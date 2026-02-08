@@ -22,16 +22,18 @@ Tested against the Canvas LMS REST API (=/api/v1/=) as of 2026-02-07. Canvas doe
 - *12 Content Types Supported*: Assignments, quizzes, pages, modules, rubrics, outcomes, discussions, announcements, files, assignment groups, sections, and per-section date overrides
 - *Resilient Syncing*: Pre-sync credential validation, rate limit retry with backoff, actionable error messages for auth failures, graceful handling of missing files
 
-* Quick Start
-
-** Installation
+* Installation
 
 org-canvas is not yet on MELPA. Install from source:
 
 #+begin_src elisp
-;; Using straight.el
-(straight-use-package
- '(org-canvas :type git :host github :repo "ransomts/org-canvas"))
+;; Using use-package with straight.el
+(use-package org-canvas
+  :straight (org-canvas :type git :host github :repo "ransomts/org-canvas"))
+
+;; Using use-package with built-in vc-package (Emacs 29+)
+(use-package org-canvas
+  :vc (:url "https://github.com/ransomts/org-canvas"))
 #+end_src
 
 Or clone for development:
@@ -41,6 +43,8 @@ git clone https://github.com/ransomts/org-canvas.git
 cd org-canvas
 eldev prepare
 #+end_src
+
+* Quick Start
 
 ** Configuration
 
