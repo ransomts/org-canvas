@@ -8,3 +8,7 @@ coverage/
 test-results.xml
 /lisp/org-canvas-credentials.el
 /test-local.sh
+
+.gemini/
+gha-creds-*.json
+/lisp/org-canvas.log

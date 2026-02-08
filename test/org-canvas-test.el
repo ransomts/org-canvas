@@ -15,7 +15,9 @@
   (it "calls all sync functions in dependency order"
     (let ((call-order nil))
       (with-sync-test-env
-        (cl-letf (((symbol-function 'org-canvas-sync-outcomes)
+        (cl-letf (((symbol-function 'org-canvas--preflight-check)
+                   (lambda () nil))
+                  ((symbol-function 'org-canvas-sync-outcomes)
                    (lambda () (push 'outcomes call-order)))
                   ((symbol-function 'org-canvas-sync-rubrics)
                    (lambda () (push 'rubrics call-order)))
