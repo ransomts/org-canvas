@@ -1,0 +1,56 @@
+;;; Eldev --- Eldev configuration file  -*- lexical-binding: t; -*-
+
+(setf eldev-project-source-dirs '("lisp"))
+(setf eldev-project-main-file "org-canvas.el")
+
+(eldev-use-vc-repository 'elog :github "Kinneyzhang/elog" :commit "357781d50a05e90a31dc93d38bb3ba0949500602")
+
+(eldev-use-package-archive 'gnu-elpa)
+(eldev-use-package-archive 'melpa)
+
+(eldev-add-extra-dependencies 'runtime '(elog))
+(eldev-add-extra-dependencies 'runtime 'compat)
+(eldev-add-extra-dependencies 'test 'compat)
+
+(eldev-use-plugin 'autoloads)
+
+;; Code coverage with undercover
+(eldev-use-plugin 'undercover)
+(setf eldev-undercover-fileset '("lisp/org-canvas.el"
+                                  "lisp/org-canvas-core.el"
+                                  "lisp/org-canvas-announcements.el"
+                                  "lisp/org-canvas-assignment-groups.el"
+                                  "lisp/org-canvas-assignments.el"
+                                  "lisp/org-canvas-discussions.el"
+                                  "lisp/org-canvas-files.el"
+                                  "lisp/org-canvas-modules.el"
+                                  "lisp/org-canvas-outcomes.el"
+                                  "lisp/org-canvas-pages.el"
+                                  "lisp/org-canvas-quizzes.el"
+                                  "lisp/org-canvas-rubrics.el"
+                                  "lisp/org-canvas-sections.el"
+                                  "lisp/org-canvas-validate.el"))
+;; Use codecov format with local report file (don't auto-send)
+(setf eldev-undercover-report-format 'codecov)
+(setf eldev-undercover-send-report nil)
+
+;; Test configuration - use Buttercup
+(setf eldev-test-framework 'buttercup)
+(eldev-add-extra-dependencies 'test 'buttercup)
+(eldev-add-extra-dependencies 'test 'buttercup-junit)
+(eldev-add-extra-dependencies 'test 'undercover)
+(setf eldev-test-fileset '("./test/*.el"))
+(push "test" eldev-project-source-dirs)
+
+;; JUnit XML reporter for Codecov Test Analytics
+;; Set ELDEV_JUNIT=1 to enable JUnit XML output
+(when (getenv "ELDEV_JUNIT")
+  (with-eval-after-load 'buttercup
+    (require 'buttercup-junit)
+    (setq buttercup-reporter #'buttercup-junit-reporter)
+    (setq buttercup-junit-result-file
+          (or (getenv "JUNIT_REPORT_FILE") "test-results.xml"))))
+
+;; Exclude vendor directory from linting
+(setf eldev-lint-ignored-fileset '("vendor/" "test/"))
+

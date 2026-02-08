@@ -1,0 +1,641 @@
+17:18:57.966| [INFO] <org-canvas> Starting Global Delete...
+17:18:57.967| [INFO] <org-canvas> [Delete] Modules...
+17:18:57.972| [WARNING] <org-canvas> ========================================
+17:18:57.973| [WARNING] <org-canvas> >>> STARTING MASS DELETION OF MODULES
+17:18:57.973| [WARNING] <org-canvas> ========================================
+17:18:57.974| [DEBUG] <org-canvas> [API] >>> REQUEST: GET https://clemson.instructure.com/api/v1/courses/287239/modules?per_page=100
+17:18:57.974| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:18:57.975| [DEBUG] <org-canvas> [API] Params: (("per_page" . "100"))
+17:18:57.975| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/modules?per_page=100"
+17:18:58.438| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:18:58.440| [INFO] <org-canvas> Found 2 modules on Canvas
+17:18:58.441| [INFO] <org-canvas> Deleting: 'Week 01: Introduction' (ID: 750709)
+17:18:58.442| [DEBUG] <org-canvas> [API] >>> REQUEST: DELETE https://clemson.instructure.com/api/v1/courses/287239/modules/750709
+17:18:58.442| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:18:58.442| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -X DELETE \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/modules/750709"
+17:18:59.047| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:18:59.047| [INFO] <org-canvas>   -> Deleted successfully
+17:18:59.048| [INFO] <org-canvas> Deleting: 'Week 02: Pandas & DataFrames' (ID: 750710)
+17:18:59.048| [DEBUG] <org-canvas> [API] >>> REQUEST: DELETE https://clemson.instructure.com/api/v1/courses/287239/modules/750710
+17:18:59.049| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:18:59.049| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -X DELETE \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/modules/750710"
+17:18:59.561| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:18:59.562| [INFO] <org-canvas>   -> Deleted successfully
+17:18:59.563| [INFO] <org-canvas> Cleaning local properties...
+17:18:59.565| [DEBUG] <org-canvas> Removing properties for ID: 750709
+17:18:59.568| [DEBUG] <org-canvas> Removing properties for ID: 5434234
+17:18:59.571| [DEBUG] <org-canvas> Removing properties for ID: 5434235
+17:18:59.574| [DEBUG] <org-canvas> Removing properties for ID: 5434236
+17:18:59.577| [DEBUG] <org-canvas> Removing properties for ID: 5434237
+17:18:59.579| [DEBUG] <org-canvas> Removing properties for ID: 5434238
+17:18:59.582| [DEBUG] <org-canvas> Removing properties for ID: 750710
+17:18:59.585| [DEBUG] <org-canvas> Removing properties for ID: 5434239
+17:18:59.588| [DEBUG] <org-canvas> Removing properties for ID: 5434240
+17:18:59.600| [INFO] <org-canvas> ========================================
+17:18:59.601| [INFO] <org-canvas> >>> MASS DELETION COMPLETE: 2 removed
+17:18:59.602| [INFO] <org-canvas> ========================================
+17:18:59.603| [INFO] <org-canvas> [Delete] Assignments...
+17:18:59.611| [WARNING] <org-canvas> ========================================
+17:18:59.612| [WARNING] <org-canvas> >>> STARTING MASS DELETION OF ASSIGNMENTS
+17:18:59.613| [WARNING] <org-canvas> ========================================
+17:18:59.614| [DEBUG] <org-canvas> [API] >>> REQUEST: GET https://clemson.instructure.com/api/v1/courses/287239/assignments?per_page=100&page=1
+17:18:59.615| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:18:59.616| [DEBUG] <org-canvas> [API] Params: (("per_page" . "100") ("page" . "1"))
+17:18:59.617| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/assignments?per_page=100&page=1"
+17:19:00.350| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:00.350| [INFO] <org-canvas> Found 5 assignments on Canvas
+17:19:00.351| [INFO] <org-canvas> Deleting: 'Introduce Yourself' (ID: 2388113)
+17:19:00.351| [DEBUG] <org-canvas> [API] >>> REQUEST: DELETE https://clemson.instructure.com/api/v1/courses/287239/assignments/2388113
+17:19:00.352| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:00.352| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -X DELETE \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/assignments/2388113"
+17:19:01.306| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:01.307| [INFO] <org-canvas>   -> Deleted successfully
+17:19:01.307| [INFO] <org-canvas> Deleting: 'Lab 01: Python Basics' (ID: 2388116)
+17:19:01.308| [DEBUG] <org-canvas> [API] >>> REQUEST: DELETE https://clemson.instructure.com/api/v1/courses/287239/assignments/2388116
+17:19:01.308| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:01.309| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -X DELETE \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/assignments/2388116"
+17:19:02.192| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:02.193| [INFO] <org-canvas>   -> Deleted successfully
+17:19:02.193| [INFO] <org-canvas> Deleting: 'Quiz 01: Syllabus Check' (ID: 2388114)
+17:19:02.194| [DEBUG] <org-canvas> [API] >>> REQUEST: DELETE https://clemson.instructure.com/api/v1/courses/287239/assignments/2388114
+17:19:02.194| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:02.195| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -X DELETE \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/assignments/2388114"
+17:19:03.324| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:03.325| [INFO] <org-canvas>   -> Deleted successfully
+17:19:03.326| [INFO] <org-canvas> Deleting: 'Quiz 02: Question Types Demo' (ID: 2388115)
+17:19:03.326| [DEBUG] <org-canvas> [API] >>> REQUEST: DELETE https://clemson.instructure.com/api/v1/courses/287239/assignments/2388115
+17:19:03.326| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:03.327| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -X DELETE \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/assignments/2388115"
+17:19:04.213| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:04.215| [INFO] <org-canvas>   -> Deleted successfully
+17:19:04.215| [INFO] <org-canvas> Deleting: 'Final Project' (ID: 2388117)
+17:19:04.216| [DEBUG] <org-canvas> [API] >>> REQUEST: DELETE https://clemson.instructure.com/api/v1/courses/287239/assignments/2388117
+17:19:04.216| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:04.217| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -X DELETE \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/assignments/2388117"
+17:19:05.209| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:05.210| [INFO] <org-canvas>   -> Deleted successfully
+17:19:05.211| [INFO] <org-canvas> Cleaning local properties...
+17:19:05.213| [DEBUG] <org-canvas> Removing properties for: 2388116
+17:19:05.218| [DEBUG] <org-canvas> Removing properties for: 2388117
+17:19:05.232| [INFO] <org-canvas> Saved /home/tsranso/Code/org-canvas/example-course/assignments.org
+17:19:05.233| [INFO] <org-canvas> ========================================
+17:19:05.234| [INFO] <org-canvas> >>> MASS DELETION COMPLETE: 5 removed
+17:19:05.235| [INFO] <org-canvas> ========================================
+17:19:05.237| [INFO] <org-canvas> [Delete] Quizzes...
+17:19:05.242| [WARNING] <org-canvas> ========================================
+17:19:05.243| [WARNING] <org-canvas> >>> STARTING MASS DELETION OF QUIZZES
+17:19:05.244| [WARNING] <org-canvas> ========================================
+17:19:05.244| [DEBUG] <org-canvas> [API] >>> REQUEST: GET https://clemson.instructure.com/api/v1/courses/287239/quizzes?per_page=100
+17:19:05.245| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:05.245| [DEBUG] <org-canvas> [API] Params: (("per_page" . "100"))
+17:19:05.245| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/quizzes?per_page=100"
+17:19:05.674| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:05.675| [INFO] <org-canvas> Found 0 quizzes on Canvas
+17:19:05.676| [INFO] <org-canvas> Cleaning local properties...
+17:19:05.735| [INFO] <org-canvas> Saved /home/tsranso/Code/org-canvas/example-course/quizzes.org
+17:19:05.736| [INFO] <org-canvas> ========================================
+17:19:05.736| [INFO] <org-canvas> >>> MASS DELETION COMPLETE: 0 removed
+17:19:05.736| [INFO] <org-canvas> ========================================
+17:19:05.737| [INFO] <org-canvas> [Delete] Files...
+17:19:05.742| [WARNING] <org-canvas> ========================================
+17:19:05.742| [WARNING] <org-canvas> >>> STARTING MASS DELETION OF FILES AND FOLDERS
+17:19:05.743| [WARNING] <org-canvas> ========================================
+17:19:05.743| [DEBUG] <org-canvas> [API] >>> REQUEST: GET https://clemson.instructure.com/api/v1/courses/287239/files?per_page=100
+17:19:05.744| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:05.744| [DEBUG] <org-canvas> [API] Params: (("per_page" . "100"))
+17:19:05.745| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/files?per_page=100"
+17:19:06.160| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:06.160| [INFO] <org-canvas> Found 5 files on Canvas
+17:19:06.161| [INFO] <org-canvas> Deleting file: '00-intro-to-the-class.pdf' (ID: 29590159)
+17:19:06.161| [DEBUG] <org-canvas> [API] >>> REQUEST: DELETE https://clemson.instructure.com/api/v1/files/29590159
+17:19:06.162| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:06.162| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -X DELETE \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/files/29590159"
+17:19:06.666| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:06.667| [INFO] <org-canvas>   -> Deleted successfully
+17:19:06.667| [INFO] <org-canvas> Deleting file: '01-01-getting-data.pdf' (ID: 29590161)
+17:19:06.668| [DEBUG] <org-canvas> [API] >>> REQUEST: DELETE https://clemson.instructure.com/api/v1/files/29590161
+17:19:06.668| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:06.669| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -X DELETE \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/files/29590161"
+17:19:07.039| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:07.040| [INFO] <org-canvas>   -> Deleted successfully
+17:19:07.040| [INFO] <org-canvas> Deleting file: 'housing_data.csv' (ID: 29590158)
+17:19:07.041| [DEBUG] <org-canvas> [API] >>> REQUEST: DELETE https://clemson.instructure.com/api/v1/files/29590158
+17:19:07.041| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:07.042| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -X DELETE \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/files/29590158"
+17:19:07.440| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:07.441| [INFO] <org-canvas>   -> Deleted successfully
+17:19:07.441| [INFO] <org-canvas> Deleting file: 'starter_code.py' (ID: 29590157)
+17:19:07.442| [DEBUG] <org-canvas> [API] >>> REQUEST: DELETE https://clemson.instructure.com/api/v1/files/29590157
+17:19:07.442| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:07.443| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -X DELETE \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/files/29590157"
+17:19:07.848| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:07.849| [INFO] <org-canvas>   -> Deleted successfully
+17:19:07.849| [INFO] <org-canvas> Deleting file: 'Syllabus.pdf' (ID: 29590156)
+17:19:07.850| [DEBUG] <org-canvas> [API] >>> REQUEST: DELETE https://clemson.instructure.com/api/v1/files/29590156
+17:19:07.850| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:07.851| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -X DELETE \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/files/29590156"
+17:19:08.240| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:08.240| [INFO] <org-canvas>   -> Deleted successfully
+17:19:08.241| [INFO] <org-canvas> ----------------------------------------
+17:19:08.241| [INFO] <org-canvas> Now deleting folders...
+17:19:08.242| [DEBUG] <org-canvas> [API] >>> REQUEST: GET https://clemson.instructure.com/api/v1/courses/287239/folders?per_page=100
+17:19:08.242| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:08.243| [DEBUG] <org-canvas> [API] Params: (("per_page" . "100"))
+17:19:08.243| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/folders?per_page=100"
+17:19:08.599| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:08.600| [DEBUG] <org-canvas> [Files] Getting root folder...
+17:19:08.600| [DEBUG] <org-canvas> [API] >>> REQUEST: GET https://clemson.instructure.com/api/v1/courses/287239/folders/root
+17:19:08.601| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:08.601| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/folders/root"
+17:19:08.922| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:08.923| [DEBUG] <org-canvas> [Files] Root folder ID: 3336938
+17:19:08.923| [INFO] <org-canvas> Found 3 folders to delete (excluding root)
+17:19:08.924| [INFO] <org-canvas> Deleting folder: 'course files/Lecture decks' (ID: 3400051)
+17:19:08.924| [DEBUG] <org-canvas> [API] >>> REQUEST: DELETE https://clemson.instructure.com/api/v1/folders/3400051?force=true
+17:19:08.925| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:08.925| [DEBUG] <org-canvas> [API] Params: (("force" . "true"))
+17:19:08.926| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -X DELETE \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/folders/3400051?force=true"
+17:19:09.336| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:09.338| [INFO] <org-canvas>   -> Deleted successfully
+17:19:09.339| [INFO] <org-canvas> Deleting folder: 'course files/Labs/Week 01' (ID: 3400050)
+17:19:09.339| [DEBUG] <org-canvas> [API] >>> REQUEST: DELETE https://clemson.instructure.com/api/v1/folders/3400050?force=true
+17:19:09.340| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:09.340| [DEBUG] <org-canvas> [API] Params: (("force" . "true"))
+17:19:09.341| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -X DELETE \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/folders/3400050?force=true"
+17:19:09.783| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:09.784| [INFO] <org-canvas>   -> Deleted successfully
+17:19:09.784| [INFO] <org-canvas> Deleting folder: 'course files/Labs' (ID: 3400049)
+17:19:09.785| [DEBUG] <org-canvas> [API] >>> REQUEST: DELETE https://clemson.instructure.com/api/v1/folders/3400049?force=true
+17:19:09.785| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:09.786| [DEBUG] <org-canvas> [API] Params: (("force" . "true"))
+17:19:09.786| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -X DELETE \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/folders/3400049?force=true"
+17:19:10.163| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:10.163| [INFO] <org-canvas>   -> Deleted successfully
+17:19:10.164| [INFO] <org-canvas> Cleaning local properties...
+17:19:10.166| [DEBUG] <org-canvas> Removing properties for ID: 29590156
+17:19:10.169| [DEBUG] <org-canvas> Removing properties for ID: 29590157
+17:19:10.172| [DEBUG] <org-canvas> Removing properties for ID: 29590158
+17:19:10.175| [DEBUG] <org-canvas> Removing properties for ID: 29590159
+17:19:10.178| [DEBUG] <org-canvas> Removing properties for ID: 29590161
+17:19:10.188| [INFO] <org-canvas> ========================================
+17:19:10.188| [INFO] <org-canvas> >>> MASS DELETION COMPLETE: 5 files, 3 folders removed
+17:19:10.189| [INFO] <org-canvas> ========================================
+17:19:10.189| [INFO] <org-canvas> [Delete] Announcements...
+17:19:10.194| [WARNING] <org-canvas> ========================================
+17:19:10.195| [WARNING] <org-canvas> >>> STARTING MASS DELETION OF ANNOUNCEMENTS
+17:19:10.196| [WARNING] <org-canvas> ========================================
+17:19:10.196| [DEBUG] <org-canvas> [API] >>> REQUEST: GET https://clemson.instructure.com/api/v1/courses/287239/discussion_topics?only_announcements=true&per_page=100&page=1
+17:19:10.197| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:10.197| [DEBUG] <org-canvas> [API] Params: (("only_announcements" . "true") ("per_page" . "100") ("page" . "1"))
+17:19:10.198| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/discussion_topics?only_announcements=true&per_page=100&page=1"
+17:19:10.699| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:10.700| [INFO] <org-canvas> Found 2 announcements on Canvas
+17:19:10.700| [INFO] <org-canvas> Deleting: 'Reminder: Midterm Approaching' (ID: 1709363)
+17:19:10.701| [DEBUG] <org-canvas> [API] >>> REQUEST: DELETE https://clemson.instructure.com/api/v1/courses/287239/discussion_topics/1709363
+17:19:10.701| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:10.701| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -X DELETE \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/discussion_topics/1709363"
+17:19:11.147| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:11.147| [INFO] <org-canvas>   -> Deleted successfully
+17:19:11.148| [INFO] <org-canvas> Deleting: 'Welcome to Class!' (ID: 1709362)
+17:19:11.327| [DEBUG] <org-canvas> [API] >>> REQUEST: DELETE https://clemson.instructure.com/api/v1/courses/287239/discussion_topics/1709362
+17:19:11.328| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:11.328| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -X DELETE \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/discussion_topics/1709362"
+17:19:11.870| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:11.870| [INFO] <org-canvas>   -> Deleted successfully
+17:19:11.871| [INFO] <org-canvas> Cleaning local properties...
+17:19:11.873| [DEBUG] <org-canvas> Removing properties for: 1709362
+17:19:11.877| [DEBUG] <org-canvas> Removing properties for: 1709363
+17:19:11.888| [INFO] <org-canvas> Saved /home/tsranso/Code/org-canvas/example-course/announcements.org
+17:19:11.888| [INFO] <org-canvas> ========================================
+17:19:11.889| [INFO] <org-canvas> >>> MASS DELETION COMPLETE: 2 removed
+17:19:11.890| [INFO] <org-canvas> ========================================
+17:19:11.892| [INFO] <org-canvas> [Delete] Discussions...
+17:19:11.897| [WARNING] <org-canvas> ========================================
+17:19:11.898| [WARNING] <org-canvas> >>> STARTING MASS DELETION OF DISCUSSIONS
+17:19:11.899| [WARNING] <org-canvas> ========================================
+17:19:11.899| [DEBUG] <org-canvas> [API] >>> REQUEST: GET https://clemson.instructure.com/api/v1/courses/287239/discussion_topics?per_page=100&page=1
+17:19:11.900| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:11.900| [DEBUG] <org-canvas> [API] Params: (("per_page" . "100") ("page" . "1"))
+17:19:11.901| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/discussion_topics?per_page=100&page=1"
+17:19:12.381| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:12.382| [INFO] <org-canvas> Found 1 discussions on Canvas
+17:19:12.382| [INFO] <org-canvas> Deleting: 'General Q&A' (ID: 1709361)
+17:19:12.384| [DEBUG] <org-canvas> [API] >>> REQUEST: DELETE https://clemson.instructure.com/api/v1/courses/287239/discussion_topics/1709361
+17:19:12.384| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:12.385| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -X DELETE \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/discussion_topics/1709361"
+17:19:12.837| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:12.838| [INFO] <org-canvas>   -> Deleted successfully
+17:19:12.838| [INFO] <org-canvas> Cleaning local properties...
+17:19:12.841| [DEBUG] <org-canvas> Removing properties for: 1709360
+17:19:12.845| [DEBUG] <org-canvas> Removing properties for: 1709361
+17:19:12.857| [INFO] <org-canvas> Saved /home/tsranso/Code/org-canvas/example-course/discussions.org
+17:19:12.857| [INFO] <org-canvas> ========================================
+17:19:12.858| [INFO] <org-canvas> >>> MASS DELETION COMPLETE: 1 removed
+17:19:12.859| [INFO] <org-canvas> ========================================
+17:19:12.861| [INFO] <org-canvas> [Delete] Pages...
+17:19:12.867| [WARNING] <org-canvas> ========================================
+17:19:12.868| [WARNING] <org-canvas> >>> STARTING MASS DELETION OF PAGES
+17:19:12.868| [WARNING] <org-canvas> ========================================
+17:19:12.869| [DEBUG] <org-canvas> [API] >>> REQUEST: GET https://clemson.instructure.com/api/v1/courses/287239/pages?per_page=100&page=1
+17:19:12.869| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:12.870| [DEBUG] <org-canvas> [API] Params: (("per_page" . "100") ("page" . "1"))
+17:19:12.870| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/pages?per_page=100&page=1"
+17:19:13.381| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:13.382| [INFO] <org-canvas> Found 2 pages on Canvas
+17:19:13.382| [INFO] <org-canvas> Deleting: 'Front Page' (ID: front-page-39)
+17:19:13.383| [DEBUG] <org-canvas> [API] >>> REQUEST: DELETE https://clemson.instructure.com/api/v1/courses/287239/pages/front-page-39
+17:19:13.383| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:13.384| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -X DELETE \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/pages/front-page-39"
+17:19:13.880| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:13.882| [INFO] <org-canvas>   -> Deleted successfully
+17:19:13.882| [INFO] <org-canvas> Deleting: 'Lecture 01: Intro to Python' (ID: lecture-01-intro-to-python-44)
+17:19:13.883| [DEBUG] <org-canvas> [API] >>> REQUEST: DELETE https://clemson.instructure.com/api/v1/courses/287239/pages/lecture-01-intro-to-python-44
+17:19:13.884| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:13.884| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -X DELETE \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/pages/lecture-01-intro-to-python-44"
+17:19:14.440| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:14.442| [INFO] <org-canvas>   -> Deleted successfully
+17:19:14.443| [INFO] <org-canvas> Cleaning local properties...
+17:19:14.446| [DEBUG] <org-canvas> Removing properties for: front-page-39
+17:19:14.449| [DEBUG] <org-canvas> Removing properties for: lecture-01-intro-to-python-44
+17:19:14.464| [INFO] <org-canvas> Saved /home/tsranso/Code/org-canvas/example-course/pages.org
+17:19:14.465| [INFO] <org-canvas> ========================================
+17:19:14.466| [INFO] <org-canvas> >>> MASS DELETION COMPLETE: 2 removed
+17:19:14.467| [INFO] <org-canvas> ========================================
+17:19:14.468| [INFO] <org-canvas> [Delete] Assignment Groups...
+17:19:14.478| [WARNING] <org-canvas> ========================================
+17:19:14.479| [WARNING] <org-canvas> >>> STARTING MASS DELETION OF ASSIGNMENT-GROUPS
+17:19:14.480| [WARNING] <org-canvas> ========================================
+17:19:14.482| [DEBUG] <org-canvas> [API] >>> REQUEST: GET https://clemson.instructure.com/api/v1/courses/287239/assignment_groups?per_page=100&page=1
+17:19:14.483| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:14.483| [DEBUG] <org-canvas> [API] Params: (("per_page" . "100") ("page" . "1"))
+17:19:14.483| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/assignment_groups?per_page=100&page=1"
+17:19:14.784| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:14.785| [INFO] <org-canvas> Found 4 assignment-groups on Canvas
+17:19:14.785| [INFO] <org-canvas> Deleting: 'Labs' (ID: 683688)
+17:19:14.786| [DEBUG] <org-canvas> [API] >>> REQUEST: DELETE https://clemson.instructure.com/api/v1/courses/287239/assignment_groups/683688
+17:19:14.786| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:14.787| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -X DELETE \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/assignment_groups/683688"
+17:19:15.119| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:15.120| [INFO] <org-canvas>   -> Deleted successfully
+17:19:15.121| [INFO] <org-canvas> Deleting: 'Quizzes' (ID: 683689)
+17:19:15.121| [DEBUG] <org-canvas> [API] >>> REQUEST: DELETE https://clemson.instructure.com/api/v1/courses/287239/assignment_groups/683689
+17:19:15.122| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:15.122| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -X DELETE \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/assignment_groups/683689"
+17:19:15.642| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:15.643| [INFO] <org-canvas>   -> Deleted successfully
+17:19:15.643| [INFO] <org-canvas> Deleting: 'Exams' (ID: 683690)
+17:19:15.644| [DEBUG] <org-canvas> [API] >>> REQUEST: DELETE https://clemson.instructure.com/api/v1/courses/287239/assignment_groups/683690
+17:19:15.644| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:15.645| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -X DELETE \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/assignment_groups/683690"
+17:19:16.014| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:16.015| [INFO] <org-canvas>   -> Deleted successfully
+17:19:16.016| [INFO] <org-canvas> Deleting: 'Projects' (ID: 683691)
+17:19:16.016| [DEBUG] <org-canvas> [API] >>> REQUEST: DELETE https://clemson.instructure.com/api/v1/courses/287239/assignment_groups/683691
+17:19:16.017| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:16.017| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -X DELETE \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/assignment_groups/683691"
+17:19:16.380| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:16.381| [INFO] <org-canvas>   -> Deleted successfully
+17:19:16.382| [INFO] <org-canvas> Cleaning local properties...
+17:19:16.385| [DEBUG] <org-canvas> Removing properties for: 683688
+17:19:16.392| [DEBUG] <org-canvas> Removing properties for: 683689
+17:19:16.399| [DEBUG] <org-canvas> Removing properties for: 683690
+17:19:16.405| [DEBUG] <org-canvas> Removing properties for: 683691
+17:19:16.418| [INFO] <org-canvas> Saved /home/tsranso/Code/org-canvas/example-course/assignment-groups.org
+17:19:16.418| [INFO] <org-canvas> ========================================
+17:19:16.419| [INFO] <org-canvas> >>> MASS DELETION COMPLETE: 4 removed
+17:19:16.419| [INFO] <org-canvas> ========================================
+17:19:16.420| [INFO] <org-canvas> [Delete] Rubrics...
+17:19:16.425| [WARNING] <org-canvas> ========================================
+17:19:16.426| [WARNING] <org-canvas> >>> STARTING MASS DELETION OF RUBRICS
+17:19:16.426| [WARNING] <org-canvas> ========================================
+17:19:16.427| [INFO] <org-canvas> Dissociating rubrics from assignments...
+17:19:16.427| [DEBUG] <org-canvas> [API] >>> REQUEST: GET https://clemson.instructure.com/api/v1/courses/287239/assignments?per_page=100
+17:19:16.428| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:16.428| [DEBUG] <org-canvas> [API] Params: (("per_page" . "100"))
+17:19:16.429| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/assignments?per_page=100"
+17:19:16.819| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:16.820| [INFO] <org-canvas> Dissociated 0 rubric associations
+17:19:16.820| [DEBUG] <org-canvas> [API] >>> REQUEST: GET https://clemson.instructure.com/api/v1/courses/287239/rubrics?per_page=100
+17:19:16.821| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:16.821| [DEBUG] <org-canvas> [API] Params: (("per_page" . "100"))
+17:19:16.822| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/rubrics?per_page=100"
+17:19:17.171| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:17.172| [INFO] <org-canvas> Found 5 rubrics on Canvas
+17:19:17.172| [INFO] <org-canvas> Deleting: 'Standard Lab Rubric' (ID: 122938)
+17:19:17.173| [DEBUG] <org-canvas> [API] >>> REQUEST: DELETE https://clemson.instructure.com/api/v1/courses/287239/rubrics/122938
+17:19:17.173| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:17.174| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -X DELETE \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/rubrics/122938"
+17:19:17.527| [DEBUG] <org-canvas> [API] <<< RESPONSE: error
+17:19:17.528| [ERROR] <org-canvas> API Request Failed: ("HTTP error" #s(plz-error nil #s(plz-response 2 500 ((date . "Sun, 08 Feb 2026 22:19:17 GMT") (content-type . "application/json; charset=utf-8") (server . "Apache") (x-session-id . "19e2cd9377e9ac354c3f5d98bdcf0808") (x-request-context-id . "f27a2532-10ec-4b9d-90c3-815cac9ab486") (vary . "Accept-Encoding") (content-encoding . "br") (x-rate-limit-remaining . "700.0") (x-canvas-meta . "q=2921;tid=Root=1-69890be5-019f84e6139349f62a4ac0fe;at=12150000000683311;dk=170000000000016;a=1;g=AT3KT32aOWmacqbhgD5KJ9mJ433qBojhDaSSNwuO;s=1215;c=cluster212;z=us-east-1c;o=rubrics;n=destroy;t=Course;i=287239;st=80c1bc637af74200893d65c5f347d0a8-575789a903444403-0;b=2601292;m=2601292;u=0.06;y=0.01;d=0.03;rlr=700.0;") (content-security-policy . "frame-ancestors 'self' clemson.instructure.com clemson.beta.instructure.com clemson.test.instructure.com;") (x-request-cost . "0.08545713599774274") (cache-control . "no-cache") (strict-transport-security . "max-age=63072000") (referrer-policy . "no-referrer-when-downgrade") (x-permitted-cross-domain-policies . "none") (x-xss-protection . "1; mode=block") (x-canvas-user-id . "12150000000064878") (x-download-options . "noopen") (x-runtime . "0.105291") (x-content-type-options . "nosniff") (set-cookie . "_csrf_token=dMFyz2FkACkXFHDB9YglUsnkAHqkic8Kli7MTxhUDZEYgzngAww5WF1wCKOj8BcBvbNGCsD%2Fn3%2FgZIU%2BKwFM%2Bw%3D%3D; path=/; secure") (set-cookie . "log_session_id=19e2cd9377e9ac354c3f5d98bdcf0808; path=/; secure; httponly") (set-cookie . "canvas_session=dPF06mu3HiVyTkvzs8vYdw.1ZWHrt4P11tUkf6bWEyL2J2IBxUDvZCvYASjgtpjGHGVjup8s0_FbQQVfbqvE7abqrDkCb56SpElkI1fEdxkcYm9e1e1nZn6l1QNhoEU9ycNegW4a9Kp7lT_yujtjyXL.OYzoaHSKWnTu1dye0UsF7CPVTmk.aYkL5Q; path=/; secure; httponly; samesite=none") (x-request-processor . "08b213447962c8217") (x-a11y-ally . "Dana Danger Grey") (status . "500 Internal Server Error") (p3p . "CP=\"None, see http://www.instructure.com/privacy-policy\"")) "{\"errors\":[{\"message\":\"An error occurred.\",\"error_code\":\"internal_server_error\"}],\"error_report_id\":10227089}") nil))
+  URL: https://clemson.instructure.com/api/v1/courses/287239/rubrics/122938
+  Body: nil
+17:19:17.528| [WARNING] <org-canvas>   -> Delete returned error: API Request Failed: ("HTTP error" #s(plz-error nil #s(plz-response 2 500 ((date . "Sun, 08 Feb 2026 22:19:17 GMT") (content-type . "application/json; charset=utf-8") (server . "Apache") (x-session-id . "19e2cd9377e9ac354c3f5d98bdcf0808") (x-request-context-id . "f27a2532-10ec-4b9d-90c3-815cac9ab486") (vary . "Accept-Encoding") (content-encoding . "br") (x-rate-limit-remaining . "700.0") (x-canvas-meta . "q=2921;tid=Root=1-69890be5-019f84e6139349f62a4ac0fe;at=12150000000683311;dk=170000000000016;a=1;g=AT3KT32aOWmacqbhgD5KJ9mJ433qBojhDaSSNwuO;s=1215;c=cluster212;z=us-east-1c;o=rubrics;n=destroy;t=Course;i=287239;st=80c1bc637af74200893d65c5f347d0a8-575789a903444403-0;b=2601292;m=2601292;u=0.06;y=0.01;d=0.03;rlr=700.0;") (content-security-policy . "frame-ancestors 'self' clemson.instructure.com clemson.beta.instructure.com clemson.test.instructure.com;") (x-request-cost . "0.08545713599774274") (cache-control . "no-cache") (strict-transport-security . "max-age=63072000") (referrer-policy . "no-referrer-when-downgrade") (x-permitted-cross-domain-policies . "none") (x-xss-protection . "1; mode=block") (x-canvas-user-id . "12150000000064878") (x-download-options . "noopen") (x-runtime . "0.105291") (x-content-type-options . "nosniff") (set-cookie . "_csrf_token=dMFyz2FkACkXFHDB9YglUsnkAHqkic8Kli7MTxhUDZEYgzngAww5WF1wCKOj8BcBvbNGCsD%2Fn3%2FgZIU%2BKwFM%2Bw%3D%3D; path=/; secure") (set-cookie . "log_session_id=19e2cd9377e9ac354c3f5d98bdcf0808; path=/; secure; httponly") (set-cookie . "canvas_session=dPF06mu3HiVyTkvzs8vYdw.1ZWHrt4P11tUkf6bWEyL2J2IBxUDvZCvYASjgtpjGHGVjup8s0_FbQQVfbqvE7abqrDkCb56SpElkI1fEdxkcYm9e1e1nZn6l1QNhoEU9ycNegW4a9Kp7lT_yujtjyXL.OYzoaHSKWnTu1dye0UsF7CPVTmk.aYkL5Q; path=/; secure; httponly; samesite=none") (x-request-processor . "08b213447962c8217") (x-a11y-ally . "Dana Danger Grey") (status . "500 Internal Server Error") (p3p . "CP=\"None, see http://www.instructure.com/privacy-policy\"")) "{\"errors\":[{\"message\":\"An error occurred.\",\"error_code\":\"internal_server_error\"}],\"error_report_id\":10227089}") nil))
+17:19:17.529| [INFO] <org-canvas>   -> Verifying whether rubric was actually deleted...
+17:19:17.529| [DEBUG] <org-canvas> [API] >>> REQUEST: GET https://clemson.instructure.com/api/v1/courses/287239/rubrics/122938
+17:19:17.530| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:17.530| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/rubrics/122938"
+17:19:17.868| [DEBUG] <org-canvas> [API] <<< RESPONSE: error
+17:19:17.869| [ERROR] <org-canvas> API Request Failed: ("HTTP error" #s(plz-error nil #s(plz-response 2 404 ((date . "Sun, 08 Feb 2026 22:19:17 GMT") (content-type . "application/json; charset=utf-8") (server . "Apache") (x-session-id . "8d47522fe0845f86d352a6e24fd433f6") (x-request-context-id . "4d961cfb-b9f0-4309-8974-388976f2ca40") (vary . "Accept-Encoding") (content-encoding . "br") (x-rate-limit-remaining . "700.0") (x-canvas-meta . "q=2773;tid=Root=1-69890be5-6cf90fcf773fd65b444eda0a;at=12150000000683311;dk=170000000000016;a=1;g=AT3KT32aOWmacqbhgD5KJ9mJ433qBojhDaSSNwuO;s=1215;c=cluster212;z=us-east-1c;o=rubrics_api;n=show;t=Course;i=287239;st=2295f73a641a45d9b7f5b1fc51fdcc02-03272736a7d04d68-0;x=5.0;p=f;f=2026-02-08T22:19:17.78Z;b=2310796;m=2310796;u=0.03;y=0.00;d=0.01;rlr=700.0;") (content-security-policy . "frame-ancestors 'self' clemson.instructure.com clemson.beta.instructure.com clemson.test.instructure.com;") (x-request-cost . "0.043595242999117545") (cache-control . "no-cache") (strict-transport-security . "max-age=63072000") (referrer-policy . "no-referrer-when-downgrade") (x-permitted-cross-domain-policies . "none") (x-xss-protection . "1; mode=block") (x-canvas-user-id . "12150000000064878") (x-download-options . "noopen") (x-runtime . "0.068789") (x-content-type-options . "nosniff") (set-cookie . "_csrf_token=LXS05J5FPbEgJugtkKHdGgU8cLP9OBLyj94uswK7EZZlO9Ch%2BSJ1mmpSnF2i8Oh1TkYJ3b9Addm3qW%2Fgbv103w%3D%3D; path=/; secure") (set-cookie . "log_session_id=8d47522fe0845f86d352a6e24fd433f6; path=/; secure; httponly") (set-cookie . "canvas_session=YDasxhV0aSTxrZ8pAAJI4Q.Q7Er5dm4zZoo1EDjtqWdW1qF9b455A6iAiWJV42CwVWnqMHNSh5h2zK9hX5HSFM0MUYOcK5p3oIwIxKmsWL8TxNxr-vC-CCpsVeMGrroxYkAkaUoaT6U5bafyjaq8MnM.CV2GYDcYGdpQs3c2mwRsXpoD0V0.aYkL5Q; path=/; secure; httponly; samesite=none") (x-request-processor . "08b213447962c8217") (x-a11y-ally . "Dana Danger Grey") (status . "404 Not Found") (p3p . "CP=\"None, see http://www.instructure.com/privacy-policy\"")) "{\"message\":\"Rubric not found\"}") nil))
+  URL: https://clemson.instructure.com/api/v1/courses/287239/rubrics/122938
+  Body: nil
+17:19:17.869| [INFO] <org-canvas>   -> Rubric no longer exists (confirmed deleted)
+17:19:17.870| [INFO] <org-canvas> Deleting: 'Final Presentation Rubric' (ID: 122939)
+17:19:17.870| [DEBUG] <org-canvas> [API] >>> REQUEST: DELETE https://clemson.instructure.com/api/v1/courses/287239/rubrics/122939
+17:19:17.871| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:17.871| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -X DELETE \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/rubrics/122939"
+17:19:18.193| [DEBUG] <org-canvas> [API] <<< RESPONSE: error
+17:19:18.193| [ERROR] <org-canvas> API Request Failed: ("HTTP error" #s(plz-error nil #s(plz-response 2 500 ((date . "Sun, 08 Feb 2026 22:19:18 GMT") (content-type . "application/json; charset=utf-8") (server . "Apache") (x-session-id . "aa5c2dfa9cb72f3a9fb37b9d645f55f6") (x-request-context-id . "743b5ed7-5fb8-4587-9fe4-0a1ff6d6781b") (vary . "Accept-Encoding") (content-encoding . "br") (x-rate-limit-remaining . "700.0") (x-canvas-meta . "q=4275;tid=Root=1-69890be6-563075e168d9ec8913772761;at=12150000000683311;dk=170000000000016;a=1;g=AT3KT32aOWmacqbhgD5KJ9mJ433qBojhDaSSNwuO;s=1215;c=cluster212;z=us-east-1b;o=rubrics;n=destroy;t=Course;i=287239;st=4c2e56d6ec4d4fd6951175349a2ad007-4bd94d66012f46c5-0;b=2389452;m=2389452;u=0.05;y=0.00;d=0.02;rlr=700.0;") (content-security-policy . "frame-ancestors 'self' clemson.instructure.com clemson.beta.instructure.com clemson.test.instructure.com;") (x-request-cost . "0.06787302500043779") (cache-control . "no-cache") (strict-transport-security . "max-age=63072000") (referrer-policy . "no-referrer-when-downgrade") (x-permitted-cross-domain-policies . "none") (x-xss-protection . "1; mode=block") (x-canvas-user-id . "12150000000064878") (x-download-options . "noopen") (x-runtime . "0.080763") (x-content-type-options . "nosniff") (set-cookie . "_csrf_token=n0fKXcVqoSpXvrlEkNYNszWJRNa%2F0fMDCPKJIbcHUuv3PoNtqRvgWDDZ%2FR7hlWzVV%2B4NpPqWnGh9i8J1800%2FqA%3D%3D; path=/; secure") (set-cookie . "log_session_id=aa5c2dfa9cb72f3a9fb37b9d645f55f6; path=/; secure; httponly") (set-cookie . "canvas_session=9lug39Z5GTzIvKe2qwtqWA._rfyOftwyR0QP2hHP_Lf0LY9gtoPenDaBrzc4q6q12Z679Ihaq_yGWD2cAi6-78UY7GFkmfIBLsoVX2UjApINBS6pxsZ_QvRtiI-zlJJljku8IKxRKAv9WSfd88yQ1JV.4rHQAKn0GbqfRzZKscPIhA0bR8k.aYkL5g; path=/; secure; httponly; samesite=none") (x-request-processor . "08007025bb2097036") (x-a11y-ally . "Dana Danger Grey") (status . "500 Internal Server Error") (p3p . "CP=\"None, see http://www.instructure.com/privacy-policy\"")) "{\"errors\":[{\"message\":\"An error occurred.\",\"error_code\":\"internal_server_error\"}],\"error_report_id\":10227090}") nil))
+  URL: https://clemson.instructure.com/api/v1/courses/287239/rubrics/122939
+  Body: nil
+17:19:18.194| [WARNING] <org-canvas>   -> Delete returned error: API Request Failed: ("HTTP error" #s(plz-error nil #s(plz-response 2 500 ((date . "Sun, 08 Feb 2026 22:19:18 GMT") (content-type . "application/json; charset=utf-8") (server . "Apache") (x-session-id . "aa5c2dfa9cb72f3a9fb37b9d645f55f6") (x-request-context-id . "743b5ed7-5fb8-4587-9fe4-0a1ff6d6781b") (vary . "Accept-Encoding") (content-encoding . "br") (x-rate-limit-remaining . "700.0") (x-canvas-meta . "q=4275;tid=Root=1-69890be6-563075e168d9ec8913772761;at=12150000000683311;dk=170000000000016;a=1;g=AT3KT32aOWmacqbhgD5KJ9mJ433qBojhDaSSNwuO;s=1215;c=cluster212;z=us-east-1b;o=rubrics;n=destroy;t=Course;i=287239;st=4c2e56d6ec4d4fd6951175349a2ad007-4bd94d66012f46c5-0;b=2389452;m=2389452;u=0.05;y=0.00;d=0.02;rlr=700.0;") (content-security-policy . "frame-ancestors 'self' clemson.instructure.com clemson.beta.instructure.com clemson.test.instructure.com;") (x-request-cost . "0.06787302500043779") (cache-control . "no-cache") (strict-transport-security . "max-age=63072000") (referrer-policy . "no-referrer-when-downgrade") (x-permitted-cross-domain-policies . "none") (x-xss-protection . "1; mode=block") (x-canvas-user-id . "12150000000064878") (x-download-options . "noopen") (x-runtime . "0.080763") (x-content-type-options . "nosniff") (set-cookie . "_csrf_token=n0fKXcVqoSpXvrlEkNYNszWJRNa%2F0fMDCPKJIbcHUuv3PoNtqRvgWDDZ%2FR7hlWzVV%2B4NpPqWnGh9i8J1800%2FqA%3D%3D; path=/; secure") (set-cookie . "log_session_id=aa5c2dfa9cb72f3a9fb37b9d645f55f6; path=/; secure; httponly") (set-cookie . "canvas_session=9lug39Z5GTzIvKe2qwtqWA._rfyOftwyR0QP2hHP_Lf0LY9gtoPenDaBrzc4q6q12Z679Ihaq_yGWD2cAi6-78UY7GFkmfIBLsoVX2UjApINBS6pxsZ_QvRtiI-zlJJljku8IKxRKAv9WSfd88yQ1JV.4rHQAKn0GbqfRzZKscPIhA0bR8k.aYkL5g; path=/; secure; httponly; samesite=none") (x-request-processor . "08007025bb2097036") (x-a11y-ally . "Dana Danger Grey") (status . "500 Internal Server Error") (p3p . "CP=\"None, see http://www.instructure.com/privacy-policy\"")) "{\"errors\":[{\"message\":\"An error occurred.\",\"error_code\":\"internal_server_error\"}],\"error_report_id\":10227090}") nil))
+17:19:18.195| [INFO] <org-canvas>   -> Verifying whether rubric was actually deleted...
+17:19:18.195| [DEBUG] <org-canvas> [API] >>> REQUEST: GET https://clemson.instructure.com/api/v1/courses/287239/rubrics/122939
+17:19:18.196| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:18.196| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/rubrics/122939"
+17:19:18.550| [DEBUG] <org-canvas> [API] <<< RESPONSE: error
+17:19:18.551| [ERROR] <org-canvas> API Request Failed: ("HTTP error" #s(plz-error nil #s(plz-response 2 404 ((date . "Sun, 08 Feb 2026 22:19:18 GMT") (content-type . "application/json; charset=utf-8") (server . "Apache") (x-session-id . "e37012b2855807fafcccd4cbf1cf79d6") (x-request-context-id . "c801d409-f2a7-4fb3-a028-be386498db55") (vary . "Accept-Encoding") (content-encoding . "br") (x-rate-limit-remaining . "700.0") (x-canvas-meta . "q=3280;tid=Root=1-69890be6-2b16790f06d267a54304715e;at=12150000000683311;dk=170000000000016;a=1;g=AT3KT32aOWmacqbhgD5KJ9mJ433qBojhDaSSNwuO;s=1215;c=cluster212;z=us-east-1b;o=rubrics_api;n=show;t=Course;i=287239;st=490ceabbbc23407bb6a7b0ed277acf38-77e9fecd8b9044f6-0;x=5.0;p=f;f=2026-02-08T22:19:18.47Z;b=1956424;m=1956424;u=0.05;y=0.01;d=0.01;rlr=700.0;") (content-security-policy . "frame-ancestors 'self' clemson.instructure.com clemson.beta.instructure.com clemson.test.instructure.com;") (x-request-cost . "0.059066360000508134") (cache-control . "no-cache") (strict-transport-security . "max-age=63072000") (referrer-policy . "no-referrer-when-downgrade") (x-permitted-cross-domain-policies . "none") (x-xss-protection . "1; mode=block") (x-canvas-user-id . "12150000000064878") (x-download-options . "noopen") (x-runtime . "0.094356") (x-content-type-options . "nosniff") (set-cookie . "_csrf_token=V8ZdFIxlwZwvxRo8HW9bCXA5mFiOAzoc6UypXFfhXzhjni4t3xb18B2gUm57RBRwOGHcNbc2bH6fOvsOPpY8Ww%3D%3D; path=/; secure") (set-cookie . "log_session_id=e37012b2855807fafcccd4cbf1cf79d6; path=/; secure; httponly") (set-cookie . "canvas_session=XExEmPDi1WtALGns4KuyzQ.BqABghshjfM8TaElFxKw--vt8C4H0R2rwUHaN2ollbfSzbClU1mSefHhTPMdW_5YczF35JpUxZzDeNziGQ8LsWbrkOPkWXoyDMH77meyTz1-r2wwstvBMPYc_rgUZX0N.EtUQcXoDrvmpzuR8D4JefLI_ex4.aYkL5g; path=/; secure; httponly; samesite=none") (x-request-processor . "0a3d8e2eb27000d78") (x-a11y-ally . "Dana Danger Grey") (status . "404 Not Found") (p3p . "CP=\"None, see http://www.instructure.com/privacy-policy\"")) "{\"message\":\"Rubric not found\"}") nil))
+  URL: https://clemson.instructure.com/api/v1/courses/287239/rubrics/122939
+  Body: nil
+17:19:18.551| [INFO] <org-canvas>   -> Rubric no longer exists (confirmed deleted)
+17:19:18.552| [INFO] <org-canvas> Deleting: 'Final Presentation Rubric (1)' (ID: 122941)
+17:19:18.552| [DEBUG] <org-canvas> [API] >>> REQUEST: DELETE https://clemson.instructure.com/api/v1/courses/287239/rubrics/122941
+17:19:18.553| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:18.553| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -X DELETE \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/rubrics/122941"
+17:19:19.141| [DEBUG] <org-canvas> [API] <<< RESPONSE: error
+17:19:19.142| [ERROR] <org-canvas> API Request Failed: ("HTTP error" #s(plz-error nil #s(plz-response 2 500 ((date . "Sun, 08 Feb 2026 22:19:18 GMT") (content-type . "application/json; charset=utf-8") (server . "Apache") (x-session-id . "600d06c649e8ca09baafac3adb8748a7") (x-request-context-id . "55acccfa-eb26-4ca4-bbce-94dde7bc6c21") (vary . "Accept-Encoding") (content-encoding . "br") (x-rate-limit-remaining . "700.0") (x-canvas-meta . "q=3422;tid=Root=1-69890be6-1022636f250b68220effe2f2;at=12150000000683311;dk=170000000000016;a=1;g=AT3KT32aOWmacqbhgD5KJ9mJ433qBojhDaSSNwuO;s=1215;c=cluster212;z=us-east-1c;o=rubrics;n=destroy;t=Course;i=287239;st=e4e8d94ce6f24c8a8518ce651b50faad-4973042e6f054669-0;b=2141768;m=2141768;u=0.10;y=0.01;d=0.03;rlr=700.0;") (content-security-policy . "frame-ancestors 'self' clemson.instructure.com clemson.beta.instructure.com clemson.test.instructure.com;") (x-request-cost . "0.13143900500034533") (cache-control . "no-cache") (strict-transport-security . "max-age=63072000") (referrer-policy . "no-referrer-when-downgrade") (x-permitted-cross-domain-policies . "none") (x-xss-protection . "1; mode=block") (x-canvas-user-id . "12150000000064878") (x-download-options . "noopen") (x-runtime . "0.173321") (x-content-type-options . "nosniff") (set-cookie . "_csrf_token=0c58Ji6mHAJrtPOOCVke05SV%2FYJVCDcYRvQrj4xHxmCHiBVOecJUSDvZxb1gE3Hg%2F9CSwAx6BS4hv2Tavzb1Aw%3D%3D; path=/; secure") (set-cookie . "log_session_id=600d06c649e8ca09baafac3adb8748a7; path=/; secure; httponly") (set-cookie . "canvas_session=_aqFKw9gDoT39AZuQvvOPw.4GQqppa6gX4A0TXbEuY1g0BlDOFAaOV2IAERtfv-XbysdVeIEBRKpRWpXYSDB_SY1Ur9tf591cihxiXaSMVMTGnJFzTPaP3tU8jRYtbEiy7ybnp_6RMHAA9IiPTl8YUW.WGYfCkncxwPiCdpcPnEmuwnYedA.aYkL5g; path=/; secure; httponly; samesite=none") (x-request-processor . "08b213447962c8217") (x-a11y-ally . "Dana Danger Grey") (status . "500 Internal Server Error") (p3p . "CP=\"None, see http://www.instructure.com/privacy-policy\"")) "{\"errors\":[{\"message\":\"An error occurred.\",\"error_code\":\"internal_server_error\"}],\"error_report_id\":10227091}") nil))
+  URL: https://clemson.instructure.com/api/v1/courses/287239/rubrics/122941
+  Body: nil
+17:19:19.142| [WARNING] <org-canvas>   -> Delete returned error: API Request Failed: ("HTTP error" #s(plz-error nil #s(plz-response 2 500 ((date . "Sun, 08 Feb 2026 22:19:18 GMT") (content-type . "application/json; charset=utf-8") (server . "Apache") (x-session-id . "600d06c649e8ca09baafac3adb8748a7") (x-request-context-id . "55acccfa-eb26-4ca4-bbce-94dde7bc6c21") (vary . "Accept-Encoding") (content-encoding . "br") (x-rate-limit-remaining . "700.0") (x-canvas-meta . "q=3422;tid=Root=1-69890be6-1022636f250b68220effe2f2;at=12150000000683311;dk=170000000000016;a=1;g=AT3KT32aOWmacqbhgD5KJ9mJ433qBojhDaSSNwuO;s=1215;c=cluster212;z=us-east-1c;o=rubrics;n=destroy;t=Course;i=287239;st=e4e8d94ce6f24c8a8518ce651b50faad-4973042e6f054669-0;b=2141768;m=2141768;u=0.10;y=0.01;d=0.03;rlr=700.0;") (content-security-policy . "frame-ancestors 'self' clemson.instructure.com clemson.beta.instructure.com clemson.test.instructure.com;") (x-request-cost . "0.13143900500034533") (cache-control . "no-cache") (strict-transport-security . "max-age=63072000") (referrer-policy . "no-referrer-when-downgrade") (x-permitted-cross-domain-policies . "none") (x-xss-protection . "1; mode=block") (x-canvas-user-id . "12150000000064878") (x-download-options . "noopen") (x-runtime . "0.173321") (x-content-type-options . "nosniff") (set-cookie . "_csrf_token=0c58Ji6mHAJrtPOOCVke05SV%2FYJVCDcYRvQrj4xHxmCHiBVOecJUSDvZxb1gE3Hg%2F9CSwAx6BS4hv2Tavzb1Aw%3D%3D; path=/; secure") (set-cookie . "log_session_id=600d06c649e8ca09baafac3adb8748a7; path=/; secure; httponly") (set-cookie . "canvas_session=_aqFKw9gDoT39AZuQvvOPw.4GQqppa6gX4A0TXbEuY1g0BlDOFAaOV2IAERtfv-XbysdVeIEBRKpRWpXYSDB_SY1Ur9tf591cihxiXaSMVMTGnJFzTPaP3tU8jRYtbEiy7ybnp_6RMHAA9IiPTl8YUW.WGYfCkncxwPiCdpcPnEmuwnYedA.aYkL5g; path=/; secure; httponly; samesite=none") (x-request-processor . "08b213447962c8217") (x-a11y-ally . "Dana Danger Grey") (status . "500 Internal Server Error") (p3p . "CP=\"None, see http://www.instructure.com/privacy-policy\"")) "{\"errors\":[{\"message\":\"An error occurred.\",\"error_code\":\"internal_server_error\"}],\"error_report_id\":10227091}") nil))
+17:19:19.143| [INFO] <org-canvas>   -> Verifying whether rubric was actually deleted...
+17:19:19.144| [DEBUG] <org-canvas> [API] >>> REQUEST: GET https://clemson.instructure.com/api/v1/courses/287239/rubrics/122941
+17:19:19.144| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:19.145| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/rubrics/122941"
+17:19:19.449| [DEBUG] <org-canvas> [API] <<< RESPONSE: error
+17:19:19.451| [ERROR] <org-canvas> API Request Failed: ("HTTP error" #s(plz-error nil #s(plz-response 2 404 ((date . "Sun, 08 Feb 2026 22:19:19 GMT") (content-type . "application/json; charset=utf-8") (server . "Apache") (x-session-id . "88bc54c4c140720f22f34813d27f1881") (x-request-context-id . "200b6981-aa8e-491c-8273-220384d5d163") (vary . "Accept-Encoding") (content-encoding . "br") (x-rate-limit-remaining . "700.0") (x-canvas-meta . "q=3036;tid=Root=1-69890be7-33430f90599e7a8d4f3089cd;at=12150000000683311;dk=170000000000016;a=1;g=AT3KT32aOWmacqbhgD5KJ9mJ433qBojhDaSSNwuO;s=1215;c=cluster212;z=us-east-1c;o=rubrics_api;n=show;t=Course;i=287239;st=5fd6c90519db447c8842430a59179f47-51df030b31c2402a-0;x=5.0;p=f;f=2026-02-08T22:19:19.37Z;b=2310796;m=2310796;u=0.03;y=0.00;d=0.01;rlr=700.0;") (content-security-policy . "frame-ancestors 'self' clemson.instructure.com clemson.beta.instructure.com clemson.test.instructure.com;") (x-request-cost . "0.03705457399661327") (cache-control . "no-cache") (strict-transport-security . "max-age=63072000") (referrer-policy . "no-referrer-when-downgrade") (x-permitted-cross-domain-policies . "none") (x-xss-protection . "1; mode=block") (x-canvas-user-id . "12150000000064878") (x-download-options . "noopen") (x-runtime . "0.059788") (x-content-type-options . "nosniff") (set-cookie . "_csrf_token=oGwyejbOofELeDamWe4UZ3OV0BJgy6jx5DFI48X0Q8jKWgY8Z%2FzVtUNTU88sqkU%2FRrqRaFaxnYKhawvUp7wAiQ%3D%3D; path=/; secure") (set-cookie . "log_session_id=88bc54c4c140720f22f34813d27f1881; path=/; secure; httponly") (set-cookie . "canvas_session=BqMysHMPKtKc6TDfAOWQHw.7U3AyQYEfIpreJdxszlG23AKlj-tFI4b_i3oXuzLYRH5PHctGAm5DXvfikuTOsd7t_zThenPUy4NOXWCHW0DQBT1FRAqZ6W4X0vEik_dKwJwBvbWHQhmDGtdsX57rSm1.kb1vFPYUR0IHusKzpUVqZCy_fqM.aYkL5w; path=/; secure; httponly; samesite=none") (x-request-processor . "0c3000438da7a6a11") (x-a11y-ally . "Dana Danger Grey") (status . "404 Not Found") (p3p . "CP=\"None, see http://www.instructure.com/privacy-policy\"")) "{\"message\":\"Rubric not found\"}") nil))
+  URL: https://clemson.instructure.com/api/v1/courses/287239/rubrics/122941
+  Body: nil
+17:19:19.452| [INFO] <org-canvas>   -> Rubric no longer exists (confirmed deleted)
+17:19:19.453| [INFO] <org-canvas> Deleting: 'Standard Lab Rubric (1)' (ID: 123432)
+17:19:19.453| [DEBUG] <org-canvas> [API] >>> REQUEST: DELETE https://clemson.instructure.com/api/v1/courses/287239/rubrics/123432
+17:19:19.454| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:19.454| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -X DELETE \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/rubrics/123432"
+17:19:19.885| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:19.886| [INFO] <org-canvas>   -> Deleted successfully
+17:19:19.887| [INFO] <org-canvas> Deleting: 'Final Presentation Rubric (2)' (ID: 123433)
+17:19:19.887| [DEBUG] <org-canvas> [API] >>> REQUEST: DELETE https://clemson.instructure.com/api/v1/courses/287239/rubrics/123433
+17:19:19.888| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:19.889| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -X DELETE \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/rubrics/123433"
+17:19:20.298| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:20.299| [INFO] <org-canvas>   -> Deleted successfully
+17:19:20.300| [INFO] <org-canvas> Cleaning local properties...
+17:19:20.302| [DEBUG] <org-canvas> Removing properties for: 123432
+17:19:20.306| [DEBUG] <org-canvas> Removing properties for: 123433
+17:19:20.320| [INFO] <org-canvas> Saved /home/tsranso/Code/org-canvas/example-course/rubrics.org
+17:19:20.320| [INFO] <org-canvas> ========================================
+17:19:20.321| [INFO] <org-canvas> >>> MASS DELETION COMPLETE: 5 removed
+17:19:20.322| [INFO] <org-canvas> ========================================
+17:19:20.323| [INFO] <org-canvas> [Delete] Outcomes...
+17:19:20.329| [WARNING] <org-canvas> ========================================
+17:19:20.330| [WARNING] <org-canvas> >>> STARTING MASS DELETION OF OUTCOMES
+17:19:20.331| [WARNING] <org-canvas> ========================================
+17:19:20.332| [DEBUG] <org-canvas> [API] >>> REQUEST: GET https://clemson.instructure.com/api/v1/courses/287239/root_outcome_group
+17:19:20.333| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:20.333| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/root_outcome_group"
+17:19:20.785| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:20.786| [DEBUG] <org-canvas> [API] >>> REQUEST: GET https://clemson.instructure.com/api/v1/courses/287239/outcome_groups/123223/subgroups
+17:19:20.786| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:20.787| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/outcome_groups/123223/subgroups"
+17:19:21.098| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:21.099| [INFO] <org-canvas> Found 1 outcome groups (excluding root)
+17:19:21.100| [INFO] <org-canvas> Deleting group: 'Algorithmic Thinking' (ID: 124111)
+17:19:21.100| [DEBUG] <org-canvas> [API] >>> REQUEST: DELETE https://clemson.instructure.com/api/v1/courses/287239/outcome_groups/124111
+17:19:21.101| [DEBUG] <org-canvas> [API] Timeout: 15s | Headers: (("Authorization" . "Bearer ***MASKED***") ("Content-Type" . "application/json"))
+17:19:21.101| [DEBUG] <org-canvas> [API] curl:
+curl \
+     -X DELETE \
+     -H "Authorization: Bearer $CANVAS_TOKEN" \
+     -H "Content-Type: application/json" \
+     "https://clemson.instructure.com/api/v1/courses/287239/outcome_groups/124111"
+17:19:21.560| [DEBUG] <org-canvas> [API] <<< RESPONSE: success
+17:19:21.562| [INFO] <org-canvas>   -> Deleted successfully
+17:19:21.562| [INFO] <org-canvas> Cleaning local properties...
+17:19:21.565| [DEBUG] <org-canvas> Removing properties for ID: 124111
+17:19:21.568| [DEBUG] <org-canvas> Removing properties for ID: 51465
+17:19:21.579| [INFO] <org-canvas> Saved /home/tsranso/Code/org-canvas/example-course/outcomes.org
+17:19:21.579| [INFO] <org-canvas> ========================================
+17:19:21.580| [INFO] <org-canvas> >>> MASS DELETION COMPLETE: 1 groups removed
+17:19:21.580| [INFO] <org-canvas> ========================================
+17:19:21.581| [INFO] <org-canvas> Global Delete Complete.

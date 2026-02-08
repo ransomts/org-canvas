@@ -1,0 +1,67 @@
+#+TITLE: Course Assignments
+#+COLUMNS: %30ITEM %10POINTS %15DUE_AT %10TODO %10DIRTY
+#+TODO: TODO(t) WAITING(w) | DONE(d)
+# Sync command: M-x org-canvas-sync-assignments
+#
+# Supported properties:
+#   POINTS             - Points possible (number)
+#   GRADING_TYPE       - points | percent | letter_grade | gpa_scale | pass_fail | not_graded (default: points)
+#   DUE_AT             - Due date (Org timestamp)
+#   UNLOCK_AT          - Available from date (Org timestamp)
+#   LOCK_AT            - Available until date (Org timestamp)
+#   SUBMISSION         - Comma-separated: online_upload, online_url, online_text_entry, media_recording, on_paper, external_tool, none
+#   ALLOWED_EXTENSIONS - Comma-separated file extensions (e.g., py, txt, pdf)
+#   MAX_ATTEMPTS       - Number of allowed submission attempts (-1 = unlimited)
+#   PUBLISHED          - true | false (default: true)
+#   GROUP              - Link to assignment-groups.org heading
+#   RUBRIC_LINK        - Link to rubrics.org heading
+#   PEER_REVIEWS       - true | false (enables peer reviews)
+#   PEER_REVIEW_COUNT  - Number of peer reviews per student
+#   PEER_REVIEW_DUE_AT - Peer review due date (Org timestamp)
+#
+# Auto-generated (do not edit):
+#   CANVAS_ID, LAST_SYNCED, PAYLOAD_HASH
+
+* Lab 01: Python Basics
+:PROPERTIES:
+:POINTS:   20
+:DUE_AT:   <2030-06-20 Thu 23:59>
+:UNLOCK_AT: <2030-06-10 Mon 08:00>
+:LOCK_AT:  <2030-06-22 Sat 23:59>
+:SUBMISSION: online_upload
+:ALLOWED_EXTENSIONS: py
+:MAX_ATTEMPTS: -1
+:GROUP: [[file:assignment-groups.org::*Labs][Labs]]
+:RUBRIC_LINK: [[file:rubrics.org::*Standard Lab Rubric][Standard Lab Rubric]]
+:END:
+
+*Instructions:*
+Complete the function in the starter code to parse the CSV file.
+
+*Resources:*
+1. Download the starter code: [[file:files.org::*\[\[file:content/labs/starter_code.py\]\[starter_code.py\]\]][starter_code.py]]
+2. Download the data: [[file:files.org::*\[\[file:content/labs/housing_data.csv\]\[housing_data.csv\]\]][housing_data.csv]]
+3. Review the lecture notes: [[file:pages.org::*Lecture 01: Intro to Python][Lecture 01: Intro to Python]]
+
+   *Deliverables:*
+   Upload your completed ~.py~ file here.
+
+#+NAME: overrides
+| Section                | Due At                  | Unlock At               | Lock At                 |
+|------------------------+-------------------------+-------------------------+-------------------------|
+| [[file:sections.org::*Section A - MWF 9:00am][Section A - MWF 9:00am]] | <2030-06-22 Sat 23:59> | <2030-06-12 Wed 08:00> |                         |
+| [[file:sections.org::*Section B - TTh 1:30pm][Section B - TTh 1:30pm]] | <2030-06-23 Sun 23:59> |                         | <2030-06-25 Tue 23:59> |
+
+* Final Project
+:PROPERTIES:
+:POINTS:   100
+:DUE_AT:   <2026-05-01 Fri 23:59>
+:UNLOCK_AT: <2026-04-01 Wed 08:00>
+:SUBMISSION: online_url
+:GROUP: [[file:assignment-groups.org::*Projects][Projects]]
+:PEER_REVIEWS: true
+:PEER_REVIEW_DUE_AT: <2026-05-08 Thu 23:59>
+:PEER_REVIEW_COUNT: 2
+:END:
+
+Submit the GitHub URL to your repo.

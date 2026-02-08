@@ -1,0 +1,26 @@
+#+TITLE: Course Announcements
+# Sync command: M-x org-canvas-sync-announcements
+#
+# Supported properties:
+#   PUBLISHED      - true | false (default: true)
+#   POST_AT        - Scheduled post date (Org timestamp)
+#   ALLOW_COMMENTS - true | false (allow replies)
+#
+# Auto-generated (do not edit):
+#   CANVAS_ID, LAST_SYNCED, PAYLOAD_HASH
+
+* Welcome to Class!
+:PROPERTIES:
+:PUBLISHED: true
+:POST_AT:  <2026-01-08 Thu 08:00>
+:ALLOW_COMMENTS: false
+:END:
+
+Welcome to *Applied Data Science*. Please read the syllabus before our first lecture.
+
+* Reminder: Midterm Approaching
+:PROPERTIES:
+:POST_AT:  <2026-03-01 Sun 09:00>
+:END:
+
+The midterm is next week. It covers Modules 01-05.

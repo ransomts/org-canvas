@@ -1,0 +1,1006 @@
+#+TITLE: org-canvas Manual
+#+AUTHOR: Tim Ransom
+#+OPTIONS: toc:3 num:t
+
+* Introduction
+
+org-canvas synchronizes Org Mode files with Canvas LMS. Each course content type has its own Org file, and the package pushes changes to Canvas via its REST API.
+
+The workflow treats Org files as the "source of truth" - you design your course entirely in Org Mode and push changes to Canvas. The package tracks sync state via properties (=CANVAS_ID=, =LAST_SYNCED=) so it knows whether to create new items or update existing ones.
+
+* Getting Started
+
+** Prerequisites
+
+- Emacs 27.1 or later
+- Org Mode 9.6 or later
+- A Canvas LMS instance with API access
+- A Canvas API token (generate from Account > Settings > Approved Integrations)
+
+** Configuration
+
+Create =org-canvas-credentials.el= in your course directory:
+
+#+begin_src elisp
+;;; org-canvas-credentials.el --- Canvas API credentials  -*- lexical-binding: t; -*-
+
+(setq org-canvas-api-token "your-canvas-api-token-here")
+(setq org-canvas-course-id "12345")  ; Found in your Canvas course URL
+(setq org-canvas-base-url "https://your-institution.instructure.com")
+(setq org-canvas-directory "/path/to/your/course/")
+
+(provide 'org-canvas-credentials)
+;;; org-canvas-credentials.el ends here
+#+end_src
+
+*Important*: Add =org-canvas-credentials.el= to =.gitignore= to avoid committing your API token.
+
+** Testing Connection
+
+#+begin_src elisp
+M-x org-canvas-test-connection
+#+end_src
+
+This prints your course name if the connection is successful.
+
+* Course Structure
+
+** Directory Layout
+
+#+begin_example
+my-course/
+├── org-canvas-credentials.el  ; API credentials (gitignored)
+├── assignments.org            ; Course assignments
+├── assignment-groups.org      ; Grade weighting categories
+├── quizzes.org               ; Quizzes with embedded questions
+├── pages.org                 ; Wiki/content pages
+├── modules.org               ; Course navigation structure
+├── rubrics.org               ; Grading rubrics
+├── outcomes.org              ; Learning outcomes
+├── discussions.org           ; Discussion boards
+├── announcements.org         ; Course announcements
+├── files.org                 ; File uploads
+└── sections.org              ; Course sections & date overrides
+#+end_example
+
+** File Path Configuration
+
+Each file path is configured via a variable:
+
+| Variable                          | Default                  |
+|-----------------------------------+--------------------------|
+| =org-canvas-assignments-file=       | =assignments.org=          |
+| =org-canvas-assignment-groups-file= | =assignment-groups.org=    |
+| =org-canvas-quizzes-file=           | =quizzes.org=              |
+| =org-canvas-pages-file=             | =pages.org=                |
+| =org-canvas-modules-file=           | =modules.org=              |
+| =org-canvas-rubrics-file=           | =rubrics.org=              |
+| =org-canvas-outcomes-file=          | =outcomes.org=             |
+| =org-canvas-discussions-file=       | =discussions.org=          |
+| =org-canvas-announcements-file=     | =announcements.org=        |
+| =org-canvas-files-file=             | =files.org=                |
+| =org-canvas-sections-file=          | =sections.org=             |
+
+All paths are relative to =org-canvas-directory=.
+
+* Sync Order and Dependencies
+
+** Dependency Graph
+
+Course files can contain links to other course files. For example, an assignment may reference a rubric, an assignment group, or link to a page for instructions. These links are resolved during sync to obtain Canvas IDs.
+
+#+begin_example
+assignments.org  -->  rubrics.org
+                 -->  assignment-groups.org
+                 -->  outcomes.org
+                 -->  pages.org
+                 -->  files.org
+
+quizzes.org      -->  assignment-groups.org
+                 -->  outcomes.org
+
+modules.org      -->  assignments.org
+                 -->  quizzes.org
+                 -->  discussions.org
+                 -->  pages.org
+                 -->  files.org
+#+end_example
+
+** Sync Tiers
+
+Files are synced in tiers based on their dependencies:
+
+*** Tier 0: No Dependencies
+
+These files have no outgoing links to other course files:
+
+| File                  | Canvas Entity     | Notes                         |
+|-----------------------+-------------------+-------------------------------|
+| =outcomes.org=          | Learning Outcomes | Groups (L1) and Outcomes (L2) |
+| =rubrics.org=           | Rubrics           | Grading rubrics               |
+| =assignment-groups.org= | Assignment Groups | Weight categories             |
+| =pages.org=             | Wiki Pages        | Course content pages          |
+| =files.org=             | Files             | Binary file uploads           |
+| =discussions.org=       | Discussions       | Discussion topics             |
+| =announcements.org=     | Announcements     | Course announcements          |
+| =sections.org=          | Sections          | Course sections               |
+
+*** Tier 1: Depends on Tier 0
+
+| File            | Depends On                                       |
+|-----------------+--------------------------------------------------|
+| =quizzes.org=     | assignment-groups.org, outcomes.org               |
+| =assignments.org= | rubrics.org, assignment-groups.org, outcomes.org |
+|                 | pages.org, files.org                             |
+
+*** Tier 1.75: Depends on Tier 0 + 1
+
+| File           | Depends On                     |
+|----------------+--------------------------------|
+| =sections.org=   | sections (Tier 0), assignments |
+| (overrides)    | quizzes (from Tier 1)          |
+
+Per-section date overrides are defined as tables in =assignments.org= and require both sections and assignments to exist first.
+
+*** Tier 2: Depends on Tier 1
+
+| File        | Depends On                                    |
+|-------------+-----------------------------------------------|
+| =modules.org= | assignments.org, quizzes.org, discussions.org |
+|             | pages.org, files.org                          |
+
+** Automatic Sync Order
+
+The =org-canvas-sync= function syncs files in proper dependency order:
+
+1. =outcomes.org= (Tier 0)
+2. =rubrics.org= (Tier 0)
+3. =assignment-groups.org= (Tier 0) - first pass, without drop rules
+4. =sections.org= (Tier 0) - course sections
+5. =files.org= (Tier 0)
+6. =pages.org= (Tier 0)
+7. =discussions.org= (Tier 0)
+8. =announcements.org= (Tier 0)
+9. =quizzes.org= (Tier 1)
+10. =assignments.org= (Tier 1)
+11. =assignment-groups.org= (Tier 1.5) - second pass, with drop rules
+12. Per-section overrides (Tier 1.75)
+13. =modules.org= (Tier 2)
+
+*Note*: Assignment groups are synced twice because Canvas rejects drop rules for groups with no assignments. Per-section overrides require both sections and assignments/quizzes to exist.
+
+* File Formats
+
+** Common Properties
+
+All syncable headings support these properties:
+
+| Property    | Type      | Description                             |
+|-------------+-----------+-----------------------------------------|
+| =CANVAS_ID=   | string    | Canvas ID (auto-populated after sync)   |
+| =LAST_SYNCED= | timestamp | Last sync time (auto-populated)         |
+| =PUBLISHED=   | boolean   | Whether item is visible (default: true) |
+
+** assignments.org
+
+Course assignments with due dates, submission types, and grading options.
+
+*** Structure
+
+- Level 1 headings = Assignments
+- Body text = Assignment description (exported to HTML)
+
+*** Properties
+
+| Property           | Type      | Description                                   |
+|--------------------+-----------+-----------------------------------------------|
+| =POINTS=             | number    | Points possible                               |
+| =GRADING_TYPE=       | string    | points, percent, letter_grade, pass_fail, gpa_scale |
+| =DUE_AT=             | timestamp | Due date                                      |
+| =UNLOCK_AT=          | timestamp | Available from date                           |
+| =LOCK_AT=            | timestamp | Available until date                          |
+| =SUBMISSION=         | string    | Submission type (see below)                   |
+| =ALLOWED_EXTENSIONS= | string    | Comma-separated file extensions (py, txt)     |
+| =MAX_ATTEMPTS=       | number    | Max submission attempts (-1 = unlimited)      |
+| =GROUP=              | link      | Link to assignment-groups.org heading         |
+| =RUBRIC_LINK=        | link      | Link to rubrics.org heading                   |
+| =OMIT_FROM_GRADES=   | boolean   | Exclude from grade calculations               |
+| =ANONYMOUS_GRADING=  | boolean   | Hide student names during grading             |
+| =PEER_REVIEWS=       | boolean   | Enable peer reviews                           |
+| =PEER_REVIEW_COUNT=  | number    | Reviews per student                           |
+| =PEER_REVIEW_DUE_AT= | timestamp | Peer review due date                          |
+
+*** Submission Types
+
+| Value              | Description                    |
+|--------------------+--------------------------------|
+| =online_upload=      | File upload                    |
+| =online_text_entry=  | Text box in browser            |
+| =online_url=         | URL submission                 |
+| =media_recording=    | Audio/video recording          |
+| =none=               | No submission (e.g., in-class) |
+
+Multiple types can be combined: =online_upload,online_text_entry=
+
+*** Example
+
+#+begin_src org
+,* Lab 1: Introduction to Python
+:PROPERTIES:
+:POINTS: 100
+:DUE_AT: <2025-09-15 Mon 23:59>
+:UNLOCK_AT: <2025-09-01 Mon 00:00>
+:SUBMISSION: online_upload
+:ALLOWED_EXTENSIONS: py
+:GROUP: [[file:assignment-groups.org::*Labs][Labs]]
+:RUBRIC_LINK: [[file:rubrics.org::*Code Quality Rubric][Code Quality Rubric]]
+:END:
+
+Write a Python program that demonstrates basic programming concepts.
+
+,** Requirements
+- Create a file named =hello.py=
+- Print a greeting message
+- Define at least one variable
+#+end_src
+
+** assignment-groups.org
+
+Assignment weight categories for grade calculation.
+
+*** Structure
+
+- Level 1 heading = Container (title, ignored)
+- Level 2 headings = Assignment Groups
+
+*** Properties
+
+| Property     | Type   | Description                      |
+|--------------+--------+----------------------------------|
+| =WEIGHT=       | number | Group weight percentage (0-100)  |
+| =DROP_LOWEST=  | number | Number of lowest scores to drop  |
+| =DROP_HIGHEST= | number | Number of highest scores to drop |
+
+*** Example
+
+#+begin_src org
+,* Assignment Groups
+,** Labs
+:PROPERTIES:
+:WEIGHT: 40
+:DROP_LOWEST: 1
+:END:
+
+,** Exams
+:PROPERTIES:
+:WEIGHT: 30
+:END:
+
+,** Participation
+:PROPERTIES:
+:WEIGHT: 30
+:END:
+#+end_src
+
+** quizzes.org
+
+Quizzes with embedded questions.
+
+*** Structure
+
+- Level 1 headings = Quizzes
+- Level 2 headings = Questions (under each quiz)
+- List items under questions = Answer choices
+
+*** Quiz Properties
+
+| Property         | Type      | Description                                   |
+|------------------+-----------+-----------------------------------------------|
+| =QUIZ_TYPE=        | string    | assignment, practice_quiz, graded_survey      |
+| =TIME_LIMIT=       | number    | Time limit in minutes                         |
+| =SHUFFLE_ANSWERS=  | boolean   | Randomize answer order                        |
+| =ALLOWED_ATTEMPTS= | number    | Max attempts (-1 = unlimited)                 |
+| =DUE_AT=           | timestamp | Due date                                      |
+| =GROUP=            | link      | Link to assignment-groups.org heading         |
+
+*** Question Properties
+
+| Property | Type   | Description                          |
+|----------+--------+--------------------------------------|
+| =TYPE=     | string | Question type (see below)            |
+| =POINTS=   | number | Points for this question             |
+
+*** Question Types
+
+| Type                             | Answer Format                            |
+|----------------------------------+------------------------------------------|
+| =multiple_choice_question=         | =- [X] Correct= / =- [ ] Wrong=              |
+| =true_false_question=              | =- [X] True= / =- [ ] False=                 |
+| =short_answer_question=            | =- [X] Accepted answer= (multiple allowed) |
+| =fill_in_multiple_blanks_question= | Nested list: =- blank1= then =- [X] answer=  |
+| =multiple_dropdowns_question=      | Nested list: =- blank1= then =- [X] choice=  |
+| =multiple_answers_question=        | Multiple =[X]= marks allowed               |
+| =matching_question=                | =- Left = Right= (distractors have no =)    |
+| =numerical_question=               | =- [X] 42= or =- [X] [1, 10]= (range)        |
+| =essay_question=                   | No answers (free response)               |
+| =file_upload_question=             | No answers (file submission)             |
+| =text_only_question=               | Body text only (instructions/headers)    |
+
+*** Example
+
+#+begin_src org
+,* Midterm Exam
+:PROPERTIES:
+:QUIZ_TYPE: assignment
+:TIME_LIMIT: 60
+:SHUFFLE_ANSWERS: true
+:ALLOWED_ATTEMPTS: 1
+:GROUP: [[file:assignment-groups.org::*Exams][Exams]]
+:END:
+
+This exam covers chapters 1-5.
+
+,** What is 2 + 2?
+:PROPERTIES:
+:TYPE: multiple_choice_question
+:POINTS: 5
+:END:
+
+- [X] 4
+- [ ] 3
+- [ ] 5
+- [ ] 22
+
+,** Python is a compiled language.
+:PROPERTIES:
+:TYPE: true_false_question
+:POINTS: 5
+:END:
+
+- [ ] True
+- [X] False
+
+,** What keyword defines a function in Python?
+:PROPERTIES:
+:TYPE: short_answer_question
+:POINTS: 5
+:END:
+
+- [X] def
+- [X] function
+
+,** Explain the concept of polymorphism.
+:PROPERTIES:
+:TYPE: essay_question
+:POINTS: 20
+:END:
+#+end_src
+
+** pages.org
+
+Wiki pages for course content.
+
+*** Structure
+
+- Level 1 headings = Pages
+- Body text = Page content (exported to HTML)
+
+*** Properties
+
+| Property      | Type      | Description                         |
+|---------------+-----------+-------------------------------------|
+| =CANVAS_URL=    | string    | Page URL slug (auto-populated)      |
+| =FRONT_PAGE=    | boolean   | Set as course front page            |
+| =EDITING_ROLES= | string    | Who can edit (teachers, students)   |
+| =TODO_DATE=     | timestamp | Add to student to-do list on date   |
+
+*** Example
+
+#+begin_src org
+,* Welcome to CS 101
+:PROPERTIES:
+:FRONT_PAGE: true
+:END:
+
+Welcome to Introduction to Computer Science!
+
+,** Course Overview
+This course covers fundamental programming concepts...
+
+,* Lab Setup Guide
+:PROPERTIES:
+:END:
+
+Follow these steps to set up your development environment...
+#+end_src
+
+** modules.org
+
+Course navigation structure with ordered content.
+
+*** Structure
+
+- Level 1 headings = Modules
+- Level 2 headings = Module Items (assignments, quizzes, pages, etc.)
+
+*** Module Properties
+
+| Property                       | Type      | Description                          |
+|--------------------------------+-----------+--------------------------------------|
+| =UNLOCK_AT=                      | timestamp | Date to unlock the module            |
+| =REQUIRE_SEQUENTIAL_PROGRESSION= | boolean   | Force items to be completed in order |
+| =PREREQUISITE_MODULE_IDS=        | string    | Comma-separated module IDs required  |
+
+*** Module Item Properties
+
+| Property               | Type    | Description                                                                    |
+|------------------------+---------+--------------------------------------------------------------------------------|
+| =ITEM_TYPE=              | string  | Assignment, Quiz, Page, Discussion, File, SubHeader, ExternalUrl, ExternalTool |
+| =INDENT=                 | number  | Indentation level (0-5)                                                        |
+| =COMPLETION_REQUIREMENT= | string  | must_view, must_submit, must_contribute, min_score                             |
+| =MIN_SCORE=              | number  | Required score for min_score completion                                        |
+| =EXTERNAL_URL=           | string  | URL for ExternalUrl items                                                      |
+| =NEW_TAB=                | boolean | Open external URL in new tab                                                   |
+
+*** Item Type Resolution
+
+For most item types, org-canvas resolves links to find the Canvas ID:
+
+| Item Type   | Link Target           |
+|-------------+-----------------------|
+| Assignment  | assignments.org       |
+| Quiz        | quizzes.org           |
+| Page        | pages.org             |
+| Discussion  | discussions.org       |
+| File        | files.org             |
+| SubHeader   | (no link - text only) |
+| ExternalUrl | (uses EXTERNAL_URL)   |
+
+*** Example
+
+#+begin_src org
+,* Week 1: Introduction
+:PROPERTIES:
+:UNLOCK_AT: <2025-01-13 Mon 00:00>
+:REQUIRE_SEQUENTIAL_PROGRESSION: true
+:END:
+
+,** Course Overview
+:PROPERTIES:
+:ITEM_TYPE: Page
+:COMPLETION_REQUIREMENT: must_view
+:END:
+[[file:pages.org::*Welcome to CS 101][Welcome to CS 101]]
+
+,** Read Chapter 1
+:PROPERTIES:
+:ITEM_TYPE: SubHeader
+:INDENT: 1
+:END:
+
+,** Lab 1
+:PROPERTIES:
+:ITEM_TYPE: Assignment
+:COMPLETION_REQUIREMENT: must_submit
+:END:
+[[file:assignments.org::*Lab 1: Introduction to Python][Lab 1: Introduction to Python]]
+
+,** Week 1 Quiz
+:PROPERTIES:
+:ITEM_TYPE: Quiz
+:COMPLETION_REQUIREMENT: min_score
+:MIN_SCORE: 70
+:END:
+[[file:quizzes.org::*Chapter 1 Quiz][Chapter 1 Quiz]]
+#+end_src
+
+** rubrics.org
+
+Grading rubrics with criteria.
+
+*** Structure
+
+- Level 1 headings = Rubrics
+- Tables under headings = Criteria rows
+
+*** Properties
+
+| Property                     | Type    | Description                     |
+|------------------------------+---------+---------------------------------|
+| =FREE_FORM_CRITERION_COMMENTS= | boolean | Allow freeform comments         |
+| =HIDE_SCORE_TOTAL=             | boolean | Hide rubric total from students |
+
+
+*** Table Format
+
+| Criterion Description | Points | Long Description (optional) |
+|-----------------------+--------+-----------------------------|
+| Code Quality          |     10 | Well-formatted, readable    |
+| Correctness           |     15 | Passes all test cases       |
+
+*** Example
+
+#+begin_src org
+,* Code Quality Rubric
+:PROPERTIES:
+:FREE_FORM_CRITERION_COMMENTS: true
+:END:
+
+| Criterion     | Points | Description                    |
+|---------------+--------+--------------------------------|
+| Correctness   |     50 | Code produces correct output   |
+| Style         |     20 | Follows coding conventions     |
+| Documentation |     15 | Clear comments and docstrings  |
+| Efficiency    |     15 | Reasonable time/space complexity |
+#+end_src
+
+** outcomes.org
+
+Learning outcomes organized hierarchically.
+
+*** Structure
+
+- Level 1 headings = Outcome Groups (containers)
+- Level 2 headings = Outcomes (with mastery ratings)
+- List items under outcomes = Rating levels
+
+*** Outcome Properties
+
+| Property           | Type   | Description                                  |
+|--------------------+--------+----------------------------------------------|
+| =CALCULATION_METHOD= | string | highest, latest, decaying_average, n_mastery |
+| =CALCULATION_INT=    | number | Variable for calculation method              |
+| =MASTERY_POINTS=     | number | Points threshold for mastery                 |
+
+*** Rating Format
+
+Ratings are parsed from list items with points in brackets:
+
+#+begin_example
+- [5] Exceeds Expectations
+- [3] Meets Expectations
+- [1] Approaching
+- [0] Does Not Meet
+#+end_example
+
+*** Example
+
+#+begin_src org
+,* Programming Fundamentals
+,** Variables and Data Types
+:PROPERTIES:
+:CALCULATION_METHOD: decaying_average
+:CALCULATION_INT: 65
+:MASTERY_POINTS: 3
+:END:
+
+Students can declare and use variables appropriately.
+
+- [5] Exceeds: Uses advanced type concepts
+- [3] Meets: Correctly uses basic types
+- [1] Approaching: Some confusion with types
+- [0] Does Not Meet: Cannot use variables
+
+,** Control Flow
+:PROPERTIES:
+:CALCULATION_METHOD: highest
+:MASTERY_POINTS: 3
+:END:
+
+Students can write conditional and loop statements.
+
+- [5] Exceeds: Complex nested structures
+- [3] Meets: Basic if/else and loops
+- [0] Does Not Meet: Cannot write conditionals
+#+end_src
+
+** discussions.org
+
+Discussion boards for student interaction.
+
+*** Structure
+
+- Level 1 headings = Discussion Topics
+- Body text = Initial post (exported to HTML)
+
+*** Properties
+
+| Property        | Type      | Description                           |
+|-----------------+-----------+---------------------------------------|
+| =DISCUSSION_TYPE= | string    | side_comment, threaded                |
+| =PINNED=          | boolean   | Pin to top of discussions list        |
+| =POST_FIRST=      | boolean   | Require post before viewing others    |
+| =AVAILABLE_FROM=  | timestamp | Hide discussion until this date       |
+| =LOCK_AT=         | timestamp | Prevent replies after this date       |
+| =GRADING_TYPE=    | string    | points, percent (for graded)          |
+| =POINTS=          | number    | Points possible (for graded)          |
+| =DUE_AT=          | timestamp | Due date (for graded)                 |
+| =GROUP=           | link      | Assignment group (for graded)         |
+
+*** Example
+
+#+begin_src org
+,* Introduce Yourself
+:PROPERTIES:
+:DISCUSSION_TYPE: side_comment
+:PINNED: true
+:POST_FIRST: true
+:END:
+
+Please introduce yourself to the class! Share:
+- Your name and major
+- Why you're taking this course
+- An interesting fact about yourself
+
+,* Week 1 Discussion: Programming Ethics
+:PROPERTIES:
+:DISCUSSION_TYPE: threaded
+:GRADING_TYPE: points
+:POINTS: 10
+:DUE_AT: <2025-01-17 Fri 23:59>
+:GROUP: [[file:assignment-groups.org::*Participation][Participation]]
+:END:
+
+Read the article on programming ethics and respond to the following...
+#+end_src
+
+** announcements.org
+
+Course announcements.
+
+*** Structure
+
+- Level 1 headings = Announcements
+- Body text = Announcement content (exported to HTML)
+
+*** Properties
+
+| Property       | Type      | Description                    |
+|----------------+-----------+--------------------------------|
+| =POST_AT=        | timestamp | Scheduled post time            |
+| =ALLOW_COMMENTS= | boolean   | Allow student replies          |
+
+*** Example
+
+#+begin_src org
+,* Welcome to the Course!
+:PROPERTIES:
+:ALLOW_COMMENTS: true
+:END:
+
+Welcome to CS 101! I'm excited to have you in class this semester.
+
+Please complete the following before our first meeting:
+1. Review the syllabus
+2. Complete the intro survey
+3. Set up your development environment
+
+,* Lab 1 Due Date Extended
+:PROPERTIES:
+:POST_AT: <2025-01-18 Sat 09:00>
+:END:
+
+Due to technical difficulties, Lab 1 is now due Monday at midnight.
+#+end_src
+
+** files.org
+
+Binary file uploads with folder organization.
+
+*** Structure
+
+- Headings with file links (=[[file:...][name]]=) = Files to upload
+- Headings without file links = Folder containers
+- Heading nesting creates the Canvas folder hierarchy
+- The link display text becomes the file's display name in Canvas
+
+Supported link formats:
+
+| Format                     | Description                   |
+|----------------------------+-------------------------------|
+| =[[file:path][Name]]=        | Standard file link            |
+| =[[pdf:path::page][Name]]=   | PDF with optional page ref    |
+| =[[file:path]]=              | Bare file link (filename used)|
+
+*** Properties
+
+| Property   | Type      | Description                   |
+|------------+-----------+-------------------------------|
+| =UNLOCK_AT=  | timestamp | Date to make file available   |
+| =LOCK_AT=    | timestamp | Date to hide file             |
+
+*** Example
+
+#+begin_src org
+,* [[file:content/syllabus.pdf][Syllabus.pdf]]
+:PROPERTIES:
+:PUBLISHED: true
+:END:
+
+,* Labs
+,** Week 01
+,*** [[file:content/labs/starter_code.py][starter_code.py]]
+:PROPERTIES:
+:PUBLISHED: true
+:UNLOCK_AT: <2025-01-13 Mon 00:00>
+:END:
+
+,* Lecture Decks
+,** [[file:content/lectures/intro.pdf][intro.pdf]]
+:PROPERTIES:
+:PUBLISHED: false
+:END:
+#+end_src
+
+In this example:
+- =Syllabus.pdf= uploads to the root course files folder
+- =starter_code.py= uploads to =Labs/Week 01/= (folder hierarchy from headings)
+- =intro.pdf= uploads to =Lecture Decks/=
+- The =Labs= and =Week 01= headings have no file links, so they create folders only
+
+** sections.org
+
+Course sections and per-section assignment date overrides.
+
+*** Structure
+
+- Level 1 headings = Course Sections
+
+*** Properties
+
+| Property            | Type      | Description                            |
+|---------------------+-----------+----------------------------------------|
+| =START_AT=            | timestamp | Section start date                     |
+| =END_AT=              | timestamp | Section end date                       |
+| =RESTRICT_TO_DATES=   | boolean   | Restrict enrollments to section dates  |
+
+*** Example
+
+#+begin_src org
+,* Section A - MWF 9:00am
+:PROPERTIES:
+:START_AT: <2026-01-15 Thu>
+:END_AT: <2026-05-15 Fri>
+:RESTRICT_TO_DATES: false
+:END:
+
+,* Section B - TTh 1:30pm
+:PROPERTIES:
+:START_AT: <2026-01-15 Thu>
+:END_AT: <2026-05-15 Fri>
+:RESTRICT_TO_DATES: false
+:END:
+#+end_src
+
+*** Per-Section Date Overrides
+
+Assignment headings in =assignments.org= can contain an optional =#+NAME: overrides= table with per-section date overrides:
+
+#+begin_src org
+,* Lab 1: Introduction to Python
+:PROPERTIES:
+:POINTS: 100
+:END:
+
+Assignment description...
+
+#+NAME: overrides
+| Section                                      | Due At                 | Unlock At              | Lock At |
+|----------------------------------------------+------------------------+------------------------+---------|
+| [[file:sections.org::*Section A][Section A]] | <2026-02-15 Sun 23:59> | <2026-02-01 Sat 00:00> |         |
+| [[file:sections.org::*Section B][Section B]] | <2026-02-17 Tue 23:59> | <2026-02-03 Mon 00:00> |         |
+#+end_src
+
+Each row links to a section in =sections.org=. The section's =CANVAS_ID= is resolved from that file. Empty date cells are omitted from the override. Overrides are synced after both sections and assignments exist on Canvas.
+
+The override sync uses a reconcile approach: it GETs existing overrides, matches by =course_section_id=, then PUTs (update), POSTs (create), or DELETEs (remove) as needed.
+
+* Link Resolution
+
+Properties like =GROUP= and =RUBRIC_LINK= can contain Org links to headings in other files. During sync, these links are resolved to Canvas IDs.
+
+** Link Format
+
+#+begin_example
+:GROUP: [[file:assignment-groups.org::*Labs][Labs]]
+:RUBRIC_LINK: [[file:rubrics.org::*Standard Lab Rubric][Standard Lab Rubric]]
+#+end_example
+
+** Resolution Process
+
+1. Parse the file path and heading name from the link
+2. Open the referenced file
+3. Find the heading matching the name
+4. Read its =CANVAS_ID= property
+5. Use that ID in the API payload
+
+*Important*: Referenced items must be synced before items that reference them. This is why sync order matters.
+
+** Supported Link Properties
+
+| Property       | Source File           | Used In                           |
+|----------------+-----------------------+-----------------------------------|
+| =GROUP=          | assignment-groups.org | assignments, quizzes, discussions |
+| =RUBRIC_LINK=    | rubrics.org           | assignments                       |
+| (module items) | various               | modules                           |
+
+* Commands Reference
+
+** Sync Commands
+
+| Command                           | Description                |
+|-----------------------------------+----------------------------|
+| =org-canvas-sync=                   | Sync all course content    |
+| =org-canvas-sync-assignments=       | Sync assignments only      |
+| =org-canvas-sync-assignment-groups= | Sync assignment groups     |
+| =org-canvas-sync-quizzes=           | Sync quizzes and questions |
+| =org-canvas-sync-pages=             | Sync wiki pages            |
+| =org-canvas-sync-modules=           | Sync course modules        |
+| =org-canvas-sync-rubrics=           | Sync rubrics               |
+| =org-canvas-sync-outcomes=          | Sync learning outcomes     |
+| =org-canvas-sync-discussions=       | Sync discussion topics     |
+| =org-canvas-sync-announcements=     | Sync announcements         |
+| =org-canvas-sync-files=             | Upload files               |
+| =org-canvas-sync-sections=          | Sync course sections       |
+| =org-canvas-sync-overrides=         | Sync per-section overrides |
+
+** Delete Commands
+
+| Command                                 | Description                  |
+|-----------------------------------------+------------------------------|
+| =org-canvas-delete-all=                   | Delete ALL course content    |
+| =org-canvas-delete-all-assignments=       | Delete all assignments       |
+| =org-canvas-delete-all-quizzes=           | Delete all quizzes           |
+| =org-canvas-delete-all-pages=             | Delete all pages             |
+| =org-canvas-delete-all-modules=           | Delete all modules           |
+| =org-canvas-delete-all-rubrics=           | Delete all rubrics           |
+| =org-canvas-delete-all-outcomes=          | Delete all outcomes          |
+| =org-canvas-delete-all-discussions=       | Delete all discussions       |
+| =org-canvas-delete-all-announcements=     | Delete all announcements     |
+| =org-canvas-delete-all-files=             | Delete all files             |
+| =org-canvas-delete-all-assignment-groups= | Delete all assignment groups |
+| =org-canvas-delete-all-sections=          | Delete all sections          |
+
+** Sync at Point Commands
+
+These commands sync just the item at the current cursor position:
+
+| Command                                | Description                  |
+|----------------------------------------+------------------------------|
+| =org-canvas-sync-assignment-at-point=    | Sync assignment at point     |
+| =org-canvas-sync-page-at-point=         | Sync page at point           |
+| =org-canvas-sync-discussion-at-point=   | Sync discussion at point     |
+| =org-canvas-sync-announcement-at-point= | Sync announcement at point   |
+| =org-canvas-sync-quiz-at-point=         | Sync quiz at point           |
+
+** Delete at Point Commands
+
+These commands delete the item at the current cursor position:
+
+| Command                               | Description                |
+|---------------------------------------+----------------------------|
+| =org-canvas-delete-assignment-at-point= | Delete assignment at point |
+| =org-canvas-delete-page-at-point=       | Delete page at point       |
+| =org-canvas-delete-file-at-point=       | Delete file at point       |
+| =org-canvas-delete-module-at-point=     | Delete module at point     |
+
+** Utility Commands
+
+| Command                         | Description                              |
+|---------------------------------+------------------------------------------|
+| =org-canvas-test-connection=      | Test API connection (prints course name) |
+| =org-canvas-clear-log=            | Clear log buffer and log file            |
+| =org-canvas-set-log-level=        | Set logging level interactively          |
+| =org-canvas-set-log-destination=  | Set log destination interactively        |
+
+* Troubleshooting
+
+** Common Issues
+
+*** "Request failed: Timeout"
+
+The API request timed out. org-canvas has built-in timeout recovery that searches Canvas for recently created items and retries if needed.
+
+*** "CANVAS_ID not found for linked item"
+
+The item being referenced hasn't been synced yet. Run =org-canvas-sync= to sync in proper dependency order, or sync the referenced file first.
+
+*** "API returned 404"
+
+The item exists in your Org file but was deleted from Canvas. org-canvas will automatically retry the operation as a POST (create) instead of PUT (update).
+
+*** "Authentication failed (HTTP 401)"
+
+Your API token has expired or been revoked. Generate a new one at Canvas > Account > Settings > Approved Integrations, and update =org-canvas-credentials.el=.
+
+*** "Permission denied (HTTP 403)"
+
+Your token lacks the required scope. Ensure the token has full access to the course, or generate a new token with broader permissions.
+
+*** "Rate limited after N retries"
+
+Canvas throttles API requests. org-canvas automatically retries on 429 responses, but if the rate limit persists, try reducing the batch size or waiting a few minutes. Configure retry behavior:
+
+| Variable                        | Default | Description                    |
+|---------------------------------+---------+--------------------------------|
+| =org-canvas-rate-limit-retries=   |       3 | Number of retries on 429/403   |
+| =org-canvas-rate-limit-wait=      |      10 | Seconds between retries        |
+
+** Preflight Check
+
+When running =org-canvas-sync=, a preflight check runs automatically before any content is synced. It validates:
+
+1. =org-canvas-api-token= is set and non-empty
+2. =org-canvas-course-id= is set and non-empty
+3. The API connection works (fetches course name)
+
+If any check fails, the sync aborts with an actionable error message before any API calls are made. Individual sync commands (e.g., =org-canvas-sync-pages=) do not run the preflight check.
+
+** Logging
+
+Logging destination is controlled by =org-canvas-log-destination=:
+
+| Destination | Description                                        |
+|-------------+----------------------------------------------------|
+| =buffer=      | Log to =*canvas-log*= buffer (default)               |
+| =file=        | Log to file (=org-canvas.log= in course directory)   |
+| =both=        | Log to both buffer and file                        |
+
+Change settings interactively:
+
+#+begin_src elisp
+M-x org-canvas-set-log-level        ;; trace, debug, info, warning, error
+M-x org-canvas-set-log-destination  ;; buffer, file, both
+M-x org-canvas-clear-log            ;; Clear log buffer and file
+#+end_src
+
+Additional logging variables:
+
+| Variable                        | Description                      |
+|---------------------------------+----------------------------------|
+| =org-canvas-log-level=            | Minimum log level (default: info)|
+| =org-canvas-log-destination=      | Where to log (default: buffer)   |
+| =org-canvas-log-file=             | Log file path                    |
+| =org-canvas-log-request-bodies=   | Log full request/response bodies |
+| =org-canvas-request-timeout=      | API timeout in seconds (default: 15) |
+
+** Debugging API Calls
+
+The log includes curl commands that can be copy/pasted to terminal for testing:
+
+#+begin_example
+[DEBUG] Equivalent curl command:
+curl -X POST 'https://canvas.example.com/api/v1/courses/12345/assignments' \
+  -H 'Authorization: Bearer ...' \
+  -H 'Content-Type: application/json' \
+  -d '{"assignment":{"name":"Lab 1","points_possible":100}}'
+#+end_example
+
+* Architecture
+
+** Module Structure
+
+#+begin_example
+lisp/
+├── org-canvas.el             ; Main entry point, orchestrates all modules
+├── org-canvas-core.el        ; Shared infrastructure
+├── org-canvas-credentials.el ; API credentials (not in git)
+└── org-canvas-{feature}.el   ; Feature modules
+#+end_example
+
+** 4-Stage Pipeline
+
+Every feature module follows this pattern:
+
+1. *Parse* - Extract data from Org heading properties
+2. *Build Payload* - Convert to Canvas API format
+3. *Execute* - Call API with error handling
+4. *Finalize* - Save CANVAS_ID and LAST_SYNCED
+
+** Sync State
+
+Items are tracked via the =CANVAS_ID= property:
+- Present: UPDATE (PUT) operation
+- Absent: CREATE (POST) operation
+
+After successful sync, =LAST_SYNCED= is updated with the current timestamp.

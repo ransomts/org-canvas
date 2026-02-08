@@ -1,0 +1,181 @@
+#+TITLE: org-canvas
+#+AUTHOR: Tim Ransom
+#+OPTIONS: toc:nil num:nil
+
+[[https://github.com/ransomts/org-canvas][https://img.shields.io/badge/status-experimental-critical.svg]]
+[[https://github.com/ransomts/org-canvas/blob/main/LICENSE][https://img.shields.io/github/license/ransomts/org-canvas.svg]]
+[[https://github.com/ransomts/org-canvas/actions/workflows/ci.yml][https://github.com/ransomts/org-canvas/actions/workflows/ci.yml/badge.svg]]
+[[https://codecov.io/gh/ransomts/org-canvas][https://codecov.io/gh/ransomts/org-canvas/graph/badge.svg]]
+
+* Overview
+
+org-canvas is an Emacs package that synchronizes course content from Org Mode files to Canvas LMS via its REST API. It enables a "source of truth" workflow where instructors design their entire course in Org Mode and push changes to Canvas.
+
+Tested against the Canvas LMS REST API (=/api/v1/=) as of 2026-02-07. Canvas does not version its API beyond =v1=; see the [[https://community.canvaslms.com/t5/Change-Log/tkb-p/changelog][Canvas API Change Log]] for recent changes.
+
+** Key Features
+
+- *Org Mode as Source of Truth*: Design your course in plain text with full Org Mode capabilities
+- *Bidirectional Sync Tracking*: Automatically manages Canvas IDs and sync timestamps
+- *Modular Architecture*: Sync individual content types or the entire course at once
+- *Dependency-Aware*: Syncs in proper order respecting cross-references between files
+- *12 Content Types Supported*: Assignments, quizzes, pages, modules, rubrics, outcomes, discussions, announcements, files, assignment groups, sections, and per-section date overrides
+- *Resilient Syncing*: Pre-sync credential validation, rate limit retry with backoff, actionable error messages for auth failures, graceful handling of missing files
+
+* Quick Start
+
+** Installation
+
+org-canvas is not yet on MELPA. Install from source:
+
+#+begin_src elisp
+;; Using straight.el
+(straight-use-package
+ '(org-canvas :type git :host github :repo "ransomts/org-canvas"))
+#+end_src
+
+Or clone for development:
+
+#+begin_src bash
+git clone https://github.com/ransomts/org-canvas.git
+cd org-canvas
+eldev prepare
+#+end_src
+
+** Configuration
+
+The easiest way to set up a new course is the setup wizard:
+
+#+begin_src elisp
+M-x org-canvas-init
+#+end_src
+
+This prompts for your Canvas URL, API token, and course ID, tests the connection, writes =org-canvas-credentials.el=, and optionally creates skeleton =.org= files for all 12 content types.
+
+Or create =org-canvas-credentials.el= manually in your course directory (not tracked by git):
+
+#+begin_src elisp
+(setq org-canvas-api-token "your-canvas-api-token")
+(setq org-canvas-course-id "12345")
+(setq org-canvas-base-url "https://canvas.instructure.com")
+(setq org-canvas-directory "/path/to/your/course/")
+#+end_src
+
+** Course Structure
+
+Create Org files for each content type:
+
+#+begin_example
+my-course/
+├── org-canvas-credentials.el  ; Your API credentials (gitignored)
+├── assignments.org            ; Course assignments
+├── quizzes.org               ; Quizzes with questions
+├── pages.org                 ; Wiki pages
+├── modules.org               ; Course structure/navigation
+├── rubrics.org               ; Grading rubrics
+├── outcomes.org              ; Learning outcomes
+├── discussions.org           ; Discussion boards
+├── announcements.org         ; Course announcements
+├── files.org                 ; File uploads
+├── assignment-groups.org     ; Grade weighting categories
+└── sections.org              ; Course sections (pulled from Canvas) & date overrides
+#+end_example
+
+** Basic Usage
+
+#+begin_src elisp
+;; Test your connection
+M-x org-canvas-test-connection
+
+;; See sync status overview
+M-x org-canvas-status
+
+;; Validate all org files (offline, no API calls)
+M-x org-canvas-validate
+
+;; Preview what would be synced (no API calls)
+M-x org-canvas-sync-dry-run
+
+;; Sync everything (respects dependencies)
+M-x org-canvas-sync
+
+;; Sync individual content types
+M-x org-canvas-sync-assignments
+M-x org-canvas-sync-quizzes
+M-x org-canvas-sync-pages
+;; ... etc for all 12 content types
+
+;; Sync a single item at cursor
+M-x org-canvas-sync-assignment-at-point
+
+;; Delete all content from Canvas
+M-x org-canvas-delete-all
+#+end_src
+
+* Example: Creating an Assignment
+
+#+begin_src org
+,* Lab 1: Introduction to Python
+:PROPERTIES:
+:POINTS: 100
+:DUE_AT: <2025-09-15 Mon 23:59>
+:SUBMISSION: online_upload
+:ALLOWED_EXTENSIONS: py
+:GROUP: [[file:assignment-groups.org::*Labs][Labs]]
+:RUBRIC_LINK: [[file:rubrics.org::*Standard Lab Rubric][Standard Lab Rubric]]
+:END:
+
+Write a Python program that prints "Hello, World!" and demonstrates
+basic variable usage.
+
+,** Requirements
+- Create a file named =hello.py=
+- Print a greeting message
+- Define at least one variable
+#+end_src
+
+After syncing, org-canvas automatically adds:
+
+#+begin_src org
+:CANVAS_ID: 123456
+:LAST_SYNCED: [2025-02-02 Sun 10:30]
+#+end_src
+
+* Documentation
+
+See [[file:documentation/manual.org][the full manual]] for:
+
+- Complete file format specifications for all 12 content types
+- All supported properties and link resolution between files
+- Quiz question types and answer formats
+- Sections and per-section date overrides
+- Sync order and dependency management
+- Logging and configuration options
+- Troubleshooting tips
+
+* Dependencies
+
+- Emacs 27.1+
+- Org Mode 9.6+
+- [[https://github.com/alphapapa/plz.el][plz]] - HTTP library
+- [[https://github.com/Kinneyzhang/elog][elog]] - Logging framework
+
+* Development
+
+#+begin_src bash
+# Run tests
+eldev test
+
+# Run tests with coverage
+eldev test -u "on,text,dontsend"
+
+# Lint
+eldev lint
+
+# Compile
+eldev compile
+#+end_src
+
+* License
+
+GPL3 License. See [[file:LICENSE][LICENSE]] for details.

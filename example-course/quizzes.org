@@ -1,0 +1,170 @@
+#+TITLE: Course Quizzes
+#+COLUMNS: %30ITEM %10TIME_LIMIT %15DUE_AT %10TODO
+#+TODO: TODO(t) | DONE(d)
+# Sync command: M-x org-canvas-sync-quizzes
+#
+# Quiz properties (level-1 headings):
+#   QUIZ_TYPE        - assignment | practice_quiz | graded_survey | survey (default: assignment)
+#   TIME_LIMIT       - Minutes allowed (number)
+#   SHUFFLE_ANSWERS  - true | false (randomize answer order)
+#   ALLOWED_ATTEMPTS - Number of allowed attempts (number)
+#   DUE_AT           - Due date (Org timestamp)
+#   PUBLISHED        - true | false (default: true)
+#   GROUP            - Link to assignment-groups.org heading
+#
+# Question properties (level-2 headings):
+#   TYPE   - multiple_choice_question | true_false_question | short_answer_question |
+#            fill_in_multiple_blanks_question | multiple_dropdowns_question |
+#            multiple_answers_question | matching_question | numerical_question |
+#            essay_question | file_upload_question | text_only_question
+#   POINTS - Points per question (number, default: 1)
+#
+# Auto-generated (do not edit):
+#   CANVAS_ID, LAST_SYNCED, PAYLOAD_HASH
+
+* Quiz 01: Syllabus Check
+:PROPERTIES:
+:PUBLISHED: true
+:DUE_AT:   <2030-06-15 Sat 23:59>
+:TIME_LIMIT: 15
+:SHUFFLE_ANSWERS: true
+:GROUP: [[file:assignment-groups.org::*Quizzes][Quizzes]]
+:END:
+
+Please answer the following questions regarding the syllabus.
+
+** Question: Late Policy
+:PROPERTIES:
+:TYPE:     multiple_choice_question
+:POINTS:   1
+:END:
+What is the penalty for late work?
+- [X] 10% per day
+- [ ] 50% per day
+- [ ] No penalty
+
+** Question: Late Policy 2
+:PROPERTIES:
+:TYPE:     multiple_choice_question
+:POINTS:   1
+:END:
+What is the penalty for late work?
+- [X] 10% per day
+- [ ] 50% per day
+- [ ] No penalty
+
+* Quiz 02: Question Types Demo
+:PROPERTIES:
+:PUBLISHED: false
+:TIME_LIMIT: 30
+:GROUP: [[file:assignment-groups.org::*Quizzes][Quizzes]]
+:SHUFFLE_ANSWERS: false
+:END:
+
+This quiz demonstrates the various question types available in Canvas.
+
+** Question: Basic True False
+:PROPERTIES:
+:TYPE:     true_false_question
+:POINTS:   1
+:OUTCOME:  [[file:outcomes.org::*LO-01: Big O Notation][LO-01: Big O Notation]]
+:END:
+The earth is flat.
+- [ ] True
+- [X] False
+
+** Question: Multiple Answers (Select All)
+:PROPERTIES:
+:TYPE:     multiple_answers_question
+:POINTS:   1
+:END:
+Which of the following are primary colors?
+- [X] Red
+- [ ] Green
+- [X] Blue
+- [X] Yellow
+
+** Question: Short Answer (Fill in the blank)
+:PROPERTIES:
+:TYPE:     short_answer_question
+:POINTS:   1
+:END:
+What is the capital of France?
+- [X] Paris
+- [X] paris
+
+** Question: Fill in Multiple Blanks
+:PROPERTIES:
+:TYPE:     fill_in_multiple_blanks_question
+:POINTS:   2
+:END:
+Roses are [color1] and violets are [color2].
+- color1
+  - [X] red
+  - [X] Red
+- color2
+  - [X] blue
+  - [X] Blue
+
+** Question: Multiple Dropdowns
+:PROPERTIES:
+:TYPE:     multiple_dropdowns_question
+:POINTS:   2
+:END:
+The [animal] says [sound].
+- animal
+  - [X] Cat
+  - [ ] Dog
+  - [ ] Bird
+- sound
+  - [X] Meow
+  - [ ] Woof
+  - [ ] Tweet
+
+** Question: Matching
+:PROPERTIES:
+:TYPE:     matching_question
+:POINTS:   3
+:END:
+Match the programming language to its primary use case (stereotypical).
+- Python = Data Science
+- JavaScript = Web Development
+- C = Systems Programming
+- SQL = Database Management
+- HTML = Distractor Answer
+
+** Question: Numerical Answer (Exact)
+:PROPERTIES:
+:TYPE:     numerical_question
+:POINTS:   1
+:END:
+What is 2 + 2?
+- [X] 4
+
+** Question: Numerical Answer (Range)
+:PROPERTIES:
+:TYPE:     numerical_question
+:POINTS:   1
+:END:
+Enter a number between 1 and 10.
+- [X] [1, 10]
+
+** Question: Essay Question
+:PROPERTIES:
+:TYPE:     essay_question
+:POINTS:   5
+:END:
+Explain, in your own words, the difference between a list and a dictionary in Python.
+
+** Question: File Upload
+:PROPERTIES:
+:TYPE:     file_upload_question
+:POINTS:   10
+:END:
+Please upload your final project PDF here.
+
+** Text: Section Header
+:PROPERTIES:
+:TYPE:     text_only_question
+:END:
+This is not a question. It is a text block used to provide instructions or headers within a quiz.

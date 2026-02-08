@@ -1,0 +1,10 @@
+.aider*
+dist/
+/.eldev/
+**.elc
+/lisp/org-canvas-autoloads.el
+/lisp/.env
+coverage/
+test-results.xml
+/lisp/org-canvas-credentials.el
+/test-local.sh

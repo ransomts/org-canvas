@@ -1,0 +1,76 @@
+#+TITLE: Course Modules
+#+COLUMNS: %30ITEM %10UNLOCK_AT %10TODO
+#+TODO: TODO(t) | DONE(d)
+# Sync command: M-x org-canvas-sync-modules
+# Modules should be synced LAST (after all other content types).
+#
+# Module properties (level-1 headings):
+#   PUBLISHED                       - true | false (default: true)
+#   POSITION                        - Display order (number)
+#   UNLOCK_AT                       - Available from date (Org timestamp)
+#   PREREQUISITE_MODULE_IDS         - Comma-separated Canvas module IDs
+#   REQUIRE_SEQUENTIAL_PROGRESSION  - true | false
+#   PUBLISH_FINAL_GRADE             - true | false
+#
+# Module item properties (level-2 headings):
+#   INDENT                  - Indentation level (number, 0-5)
+#   COMPLETION_REQUIREMENT  - must_view | must_submit | must_contribute | min_score
+#   MIN_SCORE               - Minimum score threshold (number, for min_score requirement)
+#
+# Level-2 headings link to content: [[file:pages.org::*Title][Title]]
+# Headings without links become SubHeaders (text dividers).
+#
+# Auto-generated (do not edit):
+#   CANVAS_ID, LAST_SYNCED, PAYLOAD_HASH
+
+* Week 01: Introduction
+:PROPERTIES:
+:ID:       week-01-module
+:DIRTY:    false
+:POSITION: 1
+:END:
+** [[file:discussions.org::*Introduce Yourself][Introduce Yourself]]
+:PROPERTIES:
+:INDENT:   0
+:END:
+** [[file:pages.org::*Lecture 01: Intro to Python][Lecture 01: Intro to Python]]
+:PROPERTIES:
+:INDENT:   0
+:COMPLETION_REQUIREMENT: must_view
+:END:
+
+** [[file:assignments.org::*Lab 01: Python Basics][Lab 01: Python Basics]]
+:PROPERTIES:
+:INDENT:   1
+:END:
+
+** [[file:quizzes.org::*Quiz 01: Syllabus Check][Quiz 01: Syllabus Check]]
+:PROPERTIES:
+:INDENT:   1
+:END:
+
+** [[file:files.org::*\[\[file:../course-content/syllabus.pdf\]\[Syllabus.pdf\]\]][Syllabus.pdf]]
+:PROPERTIES:
+:INDENT:   1
+:END:
+
+* Week 02: Pandas & DataFrames
+:PROPERTIES:
+:ID:       week-02-module
+:DIRTY:    true
+:UNLOCK_AT: <2030-06-15 Sat 08:00>
+:POSITION: 2
+:PREREQUISITE_MODULE_IDS: 750657
+:REQUIRE_SEQUENTIAL_PROGRESSION: true
+:END:
+
+** [[file:files.org::*\[\[file:../course-content/labs/starter_code.py\]\[starter_code.py\]\]][starter_code.py]]
+:PROPERTIES:
+:INDENT:   0
+:END:
+
+** [[file:discussions.org::*General Q&A][General Q&A]]
+:PROPERTIES:
+:INDENT:   0
+:END:
+

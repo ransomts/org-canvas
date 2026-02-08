@@ -1,0 +1,39 @@
+# Sync command: M-x org-canvas-sync-assignment-groups
+#
+# Level-1 heading = Weighting scheme header (WEIGHTING_SCHEME property)
+# Level-2 headings = Assignment groups
+#
+# Group properties (level-2 headings):
+#   WEIGHT       - Group weight as percent (number)
+#   DROP_LOWEST  - Number of lowest scores to drop (number)
+#   DROP_HIGHEST - Number of highest scores to drop (number)
+#
+# Auto-generated (do not edit):
+#   CANVAS_ID, LAST_SYNCED, PAYLOAD_HASH
+
+* Assignment Groups (Weights)
+:PROPERTIES:
+:WEIGHTING_SCHEME: percent
+:END:
+
+** Labs
+:PROPERTIES:
+:WEIGHT:   40
+:DROP_LOWEST: 1
+:END:
+
+** Quizzes
+:PROPERTIES:
+:WEIGHT:   20
+:DROP_LOWEST: 2
+:END:
+
+** Exams
+:PROPERTIES:
+:WEIGHT:   20
+:END:
+
+** Projects
+:PROPERTIES:
+:WEIGHT:   20
+:END:
