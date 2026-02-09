@@ -105,7 +105,7 @@
           (total-points 0))
 
       (puthash "title" title rubric-obj)
-      (puthash "free_form_criterion_comments" (if free-form t :json-false) rubric-obj)
+      (puthash "free_form_criterion_comments" (org-canvas--to-json-boolean free-form) rubric-obj)
 
       ;; Process table rows (skip header and hlines)
       (dolist (row criteria-rows)
@@ -157,7 +157,7 @@
 
 ;;;; 3. Stage: Execution
 
-(defun org-canvas--rubric-find-by-title (title)
+(defun org-canvas--rubric-search-by-title (title)
   "Search for a rubric with TITLE on Canvas.  Return nil on error."
   ;; Rubrics API doesn't support search_term, so we fetch all and filter
   (org-canvas--search-item "rubrics" title :params nil))
@@ -179,7 +179,7 @@ it before creating new one."
     (elog-info org-canvas--logger "[Stage 3: Execute] Starting push for rubric '%s'" title)
 
     ;; Check for existing rubric with same title
-    (let ((existing (org-canvas--rubric-find-by-title title)))
+    (let ((existing (org-canvas--rubric-search-by-title title)))
       (when existing
         (let ((existing-id (alist-get 'id existing)))
           (elog-warning org-canvas--logger "[Stage 3: Conflict] Rubric '%s' already exists (ID: %s). Deleting..." title existing-id)
@@ -198,7 +198,7 @@ it before creating new one."
        (elog-error org-canvas--logger "[Stage 3: Execute] POST failed: %s" (cadr err))
        (if (org-canvas--timeout-error-p err)
            (org-canvas--handle-timeout-recovery
-            #'org-canvas--rubric-find-by-title title err)
+            #'org-canvas--rubric-search-by-title title err)
          (signal (car err) (cdr err)))))))
 
 ;;;; 4. Stage: Finalization
@@ -423,53 +423,33 @@ On failure, fetches detailed rubric info for diagnostics."
 
 ;;;; Pull
 
-;;;###autoload
-(defun org-canvas-pull-rubrics ()
-  "Pull rubrics from Canvas into rubrics.org."
-  (interactive)
-  (org-canvas-clear-log)
-  (display-buffer (get-buffer-create "*canvas-log*"))
-  (elog-info org-canvas--logger "========================================")
-  (elog-info org-canvas--logger ">>> PULLING RUBRICS")
-  (elog-info org-canvas--logger "========================================")
-  (let* ((file (expand-file-name org-canvas-rubrics-file))
-         (endpoint (org-canvas-api-course-endpoint "rubrics"))
-         (remote (org-canvas-api-request-all-pages 'GET endpoint))
-         (count 0))
-    (unless (file-exists-p file)
-      (with-temp-file file (insert "")))
-    (with-current-buffer (find-file-noselect file)
-      (dolist (rubric remote)
-        (let* ((id (alist-get 'id rubric))
-               (title (alist-get 'title rubric))
-               (criteria (alist-get 'data rubric))
-               (pos (org-canvas--pull-upsert-heading file id title)))
-          (goto-char pos)
-          (when title (org-edit-headline title))
-          (org-canvas-org-save-sync-state pos id)
-          ;; Insert criteria as org table
-          (when criteria
-            (let ((body-start (save-excursion
-                                (org-end-of-meta-data t) (point)))
-                  (body-end (save-excursion
-                              (org-end-of-subtree t) (point))))
-              (delete-region body-start body-end)
-              (goto-char body-start)
-              (insert "\n| Criterion | Points | Description |\n")
-              (insert "|---|---|---|\n")
-              (dolist (c (append criteria nil))
-                (let ((desc (or (alist-get 'description c) ""))
-                      (pts (or (alist-get 'points c) 0))
-                      (long-desc (or (alist-get 'long_description c) "")))
-                  (insert (format "| %s | %s | %s |\n"
-                                  (replace-regexp-in-string "|" "/" desc)
-                                  pts
-                                  (replace-regexp-in-string "|" "/" long-desc)))))
-              (insert "\n")))
-          (cl-incf count)))
-      (save-buffer))
-    (elog-info org-canvas--logger "Rubrics pull complete: %d rubrics" count)
-    (message "Rubrics pull complete: %d rubrics." count)))
+(defun org-canvas--rubric-pull-item (item pos)
+  "Set per-item properties for a pulled rubric.
+ITEM is the API response alist, POS is the heading position."
+  (let ((criteria (alist-get 'data item)))
+    (when criteria
+      (let ((body-start (save-excursion
+                          (org-end-of-meta-data t) (point)))
+            (body-end (save-excursion
+                        (org-end-of-subtree t) (point))))
+        (delete-region body-start body-end)
+        (goto-char body-start)
+        (insert "\n| Criterion | Points | Description |\n")
+        (insert "|---|---|---|\n")
+        (dolist (c (append criteria nil))
+          (let ((desc (or (alist-get 'description c) ""))
+                (pts (or (alist-get 'points c) 0))
+                (long-desc (or (alist-get 'long_description c) "")))
+            (insert (format "| %s | %s | %s |\n"
+                            (replace-regexp-in-string "|" "/" desc)
+                            pts
+                            (replace-regexp-in-string "|" "/" long-desc)))))
+        (insert "\n")))))
+
+(org-canvas-define-pull rubrics
+  :file org-canvas-rubrics-file
+  :endpoint "rubrics"
+  :item-fn #'org-canvas--rubric-pull-item)
 
 (provide 'org-canvas-rubrics)
 ;;; org-canvas-rubrics.el ends here

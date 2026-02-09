@@ -112,7 +112,7 @@
 
       (puthash "title" title inner-page)
       (puthash "body" (plist-get data :body) inner-page)
-      (puthash "published" (if (plist-get data :published) t :json-false) inner-page)
+      (puthash "published" (org-canvas--to-json-boolean (plist-get data :published)) inner-page)
 
       (when (plist-get data :front_page)
         (puthash "front_page" t inner-page)
@@ -130,7 +130,7 @@
 
 ;;;; 3. Stage: Execution
 
-(defun org-canvas--page-find-by-title (title)
+(defun org-canvas--page-search-by-title (title)
   "Search for a page with TITLE on Canvas.  Return nil on error."
   (org-canvas--search-item "pages" title))
 
@@ -141,7 +141,7 @@ Handles Timeout by searching for the page."
   (org-canvas--push-to-api data payload
     :endpoint "pages"
     :id-key :canvas-url
-    :find-fn #'org-canvas--page-find-by-title))
+    :find-fn #'org-canvas--page-search-by-title))
 
 ;;;; 4. Stage: Finalization
 
@@ -205,54 +205,25 @@ Handles Timeout by searching for the page."
 
 ;;;; Pull
 
-;;;###autoload
-(defun org-canvas-pull-pages ()
-  "Pull pages from Canvas into pages.org."
-  (interactive)
-  (org-canvas-clear-log)
-  (display-buffer (get-buffer-create "*canvas-log*"))
-  (elog-info org-canvas--logger "========================================")
-  (elog-info org-canvas--logger ">>> PULLING PAGES")
-  (elog-info org-canvas--logger "========================================")
-  (let* ((file (expand-file-name org-canvas-pages-file))
-         (endpoint (org-canvas-api-course-endpoint "pages"))
-         (remote (org-canvas-api-request-all-pages 'GET endpoint))
-         (count 0))
-    (unless (file-exists-p file)
-      (with-temp-file file (insert "")))
-    (with-current-buffer (find-file-noselect file)
-      (dolist (page remote)
-        (let* ((url (alist-get 'url page))
-               (title (alist-get 'title page))
-               (front-page (alist-get 'front_page page)))
-          ;; Skip the front page
-          (unless (eq front-page t)
-            ;; Fetch full page for body
-            (let* ((detail-url (org-canvas-api-course-endpoint "pages/%s" url))
-                   (detail (condition-case nil
-                               (org-canvas-api-request 'GET detail-url)
-                             (error nil)))
-                   (body (when detail (alist-get 'body detail)))
-                   (pos (org-canvas--pull-upsert-heading
-                         file url title "CANVAS_URL")))
-              (goto-char pos)
-              (when title (org-edit-headline title))
-              (org-canvas-org-set-property pos "CANVAS_URL" (format "%s" url))
-              (org-canvas-org-set-property
-               pos "LAST_SYNCED" (format-time-string "[%Y-%m-%d %a %H:%M]"))
-              ;; Insert body after properties
-              (when (and body (not (string-empty-p body)))
-                (let ((body-start (save-excursion
-                                    (org-end-of-meta-data t) (point)))
-                      (body-end (save-excursion
-                                  (org-end-of-subtree t) (point))))
-                  (delete-region body-start body-end)
-                  (goto-char body-start)
-                  (insert "\n" (org-canvas--html-to-org body) "\n")))
-              (cl-incf count)))))
-      (save-buffer))
-    (elog-info org-canvas--logger "Pages pull complete: %d pages" count)
-    (message "Pages pull complete: %d pages." count)))
+(defun org-canvas--page-pull-item (item pos)
+  "Set per-item properties for a pulled page.
+ITEM is the API response alist, POS is the heading position.
+Fetches the full page detail to get body content."
+  (let* ((url (alist-get 'url item))
+         (detail-url (org-canvas-api-course-endpoint "pages/%s" url))
+         (detail (condition-case nil
+                     (org-canvas-api-request 'GET detail-url)
+                   (error nil)))
+         (body (when detail (alist-get 'body detail))))
+    (org-canvas--pull-insert-body body)))
+
+(org-canvas-define-pull pages
+  :file org-canvas-pages-file
+  :endpoint "pages"
+  :id-field 'url
+  :id-property "CANVAS_URL"
+  :filter-fn (lambda (item) (eq (alist-get 'front_page item) t))
+  :item-fn #'org-canvas--page-pull-item)
 
 (provide 'org-canvas-pages)
 ;;; org-canvas-pages.el ends here

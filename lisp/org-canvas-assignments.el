@@ -164,7 +164,7 @@ Accepts: online_upload, online_url, online_text_entry, media_recording,
       ;; Required fields
       (puthash "name" title assignment)
       (puthash "description" (plist-get data :description) assignment)
-      (puthash "published" (if (plist-get data :published) t :json-false) assignment)
+      (puthash "published" (org-canvas--to-json-boolean (plist-get data :published)) assignment)
       (puthash "submission_types" (plist-get data :submission_types) assignment)
 
       ;; Points and grading
@@ -212,7 +212,7 @@ Accepts: online_upload, online_url, online_text_entry, media_recording,
 
 ;;;; 3. Stage: Execution
 
-(defun org-canvas--assignment-find-by-name (name)
+(defun org-canvas--assignment-search-by-name (name)
   "Search for an assignment with NAME on Canvas.  Return nil on error."
   (org-canvas--search-item "assignments" name :match-field 'name))
 
@@ -222,7 +222,7 @@ Handles 404 on PUT by retrying as POST (stale CANVAS_ID recovery).
 Handles timeout by searching for the assignment."
   (org-canvas--push-to-api data payload
     :endpoint "assignments"
-    :find-fn #'org-canvas--assignment-find-by-name))
+    :find-fn #'org-canvas--assignment-search-by-name))
 
 (defun org-canvas--assignment-associate-rubric (assignment-id rubric-id)
   "Associate RUBRIC-ID with ASSIGNMENT-ID on Canvas."
@@ -320,72 +320,44 @@ Returns a string like \"[[file:assignment-groups.org::*Name][Name]]\" or nil."
         (format "[[file:assignment-groups.org::*%s][%s]]"
                 group-name group-name)))))
 
-;;;###autoload
-(defun org-canvas-pull-assignments ()
-  "Pull assignments from Canvas into assignments.org."
-  (interactive)
-  (org-canvas-clear-log)
-  (display-buffer (get-buffer-create "*canvas-log*"))
-  (elog-info org-canvas--logger "========================================")
-  (elog-info org-canvas--logger ">>> PULLING ASSIGNMENTS")
-  (elog-info org-canvas--logger "========================================")
-  (let* ((file (expand-file-name org-canvas-assignments-file))
-         (endpoint (org-canvas-api-course-endpoint "assignments"))
-         (remote (org-canvas-api-request-all-pages 'GET endpoint))
-         (count 0))
-    (unless (file-exists-p file)
-      (with-temp-file file (insert "")))
-    (with-current-buffer (find-file-noselect file)
-      (dolist (item remote)
-        (let* ((id (alist-get 'id item))
-               (name (alist-get 'name item))
-               (desc-html (alist-get 'description item))
-               (points (alist-get 'points_possible item))
-               (due-at (alist-get 'due_at item))
-               (unlock-at (alist-get 'unlock_at item))
-               (lock-at (alist-get 'lock_at item))
-               (submission-types (alist-get 'submission_types item))
-               (group-id (alist-get 'assignment_group_id item))
-               (peer-reviews (alist-get 'peer_reviews item))
-               (pos (org-canvas--pull-upsert-heading file id name)))
-          (goto-char pos)
-          (when name (org-edit-headline name))
-          (org-canvas-org-save-sync-state pos id)
-          (when points
-            (org-canvas-org-set-property pos "POINTS" (format "%s" points)))
-          (when due-at
-            (let ((ts (org-canvas--iso8601-to-org-timestamp due-at)))
-              (when ts (org-canvas-org-set-property pos "DUE_AT" ts))))
-          (when unlock-at
-            (let ((ts (org-canvas--iso8601-to-org-timestamp unlock-at)))
-              (when ts (org-canvas-org-set-property pos "UNLOCK_AT" ts))))
-          (when lock-at
-            (let ((ts (org-canvas--iso8601-to-org-timestamp lock-at)))
-              (when ts (org-canvas-org-set-property pos "LOCK_AT" ts))))
-          (when submission-types
-            (org-canvas-org-set-property
-             pos "SUBMISSION_TYPES"
-             (mapconcat #'identity (append submission-types nil) ",")))
-          (when peer-reviews
-            (org-canvas-org-set-property
-             pos "PEER_REVIEWS" (if (eq peer-reviews t) "true" "false")))
-          ;; Resolve assignment group link
-          (let ((group-link (org-canvas--assignment-resolve-group-link group-id)))
-            (when group-link
-              (org-canvas-org-set-property pos "GROUP" group-link)))
-          ;; Insert body
-          (when (and desc-html (not (string-empty-p desc-html)))
-            (let ((body-start (save-excursion
-                                (org-end-of-meta-data t) (point)))
-                  (body-end (save-excursion
-                              (org-end-of-subtree t) (point))))
-              (delete-region body-start body-end)
-              (goto-char body-start)
-              (insert "\n" (org-canvas--html-to-org desc-html) "\n")))
-          (cl-incf count)))
-      (save-buffer))
-    (elog-info org-canvas--logger "Assignments pull complete: %d items" count)
-    (message "Assignments pull complete: %d items." count)))
+(defun org-canvas--assignment-pull-item (item pos)
+  "Set per-item properties for a pulled assignment.
+ITEM is the API response alist, POS is the heading position."
+  (let ((points (alist-get 'points_possible item))
+        (due-at (alist-get 'due_at item))
+        (unlock-at (alist-get 'unlock_at item))
+        (lock-at (alist-get 'lock_at item))
+        (submission-types (alist-get 'submission_types item))
+        (peer-reviews (alist-get 'peer_reviews item))
+        (group-id (alist-get 'assignment_group_id item)))
+    (when points
+      (org-canvas-org-set-property pos "POINTS" (format "%s" points)))
+    (when due-at
+      (let ((ts (org-canvas--iso8601-to-org-timestamp due-at)))
+        (when ts (org-canvas-org-set-property pos "DUE_AT" ts))))
+    (when unlock-at
+      (let ((ts (org-canvas--iso8601-to-org-timestamp unlock-at)))
+        (when ts (org-canvas-org-set-property pos "UNLOCK_AT" ts))))
+    (when lock-at
+      (let ((ts (org-canvas--iso8601-to-org-timestamp lock-at)))
+        (when ts (org-canvas-org-set-property pos "LOCK_AT" ts))))
+    (when submission-types
+      (org-canvas-org-set-property
+       pos "SUBMISSION_TYPES"
+       (mapconcat #'identity (append submission-types nil) ",")))
+    (when peer-reviews
+      (org-canvas-org-set-property
+       pos "PEER_REVIEWS" (if (eq peer-reviews t) "true" "false")))
+    (let ((group-link (org-canvas--assignment-resolve-group-link group-id)))
+      (when group-link
+        (org-canvas-org-set-property pos "GROUP" group-link))))
+  (org-canvas--pull-insert-body (alist-get 'description item)))
+
+(org-canvas-define-pull assignments
+  :file org-canvas-assignments-file
+  :endpoint "assignments"
+  :title-field 'name
+  :item-fn #'org-canvas--assignment-pull-item)
 
 (provide 'org-canvas-assignments)
 ;;; org-canvas-assignments.el ends here

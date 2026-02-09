@@ -240,6 +240,15 @@ Does nothing when `org-canvas--inhibit-log-clear' is non-nil."
         (when (file-exists-p log-file)
           (delete-file log-file))))))
 
+(defun org-canvas--start-operation (operation-name)
+  "Clear log, display log buffer, and log OPERATION-NAME banner.
+Respects `org-canvas--inhibit-log-clear'."
+  (org-canvas-clear-log)
+  (display-buffer (get-buffer-create "*canvas-log*"))
+  (elog-info org-canvas--logger "========================================")
+  (elog-info org-canvas--logger ">>> %s" operation-name)
+  (elog-info org-canvas--logger "========================================"))
+
 (defun org-canvas-set-log-level (level)
   "Set the logging level to LEVEL interactively.
 LEVEL should be one of: trace, debug, info, warning, error."
@@ -476,6 +485,10 @@ Otherwise, returns t only if property is \"true\"."
     (if default-true
 	(not (string-equal "false" value))
       (string-equal "true" value))))
+
+(defun org-canvas--to-json-boolean (value)
+  "Convert VALUE to Canvas JSON boolean (t or :json-false)."
+  (if value t :json-false))
 
 (defun org-canvas-org-get-number-property (pom property &optional default)
   "Get PROPERTY at POM as a number.
@@ -839,15 +852,6 @@ SOURCE-DIR is the directory of the source .org file."
 (defvar org-export-with-sub-superscripts)
 (defvar org-export-use-babel)
 
-(defun org-canvas--export-subtree-to-html ()
-  "Export current Org subtree body to HTML string.
-Tolerates broken cross-file links, disables subscript markup, and
-suppresses Babel evaluation to avoid requiring live kernels."
-  (let ((org-export-with-broken-links 'mark)
-        (org-export-with-sub-superscripts nil)
-        (org-export-use-babel nil))
-    (org-export-as 'html t nil t nil)))
-
 (defun org-canvas--export-subtree-body-to-html ()
   "Export current Org subtree to HTML, resolving cross-file links.
 Returns the HTML string.  Cross-file links [[file:*.org::*...][...]]
@@ -897,6 +901,16 @@ if pandoc is not available."
             (string-trim (buffer-string))
           (concat "# WARNING: pandoc conversion failed\n" html))))))
 
+(defun org-canvas--pull-insert-body (body-html)
+  "Replace current heading's body with Org-converted BODY-HTML.
+Point must be at a heading.  Does nothing if BODY-HTML is nil or empty."
+  (when (and body-html (not (string-empty-p body-html)))
+    (let ((body-start (save-excursion (org-end-of-meta-data t) (point)))
+          (body-end (save-excursion (org-end-of-subtree t) (point))))
+      (delete-region body-start body-end)
+      (goto-char body-start)
+      (insert "\n" (org-canvas--html-to-org body-html) "\n"))))
+
 (defun org-canvas--pull-upsert-heading (file canvas-id &optional title id-property)
   "Find or create a heading in FILE matched by CANVAS-ID.
 If a level-1 heading with ID-PROPERTY (default \"CANVAS_ID\") equal to
@@ -940,6 +954,86 @@ Returns a string like \"[2026-01-15 Thu 10:00]\" or nil."
              (not (eq iso8601 :null)))
     (let ((time (date-to-time iso8601)))
       (format-time-string "[%Y-%m-%d %a %H:%M]" time t))))
+
+;;;; 4f. Pull Macro
+
+(defmacro org-canvas-define-pull (feature &rest args)
+  "Define `org-canvas-pull-FEATURE' function.
+FEATURE is a symbol like \\='pages or \\='announcements.
+
+ARGS is a plist with the following keys:
+  :file        - Symbol for file path defcustom (required)
+  :endpoint    - API endpoint suffix string (required)
+  :params      - Extra GET params alist (optional)
+  :item-fn     - Function (item pos) for per-item property setting (required)
+  :filter-fn   - Predicate (item) to skip item when non-nil (optional)
+  :id-field    - Alist key for item ID (default: \\='id)
+  :title-field - Alist key for item title (default: \\='title)
+  :id-property - Org property name for Canvas ID (default: \"CANVAS_ID\")
+
+Generates an interactive function `org-canvas-pull-FEATURE' that:
+  1. Clears the log and displays the log buffer
+  2. Fetches all items from the Canvas API endpoint
+  3. Upserts a heading for each item, saves sync state
+  4. Calls ITEM-FN for module-specific property setting
+  5. Saves the buffer and logs completion
+
+Example:
+  (org-canvas-define-pull announcements
+    :file org-canvas-announcements-file
+    :endpoint \"discussion_topics\"
+    :params \\='((\"only_announcements\" . \"true\"))
+    :item-fn #\\='org-canvas--announcement-pull-item)"
+  (declare (indent 1))
+  (let* ((feature-name (symbol-name feature))
+         (pull-fn-name (intern (format "org-canvas-pull-%s" feature-name)))
+         (file-expr (plist-get args :file))
+         (endpoint-expr (plist-get args :endpoint))
+         (params-expr (plist-get args :params))
+         (item-fn (plist-get args :item-fn))
+         (filter-fn (plist-get args :filter-fn))
+         (id-field (or (plist-get args :id-field) ''id))
+         (title-field (or (plist-get args :title-field) ''title))
+         (id-property (or (plist-get args :id-property) "CANVAS_ID"))
+         (op-label (upcase (replace-regexp-in-string "-" " " feature-name))))
+    (unless file-expr (error "org-canvas-define-pull: :file is required"))
+    (unless endpoint-expr (error "org-canvas-define-pull: :endpoint is required"))
+    (unless item-fn (error "org-canvas-define-pull: :item-fn is required"))
+    `(progn
+       ;;;###autoload
+       (defun ,pull-fn-name ()
+         ,(format "Pull %s from Canvas into the local Org file." feature-name)
+         (interactive)
+         (org-canvas--start-operation ,(format "PULLING %s" op-label))
+         (let* ((file (expand-file-name ,file-expr))
+                (endpoint (org-canvas-api-course-endpoint ,endpoint-expr))
+                (remote (org-canvas-api-request-all-pages
+                         'GET endpoint ,params-expr))
+                (count 0))
+           (unless (file-exists-p file)
+             (with-temp-file file (insert "")))
+           (with-current-buffer (find-file-noselect file)
+             (dolist (item remote)
+               ,(let ((body
+                       `(let* ((id (alist-get ,id-field item))
+                               (title (alist-get ,title-field item))
+                               (pos (org-canvas--pull-upsert-heading
+                                     file id title ,id-property)))
+                          (goto-char pos)
+                          (when title (org-edit-headline title))
+                          (org-canvas-org-save-sync-state pos id ,id-property)
+                          (funcall ,item-fn item pos)
+                          (cl-incf count))))
+                  (if filter-fn
+                      `(unless (funcall ,filter-fn item)
+                         ,body)
+                    body)))
+             (save-buffer))
+           (elog-info org-canvas--logger
+             ,(format "%s pull complete: %%d items"
+                      (capitalize feature-name)) count)
+           (message ,(format "%s pull complete: %%d items."
+                             (capitalize feature-name)) count))))))
 
 ;;;; 5. Diagnostics
 

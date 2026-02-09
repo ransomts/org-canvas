@@ -91,7 +91,7 @@ Returns a plist with keys :title, :pom, :time-zone, :default-view,
                     (org-canvas-org-get-property pom "START_AT")))
          (end-at (org-canvas-org-parse-timestamp
                   (org-canvas-org-get-property pom "END_AT")))
-         (syllabus-body (org-canvas--export-subtree-to-html)))
+         (syllabus-body (org-canvas--export-subtree-body-to-html)))
     (list :title title
           :pom pom
           :time-zone time-zone
@@ -228,11 +228,7 @@ Fetches course data via GET /courses/:id?include[]=syllabus_body
 and populates the first heading's properties.  Creates the file
 and heading if they don't exist."
   (interactive)
-  (org-canvas-clear-log)
-  (display-buffer (get-buffer-create "*canvas-log*"))
-  (elog-info org-canvas--logger "========================================")
-  (elog-info org-canvas--logger ">>> PULLING SETTINGS FROM CANVAS")
-  (elog-info org-canvas--logger "========================================")
+  (org-canvas--start-operation "PULLING SETTINGS FROM CANVAS")
   (let* ((endpoint (org-canvas-api-course-endpoint ""))
          (response (org-canvas-api-request
                     'GET endpoint

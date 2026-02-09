@@ -198,7 +198,7 @@ rating list item (- [N] ...).  Skips the :PROPERTIES: drawer."
 
 ;;;; 3. Stage: Execution
 
-(defun org-canvas--outcome-group-find-by-title (title parent-id)
+(defun org-canvas--outcome-group-search-by-title (title parent-id)
   "Search for an outcome group with TITLE under PARENT-ID."
   (elog-debug org-canvas--logger "[Stage 3: Search] Looking for group '%s'" title)
   (condition-case err
@@ -248,10 +248,10 @@ rating list item (- [N] ...).  Skips the :PROPERTIES: drawer."
       (error
        (elog-error org-canvas--logger "[Stage 3: Execute] Failed: %s" (cadr err))
        ;; Try to find if it was created despite error
-       (or (org-canvas--outcome-group-find-by-title title parent-id)
+       (or (org-canvas--outcome-group-search-by-title title parent-id)
            (signal (car err) (cdr err)))))))
 
-(defun org-canvas--outcome-find-by-title (title group-id)
+(defun org-canvas--outcome-search-by-title (title group-id)
   "Search for an outcome with TITLE in GROUP-ID."
   (elog-debug org-canvas--logger "[Stage 3: Search] Looking for outcome '%s' in group %s" title group-id)
   (condition-case err
@@ -306,7 +306,7 @@ rating list item (- [N] ...).  Skips the :PROPERTIES: drawer."
           (or (alist-get 'outcome response) response))
       (error
        (elog-error org-canvas--logger "[Stage 3: Execute] Failed: %s" (cadr err))
-       (or (org-canvas--outcome-find-by-title title group-id)
+       (or (org-canvas--outcome-search-by-title title group-id)
            (signal (car err) (cdr err)))))))
 
 ;;;; 4. Stage: Finalization
@@ -483,11 +483,7 @@ Warning: This will remove all learning outcomes from the course."
 (defun org-canvas-pull-outcomes ()
   "Pull outcome groups and outcomes from Canvas into outcomes.org."
   (interactive)
-  (org-canvas-clear-log)
-  (display-buffer (get-buffer-create "*canvas-log*"))
-  (elog-info org-canvas--logger "========================================")
-  (elog-info org-canvas--logger ">>> PULLING OUTCOMES")
-  (elog-info org-canvas--logger "========================================")
+  (org-canvas--start-operation "PULLING OUTCOMES")
   (let* ((file (expand-file-name org-canvas-outcomes-file))
          (groups-endpoint (org-canvas-api-course-endpoint "outcome_groups"))
          (remote-groups (org-canvas-api-request-all-pages 'GET groups-endpoint))
@@ -539,20 +535,13 @@ Warning: This will remove all learning outcomes from the course."
                       (when otitle (org-edit-headline otitle))
                       (org-canvas-org-save-sync-state opos oid)
                       ;; Add description as body
-                      (when (and desc (not (string-empty-p desc)))
-                        (let ((body-start (save-excursion
-                                            (org-end-of-meta-data t) (point)))
-                              (body-end (save-excursion
-                                          (org-end-of-subtree t) (point))))
-                          (delete-region body-start body-end)
-                          (goto-char body-start)
-                          (insert "\n" (org-canvas--html-to-org desc) "\n")
-                          (when ratings
-                            (insert "\nRatings:\n")
-                            (dolist (r (append ratings nil))
-                              (insert (format "- %s (%s pts)\n"
-                                              (or (alist-get 'description r) "")
-                                              (or (alist-get 'points r) 0)))))))
+                      (org-canvas--pull-insert-body desc)
+                      (when (and desc (not (string-empty-p desc)) ratings)
+                        (insert "\nRatings:\n")
+                        (dolist (r (append ratings nil))
+                          (insert (format "- %s (%s pts)\n"
+                                          (or (alist-get 'description r) "")
+                                          (or (alist-get 'points r) 0)))))
                       (cl-incf outcome-count)))))
             (error nil))))
       (save-buffer))

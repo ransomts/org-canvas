@@ -57,14 +57,14 @@
   (let* ((pom (point))
          (title (org-canvas--strip-statistics-cookie (org-get-heading t t t t)))
          (canvas-id (org-canvas-org-get-property pom "CANVAS_ID"))
-         (published (if (org-canvas-org-get-boolean-property pom "PUBLISHED" t) t :json-false))
+         (published (org-canvas-org-get-boolean-property pom "PUBLISHED" t))
          (discussion-type (org-canvas--validate-property
                           (org-canvas-org-get-property pom "DISCUSSION_TYPE")
                           '("side_comment" "threaded")
                           "DISCUSSION_TYPE" "side_comment"))
          (grading-type (org-canvas-org-get-property pom "GRADING_TYPE"))
          (points (org-canvas-org-get-property pom "POINTS"))
-         (post-first (if (org-canvas-org-get-boolean-property pom "POST_FIRST") t :json-false))
+         (post-first (org-canvas-org-get-boolean-property pom "POST_FIRST"))
          (pinned (org-canvas-org-get-boolean-property pom "PINNED"))
          (available-from (org-canvas-org-parse-timestamp (org-canvas-org-get-property pom "AVAILABLE_FROM")))
          (due-at (org-canvas-org-parse-timestamp (org-canvas-org-get-property pom "DUE_AT")))
@@ -110,9 +110,9 @@
 
     (let ((base `((title . ,title)
                   (message . ,(plist-get data :message))
-                  (published . ,(plist-get data :published))
+                  (published . ,(org-canvas--to-json-boolean (plist-get data :published)))
                   (discussion_type . ,(plist-get data :discussion_type))
-                  (require_initial_post . ,(plist-get data :require_initial_post)))))
+                  (require_initial_post . ,(org-canvas--to-json-boolean (plist-get data :require_initial_post))))))
 
       ;; Top-level discussion properties
       (when (plist-get data :pinned)
@@ -181,54 +181,23 @@ Handles 404 on PUT by retrying as POST (stale CANVAS_ID recovery)."
 
 ;;;; Pull
 
-;;;###autoload
-(defun org-canvas-pull-discussions ()
-  "Pull discussion topics from Canvas into discussions.org."
-  (interactive)
-  (org-canvas-clear-log)
-  (display-buffer (get-buffer-create "*canvas-log*"))
-  (elog-info org-canvas--logger "========================================")
-  (elog-info org-canvas--logger ">>> PULLING DISCUSSIONS")
-  (elog-info org-canvas--logger "========================================")
-  (let* ((file (expand-file-name org-canvas-discussions-file))
-         (endpoint (org-canvas-api-course-endpoint "discussion_topics"))
-         (remote (org-canvas-api-request-all-pages 'GET endpoint))
-         (count 0))
-    (unless (file-exists-p file)
-      (with-temp-file file (insert "")))
-    (with-current-buffer (find-file-noselect file)
-      (dolist (item remote)
-        ;; Skip announcements
-        (unless (eq (alist-get 'is_announcement item) t)
-          (let* ((id (alist-get 'id item))
-                 (title (alist-get 'title item))
-                 (message-html (alist-get 'message item))
-                 (discussion-type (alist-get 'discussion_type item))
-                 (posted-at (alist-get 'posted_at item))
-                 (delayed-post (alist-get 'delayed_post_at item))
-                 (pos (org-canvas--pull-upsert-heading file id title)))
-            (goto-char pos)
-            (when title (org-edit-headline title))
-            (org-canvas-org-save-sync-state pos id)
-            (when discussion-type
-              (org-canvas-org-set-property
-               pos "DISCUSSION_TYPE" discussion-type))
-            (when delayed-post
-              (let ((ts (org-canvas--iso8601-to-org-timestamp delayed-post)))
-                (when ts (org-canvas-org-set-property pos "DELAYED_POST_AT" ts))))
-            ;; Insert body
-            (when (and message-html (not (string-empty-p message-html)))
-              (let ((body-start (save-excursion
-                                  (org-end-of-meta-data t) (point)))
-                    (body-end (save-excursion
-                                (org-end-of-subtree t) (point))))
-                (delete-region body-start body-end)
-                (goto-char body-start)
-                (insert "\n" (org-canvas--html-to-org message-html) "\n")))
-            (cl-incf count))))
-      (save-buffer))
-    (elog-info org-canvas--logger "Discussions pull complete: %d topics" count)
-    (message "Discussions pull complete: %d topics." count)))
+(defun org-canvas--discussion-pull-item (item pos)
+  "Set per-item properties for a pulled discussion.
+ITEM is the API response alist, POS is the heading position."
+  (let ((discussion-type (alist-get 'discussion_type item))
+        (delayed-post (alist-get 'delayed_post_at item)))
+    (when discussion-type
+      (org-canvas-org-set-property pos "DISCUSSION_TYPE" discussion-type))
+    (when delayed-post
+      (let ((ts (org-canvas--iso8601-to-org-timestamp delayed-post)))
+        (when ts (org-canvas-org-set-property pos "DELAYED_POST_AT" ts)))))
+  (org-canvas--pull-insert-body (alist-get 'message item)))
+
+(org-canvas-define-pull discussions
+  :file org-canvas-discussions-file
+  :endpoint "discussion_topics"
+  :filter-fn (lambda (item) (eq (alist-get 'is_announcement item) t))
+  :item-fn #'org-canvas--discussion-pull-item)
 
 (provide 'org-canvas-discussions)
 ;;; org-canvas-discussions.el ends here

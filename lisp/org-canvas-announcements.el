@@ -76,7 +76,7 @@
             :discussion_type "side_comment"
             :is_announcement t
             :allow_rating nil
-            :allow_discussion_comments (if allow-comments t :json-false)
+            :allow_discussion_comments allow-comments
             :pom pom))))
 
 ;;;; 2. Stage: Transformation
@@ -88,7 +88,7 @@
 
     (let ((base `((title . ,title)
                   (message . ,(plist-get data :message))
-                  (published . ,(plist-get data :published))
+                  (published . ,(org-canvas--to-json-boolean (plist-get data :published)))
                   (is_announcement . t)
                   (discussion_type . "side_comment"))))
 
@@ -96,10 +96,8 @@
         (elog-debug org-canvas--logger "[Stage 2: Transform] Adding delayed_post_at: %s" (plist-get data :delayed_post_at))
         (push `(delayed_post_at . ,(plist-get data :delayed_post_at)) base))
 
-      (when (plist-get data :allow_discussion_comments)
-        (push `(lock_at . ,(if (eq (plist-get data :allow_discussion_comments) :json-false)
-                               (org-canvas-current-iso8601-timestamp)
-                             nil)) base))
+      (unless (plist-get data :allow_discussion_comments)
+        (push `(lock_at . ,(org-canvas-current-iso8601-timestamp)) base))
 
       (elog-debug org-canvas--logger "[Stage 2: Transform] Payload complete")
       base)))
@@ -140,48 +138,20 @@
 
 ;;;; Pull
 
-;;;###autoload
-(defun org-canvas-pull-announcements ()
-  "Pull announcements from Canvas into announcements.org."
-  (interactive)
-  (org-canvas-clear-log)
-  (display-buffer (get-buffer-create "*canvas-log*"))
-  (elog-info org-canvas--logger "========================================")
-  (elog-info org-canvas--logger ">>> PULLING ANNOUNCEMENTS")
-  (elog-info org-canvas--logger "========================================")
-  (let* ((file (expand-file-name org-canvas-announcements-file))
-         (endpoint (org-canvas-api-course-endpoint "discussion_topics"))
-         (remote (org-canvas-api-request-all-pages
-                  'GET endpoint '(("only_announcements" . "true"))))
-         (count 0))
-    (unless (file-exists-p file)
-      (with-temp-file file (insert "")))
-    (with-current-buffer (find-file-noselect file)
-      (dolist (item remote)
-        (let* ((id (alist-get 'id item))
-               (title (alist-get 'title item))
-               (message-html (alist-get 'message item))
-               (delayed-post (alist-get 'delayed_post_at item))
-               (pos (org-canvas--pull-upsert-heading file id title)))
-          (goto-char pos)
-          (when title (org-edit-headline title))
-          (org-canvas-org-save-sync-state pos id)
-          (when delayed-post
-            (let ((ts (org-canvas--iso8601-to-org-timestamp delayed-post)))
-              (when ts (org-canvas-org-set-property pos "DELAYED_POST_AT" ts))))
-          ;; Insert body
-          (when (and message-html (not (string-empty-p message-html)))
-            (let ((body-start (save-excursion
-                                (org-end-of-meta-data t) (point)))
-                  (body-end (save-excursion
-                              (org-end-of-subtree t) (point))))
-              (delete-region body-start body-end)
-              (goto-char body-start)
-              (insert "\n" (org-canvas--html-to-org message-html) "\n")))
-          (cl-incf count)))
-      (save-buffer))
-    (elog-info org-canvas--logger "Announcements pull complete: %d items" count)
-    (message "Announcements pull complete: %d items." count)))
+(defun org-canvas--announcement-pull-item (item pos)
+  "Set per-item properties for a pulled announcement.
+ITEM is the API response alist, POS is the heading position."
+  (let ((delayed-post (alist-get 'delayed_post_at item)))
+    (when delayed-post
+      (let ((ts (org-canvas--iso8601-to-org-timestamp delayed-post)))
+        (when ts (org-canvas-org-set-property pos "DELAYED_POST_AT" ts)))))
+  (org-canvas--pull-insert-body (alist-get 'message item)))
+
+(org-canvas-define-pull announcements
+  :file org-canvas-announcements-file
+  :endpoint "discussion_topics"
+  :params '(("only_announcements" . "true"))
+  :item-fn #'org-canvas--announcement-pull-item)
 
 (provide 'org-canvas-announcements)
 ;;; org-canvas-announcements.el ends here

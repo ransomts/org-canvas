@@ -290,7 +290,7 @@ MODULES-FILE-DIR is used to resolve relative file links."
 
     (let ((module (make-hash-table :test 'equal)))
       (puthash "name" title module)
-      (puthash "published" (if (plist-get data :published) t :json-false) module)
+      (puthash "published" (org-canvas--to-json-boolean (plist-get data :published)) module)
 
       (when (plist-get data :position)
         (puthash "position" (plist-get data :position) module))
@@ -358,7 +358,7 @@ MODULES-FILE-DIR is used to resolve relative file links."
 
 ;;;; 3. Stage: Execution - Module
 
-(defun org-canvas--module-find-by-name (name)
+(defun org-canvas--module-search-by-name (name)
   "Search for a module with NAME on Canvas.  Return nil on error."
   (elog-info org-canvas--logger "[Stage 3: Search] Looking for module '%s'..." name)
   (condition-case err
@@ -381,7 +381,7 @@ MODULES-FILE-DIR is used to resolve relative file links."
   "Send module PAYLOAD to Canvas API based on DATA."
   (org-canvas--push-to-api data payload
     :endpoint "modules"
-    :find-fn #'org-canvas--module-find-by-name))
+    :find-fn #'org-canvas--module-search-by-name))
 
 ;;;; 3. Stage: Execution - Module Item
 
@@ -696,11 +696,7 @@ Returns a link string or just the title if resolution fails."
 (defun org-canvas-pull-modules ()
   "Pull modules from Canvas into modules.org."
   (interactive)
-  (org-canvas-clear-log)
-  (display-buffer (get-buffer-create "*canvas-log*"))
-  (elog-info org-canvas--logger "========================================")
-  (elog-info org-canvas--logger ">>> PULLING MODULES")
-  (elog-info org-canvas--logger "========================================")
+  (org-canvas--start-operation "PULLING MODULES")
   (let* ((file (expand-file-name org-canvas-modules-file))
          (endpoint (org-canvas-api-course-endpoint "modules"))
          (remote (org-canvas-api-request-all-pages

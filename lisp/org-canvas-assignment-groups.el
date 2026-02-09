@@ -163,49 +163,28 @@ Handles 404 on PUT by retrying as POST (stale CANVAS_ID recovery)."
 
 ;;;; Pull
 
-;;;###autoload
-(defun org-canvas-pull-assignment-groups ()
-  "Pull assignment groups from Canvas into assignment-groups.org."
-  (interactive)
-  (org-canvas-clear-log)
-  (display-buffer (get-buffer-create "*canvas-log*"))
-  (elog-info org-canvas--logger "========================================")
-  (elog-info org-canvas--logger ">>> PULLING ASSIGNMENT GROUPS")
-  (elog-info org-canvas--logger "========================================")
-  (let* ((file (expand-file-name org-canvas-assignment-groups-file))
-         (endpoint (org-canvas-api-course-endpoint "assignment_groups"))
-         (remote (org-canvas-api-request-all-pages 'GET endpoint))
-         (created 0) (updated 0))
-    (unless (file-exists-p file)
-      (with-temp-file file (insert "")))
-    (with-current-buffer (find-file-noselect file)
-      (dolist (group remote)
-        (let* ((id (alist-get 'id group))
-               (name (alist-get 'name group))
-               (weight (alist-get 'group_weight group))
-               (rules (alist-get 'rules group))
-               (pos (org-canvas--pull-upsert-heading file id name)))
-          (goto-char pos)
-          (when name (org-edit-headline name))
-          (org-canvas-org-set-property pos "CANVAS_ID" (format "%s" id))
-          (when weight
-            (org-canvas-org-set-property pos "WEIGHT" (format "%s" weight)))
-          (when rules
-            (let ((drop-lowest (alist-get 'drop_lowest rules))
-                  (drop-highest (alist-get 'drop_highest rules)))
-              (when (and drop-lowest (> drop-lowest 0))
-                (org-canvas-org-set-property pos "DROP_LOWEST"
-                                             (format "%s" drop-lowest)))
-              (when (and drop-highest (> drop-highest 0))
-                (org-canvas-org-set-property pos "DROP_HIGHEST"
-                                             (format "%s" drop-highest)))))
-          (org-canvas-org-set-property
-           pos "LAST_SYNCED" (format-time-string "[%Y-%m-%d %a %H:%M]"))
-          (if (org-entry-get pos "CANVAS_ID") (cl-incf updated) (cl-incf created))))
-      (save-buffer))
-    (elog-info org-canvas--logger
-      "Assignment groups pull complete: %d updated, %d created" updated created)
-    (message "Assignment groups pull complete.")))
+(defun org-canvas--assignment-group-pull-item (item pos)
+  "Set per-item properties for a pulled assignment group.
+ITEM is the API response alist, POS is the heading position."
+  (let ((weight (alist-get 'group_weight item))
+        (rules (alist-get 'rules item)))
+    (when weight
+      (org-canvas-org-set-property pos "WEIGHT" (format "%s" weight)))
+    (when rules
+      (let ((drop-lowest (alist-get 'drop_lowest rules))
+            (drop-highest (alist-get 'drop_highest rules)))
+        (when (and drop-lowest (> drop-lowest 0))
+          (org-canvas-org-set-property pos "DROP_LOWEST"
+                                       (format "%s" drop-lowest)))
+        (when (and drop-highest (> drop-highest 0))
+          (org-canvas-org-set-property pos "DROP_HIGHEST"
+                                       (format "%s" drop-highest)))))))
+
+(org-canvas-define-pull assignment-groups
+  :file org-canvas-assignment-groups-file
+  :endpoint "assignment_groups"
+  :title-field 'name
+  :item-fn #'org-canvas--assignment-group-pull-item)
 
 (provide 'org-canvas-assignment-groups)
 ;;; org-canvas-assignment-groups.el ends here

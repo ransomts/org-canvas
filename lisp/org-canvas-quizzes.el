@@ -50,7 +50,7 @@
 
 ;;;; Helper Functions
 
-(defun org-canvas--quiz-get-body-text ()
+(defun org-canvas--quiz-parse-body-text ()
   "Get the body text of current heading, excluding subheadings.
 Returns the text between the current heading and the first subheading."
   (save-excursion
@@ -67,7 +67,7 @@ Returns the text between the current heading and the first subheading."
 	  (setq end subtree-end)))
       (string-trim (buffer-substring-no-properties start end)))))
 
-(defun org-canvas--quiz-get-question-text ()
+(defun org-canvas--quiz-parse-question-text ()
   "Get the question prompt text, excluding answer lists.
 Returns only the text before the first list item (- or *)."
   (save-excursion
@@ -176,14 +176,14 @@ Supports: exact value, or [min, max] range."
 		    '("assignment" "practice_quiz" "graded_survey" "survey")
 		    "QUIZ_TYPE" "assignment"))
 	 (time-limit (org-canvas-org-get-property pom "TIME_LIMIT"))
-	 (published (if (org-canvas-org-get-boolean-property pom "PUBLISHED" t) t :json-false))
+	 (published (org-canvas-org-get-boolean-property pom "PUBLISHED" t))
 	 (shuffle (org-canvas-org-get-boolean-property pom "SHUFFLE_ANSWERS"))
 	 (attempts (org-canvas-org-get-property pom "ALLOWED_ATTEMPTS"))
 	 (due-at (org-canvas-org-get-property pom "DUE_AT"))
 	 (group-link (org-canvas-org-get-property pom "GROUP"))
 	 (assignment-group-id (org-canvas--resolve-link-property
 			       group-link "CANVAS_ID" org-canvas-quizzes-file))
-	 (body-text (org-canvas--quiz-get-body-text)))
+	 (body-text (org-canvas--quiz-parse-body-text)))
 
     (when (or (null title) (string-empty-p title))
       (error "Quiz title cannot be empty at point %d" (marker-position pom)))
@@ -210,7 +210,7 @@ Supports: exact value, or [min, max] range."
   "Convert quiz DATA to Canvas payload."
   (let ((quiz-obj `((title . ,(plist-get data :title))
 		    (quiz_type . ,(plist-get data :quiz_type))
-		    (published . ,(plist-get data :published)))))
+		    (published . ,(org-canvas--to-json-boolean (plist-get data :published))))))
 
     (when-let ((desc (plist-get data :description)))
       (push `(description . ,desc) quiz-obj))
@@ -270,7 +270,7 @@ QUIZ-CANVAS-ID is the Canvas ID of the parent quiz."
 		    "file_upload_question" "text_only_question")
 		  "TYPE" "multiple_choice_question"))
 	 (points (org-canvas-org-get-number-property pom "POINTS" 1))
-	 (body-text (org-canvas--quiz-get-question-text)))
+	 (body-text (org-canvas--quiz-parse-question-text)))
 
     (elog-debug org-canvas--logger "[Question Parse] '%s' type=%s" title q-type)
 
@@ -285,17 +285,8 @@ QUIZ-CANVAS-ID is the Canvas ID of the parent quiz."
 (defun org-canvas--question-build-answers (q-type)
   "Build answers array based on Q-TYPE from current heading content."
   (pcase q-type
-    ;; Multiple choice: one correct answer
-    ((or "multiple_choice_question" "true_false_question")
-     (let ((answers (org-canvas--quiz-parse-checkbox-list)))
-       (cl-loop for (text . correct) in answers
-		collect `((answer_text . ,text)
-			  (answer_weight . ,(if correct
-					       org-canvas--answer-weight-correct
-					     org-canvas--answer-weight-incorrect))))))
-
-    ;; Multiple answers: multiple can be correct
-    ("multiple_answers_question"
+    ;; Multiple choice, true/false, multiple answers: checkbox answers with weights
+    ((or "multiple_choice_question" "true_false_question" "multiple_answers_question")
      (let ((answers (org-canvas--quiz-parse-checkbox-list)))
        (cl-loop for (text . correct) in answers
 		collect `((answer_text . ,text)
@@ -560,11 +551,7 @@ QUIZ-CANVAS-ID is the Canvas ID of the quiz."
 (defun org-canvas-pull-quizzes ()
   "Pull quizzes from Canvas into quizzes.org."
   (interactive)
-  (org-canvas-clear-log)
-  (display-buffer (get-buffer-create "*canvas-log*"))
-  (elog-info org-canvas--logger "========================================")
-  (elog-info org-canvas--logger ">>> PULLING QUIZZES")
-  (elog-info org-canvas--logger "========================================")
+  (org-canvas--start-operation "PULLING QUIZZES")
   (let* ((file (expand-file-name org-canvas-quizzes-file))
          (endpoint (org-canvas-api-course-endpoint "quizzes"))
          (remote (org-canvas-api-request-all-pages 'GET endpoint))
@@ -609,14 +596,7 @@ QUIZ-CANVAS-ID is the Canvas ID of the quiz."
               (when group-link
                 (org-canvas-org-set-property pos "GROUP" group-link))))
           ;; Insert description body
-          (when (and desc-html (not (string-empty-p desc-html)))
-            (let ((body-start (save-excursion
-                                (org-end-of-meta-data t) (point)))
-                  (body-end (save-excursion
-                              (org-end-of-subtree t) (point))))
-              (delete-region body-start body-end)
-              (goto-char body-start)
-              (insert "\n" (org-canvas--html-to-org desc-html) "\n")))
+          (org-canvas--pull-insert-body desc-html)
           ;; Fetch and insert questions as L2 headings
           (condition-case nil
               (let* ((q-url (org-canvas-api-course-endpoint

@@ -608,7 +608,7 @@ Per Canvas docs, this GET request must be authenticated."
              (error-message-string err))
            (signal (car err) (cdr err))))))))
 
-(defun org-canvas--file-find-by-name (display-name folder-path)
+(defun org-canvas--file-search-by-name (display-name folder-path)
   "Search for a file with DISPLAY-NAME in FOLDER-PATH on Canvas."
   (elog-info org-canvas--logger "[Stage 3: Search] Looking for '%s' in '%s'..."
     display-name (if (string-empty-p folder-path) "root" folder-path))
@@ -893,11 +893,7 @@ Creates folders as needed and populates the folder cache."
   "Pull file metadata from Canvas into files.org.
 Downloads file contents to the content/ directory."
   (interactive)
-  (org-canvas-clear-log)
-  (display-buffer (get-buffer-create "*canvas-log*"))
-  (elog-info org-canvas--logger "========================================")
-  (elog-info org-canvas--logger ">>> PULLING FILES")
-  (elog-info org-canvas--logger "========================================")
+  (org-canvas--start-operation "PULLING FILES")
   (let* ((file (expand-file-name org-canvas-files-file))
          (content-dir (expand-file-name
                        "content" (file-name-directory file)))
