@@ -226,13 +226,13 @@ Content.
           (org-canvas--page-push-to-api data payload)
           (expect-api-called 'PUT "pages/existing-page"))))))
 
-(describe "org-canvas--page-find-by-title (mocked)"
+(describe "org-canvas--page-search-by-title (mocked)"
   (it "searches pages endpoint"
     (with-org-canvas-test-config
       (with-mock-api
         (setq test-org-canvas-api-responses
               '(("pages" . [((url . "test-page") (title . "Test Page"))])))
-        (org-canvas--page-find-by-title "Test Page")
+        (org-canvas--page-search-by-title "Test Page")
         (expect-api-called 'GET "pages"))))
 
   (it "returns matching page"
@@ -241,7 +241,7 @@ Content.
         (setq test-org-canvas-api-responses
               '(("pages" . [((url . "syllabus") (title . "Syllabus"))
                             ((url . "other") (title . "Other"))])))
-        (let ((result (org-canvas--page-find-by-title "Syllabus")))
+        (let ((result (org-canvas--page-search-by-title "Syllabus")))
           (expect (alist-get 'url result) :to-equal "syllabus"))))))
 
 ;;;; Stage 4: Finalize
@@ -373,13 +373,13 @@ This is *bold* text.
 
 ;;;; Additional Find by Title Tests
 
-(describe "org-canvas--page-find-by-title (mocked)"
+(describe "org-canvas--page-search-by-title (mocked)"
   (it "returns nil when no match"
     (with-org-canvas-test-config
       (with-mock-api
         (setq test-org-canvas-api-responses
               '(("pages" . [((url . "other") (title . "Other Page"))])))
-        (let ((result (org-canvas--page-find-by-title "Nonexistent")))
+        (let ((result (org-canvas--page-search-by-title "Nonexistent")))
           (expect result :to-be nil)))))
 
   (it "returns nil on API error"
@@ -387,7 +387,7 @@ This is *bold* text.
       (cl-letf (((symbol-function 'org-canvas-api-request)
                  (lambda (&rest _)
                    (signal 'error '("API error")))))
-        (let ((result (org-canvas--page-find-by-title "Any")))
+        (let ((result (org-canvas--page-search-by-title "Any")))
           (expect result :to-be nil))))))
 
 ;;;; Additional Finalize Tests

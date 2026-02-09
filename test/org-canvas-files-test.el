@@ -469,13 +469,13 @@
       (expect (org-canvas--file-upload-step3-confirm step2-response)
               :to-throw 'error))))
 
-(describe "org-canvas--file-find-by-name (mocked)"
+(describe "org-canvas--file-search-by-name (mocked)"
   (it "searches files endpoint with search_term"
     (with-org-canvas-test-config
       (with-mock-api
         (setq test-org-canvas-api-responses
               '(("files" . [((id . 111) (display_name . "Lab 1.pdf"))])))
-        (org-canvas--file-find-by-name "Lab 1.pdf" "")
+        (org-canvas--file-search-by-name "Lab 1.pdf" "")
         (expect-api-called 'GET "files"))))
 
   (it "returns matching file object"
@@ -484,7 +484,7 @@
         (setq test-org-canvas-api-responses
               '(("files" . [((id . 222) (display_name . "Syllabus.pdf"))
                             ((id . 333) (display_name . "Other.pdf"))])))
-        (let ((result (org-canvas--file-find-by-name "Syllabus.pdf" "")))
+        (let ((result (org-canvas--file-search-by-name "Syllabus.pdf" "")))
           (expect (alist-get 'id result) :to-equal 222)))))
 
   (it "returns nil when file not found"
@@ -492,7 +492,7 @@
       (with-mock-api
         (setq test-org-canvas-api-responses
               '(("files" . [])))
-        (let ((result (org-canvas--file-find-by-name "Missing.pdf" "")))
+        (let ((result (org-canvas--file-search-by-name "Missing.pdf" "")))
           (expect result :to-be nil)))))
 
   (it "returns nil on API error"
@@ -500,7 +500,7 @@
       (cl-letf (((symbol-function 'org-canvas-api-request)
                  (lambda (_method _url &rest _args)
                    (signal 'error '("API Error")))))
-        (let ((result (org-canvas--file-find-by-name "Any.pdf" "")))
+        (let ((result (org-canvas--file-search-by-name "Any.pdf" "")))
           (expect result :to-be nil))))))
 
 (describe "org-canvas--file-push-to-api (mocked)"
@@ -1616,14 +1616,14 @@
             (org-canvas--file-push-to-api data)
             (expect warning-logged :to-be t)))))))
 
-(describe "org-canvas--file-find-by-name folder path log"
+(describe "org-canvas--file-search-by-name folder path log"
   (it "logs search location with non-empty folder path"
     (with-org-canvas-test-config
       (with-mock-api
         (setq test-org-canvas-api-responses
               '(("files" . [((display_name . "test.pdf") (id . 100))])))
         ;; Should not error when folder-path is non-empty
-        (let ((result (org-canvas--file-find-by-name "test.pdf" "Labs/Week1")))
+        (let ((result (org-canvas--file-search-by-name "test.pdf" "Labs/Week1")))
           (expect (alist-get 'id result) :to-equal 100))))))
 
 (describe "org-canvas-sync-files pre-flight warning"

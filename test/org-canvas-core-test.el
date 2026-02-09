@@ -2357,7 +2357,7 @@ Content two.
                 (kill-buffer)))
           (delete-directory dir t))))))
 
-(describe "org-canvas--export-subtree-to-html"
+(describe "org-canvas--export-subtree-body-to-html"
   (it "succeeds with source blocks without requiring a kernel"
     (with-temp-org-buffer
      "* Page Title
@@ -2369,7 +2369,7 @@ x = 42
 #+end_src
 "
      (goto-char (point-min))
-     (let ((html (org-canvas--export-subtree-to-html)))
+     (let ((html (org-canvas--export-subtree-body-to-html)))
        (expect html :to-be-truthy)
        (expect html :to-match "42")))))
 
@@ -3755,6 +3755,48 @@ Page content.
         (expect result :to-match "WARNING")
         (expect result :to-match "<p>Test</p>")))))
 
+(describe "org-canvas--pull-insert-body"
+  (it "inserts converted HTML as Org text"
+    (with-temp-org-buffer
+     "* Heading
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+Old body text
+"
+     (goto-char (point-min))
+     (org-back-to-heading t)
+     (org-canvas--pull-insert-body "<p>New content</p>")
+     (goto-char (point-min))
+     (expect (buffer-string) :to-match "New content")
+     (expect (buffer-string) :not :to-match "Old body text")))
+
+  (it "does nothing when body is nil"
+    (with-temp-org-buffer
+     "* Heading
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+Keep this
+"
+     (goto-char (point-min))
+     (org-back-to-heading t)
+     (org-canvas--pull-insert-body nil)
+     (expect (buffer-string) :to-match "Keep this")))
+
+  (it "does nothing when body is empty string"
+    (with-temp-org-buffer
+     "* Heading
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+Keep this too
+"
+     (goto-char (point-min))
+     (org-back-to-heading t)
+     (org-canvas--pull-insert-body "")
+     (expect (buffer-string) :to-match "Keep this too"))))
+
 (describe "org-canvas--pull-upsert-heading"
   (it "creates new heading when no match exists"
     (let* ((temp-dir (make-temp-file "upsert-test" t))
@@ -3827,5 +3869,33 @@ Page content.
 
   (it "returns nil for nil input"
     (expect (org-canvas--iso8601-to-org-inactive-timestamp nil) :to-be nil)))
+
+(describe "org-canvas-define-pull"
+  (it "signals error when :file is missing"
+    (expect (macroexpand '(org-canvas-define-pull test-feature
+                            :endpoint "test"
+                            :item-fn #'ignore))
+            :to-throw 'error))
+
+  (it "signals error when :endpoint is missing"
+    (expect (macroexpand '(org-canvas-define-pull test-feature
+                            :file test-file
+                            :item-fn #'ignore))
+            :to-throw 'error))
+
+  (it "signals error when :item-fn is missing"
+    (expect (macroexpand '(org-canvas-define-pull test-feature
+                            :file test-file
+                            :endpoint "test"))
+            :to-throw 'error))
+
+  (it "generates a pull function with correct name"
+    (let ((expansion (macroexpand '(org-canvas-define-pull test-widgets
+                                    :file test-file
+                                    :endpoint "widgets"
+                                    :item-fn #'ignore))))
+      (expect expansion :to-be-truthy)
+      ;; Check that the expansion contains a defun with the right name
+      (expect (format "%S" expansion) :to-match "org-canvas-pull-test-widgets"))))
 
 ;;; org-canvas-core-test.el ends here

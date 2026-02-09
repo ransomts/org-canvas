@@ -237,13 +237,13 @@ Content.
           (org-canvas--assignment-push-to-api data payload)
           (expect-api-called 'PUT "assignments/789"))))))
 
-(describe "org-canvas--assignment-find-by-name (mocked)"
+(describe "org-canvas--assignment-search-by-name (mocked)"
   (it "searches assignments endpoint"
     (with-org-canvas-test-config
       (with-mock-api
         (setq test-org-canvas-api-responses
               '(("assignments" . [((id . 100) (name . "Homework 1"))])))
-        (org-canvas--assignment-find-by-name "Homework 1")
+        (org-canvas--assignment-search-by-name "Homework 1")
         (expect-api-called 'GET "assignments"))))
 
   (it "returns matching assignment"
@@ -252,7 +252,7 @@ Content.
         (setq test-org-canvas-api-responses
               '(("assignments" . [((id . 100) (name . "Lab 1"))
                                   ((id . 101) (name . "Lab 2"))])))
-        (let ((result (org-canvas--assignment-find-by-name "Lab 1")))
+        (let ((result (org-canvas--assignment-search-by-name "Lab 1")))
           (expect (alist-get 'id result) :to-equal 100))))))
 
 ;;;; Stage 4: Finalize
@@ -516,13 +516,13 @@ This is *bold* text.
 
 ;;;; Additional Find by Name Tests
 
-(describe "org-canvas--assignment-find-by-name (mocked)"
+(describe "org-canvas--assignment-search-by-name (mocked)"
   (it "returns nil when no match"
     (with-org-canvas-test-config
       (with-mock-api
         (setq test-org-canvas-api-responses
               '(("assignments" . [((id . 100) (name . "Other"))])))
-        (let ((result (org-canvas--assignment-find-by-name "Nonexistent")))
+        (let ((result (org-canvas--assignment-search-by-name "Nonexistent")))
           (expect result :to-be nil)))))
 
   (it "returns nil on API error"
@@ -530,7 +530,7 @@ This is *bold* text.
       (cl-letf (((symbol-function 'org-canvas-api-request)
                  (lambda (&rest _)
                    (signal 'error '("API error")))))
-        (let ((result (org-canvas--assignment-find-by-name "Any")))
+        (let ((result (org-canvas--assignment-search-by-name "Any")))
           (expect result :to-be nil))))))
 
 ;;;; Associate Rubric Tests

@@ -315,13 +315,13 @@ Just some text, no table.
             (expect (org-canvas--rubric-push-to-api data payload)
                     :to-throw 'error)))))))
 
-(describe "org-canvas--rubric-find-by-title (mocked)"
+(describe "org-canvas--rubric-search-by-title (mocked)"
   (it "searches rubrics endpoint"
     (with-org-canvas-test-config
       (with-mock-api
         (setq test-org-canvas-api-responses
               '(("rubrics" . [((id . 100) (title . "Essay Rubric"))])))
-        (org-canvas--rubric-find-by-title "Essay Rubric")
+        (org-canvas--rubric-search-by-title "Essay Rubric")
         (expect-api-called 'GET "rubrics"))))
 
   (it "returns matching rubric"
@@ -330,7 +330,7 @@ Just some text, no table.
         (setq test-org-canvas-api-responses
               '(("rubrics" . [((id . 100) (title . "Rubric A"))
                               ((id . 101) (title . "Rubric B"))])))
-        (let ((result (org-canvas--rubric-find-by-title "Rubric A")))
+        (let ((result (org-canvas--rubric-search-by-title "Rubric A")))
           (expect (alist-get 'id result) :to-equal 100))))))
 
 ;;;; Rubric Dissociation

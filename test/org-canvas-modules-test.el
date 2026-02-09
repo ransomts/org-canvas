@@ -715,14 +715,14 @@
               (expect (plist-get result :type) :to-be-truthy)))
         (delete-file temp-file)))))
 
-(describe "org-canvas--module-find-by-name (mocked)"
+(describe "org-canvas--module-search-by-name (mocked)"
   (it "searches modules by name"
     (with-org-canvas-test-config
       (with-mock-api
         (setq test-org-canvas-api-responses
               '(("modules" . [((id . 100) (name . "Week 1"))
                             ((id . 101) (name . "Week 2"))])))
-        (org-canvas--module-find-by-name "Week 1")
+        (org-canvas--module-search-by-name "Week 1")
         (expect-api-called 'GET "modules"))))
 
   (it "returns matching module"
@@ -731,7 +731,7 @@
         (setq test-org-canvas-api-responses
               '(("modules" . [((id . 100) (name . "Week 1"))
                             ((id . 101) (name . "Week 2"))])))
-        (let ((result (org-canvas--module-find-by-name "Week 1")))
+        (let ((result (org-canvas--module-search-by-name "Week 1")))
           (expect (alist-get 'id result) :to-equal 100)))))
 
   (it "returns nil when no match found"
@@ -739,7 +739,7 @@
       (with-mock-api
         (setq test-org-canvas-api-responses
               '(("modules" . [((id . 100) (name . "Week 1"))])))
-        (let ((result (org-canvas--module-find-by-name "Nonexistent Module")))
+        (let ((result (org-canvas--module-search-by-name "Nonexistent Module")))
           (expect result :to-be nil)))))
 
   (it "returns nil on API error"
@@ -747,7 +747,7 @@
       (cl-letf (((symbol-function 'org-canvas-api-request)
                  (lambda (_method _url &rest _args)
                    (signal 'error '("API Error")))))
-        (let ((result (org-canvas--module-find-by-name "Any Module")))
+        (let ((result (org-canvas--module-search-by-name "Any Module")))
           (expect result :to-be nil))))))
 
 ;;;; Delete Functions (mocked)

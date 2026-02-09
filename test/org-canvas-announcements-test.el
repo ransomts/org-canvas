@@ -144,7 +144,7 @@ No comments allowed.
 "
      (org-back-to-heading)
      (let ((data (org-canvas--announcement-parse-entry)))
-       (expect (plist-get data :allow_discussion_comments) :to-equal :json-false)))))
+       (expect (plist-get data :allow_discussion_comments) :to-be nil)))))
 
 ;;;; Stage 2: Build Payload
 
@@ -174,8 +174,8 @@ No comments allowed.
            (payload (org-canvas--announcement-build-payload data)))
       (expect (alist-get 'delayed_post_at payload) :to-equal "2024-01-15T09:00:00Z")))
 
-  (it "adds lock_at when allow_discussion_comments is :false"
-    (let* ((data '(:title "Locked" :message "" :published t :allow_discussion_comments :json-false))
+  (it "adds lock_at when allow_discussion_comments is nil"
+    (let* ((data '(:title "Locked" :message "" :published t :allow_discussion_comments nil))
            (payload (org-canvas--announcement-build-payload data)))
       (expect (alist-get 'lock_at payload) :to-match "^20[0-9][0-9]-")))
 

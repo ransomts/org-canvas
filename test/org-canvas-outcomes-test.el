@@ -446,14 +446,14 @@ Content.
 
 ;;;; Stage 3: Search Functions (mocked)
 
-(describe "org-canvas--outcome-group-find-by-title (mocked)"
+(describe "org-canvas--outcome-group-search-by-title (mocked)"
   (it "searches subgroups endpoint"
     (with-org-canvas-test-config
       (with-mock-api
         (setq test-org-canvas-api-responses
               '(("outcome_groups/100/subgroups" . [((id . 200) (title . "Skills"))
                                                    ((id . 201) (title . "Knowledge"))])))
-        (org-canvas--outcome-group-find-by-title "Skills" 100)
+        (org-canvas--outcome-group-search-by-title "Skills" 100)
         (expect-api-called 'GET "outcome_groups/100/subgroups"))))
 
   (it "returns matching group"
@@ -462,7 +462,7 @@ Content.
         (setq test-org-canvas-api-responses
               '(("outcome_groups" . [((id . 200) (title . "Skills"))
                                      ((id . 201) (title . "Knowledge"))])))
-        (let ((result (org-canvas--outcome-group-find-by-title "Skills" 100)))
+        (let ((result (org-canvas--outcome-group-search-by-title "Skills" 100)))
           (expect (alist-get 'id result) :to-equal 200)))))
 
   (it "returns nil when not found"
@@ -470,7 +470,7 @@ Content.
       (with-mock-api
         (setq test-org-canvas-api-responses
               '(("outcome_groups" . [((id . 200) (title . "Other"))])))
-        (let ((result (org-canvas--outcome-group-find-by-title "Missing" 100)))
+        (let ((result (org-canvas--outcome-group-search-by-title "Missing" 100)))
           (expect result :to-be nil)))))
 
   (it "returns nil on API error"
@@ -478,16 +478,16 @@ Content.
       (cl-letf (((symbol-function 'org-canvas-api-request)
                  (lambda (_method _url &rest _args)
                    (signal 'error '("API Error")))))
-        (let ((result (org-canvas--outcome-group-find-by-title "Any" 100)))
+        (let ((result (org-canvas--outcome-group-search-by-title "Any" 100)))
           (expect result :to-be nil))))))
 
-(describe "org-canvas--outcome-find-by-title (mocked)"
+(describe "org-canvas--outcome-search-by-title (mocked)"
   (it "searches outcomes in group"
     (with-org-canvas-test-config
       (with-mock-api
         (setq test-org-canvas-api-responses
               '(("outcome_groups/100/outcomes" . [((outcome . ((id . 300) (title . "Writing"))))])))
-        (org-canvas--outcome-find-by-title "Writing" 100)
+        (org-canvas--outcome-search-by-title "Writing" 100)
         (expect-api-called 'GET "outcome_groups/100/outcomes"))))
 
   (it "returns matching outcome"
@@ -496,7 +496,7 @@ Content.
         (setq test-org-canvas-api-responses
               '(("outcome_groups" . [((outcome . ((id . 300) (title . "Writing"))))
                                      ((outcome . ((id . 301) (title . "Reading"))))])))
-        (let ((result (org-canvas--outcome-find-by-title "Writing" 100)))
+        (let ((result (org-canvas--outcome-search-by-title "Writing" 100)))
           (expect (alist-get 'id result) :to-equal 300)))))
 
   (it "returns nil when not found"
@@ -504,7 +504,7 @@ Content.
       (with-mock-api
         (setq test-org-canvas-api-responses
               '(("outcome_groups" . [])))
-        (let ((result (org-canvas--outcome-find-by-title "Missing" 100)))
+        (let ((result (org-canvas--outcome-search-by-title "Missing" 100)))
           (expect result :to-be nil)))))
 
   (it "returns nil on API error"
@@ -512,7 +512,7 @@ Content.
       (cl-letf (((symbol-function 'org-canvas-api-request)
                  (lambda (_method _url &rest _args)
                    (signal 'error '("API Error")))))
-        (let ((result (org-canvas--outcome-find-by-title "Any" 100)))
+        (let ((result (org-canvas--outcome-search-by-title "Any" 100)))
           (expect result :to-be nil))))))
 
 ;;;; Stage 3: Push to API (mocked)

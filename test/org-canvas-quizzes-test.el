@@ -8,7 +8,7 @@
 
 ;;;; Helper Functions
 
-(describe "org-canvas--quiz-get-body-text"
+(describe "org-canvas--quiz-parse-body-text"
   (it "extracts body text from heading"
     (with-temp-org-buffer
      "* Quiz Title
@@ -18,7 +18,7 @@
 This is the quiz description.
 "
      (org-back-to-heading)
-     (expect (org-canvas--quiz-get-body-text)
+     (expect (org-canvas--quiz-parse-body-text)
              :to-equal "This is the quiz description.")))
 
   (it "excludes subheadings from body"
@@ -33,10 +33,10 @@ Quiz intro text.
 Question content.
 "
      (org-back-to-heading)
-     (expect (org-canvas--quiz-get-body-text)
+     (expect (org-canvas--quiz-parse-body-text)
              :to-equal "Quiz intro text."))))
 
-(describe "org-canvas--quiz-get-question-text"
+(describe "org-canvas--quiz-parse-question-text"
   (it "extracts question text before list"
     (with-temp-org-buffer
      "* Quiz
@@ -49,7 +49,7 @@ Question content.
 "
      (search-forward "What is 2+2")
      (org-back-to-heading)
-     (expect (org-canvas--quiz-get-question-text) :to-equal "")))
+     (expect (org-canvas--quiz-parse-question-text) :to-equal "")))
 
   (it "extracts multi-line question text"
     (with-temp-org-buffer
@@ -66,7 +66,7 @@ What would happen if X occurred?
 "
      (search-forward "Question")
      (org-back-to-heading)
-     (let ((text (org-canvas--quiz-get-question-text)))
+     (let ((text (org-canvas--quiz-parse-question-text)))
        (expect text :to-match "Consider the following scenario")))))
 
 (describe "org-canvas--quiz-parse-checkbox-list"
@@ -202,7 +202,7 @@ Content.
 "
      (org-back-to-heading)
      (let ((data (org-canvas--quiz-parse-entry)))
-       (expect (plist-get data :published) :to-equal :json-false))))
+       (expect (plist-get data :published) :to-be nil))))
 
   (it "parses shuffle_answers"
     (with-temp-org-buffer
@@ -394,8 +394,8 @@ Content.
            (payload (org-canvas--quiz-build-payload data)))
       (expect (alist-get 'published (alist-get 'quiz payload)) :to-be t)))
 
-  (it "includes published json-false"
-    (let* ((data '(:title "Test" :quiz_type "assignment" :published :json-false))
+  (it "includes published json-false when nil"
+    (let* ((data '(:title "Test" :quiz_type "assignment" :published nil))
            (payload (org-canvas--quiz-build-payload data)))
       (expect (alist-get 'published (alist-get 'quiz payload)) :to-equal :json-false)))
 
@@ -1465,7 +1465,7 @@ Quiz description.
 
 ;;;; Empty Quiz Body
 
-(describe "org-canvas--quiz-get-body-text edge cases"
+(describe "org-canvas--quiz-parse-body-text edge cases"
   (it "returns empty string for quiz with no body"
     (with-temp-org-buffer
      "* Quiz
@@ -1475,7 +1475,7 @@ Quiz description.
 - [X] A
 "
      (org-back-to-heading)
-     (expect (org-canvas--quiz-get-body-text) :to-equal "")))
+     (expect (org-canvas--quiz-parse-body-text) :to-equal "")))
 
   (it "handles quiz with only whitespace body"
     (with-temp-org-buffer
@@ -1489,7 +1489,7 @@ Quiz description.
 - [X] A
 "
      (org-back-to-heading)
-     (expect (org-canvas--quiz-get-body-text) :to-equal ""))))
+     (expect (org-canvas--quiz-parse-body-text) :to-equal ""))))
 
 ;;;; Quiz Parse Entry Edge Cases
 
