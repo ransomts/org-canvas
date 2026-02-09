@@ -527,16 +527,15 @@ Page content.
                   (org-canvas-course-id "99999"))
               (with-sync-test-env
                 (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t))
-                          ((symbol-function 'org-canvas-api-request)
-                           (lambda (method _url &rest _args)
-                             (cond
-                              ((eq method 'GET)
-                               ;; Return a front page and a normal page
-                               [((url . "home") (title . "Home") (front_page . t))
-                                ((url . "other") (title . "Other") (front_page . nil))])
-                              ((eq method 'DELETE)
-                               (setq deleted-count (1+ deleted-count))
-                               nil)))))
+                          ((symbol-function 'org-canvas-api-request-all-pages)
+                           (lambda (_method _url &optional _params)
+                             '(((url . "home") (title . "Home") (front_page . t))
+                               ((url . "other") (title . "Other") (front_page . nil)))))
+                          ((symbol-function 'org-canvas--delete-items-queued)
+                           (lambda (items _endpoint-fn _id-field _title-field &optional skip-fn)
+                             (let ((to-delete (if skip-fn (cl-remove-if skip-fn items) items)))
+                               (setq deleted-count (length to-delete))
+                               (cons (length to-delete) nil)))))
                   (org-canvas-delete-all-pages)
                   ;; Only the non-front page should be deleted
                   (expect deleted-count :to-equal 1)))))

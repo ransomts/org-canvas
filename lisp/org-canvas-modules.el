@@ -593,23 +593,14 @@ Returns (success-count . fail-count)."
       (let* ((endpoint (org-canvas-api-course-endpoint "modules"))
              (params org-canvas--api-max-per-page)
              (remote-items (append (org-canvas-api-request 'GET endpoint :params params) nil))
-             (deleted-ids nil)
-             (deleted-count 0))
-
-        (elog-info org-canvas--logger "Found %d modules on Canvas" (length remote-items))
-
-        (dolist (item remote-items)
-          (let ((id (alist-get 'id item))
-                (name (alist-get 'name item)))
-            (elog-info org-canvas--logger "Deleting: '%s' (ID: %s)" name id)
-            (condition-case err
-                (progn
-                  (org-canvas-api-request 'DELETE (org-canvas-api-course-endpoint "modules/%s" id))
-                  (push (number-to-string id) deleted-ids)
-                  (setq deleted-count (1+ deleted-count))
-                  (elog-info org-canvas--logger "  -> Deleted successfully"))
-              (error
-               (elog-error org-canvas--logger "  -> Delete failed: %s" (cadr err))))))
+             (result (progn
+                       (elog-info org-canvas--logger "Found %d modules on Canvas" (length remote-items))
+                       (org-canvas--delete-items-queued
+                        remote-items
+                        (lambda (item-id)
+                          (org-canvas-api-course-endpoint "modules/%s" item-id))
+                        'id 'name)))
+             (deleted-count (car result)))
 
         ;; Clean local properties (modules and module items)
         (when (file-exists-p modules-file)

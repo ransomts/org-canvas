@@ -450,25 +450,14 @@ Warning: This will remove all learning outcomes from the course."
   (let* ((root-group-id (org-canvas--outcome-get-root-group-id))
          (endpoint (org-canvas-api-course-endpoint "outcome_groups/%s/subgroups" root-group-id))
          (subgroups (append (org-canvas-api-request 'GET endpoint) nil))
-         (deleted-groups 0)
-         (deleted-ids nil))
-
-    (elog-info org-canvas--logger "Found %d outcome groups (excluding root)" (length subgroups))
-
-    ;; Delete each subgroup (which deletes its outcomes too)
-    (dolist (group subgroups)
-      (let ((id (alist-get 'id group))
-            (title (alist-get 'title group)))
-        (elog-info org-canvas--logger "Deleting group: '%s' (ID: %s)" title id)
-        (condition-case err
-            (progn
-              (org-canvas-api-request 'DELETE
-                                      (org-canvas-api-course-endpoint "outcome_groups/%s" id))
-              (push (number-to-string id) deleted-ids)
-              (setq deleted-groups (1+ deleted-groups))
-              (elog-info org-canvas--logger "  -> Deleted successfully"))
-          (error
-           (elog-error org-canvas--logger "  -> Delete failed: %s" (cadr err))))))
+         (result (progn
+                   (elog-info org-canvas--logger "Found %d outcome groups (excluding root)" (length subgroups))
+                   (org-canvas--delete-items-queued
+                    subgroups
+                    (lambda (item-id)
+                      (org-canvas-api-course-endpoint "outcome_groups/%s" item-id))
+                    'id 'title)))
+         (deleted-groups (car result)))
 
     ;; Cleanup local properties
     (when (file-exists-p org-canvas-outcomes-file)

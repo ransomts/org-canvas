@@ -529,22 +529,14 @@ QUIZ-CANVAS-ID is the Canvas ID of the quiz."
   (let* ((endpoint (org-canvas-api-course-endpoint "quizzes"))
 	 (params org-canvas--api-max-per-page)
 	 (remote-items (append (org-canvas-api-request 'GET endpoint :params params) nil))
-	 (deleted 0)
-	 (deleted-ids nil))
-
-    (elog-info org-canvas--logger "Found %d quizzes on Canvas" (length remote-items))
-
-    (dolist (item remote-items)
-      (let ((id (alist-get 'id item))
-	    (title (alist-get 'title item)))
-	(elog-info org-canvas--logger "Deleting: '%s' (ID: %s)" title id)
-	(condition-case err
-	    (progn
-	      (org-canvas-api-request 'DELETE (org-canvas-api-course-endpoint "quizzes/%s" id))
-	      (push (number-to-string id) deleted-ids)
-	      (setq deleted (1+ deleted))
-	      (elog-info org-canvas--logger "  -> Deleted successfully"))
-	  (error (elog-error org-canvas--logger "  -> Delete failed: %s" (cadr err))))))
+	 (result (progn
+		   (elog-info org-canvas--logger "Found %d quizzes on Canvas" (length remote-items))
+		   (org-canvas--delete-items-queued
+		    remote-items
+		    (lambda (item-id)
+		      (org-canvas-api-course-endpoint "quizzes/%s" item-id))
+		    'id 'title)))
+	 (deleted (car result)))
 
     ;; Cleanup local properties (both quizzes and questions)
     (when (file-exists-p org-canvas-quizzes-file)

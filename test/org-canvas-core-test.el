@@ -891,60 +891,78 @@
 ;;;; 12. Delete All Items Helper
 
 (describe "org-canvas--delete-all-items (mocked)"
-  (it "deletes items from Canvas"
+  (it "deletes items from Canvas via queued helper"
     (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("items" . [((id . 1) (title . "Item 1"))
-                            ((id . 2) (title . "Item 2"))])))
-        (let ((deleted (org-canvas--delete-all-items "items"
-                         :endpoint "items"
-                         :file nil)))
-          (expect deleted :to-equal 2)
-          (expect-api-called 'DELETE "items/1")
-          (expect-api-called 'DELETE "items/2")))))
-
-  (it "skips items when skip-fn returns non-nil"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("pages" . [((id . 1) (title . "Keep") (front_page . t))
-                            ((id . 2) (title . "Delete") (front_page . :json-false))])))
-        (let ((deleted (org-canvas--delete-all-items "pages"
-                         :endpoint "pages"
-                         :file nil
-                         :skip-fn (lambda (item) (eq (alist-get 'front_page item) t)))))
-          (expect deleted :to-equal 1)))))
-
-  (it "uses custom id-field and title-field"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("pages" . [((url . "my-page") (name . "My Page"))])))
-        (let ((deleted (org-canvas--delete-all-items "pages"
-                         :endpoint "pages"
-                         :file nil
-                         :id-field 'url
-                         :title-field 'name)))
-          (expect deleted :to-equal 1)
-          (expect-api-called 'DELETE "pages/my-page")))))
-
-  (it "continues after delete error"
-    (with-org-canvas-test-config
-      (let ((call-count 0))
-        (cl-letf (((symbol-function 'org-canvas-api-request)
-                   (lambda (method _url &rest _args)
-                     (setq call-count (1+ call-count))
-                     (cond
-                      ((eq method 'GET) [((id . 1) (title . "A")) ((id . 2) (title . "B"))])
-                      ((and (eq method 'DELETE) (= call-count 2))
-                       (signal 'error '("Delete failed")))
-                      (t nil)))))
+      (let ((queued-args nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (_method _url &optional _params)
+                     '(((id . 1) (title . "Item 1"))
+                       ((id . 2) (title . "Item 2")))))
+                  ((symbol-function 'org-canvas--delete-items-queued)
+                   (lambda (items endpoint-fn id-field title-field &optional skip-fn)
+                     (setq queued-args (list items endpoint-fn id-field title-field skip-fn))
+                     (cons 2 '("1" "2")))))
           (let ((deleted (org-canvas--delete-all-items "items"
                            :endpoint "items"
                            :file nil)))
-            ;; One succeeded, one failed
-            (expect deleted :to-equal 1))))))
+            (expect deleted :to-equal 2)
+            ;; Verify queued helper received correct args
+            (expect (length (nth 0 queued-args)) :to-equal 2)
+            (expect (nth 2 queued-args) :to-equal 'id)
+            (expect (nth 3 queued-args) :to-equal 'title))))))
+
+  (it "passes skip-fn to queued helper"
+    (with-org-canvas-test-config
+      (let ((queued-skip-fn nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (_method _url &optional _params)
+                     '(((id . 1) (title . "Keep") (front_page . t))
+                       ((id . 2) (title . "Delete") (front_page . :json-false)))))
+                  ((symbol-function 'org-canvas--delete-items-queued)
+                   (lambda (_items _endpoint-fn _id-field _title-field &optional skip-fn)
+                     (setq queued-skip-fn skip-fn)
+                     (cons 1 '("2")))))
+          (org-canvas--delete-all-items "pages"
+            :endpoint "pages"
+            :file nil
+            :skip-fn (lambda (item) (eq (alist-get 'front_page item) t)))
+          (expect queued-skip-fn :not :to-be nil)))))
+
+  (it "uses custom id-field and title-field"
+    (with-org-canvas-test-config
+      (let ((queued-args nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (_method _url &optional _params)
+                     '(((url . "my-page") (name . "My Page")))))
+                  ((symbol-function 'org-canvas--delete-items-queued)
+                   (lambda (items endpoint-fn id-field title-field &optional _skip-fn)
+                     (setq queued-args (list items endpoint-fn id-field title-field))
+                     (cons 1 '("my-page")))))
+          (let ((deleted (org-canvas--delete-all-items "pages"
+                           :endpoint "pages"
+                           :file nil
+                           :id-field 'url
+                           :title-field 'name)))
+            (expect deleted :to-equal 1)
+            (expect (nth 2 queued-args) :to-equal 'url)
+            (expect (nth 3 queued-args) :to-equal 'name))))))
+
+  (it "constructs correct endpoint-fn"
+    (with-org-canvas-test-config
+      (let ((captured-endpoint-fn nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (_method _url &optional _params)
+                     '(((id . 42) (title . "Test")))))
+                  ((symbol-function 'org-canvas--delete-items-queued)
+                   (lambda (_items endpoint-fn _id-field _title-field &optional _skip-fn)
+                     (setq captured-endpoint-fn endpoint-fn)
+                     (cons 1 '("42")))))
+          (org-canvas--delete-all-items "items"
+            :endpoint "things"
+            :file nil)
+          ;; Verify endpoint-fn produces correct URL
+          (let ((url (funcall captured-endpoint-fn 42)))
+            (expect url :to-match "things/42$"))))))
 
   (it "cleans local properties from org file"
     (let ((temp-file (make-temp-file "test-canvas" nil ".org")))
@@ -964,9 +982,12 @@
 :END:
 "))
             (with-org-canvas-test-config
-              (with-mock-api
-                (setq test-org-canvas-api-responses
-                      '(("items" . [((id . 1) (title . "Item 1"))])))
+              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                         (lambda (_method _url &optional _params)
+                           '(((id . 1) (title . "Item 1")))))
+                        ((symbol-function 'org-canvas--delete-items-queued)
+                         (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn)
+                           (cons 1 '("1")))))
                 (org-canvas--delete-all-items "items"
                   :endpoint "items"
                   :file temp-file)))
@@ -979,6 +1000,160 @@
               (outline-next-heading)
               (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)))
         (delete-file temp-file)))))
+
+;;;; 12b. Queued Delete Helper
+
+(describe "org-canvas--delete-items-queued"
+  (it "returns (0 . nil) for empty items list"
+    (let ((result (org-canvas--delete-items-queued
+                   nil
+                   (lambda (id) (format "http://example.com/%s" id))
+                   'id 'title)))
+      (expect (car result) :to-equal 0)
+      (expect (cdr result) :to-be nil)))
+
+  (it "returns (0 . nil) when all items are skipped"
+    (let ((result (org-canvas--delete-items-queued
+                   '(((id . 1) (title . "A")) ((id . 2) (title . "B")))
+                   (lambda (id) (format "http://example.com/%s" id))
+                   'id 'title
+                   (lambda (_item) t))))
+      (expect (car result) :to-equal 0)
+      (expect (cdr result) :to-be nil)))
+
+  (it "queues delete requests and collects results"
+    (with-org-canvas-test-config
+      ;; Mock plz-queue (function) and plz-run to synchronously invoke callbacks.
+      ;; make-plz-queue is a cl-defstruct constructor (inlined) and creates a real struct.
+      (let ((queued-thens nil))
+        (cl-letf (((symbol-function 'plz-queue)
+                   (lambda (queue _method _url &rest args)
+                     (push (plist-get args :then) queued-thens)
+                     queue))
+                  ((symbol-function 'plz-run)
+                   (lambda (queue)
+                     (dolist (then-fn (nreverse queued-thens))
+                       (when then-fn (funcall then-fn nil)))
+                     (when (plz-queue-finally queue)
+                       (funcall (plz-queue-finally queue))))))
+          (let ((result (org-canvas--delete-items-queued
+                         '(((id . 1) (title . "First"))
+                           ((id . 2) (title . "Second")))
+                         (lambda (id) (format "http://example.com/%s" id))
+                         'id 'title)))
+            (expect (car result) :to-equal 2)
+            (expect (member "1" (cdr result)) :to-be-truthy)
+            (expect (member "2" (cdr result)) :to-be-truthy))))))
+
+  (it "continues on error and only counts successes"
+    (with-org-canvas-test-config
+      (let ((queued-callbacks nil))
+        (cl-letf (((symbol-function 'plz-queue)
+                   (lambda (queue _method _url &rest args)
+                     (push (cons (plist-get args :then) (plist-get args :else))
+                           queued-callbacks)
+                     queue))
+                  ((symbol-function 'plz-run)
+                   (lambda (queue)
+                     (let ((cbs (nreverse queued-callbacks)))
+                       ;; First: call :else (error)
+                       (when (cdar cbs) (funcall (cdar cbs) "error"))
+                       ;; Second: call :then (success)
+                       (when (caadr cbs) (funcall (caadr cbs) nil)))
+                     (when (plz-queue-finally queue)
+                       (funcall (plz-queue-finally queue))))))
+          (let ((result (org-canvas--delete-items-queued
+                         '(((id . 1) (title . "Fail"))
+                           ((id . 2) (title . "Succeed")))
+                         (lambda (id) (format "http://example.com/%s" id))
+                         'id 'title)))
+            (expect (car result) :to-equal 1)
+            (expect (cdr result) :to-equal '("2")))))))
+
+  (it "converts numeric IDs to strings in deleted-ids"
+    (with-org-canvas-test-config
+      (let ((queued-thens nil))
+        (cl-letf (((symbol-function 'plz-queue)
+                   (lambda (queue _method _url &rest args)
+                     (push (plist-get args :then) queued-thens)
+                     queue))
+                  ((symbol-function 'plz-run)
+                   (lambda (queue)
+                     (dolist (fn (nreverse queued-thens))
+                       (when fn (funcall fn nil)))
+                     (when (plz-queue-finally queue)
+                       (funcall (plz-queue-finally queue))))))
+          (let ((result (org-canvas--delete-items-queued
+                         '(((id . 42) (title . "Numeric")))
+                         (lambda (id) (format "http://example.com/%s" id))
+                         'id 'title)))
+            (expect (car result) :to-equal 1)
+            (expect (car (cdr result)) :to-equal "42"))))))
+
+  (it "keeps string IDs as-is in deleted-ids"
+    (with-org-canvas-test-config
+      (let ((queued-thens nil))
+        (cl-letf (((symbol-function 'plz-queue)
+                   (lambda (queue _method _url &rest args)
+                     (push (plist-get args :then) queued-thens)
+                     queue))
+                  ((symbol-function 'plz-run)
+                   (lambda (queue)
+                     (dolist (fn (nreverse queued-thens))
+                       (when fn (funcall fn nil)))
+                     (when (plz-queue-finally queue)
+                       (funcall (plz-queue-finally queue))))))
+          (let ((result (org-canvas--delete-items-queued
+                         '(((id . "my-page") (title . "String")))
+                         (lambda (id) (format "http://example.com/%s" id))
+                         'id 'title)))
+            (expect (car result) :to-equal 1)
+            (expect (car (cdr result)) :to-equal "my-page"))))))
+
+  (it "passes correct URL from endpoint-fn"
+    (with-org-canvas-test-config
+      (let ((captured-urls nil)
+            (queued-thens nil))
+        (cl-letf (((symbol-function 'plz-queue)
+                   (lambda (queue _method url &rest args)
+                     (push url captured-urls)
+                     (push (plist-get args :then) queued-thens)
+                     queue))
+                  ((symbol-function 'plz-run)
+                   (lambda (queue)
+                     (dolist (fn (nreverse queued-thens))
+                       (when fn (funcall fn nil)))
+                     (when (plz-queue-finally queue)
+                       (funcall (plz-queue-finally queue))))))
+          (org-canvas--delete-items-queued
+           '(((id . 5) (title . "Test")))
+           (lambda (id) (format "http://canvas.example.com/items/%s" id))
+           'id 'title)
+          (expect (car captured-urls) :to-equal "http://canvas.example.com/items/5")))))
+
+  (it "skips items with skip-fn and deletes the rest"
+    (with-org-canvas-test-config
+      (let ((queued-count 0)
+            (queued-thens nil))
+        (cl-letf (((symbol-function 'plz-queue)
+                   (lambda (queue _method _url &rest args)
+                     (setq queued-count (1+ queued-count))
+                     (push (plist-get args :then) queued-thens)
+                     queue))
+                  ((symbol-function 'plz-run)
+                   (lambda (queue)
+                     (dolist (fn (nreverse queued-thens))
+                       (when fn (funcall fn nil)))
+                     (when (plz-queue-finally queue)
+                       (funcall (plz-queue-finally queue))))))
+          (let ((result (org-canvas--delete-items-queued
+                         '(((id . 1) (title . "Keep") (front_page . t))
+                           ((id . 2) (title . "Delete") (front_page . :json-false)))
+                         (lambda (id) (format "http://example.com/%s" id))
+                         'id 'title
+                         (lambda (item) (eq (alist-get 'front_page item) t)))))
+            (expect (car result) :to-equal 1)
+            (expect queued-count :to-equal 1)))))))
 
 ;;;; 13. Delete Item at Point Helper
 
@@ -1124,33 +1299,42 @@
 ;;;; 18. Delete All Items Edge Cases
 
 (describe "org-canvas--delete-all-items edge cases (mocked)"
-  (it "uses custom title-field"
+  (it "passes list-params to GET request"
     (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("items" . [((id . 1) (name . "First Item"))])))
+      (let ((captured-params nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (_method _url &optional params)
+                     (setq captured-params params)
+                     nil))
+                  ((symbol-function 'org-canvas--delete-items-queued)
+                   (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn)
+                     (cons 0 nil))))
+          (org-canvas--delete-all-items "items"
+            :endpoint "items"
+            :file nil
+            :list-params '(("filter" . "active")))
+          (expect captured-params :to-equal '(("filter" . "active")))))))
+
+  (it "returns 0 for empty remote items"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (_method _url &optional _params) nil))
+                ((symbol-function 'org-canvas--delete-items-queued)
+                 (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn)
+                   (cons 0 nil))))
         (let ((deleted (org-canvas--delete-all-items "items"
                          :endpoint "items"
-                         :file nil
-                         :title-field 'name)))
-          (expect deleted :to-equal 1)))))
+                         :file nil)))
+          (expect deleted :to-equal 0)))))
 
-  (it "uses list-params for GET request"
+  (it "does not clean properties when file is nil"
     (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("items" . [])))
-        (org-canvas--delete-all-items "items"
-          :endpoint "items"
-          :file nil
-          :list-params '(("filter" . "active")))
-        (expect-api-called 'GET "items"))))
-
-  (it "handles numeric string conversion for IDs"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("items" . [((id . "string-id") (title . "Item"))])))
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (_method _url &optional _params)
+                   '(((id . 1) (title . "Item")))))
+                ((symbol-function 'org-canvas--delete-items-queued)
+                 (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn)
+                   (cons 1 '("1")))))
         (let ((deleted (org-canvas--delete-all-items "items"
                          :endpoint "items"
                          :file nil)))
@@ -1623,15 +1807,17 @@ Content two.
 (describe "org-canvas--delete-all-items edge paths"
   (it "handles empty remote items list"
     (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("items" . [])))
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (_method _url &optional _params) nil))
+                ((symbol-function 'org-canvas--delete-items-queued)
+                 (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn)
+                   (cons 0 nil))))
         (let ((deleted (org-canvas--delete-all-items "items"
                          :endpoint "items"
                          :file nil)))
           (expect deleted :to-equal 0)))))
 
-  (it "cleans all properties even when some deletes fail"
+  (it "cleans all properties even when queued helper reports partial success"
     (let ((temp-file (make-temp-file "test-canvas" nil ".org")))
       (unwind-protect
           (progn
@@ -1649,24 +1835,17 @@ Content two.
 :END:
 "))
             (with-org-canvas-test-config
-              (let ((call-count 0))
-                (cl-letf (((symbol-function 'org-canvas-api-request)
-                           (lambda (method _url &rest _args)
-                             (setq call-count (1+ call-count))
-                             (cond
-                              ;; GET returns both items
-                              ((eq method 'GET)
-                               [((id . 1) (title . "Item A"))
-                                ((id . 2) (title . "Item B"))])
-                              ;; Delete item 1 succeeds, item 2 fails
-                              ((and (eq method 'DELETE) (= call-count 2))
-                               nil) ; success for item 1
-                              ((and (eq method 'DELETE) (= call-count 3))
-                               (signal 'error '("Delete failed")))
-                              (t nil)))))
-                  (org-canvas--delete-all-items "items"
-                    :endpoint "items"
-                    :file temp-file))))
+              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                         (lambda (_method _url &optional _params)
+                           '(((id . 1) (title . "Item A"))
+                             ((id . 2) (title . "Item B")))))
+                        ((symbol-function 'org-canvas--delete-items-queued)
+                         (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn)
+                           ;; Simulate: item 1 deleted, item 2 failed
+                           (cons 1 '("1")))))
+                (org-canvas--delete-all-items "items"
+                  :endpoint "items"
+                  :file temp-file)))
             ;; Both items should be cleaned (delete-all cleans all properties)
             (with-current-buffer (find-file-noselect temp-file)
               (goto-char (point-min))
@@ -1678,9 +1857,12 @@ Content two.
 
   (it "does not clean properties when file is nil"
     (with-org-canvas-test-config
-      (with-mock-api
-        (setq test-org-canvas-api-responses
-              '(("items" . [((id . 1) (title . "Item"))])))
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (_method _url &optional _params)
+                   '(((id . 1) (title . "Item")))))
+                ((symbol-function 'org-canvas--delete-items-queued)
+                 (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn)
+                   (cons 1 '("1")))))
         ;; Should not error even with nil file
         (let ((deleted (org-canvas--delete-all-items "items"
                          :endpoint "items"

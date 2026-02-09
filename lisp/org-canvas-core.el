@@ -100,6 +100,12 @@ Set to nil to reduce log verbosity or hide potentially sensitive data."
   :type 'integer
   :group 'org-canvas)
 
+(defcustom org-canvas-delete-concurrency 8
+  "Maximum number of concurrent DELETE requests during mass deletion.
+Used by `org-canvas--delete-items-queued' via `plz-queue'."
+  :type 'integer
+  :group 'org-canvas)
+
 (defcustom org-canvas-detect-conflicts t
   "When non-nil, check for remote changes before overwriting.
 Before a PUT request, GET the item from Canvas and compare its
@@ -1494,6 +1500,50 @@ Save the Canvas ID and LAST_SYNCED timestamp to the Org entry."
 ;; Use the macros `org-canvas-define-delete-all' and
 ;; `org-canvas-define-delete-at-point' to generate these functions.
 
+(defun org-canvas--delete-items-queued (items endpoint-fn id-field title-field &optional skip-fn)
+  "Delete ITEMS from Canvas using concurrent requests via `plz-queue'.
+ENDPOINT-FN is a function taking an item ID and returning the DELETE URL.
+ID-FIELD and TITLE-FIELD are alist keys for extracting ID/title from each item.
+SKIP-FN, if non-nil, is called with each item; non-nil return skips that item.
+Returns (DELETED-COUNT . DELETED-IDS)."
+  (let* ((to-delete (if skip-fn (cl-remove-if skip-fn items) items))
+         (skipped (- (length items) (length to-delete))))
+    ;; Log skipped items
+    (when (> skipped 0)
+      (dolist (item items)
+        (when (and skip-fn (funcall skip-fn item))
+          (elog-info org-canvas--logger "Skipping: '%s'"
+            (alist-get title-field item)))))
+    ;; Short-circuit if nothing to delete
+    (if (null to-delete)
+        (cons 0 nil)
+      (let* ((deleted-count 0)
+             (deleted-ids nil)
+             (done nil)
+             (headers `(("Authorization" . ,(concat "Bearer " org-canvas-api-token))
+                        ("Content-Type" . "application/json")))
+             (queue (make-plz-queue
+                     :limit org-canvas-delete-concurrency
+                     :finally (lambda () (setq done t)))))
+        (dolist (item to-delete)
+          (let ((item-id (alist-get id-field item))
+                (item-title (alist-get title-field item)))
+            (elog-info org-canvas--logger "Deleting: '%s' (ID: %s)" item-title item-id)
+            (plz-queue queue 'delete (funcall endpoint-fn item-id)
+              :headers headers
+              :then (lambda (_response)
+                      (push (if (numberp item-id) (number-to-string item-id) item-id)
+                            deleted-ids)
+                      (setq deleted-count (1+ deleted-count))
+                      (elog-info org-canvas--logger "  -> Deleted '%s' successfully" item-title))
+              :else (lambda (err)
+                      (elog-error org-canvas--logger "  -> Delete failed for '%s': %s"
+                        item-title err)))))
+        (plz-run queue)
+        (while (not done)
+          (accept-process-output nil 0.1))
+        (cons deleted-count deleted-ids)))))
+
 (cl-defun org-canvas--delete-all-items (feature-name
                                         &key
                                         endpoint
@@ -1521,47 +1571,35 @@ Returns the count of successfully deleted items."
          (title-field (or title-field 'title))
          (id-property (or id-property "CANVAS_ID"))
          (full-endpoint (org-canvas-api-course-endpoint endpoint))
-         (remote-items (org-canvas-api-request-all-pages 'GET full-endpoint list-params))
-         (deleted-count 0)
-         (deleted-ids nil))
+         (remote-items (org-canvas-api-request-all-pages 'GET full-endpoint list-params)))
 
     (elog-info org-canvas--logger "Found %d %s on Canvas" (length remote-items) feature-name)
 
-    (dolist (item remote-items)
-      (let ((item-id (alist-get id-field item))
-            (item-title (alist-get title-field item)))
-        (if (and skip-fn (funcall skip-fn item))
-            (elog-info org-canvas--logger "Skipping: '%s'" item-title)
-          (progn
-            (elog-info org-canvas--logger "Deleting: '%s' (ID: %s)" item-title item-id)
-            (condition-case err
-                (progn
-                  (org-canvas-api-request 'DELETE
-					  (org-canvas-api-course-endpoint (format "%s/%%s" endpoint) item-id))
-                  (push (if (numberp item-id) (number-to-string item-id) item-id) deleted-ids)
-                  (setq deleted-count (1+ deleted-count))
-                  (elog-info org-canvas--logger "  -> Deleted successfully"))
-              (error
-               (elog-error org-canvas--logger "  -> Delete failed: %s" (cadr err))))))))
+    (let* ((result (org-canvas--delete-items-queued
+                    remote-items
+                    (lambda (item-id)
+                      (org-canvas-api-course-endpoint (format "%s/%%s" endpoint) item-id))
+                    id-field title-field skip-fn))
+           (deleted-count (car result)))
 
-    ;; Cleanup local properties
-    (when (and file (file-exists-p file))
-      (elog-info org-canvas--logger "Cleaning local properties...")
-      (with-current-buffer (find-file-noselect file)
-        (org-map-entries
-         (lambda ()
-           (elog-debug org-canvas--logger "Removing properties for: %s"
-             (org-entry-get (point) id-property))
-           (org-canvas-clear-sync-properties (point)))
-         (format "%s={.}" id-property) 'file)
-        (save-buffer)
-        (elog-info org-canvas--logger "Saved %s" file)))
+      ;; Cleanup local properties
+      (when (and file (file-exists-p file))
+        (elog-info org-canvas--logger "Cleaning local properties...")
+        (with-current-buffer (find-file-noselect file)
+          (org-map-entries
+           (lambda ()
+             (elog-debug org-canvas--logger "Removing properties for: %s"
+               (org-entry-get (point) id-property))
+             (org-canvas-clear-sync-properties (point)))
+           (format "%s={.}" id-property) 'file)
+          (save-buffer)
+          (elog-info org-canvas--logger "Saved %s" file)))
 
-    (elog-info org-canvas--logger "========================================")
-    (elog-info org-canvas--logger ">>> MASS DELETION COMPLETE: %d removed" deleted-count)
-    (elog-info org-canvas--logger "========================================")
+      (elog-info org-canvas--logger "========================================")
+      (elog-info org-canvas--logger ">>> MASS DELETION COMPLETE: %d removed" deleted-count)
+      (elog-info org-canvas--logger "========================================")
 
-    deleted-count))
+      deleted-count)))
 
 (cl-defun org-canvas--delete-item-at-point (feature-name
                                             &key
