@@ -179,5 +179,56 @@ Handles 404 on PUT by retrying as POST (stale CANVAS_ID recovery)."
   :file org-canvas-discussions-file
   :skip-fn (lambda (item) (eq (alist-get 'is_announcement item) t)))
 
+;;;; Pull
+
+;;;###autoload
+(defun org-canvas-pull-discussions ()
+  "Pull discussion topics from Canvas into discussions.org."
+  (interactive)
+  (org-canvas-clear-log)
+  (display-buffer (get-buffer-create "*canvas-log*"))
+  (elog-info org-canvas--logger "========================================")
+  (elog-info org-canvas--logger ">>> PULLING DISCUSSIONS")
+  (elog-info org-canvas--logger "========================================")
+  (let* ((file (expand-file-name org-canvas-discussions-file))
+         (endpoint (org-canvas-api-course-endpoint "discussion_topics"))
+         (remote (org-canvas-api-request-all-pages 'GET endpoint))
+         (count 0))
+    (unless (file-exists-p file)
+      (with-temp-file file (insert "")))
+    (with-current-buffer (find-file-noselect file)
+      (dolist (item remote)
+        ;; Skip announcements
+        (unless (eq (alist-get 'is_announcement item) t)
+          (let* ((id (alist-get 'id item))
+                 (title (alist-get 'title item))
+                 (message-html (alist-get 'message item))
+                 (discussion-type (alist-get 'discussion_type item))
+                 (posted-at (alist-get 'posted_at item))
+                 (delayed-post (alist-get 'delayed_post_at item))
+                 (pos (org-canvas--pull-upsert-heading file id title)))
+            (goto-char pos)
+            (when title (org-edit-headline title))
+            (org-canvas-org-save-sync-state pos id)
+            (when discussion-type
+              (org-canvas-org-set-property
+               pos "DISCUSSION_TYPE" discussion-type))
+            (when delayed-post
+              (let ((ts (org-canvas--iso8601-to-org-timestamp delayed-post)))
+                (when ts (org-canvas-org-set-property pos "DELAYED_POST_AT" ts))))
+            ;; Insert body
+            (when (and message-html (not (string-empty-p message-html)))
+              (let ((body-start (save-excursion
+                                  (org-end-of-meta-data t) (point)))
+                    (body-end (save-excursion
+                                (org-end-of-subtree t) (point))))
+                (delete-region body-start body-end)
+                (goto-char body-start)
+                (insert "\n" (org-canvas--html-to-org message-html) "\n")))
+            (cl-incf count))))
+      (save-buffer))
+    (elog-info org-canvas--logger "Discussions pull complete: %d topics" count)
+    (message "Discussions pull complete: %d topics." count)))
+
 (provide 'org-canvas-discussions)
 ;;; org-canvas-discussions.el ends here

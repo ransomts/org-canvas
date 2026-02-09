@@ -16,10 +16,13 @@ Tested against the Canvas LMS REST API (=/api/v1/=) as of 2026-02-07. Canvas doe
 ** Key Features
 
 - *Org Mode as Source of Truth*: Design your course in plain text with full Org Mode capabilities
-- *Bidirectional Sync Tracking*: Automatically manages Canvas IDs and sync timestamps
+- *Bidirectional Sync*: Push content to Canvas and pull existing courses into Org files
+- *Conflict Detection*: Warns before overwriting remote changes made directly in Canvas
 - *Modular Architecture*: Sync individual content types or the entire course at once
 - *Dependency-Aware*: Syncs in proper order respecting cross-references between files
-- *12 Content Types Supported*: Assignments, quizzes, pages, modules, rubrics, outcomes, discussions, announcements, files, assignment groups, sections, and per-section date overrides
+- *13 Content Types*: Assignments, quizzes, pages, modules, rubrics, outcomes, discussions, announcements, files, assignment groups, sections, per-section date overrides, and course settings
+- *Canvas Migration*: Import an entire existing Canvas course into Org files with =org-canvas-pull-all=
+- *Orphan Cleanup*: Detect and remove Canvas items that no longer have corresponding Org headings
 - *Resilient Syncing*: Pre-sync credential validation, rate limit retry with backoff, actionable error messages for auth failures, graceful handling of missing files
 
 * Installation
@@ -72,6 +75,7 @@ Create Org files for each content type:
 #+begin_example
 my-course/
 ├── org-canvas-credentials.el  ; Your API credentials (gitignored)
+├── settings.org               ; Course settings (timezone, homepage, license)
 ├── assignments.org            ; Course assignments
 ├── quizzes.org               ; Quizzes with questions
 ├── pages.org                 ; Wiki pages
@@ -100,17 +104,32 @@ M-x org-canvas-validate
 ;; Preview what would be synced (no API calls)
 M-x org-canvas-sync-dry-run
 
-;; Sync everything (respects dependencies)
+;; Sync everything (respects dependencies, detects conflicts)
 M-x org-canvas-sync
+
+;; Force sync, overwriting any remote changes
+M-x org-canvas-force-push
 
 ;; Sync individual content types
 M-x org-canvas-sync-assignments
 M-x org-canvas-sync-quizzes
 M-x org-canvas-sync-pages
-;; ... etc for all 12 content types
+M-x org-canvas-sync-settings
+;; ... etc for all 13 content types
 
 ;; Sync a single item at cursor
 M-x org-canvas-sync-assignment-at-point
+
+;; Import an existing Canvas course into Org files
+M-x org-canvas-pull-all
+
+;; Pull individual content types from Canvas
+M-x org-canvas-pull-assignments
+M-x org-canvas-pull-pages
+;; ... etc for all content types
+
+;; Find and remove orphaned Canvas items
+M-x org-canvas-cleanup-orphans
 
 ;; Delete all content from Canvas
 M-x org-canvas-delete-all
@@ -149,10 +168,14 @@ After syncing, org-canvas automatically adds:
 
 See [[file:documentation/manual.org][the full manual]] for:
 
-- Complete file format specifications for all 12 content types
+- Complete file format specifications for all 13 content types
 - All supported properties and link resolution between files
 - Quiz question types and answer formats
+- Course settings (timezone, homepage, grading, license)
 - Sections and per-section date overrides
+- Conflict detection and force-push
+- Canvas-to-Org migration with =org-canvas-pull-all=
+- Orphan cleanup
 - Sync order and dependency management
 - Logging and configuration options
 - Troubleshooting tips
@@ -163,6 +186,7 @@ See [[file:documentation/manual.org][the full manual]] for:
 - Org Mode 9.6+
 - [[https://github.com/alphapapa/plz.el][plz]] - HTTP library
 - [[https://github.com/Kinneyzhang/elog][elog]] - Logging framework
+- [[https://pandoc.org/][pandoc]] (optional) - Required for HTML-to-Org conversion when pulling content from Canvas
 
 * Development
 

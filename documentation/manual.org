@@ -4,9 +4,9 @@
 
 * Introduction
 
-org-canvas synchronizes Org Mode files with Canvas LMS. Each course content type has its own Org file, and the package pushes changes to Canvas via its REST API.
+org-canvas synchronizes Org Mode files with Canvas LMS. Each course content type has its own Org file, and the package manages bidirectional sync via the Canvas REST API.
 
-The workflow treats Org files as the "source of truth" - you design your course entirely in Org Mode and push changes to Canvas. The package tracks sync state via properties (=CANVAS_ID=, =LAST_SYNCED=) so it knows whether to create new items or update existing ones.
+The primary workflow treats Org files as the "source of truth" -- you design your course entirely in Org Mode and push changes to Canvas. For instructors with existing Canvas courses, =org-canvas-pull-all= imports the entire course into Org files. The package tracks sync state via properties (=CANVAS_ID=, =LAST_SYNCED=) so it knows whether to create new items or update existing ones, and detects conflicts when items are modified directly in Canvas.
 
 * Getting Started
 
@@ -16,6 +16,7 @@ The workflow treats Org files as the "source of truth" - you design your course 
 - Org Mode 9.6 or later
 - A Canvas LMS instance with API access
 - A Canvas API token (generate from Account > Settings > Approved Integrations)
+- [[https://pandoc.org/][pandoc]] (optional) -- required for HTML-to-Org conversion when pulling content from Canvas
 
 ** Configuration
 
@@ -50,6 +51,7 @@ This prints your course name if the connection is successful.
 #+begin_example
 my-course/
 ├── org-canvas-credentials.el  ; API credentials (gitignored)
+├── settings.org               ; Course settings (timezone, homepage, license)
 ├── assignments.org            ; Course assignments
 ├── assignment-groups.org      ; Grade weighting categories
 ├── quizzes.org               ; Quizzes with embedded questions
@@ -69,6 +71,7 @@ Each file path is configured via a variable:
 
 | Variable                          | Default                  |
 |-----------------------------------+--------------------------|
+| =org-canvas-settings-file=           | =settings.org=             |
 | =org-canvas-assignments-file=       | =assignments.org=          |
 | =org-canvas-assignment-groups-file= | =assignment-groups.org=    |
 | =org-canvas-quizzes-file=           | =quizzes.org=              |
@@ -109,6 +112,14 @@ modules.org      -->  assignments.org
 ** Sync Tiers
 
 Files are synced in tiers based on their dependencies:
+
+*** Tier -1: Course Level
+
+| File           | Canvas Entity   | Notes                         |
+|----------------+-----------------+-------------------------------|
+| =settings.org=   | Course Settings | Timezone, homepage, license   |
+
+Settings are synced first because they configure the course environment that other content depends on.
 
 *** Tier 0: No Dependencies
 
@@ -153,19 +164,20 @@ Per-section date overrides are defined as tables in =assignments.org= and requir
 
 The =org-canvas-sync= function syncs files in proper dependency order:
 
-1. =outcomes.org= (Tier 0)
-2. =rubrics.org= (Tier 0)
-3. =assignment-groups.org= (Tier 0) - first pass, without drop rules
-4. =sections.org= (Tier 0) - course sections
-5. =files.org= (Tier 0)
-6. =pages.org= (Tier 0)
-7. =discussions.org= (Tier 0)
-8. =announcements.org= (Tier 0)
-9. =quizzes.org= (Tier 1)
-10. =assignments.org= (Tier 1)
-11. =assignment-groups.org= (Tier 1.5) - second pass, with drop rules
-12. Per-section overrides (Tier 1.75)
-13. =modules.org= (Tier 2)
+1. =settings.org= (Tier -1) - course settings
+2. =outcomes.org= (Tier 0)
+3. =rubrics.org= (Tier 0)
+4. =assignment-groups.org= (Tier 0) - first pass, without drop rules
+5. =sections.org= (Tier 0) - course sections
+6. =files.org= (Tier 0)
+7. =pages.org= (Tier 0)
+8. =discussions.org= (Tier 0)
+9. =announcements.org= (Tier 0)
+10. =quizzes.org= (Tier 1)
+11. =assignments.org= (Tier 1)
+12. =assignment-groups.org= (Tier 1.5) - second pass, with drop rules
+13. Per-section overrides (Tier 1.75)
+14. =modules.org= (Tier 2)
 
 *Note*: Assignment groups are synced twice because Canvas rejects drop rules for groups with no assignments. Per-section overrides require both sections and assignments/quizzes to exist.
 
@@ -175,11 +187,61 @@ The =org-canvas-sync= function syncs files in proper dependency order:
 
 All syncable headings support these properties:
 
-| Property    | Type      | Description                             |
-|-------------+-----------+-----------------------------------------|
-| =CANVAS_ID=   | string    | Canvas ID (auto-populated after sync)   |
-| =LAST_SYNCED= | timestamp | Last sync time (auto-populated)         |
-| =PUBLISHED=   | boolean   | Whether item is visible (default: true) |
+| Property            | Type      | Description                               |
+|---------------------+-----------+-------------------------------------------|
+| =CANVAS_ID=           | string    | Canvas ID (auto-populated after sync)     |
+| =LAST_SYNCED=         | timestamp | Last sync time (auto-populated)           |
+| =CANVAS_UPDATED_AT=   | string    | Remote modification time (auto-populated) |
+| =PUBLISHED=           | boolean   | Whether item is visible (default: true)   |
+
+=CANVAS_UPDATED_AT= is saved after each successful push and used by conflict detection to compare against the remote =updated_at= timestamp.
+
+** settings.org
+
+Course-level settings such as timezone, homepage view, grading scheme, and license.
+
+*** Structure
+
+- Single level-1 heading = Course name
+- Body text = Syllabus content (exported to HTML)
+
+*** Properties
+
+| Property            | Type      | Valid Values                                                           | Description                    |
+|---------------------+-----------+------------------------------------------------------------------------+--------------------------------|
+| =TIME_ZONE=           | string    | IANA timezone (e.g., "America/New_York")                               | Course timezone                |
+| =DEFAULT_VIEW=        | enum      | feed, wiki, modules, syllabus, assignments                            | Course homepage view           |
+| =APPLY_WEIGHTS=       | boolean   | true, false                                                            | Weight assignment groups       |
+| =HIDE_FINAL_GRADES=   | boolean   | true, false                                                            | Hide grades from students      |
+| =PUBLIC_SYLLABUS=     | boolean   | true, false                                                            | Make syllabus publicly visible |
+| =IS_PUBLIC=            | boolean   | true, false                                                            | Make course publicly visible   |
+| =LICENSE=              | enum      | private, cc_by, cc_by_sa, cc_by_nc, cc_by_nc_sa, cc_by_nd, cc_by_nc_nd, public_domain | Content license    |
+| =START_AT=             | timestamp | Org active timestamp                                                   | Course start date              |
+| =END_AT=               | timestamp | Org active timestamp                                                   | Course end date                |
+
+Invalid enum values are replaced with the first valid option and a warning is logged.
+
+*** Example
+
+#+begin_src org
+,* Data Science 101
+:PROPERTIES:
+:TIME_ZONE: America/New_York
+:DEFAULT_VIEW: modules
+:APPLY_WEIGHTS: true
+:HIDE_FINAL_GRADES: false
+:PUBLIC_SYLLABUS: true
+:IS_PUBLIC: false
+:LICENSE: private
+:START_AT: <2026-01-15 Thu>
+:END_AT: <2026-05-15 Fri>
+:END:
+
+Welcome to Data Science 101! This course introduces the fundamentals
+of data analysis with Python.
+#+end_src
+
+The body text is exported as the course syllabus (visible on the Syllabus page in Canvas).
 
 ** assignments.org
 
@@ -824,25 +886,188 @@ Properties like =GROUP= and =RUBRIC_LINK= can contain Org links to headings in o
 | =RUBRIC_LINK=    | rubrics.org           | assignments                       |
 | (module items) | various               | modules                           |
 
+* Conflict Detection
+
+When pushing content to Canvas, org-canvas can detect if an item was modified directly in Canvas since your last sync.  This prevents silent overwrites of changes made by TAs, co-instructors, or the Canvas UI.
+
+** How It Works
+
+Before each PUT request, org-canvas:
+
+1. Reads the =LAST_SYNCED= property from the local Org heading
+2. GETs the item from Canvas and reads its =updated_at= timestamp
+3. If the remote timestamp is newer than =LAST_SYNCED=, the item is *skipped* with a warning
+
+This only applies to updates (PUT), not creates (POST).  Items without a =LAST_SYNCED= property (e.g., first sync) are never flagged.
+
+** Configuration
+
+| Variable                    | Default | Description                              |
+|-----------------------------+---------+------------------------------------------|
+| =org-canvas-detect-conflicts= | =t=       | Enable conflict detection before pushes  |
+
+** Commands
+
+| Command                | Description                                  |
+|------------------------+----------------------------------------------|
+| =org-canvas-sync=        | Sync with conflict detection (default)       |
+| =org-canvas-force-push=  | Sync without conflict detection (overwrites) |
+
+** Scope
+
+Conflict detection applies automatically to all modules using the shared =org-canvas--push-to-api= helper: assignments, pages, discussions, announcements, assignment groups, and rubrics.  Modules with custom sync logic (files, quizzes, modules, outcomes) are not covered.
+
+* Canvas-to-Org Migration
+
+Instructors with existing Canvas courses can import their entire course into Org files using =org-canvas-pull-all=.
+
+** Quick Start
+
+#+begin_src elisp
+;; Import an entire Canvas course
+M-x org-canvas-pull-all
+#+end_src
+
+This creates (or updates) all =.org= files in your course directory with content pulled from Canvas.  HTML content (page bodies, assignment descriptions, discussion messages, syllabus) is converted to Org format via [[https://pandoc.org/][pandoc]].
+
+** pandoc Dependency
+
+pandoc is required for converting HTML content to Org format.  If pandoc is not installed:
+
+- =org-canvas-pull-all= will prompt whether to continue
+- HTML content is stored as raw HTML with a warning comment
+- All other properties and metadata are still imported normally
+
+Install pandoc from https://pandoc.org/installing.html or via your system package manager.
+
+** Pull Order
+
+Content is pulled in dependency order so that cross-references can be reconstructed:
+
+1. Settings (course-level configuration)
+2. Sections (course sections)
+3. Assignment Groups (grade categories)
+4. Outcomes, Rubrics, Pages, Files, Discussions, Announcements
+5. Assignments (reconstructs GROUP links to assignment-groups.org)
+6. Quizzes (fetches questions as sub-headings)
+7. Modules (reconstructs cross-file links to assignments, pages, etc.)
+
+** Per-Module Pull Commands
+
+Each content type can be pulled individually:
+
+| Command                              | Description                           |
+|--------------------------------------+---------------------------------------|
+| =org-canvas-pull-all=                  | Pull entire course                    |
+| =org-canvas-pull-settings=             | Pull course settings                  |
+| =org-canvas-pull-sections=             | Pull course sections                  |
+| =org-canvas-pull-assignment-groups=    | Pull assignment groups                |
+| =org-canvas-pull-assignments=          | Pull assignments with descriptions    |
+| =org-canvas-pull-quizzes=              | Pull quizzes with questions           |
+| =org-canvas-pull-pages=               | Pull wiki pages with body content     |
+| =org-canvas-pull-modules=             | Pull modules with item links          |
+| =org-canvas-pull-rubrics=             | Pull rubrics with criteria tables     |
+| =org-canvas-pull-outcomes=            | Pull outcome groups and outcomes      |
+| =org-canvas-pull-discussions=         | Pull discussion topics                |
+| =org-canvas-pull-announcements=       | Pull announcements                    |
+| =org-canvas-pull-files=               | Pull file metadata and download files |
+
+** Heading Matching
+
+When pulling, each Canvas item is matched to an existing Org heading by its =CANVAS_ID= (or =CANVAS_URL= for pages).  If no match is found, a new heading is created at the end of the file.  This makes pulling idempotent -- running it multiple times updates existing headings rather than creating duplicates.
+
+** Link Reconstruction
+
+After pulling, cross-file links are reconstructed where possible:
+
+- *Assignments*: The =GROUP= property is set to a link like =[[file:assignment-groups.org::*Labs][Labs]]= by matching the =assignment_group_id= from Canvas to the heading in =assignment-groups.org= with that =CANVAS_ID=.
+- *Modules*: Item links are reconstructed by matching the Canvas =content_id= and =type= to headings in the appropriate =.org= file (e.g., =[[file:assignments.org::*Lab 1][Lab 1]]=).
+
+* Orphan Cleanup
+
+When you remove a heading from an Org file, the corresponding Canvas item is not automatically deleted.  The orphan cleanup command finds these stranded items.
+
+** Usage
+
+#+begin_src elisp
+M-x org-canvas-cleanup-orphans
+#+end_src
+
+This command:
+
+1. Scans all pushable content types (assignments, pages, quizzes, discussions, announcements, files, rubrics, assignment groups, outcomes, modules)
+2. For each type, fetches all items from Canvas and compares against local =CANVAS_ID= values
+3. Items on Canvas with no corresponding Org heading are reported as orphans
+4. Displays an orphan report in a =*canvas-orphans*= buffer
+5. Prompts whether to delete the orphaned items from Canvas
+
+** Orphan Report
+
+The report buffer shows each orphan grouped by content type:
+
+#+begin_example
+org-canvas Orphan Report
+Course: 12345 | https://canvas.example.com
+============================================================
+
+Assignments: 2 orphan(s)
+  - [98765] Old Lab Assignment
+  - [98766] Deleted Homework
+
+Pages: 1 orphan(s)
+  - [draft-page] Unused Draft
+
+============================================================
+Total orphans: 3
+#+end_example
+
+** Skipped Items
+
+The following items are never treated as orphans:
+
+- The course front page (pages with =front_page: true=)
+- Sections (pull-only, not pushed)
+- Per-section overrides (managed per-assignment)
+
 * Commands Reference
 
 ** Sync Commands
 
-| Command                           | Description                |
-|-----------------------------------+----------------------------|
-| =org-canvas-sync=                   | Sync all course content    |
-| =org-canvas-sync-assignments=       | Sync assignments only      |
-| =org-canvas-sync-assignment-groups= | Sync assignment groups     |
-| =org-canvas-sync-quizzes=           | Sync quizzes and questions |
-| =org-canvas-sync-pages=             | Sync wiki pages            |
-| =org-canvas-sync-modules=           | Sync course modules        |
-| =org-canvas-sync-rubrics=           | Sync rubrics               |
-| =org-canvas-sync-outcomes=          | Sync learning outcomes     |
-| =org-canvas-sync-discussions=       | Sync discussion topics     |
-| =org-canvas-sync-announcements=     | Sync announcements         |
-| =org-canvas-sync-files=             | Upload files               |
-| =org-canvas-sync-sections=          | Sync course sections       |
-| =org-canvas-sync-overrides=         | Sync per-section overrides |
+| Command                           | Description                                  |
+|-----------------------------------+----------------------------------------------|
+| =org-canvas-sync=                   | Sync all course content (with conflict detection) |
+| =org-canvas-force-push=             | Sync all, bypassing conflict detection       |
+| =org-canvas-sync-settings=          | Sync course settings                         |
+| =org-canvas-sync-assignments=       | Sync assignments only                        |
+| =org-canvas-sync-assignment-groups= | Sync assignment groups                       |
+| =org-canvas-sync-quizzes=           | Sync quizzes and questions                   |
+| =org-canvas-sync-pages=             | Sync wiki pages                              |
+| =org-canvas-sync-modules=           | Sync course modules                          |
+| =org-canvas-sync-rubrics=           | Sync rubrics                                 |
+| =org-canvas-sync-outcomes=          | Sync learning outcomes                       |
+| =org-canvas-sync-discussions=       | Sync discussion topics                       |
+| =org-canvas-sync-announcements=     | Sync announcements                           |
+| =org-canvas-sync-files=             | Upload files                                 |
+| =org-canvas-sync-sections=          | Sync course sections                         |
+| =org-canvas-sync-overrides=         | Sync per-section overrides                   |
+
+** Pull Commands
+
+| Command                            | Description                           |
+|------------------------------------+---------------------------------------|
+| =org-canvas-pull-all=                | Import entire Canvas course           |
+| =org-canvas-pull-settings=           | Pull course settings                  |
+| =org-canvas-pull-sections=           | Pull course sections                  |
+| =org-canvas-pull-assignment-groups=  | Pull assignment groups                |
+| =org-canvas-pull-assignments=        | Pull assignments with descriptions    |
+| =org-canvas-pull-quizzes=            | Pull quizzes with questions           |
+| =org-canvas-pull-pages=             | Pull wiki pages with body content     |
+| =org-canvas-pull-modules=           | Pull modules with item links          |
+| =org-canvas-pull-rubrics=           | Pull rubrics with criteria tables     |
+| =org-canvas-pull-outcomes=          | Pull outcome groups and outcomes      |
+| =org-canvas-pull-discussions=       | Pull discussion topics                |
+| =org-canvas-pull-announcements=     | Pull announcements                    |
+| =org-canvas-pull-files=             | Pull file metadata and download files |
 
 ** Delete Commands
 
@@ -886,12 +1111,17 @@ These commands delete the item at the current cursor position:
 
 ** Utility Commands
 
-| Command                         | Description                              |
-|---------------------------------+------------------------------------------|
-| =org-canvas-test-connection=      | Test API connection (prints course name) |
-| =org-canvas-clear-log=            | Clear log buffer and log file            |
-| =org-canvas-set-log-level=        | Set logging level interactively          |
-| =org-canvas-set-log-destination=  | Set log destination interactively        |
+| Command                         | Description                                   |
+|---------------------------------+-----------------------------------------------|
+| =org-canvas-test-connection=      | Test API connection (prints course name)      |
+| =org-canvas-init=                 | Setup wizard for new courses                  |
+| =org-canvas-status=               | Show sync status overview                     |
+| =org-canvas-validate=             | Validate all Org files offline (no API calls) |
+| =org-canvas-sync-dry-run=         | Preview what would be synced (no API calls)   |
+| =org-canvas-cleanup-orphans=      | Find and delete orphaned Canvas items         |
+| =org-canvas-clear-log=            | Clear log buffer and log file                 |
+| =org-canvas-set-log-level=        | Set logging level interactively               |
+| =org-canvas-set-log-destination=  | Set log destination interactively             |
 
 * Troubleshooting
 
@@ -1003,4 +1233,4 @@ Items are tracked via the =CANVAS_ID= property:
 - Present: UPDATE (PUT) operation
 - Absent: CREATE (POST) operation
 
-After successful sync, =LAST_SYNCED= is updated with the current timestamp.
+After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On the next push, the =LAST_SYNCED= timestamp is compared against the remote =updated_at= to detect conflicts (see [[*Conflict Detection]]).

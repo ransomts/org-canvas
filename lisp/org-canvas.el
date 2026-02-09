@@ -64,6 +64,7 @@
 (require 'org-canvas-quizzes)
 (require 'org-canvas-rubrics)
 (require 'org-canvas-sections)
+(require 'org-canvas-settings)
 (require 'org-canvas-validate)
 
 ;; Note: Feature-specific file paths (e.g., `org-canvas-rubrics-file`) are now
@@ -101,6 +102,9 @@ LABEL is used for logging (e.g., \"Pages\")."
     ;; ----------------------------------------------------------------
     ;; Sync in dependency order (see documentation/manual.org for details)
     ;; ----------------------------------------------------------------
+
+    ;; Tier -1: Course settings (before any content)
+    (org-canvas--safe-sync #'org-canvas-sync-settings "Settings")
 
     ;; Tier 0: No dependencies - these can be synced in any order
     (org-canvas--safe-sync #'org-canvas-sync-outcomes "Outcomes")
@@ -257,6 +261,17 @@ ID-PROP is the property used to identify synced items."
       (special-mode))
     (display-buffer buf)))
 
+;;;; Force Push (Bypass Conflict Detection)
+
+;;;###autoload
+(defun org-canvas-force-push ()
+  "Sync all features, bypassing conflict detection.
+Like `org-canvas-sync' but with `org-canvas-detect-conflicts' set to nil,
+so remote changes are overwritten without warning."
+  (interactive)
+  (let ((org-canvas-detect-conflicts nil))
+    (org-canvas-sync)))
+
 ;;;; Dry-Run Preview
 
 ;;;###autoload
@@ -266,6 +281,210 @@ No properties are modified and no API requests are sent."
   (interactive)
   (let ((org-canvas--dry-run t))
     (org-canvas-sync)))
+
+;;;; Pull All (Canvas → Org Migration)
+
+(defun org-canvas--safe-pull (pull-fn label)
+  "Call PULL-FN, catching errors gracefully.
+LABEL is used for logging."
+  (condition-case err
+      (funcall pull-fn)
+    (error
+     (elog-warning org-canvas--logger "[Pull] %s failed: %s"
+       label (error-message-string err)))))
+
+;;;###autoload
+(defun org-canvas-pull-all ()
+  "Import an entire Canvas course into Org files.
+Pulls all content types in dependency order, creating .org files
+as needed.  HTML content is converted to Org format via pandoc.
+
+This is the migration entry point for instructors with existing
+Canvas courses who want to adopt org-canvas."
+  (interactive)
+  (unless (executable-find "pandoc")
+    (unless (yes-or-no-p
+             "Pandoc not found.  HTML will be stored raw.  Continue? ")
+      (user-error "Aborted")))
+  (org-canvas-clear-log)
+  (display-buffer (get-buffer-create "*canvas-log*"))
+  (let ((org-canvas--inhibit-log-clear t))
+    (elog-info org-canvas--logger "========================================")
+    (elog-info org-canvas--logger ">>> STARTING FULL COURSE PULL")
+    (elog-info org-canvas--logger "Course: %s | URL: %s"
+      org-canvas-course-id org-canvas-base-url)
+    (elog-info org-canvas--logger "========================================")
+
+    ;; Preflight: validate credentials and connection
+    (org-canvas--preflight-check)
+
+    ;; Course settings
+    (org-canvas--safe-pull #'org-canvas-pull-settings "Settings")
+
+    ;; Structural / no-dependency items
+    (org-canvas--safe-pull #'org-canvas-pull-sections "Sections")
+    (org-canvas--safe-pull #'org-canvas-pull-assignment-groups "Assignment Groups")
+    (org-canvas--safe-pull #'org-canvas-pull-outcomes "Outcomes")
+    (org-canvas--safe-pull #'org-canvas-pull-rubrics "Rubrics")
+    (org-canvas--safe-pull #'org-canvas-pull-pages "Pages")
+    (org-canvas--safe-pull #'org-canvas-pull-files "Files")
+    (org-canvas--safe-pull #'org-canvas-pull-discussions "Discussions")
+    (org-canvas--safe-pull #'org-canvas-pull-announcements "Announcements")
+
+    ;; Items that link to structural items
+    (org-canvas--safe-pull #'org-canvas-pull-assignments "Assignments")
+    (org-canvas--safe-pull #'org-canvas-pull-quizzes "Quizzes")
+
+    ;; Modules reference everything
+    (org-canvas--safe-pull #'org-canvas-pull-modules "Modules")
+
+    (elog-info org-canvas--logger "========================================")
+    (elog-info org-canvas--logger ">>> FULL COURSE PULL COMPLETE")
+    (elog-info org-canvas--logger "========================================")
+    (message "Course pull complete.  See *canvas-log* for details.")))
+
+;;;; Orphan Cleanup
+
+(defun org-canvas--collect-local-ids (file id-property)
+  "Collect all values of ID-PROPERTY from level-1 headings in FILE.
+Returns a list of strings (CANVAS_ID or CANVAS_URL values).
+Returns nil if file does not exist."
+  (let ((file (expand-file-name file)))
+    (when (file-exists-p file)
+      (let (ids)
+        (with-current-buffer (find-file-noselect file)
+          (save-excursion
+            (goto-char (point-min))
+            (org-map-entries
+             (lambda ()
+               (let ((id (org-entry-get (point) id-property)))
+                 (when id (push id ids))))
+             "LEVEL=1" 'file)))
+        (nreverse ids)))))
+
+(cl-defun org-canvas--find-orphans-for-feature (feature)
+  "Find orphaned Canvas items for FEATURE.
+FEATURE is a plist from `org-canvas--orphan-feature-registry'.
+Returns a list of orphaned items (alists from the Canvas API),
+or nil if no orphans found."
+  (let* ((name (plist-get feature :name))
+         (endpoint (plist-get feature :endpoint))
+         (file-var (plist-get feature :file-var))
+         (id-field (plist-get feature :id-field))
+         (id-property (plist-get feature :id-property))
+         (list-params (plist-get feature :list-params))
+         (skip-fn (plist-get feature :skip-fn))
+         (file (and (boundp file-var) (symbol-value file-var))))
+    (unless file
+      (elog-info org-canvas--logger "[Orphan] %s: file var not set, skipping" name)
+      (cl-return-from org-canvas--find-orphans-for-feature nil))
+    (let ((local-ids (org-canvas--collect-local-ids file id-property)))
+      (condition-case err
+          (let* ((url (org-canvas-api-course-endpoint endpoint))
+                 (remote-items (org-canvas-api-request-all-pages
+                                'GET url list-params))
+                 (orphans nil))
+            (dolist (item remote-items)
+              (unless (and skip-fn (funcall skip-fn item))
+                (let ((remote-id (format "%s" (alist-get id-field item))))
+                  (unless (member remote-id local-ids)
+                    (push item orphans)))))
+            (nreverse orphans))
+        (error
+         (elog-warning org-canvas--logger
+           "[Orphan] %s: failed to fetch remote items: %s"
+           name (error-message-string err))
+         nil)))))
+
+(defun org-canvas--orphan-format-buffer (all-orphans)
+  "Format orphan results into the *canvas-orphans* buffer.
+ALL-ORPHANS is an alist of (feature-plist . orphan-list) pairs.
+Returns the buffer."
+  (let ((buf (get-buffer-create "*canvas-orphans*")))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert "org-canvas Orphan Report\n")
+        (insert (format "Course: %s | %s\n" org-canvas-course-id org-canvas-base-url))
+        (insert (make-string 60 ?=))
+        (insert "\n\n")
+        (let ((total 0))
+          (dolist (entry all-orphans)
+            (let* ((feature (car entry))
+                   (orphans (cdr entry))
+                   (name (plist-get feature :name))
+                   (title-field (plist-get feature :title-field))
+                   (id-field (plist-get feature :id-field)))
+              (insert (format "%s: %d orphan(s)\n" name (length orphans)))
+              (dolist (item orphans)
+                (let ((title (alist-get title-field item))
+                      (id (alist-get id-field item)))
+                  (insert (format "  - [%s] %s\n" id (or title "(untitled)")))))
+              (setq total (+ total (length orphans)))
+              (insert "\n")))
+          (insert (make-string 60 ?=))
+          (insert (format "\nTotal orphans: %d\n" total)))
+        (special-mode)))
+    buf))
+
+;;;###autoload
+(defun org-canvas-cleanup-orphans ()
+  "Find and optionally delete Canvas items not present in local Org files.
+Scans all pushable features, compares remote Canvas items against local
+CANVAS_ID/CANVAS_URL properties, and reports orphaned items.
+
+Orphans are Canvas items that exist remotely but have no corresponding
+Org heading locally (e.g., because the heading was deleted from the Org file)."
+  (interactive)
+  (org-canvas-clear-log)
+  (display-buffer (get-buffer-create "*canvas-log*"))
+  (elog-info org-canvas--logger "========================================")
+  (elog-info org-canvas--logger ">>> SCANNING FOR ORPHANED ITEMS")
+  (elog-info org-canvas--logger "========================================")
+  (let ((all-orphans nil)
+        (total-orphans 0))
+    ;; Scan each feature
+    (dolist (feature org-canvas--orphan-feature-registry)
+      (let ((name (plist-get feature :name)))
+        (message "Scanning %s..." name)
+        (elog-info org-canvas--logger "[Orphan] Scanning %s..." name)
+        (let ((orphans (org-canvas--find-orphans-for-feature feature)))
+          (when orphans
+            (push (cons feature orphans) all-orphans)
+            (setq total-orphans (+ total-orphans (length orphans)))
+            (elog-info org-canvas--logger
+              "[Orphan] %s: found %d orphan(s)" name (length orphans))))))
+    (setq all-orphans (nreverse all-orphans))
+    ;; Display results
+    (if (= total-orphans 0)
+        (progn
+          (elog-info org-canvas--logger "[Orphan] No orphans found.")
+          (message "No orphaned items found."))
+      (let ((buf (org-canvas--orphan-format-buffer all-orphans)))
+        (display-buffer buf)
+        ;; Prompt for deletion
+        (when (yes-or-no-p
+               (format "Found %d orphan(s).  Delete them from Canvas? " total-orphans))
+          (dolist (entry all-orphans)
+            (let* ((feature (car entry))
+                   (orphans (cdr entry))
+                   (name (plist-get feature :name))
+                   (endpoint (plist-get feature :endpoint))
+                   (id-field (plist-get feature :id-field)))
+              (dolist (item orphans)
+                (let* ((id (alist-get id-field item))
+                       (url (org-canvas-api-course-endpoint
+                             (format "%s/%%s" endpoint) id)))
+                  (condition-case err
+                      (progn
+                        (org-canvas-api-request 'DELETE url)
+                        (elog-info org-canvas--logger
+                          "[Orphan] Deleted %s #%s" name id))
+                    (error
+                     (elog-warning org-canvas--logger
+                       "[Orphan] Failed to delete %s #%s: %s"
+                       name id (error-message-string err))))))))
+          (message "Orphan cleanup complete. %d item(s) deleted." total-orphans))))))
 
 (provide 'org-canvas)
 ;;; org-canvas.el ends here

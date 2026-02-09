@@ -1,0 +1,12 @@
+#+TITLE: Settings
+* tsranso-sandbox
+:PROPERTIES:
+:TIME_ZONE: America/New_York
+:DEFAULT_VIEW: modules
+:APPLY_WEIGHTS: true
+:HIDE_FINAL_GRADES: false
+:PUBLIC_SYLLABUS: false
+:IS_PUBLIC: false
+:LICENSE:  private
+:LAST_SYNCED: [2026-02-08 Sun 20:33]
+:END:

@@ -298,5 +298,94 @@ DATA is the parsed assignment plist, RESPONSE is the Canvas API response."
 (org-canvas-define-delete-at-point assignment
   :endpoint "assignments/%s")
 
+;;;; Pull
+
+(defun org-canvas--assignment-resolve-group-link (group-id)
+  "Resolve assignment GROUP-ID to an Org link to assignment-groups.org.
+Returns a string like \"[[file:assignment-groups.org::*Name][Name]]\" or nil."
+  (when group-id
+    (let* ((groups-file (expand-file-name org-canvas-assignment-groups-file))
+           (group-name nil))
+      (when (file-exists-p groups-file)
+        (with-current-buffer (find-file-noselect groups-file)
+          (save-excursion
+            (goto-char (point-min))
+            (org-map-entries
+             (lambda ()
+               (when (equal (org-entry-get (point) "CANVAS_ID")
+                            (format "%s" group-id))
+                 (setq group-name (org-get-heading t t t t))))
+             "LEVEL=1" 'file))))
+      (when group-name
+        (format "[[file:assignment-groups.org::*%s][%s]]"
+                group-name group-name)))))
+
+;;;###autoload
+(defun org-canvas-pull-assignments ()
+  "Pull assignments from Canvas into assignments.org."
+  (interactive)
+  (org-canvas-clear-log)
+  (display-buffer (get-buffer-create "*canvas-log*"))
+  (elog-info org-canvas--logger "========================================")
+  (elog-info org-canvas--logger ">>> PULLING ASSIGNMENTS")
+  (elog-info org-canvas--logger "========================================")
+  (let* ((file (expand-file-name org-canvas-assignments-file))
+         (endpoint (org-canvas-api-course-endpoint "assignments"))
+         (remote (org-canvas-api-request-all-pages 'GET endpoint))
+         (count 0))
+    (unless (file-exists-p file)
+      (with-temp-file file (insert "")))
+    (with-current-buffer (find-file-noselect file)
+      (dolist (item remote)
+        (let* ((id (alist-get 'id item))
+               (name (alist-get 'name item))
+               (desc-html (alist-get 'description item))
+               (points (alist-get 'points_possible item))
+               (due-at (alist-get 'due_at item))
+               (unlock-at (alist-get 'unlock_at item))
+               (lock-at (alist-get 'lock_at item))
+               (submission-types (alist-get 'submission_types item))
+               (group-id (alist-get 'assignment_group_id item))
+               (peer-reviews (alist-get 'peer_reviews item))
+               (pos (org-canvas--pull-upsert-heading file id name)))
+          (goto-char pos)
+          (when name (org-edit-headline name))
+          (org-canvas-org-save-sync-state pos id)
+          (when points
+            (org-canvas-org-set-property pos "POINTS" (format "%s" points)))
+          (when due-at
+            (let ((ts (org-canvas--iso8601-to-org-timestamp due-at)))
+              (when ts (org-canvas-org-set-property pos "DUE_AT" ts))))
+          (when unlock-at
+            (let ((ts (org-canvas--iso8601-to-org-timestamp unlock-at)))
+              (when ts (org-canvas-org-set-property pos "UNLOCK_AT" ts))))
+          (when lock-at
+            (let ((ts (org-canvas--iso8601-to-org-timestamp lock-at)))
+              (when ts (org-canvas-org-set-property pos "LOCK_AT" ts))))
+          (when submission-types
+            (org-canvas-org-set-property
+             pos "SUBMISSION_TYPES"
+             (mapconcat #'identity (append submission-types nil) ",")))
+          (when peer-reviews
+            (org-canvas-org-set-property
+             pos "PEER_REVIEWS" (if (eq peer-reviews t) "true" "false")))
+          ;; Resolve assignment group link
+          (let ((group-link (org-canvas--assignment-resolve-group-link group-id)))
+            (when group-link
+              (org-canvas-org-set-property pos "GROUP" group-link)))
+          ;; Insert body
+          (when (and desc-html (not (string-empty-p desc-html)))
+            (let ((body-start (save-excursion
+                                (org-end-of-meta-data t) (point)))
+                  (body-end (save-excursion
+                              (org-end-of-subtree t) (point))))
+              (delete-region body-start body-end)
+              (goto-char body-start)
+              (insert "\n" (org-canvas--html-to-org desc-html) "\n")))
+          (cl-incf count)))
+      (save-buffer))
+    (elog-info org-canvas--logger "Assignments pull complete: %d items" count)
+    (message "Assignments pull complete: %d items." count)))
+
 (provide 'org-canvas-assignments)
 ;;; org-canvas-assignments.el ends here

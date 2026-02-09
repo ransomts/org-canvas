@@ -562,5 +562,111 @@ QUIZ-CANVAS-ID is the Canvas ID of the quiz."
     (elog-info org-canvas--logger "========================================")
     (message "Quiz deletion complete. %d removed." deleted)))
 
+;;;; Pull
+
+;;;###autoload
+(defun org-canvas-pull-quizzes ()
+  "Pull quizzes from Canvas into quizzes.org."
+  (interactive)
+  (org-canvas-clear-log)
+  (display-buffer (get-buffer-create "*canvas-log*"))
+  (elog-info org-canvas--logger "========================================")
+  (elog-info org-canvas--logger ">>> PULLING QUIZZES")
+  (elog-info org-canvas--logger "========================================")
+  (let* ((file (expand-file-name org-canvas-quizzes-file))
+         (endpoint (org-canvas-api-course-endpoint "quizzes"))
+         (remote (org-canvas-api-request-all-pages 'GET endpoint))
+         (count 0))
+    (unless (file-exists-p file)
+      (with-temp-file file (insert "")))
+    (with-current-buffer (find-file-noselect file)
+      (dolist (quiz remote)
+        (let* ((id (alist-get 'id quiz))
+               (title (alist-get 'title quiz))
+               (desc-html (alist-get 'description quiz))
+               (quiz-type (alist-get 'quiz_type quiz))
+               (time-limit (alist-get 'time_limit quiz))
+               (shuffle (alist-get 'shuffle_answers quiz))
+               (due-at (alist-get 'due_at quiz))
+               (unlock-at (alist-get 'unlock_at quiz))
+               (lock-at (alist-get 'lock_at quiz))
+               (group-id (alist-get 'assignment_group_id quiz))
+               (pos (org-canvas--pull-upsert-heading file id title)))
+          (goto-char pos)
+          (when title (org-edit-headline title))
+          (org-canvas-org-save-sync-state pos id)
+          (when quiz-type
+            (org-canvas-org-set-property pos "QUIZ_TYPE" quiz-type))
+          (when time-limit
+            (org-canvas-org-set-property pos "TIME_LIMIT" (format "%s" time-limit)))
+          (when shuffle
+            (org-canvas-org-set-property
+             pos "SHUFFLE_ANSWERS" (if (eq shuffle t) "true" "false")))
+          (when due-at
+            (let ((ts (org-canvas--iso8601-to-org-timestamp due-at)))
+              (when ts (org-canvas-org-set-property pos "DUE_AT" ts))))
+          (when unlock-at
+            (let ((ts (org-canvas--iso8601-to-org-timestamp unlock-at)))
+              (when ts (org-canvas-org-set-property pos "UNLOCK_AT" ts))))
+          (when lock-at
+            (let ((ts (org-canvas--iso8601-to-org-timestamp lock-at)))
+              (when ts (org-canvas-org-set-property pos "LOCK_AT" ts))))
+          ;; Resolve assignment group link
+          (when (and group-id (fboundp 'org-canvas--assignment-resolve-group-link))
+            (let ((group-link (org-canvas--assignment-resolve-group-link group-id)))
+              (when group-link
+                (org-canvas-org-set-property pos "GROUP" group-link))))
+          ;; Insert description body
+          (when (and desc-html (not (string-empty-p desc-html)))
+            (let ((body-start (save-excursion
+                                (org-end-of-meta-data t) (point)))
+                  (body-end (save-excursion
+                              (org-end-of-subtree t) (point))))
+              (delete-region body-start body-end)
+              (goto-char body-start)
+              (insert "\n" (org-canvas--html-to-org desc-html) "\n")))
+          ;; Fetch and insert questions as L2 headings
+          (condition-case nil
+              (let* ((q-url (org-canvas-api-course-endpoint
+                             "quizzes/%s/questions" id))
+                     (questions (org-canvas-api-request-all-pages 'GET q-url)))
+                (dolist (q questions)
+                  (let* ((q-name (or (alist-get 'question_name q) "Question"))
+                         (q-text (alist-get 'question_text q))
+                         (q-type (alist-get 'question_type q))
+                         (q-points (alist-get 'points_possible q))
+                         (answers (alist-get 'answers q)))
+                    (let ((subtree-end (save-excursion
+                                         (org-end-of-subtree t) (point))))
+                      (goto-char subtree-end)
+                      (unless (bolp) (insert "\n"))
+                      (insert (format "** %s\n" q-name))
+                      (org-back-to-heading t)
+                      (let ((qpos (point)))
+                        (when q-type
+                          (org-canvas-org-set-property qpos "QUESTION_TYPE" q-type))
+                        (when q-points
+                          (org-canvas-org-set-property
+                           qpos "POINTS" (format "%s" q-points)))
+                        ;; Insert question text and answers
+                        (let ((q-body-start (save-excursion
+                                              (org-end-of-meta-data t) (point))))
+                          (goto-char q-body-start)
+                          (when (and q-text (not (string-empty-p q-text)))
+                            (insert "\n" (org-canvas--html-to-org q-text) "\n"))
+                          (when answers
+                            (dolist (a (append answers nil))
+                              (let ((text (or (alist-get 'text a)
+                                              (alist-get 'html a) ""))
+                                    (weight (alist-get 'weight a)))
+                                (insert (format "- [%s] %s\n"
+                                                (if (and weight (> weight 0)) "X" " ")
+                                                text)))))))))))
+            (error nil))
+          (cl-incf count)))
+      (save-buffer))
+    (elog-info org-canvas--logger "Quizzes pull complete: %d quizzes" count)
+    (message "Quizzes pull complete: %d quizzes." count)))
+
 (provide 'org-canvas-quizzes)
 ;;; org-canvas-quizzes.el ends here

@@ -203,5 +203,56 @@ Handles Timeout by searching for the page."
          (elog-error org-canvas--logger "Failed to delete: %s" (cadr err))
          (message "Failed to delete page. Check logs."))))))
 
+;;;; Pull
+
+;;;###autoload
+(defun org-canvas-pull-pages ()
+  "Pull pages from Canvas into pages.org."
+  (interactive)
+  (org-canvas-clear-log)
+  (display-buffer (get-buffer-create "*canvas-log*"))
+  (elog-info org-canvas--logger "========================================")
+  (elog-info org-canvas--logger ">>> PULLING PAGES")
+  (elog-info org-canvas--logger "========================================")
+  (let* ((file (expand-file-name org-canvas-pages-file))
+         (endpoint (org-canvas-api-course-endpoint "pages"))
+         (remote (org-canvas-api-request-all-pages 'GET endpoint))
+         (count 0))
+    (unless (file-exists-p file)
+      (with-temp-file file (insert "")))
+    (with-current-buffer (find-file-noselect file)
+      (dolist (page remote)
+        (let* ((url (alist-get 'url page))
+               (title (alist-get 'title page))
+               (front-page (alist-get 'front_page page)))
+          ;; Skip the front page
+          (unless (eq front-page t)
+            ;; Fetch full page for body
+            (let* ((detail-url (org-canvas-api-course-endpoint "pages/%s" url))
+                   (detail (condition-case nil
+                               (org-canvas-api-request 'GET detail-url)
+                             (error nil)))
+                   (body (when detail (alist-get 'body detail)))
+                   (pos (org-canvas--pull-upsert-heading
+                         file url title "CANVAS_URL")))
+              (goto-char pos)
+              (when title (org-edit-headline title))
+              (org-canvas-org-set-property pos "CANVAS_URL" (format "%s" url))
+              (org-canvas-org-set-property
+               pos "LAST_SYNCED" (format-time-string "[%Y-%m-%d %a %H:%M]"))
+              ;; Insert body after properties
+              (when (and body (not (string-empty-p body)))
+                (let ((body-start (save-excursion
+                                    (org-end-of-meta-data t) (point)))
+                      (body-end (save-excursion
+                                  (org-end-of-subtree t) (point))))
+                  (delete-region body-start body-end)
+                  (goto-char body-start)
+                  (insert "\n" (org-canvas--html-to-org body) "\n")))
+              (cl-incf count)))))
+      (save-buffer))
+    (elog-info org-canvas--logger "Pages pull complete: %d pages" count)
+    (message "Pages pull complete: %d pages." count)))
+
 (provide 'org-canvas-pages)
 ;;; org-canvas-pages.el ends here

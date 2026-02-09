@@ -886,5 +886,60 @@ Creates folders as needed and populates the folder cache."
          (elog-error org-canvas--logger "Failed to delete: %s" (cadr err))
          (message "Failed to delete file. Check logs."))))))
 
+;;;; Pull
+
+;;;###autoload
+(defun org-canvas-pull-files ()
+  "Pull file metadata from Canvas into files.org.
+Downloads file contents to the content/ directory."
+  (interactive)
+  (org-canvas-clear-log)
+  (display-buffer (get-buffer-create "*canvas-log*"))
+  (elog-info org-canvas--logger "========================================")
+  (elog-info org-canvas--logger ">>> PULLING FILES")
+  (elog-info org-canvas--logger "========================================")
+  (let* ((file (expand-file-name org-canvas-files-file))
+         (content-dir (expand-file-name
+                       "content" (file-name-directory file)))
+         (endpoint (org-canvas-api-course-endpoint "files"))
+         (remote (org-canvas-api-request-all-pages 'GET endpoint))
+         (count 0))
+    (unless (file-exists-p file)
+      (with-temp-file file (insert "")))
+    (unless (file-directory-p content-dir)
+      (make-directory content-dir t))
+    (with-current-buffer (find-file-noselect file)
+      (dolist (item remote)
+        (let* ((id (alist-get 'id item))
+               (display-name (alist-get 'display_name item))
+               (download-url (alist-get 'url item))
+               (content-type (alist-get 'content-type item))
+               (size (alist-get 'size item))
+               (local-path (expand-file-name display-name content-dir))
+               (heading-text (format "[[file:content/%s][%s]]"
+                                     display-name display-name))
+               (pos (org-canvas--pull-upsert-heading file id heading-text)))
+          (goto-char pos)
+          (org-canvas-org-save-sync-state pos id)
+          (when content-type
+            (org-canvas-org-set-property pos "CONTENT_TYPE" content-type))
+          (when size
+            (org-canvas-org-set-property pos "SIZE" (format "%s" size)))
+          ;; Download file if it doesn't exist locally
+          (when (and download-url (not (file-exists-p local-path)))
+            (condition-case err
+                (progn
+                  (elog-info org-canvas--logger
+                    "[Download] %s (%s bytes)" display-name (or size "?"))
+                  (url-copy-file download-url local-path t))
+              (error
+               (elog-warning org-canvas--logger
+                 "[Download] Failed for %s: %s"
+                 display-name (error-message-string err)))))
+          (cl-incf count)))
+      (save-buffer))
+    (elog-info org-canvas--logger "Files pull complete: %d files" count)
+    (message "Files pull complete: %d files." count)))
+
 (provide 'org-canvas-files)
 ;;; org-canvas-files.el ends here

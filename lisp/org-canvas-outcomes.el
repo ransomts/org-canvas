@@ -488,5 +488,89 @@ Warning: This will remove all learning outcomes from the course."
     (elog-info org-canvas--logger "========================================")
     (message "Outcome deletion complete. %d groups removed." deleted-groups)))
 
+;;;; Pull
+
+;;;###autoload
+(defun org-canvas-pull-outcomes ()
+  "Pull outcome groups and outcomes from Canvas into outcomes.org."
+  (interactive)
+  (org-canvas-clear-log)
+  (display-buffer (get-buffer-create "*canvas-log*"))
+  (elog-info org-canvas--logger "========================================")
+  (elog-info org-canvas--logger ">>> PULLING OUTCOMES")
+  (elog-info org-canvas--logger "========================================")
+  (let* ((file (expand-file-name org-canvas-outcomes-file))
+         (groups-endpoint (org-canvas-api-course-endpoint "outcome_groups"))
+         (remote-groups (org-canvas-api-request-all-pages 'GET groups-endpoint))
+         (group-count 0) (outcome-count 0))
+    (unless (file-exists-p file)
+      (with-temp-file file (insert "")))
+    (with-current-buffer (find-file-noselect file)
+      (dolist (group remote-groups)
+        (let* ((gid (alist-get 'id group))
+               (gtitle (or (alist-get 'title group) "Untitled Group"))
+               (pos (org-canvas--pull-upsert-heading file gid gtitle)))
+          (goto-char pos)
+          (when gtitle (org-edit-headline gtitle))
+          (org-canvas-org-save-sync-state pos gid)
+          (cl-incf group-count)
+          ;; Fetch outcomes in this group
+          (condition-case nil
+              (let* ((outcomes-url (org-canvas-api-course-endpoint
+                                   "outcome_groups/%s/outcomes" gid))
+                     (outcomes (org-canvas-api-request-all-pages
+                                'GET outcomes-url)))
+                (dolist (link outcomes)
+                  (let* ((outcome (alist-get 'outcome link))
+                         (oid (alist-get 'id outcome))
+                         (otitle (or (alist-get 'title outcome) "Untitled"))
+                         (desc (alist-get 'description outcome))
+                         (ratings (alist-get 'ratings outcome)))
+                    ;; Find or create L2 heading under this group
+                    (let ((opos nil))
+                      (save-excursion
+                        (org-narrow-to-subtree)
+                        (goto-char (point-min))
+                        (org-map-entries
+                         (lambda ()
+                           (when (equal (org-entry-get (point) "CANVAS_ID")
+                                        (format "%s" oid))
+                             (setq opos (point))))
+                         "LEVEL=2" 'tree)
+                        (widen))
+                      (unless opos
+                        (let ((subtree-end (save-excursion
+                                             (org-end-of-subtree t) (point))))
+                          (goto-char subtree-end)
+                          (unless (bolp) (insert "\n"))
+                          (insert (format "** %s\n" otitle))
+                          (org-back-to-heading t)
+                          (setq opos (point))))
+                      (goto-char opos)
+                      (when otitle (org-edit-headline otitle))
+                      (org-canvas-org-save-sync-state opos oid)
+                      ;; Add description as body
+                      (when (and desc (not (string-empty-p desc)))
+                        (let ((body-start (save-excursion
+                                            (org-end-of-meta-data t) (point)))
+                              (body-end (save-excursion
+                                          (org-end-of-subtree t) (point))))
+                          (delete-region body-start body-end)
+                          (goto-char body-start)
+                          (insert "\n" (org-canvas--html-to-org desc) "\n")
+                          (when ratings
+                            (insert "\nRatings:\n")
+                            (dolist (r (append ratings nil))
+                              (insert (format "- %s (%s pts)\n"
+                                              (or (alist-get 'description r) "")
+                                              (or (alist-get 'points r) 0)))))))
+                      (cl-incf outcome-count)))))
+            (error nil))))
+      (save-buffer))
+    (elog-info org-canvas--logger
+      "Outcomes pull complete: %d groups, %d outcomes" group-count outcome-count)
+    (message "Outcomes pull complete: %d groups, %d outcomes."
+             group-count outcome-count)))
+
 (provide 'org-canvas-outcomes)
 ;;; org-canvas-outcomes.el ends here

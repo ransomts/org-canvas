@@ -100,6 +100,15 @@ Set to nil to reduce log verbosity or hide potentially sensitive data."
   :type 'integer
   :group 'org-canvas)
 
+(defcustom org-canvas-detect-conflicts t
+  "When non-nil, check for remote changes before overwriting.
+Before a PUT request, GET the item from Canvas and compare its
+`updated_at' timestamp with the local `LAST_SYNCED'.  If Canvas
+is newer, warn and skip the item.  Set to nil or use
+`org-canvas-force-push' to bypass."
+  :type 'boolean
+  :group 'org-canvas)
+
 ;; Attempt to load credentials from a separate file if present
 (require 'org-canvas-credentials nil t)
 
@@ -604,6 +613,92 @@ Returns a list of (success-count . fail-count)."
     ("modules.org" "modules" "CANVAS_ID"))
   "Map from org filename to (endpoint id-property) for Canvas URL resolution.")
 
+(defconst org-canvas--orphan-feature-registry
+  '((:name "Assignments"
+     :endpoint "assignments"
+     :file-var org-canvas-assignments-file
+     :id-field id
+     :id-property "CANVAS_ID"
+     :title-field name
+     :list-params nil
+     :skip-fn nil)
+    (:name "Pages"
+     :endpoint "pages"
+     :file-var org-canvas-pages-file
+     :id-field url
+     :id-property "CANVAS_URL"
+     :title-field title
+     :list-params nil
+     :skip-fn (lambda (item) (eq (alist-get 'front_page item) t)))
+    (:name "Quizzes"
+     :endpoint "quizzes"
+     :file-var org-canvas-quizzes-file
+     :id-field id
+     :id-property "CANVAS_ID"
+     :title-field title
+     :list-params nil
+     :skip-fn nil)
+    (:name "Discussions"
+     :endpoint "discussion_topics"
+     :file-var org-canvas-discussions-file
+     :id-field id
+     :id-property "CANVAS_ID"
+     :title-field title
+     :list-params nil
+     :skip-fn (lambda (item) (eq (alist-get 'is_announcement item) t)))
+    (:name "Announcements"
+     :endpoint "discussion_topics"
+     :file-var org-canvas-announcements-file
+     :id-field id
+     :id-property "CANVAS_ID"
+     :title-field title
+     :list-params (("only_announcements" . "true"))
+     :skip-fn nil)
+    (:name "Files"
+     :endpoint "files"
+     :file-var org-canvas-files-file
+     :id-field id
+     :id-property "CANVAS_ID"
+     :title-field display_name
+     :list-params nil
+     :skip-fn nil)
+    (:name "Rubrics"
+     :endpoint "rubrics"
+     :file-var org-canvas-rubrics-file
+     :id-field id
+     :id-property "CANVAS_ID"
+     :title-field title
+     :list-params nil
+     :skip-fn nil)
+    (:name "Assignment Groups"
+     :endpoint "assignment_groups"
+     :file-var org-canvas-assignment-groups-file
+     :id-field id
+     :id-property "CANVAS_ID"
+     :title-field name
+     :list-params nil
+     :skip-fn nil)
+    (:name "Outcomes"
+     :endpoint "outcome_groups"
+     :file-var org-canvas-outcomes-file
+     :id-field id
+     :id-property "CANVAS_ID"
+     :title-field title
+     :list-params nil
+     :skip-fn nil)
+    (:name "Modules"
+     :endpoint "modules"
+     :file-var org-canvas-modules-file
+     :id-field id
+     :id-property "CANVAS_ID"
+     :title-field name
+     :list-params nil
+     :skip-fn nil))
+  "Registry of pushable features for orphan detection.
+Each entry is a plist describing how to fetch remote items and match them
+against local Org headings.  Sections and overrides are excluded
+\(sections are pull-only, overrides are per-assignment\).")
+
 (defun org-canvas--strip-statistics-cookie (title)
   "Remove Org statistics cookies like [1/3] or [33%] from TITLE.
 Also strips text properties to prevent propertized strings from
@@ -778,6 +873,68 @@ are resolved to Canvas URLs when the target has a CANVAS_ID."
                 (org-export-use-babel nil))
             (org-export-as 'html t nil t nil)))))))
 
+;;;; 4e. Pull Helpers (Canvas → Org)
+
+(defun org-canvas--html-to-org (html)
+  "Convert HTML string to Org format using pandoc.
+Returns the Org-mode text, or the raw HTML prefixed with a warning
+if pandoc is not available."
+  (if (not (executable-find "pandoc"))
+      (concat "# WARNING: pandoc not found, raw HTML below\n" html)
+    (with-temp-buffer
+      (insert html)
+      (let ((exit-code (call-process-region
+                        (point-min) (point-max) "pandoc"
+                        t t nil
+                        "-f" "html" "-t" "org" "--wrap=none")))
+        (if (= exit-code 0)
+            (string-trim (buffer-string))
+          (concat "# WARNING: pandoc conversion failed\n" html))))))
+
+(defun org-canvas--pull-upsert-heading (file canvas-id &optional title id-property)
+  "Find or create a heading in FILE matched by CANVAS-ID.
+If a level-1 heading with ID-PROPERTY (default \"CANVAS_ID\") equal to
+CANVAS-ID exists, return its position.  Otherwise create a new heading
+at the end of the buffer with TITLE and return its position.
+Returns a point in the buffer visiting FILE."
+  (let ((id-prop (or id-property "CANVAS_ID"))
+        (buf (find-file-noselect (expand-file-name file))))
+    (with-current-buffer buf
+      (save-excursion
+        ;; Search for existing heading by CANVAS_ID
+        (goto-char (point-min))
+        (let ((found nil))
+          (org-map-entries
+           (lambda ()
+             (when (equal (org-entry-get (point) id-prop)
+                          (format "%s" canvas-id))
+               (setq found (point))))
+           "LEVEL=1" 'file)
+          (if found
+              found
+            ;; Create new heading at end
+            (goto-char (point-max))
+            (unless (bolp) (insert "\n"))
+            (insert (format "* %s\n" (or title "Untitled")))
+            (org-back-to-heading t)
+            (point)))))))
+
+(defun org-canvas--iso8601-to-org-timestamp (iso8601)
+  "Convert ISO8601 timestamp to Org active timestamp.
+Returns a string like \"<2026-01-15 Thu 10:00>\" or nil."
+  (when (and iso8601 (stringp iso8601) (not (equal iso8601 ""))
+             (not (eq iso8601 :null)))
+    (let ((time (date-to-time iso8601)))
+      (format-time-string "<%Y-%m-%d %a %H:%M>" time t))))
+
+(defun org-canvas--iso8601-to-org-inactive-timestamp (iso8601)
+  "Convert ISO8601 timestamp to Org inactive timestamp.
+Returns a string like \"[2026-01-15 Thu 10:00]\" or nil."
+  (when (and iso8601 (stringp iso8601) (not (equal iso8601 ""))
+             (not (eq iso8601 :null)))
+    (let ((time (date-to-time iso8601)))
+      (format-time-string "[%Y-%m-%d %a %H:%M]" time t))))
+
 ;;;; 5. Diagnostics
 
 (defun org-canvas-get-course-name ()
@@ -932,18 +1089,25 @@ CTX is a plist with keys:
                 (plist-put counters :success (1+ (plist-get counters :success))))
                (t
                 (let ((response (funcall push-fn data payload)))
-                  (funcall finalize-fn data response)
-                  (org-entry-put (point) "PAYLOAD_HASH" payload-hash)
-                  (save-buffer)
-                  (plist-put counters :success (1+ (plist-get counters :success)))
-                  (message "%s [%d/%d] Synced '%s'"
-                    cap-feature progress total-count title)
-                  ;; Track newly created IDs
-                  (unless canvas-id
-                    (let ((new-id (or (org-entry-get (point) "CANVAS_ID")
-                                      (org-entry-get (point) "CANVAS_URL"))))
-                      (when new-id
-                        (push new-id (car synced-ids)))))))))
+                  (if (eq response 'conflict)
+                      ;; Conflict detected — skip finalize
+                      (progn
+                        (plist-put counters :conflict
+                                   (1+ (plist-get counters :conflict)))
+                        (message "%s [%d/%d] CONFLICT: '%s' (remote modified)"
+                          cap-feature progress total-count title))
+                    (funcall finalize-fn data response)
+                    (org-entry-put (point) "PAYLOAD_HASH" payload-hash)
+                    (save-buffer)
+                    (plist-put counters :success (1+ (plist-get counters :success)))
+                    (message "%s [%d/%d] Synced '%s'"
+                      cap-feature progress total-count title)
+                    ;; Track newly created IDs
+                    (unless canvas-id
+                      (let ((new-id (or (org-entry-get (point) "CANVAS_ID")
+                                        (org-entry-get (point) "CANVAS_URL"))))
+                        (when new-id
+                          (push new-id (car synced-ids))))))))))
           (error
            (plist-put counters :fail (1+ (plist-get counters :fail)))
            (elog-error org-canvas--logger "[FAILED] %s at point %d: %s"
@@ -964,19 +1128,30 @@ FEATURE-NAME is used in the log message."
         old-id feature-name))))
 
 (defun org-canvas--sync-log-summary (feature-upper feature-name sync-file
-                                     success-count skip-count fail-count)
+                                     success-count skip-count fail-count
+                                     &optional conflict-count)
   "Save SYNC-FILE and log completion summary.
-FEATURE-UPPER and FEATURE-NAME are for log messages."
-  (with-current-buffer (find-file-noselect sync-file)
-    (save-buffer)
-    (elog-info org-canvas--logger "Saved %s" sync-file))
-  (elog-info org-canvas--logger "========================================")
-  (elog-info org-canvas--logger ">>> %s SYNC COMPLETE" feature-upper)
-  (elog-info org-canvas--logger "Success: %d | Skipped: %d | Failed: %d"
-    success-count skip-count fail-count)
-  (elog-info org-canvas--logger "========================================")
-  (message "%s sync: %d success, %d skipped, %d failed."
-           (capitalize feature-name) success-count skip-count fail-count))
+FEATURE-UPPER and FEATURE-NAME are for log messages.
+CONFLICT-COUNT is the number of items skipped due to remote conflicts."
+  (let ((conflict-count (or conflict-count 0)))
+    (with-current-buffer (find-file-noselect sync-file)
+      (save-buffer)
+      (elog-info org-canvas--logger "Saved %s" sync-file))
+    (elog-info org-canvas--logger "========================================")
+    (elog-info org-canvas--logger ">>> %s SYNC COMPLETE" feature-upper)
+    (if (> conflict-count 0)
+        (elog-info org-canvas--logger
+          "Success: %d | Skipped: %d | Failed: %d | Conflicts: %d"
+          success-count skip-count fail-count conflict-count)
+      (elog-info org-canvas--logger "Success: %d | Skipped: %d | Failed: %d"
+        success-count skip-count fail-count))
+    (elog-info org-canvas--logger "========================================")
+    (if (> conflict-count 0)
+        (message "%s sync: %d success, %d skipped, %d failed, %d conflicts."
+                 (capitalize feature-name) success-count skip-count
+                 fail-count conflict-count)
+      (message "%s sync: %d success, %d skipped, %d failed."
+               (capitalize feature-name) success-count skip-count fail-count))))
 
 (defmacro org-canvas-define-sync (feature &rest args)
   "Define a sync function for FEATURE using the 4-stage pipeline pattern.
@@ -1060,6 +1235,48 @@ Example usage:
               (plist-get counters :success)
               (plist-get counters :skip)
               (plist-get counters :fail))))))))
+
+;;;; 6b. Conflict Detection
+;;
+;; Before overwriting a Canvas item (PUT), check if someone edited it
+;; remotely.  Compare the item's `updated_at' from a fresh GET with the
+;; local `LAST_SYNCED' timestamp.  If Canvas is newer, warn and skip.
+
+(defun org-canvas--parse-iso8601-time (iso8601)
+  "Parse ISO8601 timestamp string to an Emacs time value.
+Returns nil if ISO8601 is nil or :null."
+  (when (and iso8601 (not (eq iso8601 :null)) (stringp iso8601))
+    (date-to-time iso8601)))
+
+(defun org-canvas--parse-last-synced (pom)
+  "Parse the LAST_SYNCED Org timestamp at POM to an Emacs time value.
+Returns nil if no LAST_SYNCED property exists."
+  (let ((ts (org-entry-get pom "LAST_SYNCED")))
+    (when ts
+      (encode-time (org-parse-time-string ts)))))
+
+(cl-defun org-canvas--conflict-check (endpoint id pom)
+  "Check if the remote item at ENDPOINT/ID was modified after LAST_SYNCED at POM.
+Returns \\='conflict if the remote item is newer, nil otherwise.
+Returns nil on GET failure (allows push to proceed) or when
+no LAST_SYNCED exists (legacy item, first sync)."
+  (let ((local-time (org-canvas--parse-last-synced pom)))
+    (unless local-time
+      (cl-return-from org-canvas--conflict-check nil))
+    (condition-case _err
+        (let* ((full-url (org-canvas-api-course-endpoint
+                          (format "%s/%%s" endpoint) id))
+               (response (org-canvas-api-request 'GET full-url))
+               (updated-at (alist-get 'updated_at response))
+               (remote-time (org-canvas--parse-iso8601-time updated-at)))
+          (if (and remote-time (time-less-p local-time remote-time))
+              (progn
+                (elog-warning org-canvas--logger
+                  "[Conflict] Remote item updated at %s, local LAST_SYNCED is %s"
+                  updated-at (org-entry-get pom "LAST_SYNCED"))
+                'conflict)
+            nil))
+      (error nil))))
 
 ;;;; 7. Push-to-API Infrastructure
 ;;
@@ -1188,6 +1405,16 @@ Returns the API response alist."
       (elog-info org-canvas--logger "[DRY-RUN] Would %s '%s' to %s" method title full-endpoint)
       (cl-return-from org-canvas--push-to-api '((id . "dry-run"))))
 
+    ;; Conflict detection: for PUT only, check if remote was modified
+    (when (and org-canvas-detect-conflicts
+               (eq method 'PUT)
+               (plist-get data :pom))
+      (when (eq 'conflict
+                (org-canvas--conflict-check endpoint id (plist-get data :pom)))
+        (elog-warning org-canvas--logger
+          "[Conflict] Skipping '%s' — remote item was modified since last sync" title)
+        (cl-return-from org-canvas--push-to-api 'conflict)))
+
     (elog-info org-canvas--logger "[Execute] %s '%s' to %s" method title full-endpoint)
 
     (condition-case err
@@ -1243,6 +1470,11 @@ Save the Canvas ID and LAST_SYNCED timestamp to the Org entry."
         (progn
           (elog-info org-canvas--logger "[Finalize] Saving %s=%s for '%s'" id-property id title)
           (org-canvas-org-save-sync-state pom id id-property)
+          ;; Save CANVAS_UPDATED_AT for conflict detection
+          (let ((updated-at (alist-get 'updated_at response)))
+            (when updated-at
+              (org-canvas-org-set-property pom "CANVAS_UPDATED_AT"
+                                           (format "%s" updated-at))))
           (when post-fn
             (funcall post-fn data response))
           (elog-info org-canvas--logger "[Finalize] Complete for '%s'" title))
@@ -1518,7 +1750,8 @@ pipeline for the single heading at point."
 (defconst org-canvas--skeleton-files
   '("assignments.org" "pages.org" "quizzes.org" "modules.org"
     "files.org" "outcomes.org" "rubrics.org" "discussions.org"
-    "announcements.org" "assignment-groups.org" "sections.org")
+    "announcements.org" "assignment-groups.org" "sections.org"
+    "settings.org")
   "List of org files to create in a new course skeleton.")
 
 (defun org-canvas--write-credentials-file (dir url token course-id)

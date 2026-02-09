@@ -3317,4 +3317,333 @@ Page content.
              (setq found (nth 2 call))))
          (expect found :to-equal "My Group"))))))
 
+;;;; Conflict Detection
+
+(describe "org-canvas--parse-iso8601-time"
+  (it "parses a valid ISO8601 timestamp"
+    (let ((result (org-canvas--parse-iso8601-time "2026-01-15T10:00:00Z")))
+      (expect result :to-be-truthy)))
+
+  (it "returns nil for nil input"
+    (expect (org-canvas--parse-iso8601-time nil) :to-be nil))
+
+  (it "returns nil for :null input"
+    (expect (org-canvas--parse-iso8601-time :null) :to-be nil))
+
+  (it "returns nil for non-string input"
+    (expect (org-canvas--parse-iso8601-time 12345) :to-be nil)))
+
+(describe "org-canvas--parse-last-synced"
+  (it "parses LAST_SYNCED from an Org heading"
+    (with-temp-org-buffer
+     "* Item
+:PROPERTIES:
+:LAST_SYNCED: [2026-01-15 Thu 10:00]
+:END:
+"
+     (org-back-to-heading)
+     (let ((result (org-canvas--parse-last-synced (point))))
+       (expect result :to-be-truthy))))
+
+  (it "returns nil when no LAST_SYNCED"
+    (with-temp-org-buffer
+     "* Item
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (expect (org-canvas--parse-last-synced (point)) :to-be nil))))
+
+(describe "org-canvas--conflict-check"
+  (it "returns conflict when remote is newer"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer
+       "* Item
+:PROPERTIES:
+:CANVAS_ID: 123
+:LAST_SYNCED: [2026-01-01 Thu 10:00]
+:END:
+"
+       (org-back-to-heading)
+       ;; Remote updated_at is much newer than LAST_SYNCED
+       (cl-letf (((symbol-function 'org-canvas-api-request)
+                  (lambda (_method _url &rest _args)
+                    '((id . 123) (updated_at . "2026-02-01T10:00:00Z")))))
+         (expect (org-canvas--conflict-check "items" "123" (point))
+                 :to-equal 'conflict)))))
+
+  (it "returns nil when local is newer"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer
+       "* Item
+:PROPERTIES:
+:CANVAS_ID: 123
+:LAST_SYNCED: [2026-02-01 Thu 10:00]
+:END:
+"
+       (org-back-to-heading)
+       (cl-letf (((symbol-function 'org-canvas-api-request)
+                  (lambda (_method _url &rest _args)
+                    '((id . 123) (updated_at . "2026-01-01T10:00:00Z")))))
+         (expect (org-canvas--conflict-check "items" "123" (point))
+                 :to-be nil)))))
+
+  (it "returns nil when no LAST_SYNCED exists"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer
+       "* Item
+:PROPERTIES:
+:CANVAS_ID: 123
+:END:
+"
+       (org-back-to-heading)
+       (expect (org-canvas--conflict-check "items" "123" (point))
+               :to-be nil))))
+
+  (it "returns nil on GET failure"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer
+       "* Item
+:PROPERTIES:
+:CANVAS_ID: 123
+:LAST_SYNCED: [2026-01-01 Thu 10:00]
+:END:
+"
+       (org-back-to-heading)
+       (cl-letf (((symbol-function 'org-canvas-api-request)
+                  (lambda (_method _url &rest _args)
+                    (signal 'error '("HTTP 500")))))
+         (expect (org-canvas--conflict-check "items" "123" (point))
+                 :to-be nil))))))
+
+(describe "org-canvas--push-to-api conflict detection"
+  (it "returns conflict when remote is newer on PUT"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer
+       "* Conflict Item
+:PROPERTIES:
+:CANVAS_ID: 456
+:LAST_SYNCED: [2026-01-01 Thu 10:00]
+:END:
+"
+       (org-back-to-heading)
+       (let ((org-canvas-detect-conflicts t))
+         (cl-letf (((symbol-function 'org-canvas-api-request)
+                    (lambda (method _url &rest _args)
+                      (when (eq method 'GET)
+                        '((id . 456) (updated_at . "2026-02-01T10:00:00Z"))))))
+           (let ((data (list :title "Conflict Item" :canvas-id "456"
+                             :pom (point-marker)))
+                 (payload '((title . "Conflict Item"))))
+             (expect (org-canvas--push-to-api data payload :endpoint "items")
+                     :to-equal 'conflict)))))))
+
+  (it "skips conflict check for POST (new items)"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (let ((org-canvas-detect-conflicts t)
+              (data '(:title "New Item" :canvas-id nil))
+              (payload '((title . "New Item"))))
+          ;; POST should proceed without conflict check
+          (org-canvas--push-to-api data payload :endpoint "items")
+          (expect-api-called 'POST "items$")))))
+
+  (it "skips conflict check when detect-conflicts is nil"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (let ((org-canvas-detect-conflicts nil)
+              (data '(:title "Force Push" :canvas-id "789"))
+              (payload '((title . "Force Push"))))
+          (org-canvas--push-to-api data payload :endpoint "items")
+          (expect-api-called 'PUT "items/789")))))
+
+  (it "skips conflict check in dry-run mode"
+    (with-org-canvas-test-config
+      (let ((org-canvas--dry-run t)
+            (org-canvas-detect-conflicts t)
+            (api-called nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_method _url &rest _args)
+                     (setq api-called t))))
+          (let ((data '(:title "Dry Run" :canvas-id "123"))
+                (payload '((title . "Dry Run"))))
+            (org-canvas--push-to-api data payload :endpoint "items")
+            (expect api-called :to-be nil)))))))
+
+(describe "org-canvas--finalize-item saves CANVAS_UPDATED_AT"
+  (it "stores updated_at from response"
+    (with-temp-org-buffer
+     "* Item
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (let ((data (list :title "Item" :pom (point-marker)))
+           (response '((id . 999) (updated_at . "2026-02-01T12:00:00Z"))))
+       (org-canvas--finalize-item data response)
+       (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
+               :to-equal "2026-02-01T12:00:00Z"))))
+
+  (it "does not set CANVAS_UPDATED_AT when absent from response"
+    (with-temp-org-buffer
+     "* Item
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (let ((data (list :title "Item" :pom (point-marker)))
+           (response '((id . 111))))
+       (org-canvas--finalize-item data response)
+       (expect (org-entry-get (point) "CANVAS_UPDATED_AT") :to-be nil)))))
+
+(describe "org-canvas--sync-process-entry conflict counter"
+  (it "increments conflict counter when push returns conflict"
+    (with-temp-org-buffer
+     "* Conflict Item
+:PROPERTIES:
+:CANVAS_ID: 123
+:END:
+"
+     (org-back-to-heading)
+     (let* ((marker (point-marker))
+            (counters (list :success 0 :skip 0 :fail 0 :conflict 0))
+            (ctx (list :parse-fn (lambda () (list :title "Conflict Item"
+                                                   :canvas-id "123"
+                                                   :pom (point-marker)))
+                       :build-fn (lambda (_data) '((title . "Conflict Item")))
+                       :push-fn (lambda (_data _payload) 'conflict)
+                       :finalize-fn (lambda (_data _response) nil)
+                       :feature-name "items"
+                       :feature-upper "ITEMS"
+                       :total-count 1
+                       :counters counters
+                       :synced-ids (list nil))))
+       (org-canvas--sync-process-entry marker ctx)
+       (expect (plist-get counters :conflict) :to-equal 1)
+       (expect (plist-get counters :success) :to-equal 0)))))
+
+(describe "org-canvas--sync-log-summary with conflicts"
+  (it "includes conflict count in log when conflicts exist"
+    (let ((temp-file (make-temp-file "summary-test" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file (insert "* Item\n"))
+            (spy-on 'elog-info)
+            (org-canvas--sync-log-summary "TEST" "test" temp-file 5 2 1 3)
+            (let ((found nil))
+              (dolist (call (spy-calls-all-args 'elog-info))
+                (when (and (>= (length call) 2)
+                           (stringp (nth 1 call))
+                           (string-match-p "Conflicts" (nth 1 call)))
+                  (setq found t)))
+              (expect found :to-be-truthy)))
+        (let ((buf (find-buffer-visiting temp-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file temp-file))))
+
+  (it "omits conflict count when zero"
+    (let ((temp-file (make-temp-file "summary-test" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file (insert "* Item\n"))
+            (spy-on 'elog-info)
+            (org-canvas--sync-log-summary "TEST" "test" temp-file 5 2 1 0)
+            (let ((found nil))
+              (dolist (call (spy-calls-all-args 'elog-info))
+                (when (and (>= (length call) 2)
+                           (stringp (nth 1 call))
+                           (string-match-p "Conflicts" (nth 1 call)))
+                  (setq found t)))
+              (expect found :to-be nil)))
+        (let ((buf (find-buffer-visiting temp-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file temp-file)))))
+
+;;;; Pull Helpers
+
+(describe "org-canvas--html-to-org"
+  (it "converts simple HTML to Org"
+    (let ((result (org-canvas--html-to-org "<p>Hello <strong>world</strong></p>")))
+      (expect result :to-match "Hello")
+      (expect result :to-match "world")))
+
+  (it "returns raw HTML with warning if pandoc is absent"
+    (cl-letf (((symbol-function 'executable-find) (lambda (_) nil)))
+      (let ((result (org-canvas--html-to-org "<p>Test</p>")))
+        (expect result :to-match "WARNING")
+        (expect result :to-match "<p>Test</p>")))))
+
+(describe "org-canvas--pull-upsert-heading"
+  (it "creates new heading when no match exists"
+    (let* ((temp-dir (make-temp-file "upsert-test" t))
+           (test-file (expand-file-name "test.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file test-file (insert ""))
+            (let ((pos (org-canvas--pull-upsert-heading
+                        test-file 999 "New Item")))
+              (with-current-buffer (find-file-noselect test-file)
+                (goto-char pos)
+                (expect (org-get-heading t t t t) :to-equal "New Item"))))
+        (let ((buf (find-buffer-visiting test-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "finds existing heading by CANVAS_ID"
+    (let* ((temp-dir (make-temp-file "upsert-test" t))
+           (test-file (expand-file-name "test.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file test-file
+              (insert "* Existing\n:PROPERTIES:\n:CANVAS_ID: 42\n:END:\n"))
+            (let ((pos (org-canvas--pull-upsert-heading
+                        test-file 42 "Updated")))
+              (with-current-buffer (find-file-noselect test-file)
+                (goto-char pos)
+                ;; Should find existing, not create new
+                (expect (org-entry-get (point) "CANVAS_ID") :to-equal "42"))))
+        (let ((buf (find-buffer-visiting test-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "uses custom id-property"
+    (let* ((temp-dir (make-temp-file "upsert-test" t))
+           (test-file (expand-file-name "test.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file test-file
+              (insert "* Page\n:PROPERTIES:\n:CANVAS_URL: my-page\n:END:\n"))
+            (let ((pos (org-canvas--pull-upsert-heading
+                        test-file "my-page" "Updated Page" "CANVAS_URL")))
+              (with-current-buffer (find-file-noselect test-file)
+                (goto-char pos)
+                (expect (org-entry-get (point) "CANVAS_URL")
+                        :to-equal "my-page"))))
+        (let ((buf (find-buffer-visiting test-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
+(describe "org-canvas--iso8601-to-org-timestamp"
+  (it "converts ISO8601 to active timestamp"
+    (let ((result (org-canvas--iso8601-to-org-timestamp "2026-01-15T10:00:00Z")))
+      (expect result :to-match "<2026-01-15")))
+
+  (it "returns nil for nil input"
+    (expect (org-canvas--iso8601-to-org-timestamp nil) :to-be nil))
+
+  (it "returns nil for :null"
+    (expect (org-canvas--iso8601-to-org-timestamp :null) :to-be nil))
+
+  (it "returns nil for empty string"
+    (expect (org-canvas--iso8601-to-org-timestamp "") :to-be nil)))
+
+(describe "org-canvas--iso8601-to-org-inactive-timestamp"
+  (it "converts ISO8601 to inactive timestamp"
+    (let ((result (org-canvas--iso8601-to-org-inactive-timestamp
+                   "2026-01-15T10:00:00Z")))
+      (expect result :to-match "\\[2026-01-15")))
+
+  (it "returns nil for nil input"
+    (expect (org-canvas--iso8601-to-org-inactive-timestamp nil) :to-be nil)))
+
 ;;; org-canvas-core-test.el ends here

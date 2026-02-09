@@ -661,5 +661,114 @@ Returns (success-count . fail-count)."
          (elog-error org-canvas--logger "Failed to delete: %s" (cadr err))
          (message "Failed to delete module. Check logs."))))))
 
+;;;; Pull
+
+(defconst org-canvas--module-type-to-file-map
+  '(("Page" . "pages.org")
+    ("Assignment" . "assignments.org")
+    ("Quiz" . "quizzes.org")
+    ("Discussion" . "discussions.org")
+    ("File" . "files.org"))
+  "Map Canvas module item types to their corresponding Org files.")
+
+(defun org-canvas--module-resolve-item-link (item-type content-id title)
+  "Resolve a module item to an Org cross-file link.
+ITEM-TYPE is a Canvas type string (\"Page\", \"Assignment\", etc.).
+CONTENT-ID is the Canvas ID of the target item.
+TITLE is the item title for display.
+Returns a link string or just the title if resolution fails."
+  (let* ((org-file (alist-get item-type org-canvas--module-type-to-file-map
+                              nil nil #'equal))
+         (id-prop (if (equal item-type "Page") "CANVAS_URL" "CANVAS_ID")))
+    (if (not org-file)
+        (or title "Untitled")
+      (let ((file-path (expand-file-name
+                        (org-canvas--path org-file))))
+        (if (not (file-exists-p file-path))
+            (or title "Untitled")
+          (let ((heading-name nil))
+            (with-current-buffer (find-file-noselect file-path)
+              (save-excursion
+                (goto-char (point-min))
+                (org-map-entries
+                 (lambda ()
+                   (when (equal (org-entry-get (point) id-prop)
+                                (format "%s" content-id))
+                     (setq heading-name (org-get-heading t t t t))))
+                 "LEVEL=1" 'file)))
+            (if heading-name
+                (format "[[file:%s::*%s][%s]]"
+                        org-file heading-name (or title heading-name))
+              (or title "Untitled"))))))))
+
+;;;###autoload
+(defun org-canvas-pull-modules ()
+  "Pull modules from Canvas into modules.org."
+  (interactive)
+  (org-canvas-clear-log)
+  (display-buffer (get-buffer-create "*canvas-log*"))
+  (elog-info org-canvas--logger "========================================")
+  (elog-info org-canvas--logger ">>> PULLING MODULES")
+  (elog-info org-canvas--logger "========================================")
+  (let* ((file (expand-file-name org-canvas-modules-file))
+         (endpoint (org-canvas-api-course-endpoint "modules"))
+         (remote (org-canvas-api-request-all-pages
+                  'GET endpoint '(("include[]" . "items"))))
+         (mod-count 0) (item-count 0))
+    (unless (file-exists-p file)
+      (with-temp-file file (insert "")))
+    (with-current-buffer (find-file-noselect file)
+      (dolist (mod remote)
+        (let* ((mid (alist-get 'id mod))
+               (mname (alist-get 'name mod))
+               (items (alist-get 'items mod))
+               (pos (org-canvas--pull-upsert-heading file mid mname)))
+          (goto-char pos)
+          (when mname (org-edit-headline mname))
+          (org-canvas-org-save-sync-state pos mid)
+          (cl-incf mod-count)
+          ;; Clear existing L2 children and re-create from remote
+          (let ((body-start (save-excursion
+                              (org-end-of-meta-data t) (point)))
+                (body-end (save-excursion
+                            (org-end-of-subtree t) (point))))
+            (delete-region body-start body-end)
+            (goto-char body-start)
+            (when items
+              (insert "\n")
+              (dolist (item (append items nil))
+                (let* ((item-type (alist-get 'type item))
+                       (item-title (alist-get 'title item))
+                       (item-id (alist-get 'id item))
+                       (content-id (alist-get 'content_id item))
+                       (indent (alist-get 'indent item)))
+                  (cond
+                   ;; SubHeader → plain text heading
+                   ((equal item-type "SubHeader")
+                    (insert (format "** %s\n" (or item-title "Section")))
+                    (org-back-to-heading t)
+                    (org-canvas-org-set-property (point) "CANVAS_ID"
+                                                 (format "%s" item-id))
+                    (goto-char (save-excursion (org-end-of-subtree t) (point))))
+                   ;; Content items → linked headings
+                   (t
+                    (let ((link (org-canvas--module-resolve-item-link
+                                 item-type content-id item-title)))
+                      (insert (format "** %s\n" link))
+                      (org-back-to-heading t)
+                      (org-canvas-org-set-property (point) "CANVAS_ID"
+                                                   (format "%s" item-id))
+                      (when indent
+                        (org-canvas-org-set-property (point) "INDENT"
+                                                     (format "%s" indent)))
+                      (goto-char (save-excursion
+                                   (org-end-of-subtree t) (point))))))
+                (cl-incf item-count)))))))
+      (save-buffer))
+    (elog-info org-canvas--logger
+      "Modules pull complete: %d modules, %d items" mod-count item-count)
+    (message "Modules pull complete: %d modules, %d items."
+             mod-count item-count)))
+
 (provide 'org-canvas-modules)
 ;;; org-canvas-modules.el ends here
