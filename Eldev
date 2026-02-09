@@ -55,3 +55,182 @@
 ;; Exclude vendor directory from linting
 (setf eldev-lint-ignored-fileset '("vendor/" "test/"))
 
+;;; Code Complexity Analyzer
+
+;; --- Cognitive complexity (SonarSource, 2016) ---
+;; Penalizes nested control flow: each scored form adds +1 + current nesting depth.
+
+(defvar org-canvas--cognitive-scored-forms
+  '(if when unless cond pcase
+    condition-case condition-case-unless-debug
+    while dolist dotimes
+    cl-loop catch unwind-protect)
+  "Forms that increment cognitive complexity (+1 + nesting depth).")
+
+(defun org-canvas--cognitive-walk (sexp depth)
+  "Walk SEXP tree at nesting DEPTH, returning cognitive complexity score."
+  (cond
+   ((not (consp sexp)) 0)
+   ((not (listp (cdr sexp))) 0)                ; dotted pair
+   ((memq (car sexp) org-canvas--cognitive-scored-forms)
+    (let ((increment (+ 1 depth))
+          (child-score 0))
+      (dolist (child (cdr sexp))
+        (setq child-score (+ child-score (org-canvas--cognitive-walk child (1+ depth)))))
+      (+ increment child-score)))
+   (t
+    (let ((total 0))
+      (dolist (child sexp)
+        (setq total (+ total (org-canvas--cognitive-walk child depth))))
+      total))))
+
+;; --- Cyclomatic complexity (McCabe, 1976) ---
+;; Counts linearly independent paths: base 1 + one per decision point.
+;; Nesting is irrelevant — only the count of branches matters.
+
+(defvar org-canvas--cyclomatic-simple-forms
+  '(if when unless while dolist dotimes cl-loop catch)
+  "Forms that add +1 to cyclomatic complexity (single decision point).")
+
+(defun org-canvas--cyclomatic-walk (sexp)
+  "Walk SEXP tree, returning cyclomatic decision-point count (caller adds base 1)."
+  (cond
+   ((not (consp sexp)) 0)
+   ((not (listp (cdr sexp))) 0)                ; dotted pair
+   ;; Simple decision forms: +1, then recurse into children
+   ((memq (car sexp) org-canvas--cyclomatic-simple-forms)
+    (let ((total 1))
+      (dolist (child (cdr sexp))
+        (setq total (+ total (org-canvas--cyclomatic-walk child))))
+      total))
+   ;; cond/pcase: +1 per clause (each is a decision point)
+   ((memq (car sexp) '(cond pcase))
+    (let ((total 0))
+      (dolist (clause (cdr sexp))
+        (when (consp clause)
+          (setq total (1+ total))
+          (dolist (child clause)
+            (setq total (+ total (org-canvas--cyclomatic-walk child))))))
+      total))
+   ;; condition-case: +1 per handler clause
+   ((memq (car sexp) '(condition-case condition-case-unless-debug))
+    (let ((total 0)
+          ;; (condition-case VAR BODYFORM HANDLERS...)
+          (handlers (cdddr sexp)))
+      ;; Recurse into bodyform
+      (setq total (+ total (org-canvas--cyclomatic-walk (nth 2 sexp))))
+      (dolist (handler handlers)
+        (when (consp handler)
+          (setq total (1+ total))
+          (dolist (child (cdr handler))
+            (setq total (+ total (org-canvas--cyclomatic-walk child))))))
+      total))
+   ;; unwind-protect: no decision point, just recurse
+   (t
+    (let ((total 0))
+      (dolist (child sexp)
+        (setq total (+ total (org-canvas--cyclomatic-walk child))))
+      total))))
+
+;; --- Shared helpers ---
+
+(defun org-canvas--complexity-skip-preamble (body)
+  "Skip docstring, (declare ...), and (interactive ...) from BODY."
+  (when (and body (stringp (car body)))
+    (setq body (cdr body)))
+  (while (and body (consp (car body))
+              (memq (caar body) '(declare interactive)))
+    (setq body (cdr body)))
+  body)
+
+(defun org-canvas--complexity-analyze-file (file)
+  "Analyze FILE, returning list of (name cognitive cyclomatic) per defun."
+  (let ((results nil))
+    (with-temp-buffer
+      (insert-file-contents file)
+      (emacs-lisp-mode)
+      (goto-char (point-min))
+      (condition-case nil
+          (while t
+            (let ((sexp (read (current-buffer))))
+              (when (and (consp sexp)
+                         (memq (car sexp) '(defun cl-defun defmacro defsubst)))
+                (let* ((name (nth 1 sexp))
+                       (body (org-canvas--complexity-skip-preamble (cdddr sexp)))
+                       (cog 0) (cyc 0))
+                  (dolist (form body)
+                    (setq cog (+ cog (org-canvas--cognitive-walk form 0)))
+                    (setq cyc (+ cyc (org-canvas--cyclomatic-walk form))))
+                  (push (list name cog (1+ cyc)) results)))))  ; +1 base path
+        (end-of-file nil)))
+    (nreverse results)))
+
+(defun org-canvas--complexity-label (score)
+  "Return severity label for SCORE."
+  (cond
+   ((> score 15) "very high")
+   ((> score 10) "high")
+   ((> score 5)  "moderate")
+   (t nil)))
+
+(eldev-defcommand org-canvas-complexity (&rest parameters)
+  "Report cognitive and cyclomatic complexity of all project functions.
+
+Scans all source files and scores each defun/defmacro using:
+  - Cognitive complexity (SonarSource, 2016): penalizes nested control flow
+  - Cyclomatic complexity (McCabe, 1976): counts linearly independent paths
+
+Set CODEMETRICS_THRESHOLD env var to change the cognitive fail threshold
+\(default 15)."
+  :aliases (complexity cc)
+  :briefdoc "Report code complexity metrics"
+  (let* ((threshold (string-to-number (or (getenv "CODEMETRICS_THRESHOLD") "15")))
+         (source-files (mapcan (lambda (dir)
+                                 (when (file-directory-p dir)
+                                   (directory-files dir t "\\.el\\'" t)))
+                               eldev-project-source-dirs))
+         (total-fns 0)
+         (above-threshold 0)
+         (cog-bins (list 0 0 0 0))     ; low, moderate, high, very-high
+         (max-cyc 0))
+    (eldev-output "=== Code Complexity Report ===")
+    (eldev-output "    cog = cognitive    cyc = cyclomatic\n")
+    (dolist (file (sort source-files #'string<))
+      (let ((results (org-canvas--complexity-analyze-file file))
+            (rel-path (file-relative-name file eldev-project-dir)))
+        (when results
+          (let ((sorted (sort (copy-sequence results)
+                              (lambda (a b) (> (nth 1 a) (nth 1 b)))))
+                (file-printed nil))
+            (dolist (entry sorted)
+              (let* ((name (car entry))
+                     (cog (nth 1 entry))
+                     (cyc (nth 2 entry))
+                     (label (org-canvas--complexity-label cog))
+                     (name-str (symbol-name name))
+                     (dots (make-string (max 1 (- 46 (length name-str))) ?.)))
+                (setq total-fns (1+ total-fns))
+                (when (> cyc max-cyc) (setq max-cyc cyc))
+                (cond
+                 ((> cog 15) (setf (nth 3 cog-bins) (1+ (nth 3 cog-bins))))
+                 ((> cog 10) (setf (nth 2 cog-bins) (1+ (nth 2 cog-bins))))
+                 ((> cog 5)  (setf (nth 1 cog-bins) (1+ (nth 1 cog-bins))))
+                 (t          (setf (nth 0 cog-bins) (1+ (nth 0 cog-bins)))))
+                (when (> cog threshold)
+                  (setq above-threshold (1+ above-threshold)))
+                (when (and label (> cog 5))
+                  (unless file-printed
+                    (eldev-output "\n%s" rel-path)
+                    (setq file-printed t))
+                  (eldev-output "  %s %s cog %3d  cyc %3d  [%s]"
+                                name-str dots cog cyc label))))))))
+    (eldev-output "\nSummary: %d functions, %d above cognitive threshold (%d)"
+                  total-fns above-threshold threshold)
+    (eldev-output "  Cognitive — Low (0-5): %d | Moderate (6-10): %d | High (11-15): %d | Very High (>15): %d"
+                  (nth 0 cog-bins) (nth 1 cog-bins) (nth 2 cog-bins) (nth 3 cog-bins))
+    (eldev-output "  Cyclomatic — max: %d" max-cyc)
+    (when (> above-threshold 0)
+      (eldev-warn "\n%d function(s) exceed cognitive complexity threshold of %d"
+                  above-threshold threshold)
+      (signal 'eldev-quit 1))))
+
