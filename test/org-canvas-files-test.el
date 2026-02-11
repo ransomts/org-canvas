@@ -1213,10 +1213,8 @@
     (setq org-canvas--file-folder-cache nil))
 
   (it "aborts when user declines confirmation"
-    (let ((delete-called nil))
-      (cl-letf (((symbol-function 'y-or-n-p) (lambda (_prompt) nil)))
-        (org-canvas-delete-all-files)
-        (expect delete-called :to-be nil))))
+    (cl-letf (((symbol-function 'y-or-n-p) (lambda (_prompt) nil)))
+      (expect (org-canvas-delete-all-files) :to-throw 'user-error)))
 
   (it "deletes all files and folders when confirmed"
     (let ((temp-dir (make-temp-file "files-test" t)))

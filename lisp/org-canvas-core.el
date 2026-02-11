@@ -1068,7 +1068,7 @@ ARGS is a plist with the following keys:
   :endpoint    - API endpoint suffix string (required)
   :params      - Extra GET params alist (optional)
   :item-fn     - Function (item pos) for per-item property setting (required)
-  :filter-fn   - Predicate (item) to skip item when non-nil (optional)
+  :skip-fn     - Predicate (item) to skip item when non-nil (optional)
   :id-field    - Alist key for item ID (default: \\='id)
   :title-field - Alist key for item title (default: \\='title)
   :id-property - Org property name for Canvas ID (default: \"CANVAS_ID\")
@@ -1093,7 +1093,7 @@ Example:
          (endpoint-expr (plist-get args :endpoint))
          (params-expr (plist-get args :params))
          (item-fn (plist-get args :item-fn))
-         (filter-fn (plist-get args :filter-fn))
+         (skip-fn (plist-get args :skip-fn))
          (id-field (or (plist-get args :id-field) ''id))
          (title-field (or (plist-get args :title-field) ''title))
          (id-property (or (plist-get args :id-property) "CANVAS_ID"))
@@ -1124,8 +1124,8 @@ Example:
                            (list :id-field ,id-field :title-field ,title-field
                                  :id-property ,id-property :item-fn ,item-fn))
                           (cl-incf count))))
-                  (if filter-fn
-                      `(unless (funcall ,filter-fn item)
+                  (if skip-fn
+                      `(unless (funcall ,skip-fn item)
                          ,body)
                     body)))
              (save-buffer))

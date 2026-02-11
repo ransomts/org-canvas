@@ -804,56 +804,56 @@ Creates folders as needed and populates the folder cache."
 (defun org-canvas-delete-all-files ()
   "Delete ALL files and folders in the course (Danger Zone)."
   (interactive)
+  (unless org-canvas--inhibit-log-clear
+    (unless (y-or-n-p "Delete ALL files and folders in this course? ")
+      (user-error "Aborted")))
   (let ((files-file (expand-file-name org-canvas-files-file)))
-    (if (and (not org-canvas--inhibit-log-clear)
-             (not (y-or-n-p "Delete ALL files and folders in this course? ")))
-        (message "Aborted.")
-      (org-canvas-clear-log)
-      ;; Clear session caches
-      (setq org-canvas--file-root-folder-cache nil)
-      (setq org-canvas--file-folder-cache (make-hash-table :test 'equal))
-      (display-buffer (get-buffer-create org-canvas--log-buffer-name))
-      (elog-warning org-canvas--logger "========================================")
-      (elog-warning org-canvas--logger ">>> STARTING MASS DELETION OF FILES AND FOLDERS")
-      (elog-warning org-canvas--logger "========================================")
+    (org-canvas-clear-log)
+    ;; Clear session caches
+    (setq org-canvas--file-root-folder-cache nil)
+    (setq org-canvas--file-folder-cache (make-hash-table :test 'equal))
+    (display-buffer (get-buffer-create org-canvas--log-buffer-name))
+    (elog-warning org-canvas--logger "========================================")
+    (elog-warning org-canvas--logger ">>> STARTING MASS DELETION OF FILES AND FOLDERS")
+    (elog-warning org-canvas--logger "========================================")
 
-      (let* ((endpoint (org-canvas-api-course-endpoint "files"))
-             (params org-canvas--api-max-per-page)
-             (remote-items (append (org-canvas-api-request 'GET endpoint :params params) nil))
-             (deleted-ids nil)
-             (deleted-file-count 0)
-             (deleted-folder-count 0))
+    (let* ((endpoint (org-canvas-api-course-endpoint "files"))
+           (params org-canvas--api-max-per-page)
+           (remote-items (append (org-canvas-api-request 'GET endpoint :params params) nil))
+           (deleted-ids nil)
+           (deleted-file-count 0)
+           (deleted-folder-count 0))
 
-        (elog-info org-canvas--logger "Found %d files on Canvas" (length remote-items))
+      (elog-info org-canvas--logger "Found %d files on Canvas" (length remote-items))
 
-        ;; Delete all files first
-        (dolist (item remote-items)
-          (let* ((id (alist-get 'id item))
-                 (name (alist-get 'display_name item)))
-            (elog-info org-canvas--logger "Deleting file: '%s' (ID: %s)" name id)
-            (condition-case err
-                (progn
-                  (org-canvas-api-request 'DELETE (format "%s/api/v1/files/%s" org-canvas-base-url id))
-                  (push (number-to-string id) deleted-ids)
-                  (setq deleted-file-count (1+ deleted-file-count))
-                  (elog-info org-canvas--logger "  -> Deleted successfully"))
-              (error
-               (elog-error org-canvas--logger "  -> Delete failed: %s" (error-message-string err))))))
+      ;; Delete all files first
+      (dolist (item remote-items)
+        (let* ((id (alist-get 'id item))
+               (name (alist-get 'display_name item)))
+          (elog-info org-canvas--logger "Deleting file: '%s' (ID: %s)" name id)
+          (condition-case err
+              (progn
+                (org-canvas-api-request 'DELETE (format "%s/api/v1/files/%s" org-canvas-base-url id))
+                (push (number-to-string id) deleted-ids)
+                (setq deleted-file-count (1+ deleted-file-count))
+                (elog-info org-canvas--logger "  -> Deleted successfully"))
+            (error
+             (elog-error org-canvas--logger "  -> Delete failed: %s" (error-message-string err))))))
 
-        ;; Delete all folders (after files are gone)
-        (elog-info org-canvas--logger "----------------------------------------")
-        (elog-info org-canvas--logger "Now deleting folders...")
-        (setq deleted-folder-count (org-canvas--file-delete-all-folders))
+      ;; Delete all folders (after files are gone)
+      (elog-info org-canvas--logger "----------------------------------------")
+      (elog-info org-canvas--logger "Now deleting folders...")
+      (setq deleted-folder-count (org-canvas--file-delete-all-folders))
 
-        ;; Clean local properties
-        (org-canvas--clean-local-sync-properties files-file)
+      ;; Clean local properties
+      (org-canvas--clean-local-sync-properties files-file)
 
-        (elog-info org-canvas--logger "========================================")
-        (elog-info org-canvas--logger ">>> MASS DELETION COMPLETE: %d files, %d folders removed"
-          deleted-file-count deleted-folder-count)
-        (elog-info org-canvas--logger "========================================")
-        (message "Deletion complete. %d files, %d folders removed."
-                 deleted-file-count deleted-folder-count)))))
+      (elog-info org-canvas--logger "========================================")
+      (elog-info org-canvas--logger ">>> MASS DELETION COMPLETE: %d files, %d folders removed"
+        deleted-file-count deleted-folder-count)
+      (elog-info org-canvas--logger "========================================")
+      (message "Deletion complete. %d files, %d folders removed."
+               deleted-file-count deleted-folder-count))))
 
 ;;;###autoload
 (defun org-canvas-delete-file-at-point ()

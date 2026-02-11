@@ -504,39 +504,9 @@ QUIZ-CANVAS-ID is the Canvas ID of the quiz."
 
 ;;;; Delete Functions
 
-;;;###autoload
-(defun org-canvas-delete-all-quizzes ()
-  "Delete ALL quizzes in the configured course."
-  (interactive)
-  (unless org-canvas--inhibit-log-clear
-    (unless (y-or-n-p "Delete ALL quizzes in this course? ")
-      (user-error "Aborted")))
-
-  (org-canvas-clear-log)
-  (display-buffer (get-buffer-create org-canvas--log-buffer-name))
-  (elog-warning org-canvas--logger "========================================")
-  (elog-warning org-canvas--logger ">>> STARTING MASS DELETION OF QUIZZES")
-  (elog-warning org-canvas--logger "========================================")
-
-  (let* ((endpoint (org-canvas-api-course-endpoint "quizzes"))
-	 (params org-canvas--api-max-per-page)
-	 (remote-items (append (org-canvas-api-request 'GET endpoint :params params) nil))
-	 (result (progn
-		   (elog-info org-canvas--logger "Found %d quizzes on Canvas" (length remote-items))
-		   (org-canvas--delete-items-queued
-		    remote-items
-		    (lambda (item-id)
-		      (org-canvas-api-course-endpoint "quizzes/%s" item-id))
-		    'id 'title)))
-	 (deleted (car result)))
-
-    ;; Cleanup local properties (both quizzes and questions)
-    (org-canvas--clean-local-sync-properties org-canvas-quizzes-file)
-
-    (elog-info org-canvas--logger "========================================")
-    (elog-info org-canvas--logger ">>> MASS DELETION COMPLETE: %d removed" deleted)
-    (elog-info org-canvas--logger "========================================")
-    (message "Quiz deletion complete. %d removed." deleted)))
+(org-canvas-define-delete-all quizzes
+  :endpoint "quizzes"
+  :file org-canvas-quizzes-file)
 
 ;;;; Pull
 

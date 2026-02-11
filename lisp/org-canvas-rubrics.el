@@ -95,7 +95,7 @@
   "Build a hash-table for a single criterion from table ROW at COUNTER.
 Returns a plist (:id KEY :obj HASH :points NUM)."
   (let* ((desc (nth 0 row))
-         (points (string-to-number (or (nth 1 row) "0")))
+         (points (org-canvas--safe-string-to-number (or (nth 1 row) "0") "POINTS"))
          (long-desc (or (nth 2 row) ""))
          (crit-obj (make-hash-table :test 'equal))
          (ratings (make-hash-table :test 'equal))

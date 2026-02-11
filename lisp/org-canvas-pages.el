@@ -203,7 +203,7 @@ Fetches the full page detail to get body content."
   :endpoint "pages"
   :id-field 'url
   :id-property "CANVAS_URL"
-  :filter-fn (lambda (item) (eq (alist-get 'front_page item) t))
+  :skip-fn (lambda (item) (eq (alist-get 'front_page item) t))
   :item-fn #'org-canvas--page-pull-item)
 
 (provide 'org-canvas-pages)

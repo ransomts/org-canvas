@@ -867,17 +867,8 @@
           (delete-file temp-file)))))
 
   (it "aborts when user cancels"
-    (with-org-canvas-test-config
-      (let ((delete-called nil))
-        (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil))
-                  ((symbol-function 'org-canvas-api-request)
-                   (lambda (_method _url &rest _args)
-                     (setq delete-called t)
-                     nil)))
-          ;; Should not throw, just message "Aborted."
-          (org-canvas-delete-all-modules)
-          ;; API should never be called
-          (expect delete-called :to-be nil))))))
+    (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil)))
+      (expect (org-canvas-delete-all-modules) :to-throw 'user-error))))
 
 ;;;; Delete Module at Point Tests
 

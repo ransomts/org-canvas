@@ -209,7 +209,7 @@ ITEM is the API response alist, POS is the heading position."
 (org-canvas-define-pull discussions
   :file org-canvas-discussions-file
   :endpoint "discussion_topics"
-  :filter-fn (lambda (item) (eq (alist-get 'is_announcement item) t))
+  :skip-fn (lambda (item) (eq (alist-get 'is_announcement item) t))
   :item-fn #'org-canvas--discussion-pull-item)
 
 (provide 'org-canvas-discussions)

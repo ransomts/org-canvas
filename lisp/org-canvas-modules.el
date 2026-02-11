@@ -603,39 +603,10 @@ Returns the expanded modules file path."
 
 ;;;; Delete Functions
 
-;;;###autoload
-(defun org-canvas-delete-all-modules ()
-  "Delete ALL modules in the course (Danger Zone)."
-  (interactive)
-  (let ((modules-file (expand-file-name org-canvas-modules-file)))
-    (if (and (not org-canvas--inhibit-log-clear)
-             (not (y-or-n-p "Delete ALL modules in this course? ")))
-        (message "Aborted.")
-      (org-canvas-clear-log)
-      (display-buffer (get-buffer-create org-canvas--log-buffer-name))
-      (elog-warning org-canvas--logger "========================================")
-      (elog-warning org-canvas--logger ">>> STARTING MASS DELETION OF MODULES")
-      (elog-warning org-canvas--logger "========================================")
-
-      (let* ((endpoint (org-canvas-api-course-endpoint "modules"))
-             (params org-canvas--api-max-per-page)
-             (remote-items (append (org-canvas-api-request 'GET endpoint :params params) nil))
-             (result (progn
-                       (elog-info org-canvas--logger "Found %d modules on Canvas" (length remote-items))
-                       (org-canvas--delete-items-queued
-                        remote-items
-                        (lambda (item-id)
-                          (org-canvas-api-course-endpoint "modules/%s" item-id))
-                        'id 'name)))
-             (deleted-count (car result)))
-
-        ;; Clean local properties (modules and module items)
-        (org-canvas--clean-local-sync-properties modules-file)
-
-        (elog-info org-canvas--logger "========================================")
-        (elog-info org-canvas--logger ">>> MASS DELETION COMPLETE: %d removed" deleted-count)
-        (elog-info org-canvas--logger "========================================")
-        (message "Module deletion complete. %d removed." deleted-count)))))
+(org-canvas-define-delete-all modules
+  :endpoint "modules"
+  :file org-canvas-modules-file
+  :title-field 'name)
 
 (defun org-canvas--module-clear-children-properties (pom)
   "Clear sync properties from POM and all its child headings."
