@@ -223,24 +223,25 @@ test/
 
 ### Test Coverage Summary
 
-**1064 tests total** covering core utilities, all feature modules, and validation (6 tests skip on Emacs 29.x due to org-mode differences).
+**1264 tests total** covering core utilities, all feature modules, and validation (6 tests skip on Emacs 29.x due to org-mode differences). Coverage is ~99% (17 uncovered lines across 15 files).
 
 | Module            | Tests |
 |-------------------|-------|
-| **core**          | 259   |
-| files             | 129   |
-| modules           | 124   |
-| quizzes           | 99    |
-| outcomes          | 88    |
-| **validate**      | 67    |
-| sections          | 58    |
-| assignments       | 57    |
-| pages             | 46    |
-| rubrics           | 38    |
-| discussions       | 29    |
-| announcements     | 28    |
-| assignment-groups | 16    |
-| orchestration     | 8     |
+| **core**          | 353   |
+| files             | 136   |
+| modules           | 133   |
+| quizzes           | 123   |
+| outcomes          | 97    |
+| **validate**      | 72    |
+| assignments       | 69    |
+| pages             | 48    |
+| rubrics           | 48    |
+| sections          | 43    |
+| orchestration     | 38    |
+| discussions       | 34    |
+| announcements     | 31    |
+| settings          | 20    |
+| assignment-groups | 19    |
 
 **Core tests cover:**
 - Path utilities (`org-canvas--path`)
@@ -262,8 +263,14 @@ test/
 3. **Push**: POST/PUT selection, timeout recovery, 404 retry logic
 4. **Finalize**: CANVAS_ID saving, LAST_SYNCED timestamps, error handling
 
+**Pull function tests cover:**
+- Canvas-to-Org import for all 12 feature modules
+- `pull-upsert-heading`, `pull-insert-body`, property/timestamp setting
+- Item link resolution across files (modules → pages/assignments/etc.)
+
 **Integration tests cover:**
 - Full sync pipelines (`org-canvas-sync-{feature}`)
+- Full pull pipelines (`org-canvas-pull-{feature}`)
 - Delete-all commands (`org-canvas-delete-all-{feature}`)
 - Delete-at-point commands
 - User confirmation prompts

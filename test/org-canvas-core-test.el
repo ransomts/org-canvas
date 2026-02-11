@@ -3300,7 +3300,7 @@ Page content.
       (unwind-protect
           (progn
             (with-temp-file temp-file
-              (insert "* Test Announcement\n:PROPERTIES:\n:CANVAS_ID: 12345\n:PAYLOAD_HASH: dummy\n:PUBLISHED: true\n:END:\nBody.\n"))
+              (insert "* Test Announcement\n:PROPERTIES:\n:CANVAS_ID: 12345\n:PAYLOAD_HASH: dummy\n:PUBLISHED: true\n:ALLOW_COMMENTS: true\n:END:\nBody.\n"))
             ;; First sync sets PAYLOAD_HASH to real value
             (with-org-canvas-test-config
               (with-mock-api
