@@ -518,6 +518,34 @@ Use \\[next-error] and \\[previous-error] to navigate issues."
 
 ;;;; 8. Main Command
 
+(defun org-canvas--validate-run-all-specs ()
+  "Run all validation specs and collect issues.
+Returns a plist (:issues ISSUES :checked N :skipped N)."
+  (let ((all-issues nil)
+        (files-checked 0)
+        (files-skipped 0))
+    (dolist (spec org-canvas--validate-specs)
+      (let* ((file-var (plist-get spec :file))
+             (file (and (boundp file-var)
+                        (expand-file-name (symbol-value file-var)))))
+        (if (and file (file-exists-p file))
+            (progn
+              (setq files-checked (1+ files-checked))
+              (let ((issues (org-canvas--validate-spec spec)))
+                (setq all-issues (nconc all-issues issues))))
+          (setq files-skipped (1+ files-skipped)))))
+    (list :issues all-issues :checked files-checked :skipped files-skipped)))
+
+(defun org-canvas--validate-format-summary (error-count warning-count)
+  "Return a summary message string for ERROR-COUNT and WARNING-COUNT."
+  (cond
+   ((> error-count 0)
+    (format "Validation: %d error(s), %d warning(s)" error-count warning-count))
+   ((> warning-count 0)
+    (format "Validation: %d warning(s), no errors" warning-count))
+   (t
+    "Validation passed: no issues found")))
+
 ;;;###autoload
 (defun org-canvas-validate ()
   "Validate all course org files without contacting the Canvas API.
@@ -527,54 +555,36 @@ requirements across all 12 content types.
 Results are displayed in a `*canvas-validate*' buffer with
 `compilation-mode' navigation (\\[next-error] / \\[previous-error])."
   (interactive)
-  (let ((all-issues nil)
-        (files-checked 0)
-        (files-skipped 0))
-    ;; Run all specs
-    (dolist (spec org-canvas--validate-specs)
-      (let* ((label (plist-get spec :label))
-             (file-var (plist-get spec :file))
-             (file (and (boundp file-var)
-                        (expand-file-name (symbol-value file-var)))))
-        (if (and file (file-exists-p file))
-            (progn
-              (setq files-checked (1+ files-checked))
-              (let ((issues (org-canvas--validate-spec spec)))
-                (setq all-issues (nconc all-issues issues))))
-          (setq files-skipped (1+ files-skipped)))))
-
-    ;; Build report
-    (let ((buf (get-buffer-create "*canvas-validate*"))
-          (error-count (cl-count 'error all-issues :key (lambda (i) (plist-get i :severity))))
-          (warning-count (cl-count 'warning all-issues :key (lambda (i) (plist-get i :severity)))))
-      (with-current-buffer buf
-        (let ((inhibit-read-only t))
-          (erase-buffer)
-          (insert (format "org-canvas validation report\n"))
-          (insert (make-string 60 ?=))
-          (insert "\n\n")
-          ;; Insert issues
-          (if all-issues
-              (dolist (issue all-issues)
-                (insert (org-canvas--validate-format-issue issue))
-                (insert "\n"))
-            (insert "No issues found.\n"))
-          (insert "\n")
-          (insert (make-string 60 ?=))
-          (insert "\n")
-          (insert (format "Validation complete: %d error(s), %d warning(s) across %d file(s)"
-                          error-count warning-count files-checked))
-          (when (> files-skipped 0)
-            (insert (format " (%d file(s) not found, skipped)" files-skipped)))
-          (insert "\n"))
-        (org-canvas-validate-mode)
-        (goto-char (point-min)))
-      (display-buffer buf)
-      (if (> error-count 0)
-          (message "Validation: %d error(s), %d warning(s)" error-count warning-count)
-        (if (> warning-count 0)
-            (message "Validation: %d warning(s), no errors" warning-count)
-          (message "Validation passed: no issues found"))))))
+  (let* ((result (org-canvas--validate-run-all-specs))
+         (all-issues (plist-get result :issues))
+         (files-checked (plist-get result :checked))
+         (files-skipped (plist-get result :skipped))
+         (buf (get-buffer-create "*canvas-validate*"))
+         (error-count (cl-count 'error all-issues :key (lambda (i) (plist-get i :severity))))
+         (warning-count (cl-count 'warning all-issues :key (lambda (i) (plist-get i :severity)))))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert (format "org-canvas validation report\n"))
+        (insert (make-string 60 ?=))
+        (insert "\n\n")
+        (if all-issues
+            (dolist (issue all-issues)
+              (insert (org-canvas--validate-format-issue issue))
+              (insert "\n"))
+          (insert "No issues found.\n"))
+        (insert "\n")
+        (insert (make-string 60 ?=))
+        (insert "\n")
+        (insert (format "Validation complete: %d error(s), %d warning(s) across %d file(s)"
+                        error-count warning-count files-checked))
+        (when (> files-skipped 0)
+          (insert (format " (%d file(s) not found, skipped)" files-skipped)))
+        (insert "\n"))
+      (org-canvas-validate-mode)
+      (goto-char (point-min)))
+    (display-buffer buf)
+    (message "%s" (org-canvas--validate-format-summary error-count warning-count))))
 
 (provide 'org-canvas-validate)
 ;;; org-canvas-validate.el ends here

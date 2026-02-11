@@ -1123,6 +1123,181 @@ These commands delete the item at the current cursor position:
 | =org-canvas-set-log-level=        | Set logging level interactively               |
 | =org-canvas-set-log-destination=  | Set log destination interactively             |
 
+* Example Workflows
+
+This section describes common end-to-end workflows that instructors follow when using org-canvas.
+
+** New Course from Scratch
+
+Starting a brand-new course that doesn't exist on Canvas yet (or exists but is empty).
+
+1. *Initialize the project.*  Run =M-x org-canvas-init=.  The wizard prompts for your Canvas URL, API token, and course ID, tests the connection, and creates =org-canvas-credentials.el= plus skeleton =.org= files.
+
+2. *Configure course settings.*  Edit =settings.org= to set the time zone, license, homepage, and term dates:
+
+   #+begin_src org
+   ,* Course Settings
+   :PROPERTIES:
+   :TIME_ZONE: America/New_York
+   :DEFAULT_VIEW: modules
+   :LICENSE: cc_by_nc_sa
+   :START_AT: <2026-08-25 Mon 00:00>
+   :END_AT: <2026-12-15 Tue 23:59>
+   :END:
+   #+end_src
+
+3. *Build course content.*  Fill in the Org files for each content type you need.  A typical order that respects dependencies:
+
+   - =assignment-groups.org= -- grade categories (Homework, Labs, Exams)
+   - =outcomes.org= -- learning outcomes (optional)
+   - =rubrics.org= -- grading rubrics (optional)
+   - =pages.org= -- syllabus, reference pages, instructions
+   - =files.org= -- lecture slides, handouts, datasets
+   - =assignments.org= -- homework, projects (link to rubrics and groups)
+   - =quizzes.org= -- quizzes with embedded questions
+   - =discussions.org= -- discussion boards
+   - =announcements.org= -- welcome announcement
+   - =modules.org= -- organize everything into weekly modules
+
+4. *Validate offline.*  Run =M-x org-canvas-validate= to catch property errors, missing links, and invalid dates before making any API calls.
+
+5. *Preview changes.*  Run =M-x org-canvas-sync-dry-run= to see what would be created or updated without touching Canvas.
+
+6. *Push to Canvas.*  Run =M-x org-canvas-sync=.  This syncs all files in dependency order and sets =CANVAS_ID= properties on each heading.
+
+7. *Verify.*  Open Canvas in a browser and spot-check the published course.
+
+** Importing an Existing Canvas Course
+
+Adopting org-canvas for a course that already has content on Canvas.
+
+1. *Initialize.*  Run =M-x org-canvas-init= with the existing course's ID.  Choose *not* to generate skeleton files (the pull will create them).
+
+2. *Install pandoc.*  HTML content (page bodies, assignment descriptions) requires [[https://pandoc.org/][pandoc]] for conversion to Org format.  Without it, HTML is stored as raw markup.
+
+3. *Pull everything.*  Run =M-x org-canvas-pull-all=.  This imports all 12 content types in dependency order, creating one =.org= file per type.  Each heading receives a =CANVAS_ID= and =LAST_SYNCED= property so org-canvas treats them as existing items on future syncs.
+
+4. *Review the import.*  Open each =.org= file and verify the converted content.  Fix any pandoc conversion artifacts (e.g., stray HTML tags in complex formatting).
+
+5. *Make your first edit and sync.*  Change a heading in any file, then run =M-x org-canvas-sync=.  Only the modified item will be pushed -- unchanged items are skipped thanks to payload hashing.
+
+6. *Version control.*  Run =git init= and commit the =.org= files (keep =org-canvas-credentials.el= in =.gitignore=).  You now have a full history of your course content.
+
+** Semester-to-Semester Course Copy
+
+Reusing last semester's Org files for a new section.
+
+1. *Copy the directory.*  Duplicate your course folder and update =org-canvas-credentials.el= with the new course ID.
+
+2. *Strip sync state.*  Delete all =CANVAS_ID=, =CANVAS_URL=, =LAST_SYNCED=, =CANVAS_UPDATED_AT=, and =PAYLOAD_HASH= properties from every heading.  This tells org-canvas to create fresh items instead of trying to update the old course:
+
+   #+begin_src bash
+   # Remove sync properties from all .org files
+   sed -i '/:CANVAS_ID:/d; /:CANVAS_URL:/d; /:LAST_SYNCED:/d; /:CANVAS_UPDATED_AT:/d; /:PAYLOAD_HASH:/d' *.org
+   #+end_src
+
+3. *Update dates.*  Search for Org timestamps (=<2025-...>=) and update them to the new semester.  Per-section overrides in =assignments.org= need updated dates too.
+
+4. *Update sections.*  Edit =sections.org= with the new semester's section names if they changed.
+
+5. *Validate and push.*  Run =M-x org-canvas-validate=, then =M-x org-canvas-sync=.  Everything is created as new items in the new course.
+
+** Incremental Edits During the Semester
+
+Day-to-day workflow for an instructor maintaining a live course.
+
+1. *Edit a single item.*  Open the relevant =.org= file (e.g., =assignments.org=), navigate to the heading, and make your changes.
+
+2. *Sync just that item.*  With point on the heading, run =M-x org-canvas-sync-assignment-at-point=.  This pushes only the current heading without re-syncing the entire file.
+
+3. *Sync a single module.*  If you changed several items in one content type, run the per-module sync command (e.g., =M-x org-canvas-sync-pages=) to push just that type.
+
+4. *Full sync after large edits.*  After updating many files, run =M-x org-canvas-sync= to push everything.  Unchanged items are skipped automatically via payload hashing, so this is safe to run frequently.
+
+** Collaborative Course with TAs
+
+When multiple people edit content -- some via Org files, others via the Canvas web UI.
+
+1. *Enable conflict detection.*  This is on by default (=org-canvas-detect-conflicts= is =t=).  Before each push, org-canvas compares =LAST_SYNCED= against the remote =updated_at= timestamp.
+
+2. *Check for remote changes.*  If a TA edited an assignment in Canvas and you modified the same heading locally, =org-canvas-sync= reports a =CONFLICT= for that item and skips it.
+
+3. *Resolve conflicts.*  Pull the latest version with =M-x org-canvas-pull-assignments= to see what the TA changed.  Merge their changes into your Org file, then sync again.
+
+4. *Force push when needed.*  If you're confident your local version should win, use =M-x org-canvas-force-push= to overwrite remote changes.
+
+5. *Divide responsibilities.*  Consider splitting ownership -- the instructor manages content via Org files, TAs handle grading and student-facing interactions in Canvas.  Conflict detection prevents accidental overwrites in the overlap.
+
+** Removing Content and Cleaning Up
+
+Deleting items that are no longer needed.
+
+*** Deleting a Single Item
+
+1. Navigate to the heading in the =.org= file.
+2. Run the delete-at-point command (e.g., =M-x org-canvas-delete-assignment-at-point=).
+3. This deletes the item from Canvas and clears sync properties from the heading.
+4. Optionally remove the heading from the Org file.
+
+*** Deleting All Items of a Type
+
+1. Run =M-x org-canvas-delete-all-assignments= (or the equivalent for another type).
+2. Confirm the deletion.  All items of that type are removed from Canvas and sync properties are cleared.
+
+*** Finding and Removing Orphans
+
+When you delete a heading from an Org file but forget to delete it from Canvas:
+
+1. Run =M-x org-canvas-cleanup-orphans=.
+2. Review the orphan report in the =*canvas-orphans*= buffer.
+3. Confirm deletion to remove stale Canvas items.
+
+** Per-Section Date Overrides
+
+Setting different due dates for different course sections.
+
+1. *Pull sections.*  Run =M-x org-canvas-pull-sections= to populate =sections.org= with section headings and =CANVAS_ID= properties.
+
+2. *Add override tables.*  In =assignments.org=, add a =#+NAME: overrides= table under the relevant assignment heading:
+
+   #+begin_src org
+   ,* Homework 1
+   :PROPERTIES:
+   :POINTS: 50
+   :DUE_AT: <2026-09-15 Mon 23:59>
+   :END:
+
+   Default description...
+
+   #+NAME: overrides
+   | Section                                      | Due At                 | Unlock At              | Lock At |
+   |----------------------------------------------+------------------------+------------------------+---------|
+   | [[file:sections.org::*Section A][Section A]] | <2026-09-16 Tue 23:59> | <2026-09-01 Mon 00:00> |         |
+   | [[file:sections.org::*Section B][Section B]] | <2026-09-18 Thu 23:59> | <2026-09-01 Mon 00:00> |         |
+   #+end_src
+
+3. *Sync.*  Run =M-x org-canvas-sync=.  Sections are synced first (Tier 0), then assignments (Tier 1), then overrides (Tier 1.75).
+
+4. *Modify overrides.*  Edit dates in the table, add new rows, or remove rows.  The override sync reconciles against Canvas: new rows are created, changed rows are updated, and removed rows are deleted.
+
+** Pre-Semester Validation Checklist
+
+A final review workflow before making the course visible to students.
+
+1. *Validate all files.*  Run =M-x org-canvas-validate=.  Fix any errors (invalid properties, broken links, past-date warnings).
+
+2. *Dry run.*  Run =M-x org-canvas-sync-dry-run= to confirm the sync plan looks correct.
+
+3. *Sync everything.*  Run =M-x org-canvas-sync=.
+
+4. *Check status.*  Run =M-x org-canvas-status= to see a summary of synced items per module and any issues.
+
+5. *Clean up orphans.*  Run =M-x org-canvas-cleanup-orphans= to remove any leftover items from earlier drafts.
+
+6. *Review in Canvas.*  Open the course in a browser, walk through the modules, and verify everything renders correctly.
+
+7. *Commit to git.*  Commit the final state of all =.org= files so you have a clean snapshot of the published course.
+
 * Troubleshooting
 
 ** Common Issues

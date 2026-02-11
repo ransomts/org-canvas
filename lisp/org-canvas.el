@@ -210,6 +210,26 @@ Deletion order is reverse of sync order to respect dependencies."
     ("Sections"          org-canvas-sections-file          "CANVAS_ID"))
   "Content types for status reporting: (label file-var id-property).")
 
+(defun org-canvas--status-count-entries (file id-prop)
+  "Count synced and pending entries in FILE using ID-PROP.
+Returns a plist (:synced N :pending N :last-synced TS-OR-NIL)."
+  (let ((synced 0) (pending 0) (last-synced nil))
+    (with-current-buffer (find-file-noselect file)
+      (save-excursion
+        (goto-char (point-min))
+        (org-map-entries
+         (lambda ()
+           (let ((id (org-entry-get (point) id-prop))
+                 (ts (org-entry-get (point) "LAST_SYNCED")))
+             (if id
+                 (progn
+                   (setq synced (1+ synced))
+                   (when (and ts (or (not last-synced) (string> ts last-synced)))
+                     (setq last-synced ts)))
+               (setq pending (1+ pending)))))
+         "LEVEL=1" 'file)))
+    (list :synced synced :pending pending :last-synced last-synced)))
+
 (defun org-canvas--status-report-file (buf label file-var id-prop)
   "Report sync status for content type LABEL to buffer BUF.
 FILE-VAR is the symbol of the file path variable.
@@ -220,21 +240,10 @@ ID-PROP is the property used to identify synced items."
       (insert (format "\n%s" label))
       (if (or (not file) (not (file-exists-p file)))
           (insert " — file not found, skipped\n")
-        (let ((synced 0) (pending 0) (last-synced nil))
-          (with-current-buffer (find-file-noselect file)
-            (save-excursion
-              (goto-char (point-min))
-              (org-map-entries
-               (lambda ()
-                 (let ((id (org-entry-get (point) id-prop))
-                       (ts (org-entry-get (point) "LAST_SYNCED")))
-                   (if id
-                       (progn
-                         (setq synced (1+ synced))
-                         (when (and ts (or (not last-synced) (string> ts last-synced)))
-                           (setq last-synced ts)))
-                     (setq pending (1+ pending)))))
-               "LEVEL=1" 'file)))
+        (let* ((counts (org-canvas--status-count-entries file id-prop))
+               (synced (plist-get counts :synced))
+               (pending (plist-get counts :pending))
+               (last-synced (plist-get counts :last-synced)))
           (insert (format " (%s)\n" (file-name-nondirectory file)))
           (insert (format "  Synced: %-4d  Pending: %-4d" synced pending))
           (when last-synced
@@ -362,6 +371,18 @@ Returns nil if file does not exist."
              "LEVEL=1" 'file)))
         (nreverse ids)))))
 
+(defun org-canvas--filter-orphans (remote-items local-ids id-field skip-fn)
+  "Return items from REMOTE-ITEMS not present in LOCAL-IDS.
+ID-FIELD is the alist key for item IDs.  SKIP-FN, when non-nil,
+filters out items before the orphan check."
+  (let (orphans)
+    (dolist (item remote-items)
+      (unless (and skip-fn (funcall skip-fn item))
+        (let ((remote-id (format "%s" (alist-get id-field item))))
+          (unless (member remote-id local-ids)
+            (push item orphans)))))
+    (nreverse orphans)))
+
 (cl-defun org-canvas--find-orphans-for-feature (feature)
   "Find orphaned Canvas items for FEATURE.
 FEATURE is a plist from `org-canvas--orphan-feature-registry'.
@@ -382,14 +403,8 @@ or nil if no orphans found."
       (condition-case err
           (let* ((url (org-canvas-api-course-endpoint endpoint))
                  (remote-items (org-canvas-api-request-all-pages
-                                'GET url list-params))
-                 (orphans nil))
-            (dolist (item remote-items)
-              (unless (and skip-fn (funcall skip-fn item))
-                (let ((remote-id (format "%s" (alist-get id-field item))))
-                  (unless (member remote-id local-ids)
-                    (push item orphans)))))
-            (nreverse orphans))
+                                'GET url list-params)))
+            (org-canvas--filter-orphans remote-items local-ids id-field skip-fn))
         (error
          (elog-warning org-canvas--logger
            "[Orphan] %s: failed to fetch remote items: %s"
