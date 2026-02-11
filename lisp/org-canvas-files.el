@@ -201,7 +201,7 @@ Return the folder object."
           response)
       (error
        ;; If it already exists, try to get it
-       (elog-debug org-canvas--logger "[Files] Folder creation failed (may exist): %s" (cadr err))
+       (elog-debug org-canvas--logger "[Files] Folder creation failed (may exist): %s" (error-message-string err))
        (org-canvas--file-resolve-folder-by-path folder-path)))))
 
 (defun org-canvas--file-resolve-or-cache-folder (current-path part current-folder)
@@ -580,7 +580,7 @@ Per Canvas docs, this GET request must be authenticated."
       (condition-case err
           (org-canvas-api-request 'DELETE (format "%s/api/v1/files/%s" org-canvas-base-url canvas-id))
         (error
-         (elog-warning org-canvas--logger "[Stage 3: Execute] Could not delete old file: %s" (cadr err)))))
+         (elog-warning org-canvas--logger "[Stage 3: Execute] Could not delete old file: %s" (error-message-string err)))))
 
     ;; Get or create the target folder
     (let* ((root-folder (org-canvas--file-get-root-folder))
@@ -626,7 +626,7 @@ Per Canvas docs, this GET request must be authenticated."
                       (string= (alist-get 'display_name f) display-name))
                     results))
     (error
-     (elog-warning org-canvas--logger "[Stage 3: Search] Search failed: %s" (cadr err))
+     (elog-warning org-canvas--logger "[Stage 3: Search] Search failed: %s" (error-message-string err))
      nil)))
 
 ;;;; 4. Stage: Finalization
@@ -696,7 +696,7 @@ Creates folders as needed and populates the folder cache."
     (unless (and files-file (file-exists-p files-file))
       (error "Files manifest not found: %s" files-file))
 
-    (display-buffer (get-buffer-create "*canvas-log*"))
+    (display-buffer (get-buffer-create org-canvas--log-buffer-name))
     (elog-info org-canvas--logger "========================================")
     (elog-info org-canvas--logger ">>> STARTING FILE SYNC")
     (elog-info org-canvas--logger "File: %s" files-file)
@@ -709,7 +709,7 @@ Creates folders as needed and populates the folder cache."
           (org-canvas-api-request 'GET (org-canvas-api-course-endpoint ""))
           (elog-info org-canvas--logger "[Pre-flight] Course accessible"))
       (error
-       (elog-warning org-canvas--logger "[Pre-flight] Warning: %s" (cadr err))))
+       (elog-warning org-canvas--logger "[Pre-flight] Warning: %s" (error-message-string err))))
 
     ;; Pre-create all necessary folders before uploading any files
     (let ((folder-paths (org-canvas--file-collect-folder-paths files-file)))
@@ -797,9 +797,10 @@ Creates folders as needed and populates the folder cache."
               (setq deleted-count (1+ deleted-count))
               (elog-info org-canvas--logger "  -> Deleted successfully"))
           (error
-           (elog-error org-canvas--logger "  -> Delete failed: %s" (cadr err))))))
+           (elog-error org-canvas--logger "  -> Delete failed: %s" (error-message-string err))))))
     deleted-count))
 
+;;;###autoload
 (defun org-canvas-delete-all-files ()
   "Delete ALL files and folders in the course (Danger Zone)."
   (interactive)
@@ -811,7 +812,7 @@ Creates folders as needed and populates the folder cache."
       ;; Clear session caches
       (setq org-canvas--file-root-folder-cache nil)
       (setq org-canvas--file-folder-cache (make-hash-table :test 'equal))
-      (display-buffer (get-buffer-create "*canvas-log*"))
+      (display-buffer (get-buffer-create org-canvas--log-buffer-name))
       (elog-warning org-canvas--logger "========================================")
       (elog-warning org-canvas--logger ">>> STARTING MASS DELETION OF FILES AND FOLDERS")
       (elog-warning org-canvas--logger "========================================")
@@ -837,7 +838,7 @@ Creates folders as needed and populates the folder cache."
                   (setq deleted-file-count (1+ deleted-file-count))
                   (elog-info org-canvas--logger "  -> Deleted successfully"))
               (error
-               (elog-error org-canvas--logger "  -> Delete failed: %s" (cadr err))))))
+               (elog-error org-canvas--logger "  -> Delete failed: %s" (error-message-string err))))))
 
         ;; Delete all folders (after files are gone)
         (elog-info org-canvas--logger "----------------------------------------")
@@ -854,6 +855,7 @@ Creates folders as needed and populates the folder cache."
         (message "Deletion complete. %d files, %d folders removed."
                  deleted-file-count deleted-folder-count)))))
 
+;;;###autoload
 (defun org-canvas-delete-file-at-point ()
   "Delete the Canvas file associated with the current Org heading."
   (interactive)
@@ -868,7 +870,7 @@ Creates folders as needed and populates the folder cache."
 
     (when (y-or-n-p (format "Delete '%s' from Canvas? " display-name))
       (org-canvas-clear-log)
-      (display-buffer (get-buffer-create "*canvas-log*"))
+      (display-buffer (get-buffer-create org-canvas--log-buffer-name))
       (elog-info org-canvas--logger "Deleting file '%s' (ID: %s)..." display-name canvas-id)
 
       (condition-case err
@@ -879,7 +881,7 @@ Creates folders as needed and populates the folder cache."
             (elog-info org-canvas--logger "Cleaned local properties")
             (message "File '%s' deleted." display-name))
         (error
-         (elog-error org-canvas--logger "Failed to delete: %s" (cadr err))
+         (elog-error org-canvas--logger "Failed to delete: %s" (error-message-string err))
          (message "Failed to delete file. Check logs."))))))
 
 ;;;; Pull

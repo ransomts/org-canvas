@@ -180,32 +180,9 @@ Handles Timeout by searching for the page."
   :id-property "CANVAS_URL"
   :skip-fn (lambda (item) (eq (alist-get 'front_page item) t)))
 
-(defun org-canvas-delete-page-at-point ()
-  "Delete the Canvas page associated with the current Org heading."
-  (interactive)
-  (org-back-to-heading t)
-  (let* ((pom (point))
-         (canvas-url (org-canvas-org-get-property pom "CANVAS_URL"))
-         (title (org-get-heading t t t t)))
-
-    (unless canvas-url
-      (user-error "No CANVAS_URL property found for this heading"))
-
-    (when (y-or-n-p (format "Delete '%s' from Canvas? " title))
-      (org-canvas-clear-log)
-      (display-buffer (get-buffer-create "*canvas-log*"))
-      (elog-info org-canvas--logger "Deleting page '%s' (URL: %s)..." title canvas-url)
-
-      (condition-case err
-          (progn
-            (org-canvas-api-request 'DELETE (org-canvas-api-course-endpoint "pages/%s" canvas-url))
-            (elog-info org-canvas--logger "Successfully deleted from Canvas")
-            (org-canvas-clear-sync-properties pom)
-            (elog-info org-canvas--logger "Cleaned local properties")
-            (message "Page '%s' deleted." title))
-        (error
-         (elog-error org-canvas--logger "Failed to delete: %s" (cadr err))
-         (message "Failed to delete page. Check logs."))))))
+(org-canvas-define-delete-at-point page
+  :endpoint "pages/%s"
+  :id-property "CANVAS_URL")
 
 ;;;; Pull
 

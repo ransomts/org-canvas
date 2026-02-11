@@ -152,7 +152,7 @@ heading names are preserved (user may rename).  Warns about stale
 local headings whose CANVAS_ID no longer exists on Canvas."
   (interactive)
   (org-canvas-clear-log)
-  (display-buffer (get-buffer-create "*canvas-log*"))
+  (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (let* ((sections-file (org-canvas--pull-sections-preflight))
          (endpoint (org-canvas-api-course-endpoint "sections"))
            (remote-sections (append (org-canvas-api-request
@@ -359,7 +359,7 @@ Scans assignments.org for `#+NAME: overrides' tables and
 reconciles them with Canvas assignment overrides."
   (interactive)
   (org-canvas-clear-log)
-  (display-buffer (get-buffer-create "*canvas-log*"))
+  (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (let* ((assignments-file (org-canvas--override-sync-preflight))
          (source-dir (file-name-directory assignments-file))
           (total-created 0) (total-updated 0) (total-deleted 0)

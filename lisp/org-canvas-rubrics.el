@@ -178,7 +178,7 @@ it before creating new one."
           (condition-case err
               (org-canvas--rubric-delete-by-id existing-id)
             (error
-             (elog-error org-canvas--logger "[Stage 3: Conflict] Failed to delete existing rubric (may be in use): %s" (cadr err)))))))
+             (elog-error org-canvas--logger "[Stage 3: Conflict] Failed to delete existing rubric (may be in use): %s" (error-message-string err)))))))
 
     (elog-info org-canvas--logger "[Stage 3: Execute] POST Rubric '%s' to %s" title endpoint)
 
@@ -187,7 +187,7 @@ it before creating new one."
           (elog-info org-canvas--logger "[Stage 3: Execute] POST successful for '%s'" title)
           response)
       (error
-       (elog-error org-canvas--logger "[Stage 3: Execute] POST failed: %s" (cadr err))
+       (elog-error org-canvas--logger "[Stage 3: Execute] POST failed: %s" (error-message-string err))
        (if (org-canvas--timeout-error-p err)
            (org-canvas--handle-timeout-recovery
             #'org-canvas--rubric-search-by-title title err)
@@ -243,7 +243,7 @@ Returns t on success, nil on failure."
         t)
     (error
      (elog-warning org-canvas--logger
-                   "  -> Dissociation failed: %s" (cadr err))
+                   "  -> Dissociation failed: %s" (error-message-string err))
      nil)))
 
 (defun org-canvas--rubric-dissociate-all ()
@@ -301,7 +301,7 @@ an assignment, so this must run before rubric deletion."
             (elog-warning org-canvas--logger "  [Detail] assessments: none"))))
     (error
      (elog-warning org-canvas--logger
-                   "  [Detail] Failed to fetch rubric detail: %s" (cadr err)))))
+                   "  [Detail] Failed to fetch rubric detail: %s" (error-message-string err)))))
 
 (defun org-canvas--rubric-find-linked-assignments (rubric-id)
   "Return list of assignments that reference RUBRIC-ID."
@@ -335,7 +335,7 @@ an assignment, so this must run before rubric deletion."
                         "  [Assignments] No assignments reference this rubric")))
     (error
      (elog-warning org-canvas--logger
-                   "  [Assignments] Failed to check assignments: %s" (cadr err)))))
+                   "  [Assignments] Failed to check assignments: %s" (error-message-string err)))))
 
 (defun org-canvas--rubric-log-diagnostics (rubric-id list-data)
   "Fetch and log detailed info about rubric RUBRIC-ID after a failed deletion.
@@ -376,10 +376,11 @@ Returns the string ID if deleted, nil otherwise."
           (elog-info org-canvas--logger "  -> Deleted successfully")
           (org-canvas--normalize-id item-id))
       (error
-       (elog-warning org-canvas--logger "  -> Delete returned error: %s" (cadr err))
+       (elog-warning org-canvas--logger "  -> Delete returned error: %s" (error-message-string err))
        (when (org-canvas--rubric-verify-deleted item-id item)
          (org-canvas--normalize-id item-id))))))
 
+;;;###autoload
 (defun org-canvas-delete-all-rubrics ()
   "Delete ALL rubrics in the configured course.
 First dissociates rubrics from assignments to avoid Canvas 500 errors.
@@ -390,7 +391,7 @@ On failure, fetches detailed rubric info for diagnostics."
       (user-error "Aborted")))
 
   (org-canvas-clear-log)
-  (display-buffer (get-buffer-create "*canvas-log*"))
+  (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (elog-warning org-canvas--logger "========================================")
   (elog-warning org-canvas--logger ">>> STARTING MASS DELETION OF RUBRICS")
   (elog-warning org-canvas--logger "========================================")

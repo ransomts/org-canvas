@@ -245,7 +245,7 @@ Handles timeout by searching for the assignment."
           (org-canvas-api-request 'POST endpoint :data payload)
           (elog-info org-canvas--logger "[Rubric] Association created"))
       (error
-       (elog-warning org-canvas--logger "[Rubric] Association failed: %s" (cadr err))))))
+       (elog-warning org-canvas--logger "[Rubric] Association failed: %s" (error-message-string err))))))
 
 (defun org-canvas--assignment-post-finalize (data response)
   "Verify assignment properties and associate rubric.

@@ -438,7 +438,7 @@ QUIZ-CANVAS-ID is the Canvas ID of the quiz."
   (unless (and org-canvas-quizzes-file (file-exists-p org-canvas-quizzes-file))
     (error "Quizzes file not found: %s" org-canvas-quizzes-file))
 
-  (display-buffer (get-buffer-create "*canvas-log*"))
+  (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (elog-info org-canvas--logger "========================================")
   (elog-info org-canvas--logger ">>> STARTING QUIZ SYNC")
   (elog-info org-canvas--logger "File: %s" org-canvas-quizzes-file)
@@ -504,6 +504,7 @@ QUIZ-CANVAS-ID is the Canvas ID of the quiz."
 
 ;;;; Delete Functions
 
+;;;###autoload
 (defun org-canvas-delete-all-quizzes ()
   "Delete ALL quizzes in the configured course."
   (interactive)
@@ -512,7 +513,7 @@ QUIZ-CANVAS-ID is the Canvas ID of the quiz."
       (user-error "Aborted")))
 
   (org-canvas-clear-log)
-  (display-buffer (get-buffer-create "*canvas-log*"))
+  (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (elog-warning org-canvas--logger "========================================")
   (elog-warning org-canvas--logger ">>> STARTING MASS DELETION OF QUIZZES")
   (elog-warning org-canvas--logger "========================================")

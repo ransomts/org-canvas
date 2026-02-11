@@ -130,6 +130,9 @@ if `org-canvas-directory` is nil."
 
 ;;;; 2. Logging Layer
 
+(defconst org-canvas--log-buffer-name "*canvas-log*"
+  "Name of the buffer used for org-canvas log output.")
+
 (defcustom org-canvas-log-destination 'both
   "Where org-canvas writes log output.
 - buffer: Log to the *canvas-log* buffer
@@ -164,7 +167,7 @@ DESTINATION should be one of: buffer, file, both."
 (defvar org-canvas--logger
   (elog-logger :name "org-canvas"
 	       :handlers (org-canvas--log-handlers org-canvas-log-destination)
-	       :buffer "*canvas-log*"
+	       :buffer org-canvas--log-buffer-name
 	       :file (when (memq org-canvas-log-destination '(file both))
 		       (org-canvas--log-file-path))
 	       :level 'debug)
@@ -231,7 +234,7 @@ Bound to t by `org-canvas-sync' so sub-sync phases preserve each other's logs.")
   "Clear the log buffer and log file (when file logging is active).
 Does nothing when `org-canvas--inhibit-log-clear' is non-nil."
   (unless org-canvas--inhibit-log-clear
-    (with-current-buffer (get-buffer-create "*canvas-log*")
+    (with-current-buffer (get-buffer-create org-canvas--log-buffer-name)
       (let ((inhibit-read-only t))
         (erase-buffer)
         (read-only-mode -1)))
@@ -244,7 +247,7 @@ Does nothing when `org-canvas--inhibit-log-clear' is non-nil."
   "Clear log, display log buffer, and log OPERATION-NAME banner.
 Respects `org-canvas--inhibit-log-clear'."
   (org-canvas-clear-log)
-  (display-buffer (get-buffer-create "*canvas-log*"))
+  (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (elog-info org-canvas--logger "========================================")
   (elog-info org-canvas--logger ">>> %s" operation-name)
   (elog-info org-canvas--logger "========================================"))
@@ -1197,7 +1200,7 @@ Opens the log buffer and logs a sync header."
                             (file-name-nondirectory sync-file)))
           (with-current-buffer buf (save-buffer))
         (user-error "Aborted: unsaved changes in %s" sync-file))))
-  (display-buffer (get-buffer-create "*canvas-log*"))
+  (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (elog-info org-canvas--logger "========================================")
   (elog-info org-canvas--logger ">>> STARTING %s SYNC" feature-upper)
   (elog-info org-canvas--logger "File: %s" sync-file)
@@ -1372,6 +1375,13 @@ FEATURE-NAME is the module name.  COUNTERS is a plist with
       (message "%s sync: %d success, %d skipped, %d failed."
                (capitalize feature-name) success-count skip-count fail-count))))
 
+;; Plist key convention in parse-entry return values:
+;; - kebab-case (:canvas-id, :pom, :local-path) for internal pipeline fields
+;; - snake_case (:points_possible, :due_at) for fields mapping 1:1 to Canvas API params
+;; - Universal fields (:title, :published, :description) use kebab-case regardless
+;; Modules with hash-table payloads (rubrics, modules, files) use all kebab-case
+;; since they remap everything manually in build-payload.
+
 (defmacro org-canvas-define-sync (feature &rest args)
   "Define a sync function for FEATURE using the 4-stage pipeline pattern.
 
@@ -1515,14 +1525,14 @@ error-thrown fields since different callers place the timeout
 indicator in different positions."
   (or (let ((error-thrown (caddr err)))
         (and error-thrown (string-match-p "Timeout" (format "%s" error-thrown))))
-      (let ((err-msg (cadr err)))
-        (and err-msg (string-match-p "Timeout" (format "%s" err-msg))))))
+      (let ((err-msg (error-message-string err)))
+        (and err-msg (string-match-p "Timeout" err-msg)))))
 
 (defun org-canvas--404-on-put-p (err method)
   "Return non-nil if ERR is a 404 and METHOD is PUT.
 ERR is a `condition-case' error value."
   (and (eq method 'PUT)
-       (string-match-p "404" (format "%s" (cadr err)))))
+       (string-match-p "404" (error-message-string err))))
 
 (cl-defun org-canvas--search-item (endpoint title &key params match-field)
   "Search for an item on Canvas by title.
@@ -1552,7 +1562,7 @@ Return the matching item alist, or nil if not found."
               (elog-debug org-canvas--logger "[Search] No exact match found"))
             found))
       (error
-       (elog-warning org-canvas--logger "[Search] Failed: %s" (cadr err))
+       (elog-warning org-canvas--logger "[Search] Failed: %s" (error-message-string err))
        nil))))
 
 (defun org-canvas--handle-timeout-recovery (find-fn title err)
@@ -1638,7 +1648,7 @@ Returns the API response alist."
           (elog-info org-canvas--logger "[Execute] %s successful for '%s'" method title)
           response)
       (error
-       (elog-error org-canvas--logger "[Execute] Failed: %s" (cadr err))
+       (elog-error org-canvas--logger "[Execute] Failed: %s" (error-message-string err))
 
        (cond
         ;; CASE 1: Timeout -> Check if item exists via find-fn
@@ -1829,7 +1839,7 @@ Return non-nil if deletion succeeded."
 
     (when (y-or-n-p (format "Delete '%s' from Canvas? " title))
       (org-canvas-clear-log)
-      (display-buffer (get-buffer-create "*canvas-log*"))
+      (display-buffer (get-buffer-create org-canvas--log-buffer-name))
       (elog-info org-canvas--logger "Deleting %s '%s' (ID: %s)..." feature-name title canvas-id)
 
       (condition-case err
@@ -1842,7 +1852,7 @@ Return non-nil if deletion succeeded."
             (message "%s '%s' deleted." (capitalize feature-name) title)
             t)
         (error
-         (elog-error org-canvas--logger "Failed to delete: %s" (cadr err))
+         (elog-error org-canvas--logger "Failed to delete: %s" (error-message-string err))
          (message "Failed to delete %s. Check logs." feature-name)
          nil)))))
 
@@ -1855,7 +1865,7 @@ FEATURE-NAME is the module name string.  ENDPOINT, FILE, ID-FIELD,
 TITLE-FIELD, ID-PROPERTY, LIST-PARAMS, and SKIP-FN are passed
 through to `org-canvas--delete-all-items'."
   (org-canvas-clear-log)
-  (display-buffer (get-buffer-create "*canvas-log*"))
+  (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (let ((feature-upper (upcase feature-name)))
     (elog-warning org-canvas--logger "========================================")
     (elog-warning org-canvas--logger ">>> STARTING MASS DELETION OF %s" feature-upper)
@@ -1934,7 +1944,7 @@ FEATURE-NAME is the module name string.  PARSE-FN, BUILD-FN,
 PUSH-FN, FINALIZE-FN are the 4-stage pipeline functions.
 TITLE-KEY is the plist key for the display name."
   (org-back-to-heading t)
-  (display-buffer (get-buffer-create "*canvas-log*"))
+  (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (let* ((data (funcall parse-fn))
          (title (plist-get data title-key))
          (payload (funcall build-fn data))

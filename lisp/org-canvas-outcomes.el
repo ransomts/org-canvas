@@ -208,7 +208,7 @@ rating list item (- [N] ...).  Skips the :PROPERTIES: drawer."
                  when (string-equal (alist-get 'title item) title)
                  return item))
     (error
-     (elog-warning org-canvas--logger "[Stage 3: Search] Failed: %s" (cadr err))
+     (elog-warning org-canvas--logger "[Stage 3: Search] Failed: %s" (error-message-string err))
      nil)))
 
 (defun org-canvas--outcome-group-push-to-api (data root-group-id)
@@ -225,7 +225,7 @@ rating list item (- [N] ...).  Skips the :PROPERTIES: drawer."
               (org-canvas-api-request 'PUT endpoint :data payload)
             (error
              ;; 404 -> Create new
-             (if (string-match "404" (format "%s" (cadr err)))
+             (if (string-match "404" (error-message-string err))
                  (progn
                    (elog-warning org-canvas--logger "[Stage 3: Recovery] Group not found, creating...")
                    (org-canvas--outcome-group-create data root-group-id))
@@ -246,7 +246,7 @@ rating list item (- [N] ...).  Skips the :PROPERTIES: drawer."
           (elog-info org-canvas--logger "[Stage 3: Execute] Group created successfully")
           response)
       (error
-       (elog-error org-canvas--logger "[Stage 3: Execute] Failed: %s" (cadr err))
+       (elog-error org-canvas--logger "[Stage 3: Execute] Failed: %s" (error-message-string err))
        ;; Try to find if it was created despite error
        (or (org-canvas--outcome-group-search-by-title title parent-id)
            (signal (car err) (cdr err)))))))
@@ -263,7 +263,7 @@ rating list item (- [N] ...).  Skips the :PROPERTIES: drawer."
                  when (and outcome (string-equal (alist-get 'title outcome) title))
                  return outcome))
     (error
-     (elog-warning org-canvas--logger "[Stage 3: Search] Failed: %s" (cadr err))
+     (elog-warning org-canvas--logger "[Stage 3: Search] Failed: %s" (error-message-string err))
      nil)))
 
 (defun org-canvas--outcome-push-to-api (data)
@@ -283,7 +283,7 @@ rating list item (- [N] ...).  Skips the :PROPERTIES: drawer."
           (condition-case err
               (org-canvas-api-request 'PUT endpoint :data payload)
             (error
-             (if (string-match "404" (format "%s" (cadr err)))
+             (if (string-match "404" (error-message-string err))
                  (progn
                    (elog-warning org-canvas--logger "[Stage 3: Recovery] Outcome not found, creating...")
                    (org-canvas--outcome-create data parent-group-id))
@@ -305,7 +305,7 @@ rating list item (- [N] ...).  Skips the :PROPERTIES: drawer."
           ;; Response contains outcome_link, extract the outcome
           (or (alist-get 'outcome response) response))
       (error
-       (elog-error org-canvas--logger "[Stage 3: Execute] Failed: %s" (cadr err))
+       (elog-error org-canvas--logger "[Stage 3: Execute] Failed: %s" (error-message-string err))
        (or (org-canvas--outcome-search-by-title title group-id)
            (signal (car err) (cdr err)))))))
 
@@ -361,7 +361,7 @@ Returns a cons cell (SUCCESS-COUNT . FAIL-COUNT)."
 Returns the root group ID, or signals an error."
   (unless (and org-canvas-outcomes-file (file-exists-p org-canvas-outcomes-file))
     (error "Outcomes file not found: %s" org-canvas-outcomes-file))
-  (display-buffer (get-buffer-create "*canvas-log*"))
+  (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (elog-info org-canvas--logger "========================================")
   (elog-info org-canvas--logger ">>> STARTING OUTCOME SYNC")
   (elog-info org-canvas--logger "File: %s" org-canvas-outcomes-file)
@@ -424,6 +424,7 @@ First syncs outcome groups (level-1 headings), then outcomes (level-2 headings).
 
 ;;;; Delete Functions
 
+;;;###autoload
 (defun org-canvas-delete-all-outcomes ()
   "Delete ALL outcomes and outcome groups in the configured course.
 Warning: This will remove all learning outcomes from the course."
@@ -433,7 +434,7 @@ Warning: This will remove all learning outcomes from the course."
       (user-error "Aborted")))
 
   (org-canvas-clear-log)
-  (display-buffer (get-buffer-create "*canvas-log*"))
+  (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (elog-warning org-canvas--logger "========================================")
   (elog-warning org-canvas--logger ">>> STARTING MASS DELETION OF OUTCOMES")
   (elog-warning org-canvas--logger "========================================")

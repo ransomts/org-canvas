@@ -387,7 +387,7 @@ MODULES-FILE-DIR is used to resolve relative file links."
             (elog-debug org-canvas--logger "[Stage 3: Search] No exact match found"))
           found))
     (error
-     (elog-warning org-canvas--logger "[Stage 3: Search] Failed: %s" (cadr err))
+     (elog-warning org-canvas--logger "[Stage 3: Search] Failed: %s" (error-message-string err))
      nil)))
 
 (defun org-canvas--module-push-to-api (data payload)
@@ -427,7 +427,7 @@ Return the matching item alist, or nil if not found."
           (elog-info org-canvas--logger "[Stage 3: Execute] %s successful for item '%s'" method title)
           response)
       (error
-       (elog-error org-canvas--logger "[Stage 3: Execute] Item failed: %s" (cadr err))
+       (elog-error org-canvas--logger "[Stage 3: Execute] Item failed: %s" (error-message-string err))
 
        (cond
         ;; CASE 1: Timeout -> Search for item in module
@@ -540,7 +540,7 @@ Returns the expanded modules file path."
   (let ((modules-file (expand-file-name org-canvas-modules-file)))
     (unless (and modules-file (file-exists-p modules-file))
       (error "Modules file not found: %s" modules-file))
-    (display-buffer (get-buffer-create "*canvas-log*"))
+    (display-buffer (get-buffer-create org-canvas--log-buffer-name))
     (elog-info org-canvas--logger "========================================")
     (elog-info org-canvas--logger ">>> STARTING MODULE SYNC")
     (elog-info org-canvas--logger "File: %s" modules-file)
@@ -552,7 +552,7 @@ Returns the expanded modules file path."
           (org-canvas-api-request 'GET (org-canvas-api-course-endpoint ""))
           (elog-info org-canvas--logger "[Pre-flight] Course accessible"))
       (error
-       (elog-warning org-canvas--logger "[Pre-flight] Warning: %s" (cadr err))))
+       (elog-warning org-canvas--logger "[Pre-flight] Warning: %s" (error-message-string err))))
     modules-file))
 
 ;;;###autoload
@@ -603,6 +603,7 @@ Returns the expanded modules file path."
 
 ;;;; Delete Functions
 
+;;;###autoload
 (defun org-canvas-delete-all-modules ()
   "Delete ALL modules in the course (Danger Zone)."
   (interactive)
@@ -611,7 +612,7 @@ Returns the expanded modules file path."
              (not (y-or-n-p "Delete ALL modules in this course? ")))
         (message "Aborted.")
       (org-canvas-clear-log)
-      (display-buffer (get-buffer-create "*canvas-log*"))
+      (display-buffer (get-buffer-create org-canvas--log-buffer-name))
       (elog-warning org-canvas--logger "========================================")
       (elog-warning org-canvas--logger ">>> STARTING MASS DELETION OF MODULES")
       (elog-warning org-canvas--logger "========================================")
@@ -646,6 +647,7 @@ Returns the expanded modules file path."
       (while (org-get-next-sibling)
         (org-canvas-clear-sync-properties (point))))))
 
+;;;###autoload
 (defun org-canvas-delete-module-at-point ()
   "Delete the Canvas module associated with the current Org heading."
   (interactive)
@@ -659,7 +661,7 @@ Returns the expanded modules file path."
 
     (when (y-or-n-p (format "Delete module '%s' (and all items) from Canvas? " title))
       (org-canvas-clear-log)
-      (display-buffer (get-buffer-create "*canvas-log*"))
+      (display-buffer (get-buffer-create org-canvas--log-buffer-name))
       (elog-info org-canvas--logger "Deleting module '%s' (ID: %s)..." title canvas-id)
 
       (condition-case err
@@ -670,7 +672,7 @@ Returns the expanded modules file path."
             (elog-info org-canvas--logger "Cleaned local properties")
             (message "Module '%s' deleted." title))
         (error
-         (elog-error org-canvas--logger "Failed to delete: %s" (cadr err))
+         (elog-error org-canvas--logger "Failed to delete: %s" (error-message-string err))
          (message "Failed to delete module. Check logs."))))))
 
 ;;;; Pull

@@ -175,7 +175,7 @@ Reads settings from the first heading in `org-canvas-settings-file'
 and pushes them to Canvas via PUT /courses/:id."
   (interactive)
   (org-canvas-clear-log)
-  (display-buffer (get-buffer-create "*canvas-log*"))
+  (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (let ((settings-file (expand-file-name org-canvas-settings-file)))
     (unless (file-exists-p settings-file)
       (error "Settings file not found: %s" settings-file))
