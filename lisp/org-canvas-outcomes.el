@@ -479,6 +479,64 @@ Warning: This will remove all learning outcomes from the course."
 
 ;;;; Pull
 
+(defun org-canvas--outcome-pull-find-or-create-l2 (oid otitle)
+  "Find or create an L2 heading with CANVAS_ID OID under current heading.
+OTITLE is used when creating a new heading.  Point must be at the
+parent L1 heading.  Returns the position of the L2 heading."
+  (let ((opos nil))
+    (save-excursion
+      (org-narrow-to-subtree)
+      (goto-char (point-min))
+      (org-map-entries
+       (lambda ()
+         (when (equal (org-entry-get (point) "CANVAS_ID")
+                      (format "%s" oid))
+           (setq opos (point))))
+       "LEVEL=2" 'tree)
+      (widen))
+    (unless opos
+      (let ((subtree-end (save-excursion (org-end-of-subtree t) (point))))
+        (goto-char subtree-end)
+        (unless (bolp) (insert "\n"))
+        (insert (format "** %s\n" otitle))
+        (org-back-to-heading t)
+        (setq opos (point))))
+    opos))
+
+(defun org-canvas--outcome-pull-insert-ratings (desc ratings)
+  "Insert RATINGS list after the body, if DESC is non-empty.
+RATINGS is a vector/list of alists with \\='description and \\='points keys."
+  (when (and desc (not (string-empty-p desc)) ratings)
+    (insert "\nRatings:\n")
+    (dolist (r (append ratings nil))
+      (insert (format "- %s (%s pts)\n"
+                      (or (alist-get 'description r) "")
+                      (or (alist-get 'points r) 0))))))
+
+(defun org-canvas--outcome-pull-process-group (gid)
+  "Fetch and insert outcomes for group GID as L2 headings.
+Point must be at the parent group heading."
+  (condition-case nil
+      (let* ((outcomes-url (org-canvas-api-course-endpoint
+                            "outcome_groups/%s/outcomes" gid))
+             (outcomes (org-canvas-api-request-all-pages 'GET outcomes-url))
+             (count 0))
+        (dolist (link outcomes)
+          (let* ((outcome (alist-get 'outcome link))
+                 (oid (alist-get 'id outcome))
+                 (otitle (or (alist-get 'title outcome) "Untitled"))
+                 (desc (alist-get 'description outcome))
+                 (ratings (alist-get 'ratings outcome))
+                 (opos (org-canvas--outcome-pull-find-or-create-l2 oid otitle)))
+            (goto-char opos)
+            (when otitle (org-edit-headline otitle))
+            (org-canvas-org-save-sync-state opos oid)
+            (org-canvas--pull-insert-body desc)
+            (org-canvas--outcome-pull-insert-ratings desc ratings)
+            (cl-incf count)))
+        count)
+    (error 0)))
+
 ;;;###autoload
 (defun org-canvas-pull-outcomes ()
   "Pull outcome groups and outcomes from Canvas into outcomes.org."
@@ -499,51 +557,8 @@ Warning: This will remove all learning outcomes from the course."
           (when gtitle (org-edit-headline gtitle))
           (org-canvas-org-save-sync-state pos gid)
           (cl-incf group-count)
-          ;; Fetch outcomes in this group
-          (condition-case nil
-              (let* ((outcomes-url (org-canvas-api-course-endpoint
-                                   "outcome_groups/%s/outcomes" gid))
-                     (outcomes (org-canvas-api-request-all-pages
-                                'GET outcomes-url)))
-                (dolist (link outcomes)
-                  (let* ((outcome (alist-get 'outcome link))
-                         (oid (alist-get 'id outcome))
-                         (otitle (or (alist-get 'title outcome) "Untitled"))
-                         (desc (alist-get 'description outcome))
-                         (ratings (alist-get 'ratings outcome)))
-                    ;; Find or create L2 heading under this group
-                    (let ((opos nil))
-                      (save-excursion
-                        (org-narrow-to-subtree)
-                        (goto-char (point-min))
-                        (org-map-entries
-                         (lambda ()
-                           (when (equal (org-entry-get (point) "CANVAS_ID")
-                                        (format "%s" oid))
-                             (setq opos (point))))
-                         "LEVEL=2" 'tree)
-                        (widen))
-                      (unless opos
-                        (let ((subtree-end (save-excursion
-                                             (org-end-of-subtree t) (point))))
-                          (goto-char subtree-end)
-                          (unless (bolp) (insert "\n"))
-                          (insert (format "** %s\n" otitle))
-                          (org-back-to-heading t)
-                          (setq opos (point))))
-                      (goto-char opos)
-                      (when otitle (org-edit-headline otitle))
-                      (org-canvas-org-save-sync-state opos oid)
-                      ;; Add description as body
-                      (org-canvas--pull-insert-body desc)
-                      (when (and desc (not (string-empty-p desc)) ratings)
-                        (insert "\nRatings:\n")
-                        (dolist (r (append ratings nil))
-                          (insert (format "- %s (%s pts)\n"
-                                          (or (alist-get 'description r) "")
-                                          (or (alist-get 'points r) 0)))))
-                      (cl-incf outcome-count)))))
-            (error nil))))
+          (cl-incf outcome-count
+                   (org-canvas--outcome-pull-process-group gid))))
       (save-buffer))
     (elog-info org-canvas--logger
       "Outcomes pull complete: %d groups, %d outcomes" group-count outcome-count)

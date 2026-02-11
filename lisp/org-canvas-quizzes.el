@@ -282,75 +282,75 @@ QUIZ-CANVAS-ID is the Canvas ID of the parent quiz."
 	  :points_possible points
 	  :pom pom)))
 
+(defun org-canvas--question-build-checkbox-answers ()
+  "Build answers from checkbox list where all items get weights."
+  (let ((answers (org-canvas--quiz-parse-checkbox-list)))
+    (cl-loop for (text . correct) in answers
+             collect `((answer_text . ,text)
+                       (answer_weight . ,(if correct
+                                             org-canvas--answer-weight-correct
+                                           org-canvas--answer-weight-incorrect))))))
+
+(defun org-canvas--question-build-short-answers ()
+  "Build answers from checkbox list, keeping only correct items."
+  (let ((answers (org-canvas--quiz-parse-checkbox-list)))
+    (cl-loop for (text . correct) in answers
+             when correct
+             collect `((answer_text . ,text)
+                       (answer_weight . ,org-canvas--answer-weight-correct)))))
+
+(defun org-canvas--question-build-blank-answers (correct-only)
+  "Build answers from nested blanks.
+When CORRECT-ONLY is non-nil, only include correct answers."
+  (let ((blanks (org-canvas--quiz-parse-nested-blanks)))
+    (cl-loop for (blank-id . answers) in blanks
+             append (cl-loop for (text . correct) in answers
+                             when (or (not correct-only) correct)
+                             collect `((blank_id . ,blank-id)
+                                       (answer_text . ,text)
+                                       (answer_weight . ,(if correct
+                                                             org-canvas--answer-weight-correct
+                                                           org-canvas--answer-weight-incorrect)))))))
+
+(defun org-canvas--question-build-matching-answers ()
+  "Build answers from matching pairs list."
+  (let ((matches (org-canvas--quiz-parse-matching-list)))
+    (cl-loop for (left . right) in matches
+             collect (if right
+                        `((answer_match_left . ,left)
+                          (answer_match_right . ,right))
+                      `((answer_match_left . ,left))))))
+
+(defun org-canvas--question-build-numerical-answer ()
+  "Build answer from numerical value or range."
+  (let ((num (org-canvas--quiz-parse-numerical-answer)))
+    (when num
+      (if (eq (plist-get num :type) 'range)
+          `(((numerical_answer_type . "range_answer")
+             (answer_range_start . ,(plist-get num :start))
+             (answer_range_end . ,(plist-get num :end))
+             (answer_weight . ,org-canvas--answer-weight-correct)))
+        `(((numerical_answer_type . "exact_answer")
+           (answer_exact . ,(plist-get num :value))
+           (answer_weight . ,org-canvas--answer-weight-correct)))))))
+
 (defun org-canvas--question-build-answers (q-type)
   "Build answers array based on Q-TYPE from current heading content."
   (pcase q-type
-    ;; Multiple choice, true/false, multiple answers: checkbox answers with weights
     ((or "multiple_choice_question" "true_false_question" "multiple_answers_question")
-     (let ((answers (org-canvas--quiz-parse-checkbox-list)))
-       (cl-loop for (text . correct) in answers
-		collect `((answer_text . ,text)
-			  (answer_weight . ,(if correct
-					       org-canvas--answer-weight-correct
-					     org-canvas--answer-weight-incorrect))))))
-
-    ;; Short answer: all checked items are acceptable
+     (org-canvas--question-build-checkbox-answers))
     ("short_answer_question"
-     (let ((answers (org-canvas--quiz-parse-checkbox-list)))
-       (cl-loop for (text . correct) in answers
-		when correct
-		collect `((answer_text . ,text)
-			  (answer_weight . ,org-canvas--answer-weight-correct)))))
-
-    ;; Fill in multiple blanks
+     (org-canvas--question-build-short-answers))
     ("fill_in_multiple_blanks_question"
-     (let ((blanks (org-canvas--quiz-parse-nested-blanks)))
-       (cl-loop for (blank-id . answers) in blanks
-		append (cl-loop for (text . correct) in answers
-				when correct
-				collect `((blank_id . ,blank-id)
-					  (answer_text . ,text)
-					  (answer_weight . ,org-canvas--answer-weight-correct))))))
-
-    ;; Multiple dropdowns
+     (org-canvas--question-build-blank-answers t))
     ("multiple_dropdowns_question"
-     (let ((blanks (org-canvas--quiz-parse-nested-blanks)))
-       (cl-loop for (blank-id . answers) in blanks
-		append (cl-loop for (text . correct) in answers
-				collect `((blank_id . ,blank-id)
-					  (answer_text . ,text)
-					  (answer_weight . ,(if correct
-							       org-canvas--answer-weight-correct
-							     org-canvas--answer-weight-incorrect)))))))
-
-    ;; Matching
+     (org-canvas--question-build-blank-answers nil))
     ("matching_question"
-     (let ((matches (org-canvas--quiz-parse-matching-list)))
-       (cl-loop for (left . right) in matches
-		collect (if right
-			    `((answer_match_left . ,left)
-			      (answer_match_right . ,right))
-			  ;; Distractor (no right side)
-			  `((answer_match_left . ,left))))))
-
-    ;; Numerical
+     (org-canvas--question-build-matching-answers))
     ("numerical_question"
-     (let ((num (org-canvas--quiz-parse-numerical-answer)))
-       (when num
-	 (if (eq (plist-get num :type) 'range)
-	     `(((numerical_answer_type . "range_answer")
-		(answer_range_start . ,(plist-get num :start))
-		(answer_range_end . ,(plist-get num :end))
-		(answer_weight . ,org-canvas--answer-weight-correct)))
-	   `(((numerical_answer_type . "exact_answer")
-	      (answer_exact . ,(plist-get num :value))
-	      (answer_weight . ,org-canvas--answer-weight-correct)))))))
-
-    ;; No answers needed for these types
+     (org-canvas--question-build-numerical-answer))
     ((or "essay_question" "file_upload_question" "text_only_question")
      nil)
-
-    ;; Default
     (_ nil)))
 
 (defun org-canvas--question-build-payload (data)
@@ -547,6 +547,76 @@ QUIZ-CANVAS-ID is the Canvas ID of the quiz."
 
 ;;;; Pull
 
+(defun org-canvas--pull-set-timestamp-property (pos property iso8601)
+  "Set PROPERTY at POS from ISO8601 string, converting to Org timestamp.
+Does nothing if ISO8601 is nil or conversion fails."
+  (when iso8601
+    (let ((ts (org-canvas--iso8601-to-org-timestamp iso8601)))
+      (when ts (org-canvas-org-set-property pos property ts)))))
+
+(defun org-canvas--quiz-pull-set-properties (pos quiz file)
+  "Set all properties on heading at POS from QUIZ API response.
+FILE is the quizzes.org path, used for group link resolution."
+  (let ((quiz-type (alist-get 'quiz_type quiz))
+        (time-limit (alist-get 'time_limit quiz))
+        (shuffle (alist-get 'shuffle_answers quiz))
+        (group-id (alist-get 'assignment_group_id quiz)))
+    (org-canvas-org-save-sync-state pos (alist-get 'id quiz))
+    (when quiz-type
+      (org-canvas-org-set-property pos "QUIZ_TYPE" quiz-type))
+    (when time-limit
+      (org-canvas-org-set-property pos "TIME_LIMIT" (format "%s" time-limit)))
+    (when shuffle
+      (org-canvas-org-set-property
+       pos "SHUFFLE_ANSWERS" (if (eq shuffle t) "true" "false")))
+    (org-canvas--pull-set-timestamp-property pos "DUE_AT" (alist-get 'due_at quiz))
+    (org-canvas--pull-set-timestamp-property pos "UNLOCK_AT" (alist-get 'unlock_at quiz))
+    (org-canvas--pull-set-timestamp-property pos "LOCK_AT" (alist-get 'lock_at quiz))
+    (when (and group-id (fboundp 'org-canvas--assignment-resolve-group-link))
+      (let ((group-link (org-canvas--assignment-resolve-group-link group-id)))
+        (when group-link
+          (org-canvas-org-set-property pos "GROUP" group-link))))))
+
+(defun org-canvas--quiz-pull-insert-question (q)
+  "Insert a single question Q as an L2 heading under the current quiz.
+Point must be at the parent quiz heading."
+  (let ((q-name (or (alist-get 'question_name q) "Question"))
+        (q-text (alist-get 'question_text q))
+        (q-type (alist-get 'question_type q))
+        (q-points (alist-get 'points_possible q))
+        (answers (alist-get 'answers q)))
+    (let ((subtree-end (save-excursion (org-end-of-subtree t) (point))))
+      (goto-char subtree-end)
+      (unless (bolp) (insert "\n"))
+      (insert (format "** %s\n" q-name))
+      (org-back-to-heading t)
+      (let ((qpos (point)))
+        (when q-type
+          (org-canvas-org-set-property qpos "QUESTION_TYPE" q-type))
+        (when q-points
+          (org-canvas-org-set-property qpos "POINTS" (format "%s" q-points)))
+        (goto-char (save-excursion (org-end-of-meta-data t) (point)))
+        (when (and q-text (not (string-empty-p q-text)))
+          (insert "\n" (org-canvas--html-to-org q-text) "\n"))
+        (when answers
+          (dolist (a (append answers nil))
+            (let ((text (or (alist-get 'text a) (alist-get 'html a) ""))
+                  (weight (alist-get 'weight a)))
+              (insert (format "- [%s] %s\n"
+                              (if (and weight (> weight 0)) "X" " ")
+                              text)))))))))
+
+(defun org-canvas--quiz-pull-insert-questions (quiz-id)
+  "Fetch and insert questions for QUIZ-ID as L2 headings.
+Point must be at the parent quiz heading."
+  (condition-case nil
+      (let* ((q-url (org-canvas-api-course-endpoint
+                     "quizzes/%s/questions" quiz-id))
+             (questions (org-canvas-api-request-all-pages 'GET q-url)))
+        (dolist (q questions)
+          (org-canvas--quiz-pull-insert-question q)))
+    (error nil)))
+
 ;;;###autoload
 (defun org-canvas-pull-quizzes ()
   "Pull quizzes from Canvas into quizzes.org."
@@ -562,79 +632,12 @@ QUIZ-CANVAS-ID is the Canvas ID of the quiz."
       (dolist (quiz remote)
         (let* ((id (alist-get 'id quiz))
                (title (alist-get 'title quiz))
-               (desc-html (alist-get 'description quiz))
-               (quiz-type (alist-get 'quiz_type quiz))
-               (time-limit (alist-get 'time_limit quiz))
-               (shuffle (alist-get 'shuffle_answers quiz))
-               (due-at (alist-get 'due_at quiz))
-               (unlock-at (alist-get 'unlock_at quiz))
-               (lock-at (alist-get 'lock_at quiz))
-               (group-id (alist-get 'assignment_group_id quiz))
                (pos (org-canvas--pull-upsert-heading file id title)))
           (goto-char pos)
           (when title (org-edit-headline title))
-          (org-canvas-org-save-sync-state pos id)
-          (when quiz-type
-            (org-canvas-org-set-property pos "QUIZ_TYPE" quiz-type))
-          (when time-limit
-            (org-canvas-org-set-property pos "TIME_LIMIT" (format "%s" time-limit)))
-          (when shuffle
-            (org-canvas-org-set-property
-             pos "SHUFFLE_ANSWERS" (if (eq shuffle t) "true" "false")))
-          (when due-at
-            (let ((ts (org-canvas--iso8601-to-org-timestamp due-at)))
-              (when ts (org-canvas-org-set-property pos "DUE_AT" ts))))
-          (when unlock-at
-            (let ((ts (org-canvas--iso8601-to-org-timestamp unlock-at)))
-              (when ts (org-canvas-org-set-property pos "UNLOCK_AT" ts))))
-          (when lock-at
-            (let ((ts (org-canvas--iso8601-to-org-timestamp lock-at)))
-              (when ts (org-canvas-org-set-property pos "LOCK_AT" ts))))
-          ;; Resolve assignment group link
-          (when (and group-id (fboundp 'org-canvas--assignment-resolve-group-link))
-            (let ((group-link (org-canvas--assignment-resolve-group-link group-id)))
-              (when group-link
-                (org-canvas-org-set-property pos "GROUP" group-link))))
-          ;; Insert description body
-          (org-canvas--pull-insert-body desc-html)
-          ;; Fetch and insert questions as L2 headings
-          (condition-case nil
-              (let* ((q-url (org-canvas-api-course-endpoint
-                             "quizzes/%s/questions" id))
-                     (questions (org-canvas-api-request-all-pages 'GET q-url)))
-                (dolist (q questions)
-                  (let* ((q-name (or (alist-get 'question_name q) "Question"))
-                         (q-text (alist-get 'question_text q))
-                         (q-type (alist-get 'question_type q))
-                         (q-points (alist-get 'points_possible q))
-                         (answers (alist-get 'answers q)))
-                    (let ((subtree-end (save-excursion
-                                         (org-end-of-subtree t) (point))))
-                      (goto-char subtree-end)
-                      (unless (bolp) (insert "\n"))
-                      (insert (format "** %s\n" q-name))
-                      (org-back-to-heading t)
-                      (let ((qpos (point)))
-                        (when q-type
-                          (org-canvas-org-set-property qpos "QUESTION_TYPE" q-type))
-                        (when q-points
-                          (org-canvas-org-set-property
-                           qpos "POINTS" (format "%s" q-points)))
-                        ;; Insert question text and answers
-                        (let ((q-body-start (save-excursion
-                                              (org-end-of-meta-data t) (point))))
-                          (goto-char q-body-start)
-                          (when (and q-text (not (string-empty-p q-text)))
-                            (insert "\n" (org-canvas--html-to-org q-text) "\n"))
-                          (when answers
-                            (dolist (a (append answers nil))
-                              (let ((text (or (alist-get 'text a)
-                                              (alist-get 'html a) ""))
-                                    (weight (alist-get 'weight a)))
-                                (insert (format "- [%s] %s\n"
-                                                (if (and weight (> weight 0)) "X" " ")
-                                                text)))))))))))
-            (error nil))
+          (org-canvas--quiz-pull-set-properties pos quiz file)
+          (org-canvas--pull-insert-body (alist-get 'description quiz))
+          (org-canvas--quiz-pull-insert-questions id)
           (cl-incf count)))
       (save-buffer))
     (elog-info org-canvas--logger "Quizzes pull complete: %d quizzes" count)
