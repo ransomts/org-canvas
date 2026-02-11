@@ -89,7 +89,7 @@ Generates `org-canvas-sync-announcements` with logging, error handling, and buff
 (org-canvas--push-to-api data payload
   :endpoint "pages"
   :id-key :canvas-url           ; for pages (default :canvas-id)
-  :find-fn #'org-canvas--page-find-by-title)  ; for timeout recovery
+  :find-fn #'org-canvas--page-search-by-title)  ; for timeout recovery
 
 ;; Generic finalize with optional post-processing
 (org-canvas--finalize-item data response

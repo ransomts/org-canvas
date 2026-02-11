@@ -143,8 +143,17 @@
     (setq body (cdr body)))
   body)
 
+(defun org-canvas--complexity-count-params (arglist)
+  "Count the number of required + optional parameters in ARGLIST.
+Excludes &rest, &optional, &key keywords themselves but counts their arguments."
+  (let ((count 0))
+    (dolist (arg (if (listp arglist) arglist nil))
+      (unless (memq arg '(&optional &rest &key &allow-other-keys &body))
+        (setq count (1+ count))))
+    count))
+
 (defun org-canvas--complexity-analyze-file (file)
-  "Analyze FILE, returning list of (name cognitive cyclomatic) per defun."
+  "Analyze FILE, returning list of (name cog cyc loc params) per defun."
   (let ((results nil))
     (with-temp-buffer
       (insert-file-contents file)
@@ -152,16 +161,20 @@
       (goto-char (point-min))
       (condition-case nil
           (while t
-            (let ((sexp (read (current-buffer))))
+            (let ((start-pos (point))
+                  (sexp (read (current-buffer))))
               (when (and (consp sexp)
                          (memq (car sexp) '(defun cl-defun defmacro defsubst)))
                 (let* ((name (nth 1 sexp))
+                       (arglist (nth 2 sexp))
+                       (params (org-canvas--complexity-count-params arglist))
+                       (loc (count-lines start-pos (point)))
                        (body (org-canvas--complexity-skip-preamble (cdddr sexp)))
                        (cog 0) (cyc 0))
                   (dolist (form body)
                     (setq cog (+ cog (org-canvas--cognitive-walk form 0)))
                     (setq cyc (+ cyc (org-canvas--cyclomatic-walk form))))
-                  (push (list name cog (1+ cyc)) results)))))  ; +1 base path
+                  (push (list name cog (1+ cyc) loc params) results)))))
         (end-of-file nil)))
     (nreverse results)))
 
@@ -174,11 +187,13 @@
    (t nil)))
 
 (eldev-defcommand org-canvas-complexity (&rest parameters)
-  "Report cognitive and cyclomatic complexity of all project functions.
+  "Report code metrics for all project functions.
 
 Scans all source files and scores each defun/defmacro using:
   - Cognitive complexity (SonarSource, 2016): penalizes nested control flow
   - Cyclomatic complexity (McCabe, 1976): counts linearly independent paths
+  - Function length (LOC): lines of code per function
+  - Parameter count: number of formal parameters
 
 Set CODEMETRICS_THRESHOLD env var to change the cognitive fail threshold
 \(default 15)."
@@ -192,9 +207,13 @@ Set CODEMETRICS_THRESHOLD env var to change the cognitive fail threshold
          (total-fns 0)
          (above-threshold 0)
          (cog-bins (list 0 0 0 0))     ; low, moderate, high, very-high
-         (max-cyc 0))
+         (max-cyc 0)
+         (max-loc 0) (max-loc-fn nil)
+         (long-fns 0)                   ; LOC > 50
+         (high-arity 0)                 ; params > 5
+         (total-loc 0))
     (eldev-output "=== Code Complexity Report ===")
-    (eldev-output "    cog = cognitive    cyc = cyclomatic\n")
+    (eldev-output "    cog = cognitive  cyc = cyclomatic  loc = lines  par = params\n")
     (dolist (file (sort source-files #'string<))
       (let ((results (org-canvas--complexity-analyze-file file))
             (rel-path (file-relative-name file eldev-project-dir)))
@@ -206,11 +225,17 @@ Set CODEMETRICS_THRESHOLD env var to change the cognitive fail threshold
               (let* ((name (car entry))
                      (cog (nth 1 entry))
                      (cyc (nth 2 entry))
+                     (loc (nth 3 entry))
+                     (params (nth 4 entry))
                      (label (org-canvas--complexity-label cog))
                      (name-str (symbol-name name))
-                     (dots (make-string (max 1 (- 46 (length name-str))) ?.)))
+                     (dots (make-string (max 1 (- 42 (length name-str))) ?.)))
                 (setq total-fns (1+ total-fns))
+                (setq total-loc (+ total-loc loc))
                 (when (> cyc max-cyc) (setq max-cyc cyc))
+                (when (> loc max-loc) (setq max-loc loc max-loc-fn name))
+                (when (> loc 50) (setq long-fns (1+ long-fns)))
+                (when (> params 5) (setq high-arity (1+ high-arity)))
                 (cond
                  ((> cog 15) (setf (nth 3 cog-bins) (1+ (nth 3 cog-bins))))
                  ((> cog 10) (setf (nth 2 cog-bins) (1+ (nth 2 cog-bins))))
@@ -218,17 +243,26 @@ Set CODEMETRICS_THRESHOLD env var to change the cognitive fail threshold
                  (t          (setf (nth 0 cog-bins) (1+ (nth 0 cog-bins)))))
                 (when (> cog threshold)
                   (setq above-threshold (1+ above-threshold)))
-                (when (and label (> cog 5))
+                (when (or (and label (> cog 5)) (> loc 50) (> params 5))
                   (unless file-printed
                     (eldev-output "\n%s" rel-path)
                     (setq file-printed t))
-                  (eldev-output "  %s %s cog %3d  cyc %3d  [%s]"
-                                name-str dots cog cyc label))))))))
-    (eldev-output "\nSummary: %d functions, %d above cognitive threshold (%d)"
-                  total-fns above-threshold threshold)
-    (eldev-output "  Cognitive — Low (0-5): %d | Moderate (6-10): %d | High (11-15): %d | Very High (>15): %d"
+                  (eldev-output "  %s %s cog %3d  cyc %3d  loc %3d  par %d%s"
+                                name-str dots cog cyc loc params
+                                (cond
+                                 (label (format "  [%s]" label))
+                                 ((> loc 50) "  [long]")
+                                 ((> params 5) "  [arity]")
+                                 (t ""))))))))))
+    (eldev-output "\nSummary: %d functions, %d total LOC, %d above cognitive threshold (%d)"
+                  total-fns total-loc above-threshold threshold)
+    (eldev-output "  Cognitive  — Low (0-5): %d | Moderate (6-10): %d | High (11-15): %d | Very High (>15): %d"
                   (nth 0 cog-bins) (nth 1 cog-bins) (nth 2 cog-bins) (nth 3 cog-bins))
     (eldev-output "  Cyclomatic — max: %d" max-cyc)
+    (eldev-output "  Length     — avg: %d LOC | max: %d (%s) | >50 LOC: %d"
+                  (if (> total-fns 0) (/ total-loc total-fns) 0)
+                  max-loc (if max-loc-fn (symbol-name max-loc-fn) "n/a") long-fns)
+    (eldev-output "  Arity      — >5 params: %d" high-arity)
     (when (> above-threshold 0)
       (eldev-warn "\n%d function(s) exceed cognitive complexity threshold of %d"
                   above-threshold threshold)
