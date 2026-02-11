@@ -367,6 +367,48 @@ or signal an error for terminal failures."
         err-msg full-url body)
       (signal 'error (list err-msg body plz-err))))))
 
+(defun org-canvas--api-build-query-string (params)
+  "Build a URL query string from PARAMS alist.
+Returns a string like \"?key=value&...\" or \"\" if PARAMS is nil."
+  (if params
+      (concat "?" (url-build-query-string
+                   (cl-loop for (k . v) in params
+                            collect (list (format "%s" k)
+                                          (format "%s" v)))))
+    ""))
+
+(defun org-canvas--api-retries-exhausted (retry-count err)
+  "Signal an error after RETRY-COUNT rate-limit retries.
+ERR is the last plz-error condition."
+  (let* ((plz-err (cdr err))
+         (response (and (plz-error-p plz-err)
+                        (plz-error-response plz-err)))
+         (body (and response (plz-response-body response))))
+    (signal 'error (list (format "Rate limited after %d retries" retry-count)
+                         body plz-err))))
+
+(defun org-canvas--api-log-request (method full-url params json-payload timeout headers)
+  "Log debug info for an API request.
+METHOD, FULL-URL, PARAMS, JSON-PAYLOAD, TIMEOUT, HEADERS describe the request."
+  (elog-debug org-canvas--logger "[API] >>> REQUEST: %s %s" method full-url)
+  (elog-debug org-canvas--logger "[API] Timeout: %ds | Headers: %S"
+    timeout (org-canvas--mask-token headers))
+  (when params
+    (elog-debug org-canvas--logger "[API] Params: %S" params))
+  (when (and json-payload org-canvas-log-request-bodies)
+    (elog-debug org-canvas--logger "[API] Body:\n%s"
+      (org-canvas--pretty-json json-payload)))
+  (elog-debug org-canvas--logger "[API] curl:\n%s"
+    (org-canvas--build-curl-command method full-url
+                                    (when org-canvas-log-request-bodies json-payload))))
+
+(defun org-canvas--api-log-response (result)
+  "Log debug info for an API response RESULT."
+  (elog-debug org-canvas--logger "[API] <<< RESPONSE: success")
+  (when (and result org-canvas-log-request-bodies)
+    (elog-debug org-canvas--logger "[API] Response Body:\n%s"
+      (org-canvas--pretty-json result))))
+
 (cl-defun org-canvas-api-request (method url &key params data timeout)
   "Perform an HTTP request to the Canvas API synchronously using `plz'.
 METHOD is \\='GET, \\='POST, \\='PUT, or \\='DELETE.
@@ -375,15 +417,7 @@ PARAMS is an alist of query parameters.
 DATA is an alist or hash-table to be sent as JSON body (for POST/PUT).
 TIMEOUT is the request timeout in seconds."
   (org-canvas--ensure-credentials)
-  (let* (;; Build query string from params alist
-         (query-string (if params
-			   (concat "?" (url-build-query-string
-					(cl-loop for (k . v) in params
-						 collect (list (format "%s" k)
-							       (format "%s" v)))))
-			 ""))
-	 (full-url (concat url query-string))
-         ;; JSON-encode data if not already a string
+  (let* ((full-url (concat url (org-canvas--api-build-query-string params)))
 	 (json-payload (when data
 			 (if (stringp data) data (json-encode data))))
 	 (headers `(("Authorization" . ,(concat "Bearer " org-canvas-api-token))
@@ -393,17 +427,7 @@ TIMEOUT is the request timeout in seconds."
          ;; Our codebase uses uppercase by convention, so convert here
 	 (plz-method (intern (downcase (symbol-name method)))))
 
-    (elog-debug org-canvas--logger "[API] >>> REQUEST: %s %s" method full-url)
-    (elog-debug org-canvas--logger "[API] Timeout: %ds | Headers: %S"
-      actual-timeout (org-canvas--mask-token headers))
-    (when params
-      (elog-debug org-canvas--logger "[API] Params: %S" params))
-    (when (and json-payload org-canvas-log-request-bodies)
-      (elog-debug org-canvas--logger "[API] Body:\n%s"
-	(org-canvas--pretty-json json-payload)))
-    (elog-debug org-canvas--logger "[API] curl:\n%s"
-      (org-canvas--build-curl-command method full-url
-				      (when org-canvas-log-request-bodies json-payload)))
+    (org-canvas--api-log-request method full-url params json-payload actual-timeout headers)
 
     (let ((retry-count 0)
           (done nil)
@@ -417,28 +441,17 @@ TIMEOUT is the request timeout in seconds."
                       :body json-payload
                       :as #'json-read
                       :timeout actual-timeout))
-              (elog-debug org-canvas--logger "[API] <<< RESPONSE: success")
-              (when (and result org-canvas-log-request-bodies)
-                (elog-debug org-canvas--logger "[API] Response Body:\n%s"
-                  (org-canvas--pretty-json result)))
+              (org-canvas--api-log-response result)
               (setq done t))
           (plz-error
-           ;; Handler returns :retry for rate-limits (after sleeping),
-           ;; or signals an error for terminal failures (never returns).
            (when (eq (org-canvas--api-handle-plz-error err full-url) :retry)
              (if (< retry-count org-canvas-rate-limit-retries)
                  (progn
                    (elog-debug org-canvas--logger
                      "[API] Retry %d/%d" (1+ retry-count) org-canvas-rate-limit-retries)
                    (setq retry-count (1+ retry-count)))
-               ;; Retries exhausted
                (setq done t)
-               (let* ((plz-err (cdr err))
-                      (response (and (plz-error-p plz-err)
-                                     (plz-error-response plz-err)))
-                      (body (and response (plz-response-body response))))
-                 (signal 'error (list (format "Rate limited after %d retries" retry-count)
-                                      body plz-err))))))))
+               (org-canvas--api-retries-exhausted retry-count err))))))
       result)))
 
 (defun org-canvas-api-request-all-pages (method url &optional params)
@@ -911,6 +924,13 @@ Point must be at a heading.  Does nothing if BODY-HTML is nil or empty."
       (goto-char body-start)
       (insert "\n" (org-canvas--html-to-org body-html) "\n"))))
 
+(defun org-canvas--pull-set-timestamp-property (pos property iso8601)
+  "Set PROPERTY at POS from ISO8601 string, converting to Org timestamp.
+Does nothing if ISO8601 is nil or conversion fails."
+  (when iso8601
+    (let ((ts (org-canvas--iso8601-to-org-timestamp iso8601)))
+      (when ts (org-canvas-org-set-property pos property ts)))))
+
 (defun org-canvas--pull-upsert-heading (file canvas-id &optional title id-property)
   "Find or create a heading in FILE matched by CANVAS-ID.
 If a level-1 heading with ID-PROPERTY (default \"CANVAS_ID\") equal to
@@ -1140,6 +1160,60 @@ Returns a plist (:targets MARKERS :all-ids-before IDS)."
                id-counts))
     (list :targets targets :all-ids-before all-ids-before)))
 
+(defun org-canvas--sync-execute-pipeline (data payload ctx)
+  "Execute the skip/dry-run/push pipeline for a single entry.
+DATA is the parsed entry, PAYLOAD is the built API payload.
+CTX is the sync context plist (see `org-canvas--sync-process-entry')."
+  (let* ((push-fn (plist-get ctx :push-fn))
+         (finalize-fn (plist-get ctx :finalize-fn))
+         (feature-name (plist-get ctx :feature-name))
+         (total-count (plist-get ctx :total-count))
+         (counters (plist-get ctx :counters))
+         (synced-ids (plist-get ctx :synced-ids))
+         (payload-hash (md5 (json-encode payload)))
+         (stored-hash (org-entry-get (point) "PAYLOAD_HASH"))
+         (canvas-id (or (plist-get data :canvas-id)
+                        (plist-get data :canvas-url)))
+         (title (plist-get data (or (plist-get ctx :title-key) :title)))
+         (cap-feature (capitalize feature-name))
+         (progress (+ (plist-get counters :success)
+                      (plist-get counters :skip)
+                      (plist-get counters :fail)
+                      1)))
+    (when canvas-id
+      (push canvas-id (car synced-ids)))
+    (cond
+     ((and stored-hash (string= payload-hash stored-hash) canvas-id)
+      (plist-put counters :skip (1+ (plist-get counters :skip)))
+      (elog-info org-canvas--logger "[Skip] '%s' unchanged" title)
+      (message "%s [%d/%d] Skipping '%s' (unchanged)"
+        cap-feature progress total-count title))
+     (org-canvas--dry-run
+      (elog-info org-canvas--logger "[DRY-RUN] Would %s '%s'"
+        (if canvas-id "UPDATE" "CREATE") title)
+      (message "%s [DRY-RUN] Would %s '%s'"
+        cap-feature (if canvas-id "update" "create") title)
+      (plist-put counters :success (1+ (plist-get counters :success))))
+     (t
+      (let ((response (funcall push-fn data payload)))
+        (if (eq response 'conflict)
+            (progn
+              (plist-put counters :conflict
+                         (1+ (plist-get counters :conflict)))
+              (message "%s [%d/%d] CONFLICT: '%s' (remote modified)"
+                cap-feature progress total-count title))
+          (funcall finalize-fn data response)
+          (org-entry-put (point) "PAYLOAD_HASH" payload-hash)
+          (save-buffer)
+          (plist-put counters :success (1+ (plist-get counters :success)))
+          (message "%s [%d/%d] Synced '%s'"
+            cap-feature progress total-count title)
+          (unless canvas-id
+            (let ((new-id (or (org-entry-get (point) "CANVAS_ID")
+                              (org-entry-get (point) "CANVAS_URL"))))
+              (when new-id
+                (push new-id (car synced-ids)))))))))))
+
 (defun org-canvas--sync-process-entry (marker ctx)
   "Process one entry through the 4-stage pipeline.
 MARKER is the position of the entry.
@@ -1152,68 +1226,18 @@ CTX is a plist with keys:
   :title-key - plist key for display name (default :title)"
   (let ((parse-fn (plist-get ctx :parse-fn))
         (build-fn (plist-get ctx :build-fn))
-        (push-fn (plist-get ctx :push-fn))
-        (finalize-fn (plist-get ctx :finalize-fn))
-        (feature-name (plist-get ctx :feature-name))
         (feature-upper (plist-get ctx :feature-upper))
+        (feature-name (plist-get ctx :feature-name))
         (total-count (plist-get ctx :total-count))
-        (counters (plist-get ctx :counters))
-        (synced-ids (plist-get ctx :synced-ids))
-        (title-key (or (plist-get ctx :title-key) :title)))
+        (counters (plist-get ctx :counters)))
     (elog-info org-canvas--logger "----------------------------------------")
     (with-current-buffer (marker-buffer marker)
       (save-excursion
         (goto-char (marker-position marker))
         (condition-case err
             (let* ((data (funcall parse-fn))
-                   (payload (funcall build-fn data))
-                   (payload-hash (md5 (json-encode payload)))
-                   (stored-hash (org-entry-get (point) "PAYLOAD_HASH"))
-                   (canvas-id (or (plist-get data :canvas-id)
-                                  (plist-get data :canvas-url)))
-                   (title (plist-get data title-key))
-                   (cap-feature (capitalize feature-name))
-                   (progress (+ (plist-get counters :success)
-                                (plist-get counters :skip)
-                                (plist-get counters :fail)
-                                1)))
-              ;; Track synced IDs for orphan detection
-              (when canvas-id
-                (push canvas-id (car synced-ids)))
-              ;; Skip if unchanged and already synced
-              (cond
-               ((and stored-hash (string= payload-hash stored-hash) canvas-id)
-                (plist-put counters :skip (1+ (plist-get counters :skip)))
-                (elog-info org-canvas--logger "[Skip] '%s' unchanged" title)
-                (message "%s [%d/%d] Skipping '%s' (unchanged)"
-                  cap-feature progress total-count title))
-               (org-canvas--dry-run
-                (elog-info org-canvas--logger "[DRY-RUN] Would %s '%s'"
-                  (if canvas-id "UPDATE" "CREATE") title)
-                (message "%s [DRY-RUN] Would %s '%s'"
-                  cap-feature (if canvas-id "update" "create") title)
-                (plist-put counters :success (1+ (plist-get counters :success))))
-               (t
-                (let ((response (funcall push-fn data payload)))
-                  (if (eq response 'conflict)
-                      ;; Conflict detected — skip finalize
-                      (progn
-                        (plist-put counters :conflict
-                                   (1+ (plist-get counters :conflict)))
-                        (message "%s [%d/%d] CONFLICT: '%s' (remote modified)"
-                          cap-feature progress total-count title))
-                    (funcall finalize-fn data response)
-                    (org-entry-put (point) "PAYLOAD_HASH" payload-hash)
-                    (save-buffer)
-                    (plist-put counters :success (1+ (plist-get counters :success)))
-                    (message "%s [%d/%d] Synced '%s'"
-                      cap-feature progress total-count title)
-                    ;; Track newly created IDs
-                    (unless canvas-id
-                      (let ((new-id (or (org-entry-get (point) "CANVAS_ID")
-                                        (org-entry-get (point) "CANVAS_URL"))))
-                        (when new-id
-                          (push new-id (car synced-ids))))))))))
+                   (payload (funcall build-fn data)))
+              (org-canvas--sync-execute-pipeline data payload ctx))
           (error
            (plist-put counters :fail (1+ (plist-get counters :fail)))
            (elog-error org-canvas--logger "[FAILED] %s at point %d: %s"
@@ -1600,6 +1624,14 @@ Save the Canvas ID and LAST_SYNCED timestamp to the Org entry."
 ;; Use the macros `org-canvas-define-delete-all' and
 ;; `org-canvas-define-delete-at-point' to generate these functions.
 
+(defun org-canvas--delete-log-skipped (items skip-fn title-field)
+  "Log skipped items from ITEMS using SKIP-FN.
+TITLE-FIELD is the alist key for item display names."
+  (dolist (item items)
+    (when (funcall skip-fn item)
+      (elog-info org-canvas--logger "Skipping: '%s'"
+        (alist-get title-field item)))))
+
 (defun org-canvas--delete-items-queued (items endpoint-fn id-field title-field &optional skip-fn)
   "Delete ITEMS from Canvas using concurrent requests via `plz-queue'.
 ENDPOINT-FN is a function taking an item ID and returning the DELETE URL.
@@ -1608,12 +1640,8 @@ SKIP-FN, if non-nil, is called with each item; non-nil return skips that item.
 Returns (DELETED-COUNT . DELETED-IDS)."
   (let* ((to-delete (if skip-fn (cl-remove-if skip-fn items) items))
          (skipped (- (length items) (length to-delete))))
-    ;; Log skipped items
-    (when (> skipped 0)
-      (dolist (item items)
-        (when (and skip-fn (funcall skip-fn item))
-          (elog-info org-canvas--logger "Skipping: '%s'"
-            (alist-get title-field item)))))
+    (when (and (> skipped 0) skip-fn)
+      (org-canvas--delete-log-skipped items skip-fn title-field))
     ;; Short-circuit if nothing to delete
     (if (null to-delete)
         (cons 0 nil)

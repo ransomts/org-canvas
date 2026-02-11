@@ -324,23 +324,14 @@ Returns a string like \"[[file:assignment-groups.org::*Name][Name]]\" or nil."
   "Set per-item properties for a pulled assignment.
 ITEM is the API response alist, POS is the heading position."
   (let ((points (alist-get 'points_possible item))
-        (due-at (alist-get 'due_at item))
-        (unlock-at (alist-get 'unlock_at item))
-        (lock-at (alist-get 'lock_at item))
         (submission-types (alist-get 'submission_types item))
         (peer-reviews (alist-get 'peer_reviews item))
         (group-id (alist-get 'assignment_group_id item)))
     (when points
       (org-canvas-org-set-property pos "POINTS" (format "%s" points)))
-    (when due-at
-      (let ((ts (org-canvas--iso8601-to-org-timestamp due-at)))
-        (when ts (org-canvas-org-set-property pos "DUE_AT" ts))))
-    (when unlock-at
-      (let ((ts (org-canvas--iso8601-to-org-timestamp unlock-at)))
-        (when ts (org-canvas-org-set-property pos "UNLOCK_AT" ts))))
-    (when lock-at
-      (let ((ts (org-canvas--iso8601-to-org-timestamp lock-at)))
-        (when ts (org-canvas-org-set-property pos "LOCK_AT" ts))))
+    (org-canvas--pull-set-timestamp-property pos "DUE_AT" (alist-get 'due_at item))
+    (org-canvas--pull-set-timestamp-property pos "UNLOCK_AT" (alist-get 'unlock_at item))
+    (org-canvas--pull-set-timestamp-property pos "LOCK_AT" (alist-get 'lock_at item))
     (when submission-types
       (org-canvas-org-set-property
        pos "SUBMISSION_TYPES"

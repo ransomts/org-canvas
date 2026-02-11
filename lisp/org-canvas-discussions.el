@@ -103,6 +103,21 @@
 
 ;;;; 2. Stage: Transformation
 
+(defun org-canvas--discussion-build-graded-assignment (data)
+  "Build the graded assignment sub-payload from DATA.
+Returns an alist for the `assignment' key."
+  (let ((assignment-data `((points_possible . ,(plist-get data :points_possible))
+                           (grading_type . ,(or (plist-get data :grading_type) "points")))))
+    (when (plist-get data :due_at)
+      (push `(due_at . ,(plist-get data :due_at)) assignment-data))
+    (when (plist-get data :lock_at)
+      (push `(lock_at . ,(plist-get data :lock_at)) assignment-data))
+    (when (plist-get data :delayed_post_at)
+      (push `(unlock_at . ,(plist-get data :delayed_post_at)) assignment-data))
+    (when (plist-get data :assignment_group_id)
+      (push `(assignment_group_id . ,(plist-get data :assignment_group_id)) assignment-data))
+    assignment-data))
+
 (defun org-canvas--discussion-build-payload (data)
   "Convert DATA to Canvas payload."
   (let ((title (plist-get data :title)))
@@ -114,30 +129,17 @@
                   (discussion_type . ,(plist-get data :discussion_type))
                   (require_initial_post . ,(org-canvas--to-json-boolean (plist-get data :require_initial_post))))))
 
-      ;; Top-level discussion properties
       (when (plist-get data :pinned)
         (push '(pinned . t) base))
       (when (plist-get data :delayed_post_at)
         (push `(delayed_post_at . ,(plist-get data :delayed_post_at)) base))
-      ;; lock_at at top level only for non-graded discussions
       (when (and (plist-get data :lock_at) (not (plist-get data :points_possible)))
         (push `(lock_at . ,(plist-get data :lock_at)) base))
 
       (when (plist-get data :points_possible)
         (elog-debug org-canvas--logger "[Stage 2: Transform] Adding graded assignment: %s pts"
           (plist-get data :points_possible))
-        (let ((assignment-data `((points_possible . ,(plist-get data :points_possible))
-                                 (grading_type . ,(or (plist-get data :grading_type) "points")))))
-          (when (plist-get data :due_at)
-            (push `(due_at . ,(plist-get data :due_at)) assignment-data))
-          (when (plist-get data :lock_at)
-            (push `(lock_at . ,(plist-get data :lock_at)) assignment-data))
-          (when (plist-get data :delayed_post_at)
-            (push `(unlock_at . ,(plist-get data :delayed_post_at)) assignment-data))
-          (when (plist-get data :assignment_group_id)
-            (push `(assignment_group_id . ,(plist-get data :assignment_group_id)) assignment-data))
-          (push `(assignment . ,assignment-data) base))
-        ;; Validate date ordering for graded discussions
+        (push `(assignment . ,(org-canvas--discussion-build-graded-assignment data)) base)
         (org-canvas--validate-date-ordering data))
 
       (elog-debug org-canvas--logger "[Stage 2: Transform] Payload complete")

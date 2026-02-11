@@ -547,13 +547,6 @@ QUIZ-CANVAS-ID is the Canvas ID of the quiz."
 
 ;;;; Pull
 
-(defun org-canvas--pull-set-timestamp-property (pos property iso8601)
-  "Set PROPERTY at POS from ISO8601 string, converting to Org timestamp.
-Does nothing if ISO8601 is nil or conversion fails."
-  (when iso8601
-    (let ((ts (org-canvas--iso8601-to-org-timestamp iso8601)))
-      (when ts (org-canvas-org-set-property pos property ts)))))
-
 (defun org-canvas--quiz-pull-set-properties (pos quiz file)
   "Set all properties on heading at POS from QUIZ API response.
 FILE is the quizzes.org path, used for group link resolution."

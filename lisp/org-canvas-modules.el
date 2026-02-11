@@ -84,6 +84,21 @@ where sibling dirs aren't nested).  Returns absolute path, or nil."
                         abs-file fallback))
         (if (file-exists-p fallback) fallback nil)))))
 
+(defun org-canvas--module-search-by-display-title (title)
+  "Search current buffer for a heading whose display TITLE matches.
+Returns a (CANVAS_ID . CANVAS_URL) cons cell, or nil."
+  (goto-char (point-min))
+  (let (canvas-id page-url)
+    (while (and (not (or canvas-id page-url))
+                (re-search-forward "^\\*+ " nil t))
+      (let ((h (org-get-heading t t t t)))
+        (when (or (string= h title)
+                  (and h (string-match-p (regexp-quote title) h)))
+          (setq canvas-id (org-entry-get (point) "CANVAS_ID"))
+          (setq page-url (org-entry-get (point) "CANVAS_URL")))))
+    (when (or canvas-id page-url)
+      (cons canvas-id page-url))))
+
 (defun org-canvas--module-search-heading-for-id (abs-file heading title)
   "Search ABS-FILE for HEADING and return its Canvas IDs.
 First tries exact match on HEADING (with Org bracket unescaping).
@@ -93,33 +108,23 @@ Returns a (CANVAS_ID . CANVAS_URL) cons cell, or nil if not found."
   (with-current-buffer (find-file-noselect abs-file)
     (save-excursion
       (goto-char (point-min))
-      (let ((canvas-id nil) (page-url nil))
-        (if heading
-            ;; Search for specific heading
-            (let* ((unescaped (replace-regexp-in-string
-                              "\\\\[][]"
-                              (lambda (m) (substring m 1))
-                              heading))
-                   (search-re (format "^\\*+ +%s" (regexp-quote unescaped))))
-              (if (re-search-forward search-re nil t)
-                  (progn
-                    (setq canvas-id (org-entry-get (point) "CANVAS_ID"))
-                    (setq page-url (org-entry-get (point) "CANVAS_URL")))
-                ;; Fallback: match by display title
-                (goto-char (point-min))
-                (while (and (not (or canvas-id page-url))
-                            (re-search-forward "^\\*+ " nil t))
-                  (let ((h (org-get-heading t t t t)))
-                    (when (or (string= h title)
-                              (and h (string-match-p (regexp-quote title) h)))
-                      (setq canvas-id (org-entry-get (point) "CANVAS_ID"))
-                      (setq page-url (org-entry-get (point) "CANVAS_URL")))))))
-          ;; No heading specified, try first level-1 heading
-          (when (re-search-forward "^\\* " nil t)
-            (setq canvas-id (org-entry-get (point) "CANVAS_ID"))
-            (setq page-url (org-entry-get (point) "CANVAS_URL"))))
-        (when (or canvas-id page-url)
-          (cons canvas-id page-url))))))
+      (if heading
+          (let* ((unescaped (replace-regexp-in-string
+                            "\\\\[][]"
+                            (lambda (m) (substring m 1))
+                            heading))
+                 (search-re (format "^\\*+ +%s" (regexp-quote unescaped))))
+            (if (re-search-forward search-re nil t)
+                (let ((canvas-id (org-entry-get (point) "CANVAS_ID"))
+                      (page-url (org-entry-get (point) "CANVAS_URL")))
+                  (when (or canvas-id page-url)
+                    (cons canvas-id page-url)))
+              (org-canvas--module-search-by-display-title title)))
+        (when (re-search-forward "^\\* " nil t)
+          (let ((canvas-id (org-entry-get (point) "CANVAS_ID"))
+                (page-url (org-entry-get (point) "CANVAS_URL")))
+            (when (or canvas-id page-url)
+              (cons canvas-id page-url))))))))
 
 (defun org-canvas--module-resolve-link (link-string modules-file-dir)
   "Resolve LINK-STRING to get the linked item's Canvas ID and type.
@@ -692,6 +697,39 @@ Returns a link string or just the title if resolution fails."
                         org-file heading-name (or title heading-name))
               (or title "Untitled"))))))))
 
+(defun org-canvas--module-pull-insert-items (items)
+  "Insert level-2 headings for module ITEMS at point.
+Returns the count of items inserted."
+  (let ((count 0))
+    (insert "\n")
+    (dolist (item (append items nil))
+      (let* ((item-type (alist-get 'type item))
+             (item-title (alist-get 'title item))
+             (item-id (alist-get 'id item))
+             (content-id (alist-get 'content_id item))
+             (indent (alist-get 'indent item)))
+        (cond
+         ((equal item-type "SubHeader")
+          (insert (format "** %s\n" (or item-title "Section")))
+          (org-back-to-heading t)
+          (org-canvas-org-set-property (point) "CANVAS_ID"
+                                       (format "%s" item-id))
+          (goto-char (save-excursion (org-end-of-subtree t) (point))))
+         (t
+          (let ((link (org-canvas--module-resolve-item-link
+                       item-type content-id item-title)))
+            (insert (format "** %s\n" link))
+            (org-back-to-heading t)
+            (org-canvas-org-set-property (point) "CANVAS_ID"
+                                         (format "%s" item-id))
+            (when indent
+              (org-canvas-org-set-property (point) "INDENT"
+                                           (format "%s" indent)))
+            (goto-char (save-excursion
+                         (org-end-of-subtree t) (point))))))
+        (cl-incf count)))
+    count))
+
 ;;;###autoload
 (defun org-canvas-pull-modules ()
   "Pull modules from Canvas into modules.org."
@@ -714,7 +752,6 @@ Returns a link string or just the title if resolution fails."
           (when mname (org-edit-headline mname))
           (org-canvas-org-save-sync-state pos mid)
           (cl-incf mod-count)
-          ;; Clear existing L2 children and re-create from remote
           (let ((body-start (save-excursion
                               (org-end-of-meta-data t) (point)))
                 (body-end (save-excursion
@@ -722,35 +759,8 @@ Returns a link string or just the title if resolution fails."
             (delete-region body-start body-end)
             (goto-char body-start)
             (when items
-              (insert "\n")
-              (dolist (item (append items nil))
-                (let* ((item-type (alist-get 'type item))
-                       (item-title (alist-get 'title item))
-                       (item-id (alist-get 'id item))
-                       (content-id (alist-get 'content_id item))
-                       (indent (alist-get 'indent item)))
-                  (cond
-                   ;; SubHeader → plain text heading
-                   ((equal item-type "SubHeader")
-                    (insert (format "** %s\n" (or item-title "Section")))
-                    (org-back-to-heading t)
-                    (org-canvas-org-set-property (point) "CANVAS_ID"
-                                                 (format "%s" item-id))
-                    (goto-char (save-excursion (org-end-of-subtree t) (point))))
-                   ;; Content items → linked headings
-                   (t
-                    (let ((link (org-canvas--module-resolve-item-link
-                                 item-type content-id item-title)))
-                      (insert (format "** %s\n" link))
-                      (org-back-to-heading t)
-                      (org-canvas-org-set-property (point) "CANVAS_ID"
-                                                   (format "%s" item-id))
-                      (when indent
-                        (org-canvas-org-set-property (point) "INDENT"
-                                                     (format "%s" indent)))
-                      (goto-char (save-excursion
-                                   (org-end-of-subtree t) (point))))))
-                (cl-incf item-count)))))))
+              (setq item-count (+ item-count
+                                  (org-canvas--module-pull-insert-items items)))))))
       (save-buffer))
     (elog-info org-canvas--logger
       "Modules pull complete: %d modules, %d items" mod-count item-count)

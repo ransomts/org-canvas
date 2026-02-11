@@ -127,6 +127,12 @@ FILE, LINE, HEADING identify the location."
 
 ;;;; 3. Date Ordering Check
 
+(defun org-canvas--validate-safe-parse-timestamp (value)
+  "Parse VALUE as an Org timestamp, returning ISO string or nil on error."
+  (and value (condition-case nil
+                 (org-canvas-org-parse-timestamp value)
+               (error nil))))
+
 (defun org-canvas--validate-check-date-order (date-triples file line heading)
   "Check chronological ordering for DATE-TRIPLES.
 Each triple is (PROP1 PROP2 PROP3) where values should be ordered.
@@ -139,27 +145,20 @@ Returns a list of warning issues."
              (p3 (nth 2 triple))
              (v1 (org-entry-get (point) p1))
              (v2 (org-entry-get (point) p2))
-             (v3 (org-entry-get (point) p3)))
-        ;; Parse to ISO for comparison
-        (let ((iso1 (and v1 (condition-case nil
-                                (org-canvas-org-parse-timestamp v1)
-                              (error nil))))
-              (iso2 (and v2 (condition-case nil
-                                (org-canvas-org-parse-timestamp v2)
-                              (error nil))))
-              (iso3 (and v3 (condition-case nil
-                                (org-canvas-org-parse-timestamp v3)
-                              (error nil)))))
-          (when (and iso1 iso2 (string> iso1 iso2))
-            (push (org-canvas--validate-make-issue
-                   'warning file line heading p1
-                   (format "%s is after %s (%s > %s)" p1 p2 v1 v2))
-                  issues))
-          (when (and iso2 iso3 (string> iso2 iso3))
-            (push (org-canvas--validate-make-issue
-                   'warning file line heading p2
-                   (format "%s is after %s (%s > %s)" p2 p3 v2 v3))
-                  issues)))))
+             (v3 (org-entry-get (point) p3))
+             (iso1 (org-canvas--validate-safe-parse-timestamp v1))
+             (iso2 (org-canvas--validate-safe-parse-timestamp v2))
+             (iso3 (org-canvas--validate-safe-parse-timestamp v3)))
+        (when (and iso1 iso2 (string> iso1 iso2))
+          (push (org-canvas--validate-make-issue
+                 'warning file line heading p1
+                 (format "%s is after %s (%s > %s)" p1 p2 v1 v2))
+                issues))
+        (when (and iso2 iso3 (string> iso2 iso3))
+          (push (org-canvas--validate-make-issue
+                 'warning file line heading p2
+                 (format "%s is after %s (%s > %s)" p2 p3 v2 v3))
+                issues))))
     (nreverse issues)))
 
 ;;;; 4. Validation Specs
@@ -385,38 +384,39 @@ FILE, LINE, HEADING identify the location."
            'warning file line heading "CANVAS_ID"
            "Section has no CANVAS_ID (run org-canvas-pull-sections first)"))))
 
+(defun org-canvas--validate-override-rows (file heading)
+  "Check each data row in an override table for valid section links.
+FILE and HEADING identify the location.  Point must be at the first data row."
+  (let ((issues nil))
+    (while (looking-at "^|\\([^-]\\)")
+      (let* ((row-line (line-number-at-pos))
+             (line-text (buffer-substring-no-properties
+                         (line-beginning-position) (line-end-position)))
+             (fields (split-string line-text "|" t "[ \t]+")))
+        (when (and fields (car fields))
+          (let ((section-ref (string-trim (car fields))))
+            (when (and (not (string-empty-p section-ref))
+                       (not (string-match "\\[\\[file:" section-ref)))
+              (push (org-canvas--validate-make-issue
+                     'warning file row-line heading nil
+                     (format "Override row section '%s' is not a file link"
+                             section-ref))
+                    issues)))))
+      (forward-line 1))
+    (nreverse issues)))
+
 (defun org-canvas--validate-assignment-structure (file line heading)
   "Check override table in assignment if present.
 FILE, LINE, HEADING identify the location."
-  (let ((issues nil)
-        (end (save-excursion (org-end-of-subtree t) (point))))
+  (let ((end (save-excursion (org-end-of-subtree t) (point))))
     (save-excursion
       (when (re-search-forward "^#\\+NAME: overrides" end t)
-        ;; Found an override table — check it has valid content
         (forward-line 1)
         (when (looking-at "^|")
-          ;; Skip header row and separator
           (forward-line 1)
           (when (looking-at "^|-")
             (forward-line 1))
-          ;; Check each data row
-          (while (looking-at "^|\\([^-]\\)")
-            (let* ((row-line (line-number-at-pos))
-                   (line-text (buffer-substring-no-properties
-                               (line-beginning-position) (line-end-position)))
-                   (fields (split-string line-text "|" t "[ \t]+")))
-              ;; First field should be a section link
-              (when (and fields (car fields))
-                (let ((section-ref (string-trim (car fields))))
-                  (when (and (not (string-empty-p section-ref))
-                             (not (string-match "\\[\\[file:" section-ref)))
-                    (push (org-canvas--validate-make-issue
-                           'warning file row-line heading nil
-                           (format "Override row section '%s' is not a file link"
-                                   section-ref))
-                          issues)))))
-            (forward-line 1)))))
-    (nreverse issues)))
+          (org-canvas--validate-override-rows file heading))))))
 
 ;;;; 6. Validation Engine
 
@@ -451,11 +451,30 @@ Returns a list of issues."
           (push issue issues))))
     (nreverse issues)))
 
+(defun org-canvas--validate-entry-at-marker (props date-order structural-fn file)
+  "Validate the entry at point using PROPS, DATE-ORDER, and STRUCTURAL-FN.
+FILE identifies the source file.  Returns a list of issues."
+  (let ((line (line-number-at-pos))
+        (heading (org-get-heading t t t t))
+        (issues nil))
+    (when props
+      (setq issues (nconc issues
+                          (org-canvas--validate-entry-properties
+                           props file line heading))))
+    (when date-order
+      (setq issues (nconc issues
+                          (org-canvas--validate-check-date-order
+                           date-order file line heading))))
+    (when structural-fn
+      (let ((structural-issues (funcall structural-fn file line heading)))
+        (when structural-issues
+          (setq issues (nconc issues structural-issues)))))
+    issues))
+
 (defun org-canvas--validate-spec (spec)
   "Run validation for a single SPEC.
 Returns a list of issues."
-  (let* ((label (plist-get spec :label))
-         (file-var (plist-get spec :file))
+  (let* ((file-var (plist-get spec :file))
          (query (plist-get spec :query))
          (props (plist-get spec :properties))
          (date-order (plist-get spec :date-order))
@@ -470,23 +489,9 @@ Returns a list of issues."
           (let ((markers (org-map-entries (lambda () (point-marker)) query 'file)))
             (dolist (marker markers)
               (goto-char (marker-position marker))
-              (let* ((line (line-number-at-pos))
-                     (heading (org-get-heading t t t t)))
-                ;; Property checks
-                (when props
-                  (setq issues (nconc issues
-                                      (org-canvas--validate-entry-properties
-                                       props file line heading))))
-                ;; Date ordering
-                (when date-order
-                  (setq issues (nconc issues
-                                      (org-canvas--validate-check-date-order
-                                       date-order file line heading))))
-                ;; Structural check
-                (when structural-fn
-                  (let ((structural-issues (funcall structural-fn file line heading)))
-                    (when structural-issues
-                      (setq issues (nconc issues structural-issues)))))))))))
+              (setq issues (nconc issues
+                                  (org-canvas--validate-entry-at-marker
+                                   props date-order structural-fn file))))))))
     issues))
 
 ;;;; 7. Report Buffer and Mode

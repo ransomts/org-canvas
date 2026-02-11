@@ -277,6 +277,28 @@ Returns a list of plists: (:section-id ID :due-at TS :unlock-at TS :lock-at TS).
             (alist-get 'assignment_override payload)))
     payload))
 
+(defun org-canvas--override-delete-removed (endpoint existing seen-section-ids)
+  "Delete overrides in EXISTING whose section_id is not in SEEN-SECTION-IDS.
+ENDPOINT is the overrides API URL.  Returns the number deleted."
+  (let ((deleted 0))
+    (dolist (item existing)
+      (let ((item-section-id (alist-get 'course_section_id item))
+            (item-id (alist-get 'id item)))
+        (unless (memq item-section-id seen-section-ids)
+          (condition-case err
+              (progn
+                (elog-debug org-canvas--logger
+                            "[Override] Deleting override %s (section %s no longer in table)"
+                            item-id item-section-id)
+                (org-canvas-api-request 'DELETE
+                  (format "%s/%s" endpoint item-id))
+                (setq deleted (1+ deleted)))
+            (error
+             (elog-error org-canvas--logger
+                         "[Override] Delete failed for override %s: %s"
+                         item-id (error-message-string err)))))))
+    deleted))
+
 (defun org-canvas--override-sync-for-assignment (assignment-id overrides)
   "Reconcile OVERRIDES for ASSIGNMENT-ID on Canvas.
 OVERRIDES is a list of parsed override plists from
@@ -324,23 +346,8 @@ Returns a list (CREATED UPDATED DELETED) as integer counts."
                        "[Override] Failed for section %s: %s"
                        section-id (error-message-string err))))))
 
-    ;; Delete overrides whose section_id is not in the table
-    (dolist (item existing)
-      (let ((item-section-id (alist-get 'course_section_id item))
-            (item-id (alist-get 'id item)))
-        (unless (memq item-section-id seen-section-ids)
-          (condition-case err
-              (progn
-                (elog-debug org-canvas--logger
-                            "[Override] Deleting override %s (section %s no longer in table)"
-                            item-id item-section-id)
-                (org-canvas-api-request 'DELETE
-                  (format "%s/%s" endpoint item-id))
-                (setq deleted (1+ deleted)))
-            (error
-             (elog-error org-canvas--logger
-                         "[Override] Delete failed for override %s: %s"
-                         item-id (error-message-string err)))))))
+    (setq deleted (org-canvas--override-delete-removed
+                   endpoint existing seen-section-ids))
 
     (list created updated deleted)))
 

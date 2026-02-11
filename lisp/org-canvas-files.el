@@ -204,38 +204,41 @@ Return the folder object."
        (elog-debug org-canvas--logger "[Files] Folder creation failed (may exist): %s" (cadr err))
        (org-canvas--file-resolve-folder-by-path folder-path)))))
 
+(defun org-canvas--file-resolve-or-cache-folder (current-path part current-folder)
+  "Resolve folder for PART under CURRENT-FOLDER, using cache at CURRENT-PATH.
+Returns the resolved folder object."
+  (let ((cached (and org-canvas--file-folder-cache
+                     (gethash current-path org-canvas--file-folder-cache))))
+    (if cached
+        (progn
+          (elog-debug org-canvas--logger "[Files] Using cached folder for: %s" current-path)
+          cached)
+      (let ((folder (org-canvas--file-ensure-subfolder current-folder part)))
+        (when org-canvas--file-folder-cache
+          (puthash current-path folder org-canvas--file-folder-cache)
+          (elog-debug org-canvas--logger "[Files] Cached folder: %s -> ID %s"
+            current-path (alist-get 'id folder)))
+        folder))))
+
 (defun org-canvas--file-resolve-folder-by-path (folder-path)
   "Resolve a folder by its path (FOLDER-PATH), creating parent folders if needed.
 Uses session cache to avoid redundant API calls."
-  ;; Check cache first
   (let ((cached (and org-canvas--file-folder-cache
                      (gethash folder-path org-canvas--file-folder-cache))))
     (if cached
         (progn
           (elog-debug org-canvas--logger "[Files] Using cached folder for path: %s" folder-path)
           cached)
-      ;; Not cached - resolve and cache each level
       (let* ((parts (split-string folder-path "/" t))
-             (root (org-canvas--file-get-root-folder))
-             (current-folder root)
+             (current-folder (org-canvas--file-get-root-folder))
              (current-path ""))
         (dolist (part parts)
           (setq current-path (if (string-empty-p current-path)
                                  part
                                (concat current-path "/" part)))
-          ;; Check if this intermediate path is cached
-          (let ((cached-intermediate (and org-canvas--file-folder-cache
-                                          (gethash current-path org-canvas--file-folder-cache))))
-            (if cached-intermediate
-                (progn
-                  (elog-debug org-canvas--logger "[Files] Using cached folder for: %s" current-path)
-                  (setq current-folder cached-intermediate))
-              ;; Not cached - resolve and cache it
-              (setq current-folder (org-canvas--file-ensure-subfolder current-folder part))
-              (when org-canvas--file-folder-cache
-                (puthash current-path current-folder org-canvas--file-folder-cache)
-                (elog-debug org-canvas--logger "[Files] Cached folder: %s -> ID %s"
-                  current-path (alist-get 'id current-folder))))))
+          (setq current-folder
+                (org-canvas--file-resolve-or-cache-folder
+                 current-path part current-folder)))
         current-folder))))
 
 (defun org-canvas--file-ensure-subfolder (parent-folder folder-name)
@@ -505,58 +508,57 @@ with `location' key."
       (with-current-buffer (url-retrieve-synchronously upload-url nil nil 120)
         (org-canvas--file-parse-upload-response local-path upload-url)))))
 
+(defun org-canvas--file-confirm-with-retry (url max-retries)
+  "GET URL with exponential-backoff retries up to MAX-RETRIES.
+Returns the API response or signals the last error."
+  (let ((attempt 0) response last-err)
+    (while (and (< attempt max-retries) (null response))
+      (setq attempt (1+ attempt))
+      (condition-case err
+          (progn
+            (when (> attempt 1)
+              (let ((delay (expt 2 (1- attempt))))
+                (elog-warning org-canvas--logger
+                  "[Stage 3: Upload Step 3] Retry %d/%d after %ds..."
+                  attempt max-retries delay)
+                (sleep-for delay)))
+            (setq response (org-canvas-api-request 'GET url)))
+        (error
+         (setq last-err err)
+         (elog-warning org-canvas--logger
+           "[Stage 3: Upload Step 3] Attempt %d/%d failed: %s"
+           attempt max-retries (error-message-string err)))))
+    (if response
+        response
+      (elog-error org-canvas--logger
+        "[Stage 3: Upload Step 3] All %d confirmation attempts failed. File may exist on Canvas without local tracking."
+        max-retries)
+      (signal (car last-err) (cdr last-err)))))
+
 (defun org-canvas--file-upload-step3-confirm (step2-response)
   "Step 3: Confirm the upload and get the file object.
 STEP2-RESPONSE is the response from step 2.
 Per Canvas docs, this GET request must be authenticated."
   (elog-info org-canvas--logger "[Stage 3: Upload Step 3] Confirming upload...")
-
-  ;; Check if we already have the file object (some uploads return it directly)
   (if (alist-get 'id step2-response)
       (progn
         (elog-debug org-canvas--logger "[Stage 3: Upload Step 3] File object returned directly")
         step2-response)
-    ;; Otherwise we need to follow the location URL with an authenticated GET
     (let ((location (alist-get 'location step2-response)))
       (if location
           (let* ((full-url (if (string-prefix-p "http" location)
                                location
                              (concat org-canvas-base-url location)))
-                 (max-retries org-canvas--file-upload-confirm-retries)
-                 (attempt 0)
-                 (response nil)
-                 (last-err nil))
-            ;; Retry loop with exponential backoff
-            (while (and (< attempt max-retries) (null response))
-              (setq attempt (1+ attempt))
-              (condition-case err
-                  (progn
-                    (when (> attempt 1)
-                      (let ((delay (expt 2 (1- attempt))))
-                        (elog-warning org-canvas--logger
-                          "[Stage 3: Upload Step 3] Retry %d/%d after %ds..."
-                          attempt max-retries delay)
-                        (sleep-for delay)))
-                    (setq response (org-canvas-api-request 'GET full-url)))
-                (error
-                 (setq last-err err)
-                 (elog-warning org-canvas--logger
-                   "[Stage 3: Upload Step 3] Attempt %d/%d failed: %s"
-                   attempt max-retries (error-message-string err)))))
-            (if response
-                (progn
-                  (elog-debug org-canvas--logger
-                    "[Stage 3: Upload Step 3] Confirmed, file ID: %s"
-                    (alist-get 'id response))
-                  (unless (alist-get 'id response)
-                    (elog-warning org-canvas--logger
-                      "[Stage 3: Upload Step 3] No ID in confirmation response: %S"
-                      response))
-                  response)
-              (elog-error org-canvas--logger
-                "[Stage 3: Upload Step 3] All %d confirmation attempts failed. File may exist on Canvas without local tracking."
-                max-retries)
-              (signal (car last-err) (cdr last-err))))
+                 (response (org-canvas--file-confirm-with-retry
+                            full-url org-canvas--file-upload-confirm-retries)))
+            (elog-debug org-canvas--logger
+              "[Stage 3: Upload Step 3] Confirmed, file ID: %s"
+              (alist-get 'id response))
+            (unless (alist-get 'id response)
+              (elog-warning org-canvas--logger
+                "[Stage 3: Upload Step 3] No ID in confirmation response: %S"
+                response))
+            response)
         (error "No file ID or location in upload response")))))
 
 (defun org-canvas--file-push-to-api (data)
@@ -888,6 +890,20 @@ Creates folders as needed and populates the folder cache."
 
 ;;;; Pull
 
+(defun org-canvas--file-pull-download (display-name download-url local-path size)
+  "Download file DISPLAY-NAME from DOWNLOAD-URL to LOCAL-PATH if not present.
+SIZE is used for logging; may be nil."
+  (when (and download-url (not (file-exists-p local-path)))
+    (condition-case err
+        (progn
+          (elog-info org-canvas--logger
+            "[Download] %s (%s bytes)" display-name (or size "?"))
+          (url-copy-file download-url local-path t))
+      (error
+       (elog-warning org-canvas--logger
+         "[Download] Failed for %s: %s"
+         display-name (error-message-string err))))))
+
 ;;;###autoload
 (defun org-canvas-pull-files ()
   "Pull file metadata from Canvas into files.org.
@@ -921,17 +937,8 @@ Downloads file contents to the content/ directory."
             (org-canvas-org-set-property pos "CONTENT_TYPE" content-type))
           (when size
             (org-canvas-org-set-property pos "SIZE" (format "%s" size)))
-          ;; Download file if it doesn't exist locally
-          (when (and download-url (not (file-exists-p local-path)))
-            (condition-case err
-                (progn
-                  (elog-info org-canvas--logger
-                    "[Download] %s (%s bytes)" display-name (or size "?"))
-                  (url-copy-file download-url local-path t))
-              (error
-               (elog-warning org-canvas--logger
-                 "[Download] Failed for %s: %s"
-                 display-name (error-message-string err)))))
+          (org-canvas--file-pull-download
+           display-name download-url local-path size)
           (cl-incf count)))
       (save-buffer))
     (elog-info org-canvas--logger "Files pull complete: %d files" count)

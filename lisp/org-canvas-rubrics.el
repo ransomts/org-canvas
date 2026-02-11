@@ -268,16 +268,8 @@ an assignment, so this must run before rubric deletion."
 
 ;;;; Rubric Diagnostics
 
-(defun org-canvas--rubric-log-diagnostics (rubric-id list-data)
-  "Fetch and log detailed info about rubric RUBRIC-ID after a failed deletion.
-LIST-DATA is the rubric alist from the list response."
-  (elog-warning org-canvas--logger "--- Diagnostic info for rubric %s ---" rubric-id)
-
-  ;; Log all fields from the list response
-  (dolist (pair list-data)
-    (elog-warning org-canvas--logger "  %s: %S" (car pair) (cdr pair)))
-
-  ;; Fetch the individual rubric with assessments included
+(defun org-canvas--rubric-log-detail (rubric-id)
+  "Fetch and log rubric detail with assessments for RUBRIC-ID."
   (condition-case err
       (let* ((endpoint (org-canvas-api-course-endpoint "rubrics/%s" rubric-id))
              (detail (org-canvas-api-request 'GET endpoint
@@ -310,19 +302,24 @@ LIST-DATA is the rubric alist from the list response."
             (elog-warning org-canvas--logger "  [Detail] assessments: none"))))
     (error
      (elog-warning org-canvas--logger
-                   "  [Detail] Failed to fetch rubric detail: %s" (cadr err))))
+                   "  [Detail] Failed to fetch rubric detail: %s" (cadr err)))))
 
-  ;; Check if any assignment references this rubric (by rubric_id field)
+(defun org-canvas--rubric-find-linked-assignments (rubric-id)
+  "Return list of assignments that reference RUBRIC-ID."
+  (let* ((endpoint (org-canvas-api-course-endpoint "assignments"))
+         (assignments (append (org-canvas-api-request 'GET endpoint
+                                :params org-canvas--api-max-per-page) nil))
+         (numeric-id (if (stringp rubric-id)
+                         (string-to-number rubric-id)
+                       rubric-id)))
+    (cl-remove-if-not
+     (lambda (a) (equal (alist-get 'rubric_id a) numeric-id))
+     assignments)))
+
+(defun org-canvas--rubric-log-linked-assignments (rubric-id)
+  "Find and log assignments that reference RUBRIC-ID."
   (condition-case err
-      (let* ((endpoint (org-canvas-api-course-endpoint "assignments"))
-             (assignments (append (org-canvas-api-request 'GET endpoint
-                                    :params org-canvas--api-max-per-page) nil))
-             (linked nil))
-        (dolist (a assignments)
-          (when (equal (alist-get 'rubric_id a) (if (stringp rubric-id)
-                                                     (string-to-number rubric-id)
-                                                   rubric-id))
-            (push a linked)))
+      (let ((linked (org-canvas--rubric-find-linked-assignments rubric-id)))
         (if linked
             (progn
               (elog-warning org-canvas--logger
@@ -339,11 +336,44 @@ LIST-DATA is the rubric alist from the list response."
                         "  [Assignments] No assignments reference this rubric")))
     (error
      (elog-warning org-canvas--logger
-                   "  [Assignments] Failed to check assignments: %s" (cadr err))))
+                   "  [Assignments] Failed to check assignments: %s" (cadr err)))))
 
+(defun org-canvas--rubric-log-diagnostics (rubric-id list-data)
+  "Fetch and log detailed info about rubric RUBRIC-ID after a failed deletion.
+LIST-DATA is the rubric alist from the list response."
+  (elog-warning org-canvas--logger "--- Diagnostic info for rubric %s ---" rubric-id)
+  (dolist (pair list-data)
+    (elog-warning org-canvas--logger "  %s: %S" (car pair) (cdr pair)))
+  (org-canvas--rubric-log-detail rubric-id)
+  (org-canvas--rubric-log-linked-assignments rubric-id)
   (elog-warning org-canvas--logger "--- End diagnostic info ---"))
 
 ;;;; Delete All Rubrics (custom, with dissociation and diagnostics)
+
+(defun org-canvas--rubric-delete-with-verify (item)
+  "Delete a single rubric ITEM, verifying on error.
+Returns the string ID if deleted, nil otherwise."
+  (let ((item-id (alist-get 'id item)))
+    (condition-case err
+        (progn
+          (org-canvas-api-request 'DELETE
+            (org-canvas-api-course-endpoint "rubrics/%s" item-id))
+          (elog-info org-canvas--logger "  -> Deleted successfully")
+          (if (numberp item-id) (number-to-string item-id) item-id))
+      (error
+       ;; Canvas sometimes returns 500 but actually deletes the rubric.
+       (elog-warning org-canvas--logger "  -> Delete returned error: %s" (cadr err))
+       (elog-info org-canvas--logger "  -> Verifying whether rubric was actually deleted...")
+       (condition-case _verify-err
+           (progn
+             (org-canvas-api-request 'GET
+               (org-canvas-api-course-endpoint "rubrics/%s" item-id))
+             (elog-error org-canvas--logger "  -> Rubric still exists. Deletion truly failed.")
+             (org-canvas--rubric-log-diagnostics item-id item)
+             nil)
+         (error
+          (elog-info org-canvas--logger "  -> Rubric no longer exists (confirmed deleted)")
+          (if (numberp item-id) (number-to-string item-id) item-id)))))))
 
 (defun org-canvas-delete-all-rubrics ()
   "Delete ALL rubrics in the configured course.
@@ -372,35 +402,13 @@ On failure, fetches detailed rubric info for diagnostics."
     (elog-info org-canvas--logger "Found %d rubrics on Canvas" (length remote-items))
 
     (dolist (item remote-items)
-      (let ((item-id (alist-get 'id item))
-            (item-title (alist-get 'title item)))
+      (let* ((item-id (alist-get 'id item))
+             (item-title (alist-get 'title item))
+             (result (org-canvas--rubric-delete-with-verify item)))
         (elog-info org-canvas--logger "Deleting: '%s' (ID: %s)" item-title item-id)
-        (condition-case err
-            (progn
-              (org-canvas-api-request 'DELETE
-                (org-canvas-api-course-endpoint "rubrics/%s" item-id))
-              (push (if (numberp item-id) (number-to-string item-id) item-id)
-                    deleted-ids)
-              (setq deleted-count (1+ deleted-count))
-              (elog-info org-canvas--logger "  -> Deleted successfully"))
-          (error
-           ;; Canvas sometimes returns 500 but actually deletes the rubric.
-           ;; Verify by checking if rubric still exists (GET returns 404 = deleted).
-           (elog-warning org-canvas--logger "  -> Delete returned error: %s" (cadr err))
-           (elog-info org-canvas--logger "  -> Verifying whether rubric was actually deleted...")
-           (condition-case _verify-err
-               (progn
-                 (org-canvas-api-request 'GET
-                   (org-canvas-api-course-endpoint "rubrics/%s" item-id))
-                 ;; GET succeeded = rubric still exists, genuine failure
-                 (elog-error org-canvas--logger "  -> Rubric still exists. Deletion truly failed.")
-                 (org-canvas--rubric-log-diagnostics item-id item))
-             (error
-              ;; GET failed (404) = rubric was deleted despite the 500
-              (elog-info org-canvas--logger "  -> Rubric no longer exists (confirmed deleted)")
-              (push (if (numberp item-id) (number-to-string item-id) item-id)
-                    deleted-ids)
-              (setq deleted-count (1+ deleted-count))))))))
+        (when result
+          (push result deleted-ids)
+          (setq deleted-count (1+ deleted-count)))))
 
     ;; Cleanup local properties
     (when (and org-canvas-rubrics-file

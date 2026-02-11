@@ -48,6 +48,19 @@
 
 ;;;; 1. Stage: Extraction
 
+(defun org-canvas--page-validate-editing-roles (raw)
+  "Validate comma-separated EDITING_ROLES string RAW.
+Logs warnings for invalid roles.  Returns RAW unchanged."
+  (let ((roles (mapcar #'string-trim (split-string raw "," t))))
+    (dolist (role roles)
+      (unless (member role '("teachers" "students" "members" "public"))
+        (when (boundp 'org-canvas--logger)
+          (elog-warning org-canvas--logger
+            "[Validate] EDITING_ROLES: '%s' is not valid (expected: teachers, students, members, public)"
+            role))
+        (message "Warning: EDITING_ROLES '%s' is not valid" role))))
+  raw)
+
 (defun org-canvas--page-parse-entry ()
   "Extract wiki page data from the Org heading at point."
   (org-back-to-heading t)
@@ -59,17 +72,8 @@
          (published (org-canvas-org-get-boolean-property pom "PUBLISHED" t))
          (front-page (org-canvas-org-get-boolean-property pom "FRONT_PAGE"))
          (editing-roles (let ((raw (org-canvas-org-get-property pom "EDITING_ROLES")))
-                         (when raw
-                           ;; Validate each comma-separated role individually
-                           (let ((roles (mapcar #'string-trim (split-string raw "," t))))
-                             (dolist (role roles)
-                               (unless (member role '("teachers" "students" "members" "public"))
-                                 (when (boundp 'org-canvas--logger)
-                                   (elog-warning org-canvas--logger
-                                     "[Validate] EDITING_ROLES: '%s' is not valid (expected: teachers, students, members, public)"
-                                     role))
-                                 (message "Warning: EDITING_ROLES '%s' is not valid" role)))
-                             raw))))
+                          (when raw
+                            (org-canvas--page-validate-editing-roles raw))))
          (todo-date (org-canvas-org-parse-timestamp (org-canvas-org-get-property pom "TODO_DATE"))))
 
     (elog-info org-canvas--logger "[Stage 1: Parse] Processing Page: '%s' (URL: %s)" title (or canvas-url "NEW"))

@@ -427,6 +427,29 @@ Returns the buffer."
         (special-mode)))
     buf))
 
+(defun org-canvas--orphan-delete-all (all-orphans)
+  "Delete all orphaned items in ALL-ORPHANS from Canvas.
+ALL-ORPHANS is a list of (FEATURE . ITEMS) pairs."
+  (dolist (entry all-orphans)
+    (let* ((feature (car entry))
+           (orphans (cdr entry))
+           (name (plist-get feature :name))
+           (endpoint (plist-get feature :endpoint))
+           (id-field (plist-get feature :id-field)))
+      (dolist (item orphans)
+        (let* ((id (alist-get id-field item))
+               (url (org-canvas-api-course-endpoint
+                     (format "%s/%%s" endpoint) id)))
+          (condition-case err
+              (progn
+                (org-canvas-api-request 'DELETE url)
+                (elog-info org-canvas--logger
+                  "[Orphan] Deleted %s #%s" name id))
+            (error
+             (elog-warning org-canvas--logger
+               "[Orphan] Failed to delete %s #%s: %s"
+               name id (error-message-string err)))))))))
+
 ;;;###autoload
 (defun org-canvas-cleanup-orphans ()
   "Find and optionally delete Canvas items not present in local Org files.
@@ -462,28 +485,9 @@ Org heading locally (e.g., because the heading was deleted from the Org file)."
           (message "No orphaned items found."))
       (let ((buf (org-canvas--orphan-format-buffer all-orphans)))
         (display-buffer buf)
-        ;; Prompt for deletion
         (when (yes-or-no-p
                (format "Found %d orphan(s).  Delete them from Canvas? " total-orphans))
-          (dolist (entry all-orphans)
-            (let* ((feature (car entry))
-                   (orphans (cdr entry))
-                   (name (plist-get feature :name))
-                   (endpoint (plist-get feature :endpoint))
-                   (id-field (plist-get feature :id-field)))
-              (dolist (item orphans)
-                (let* ((id (alist-get id-field item))
-                       (url (org-canvas-api-course-endpoint
-                             (format "%s/%%s" endpoint) id)))
-                  (condition-case err
-                      (progn
-                        (org-canvas-api-request 'DELETE url)
-                        (elog-info org-canvas--logger
-                          "[Orphan] Deleted %s #%s" name id))
-                    (error
-                     (elog-warning org-canvas--logger
-                       "[Orphan] Failed to delete %s #%s: %s"
-                       name id (error-message-string err))))))))
+          (org-canvas--orphan-delete-all all-orphans)
           (message "Orphan cleanup complete. %d item(s) deleted." total-orphans))))))
 
 (provide 'org-canvas)

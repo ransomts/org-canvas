@@ -107,42 +107,34 @@ Returns a plist with keys :title, :pom, :time-zone, :default-view,
 
 ;;;; 2. Build Payload
 
+(defun org-canvas--settings-puthash-when (course data key api-key &optional boolean-p)
+  "Conditionally set API-KEY in COURSE hash from DATA plist KEY.
+When BOOLEAN-P is non-nil, convert \"true\"/\"false\" to t/:json-false."
+  (let ((val (plist-get data key)))
+    (when val
+      (puthash api-key
+               (if boolean-p
+                   (if (equal val "true") t :json-false)
+                 val)
+               course))))
+
 (defun org-canvas--settings-build-payload (data)
   "Build a Canvas course update payload from parsed DATA plist.
 Returns a hash-table suitable for `json-encode'."
-  (let ((payload (make-hash-table :test 'equal)))
-    (let ((course (make-hash-table :test 'equal)))
-      (when (plist-get data :title)
-        (puthash "name" (plist-get data :title) course))
-      (when (plist-get data :time-zone)
-        (puthash "time_zone" (plist-get data :time-zone) course))
-      (when (plist-get data :default-view)
-        (puthash "default_view" (plist-get data :default-view) course))
-      (when (plist-get data :apply-weights)
-        (puthash "apply_assignment_group_weights"
-                 (if (equal (plist-get data :apply-weights) "true") t :json-false)
-                 course))
-      (when (plist-get data :hide-final-grades)
-        (puthash "hide_final_grades"
-                 (if (equal (plist-get data :hide-final-grades) "true") t :json-false)
-                 course))
-      (when (plist-get data :public-syllabus)
-        (puthash "public_syllabus"
-                 (if (equal (plist-get data :public-syllabus) "true") t :json-false)
-                 course))
-      (when (plist-get data :is-public)
-        (puthash "is_public"
-                 (if (equal (plist-get data :is-public) "true") t :json-false)
-                 course))
-      (when (plist-get data :license)
-        (puthash "license" (plist-get data :license) course))
-      (when (plist-get data :start-at)
-        (puthash "start_at" (plist-get data :start-at) course))
-      (when (plist-get data :end-at)
-        (puthash "end_at" (plist-get data :end-at) course))
-      (when (plist-get data :syllabus-body)
-        (puthash "syllabus_body" (plist-get data :syllabus-body) course))
-      (puthash "course" course payload))
+  (let ((payload (make-hash-table :test 'equal))
+        (course (make-hash-table :test 'equal)))
+    (org-canvas--settings-puthash-when course data :title "name")
+    (org-canvas--settings-puthash-when course data :time-zone "time_zone")
+    (org-canvas--settings-puthash-when course data :default-view "default_view")
+    (org-canvas--settings-puthash-when course data :apply-weights "apply_assignment_group_weights" t)
+    (org-canvas--settings-puthash-when course data :hide-final-grades "hide_final_grades" t)
+    (org-canvas--settings-puthash-when course data :public-syllabus "public_syllabus" t)
+    (org-canvas--settings-puthash-when course data :is-public "is_public" t)
+    (org-canvas--settings-puthash-when course data :license "license")
+    (org-canvas--settings-puthash-when course data :start-at "start_at")
+    (org-canvas--settings-puthash-when course data :end-at "end_at")
+    (org-canvas--settings-puthash-when course data :syllabus-body "syllabus_body")
+    (puthash "course" course payload)
     payload))
 
 ;;;; 3. Push
@@ -221,6 +213,49 @@ and pushes them to Canvas via PUT /courses/:id."
              (error-message-string err))
            (message "Settings sync FAILED: %s" (error-message-string err))))))))
 
+(defun org-canvas--settings-pull-set-properties (pom response syllabus-body)
+  "Set all settings properties at POM from API RESPONSE.
+SYLLABUS-BODY is the pre-extracted syllabus HTML (may be nil)."
+  (let ((time-zone (alist-get 'time_zone response))
+        (default-view (alist-get 'default_view response))
+        (apply-weights (alist-get 'apply_assignment_group_weights response))
+        (hide-final (alist-get 'hide_final_grades response))
+        (public-syllabus (alist-get 'public_syllabus response))
+        (is-public (alist-get 'is_public response))
+        (license (let ((v (alist-get 'license response)))
+                   (if (or (null v) (eq v :null)) nil v)))
+        (start-at (alist-get 'start_at response))
+        (end-at (alist-get 'end_at response)))
+    (when time-zone
+      (org-canvas-org-set-property pom "TIME_ZONE" time-zone))
+    (when default-view
+      (org-canvas-org-set-property pom "DEFAULT_VIEW" default-view))
+    (org-canvas-org-set-property
+     pom "APPLY_WEIGHTS" (if (eq apply-weights t) "true" "false"))
+    (org-canvas-org-set-property
+     pom "HIDE_FINAL_GRADES" (if (eq hide-final t) "true" "false"))
+    (org-canvas-org-set-property
+     pom "PUBLIC_SYLLABUS" (if (eq public-syllabus t) "true" "false"))
+    (org-canvas-org-set-property
+     pom "IS_PUBLIC" (if (eq is-public t) "true" "false"))
+    (when license
+      (org-canvas-org-set-property pom "LICENSE" license))
+    (org-canvas--pull-set-timestamp-property pom "START_AT" start-at)
+    (org-canvas--pull-set-timestamp-property pom "END_AT" end-at)
+    (org-canvas-org-set-property
+     pom "LAST_SYNCED"
+     (format-time-string "[%Y-%m-%d %a %H:%M]"))
+    (when syllabus-body
+      (let ((body-start (save-excursion
+                          (org-end-of-meta-data t)
+                          (point)))
+            (body-end (save-excursion
+                        (org-end-of-subtree t)
+                        (point))))
+        (delete-region body-start body-end)
+        (goto-char body-start)
+        (insert "\n" syllabus-body "\n")))))
+
 ;;;###autoload
 (defun org-canvas-pull-settings ()
   "Pull course settings from Canvas into settings.org.
@@ -234,16 +269,6 @@ and heading if they don't exist."
                     'GET endpoint
                     :params '(("include[]" . "syllabus_body"))))
          (name (alist-get 'name response))
-         (time-zone (alist-get 'time_zone response))
-         (default-view (alist-get 'default_view response))
-         (apply-weights (alist-get 'apply_assignment_group_weights response))
-         (hide-final (alist-get 'hide_final_grades response))
-         (public-syllabus (alist-get 'public_syllabus response))
-         (is-public (alist-get 'is_public response))
-         (license (let ((v (alist-get 'license response)))
-                    (if (or (null v) (eq v :null)) nil v)))
-         (start-at (alist-get 'start_at response))
-         (end-at (alist-get 'end_at response))
          (syllabus-body (let ((v (alist-get 'syllabus_body response)))
                           (if (or (null v) (eq v :null)) nil v)))
          (settings-file (expand-file-name org-canvas-settings-file)))
@@ -267,42 +292,8 @@ and heading if they don't exist."
       ;; Update heading title
       (when name
         (org-edit-headline name))
-      ;; Set properties
-      (let ((pom (point)))
-        (when time-zone
-          (org-canvas-org-set-property pom "TIME_ZONE" time-zone))
-        (when default-view
-          (org-canvas-org-set-property pom "DEFAULT_VIEW" default-view))
-        (org-canvas-org-set-property
-         pom "APPLY_WEIGHTS" (if (eq apply-weights t) "true" "false"))
-        (org-canvas-org-set-property
-         pom "HIDE_FINAL_GRADES" (if (eq hide-final t) "true" "false"))
-        (org-canvas-org-set-property
-         pom "PUBLIC_SYLLABUS" (if (eq public-syllabus t) "true" "false"))
-        (org-canvas-org-set-property
-         pom "IS_PUBLIC" (if (eq is-public t) "true" "false"))
-        (when license
-          (org-canvas-org-set-property pom "LICENSE" license))
-        (when (and start-at (not (eq start-at :null)))
-          (let ((ts (org-canvas--settings-format-timestamp start-at)))
-            (when ts (org-canvas-org-set-property pom "START_AT" ts))))
-        (when (and end-at (not (eq end-at :null)))
-          (let ((ts (org-canvas--settings-format-timestamp end-at)))
-            (when ts (org-canvas-org-set-property pom "END_AT" ts))))
-        (org-canvas-org-set-property
-         pom "LAST_SYNCED"
-         (format-time-string "[%Y-%m-%d %a %H:%M]"))
-        ;; Handle syllabus body — insert/replace after properties
-        (when syllabus-body
-          (let ((body-start (save-excursion
-                              (org-end-of-meta-data t)
-                              (point)))
-                (body-end (save-excursion
-                            (org-end-of-subtree t)
-                            (point))))
-            (delete-region body-start body-end)
-            (goto-char body-start)
-            (insert "\n" syllabus-body "\n"))))
+      (org-canvas--settings-pull-set-properties
+       (point) response syllabus-body)
       (save-buffer))
     (elog-info org-canvas--logger "========================================")
     (elog-info org-canvas--logger ">>> SETTINGS PULL COMPLETE")
