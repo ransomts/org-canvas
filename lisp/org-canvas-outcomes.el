@@ -460,17 +460,7 @@ Warning: This will remove all learning outcomes from the course."
          (deleted-groups (car result)))
 
     ;; Cleanup local properties
-    (when (file-exists-p org-canvas-outcomes-file)
-      (elog-info org-canvas--logger "Cleaning local properties...")
-      (with-current-buffer (find-file-noselect org-canvas-outcomes-file)
-        (org-map-entries
-         (lambda ()
-           (elog-debug org-canvas--logger "Removing properties for ID: %s"
-                       (org-entry-get (point) "CANVAS_ID"))
-           (org-canvas-clear-sync-properties (point)))
-         "CANVAS_ID={.}" 'file)
-        (save-buffer)
-        (elog-info org-canvas--logger "Saved %s" org-canvas-outcomes-file)))
+    (org-canvas--clean-local-sync-properties org-canvas-outcomes-file)
 
     (elog-info org-canvas--logger "========================================")
     (elog-info org-canvas--logger ">>> MASS DELETION COMPLETE: %d groups removed" deleted-groups)

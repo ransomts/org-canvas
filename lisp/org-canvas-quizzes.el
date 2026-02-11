@@ -530,15 +530,7 @@ QUIZ-CANVAS-ID is the Canvas ID of the quiz."
 	 (deleted (car result)))
 
     ;; Cleanup local properties (both quizzes and questions)
-    (when (file-exists-p org-canvas-quizzes-file)
-      (elog-info org-canvas--logger "Cleaning local properties...")
-      (with-current-buffer (find-file-noselect org-canvas-quizzes-file)
-	(org-map-entries
-	 (lambda ()
-	   (org-canvas-clear-sync-properties (point)))
-	 "CANVAS_ID={.}" 'file)
-	(save-buffer)
-	(elog-info org-canvas--logger "Saved %s" org-canvas-quizzes-file)))
+    (org-canvas--clean-local-sync-properties org-canvas-quizzes-file)
 
     (elog-info org-canvas--logger "========================================")
     (elog-info org-canvas--logger ">>> MASS DELETION COMPLETE: %d removed" deleted)
@@ -560,8 +552,7 @@ FILE is the quizzes.org path, used for group link resolution."
     (when time-limit
       (org-canvas-org-set-property pos "TIME_LIMIT" (format "%s" time-limit)))
     (when shuffle
-      (org-canvas-org-set-property
-       pos "SHUFFLE_ANSWERS" (if (eq shuffle t) "true" "false")))
+      (org-canvas--pull-set-boolean-property pos "SHUFFLE_ANSWERS" shuffle))
     (org-canvas--pull-set-timestamp-property pos "DUE_AT" (alist-get 'due_at quiz))
     (org-canvas--pull-set-timestamp-property pos "UNLOCK_AT" (alist-get 'unlock_at quiz))
     (org-canvas--pull-set-timestamp-property pos "LOCK_AT" (alist-get 'lock_at quiz))
@@ -569,6 +560,22 @@ FILE is the quizzes.org path, used for group link resolution."
       (let ((group-link (org-canvas--assignment-resolve-group-link group-id)))
         (when group-link
           (org-canvas-org-set-property pos "GROUP" group-link))))))
+
+(defun org-canvas--quiz-insert-question-body (q-text)
+  "Insert question body text Q-TEXT (HTML) at point as Org markup."
+  (when (and q-text (not (string-empty-p q-text)))
+    (insert "\n" (org-canvas--html-to-org q-text) "\n")))
+
+(defun org-canvas--quiz-insert-answers (answers)
+  "Insert ANSWERS list at point as Org checklist items.
+Each answer's weight determines checked ([X]) vs unchecked ([ ])."
+  (when answers
+    (dolist (a (append answers nil))
+      (let ((text (or (alist-get 'text a) (alist-get 'html a) ""))
+            (weight (alist-get 'weight a)))
+        (insert (format "- [%s] %s\n"
+                        (if (and weight (> weight 0)) "X" " ")
+                        text))))))
 
 (defun org-canvas--quiz-pull-insert-question (q)
   "Insert a single question Q as an L2 heading under the current quiz.
@@ -589,15 +596,8 @@ Point must be at the parent quiz heading."
         (when q-points
           (org-canvas-org-set-property qpos "POINTS" (format "%s" q-points)))
         (goto-char (save-excursion (org-end-of-meta-data t) (point)))
-        (when (and q-text (not (string-empty-p q-text)))
-          (insert "\n" (org-canvas--html-to-org q-text) "\n"))
-        (when answers
-          (dolist (a (append answers nil))
-            (let ((text (or (alist-get 'text a) (alist-get 'html a) ""))
-                  (weight (alist-get 'weight a)))
-              (insert (format "- [%s] %s\n"
-                              (if (and weight (> weight 0)) "X" " ")
-                              text)))))))))
+        (org-canvas--quiz-insert-question-body q-text)
+        (org-canvas--quiz-insert-answers answers)))))
 
 (defun org-canvas--quiz-pull-insert-questions (quiz-id)
   "Fetch and insert questions for QUIZ-ID as L2 headings.

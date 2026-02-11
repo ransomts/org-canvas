@@ -258,6 +258,20 @@ Returns the folder API object for the subfolder."
 
 ;;;; 1. Stage: Extraction
 
+(defun org-canvas--file-validate-local (abs-path display-name)
+  "Validate that ABS-PATH exists and is within the size limit.
+DISPLAY-NAME is used for error messages.  Signals an error on failure."
+  (unless (file-exists-p abs-path)
+    (elog-error org-canvas--logger "[Stage 1: Parse] File not found: %s" abs-path)
+    (error "File not found: %s" abs-path))
+  (let ((size-mb (/ (file-attribute-size (file-attributes abs-path)) org-canvas--bytes-per-mb)))
+    (when (> size-mb org-canvas-max-file-size-mb)
+      (elog-warning org-canvas--logger
+        "[Stage 1: Parse] Skipping '%s': %.1f MB exceeds limit of %d MB"
+        display-name size-mb org-canvas-max-file-size-mb)
+      (error "File '%s' (%.1f MB) exceeds max size of %d MB"
+             display-name size-mb org-canvas-max-file-size-mb))))
+
 (defun org-canvas--file-parse-entry ()
   "Extract file data from the Org heading at point.
 Returns nil for folder-only headings (no file link)."
@@ -297,17 +311,7 @@ Returns nil for folder-only headings (no file link)."
         (elog-debug org-canvas--logger "[Stage 1: Parse] Local path: %s" abs-path)
         (elog-debug org-canvas--logger "[Stage 1: Parse] Canvas folder: %s" (if (string-empty-p folder-path) "root" folder-path))
 
-        (unless (file-exists-p abs-path)
-          (elog-error org-canvas--logger "[Stage 1: Parse] File not found: %s" abs-path)
-          (error "File not found: %s" abs-path))
-
-        (let ((size-mb (/ (file-attribute-size (file-attributes abs-path)) org-canvas--bytes-per-mb)))
-          (when (> size-mb org-canvas-max-file-size-mb)
-            (elog-warning org-canvas--logger
-              "[Stage 1: Parse] Skipping '%s': %.1f MB exceeds limit of %d MB"
-              display-name size-mb org-canvas-max-file-size-mb)
-            (error "File '%s' (%.1f MB) exceeds max size of %d MB"
-                   display-name size-mb org-canvas-max-file-size-mb)))
+        (org-canvas--file-validate-local abs-path display-name)
 
         (list :display-name display-name
               :local-path abs-path
@@ -424,6 +428,24 @@ Returns the full unibyte body string ready for HTTP upload."
                          'raw-text)))
       (concat body-prefix file-content body-suffix))))
 
+(defun org-canvas--file-extract-response-parts ()
+  "Parse HTTP status, Location header, and JSON body from current buffer.
+Must be called at `point-min' of an HTTP response buffer.
+Returns a plist (:status STRING :location URL :json DATA :body STRING)."
+  (let (status-line location-header json-response response-body)
+    (when (looking-at "HTTP/[0-9.]+ \\([0-9]+\\)")
+      (setq status-line (match-string 1)))
+    (save-excursion
+      (when (re-search-forward "^[Ll]ocation: \\(.*\\)\r?$" nil t)
+        (setq location-header (string-trim (match-string 1)))))
+    (when (re-search-forward "\r?\n\r?\n" nil t)
+      (setq response-body (buffer-substring-no-properties (point) (point-max)))
+      (setq json-response (condition-case nil
+                              (json-read-from-string response-body)
+                            (error nil))))
+    (list :status status-line :location location-header
+          :json json-response :body response-body)))
+
 (defun org-canvas--file-parse-upload-response (local-path upload-url)
   "Parse the HTTP response in the current buffer after file upload.
 LOCAL-PATH is the path to the uploaded file (for logging).
@@ -431,26 +453,13 @@ UPLOAD-URL is the URL the file was uploaded to (for logging).
 Must be called in the `url-retrieve' response buffer.
 Returns either a file object alist, a location alist, or signals an error."
   (goto-char (point-min))
-  ;; Parse headers and body BEFORE killing buffer
-  (let ((location-header nil)
-        (status-line nil)
-        (json-response nil)
-        (response-body nil))
-    ;; Get status line
-    (when (looking-at "HTTP/[0-9.]+ \\([0-9]+\\)")
-      (setq status-line (match-string 1))
+  (let* ((parts (org-canvas--file-extract-response-parts))
+         (status-line (plist-get parts :status))
+         (location-header (plist-get parts :location))
+         (json-response (plist-get parts :json))
+         (response-body (plist-get parts :body)))
+    (when status-line
       (elog-debug org-canvas--logger "[Stage 3: Upload Step 2] HTTP status: %s" status-line))
-    ;; Look for Location header in the headers section
-    (save-excursion
-      (when (re-search-forward "^[Ll]ocation: \\(.*\\)\r?$" nil t)
-        (setq location-header (string-trim (match-string 1)))))
-    ;; Find the response body (after headers)
-    (when (re-search-forward "\r?\n\r?\n" nil t)
-      (setq response-body (buffer-substring-no-properties (point) (point-max)))
-      (setq json-response (condition-case nil
-                              (json-read-from-string response-body)
-                            (error nil))))
-    ;; Now we can kill the buffer
     (kill-buffer)
     ;; Log HTTP errors with diagnostic details
     (when (and status-line (>= (string-to-number status-line) 400))
@@ -463,19 +472,15 @@ Returns either a file object alist, a location alist, or signals an error."
           (truncate-string-to-width response-body 500))))
     ;; Determine what to return
     (cond
-     ;; If we got a JSON response with an ID, return it directly
      ((and json-response (alist-get 'id json-response))
       (elog-debug org-canvas--logger "[Stage 3: Upload Step 2] Got file object directly")
       json-response)
-     ;; If we have a location header (3XX redirect or 201 Created), return it
      (location-header
       (elog-debug org-canvas--logger "[Stage 3: Upload Step 2] Got redirect to: %s" location-header)
       `((location . ,location-header)))
-     ;; If we got some other JSON response, return it
      (json-response
       (elog-debug org-canvas--logger "[Stage 3: Upload Step 2] Got JSON response")
       json-response)
-     ;; Otherwise error
      (t
       (error "Upload failed: no JSON response or Location header.  Status: %s, Body: %s"
              status-line (or response-body "empty"))))))
@@ -842,16 +847,7 @@ Creates folders as needed and populates the folder cache."
         (setq deleted-folder-count (org-canvas--file-delete-all-folders))
 
         ;; Clean local properties
-        (when (file-exists-p files-file)
-          (elog-info org-canvas--logger "Cleaning local properties...")
-          (with-current-buffer (find-file-noselect files-file)
-            (org-map-entries
-             (lambda ()
-               (elog-debug org-canvas--logger "Removing properties for ID: %s"
-                           (org-entry-get (point) "CANVAS_ID"))
-               (org-canvas-clear-sync-properties (point)))
-             "CANVAS_ID={.}" 'file)
-            (save-buffer)))
+        (org-canvas--clean-local-sync-properties files-file)
 
         (elog-info org-canvas--logger "========================================")
         (elog-info org-canvas--logger ">>> MASS DELETION COMPLETE: %d files, %d folders removed"

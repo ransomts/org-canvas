@@ -409,6 +409,34 @@ METHOD, FULL-URL, PARAMS, JSON-PAYLOAD, TIMEOUT, HEADERS describe the request."
     (elog-debug org-canvas--logger "[API] Response Body:\n%s"
       (org-canvas--pretty-json result))))
 
+(defun org-canvas--api-execute-with-retry (plz-method full-url headers json-payload actual-timeout)
+  "Execute PLZ-METHOD request to FULL-URL with retry on rate-limit.
+HEADERS, JSON-PAYLOAD, and ACTUAL-TIMEOUT configure the request."
+  (let ((retry-count 0)
+        (done nil)
+        result)
+    (while (not done)
+      (condition-case err
+          (progn
+            (setq result
+                  (plz plz-method full-url
+                    :headers headers
+                    :body json-payload
+                    :as #'json-read
+                    :timeout actual-timeout))
+            (org-canvas--api-log-response result)
+            (setq done t))
+        (plz-error
+         (when (eq (org-canvas--api-handle-plz-error err full-url) :retry)
+           (if (< retry-count org-canvas-rate-limit-retries)
+               (progn
+                 (elog-debug org-canvas--logger
+                   "[API] Retry %d/%d" (1+ retry-count) org-canvas-rate-limit-retries)
+                 (setq retry-count (1+ retry-count)))
+             (setq done t)
+             (org-canvas--api-retries-exhausted retry-count err))))))
+    result))
+
 (cl-defun org-canvas-api-request (method url &key params data timeout)
   "Perform an HTTP request to the Canvas API synchronously using `plz'.
 METHOD is \\='GET, \\='POST, \\='PUT, or \\='DELETE.
@@ -428,31 +456,7 @@ TIMEOUT is the request timeout in seconds."
 	 (plz-method (intern (downcase (symbol-name method)))))
 
     (org-canvas--api-log-request method full-url params json-payload actual-timeout headers)
-
-    (let ((retry-count 0)
-          (done nil)
-          result)
-      (while (not done)
-        (condition-case err
-            (progn
-              (setq result
-                    (plz plz-method full-url
-                      :headers headers
-                      :body json-payload
-                      :as #'json-read
-                      :timeout actual-timeout))
-              (org-canvas--api-log-response result)
-              (setq done t))
-          (plz-error
-           (when (eq (org-canvas--api-handle-plz-error err full-url) :retry)
-             (if (< retry-count org-canvas-rate-limit-retries)
-                 (progn
-                   (elog-debug org-canvas--logger
-                     "[API] Retry %d/%d" (1+ retry-count) org-canvas-rate-limit-retries)
-                   (setq retry-count (1+ retry-count)))
-               (setq done t)
-               (org-canvas--api-retries-exhausted retry-count err))))))
-      result)))
+    (org-canvas--api-execute-with-retry plz-method full-url headers json-payload actual-timeout)))
 
 (defun org-canvas-api-request-all-pages (method url &optional params)
   "Fetch all pages of results from a paginated Canvas API endpoint.
@@ -543,6 +547,22 @@ Returns VALUE if valid, DEFAULT if nil, or DEFAULT with a warning if invalid."
   (dolist (prop org-canvas--sync-property-names)
     (org-entry-delete pom prop)))
 
+(defun org-canvas--clean-local-sync-properties (file &optional id-property)
+  "Remove sync properties from all headings with IDs in FILE.
+ID-PROPERTY defaults to \"CANVAS_ID\"."
+  (let ((id-prop (or id-property "CANVAS_ID")))
+    (when (and file (file-exists-p file))
+      (elog-info org-canvas--logger "Cleaning local properties...")
+      (with-current-buffer (find-file-noselect file)
+        (org-map-entries
+         (lambda ()
+           (elog-debug org-canvas--logger "Removing properties for: %s"
+                       (org-entry-get (point) id-prop))
+           (org-canvas-clear-sync-properties (point)))
+         (format "%s={.}" id-prop) 'file)
+        (save-buffer)
+        (elog-info org-canvas--logger "Saved %s" file)))))
+
 (defun org-canvas-org-set-property (pom property value)
   "Set Org PROPERTY to VALUE at POM (point or marker).
 Ensures the correct buffer is used if POM is a marker."
@@ -552,11 +572,25 @@ Ensures the correct buffer is used if POM is a marker."
 	(goto-char pom)
 	(org-entry-put (point) property value)))))
 
+(defun org-canvas--normalize-id (id)
+  "Ensure ID is a string.  Convert numbers; pass strings through."
+  (if (numberp id) (number-to-string id) id))
+
+(defun org-canvas--pull-set-boolean-property (pom property value)
+  "Set boolean PROPERTY at POM.  Convert t to \"true\", else to \"false\"."
+  (org-canvas-org-set-property
+   pom property (if (eq value t) "true" "false")))
+
+(defun org-canvas--alist-get-non-null (key alist)
+  "Get KEY from ALIST, returning nil for null or :null values."
+  (let ((v (alist-get key alist)))
+    (if (or (null v) (eq v :null)) nil v)))
+
 (defun org-canvas-org-save-sync-state (pom id &optional id-prop)
   "Standardize saving ID and LAST_SYNCED to the heading at POM.
 ID-PROP defaults to `CANVAS_ID'."
   (let ((prop (or id-prop "CANVAS_ID"))
-	(id-str (if (numberp id) (number-to-string id) id))
+	(id-str (org-canvas--normalize-id id))
 	(timestamp (format-time-string "[%Y-%m-%d %a %H:%M]")))
     (org-canvas-org-set-property pom prop id-str)
     (org-canvas-org-set-property pom "LAST_SYNCED" timestamp)))
@@ -828,6 +862,23 @@ SOURCE-DIR is the directory of the source file containing the link."
                           org-canvas-base-url org-canvas-course-id
                           endpoint id))))))))))
 
+(defun org-canvas--replace-link-with-canvas-url
+    (link-start link-end file heading display source-dir)
+  "Replace Org link from LINK-START to LINK-END with a Canvas URL link.
+FILE and HEADING identify the target.  DISPLAY is the link text.
+SOURCE-DIR is the directory of the source .org file.
+If resolution fails, replaces with plain DISPLAY text."
+  (let ((canvas-url (org-canvas--resolve-to-canvas-url
+                     file heading source-dir)))
+    (delete-region link-start link-end)
+    (goto-char link-start)
+    (if canvas-url
+        (insert (format "[[%s][%s]]" canvas-url display))
+      (elog-warning org-canvas--logger
+        "[Links] Unresolved: [[file:%s::*%s][%s]] → plain text"
+        file heading display)
+      (insert display))))
+
 (defun org-canvas--resolve-body-links (source-dir)
   "Resolve cross-file Org links in current buffer to Canvas URLs.
 Replaces [[file:*.org::*HEADING][DISPLAY]] links with Canvas URL links.
@@ -839,27 +890,16 @@ SOURCE-DIR is the directory of the source .org file."
     (let ((link-start (match-beginning 0))
           (file (match-string 1))
           (heading-start (point)))
-      ;; Find ][ separator (escaped brackets use \]\[ which won't match)
       (when (search-forward "][" nil t)
         (let* ((heading (buffer-substring-no-properties
                          heading-start (- (point) 2)))
                (display-start (point)))
-          ;; Find ]] end
           (when (search-forward "]]" nil t)
             (let* ((link-end (point))
                    (display (buffer-substring-no-properties
-                             display-start (- link-end 2)))
-                   (canvas-url (org-canvas--resolve-to-canvas-url
-                                file heading source-dir)))
-              ;; Replace the link
-              (delete-region link-start link-end)
-              (goto-char link-start)
-              (if canvas-url
-                  (insert (format "[[%s][%s]]" canvas-url display))
-                (elog-warning org-canvas--logger
-                  "[Links] Unresolved: [[file:%s::*%s][%s]] → plain text"
-                  file heading display)
-                (insert display)))))))))
+                             display-start (- link-end 2))))
+              (org-canvas--replace-link-with-canvas-url
+               link-start link-end file heading display source-dir))))))))
 
 (defvar org-export-with-broken-links)
 (defvar org-export-with-sub-superscripts)
@@ -977,6 +1017,28 @@ Returns a string like \"[2026-01-15 Thu 10:00]\" or nil."
 
 ;;;; 4f. Pull Macro
 
+(defun org-canvas--pull-confirm-overwrite (file feature-name)
+  "Prompt user to confirm overwrite if FILE already has content.
+Signals `user-error' with FEATURE-NAME if aborted."
+  (when (and (file-exists-p file)
+             (> (file-attribute-size (file-attributes file)) 0)
+             (not (y-or-n-p
+                   (format "%s already exists.  Pull will overwrite headings.  Continue? "
+                           (file-name-nondirectory file)))))
+    (user-error "%s pull aborted" (capitalize feature-name))))
+
+(defun org-canvas--pull-process-item (item file id-field title-field id-property item-fn)
+  "Process a single pulled ITEM into FILE.
+ID-FIELD and TITLE-FIELD select values from the API alist.
+ID-PROPERTY is the Org property name.  ITEM-FN does per-module work."
+  (let* ((id (alist-get id-field item))
+         (title (alist-get title-field item))
+         (pos (org-canvas--pull-upsert-heading file id title id-property)))
+    (goto-char pos)
+    (when title (org-edit-headline title))
+    (org-canvas-org-save-sync-state pos id id-property)
+    (funcall item-fn item pos)))
+
 (defmacro org-canvas-define-pull (feature &rest args)
   "Define `org-canvas-pull-FEATURE' function.
 FEATURE is a symbol like \\='pages or \\='announcements.
@@ -1030,25 +1092,15 @@ Example:
                 (remote (org-canvas-api-request-all-pages
                          'GET endpoint ,params-expr))
                 (count 0))
-           (when (and (file-exists-p file)
-                      (> (file-attribute-size (file-attributes file)) 0)
-                      (not (y-or-n-p
-                            (format "%s already exists.  Pull will overwrite headings.  Continue? "
-                                    (file-name-nondirectory file)))))
-             (user-error ,(format "%s pull aborted" (capitalize feature-name))))
+           (org-canvas--pull-confirm-overwrite file ,feature-name)
            (unless (file-exists-p file)
              (with-temp-file file (insert "")))
            (with-current-buffer (find-file-noselect file)
              (dolist (item remote)
                ,(let ((body
-                       `(let* ((id (alist-get ,id-field item))
-                               (title (alist-get ,title-field item))
-                               (pos (org-canvas--pull-upsert-heading
-                                     file id title ,id-property)))
-                          (goto-char pos)
-                          (when title (org-edit-headline title))
-                          (org-canvas-org-save-sync-state pos id ,id-property)
-                          (funcall ,item-fn item pos)
+                       `(progn
+                          (org-canvas--pull-process-item
+                           item file ,id-field ,title-field ,id-property ,item-fn)
                           (cl-incf count))))
                   (if filter-fn
                       `(unless (funcall ,filter-fn item)
@@ -1160,12 +1212,38 @@ Returns a plist (:targets MARKERS :all-ids-before IDS)."
                id-counts))
     (list :targets targets :all-ids-before all-ids-before)))
 
+(defun org-canvas--sync-finalize-push (response data payload-hash ctx)
+  "Finalize a successful push RESPONSE for DATA.
+PAYLOAD-HASH is saved to the heading.  CTX is the sync context plist."
+  (let ((finalize-fn (plist-get ctx :finalize-fn))
+        (counters (plist-get ctx :counters))
+        (synced-ids (plist-get ctx :synced-ids))
+        (canvas-id (or (plist-get data :canvas-id)
+                       (plist-get data :canvas-url)))
+        (cap-feature (capitalize (plist-get ctx :feature-name)))
+        (title (plist-get data (or (plist-get ctx :title-key) :title)))
+        (total-count (plist-get ctx :total-count))
+        (progress (+ (plist-get (plist-get ctx :counters) :success)
+                     (plist-get (plist-get ctx :counters) :skip)
+                     (plist-get (plist-get ctx :counters) :fail)
+                     1)))
+    (funcall finalize-fn data response)
+    (org-entry-put (point) "PAYLOAD_HASH" payload-hash)
+    (save-buffer)
+    (plist-put counters :success (1+ (plist-get counters :success)))
+    (message "%s [%d/%d] Synced '%s'"
+      cap-feature progress total-count title)
+    (unless canvas-id
+      (let ((new-id (or (org-entry-get (point) "CANVAS_ID")
+                        (org-entry-get (point) "CANVAS_URL"))))
+        (when new-id
+          (push new-id (car synced-ids)))))))
+
 (defun org-canvas--sync-execute-pipeline (data payload ctx)
   "Execute the skip/dry-run/push pipeline for a single entry.
 DATA is the parsed entry, PAYLOAD is the built API payload.
 CTX is the sync context plist (see `org-canvas--sync-process-entry')."
   (let* ((push-fn (plist-get ctx :push-fn))
-         (finalize-fn (plist-get ctx :finalize-fn))
          (feature-name (plist-get ctx :feature-name))
          (total-count (plist-get ctx :total-count))
          (counters (plist-get ctx :counters))
@@ -1202,17 +1280,7 @@ CTX is the sync context plist (see `org-canvas--sync-process-entry')."
                          (1+ (plist-get counters :conflict)))
               (message "%s [%d/%d] CONFLICT: '%s' (remote modified)"
                 cap-feature progress total-count title))
-          (funcall finalize-fn data response)
-          (org-entry-put (point) "PAYLOAD_HASH" payload-hash)
-          (save-buffer)
-          (plist-put counters :success (1+ (plist-get counters :success)))
-          (message "%s [%d/%d] Synced '%s'"
-            cap-feature progress total-count title)
-          (unless canvas-id
-            (let ((new-id (or (org-entry-get (point) "CANVAS_ID")
-                              (org-entry-get (point) "CANVAS_URL"))))
-              (when new-id
-                (push new-id (car synced-ids)))))))))))
+          (org-canvas--sync-finalize-push response data payload-hash ctx)))))))
 
 (defun org-canvas--sync-process-entry (marker ctx)
   "Process one entry through the 4-stage pipeline.
@@ -1660,7 +1728,7 @@ Returns (DELETED-COUNT . DELETED-IDS)."
             (plz-queue queue 'delete (funcall endpoint-fn item-id)
               :headers headers
               :then (lambda (_response)
-                      (push (if (numberp item-id) (number-to-string item-id) item-id)
+                      (push (org-canvas--normalize-id item-id)
                             deleted-ids)
                       (setq deleted-count (1+ deleted-count))
                       (elog-info org-canvas--logger "  -> Deleted '%s' successfully" item-title))
@@ -1711,17 +1779,7 @@ Returns the count of successfully deleted items."
            (deleted-count (car result)))
 
       ;; Cleanup local properties
-      (when (and file (file-exists-p file))
-        (elog-info org-canvas--logger "Cleaning local properties...")
-        (with-current-buffer (find-file-noselect file)
-          (org-map-entries
-           (lambda ()
-             (elog-debug org-canvas--logger "Removing properties for: %s"
-               (org-entry-get (point) id-property))
-             (org-canvas-clear-sync-properties (point)))
-           (format "%s={.}" id-property) 'file)
-          (save-buffer)
-          (elog-info org-canvas--logger "Saved %s" file)))
+      (org-canvas--clean-local-sync-properties file id-property)
 
       (elog-info org-canvas--logger "========================================")
       (elog-info org-canvas--logger ">>> MASS DELETION COMPLETE: %d removed" deleted-count)

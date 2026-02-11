@@ -44,20 +44,6 @@
      ""
      (expect (org-canvas--section-find-heading-by-id "111") :to-be nil))))
 
-;;;; Helper: format timestamp
-
-(describe "org-canvas--section-format-timestamp"
-  (it "converts ISO8601 to Org timestamp"
-    (let ((result (org-canvas--section-format-timestamp "2026-01-15T00:00:00Z")))
-      (expect result :to-be-truthy)
-      (expect result :to-match "^<2026-01-15")))
-
-  (it "returns nil for nil input"
-    (expect (org-canvas--section-format-timestamp nil) :to-be nil))
-
-  (it "returns nil for :null input"
-    (expect (org-canvas--section-format-timestamp :null) :to-be nil)))
-
 ;;;; Pull Sections
 
 (describe "org-canvas-pull-sections"

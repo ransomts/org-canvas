@@ -305,17 +305,4 @@ Welcome to the course.
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
 
-;;;; Timestamp helper
-
-(describe "org-canvas--settings-format-timestamp"
-  (it "converts ISO8601 to Org timestamp"
-    (let ((result (org-canvas--settings-format-timestamp "2026-01-15T10:00:00Z")))
-      (expect result :to-match "2026-01-15")))
-
-  (it "returns nil for nil input"
-    (expect (org-canvas--settings-format-timestamp nil) :to-be nil))
-
-  (it "returns nil for :null input"
-    (expect (org-canvas--settings-format-timestamp :null) :to-be nil)))
-
 ;;; org-canvas-settings-test.el ends here

@@ -237,6 +237,23 @@ it before creating new one."
 
 ;;;; Rubric Dissociation
 
+(defun org-canvas--rubric-delete-association (assoc-id assignment-name)
+  "Delete rubric association ASSOC-ID for ASSIGNMENT-NAME.
+Returns t on success, nil on failure."
+  (elog-info org-canvas--logger
+             "Dissociating rubric from assignment '%s' (association: %s)"
+             assignment-name assoc-id)
+  (condition-case err
+      (progn
+        (org-canvas-api-request 'DELETE
+          (org-canvas-api-course-endpoint "rubric_associations/%s" assoc-id))
+        (elog-info org-canvas--logger "  -> Dissociated successfully")
+        t)
+    (error
+     (elog-warning org-canvas--logger
+                   "  -> Dissociation failed: %s" (cadr err))
+     nil)))
+
 (defun org-canvas--rubric-dissociate-all ()
   "Remove all rubric associations from assignments in the course.
 Canvas returns 500 when deleting a rubric still associated with
@@ -250,19 +267,9 @@ an assignment, so this must run before rubric deletion."
         (when rubric-settings
           (let ((assoc-id (alist-get 'id rubric-settings))
                 (title (alist-get 'name assignment)))
-            (when assoc-id
-              (elog-info org-canvas--logger
-                         "Dissociating rubric from assignment '%s' (association: %s)"
-                         title assoc-id)
-              (condition-case err
-                  (progn
-                    (org-canvas-api-request 'DELETE
-                      (org-canvas-api-course-endpoint "rubric_associations/%s" assoc-id))
-                    (setq dissociated (1+ dissociated))
-                    (elog-info org-canvas--logger "  -> Dissociated successfully"))
-                (error
-                 (elog-warning org-canvas--logger
-                              "  -> Dissociation failed: %s" (cadr err)))))))))
+            (when (and assoc-id
+                       (org-canvas--rubric-delete-association assoc-id title))
+              (setq dissociated (1+ dissociated)))))))
     (elog-info org-canvas--logger "Dissociated %d rubric associations" dissociated)
     dissociated))
 
@@ -350,6 +357,22 @@ LIST-DATA is the rubric alist from the list response."
 
 ;;;; Delete All Rubrics (custom, with dissociation and diagnostics)
 
+(defun org-canvas--rubric-verify-deleted (rubric-id item)
+  "Check whether RUBRIC-ID was actually deleted despite an API error.
+ITEM is the rubric alist for diagnostics.
+Returns t if confirmed deleted, nil if still present."
+  (elog-info org-canvas--logger "  -> Verifying whether rubric was actually deleted...")
+  (condition-case _verify-err
+      (progn
+        (org-canvas-api-request 'GET
+          (org-canvas-api-course-endpoint "rubrics/%s" rubric-id))
+        (elog-error org-canvas--logger "  -> Rubric still exists. Deletion truly failed.")
+        (org-canvas--rubric-log-diagnostics rubric-id item)
+        nil)
+    (error
+     (elog-info org-canvas--logger "  -> Rubric no longer exists (confirmed deleted)")
+     t)))
+
 (defun org-canvas--rubric-delete-with-verify (item)
   "Delete a single rubric ITEM, verifying on error.
 Returns the string ID if deleted, nil otherwise."
@@ -359,21 +382,11 @@ Returns the string ID if deleted, nil otherwise."
           (org-canvas-api-request 'DELETE
             (org-canvas-api-course-endpoint "rubrics/%s" item-id))
           (elog-info org-canvas--logger "  -> Deleted successfully")
-          (if (numberp item-id) (number-to-string item-id) item-id))
+          (org-canvas--normalize-id item-id))
       (error
-       ;; Canvas sometimes returns 500 but actually deletes the rubric.
        (elog-warning org-canvas--logger "  -> Delete returned error: %s" (cadr err))
-       (elog-info org-canvas--logger "  -> Verifying whether rubric was actually deleted...")
-       (condition-case _verify-err
-           (progn
-             (org-canvas-api-request 'GET
-               (org-canvas-api-course-endpoint "rubrics/%s" item-id))
-             (elog-error org-canvas--logger "  -> Rubric still exists. Deletion truly failed.")
-             (org-canvas--rubric-log-diagnostics item-id item)
-             nil)
-         (error
-          (elog-info org-canvas--logger "  -> Rubric no longer exists (confirmed deleted)")
-          (if (numberp item-id) (number-to-string item-id) item-id)))))))
+       (when (org-canvas--rubric-verify-deleted item-id item)
+         (org-canvas--normalize-id item-id))))))
 
 (defun org-canvas-delete-all-rubrics ()
   "Delete ALL rubrics in the configured course.
@@ -411,18 +424,7 @@ On failure, fetches detailed rubric info for diagnostics."
           (setq deleted-count (1+ deleted-count)))))
 
     ;; Cleanup local properties
-    (when (and org-canvas-rubrics-file
-               (file-exists-p org-canvas-rubrics-file))
-      (elog-info org-canvas--logger "Cleaning local properties...")
-      (with-current-buffer (find-file-noselect org-canvas-rubrics-file)
-        (org-map-entries
-         (lambda ()
-           (elog-debug org-canvas--logger "Removing properties for: %s"
-                       (org-entry-get (point) "CANVAS_ID"))
-           (org-canvas-clear-sync-properties (point)))
-         "CANVAS_ID={.}" 'file)
-        (save-buffer)
-        (elog-info org-canvas--logger "Saved %s" org-canvas-rubrics-file)))
+    (org-canvas--clean-local-sync-properties org-canvas-rubrics-file)
 
     (elog-info org-canvas--logger "========================================")
     (elog-info org-canvas--logger ">>> MASS DELETION COMPLETE: %d removed" deleted-count)

@@ -99,6 +99,13 @@ Returns a (CANVAS_ID . CANVAS_URL) cons cell, or nil."
     (when (or canvas-id page-url)
       (cons canvas-id page-url))))
 
+(defun org-canvas--module-get-ids-at-point ()
+  "Return (CANVAS_ID . CANVAS_URL) cons at point, or nil if neither is set."
+  (let ((canvas-id (org-entry-get (point) "CANVAS_ID"))
+        (page-url (org-entry-get (point) "CANVAS_URL")))
+    (when (or canvas-id page-url)
+      (cons canvas-id page-url))))
+
 (defun org-canvas--module-search-heading-for-id (abs-file heading title)
   "Search ABS-FILE for HEADING and return its Canvas IDs.
 First tries exact match on HEADING (with Org bracket unescaping).
@@ -115,16 +122,17 @@ Returns a (CANVAS_ID . CANVAS_URL) cons cell, or nil if not found."
                             heading))
                  (search-re (format "^\\*+ +%s" (regexp-quote unescaped))))
             (if (re-search-forward search-re nil t)
-                (let ((canvas-id (org-entry-get (point) "CANVAS_ID"))
-                      (page-url (org-entry-get (point) "CANVAS_URL")))
-                  (when (or canvas-id page-url)
-                    (cons canvas-id page-url)))
+                (org-canvas--module-get-ids-at-point)
               (org-canvas--module-search-by-display-title title)))
         (when (re-search-forward "^\\* " nil t)
-          (let ((canvas-id (org-entry-get (point) "CANVAS_ID"))
-                (page-url (org-entry-get (point) "CANVAS_URL")))
-            (when (or canvas-id page-url)
-              (cons canvas-id page-url))))))))
+          (org-canvas--module-get-ids-at-point))))))
+
+(defun org-canvas--module-lookup-ids-in-file (abs-file heading title)
+  "Look up Canvas IDs in ABS-FILE for HEADING (with TITLE fallback).
+Returns a plist (:canvas-id ID :canvas-url URL) or nil."
+  (let ((ids (org-canvas--module-search-heading-for-id abs-file heading title)))
+    (when ids
+      (list :canvas-id (car ids) :canvas-url (cdr ids)))))
 
 (defun org-canvas--module-resolve-link (link-string modules-file-dir)
   "Resolve LINK-STRING to get the linked item's Canvas ID and type.
@@ -141,24 +149,24 @@ Returns a plist (:type TYPE :content-id ID :page-url URL :title TITLE) or nil."
       (elog-debug org-canvas--logger "[Module Item] Resolving: file=%s heading=%s type=%s"
         file (or heading "N/A") item-type)
 
-      (if (not abs-file)
-          (progn
-            (elog-warning org-canvas--logger "[Module Item] File not found: %s"
-              (expand-file-name file modules-file-dir))
-            nil)
-        (let ((ids (org-canvas--module-search-heading-for-id abs-file heading title)))
-          (if ids
-              (let ((canvas-id (car ids))
-                    (page-url (cdr ids)))
+      (cond
+       ((not abs-file)
+        (elog-warning org-canvas--logger "[Module Item] File not found: %s"
+          (expand-file-name file modules-file-dir))
+        nil)
+       (t
+        (let ((found (org-canvas--module-lookup-ids-in-file abs-file heading title)))
+          (if found
+              (let ((canvas-id (plist-get found :canvas-id))
+                    (page-url (plist-get found :canvas-url)))
                 (elog-debug org-canvas--logger "[Module Item] Resolved: type=%s id=%s url=%s"
                   item-type (or canvas-id "N/A") (or page-url "N/A"))
                 (list :type item-type
                       :content-id (when canvas-id (string-to-number canvas-id))
                       :page-url page-url
                       :title title))
-            (progn
-              (elog-warning org-canvas--logger "[Module Item] No CANVAS_ID found for: %s" heading)
-              nil)))))))
+            (elog-warning org-canvas--logger "[Module Item] No CANVAS_ID found for: %s" heading)
+            nil)))))))
 
 (defun org-canvas--module-parse-prerequisite-ids (prereq-string)
   "Parse PREREQ-STRING into a list of module IDs.
@@ -441,15 +449,9 @@ Return the matching item alist, or nil if not found."
 
 ;;;; Main Sync Functions
 
-(defun org-canvas--module-sync-items (module-id module-pom modules-file-dir)
-  "Sync all items for MODULE-ID starting from MODULE-POM.
-MODULES-FILE-DIR is used for resolving links.
-Returns (success-count . fail-count)."
-  (let ((item-markers nil)
-        (success-count 0)
-        (fail-count 0)
-        (position 1))
-
+(defun org-canvas--module-collect-item-markers (module-pom)
+  "Collect deduplicated markers for all child headings of MODULE-POM."
+  (let ((item-markers nil))
     ;; Collect all level-2 children of this module
     (save-excursion
       (goto-char module-pom)
@@ -458,7 +460,6 @@ Returns (success-count . fail-count)."
                     (> (org-current-level) module-level))
           (when (= (org-current-level) (1+ module-level))
             (push (point-marker) item-markers)))))
-
     ;; Also check immediate children using outline structure
     (save-excursion
       (goto-char module-pom)
@@ -466,8 +467,16 @@ Returns (success-count . fail-count)."
         (push (point-marker) item-markers)
         (while (org-get-next-sibling)
           (push (point-marker) item-markers))))
+    (delete-dups (nreverse item-markers))))
 
-    (setq item-markers (delete-dups (nreverse item-markers)))
+(defun org-canvas--module-sync-items (module-id module-pom modules-file-dir)
+  "Sync all items for MODULE-ID starting from MODULE-POM.
+MODULES-FILE-DIR is used for resolving links.
+Returns (success-count . fail-count)."
+  (let ((item-markers (org-canvas--module-collect-item-markers module-pom))
+        (success-count 0)
+        (fail-count 0)
+        (position 1))
     (elog-info org-canvas--logger "[Module Items] Found %d items to sync" (length item-markers))
 
     (dolist (marker item-markers)
@@ -496,6 +505,34 @@ Returns (success-count . fail-count)."
                (marker-position marker) (error-message-string err)))))))
 
     (cons success-count fail-count)))
+
+(defun org-canvas--module-sync-one (marker modules-file-dir)
+  "Sync a single module at MARKER and its child items.
+MODULES-FILE-DIR is the directory containing modules.org.
+Returns a plist (:module-ok BOOL :item-success N :item-fail N)."
+  (with-current-buffer (marker-buffer marker)
+    (save-excursion
+      (goto-char (marker-position marker))
+      (condition-case err
+          (let* ((data (org-canvas--module-parse-entry))
+                 (payload (org-canvas--module-build-payload data))
+                 (response (org-canvas--module-push-to-api data payload))
+                 (module-id (alist-get 'id response))
+                 (i-success 0) (i-fail 0))
+            (org-canvas--module-finalize data response)
+            (when module-id
+              (elog-info org-canvas--logger "[Module Items] Syncing items for module %s..." module-id)
+              (let ((item-counts (org-canvas--module-sync-items
+                                  module-id (marker-position marker) modules-file-dir)))
+                (setq i-success (car item-counts))
+                (setq i-fail (cdr item-counts))))
+            (list :module-ok t :title (plist-get data :title)
+                  :item-success i-success :item-fail i-fail))
+        (error
+         (elog-error org-canvas--logger "[FAILED] Module at point %d: %s"
+           (marker-position marker) (error-message-string err))
+         (list :module-ok nil :error-msg (error-message-string err)
+               :item-success 0 :item-fail 0))))))
 
 ;;;###autoload
 (defun org-canvas-sync-modules ()
@@ -529,45 +566,27 @@ Returns (success-count . fail-count)."
           (item-fail 0)
           (modules-file-dir (file-name-directory modules-file)))
 
-      ;; Collect all level-1 headings (modules)
       (with-current-buffer (find-file-noselect modules-file)
         (setq module-markers (org-map-entries (lambda () (point-marker)) "LEVEL=1" 'file)))
 
       (elog-info org-canvas--logger "Found %d modules to sync" (length module-markers))
 
-      ;; Process each module
       (dolist (marker module-markers)
         (elog-info org-canvas--logger "========================================")
-        (with-current-buffer (marker-buffer marker)
-          (save-excursion
-            (goto-char (marker-position marker))
-            (condition-case err
-                (let* ((data (org-canvas--module-parse-entry))
-                       (payload (org-canvas--module-build-payload data))
-                       (response (org-canvas--module-push-to-api data payload))
-                       (module-id (alist-get 'id response)))
-                  (org-canvas--module-finalize data response)
-                  (setq module-success (1+ module-success))
-                  (message "Modules [%d/%d] Synced '%s'"
-                    (+ module-success module-fail) (length module-markers)
-                    (plist-get data :title))
+        (let ((result (org-canvas--module-sync-one marker modules-file-dir)))
+          (if (plist-get result :module-ok)
+              (progn
+                (setq module-success (1+ module-success))
+                (message "Modules [%d/%d] Synced '%s'"
+                  (+ module-success module-fail) (length module-markers)
+                  (plist-get result :title)))
+            (setq module-fail (1+ module-fail))
+            (message "Modules [%d/%d] FAILED: %s"
+              (+ module-success module-fail) (length module-markers)
+              (plist-get result :error-msg)))
+          (setq item-success (+ item-success (plist-get result :item-success)))
+          (setq item-fail (+ item-fail (plist-get result :item-fail)))))
 
-                  ;; Now sync items for this module
-                  (when module-id
-                    (elog-info org-canvas--logger "[Module Items] Syncing items for module %s..." module-id)
-                    (let ((item-counts (org-canvas--module-sync-items
-                                        module-id (marker-position marker) modules-file-dir)))
-                      (setq item-success (+ item-success (car item-counts)))
-                      (setq item-fail (+ item-fail (cdr item-counts))))))
-              (error
-               (setq module-fail (1+ module-fail))
-               (elog-error org-canvas--logger "[FAILED] Module at point %d: %s"
-                 (marker-position marker) (error-message-string err))
-               (message "Modules [%d/%d] FAILED: %s"
-                 (+ module-success module-fail) (length module-markers)
-                 (error-message-string err)))))))
-
-      ;; Save the org file
       (with-current-buffer (find-file-noselect modules-file)
         (save-buffer)
         (elog-info org-canvas--logger "Saved %s" modules-file))
@@ -608,21 +627,22 @@ Returns (success-count . fail-count)."
              (deleted-count (car result)))
 
         ;; Clean local properties (modules and module items)
-        (when (file-exists-p modules-file)
-          (elog-info org-canvas--logger "Cleaning local properties...")
-          (with-current-buffer (find-file-noselect modules-file)
-            (org-map-entries
-             (lambda ()
-               (elog-debug org-canvas--logger "Removing properties for ID: %s"
-                           (org-entry-get (point) "CANVAS_ID"))
-               (org-canvas-clear-sync-properties (point)))
-             "CANVAS_ID={.}" 'file)
-            (save-buffer)))
+        (org-canvas--clean-local-sync-properties modules-file)
 
         (elog-info org-canvas--logger "========================================")
         (elog-info org-canvas--logger ">>> MASS DELETION COMPLETE: %d removed" deleted-count)
         (elog-info org-canvas--logger "========================================")
         (message "Module deletion complete. %d removed." deleted-count)))))
+
+(defun org-canvas--module-clear-children-properties (pom)
+  "Clear sync properties from POM and all its child headings."
+  (org-canvas-clear-sync-properties pom)
+  (save-excursion
+    (goto-char pom)
+    (when (org-goto-first-child)
+      (org-canvas-clear-sync-properties (point))
+      (while (org-get-next-sibling)
+        (org-canvas-clear-sync-properties (point))))))
 
 (defun org-canvas-delete-module-at-point ()
   "Delete the Canvas module associated with the current Org heading."
@@ -644,13 +664,7 @@ Returns (success-count . fail-count)."
           (progn
             (org-canvas-api-request 'DELETE (org-canvas-api-course-endpoint "modules/%s" canvas-id))
             (elog-info org-canvas--logger "Successfully deleted from Canvas")
-            ;; Clear properties from module and all its items
-            (org-canvas-clear-sync-properties pom)
-            (save-excursion
-              (when (org-goto-first-child)
-                (org-canvas-clear-sync-properties (point))
-                (while (org-get-next-sibling)
-                  (org-canvas-clear-sync-properties (point)))))
+            (org-canvas--module-clear-children-properties pom)
             (elog-info org-canvas--logger "Cleaned local properties")
             (message "Module '%s' deleted." title))
         (error

@@ -54,15 +54,6 @@
     "cc_by_nd" "cc_by_nc_nd" "public_domain")
   "Valid values for LICENSE.")
 
-;;;; Helpers
-
-(defun org-canvas--settings-format-timestamp (iso8601)
-  "Convert ISO8601 timestamp from Canvas API to Org timestamp format.
-Returns an Org active timestamp string, or nil if ISO8601 is nil."
-  (when (and iso8601 (not (equal iso8601 :null)))
-    (let ((time (date-to-time iso8601)))
-      (format-time-string "<%Y-%m-%d %a %H:%M>" time t))))
-
 ;;;; 1. Parse
 
 (defun org-canvas--settings-parse-entry ()
@@ -213,31 +204,39 @@ and pushes them to Canvas via PUT /courses/:id."
              (error-message-string err))
            (message "Settings sync FAILED: %s" (error-message-string err))))))))
 
+(defun org-canvas--settings-replace-syllabus-body (syllabus-body)
+  "Replace the body under the current heading with SYLLABUS-BODY.
+Point must be at the heading."
+  (let ((body-start (save-excursion
+                      (org-end-of-meta-data t)
+                      (point)))
+        (body-end (save-excursion
+                    (org-end-of-subtree t)
+                    (point))))
+    (delete-region body-start body-end)
+    (goto-char body-start)
+    (insert "\n" syllabus-body "\n")))
+
 (defun org-canvas--settings-pull-set-properties (pom response syllabus-body)
   "Set all settings properties at POM from API RESPONSE.
 SYLLABUS-BODY is the pre-extracted syllabus HTML (may be nil)."
   (let ((time-zone (alist-get 'time_zone response))
         (default-view (alist-get 'default_view response))
-        (apply-weights (alist-get 'apply_assignment_group_weights response))
-        (hide-final (alist-get 'hide_final_grades response))
-        (public-syllabus (alist-get 'public_syllabus response))
-        (is-public (alist-get 'is_public response))
-        (license (let ((v (alist-get 'license response)))
-                   (if (or (null v) (eq v :null)) nil v)))
+        (license (org-canvas--alist-get-non-null 'license response))
         (start-at (alist-get 'start_at response))
         (end-at (alist-get 'end_at response)))
     (when time-zone
       (org-canvas-org-set-property pom "TIME_ZONE" time-zone))
     (when default-view
       (org-canvas-org-set-property pom "DEFAULT_VIEW" default-view))
-    (org-canvas-org-set-property
-     pom "APPLY_WEIGHTS" (if (eq apply-weights t) "true" "false"))
-    (org-canvas-org-set-property
-     pom "HIDE_FINAL_GRADES" (if (eq hide-final t) "true" "false"))
-    (org-canvas-org-set-property
-     pom "PUBLIC_SYLLABUS" (if (eq public-syllabus t) "true" "false"))
-    (org-canvas-org-set-property
-     pom "IS_PUBLIC" (if (eq is-public t) "true" "false"))
+    (org-canvas--pull-set-boolean-property
+     pom "APPLY_WEIGHTS" (alist-get 'apply_assignment_group_weights response))
+    (org-canvas--pull-set-boolean-property
+     pom "HIDE_FINAL_GRADES" (alist-get 'hide_final_grades response))
+    (org-canvas--pull-set-boolean-property
+     pom "PUBLIC_SYLLABUS" (alist-get 'public_syllabus response))
+    (org-canvas--pull-set-boolean-property
+     pom "IS_PUBLIC" (alist-get 'is_public response))
     (when license
       (org-canvas-org-set-property pom "LICENSE" license))
     (org-canvas--pull-set-timestamp-property pom "START_AT" start-at)
@@ -246,15 +245,7 @@ SYLLABUS-BODY is the pre-extracted syllabus HTML (may be nil)."
      pom "LAST_SYNCED"
      (format-time-string "[%Y-%m-%d %a %H:%M]"))
     (when syllabus-body
-      (let ((body-start (save-excursion
-                          (org-end-of-meta-data t)
-                          (point)))
-            (body-end (save-excursion
-                        (org-end-of-subtree t)
-                        (point))))
-        (delete-region body-start body-end)
-        (goto-char body-start)
-        (insert "\n" syllabus-body "\n")))))
+      (org-canvas--settings-replace-syllabus-body syllabus-body))))
 
 ;;;###autoload
 (defun org-canvas-pull-settings ()
@@ -269,16 +260,9 @@ and heading if they don't exist."
                     'GET endpoint
                     :params '(("include[]" . "syllabus_body"))))
          (name (alist-get 'name response))
-         (syllabus-body (let ((v (alist-get 'syllabus_body response)))
-                          (if (or (null v) (eq v :null)) nil v)))
+         (syllabus-body (org-canvas--alist-get-non-null 'syllabus_body response))
          (settings-file (expand-file-name org-canvas-settings-file)))
-    ;; Confirm before overwriting an existing file
-    (when (and (file-exists-p settings-file)
-               (> (file-attribute-size (file-attributes settings-file)) 0)
-               (not (y-or-n-p
-                     (format "%s already exists.  Pull will overwrite headings.  Continue? "
-                             (file-name-nondirectory settings-file)))))
-      (user-error "Settings pull aborted"))
+    (org-canvas--pull-confirm-overwrite settings-file "settings")
     ;; Open or create the settings file
     (unless (file-exists-p settings-file)
       (with-temp-file settings-file

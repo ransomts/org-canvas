@@ -154,6 +154,17 @@ Accepts: online_upload, online_url, online_text_entry, media_recording,
 
 ;;;; 2. Stage: Transformation
 
+(defun org-canvas--assignment-add-peer-reviews (data assignment)
+  "Add peer review fields from DATA to ASSIGNMENT hash-table when enabled."
+  (when (plist-get data :peer_reviews)
+    (elog-debug org-canvas--logger "[Stage 2: Transform] Peer reviews enabled")
+    (puthash "peer_reviews" t assignment)
+    (puthash "automatic_peer_reviews" t assignment)
+    (when (plist-get data :peer_review_count)
+      (puthash "peer_review_count" (plist-get data :peer_review_count) assignment))
+    (when (plist-get data :peer_reviews_due_at)
+      (puthash "peer_reviews_due_at" (plist-get data :peer_reviews_due_at) assignment))))
+
 (defun org-canvas--assignment-build-payload (data)
   "Convert DATA to Canvas assignment payload."
   (org-canvas--validate-date-ordering data)
@@ -194,14 +205,7 @@ Accepts: online_upload, online_url, online_text_entry, media_recording,
         (puthash "assignment_group_id" (plist-get data :assignment_group_id) assignment))
 
       ;; Peer reviews
-      (when (plist-get data :peer_reviews)
-        (elog-debug org-canvas--logger "[Stage 2: Transform] Peer reviews enabled")
-        (puthash "peer_reviews" t assignment)
-        (puthash "automatic_peer_reviews" t assignment)
-        (when (plist-get data :peer_review_count)
-          (puthash "peer_review_count" (plist-get data :peer_review_count) assignment))
-        (when (plist-get data :peer_reviews_due_at)
-          (puthash "peer_reviews_due_at" (plist-get data :peer_reviews_due_at) assignment)))
+      (org-canvas--assignment-add-peer-reviews data assignment)
 
       (elog-debug org-canvas--logger "[Stage 2: Transform] Payload complete")
 
@@ -337,8 +341,7 @@ ITEM is the API response alist, POS is the heading position."
        pos "SUBMISSION_TYPES"
        (mapconcat #'identity (append submission-types nil) ",")))
     (when peer-reviews
-      (org-canvas-org-set-property
-       pos "PEER_REVIEWS" (if (eq peer-reviews t) "true" "false")))
+      (org-canvas--pull-set-boolean-property pos "PEER_REVIEWS" peer-reviews))
     (let ((group-link (org-canvas--assignment-resolve-group-link group-id)))
       (when group-link
         (org-canvas-org-set-property pos "GROUP" group-link))))

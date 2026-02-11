@@ -76,33 +76,58 @@ Return marker or nil."
        "LEVEL=1" 'file))
     found))
 
-(defun org-canvas--section-format-timestamp (iso8601)
-  "Convert ISO8601 timestamp from Canvas API to Org timestamp format.
-Returns an Org active timestamp string, or nil if ISO8601 is nil."
-  (when (and iso8601 (not (equal iso8601 :null)))
-    (let ((time (date-to-time iso8601)))
-      (format-time-string "<%Y-%m-%d %a %H:%M>" time t))))
-
 (defun org-canvas--section-set-properties (pom id start-at end-at restrict)
   "Set section properties at POM from Canvas API data.
 ID is the section's Canvas ID string.
 START-AT, END-AT are ISO8601 timestamps (or nil).
 RESTRICT is the restrict_enrollments_to_section_dates value."
   (org-canvas-org-set-property pom "CANVAS_ID" id)
-  (when (org-canvas--section-format-timestamp start-at)
-    (org-canvas-org-set-property
-     pom "START_AT"
-     (org-canvas--section-format-timestamp start-at)))
-  (when (org-canvas--section-format-timestamp end-at)
-    (org-canvas-org-set-property
-     pom "END_AT"
-     (org-canvas--section-format-timestamp end-at)))
-  (org-canvas-org-set-property
-   pom "RESTRICT_TO_DATES"
-   (if (eq restrict t) "true" "false"))
+  (org-canvas--pull-set-timestamp-property pom "START_AT" start-at)
+  (org-canvas--pull-set-timestamp-property pom "END_AT" end-at)
+  (org-canvas--pull-set-boolean-property pom "RESTRICT_TO_DATES" restrict)
   (org-canvas-org-set-property
    pom "LAST_SYNCED"
    (format-time-string "[%Y-%m-%d %a %H:%M]")))
+
+(defun org-canvas--pull-sections-upsert (section)
+  "Update or create a heading for SECTION in the current buffer.
+Returns the symbol `created' or `updated'."
+  (let* ((id (number-to-string (alist-get 'id section)))
+         (name (alist-get 'name section))
+         (start-at (alist-get 'start_at section))
+         (end-at (alist-get 'end_at section))
+         (restrict (alist-get 'restrict_enrollments_to_section_dates section))
+         (marker (org-canvas--section-find-heading-by-id id)))
+    (if marker
+        (progn
+          (goto-char (marker-position marker))
+          (org-canvas--section-set-properties (point) id start-at end-at restrict)
+          (elog-info org-canvas--logger
+                     "[Pull] Updated existing section '%s' (ID: %s)"
+                     (org-get-heading t t t t) id)
+          'updated)
+      (goto-char (point-max))
+      (unless (bolp) (insert "\n"))
+      (insert (format "* %s\n" name))
+      (org-back-to-heading t)
+      (org-canvas--section-set-properties (point) id start-at end-at restrict)
+      (elog-info org-canvas--logger
+                 "[Pull] Created new section '%s' (ID: %s)" name id)
+      'created)))
+
+(defun org-canvas--pull-sections-warn-stale (remote-ids)
+  "Warn about local headings whose CANVAS_ID is not in REMOTE-IDS.
+Must be called in the sections file buffer."
+  (org-map-entries
+   (lambda ()
+     (let ((local-id (org-entry-get (point) "CANVAS_ID")))
+       (when (and local-id (not (member local-id remote-ids)))
+         (elog-warning org-canvas--logger
+                       "[Pull] Stale section '%s' (ID: %s) — no longer on Canvas"
+                       (org-get-heading t t t t) local-id)
+         (message "Warning: Stale section '%s' (ID: %s) not found on Canvas"
+                  (org-get-heading t t t t) local-id))))
+   "LEVEL=1" 'file))
 
 ;;;###autoload
 (defun org-canvas-pull-sections ()
@@ -119,12 +144,7 @@ local headings whose CANVAS_ID no longer exists on Canvas."
     (unless (file-directory-p (file-name-directory sections-file))
       (error "Sections file directory does not exist: %s"
              (file-name-directory sections-file)))
-    (when (and (file-exists-p sections-file)
-               (> (file-attribute-size (file-attributes sections-file)) 0)
-               (not (y-or-n-p
-                     (format "%s already exists.  Pull will overwrite headings.  Continue? "
-                             (file-name-nondirectory sections-file)))))
-      (user-error "Sections pull aborted"))
+    (org-canvas--pull-confirm-overwrite sections-file "sections")
 
     (elog-info org-canvas--logger "========================================")
     (elog-info org-canvas--logger ">>> PULLING SECTIONS FROM CANVAS")
@@ -142,51 +162,15 @@ local headings whose CANVAS_ID no longer exists on Canvas."
       (elog-info org-canvas--logger "[Pull] Fetched %d sections from Canvas"
                  (length remote-sections))
 
-      ;; Open or create the sections file
       (with-current-buffer (find-file-noselect sections-file)
-        ;; Process each remote section
         (dolist (section remote-sections)
-          (let* ((id (number-to-string (alist-get 'id section)))
-                 (name (alist-get 'name section))
-                 (start-at (alist-get 'start_at section))
-                 (end-at (alist-get 'end_at section))
-                 (restrict (alist-get 'restrict_enrollments_to_section_dates section))
-                 (marker (org-canvas--section-find-heading-by-id id)))
-            (push id remote-ids)
-
-            (if marker
-                ;; Update existing heading (preserve name)
-                (progn
-                  (goto-char (marker-position marker))
-                  (org-canvas--section-set-properties (point) id start-at end-at restrict)
-                  (elog-info org-canvas--logger
-                             "[Pull] Updated existing section '%s' (ID: %s)"
-                             (org-get-heading t t t t) id)
-                  (setq updated (1+ updated)))
-
-              ;; Create new heading at end of buffer
-              (goto-char (point-max))
-              (unless (bolp) (insert "\n"))
-              (insert (format "* %s\n" name))
-              (org-back-to-heading t)
-              (org-canvas--section-set-properties (point) id start-at end-at restrict)
-              (elog-info org-canvas--logger
-                         "[Pull] Created new section '%s' (ID: %s)" name id)
+          (push (number-to-string (alist-get 'id section)) remote-ids)
+          (let ((result (org-canvas--pull-sections-upsert section)))
+            (if (eq result 'updated)
+                (setq updated (1+ updated))
               (setq created (1+ created)))))
 
-        ;; Warn about stale local headings
-        (org-map-entries
-         (lambda ()
-           (let ((local-id (org-entry-get (point) "CANVAS_ID")))
-             (when (and local-id (not (member local-id remote-ids)))
-               (elog-warning org-canvas--logger
-                             "[Pull] Stale section '%s' (ID: %s) — no longer on Canvas"
-                             (org-get-heading t t t t) local-id)
-               (message "Warning: Stale section '%s' (ID: %s) not found on Canvas"
-                        (org-get-heading t t t t) local-id))))
-         "LEVEL=1" 'file)
-
-        ;; Save the buffer
+        (org-canvas--pull-sections-warn-stale remote-ids)
         (save-buffer))
 
       (elog-info org-canvas--logger "========================================")
