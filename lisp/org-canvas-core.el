@@ -1010,6 +1010,12 @@ Example:
                 (remote (org-canvas-api-request-all-pages
                          'GET endpoint ,params-expr))
                 (count 0))
+           (when (and (file-exists-p file)
+                      (> (file-attribute-size (file-attributes file)) 0)
+                      (not (y-or-n-p
+                            (format "%s already exists.  Pull will overwrite headings.  Continue? "
+                                    (file-name-nondirectory file)))))
+             (user-error ,(format "%s pull aborted" (capitalize feature-name))))
            (unless (file-exists-p file)
              (with-temp-file file (insert "")))
            (with-current-buffer (find-file-noselect file)

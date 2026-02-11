@@ -247,6 +247,13 @@ and heading if they don't exist."
          (syllabus-body (let ((v (alist-get 'syllabus_body response)))
                           (if (or (null v) (eq v :null)) nil v)))
          (settings-file (expand-file-name org-canvas-settings-file)))
+    ;; Confirm before overwriting an existing file
+    (when (and (file-exists-p settings-file)
+               (> (file-attribute-size (file-attributes settings-file)) 0)
+               (not (y-or-n-p
+                     (format "%s already exists.  Pull will overwrite headings.  Continue? "
+                             (file-name-nondirectory settings-file)))))
+      (user-error "Settings pull aborted"))
     ;; Open or create the settings file
     (unless (file-exists-p settings-file)
       (with-temp-file settings-file

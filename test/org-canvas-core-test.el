@@ -3896,6 +3896,45 @@ Keep this too
                                     :item-fn #'ignore))))
       (expect expansion :to-be-truthy)
       ;; Check that the expansion contains a defun with the right name
-      (expect (format "%S" expansion) :to-match "org-canvas-pull-test-widgets"))))
+      (expect (format "%S" expansion) :to-match "org-canvas-pull-test-widgets")))
+
+  (it "aborts when user declines overwrite of existing file"
+    (let* ((temp-dir (make-temp-file "pull-confirm-test" t))
+           (test-file (expand-file-name "assignment-groups.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file test-file
+              (insert "* Existing Group\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"))
+            (let ((org-canvas-assignment-groups-file test-file))
+              (with-org-canvas-test-config
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (lambda (_method _url &optional _params) '()))
+                          ((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                          ((symbol-function 'display-buffer) (lambda (_) nil))
+                          ((symbol-function 'y-or-n-p) (lambda (_) nil)))
+                  (expect (org-canvas-pull-assignment-groups)
+                          :to-throw 'user-error)))))
+        (let ((buf (find-buffer-visiting test-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "proceeds without prompting when file does not exist"
+    (let* ((temp-dir (make-temp-file "pull-confirm-test" t))
+           (test-file (expand-file-name "assignment-groups.org" temp-dir))
+           (prompted nil))
+      (unwind-protect
+          (let ((org-canvas-assignment-groups-file test-file))
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                         (lambda (_method _url &optional _params) '()))
+                        ((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                        ((symbol-function 'display-buffer) (lambda (_) nil))
+                        ((symbol-function 'y-or-n-p)
+                         (lambda (_) (setq prompted t) t)))
+                (org-canvas-pull-assignment-groups)
+                (expect prompted :to-be nil))))
+        (let ((buf (find-buffer-visiting test-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
 
 ;;; org-canvas-core-test.el ends here

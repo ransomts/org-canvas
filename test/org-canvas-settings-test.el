@@ -263,7 +263,8 @@ Welcome to the course.
                                (public_syllabus . :json-false)
                                (is_public . :json-false))))
                           ((symbol-function 'org-canvas-clear-log) (lambda () nil))
-                          ((symbol-function 'display-buffer) (lambda (_) nil)))
+                          ((symbol-function 'display-buffer) (lambda (_) nil))
+                          ((symbol-function 'y-or-n-p) (lambda (_) t)))
                   (org-canvas-pull-settings)
                   ;; Verify the saved file by reading it into a temp org buffer
                   (let ((content (with-temp-buffer
@@ -280,6 +281,26 @@ Welcome to the course.
                      (org-back-to-heading)
                      (expect (org-entry-get (point) "TIME_ZONE")
                              :to-equal "America/Chicago")))))))
+        (let ((buf (find-buffer-visiting settings-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "aborts when user declines overwrite of existing file"
+    (let* ((temp-dir (make-temp-file "pull-settings" t))
+           (settings-file (expand-file-name "settings.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file settings-file
+              (insert "#+TITLE: Settings\n* Old Name\n:PROPERTIES:\n:TIME_ZONE: UTC\n:END:\n"))
+            (let ((org-canvas-settings-file settings-file))
+              (with-org-canvas-test-config
+                (cl-letf (((symbol-function 'org-canvas-api-request)
+                           (lambda (_method _url &rest _args)
+                             '((name . "New Name"))))
+                          ((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                          ((symbol-function 'display-buffer) (lambda (_) nil))
+                          ((symbol-function 'y-or-n-p) (lambda (_) nil)))
+                  (expect (org-canvas-pull-settings) :to-throw 'user-error)))))
         (let ((buf (find-buffer-visiting settings-file)))
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))

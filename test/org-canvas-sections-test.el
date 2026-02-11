@@ -114,7 +114,8 @@
                            [((id . 100) (name . "Section A - MWF")
                              (start_at . "2026-01-15T00:00:00Z")
                              (end_at . "2026-05-15T00:00:00Z")
-                             (restrict_enrollments_to_section_dates . t))])))
+                             (restrict_enrollments_to_section_dates . t))]))
+                        ((symbol-function 'y-or-n-p) (lambda (_) t)))
                 (org-canvas-pull-sections)
                 (with-current-buffer (find-file-noselect org-file)
                   (goto-char (point-min))
@@ -148,7 +149,8 @@
                              (restrict_enrollments_to_section_dates . :json-false))
                             ((id . 200) (name . "New Section")
                              (start_at . nil) (end_at . nil)
-                             (restrict_enrollments_to_section_dates . :json-false))])))
+                             (restrict_enrollments_to_section_dates . :json-false))]))
+                        ((symbol-function 'y-or-n-p) (lambda (_) t)))
                 (org-canvas-pull-sections)
                 (with-current-buffer (find-file-noselect org-file)
                   (let ((headings nil))
@@ -177,7 +179,8 @@
                          (lambda (_method _url &rest _args) []))
                         ((symbol-function 'message)
                          (lambda (fmt &rest args)
-                           (push (apply #'format fmt args) warning-messages))))
+                           (push (apply #'format fmt args) warning-messages)))
+                        ((symbol-function 'y-or-n-p) (lambda (_) t)))
                 (org-canvas-pull-sections)
                 (expect (cl-some (lambda (msg)
                                    (string-match-p "Stale section" msg))
@@ -199,6 +202,21 @@
                   ;; No headings should have been created
                   (expect (org-map-entries (lambda () t) "LEVEL=1" 'file)
                           :to-equal nil)))))
+        (delete-directory temp-dir t))))
+
+  (it "aborts when user declines overwrite of existing file"
+    (let ((temp-dir (make-temp-file "sections-pull" t)))
+      (unwind-protect
+          (let* ((org-file (expand-file-name "sections.org" temp-dir))
+                 (org-canvas-sections-file org-file))
+            (with-temp-file org-file
+              (insert "* Existing Section\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n"))
+            (with-sync-test-env
+              (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil)))
+                (expect (org-canvas-pull-sections) :to-throw 'user-error))))
+        (let ((buf (find-buffer-visiting
+                    (expand-file-name "sections.org" temp-dir))))
+          (when buf (kill-buffer buf)))
         (delete-directory temp-dir t))))
 
   (it "errors when sections file directory does not exist"

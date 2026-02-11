@@ -119,6 +119,12 @@ local headings whose CANVAS_ID no longer exists on Canvas."
     (unless (file-directory-p (file-name-directory sections-file))
       (error "Sections file directory does not exist: %s"
              (file-name-directory sections-file)))
+    (when (and (file-exists-p sections-file)
+               (> (file-attribute-size (file-attributes sections-file)) 0)
+               (not (y-or-n-p
+                     (format "%s already exists.  Pull will overwrite headings.  Continue? "
+                             (file-name-nondirectory sections-file)))))
+      (user-error "Sections pull aborted"))
 
     (elog-info org-canvas--logger "========================================")
     (elog-info org-canvas--logger ">>> PULLING SECTIONS FROM CANVAS")
