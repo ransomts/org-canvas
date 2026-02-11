@@ -3937,4 +3937,217 @@ Keep this too
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
 
+;;;; Additional Coverage Tests
+
+(describe "org-canvas--html-to-org pandoc failure"
+  (it "returns warning with raw HTML when pandoc exits non-zero"
+    (cl-letf (((symbol-function 'executable-find) (lambda (_) "pandoc"))
+              ((symbol-function 'call-process-region)
+               (lambda (_start _end _program &optional _delete _buffer &rest _args)
+                 1)))  ;; exit code 1
+      (let ((result (org-canvas--html-to-org "<p>Test</p>")))
+        (expect result :to-match "WARNING.*pandoc conversion failed")
+        (expect result :to-match "<p>Test</p>")))))
+
+(describe "org-canvas--pull-upsert-heading at EOF"
+  (it "creates heading when file has no newline at end"
+    (let* ((temp-dir (make-temp-file "upsert-test" t))
+           (test-file (expand-file-name "test.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file test-file (insert "* Existing"))  ;; no trailing newline
+            (let ((pos (org-canvas--pull-upsert-heading
+                        test-file 999 "New Item")))
+              (with-current-buffer (find-file-noselect test-file)
+                (goto-char pos)
+                (expect (org-get-heading t t t t) :to-equal "New Item"))))
+        (let ((buf (find-buffer-visiting test-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
+(describe "org-canvas--sync-collect-entries duplicate warning"
+  (it "warns about duplicate CANVAS_IDs"
+    (let* ((temp-dir (make-temp-file "dup-test" t))
+           (test-file (expand-file-name "test.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file test-file
+              (insert "* Item 1
+:PROPERTIES:
+:CANVAS_ID: DUP-1
+:END:
+* Item 2
+:PROPERTIES:
+:CANVAS_ID: DUP-1
+:END:
+"))
+            (spy-on 'elog-warning)
+            (with-org-canvas-test-config
+              (org-canvas--sync-collect-entries test-file "LEVEL=1" "test")
+              (let ((dup-warned nil))
+                (dolist (call (spy-calls-all-args 'elog-warning))
+                  (when (and (>= (length call) 2)
+                             (stringp (nth 1 call))
+                             (string-match-p "Duplicate" (nth 1 call)))
+                    (setq dup-warned t)))
+                (expect dup-warned :to-be-truthy))))
+        (let ((buf (find-buffer-visiting test-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
+(describe "org-canvas--sync-execute-pipeline dry-run"
+  (it "skips API call in dry-run mode"
+    (let* ((temp-dir (make-temp-file "dry-test" t))
+           (test-file (expand-file-name "test.org" temp-dir))
+           (api-called nil))
+      (unwind-protect
+          (progn
+            (with-temp-file test-file
+              (insert "* Item
+:PROPERTIES:
+:END:
+"))
+            (with-org-canvas-test-config
+              (with-sync-test-env
+                (let ((org-canvas--dry-run t))
+                  (cl-letf (((symbol-function 'org-canvas-api-request)
+                             (lambda (&rest _args)
+                               (setq api-called t)
+                               '((id . 1)))))
+                    (let* ((targets (org-canvas--sync-collect-entries
+                                    test-file "LEVEL=1" "test"))
+                           (counters (list :success 0 :skip 0 :fail 0 :conflict 0))
+                           (synced-ids (list nil))
+                           (ctx (list :parse-fn (lambda ()
+                                                  (list :title "Item" :canvas-id nil
+                                                        :pom (point-marker)))
+                                      :build-fn (lambda (_data) '((title . "Item")))
+                                      :push-fn (lambda (_data _payload)
+                                                 (setq api-called t)
+                                                 '((id . 1)))
+                                      :finalize-fn (lambda (_data _response) nil)
+                                      :feature-name "test" :feature-upper "TEST"
+                                      :total-count 1 :counters counters
+                                      :synced-ids synced-ids
+                                      :title-key :title)))
+                      (dolist (marker (plist-get targets :targets))
+                        (org-canvas--sync-process-entry marker ctx))
+                      (expect api-called :to-be nil)))))))
+        (let ((buf (find-buffer-visiting test-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
+(describe "org-canvas--sync-warn-orphans"
+  (it "warns about IDs not in synced set"
+    (spy-on 'elog-warning)
+    (org-canvas--sync-warn-orphans '("111" "222" "333") '("111" "333") "test")
+    (let ((orphan-warned nil))
+      (dolist (call (spy-calls-all-args 'elog-warning))
+        (when (and (>= (length call) 3)
+                   (stringp (nth 1 call))
+                   (string-match-p "Orphan" (nth 1 call)))
+          (setq orphan-warned t)))
+      (expect orphan-warned :to-be-truthy)))
+
+  (it "does not warn when all IDs synced"
+    (spy-on 'elog-warning)
+    (org-canvas--sync-warn-orphans '("111" "222") '("111" "222") "test")
+    (let ((orphan-warned nil))
+      (dolist (call (spy-calls-all-args 'elog-warning))
+        (when (and (>= (length call) 2)
+                   (stringp (nth 1 call))
+                   (string-match-p "Orphan" (nth 1 call)))
+          (setq orphan-warned t)))
+      (expect orphan-warned :to-be nil))))
+
+(describe "org-canvas-define-push-at-point macro validation"
+  (it "errors when :parse is missing"
+    (expect (macroexpand '(org-canvas-define-push-at-point test-feat
+                            :build #'ignore :push #'ignore :finalize #'ignore))
+            :to-throw 'error))
+
+  (it "errors when :build is missing"
+    (expect (macroexpand '(org-canvas-define-push-at-point test-feat
+                            :parse #'ignore :push #'ignore :finalize #'ignore))
+            :to-throw 'error))
+
+  (it "errors when :push is missing"
+    (expect (macroexpand '(org-canvas-define-push-at-point test-feat
+                            :parse #'ignore :build #'ignore :finalize #'ignore))
+            :to-throw 'error)))
+
+(describe "org-canvas-init"
+  (it "creates credentials file and sets variables"
+    (let* ((temp-dir (make-temp-file "init-test" t))
+           (read-index 0)
+           (reads (list temp-dir "https://test.canvas.example.com" "token123" "12345")))
+      (unwind-protect
+          (cl-letf (((symbol-function 'read-directory-name)
+                     (lambda (&rest _) (nth 0 reads)))
+                    ((symbol-function 'read-string)
+                     (lambda (_prompt &optional initial &rest _)
+                       (setq read-index (1+ read-index))
+                       (or initial (nth read-index reads))))
+                    ((symbol-function 'org-canvas-api-request)
+                     (lambda (_method _url &rest _args) '((name . "Test Course"))))
+                    ((symbol-function 'y-or-n-p) (lambda (_) nil)))
+            (org-canvas-init)
+            (expect org-canvas-directory :to-equal temp-dir)
+            (expect org-canvas-api-token :to-equal "token123")
+            (expect org-canvas-course-id :to-equal "12345")
+            (expect (file-exists-p (expand-file-name
+                                    "org-canvas-credentials.el" temp-dir))
+                    :to-be-truthy))
+        (delete-directory temp-dir t))))
+
+  (it "errors on empty token"
+    (cl-letf (((symbol-function 'read-directory-name)
+               (lambda (&rest _) "/tmp/test/"))
+              ((symbol-function 'read-string)
+               (lambda (_prompt &optional initial &rest _)
+                 (or initial ""))))
+      (expect (org-canvas-init) :to-throw 'user-error)))
+
+  (it "handles connection failure with user prompt"
+    (let* ((temp-dir (make-temp-file "init-test" t))
+           (read-index 0)
+           (reads (list temp-dir "https://test.canvas.example.com" "token123" "12345")))
+      (unwind-protect
+          (cl-letf (((symbol-function 'read-directory-name)
+                     (lambda (&rest _) (nth 0 reads)))
+                    ((symbol-function 'read-string)
+                     (lambda (_prompt &optional initial &rest _)
+                       (setq read-index (1+ read-index))
+                       (or initial (nth read-index reads))))
+                    ((symbol-function 'org-canvas-api-request)
+                     (lambda (_method _url &rest _args)
+                       (signal 'error '("Connection refused"))))
+                    ((symbol-function 'y-or-n-p) (lambda (_) t)))
+            (org-canvas-init)
+            ;; Should save anyway since user said yes
+            (expect (file-exists-p (expand-file-name
+                                    "org-canvas-credentials.el" temp-dir))
+                    :to-be-truthy))
+        (delete-directory temp-dir t))))
+
+  (it "creates skeleton files when requested"
+    (let* ((temp-dir (make-temp-file "init-test" t))
+           (read-index 0)
+           (reads (list temp-dir "https://test.canvas.example.com" "token123" "12345")))
+      (unwind-protect
+          (cl-letf (((symbol-function 'read-directory-name)
+                     (lambda (&rest _) (nth 0 reads)))
+                    ((symbol-function 'read-string)
+                     (lambda (_prompt &optional initial &rest _)
+                       (setq read-index (1+ read-index))
+                       (or initial (nth read-index reads))))
+                    ((symbol-function 'org-canvas-api-request)
+                     (lambda (_method _url &rest _args) '((name . "Course"))))
+                    ((symbol-function 'y-or-n-p) (lambda (_) t)))
+            (org-canvas-init)
+            ;; Should have created skeleton files
+            (expect (file-exists-p (expand-file-name "assignments.org" temp-dir))
+                    :to-be-truthy))
+        (delete-directory temp-dir t)))))
+
 ;;; org-canvas-core-test.el ends here

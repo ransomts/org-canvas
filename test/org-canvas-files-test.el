@@ -1697,4 +1697,117 @@
                  '((location . "https://example.com/confirm")))
                 :to-throw 'error)))))
 
+;;;; Pull Function Tests
+
+(describe "org-canvas--file-pull-download"
+  (it "downloads when file is absent"
+    (let* ((temp-dir (make-temp-file "file-pull-test" t))
+           (local-path (expand-file-name "test.pdf" temp-dir))
+           (downloaded nil))
+      (unwind-protect
+          (cl-letf (((symbol-function 'url-copy-file)
+                     (lambda (_url path &rest _args)
+                       (setq downloaded path))))
+            (org-canvas--file-pull-download "test.pdf" "https://example.com/test.pdf" local-path 1024)
+            (expect downloaded :to-equal local-path))
+        (delete-directory temp-dir t))))
+
+  (it "skips when file already exists"
+    (let* ((temp-dir (make-temp-file "file-pull-test" t))
+           (local-path (expand-file-name "existing.pdf" temp-dir))
+           (downloaded nil))
+      (unwind-protect
+          (progn
+            (with-temp-file local-path (insert "existing"))
+            (cl-letf (((symbol-function 'url-copy-file)
+                       (lambda (_url _path &rest _args)
+                         (setq downloaded t))))
+              (org-canvas--file-pull-download "existing.pdf" "https://example.com/f" local-path 100)
+              (expect downloaded :to-be nil)))
+        (delete-directory temp-dir t))))
+
+  (it "handles download errors gracefully"
+    (let* ((temp-dir (make-temp-file "file-pull-test" t))
+           (local-path (expand-file-name "fail.pdf" temp-dir)))
+      (unwind-protect
+          (cl-letf (((symbol-function 'url-copy-file)
+                     (lambda (_url _path &rest _args)
+                       (signal 'error '("Network error")))))
+            ;; Should not throw
+            (org-canvas--file-pull-download "fail.pdf" "https://example.com/f" local-path nil))
+        (delete-directory temp-dir t))))
+
+  (it "skips when download-url is nil"
+    (let* ((temp-dir (make-temp-file "file-pull-test" t))
+           (local-path (expand-file-name "nourl.pdf" temp-dir))
+           (downloaded nil))
+      (unwind-protect
+          (cl-letf (((symbol-function 'url-copy-file)
+                     (lambda (_url _path &rest _args) (setq downloaded t))))
+            (org-canvas--file-pull-download "nourl.pdf" nil local-path 100)
+            (expect downloaded :to-be nil))
+        (delete-directory temp-dir t)))))
+
+(describe "org-canvas-pull-files"
+  (it "creates headings with file links and properties"
+    (let* ((temp-dir (make-temp-file "pull-files-test" t))
+           (files-file (expand-file-name "files.org" temp-dir)))
+      (unwind-protect
+          (let ((org-canvas-files-file files-file))
+            (with-org-canvas-test-config
+              (with-sync-test-env
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (lambda (_method _url &optional _params)
+                             '(((id . 1) (display_name . "syllabus.pdf")
+                                (url . "https://example.com/syllabus.pdf")
+                                (content-type . "application/pdf")
+                                (size . 2048)))))
+                          ((symbol-function 'url-copy-file)
+                           (lambda (_url _path &rest _args) nil)))
+                  (org-canvas-pull-files)
+                  (with-current-buffer (find-file-noselect files-file)
+                    (expect (buffer-string) :to-match "syllabus.pdf")
+                    (expect (buffer-string) :to-match "CANVAS_ID.*1")
+                    (expect (buffer-string) :to-match "CONTENT_TYPE.*application/pdf")
+                    (expect (buffer-string) :to-match "SIZE.*2048"))))))
+        (let ((buf (find-buffer-visiting files-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "creates content directory"
+    (let* ((temp-dir (make-temp-file "pull-files-test" t))
+           (files-file (expand-file-name "files.org" temp-dir)))
+      (unwind-protect
+          (let ((org-canvas-files-file files-file))
+            (with-org-canvas-test-config
+              (with-sync-test-env
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (lambda (_method _url &optional _params) '()))
+                          ((symbol-function 'url-copy-file)
+                           (lambda (_url _path &rest _args) nil)))
+                  (org-canvas-pull-files)
+                  (expect (file-directory-p
+                           (expand-file-name "content" temp-dir))
+                          :to-be-truthy)))))
+        (let ((buf (find-buffer-visiting files-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "creates files.org when it does not exist"
+    (let* ((temp-dir (make-temp-file "pull-files-test" t))
+           (files-file (expand-file-name "files.org" temp-dir)))
+      (unwind-protect
+          (let ((org-canvas-files-file files-file))
+            (with-org-canvas-test-config
+              (with-sync-test-env
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (lambda (_method _url &optional _params) '()))
+                          ((symbol-function 'url-copy-file)
+                           (lambda (_url _path &rest _args) nil)))
+                  (org-canvas-pull-files)
+                  (expect (file-exists-p files-file) :to-be-truthy)))))
+        (let ((buf (find-buffer-visiting files-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
 ;;; org-canvas-files-test.el ends here

@@ -305,4 +305,75 @@ Welcome to the course.
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
 
+;;;; Additional Coverage Tests
+
+(describe "org-canvas--settings-push error handling"
+  (it "re-signals API error"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (_method _url &rest _args)
+                   (signal 'error '("500 Internal Server Error")))))
+        (let ((data '(:title "Course" :pom 1 :canvas-id nil))
+              (payload '((course . ((name . "Course"))))))
+          (expect (org-canvas--settings-push data payload) :to-throw 'error))))))
+
+(describe "org-canvas-sync-settings error paths"
+  (it "errors when no heading found"
+    (let* ((temp-dir (make-temp-file "settings-test" t))
+           (settings-file (expand-file-name "settings.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file settings-file
+              (insert "#+TITLE: Settings\n"))
+            (let ((org-canvas-settings-file settings-file))
+              (with-sync-test-env
+                (expect (org-canvas-sync-settings) :to-throw 'error))))
+        (let ((buf (find-buffer-visiting settings-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "logs error on sync failure"
+    (let* ((temp-dir (make-temp-file "settings-test" t))
+           (settings-file (expand-file-name "settings.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file settings-file
+              (insert "#+TITLE: Settings\n* Course\n:PROPERTIES:\n:END:\n"))
+            (let ((org-canvas-settings-file settings-file))
+              (with-org-canvas-test-config
+                (with-sync-test-env
+                  (cl-letf (((symbol-function 'org-canvas--settings-parse-entry)
+                             (lambda () (signal 'error '("Parse error")))))
+                    ;; Should not throw (errors are caught and logged)
+                    (org-canvas-sync-settings))))))
+        (let ((buf (find-buffer-visiting settings-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
+(describe "org-canvas-pull-settings heading creation"
+  (it "creates heading when file has no headings"
+    (let* ((temp-dir (make-temp-file "settings-test" t))
+           (settings-file (expand-file-name "settings.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file settings-file
+              (insert "#+TITLE: Settings\n"))
+            (let ((org-canvas-settings-file settings-file))
+              (with-org-canvas-test-config
+                (cl-letf (((symbol-function 'org-canvas-api-request)
+                           (lambda (_method _url &rest _args)
+                             '((name . "My Course"))))
+                          ((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                          ((symbol-function 'display-buffer) (lambda (_) nil))
+                          ((symbol-function 'org-canvas--pull-confirm-overwrite)
+                           (lambda (&rest _) nil))
+                          ((symbol-function 'org-canvas--settings-pull-set-properties)
+                           (lambda (&rest _) nil)))
+                  (org-canvas-pull-settings)
+                  (with-current-buffer (find-file-noselect settings-file)
+                    (expect (buffer-string) :to-match "My Course"))))))
+        (let ((buf (find-buffer-visiting settings-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
 ;;; org-canvas-settings-test.el ends here

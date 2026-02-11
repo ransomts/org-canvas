@@ -710,4 +710,69 @@
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
 
+;;;; Additional Coverage Tests
+
+(describe "org-canvas-pull-all pandoc warning"
+  (it "continues when user accepts no pandoc"
+    (with-org-canvas-test-config
+      (with-sync-test-env
+        (cl-letf (((symbol-function 'executable-find) (lambda (_) nil))
+                  ((symbol-function 'yes-or-no-p) (lambda (_) t))
+                  ((symbol-function 'org-canvas--preflight-check) (lambda () nil))
+                  ((symbol-function 'org-canvas--safe-pull) (lambda (_fn _label) nil)))
+          ;; Should not throw
+          (org-canvas-pull-all)
+          (expect t :to-be t)))))
+
+  (it "aborts when user declines no pandoc"
+    (with-org-canvas-test-config
+      (with-sync-test-env
+        (cl-letf (((symbol-function 'executable-find) (lambda (_) nil))
+                  ((symbol-function 'yes-or-no-p) (lambda (_) nil)))
+          (expect (org-canvas-pull-all) :to-throw 'user-error))))))
+
+(describe "org-canvas--find-orphans-for-feature"
+  (it "returns nil when file-var is unbound"
+    (let ((feature (list :name "widgets" :endpoint "widgets"
+                         :file-var 'org-canvas-nonexistent-file-var
+                         :id-field 'id :id-property "CANVAS_ID"
+                         :list-params nil :skip-fn nil)))
+      (expect (org-canvas--find-orphans-for-feature feature) :to-be nil))))
+
+(describe "org-canvas--orphan-delete-all"
+  (it "logs error when delete fails"
+    (with-org-canvas-test-config
+      (spy-on 'elog-warning)
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (_method _url &rest _args)
+                   (signal 'error '("DELETE failed")))))
+        (let ((feature (list :name "pages" :endpoint "pages" :id-field 'id))
+              (orphans '(((id . 1) (title . "Orphan Page")))))
+          (org-canvas--orphan-delete-all (list (cons feature orphans)))
+          (expect 'elog-warning :to-have-been-called))))))
+
+(describe "org-canvas--status-count-entries"
+  (it "counts pending entries (no CANVAS_ID)"
+    (let* ((temp-dir (make-temp-file "status-test" t))
+           (test-file (expand-file-name "test.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file test-file
+              (insert "* Synced Item
+:PROPERTIES:
+:CANVAS_ID: 123
+:LAST_SYNCED: [2026-01-15 Thu]
+:END:
+* Pending Item
+:PROPERTIES:
+:END:
+"))
+            (let ((counts (org-canvas--status-count-entries test-file "CANVAS_ID")))
+              (expect (plist-get counts :synced) :to-equal 1)
+              (expect (plist-get counts :pending) :to-equal 1)
+              (expect (plist-get counts :last-synced) :to-match "2026")))
+        (let ((buf (find-buffer-visiting test-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
 ;;; org-canvas-test.el ends here

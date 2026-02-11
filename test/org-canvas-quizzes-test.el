@@ -1651,4 +1651,289 @@ Content.
       (org-canvas--quiz-verify-response data response)
       (expect 'elog-warning :not :to-have-been-called))))
 
+;;;; Pull Function Tests
+
+(describe "org-canvas--quiz-pull-set-properties"
+  (it "sets QUIZ_TYPE property"
+    (with-temp-org-buffer
+     "* Test Quiz
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (let ((quiz '((id . 42) (quiz_type . "graded_survey"))))
+       (org-canvas--quiz-pull-set-properties (point) quiz "/tmp/quizzes.org")
+       (expect (org-entry-get (point) "QUIZ_TYPE") :to-equal "graded_survey"))))
+
+  (it "sets TIME_LIMIT property"
+    (with-temp-org-buffer
+     "* Test Quiz
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (let ((quiz '((id . 42) (time_limit . 60))))
+       (org-canvas--quiz-pull-set-properties (point) quiz "/tmp/quizzes.org")
+       (expect (org-entry-get (point) "TIME_LIMIT") :to-equal "60"))))
+
+  (it "sets SHUFFLE_ANSWERS boolean"
+    (with-temp-org-buffer
+     "* Test Quiz
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (let ((quiz '((id . 42) (shuffle_answers . t))))
+       (org-canvas--quiz-pull-set-properties (point) quiz "/tmp/quizzes.org")
+       (expect (org-entry-get (point) "SHUFFLE_ANSWERS") :to-equal "true"))))
+
+  (it "sets timestamp properties"
+    (with-temp-org-buffer
+     "* Test Quiz
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (let ((quiz '((id . 42) (due_at . "2026-06-15T23:59:00Z")
+                   (unlock_at . "2026-06-01T00:00:00Z")
+                   (lock_at . "2026-06-30T23:59:00Z"))))
+       (org-canvas--quiz-pull-set-properties (point) quiz "/tmp/quizzes.org")
+       (expect (org-entry-get (point) "DUE_AT") :to-match "<2026-06-15")
+       (expect (org-entry-get (point) "UNLOCK_AT") :to-match "<2026-06-01")
+       (expect (org-entry-get (point) "LOCK_AT") :to-match "<2026-06-30"))))
+
+  (it "saves CANVAS_ID via sync state"
+    (with-temp-org-buffer
+     "* Test Quiz
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (let ((quiz '((id . 42))))
+       (org-canvas--quiz-pull-set-properties (point) quiz "/tmp/quizzes.org")
+       (expect (org-entry-get (point) "CANVAS_ID") :to-equal "42"))))
+
+  (it "sets GROUP link when group-id resolves"
+    (let ((groups-file (make-temp-file "test-groups" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file groups-file
+              (insert "* Homework
+:PROPERTIES:
+:CANVAS_ID: 777
+:END:
+"))
+            (let ((org-canvas-assignment-groups-file groups-file))
+              (with-temp-org-buffer
+               "* Test Quiz
+:PROPERTIES:
+:END:
+"
+               (org-back-to-heading)
+               (let ((quiz '((id . 42) (assignment_group_id . 777))))
+                 (org-canvas--quiz-pull-set-properties (point) quiz "/tmp/quizzes.org")
+                 (expect (org-entry-get (point) "GROUP") :to-match "Homework")))))
+        (delete-file groups-file)))))
+
+(describe "org-canvas--quiz-insert-question-body"
+  (it "inserts converted question text"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:END:
+"
+     (goto-char (point-max))
+     (cl-letf (((symbol-function 'org-canvas--html-to-org)
+                (lambda (html) html)))
+       (org-canvas--quiz-insert-question-body "What is 2+2?")
+       (expect (buffer-string) :to-match "What is 2+2?"))))
+
+  (it "does nothing for nil text"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:END:
+"
+     (let ((before (buffer-string)))
+       (goto-char (point-max))
+       (org-canvas--quiz-insert-question-body nil)
+       (expect (buffer-string) :to-equal before))))
+
+  (it "does nothing for empty text"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:END:
+"
+     (let ((before (buffer-string)))
+       (goto-char (point-max))
+       (org-canvas--quiz-insert-question-body "")
+       (expect (buffer-string) :to-equal before)))))
+
+(describe "org-canvas--quiz-insert-answers"
+  (it "inserts checked and unchecked answers"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:END:
+"
+     (goto-char (point-max))
+     (org-canvas--quiz-insert-answers
+      [((text . "Correct") (weight . 100))
+       ((text . "Wrong") (weight . 0))])
+     (expect (buffer-string) :to-match "\\- \\[X\\] Correct")
+     (expect (buffer-string) :to-match "\\- \\[ \\] Wrong")))
+
+  (it "does nothing for nil answers"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:END:
+"
+     (let ((before (buffer-string)))
+       (goto-char (point-max))
+       (org-canvas--quiz-insert-answers nil)
+       (expect (buffer-string) :to-equal before))))
+
+  (it "uses html field when text is absent"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:END:
+"
+     (goto-char (point-max))
+     (org-canvas--quiz-insert-answers
+      [((html . "HTML Answer") (weight . 100))])
+     (expect (buffer-string) :to-match "HTML Answer"))))
+
+(describe "org-canvas--quiz-pull-insert-question"
+  (it "creates L2 heading with properties"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (cl-letf (((symbol-function 'org-canvas--html-to-org)
+                (lambda (html) html)))
+       (org-canvas--quiz-pull-insert-question
+        '((question_name . "Q1")
+          (question_text . "What is 2+2?")
+          (question_type . "multiple_choice_question")
+          (points_possible . 5)
+          (answers . [((text . "4") (weight . 100))
+                      ((text . "5") (weight . 0))])))
+       (expect (buffer-string) :to-match "\\*\\* Q1")
+       (expect (buffer-string) :to-match "What is 2+2?")
+       (expect (buffer-string) :to-match "\\[X\\] 4")
+       (expect (buffer-string) :to-match "\\[ \\] 5")))))
+
+(describe "org-canvas--quiz-pull-insert-questions"
+  (it "fetches and inserts questions"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+"
+     (org-back-to-heading)
+     (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                (lambda (_method _url &optional _params)
+                  '(((question_name . "Q1") (question_text . "Body")
+                     (question_type . "short_answer_question")
+                     (points_possible . 10) (answers . [])))))
+               ((symbol-function 'org-canvas--html-to-org)
+                (lambda (html) html)))
+       (org-canvas--quiz-pull-insert-questions 100)
+       (expect (buffer-string) :to-match "\\*\\* Q1"))))
+
+  (it "handles API error gracefully"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+"
+     (org-back-to-heading)
+     (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                (lambda (_method _url &optional _params)
+                  (signal 'error '("API error")))))
+       ;; Should not throw
+       (org-canvas--quiz-pull-insert-questions 100)
+       (expect (buffer-string) :not :to-match "\\*\\*")))))
+
+(describe "org-canvas-pull-quizzes"
+  (it "creates headings from remote quizzes"
+    (let* ((temp-dir (make-temp-file "pull-quiz-test" t))
+           (quiz-file (expand-file-name "quizzes.org" temp-dir)))
+      (unwind-protect
+          (let ((org-canvas-quizzes-file quiz-file))
+            (with-org-canvas-test-config
+              (with-sync-test-env
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (lambda (_method url &optional _params)
+                             (if (string-match "questions" url)
+                                 '()
+                               '(((id . 1) (title . "Midterm")
+                                  (quiz_type . "assignment")
+                                  (description . "<p>Instructions</p>"))))))
+                          ((symbol-function 'org-canvas--html-to-org)
+                           (lambda (html) (replace-regexp-in-string "<[^>]+>" "" html))))
+                  (org-canvas-pull-quizzes)
+                  (with-current-buffer (find-file-noselect quiz-file)
+                    (goto-char (point-min))
+                    (expect (buffer-string) :to-match "Midterm")
+                    (expect (buffer-string) :to-match "CANVAS_ID.*1"))))))
+        (let ((buf (find-buffer-visiting quiz-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "updates existing headings on re-pull"
+    (let* ((temp-dir (make-temp-file "pull-quiz-test" t))
+           (quiz-file (expand-file-name "quizzes.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file quiz-file
+              (insert "* Old Title
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"))
+            (let ((org-canvas-quizzes-file quiz-file))
+              (with-org-canvas-test-config
+                (with-sync-test-env
+                  (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                             (lambda (_method url &optional _params)
+                               (if (string-match "questions" url)
+                                   '()
+                                 '(((id . 1) (title . "Updated Midterm")
+                                    (quiz_type . "assignment"))))))
+                            ((symbol-function 'org-canvas--html-to-org)
+                             (lambda (html) html)))
+                    (org-canvas-pull-quizzes)
+                    (with-current-buffer (find-file-noselect quiz-file)
+                      (goto-char (point-min))
+                      (expect (buffer-string) :to-match "Updated Midterm")))))))
+        (let ((buf (find-buffer-visiting quiz-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "creates file when it does not exist"
+    (let* ((temp-dir (make-temp-file "pull-quiz-test" t))
+           (quiz-file (expand-file-name "quizzes.org" temp-dir)))
+      (unwind-protect
+          (let ((org-canvas-quizzes-file quiz-file))
+            (with-org-canvas-test-config
+              (with-sync-test-env
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (lambda (_method _url &optional _params) '()))
+                          ((symbol-function 'org-canvas--html-to-org)
+                           (lambda (html) html)))
+                  (org-canvas-pull-quizzes)
+                  (expect (file-exists-p quiz-file) :to-be-truthy)))))
+        (let ((buf (find-buffer-visiting quiz-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
 ;;; org-canvas-quizzes-test.el ends here

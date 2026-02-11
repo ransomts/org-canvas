@@ -733,4 +733,82 @@ Content.
       (expect 'org-canvas--assignment-associate-rubric
               :to-have-been-called-with 1001 "55"))))
 
+;;;; Pull Function Tests
+
+(describe "org-canvas--assignment-resolve-group-link"
+  (it "resolves group ID to Org link"
+    (let ((groups-file (make-temp-file "test-groups" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file groups-file
+              (insert "* Homework
+:PROPERTIES:
+:CANVAS_ID: 777
+:END:
+"))
+            (let ((org-canvas-assignment-groups-file groups-file))
+              (let ((result (org-canvas--assignment-resolve-group-link 777)))
+                (expect result :to-match "Homework"))))
+        (let ((buf (find-buffer-visiting groups-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file groups-file))))
+
+  (it "returns nil when file does not exist"
+    (let ((org-canvas-assignment-groups-file "/nonexistent-groups.org"))
+      (expect (org-canvas--assignment-resolve-group-link 777) :to-be nil)))
+
+  (it "returns nil when no matching group"
+    (let ((groups-file (make-temp-file "test-groups" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file groups-file
+              (insert "* Other Group
+:PROPERTIES:
+:CANVAS_ID: 999
+:END:
+"))
+            (let ((org-canvas-assignment-groups-file groups-file))
+              (expect (org-canvas--assignment-resolve-group-link 777) :to-be nil)))
+        (let ((buf (find-buffer-visiting groups-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file groups-file))))
+
+  (it "returns nil for nil group-id"
+    (expect (org-canvas--assignment-resolve-group-link nil) :to-be nil)))
+
+(describe "org-canvas--assignment-pull-item"
+  (it "sets PEER_REVIEWS and GROUP properties"
+    (let ((groups-file (make-temp-file "test-groups" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file groups-file
+              (insert "* Labs
+:PROPERTIES:
+:CANVAS_ID: 555
+:END:
+"))
+            (let ((org-canvas-assignment-groups-file groups-file))
+              (with-temp-org-buffer
+               "* Assignment
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+               (org-back-to-heading)
+               (cl-letf (((symbol-function 'org-canvas--html-to-org)
+                          (lambda (html) html)))
+                 (org-canvas--assignment-pull-item
+                  '((id . 1) (name . "Assignment")
+                    (points_possible . 100)
+                    (submission_types . ["online_upload"])
+                    (peer_reviews . t)
+                    (assignment_group_id . 555)
+                    (description . "<p>Do this</p>"))
+                  (point))
+                 (expect (org-entry-get (point) "PEER_REVIEWS") :to-equal "true")
+                 (expect (org-entry-get (point) "GROUP") :to-match "Labs")))))
+        (let ((buf (find-buffer-visiting groups-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file groups-file)))))
+
 ;;; org-canvas-assignments-test.el ends here

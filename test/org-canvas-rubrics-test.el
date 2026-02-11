@@ -595,4 +595,138 @@ Just some text, no table.
        (org-canvas--rubric-finalize data response)
        (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)))))
 
+;;;; Pull Function Tests
+
+(describe "org-canvas--rubric-pull-item"
+  (it "replaces body with criteria table"
+    (with-temp-org-buffer
+     "* My Rubric
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+Old body text
+"
+     (org-back-to-heading)
+     (let ((item '((id . 1) (title . "My Rubric")
+                   (data . [((description . "Quality")
+                             (points . 10)
+                             (long_description . "Well written"))]))))
+       (org-canvas--rubric-pull-item item (point))
+       (expect (buffer-string) :to-match "| Quality | 10 | Well written |")
+       (expect (buffer-string) :not :to-match "Old body text"))))
+
+  (it "escapes pipe characters in criteria"
+    (with-temp-org-buffer
+     "* My Rubric
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (let ((item '((id . 1) (title . "My Rubric")
+                   (data . [((description . "Good|Bad")
+                             (points . 5)
+                             (long_description . "Either|Or"))]))))
+       (org-canvas--rubric-pull-item item (point))
+       (expect (buffer-string) :to-match "Good/Bad")
+       (expect (buffer-string) :to-match "Either/Or"))))
+
+  (it "does nothing for nil criteria"
+    (with-temp-org-buffer
+     "* My Rubric
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+Keep this body
+"
+     (org-back-to-heading)
+     (let ((item '((id . 1) (title . "My Rubric"))))
+       (org-canvas--rubric-pull-item item (point))
+       (expect (buffer-string) :to-match "Keep this body")))))
+
+(describe "org-canvas-pull-rubrics"
+  (it "pulls rubrics from Canvas"
+    (let* ((temp-dir (make-temp-file "pull-rubric-test" t))
+           (rubrics-file (expand-file-name "rubrics.org" temp-dir)))
+      (unwind-protect
+          (let ((org-canvas-rubrics-file rubrics-file))
+            (with-org-canvas-test-config
+              (with-sync-test-env
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (lambda (_method _url &optional _params)
+                             '(((id . 1) (title . "Essay Rubric")
+                                (data . [((description . "Thesis")
+                                          (points . 20)
+                                          (long_description . ""))])))))
+                          ((symbol-function 'y-or-n-p) (lambda (_) t)))
+                  (org-canvas-pull-rubrics)
+                  (with-current-buffer (find-file-noselect rubrics-file)
+                    (expect (buffer-string) :to-match "Essay Rubric")
+                    (expect (buffer-string) :to-match "Thesis"))))))
+        (let ((buf (find-buffer-visiting rubrics-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
+;;;; Rubric Diagnostics Tests
+
+(describe "org-canvas--rubric-log-detail"
+  (it "logs assessment info when present"
+    (with-org-canvas-test-config
+      (spy-on 'elog-warning)
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (_method _url &rest _args)
+                   '((id . 1)
+                     (context_type . "Course")
+                     (context_id . 99)
+                     (reusable . t)
+                     (read_only . nil)
+                     (assessments . [((id . 5) (assessment_type . "grading")
+                                      (artifact_type . "Submission")
+                                      (artifact_id . 10) (score . 85))])))))
+        (org-canvas--rubric-log-detail 1)
+        (expect 'elog-warning :to-have-been-called))))
+
+  (it "logs when no assessments"
+    (with-org-canvas-test-config
+      (spy-on 'elog-warning)
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (_method _url &rest _args)
+                   '((id . 1) (context_type . "Course") (context_id . 99)
+                     (reusable . nil) (read_only . nil) (assessments . nil)))))
+        (org-canvas--rubric-log-detail 1)
+        (expect 'elog-warning :to-have-been-called))))
+
+  (it "handles API error"
+    (with-org-canvas-test-config
+      (spy-on 'elog-warning)
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (_method _url &rest _args)
+                   (signal 'error '("404 Not Found")))))
+        (org-canvas--rubric-log-detail 1)
+        (expect 'elog-warning :to-have-been-called)))))
+
+(describe "org-canvas--rubric-find-linked-assignments"
+  (it "returns empty list when no assignments match"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (_method _url &rest _args)
+                   [((id . 1) (name . "HW") (rubric_id . 999))])))
+        (let ((result (org-canvas--rubric-find-linked-assignments "123")))
+          (expect result :to-equal nil))))))
+
+(describe "org-canvas--rubric-log-linked-assignments"
+  (it "handles API error gracefully"
+    (with-org-canvas-test-config
+      (spy-on 'elog-warning)
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (_method _url &rest _args)
+                   (signal 'error '("Server error")))))
+        (org-canvas--rubric-log-linked-assignments "123")
+        (expect 'elog-warning :to-have-been-called)))))
+
+(describe "org-canvas-delete-all-rubrics confirmation"
+  (it "aborts when user declines"
+    (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil)))
+      (expect (org-canvas-delete-all-rubrics) :to-throw 'user-error))))
+
 ;;; org-canvas-rubrics-test.el ends here

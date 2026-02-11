@@ -334,4 +334,56 @@ Body content.
           (expect (org-canvas--announcement-push-to-api data payload)
                   :to-throw 'error))))))
 
+;;;; Pull Function Tests
+
+(describe "org-canvas--announcement-pull-item"
+  (it "sets DELAYED_POST_AT from ISO timestamp"
+    (with-temp-org-buffer
+     "* Announcement
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (cl-letf (((symbol-function 'org-canvas--html-to-org)
+                (lambda (html) html)))
+       (org-canvas--announcement-pull-item
+        '((id . 1) (title . "Announcement")
+          (delayed_post_at . "2026-06-15T09:00:00Z")
+          (message . "<p>Hello</p>"))
+        (point))
+       (expect (org-entry-get (point) "DELAYED_POST_AT") :to-match "<2026-06-15"))))
+
+  (it "skips DELAYED_POST_AT when nil"
+    (with-temp-org-buffer
+     "* Announcement
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (cl-letf (((symbol-function 'org-canvas--html-to-org)
+                (lambda (html) html)))
+       (org-canvas--announcement-pull-item
+        '((id . 1) (title . "Announcement")
+          (delayed_post_at . nil)
+          (message . "<p>Hello</p>"))
+        (point))
+       (expect (org-entry-get (point) "DELAYED_POST_AT") :to-be nil))))
+
+  (it "inserts body text"
+    (with-temp-org-buffer
+     "* Announcement
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (cl-letf (((symbol-function 'org-canvas--html-to-org)
+                (lambda (html) (replace-regexp-in-string "<[^>]+>" "" html))))
+       (org-canvas--announcement-pull-item
+        '((id . 1) (title . "Ann") (message . "<p>Important info</p>"))
+        (point))
+       (expect (buffer-string) :to-match "Important info")))))
+
 ;;; org-canvas-announcements-test.el ends here

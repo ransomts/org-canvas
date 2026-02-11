@@ -192,4 +192,50 @@
        (expect (org-entry-get (point) "LAST_SYNCED")
                :to-match "^\\[20[0-9][0-9]-")))))
 
+;;;; Pull Function Tests
+
+(describe "org-canvas--assignment-group-pull-item"
+  (it "sets WEIGHT property"
+    (with-temp-org-buffer
+     "* Group
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (org-canvas--assignment-group-pull-item
+      '((id . 1) (name . "Group") (group_weight . 25))
+      (point))
+     (expect (org-entry-get (point) "WEIGHT") :to-equal "25")))
+
+  (it "sets DROP_LOWEST and DROP_HIGHEST from rules"
+    (with-temp-org-buffer
+     "* Group
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (org-canvas--assignment-group-pull-item
+      '((id . 1) (name . "Group") (group_weight . 10)
+        (rules . ((drop_lowest . 2) (drop_highest . 1))))
+      (point))
+     (expect (org-entry-get (point) "DROP_LOWEST") :to-equal "2")
+     (expect (org-entry-get (point) "DROP_HIGHEST") :to-equal "1")))
+
+  (it "skips zero drop rules"
+    (with-temp-org-buffer
+     "* Group
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (org-canvas--assignment-group-pull-item
+      '((id . 1) (name . "Group") (group_weight . 50)
+        (rules . ((drop_lowest . 0) (drop_highest . 0))))
+      (point))
+     (expect (org-entry-get (point) "DROP_LOWEST") :to-be nil)
+     (expect (org-entry-get (point) "DROP_HIGHEST") :to-be nil))))
+
 ;;; org-canvas-assignment-groups-test.el ends here

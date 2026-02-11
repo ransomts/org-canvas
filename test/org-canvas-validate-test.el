@@ -813,5 +813,63 @@ EXCEPT is a list of filenames to skip."
           ;; Should have no errors from pages
           (expect content :not :to-match "PUBLISHED.*not a valid"))))))
 
+;;;; Additional Coverage Tests
+
+(describe "org-canvas--validate-format-summary"
+  (it "returns warning-only message"
+    (let ((result (org-canvas--validate-format-summary 0 3)))
+      (expect result :to-match "3 warning")
+      (expect result :to-match "no errors")))
+
+  (it "returns error message"
+    (let ((result (org-canvas--validate-format-summary 2 1)))
+      (expect result :to-match "2 error")
+      (expect result :to-match "1 warning")))
+
+  (it "returns passed message when no issues"
+    (let ((result (org-canvas--validate-format-summary 0 0)))
+      (expect result :to-match "passed"))))
+
+(describe "org-canvas--validate-file-structure file size warning"
+  (it "warns when file exceeds max size"
+    (let* ((org-canvas-max-file-size-mb 0)  ;; 0 MB threshold - any file triggers
+           (temp-file (make-temp-file "size-test" nil ".txt"))
+           (org-file (make-temp-file "org-test-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file (insert "content"))
+            (with-temp-file org-file
+              (insert (format "* [[file:%s][Test File]]\n:PROPERTIES:\n:END:\n" temp-file)))
+            (with-current-buffer (find-file-noselect org-file)
+              (goto-char (point-min))
+              (org-back-to-heading)
+              (let ((issues (org-canvas--validate-file-structure
+                             org-file 1 "Test File")))
+                (expect (length issues) :not :to-equal 0)
+                (let ((issue (car issues)))
+                  (expect (plist-get issue :severity) :to-equal 'warning)
+                  (expect (plist-get issue :message) :to-match "MB")))
+              (kill-buffer)))
+        (delete-file temp-file)
+        (delete-file org-file)))))
+
+(describe "org-canvas--validate-entry-at-marker structural-fn"
+  (it "appends structural issues"
+    (with-temp-org-buffer
+     "* Section
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     ;; Using section validator - no CANVAS_ID triggers structural warning
+     (let ((issues (org-canvas--validate-entry-at-marker
+                    nil nil
+                    #'org-canvas--validate-section-structure
+                    "test.org")))
+       (expect (cl-some (lambda (i)
+                          (string-match-p "CANVAS_ID" (plist-get i :message)))
+                        issues)
+               :to-be-truthy)))))
+
 (provide 'org-canvas-validate-test)
 ;;; org-canvas-validate-test.el ends here

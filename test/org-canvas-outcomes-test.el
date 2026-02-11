@@ -1266,4 +1266,153 @@ Description B.
                   (expect push-count :to-equal 2)))))
         (delete-file temp-file)))))
 
+;;;; Pull Function Tests
+
+(describe "org-canvas--outcome-pull-find-or-create-l2"
+  (it "finds existing L2 by CANVAS_ID"
+    (with-temp-org-buffer
+     "* Group
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** Existing Outcome
+:PROPERTIES:
+:CANVAS_ID: 200
+:END:
+"
+     (org-back-to-heading)
+     (let ((pos (org-canvas--outcome-pull-find-or-create-l2 200 "Existing Outcome")))
+       (goto-char pos)
+       (expect (org-entry-get pos "CANVAS_ID") :to-equal "200"))))
+
+  (it "creates new L2 when not found"
+    (with-temp-org-buffer
+     "* Group
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+"
+     (org-back-to-heading)
+     (let ((pos (org-canvas--outcome-pull-find-or-create-l2 999 "New Outcome")))
+       (goto-char pos)
+       (expect (org-get-heading t t t t) :to-equal "New Outcome")))))
+
+(describe "org-canvas--outcome-pull-insert-ratings"
+  (it "inserts formatted ratings"
+    (with-temp-org-buffer
+     "* Group
+:PROPERTIES:
+:END:
+"
+     (goto-char (point-max))
+     (org-canvas--outcome-pull-insert-ratings
+      "Has description"
+      [((description . "Excellent") (points . 4))
+       ((description . "Good") (points . 3))])
+     (expect (buffer-string) :to-match "Ratings:")
+     (expect (buffer-string) :to-match "Excellent (4 pts)")
+     (expect (buffer-string) :to-match "Good (3 pts)")))
+
+  (it "does nothing for nil description"
+    (with-temp-org-buffer
+     "* Group
+:PROPERTIES:
+:END:
+"
+     (let ((before (buffer-string)))
+       (goto-char (point-max))
+       (org-canvas--outcome-pull-insert-ratings
+        nil [((description . "Good") (points . 3))])
+       (expect (buffer-string) :to-equal before))))
+
+  (it "does nothing for empty description"
+    (with-temp-org-buffer
+     "* Group
+:PROPERTIES:
+:END:
+"
+     (let ((before (buffer-string)))
+       (goto-char (point-max))
+       (org-canvas--outcome-pull-insert-ratings
+        "" [((description . "Good") (points . 3))])
+       (expect (buffer-string) :to-equal before)))))
+
+(describe "org-canvas--outcome-pull-process-group"
+  (it "fetches and inserts outcomes"
+    (with-temp-org-buffer
+     "* Group
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+"
+     (org-back-to-heading)
+     (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                (lambda (_method _url &optional _params)
+                  '(((outcome . ((id . 201) (title . "Outcome A")
+                                 (description . "Desc A")
+                                 (ratings . [((description . "Good") (points . 3))])))))))
+               ((symbol-function 'org-canvas--html-to-org)
+                (lambda (html) html)))
+       (let ((count (org-canvas--outcome-pull-process-group 100)))
+         (expect count :to-equal 1)
+         (expect (buffer-string) :to-match "Outcome A")))))
+
+  (it "returns 0 on API error"
+    (with-temp-org-buffer
+     "* Group
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+"
+     (org-back-to-heading)
+     (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                (lambda (_method _url &optional _params)
+                  (signal 'error '("API error")))))
+       (expect (org-canvas--outcome-pull-process-group 100) :to-equal 0)))))
+
+(describe "org-canvas-pull-outcomes"
+  (it "creates groups and outcomes"
+    (let* ((temp-dir (make-temp-file "pull-outcomes-test" t))
+           (outcomes-file (expand-file-name "outcomes.org" temp-dir)))
+      (unwind-protect
+          (let ((org-canvas-outcomes-file outcomes-file))
+            (with-org-canvas-test-config
+              (with-sync-test-env
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (lambda (_method url &optional _params)
+                             (cond
+                              ((string-match "outcome_groups$" url)
+                               '(((id . 10) (title . "Critical Thinking"))))
+                              ((string-match "outcomes$" url)
+                               '(((outcome . ((id . 201) (title . "Analyze")
+                                              (description . "<p>Desc</p>")
+                                              (ratings . []))))))
+                              (t '()))))
+                          ((symbol-function 'org-canvas--html-to-org)
+                           (lambda (html) (replace-regexp-in-string "<[^>]+>" "" html))))
+                  (org-canvas-pull-outcomes)
+                  (with-current-buffer (find-file-noselect outcomes-file)
+                    (expect (buffer-string) :to-match "Critical Thinking")
+                    (expect (buffer-string) :to-match "Analyze"))))))
+        (let ((buf (find-buffer-visiting outcomes-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "creates file when it does not exist"
+    (let* ((temp-dir (make-temp-file "pull-outcomes-test" t))
+           (outcomes-file (expand-file-name "outcomes.org" temp-dir)))
+      (unwind-protect
+          (let ((org-canvas-outcomes-file outcomes-file))
+            (with-org-canvas-test-config
+              (with-sync-test-env
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (lambda (_method _url &optional _params) '()))
+                          ((symbol-function 'org-canvas--html-to-org)
+                           (lambda (html) html)))
+                  (org-canvas-pull-outcomes)
+                  (expect (file-exists-p outcomes-file) :to-be-truthy)))))
+        (let ((buf (find-buffer-visiting outcomes-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
 ;;; org-canvas-outcomes-test.el ends here

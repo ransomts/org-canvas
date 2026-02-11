@@ -356,4 +356,95 @@ Content.
      (let ((data (org-canvas--discussion-parse-entry)))
        (expect (plist-get data :discussion_type) :to-equal "side_comment")))))
 
+;;;; Pull Function Tests
+
+(describe "org-canvas--discussion-pull-item"
+  (it "sets DISCUSSION_TYPE property"
+    (with-temp-org-buffer
+     "* Discussion
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (cl-letf (((symbol-function 'org-canvas--html-to-org)
+                (lambda (html) html)))
+       (org-canvas--discussion-pull-item
+        '((id . 1) (title . "Discussion")
+          (discussion_type . "threaded")
+          (message . "<p>Discuss</p>"))
+        (point))
+       (expect (org-entry-get (point) "DISCUSSION_TYPE") :to-equal "threaded"))))
+
+  (it "sets DELAYED_POST_AT when present"
+    (with-temp-org-buffer
+     "* Discussion
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (cl-letf (((symbol-function 'org-canvas--html-to-org)
+                (lambda (html) html)))
+       (org-canvas--discussion-pull-item
+        '((id . 1) (title . "Discussion")
+          (delayed_post_at . "2026-06-15T09:00:00Z")
+          (message . "<p>Later</p>"))
+        (point))
+       (expect (org-entry-get (point) "DELAYED_POST_AT") :to-match "<2026-06-15"))))
+
+  (it "inserts body text"
+    (with-temp-org-buffer
+     "* Discussion
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (cl-letf (((symbol-function 'org-canvas--html-to-org)
+                (lambda (html) (replace-regexp-in-string "<[^>]+>" "" html))))
+       (org-canvas--discussion-pull-item
+        '((id . 1) (title . "Disc")
+          (message . "<p>Talk about this</p>"))
+        (point))
+       (expect (buffer-string) :to-match "Talk about this")))))
+
+;;;; Parse Entry GROUP Link Resolution
+
+(describe "org-canvas--discussion-parse-entry GROUP link"
+  (it "resolves GROUP link to assignment_group_id"
+    (let ((groups-file (make-temp-file "test-groups" nil ".org"))
+          (disc-file (make-temp-file "test-disc" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file groups-file
+              (insert "* Discussions
+:PROPERTIES:
+:CANVAS_ID: 888
+:END:
+"))
+            (with-temp-file disc-file
+              (insert (format "* Graded Discussion
+:PROPERTIES:
+:PUBLISHED: true
+:GRADING_TYPE: points
+:POINTS: 10
+:GROUP: [[file:%s::*Discussions]]
+:END:
+
+Content.
+" groups-file)))
+            (let ((org-canvas-discussions-file disc-file))
+              (with-current-buffer (find-file-noselect disc-file)
+                (goto-char (point-min))
+                (org-back-to-heading)
+                (let ((data (org-canvas--discussion-parse-entry)))
+                  (expect (plist-get data :assignment_group_id) :to-equal 888)))))
+        (let ((buf (find-buffer-visiting groups-file)))
+          (when buf (kill-buffer buf)))
+        (let ((buf (find-buffer-visiting disc-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file groups-file)
+        (delete-file disc-file)))))
+
 ;;; org-canvas-discussions-test.el ends here

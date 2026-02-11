@@ -1580,4 +1580,130 @@
             (expect (org-canvas--module-item-push-to-api 100 data payload)
                     :to-throw 'error)))))))
 
+;;;; Pull Function Tests
+
+(describe "org-canvas--module-resolve-item-link"
+  (it "resolves Page by CANVAS_URL"
+    (let* ((temp-dir (make-temp-file "mod-link-test" t))
+           (pages-file (expand-file-name "pages.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file pages-file
+              (insert "* Welcome
+:PROPERTIES:
+:CANVAS_URL: welcome-page
+:END:
+"))
+            (let ((org-canvas-directory temp-dir))
+              (let ((link (org-canvas--module-resolve-item-link
+                           "Page" "welcome-page" "Welcome")))
+                (expect link :to-match "Welcome"))))
+        (let ((buf (find-buffer-visiting pages-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "resolves Assignment by CANVAS_ID"
+    (let* ((temp-dir (make-temp-file "mod-link-test" t))
+           (assign-file (expand-file-name "assignments.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file assign-file
+              (insert "* Homework 1
+:PROPERTIES:
+:CANVAS_ID: 42
+:END:
+"))
+            (let ((org-canvas-directory temp-dir))
+              (let ((link (org-canvas--module-resolve-item-link
+                           "Assignment" 42 "Homework 1")))
+                (expect link :to-match "Homework 1"))))
+        (let ((buf (find-buffer-visiting assign-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "returns title when file not found"
+    (let ((org-canvas-directory "/nonexistent-dir/"))
+      (expect (org-canvas--module-resolve-item-link "Page" 999 "My Page")
+              :to-equal "My Page")))
+
+  (it "returns title for unknown type"
+    (expect (org-canvas--module-resolve-item-link "UnknownType" 1 "Item")
+            :to-equal "Item"))
+
+  (it "returns Untitled when title and file both nil"
+    (expect (org-canvas--module-resolve-item-link "UnknownType" 1 nil)
+            :to-equal "Untitled")))
+
+(describe "org-canvas--module-pull-insert-items"
+  (it "inserts SubHeader as L2 heading"
+    (with-temp-org-buffer
+     "* Module
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (goto-char (save-excursion (org-end-of-subtree t) (point)))
+     (let ((count (org-canvas--module-pull-insert-items
+                   [((type . "SubHeader") (title . "Week 1")
+                     (id . 101) (content_id . nil) (indent . nil))])))
+       (expect count :to-equal 1)
+       (expect (buffer-string) :to-match "\\*\\* Week 1"))))
+
+  (it "inserts linked items with INDENT"
+    (with-temp-org-buffer
+     "* Module
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (goto-char (save-excursion (org-end-of-subtree t) (point)))
+     (cl-letf (((symbol-function 'org-canvas--module-resolve-item-link)
+                (lambda (_type _cid title) (or title "Untitled"))))
+       (let ((count (org-canvas--module-pull-insert-items
+                     [((type . "Assignment") (title . "HW1")
+                       (id . 201) (content_id . 42) (indent . 2))])))
+         (expect count :to-equal 1)
+         (expect (buffer-string) :to-match "\\*\\* HW1"))))))
+
+(describe "org-canvas-pull-modules"
+  (it "creates module headings with items"
+    (let* ((temp-dir (make-temp-file "pull-mod-test" t))
+           (modules-file (expand-file-name "modules.org" temp-dir)))
+      (unwind-protect
+          (let ((org-canvas-modules-file modules-file))
+            (with-org-canvas-test-config
+              (with-sync-test-env
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (lambda (_method _url &optional _params)
+                             '(((id . 10) (name . "Week 1")
+                                (items . [((type . "SubHeader")
+                                           (title . "Readings")
+                                           (id . 101))])))))
+                          ((symbol-function 'org-canvas--module-resolve-item-link)
+                           (lambda (_type _cid title) (or title "Untitled"))))
+                  (org-canvas-pull-modules)
+                  (with-current-buffer (find-file-noselect modules-file)
+                    (expect (buffer-string) :to-match "Week 1")
+                    (expect (buffer-string) :to-match "Readings"))))))
+        (let ((buf (find-buffer-visiting modules-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "creates modules.org when it does not exist"
+    (let* ((temp-dir (make-temp-file "pull-mod-test" t))
+           (modules-file (expand-file-name "modules.org" temp-dir)))
+      (unwind-protect
+          (let ((org-canvas-modules-file modules-file))
+            (with-org-canvas-test-config
+              (with-sync-test-env
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (lambda (_method _url &optional _params) '())))
+                  (org-canvas-pull-modules)
+                  (expect (file-exists-p modules-file) :to-be-truthy)))))
+        (let ((buf (find-buffer-visiting modules-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
 ;;; org-canvas-modules-test.el ends here

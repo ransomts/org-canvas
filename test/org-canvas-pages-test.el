@@ -586,4 +586,17 @@ Content.
                 (lambda (&rest _args) 42)))
        (expect (org-canvas--page-parse-entry) :to-throw 'error)))))
 
+;;;; Additional Coverage Tests
+
+(describe "org-canvas--page-validate-editing-roles"
+  (it "warns on invalid role"
+    (spy-on 'message)
+    (org-canvas--page-validate-editing-roles "teachers,invalid_role")
+    (expect 'message :to-have-been-called))
+
+  (it "accepts valid roles without warning"
+    (spy-on 'message)
+    (org-canvas--page-validate-editing-roles "teachers,students")
+    (expect 'message :not :to-have-been-called)))
+
 ;;; org-canvas-pages-test.el ends here

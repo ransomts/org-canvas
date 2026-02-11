@@ -677,4 +677,58 @@ Just a description, no override table.
     (let ((org-canvas-assignments-file "/nonexistent/assignments.org"))
       (expect (org-canvas-sync-overrides) :to-throw 'error))))
 
+;;;; Additional Coverage Tests
+
+(describe "org-canvas--pull-sections-upsert newline guard"
+  (it "inserts newline before heading when buffer lacks trailing newline"
+    (with-temp-org-buffer
+     "* Existing Section
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:"
+     ;; No trailing newline
+     (org-canvas--pull-sections-upsert
+      '((id . 2) (name . "New Section") (start_at . nil)
+        (end_at . nil) (restrict_enrollments_to_section_dates . nil)))
+     (expect (buffer-string) :to-match "\\* New Section"))))
+
+(describe "org-canvas--override-delete-removed error handling"
+  (it "handles delete API error gracefully"
+    (with-org-canvas-test-config
+      (let ((deleted 0))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method _url &rest _args)
+                     (when (eq method 'DELETE)
+                       (signal 'error '("DELETE failed"))))))
+          ;; Should not throw, just log and return 0
+          (setq deleted (org-canvas--override-delete-removed
+                         "https://test.canvas.example.com/api/v1/courses/99999/assignments/1/overrides"
+                         '(((id . 5) (course_section_id . 99)))
+                         '(1 2 3)))
+          (expect deleted :to-equal 0))))))
+
+(describe "org-canvas-sync-overrides assignments fallback path"
+  (it "falls back to org-canvas--path when assignments-file var unbound"
+    (let* ((temp-dir (make-temp-file "override-test" t))
+           (assign-file (expand-file-name "assignments.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file assign-file
+              (insert "* Assignment
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"))
+            (let ((org-canvas-directory temp-dir)
+                  (org-canvas-assignments-file assign-file))
+              (with-org-canvas-test-config
+                (with-sync-test-env
+                  (cl-letf (((symbol-function 'org-canvas-api-request)
+                             (lambda (_method _url &rest _args) nil)))
+                    (org-canvas-sync-overrides)
+                    (expect t :to-be t))))))
+        (let ((buf (find-buffer-visiting assign-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
 ;;; org-canvas-sections-test.el ends here
