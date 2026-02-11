@@ -129,6 +129,20 @@ Must be called in the sections file buffer."
                   (org-get-heading t t t t) local-id))))
    "LEVEL=1" 'file))
 
+(defun org-canvas--pull-sections-preflight ()
+  "Validate sections file directory and confirm overwrite.
+Returns the expanded sections file path."
+  (let ((sections-file (expand-file-name org-canvas-sections-file)))
+    (unless (file-directory-p (file-name-directory sections-file))
+      (error "Sections file directory does not exist: %s"
+             (file-name-directory sections-file)))
+    (org-canvas--pull-confirm-overwrite sections-file "sections")
+    (elog-info org-canvas--logger "========================================")
+    (elog-info org-canvas--logger ">>> PULLING SECTIONS FROM CANVAS")
+    (elog-info org-canvas--logger "File: %s" sections-file)
+    (elog-info org-canvas--logger "========================================")
+    sections-file))
+
 ;;;###autoload
 (defun org-canvas-pull-sections ()
   "Pull course sections from Canvas into sections.org.
@@ -139,19 +153,8 @@ local headings whose CANVAS_ID no longer exists on Canvas."
   (interactive)
   (org-canvas-clear-log)
   (display-buffer (get-buffer-create "*canvas-log*"))
-
-  (let ((sections-file (expand-file-name org-canvas-sections-file)))
-    (unless (file-directory-p (file-name-directory sections-file))
-      (error "Sections file directory does not exist: %s"
-             (file-name-directory sections-file)))
-    (org-canvas--pull-confirm-overwrite sections-file "sections")
-
-    (elog-info org-canvas--logger "========================================")
-    (elog-info org-canvas--logger ">>> PULLING SECTIONS FROM CANVAS")
-    (elog-info org-canvas--logger "File: %s" sections-file)
-    (elog-info org-canvas--logger "========================================")
-
-    (let* ((endpoint (org-canvas-api-course-endpoint "sections"))
+  (let* ((sections-file (org-canvas--pull-sections-preflight))
+         (endpoint (org-canvas-api-course-endpoint "sections"))
            (remote-sections (append (org-canvas-api-request
                                      'GET endpoint
                                      :params org-canvas--api-max-per-page)
@@ -178,7 +181,7 @@ local headings whose CANVAS_ID no longer exists on Canvas."
       (elog-info org-canvas--logger "Created: %d | Updated: %d | Total remote: %d"
                  created updated (length remote-sections))
       (elog-info org-canvas--logger "========================================")
-      (message "Section pull: %d created, %d updated." created updated))))
+      (message "Section pull: %d created, %d updated." created updated)))
 
 ;;;; ================================================================
 ;;;; Assignment Overrides
@@ -335,6 +338,21 @@ Returns a list (CREATED UPDATED DELETED) as integer counts."
 
     (list created updated deleted)))
 
+(defun org-canvas--override-sync-preflight ()
+  "Validate assignments file and log header for override sync.
+Returns the expanded assignments file path."
+  (let ((assignments-file (expand-file-name
+                           (if (boundp 'org-canvas-assignments-file)
+                               org-canvas-assignments-file
+                             (org-canvas--path "assignments.org")))))
+    (unless (file-exists-p assignments-file)
+      (error "Assignments file not found: %s" assignments-file))
+    (elog-info org-canvas--logger "========================================")
+    (elog-info org-canvas--logger ">>> STARTING OVERRIDE SYNC")
+    (elog-info org-canvas--logger "File: %s" assignments-file)
+    (elog-info org-canvas--logger "========================================")
+    assignments-file))
+
 (defun org-canvas-sync-overrides ()
   "Sync per-section date overrides for all assignments.
 Scans assignments.org for `#+NAME: overrides' tables and
@@ -342,20 +360,8 @@ reconciles them with Canvas assignment overrides."
   (interactive)
   (org-canvas-clear-log)
   (display-buffer (get-buffer-create "*canvas-log*"))
-
-  (let ((assignments-file (expand-file-name
-                           (if (boundp 'org-canvas-assignments-file)
-                               org-canvas-assignments-file
-                             (org-canvas--path "assignments.org")))))
-    (unless (file-exists-p assignments-file)
-      (error "Assignments file not found: %s" assignments-file))
-
-    (elog-info org-canvas--logger "========================================")
-    (elog-info org-canvas--logger ">>> STARTING OVERRIDE SYNC")
-    (elog-info org-canvas--logger "File: %s" assignments-file)
-    (elog-info org-canvas--logger "========================================")
-
-    (let ((source-dir (file-name-directory assignments-file))
+  (let* ((assignments-file (org-canvas--override-sync-preflight))
+         (source-dir (file-name-directory assignments-file))
           (total-created 0) (total-updated 0) (total-deleted 0)
           (assignments-processed 0))
 
@@ -384,7 +390,7 @@ reconciles them with Canvas assignment overrides."
                  assignments-processed total-created total-updated total-deleted)
       (elog-info org-canvas--logger "========================================")
       (message "Override sync: %d assignments, %d created, %d updated, %d deleted."
-               assignments-processed total-created total-updated total-deleted))))
+               assignments-processed total-created total-updated total-deleted)))
 
 (provide 'org-canvas-sections)
 ;;; org-canvas-sections.el ends here

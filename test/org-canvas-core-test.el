@@ -3711,7 +3711,8 @@ Page content.
           (progn
             (with-temp-file temp-file (insert "* Item\n"))
             (spy-on 'elog-info)
-            (org-canvas--sync-log-summary "TEST" "test" temp-file 5 2 1 3)
+            (org-canvas--sync-log-summary "test" temp-file
+             '(:success 5 :skip 2 :fail 1 :conflict 3))
             (let ((found nil))
               (dolist (call (spy-calls-all-args 'elog-info))
                 (when (and (>= (length call) 2)
@@ -3729,7 +3730,8 @@ Page content.
           (progn
             (with-temp-file temp-file (insert "* Item\n"))
             (spy-on 'elog-info)
-            (org-canvas--sync-log-summary "TEST" "test" temp-file 5 2 1 0)
+            (org-canvas--sync-log-summary "test" temp-file
+             '(:success 5 :skip 2 :fail 1 :conflict 0))
             (let ((found nil))
               (dolist (call (spy-calls-all-args 'elog-info))
                 (when (and (>= (length call) 2)

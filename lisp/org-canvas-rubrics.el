@@ -91,67 +91,59 @@
 
 ;;;; 2. Stage: Transformation
 
+(defun org-canvas--rubric-build-criterion (row counter)
+  "Build a hash-table for a single criterion from table ROW at COUNTER.
+Returns a plist (:id KEY :obj HASH :points NUM)."
+  (let* ((desc (nth 0 row))
+         (points (string-to-number (or (nth 1 row) "0")))
+         (long-desc (or (nth 2 row) ""))
+         (crit-obj (make-hash-table :test 'equal))
+         (ratings (make-hash-table :test 'equal))
+         (r1 (make-hash-table :test 'equal))
+         (r2 (make-hash-table :test 'equal)))
+    (elog-debug org-canvas--logger "[Stage 2: Transform] Criterion %d: '%s' (%d pts)" counter desc points)
+    (puthash "description" desc crit-obj)
+    (puthash "points" points crit-obj)
+    (puthash "long_description" long-desc crit-obj)
+    (puthash "description" "Full Marks" r1)
+    (puthash "points" points r1)
+    (puthash "description" "No Marks" r2)
+    (puthash "points" 0 r2)
+    (puthash "0" r1 ratings)
+    (puthash "1" r2 ratings)
+    (puthash "ratings" ratings crit-obj)
+    (list :id (format "%d" counter) :obj crit-obj :points points)))
+
+(defun org-canvas--rubric-build-association ()
+  "Build the rubric_association hash-table for a course-level rubric."
+  (let ((ra (make-hash-table :test 'equal)))
+    (puthash "association_type" "Course" ra)
+    (puthash "association_id" org-canvas-course-id ra)
+    ra))
+
 (defun org-canvas--rubric-build-payload (data)
   "Convert DATA to Canvas rubric payload using Hash Tables."
   (let ((title (plist-get data :title))
         (criteria-rows (plist-get data :criteria))
         (free-form (plist-get data :free-form)))
-
     (elog-info org-canvas--logger "[Stage 2: Transform] Building payload for '%s'" title)
-
     (let ((rubric-obj (make-hash-table :test 'equal))
           (criteria-hash (make-hash-table :test 'equal))
           (counter 0)
           (total-points 0))
-
       (puthash "title" title rubric-obj)
       (puthash "free_form_criterion_comments" (org-canvas--to-json-boolean free-form) rubric-obj)
-
-      ;; Process table rows (skip header and hlines)
       (dolist (row criteria-rows)
         (unless (eq row 'hline)
-          (let* ((desc (nth 0 row))
-                 (points (string-to-number (or (nth 1 row) "0")))
-                 (long-desc (or (nth 2 row) ""))
-                 (crit-id (format "%d" counter))
-                 (crit-obj (make-hash-table :test 'equal)))
-
-            (elog-debug org-canvas--logger "[Stage 2: Transform] Criterion %d: '%s' (%d pts)" counter desc points)
-
-            (puthash "description" desc crit-obj)
-            (puthash "points" points crit-obj)
-            (puthash "long_description" long-desc crit-obj)
-
-            ;; Add ratings (Full Marks vs No Marks)
-            (let ((ratings (make-hash-table :test 'equal)))
-              (let ((r1 (make-hash-table :test 'equal))
-                    (r2 (make-hash-table :test 'equal)))
-                (puthash "description" "Full Marks" r1)
-                (puthash "points" points r1)
-                (puthash "description" "No Marks" r2)
-                (puthash "points" 0 r2)
-                (puthash "0" r1 ratings)
-                (puthash "1" r2 ratings))
-              (puthash "ratings" ratings crit-obj))
-
-            (puthash crit-id crit-obj criteria-hash)
-            (setq total-points (+ total-points points))
+          (let ((crit (org-canvas--rubric-build-criterion row counter)))
+            (puthash (plist-get crit :id) (plist-get crit :obj) criteria-hash)
+            (setq total-points (+ total-points (plist-get crit :points)))
             (setq counter (1+ counter)))))
-
       (puthash "criteria" criteria-hash rubric-obj)
-
       (elog-info org-canvas--logger "[Stage 2: Transform] Built %d criteria, total points: %d" counter total-points)
-
-      ;; Wrapper
       (let ((payload (make-hash-table :test 'equal)))
         (puthash "rubric" rubric-obj payload)
-        (puthash "rubric_association"
-                 (let ((ra (make-hash-table :test 'equal)))
-                   (puthash "association_type" "Course" ra)
-                   (puthash "association_id" org-canvas-course-id ra)
-                   ra)
-                 payload)
-
+        (puthash "rubric_association" (org-canvas--rubric-build-association) payload)
         (elog-debug org-canvas--logger "[Stage 2: Transform] Payload complete")
         payload))))
 

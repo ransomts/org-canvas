@@ -81,6 +81,35 @@ LABEL is used for logging (e.g., \"Pages\")."
            (elog-info org-canvas--logger "[Skip] %s: %s" label msg)
          (elog-error org-canvas--logger "[FAILED] %s: %s" label msg))))))
 
+(defun org-canvas--run-tier (tier wrapper-fn)
+  "Run each (FUNCTION LABEL) entry in TIER through WRAPPER-FN."
+  (dolist (entry tier)
+    (funcall wrapper-fn (car entry) (cadr entry))))
+
+;; Sync in dependency order (see documentation/manual.org for details):
+;;   Tier -1: Course settings (before any content)
+;;   Tier 0:  No dependencies — synced in any order
+;;   Tier 1:  Depends on Tier 0 (quizzes, assignments link to Tier 0 items)
+;;   Tier 1.5: Re-sync assignment groups to apply drop rules
+;;   Tier 1.75: Overrides need sections + assignments
+;;   Tier 2:  Modules reference all content types
+(defconst org-canvas--sync-tiers
+  '(((org-canvas-sync-settings "Settings"))
+    ((org-canvas-sync-outcomes "Outcomes")
+     (org-canvas-sync-rubrics "Rubrics")
+     (org-canvas-sync-assignment-groups "Assignment Groups")
+     (org-canvas-pull-sections "Sections")
+     (org-canvas-sync-files "Files")
+     (org-canvas-sync-pages "Pages")
+     (org-canvas-sync-discussions "Discussions")
+     (org-canvas-sync-announcements "Announcements"))
+    ((org-canvas-sync-quizzes "Quizzes")
+     (org-canvas-sync-assignments "Assignments"))
+    ((org-canvas-sync-assignment-groups "Assignment Groups"))
+    ((org-canvas-sync-overrides "Overrides"))
+    ((org-canvas-sync-modules "Modules")))
+  "Sync tiers in dependency order.  Each tier is a list of (FN LABEL) pairs.")
+
 ;;;###autoload
 (defun org-canvas-sync ()
   "Sync all enabled Canvas features."
@@ -95,52 +124,36 @@ LABEL is used for logging (e.g., \"Pages\")."
     (elog-info org-canvas--logger ">>> STARTING GLOBAL SYNC")
     (elog-info org-canvas--logger "Course: %s | URL: %s" org-canvas-course-id org-canvas-base-url)
     (elog-info org-canvas--logger "========================================")
-
-    ;; Preflight: validate credentials and connection
     (org-canvas--preflight-check)
-
-    ;; ----------------------------------------------------------------
-    ;; Sync in dependency order (see documentation/manual.org for details)
-    ;; ----------------------------------------------------------------
-
-    ;; Tier -1: Course settings (before any content)
-    (org-canvas--safe-sync #'org-canvas-sync-settings "Settings")
-
-    ;; Tier 0: No dependencies - these can be synced in any order
-    (org-canvas--safe-sync #'org-canvas-sync-outcomes "Outcomes")
-    (org-canvas--safe-sync #'org-canvas-sync-rubrics "Rubrics")
-    (org-canvas--safe-sync #'org-canvas-sync-assignment-groups "Assignment Groups")
-    (org-canvas--safe-sync #'org-canvas-pull-sections "Sections")
-    (org-canvas--safe-sync #'org-canvas-sync-files "Files")
-    (org-canvas--safe-sync #'org-canvas-sync-pages "Pages")
-    (org-canvas--safe-sync #'org-canvas-sync-discussions "Discussions")
-    (org-canvas--safe-sync #'org-canvas-sync-announcements "Announcements")
-
-    ;; Note: Same-tier cross-references (e.g., page→page) may not fully
-    ;; resolve on first sync since the target may not have a CANVAS_ID yet.
-    ;; A second sync will resolve them.
+    ;; Tiers -1 and 0
+    (org-canvas--run-tier (nth 0 org-canvas--sync-tiers) #'org-canvas--safe-sync)
+    (org-canvas--run-tier (nth 1 org-canvas--sync-tiers) #'org-canvas--safe-sync)
     (elog-info org-canvas--logger
       "[Note] Same-tier cross-references (e.g., page→page) may require a second sync to fully resolve")
-
-    ;; Tier 1: Depends on Tier 0 - these may link to Tier 0 items
-    (org-canvas--safe-sync #'org-canvas-sync-quizzes "Quizzes")
-    (org-canvas--safe-sync #'org-canvas-sync-assignments "Assignments")
-
-    ;; Tier 1.5: Re-sync assignment groups to apply drop rules
-    ;; Canvas rejects drop rules for empty groups, so we create groups first,
-    ;; sync assignments into them, then update groups with drop rules.
-    (org-canvas--safe-sync #'org-canvas-sync-assignment-groups "Assignment Groups")
-
-    ;; Tier 1.75: Overrides need both sections and assignments synced
-    (org-canvas--safe-sync #'org-canvas-sync-overrides "Overrides")
-
-    ;; Tier 2: Depends on all - modules reference all content types
-    (org-canvas--safe-sync #'org-canvas-sync-modules "Modules")
-
+    ;; Tiers 1 through 2
+    (dolist (tier (nthcdr 2 org-canvas--sync-tiers))
+      (org-canvas--run-tier tier #'org-canvas--safe-sync))
     (elog-info org-canvas--logger "========================================")
     (elog-info org-canvas--logger ">>> GLOBAL SYNC COMPLETE")
     (elog-info org-canvas--logger "========================================")
     (message "Sync complete. See *canvas-log* for details.")))
+
+;; Delete in REVERSE dependency order:
+;;   Tier 2:  Modules (reference all content types)
+;;   Tier 1:  Assignments, Quizzes (may reference Tier 0)
+;;   Tier 0:  Everything else (no dependencies, safe to delete last)
+(defconst org-canvas--delete-tiers
+  '(((org-canvas-delete-all-modules "Modules"))
+    ((org-canvas-delete-all-assignments "Assignments")
+     (org-canvas-delete-all-quizzes "Quizzes"))
+    ((org-canvas-delete-all-files "Files")
+     (org-canvas-delete-all-announcements "Announcements")
+     (org-canvas-delete-all-discussions "Discussions")
+     (org-canvas-delete-all-pages "Pages")
+     (org-canvas-delete-all-assignment-groups "Assignment Groups")
+     (org-canvas-delete-all-rubrics "Rubrics")
+     (org-canvas-delete-all-outcomes "Outcomes")))
+  "Delete tiers in reverse dependency order.  Each tier is a list of (FN LABEL) pairs.")
 
 ;;;###autoload
 (defun org-canvas-delete-all ()
@@ -154,43 +167,15 @@ Deletion order is reverse of sync order to respect dependencies."
     (user-error "Aborted"))
   (unless (yes-or-no-p "This cannot be undone.  Do you wish to continue? ")
     (user-error "Aborted"))
-
   (org-canvas-clear-log)
   (display-buffer (get-buffer-create "*canvas-log*"))
   (let ((org-canvas--inhibit-log-clear t))
     (elog-info org-canvas--logger "Starting Global Delete...")
-
-    ;; ----------------------------------------------------------------
-    ;; Delete in REVERSE dependency order
-    ;; Items that reference others must be deleted first
-    ;; ----------------------------------------------------------------
-
-    ;; Tier 2 first: Modules reference all content types
-    (elog-info org-canvas--logger "[Delete] Modules...")
-    (org-canvas-delete-all-modules)
-
-    ;; Tier 1: Assignments and Quizzes may reference Tier 0 items
-    (elog-info org-canvas--logger "[Delete] Assignments...")
-    (org-canvas-delete-all-assignments)
-    (elog-info org-canvas--logger "[Delete] Quizzes...")
-    (org-canvas-delete-all-quizzes)
-
-    ;; Tier 0: No dependencies - safe to delete last
-    (elog-info org-canvas--logger "[Delete] Files...")
-    (org-canvas-delete-all-files)
-    (elog-info org-canvas--logger "[Delete] Announcements...")
-    (org-canvas-delete-all-announcements)
-    (elog-info org-canvas--logger "[Delete] Discussions...")
-    (org-canvas-delete-all-discussions)
-    (elog-info org-canvas--logger "[Delete] Pages...")
-    (org-canvas-delete-all-pages)
-    (elog-info org-canvas--logger "[Delete] Assignment Groups...")
-    (org-canvas-delete-all-assignment-groups)
-    (elog-info org-canvas--logger "[Delete] Rubrics...")
-    (org-canvas-delete-all-rubrics)
-    (elog-info org-canvas--logger "[Delete] Outcomes...")
-    (org-canvas-delete-all-outcomes)
-
+    (dolist (tier org-canvas--delete-tiers)
+      (org-canvas--run-tier
+       tier (lambda (fn label)
+              (elog-info org-canvas--logger "[Delete] %s..." label)
+              (funcall fn))))
     (elog-info org-canvas--logger "Global Delete Complete.")
     (message "Global Delete Complete. See *canvas-log*.")))
 
@@ -302,6 +287,23 @@ LABEL is used for logging."
      (elog-warning org-canvas--logger "[Pull] %s failed: %s"
        label (error-message-string err)))))
 
+;; Pull in dependency order:
+;;   Settings, then structural items, then linked items, then modules
+(defconst org-canvas--pull-tiers
+  '(((org-canvas-pull-settings "Settings"))
+    ((org-canvas-pull-sections "Sections")
+     (org-canvas-pull-assignment-groups "Assignment Groups")
+     (org-canvas-pull-outcomes "Outcomes")
+     (org-canvas-pull-rubrics "Rubrics")
+     (org-canvas-pull-pages "Pages")
+     (org-canvas-pull-files "Files")
+     (org-canvas-pull-discussions "Discussions")
+     (org-canvas-pull-announcements "Announcements"))
+    ((org-canvas-pull-assignments "Assignments")
+     (org-canvas-pull-quizzes "Quizzes"))
+    ((org-canvas-pull-modules "Modules")))
+  "Pull tiers in dependency order.  Each tier is a list of (FN LABEL) pairs.")
+
 ;;;###autoload
 (defun org-canvas-pull-all ()
   "Import an entire Canvas course into Org files.
@@ -323,30 +325,9 @@ Canvas courses who want to adopt org-canvas."
     (elog-info org-canvas--logger "Course: %s | URL: %s"
       org-canvas-course-id org-canvas-base-url)
     (elog-info org-canvas--logger "========================================")
-
-    ;; Preflight: validate credentials and connection
     (org-canvas--preflight-check)
-
-    ;; Course settings
-    (org-canvas--safe-pull #'org-canvas-pull-settings "Settings")
-
-    ;; Structural / no-dependency items
-    (org-canvas--safe-pull #'org-canvas-pull-sections "Sections")
-    (org-canvas--safe-pull #'org-canvas-pull-assignment-groups "Assignment Groups")
-    (org-canvas--safe-pull #'org-canvas-pull-outcomes "Outcomes")
-    (org-canvas--safe-pull #'org-canvas-pull-rubrics "Rubrics")
-    (org-canvas--safe-pull #'org-canvas-pull-pages "Pages")
-    (org-canvas--safe-pull #'org-canvas-pull-files "Files")
-    (org-canvas--safe-pull #'org-canvas-pull-discussions "Discussions")
-    (org-canvas--safe-pull #'org-canvas-pull-announcements "Announcements")
-
-    ;; Items that link to structural items
-    (org-canvas--safe-pull #'org-canvas-pull-assignments "Assignments")
-    (org-canvas--safe-pull #'org-canvas-pull-quizzes "Quizzes")
-
-    ;; Modules reference everything
-    (org-canvas--safe-pull #'org-canvas-pull-modules "Modules")
-
+    (dolist (tier org-canvas--pull-tiers)
+      (org-canvas--run-tier tier #'org-canvas--safe-pull))
     (elog-info org-canvas--logger "========================================")
     (elog-info org-canvas--logger ">>> FULL COURSE PULL COMPLETE")
     (elog-info org-canvas--logger "========================================")

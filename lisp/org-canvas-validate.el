@@ -30,60 +30,63 @@
           (symbol-name (plist-get issue :severity))
           (plist-get issue :message)))
 
-(defun org-canvas--validate-make-issue (severity file line heading property message)
+(defun org-canvas--validate-make-issue (severity loc property message)
   "Create a validation issue plist.
-SEVERITY is `error' or `warning'.  FILE, LINE, HEADING, PROPERTY,
-MESSAGE describe the problem."
-  (list :severity severity :file file :line line
-        :heading heading :property property :message message))
+SEVERITY is `error' or `warning'.  LOC is a plist (:file F :line N :heading H).
+PROPERTY and MESSAGE describe the problem."
+  (list :severity severity
+        :file (plist-get loc :file)
+        :line (plist-get loc :line)
+        :heading (plist-get loc :heading)
+        :property property :message message))
 
 ;;;; 2. Type-Specific Validators
 ;;
 ;; Each returns nil (valid) or an issue plist.
 
-(defun org-canvas--validate-check-boolean (value property file line heading)
+(defun org-canvas--validate-check-boolean (value property loc)
   "Check that VALUE is \"true\", \"false\", or absent.
-PROPERTY, FILE, LINE, HEADING identify the location."
+PROPERTY names the property.  LOC is a (:file :line :heading) plist."
   (when (and value (not (member (downcase value) '("true" "false"))))
     (org-canvas--validate-make-issue
-     'error file line heading property
+     'error loc property
      (format "%s: '%s' is not a valid boolean (expected true/false)" property value))))
 
-(defun org-canvas--validate-check-number (value property file line heading)
+(defun org-canvas--validate-check-number (value property loc)
   "Check that VALUE is a valid number.
-PROPERTY, FILE, LINE, HEADING identify the location."
+PROPERTY names the property.  LOC is a (:file :line :heading) plist."
   (when (and value (not (string-empty-p value))
             (not (string-match-p "\\`-?[0-9]*\\.?[0-9]+\\'" value)))
     (org-canvas--validate-make-issue
-     'error file line heading property
+     'error loc property
      (format "%s: '%s' is not a valid number" property value))))
 
-(defun org-canvas--validate-check-enum (value property valid-values file line heading)
+(defun org-canvas--validate-check-enum (value property valid-values loc)
   "Check that VALUE is in VALID-VALUES.
-PROPERTY, FILE, LINE, HEADING identify the location."
+PROPERTY names the property.  LOC is a (:file :line :heading) plist."
   (when (and value (not (member value valid-values)))
     (org-canvas--validate-make-issue
-     'error file line heading property
+     'error loc property
      (format "%s: '%s' is not valid (expected: %s)"
              property value (string-join valid-values ", ")))))
 
-(defun org-canvas--validate-check-csv-enum (value property valid-values file line heading)
+(defun org-canvas--validate-check-csv-enum (value property valid-values loc)
   "Check that each comma-separated part of VALUE is in VALID-VALUES.
-PROPERTY, FILE, LINE, HEADING identify the location."
+PROPERTY names the property.  LOC is a (:file :line :heading) plist."
   (when value
     (let ((parts (split-string value "," t "[ \t]+")))
       (let ((bad (cl-remove-if (lambda (p) (member p valid-values)) parts)))
         (when bad
           (org-canvas--validate-make-issue
-           'error file line heading property
+           'error loc property
            (format "%s: invalid value(s) '%s' (expected: %s)"
                    property (string-join bad ", ")
                    (string-join valid-values ", "))))))))
 
-(defun org-canvas--validate-check-timestamp (value property file line heading)
+(defun org-canvas--validate-check-timestamp (value property loc)
   "Check that VALUE is parseable as an Org timestamp.
 Warns if the timestamp is in the past.
-PROPERTY, FILE, LINE, HEADING identify the location."
+PROPERTY names the property.  LOC is a (:file :line :heading) plist."
   (when value
     (condition-case nil
         (let* ((parsed (org-parse-time-string value))
@@ -92,35 +95,34 @@ PROPERTY, FILE, LINE, HEADING identify the location."
                (now (format-time-string "%Y-%m-%dT%H:%M:%SZ" (current-time) t)))
           (when (string< iso now)
             (org-canvas--validate-make-issue
-             'warning file line heading property
+             'warning loc property
              (format "%s: timestamp %s is in the past" property value))))
       (error
        (org-canvas--validate-make-issue
-        'error file line heading property
+        'error loc property
         (format "%s: '%s' is not a valid Org timestamp" property value))))))
 
-(defun org-canvas--validate-check-link (value property target-file-var id-property
-                                               file line heading)
+(defun org-canvas--validate-check-link (value property target-file-var id-property loc)
   "Check that VALUE is a valid Org file link and resolves.
 PROPERTY is the property name for error messages.
 TARGET-FILE-VAR is the symbol of the target file variable.
 ID-PROPERTY is the Canvas ID property expected on the target heading.
-FILE, LINE, HEADING identify the location."
+LOC is a (:file :line :heading) plist."
   (when value
     (cond
      ((not (string-match "\\[\\[file:" value))
       (org-canvas--validate-make-issue
-       'error file line heading property
+       'error loc property
        (format "%s: '%s' is not a file link (expected [[file:...::*heading][...]])"
                property value)))
      (t
       (let ((resolved (org-canvas--resolve-link-property
-                       value id-property file)))
+                       value id-property (plist-get loc :file))))
         (cond
          ;; resolve-link-property returns nil for missing file or heading
          ((not resolved)
           (org-canvas--validate-make-issue
-           'warning file line heading property
+           'warning loc property
            (format "%s: link target has no %s (sync target first)"
                    property id-property)))
          (t nil)))))))
@@ -133,10 +135,10 @@ FILE, LINE, HEADING identify the location."
                  (org-canvas-org-parse-timestamp value)
                (error nil))))
 
-(defun org-canvas--validate-check-date-order (date-triples file line heading)
+(defun org-canvas--validate-check-date-order (date-triples loc)
   "Check chronological ordering for DATE-TRIPLES.
 Each triple is (PROP1 PROP2 PROP3) where values should be ordered.
-FILE, LINE, HEADING identify the location.
+LOC is a (:file :line :heading) plist.
 Returns a list of warning issues."
   (let ((issues nil))
     (dolist (triple date-triples)
@@ -151,12 +153,12 @@ Returns a list of warning issues."
              (iso3 (org-canvas--validate-safe-parse-timestamp v3)))
         (when (and iso1 iso2 (string> iso1 iso2))
           (push (org-canvas--validate-make-issue
-                 'warning file line heading p1
+                 'warning loc p1
                  (format "%s is after %s (%s > %s)" p1 p2 v1 v2))
                 issues))
         (when (and iso2 iso3 (string> iso2 iso3))
           (push (org-canvas--validate-make-issue
-                 'warning file line heading p2
+                 'warning loc p2
                  (format "%s is after %s (%s > %s)" p2 p3 v2 v3))
                 issues))))
     (nreverse issues)))
@@ -336,20 +338,21 @@ Returns a list of warning issues."
 
 ;;;; 5. Structural Validators
 
-(defun org-canvas--validate-rubric-structure (file line heading)
+(defun org-canvas--validate-rubric-structure (loc)
   "Check that the rubric heading at point has an org-table.
-FILE, LINE, HEADING identify the location."
+LOC is a (:file :line :heading) plist."
   (let ((end (save-excursion (org-end-of-subtree t) (point))))
     (save-excursion
       (unless (re-search-forward "^|" end t)
         (list (org-canvas--validate-make-issue
-               'error file line heading nil
+               'error loc nil
                "Rubric has no criteria table (expected an org-table under heading)"))))))
 
-(defun org-canvas--validate-file-structure (file line heading)
+(defun org-canvas--validate-file-structure (loc)
   "Check file heading structure: link existence, file on disk, size.
-FILE, LINE, HEADING identify the location."
+LOC is a (:file :line :heading) plist."
   (let ((issues nil)
+        (file (plist-get loc :file))
         (raw-heading (save-excursion
                        (org-back-to-heading t)
                        (looking-at org-complex-heading-regexp)
@@ -361,7 +364,7 @@ FILE, LINE, HEADING identify the location."
         (cond
          ((not (file-exists-p abs-path))
           (push (org-canvas--validate-make-issue
-                 'error file line heading nil
+                 'error loc nil
                  (format "Linked file does not exist: %s" link-path))
                 issues))
          (t
@@ -370,18 +373,18 @@ FILE, LINE, HEADING identify the location."
             (when (and (boundp 'org-canvas-max-file-size-mb)
                        (> size-mb org-canvas-max-file-size-mb))
               (push (org-canvas--validate-make-issue
-                     'warning file line heading nil
+                     'warning loc nil
                      (format "File is %.1f MB (limit: %d MB)"
                              size-mb org-canvas-max-file-size-mb))
                     issues)))))))
     (nreverse issues)))
 
-(defun org-canvas--validate-section-structure (file line heading)
+(defun org-canvas--validate-section-structure (loc)
   "Warn if section has no CANVAS_ID (not yet pulled).
-FILE, LINE, HEADING identify the location."
+LOC is a (:file :line :heading) plist."
   (unless (org-entry-get (point) "CANVAS_ID")
     (list (org-canvas--validate-make-issue
-           'warning file line heading "CANVAS_ID"
+           'warning loc "CANVAS_ID"
            "Section has no CANVAS_ID (run org-canvas-pull-sections first)"))))
 
 (defun org-canvas--validate-override-rows (file heading)
@@ -390,6 +393,7 @@ FILE and HEADING identify the location.  Point must be at the first data row."
   (let ((issues nil))
     (while (looking-at "^|\\([^-]\\)")
       (let* ((row-line (line-number-at-pos))
+             (row-loc (list :file file :line row-line :heading heading))
              (line-text (buffer-substring-no-properties
                          (line-beginning-position) (line-end-position)))
              (fields (split-string line-text "|" t "[ \t]+")))
@@ -398,16 +402,16 @@ FILE and HEADING identify the location.  Point must be at the first data row."
             (when (and (not (string-empty-p section-ref))
                        (not (string-match "\\[\\[file:" section-ref)))
               (push (org-canvas--validate-make-issue
-                     'warning file row-line heading nil
+                     'warning row-loc nil
                      (format "Override row section '%s' is not a file link"
                              section-ref))
                     issues)))))
       (forward-line 1))
     (nreverse issues)))
 
-(defun org-canvas--validate-assignment-structure (file line heading)
+(defun org-canvas--validate-assignment-structure (loc)
   "Check override table in assignment if present.
-FILE, LINE, HEADING identify the location."
+LOC is a (:file :line :heading) plist."
   (let ((end (save-excursion (org-end-of-subtree t) (point))))
     (save-excursion
       (when (re-search-forward "^#\\+NAME: overrides" end t)
@@ -416,13 +420,14 @@ FILE, LINE, HEADING identify the location."
           (forward-line 1)
           (when (looking-at "^|-")
             (forward-line 1))
-          (org-canvas--validate-override-rows file heading))))))
+          (org-canvas--validate-override-rows
+           (plist-get loc :file) (plist-get loc :heading)))))))
 
 ;;;; 6. Validation Engine
 
-(defun org-canvas--validate-entry-properties (props file line heading)
+(defun org-canvas--validate-entry-properties (props loc)
   "Validate PROPS list for the heading at point.
-FILE, LINE, HEADING identify the location.
+LOC is a (:file :line :heading) plist.
 Returns a list of issues."
   (let ((issues nil))
     (dolist (prop props)
@@ -435,18 +440,17 @@ Returns a list of issues."
              (issue
               (pcase type
                 ('boolean
-                 (org-canvas--validate-check-boolean value name file line heading))
+                 (org-canvas--validate-check-boolean value name loc))
                 ('number
-                 (org-canvas--validate-check-number value name file line heading))
+                 (org-canvas--validate-check-number value name loc))
                 ('enum
-                 (org-canvas--validate-check-enum value name values file line heading))
+                 (org-canvas--validate-check-enum value name values loc))
                 ('csv-enum
-                 (org-canvas--validate-check-csv-enum value name values file line heading))
+                 (org-canvas--validate-check-csv-enum value name values loc))
                 ('timestamp
-                 (org-canvas--validate-check-timestamp value name file line heading))
+                 (org-canvas--validate-check-timestamp value name loc))
                 ('link
-                 (org-canvas--validate-check-link value name target-file id-prop
-                                                  file line heading)))))
+                 (org-canvas--validate-check-link value name target-file id-prop loc)))))
         (when issue
           (push issue issues))))
     (nreverse issues)))
@@ -454,19 +458,19 @@ Returns a list of issues."
 (defun org-canvas--validate-entry-at-marker (props date-order structural-fn file)
   "Validate the entry at point using PROPS, DATE-ORDER, and STRUCTURAL-FN.
 FILE identifies the source file.  Returns a list of issues."
-  (let ((line (line-number-at-pos))
-        (heading (org-get-heading t t t t))
-        (issues nil))
+  (let* ((line (line-number-at-pos))
+         (heading (org-get-heading t t t t))
+         (loc (list :file file :line line :heading heading))
+         (issues nil))
     (when props
       (setq issues (nconc issues
-                          (org-canvas--validate-entry-properties
-                           props file line heading))))
+                          (org-canvas--validate-entry-properties props loc))))
     (when date-order
       (setq issues (nconc issues
                           (org-canvas--validate-check-date-order
-                           date-order file line heading))))
+                           date-order loc))))
     (when structural-fn
-      (let ((structural-issues (funcall structural-fn file line heading)))
+      (let ((structural-issues (funcall structural-fn loc)))
         (when structural-issues
           (setq issues (nconc issues structural-issues)))))
     issues))

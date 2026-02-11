@@ -49,6 +49,21 @@
 
 ;;;; 1. Stage: Extraction
 
+(defun org-canvas--discussion-parse-grading-props (pom)
+  "Extract grading-related properties from the heading at POM.
+Returns a plist with :grading-type, :points, :due-at, :lock-at,
+:assignment-group-id keys."
+  (let* ((grading-type (org-canvas-org-get-property pom "GRADING_TYPE"))
+         (points (org-canvas-org-get-property pom "POINTS"))
+         (due-at (org-canvas-org-parse-timestamp (org-canvas-org-get-property pom "DUE_AT")))
+         (lock-at (org-canvas-org-parse-timestamp (org-canvas-org-get-property pom "LOCK_AT")))
+         (group-link (org-canvas-org-get-property pom "GROUP"))
+         (assignment-group-id (when group-link
+                                (org-canvas--resolve-link-property group-link "CANVAS_ID"
+                                                                   org-canvas-discussions-file))))
+    (list :grading-type grading-type :points points :due-at due-at
+          :lock-at lock-at :assignment-group-id assignment-group-id)))
+
 (defun org-canvas--discussion-parse-entry ()
   "Extract discussion data from the Org heading at point."
   (org-back-to-heading t)
@@ -62,28 +77,24 @@
                           (org-canvas-org-get-property pom "DISCUSSION_TYPE")
                           '("side_comment" "threaded")
                           "DISCUSSION_TYPE" "side_comment"))
-         (grading-type (org-canvas-org-get-property pom "GRADING_TYPE"))
-         (points (org-canvas-org-get-property pom "POINTS"))
          (post-first (org-canvas-org-get-boolean-property pom "POST_FIRST"))
          (pinned (org-canvas-org-get-boolean-property pom "PINNED"))
          (available-from (org-canvas-org-parse-timestamp (org-canvas-org-get-property pom "AVAILABLE_FROM")))
-         (due-at (org-canvas-org-parse-timestamp (org-canvas-org-get-property pom "DUE_AT")))
-         (lock-at (org-canvas-org-parse-timestamp (org-canvas-org-get-property pom "LOCK_AT")))
-         (group-link (org-canvas-org-get-property pom "GROUP"))
-         (assignment-group-id (when group-link
-                                (org-canvas--resolve-link-property group-link "CANVAS_ID"
-                                                                   org-canvas-discussions-file))))
+         (grading (org-canvas--discussion-parse-grading-props pom)))
 
     (when (or (null title) (string-empty-p title))
       (error "Discussion title cannot be empty at point %d" pom))
 
     (elog-info org-canvas--logger "[Stage 1: Parse] Processing Discussion: '%s' (ID: %s)" title (or canvas-id "NEW"))
     (elog-debug org-canvas--logger "[Stage 1: Parse] Properties: type=%s, graded=%s, points=%s, post-first=%s, pinned=%s"
-      discussion-type (if grading-type "yes" "no") (or points "N/A") post-first pinned)
+      discussion-type (if (plist-get grading :grading-type) "yes" "no")
+      (or (plist-get grading :points) "N/A") post-first pinned)
 
     ;; Extract Body content (resolves cross-file links to Canvas URLs)
     (elog-debug org-canvas--logger "[Stage 1: Export] Exporting subtree to HTML...")
-    (let ((content (org-canvas--export-subtree-body-to-html)))
+    (let ((content (org-canvas--export-subtree-body-to-html))
+          (points (plist-get grading :points))
+          (agid (plist-get grading :assignment-group-id)))
       (elog-info org-canvas--logger "[Stage 1: Parse] Body size: %d chars" (length content))
 
       (list :title title
@@ -91,14 +102,14 @@
             :canvas-id canvas-id
             :published published
             :discussion_type discussion-type
-            :grading_type grading-type
+            :grading_type (plist-get grading :grading-type)
             :points_possible (when points (org-canvas--safe-string-to-number points "POINTS"))
             :require_initial_post post-first
             :pinned pinned
             :delayed_post_at available-from
-            :due_at due-at
-            :lock_at lock-at
-            :assignment_group_id (when assignment-group-id (string-to-number assignment-group-id))
+            :due_at (plist-get grading :due-at)
+            :lock_at (plist-get grading :lock-at)
+            :assignment_group_id (when agid (string-to-number agid))
             :pom pom))))
 
 ;;;; 2. Stage: Transformation

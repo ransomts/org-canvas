@@ -534,23 +534,18 @@ Returns a plist (:module-ok BOOL :item-success N :item-fail N)."
          (list :module-ok nil :error-msg (error-message-string err)
                :item-success 0 :item-fail 0))))))
 
-;;;###autoload
-(defun org-canvas-sync-modules ()
-  "Synchronize modules and their items to Canvas."
-  (interactive)
-  (org-canvas-clear-log)
-
+(defun org-canvas--module-sync-preflight ()
+  "Validate modules file and verify course access.
+Returns the expanded modules file path."
   (let ((modules-file (expand-file-name org-canvas-modules-file)))
     (unless (and modules-file (file-exists-p modules-file))
       (error "Modules file not found: %s" modules-file))
-
     (display-buffer (get-buffer-create "*canvas-log*"))
     (elog-info org-canvas--logger "========================================")
     (elog-info org-canvas--logger ">>> STARTING MODULE SYNC")
     (elog-info org-canvas--logger "File: %s" modules-file)
     (elog-info org-canvas--logger "Course: %s | URL: %s" org-canvas-course-id org-canvas-base-url)
     (elog-info org-canvas--logger "========================================")
-
     (elog-info org-canvas--logger "[Pre-flight] Verifying course access...")
     (condition-case err
         (progn
@@ -558,8 +553,15 @@ Returns a plist (:module-ok BOOL :item-success N :item-fail N)."
           (elog-info org-canvas--logger "[Pre-flight] Course accessible"))
       (error
        (elog-warning org-canvas--logger "[Pre-flight] Warning: %s" (cadr err))))
+    modules-file))
 
-    (let ((module-markers nil)
+;;;###autoload
+(defun org-canvas-sync-modules ()
+  "Synchronize modules and their items to Canvas."
+  (interactive)
+  (org-canvas-clear-log)
+  (let* ((modules-file (org-canvas--module-sync-preflight))
+         (module-markers nil)
           (module-success 0)
           (module-fail 0)
           (item-success 0)
@@ -597,7 +599,7 @@ Returns a plist (:module-ok BOOL :item-success N :item-fail N)."
       (elog-info org-canvas--logger "Items: %d success, %d failed" item-success item-fail)
       (elog-info org-canvas--logger "========================================")
       (message "Module Sync: %d modules (%d items) succeeded, %d modules (%d items) failed."
-               module-success item-success module-fail item-fail))))
+               module-success item-success module-fail item-fail)))
 
 ;;;; Delete Functions
 

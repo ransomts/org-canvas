@@ -387,20 +387,26 @@ ERR is the last plz-error condition."
     (signal 'error (list (format "Rate limited after %d retries" retry-count)
                          body plz-err))))
 
-(defun org-canvas--api-log-request (method full-url params json-payload timeout headers)
-  "Log debug info for an API request.
-METHOD, FULL-URL, PARAMS, JSON-PAYLOAD, TIMEOUT, HEADERS describe the request."
-  (elog-debug org-canvas--logger "[API] >>> REQUEST: %s %s" method full-url)
-  (elog-debug org-canvas--logger "[API] Timeout: %ds | Headers: %S"
-    timeout (org-canvas--mask-token headers))
-  (when params
-    (elog-debug org-canvas--logger "[API] Params: %S" params))
-  (when (and json-payload org-canvas-log-request-bodies)
-    (elog-debug org-canvas--logger "[API] Body:\n%s"
-      (org-canvas--pretty-json json-payload)))
-  (elog-debug org-canvas--logger "[API] curl:\n%s"
-    (org-canvas--build-curl-command method full-url
-                                    (when org-canvas-log-request-bodies json-payload))))
+(defun org-canvas--api-log-request (request)
+  "Log debug info for an API REQUEST plist.
+REQUEST has keys :method :url :params :body :timeout :headers."
+  (let ((method (plist-get request :method))
+        (full-url (plist-get request :url))
+        (params (plist-get request :params))
+        (json-payload (plist-get request :body))
+        (timeout (plist-get request :timeout))
+        (headers (plist-get request :headers)))
+    (elog-debug org-canvas--logger "[API] >>> REQUEST: %s %s" method full-url)
+    (elog-debug org-canvas--logger "[API] Timeout: %ds | Headers: %S"
+      timeout (org-canvas--mask-token headers))
+    (when params
+      (elog-debug org-canvas--logger "[API] Params: %S" params))
+    (when (and json-payload org-canvas-log-request-bodies)
+      (elog-debug org-canvas--logger "[API] Body:\n%s"
+        (org-canvas--pretty-json json-payload)))
+    (elog-debug org-canvas--logger "[API] curl:\n%s"
+      (org-canvas--build-curl-command method full-url
+                                      (when org-canvas-log-request-bodies json-payload)))))
 
 (defun org-canvas--api-log-response (result)
   "Log debug info for an API response RESULT."
@@ -455,7 +461,9 @@ TIMEOUT is the request timeout in seconds."
          ;; Our codebase uses uppercase by convention, so convert here
 	 (plz-method (intern (downcase (symbol-name method)))))
 
-    (org-canvas--api-log-request method full-url params json-payload actual-timeout headers)
+    (org-canvas--api-log-request
+     (list :method method :url full-url :params params
+           :body json-payload :timeout actual-timeout :headers headers))
     (org-canvas--api-execute-with-retry plz-method full-url headers json-payload actual-timeout)))
 
 (defun org-canvas-api-request-all-pages (method url &optional params)
@@ -862,22 +870,26 @@ SOURCE-DIR is the directory of the source file containing the link."
                           org-canvas-base-url org-canvas-course-id
                           endpoint id))))))))))
 
-(defun org-canvas--replace-link-with-canvas-url
-    (link-start link-end file heading display source-dir)
-  "Replace Org link from LINK-START to LINK-END with a Canvas URL link.
-FILE and HEADING identify the target.  DISPLAY is the link text.
+(defun org-canvas--replace-link-with-canvas-url (link-info source-dir)
+  "Replace Org link described by LINK-INFO with a Canvas URL link.
+LINK-INFO is a plist with :start :end :file :heading :display.
 SOURCE-DIR is the directory of the source .org file.
-If resolution fails, replaces with plain DISPLAY text."
-  (let ((canvas-url (org-canvas--resolve-to-canvas-url
-                     file heading source-dir)))
-    (delete-region link-start link-end)
-    (goto-char link-start)
-    (if canvas-url
-        (insert (format "[[%s][%s]]" canvas-url display))
-      (elog-warning org-canvas--logger
-        "[Links] Unresolved: [[file:%s::*%s][%s]] → plain text"
-        file heading display)
-      (insert display))))
+If resolution fails, replaces with plain display text."
+  (let ((link-start (plist-get link-info :start))
+        (link-end (plist-get link-info :end))
+        (file (plist-get link-info :file))
+        (heading (plist-get link-info :heading))
+        (display (plist-get link-info :display)))
+    (let ((canvas-url (org-canvas--resolve-to-canvas-url
+                       file heading source-dir)))
+      (delete-region link-start link-end)
+      (goto-char link-start)
+      (if canvas-url
+          (insert (format "[[%s][%s]]" canvas-url display))
+        (elog-warning org-canvas--logger
+          "[Links] Unresolved: [[file:%s::*%s][%s]] → plain text"
+          file heading display)
+        (insert display)))))
 
 (defun org-canvas--resolve-body-links (source-dir)
   "Resolve cross-file Org links in current buffer to Canvas URLs.
@@ -899,7 +911,9 @@ SOURCE-DIR is the directory of the source .org file."
                    (display (buffer-substring-no-properties
                              display-start (- link-end 2))))
               (org-canvas--replace-link-with-canvas-url
-               link-start link-end file heading display source-dir))))))))
+               (list :start link-start :end link-end :file file
+                     :heading heading :display display)
+               source-dir))))))))
 
 (defvar org-export-with-broken-links)
 (defvar org-export-with-sub-superscripts)
@@ -1027,11 +1041,14 @@ Signals `user-error' with FEATURE-NAME if aborted."
                            (file-name-nondirectory file)))))
     (user-error "%s pull aborted" (capitalize feature-name))))
 
-(defun org-canvas--pull-process-item (item file id-field title-field id-property item-fn)
+(defun org-canvas--pull-process-item (item file pull-config)
   "Process a single pulled ITEM into FILE.
-ID-FIELD and TITLE-FIELD select values from the API alist.
-ID-PROPERTY is the Org property name.  ITEM-FN does per-module work."
-  (let* ((id (alist-get id-field item))
+PULL-CONFIG is a plist with :id-field :title-field :id-property :item-fn."
+  (let* ((id-field (plist-get pull-config :id-field))
+         (title-field (plist-get pull-config :title-field))
+         (id-property (plist-get pull-config :id-property))
+         (item-fn (plist-get pull-config :item-fn))
+         (id (alist-get id-field item))
          (title (alist-get title-field item))
          (pos (org-canvas--pull-upsert-heading file id title id-property)))
     (goto-char pos)
@@ -1100,7 +1117,9 @@ Example:
                ,(let ((body
                        `(progn
                           (org-canvas--pull-process-item
-                           item file ,id-field ,title-field ,id-property ,item-fn)
+                           item file
+                           (list :id-field ,id-field :title-field ,title-field
+                                 :id-property ,id-property :item-fn ,item-fn))
                           (cl-incf count))))
                   (if filter-fn
                       `(unless (funcall ,filter-fn item)
@@ -1325,13 +1344,15 @@ FEATURE-NAME is used in the log message."
         "[Orphan] CANVAS_ID %s in file was not synced — may be orphaned on Canvas.\n  To clean up: delete the heading's CANVAS_ID property, or use M-x org-canvas-delete-%s-at-point"
         old-id feature-name))))
 
-(defun org-canvas--sync-log-summary (feature-upper feature-name sync-file
-                                     success-count skip-count fail-count
-                                     &optional conflict-count)
+(defun org-canvas--sync-log-summary (feature-name sync-file counters)
   "Save SYNC-FILE and log completion summary.
-FEATURE-UPPER and FEATURE-NAME are for log messages.
-CONFLICT-COUNT is the number of items skipped due to remote conflicts."
-  (let ((conflict-count (or conflict-count 0)))
+FEATURE-NAME is the module name.  COUNTERS is a plist with
+:success, :skip, :fail, and optionally :conflict counts."
+  (let ((feature-upper (upcase feature-name))
+        (success-count (plist-get counters :success))
+        (skip-count (plist-get counters :skip))
+        (fail-count (plist-get counters :fail))
+        (conflict-count (or (plist-get counters :conflict) 0)))
     (with-current-buffer (find-file-noselect sync-file)
       (save-buffer)
       (elog-info org-canvas--logger "Saved %s" sync-file))
@@ -1429,10 +1450,7 @@ Example usage:
              (org-canvas--sync-warn-orphans all-ids-before (car synced-ids)
                                             ,feature-name)
              (org-canvas--sync-log-summary
-              ,feature-upper ,feature-name sync-file
-              (plist-get counters :success)
-              (plist-get counters :skip)
-              (plist-get counters :fail))))))))
+              ,feature-name sync-file counters)))))))
 
 ;;;; 6b. Conflict Detection
 ;;
@@ -1828,28 +1846,34 @@ Return non-nil if deletion succeeded."
          (message "Failed to delete %s. Check logs." feature-name)
          nil)))))
 
+(cl-defun org-canvas--delete-all-runtime (feature-name &key endpoint file
+                                                        id-field title-field
+                                                        id-property list-params
+                                                        skip-fn)
+  "Runtime body for generated delete-all functions.
+FEATURE-NAME is the module name string.  ENDPOINT, FILE, ID-FIELD,
+TITLE-FIELD, ID-PROPERTY, LIST-PARAMS, and SKIP-FN are passed
+through to `org-canvas--delete-all-items'."
+  (org-canvas-clear-log)
+  (display-buffer (get-buffer-create "*canvas-log*"))
+  (let ((feature-upper (upcase feature-name)))
+    (elog-warning org-canvas--logger "========================================")
+    (elog-warning org-canvas--logger ">>> STARTING MASS DELETION OF %s" feature-upper)
+    (elog-warning org-canvas--logger "========================================"))
+  (let ((deleted-count (org-canvas--delete-all-items feature-name
+                          :endpoint endpoint :file file
+                          :id-field id-field :title-field title-field
+                          :id-property id-property :list-params list-params
+                          :skip-fn skip-fn)))
+    (message "%s deletion complete. %d removed." (capitalize feature-name) deleted-count)))
+
 (defmacro org-canvas-define-delete-all (feature &rest args)
   "Define a delete-all function for FEATURE.
-
-FEATURE is a symbol like \\='pages or \\='announcements.
-
-ARGS is a plist with the following keys:
-  :endpoint - API endpoint suffix (required)
-  :file - Expression for org file path (required)
-  :id-field - Alist key for item ID (default: \\='id)
-  :title-field - Alist key for item title (default: \\='title)
-  :id-property - Org property name (default: \"CANVAS_ID\")
-  :list-params - Extra params for GET request
-  :skip-fn - Function to skip certain items
-
-Example:
-  (org-canvas-define-delete-all announcements
-    :endpoint \"discussion_topics\"
-    :file org-canvas-announcements-file
-    :list-params \\='((\"only_announcements\" . \"true\")))"
+FEATURE is a symbol like \\='pages.  ARGS is a plist with keys:
+  :endpoint, :file (required), :id-field, :title-field,
+  :id-property, :list-params, :skip-fn."
   (declare (indent 1))
   (let* ((feature-name (symbol-name feature))
-         (feature-upper (upcase feature-name))
          (fn-name (intern (format "org-canvas-delete-all-%s" feature-name)))
          (endpoint (plist-get args :endpoint))
          (file-expr (plist-get args :file))
@@ -1865,27 +1889,14 @@ Example:
        (defun ,fn-name ()
          ,(format "Delete ALL %s in the configured course." feature-name)
          (interactive)
-         ;; Skip prompt when called from org-canvas-delete-all (which
-         ;; already prompted and sets org-canvas--inhibit-log-clear).
          (unless org-canvas--inhibit-log-clear
            (unless (y-or-n-p ,(format "Delete ALL %s in this course? " feature-name))
              (user-error "Aborted")))
-
-         (org-canvas-clear-log)
-         (display-buffer (get-buffer-create "*canvas-log*"))
-         (elog-warning org-canvas--logger "========================================")
-         (elog-warning org-canvas--logger ">>> STARTING MASS DELETION OF %s" ,feature-upper)
-         (elog-warning org-canvas--logger "========================================")
-
-         (let ((deleted-count (org-canvas--delete-all-items ,feature-name
-                                :endpoint ,endpoint
-                                :file ,file-expr
-                                :id-field ,id-field
-                                :title-field ,title-field
-                                :id-property ,id-property
-                                :list-params ,list-params
-                                :skip-fn ,skip-fn)))
-           (message "%s deletion complete. %d removed." ,(capitalize feature-name) deleted-count))))))
+         (org-canvas--delete-all-runtime ,feature-name
+           :endpoint ,endpoint :file ,file-expr
+           :id-field ,id-field :title-field ,title-field
+           :id-property ,id-property :list-params ,list-params
+           :skip-fn ,skip-fn)))))
 
 (defmacro org-canvas-define-delete-at-point (feature &rest args)
   "Define a delete-at-point function for FEATURE.
@@ -1916,20 +1927,38 @@ Example:
 
 ;;;; 9. Push-at-Point Infrastructure
 
+(defun org-canvas--push-at-point-runtime (feature-name parse-fn build-fn
+                                                       push-fn finalize-fn title-key)
+  "Runtime body for generated push-at-point functions.
+FEATURE-NAME is the module name string.  PARSE-FN, BUILD-FN,
+PUSH-FN, FINALIZE-FN are the 4-stage pipeline functions.
+TITLE-KEY is the plist key for the display name."
+  (org-back-to-heading t)
+  (display-buffer (get-buffer-create "*canvas-log*"))
+  (let* ((data (funcall parse-fn))
+         (title (plist-get data title-key))
+         (payload (funcall build-fn data))
+         (payload-hash (md5 (json-encode payload)))
+         (stored-hash (org-entry-get (point) "PAYLOAD_HASH"))
+         (canvas-id (or (plist-get data :canvas-id)
+                        (plist-get data :canvas-url))))
+    (if (and stored-hash
+             (string= payload-hash stored-hash)
+             canvas-id)
+        (progn
+          (elog-info org-canvas--logger "[Skip] '%s' unchanged" title)
+          (message "%s '%s' unchanged — skipped." (capitalize feature-name) title))
+      (let ((response (funcall push-fn data payload)))
+        (funcall finalize-fn data response)
+        (org-entry-put (point) "PAYLOAD_HASH" payload-hash)
+        (save-buffer)
+        (elog-info org-canvas--logger "[Sync] '%s' synced successfully" title)
+        (message "%s '%s' synced." (capitalize feature-name) title)))))
+
 (defmacro org-canvas-define-push-at-point (feature &rest args)
   "Define a sync-at-point function for FEATURE.
-
-FEATURE is a symbol like \\='page or \\='announcement.
-
-ARGS is a plist with the following keys:
-  :parse - Function to parse entry at point (required)
-  :build - Function to build payload from parsed data (required)
-  :push - Function to push payload to API (required)
-  :finalize - Function to finalize after API response (required)
-  :title-key - Plist key for display name in logs (default: :title)
-
-Generates `org-canvas-sync-FEATURE-at-point' that runs the 4-stage
-pipeline for the single heading at point."
+FEATURE is a symbol like \\='page.  ARGS is a plist with keys:
+  :parse, :build, :push, :finalize (required), :title-key."
   (declare (indent 1))
   (let* ((feature-name (symbol-name feature))
          (fn-name (intern (format "org-canvas-sync-%s-at-point" feature-name)))
@@ -1947,27 +1976,8 @@ pipeline for the single heading at point."
        (defun ,fn-name ()
          ,(format "Sync the %s at point to Canvas." feature-name)
          (interactive)
-         (org-back-to-heading t)
-         (display-buffer (get-buffer-create "*canvas-log*"))
-         (let* ((data (funcall ,parse-fn))
-                (title (plist-get data ,title-key))
-                (payload (funcall ,build-fn data))
-                (payload-hash (md5 (json-encode payload)))
-                (stored-hash (org-entry-get (point) "PAYLOAD_HASH"))
-                (canvas-id (or (plist-get data :canvas-id)
-                               (plist-get data :canvas-url))))
-           (if (and stored-hash
-                    (string= payload-hash stored-hash)
-                    canvas-id)
-               (progn
-                 (elog-info org-canvas--logger "[Skip] '%s' unchanged" title)
-                 (message "%s '%s' unchanged — skipped." ,(capitalize feature-name) title))
-             (let ((response (funcall ,push-fn data payload)))
-               (funcall ,finalize-fn data response)
-               (org-entry-put (point) "PAYLOAD_HASH" payload-hash)
-               (save-buffer)
-               (elog-info org-canvas--logger "[Sync] '%s' synced successfully" title)
-               (message "%s '%s' synced." ,(capitalize feature-name) title))))))))
+         (org-canvas--push-at-point-runtime
+          ,feature-name ,parse-fn ,build-fn ,push-fn ,finalize-fn ,title-key)))))
 
 ;;;; 10. Setup Wizard
 

@@ -15,124 +15,124 @@
 
 (describe "org-canvas--validate-check-boolean"
   (it "returns nil for absent value"
-    (expect (org-canvas--validate-check-boolean nil "PUBLISHED" "/f" 1 "H")
+    (expect (org-canvas--validate-check-boolean nil "PUBLISHED" (list :file "/f" :line 1 :heading "H"))
             :to-be nil))
 
   (it "returns nil for 'true'"
-    (expect (org-canvas--validate-check-boolean "true" "PUBLISHED" "/f" 1 "H")
+    (expect (org-canvas--validate-check-boolean "true" "PUBLISHED" (list :file "/f" :line 1 :heading "H"))
             :to-be nil))
 
   (it "returns nil for 'false'"
-    (expect (org-canvas--validate-check-boolean "false" "PUBLISHED" "/f" 1 "H")
+    (expect (org-canvas--validate-check-boolean "false" "PUBLISHED" (list :file "/f" :line 1 :heading "H"))
             :to-be nil))
 
   (it "returns nil for 'TRUE' (case insensitive)"
-    (expect (org-canvas--validate-check-boolean "TRUE" "PUBLISHED" "/f" 1 "H")
+    (expect (org-canvas--validate-check-boolean "TRUE" "PUBLISHED" (list :file "/f" :line 1 :heading "H"))
             :to-be nil))
 
   (it "returns error for invalid value"
-    (let ((issue (org-canvas--validate-check-boolean "yes" "PUBLISHED" "/f" 1 "H")))
+    (let ((issue (org-canvas--validate-check-boolean "yes" "PUBLISHED" (list :file "/f" :line 1 :heading "H"))))
       (expect (plist-get issue :severity) :to-equal 'error)
       (expect (plist-get issue :message) :to-match "not a valid boolean"))))
 
 (describe "org-canvas--validate-check-number"
   (it "returns nil for absent value"
-    (expect (org-canvas--validate-check-number nil "POINTS" "/f" 1 "H")
+    (expect (org-canvas--validate-check-number nil "POINTS" (list :file "/f" :line 1 :heading "H"))
             :to-be nil))
 
   (it "returns nil for empty string"
-    (expect (org-canvas--validate-check-number "" "POINTS" "/f" 1 "H")
+    (expect (org-canvas--validate-check-number "" "POINTS" (list :file "/f" :line 1 :heading "H"))
             :to-be nil))
 
   (it "returns nil for integer"
-    (expect (org-canvas--validate-check-number "100" "POINTS" "/f" 1 "H")
+    (expect (org-canvas--validate-check-number "100" "POINTS" (list :file "/f" :line 1 :heading "H"))
             :to-be nil))
 
   (it "returns nil for decimal"
-    (expect (org-canvas--validate-check-number "99.5" "POINTS" "/f" 1 "H")
+    (expect (org-canvas--validate-check-number "99.5" "POINTS" (list :file "/f" :line 1 :heading "H"))
             :to-be nil))
 
   (it "returns nil for negative number"
-    (expect (org-canvas--validate-check-number "-5" "POINTS" "/f" 1 "H")
+    (expect (org-canvas--validate-check-number "-5" "POINTS" (list :file "/f" :line 1 :heading "H"))
             :to-be nil))
 
   (it "returns error for non-numeric"
-    (let ((issue (org-canvas--validate-check-number "abc" "POINTS" "/f" 1 "H")))
+    (let ((issue (org-canvas--validate-check-number "abc" "POINTS" (list :file "/f" :line 1 :heading "H"))))
       (expect (plist-get issue :severity) :to-equal 'error)
       (expect (plist-get issue :message) :to-match "not a valid number"))))
 
 (describe "org-canvas--validate-check-enum"
   (it "returns nil for absent value"
-    (expect (org-canvas--validate-check-enum nil "TYPE" '("a" "b") "/f" 1 "H")
+    (expect (org-canvas--validate-check-enum nil "TYPE" '("a" "b") (list :file "/f" :line 1 :heading "H"))
             :to-be nil))
 
   (it "returns nil for valid value"
-    (expect (org-canvas--validate-check-enum "a" "TYPE" '("a" "b") "/f" 1 "H")
+    (expect (org-canvas--validate-check-enum "a" "TYPE" '("a" "b") (list :file "/f" :line 1 :heading "H"))
             :to-be nil))
 
   (it "returns error for invalid value"
-    (let ((issue (org-canvas--validate-check-enum "c" "TYPE" '("a" "b") "/f" 1 "H")))
+    (let ((issue (org-canvas--validate-check-enum "c" "TYPE" '("a" "b") (list :file "/f" :line 1 :heading "H"))))
       (expect (plist-get issue :severity) :to-equal 'error)
       (expect (plist-get issue :message) :to-match "not valid")))
 
   (it "lists valid values in error message"
-    (let ((issue (org-canvas--validate-check-enum "x" "T" '("a" "b" "c") "/f" 1 "H")))
+    (let ((issue (org-canvas--validate-check-enum "x" "T" '("a" "b" "c") (list :file "/f" :line 1 :heading "H"))))
       (expect (plist-get issue :message) :to-match "a, b, c"))))
 
 (describe "org-canvas--validate-check-csv-enum"
   (it "returns nil for absent value"
-    (expect (org-canvas--validate-check-csv-enum nil "ROLES" '("a" "b") "/f" 1 "H")
+    (expect (org-canvas--validate-check-csv-enum nil "ROLES" '("a" "b") (list :file "/f" :line 1 :heading "H"))
             :to-be nil))
 
   (it "returns nil for single valid value"
-    (expect (org-canvas--validate-check-csv-enum "a" "ROLES" '("a" "b") "/f" 1 "H")
+    (expect (org-canvas--validate-check-csv-enum "a" "ROLES" '("a" "b") (list :file "/f" :line 1 :heading "H"))
             :to-be nil))
 
   (it "returns nil for multiple valid values"
-    (expect (org-canvas--validate-check-csv-enum "a,b" "ROLES" '("a" "b") "/f" 1 "H")
+    (expect (org-canvas--validate-check-csv-enum "a,b" "ROLES" '("a" "b") (list :file "/f" :line 1 :heading "H"))
             :to-be nil))
 
   (it "handles whitespace around commas"
-    (expect (org-canvas--validate-check-csv-enum "a , b" "ROLES" '("a" "b") "/f" 1 "H")
+    (expect (org-canvas--validate-check-csv-enum "a , b" "ROLES" '("a" "b") (list :file "/f" :line 1 :heading "H"))
             :to-be nil))
 
   (it "returns error for invalid part"
-    (let ((issue (org-canvas--validate-check-csv-enum "a,bad" "ROLES" '("a" "b") "/f" 1 "H")))
+    (let ((issue (org-canvas--validate-check-csv-enum "a,bad" "ROLES" '("a" "b") (list :file "/f" :line 1 :heading "H"))))
       (expect (plist-get issue :severity) :to-equal 'error)
       (expect (plist-get issue :message) :to-match "bad"))))
 
 (describe "org-canvas--validate-check-timestamp"
   (it "returns nil for absent value"
-    (expect (org-canvas--validate-check-timestamp nil "DUE_AT" "/f" 1 "H")
+    (expect (org-canvas--validate-check-timestamp nil "DUE_AT" (list :file "/f" :line 1 :heading "H"))
             :to-be nil))
 
   (it "returns nil for valid future timestamp"
     (expect (org-canvas--validate-check-timestamp
-             "<2099-12-31 Wed 23:59>" "DUE_AT" "/f" 1 "H")
+             "<2099-12-31 Wed 23:59>" "DUE_AT" (list :file "/f" :line 1 :heading "H"))
             :to-be nil))
 
   (it "returns warning for past timestamp"
     (let ((issue (org-canvas--validate-check-timestamp
-                  "<2020-01-01 Wed 09:00>" "DUE_AT" "/f" 1 "H")))
+                  "<2020-01-01 Wed 09:00>" "DUE_AT" (list :file "/f" :line 1 :heading "H"))))
       (expect (plist-get issue :severity) :to-equal 'warning)
       (expect (plist-get issue :message) :to-match "in the past")))
 
   (it "returns error for malformed timestamp"
     (let ((issue (org-canvas--validate-check-timestamp
-                  "not-a-date" "DUE_AT" "/f" 1 "H")))
+                  "not-a-date" "DUE_AT" (list :file "/f" :line 1 :heading "H"))))
       (expect (plist-get issue :severity) :to-equal 'error)
       (expect (plist-get issue :message) :to-match "not a valid Org timestamp"))))
 
 (describe "org-canvas--validate-check-link"
   (it "returns nil for absent value"
     (expect (org-canvas--validate-check-link nil "GROUP" 'org-canvas-assignment-groups-file
-                                             "CANVAS_ID" "/f" 1 "H")
+                                             "CANVAS_ID" (list :file "/f" :line 1 :heading "H"))
             :to-be nil))
 
   (it "returns error for non-link value"
     (let ((issue (org-canvas--validate-check-link "Labs" "GROUP"
                                                    'org-canvas-assignment-groups-file
-                                                   "CANVAS_ID" "/f" 1 "H")))
+                                                   "CANVAS_ID" (list :file "/f" :line 1 :heading "H"))))
       (expect (plist-get issue :severity) :to-equal 'error)
       (expect (plist-get issue :message) :to-match "not a file link")))
 
@@ -148,7 +148,7 @@
             (let ((link (format "[[file:%s::*Labs][Labs]]" ag-file)))
               (let ((issue (org-canvas--validate-check-link
                             link "GROUP" 'org-canvas-assignment-groups-file
-                            "CANVAS_ID" src-file 1 "Test Assignment")))
+                            "CANVAS_ID" (list :file src-file :line 1 :heading "Test Assignment"))))
                 (expect issue :not :to-be nil)
                 (expect (plist-get issue :severity) :to-equal 'warning)
                 (expect (plist-get issue :message) :to-match "no CANVAS_ID"))))
@@ -169,7 +169,7 @@
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-check-date-order
                     '(("UNLOCK_AT" "DUE_AT" "LOCK_AT"))
-                    (buffer-file-name) (line-number-at-pos) "Test")))
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test"))))
        (expect issues :to-equal nil))))
 
   (it "returns warning for reversed unlock/due"
@@ -184,7 +184,7 @@
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-check-date-order
                     '(("UNLOCK_AT" "DUE_AT" "LOCK_AT"))
-                    (buffer-file-name) (line-number-at-pos) "Test")))
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test"))))
        (expect (length issues) :to-be-greater-than 0)
        (expect (plist-get (car issues) :severity) :to-equal 'warning)
        (expect (plist-get (car issues) :message) :to-match "UNLOCK_AT is after DUE_AT"))))
@@ -200,7 +200,7 @@
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-check-date-order
                     '(("UNLOCK_AT" "DUE_AT" "LOCK_AT"))
-                    (buffer-file-name) (line-number-at-pos) "Test")))
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test"))))
        (expect (length issues) :to-be-greater-than 0)
        (expect (plist-get (car issues) :message) :to-match "DUE_AT is after LOCK_AT"))))
 
@@ -214,7 +214,7 @@
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-check-date-order
                     '(("UNLOCK_AT" "DUE_AT" "LOCK_AT"))
-                    (buffer-file-name) (line-number-at-pos) "Test")))
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test"))))
        (expect issues :to-equal nil))))
 
   (it "handles malformed timestamps without error"
@@ -229,7 +229,7 @@
      ;; Should not signal an error; malformed dates are caught by timestamp validator
      (let ((issues (org-canvas--validate-check-date-order
                     '(("UNLOCK_AT" "DUE_AT" "LOCK_AT"))
-                    (buffer-file-name) (line-number-at-pos) "Test")))
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test"))))
        (expect issues :to-equal nil)))))
 
 ;;;; Structural Validator Tests
@@ -247,7 +247,7 @@
 "
      (org-back-to-heading t)
      (expect (org-canvas--validate-rubric-structure
-              (buffer-file-name) (line-number-at-pos) "Test Rubric")
+              (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Rubric"))
              :to-be nil)))
 
   (it "returns error when no table"
@@ -260,7 +260,7 @@ No table here.
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-rubric-structure
-                    (buffer-file-name) (line-number-at-pos) "Test Rubric")))
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Rubric"))))
        (expect (length issues) :to-equal 1)
        (expect (plist-get (car issues) :severity) :to-equal 'error)
        (expect (plist-get (car issues) :message) :to-match "no criteria table")))))
@@ -274,7 +274,7 @@ No table here.
 "
      (org-back-to-heading t)
      (expect (org-canvas--validate-file-structure
-              (buffer-file-name) (line-number-at-pos) "course-content")
+              (list :file (buffer-file-name) :line (line-number-at-pos) :heading "course-content"))
              :to-be nil)))
 
   (it "returns error for missing linked file"
@@ -285,7 +285,7 @@ No table here.
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-file-structure
-                    (buffer-file-name) (line-number-at-pos) "Nonexistent")))
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Nonexistent"))))
        (expect (length issues) :to-equal 1)
        (expect (plist-get (car issues) :severity) :to-equal 'error)
        (expect (plist-get (car issues) :message) :to-match "does not exist"))))
@@ -306,7 +306,7 @@ No table here.
                     (goto-char (point-min))
                     (org-back-to-heading t)
                     (expect (org-canvas--validate-file-structure
-                             org-file (line-number-at-pos) "test.txt")
+                             (list :file org-file :line (line-number-at-pos) :heading "test.txt"))
                             :to-be nil))
                 (kill-buffer))))
         (delete-directory temp-dir t)))))
@@ -321,7 +321,7 @@ No table here.
 "
      (org-back-to-heading t)
      (expect (org-canvas--validate-section-structure
-              (buffer-file-name) (line-number-at-pos) "Section A")
+              (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Section A"))
              :to-be nil)))
 
   (it "returns warning when CANVAS_ID is missing"
@@ -332,7 +332,7 @@ No table here.
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-section-structure
-                    (buffer-file-name) (line-number-at-pos) "Section A")))
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Section A"))))
        (expect (length issues) :to-equal 1)
        (expect (plist-get (car issues) :severity) :to-equal 'warning)
        (expect (plist-get (car issues) :message) :to-match "no CANVAS_ID")))))
@@ -349,7 +349,7 @@ Some body text.
 "
      (org-back-to-heading t)
      (expect (org-canvas--validate-assignment-structure
-              (buffer-file-name) (line-number-at-pos) "Assignment 1")
+              (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Assignment 1"))
              :to-be nil)))
 
   (it "returns warning for override row without file link"
@@ -366,7 +366,7 @@ Some body text.
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-assignment-structure
-                    (buffer-file-name) (line-number-at-pos) "Assignment 1")))
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Assignment 1"))))
        (expect (length issues) :to-be-greater-than 0)
        (expect (plist-get (car issues) :message) :to-match "not a file link")))))
 
@@ -375,13 +375,13 @@ Some body text.
 (describe "org-canvas--validate-format-issue"
   (it "formats error issue correctly"
     (let ((issue (org-canvas--validate-make-issue
-                  'error "/path/to/file.org" 42 "Test" "POINTS" "bad value")))
+                  'error (list :file "/path/to/file.org" :line 42 :heading "Test") "POINTS" "bad value")))
       (expect (org-canvas--validate-format-issue issue)
               :to-equal "/path/to/file.org:42: error: bad value")))
 
   (it "formats warning issue correctly"
     (let ((issue (org-canvas--validate-make-issue
-                  'warning "/path/to/file.org" 10 "Test" "DUE_AT" "in the past")))
+                  'warning (list :file "/path/to/file.org" :line 10 :heading "Test") "DUE_AT" "in the past")))
       (expect (org-canvas--validate-format-issue issue)
               :to-equal "/path/to/file.org:10: warning: in the past"))))
 
@@ -489,7 +489,7 @@ EXCEPT is a list of filenames to skip."
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
-                    (buffer-file-name) (line-number-at-pos) "Test Assignment")))
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Assignment"))))
        (expect (length issues) :to-be-greater-than 0)
        (expect (plist-get (car issues) :message) :to-match "GRADING_TYPE"))))
 
@@ -506,7 +506,7 @@ EXCEPT is a list of filenames to skip."
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
-                    (buffer-file-name) (line-number-at-pos) "Test Assignment")))
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Assignment"))))
        (expect (length issues) :to-be-greater-than 0)
        (expect (plist-get (car issues) :message) :to-match "SUBMISSION")))))
 
@@ -524,7 +524,7 @@ EXCEPT is a list of filenames to skip."
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
-                    (buffer-file-name) (line-number-at-pos) "Test Discussion")))
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Discussion"))))
        (expect (length issues) :to-be-greater-than 0)
        (expect (plist-get (car issues) :message) :to-match "DISCUSSION_TYPE"))))
 
@@ -541,7 +541,7 @@ EXCEPT is a list of filenames to skip."
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
-                    (buffer-file-name) (line-number-at-pos) "Graded Discussion")))
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Graded Discussion"))))
        (expect (length issues) :to-be-greater-than 0)
        (expect (plist-get (car issues) :message) :to-match "GRADING_TYPE")))))
 
@@ -561,7 +561,7 @@ EXCEPT is a list of filenames to skip."
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
-                    (buffer-file-name) (line-number-at-pos) "Test Outcome")))
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Outcome"))))
        (expect (length issues) :to-be-greater-than 0)
        (expect (plist-get (car issues) :message) :to-match "CALCULATION_METHOD"))))
 
@@ -582,7 +582,7 @@ EXCEPT is a list of filenames to skip."
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
-                    (buffer-file-name) (line-number-at-pos) "Test Outcome")))
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Outcome"))))
        (expect issues :to-equal nil)))))
 
 (describe "module item validation"
@@ -601,7 +601,7 @@ EXCEPT is a list of filenames to skip."
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
-                    (buffer-file-name) (line-number-at-pos) "Item 1")))
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Item 1"))))
        (expect (length issues) :to-be-greater-than 0)
        (expect (plist-get (car issues) :message) :to-match "COMPLETION_REQUIREMENT"))))
 
@@ -620,7 +620,7 @@ EXCEPT is a list of filenames to skip."
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
-                    (buffer-file-name) (line-number-at-pos) "Item 1")))
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Item 1"))))
        (expect issues :to-equal nil)))))
 
 (describe "quiz question validation"
@@ -639,7 +639,7 @@ EXCEPT is a list of filenames to skip."
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
-                    (buffer-file-name) (line-number-at-pos) "Question 1")))
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Question 1"))))
        (expect (length issues) :to-be-greater-than 0)
        (expect (plist-get (car issues) :message) :to-match "TYPE"))))
 
@@ -659,7 +659,7 @@ EXCEPT is a list of filenames to skip."
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
-                    (buffer-file-name) (line-number-at-pos) "Question 1")))
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Question 1"))))
        (expect issues :to-equal nil)))))
 
 (describe "page validation"
@@ -676,7 +676,7 @@ EXCEPT is a list of filenames to skip."
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
-                    (buffer-file-name) (line-number-at-pos) "Test Page")))
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Page"))))
        (expect (length issues) :to-be-greater-than 0)
        (expect (plist-get (car issues) :message) :to-match "admins"))))
 
@@ -693,7 +693,7 @@ EXCEPT is a list of filenames to skip."
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
-                    (buffer-file-name) (line-number-at-pos) "Test Page")))
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Page"))))
        (expect issues :to-equal nil)))))
 
 (describe "quiz validation"
@@ -710,7 +710,7 @@ EXCEPT is a list of filenames to skip."
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
-                    (buffer-file-name) (line-number-at-pos) "Test Quiz")))
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Quiz"))))
        (expect (length issues) :to-be-greater-than 0)
        (expect (plist-get (car issues) :message) :to-match "QUIZ_TYPE")))))
 
@@ -757,7 +757,7 @@ EXCEPT is a list of filenames to skip."
      (let ((issues (org-canvas--validate-entry-properties
                     '((:name "PUBLISHED" :type boolean)
                       (:name "POINTS" :type number))
-                    (buffer-file-name) (line-number-at-pos) "Test")))
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test"))))
        (expect (length issues) :to-equal 2))))
 
   (it "returns empty list when all valid"
@@ -772,7 +772,7 @@ EXCEPT is a list of filenames to skip."
      (let ((issues (org-canvas--validate-entry-properties
                     '((:name "PUBLISHED" :type boolean)
                       (:name "POINTS" :type number))
-                    (buffer-file-name) (line-number-at-pos) "Test")))
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test"))))
        (expect issues :to-equal nil)))))
 
 ;;;; Multi-module Integration Test
@@ -844,7 +844,7 @@ EXCEPT is a list of filenames to skip."
               (goto-char (point-min))
               (org-back-to-heading)
               (let ((issues (org-canvas--validate-file-structure
-                             org-file 1 "Test File")))
+                             (list :file org-file :line 1 :heading "Test File"))))
                 (expect (length issues) :not :to-equal 0)
                 (let ((issue (car issues)))
                   (expect (plist-get issue :severity) :to-equal 'warning)

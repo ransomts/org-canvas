@@ -272,6 +272,21 @@ DISPLAY-NAME is used for error messages.  Signals an error on failure."
       (error "File '%s' (%.1f MB) exceeds max size of %d MB"
              display-name size-mb org-canvas-max-file-size-mb))))
 
+(defun org-canvas--file-extract-heading-link ()
+  "Extract link path and display name from the heading at point.
+Uses `org-complex-heading-regexp' group 4 to preserve link syntax
+on Emacs 30 / Org 9.7+.
+Returns a plist (:link-path PATH :display-name NAME :raw-heading TEXT)."
+  (let* ((heading-with-links
+          (save-excursion
+            (beginning-of-line)
+            (when (looking-at org-complex-heading-regexp)
+              (match-string-no-properties 4))))
+         (raw-heading (or heading-with-links (org-get-heading t t t t))))
+    (list :link-path (org-canvas--file-extract-link-path raw-heading)
+          :display-name (org-canvas--file-get-display-name raw-heading)
+          :raw-heading raw-heading)))
+
 (defun org-canvas--file-parse-entry ()
   "Extract file data from the Org heading at point.
 Returns nil for folder-only headings (no file link)."
@@ -279,21 +294,10 @@ Returns nil for folder-only headings (no file link)."
   (elog-debug org-canvas--logger "[Stage 1: Parse] Starting extraction at point %d" (point))
 
   (let* ((pom (point))
-         ;; Get raw heading text with link syntax preserved.
-         ;; org-get-heading strips [[...][...]] on Emacs 30 / Org 9.7+.
-         (heading-with-links
-          (save-excursion
-            (beginning-of-line)
-            (when (looking-at org-complex-heading-regexp)
-              (match-string-no-properties 4))))
-         (raw-heading (or heading-with-links (org-get-heading t t t t)))
-         (link-path (org-canvas--file-extract-link-path raw-heading))
-         (display-name (org-canvas--file-get-display-name raw-heading))
-         (canvas-id (org-canvas-org-get-property pom "CANVAS_ID"))
-         (published (org-canvas-org-get-boolean-property pom "PUBLISHED" t))
-         (unlock-at (org-canvas-org-parse-timestamp (org-canvas-org-get-property pom "UNLOCK_AT")))
-         (lock-at (org-canvas-org-parse-timestamp (org-canvas-org-get-property pom "LOCK_AT")))
-         (files-dir (file-name-directory org-canvas-files-file)))
+         (heading-info (org-canvas--file-extract-heading-link))
+         (link-path (plist-get heading-info :link-path))
+         (display-name (plist-get heading-info :display-name))
+         (raw-heading (plist-get heading-info :raw-heading)))
 
     (elog-debug org-canvas--logger "[Stage 1: Parse] Heading text: %s" raw-heading)
     (elog-debug org-canvas--logger "[Stage 1: Parse] Link path: %s" (or link-path "NONE"))
@@ -303,7 +307,12 @@ Returns nil for folder-only headings (no file link)."
         (progn
           (elog-debug org-canvas--logger "[Stage 1: Parse] Skipping folder heading: %s" raw-heading)
           nil)
-      (let* ((folder-path (org-canvas--file-get-folder-path pom files-dir))
+      (let* ((canvas-id (org-canvas-org-get-property pom "CANVAS_ID"))
+             (published (org-canvas-org-get-boolean-property pom "PUBLISHED" t))
+             (unlock-at (org-canvas-org-parse-timestamp (org-canvas-org-get-property pom "UNLOCK_AT")))
+             (lock-at (org-canvas-org-parse-timestamp (org-canvas-org-get-property pom "LOCK_AT")))
+             (files-dir (file-name-directory org-canvas-files-file))
+             (folder-path (org-canvas--file-get-folder-path pom files-dir))
              (abs-path (expand-file-name link-path files-dir)))
 
         (elog-info org-canvas--logger "[Stage 1: Parse] Processing File: '%s' (ID: %s)"
@@ -371,6 +380,17 @@ Returns the upload parameters."
       (alist-get 'upload_url response))
     response))
 
+(defun org-canvas--file-fix-upload-param (key raw-value filename content-type)
+  "Fix null/unknown values in Canvas upload param.
+KEY is the param symbol, RAW-VALUE its original value.
+FILENAME and CONTENT-TYPE are the actual local values."
+  (cond
+   ((and (eq key 'filename) (null raw-value)) filename)
+   ((and (eq key 'content_type)
+         (or (null raw-value) (string= raw-value "unknown/unknown")))
+    content-type)
+   (t raw-value)))
+
 (defun org-canvas--file-build-multipart-body (upload-params local-path boundary)
   "Build a multipart/form-data body for file upload.
 UPLOAD-PARAMS is the alist of parameters from Canvas step 1 response.
@@ -384,42 +404,20 @@ Returns the full unibyte body string ready for HTTP upload."
                         (buffer-string)))
         (actual-filename (file-name-nondirectory local-path))
         (actual-content-type (org-canvas--file-guess-content-type local-path)))
-
     (elog-debug org-canvas--logger "[Stage 3: Upload Step 2] Building multipart form with params: %s"
       (mapconcat (lambda (p) (format "%s" (car p))) upload-params ", "))
-
-    ;; Add all the upload params from Canvas, but fix null values
     (dolist (param (append upload-params nil))
-      (let* ((key (car param))
-             (raw-value (cdr param))
-             ;; Fix null or bad values from Canvas
-             (value (cond
-                     ;; filename is null - use actual filename
-                     ((and (eq key 'filename) (null raw-value))
-                      actual-filename)
-                     ;; content_type is unknown - use guessed type
-                     ((and (eq key 'content_type)
-                           (or (null raw-value)
-                               (string= raw-value "unknown/unknown")))
-                      actual-content-type)
-                     ;; Otherwise use the value Canvas provided
-                     (t raw-value))))
-        (when value  ; Skip if still nil
+      (let ((value (org-canvas--file-fix-upload-param
+                    (car param) (cdr param) actual-filename actual-content-type)))
+        (when value
           (push (format "--%s\r\nContent-Disposition: form-data; name=\"%s\"\r\n\r\n%s"
-                        boundary key value)
+                        boundary (car param) value)
                 body-parts))))
-
-    ;; Then add the file - MUST be last parameter per Canvas docs
     (elog-debug org-canvas--logger "[Stage 3: Upload Step 2] Adding file parameter LAST: %s" actual-filename)
     (push (format "--%s\r\nContent-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\nContent-Type: %s\r\n\r\n"
                   boundary actual-filename actual-content-type)
           body-parts)
-
-    ;; Note: body-parts is built in reverse (push), then nreverse'd below
-    ;; Final order will be: [upload_params...] then [file] - file is last as required
-    ;; Encode form parts as unibyte so the entire body stays unibyte when
-    ;; concatenated with binary file content (avoids "Multibyte text in HTTP
-    ;; request" errors from url.el for PDFs, images, etc.)
+    ;; Encode form parts as unibyte to stay compatible with binary file content
     (let* ((body-prefix (encode-coding-string
                          (concat (mapconcat #'identity (nreverse body-parts) "\r\n") "\r\n")
                          'raw-text))

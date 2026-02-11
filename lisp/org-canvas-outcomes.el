@@ -356,35 +356,36 @@ Returns a cons cell (SUCCESS-COUNT . FAIL-COUNT)."
 
 ;;;; Main Sync Function
 
-;;;###autoload
-(defun org-canvas-sync-outcomes ()
-  "Synchronize all outcomes to Canvas.
-First syncs outcome groups (level-1 headings), then outcomes (level-2 headings)."
-  (interactive)
-  (org-canvas-clear-log)
+(defun org-canvas--outcome-sync-preflight ()
+  "Validate outcomes file and fetch root outcome group.
+Returns the root group ID, or signals an error."
   (unless (and org-canvas-outcomes-file (file-exists-p org-canvas-outcomes-file))
     (error "Outcomes file not found: %s" org-canvas-outcomes-file))
-
   (display-buffer (get-buffer-create "*canvas-log*"))
   (elog-info org-canvas--logger "========================================")
   (elog-info org-canvas--logger ">>> STARTING OUTCOME SYNC")
   (elog-info org-canvas--logger "File: %s" org-canvas-outcomes-file)
   (elog-info org-canvas--logger "Course: %s | URL: %s" org-canvas-course-id org-canvas-base-url)
   (elog-info org-canvas--logger "========================================")
-
-  ;; Get root outcome group
   (elog-info org-canvas--logger "[Pre-flight] Fetching root outcome group...")
-  (let ((root-group-id (org-canvas--outcome-get-root-group-id))
-        (group-success 0))
+  (let ((root-group-id (org-canvas--outcome-get-root-group-id)))
     (unless root-group-id
       (error "Could not get root outcome group for course"))
     (elog-info org-canvas--logger "[Pre-flight] Root group ID: %s" root-group-id)
+    root-group-id))
 
+;;;###autoload
+(defun org-canvas-sync-outcomes ()
+  "Synchronize all outcomes to Canvas.
+First syncs outcome groups (level-1 headings), then outcomes (level-2 headings)."
+  (interactive)
+  (org-canvas-clear-log)
+  (let ((root-group-id (org-canvas--outcome-sync-preflight))
+        (group-success 0))
     ;; Phase 1: Sync outcome groups (level-1 headings)
     (elog-info org-canvas--logger "========================================")
     (elog-info org-canvas--logger "Phase 1: Syncing Outcome Groups")
     (elog-info org-canvas--logger "========================================")
-
     (let ((group-counts
            (org-canvas--outcome-sync-phase
             org-canvas-outcomes-file 1 "Outcome Groups"
@@ -393,21 +394,15 @@ First syncs outcome groups (level-1 headings), then outcomes (level-2 headings).
                      (response (org-canvas--outcome-group-push-to-api data root-group-id)))
                 (org-canvas--outcome-group-finalize data response)
                 (plist-get data :title))))))
-
       (setq group-success (car group-counts))
-
-      ;; Save after groups are synced
       (with-current-buffer (find-file-noselect org-canvas-outcomes-file)
         (save-buffer))
-
       (elog-info org-canvas--logger "Groups: %d success, %d failed"
         (car group-counts) (cdr group-counts)))
-
     ;; Phase 2: Sync outcomes (level-2 headings)
     (elog-info org-canvas--logger "========================================")
     (elog-info org-canvas--logger "Phase 2: Syncing Outcomes")
     (elog-info org-canvas--logger "========================================")
-
     (let ((outcome-counts
            (org-canvas--outcome-sync-phase
             org-canvas-outcomes-file 2 "Outcomes"
@@ -416,12 +411,9 @@ First syncs outcome groups (level-1 headings), then outcomes (level-2 headings).
                      (response (org-canvas--outcome-push-to-api data)))
                 (org-canvas--outcome-finalize data response)
                 (plist-get data :title))))))
-
-      ;; Save after outcomes are synced
       (with-current-buffer (find-file-noselect org-canvas-outcomes-file)
         (save-buffer)
         (elog-info org-canvas--logger "Saved %s" org-canvas-outcomes-file))
-
       (elog-info org-canvas--logger "========================================")
       (elog-info org-canvas--logger ">>> OUTCOME SYNC COMPLETE")
       (elog-info org-canvas--logger "Groups: %d | Outcomes: %d"
