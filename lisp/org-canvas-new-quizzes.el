@@ -68,17 +68,17 @@ New Quizzes use /api/quiz/v1/ instead of /api/v1/."
 
 (defconst org-canvas--new-quiz-type-slugs
   '(("choice"             . "choice")
-    ("true-false"          . "true_false")
-    ("multi-answer"        . "multi_answer")
-    ("short-answer"        . "short_answer")
+    ("true-false"          . "true-false")
+    ("multi-answer"        . "multi-answer")
     ("essay"               . "essay")
-    ("file-upload"         . "file_upload")
-    ("numerical"           . "numerical")
+    ("short-answer"        . "essay")
+    ("file-upload"         . "file-upload")
+    ("numerical"           . "numeric")
     ("matching"            . "matching")
     ("ordering"            . "ordering")
     ("categorization"      . "categorization")
-    ("fill-in-the-blank"   . "fill_in_the_blank")
-    ("hot-spot"            . "hot_spot"))
+    ("fill-in-the-blank"   . "rich-fill-blank")
+    ("hot-spot"            . "hot-spot"))
   "Map from Org TYPE property values to New Quizzes interaction_type_slug.")
 
 (defconst org-canvas--new-quiz-valid-types
@@ -88,6 +88,26 @@ New Quizzes use /api/quiz/v1/ instead of /api/v1/."
 (defconst org-canvas--new-quiz-valid-scoring-policies
   '("keep_highest" "keep_latest" "keep_average")
   "Valid SCORING_POLICY values for New Quizzes.")
+
+(defconst org-canvas--new-quiz-scoring-algorithms
+  '(("choice"             . "Equivalence")
+    ("true-false"          . "Equivalence")
+    ("multi-answer"        . "AllOrNothing")
+    ("matching"            . "DeepEquals")
+    ("ordering"            . "DeepEquals")
+    ("categorization"      . "Categorization")
+    ("numerical"           . "Numeric")
+    ("fill-in-the-blank"   . "Equivalence")
+    ("short-answer"        . "None")
+    ("essay"               . "None")
+    ("file-upload"         . "None")
+    ("hot-spot"            . "None"))
+  "Map from Org TYPE property values to New Quizzes scoring_algorithm.")
+
+(defun org-canvas--new-quiz-item-scoring-algorithm (q-type)
+  "Return the scoring_algorithm string for Q-TYPE."
+  (or (cdr (assoc q-type org-canvas--new-quiz-scoring-algorithms))
+      "Equivalence"))
 
 ;;;; Helper Functions
 
@@ -260,13 +280,18 @@ Supports: exact value, or [min, max] range."
 (cl-defun org-canvas--new-quiz-push-to-api (data payload)
   "Send New Quiz PAYLOAD (from DATA) to Canvas API.
 Uses POST for new quizzes and PATCH for existing ones.
+PAYLOAD is the inner quiz data; it is wrapped under a \"quiz\" key
+as required by the New Quizzes API.
 Returns response with assignment_id."
   (let* ((id (plist-get data :canvas-id))
          (title (plist-get data :title))
          (method (if id 'PATCH 'POST))
          (endpoint (if id
                        (org-canvas--new-quiz-api-endpoint "quizzes/%s" id)
-                     (org-canvas--new-quiz-api-endpoint "quizzes"))))
+                     (org-canvas--new-quiz-api-endpoint "quizzes")))
+         (wrapped (let ((ht (make-hash-table :test 'equal)))
+                    (puthash "quiz" payload ht)
+                    ht)))
 
     (when org-canvas--dry-run
       (elog-info org-canvas--logger "[DRY-RUN] Would %s New Quiz '%s' to %s"
@@ -277,7 +302,7 @@ Returns response with assignment_id."
     (elog-info org-canvas--logger "[New Quiz API] %s '%s'" method title)
 
     (condition-case err
-        (let ((response (org-canvas-api-request method endpoint :data payload)))
+        (let ((response (org-canvas-api-request method endpoint :data wrapped)))
           (elog-info org-canvas--logger "[New Quiz API] %s successful for '%s'"
             method title)
           response)
@@ -294,7 +319,7 @@ Returns response with assignment_id."
              (let ((response (org-canvas-api-request
                               'POST
                               (org-canvas--new-quiz-api-endpoint "quizzes")
-                              :data payload)))
+                              :data wrapped)))
                (elog-info org-canvas--logger "[Recovery] POST successful")
                response)
            (error
@@ -305,7 +330,8 @@ Returns response with assignment_id."
 
 (defun org-canvas--new-quiz-finalize (data response)
   "Save New Quiz pointed to in DATA with CANVAS_ASSIGNMENT_ID from RESPONSE."
-  (let* ((id (alist-get 'assignment_id response))
+  (let* ((id (or (alist-get 'assignment_id response)
+                 (alist-get 'id response)))
          (pom (plist-get data :pom))
          (title (plist-get data :title)))
     (unless pom
@@ -409,32 +435,52 @@ QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
       (scoring_data . ((value . ,(vconcat (mapcar (lambda (c) (alist-get 'id c)) choices))))))))
 
 (defun org-canvas--new-quiz-item-build-categorization-data (categories)
-  "Build interaction_data for categorization question from CATEGORIES."
-  (let ((cats nil)
+  "Build interaction_data for categorization question from CATEGORIES.
+Canvas expects categories and distractors as keyed objects (hash-tables),
+not arrays.  category_order is an array of category IDs."
+  (let ((cats-ht (make-hash-table :test 'equal))
+        (distractors-ht (make-hash-table :test 'equal))
+        (cat-order nil)
         (all-items nil))
     (cl-loop for (cat . items) in categories
              for ci from 0
              do (let ((cat-id (format "cat_%d" ci)))
-                  (push `((id . ,cat-id)
-                          (item_body . ,cat))
-                        cats)
+                  (push cat-id cat-order)
+                  (puthash cat-id `((id . ,cat-id) (item_body . ,cat)) cats-ht)
                   (cl-loop for item in items
                            for ii from 0
-                           do (push `((id . ,(format "item_%d_%d" ci ii))
-                                      (item_body . ,item)
-                                      (scoring_data . ((value . ,cat-id))))
-                                    all-items))))
-    `((categories . ,(vconcat (nreverse cats)))
-      (items . ,(vconcat (nreverse all-items))))))
+                           do (let ((item-id (format "item_%d_%d" ci ii)))
+                                (puthash item-id
+                                         `((id . ,item-id) (item_body . ,item))
+                                         distractors-ht)
+                                (push `((id . ,item-id)
+                                        (item_body . ,item)
+                                        (scoring_data . ((value . ,cat-id))))
+                                      all-items)))))
+    (setq cat-order (nreverse cat-order))
+    ;; Return alist with hash-table categories/distractors + array cat-order
+    ;; Also include _flat-distractors for scoring_data builder
+    `((categories . ,cats-ht)
+      (distractors . ,distractors-ht)
+      (category_order . ,(vconcat cat-order))
+      (_flat_distractors . ,(vconcat (nreverse all-items))))))
 
 (defun org-canvas--new-quiz-item-build-numerical-data (num)
-  "Build interaction_data for numerical question from NUM plist."
+  "Build interaction_data for numerical question from NUM plist.
+Canvas numeric scoring_data.value is an array of answer objects:
+  exactResponse: {id, type, value}
+  withinARange:  {id, type, start, end}"
   (if (eq (plist-get num :type) 'range)
       `((scoring_data
-         . ((value . ,(plist-get num :start))
-            (range_start . ,(plist-get num :start))
-            (range_end . ,(plist-get num :end)))))
-    `((scoring_data . ((value . ,(plist-get num :value)))))))
+         . ((value . ,(vector `((id . "1")
+                                (type . "withinARange")
+                                (start . ,(number-to-string (plist-get num :start)))
+                                (end . ,(number-to-string (plist-get num :end)))))))))
+    `((scoring_data
+       . ((value . ,(vector `((id . "1")
+                               (type . "exactResponse")
+                               (value . ,(number-to-string
+                                          (plist-get num :value)))))))))))
 
 (defun org-canvas--new-quiz-item-build-fill-blank-data (answers)
   "Build interaction_data for fill-in-the-blank question from ANSWERS."
@@ -460,8 +506,7 @@ Returns an alist that will be JSON-encoded."
        (org-canvas--new-quiz-item-build-fill-blank-data
         (org-canvas--new-quiz-parse-checkbox-list))))
     ("short-answer"
-     (org-canvas--new-quiz-item-build-short-answer-data
-      (org-canvas--new-quiz-parse-checkbox-list)))
+     nil)
     ("matching"
      (org-canvas--new-quiz-item-build-matching-data
       (org-canvas--new-quiz-parse-matching-list)))
@@ -479,23 +524,101 @@ Returns an alist that will be JSON-encoded."
      nil)
     (_ nil)))
 
+;;;; Item Scoring Data
+
+(defun org-canvas--new-quiz-item-build-scoring-data (q-type interaction-data)
+  "Build top-level scoring_data for Q-TYPE from INTERACTION-DATA.
+Returns (SCORING-DATA . CLEANED-INTERACTION-DATA) where
+CLEANED-INTERACTION-DATA has embedded scoring_data removed to
+avoid duplication in the API payload."
+  (pcase q-type
+    ;; Types with top-level scoring_data in interaction-data: extract and remove
+    ((or "true-false" "ordering" "numerical" "fill-in-the-blank")
+     (let ((sd (alist-get 'scoring_data interaction-data)))
+       (cons sd (assq-delete-all 'scoring_data interaction-data))))
+
+    ;; Choice: find the single correct choice
+    ("choice"
+     (let (correct-id)
+       (dolist (c (append (alist-get 'choices interaction-data) nil))
+         (when (eq 1 (alist-get 'value (alist-get 'scoring_data c)))
+           (setq correct-id (alist-get 'id c))))
+       (cons `((value . ,correct-id)) interaction-data)))
+
+    ;; Multi-answer: collect all correct choice IDs
+    ("multi-answer"
+     (let (ids)
+       (dolist (c (append (alist-get 'choices interaction-data) nil))
+         (when (eq 1 (alist-get 'value (alist-get 'scoring_data c)))
+           (push (alist-get 'id c) ids)))
+       (cons `((value . ,(vconcat (nreverse ids)))) interaction-data)))
+
+    ;; Matching: build stem->choice map, strip scoring from stems
+    ("matching"
+     (let ((value (make-hash-table :test 'equal))
+           cleaned)
+       (dolist (stem (append (alist-get 'stems interaction-data) nil))
+         (puthash (alist-get 'id stem)
+                  (alist-get 'value (alist-get 'scoring_data stem))
+                  value)
+         (push (cl-remove-if (lambda (pair) (eq (car pair) 'scoring_data)) stem)
+               cleaned))
+       (setf (alist-get 'stems interaction-data) (vconcat (nreverse cleaned)))
+       (cons `((value . ,value)) interaction-data)))
+
+    ;; Categorization: build per-category scoring from _flat_distractors
+    ("categorization"
+     (let ((cat-items (make-hash-table :test 'equal))
+           cat-scoring)
+       ;; Collect which distractor IDs belong to which category
+       (dolist (item (append (alist-get '_flat_distractors interaction-data) nil))
+         (let ((cat-id (alist-get 'value (alist-get 'scoring_data item))))
+           (push (alist-get 'id item) (gethash cat-id cat-items))))
+       ;; Build per-category scoring entries in category_order
+       (dolist (cid (append (alist-get 'category_order interaction-data) nil))
+         (push `((id . ,cid)
+                 (scoring_data
+                  . ((value . ,(vconcat (nreverse (gethash cid cat-items))))))
+                 (scoring_algorithm . "AllOrNothing"))
+               cat-scoring))
+       ;; Remove _flat_distractors from interaction-data (internal only)
+       (setq interaction-data
+             (cl-remove-if (lambda (pair) (eq (car pair) '_flat_distractors))
+                           interaction-data))
+       (cons `((value . ,(vconcat (nreverse cat-scoring)))) interaction-data)))
+
+    ;; Essay, file-upload, hot-spot, unknown
+    (_
+     (cons `((value . "")) interaction-data))))
+
 ;;;; Item Build Payload
 
 (defun org-canvas--new-quiz-item-build-payload (data)
   "Build Canvas API payload from New Quiz item DATA."
   (let* ((q-type (plist-get data :type))
          (slug (or (cdr (assoc q-type org-canvas--new-quiz-type-slugs)) q-type))
+         (question-text (let ((body (or (plist-get data :text) "")))
+                          (if (string-empty-p body)
+                              (plist-get data :title)
+                            (concat (plist-get data :title) "\n\n" body))))
          (text-html (let ((org-export-with-sub-superscripts nil))
-                      (org-export-string-as (plist-get data :text) 'html t)))
+                      (org-export-string-as question-text 'html t)))
          (interaction-data (save-excursion
                              (goto-char (marker-position (plist-get data :pom)))
                              (org-canvas--new-quiz-item-build-interaction-data q-type)))
+         (scoring-result (org-canvas--new-quiz-item-build-scoring-data
+                          q-type interaction-data))
+         (scoring-data (car scoring-result))
+         (interaction-data (cdr scoring-result))
+         (scoring-algorithm (org-canvas--new-quiz-item-scoring-algorithm q-type))
          (payload (make-hash-table :test 'equal)))
 
     (puthash "item_body" text-html payload)
     (puthash "interaction_type_slug" slug payload)
     (puthash "points_possible" (plist-get data :points) payload)
     (puthash "entry_type" "Item" payload)
+    (puthash "scoring_data" scoring-data payload)
+    (puthash "scoring_algorithm" scoring-algorithm payload)
 
     (when interaction-data
       (puthash "interaction_data" interaction-data payload))
@@ -504,8 +627,12 @@ Returns an alist that will be JSON-encoded."
 
 ;;;; Item Push to API
 
-(defun org-canvas--new-quiz-item-push-to-api (data payload)
-  "Send New Quiz item PAYLOAD (from DATA) to Canvas API."
+(cl-defun org-canvas--new-quiz-item-push-to-api (data payload)
+  "Send New Quiz item PAYLOAD (from DATA) to Canvas API.
+PAYLOAD is the flat item data from `build-payload'.  It is restructured
+into the nested format required by the New Quizzes Items API:
+  {\"item\": {\"entry_type\": ..., \"points_possible\": ...,
+              \"entry\": {\"item_body\": ..., \"interaction_type_slug\": ..., ...}}}"
   (let* ((quiz-id (plist-get data :quiz-assignment-id))
          (item-id (plist-get data :canvas-id))
          (title (plist-get data :title))
@@ -514,16 +641,56 @@ Returns an alist that will be JSON-encoded."
                        (org-canvas--new-quiz-api-endpoint
                         "quizzes/%s/items/%s" quiz-id item-id)
                      (org-canvas--new-quiz-api-endpoint
-                      "quizzes/%s/items" quiz-id))))
+                      "quizzes/%s/items" quiz-id)))
+         ;; Restructure flat payload into nested item > entry format
+         (entry (make-hash-table :test 'equal))
+         (item (make-hash-table :test 'equal))
+         (wrapped (make-hash-table :test 'equal)))
+
+    ;; Entry-level fields (inside item.entry)
+    (puthash "item_body" (gethash "item_body" payload) entry)
+    (puthash "interaction_type_slug" (gethash "interaction_type_slug" payload) entry)
+    (when (gethash "interaction_data" payload)
+      (puthash "interaction_data" (gethash "interaction_data" payload) entry))
+    (when (gethash "scoring_data" payload)
+      (puthash "scoring_data" (gethash "scoring_data" payload) entry))
+    (when (gethash "scoring_algorithm" payload)
+      (puthash "scoring_algorithm" (gethash "scoring_algorithm" payload) entry))
+
+    ;; Item-level fields
+    (puthash "entry_type" (gethash "entry_type" payload) item)
+    (puthash "points_possible" (gethash "points_possible" payload) item)
+    (puthash "entry" entry item)
+
+    (puthash "item" item wrapped)
 
     (elog-info org-canvas--logger "[New Quiz Item API] %s '%s'" method title)
 
     (condition-case err
-        (org-canvas-api-request method endpoint :data payload)
+        (let ((response (org-canvas-api-request method endpoint :data wrapped)))
+          (elog-info org-canvas--logger "[New Quiz Item API] %s successful for '%s'"
+            method title)
+          response)
       (error
        (elog-error org-canvas--logger "[New Quiz Item API] Failed: %s"
          (error-message-string err))
-       (signal (car err) (cdr err))))))
+       (cond
+        ;; 404 on PATCH -> retry as POST (stale CANVAS_ITEM_ID)
+        ((and (eq method 'PATCH)
+              (string-match-p "404" (error-message-string err)))
+         (elog-warning org-canvas--logger
+           "[Recovery] Item not found (404). Retrying as POST...")
+         (condition-case post-err
+             (let ((response (org-canvas-api-request
+                              'POST
+                              (org-canvas--new-quiz-api-endpoint
+                               "quizzes/%s/items" quiz-id)
+                              :data wrapped)))
+               (elog-info org-canvas--logger "[Recovery] POST successful")
+               response)
+           (error
+            (signal (car post-err) (cdr post-err)))))
+        (t (signal (car err) (cdr err))))))))
 
 ;;;; Item Finalize
 
@@ -626,6 +793,7 @@ QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
 
                 ;; Now sync items under this quiz
                 (let ((quiz-id (or (alist-get 'assignment_id response)
+                                   (alist-get 'id response)
                                    (plist-get data :canvas-id))))
                   (when quiz-id
                     (let ((q-results (org-canvas--sync-new-quiz-items
@@ -670,6 +838,7 @@ QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
          (response (org-canvas--new-quiz-push-to-api data payload)))
     (org-canvas--new-quiz-finalize data response)
     (let ((quiz-id (or (alist-get 'assignment_id response)
+                       (alist-get 'id response)
                        (plist-get data :canvas-id))))
       (when quiz-id
         (org-canvas--sync-new-quiz-items (point-marker) quiz-id)))
@@ -696,7 +865,8 @@ QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
     (elog-info org-canvas--logger "Found %d new-quizzes on Canvas"
       (length remote-items))
     (dolist (item remote-items)
-      (let* ((id (alist-get 'assignment_id item))
+      (let* ((id (or (alist-get 'assignment_id item)
+                     (alist-get 'id item)))
              (title (alist-get 'title item))
              (del-url (org-canvas--new-quiz-api-endpoint "quizzes/%s" id)))
         (condition-case err
@@ -716,7 +886,8 @@ QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
 
 (defun org-canvas--new-quiz-pull-set-properties (pos quiz)
   "Set all properties on heading at POS from New Quiz API response QUIZ."
-  (let ((assignment-id (alist-get 'assignment_id quiz))
+  (let ((assignment-id (or (alist-get 'assignment_id quiz)
+                          (alist-get 'id quiz)))
         (time-limit (alist-get 'time_limit quiz))
         (shuffle (alist-get 'shuffle_answers quiz))
         (one-at-a-time (alist-get 'one_at_a_time quiz))
@@ -789,7 +960,8 @@ QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
       (with-temp-file file (insert "")))
     (with-current-buffer (find-file-noselect file)
       (dolist (quiz remote)
-        (let* ((assignment-id (alist-get 'assignment_id quiz))
+        (let* ((assignment-id (or (alist-get 'assignment_id quiz)
+                                  (alist-get 'id quiz)))
                (title (alist-get 'title quiz))
                (pos (org-canvas--pull-upsert-heading
                      file assignment-id title "CANVAS_ASSIGNMENT_ID")))

@@ -1,9 +1,0 @@
-18:33:22.171| [ERROR] <org-canvas> [FAILED] Test: Something went wrong
-18:44:01.260| [INFO] <org-canvas> ========================================
-18:44:01.260| [INFO] <org-canvas> >>> STARTING GLOBAL SYNC
-18:44:01.261| [INFO] <org-canvas> Course: 287239 | URL: https://clemson.instructure.com
-18:44:01.261| [INFO] <org-canvas> ========================================
-18:44:01.261| [INFO] <org-canvas> [Note] Same-tier cross-references (e.g., page→page) may require a second sync to fully resolve
-18:44:01.282| [INFO] <org-canvas> ========================================
-18:44:01.283| [INFO] <org-canvas> >>> GLOBAL SYNC COMPLETE
-18:44:01.283| [INFO] <org-canvas> ========================================

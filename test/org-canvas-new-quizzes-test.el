@@ -334,6 +334,20 @@ Quiz description.
           (org-canvas--new-quiz-push-to-api data payload)
           (expect-api-called 'POST "quizzes")))))
 
+  (it "wraps payload under quiz key"
+    (with-org-canvas-test-config
+      (let (sent-data)
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_method _url &rest args)
+                     (setq sent-data (plist-get args :data))
+                     '((assignment_id . 1)))))
+          (let* ((data (list :title "Wrap Test" :canvas-id nil :pom (point-marker)))
+                 (payload (make-hash-table :test 'equal)))
+            (puthash "title" "Wrap Test" payload)
+            (org-canvas--new-quiz-push-to-api data payload)
+            (expect (hash-table-p sent-data) :to-be t)
+            (expect (gethash "quiz" sent-data) :to-equal payload))))))
+
   (it "uses PATCH for existing quizzes"
     (with-org-canvas-test-config
       (with-mock-api
@@ -430,7 +444,19 @@ Quiz description.
        (expect (org-entry-get pom "CANVAS_UPDATED_AT")
                :to-equal "2026-02-14T12:00:00Z"))))
 
-  (it "errors when no assignment_id in response"
+  (it "falls back to id when assignment_id missing"
+    (with-temp-org-buffer
+     "* Fallback Test
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (let* ((pom (point-marker))
+            (data (list :title "Fallback Test" :pom pom)))
+       (org-canvas--new-quiz-finalize data '((id . 42)))
+       (expect (org-entry-get pom "CANVAS_ASSIGNMENT_ID") :to-equal "42"))))
+
+  (it "errors when neither assignment_id nor id in response"
     (with-temp-org-buffer
      "* Error Test
 :PROPERTIES:
@@ -439,7 +465,7 @@ Quiz description.
      (org-back-to-heading)
      (let* ((pom (point-marker))
             (data (list :title "Error Test" :pom pom)))
-       (expect (org-canvas--new-quiz-finalize data '((id . 42)))
+       (expect (org-canvas--new-quiz-finalize data '((title . "foo")))
                :to-throw 'error))))
 
   (it "errors when pom is missing"
@@ -592,33 +618,53 @@ Quiz description.
         (expect (nth 0 value) :to-equal "item_0")))))
 
 (describe "org-canvas--new-quiz-item-build-categorization-data"
-  (it "builds categories and items"
+  (it "builds categories and distractors as keyed objects"
     (let ((data (org-canvas--new-quiz-item-build-categorization-data
                  '(("Fruit" . ("apple" "banana"))
                    ("Vegetable" . ("carrot"))))))
-      (let ((cats (append (alist-get 'categories data) nil))
-            (items (append (alist-get 'items data) nil)))
-        (expect (length cats) :to-equal 2)
-        (expect (alist-get 'item_body (nth 0 cats)) :to-equal "Fruit")
-        (expect (length items) :to-equal 3)
-        (expect (alist-get 'item_body (nth 0 items)) :to-equal "apple")
-        ;; Items linked to their category
-        (expect (alist-get 'value (alist-get 'scoring_data (nth 0 items)))
-                :to-equal "cat_0")))))
+      (let ((cats-ht (alist-get 'categories data))
+            (dist-ht (alist-get 'distractors data))
+            (cat-order (append (alist-get 'category_order data) nil))
+            (flat (append (alist-get '_flat_distractors data) nil)))
+        ;; Categories is a hash-table keyed by ID
+        (expect (hash-table-p cats-ht) :to-be t)
+        (expect (hash-table-count cats-ht) :to-equal 2)
+        (expect (alist-get 'item_body (gethash "cat_0" cats-ht)) :to-equal "Fruit")
+        ;; Distractors is a hash-table keyed by ID
+        (expect (hash-table-p dist-ht) :to-be t)
+        (expect (hash-table-count dist-ht) :to-equal 3)
+        (expect (alist-get 'item_body (gethash "item_0_0" dist-ht)) :to-equal "apple")
+        ;; _flat_distractors has scoring_data for scoring builder
+        (expect (length flat) :to-equal 3)
+        (expect (alist-get 'value (alist-get 'scoring_data (nth 0 flat)))
+                :to-equal "cat_0")
+        ;; category_order lists category IDs in order
+        (expect cat-order :to-equal '("cat_0" "cat_1"))))))
 
 (describe "org-canvas--new-quiz-item-build-numerical-data"
-  (it "builds exact numerical data"
-    (let ((data (org-canvas--new-quiz-item-build-numerical-data
-                 '(:type exact :value 42))))
-      (expect (alist-get 'value (alist-get 'scoring_data data))
-              :to-equal 42)))
+  (it "builds exact numerical data as answer object array"
+    (let* ((data (org-canvas--new-quiz-item-build-numerical-data
+                  '(:type exact :value 42)))
+           (sd (alist-get 'scoring_data data))
+           (answers (append (alist-get 'value sd) nil))
+           (ans (nth 0 answers)))
+      (expect (length answers) :to-equal 1)
+      (let ((ans-type (alist-get 'type ans)))
+        (expect ans-type :to-equal "exactResponse"))
+      (expect (alist-get 'value ans) :to-equal "42")
+      (expect (alist-get 'id ans) :to-equal "1")))
 
-  (it "builds range numerical data"
-    (let ((data (org-canvas--new-quiz-item-build-numerical-data
-                 '(:type range :start 10 :end 20))))
-      (let ((sd (alist-get 'scoring_data data)))
-        (expect (alist-get 'range_start sd) :to-equal 10)
-        (expect (alist-get 'range_end sd) :to-equal 20)))))
+  (it "builds range numerical data as answer object array"
+    (let* ((data (org-canvas--new-quiz-item-build-numerical-data
+                  '(:type range :start 10 :end 20)))
+           (sd (alist-get 'scoring_data data))
+           (answers (append (alist-get 'value sd) nil))
+           (ans (nth 0 answers)))
+      (expect (length answers) :to-equal 1)
+      (let ((ans-type (alist-get 'type ans)))
+        (expect ans-type :to-equal "withinARange"))
+      (expect (alist-get 'start ans) :to-equal "10")
+      (expect (alist-get 'end ans) :to-equal "20"))))
 
 (describe "org-canvas--new-quiz-item-build-fill-blank-data"
   (it "includes only correct answers"
@@ -690,20 +736,17 @@ Quiz description.
      (let ((data (org-canvas--new-quiz-item-build-interaction-data "fill-in-the-blank")))
        (expect (alist-get 'scoring_data data) :to-be-truthy))))
 
-  (it "dispatches to short-answer builder"
+  (it "returns nil for short-answer type (mapped to essay)"
     (with-temp-org-buffer
      "* Quiz
 ** SA
 :PROPERTIES:
 :END:
-
-- [X] Paris
-- [X] paris
 "
      (search-forward "SA")
      (org-back-to-heading)
-     (let ((data (org-canvas--new-quiz-item-build-interaction-data "short-answer")))
-       (expect (alist-get 'scoring_data data) :to-be-truthy))))
+     (expect (org-canvas--new-quiz-item-build-interaction-data "short-answer")
+             :to-be nil)))
 
   (it "dispatches to matching builder"
     (with-temp-org-buffer
@@ -800,6 +843,129 @@ Quiz description.
      (expect (org-canvas--new-quiz-item-build-interaction-data "nonexistent")
              :to-be nil))))
 
+;;;; Item Scoring Data
+
+(describe "org-canvas--new-quiz-item-build-scoring-data"
+  (it "extracts correct choice ID for choice type"
+    (let* ((idata `((choices . ,(vconcat
+                                 '(((id . "choice_0") (scoring_data . ((value . 1))))
+                                   ((id . "choice_1") (scoring_data . ((value . 0)))))))))
+           (result (org-canvas--new-quiz-item-build-scoring-data "choice" idata))
+           (sd (car result)))
+      (expect (alist-get 'value sd) :to-equal "choice_0")))
+
+  (it "collects all correct IDs for multi-answer type"
+    (let* ((idata `((choices . ,(vconcat
+                                 '(((id . "choice_0") (scoring_data . ((value . 1))))
+                                   ((id . "choice_1") (scoring_data . ((value . 0))))
+                                   ((id . "choice_2") (scoring_data . ((value . 1)))))))))
+           (result (org-canvas--new-quiz-item-build-scoring-data "multi-answer" idata))
+           (sd (car result)))
+      (expect (append (alist-get 'value sd) nil)
+              :to-equal '("choice_0" "choice_2"))))
+
+  (it "extracts and removes scoring_data from true-false"
+    (let* ((idata `((true_choice . ((id . "true") (position . 1)))
+                    (false_choice . ((id . "false") (position . 2)))
+                    (scoring_data . ((value . "true")))))
+           (result (org-canvas--new-quiz-item-build-scoring-data "true-false" idata))
+           (sd (car result))
+           (cleaned (cdr result)))
+      (expect (alist-get 'value sd) :to-equal "true")
+      (expect (alist-get 'scoring_data cleaned) :to-be nil)))
+
+  (it "returns empty value for short-answer (mapped to essay)"
+    (let* ((result (org-canvas--new-quiz-item-build-scoring-data "short-answer" nil))
+           (sd (car result)))
+      (expect (alist-get 'value sd) :to-equal "")))
+
+  (it "extracts scoring_data from ordering and removes it"
+    (let* ((idata `((choices . ,(vconcat '(((id . "item_0") (position . 1) (item_body . "First"))
+                                           ((id . "item_1") (position . 2) (item_body . "Second")))))
+                    (scoring_data . ((value . ,(vector "item_0" "item_1"))))))
+           (result (org-canvas--new-quiz-item-build-scoring-data "ordering" idata))
+           (sd (car result))
+           (cleaned (cdr result)))
+      (expect (alist-get 'value sd) :to-be-truthy)
+      (expect (alist-get 'scoring_data cleaned) :to-be nil)
+      (expect (alist-get 'choices cleaned) :to-be-truthy)))
+
+  (it "builds stem-to-choice map for matching"
+    (let* ((idata `((stems . ,(vconcat
+                               '(((id . "stem_0") (item_body . "DNA")
+                                  (scoring_data . ((value . "choice_0"))))
+                                 ((id . "stem_1") (item_body . "RNA")
+                                  (scoring_data . ((value . "choice_1")))))))
+                    (choices . ,(vconcat
+                                '(((id . "choice_0") (item_body . "Deoxy"))
+                                  ((id . "choice_1") (item_body . "Ribo")))))))
+           (result (org-canvas--new-quiz-item-build-scoring-data "matching" idata))
+           (sd (car result))
+           (cleaned (cdr result)))
+      ;; scoring_data value is a hash-table mapping stem IDs to choice IDs
+      (expect (hash-table-p (alist-get 'value sd)) :to-be t)
+      (expect (gethash "stem_0" (alist-get 'value sd)) :to-equal "choice_0")
+      (expect (gethash "stem_1" (alist-get 'value sd)) :to-equal "choice_1")
+      ;; stems should have scoring_data stripped
+      (let ((stems (append (alist-get 'stems cleaned) nil)))
+        (expect (alist-get 'scoring_data (nth 0 stems)) :to-be nil))))
+
+  (it "builds per-category scoring for categorization"
+    (let* ((cats-ht (make-hash-table :test 'equal))
+           (dist-ht (make-hash-table :test 'equal)))
+      (puthash "cat_0" '((id . "cat_0") (item_body . "Fruit")) cats-ht)
+      (puthash "cat_1" '((id . "cat_1") (item_body . "Veg")) cats-ht)
+      (puthash "item_0_0" '((id . "item_0_0") (item_body . "apple")) dist-ht)
+      (puthash "item_1_0" '((id . "item_1_0") (item_body . "carrot")) dist-ht)
+      (let* ((idata `((categories . ,cats-ht)
+                      (distractors . ,dist-ht)
+                      (category_order . ,(vector "cat_0" "cat_1"))
+                      (_flat_distractors
+                       . ,(vconcat
+                           '(((id . "item_0_0") (item_body . "apple")
+                              (scoring_data . ((value . "cat_0"))))
+                             ((id . "item_1_0") (item_body . "carrot")
+                              (scoring_data . ((value . "cat_1")))))))))
+             (result (org-canvas--new-quiz-item-build-scoring-data "categorization" idata))
+             (sd (car result))
+             (cleaned (cdr result)))
+        ;; scoring_data value is a vector of per-category entries
+        (let ((cats (append (alist-get 'value sd) nil)))
+          (expect (length cats) :to-equal 2)
+          (expect (alist-get 'id (nth 0 cats)) :to-equal "cat_0")
+          (expect (alist-get 'scoring_algorithm (nth 0 cats)) :to-equal "AllOrNothing"))
+        ;; _flat_distractors should be removed from cleaned data
+        (expect (alist-get '_flat_distractors cleaned) :to-be nil)
+        ;; categories hash-table should still be present
+        (expect (hash-table-p (alist-get 'categories cleaned)) :to-be t))))
+
+  (it "returns empty value for essay"
+    (let* ((result (org-canvas--new-quiz-item-build-scoring-data "essay" nil))
+           (sd (car result)))
+      (expect (alist-get 'value sd) :to-equal "")))
+
+  (it "returns empty value for file-upload"
+    (let* ((result (org-canvas--new-quiz-item-build-scoring-data "file-upload" nil))
+           (sd (car result)))
+      (expect (alist-get 'value sd) :to-equal "")))
+
+  (it "extracts scoring_data from numerical exact"
+    (let* ((answer-obj `((id . "1") (type . "exactResponse") (value . "42")))
+           (idata `((scoring_data . ((value . ,(vector answer-obj))))))
+           (result (org-canvas--new-quiz-item-build-scoring-data "numerical" idata))
+           (sd (car result))
+           (cleaned (cdr result)))
+      (expect (alist-get 'value sd) :to-be-truthy)
+      (expect (alist-get 'scoring_data cleaned) :to-be nil)))
+
+  (it "extracts scoring_data from fill-in-the-blank"
+    (let* ((idata `((scoring_data . ((value . ,(vector "answer1" "answer2"))))))
+           (result (org-canvas--new-quiz-item-build-scoring-data "fill-in-the-blank" idata))
+           (sd (car result))
+           (cleaned (cdr result)))
+      (expect (alist-get 'value sd) :to-be-truthy)
+      (expect (alist-get 'scoring_data cleaned) :to-be nil))))
+
 ;;;; Item Build Payload
 
 (describe "org-canvas--new-quiz-item-build-payload"
@@ -826,8 +992,12 @@ Quiz description.
        (expect (gethash "interaction_type_slug" payload) :to-equal "choice")
        (expect (gethash "points_possible" payload) :to-equal 5)
        (expect (gethash "entry_type" payload) :to-equal "Item")
-       (expect (gethash "item_body" payload) :to-be-truthy)
-       (expect (gethash "interaction_data" payload) :to-be-truthy))))
+       ;; item_body uses title as question stem when text is empty
+       (expect (gethash "item_body" payload) :to-match "What is 2\\+2")
+       (expect (gethash "interaction_data" payload) :to-be-truthy)
+       ;; scoring fields
+       (expect (gethash "scoring_data" payload) :to-be-truthy)
+       (expect (gethash "scoring_algorithm" payload) :to-equal "Equivalence"))))
 
   (it "maps type to correct API slug"
     (with-temp-org-buffer
@@ -848,7 +1018,9 @@ Quiz description.
                         :points 1
                         :pom (point-marker)))
             (payload (org-canvas--new-quiz-item-build-payload data)))
-       (expect (gethash "interaction_type_slug" payload) :to-equal "true_false"))))
+       (expect (gethash "interaction_type_slug" payload) :to-equal "true-false")
+       (expect (gethash "scoring_algorithm" payload) :to-equal "Equivalence")
+       (expect (gethash "scoring_data" payload) :to-be-truthy))))
 
   (it "omits interaction_data for essay"
     (with-temp-org-buffer
@@ -866,7 +1038,50 @@ Quiz description.
                         :points 10
                         :pom (point-marker)))
             (payload (org-canvas--new-quiz-item-build-payload data)))
-       (expect (gethash "interaction_data" payload nil) :to-be nil)))))
+       (expect (gethash "interaction_data" payload nil) :to-be nil)
+       (expect (gethash "scoring_algorithm" payload) :to-equal "None")
+       (expect (alist-get 'value (gethash "scoring_data" payload)) :to-equal ""))))
+
+  (it "uses title as item_body when text is empty"
+    (with-temp-org-buffer
+     "* Quiz
+** Capital of France?
+:PROPERTIES:
+:TYPE: short-answer
+:END:
+
+- [X] Paris
+"
+     (search-forward "Capital of France")
+     (org-back-to-heading)
+     (let* ((data (list :title "Capital of France?"
+                        :text ""
+                        :type "short-answer"
+                        :points 1
+                        :pom (point-marker)))
+            (payload (org-canvas--new-quiz-item-build-payload data)))
+       (expect (gethash "item_body" payload) :to-match "Capital of France"))))
+
+  (it "combines title and body text when both present"
+    (with-temp-org-buffer
+     "* Quiz
+** Geography
+:PROPERTIES:
+:TYPE: short-answer
+:END:
+
+- [X] Paris
+"
+     (search-forward "Geography")
+     (org-back-to-heading)
+     (let* ((data (list :title "Geography"
+                        :text "What is the capital of France?"
+                        :type "short-answer"
+                        :points 1
+                        :pom (point-marker)))
+            (payload (org-canvas--new-quiz-item-build-payload data)))
+       (expect (gethash "item_body" payload) :to-match "Geography")
+       (expect (gethash "item_body" payload) :to-match "capital of France")))))
 
 ;;;; Item Push to API
 
@@ -889,7 +1104,34 @@ Quiz description.
            data (make-hash-table :test 'equal))
           (expect-api-called 'PATCH "quizzes/42/items/item-99")))))
 
-  (it "signals error on API failure"
+  (it "retries as POST on 404 for PATCH"
+    (with-org-canvas-test-config
+      (let ((call-count 0))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method _url &rest _args)
+                     (setq call-count (1+ call-count))
+                     (if (and (eq method 'PATCH) (= call-count 1))
+                         (error "HTTP 404 Not Found")
+                       '((id . "new-item-id"))))))
+          (let* ((data (list :title "Stale Item" :canvas-id "old-id"
+                             :quiz-assignment-id "42" :pom (point-marker)))
+                 (response (org-canvas--new-quiz-item-push-to-api
+                            data (make-hash-table :test 'equal))))
+            (expect call-count :to-equal 2)
+            (expect (alist-get 'id response) :to-equal "new-item-id"))))))
+
+  (it "signals error when POST retry also fails on 404"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (_method _url &rest _args)
+                   (error "HTTP 404 Not Found"))))
+        (let ((data (list :title "Bad" :canvas-id "old"
+                          :quiz-assignment-id "42" :pom (point-marker))))
+          (expect (org-canvas--new-quiz-item-push-to-api
+                   data (make-hash-table :test 'equal))
+                  :to-throw 'error)))))
+
+  (it "signals error on non-404 API failure"
     (with-org-canvas-test-config
       (cl-letf (((symbol-function 'org-canvas-api-request)
                  (lambda (_m _u &rest _) (error "HTTP 500"))))
@@ -897,7 +1139,40 @@ Quiz description.
                           :quiz-assignment-id "42" :pom (point-marker))))
           (expect (org-canvas--new-quiz-item-push-to-api
                    data (make-hash-table :test 'equal))
-                  :to-throw 'error))))))
+                  :to-throw 'error)))))
+
+  (it "wraps payload in nested item > entry structure"
+    (with-org-canvas-test-config
+      (let (sent-data)
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_method _url &rest args)
+                     (setq sent-data (plist-get args :data))
+                     '((id . "item-1")))))
+          (let* ((data (list :title "Wrap Item" :canvas-id nil
+                             :quiz-assignment-id "42" :pom (point-marker)))
+                 (payload (make-hash-table :test 'equal)))
+            (puthash "item_body" "<p>Question</p>" payload)
+            (puthash "interaction_type_slug" "choice" payload)
+            (puthash "points_possible" 5 payload)
+            (puthash "entry_type" "Item" payload)
+            (puthash "interaction_data" '((some . data)) payload)
+            (puthash "scoring_data" '((value . "choice_0")) payload)
+            (puthash "scoring_algorithm" "Equivalence" payload)
+            (org-canvas--new-quiz-item-push-to-api data payload)
+            ;; Verify outer wrapping
+            (expect (hash-table-p sent-data) :to-be t)
+            (let* ((item (gethash "item" sent-data))
+                   (entry (gethash "entry" item)))
+              ;; Item-level fields
+              (expect (gethash "entry_type" item) :to-equal "Item")
+              (expect (gethash "points_possible" item) :to-equal 5)
+              ;; Entry-level fields
+              (expect (gethash "item_body" entry) :to-equal "<p>Question</p>")
+              (expect (gethash "interaction_type_slug" entry) :to-equal "choice")
+              (expect (gethash "interaction_data" entry) :to-equal '((some . data)))
+              ;; Scoring fields in entry
+              (expect (gethash "scoring_data" entry) :to-equal '((value . "choice_0")))
+              (expect (gethash "scoring_algorithm" entry) :to-equal "Equivalence"))))))))
 
 ;;;; Item Finalize
 
@@ -1196,17 +1471,17 @@ Quiz description.
     (expect (cdr (assoc "choice" org-canvas--new-quiz-type-slugs))
             :to-equal "choice")
     (expect (cdr (assoc "true-false" org-canvas--new-quiz-type-slugs))
-            :to-equal "true_false")
+            :to-equal "true-false")
     (expect (cdr (assoc "multi-answer" org-canvas--new-quiz-type-slugs))
-            :to-equal "multi_answer")
+            :to-equal "multi-answer")
     (expect (cdr (assoc "short-answer" org-canvas--new-quiz-type-slugs))
-            :to-equal "short_answer")
+            :to-equal "essay")
     (expect (cdr (assoc "essay" org-canvas--new-quiz-type-slugs))
             :to-equal "essay")
     (expect (cdr (assoc "file-upload" org-canvas--new-quiz-type-slugs))
-            :to-equal "file_upload")
+            :to-equal "file-upload")
     (expect (cdr (assoc "numerical" org-canvas--new-quiz-type-slugs))
-            :to-equal "numerical")
+            :to-equal "numeric")
     (expect (cdr (assoc "matching" org-canvas--new-quiz-type-slugs))
             :to-equal "matching")
     (expect (cdr (assoc "ordering" org-canvas--new-quiz-type-slugs))
@@ -1214,18 +1489,76 @@ Quiz description.
     (expect (cdr (assoc "categorization" org-canvas--new-quiz-type-slugs))
             :to-equal "categorization")
     (expect (cdr (assoc "fill-in-the-blank" org-canvas--new-quiz-type-slugs))
-            :to-equal "fill_in_the_blank")
+            :to-equal "rich-fill-blank")
     (expect (cdr (assoc "hot-spot" org-canvas--new-quiz-type-slugs))
-            :to-equal "hot_spot")))
+            :to-equal "hot-spot")))
+
+(describe "org-canvas--new-quiz-scoring-algorithms"
+  (it "maps all types to scoring algorithms"
+    (expect (cdr (assoc "choice" org-canvas--new-quiz-scoring-algorithms))
+            :to-equal "Equivalence")
+    (expect (cdr (assoc "multi-answer" org-canvas--new-quiz-scoring-algorithms))
+            :to-equal "AllOrNothing")
+    (expect (cdr (assoc "matching" org-canvas--new-quiz-scoring-algorithms))
+            :to-equal "DeepEquals")
+    (expect (cdr (assoc "categorization" org-canvas--new-quiz-scoring-algorithms))
+            :to-equal "Categorization")
+    (expect (cdr (assoc "numerical" org-canvas--new-quiz-scoring-algorithms))
+            :to-equal "Numeric")
+    (expect (cdr (assoc "essay" org-canvas--new-quiz-scoring-algorithms))
+            :to-equal "None")))
+
+(describe "org-canvas--new-quiz-item-scoring-algorithm"
+  (it "returns Equivalence for choice"
+    (expect (org-canvas--new-quiz-item-scoring-algorithm "choice")
+            :to-equal "Equivalence"))
+
+  (it "returns AllOrNothing for multi-answer"
+    (expect (org-canvas--new-quiz-item-scoring-algorithm "multi-answer")
+            :to-equal "AllOrNothing"))
+
+  (it "returns DeepEquals for matching"
+    (expect (org-canvas--new-quiz-item-scoring-algorithm "matching")
+            :to-equal "DeepEquals"))
+
+  (it "returns Categorization for categorization"
+    (expect (org-canvas--new-quiz-item-scoring-algorithm "categorization")
+            :to-equal "Categorization"))
+
+  (it "returns Numeric for numerical"
+    (expect (org-canvas--new-quiz-item-scoring-algorithm "numerical")
+            :to-equal "Numeric"))
+
+  (it "returns None for essay"
+    (expect (org-canvas--new-quiz-item-scoring-algorithm "essay")
+            :to-equal "None"))
+
+  (it "returns None for short-answer (mapped to essay)"
+    (expect (org-canvas--new-quiz-item-scoring-algorithm "short-answer")
+            :to-equal "None"))
+
+  (it "returns None for file-upload"
+    (expect (org-canvas--new-quiz-item-scoring-algorithm "file-upload")
+            :to-equal "None"))
+
+  (it "returns Equivalence for unknown type"
+    (expect (org-canvas--new-quiz-item-scoring-algorithm "unknown")
+            :to-equal "Equivalence")))
 
 (describe "org-canvas--new-quiz-slug-to-type"
   (it "reverses slug to org type"
-    (expect (org-canvas--new-quiz-slug-to-type "true_false")
+    (expect (org-canvas--new-quiz-slug-to-type "true-false")
             :to-equal "true-false")
-    (expect (org-canvas--new-quiz-slug-to-type "multi_answer")
+    (expect (org-canvas--new-quiz-slug-to-type "multi-answer")
             :to-equal "multi-answer")
+    (expect (org-canvas--new-quiz-slug-to-type "numeric")
+            :to-equal "numerical")
+    (expect (org-canvas--new-quiz-slug-to-type "rich-fill-blank")
+            :to-equal "fill-in-the-blank")
     (expect (org-canvas--new-quiz-slug-to-type "choice")
-            :to-equal "choice"))
+            :to-equal "choice")
+    (expect (org-canvas--new-quiz-slug-to-type "essay")
+            :to-equal "essay"))
 
   (it "returns slug unchanged if not found"
     (expect (org-canvas--new-quiz-slug-to-type "unknown_type")
