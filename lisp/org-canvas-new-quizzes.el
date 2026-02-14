@@ -367,7 +367,7 @@ QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
   (let ((true-correct nil))
     (dolist (ans answers)
       (when (cdr ans)
-        (setq true-correct (string-equal-ignore-case (car ans) "true"))))
+        (setq true-correct (string= (downcase (car ans)) "true"))))
     `((true_choice . ((id . "true") (position . 1)))
       (false_choice . ((id . "false") (position . 2)))
       (scoring_data . ((value . ,(if true-correct "true" "false")))))))
