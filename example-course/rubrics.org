@@ -1,43 +1,59 @@
-#+TITLE: Course Rubrics
-#+AUTHOR: Canvas Sync Bot
-# Sync command: M-x org-canvas-sync-rubrics
-#
-# Supported properties:
-#   FREE_FORM_CRITERION_COMMENTS - true | false (allow free-form comments)
-#   PUBLISHED                    - true | false (default: true)
-#
-# Criteria are defined as Org tables under each heading:
-#   | Criteria Name | Rating 1 (Pts) | Rating 2 (Pts) | ... |
-#
-# Auto-generated (do not edit):
-#   CANVAS_ID, LAST_SYNCED, PAYLOAD_HASH
-
 * Standard Lab Rubric
 :PROPERTIES:
-:FREE_FORM_CRITERION_COMMENTS: false
+:CANVAS_ID: 122938
+:LAST_SYNCED: [2026-02-14 Sat 10:06]
 :END:
-
-This rubric is used for all weekly lab reports.
-
-| Criteria                  | 10 pts (Exemplary)                                              | 8 pts (Proficient)                                           | 5 pts (Developing)                          | 0 pts (Missing)  |
-|---------------------------+-----------------------------------------------------------------+--------------------------------------------------------------+---------------------------------------------+------------------|
-| Introduction & Hypothesis | Clear context, well-defined problem, and testable hypothesis.   | Context provided, hypothesis present but slightly vague.     | Missing context or non-testable hypothesis. | Section missing. |
-| Methodology               | Procedures described clearly; reproducible by others.           | Procedures described but lacks some detail for reproduction. | Procedures vague or confusing.              | Section missing. |
-| Results & Data            | Data organized clearly (tables/graphs), relevant to hypothesis. | Data present but lacks clear organization or labels.         | Data incomplete or disorganized.            | Section missing. |
-| Analysis & Conclusion     | Deep analysis of results, connecting back to theory.            | Analysis present but superficial; some connections missing.  | Analysis incorrect or missing logic.        | Section missing. |
-| Formatting & Grammar      | Professional formatting, no errors.                             | Readable, minor errors.                                      | Poor formatting, distracting errors.        | Unreadable.      |
+| Criterion | Points | Description |
+|---|---|---|
 
 * Final Presentation Rubric
 :PROPERTIES:
-:FREE_FORM_CRITERION_COMMENTS: true
+:CANVAS_ID: 122939
+:LAST_SYNCED: [2026-02-14 Sat 10:06]
 :END:
+| Criterion | Points | Description |
+|---|---|---|
 
-Rubric for the end-of-term group presentations. Rewritten to match the Lab Rubric's point scale.
+* Final Presentation Rubric (1)
+:PROPERTIES:
+:CANVAS_ID: 122941
+:LAST_SYNCED: [2026-02-14 Sat 10:06]
+:END:
+| Criterion | Points | Description |
+|---|---|---|
 
-| Criteria             | 10 pts (Exemplary)                                                     | 8 pts (Proficient)                                        | 5 pts (Developing)                                 | 0 pts (Missing)                   |
-|----------------------+------------------------------------------------------------------------+-----------------------------------------------------------+----------------------------------------------------+-----------------------------------|
-| Content Accuracy     | Content is technically accurate, comprehensive, and well-researched.   | Content is mostly accurate; minor errors or omissions.    | Significant inaccuracies or major topics missing.  | Content is incoherent or missing. |
-| Visual Aids (Slides) | Slides are visually appealing, readable, and enhance the presentation. | Slides are functional but may be text-heavy or cluttered. | Slides are distracting, unreadable, or irrelevant. | No visual aids provided.          |
-| Oral Delivery        | Clear voice, excellent eye contact, engaging style.                    | Clear voice, some reading from notes/slides.              | Monotone, reading entirely from slides/notes.      | No delivery (skipped).            |
-| Q&A Handling         | Answers questions confidently and accurately.                          | Answers questions but shows some hesitation.              | Unable to answer basic questions related to topic. | Did not participate in Q&A.       |
-| Time Management      | Finished exactly within the allotted time window (10-12 mins).         | Slightly over or under time (+/- 2 mins).                 | Significantly off time target.                     | Presentation did not occur.       |
+* Standard Lab Rubric (1)
+:PROPERTIES:
+:CANVAS_ID: 123479
+:LAST_SYNCED: [2026-02-14 Sat 10:06]
+:END:
+| Criterion | Points | Description |
+|---|---|---|
+| Introduction & Hypothesis | 20 | Context and hypothesis quality |
+| > Excellent | 20 | Clear context, testable hypothesis |
+| > Good | 15 | Context provided, hypothesis slightly vague |
+| > Fair | 10 | Minimal context, weak hypothesis |
+| > Poor | 0 | Missing context or hypothesis |
+| Methodology | 20 | Procedure description quality |
+| > Excellent | 20 | Fully reproducible, detailed steps |
+| > Good | 15 | Described but lacks some detail |
+| > Fair | 10 | Incomplete, hard to reproduce |
+| > Poor | 0 | Missing or unclear |
+| Results & Data | 20 | Data presentation |
+| Analysis & Conclusion | 20 | Analytical depth |
+| Formatting & Grammar | 20 | Writing quality |
+
+* Final Presentation Rubric (2)
+:PROPERTIES:
+:CANVAS_ID: 123480
+:LAST_SYNCED: [2026-02-14 Sat 10:06]
+:END:
+| Criterion | Points | Description |
+|---|---|---|
+| Criteria | 10.0 | 8 pts (Proficient) |
+| Content Accuracy | 0.0 | Content is mostly accurate; minor errors or omissions. |
+| Visual Aids (Slides) | 0.0 | Slides are functional but may be text-heavy or cluttered. |
+| Oral Delivery | 0.0 | Clear voice, some reading from notes/slides. |
+| Q&A Handling | 0.0 | Answers questions but shows some hesitation. |
+| Time Management | 0.0 | Slightly over or under time (+/- 2 mins). |
+

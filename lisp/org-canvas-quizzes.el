@@ -183,6 +183,23 @@ Supports: exact value, or [min, max] range."
 	 (group-link (org-canvas-org-get-property pom "GROUP"))
 	 (assignment-group-id (org-canvas--resolve-link-property
 			       group-link "CANVAS_ID" org-canvas-quizzes-file))
+	 (unlock-at (org-canvas-org-get-property pom "UNLOCK_AT"))
+	 (lock-at (org-canvas-org-get-property pom "LOCK_AT"))
+	 (access-code (org-canvas-org-get-property pom "ACCESS_CODE"))
+	 (show-correct (org-canvas-org-get-boolean-property pom "SHOW_CORRECT_ANSWERS" t))
+	 (show-correct-at (org-canvas-org-get-property pom "SHOW_CORRECT_ANSWERS_AT"))
+	 (hide-correct-at (org-canvas-org-get-property pom "HIDE_CORRECT_ANSWERS_AT"))
+	 (hide-results (org-canvas--validate-property
+			(org-canvas-org-get-property pom "HIDE_RESULTS")
+			'("always" "until_after_last_attempt")
+			"HIDE_RESULTS" nil))
+	 (scoring-policy (org-canvas--validate-property
+			  (org-canvas-org-get-property pom "SCORING_POLICY")
+			  '("keep_highest" "keep_latest")
+			  "SCORING_POLICY" nil))
+	 (one-question (org-canvas-org-get-boolean-property pom "ONE_QUESTION_AT_A_TIME"))
+	 (cant-go-back (org-canvas-org-get-boolean-property pom "CANT_GO_BACK"))
+	 (ip-filter (org-canvas-org-get-property pom "IP_FILTER"))
 	 (body-text (org-canvas--quiz-parse-body-text)))
 
     (when (or (null title) (string-empty-p title))
@@ -203,6 +220,17 @@ Supports: exact value, or [min, max] range."
 	  :shuffle_answers shuffle
 	  :allowed_attempts (when attempts (org-canvas--safe-string-to-number attempts "ALLOWED_ATTEMPTS"))
 	  :due_at (when due-at (org-canvas-org-parse-timestamp due-at))
+	  :unlock_at (when unlock-at (org-canvas-org-parse-timestamp unlock-at))
+	  :lock_at (when lock-at (org-canvas-org-parse-timestamp lock-at))
+	  :access_code access-code
+	  :show_correct_answers show-correct
+	  :show_correct_answers_at (when show-correct-at (org-canvas-org-parse-timestamp show-correct-at))
+	  :hide_correct_answers_at (when hide-correct-at (org-canvas-org-parse-timestamp hide-correct-at))
+	  :hide_results hide-results
+	  :scoring_policy scoring-policy
+	  :one_question_at_a_time one-question
+	  :cant_go_back cant-go-back
+	  :ip_filter ip-filter
 	  :assignment_group_id (when assignment-group-id (string-to-number assignment-group-id))
 	  :pom pom)))
 
@@ -229,6 +257,41 @@ Supports: exact value, or [min, max] range."
 
     (when-let ((group-id (plist-get data :assignment_group_id)))
       (push `(assignment_group_id . ,group-id) quiz-obj))
+
+    (when-let ((unlock (plist-get data :unlock_at)))
+      (push `(unlock_at . ,unlock) quiz-obj))
+
+    (when-let ((lock (plist-get data :lock_at)))
+      (push `(lock_at . ,lock) quiz-obj))
+
+    (when-let ((code (plist-get data :access_code)))
+      (push `(access_code . ,code) quiz-obj))
+
+    ;; Always send show_correct_answers (meaningful default of true)
+    (push `(show_correct_answers . ,(org-canvas--to-json-boolean
+				     (plist-get data :show_correct_answers)))
+	  quiz-obj)
+
+    (when-let ((show-at (plist-get data :show_correct_answers_at)))
+      (push `(show_correct_answers_at . ,show-at) quiz-obj))
+
+    (when-let ((hide-at (plist-get data :hide_correct_answers_at)))
+      (push `(hide_correct_answers_at . ,hide-at) quiz-obj))
+
+    (when-let ((hide (plist-get data :hide_results)))
+      (push `(hide_results . ,hide) quiz-obj))
+
+    (when-let ((scoring (plist-get data :scoring_policy)))
+      (push `(scoring_policy . ,scoring) quiz-obj))
+
+    (when (plist-get data :one_question_at_a_time)
+      (push `(one_question_at_a_time . t) quiz-obj))
+
+    (when (plist-get data :cant_go_back)
+      (push `(cant_go_back . t) quiz-obj))
+
+    (when-let ((ip (plist-get data :ip_filter)))
+      (push `(ip_filter . ,ip) quiz-obj))
 
     `((quiz . ,quiz-obj))))
 
@@ -527,6 +590,31 @@ FILE is the quizzes.org path, used for group link resolution."
     (org-canvas--pull-set-timestamp-property pos "DUE_AT" (alist-get 'due_at quiz))
     (org-canvas--pull-set-timestamp-property pos "UNLOCK_AT" (alist-get 'unlock_at quiz))
     (org-canvas--pull-set-timestamp-property pos "LOCK_AT" (alist-get 'lock_at quiz))
+    (let ((access-code (org-canvas--alist-get-non-null 'access_code quiz))
+          (show-correct (alist-get 'show_correct_answers quiz))
+          (hide-results (org-canvas--alist-get-non-null 'hide_results quiz))
+          (scoring (org-canvas--alist-get-non-null 'scoring_policy quiz))
+          (one-q (alist-get 'one_question_at_a_time quiz))
+          (cant-back (alist-get 'cant_go_back quiz))
+          (ip (org-canvas--alist-get-non-null 'ip_filter quiz)))
+      (when access-code
+        (org-canvas-org-set-property pos "ACCESS_CODE" access-code))
+      (when (not (eq show-correct :null))
+        (org-canvas--pull-set-boolean-property pos "SHOW_CORRECT_ANSWERS" show-correct))
+      (org-canvas--pull-set-timestamp-property pos "SHOW_CORRECT_ANSWERS_AT"
+                                               (alist-get 'show_correct_answers_at quiz))
+      (org-canvas--pull-set-timestamp-property pos "HIDE_CORRECT_ANSWERS_AT"
+                                               (alist-get 'hide_correct_answers_at quiz))
+      (when hide-results
+        (org-canvas-org-set-property pos "HIDE_RESULTS" hide-results))
+      (when scoring
+        (org-canvas-org-set-property pos "SCORING_POLICY" scoring))
+      (when one-q
+        (org-canvas--pull-set-boolean-property pos "ONE_QUESTION_AT_A_TIME" one-q))
+      (when cant-back
+        (org-canvas--pull-set-boolean-property pos "CANT_GO_BACK" cant-back))
+      (when ip
+        (org-canvas-org-set-property pos "IP_FILTER" ip)))
     (when (and group-id (fboundp 'org-canvas--assignment-resolve-group-link))
       (let ((group-link (org-canvas--assignment-resolve-group-link group-id)))
         (when group-link

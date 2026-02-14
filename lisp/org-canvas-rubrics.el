@@ -91,26 +91,46 @@
 
 ;;;; 2. Stage: Transformation
 
-(defun org-canvas--rubric-build-criterion (row counter)
+(defun org-canvas--rubric-rating-row-p (row)
+  "Return non-nil if ROW is a rating row (first cell start with \"> \")."
+  (and (listp row)
+       (stringp (nth 0 row))
+       (string-match-p "\\`> " (string-trim-left (nth 0 row)))))
+
+(defun org-canvas--rubric-build-criterion (row counter &optional rating-rows)
   "Build a hash-table for a single criterion from table ROW at COUNTER.
+If RATING-ROWS is non-nil, build ratings from those rows instead of
+the default 2-level (Full Marks / No Marks).
 Returns a plist (:id KEY :obj HASH :points NUM)."
   (let* ((desc (nth 0 row))
          (points (org-canvas--safe-string-to-number (or (nth 1 row) "0") "POINTS"))
          (long-desc (or (nth 2 row) ""))
          (crit-obj (make-hash-table :test 'equal))
-         (ratings (make-hash-table :test 'equal))
-         (r1 (make-hash-table :test 'equal))
-         (r2 (make-hash-table :test 'equal)))
+         (ratings (make-hash-table :test 'equal)))
     (elog-debug org-canvas--logger "[Stage 2: Transform] Criterion %d: '%s' (%d pts)" counter desc points)
     (puthash "description" desc crit-obj)
     (puthash "points" points crit-obj)
     (puthash "long_description" long-desc crit-obj)
-    (puthash "description" "Full Marks" r1)
-    (puthash "points" points r1)
-    (puthash "description" "No Marks" r2)
-    (puthash "points" 0 r2)
-    (puthash "0" r1 ratings)
-    (puthash "1" r2 ratings)
+    (if rating-rows
+        ;; Custom multi-level ratings from > rows
+        (let ((idx 0))
+          (dolist (rrow rating-rows)
+            (let ((r (make-hash-table :test 'equal))
+                  (rdesc (replace-regexp-in-string "\\`>[ \t]*" "" (string-trim-left (nth 0 rrow))))
+                  (rpts (org-canvas--safe-string-to-number (or (nth 1 rrow) "0") "RATING_POINTS")))
+              (puthash "description" rdesc r)
+              (puthash "points" rpts r)
+              (puthash (format "%d" idx) r ratings)
+              (setq idx (1+ idx)))))
+      ;; Default 2-level ratings
+      (let ((r1 (make-hash-table :test 'equal))
+            (r2 (make-hash-table :test 'equal)))
+        (puthash "description" "Full Marks" r1)
+        (puthash "points" points r1)
+        (puthash "description" "No Marks" r2)
+        (puthash "points" 0 r2)
+        (puthash "0" r1 ratings)
+        (puthash "1" r2 ratings)))
     (puthash "ratings" ratings crit-obj)
     (list :id (format "%d" counter) :obj crit-obj :points points)))
 
@@ -133,9 +153,29 @@ Returns a plist (:id KEY :obj HASH :points NUM)."
           (total-points 0))
       (puthash "title" title rubric-obj)
       (puthash "free_form_criterion_comments" (org-canvas--to-json-boolean free-form) rubric-obj)
-      (dolist (row criteria-rows)
-        (unless (eq row 'hline)
-          (let ((crit (org-canvas--rubric-build-criterion row counter)))
+      ;; Group rating rows (> prefix) with their parent criterion
+      (let ((pending-criterion nil)
+            (pending-ratings nil))
+        (dolist (row criteria-rows)
+          (unless (eq row 'hline)
+            (if (org-canvas--rubric-rating-row-p row)
+                ;; Accumulate rating row
+                (push row pending-ratings)
+              ;; New criterion row — flush any pending criterion first
+              (when pending-criterion
+                (let ((crit (org-canvas--rubric-build-criterion
+                             pending-criterion counter
+                             (nreverse pending-ratings))))
+                  (puthash (plist-get crit :id) (plist-get crit :obj) criteria-hash)
+                  (setq total-points (+ total-points (plist-get crit :points)))
+                  (setq counter (1+ counter))))
+              (setq pending-criterion row)
+              (setq pending-ratings nil))))
+        ;; Flush last criterion
+        (when pending-criterion
+          (let ((crit (org-canvas--rubric-build-criterion
+                       pending-criterion counter
+                       (nreverse pending-ratings))))
             (puthash (plist-get crit :id) (plist-get crit :obj) criteria-hash)
             (setq total-points (+ total-points (plist-get crit :points)))
             (setq counter (1+ counter)))))
@@ -427,6 +467,25 @@ On failure, fetches detailed rubric info for diagnostics."
 
 ;;;; Pull
 
+(defun org-canvas--rubric-has-custom-ratings (ratings)
+  "Return non-nil if RATINGS list has custom levels (not default 2-level).
+Custom means more than 2 ratings, or names other than Full Marks/No Marks."
+  (when ratings
+    (let ((rlist (append ratings nil)))
+      (or (> (length rlist) 2)
+          (not (and (= (length rlist) 2)
+                    (member (alist-get 'description (nth 0 rlist))
+                            '("Full Marks" "No Marks"))
+                    (member (alist-get 'description (nth 1 rlist))
+                            '("Full Marks" "No Marks"))))))))
+
+(defun org-canvas--rubric-sort-ratings (ratings)
+  "Sort RATINGS list by points descending."
+  (sort (copy-sequence (append ratings nil))
+        (lambda (a b)
+          (> (or (alist-get 'points a) 0)
+             (or (alist-get 'points b) 0)))))
+
 (defun org-canvas--rubric-pull-item (item pos)
   "Set per-item properties for a pulled rubric.
 ITEM is the API response alist, POS is the heading position."
@@ -443,11 +502,20 @@ ITEM is the API response alist, POS is the heading position."
         (dolist (c (append criteria nil))
           (let ((desc (or (alist-get 'description c) ""))
                 (pts (or (alist-get 'points c) 0))
-                (long-desc (or (alist-get 'long_description c) "")))
+                (long-desc (or (alist-get 'long_description c) ""))
+                (ratings (alist-get 'ratings c)))
             (insert (format "| %s | %s | %s |\n"
                             (replace-regexp-in-string "|" "/" desc)
                             pts
-                            (replace-regexp-in-string "|" "/" long-desc)))))
+                            (replace-regexp-in-string "|" "/" long-desc)))
+            ;; Insert custom rating rows if present
+            (when (org-canvas--rubric-has-custom-ratings ratings)
+              (dolist (r (org-canvas--rubric-sort-ratings ratings))
+                (let ((rdesc (or (alist-get 'description r) ""))
+                      (rpts (or (alist-get 'points r) 0)))
+                  (insert (format "| > %s | %s | |\n"
+                                  (replace-regexp-in-string "|" "/" rdesc)
+                                  rpts)))))))
         (insert "\n")))))
 
 (org-canvas-define-pull rubrics

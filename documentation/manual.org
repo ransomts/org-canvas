@@ -356,14 +356,25 @@ Quizzes with embedded questions.
 
 *** Quiz Properties
 
-| Property         | Type      | Description                                   |
-|------------------+-----------+-----------------------------------------------|
-| =QUIZ_TYPE=        | string    | assignment, practice_quiz, graded_survey      |
-| =TIME_LIMIT=       | number    | Time limit in minutes                         |
-| =SHUFFLE_ANSWERS=  | boolean   | Randomize answer order                        |
-| =ALLOWED_ATTEMPTS= | number    | Max attempts (-1 = unlimited)                 |
-| =DUE_AT=           | timestamp | Due date                                      |
-| =GROUP=            | link      | Link to assignment-groups.org heading         |
+| Property                   | Type      | Description                                                |
+|----------------------------+-----------+------------------------------------------------------------|
+| =QUIZ_TYPE=                  | string    | assignment, practice_quiz, graded_survey, survey           |
+| =TIME_LIMIT=                 | number    | Time limit in minutes                                      |
+| =SHUFFLE_ANSWERS=            | boolean   | Randomize answer order                                     |
+| =ALLOWED_ATTEMPTS=           | number    | Max attempts (-1 = unlimited)                              |
+| =DUE_AT=                     | timestamp | Due date                                                   |
+| =UNLOCK_AT=                  | timestamp | When the quiz becomes available                            |
+| =LOCK_AT=                    | timestamp | When the quiz closes                                       |
+| =ACCESS_CODE=                | string    | Password required to take the quiz                         |
+| =SHOW_CORRECT_ANSWERS=       | boolean   | Show correct answers after submission (default: true)      |
+| =SHOW_CORRECT_ANSWERS_AT=    | timestamp | When to start showing correct answers                      |
+| =HIDE_CORRECT_ANSWERS_AT=    | timestamp | When to stop showing correct answers                       |
+| =HIDE_RESULTS=               | string    | =always= or =until_after_last_attempt=                         |
+| =SCORING_POLICY=             | string    | =keep_highest= or =keep_latest= (for multiple attempts)       |
+| =ONE_QUESTION_AT_A_TIME=     | boolean   | Show one question per page                                 |
+| =CANT_GO_BACK=               | boolean   | Prevent backtracking (requires =ONE_QUESTION_AT_A_TIME=)     |
+| =IP_FILTER=                  | string    | IP address range for access restriction                    |
+| =GROUP=                      | link      | Link to assignment-groups.org heading                      |
 
 *** Question Properties
 
@@ -396,7 +407,12 @@ Quizzes with embedded questions.
 :QUIZ_TYPE: assignment
 :TIME_LIMIT: 60
 :SHUFFLE_ANSWERS: true
-:ALLOWED_ATTEMPTS: 1
+:ALLOWED_ATTEMPTS: 2
+:SCORING_POLICY: keep_highest
+:ACCESS_CODE: exam2026
+:SHOW_CORRECT_ANSWERS: false
+:ONE_QUESTION_AT_A_TIME: true
+:CANT_GO_BACK: true
 :GROUP: [[file:assignment-groups.org::*Exams][Exams]]
 :END:
 
@@ -580,6 +596,23 @@ Grading rubrics with criteria.
 | Code Quality          |     10 | Well-formatted, readable    |
 | Correctness           |     15 | Passes all test cases       |
 
+Tables without =>=  rows use the default 2-level rating (Full Marks / No Marks).
+
+*** Multi-Level Ratings
+
+To define custom rating levels per criterion, add rows prefixed with => = after the criterion row:
+
+| Criterion    | Points | Description           |
+|--------------+--------+-----------------------|
+| Code Quality |     10 | Well-formatted code   |
+| > Excellent  |     10 | Outstanding work      |
+| > Good       |      7 | Solid quality         |
+| > Fair       |      3 | Needs improvement     |
+| > Poor       |      0 | Not acceptable        |
+| Correctness  |     15 | Correct output        |
+
+Criteria without => = rows keep the default 2-level rating.  You can mix criteria with and without custom ratings in the same table.
+
 *** Example
 
 #+begin_src org
@@ -588,11 +621,15 @@ Grading rubrics with criteria.
 :FREE_FORM_CRITERION_COMMENTS: true
 :END:
 
-| Criterion     | Points | Description                    |
-|---------------+--------+--------------------------------|
-| Correctness   |     50 | Code produces correct output   |
-| Style         |     20 | Follows coding conventions     |
-| Documentation |     15 | Clear comments and docstrings  |
+| Criterion     | Points | Description                     |
+|---------------+--------+---------------------------------|
+| Correctness   |     50 | Code produces correct output    |
+| > Excellent   |     50 | All tests pass, edge cases too  |
+| > Good        |     35 | Most tests pass                 |
+| > Fair        |     20 | Some tests pass                 |
+| > Poor        |      0 | Does not compile                |
+| Style         |     20 | Follows coding conventions      |
+| Documentation |     15 | Clear comments and docstrings   |
 | Efficiency    |     15 | Reasonable time/space complexity |
 #+end_src
 

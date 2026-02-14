@@ -1936,4 +1936,429 @@ Content.
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
 
+;;;; New Quiz Properties Tests
+
+(describe "org-canvas--quiz-parse-entry new properties"
+  (it "parses UNLOCK_AT timestamp"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:UNLOCK_AT: <2026-06-01 Mon 00:00>
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--quiz-parse-entry)))
+       (expect (plist-get data :unlock_at) :to-be-truthy))))
+
+  (it "parses LOCK_AT timestamp"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:LOCK_AT: <2026-06-30 Tue 23:59>
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--quiz-parse-entry)))
+       (expect (plist-get data :lock_at) :to-be-truthy))))
+
+  (it "parses ACCESS_CODE"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:ACCESS_CODE: exam2026
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--quiz-parse-entry)))
+       (expect (plist-get data :access_code) :to-equal "exam2026"))))
+
+  (it "defaults SHOW_CORRECT_ANSWERS to true"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--quiz-parse-entry)))
+       (expect (plist-get data :show_correct_answers) :to-be t))))
+
+  (it "parses SHOW_CORRECT_ANSWERS false"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:SHOW_CORRECT_ANSWERS: false
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--quiz-parse-entry)))
+       (expect (plist-get data :show_correct_answers) :to-be nil))))
+
+  (it "parses SHOW_CORRECT_ANSWERS_AT timestamp"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:SHOW_CORRECT_ANSWERS_AT: <2026-07-01 Wed 00:00>
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--quiz-parse-entry)))
+       (expect (plist-get data :show_correct_answers_at) :to-be-truthy))))
+
+  (it "parses HIDE_CORRECT_ANSWERS_AT timestamp"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:HIDE_CORRECT_ANSWERS_AT: <2026-08-01 Sat 00:00>
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--quiz-parse-entry)))
+       (expect (plist-get data :hide_correct_answers_at) :to-be-truthy))))
+
+  (it "parses HIDE_RESULTS enum"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:HIDE_RESULTS: always
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--quiz-parse-entry)))
+       (expect (plist-get data :hide_results) :to-equal "always"))))
+
+  (it "parses SCORING_POLICY enum"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:SCORING_POLICY: keep_latest
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--quiz-parse-entry)))
+       (expect (plist-get data :scoring_policy) :to-equal "keep_latest"))))
+
+  (it "parses ONE_QUESTION_AT_A_TIME"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:ONE_QUESTION_AT_A_TIME: true
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--quiz-parse-entry)))
+       (expect (plist-get data :one_question_at_a_time) :to-be t))))
+
+  (it "parses CANT_GO_BACK"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:CANT_GO_BACK: true
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--quiz-parse-entry)))
+       (expect (plist-get data :cant_go_back) :to-be t))))
+
+  (it "parses IP_FILTER"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:IP_FILTER: 192.168.1.0/24
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--quiz-parse-entry)))
+       (expect (plist-get data :ip_filter) :to-equal "192.168.1.0/24")))))
+
+(describe "org-canvas--quiz-build-payload new properties"
+  (it "includes unlock_at when present"
+    (let* ((data '(:title "Test" :quiz_type "assignment" :unlock_at "2026-06-01T00:00:00Z"))
+           (payload (org-canvas--quiz-build-payload data)))
+      (expect (alist-get 'unlock_at (alist-get 'quiz payload))
+              :to-equal "2026-06-01T00:00:00Z")))
+
+  (it "includes lock_at when present"
+    (let* ((data '(:title "Test" :quiz_type "assignment" :lock_at "2026-06-30T23:59:00Z"))
+           (payload (org-canvas--quiz-build-payload data)))
+      (expect (alist-get 'lock_at (alist-get 'quiz payload))
+              :to-equal "2026-06-30T23:59:00Z")))
+
+  (it "includes access_code when present"
+    (let* ((data '(:title "Test" :quiz_type "assignment" :access_code "secret123"))
+           (payload (org-canvas--quiz-build-payload data)))
+      (expect (alist-get 'access_code (alist-get 'quiz payload))
+              :to-equal "secret123")))
+
+  (it "excludes access_code when nil"
+    (let* ((data '(:title "Test" :quiz_type "assignment" :access_code nil))
+           (payload (org-canvas--quiz-build-payload data)))
+      (expect (assq 'access_code (alist-get 'quiz payload)) :to-be nil)))
+
+  (it "includes show_correct_answers true"
+    (let* ((data '(:title "Test" :quiz_type "assignment" :show_correct_answers t))
+           (payload (org-canvas--quiz-build-payload data)))
+      (expect (alist-get 'show_correct_answers (alist-get 'quiz payload)) :to-be t)))
+
+  (it "includes show_correct_answers json-false when nil"
+    (let* ((data '(:title "Test" :quiz_type "assignment" :show_correct_answers nil))
+           (payload (org-canvas--quiz-build-payload data)))
+      (expect (alist-get 'show_correct_answers (alist-get 'quiz payload))
+              :to-equal :json-false)))
+
+  (it "includes show_correct_answers_at when present"
+    (let* ((data '(:title "Test" :quiz_type "assignment"
+                   :show_correct_answers_at "2026-07-01T00:00:00Z"))
+           (payload (org-canvas--quiz-build-payload data)))
+      (expect (alist-get 'show_correct_answers_at (alist-get 'quiz payload))
+              :to-equal "2026-07-01T00:00:00Z")))
+
+  (it "includes hide_correct_answers_at when present"
+    (let* ((data '(:title "Test" :quiz_type "assignment"
+                   :hide_correct_answers_at "2026-08-01T00:00:00Z"))
+           (payload (org-canvas--quiz-build-payload data)))
+      (expect (alist-get 'hide_correct_answers_at (alist-get 'quiz payload))
+              :to-equal "2026-08-01T00:00:00Z")))
+
+  (it "includes hide_results when present"
+    (let* ((data '(:title "Test" :quiz_type "assignment" :hide_results "always"))
+           (payload (org-canvas--quiz-build-payload data)))
+      (expect (alist-get 'hide_results (alist-get 'quiz payload))
+              :to-equal "always")))
+
+  (it "excludes hide_results when nil"
+    (let* ((data '(:title "Test" :quiz_type "assignment" :hide_results nil))
+           (payload (org-canvas--quiz-build-payload data)))
+      (expect (assq 'hide_results (alist-get 'quiz payload)) :to-be nil)))
+
+  (it "includes scoring_policy when present"
+    (let* ((data '(:title "Test" :quiz_type "assignment" :scoring_policy "keep_latest"))
+           (payload (org-canvas--quiz-build-payload data)))
+      (expect (alist-get 'scoring_policy (alist-get 'quiz payload))
+              :to-equal "keep_latest")))
+
+  (it "includes one_question_at_a_time when true"
+    (let* ((data '(:title "Test" :quiz_type "assignment" :one_question_at_a_time t))
+           (payload (org-canvas--quiz-build-payload data)))
+      (expect (alist-get 'one_question_at_a_time (alist-get 'quiz payload)) :to-be t)))
+
+  (it "excludes one_question_at_a_time when nil"
+    (let* ((data '(:title "Test" :quiz_type "assignment" :one_question_at_a_time nil))
+           (payload (org-canvas--quiz-build-payload data)))
+      (expect (assq 'one_question_at_a_time (alist-get 'quiz payload)) :to-be nil)))
+
+  (it "includes cant_go_back when true"
+    (let* ((data '(:title "Test" :quiz_type "assignment" :cant_go_back t))
+           (payload (org-canvas--quiz-build-payload data)))
+      (expect (alist-get 'cant_go_back (alist-get 'quiz payload)) :to-be t)))
+
+  (it "includes ip_filter when present"
+    (let* ((data '(:title "Test" :quiz_type "assignment" :ip_filter "10.0.0.0/8"))
+           (payload (org-canvas--quiz-build-payload data)))
+      (expect (alist-get 'ip_filter (alist-get 'quiz payload))
+              :to-equal "10.0.0.0/8"))))
+
+(describe "org-canvas--quiz-pull-set-properties new properties"
+  (it "sets ACCESS_CODE property"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (let ((quiz '((id . 42) (access_code . "secret"))))
+       (org-canvas--quiz-pull-set-properties (point) quiz "/tmp/quizzes.org")
+       (expect (org-entry-get (point) "ACCESS_CODE") :to-equal "secret"))))
+
+  (it "sets SHOW_CORRECT_ANSWERS boolean"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (let ((quiz '((id . 42) (show_correct_answers . t))))
+       (org-canvas--quiz-pull-set-properties (point) quiz "/tmp/quizzes.org")
+       (expect (org-entry-get (point) "SHOW_CORRECT_ANSWERS") :to-equal "true"))))
+
+  (it "sets HIDE_RESULTS property"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (let ((quiz '((id . 42) (hide_results . "always"))))
+       (org-canvas--quiz-pull-set-properties (point) quiz "/tmp/quizzes.org")
+       (expect (org-entry-get (point) "HIDE_RESULTS") :to-equal "always"))))
+
+  (it "sets SCORING_POLICY property"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (let ((quiz '((id . 42) (scoring_policy . "keep_highest"))))
+       (org-canvas--quiz-pull-set-properties (point) quiz "/tmp/quizzes.org")
+       (expect (org-entry-get (point) "SCORING_POLICY") :to-equal "keep_highest"))))
+
+  (it "sets ONE_QUESTION_AT_A_TIME boolean"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (let ((quiz '((id . 42) (one_question_at_a_time . t))))
+       (org-canvas--quiz-pull-set-properties (point) quiz "/tmp/quizzes.org")
+       (expect (org-entry-get (point) "ONE_QUESTION_AT_A_TIME") :to-equal "true"))))
+
+  (it "sets CANT_GO_BACK boolean"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (let ((quiz '((id . 42) (cant_go_back . t))))
+       (org-canvas--quiz-pull-set-properties (point) quiz "/tmp/quizzes.org")
+       (expect (org-entry-get (point) "CANT_GO_BACK") :to-equal "true"))))
+
+  (it "sets IP_FILTER property"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (let ((quiz '((id . 42) (ip_filter . "192.168.0.0/16"))))
+       (org-canvas--quiz-pull-set-properties (point) quiz "/tmp/quizzes.org")
+       (expect (org-entry-get (point) "IP_FILTER") :to-equal "192.168.0.0/16"))))
+
+  (it "sets SHOW_CORRECT_ANSWERS_AT timestamp"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (let ((quiz '((id . 42) (show_correct_answers_at . "2026-07-01T00:00:00Z"))))
+       (org-canvas--quiz-pull-set-properties (point) quiz "/tmp/quizzes.org")
+       (expect (org-entry-get (point) "SHOW_CORRECT_ANSWERS_AT") :to-match "<2026-07-01"))))
+
+  (it "sets HIDE_CORRECT_ANSWERS_AT timestamp"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (let ((quiz '((id . 42) (hide_correct_answers_at . "2026-08-01T00:00:00Z"))))
+       (org-canvas--quiz-pull-set-properties (point) quiz "/tmp/quizzes.org")
+       (expect (org-entry-get (point) "HIDE_CORRECT_ANSWERS_AT") :to-match "<2026-08-01")))))
+
+;;;; Validation Tests for New Properties
+
+(describe "quiz property validation"
+  (it "falls back to first valid for invalid HIDE_RESULTS"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:HIDE_RESULTS: invalid_value
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--quiz-parse-entry)))
+       ;; validate-property falls back to (car allowed) when default is nil
+       (expect (plist-get data :hide_results) :to-equal "always"))))
+
+  (it "falls back to first valid for invalid SCORING_POLICY"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:SCORING_POLICY: keep_average
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--quiz-parse-entry)))
+       (expect (plist-get data :scoring_policy) :to-equal "keep_highest"))))
+
+  (it "returns nil for absent HIDE_RESULTS"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--quiz-parse-entry)))
+       (expect (plist-get data :hide_results) :to-be nil))))
+
+  (it "returns nil for absent SCORING_POLICY"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--quiz-parse-entry)))
+       (expect (plist-get data :scoring_policy) :to-be nil))))
+
+  (it "accepts valid HIDE_RESULTS until_after_last_attempt"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:HIDE_RESULTS: until_after_last_attempt
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--quiz-parse-entry)))
+       (expect (plist-get data :hide_results) :to-equal "until_after_last_attempt"))))
+
+  (it "accepts valid SCORING_POLICY keep_highest"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:SCORING_POLICY: keep_highest
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--quiz-parse-entry)))
+       (expect (plist-get data :scoring_policy) :to-equal "keep_highest")))))
+
 ;;; org-canvas-quizzes-test.el ends here

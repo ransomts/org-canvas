@@ -729,4 +729,279 @@ Keep this body
     (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil)))
       (expect (org-canvas-delete-all-rubrics) :to-throw 'user-error))))
 
+;;;; Multi-Level Ratings Tests
+
+(describe "org-canvas--rubric-rating-row-p"
+  (it "returns non-nil for > prefixed rows"
+    (expect (org-canvas--rubric-rating-row-p '("> Excellent" "10" ""))
+            :to-be-truthy))
+
+  (it "returns nil for normal criterion rows"
+    (expect (org-canvas--rubric-rating-row-p '("Quality" "10" ""))
+            :to-be nil))
+
+  (it "returns nil for hline"
+    (expect (org-canvas--rubric-rating-row-p 'hline) :to-be nil)))
+
+(describe "org-canvas--rubric-build-criterion with rating-rows"
+  (it "builds default 2-level ratings when no rating-rows"
+    (let ((crit (org-canvas--rubric-build-criterion '("Quality" "10" "Desc") 0)))
+      (let* ((obj (plist-get crit :obj))
+             (ratings (gethash "ratings" obj)))
+        (expect (gethash "0" ratings) :to-be-truthy)
+        (expect (gethash "1" ratings) :to-be-truthy)
+        (expect (gethash "2" ratings) :to-be nil)
+        (expect (gethash "description" (gethash "0" ratings)) :to-equal "Full Marks")
+        (expect (gethash "description" (gethash "1" ratings)) :to-equal "No Marks"))))
+
+  (it "builds custom ratings from rating-rows"
+    (let ((crit (org-canvas--rubric-build-criterion
+                 '("Quality" "10" "Desc") 0
+                 '(("> Excellent" "10" "") ("> Good" "7" "") ("> Poor" "0" "")))))
+      (let* ((obj (plist-get crit :obj))
+             (ratings (gethash "ratings" obj)))
+        (expect (gethash "0" ratings) :to-be-truthy)
+        (expect (gethash "1" ratings) :to-be-truthy)
+        (expect (gethash "2" ratings) :to-be-truthy)
+        (expect (gethash "description" (gethash "0" ratings)) :to-equal "Excellent")
+        (expect (gethash "points" (gethash "0" ratings)) :to-equal 10)
+        (expect (gethash "description" (gethash "1" ratings)) :to-equal "Good")
+        (expect (gethash "points" (gethash "1" ratings)) :to-equal 7)
+        (expect (gethash "description" (gethash "2" ratings)) :to-equal "Poor")
+        (expect (gethash "points" (gethash "2" ratings)) :to-equal 0))))
+
+  (it "strips > prefix from rating descriptions"
+    (let ((crit (org-canvas--rubric-build-criterion
+                 '("Quality" "10" "") 0
+                 '(("> Full" "10" "")))))
+      (let* ((obj (plist-get crit :obj))
+             (ratings (gethash "ratings" obj)))
+        (expect (gethash "description" (gethash "0" ratings)) :to-equal "Full"))))
+
+  (it "uses nil rating-rows as default 2-level"
+    (let ((crit (org-canvas--rubric-build-criterion '("Quality" "10" "") 0 nil)))
+      (let* ((obj (plist-get crit :obj))
+             (ratings (gethash "ratings" obj)))
+        (expect (gethash "description" (gethash "0" ratings)) :to-equal "Full Marks")))))
+
+(describe "org-canvas--rubric-build-payload with multi-level ratings"
+  (it "builds criteria with default ratings when no > rows"
+    (let* ((data '(:title "Test" :free-form nil
+                   :criteria (("Quality" "10" "Desc"))))
+           (payload (org-canvas--rubric-build-payload data))
+           (rubric (gethash "rubric" payload))
+           (criteria (gethash "criteria" rubric))
+           (crit0 (gethash "0" criteria))
+           (ratings (gethash "ratings" crit0)))
+      (expect (gethash "description" (gethash "0" ratings)) :to-equal "Full Marks")))
+
+  (it "builds criteria with custom ratings from > rows"
+    (let* ((data '(:title "Test" :free-form nil
+                   :criteria (("Quality" "10" "Desc")
+                              ("> Excellent" "10" "")
+                              ("> Good" "7" "")
+                              ("> Poor" "0" ""))))
+           (payload (org-canvas--rubric-build-payload data))
+           (rubric (gethash "rubric" payload))
+           (criteria (gethash "criteria" rubric)))
+      ;; Should have 1 criterion (not 4)
+      (expect (gethash "0" criteria) :to-be-truthy)
+      (expect (gethash "1" criteria) :to-be nil)
+      (let ((ratings (gethash "ratings" (gethash "0" criteria))))
+        (expect (gethash "0" ratings) :to-be-truthy)
+        (expect (gethash "1" ratings) :to-be-truthy)
+        (expect (gethash "2" ratings) :to-be-truthy)
+        (expect (gethash "description" (gethash "0" ratings)) :to-equal "Excellent"))))
+
+  (it "mixes criteria with and without custom ratings"
+    (let* ((data '(:title "Test" :free-form nil
+                   :criteria (("Code Quality" "10" "")
+                              ("> Excellent" "10" "")
+                              ("> Good" "7" "")
+                              ("Correctness" "15" ""))))
+           (payload (org-canvas--rubric-build-payload data))
+           (rubric (gethash "rubric" payload))
+           (criteria (gethash "criteria" rubric)))
+      ;; Should have 2 criteria
+      (expect (gethash "0" criteria) :to-be-truthy)
+      (expect (gethash "1" criteria) :to-be-truthy)
+      (expect (gethash "2" criteria) :to-be nil)
+      ;; First criterion should have custom ratings
+      (let ((ratings0 (gethash "ratings" (gethash "0" criteria))))
+        (expect (gethash "description" (gethash "0" ratings0)) :to-equal "Excellent"))
+      ;; Second criterion should have default ratings
+      (let ((ratings1 (gethash "ratings" (gethash "1" criteria))))
+        (expect (gethash "description" (gethash "0" ratings1)) :to-equal "Full Marks"))))
+
+  (it "handles hlines mixed with rating rows"
+    (let* ((data '(:title "Test" :free-form nil
+                   :criteria (("Header" "Points" "Desc")
+                              hline
+                              ("Quality" "10" "Desc")
+                              ("> Great" "10" "")
+                              ("> OK" "5" ""))))
+           (payload (org-canvas--rubric-build-payload data))
+           (rubric (gethash "rubric" payload))
+           (criteria (gethash "criteria" rubric)))
+      ;; Header + Quality = 2 criteria (hline skipped)
+      (expect (gethash "0" criteria) :to-be-truthy)
+      (expect (gethash "1" criteria) :to-be-truthy)
+      (expect (gethash "2" criteria) :to-be nil)))
+
+  (it "calculates total points correctly with rating rows"
+    (let* ((data '(:title "Test" :free-form nil
+                   :criteria (("Quality" "10" "")
+                              ("> Excellent" "10" "")
+                              ("> Poor" "0" "")
+                              ("Format" "5" ""))))
+           (payload (org-canvas--rubric-build-payload data))
+           (rubric (gethash "rubric" payload))
+           (criteria (gethash "criteria" rubric))
+           (c0 (gethash "0" criteria))
+           (c1 (gethash "1" criteria)))
+      (expect (gethash "points" c0) :to-equal 10)
+      (expect (gethash "points" c1) :to-equal 5))))
+
+(describe "org-canvas--rubric-has-custom-ratings"
+  (it "returns nil for default 2-level ratings"
+    (expect (org-canvas--rubric-has-custom-ratings
+             '(((description . "Full Marks") (points . 10))
+               ((description . "No Marks") (points . 0))))
+            :to-be nil))
+
+  (it "returns non-nil for 3+ level ratings"
+    (expect (org-canvas--rubric-has-custom-ratings
+             '(((description . "Excellent") (points . 10))
+               ((description . "Good") (points . 7))
+               ((description . "Poor") (points . 0))))
+            :to-be-truthy))
+
+  (it "returns non-nil for custom 2-level names"
+    (expect (org-canvas--rubric-has-custom-ratings
+             '(((description . "Pass") (points . 10))
+               ((description . "Fail") (points . 0))))
+            :to-be-truthy))
+
+  (it "returns nil for nil ratings"
+    (expect (org-canvas--rubric-has-custom-ratings nil) :to-be nil)))
+
+(describe "org-canvas--rubric-sort-ratings"
+  (it "sorts ratings by points descending"
+    (let ((sorted (org-canvas--rubric-sort-ratings
+                   '(((description . "Poor") (points . 0))
+                     ((description . "Good") (points . 7))
+                     ((description . "Excellent") (points . 10))))))
+      (expect (alist-get 'description (nth 0 sorted)) :to-equal "Excellent")
+      (expect (alist-get 'description (nth 1 sorted)) :to-equal "Good")
+      (expect (alist-get 'description (nth 2 sorted)) :to-equal "Poor"))))
+
+(describe "org-canvas--rubric-pull-item with multi-level ratings"
+  (it "inserts > rows for custom ratings"
+    (with-temp-org-buffer
+     "* My Rubric
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (let ((item '((id . 1) (title . "My Rubric")
+                   (data . [((description . "Quality")
+                             (points . 10)
+                             (long_description . "")
+                             (ratings . [((description . "Excellent") (points . 10))
+                                         ((description . "Good") (points . 7))
+                                         ((description . "Poor") (points . 0))]))]))))
+       (org-canvas--rubric-pull-item item (point))
+       (expect (buffer-string) :to-match "| Quality | 10 |")
+       (expect (buffer-string) :to-match "| > Excellent | 10 |")
+       (expect (buffer-string) :to-match "| > Good | 7 |")
+       (expect (buffer-string) :to-match "| > Poor | 0 |"))))
+
+  (it "does not insert > rows for default 2-level ratings"
+    (with-temp-org-buffer
+     "* My Rubric
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (let ((item '((id . 1) (title . "My Rubric")
+                   (data . [((description . "Quality")
+                             (points . 10)
+                             (long_description . "")
+                             (ratings . [((description . "Full Marks") (points . 10))
+                                         ((description . "No Marks") (points . 0))]))]))))
+       (org-canvas--rubric-pull-item item (point))
+       (expect (buffer-string) :to-match "| Quality | 10 |")
+       (expect (buffer-string) :not :to-match "> "))))
+
+  (it "sorts rating rows by points descending"
+    (with-temp-org-buffer
+     "* My Rubric
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (let ((item '((id . 1) (title . "My Rubric")
+                   (data . [((description . "Quality")
+                             (points . 10)
+                             (long_description . "")
+                             (ratings . [((description . "Poor") (points . 0))
+                                         ((description . "Excellent") (points . 10))
+                                         ((description . "Good") (points . 7))]))]))))
+       (org-canvas--rubric-pull-item item (point))
+       ;; Verify order: Excellent (10) before Good (7) before Poor (0)
+       (let ((content (buffer-string)))
+         (expect (string-match "> Excellent" content) :to-be-truthy)
+         (let ((exc-pos (string-match "> Excellent" content))
+               (good-pos (string-match "> Good" content))
+               (poor-pos (string-match "> Poor" content)))
+           (expect (< exc-pos good-pos) :to-be t)
+           (expect (< good-pos poor-pos) :to-be t))))))
+
+  (it "round-trips multi-level ratings through pull and build"
+    ;; Parse the pulled format and verify the build produces correct structure
+    (with-temp-org-buffer
+     "* Test Rubric
+:PROPERTIES:
+:END:
+
+| Criterion | Points | Description |
+|---|---|---|
+| Code Quality | 10 | Well-written |
+| > Excellent | 10 | |
+| > Good | 7 | |
+| > Fair | 3 | |
+| > Poor | 0 | |
+| Correctness | 15 | Correct output |
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--rubric-parse-entry)))
+       (let* ((payload (org-canvas--rubric-build-payload data))
+              (rubric (gethash "rubric" payload))
+              (criteria (gethash "criteria" rubric)))
+         ;; Should have 3 criteria: header, Code Quality, Correctness
+         ;; (Header row is criterion 0, Code Quality is 1, Correctness is 2)
+         (let* ((code-quality nil)
+                (correctness nil))
+           ;; Find the Code Quality criterion by checking descriptions
+           (maphash (lambda (_k v)
+                      (cond
+                       ((string= (gethash "description" v) "Code Quality")
+                        (setq code-quality v))
+                       ((string= (gethash "description" v) "Correctness")
+                        (setq correctness v))))
+                    criteria)
+           ;; Code Quality should have 4 custom ratings
+           (expect code-quality :to-be-truthy)
+           (let ((ratings (gethash "ratings" code-quality)))
+             (expect (gethash "0" ratings) :to-be-truthy)
+             (expect (gethash "3" ratings) :to-be-truthy)
+             (expect (gethash "description" (gethash "0" ratings)) :to-equal "Excellent"))
+           ;; Correctness should have default 2-level ratings
+           (expect correctness :to-be-truthy)
+           (let ((ratings (gethash "ratings" correctness)))
+             (expect (gethash "description" (gethash "0" ratings)) :to-equal "Full Marks"))))))))
+
 ;;; org-canvas-rubrics-test.el ends here

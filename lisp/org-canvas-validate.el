@@ -186,6 +186,14 @@ Returns a list of warning issues."
     "file_upload_question" "text_only_question")
   "Valid quiz question types.")
 
+(defconst org-canvas--valid-hide-results
+  '("always" "until_after_last_attempt")
+  "Valid hide_results values for quizzes.")
+
+(defconst org-canvas--valid-scoring-policies
+  '("keep_highest" "keep_latest")
+  "Valid scoring_policy values for quizzes.")
+
 (defconst org-canvas--valid-editing-roles
   '("teachers" "students" "members" "public")
   "Valid editing roles for pages.")
@@ -242,7 +250,17 @@ Returns a list of warning issues."
       (:name "TIME_LIMIT" :type number)
       (:name "ALLOWED_ATTEMPTS" :type number)
       (:name "DUE_AT" :type timestamp)
-      (:name "GROUP" :type link :target-file org-canvas-assignment-groups-file :id-property "CANVAS_ID")))
+      (:name "UNLOCK_AT" :type timestamp)
+      (:name "LOCK_AT" :type timestamp)
+      (:name "SHOW_CORRECT_ANSWERS" :type boolean)
+      (:name "SHOW_CORRECT_ANSWERS_AT" :type timestamp)
+      (:name "HIDE_CORRECT_ANSWERS_AT" :type timestamp)
+      (:name "HIDE_RESULTS" :type enum :values ,org-canvas--valid-hide-results)
+      (:name "SCORING_POLICY" :type enum :values ,org-canvas--valid-scoring-policies)
+      (:name "ONE_QUESTION_AT_A_TIME" :type boolean)
+      (:name "CANT_GO_BACK" :type boolean)
+      (:name "GROUP" :type link :target-file org-canvas-assignment-groups-file :id-property "CANVAS_ID"))
+     :date-order (("UNLOCK_AT" "DUE_AT" "LOCK_AT")))
 
     (:label "Quiz Questions"
      :file org-canvas-quizzes-file
