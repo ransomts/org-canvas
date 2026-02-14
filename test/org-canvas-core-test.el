@@ -3537,7 +3537,7 @@ Page content.
      (expect (org-canvas--parse-last-synced (point)) :to-be nil))))
 
 (describe "org-canvas--conflict-check"
-  (it "returns conflict when remote is newer"
+  (it "returns conflict cons when remote is newer"
     (with-org-canvas-test-config
       (with-temp-org-buffer
        "* Item
@@ -3551,8 +3551,9 @@ Page content.
        (cl-letf (((symbol-function 'org-canvas-api-request)
                   (lambda (_method _url &rest _args)
                     '((id . 123) (updated_at . "2026-02-01T10:00:00Z")))))
-         (expect (org-canvas--conflict-check "items" "123" (point))
-                 :to-equal 'conflict)))))
+         (let ((result (org-canvas--conflict-check "items" "123" (point))))
+           (expect (car result) :to-equal 'conflict)
+           (expect (alist-get 'id (cdr result)) :to-equal 123))))))
 
   (it "returns nil when local is newer"
     (with-org-canvas-test-config
@@ -3599,7 +3600,7 @@ Page content.
                  :to-be nil))))))
 
 (describe "org-canvas--push-to-api conflict detection"
-  (it "returns conflict when remote is newer on PUT"
+  (it "returns conflict when user chooses skip"
     (with-org-canvas-test-config
       (with-temp-org-buffer
        "* Conflict Item
@@ -3613,7 +3614,9 @@ Page content.
          (cl-letf (((symbol-function 'org-canvas-api-request)
                     (lambda (method _url &rest _args)
                       (when (eq method 'GET)
-                        '((id . 456) (updated_at . "2026-02-01T10:00:00Z"))))))
+                        '((id . 456) (updated_at . "2026-02-01T10:00:00Z")))))
+                   ((symbol-function 'org-canvas--resolve-conflict)
+                    (lambda (_data _remote) 'skip)))
            (let ((data (list :title "Conflict Item" :canvas-id "456"
                              :pom (point-marker)))
                  (payload '((title . "Conflict Item"))))
@@ -3705,33 +3708,39 @@ Page content.
        (expect (plist-get counters :success) :to-equal 0)))))
 
 (describe "org-canvas--sync-log-summary with conflicts"
-  (it "includes conflict count in log when conflicts exist"
+  (it "includes conflict and pulled counts in log when present"
     (let ((temp-file (make-temp-file "summary-test" nil ".org")))
       (unwind-protect
           (progn
             (with-temp-file temp-file (insert "* Item\n"))
             (spy-on 'elog-info)
             (org-canvas--sync-log-summary "test" temp-file
-             '(:success 5 :skip 2 :fail 1 :conflict 3))
-            (let ((found nil))
+             '(:success 5 :skip 2 :fail 1 :conflict 3 :pulled 1))
+            (let ((found-conflicts nil)
+                  (found-pulled nil))
               (dolist (call (spy-calls-all-args 'elog-info))
                 (when (and (>= (length call) 2)
                            (stringp (nth 1 call))
                            (string-match-p "Conflicts" (nth 1 call)))
-                  (setq found t)))
-              (expect found :to-be-truthy)))
+                  (setq found-conflicts t))
+                (when (and (>= (length call) 2)
+                           (stringp (nth 1 call))
+                           (string-match-p "Pulled" (nth 1 call)))
+                  (setq found-pulled t)))
+              (expect found-conflicts :to-be-truthy)
+              (expect found-pulled :to-be-truthy)))
         (let ((buf (find-buffer-visiting temp-file)))
           (when buf (kill-buffer buf)))
         (delete-file temp-file))))
 
-  (it "omits conflict count when zero"
+  (it "omits conflict and pulled counts when zero"
     (let ((temp-file (make-temp-file "summary-test" nil ".org")))
       (unwind-protect
           (progn
             (with-temp-file temp-file (insert "* Item\n"))
             (spy-on 'elog-info)
             (org-canvas--sync-log-summary "test" temp-file
-             '(:success 5 :skip 2 :fail 1 :conflict 0))
+             '(:success 5 :skip 2 :fail 1 :conflict 0 :pulled 0))
             (let ((found nil))
               (dolist (call (spy-calls-all-args 'elog-info))
                 (when (and (>= (length call) 2)
@@ -3742,6 +3751,299 @@ Page content.
         (let ((buf (find-buffer-visiting temp-file)))
           (when buf (kill-buffer buf)))
         (delete-file temp-file)))))
+
+;;;; Interactive Conflict Resolution
+
+(describe "org-canvas--conflict-format-diff"
+  (it "creates a buffer with conflict details"
+    (let ((data (list :title "My Page" :description "local body text"
+                      :pom nil))
+          (remote '((title . "My Page Remote")
+                    (updated_at . "2026-02-01T10:00:00Z")
+                    (body . "remote body text")))
+          (org-canvas--current-pull-item-fn #'ignore))
+      (let ((buf (org-canvas--conflict-format-diff data remote)))
+        (unwind-protect
+            (with-current-buffer buf
+              (expect (buffer-string) :to-match "Conflict: My Page")
+              (expect (buffer-string) :to-match "Remote updated_at:")
+              (expect (buffer-string) :to-match "Title")
+              (expect (buffer-string) :to-match "My Page Remote"))
+          (when (buffer-live-p buf) (kill-buffer buf))))))
+
+  (it "handles nil body gracefully"
+    (let ((data (list :title "No Body" :pom nil))
+          (remote '((title . "No Body") (updated_at . "2026-02-01T10:00:00Z")))
+          (org-canvas--current-pull-item-fn nil))
+      (let ((buf (org-canvas--conflict-format-diff data remote)))
+        (unwind-protect
+            (with-current-buffer buf
+              (expect (buffer-string) :to-match "Conflict: No Body"))
+          (when (buffer-live-p buf) (kill-buffer buf))))))
+
+  (it "shows pull option only when pull-item-fn is set"
+    (let ((data (list :title "Item" :pom nil))
+          (remote '((title . "Item") (updated_at . "2026-02-01T10:00:00Z"))))
+      ;; With pull-item-fn
+      (let ((org-canvas--current-pull-item-fn #'ignore))
+        (let ((buf (org-canvas--conflict-format-diff data remote)))
+          (unwind-protect
+              (with-current-buffer buf
+                (expect (buffer-string) :to-match "l = Pull"))
+            (when (buffer-live-p buf) (kill-buffer buf)))))
+      ;; Without pull-item-fn
+      (let ((org-canvas--current-pull-item-fn nil))
+        (let ((buf (org-canvas--conflict-format-diff data remote)))
+          (unwind-protect
+              (with-current-buffer buf
+                (expect (buffer-string) :not :to-match "l = Pull"))
+            (when (buffer-live-p buf) (kill-buffer buf))))))))
+
+(describe "org-canvas--conflict-prompt"
+  (it "returns push for p"
+    (cl-letf (((symbol-function 'read-char-choice)
+               (lambda (_prompt _chars) ?p)))
+      (expect (org-canvas--conflict-prompt t) :to-equal 'push)))
+
+  (it "returns pull for l"
+    (cl-letf (((symbol-function 'read-char-choice)
+               (lambda (_prompt _chars) ?l)))
+      (expect (org-canvas--conflict-prompt t) :to-equal 'pull)))
+
+  (it "returns skip for s"
+    (cl-letf (((symbol-function 'read-char-choice)
+               (lambda (_prompt _chars) ?s)))
+      (expect (org-canvas--conflict-prompt t) :to-equal 'skip)))
+
+  (it "returns push-all for P"
+    (cl-letf (((symbol-function 'read-char-choice)
+               (lambda (_prompt _chars) ?P)))
+      (expect (org-canvas--conflict-prompt t) :to-equal 'push-all)))
+
+  (it "returns pull-all for L"
+    (cl-letf (((symbol-function 'read-char-choice)
+               (lambda (_prompt _chars) ?L)))
+      (expect (org-canvas--conflict-prompt t) :to-equal 'pull-all)))
+
+  (it "returns skip-all for S"
+    (cl-letf (((symbol-function 'read-char-choice)
+               (lambda (_prompt _chars) ?S)))
+      (expect (org-canvas--conflict-prompt t) :to-equal 'skip-all))))
+
+(describe "org-canvas--resolve-conflict"
+  (it "returns apply-all value immediately when set"
+    (let ((org-canvas--conflict-apply-all 'push)
+          (org-canvas--current-pull-item-fn nil))
+      (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")))
+              :to-equal 'push)))
+
+  (it "returns skip when apply-all is skip"
+    (let ((org-canvas--conflict-apply-all 'skip)
+          (org-canvas--current-pull-item-fn nil))
+      (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")))
+              :to-equal 'skip)))
+
+  (it "sets apply-all on push-all choice"
+    (let ((org-canvas--conflict-apply-all nil)
+          (org-canvas--current-pull-item-fn nil))
+      (cl-letf (((symbol-function 'org-canvas--conflict-prompt)
+                 (lambda (_has-pull) 'push-all)))
+        (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")))
+                :to-equal 'push)
+        (expect org-canvas--conflict-apply-all :to-equal 'push))))
+
+  (it "sets apply-all on skip-all choice"
+    (let ((org-canvas--conflict-apply-all nil)
+          (org-canvas--current-pull-item-fn nil))
+      (cl-letf (((symbol-function 'org-canvas--conflict-prompt)
+                 (lambda (_has-pull) 'skip-all)))
+        (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")))
+                :to-equal 'skip)
+        (expect org-canvas--conflict-apply-all :to-equal 'skip))))
+
+  (it "sets apply-all on pull-all choice"
+    (let ((org-canvas--conflict-apply-all nil)
+          (org-canvas--current-pull-item-fn #'ignore))
+      (cl-letf (((symbol-function 'org-canvas--conflict-prompt)
+                 (lambda (_has-pull) 'pull-all)))
+        (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")))
+                :to-equal 'pull)
+        (expect org-canvas--conflict-apply-all :to-equal 'pull))))
+
+  (it "kills the diff buffer after prompting"
+    (let ((org-canvas--conflict-apply-all nil)
+          (org-canvas--current-pull-item-fn nil))
+      (cl-letf (((symbol-function 'org-canvas--conflict-prompt)
+                 (lambda (_has-pull) 'push)))
+        (org-canvas--resolve-conflict '(:title "X") '((title . "X")))
+        (expect (get-buffer org-canvas--conflict-buffer-name) :to-be nil)))))
+
+(describe "org-canvas--conflict-pull-local"
+  (it "calls pull-item-fn and updates metadata"
+    (with-temp-org-buffer
+     "* Old Title
+:PROPERTIES:
+:CANVAS_ID: 100
+:LAST_SYNCED: [2026-01-01 Thu 10:00]
+:PAYLOAD_HASH: abc123
+:END:
+"
+     (org-back-to-heading)
+     (let* ((pom (point-marker))
+            (data (list :title "Old Title" :pom pom))
+            (remote '((title . "New Title")
+                      (updated_at . "2026-02-01T12:00:00Z")
+                      (message . "new body")))
+            (pull-called nil))
+       (org-canvas--conflict-pull-local data remote
+         (lambda (_item _pos) (setq pull-called t)))
+       (expect pull-called :to-be-truthy)
+       ;; PAYLOAD_HASH should be deleted
+       (expect (org-entry-get pom "PAYLOAD_HASH") :to-be nil)
+       ;; CANVAS_UPDATED_AT should be set
+       (expect (org-entry-get pom "CANVAS_UPDATED_AT")
+               :to-equal "2026-02-01T12:00:00Z")
+       ;; LAST_SYNCED should be updated (not the old value)
+       (let ((new-synced (org-entry-get pom "LAST_SYNCED")))
+         (expect new-synced :to-be-truthy)
+         (expect new-synced :not :to-equal "[2026-01-01 Thu 10:00]")))))
+
+  (it "updates heading title when different"
+    (with-temp-org-buffer
+     "* Original Name
+:PROPERTIES:
+:CANVAS_ID: 200
+:END:
+"
+     (org-back-to-heading)
+     (let* ((pom (point-marker))
+            (data (list :title "Original Name" :pom pom))
+            (remote '((title . "Updated Name")
+                      (updated_at . "2026-02-01T12:00:00Z"))))
+       (org-canvas--conflict-pull-local data remote
+         (lambda (_item _pos) nil))
+       (org-back-to-heading)
+       (expect (org-get-heading t t t t) :to-equal "Updated Name")))))
+
+(describe "org-canvas--push-to-api conflict resolution"
+  (it "proceeds with PUT when user chooses push"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer
+       "* Push Item
+:PROPERTIES:
+:CANVAS_ID: 789
+:LAST_SYNCED: [2026-01-01 Thu 10:00]
+:END:
+"
+       (org-back-to-heading)
+       (let ((org-canvas-detect-conflicts t)
+             (put-called nil))
+         (cl-letf (((symbol-function 'org-canvas-api-request)
+                    (lambda (method _url &rest _args)
+                      (pcase method
+                        ('GET '((id . 789) (updated_at . "2026-02-01T10:00:00Z")))
+                        ('PUT (setq put-called t) '((id . 789))))))
+                   ((symbol-function 'org-canvas--resolve-conflict)
+                    (lambda (_data _remote) 'push)))
+           (let ((data (list :title "Push Item" :canvas-id "789"
+                             :pom (point-marker)))
+                 (payload '((title . "Push Item"))))
+             (org-canvas--push-to-api data payload :endpoint "items")
+             (expect put-called :to-be-truthy)))))))
+
+  (it "returns pulled when user chooses pull"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer
+       "* Pull Item
+:PROPERTIES:
+:CANVAS_ID: 111
+:LAST_SYNCED: [2026-01-01 Thu 10:00]
+:END:
+"
+       (org-back-to-heading)
+       (let ((org-canvas-detect-conflicts t)
+             (org-canvas--current-pull-item-fn (lambda (_item _pos) nil)))
+         (cl-letf (((symbol-function 'org-canvas-api-request)
+                    (lambda (method _url &rest _args)
+                      (when (eq method 'GET)
+                        '((id . 111) (updated_at . "2026-02-01T10:00:00Z")))))
+                   ((symbol-function 'org-canvas--resolve-conflict)
+                    (lambda (_data _remote) 'pull)))
+           (let ((data (list :title "Pull Item" :canvas-id "111"
+                             :pom (point-marker)))
+                 (payload '((title . "Pull Item"))))
+             (expect (org-canvas--push-to-api data payload :endpoint "items")
+                     :to-equal 'pulled)))))))
+
+  (it "falls back to conflict when pull chosen but no pull-fn"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer
+       "* No Pull
+:PROPERTIES:
+:CANVAS_ID: 222
+:LAST_SYNCED: [2026-01-01 Thu 10:00]
+:END:
+"
+       (org-back-to-heading)
+       (let ((org-canvas-detect-conflicts t)
+             (org-canvas--current-pull-item-fn nil))
+         (cl-letf (((symbol-function 'org-canvas-api-request)
+                    (lambda (method _url &rest _args)
+                      (when (eq method 'GET)
+                        '((id . 222) (updated_at . "2026-02-01T10:00:00Z")))))
+                   ((symbol-function 'org-canvas--resolve-conflict)
+                    (lambda (_data _remote) 'pull)))
+           (let ((data (list :title "No Pull" :canvas-id "222"
+                             :pom (point-marker)))
+                 (payload '((title . "No Pull"))))
+             (expect (org-canvas--push-to-api data payload :endpoint "items")
+                     :to-equal 'conflict))))))))
+
+(describe "org-canvas--sync-execute-pipeline pulled counter"
+  (it "increments pulled counter when push returns pulled"
+    (with-temp-org-buffer
+     "* Pulled Item
+:PROPERTIES:
+:CANVAS_ID: 333
+:END:
+"
+     (org-back-to-heading)
+     (let* ((marker (point-marker))
+            (counters (list :success 0 :skip 0 :fail 0 :conflict 0 :pulled 0))
+            (ctx (list :parse-fn (lambda () (list :title "Pulled Item"
+                                                   :canvas-id "333"
+                                                   :pom (point-marker)))
+                       :build-fn (lambda (_data) '((title . "Pulled Item")))
+                       :push-fn (lambda (_data _payload) 'pulled)
+                       :finalize-fn (lambda (_data _response) nil)
+                       :feature-name "items"
+                       :feature-upper "ITEMS"
+                       :total-count 1
+                       :counters counters
+                       :synced-ids (list nil))))
+       (org-canvas--sync-process-entry marker ctx)
+       (expect (plist-get counters :pulled) :to-equal 1)
+       (expect (plist-get counters :success) :to-equal 0)))))
+
+(describe "org-canvas-define-sync conflict bindings"
+  (it "binds conflict-apply-all to nil per sync"
+    ;; Verify the generated function resets the defvar
+    (let ((org-canvas--conflict-apply-all 'push))
+      ;; We test this by expanding the macro and checking
+      ;; the generated form contains the let-binding
+      (let ((expanded (macroexpand
+                       '(org-canvas-define-sync test-feature
+                          :file "/tmp/test.org"
+                          :parse #'identity
+                          :build #'identity
+                          :push #'identity
+                          :finalize #'identity
+                          :pull-item-fn #'ignore))))
+        ;; The expanded form should contain org-canvas--conflict-apply-all
+        (expect (format "%S" expanded)
+                :to-match "org-canvas--conflict-apply-all")
+        (expect (format "%S" expanded)
+                :to-match "org-canvas--current-pull-item-fn")))))
 
 ;;;; Pull Helpers
 
@@ -4018,7 +4320,7 @@ Keep this too
                                '((id . 1)))))
                     (let* ((targets (org-canvas--sync-collect-entries
                                     test-file "LEVEL=1" "test"))
-                           (counters (list :success 0 :skip 0 :fail 0 :conflict 0))
+                           (counters (list :success 0 :skip 0 :fail 0 :conflict 0 :pulled 0))
                            (synced-ids (list nil))
                            (ctx (list :parse-fn (lambda ()
                                                   (list :title "Item" :canvas-id nil

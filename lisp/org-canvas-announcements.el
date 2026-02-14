@@ -122,7 +122,8 @@
   :parse #'org-canvas--announcement-parse-entry
   :build #'org-canvas--announcement-build-payload
   :push #'org-canvas--announcement-push-to-api
-  :finalize #'org-canvas--announcement-finalize)
+  :finalize #'org-canvas--announcement-finalize
+  :pull-item-fn #'org-canvas--announcement-pull-item)
 
 (org-canvas-define-push-at-point announcement
   :parse #'org-canvas--announcement-parse-entry

@@ -219,7 +219,8 @@ it before creating new one."
   :parse #'org-canvas--rubric-parse-entry
   :build #'org-canvas--rubric-build-payload
   :push #'org-canvas--rubric-push-to-api
-  :finalize #'org-canvas--rubric-finalize)
+  :finalize #'org-canvas--rubric-finalize
+  :pull-item-fn #'org-canvas--rubric-pull-item)
 
 (org-canvas-define-push-at-point rubric
   :parse #'org-canvas--rubric-parse-entry

@@ -1178,6 +1178,16 @@ Signals error with actionable message on failure."
 (defvar org-canvas--dry-run nil
   "When non-nil, sync shows what would happen without making API calls.")
 
+(defvar org-canvas--conflict-apply-all nil
+  "When non-nil, auto-resolve all conflicts with this action.
+Valid values: nil, \\='push, \\='pull, \\='skip.
+Bound per-sync by `org-canvas-define-sync'.")
+
+(defvar org-canvas--current-pull-item-fn nil
+  "Pull-item function for the module currently being synced.
+Dynamically bound by the sync pipeline so `org-canvas--push-to-api'
+can access it without changing per-module push function signatures.")
+
 ;;;; 6. Sync Pipeline Infrastructure
 ;;
 ;; Runtime helpers called by the generated sync functions.
@@ -1296,13 +1306,19 @@ CTX is the sync context plist (see `org-canvas--sync-process-entry')."
       (plist-put counters :success (1+ (plist-get counters :success))))
      (t
       (let ((response (funcall push-fn data payload)))
-        (if (eq response 'conflict)
-            (progn
-              (plist-put counters :conflict
-                         (1+ (plist-get counters :conflict)))
-              (message "%s [%d/%d] CONFLICT: '%s' (remote modified)"
-                cap-feature progress total-count title))
-          (org-canvas--sync-finalize-push response data payload-hash ctx)))))))
+        (cond
+         ((eq response 'conflict)
+          (plist-put counters :conflict
+                     (1+ (plist-get counters :conflict)))
+          (message "%s [%d/%d] CONFLICT: '%s' (remote modified)"
+            cap-feature progress total-count title))
+         ((eq response 'pulled)
+          (plist-put counters :pulled
+                     (1+ (or (plist-get counters :pulled) 0)))
+          (message "%s [%d/%d] PULLED: '%s' (local updated)"
+            cap-feature progress total-count title))
+         (t
+          (org-canvas--sync-finalize-push response data payload-hash ctx))))))))
 
 (defun org-canvas--sync-process-entry (marker ctx)
   "Process one entry through the 4-stage pipeline.
@@ -1350,28 +1366,31 @@ FEATURE-NAME is used in the log message."
 (defun org-canvas--sync-log-summary (feature-name sync-file counters)
   "Save SYNC-FILE and log completion summary.
 FEATURE-NAME is the module name.  COUNTERS is a plist with
-:success, :skip, :fail, and optionally :conflict counts."
+:success, :skip, :fail, and optionally :conflict and :pulled counts."
   (let ((feature-upper (upcase feature-name))
         (success-count (plist-get counters :success))
         (skip-count (plist-get counters :skip))
         (fail-count (plist-get counters :fail))
-        (conflict-count (or (plist-get counters :conflict) 0)))
+        (conflict-count (or (plist-get counters :conflict) 0))
+        (pulled-count (or (plist-get counters :pulled) 0))
+        (extra-counts 0))
     (with-current-buffer (find-file-noselect sync-file)
       (save-buffer)
       (elog-info org-canvas--logger "Saved %s" sync-file))
     (elog-info org-canvas--logger "========================================")
     (elog-info org-canvas--logger ">>> %s SYNC COMPLETE" feature-upper)
-    (if (> conflict-count 0)
+    (setq extra-counts (+ conflict-count pulled-count))
+    (if (> extra-counts 0)
         (elog-info org-canvas--logger
-          "Success: %d | Skipped: %d | Failed: %d | Conflicts: %d"
-          success-count skip-count fail-count conflict-count)
+          "Success: %d | Skipped: %d | Failed: %d | Conflicts: %d | Pulled: %d"
+          success-count skip-count fail-count conflict-count pulled-count)
       (elog-info org-canvas--logger "Success: %d | Skipped: %d | Failed: %d"
         success-count skip-count fail-count))
     (elog-info org-canvas--logger "========================================")
-    (if (> conflict-count 0)
-        (message "%s sync: %d success, %d skipped, %d failed, %d conflicts."
+    (if (> extra-counts 0)
+        (message "%s sync: %d success, %d skipped, %d failed, %d conflicts, %d pulled."
                  (capitalize feature-name) success-count skip-count
-                 fail-count conflict-count)
+                 fail-count conflict-count pulled-count)
       (message "%s sync: %d success, %d skipped, %d failed."
                (capitalize feature-name) success-count skip-count fail-count))))
 
@@ -1395,6 +1414,8 @@ ARGS is a plist with the following keys:
   :push - Function to push payload to API (required)
   :finalize - Function to finalize after API response (required)
   :title-key - Plist key for display name in logs (default: :title)
+  :pull-item-fn - Optional function to pull remote data into local heading
+                  for interactive conflict resolution
 
 This macro generates an interactive function `org-canvas-sync-FEATURE'
 that:
@@ -1423,7 +1444,8 @@ Example usage:
          (build-fn (plist-get args :build))
          (push-fn (plist-get args :push))
          (finalize-fn (plist-get args :finalize))
-         (title-key (plist-get args :title-key)))
+         (title-key (plist-get args :title-key))
+         (pull-item-fn (plist-get args :pull-item-fn)))
     ;; Validate required args
     (unless file-expr (error "org-canvas-define-sync: :file is required"))
     (unless parse-fn (error "org-canvas-define-sync: :parse is required"))
@@ -1436,13 +1458,15 @@ Example usage:
          ,(format "Synchronize %s to Canvas using the 4-stage pipeline." feature-name)
          (interactive)
          (org-canvas-clear-log)
-         (let ((sync-file (expand-file-name ,file-expr)))
+         (let ((org-canvas--conflict-apply-all nil)
+               (org-canvas--current-pull-item-fn ,pull-item-fn)
+               (sync-file (expand-file-name ,file-expr)))
            (org-canvas--sync-validate-file ,feature-upper sync-file)
            (let* ((entries (org-canvas--sync-collect-entries
                             sync-file ,query ,feature-name))
                   (targets (plist-get entries :targets))
                   (all-ids-before (plist-get entries :all-ids-before))
-                  (counters (list :success 0 :skip 0 :fail 0))
+                  (counters (list :success 0 :skip 0 :fail 0 :pulled 0))
                   (synced-ids (list nil))
                   (ctx (list :parse-fn ,parse-fn
                              :build-fn ,build-fn
@@ -1483,9 +1507,9 @@ Returns nil if no LAST_SYNCED property exists."
 
 (cl-defun org-canvas--conflict-check (endpoint id pom)
   "Check if the remote item at ENDPOINT/ID was modified after LAST_SYNCED at POM.
-Returns \\='conflict if the remote item is newer, nil otherwise.
-Returns nil on GET failure (allows push to proceed) or when
-no LAST_SYNCED exists (legacy item, first sync)."
+Returns (cons \\='conflict REMOTE-RESPONSE) if the remote item is newer,
+nil otherwise.  Returns nil on GET failure (allows push to proceed) or
+when no LAST_SYNCED exists (legacy item, first sync)."
   (let ((local-time (org-canvas--parse-last-synced pom)))
     (unless local-time
       (cl-return-from org-canvas--conflict-check nil))
@@ -1500,9 +1524,130 @@ no LAST_SYNCED exists (legacy item, first sync)."
                 (elog-warning org-canvas--logger
                   "[Conflict] Remote item updated at %s, local LAST_SYNCED is %s"
                   updated-at (org-entry-get pom "LAST_SYNCED"))
-                'conflict)
+                (cons 'conflict response))
             nil))
       (error nil))))
+
+;;;; 6c. Interactive Conflict Resolution
+;;
+;; When a conflict is detected, show a diff buffer and let the user
+;; choose: push (overwrite remote), pull (overwrite local), or skip.
+
+(defconst org-canvas--conflict-buffer-name "*canvas-conflict*"
+  "Buffer name for the conflict resolution diff display.")
+
+(defun org-canvas--conflict-format-diff (data remote-response)
+  "Create a diff buffer comparing local DATA with REMOTE-RESPONSE.
+Returns the buffer.  The caller should kill it after resolution."
+  (let* ((title (plist-get data :title))
+         (last-synced (when (plist-get data :pom)
+                        (org-entry-get (plist-get data :pom) "LAST_SYNCED")))
+         (remote-updated (alist-get 'updated_at remote-response))
+         (remote-title (or (alist-get 'title remote-response)
+                           (alist-get 'name remote-response)))
+         (remote-body (or (alist-get 'body remote-response)
+                          (alist-get 'message remote-response)
+                          (alist-get 'description remote-response)))
+         (local-body (plist-get data :description))
+         (has-pull-fn (not (null org-canvas--current-pull-item-fn)))
+         (buf (get-buffer-create org-canvas--conflict-buffer-name)))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert (format "=== Conflict: %s ===\n\n" (or title "untitled")))
+        (insert (format "  Local LAST_SYNCED:   %s\n" (or last-synced "unknown")))
+        (insert (format "  Remote updated_at:   %s\n\n" (or remote-updated "unknown")))
+        (when (and remote-title title
+                   (not (string= title remote-title)))
+          (insert (format "--- Title ---\n  Local:  %s\n  Remote: %s\n\n"
+                          title remote-title)))
+        (when (or local-body remote-body)
+          (insert "--- Body Preview ---\n")
+          (insert (format "  Local:\n%s\n\n"
+                          (if local-body
+                              (truncate-string-to-width local-body 500)
+                            "    (none)")))
+          (insert (format "  Remote:\n%s\n\n"
+                          (if remote-body
+                              (truncate-string-to-width remote-body 500)
+                            "    (none)"))))
+        (insert "--- Actions ---\n")
+        (insert "  p = Push (overwrite Canvas)\n")
+        (when has-pull-fn
+          (insert "  l = Pull (overwrite local)\n"))
+        (insert "  s = Skip\n")
+        (insert "  P/L/S = Apply to all remaining conflicts\n"))
+      (special-mode)
+      (goto-char (point-min)))
+    (display-buffer buf)
+    buf))
+
+(defun org-canvas--conflict-prompt (has-pull-fn)
+  "Prompt user for conflict resolution action.
+HAS-PULL-FN controls whether pull options are shown.
+Returns one of: push, pull, skip, push-all, pull-all, skip-all."
+  (let* ((pull-keys (when has-pull-fn '(?l ?L)))
+         (all-keys (append '(?p ?P) pull-keys '(?s ?S)))
+         (prompt (if has-pull-fn
+                     "[p]ush [l]pull [s]kip (capitals = all): "
+                   "[p]ush [s]kip (capitals = all): "))
+         (choice (read-char-choice prompt all-keys)))
+    (pcase choice
+      (?p 'push) (?P 'push-all)
+      (?l 'pull) (?L 'pull-all)
+      (?s 'skip) (?S 'skip-all))))
+
+(cl-defun org-canvas--resolve-conflict (data remote-response)
+  "Resolve a conflict for DATA given REMOTE-RESPONSE.
+Checks `org-canvas--conflict-apply-all' for a batch decision.
+Otherwise shows a diff buffer and prompts the user.
+Returns \\='push, \\='pull, or \\='skip."
+  ;; Fast path: apply-all already set by a previous choice
+  (when org-canvas--conflict-apply-all
+    (cl-return-from org-canvas--resolve-conflict
+      org-canvas--conflict-apply-all))
+  ;; Show diff and prompt
+  (let* ((has-pull-fn (not (null org-canvas--current-pull-item-fn)))
+         (buf (org-canvas--conflict-format-diff data remote-response))
+         (choice (unwind-protect
+                     (org-canvas--conflict-prompt has-pull-fn)
+                   (when (buffer-live-p buf)
+                     (kill-buffer buf)))))
+    (pcase choice
+      ('push-all (setq org-canvas--conflict-apply-all 'push) 'push)
+      ('pull-all (setq org-canvas--conflict-apply-all 'pull) 'pull)
+      ('skip-all (setq org-canvas--conflict-apply-all 'skip) 'skip)
+      (_ choice))))
+
+(defun org-canvas--conflict-pull-local (data remote-response pull-item-fn)
+  "Overwrite local heading with REMOTE-RESPONSE data.
+DATA is the parsed entry plist.  PULL-ITEM-FN is the module-specific
+function that sets properties and body from a remote item.
+Updates title, LAST_SYNCED, and deletes stale PAYLOAD_HASH."
+  (let ((pom (plist-get data :pom))
+        (remote-title (or (alist-get 'title remote-response)
+                          (alist-get 'name remote-response))))
+    (when (and remote-title pom)
+      (save-excursion
+        (goto-char (if (markerp pom) (marker-position pom) pom))
+        (org-back-to-heading t)
+        ;; Update heading title
+        (let* ((old-heading (org-get-heading t t t t))
+               (new-heading remote-title))
+          (when (and old-heading (not (string= old-heading new-heading)))
+            (re-search-forward org-complex-heading-regexp (line-end-position) t)
+            (replace-match new-heading t t nil 4)))))
+    ;; Call module-specific pull-item to update properties/body
+    (let ((pos (if (markerp pom) (marker-position pom) pom)))
+      (funcall pull-item-fn remote-response pos)
+      ;; Update sync metadata
+      (org-entry-put pos "LAST_SYNCED"
+                     (format-time-string "[%Y-%m-%d %a %H:%M]"))
+      (let ((updated-at (alist-get 'updated_at remote-response)))
+        (when updated-at
+          (org-entry-put pos "CANVAS_UPDATED_AT" updated-at)))
+      (org-entry-delete pos "PAYLOAD_HASH")
+      (save-buffer))))
 
 ;;;; 7. Push-to-API Infrastructure
 ;;
@@ -1635,11 +1780,29 @@ Returns the API response alist."
     (when (and org-canvas-detect-conflicts
                (eq method 'PUT)
                (plist-get data :pom))
-      (when (eq 'conflict
-                (org-canvas--conflict-check endpoint id (plist-get data :pom)))
-        (elog-warning org-canvas--logger
-          "[Conflict] Skipping '%s' — remote item was modified since last sync" title)
-        (cl-return-from org-canvas--push-to-api 'conflict)))
+      (let ((conflict-result (org-canvas--conflict-check endpoint id (plist-get data :pom))))
+        (when (and conflict-result (eq (car conflict-result) 'conflict))
+          (let* ((remote-response (cdr conflict-result))
+                 (effective-pull-fn org-canvas--current-pull-item-fn)
+                 (resolution (org-canvas--resolve-conflict data remote-response)))
+            (pcase resolution
+              ('skip
+               (elog-warning org-canvas--logger
+                 "[Conflict] Skipping '%s' — remote item was modified since last sync" title)
+               (cl-return-from org-canvas--push-to-api 'conflict))
+              ('pull
+               (if effective-pull-fn
+                   (progn
+                     (org-canvas--conflict-pull-local data remote-response effective-pull-fn)
+                     (elog-info org-canvas--logger
+                       "[Conflict] Pulled remote version of '%s'" title)
+                     (cl-return-from org-canvas--push-to-api 'pulled))
+                 (elog-warning org-canvas--logger
+                   "[Conflict] No pull function available, skipping '%s'" title)
+                 (cl-return-from org-canvas--push-to-api 'conflict)))
+              ('push
+               (elog-info org-canvas--logger
+                 "[Conflict] Force-pushing '%s' (user chose overwrite)" title)))))))
 
     (elog-info org-canvas--logger "[Execute] %s '%s' to %s" method title full-endpoint)
 

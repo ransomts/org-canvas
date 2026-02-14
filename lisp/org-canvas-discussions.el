@@ -177,7 +177,8 @@ Handles 404 on PUT by retrying as POST (stale CANVAS_ID recovery)."
   :parse #'org-canvas--discussion-parse-entry
   :build #'org-canvas--discussion-build-payload
   :push #'org-canvas--discussion-push-to-api
-  :finalize #'org-canvas--discussion-finalize)
+  :finalize #'org-canvas--discussion-finalize
+  :pull-item-fn #'org-canvas--discussion-pull-item)
 
 (org-canvas-define-push-at-point discussion
   :parse #'org-canvas--discussion-parse-entry

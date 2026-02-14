@@ -163,7 +163,8 @@ Handles Timeout by searching for the page."
   :parse #'org-canvas--page-parse-entry
   :build #'org-canvas--page-build-payload
   :push #'org-canvas--page-push-to-api
-  :finalize #'org-canvas--page-finalize)
+  :finalize #'org-canvas--page-finalize
+  :pull-item-fn #'org-canvas--page-pull-item)
 
 ;; Generate org-canvas-delete-all-pages using the delete macro
 ;; Pages use 'url instead of 'id, and we skip the front page

@@ -279,7 +279,8 @@ DATA is the parsed assignment plist, RESPONSE is the Canvas API response."
   :parse #'org-canvas--assignment-parse-entry
   :build #'org-canvas--assignment-build-payload
   :push #'org-canvas--assignment-push-to-api
-  :finalize #'org-canvas--assignment-finalize)
+  :finalize #'org-canvas--assignment-finalize
+  :pull-item-fn #'org-canvas--assignment-pull-item)
 
 ;;;; Push-at-Point
 
