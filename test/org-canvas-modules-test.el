@@ -282,7 +282,65 @@
      (search-forward "SubHeader Item")
      (org-back-to-heading)
      (let ((data (org-canvas--module-item-parse-entry "/tmp/")))
-       (expect (plist-get data :pom) :to-be-truthy)))))
+       (expect (plist-get data :pom) :to-be-truthy))))
+
+  (it "parses EXTERNAL_URL as ExternalUrl type"
+    (with-temp-org-buffer
+     "* Module
+** Google
+:PROPERTIES:
+:EXTERNAL_URL: https://www.google.com
+:END:
+"
+     (search-forward "Google")
+     (org-back-to-heading)
+     (let ((data (org-canvas--module-item-parse-entry "/tmp/")))
+       (expect (plist-get data :type) :to-equal "ExternalUrl")
+       (expect (plist-get data :external-url) :to-equal "https://www.google.com"))))
+
+  (it "parses NEW_TAB property for ExternalUrl"
+    (with-temp-org-buffer
+     "* Module
+** External Link
+:PROPERTIES:
+:EXTERNAL_URL: https://example.com
+:NEW_TAB: true
+:END:
+"
+     (search-forward "External Link")
+     (org-back-to-heading)
+     (let ((data (org-canvas--module-item-parse-entry "/tmp/")))
+       (expect (plist-get data :type) :to-equal "ExternalUrl")
+       (expect (plist-get data :new-tab) :to-be t))))
+
+  (it "defaults NEW_TAB to nil when not set"
+    (with-temp-org-buffer
+     "* Module
+** External Link
+:PROPERTIES:
+:EXTERNAL_URL: https://example.com
+:END:
+"
+     (search-forward "External Link")
+     (org-back-to-heading)
+     (let ((data (org-canvas--module-item-parse-entry "/tmp/")))
+       (expect (plist-get data :new-tab) :to-be nil))))
+
+  (it "preserves canvas-id and indent for ExternalUrl"
+    (with-temp-org-buffer
+     "* Module
+** External
+:PROPERTIES:
+:EXTERNAL_URL: https://example.com
+:CANVAS_ID: 54321
+:INDENT: 1
+:END:
+"
+     (search-forward "External")
+     (org-back-to-heading)
+     (let ((data (org-canvas--module-item-parse-entry "/tmp/")))
+       (expect (plist-get data :canvas-id) :to-equal "54321")
+       (expect (plist-get data :indent) :to-equal 1)))))
 
 ;;;; Stage 2: Build Module Payload
 
@@ -427,7 +485,31 @@
            (payload (org-canvas--module-item-build-payload data 1))
            (item (gethash "module_item" payload)))
       (expect (gethash "completion_requirement[type]" item) :to-equal "must_view")
-      (expect (gethash "completion_requirement[min_score]" item) :to-be nil))))
+      (expect (gethash "completion_requirement[min_score]" item) :to-be nil)))
+
+  (it "includes external_url for ExternalUrl type"
+    (let* ((data '(:type "ExternalUrl" :title "Google" :external-url "https://www.google.com"))
+           (payload (org-canvas--module-item-build-payload data 1))
+           (item (gethash "module_item" payload)))
+      (expect (gethash "external_url" item) :to-equal "https://www.google.com")))
+
+  (it "includes new_tab when set"
+    (let* ((data '(:type "ExternalUrl" :title "Link" :external-url "https://example.com" :new-tab t))
+           (payload (org-canvas--module-item-build-payload data 1))
+           (item (gethash "module_item" payload)))
+      (expect (gethash "new_tab" item) :to-be t)))
+
+  (it "excludes new_tab when nil"
+    (let* ((data '(:type "ExternalUrl" :title "Link" :external-url "https://example.com"))
+           (payload (org-canvas--module-item-build-payload data 1))
+           (item (gethash "module_item" payload)))
+      (expect (gethash "new_tab" item) :to-be nil)))
+
+  (it "excludes external_url when not present"
+    (let* ((data '(:type "SubHeader" :title "Section"))
+           (payload (org-canvas--module-item-build-payload data 1))
+           (item (gethash "module_item" payload)))
+      (expect (gethash "external_url" item) :to-be nil))))
 
 ;;;; Stage 3: Push to API (mocked)
 
@@ -1640,6 +1722,52 @@
                      (id . 101) (content_id . nil) (indent . nil))])))
        (expect count :to-equal 1)
        (expect (buffer-string) :to-match "\\*\\* Week 1"))))
+
+  (it "inserts ExternalUrl item with EXTERNAL_URL and NEW_TAB properties"
+    (with-temp-org-buffer
+     "* Module
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (goto-char (save-excursion (org-end-of-subtree t) (point)))
+     (let ((count (org-canvas--module-pull-insert-items
+                   [((type . "ExternalUrl") (title . "Google")
+                     (id . 301) (external_url . "https://www.google.com")
+                     (new_tab . t) (indent . nil))])))
+       (expect count :to-equal 1)
+       (expect (buffer-string) :to-match "\\*\\* Google")
+       ;; Find the ExternalUrl heading and verify properties
+       (goto-char (point-min))
+       (search-forward "Google")
+       (org-back-to-heading)
+       (expect (org-entry-get (point) "EXTERNAL_URL")
+               :to-equal "https://www.google.com")
+       (expect (org-entry-get (point) "NEW_TAB")
+               :to-equal "true")
+       (expect (org-entry-get (point) "CANVAS_ID")
+               :to-equal "301"))))
+
+  (it "omits NEW_TAB property when new_tab is nil"
+    (with-temp-org-buffer
+     "* Module
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (goto-char (save-excursion (org-end-of-subtree t) (point)))
+     (org-canvas--module-pull-insert-items
+      [((type . "ExternalUrl") (title . "Link")
+        (id . 302) (external_url . "https://example.com")
+        (new_tab . nil) (indent . nil))])
+     (goto-char (point-min))
+     (search-forward "Link")
+     (org-back-to-heading)
+     (expect (org-entry-get (point) "EXTERNAL_URL")
+             :to-equal "https://example.com")
+     (expect (org-entry-get (point) "NEW_TAB") :to-be nil)))
 
   (it "inserts linked items with INDENT"
     (with-temp-org-buffer

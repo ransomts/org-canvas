@@ -386,4 +386,48 @@ Body content.
         (point))
        (expect (buffer-string) :to-match "Important info")))))
 
+;;;; SPECIFIC_SECTIONS Property Tests
+
+(describe "org-canvas--announcement-parse-entry SPECIFIC_SECTIONS"
+  (it "parses SPECIFIC_SECTIONS string"
+    (with-temp-org-buffer
+     "* Section Announcement
+:PROPERTIES:
+:PUBLISHED: true
+:SPECIFIC_SECTIONS: section_1,section_2
+:END:
+
+Content for specific sections.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--announcement-parse-entry)))
+       (expect (plist-get data :specific_sections) :to-equal "section_1,section_2"))))
+
+  (it "returns nil for absent SPECIFIC_SECTIONS"
+    (with-temp-org-buffer
+     "* General Announcement
+:PROPERTIES:
+:PUBLISHED: true
+:END:
+
+Content for everyone.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--announcement-parse-entry)))
+       (expect (plist-get data :specific_sections) :to-be nil)))))
+
+(describe "org-canvas--announcement-build-payload SPECIFIC_SECTIONS"
+  (it "includes specific_sections when present"
+    (let* ((data '(:title "Test" :message "<p>Body</p>" :published t
+                   :specific_sections "section_1,section_2"))
+           (payload (org-canvas--announcement-build-payload data)))
+      (expect (alist-get 'specific_sections payload)
+              :to-equal "section_1,section_2")))
+
+  (it "excludes specific_sections when nil"
+    (let* ((data '(:title "Test" :message "<p>Body</p>" :published t
+                   :specific_sections nil))
+           (payload (org-canvas--announcement-build-payload data)))
+      (expect (assq 'specific_sections payload) :to-be nil))))
+
 ;;; org-canvas-announcements-test.el ends here

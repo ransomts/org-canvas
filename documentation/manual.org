@@ -218,6 +218,15 @@ Course-level settings such as timezone, homepage view, grading scheme, and licen
 | =LICENSE=              | enum      | private, cc_by, cc_by_sa, cc_by_nc, cc_by_nc_sa, cc_by_nd, cc_by_nc_nd, public_domain | Content license    |
 | =START_AT=             | timestamp | Org active timestamp                                                   | Course start date              |
 | =END_AT=               | timestamp | Org active timestamp                                                   | Course end date                |
+| =ALLOW_STUDENT_DISCUSSION_TOPICS= | boolean | true, false                                                  | Students can create discussions |
+| =ALLOW_STUDENT_DISCUSSION_EDITING= | boolean | true, false                                                 | Students can edit discussions  |
+| =ALLOW_STUDENT_FORUM_ATTACHMENTS= | boolean | true, false                                                  | Students can attach files      |
+| =LOCK_ALL_ANNOUNCEMENTS= | boolean | true, false                                                          | Lock all announcements         |
+| =RESTRICT_STUDENT_FUTURE_VIEW= | boolean | true, false                                                    | Hide future content from students |
+| =RESTRICT_STUDENT_PAST_VIEW= | boolean | true, false                                                      | Hide past content from students |
+| =SHOW_ANNOUNCEMENTS_ON_HOME_PAGE= | boolean | true, false                                                 | Show announcements on homepage |
+| =HOME_PAGE_ANNOUNCEMENT_LIMIT= | number | Integer                                                         | Number of announcements shown  |
+| =HIDE_DISTRIBUTION_GRAPHS= | boolean | true, false                                                        | Hide grade distribution graphs |
 
 Invalid enum values are replaced with the first valid option and a warning is logged.
 
@@ -271,6 +280,13 @@ Course assignments with due dates, submission types, and grading options.
 | =PEER_REVIEWS=       | boolean   | Enable peer reviews                           |
 | =PEER_REVIEW_COUNT=  | number    | Reviews per student                           |
 | =PEER_REVIEW_DUE_AT= | timestamp | Peer review due date                          |
+| =AUTOMATIC_PEER_REVIEWS= | boolean | Auto-assign peer reviews (default: true when PEER_REVIEWS set) |
+| =NOTIFY_OF_UPDATE=   | boolean   | Notify students of changes (write-only)       |
+| =GROUP_CATEGORY_ID=  | number    | Canvas group set ID for group assignments     |
+| =GRADE_INDIVIDUALLY= | boolean   | Grade group members individually              |
+| =ONLY_VISIBLE_TO_OVERRIDES= | boolean | Only visible to students with overrides  |
+| =MODERATED_GRADING=  | boolean   | Enable moderated grading                      |
+| =POSITION=           | number    | Position in assignment list                   |
 
 *** Submission Types
 
@@ -322,6 +338,7 @@ Assignment weight categories for grade calculation.
 | =WEIGHT=       | number | Group weight percentage (0-100)  |
 | =DROP_LOWEST=  | number | Number of lowest scores to drop  |
 | =DROP_HIGHEST= | number | Number of highest scores to drop |
+| =POSITION=     | number | Position in group ordering       |
 
 *** Example
 
@@ -374,6 +391,9 @@ Quizzes with embedded questions.
 | =ONE_QUESTION_AT_A_TIME=     | boolean   | Show one question per page                                 |
 | =CANT_GO_BACK=               | boolean   | Prevent backtracking (requires =ONE_QUESTION_AT_A_TIME=)     |
 | =IP_FILTER=                  | string    | IP address range for access restriction                    |
+| =SHOW_CORRECT_ANSWERS_LAST_ATTEMPT= | boolean | Only show correct answers on last attempt          |
+| =ONE_TIME_RESULTS=           | boolean   | Students can only view results once                        |
+| =ONLY_VISIBLE_TO_OVERRIDES=  | boolean   | Only visible to students with overrides                    |
 | =GROUP=                      | link      | Link to assignment-groups.org heading                      |
 
 *** Question Properties
@@ -471,6 +491,7 @@ Wiki pages for course content.
 | =FRONT_PAGE=    | boolean   | Set as course front page            |
 | =EDITING_ROLES= | string    | Who can edit (teachers, students)   |
 | =TODO_DATE=     | timestamp | Add to student to-do list on date   |
+| =NOTIFY_OF_UPDATE= | boolean | Notify students of changes (write-only) |
 
 *** Example
 
@@ -715,6 +736,11 @@ Discussion boards for student interaction.
 | =POINTS=          | number    | Points possible (for graded)          |
 | =DUE_AT=          | timestamp | Due date (for graded)                 |
 | =GROUP=           | link      | Assignment group (for graded)         |
+| =ALLOW_RATING=    | boolean   | Allow post rating                     |
+| =ONLY_GRADERS_CAN_RATE= | boolean | Restrict rating to graders     |
+| =SORT_BY_RATING=  | boolean   | Sort posts by rating                  |
+| =GROUP_CATEGORY=  | number    | Canvas group set ID                   |
+| =SPECIFIC_SECTIONS= | string | Comma-separated section IDs           |
 
 *** Example
 
@@ -758,6 +784,7 @@ Course announcements.
 |----------------+-----------+--------------------------------|
 | =POST_AT=        | timestamp | Scheduled post time            |
 | =ALLOW_COMMENTS= | boolean   | Allow student replies          |
+| =SPECIFIC_SECTIONS= | string | Comma-separated section IDs   |
 
 *** Example
 

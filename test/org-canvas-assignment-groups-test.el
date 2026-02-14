@@ -98,6 +98,33 @@
      (let ((data (org-canvas--assignment-group-parse-entry)))
        (expect (alist-get 'drop_highest (plist-get data :rules)) :to-equal 1))))
 
+  (it "parses POSITION as number"
+    (with-temp-org-buffer
+     "* Config
+** Homework
+:PROPERTIES:
+:WEIGHT: 30
+:POSITION: 2
+:END:
+"
+     (search-forward "Homework")
+     (org-back-to-heading)
+     (let ((data (org-canvas--assignment-group-parse-entry)))
+       (expect (plist-get data :position) :to-equal 2))))
+
+  (it "returns nil for position when not set"
+    (with-temp-org-buffer
+     "* Config
+** Group
+:PROPERTIES:
+:WEIGHT: 10
+:END:
+"
+     (search-forward "Group")
+     (org-back-to-heading)
+     (let ((data (org-canvas--assignment-group-parse-entry)))
+       (expect (plist-get data :position) :to-be nil))))
+
   (it "includes pom in data"
     (with-temp-org-buffer
      "* Config
@@ -137,7 +164,19 @@
            (payload (org-canvas--assignment-group-build-payload data)))
       ;; Rules should be included for updates (canvas-id is present)
       (expect (alist-get 'rules payload) :to-be-truthy)
-      (expect (alist-get 'drop_lowest (alist-get 'rules payload)) :to-equal 2))))
+      (expect (alist-get 'drop_lowest (alist-get 'rules payload)) :to-equal 2)))
+
+  (it "includes position in payload when set"
+    (let* ((data '(:name "Test" :group_weight 20.0 :canvas-id nil
+                   :rules nil :position 3))
+           (payload (org-canvas--assignment-group-build-payload data)))
+      (expect (alist-get 'position payload) :to-equal 3)))
+
+  (it "excludes position from payload when nil"
+    (let* ((data '(:name "Test" :group_weight 20.0 :canvas-id nil
+                   :rules nil :position nil))
+           (payload (org-canvas--assignment-group-build-payload data)))
+      (expect (alist-get 'position payload) :to-be nil))))
 
 ;;;; Stage 3: Push to API (mocked)
 
@@ -236,6 +275,32 @@
         (rules . ((drop_lowest . 0) (drop_highest . 0))))
       (point))
      (expect (org-entry-get (point) "DROP_LOWEST") :to-be nil)
-     (expect (org-entry-get (point) "DROP_HIGHEST") :to-be nil))))
+     (expect (org-entry-get (point) "DROP_HIGHEST") :to-be nil)))
+
+  (it "sets POSITION property on pull"
+    (with-temp-org-buffer
+     "* Group
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (org-canvas--assignment-group-pull-item
+      '((id . 1) (name . "Group") (group_weight . 30) (position . 2))
+      (point))
+     (expect (org-entry-get (point) "POSITION") :to-equal "2")))
+
+  (it "does not set POSITION when nil in response"
+    (with-temp-org-buffer
+     "* Group
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (org-canvas--assignment-group-pull-item
+      '((id . 1) (name . "Group") (group_weight . 30))
+      (point))
+     (expect (org-entry-get (point) "POSITION") :to-be nil))))
 
 ;;; org-canvas-assignment-groups-test.el ends here

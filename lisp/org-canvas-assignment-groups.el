@@ -62,7 +62,8 @@
            (canvas-id (org-canvas-org-get-property pom "CANVAS_ID"))
            (group-weight (org-canvas-org-get-property pom "WEIGHT"))
            (drop-lowest (org-canvas-org-get-property pom "DROP_LOWEST"))
-           (drop-highest (org-canvas-org-get-property pom "DROP_HIGHEST")))
+           (drop-highest (org-canvas-org-get-property pom "DROP_HIGHEST"))
+           (position (org-canvas-org-get-property pom "POSITION")))
 
       (when (or (null name) (string-empty-p name))
         (error "Assignment group name cannot be empty at point %d" pom))
@@ -86,6 +87,7 @@
               :canvas-id canvas-id
               :group_weight (if group-weight (org-canvas--safe-string-to-number group-weight "WEIGHT") 0.0)
               :rules rules
+              :position (when position (org-canvas--safe-string-to-number position "POSITION"))
               :pom pom)))))
 
 ;;;; 2. Stage: Transformation
@@ -103,17 +105,20 @@ because Canvas rejects drop rules when no assignments exist yet."
     (elog-info org-canvas--logger "[Stage 2: Transform]   Weight: %s" weight)
 
     ;; Only include rules on update - Canvas rejects drop rules on new groups with no assignments
-    (let ((payload (if (and rules is-update)
-                       (progn
-                         (elog-info org-canvas--logger "[Stage 2: Transform]   Rules: %S (included for update)" rules)
-                         `((name . ,name)
-                           (group_weight . ,weight)
-                           (rules . ,rules)))
-                     (progn
-                       (when rules
-                         (elog-info org-canvas--logger "[Stage 2: Transform]   Rules: %S (skipped for new group)" rules))
-                       `((name . ,name)
-                         (group_weight . ,weight))))))
+    (let* ((pos (plist-get data :position))
+           (payload (if (and rules is-update)
+                        (progn
+                          (elog-info org-canvas--logger "[Stage 2: Transform]   Rules: %S (included for update)" rules)
+                          `((name . ,name)
+                            (group_weight . ,weight)
+                            (rules . ,rules)))
+                      (progn
+                        (when rules
+                          (elog-info org-canvas--logger "[Stage 2: Transform]   Rules: %S (skipped for new group)" rules))
+                        `((name . ,name)
+                          (group_weight . ,weight))))))
+      (when pos
+        (push `(position . ,pos) payload))
 
       (elog-debug org-canvas--logger "[Stage 2: Transform] Payload: %S" payload)
       payload)))
@@ -168,9 +173,12 @@ Handles 404 on PUT by retrying as POST (stale CANVAS_ID recovery)."
   "Set per-item properties for a pulled assignment group.
 ITEM is the API response alist, POS is the heading position."
   (let ((weight (alist-get 'group_weight item))
-        (rules (alist-get 'rules item)))
+        (rules (alist-get 'rules item))
+        (position (alist-get 'position item)))
     (when weight
       (org-canvas-org-set-property pos "WEIGHT" (format "%s" weight)))
+    (when position
+      (org-canvas-org-set-property pos "POSITION" (format "%s" position)))
     (when rules
       (let ((drop-lowest (alist-get 'drop_lowest rules))
             (drop-highest (alist-get 'drop_highest rules)))

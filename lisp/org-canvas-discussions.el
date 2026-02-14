@@ -80,6 +80,11 @@ Returns a plist with :grading-type, :points, :due-at, :lock-at,
          (post-first (org-canvas-org-get-boolean-property pom "POST_FIRST"))
          (pinned (org-canvas-org-get-boolean-property pom "PINNED"))
          (available-from (org-canvas-org-parse-timestamp (org-canvas-org-get-property pom "AVAILABLE_FROM")))
+         (allow-rating (org-canvas-org-get-boolean-property pom "ALLOW_RATING"))
+         (only-graders-can-rate (org-canvas-org-get-boolean-property pom "ONLY_GRADERS_CAN_RATE"))
+         (sort-by-rating (org-canvas-org-get-boolean-property pom "SORT_BY_RATING"))
+         (group-category-id (org-canvas-org-get-property pom "GROUP_CATEGORY"))
+         (specific-sections (org-canvas-org-get-property pom "SPECIFIC_SECTIONS"))
          (grading (org-canvas--discussion-parse-grading-props pom)))
 
     (when (or (null title) (string-empty-p title))
@@ -110,6 +115,11 @@ Returns a plist with :grading-type, :points, :due-at, :lock-at,
             :due_at (plist-get grading :due-at)
             :lock_at (plist-get grading :lock-at)
             :assignment_group_id (when agid (string-to-number agid))
+            :allow_rating allow-rating
+            :only_graders_can_rate only-graders-can-rate
+            :sort_by_rating sort-by-rating
+            :group_category_id (when group-category-id (org-canvas--safe-string-to-number group-category-id "GROUP_CATEGORY"))
+            :specific_sections specific-sections
             :pom pom))))
 
 ;;;; 2. Stage: Transformation
@@ -146,6 +156,17 @@ Returns an alist for the `assignment' key."
         (push `(delayed_post_at . ,(plist-get data :delayed_post_at)) base))
       (when (and (plist-get data :lock_at) (not (plist-get data :points_possible)))
         (push `(lock_at . ,(plist-get data :lock_at)) base))
+
+      (when (plist-get data :allow_rating)
+        (push '(allow_rating . t) base))
+      (when (plist-get data :only_graders_can_rate)
+        (push '(only_graders_can_rate . t) base))
+      (when (plist-get data :sort_by_rating)
+        (push '(sort_by_rating . t) base))
+      (when (plist-get data :group_category_id)
+        (push `(group_category_id . ,(plist-get data :group_category_id)) base))
+      (when (plist-get data :specific_sections)
+        (push `(specific_sections . ,(plist-get data :specific_sections)) base))
 
       (when (plist-get data :points_possible)
         (elog-debug org-canvas--logger "[Stage 2: Transform] Adding graded assignment: %s pts"
@@ -205,6 +226,9 @@ ITEM is the API response alist, POS is the heading position."
     (when delayed-post
       (let ((ts (org-canvas--iso8601-to-org-timestamp delayed-post)))
         (when ts (org-canvas-org-set-property pos "DELAYED_POST_AT" ts)))))
+  (org-canvas--pull-set-boolean-property pos "ALLOW_RATING" (alist-get 'allow_rating item))
+  (org-canvas--pull-set-boolean-property pos "ONLY_GRADERS_CAN_RATE" (alist-get 'only_graders_can_rate item))
+  (org-canvas--pull-set-boolean-property pos "SORT_BY_RATING" (alist-get 'sort_by_rating item))
   (org-canvas--pull-insert-body (alist-get 'message item)))
 
 (org-canvas-define-pull discussions

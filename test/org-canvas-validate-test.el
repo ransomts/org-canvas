@@ -9,6 +9,7 @@
 
 (require 'buttercup)
 (require 'test-helper)
+(require 'org-canvas-settings)
 (require 'org-canvas-validate)
 
 ;;;; Type Validator Tests
@@ -404,7 +405,8 @@ Cleans up on exit."
           (org-canvas-discussions-file (expand-file-name "discussions.org" ,temp-dir-var))
           (org-canvas-announcements-file (expand-file-name "announcements.org" ,temp-dir-var))
           (org-canvas-assignment-groups-file (expand-file-name "assignment-groups.org" ,temp-dir-var))
-          (org-canvas-sections-file (expand-file-name "sections.org" ,temp-dir-var)))
+          (org-canvas-sections-file (expand-file-name "sections.org" ,temp-dir-var))
+          (org-canvas-settings-file (expand-file-name "settings.org" ,temp-dir-var)))
      (unwind-protect
          (progn ,@body)
        (delete-directory ,temp-dir-var t))))
@@ -415,7 +417,7 @@ EXCEPT is a list of filenames to skip."
   (dolist (f '("assignments.org" "pages.org" "quizzes.org"
                "modules.org" "files.org" "outcomes.org"
                "rubrics.org" "discussions.org" "announcements.org"
-               "assignment-groups.org" "sections.org"))
+               "assignment-groups.org" "sections.org" "settings.org"))
     (unless (member f except)
       (with-temp-file (expand-file-name f dir)
         (insert "#+TITLE: Test\n")))))
@@ -870,6 +872,760 @@ EXCEPT is a list of filenames to skip."
                           (string-match-p "CANVAS_ID" (plist-get i :message)))
                         issues)
                :to-be-truthy)))))
+
+;;;; New Property Validation Tests
+
+(describe "assignment new boolean properties"
+  (it "detects invalid OMIT_FROM_GRADES"
+    (with-temp-org-buffer
+     "* Test Assignment
+:PROPERTIES:
+:OMIT_FROM_GRADES: yes
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Assignments" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Assignment"))))
+       (expect (length issues) :to-be-greater-than 0)
+       (expect (plist-get (car issues) :message) :to-match "OMIT_FROM_GRADES"))))
+
+  (it "detects invalid ANONYMOUS_GRADING"
+    (with-temp-org-buffer
+     "* Test Assignment
+:PROPERTIES:
+:ANONYMOUS_GRADING: 1
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Assignments" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Assignment"))))
+       (expect (length issues) :to-be-greater-than 0)
+       (expect (plist-get (car issues) :message) :to-match "ANONYMOUS_GRADING"))))
+
+  (it "detects invalid NOTIFY_OF_UPDATE"
+    (with-temp-org-buffer
+     "* Test Assignment
+:PROPERTIES:
+:NOTIFY_OF_UPDATE: yes
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Assignments" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Assignment"))))
+       (expect (length issues) :to-be-greater-than 0)
+       (expect (plist-get (car issues) :message) :to-match "NOTIFY_OF_UPDATE"))))
+
+  (it "detects invalid AUTOMATIC_PEER_REVIEWS"
+    (with-temp-org-buffer
+     "* Test Assignment
+:PROPERTIES:
+:AUTOMATIC_PEER_REVIEWS: on
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Assignments" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Assignment"))))
+       (expect (length issues) :to-be-greater-than 0)
+       (expect (plist-get (car issues) :message) :to-match "AUTOMATIC_PEER_REVIEWS"))))
+
+  (it "detects invalid GRADE_INDIVIDUALLY"
+    (with-temp-org-buffer
+     "* Test Assignment
+:PROPERTIES:
+:GRADE_INDIVIDUALLY: yes
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Assignments" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Assignment"))))
+       (expect (length issues) :to-be-greater-than 0)
+       (expect (plist-get (car issues) :message) :to-match "GRADE_INDIVIDUALLY"))))
+
+  (it "detects invalid ONLY_VISIBLE_TO_OVERRIDES"
+    (with-temp-org-buffer
+     "* Test Assignment
+:PROPERTIES:
+:ONLY_VISIBLE_TO_OVERRIDES: yes
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Assignments" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Assignment"))))
+       (expect (length issues) :to-be-greater-than 0)
+       (expect (plist-get (car issues) :message) :to-match "ONLY_VISIBLE_TO_OVERRIDES"))))
+
+  (it "detects invalid MODERATED_GRADING"
+    (with-temp-org-buffer
+     "* Test Assignment
+:PROPERTIES:
+:MODERATED_GRADING: maybe
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Assignments" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Assignment"))))
+       (expect (length issues) :to-be-greater-than 0)
+       (expect (plist-get (car issues) :message) :to-match "MODERATED_GRADING"))))
+
+  (it "accepts valid boolean values for all new assignment booleans"
+    (with-temp-org-buffer
+     "* Test Assignment
+:PROPERTIES:
+:OMIT_FROM_GRADES: true
+:ANONYMOUS_GRADING: false
+:NOTIFY_OF_UPDATE: true
+:AUTOMATIC_PEER_REVIEWS: false
+:GRADE_INDIVIDUALLY: true
+:ONLY_VISIBLE_TO_OVERRIDES: false
+:MODERATED_GRADING: true
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Assignments" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Assignment"))))
+       (expect issues :to-equal nil)))))
+
+(describe "assignment new number properties"
+  (it "detects invalid GROUP_CATEGORY_ID"
+    (with-temp-org-buffer
+     "* Test Assignment
+:PROPERTIES:
+:GROUP_CATEGORY_ID: not-a-number
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Assignments" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Assignment"))))
+       (expect (length issues) :to-be-greater-than 0)
+       (expect (plist-get (car issues) :message) :to-match "GROUP_CATEGORY_ID"))))
+
+  (it "detects invalid POSITION"
+    (with-temp-org-buffer
+     "* Test Assignment
+:PROPERTIES:
+:POSITION: abc
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Assignments" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Assignment"))))
+       (expect (length issues) :to-be-greater-than 0)
+       (expect (plist-get (car issues) :message) :to-match "POSITION"))))
+
+  (it "accepts valid number values"
+    (with-temp-org-buffer
+     "* Test Assignment
+:PROPERTIES:
+:GROUP_CATEGORY_ID: 42
+:POSITION: 1
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Assignments" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Assignment"))))
+       (expect issues :to-equal nil)))))
+
+(describe "page NOTIFY_OF_UPDATE validation"
+  (it "detects invalid NOTIFY_OF_UPDATE on page"
+    (with-temp-org-buffer
+     "* Test Page
+:PROPERTIES:
+:NOTIFY_OF_UPDATE: yes
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Pages" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Page"))))
+       (expect (length issues) :to-be-greater-than 0)
+       (expect (plist-get (car issues) :message) :to-match "NOTIFY_OF_UPDATE"))))
+
+  (it "accepts valid NOTIFY_OF_UPDATE on page"
+    (with-temp-org-buffer
+     "* Test Page
+:PROPERTIES:
+:NOTIFY_OF_UPDATE: true
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Pages" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Page"))))
+       (expect issues :to-equal nil)))))
+
+(describe "quiz new boolean properties"
+  (it "detects invalid SHOW_CORRECT_ANSWERS_LAST_ATTEMPT"
+    (with-temp-org-buffer
+     "* Test Quiz
+:PROPERTIES:
+:SHOW_CORRECT_ANSWERS_LAST_ATTEMPT: yes
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Quizzes" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Quiz"))))
+       (expect (length issues) :to-be-greater-than 0)
+       (expect (plist-get (car issues) :message) :to-match "SHOW_CORRECT_ANSWERS_LAST_ATTEMPT"))))
+
+  (it "detects invalid ONE_TIME_RESULTS"
+    (with-temp-org-buffer
+     "* Test Quiz
+:PROPERTIES:
+:ONE_TIME_RESULTS: 1
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Quizzes" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Quiz"))))
+       (expect (length issues) :to-be-greater-than 0)
+       (expect (plist-get (car issues) :message) :to-match "ONE_TIME_RESULTS"))))
+
+  (it "detects invalid ONLY_VISIBLE_TO_OVERRIDES on quiz"
+    (with-temp-org-buffer
+     "* Test Quiz
+:PROPERTIES:
+:ONLY_VISIBLE_TO_OVERRIDES: maybe
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Quizzes" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Quiz"))))
+       (expect (length issues) :to-be-greater-than 0)
+       (expect (plist-get (car issues) :message) :to-match "ONLY_VISIBLE_TO_OVERRIDES"))))
+
+  (it "accepts valid quiz boolean values"
+    (with-temp-org-buffer
+     "* Test Quiz
+:PROPERTIES:
+:SHOW_CORRECT_ANSWERS_LAST_ATTEMPT: true
+:ONE_TIME_RESULTS: false
+:ONLY_VISIBLE_TO_OVERRIDES: true
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Quizzes" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Quiz"))))
+       (expect issues :to-equal nil)))))
+
+(describe "module item NEW_TAB validation"
+  (it "detects invalid NEW_TAB"
+    (with-temp-org-buffer
+     "* Module 1
+** Item 1
+:PROPERTIES:
+:NEW_TAB: yes
+:END:
+"
+     (search-forward "** Item 1")
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Module Items" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Item 1"))))
+       (expect (length issues) :to-be-greater-than 0)
+       (expect (plist-get (car issues) :message) :to-match "NEW_TAB"))))
+
+  (it "accepts valid NEW_TAB"
+    (with-temp-org-buffer
+     "* Module 1
+** Item 1
+:PROPERTIES:
+:NEW_TAB: true
+:END:
+"
+     (search-forward "** Item 1")
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Module Items" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Item 1"))))
+       (expect issues :to-equal nil)))))
+
+(describe "discussion new properties"
+  (it "detects invalid ALLOW_RATING"
+    (with-temp-org-buffer
+     "* Test Discussion
+:PROPERTIES:
+:ALLOW_RATING: yes
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Discussions" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Discussion"))))
+       (expect (length issues) :to-be-greater-than 0)
+       (expect (plist-get (car issues) :message) :to-match "ALLOW_RATING"))))
+
+  (it "detects invalid ONLY_GRADERS_CAN_RATE"
+    (with-temp-org-buffer
+     "* Test Discussion
+:PROPERTIES:
+:ONLY_GRADERS_CAN_RATE: 1
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Discussions" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Discussion"))))
+       (expect (length issues) :to-be-greater-than 0)
+       (expect (plist-get (car issues) :message) :to-match "ONLY_GRADERS_CAN_RATE"))))
+
+  (it "detects invalid SORT_BY_RATING"
+    (with-temp-org-buffer
+     "* Test Discussion
+:PROPERTIES:
+:SORT_BY_RATING: on
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Discussions" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Discussion"))))
+       (expect (length issues) :to-be-greater-than 0)
+       (expect (plist-get (car issues) :message) :to-match "SORT_BY_RATING"))))
+
+  (it "detects invalid GROUP_CATEGORY"
+    (with-temp-org-buffer
+     "* Test Discussion
+:PROPERTIES:
+:GROUP_CATEGORY: not-a-number
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Discussions" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Discussion"))))
+       (expect (length issues) :to-be-greater-than 0)
+       (expect (plist-get (car issues) :message) :to-match "GROUP_CATEGORY"))))
+
+  (it "accepts valid discussion rating and group properties"
+    (with-temp-org-buffer
+     "* Test Discussion
+:PROPERTIES:
+:ALLOW_RATING: true
+:ONLY_GRADERS_CAN_RATE: false
+:SORT_BY_RATING: true
+:GROUP_CATEGORY: 42
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Discussions" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Discussion"))))
+       (expect issues :to-equal nil)))))
+
+(describe "assignment group POSITION validation"
+  (it "detects invalid POSITION on assignment group"
+    (with-temp-org-buffer
+     "* Homework
+:PROPERTIES:
+:POSITION: abc
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Assignment Groups" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Homework"))))
+       (expect (length issues) :to-be-greater-than 0)
+       (expect (plist-get (car issues) :message) :to-match "POSITION"))))
+
+  (it "accepts valid POSITION on assignment group"
+    (with-temp-org-buffer
+     "* Homework
+:PROPERTIES:
+:POSITION: 3
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Assignment Groups" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Homework"))))
+       (expect issues :to-equal nil)))))
+
+;;;; Settings Validation Tests
+
+(describe "settings validation"
+  (it "detects invalid APPLY_WEIGHTS"
+    (with-temp-org-buffer
+     "* My Course
+:PROPERTIES:
+:APPLY_WEIGHTS: yes
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Settings" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "My Course"))))
+       (expect (length issues) :to-be-greater-than 0)
+       (expect (plist-get (car issues) :message) :to-match "APPLY_WEIGHTS"))))
+
+  (it "detects invalid HIDE_FINAL_GRADES"
+    (with-temp-org-buffer
+     "* My Course
+:PROPERTIES:
+:HIDE_FINAL_GRADES: 1
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Settings" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "My Course"))))
+       (expect (length issues) :to-be-greater-than 0)
+       (expect (plist-get (car issues) :message) :to-match "HIDE_FINAL_GRADES"))))
+
+  (it "detects invalid PUBLIC_SYLLABUS"
+    (with-temp-org-buffer
+     "* My Course
+:PROPERTIES:
+:PUBLIC_SYLLABUS: on
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Settings" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "My Course"))))
+       (expect (length issues) :to-be-greater-than 0)
+       (expect (plist-get (car issues) :message) :to-match "PUBLIC_SYLLABUS"))))
+
+  (it "detects invalid IS_PUBLIC"
+    (with-temp-org-buffer
+     "* My Course
+:PROPERTIES:
+:IS_PUBLIC: 0
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Settings" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "My Course"))))
+       (expect (length issues) :to-be-greater-than 0)
+       (expect (plist-get (car issues) :message) :to-match "IS_PUBLIC"))))
+
+  (it "detects invalid DEFAULT_VIEW"
+    (with-temp-org-buffer
+     "* My Course
+:PROPERTIES:
+:DEFAULT_VIEW: dashboard
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Settings" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "My Course"))))
+       (expect (length issues) :to-be-greater-than 0)
+       (expect (plist-get (car issues) :message) :to-match "DEFAULT_VIEW"))))
+
+  (it "detects invalid LICENSE"
+    (with-temp-org-buffer
+     "* My Course
+:PROPERTIES:
+:LICENSE: gpl
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Settings" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "My Course"))))
+       (expect (length issues) :to-be-greater-than 0)
+       (expect (plist-get (car issues) :message) :to-match "LICENSE"))))
+
+  (it "detects malformed START_AT timestamp"
+    (with-temp-org-buffer
+     "* My Course
+:PROPERTIES:
+:START_AT: not-a-date
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Settings" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "My Course"))))
+       (expect (length issues) :to-be-greater-than 0)
+       (expect (plist-get (car issues) :message) :to-match "START_AT"))))
+
+  (it "detects malformed END_AT timestamp"
+    (with-temp-org-buffer
+     "* My Course
+:PROPERTIES:
+:END_AT: 2026-01-01
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Settings" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "My Course"))))
+       (expect (length issues) :to-be-greater-than 0)
+       (expect (plist-get (car issues) :message) :to-match "END_AT"))))
+
+  (it "detects invalid HOME_PAGE_ANNOUNCEMENT_LIMIT"
+    (with-temp-org-buffer
+     "* My Course
+:PROPERTIES:
+:HOME_PAGE_ANNOUNCEMENT_LIMIT: lots
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Settings" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "My Course"))))
+       (expect (length issues) :to-be-greater-than 0)
+       (expect (plist-get (car issues) :message) :to-match "HOME_PAGE_ANNOUNCEMENT_LIMIT"))))
+
+  (it "detects invalid ALLOW_STUDENT_DISCUSSION_TOPICS"
+    (with-temp-org-buffer
+     "* My Course
+:PROPERTIES:
+:ALLOW_STUDENT_DISCUSSION_TOPICS: yes
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Settings" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "My Course"))))
+       (expect (length issues) :to-be-greater-than 0)
+       (expect (plist-get (car issues) :message) :to-match "ALLOW_STUDENT_DISCUSSION_TOPICS"))))
+
+  (it "detects invalid LOCK_ALL_ANNOUNCEMENTS"
+    (with-temp-org-buffer
+     "* My Course
+:PROPERTIES:
+:LOCK_ALL_ANNOUNCEMENTS: 1
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Settings" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "My Course"))))
+       (expect (length issues) :to-be-greater-than 0)
+       (expect (plist-get (car issues) :message) :to-match "LOCK_ALL_ANNOUNCEMENTS"))))
+
+  (it "detects invalid HIDE_DISTRIBUTION_GRAPHS"
+    (with-temp-org-buffer
+     "* My Course
+:PROPERTIES:
+:HIDE_DISTRIBUTION_GRAPHS: on
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Settings" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "My Course"))))
+       (expect (length issues) :to-be-greater-than 0)
+       (expect (plist-get (car issues) :message) :to-match "HIDE_DISTRIBUTION_GRAPHS"))))
+
+  (it "accepts all valid settings properties"
+    (with-temp-org-buffer
+     "* My Course
+:PROPERTIES:
+:APPLY_WEIGHTS: true
+:HIDE_FINAL_GRADES: false
+:PUBLIC_SYLLABUS: true
+:IS_PUBLIC: false
+:DEFAULT_VIEW: modules
+:LICENSE: cc_by_nc
+:START_AT: <2099-01-15 Wed 09:00>
+:END_AT: <2099-05-15 Thu 17:00>
+:ALLOW_STUDENT_DISCUSSION_TOPICS: true
+:ALLOW_STUDENT_DISCUSSION_EDITING: false
+:ALLOW_STUDENT_FORUM_ATTACHMENTS: true
+:LOCK_ALL_ANNOUNCEMENTS: false
+:RESTRICT_STUDENT_FUTURE_VIEW: true
+:RESTRICT_STUDENT_PAST_VIEW: false
+:SHOW_ANNOUNCEMENTS_ON_HOME_PAGE: true
+:HOME_PAGE_ANNOUNCEMENT_LIMIT: 5
+:HIDE_DISTRIBUTION_GRAPHS: false
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Settings" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "My Course"))))
+       (expect issues :to-equal nil))))
+
+  (it "detects multiple errors in settings"
+    (with-temp-org-buffer
+     "* My Course
+:PROPERTIES:
+:APPLY_WEIGHTS: yes
+:DEFAULT_VIEW: dashboard
+:HOME_PAGE_ANNOUNCEMENT_LIMIT: lots
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Settings" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "My Course"))))
+       (expect (length issues) :to-equal 3)))))
+
+;;;; Settings Integration Tests
+
+(describe "settings spec integration"
+  (it "validates settings file via org-canvas--validate-spec"
+    (with-validate-test-dir dir
+      (with-temp-file (expand-file-name "settings.org" dir)
+        (insert "* My Course\n:PROPERTIES:\n:APPLY_WEIGHTS: invalid\n:DEFAULT_VIEW: bad\n:END:\n"))
+      (test-validate-create-empty-files dir '("settings.org"))
+      (let ((spec (cl-find "Settings" org-canvas--validate-specs
+                           :key (lambda (s) (plist-get s :label))
+                           :test #'string=)))
+        (let ((issues (org-canvas--validate-spec spec)))
+          (expect (length issues) :to-equal 2)
+          (expect (plist-get (car issues) :message) :to-match "APPLY_WEIGHTS")
+          (expect (plist-get (cadr issues) :message) :to-match "DEFAULT_VIEW")))))
+
+  (it "returns no issues for valid settings file"
+    (with-validate-test-dir dir
+      (with-temp-file (expand-file-name "settings.org" dir)
+        (insert "* My Course\n:PROPERTIES:\n:APPLY_WEIGHTS: true\n:DEFAULT_VIEW: modules\n:LICENSE: private\n:END:\n"))
+      (test-validate-create-empty-files dir '("settings.org"))
+      (let ((spec (cl-find "Settings" org-canvas--validate-specs
+                           :key (lambda (s) (plist-get s :label))
+                           :test #'string=)))
+        (expect (org-canvas--validate-spec spec) :to-equal nil))))
+
+  (it "reports settings errors in full validation run"
+    (with-validate-test-dir dir
+      (with-temp-file (expand-file-name "settings.org" dir)
+        (insert "* My Course\n:PROPERTIES:\n:IS_PUBLIC: yes\n:LICENSE: gpl\n:END:\n"))
+      (test-validate-create-empty-files dir '("settings.org"))
+      (org-canvas-validate)
+      (with-current-buffer "*canvas-validate*"
+        (let ((content (buffer-string)))
+          (expect content :to-match "IS_PUBLIC")
+          (expect content :to-match "LICENSE"))))))
 
 (provide 'org-canvas-validate-test)
 ;;; org-canvas-validate-test.el ends here

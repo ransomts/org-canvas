@@ -74,7 +74,8 @@ Logs warnings for invalid roles.  Returns RAW unchanged."
          (editing-roles (let ((raw (org-canvas-org-get-property pom "EDITING_ROLES")))
                           (when raw
                             (org-canvas--page-validate-editing-roles raw))))
-         (todo-date (org-canvas-org-parse-timestamp (org-canvas-org-get-property pom "TODO_DATE"))))
+         (todo-date (org-canvas-org-parse-timestamp (org-canvas-org-get-property pom "TODO_DATE")))
+         (notify-of-update (org-canvas-org-get-boolean-property pom "NOTIFY_OF_UPDATE")))
 
     (elog-info org-canvas--logger "[Stage 1: Parse] Processing Page: '%s' (URL: %s)" title (or canvas-url "NEW"))
     (elog-debug org-canvas--logger "[Stage 1: Parse] Properties: published=%s, front-page=%s, editing-roles=%s"
@@ -98,6 +99,7 @@ Logs warnings for invalid roles.  Returns RAW unchanged."
             :front_page front-page
             :editing_roles editing-roles
             :student_todo_at todo-date
+            :notify_of_update notify-of-update
             :pom pom))))
 
 ;;;; 2. Stage: Transformation
@@ -126,6 +128,8 @@ Logs warnings for invalid roles.  Returns RAW unchanged."
         (puthash "editing_roles" (plist-get data :editing_roles) inner-page))
       (when (plist-get data :student_todo_at)
         (puthash "student_todo_at" (plist-get data :student_todo_at) inner-page))
+      (when (plist-get data :notify_of_update)
+        (puthash "notify_of_update" t inner-page))
 
       (puthash "wiki_page" inner-page outer-wrapper)
 

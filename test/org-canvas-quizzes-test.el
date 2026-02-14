@@ -2361,4 +2361,198 @@ Content.
      (let ((data (org-canvas--quiz-parse-entry)))
        (expect (plist-get data :scoring_policy) :to-equal "keep_highest")))))
 
+;;;; SHOW_CORRECT_ANSWERS_LAST_ATTEMPT, ONE_TIME_RESULTS, ONLY_VISIBLE_TO_OVERRIDES
+
+(describe "org-canvas--quiz-parse-entry boolean properties"
+  (it "parses SHOW_CORRECT_ANSWERS_LAST_ATTEMPT true"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:SHOW_CORRECT_ANSWERS_LAST_ATTEMPT: true
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--quiz-parse-entry)))
+       (expect (plist-get data :show_correct_answers_last_attempt) :to-be t))))
+
+  (it "defaults SHOW_CORRECT_ANSWERS_LAST_ATTEMPT to nil"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--quiz-parse-entry)))
+       (expect (plist-get data :show_correct_answers_last_attempt) :to-be nil))))
+
+  (it "parses ONE_TIME_RESULTS true"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:ONE_TIME_RESULTS: true
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--quiz-parse-entry)))
+       (expect (plist-get data :one_time_results) :to-be t))))
+
+  (it "defaults ONE_TIME_RESULTS to nil"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--quiz-parse-entry)))
+       (expect (plist-get data :one_time_results) :to-be nil))))
+
+  (it "parses ONLY_VISIBLE_TO_OVERRIDES true"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:ONLY_VISIBLE_TO_OVERRIDES: true
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--quiz-parse-entry)))
+       (expect (plist-get data :only_visible_to_overrides) :to-be t))))
+
+  (it "defaults ONLY_VISIBLE_TO_OVERRIDES to nil"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--quiz-parse-entry)))
+       (expect (plist-get data :only_visible_to_overrides) :to-be nil)))))
+
+(describe "org-canvas--quiz-build-payload boolean properties"
+  (it "includes show_correct_answers_last_attempt when true"
+    (let* ((data '(:title "Test" :quiz_type "assignment"
+                   :show_correct_answers_last_attempt t))
+           (payload (org-canvas--quiz-build-payload data)))
+      (expect (alist-get 'show_correct_answers_last_attempt (alist-get 'quiz payload))
+              :to-be t)))
+
+  (it "excludes show_correct_answers_last_attempt when nil"
+    (let* ((data '(:title "Test" :quiz_type "assignment"
+                   :show_correct_answers_last_attempt nil))
+           (payload (org-canvas--quiz-build-payload data)))
+      (expect (assq 'show_correct_answers_last_attempt (alist-get 'quiz payload))
+              :to-be nil)))
+
+  (it "includes one_time_results when true"
+    (let* ((data '(:title "Test" :quiz_type "assignment"
+                   :one_time_results t))
+           (payload (org-canvas--quiz-build-payload data)))
+      (expect (alist-get 'one_time_results (alist-get 'quiz payload))
+              :to-be t)))
+
+  (it "excludes one_time_results when nil"
+    (let* ((data '(:title "Test" :quiz_type "assignment"
+                   :one_time_results nil))
+           (payload (org-canvas--quiz-build-payload data)))
+      (expect (assq 'one_time_results (alist-get 'quiz payload))
+              :to-be nil)))
+
+  (it "includes only_visible_to_overrides when true"
+    (let* ((data '(:title "Test" :quiz_type "assignment"
+                   :only_visible_to_overrides t))
+           (payload (org-canvas--quiz-build-payload data)))
+      (expect (alist-get 'only_visible_to_overrides (alist-get 'quiz payload))
+              :to-be t)))
+
+  (it "excludes only_visible_to_overrides when nil"
+    (let* ((data '(:title "Test" :quiz_type "assignment"
+                   :only_visible_to_overrides nil))
+           (payload (org-canvas--quiz-build-payload data)))
+      (expect (assq 'only_visible_to_overrides (alist-get 'quiz payload))
+              :to-be nil))))
+
+(describe "org-canvas--quiz-pull-set-properties boolean properties"
+  (it "sets SHOW_CORRECT_ANSWERS_LAST_ATTEMPT true"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (let ((quiz '((id . 42) (show_correct_answers_last_attempt . t))))
+       (org-canvas--quiz-pull-set-properties (point) quiz "/tmp/quizzes.org")
+       (expect (org-entry-get (point) "SHOW_CORRECT_ANSWERS_LAST_ATTEMPT")
+               :to-equal "true"))))
+
+  (it "sets SHOW_CORRECT_ANSWERS_LAST_ATTEMPT false"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (let ((quiz '((id . 42) (show_correct_answers_last_attempt . :json-false))))
+       (org-canvas--quiz-pull-set-properties (point) quiz "/tmp/quizzes.org")
+       (expect (org-entry-get (point) "SHOW_CORRECT_ANSWERS_LAST_ATTEMPT")
+               :to-equal "false"))))
+
+  (it "sets ONE_TIME_RESULTS true"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (let ((quiz '((id . 42) (one_time_results . t))))
+       (org-canvas--quiz-pull-set-properties (point) quiz "/tmp/quizzes.org")
+       (expect (org-entry-get (point) "ONE_TIME_RESULTS")
+               :to-equal "true"))))
+
+  (it "sets ONE_TIME_RESULTS false"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (let ((quiz '((id . 42) (one_time_results . :json-false))))
+       (org-canvas--quiz-pull-set-properties (point) quiz "/tmp/quizzes.org")
+       (expect (org-entry-get (point) "ONE_TIME_RESULTS")
+               :to-equal "false"))))
+
+  (it "sets ONLY_VISIBLE_TO_OVERRIDES true"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (let ((quiz '((id . 42) (only_visible_to_overrides . t))))
+       (org-canvas--quiz-pull-set-properties (point) quiz "/tmp/quizzes.org")
+       (expect (org-entry-get (point) "ONLY_VISIBLE_TO_OVERRIDES")
+               :to-equal "true"))))
+
+  (it "sets ONLY_VISIBLE_TO_OVERRIDES false"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (let ((quiz '((id . 42) (only_visible_to_overrides . :json-false))))
+       (org-canvas--quiz-pull-set-properties (point) quiz "/tmp/quizzes.org")
+       (expect (org-entry-get (point) "ONLY_VISIBLE_TO_OVERRIDES")
+               :to-equal "false")))))
+
 ;;; org-canvas-quizzes-test.el ends here

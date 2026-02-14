@@ -82,6 +82,15 @@ Returns a plist with keys :title, :pom, :time-zone, :default-view,
                     (org-canvas-org-get-property pom "START_AT")))
          (end-at (org-canvas-org-parse-timestamp
                   (org-canvas-org-get-property pom "END_AT")))
+         (allow-student-discussion-topics (org-canvas-org-get-property pom "ALLOW_STUDENT_DISCUSSION_TOPICS"))
+         (allow-student-discussion-editing (org-canvas-org-get-property pom "ALLOW_STUDENT_DISCUSSION_EDITING"))
+         (allow-student-forum-attachments (org-canvas-org-get-property pom "ALLOW_STUDENT_FORUM_ATTACHMENTS"))
+         (lock-all-announcements (org-canvas-org-get-property pom "LOCK_ALL_ANNOUNCEMENTS"))
+         (restrict-student-future-view (org-canvas-org-get-property pom "RESTRICT_STUDENT_FUTURE_VIEW"))
+         (restrict-student-past-view (org-canvas-org-get-property pom "RESTRICT_STUDENT_PAST_VIEW"))
+         (show-announcements-on-home-page (org-canvas-org-get-property pom "SHOW_ANNOUNCEMENTS_ON_HOME_PAGE"))
+         (home-page-announcement-limit (org-canvas-org-get-property pom "HOME_PAGE_ANNOUNCEMENT_LIMIT"))
+         (hide-distribution-graphs (org-canvas-org-get-property pom "HIDE_DISTRIBUTION_GRAPHS"))
          (syllabus-body (org-canvas--export-subtree-body-to-html)))
     (list :title title
           :pom pom
@@ -94,6 +103,15 @@ Returns a plist with keys :title, :pom, :time-zone, :default-view,
           :license license
           :start-at start-at
           :end-at end-at
+          :allow-student-discussion-topics allow-student-discussion-topics
+          :allow-student-discussion-editing allow-student-discussion-editing
+          :allow-student-forum-attachments allow-student-forum-attachments
+          :lock-all-announcements lock-all-announcements
+          :restrict-student-future-view restrict-student-future-view
+          :restrict-student-past-view restrict-student-past-view
+          :show-announcements-on-home-page show-announcements-on-home-page
+          :home-page-announcement-limit home-page-announcement-limit
+          :hide-distribution-graphs hide-distribution-graphs
           :syllabus-body syllabus-body)))
 
 ;;;; 2. Build Payload
@@ -124,6 +142,19 @@ Returns a hash-table suitable for `json-encode'."
     (org-canvas--settings-puthash-when course data :license "license")
     (org-canvas--settings-puthash-when course data :start-at "start_at")
     (org-canvas--settings-puthash-when course data :end-at "end_at")
+    (org-canvas--settings-puthash-when course data :allow-student-discussion-topics "allow_student_discussion_topics" t)
+    (org-canvas--settings-puthash-when course data :allow-student-discussion-editing "allow_student_discussion_editing" t)
+    (org-canvas--settings-puthash-when course data :allow-student-forum-attachments "allow_student_forum_attachments" t)
+    (org-canvas--settings-puthash-when course data :lock-all-announcements "lock_all_announcements" t)
+    (org-canvas--settings-puthash-when course data :restrict-student-future-view "restrict_student_future_view" t)
+    (org-canvas--settings-puthash-when course data :restrict-student-past-view "restrict_student_past_view" t)
+    (org-canvas--settings-puthash-when course data :show-announcements-on-home-page "show_announcements_on_home_page" t)
+    (org-canvas--settings-puthash-when course data :hide-distribution-graphs "hide_distribution_graphs" t)
+    (let ((limit (plist-get data :home-page-announcement-limit)))
+      (when limit
+        (puthash "home_page_announcement_limit"
+                 (org-canvas--safe-string-to-number limit "HOME_PAGE_ANNOUNCEMENT_LIMIT")
+                 course)))
     (org-canvas--settings-puthash-when course data :syllabus-body "syllabus_body")
     (puthash "course" course payload)
     payload))
@@ -241,6 +272,26 @@ SYLLABUS-BODY is the pre-extracted syllabus HTML (may be nil)."
       (org-canvas-org-set-property pom "LICENSE" license))
     (org-canvas--pull-set-timestamp-property pom "START_AT" start-at)
     (org-canvas--pull-set-timestamp-property pom "END_AT" end-at)
+    (org-canvas--pull-set-boolean-property
+     pom "ALLOW_STUDENT_DISCUSSION_TOPICS" (alist-get 'allow_student_discussion_topics response))
+    (org-canvas--pull-set-boolean-property
+     pom "ALLOW_STUDENT_DISCUSSION_EDITING" (alist-get 'allow_student_discussion_editing response))
+    (org-canvas--pull-set-boolean-property
+     pom "ALLOW_STUDENT_FORUM_ATTACHMENTS" (alist-get 'allow_student_forum_attachments response))
+    (org-canvas--pull-set-boolean-property
+     pom "LOCK_ALL_ANNOUNCEMENTS" (alist-get 'lock_all_announcements response))
+    (org-canvas--pull-set-boolean-property
+     pom "RESTRICT_STUDENT_FUTURE_VIEW" (alist-get 'restrict_student_future_view response))
+    (org-canvas--pull-set-boolean-property
+     pom "RESTRICT_STUDENT_PAST_VIEW" (alist-get 'restrict_student_past_view response))
+    (org-canvas--pull-set-boolean-property
+     pom "SHOW_ANNOUNCEMENTS_ON_HOME_PAGE" (alist-get 'show_announcements_on_home_page response))
+    (org-canvas--pull-set-boolean-property
+     pom "HIDE_DISTRIBUTION_GRAPHS" (alist-get 'hide_distribution_graphs response))
+    (let ((limit (alist-get 'home_page_announcement_limit response)))
+      (when limit
+        (org-canvas-org-set-property pom "HOME_PAGE_ANNOUNCEMENT_LIMIT"
+                                     (format "%s" limit))))
     (org-canvas-org-set-property
      pom "LAST_SYNCED"
      (format-time-string "[%Y-%m-%d %a %H:%M]"))

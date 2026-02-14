@@ -115,7 +115,17 @@ Accepts: online_upload, online_url, online_text_entry, media_recording,
          (peer-reviews (org-canvas-org-get-boolean-property pom "PEER_REVIEWS"))
          (peer-review-count (org-canvas-org-get-property pom "PEER_REVIEW_COUNT"))
          (peer-review-due-at (org-canvas-org-parse-timestamp
-                              (org-canvas-org-get-property pom "PEER_REVIEW_DUE_AT"))))
+                              (org-canvas-org-get-property pom "PEER_REVIEW_DUE_AT")))
+         (automatic-peer-reviews (org-canvas-org-get-boolean-property pom "AUTOMATIC_PEER_REVIEWS"))
+         ;; Additional properties
+         (omit-from-grades (org-canvas-org-get-boolean-property pom "OMIT_FROM_GRADES"))
+         (anonymous-grading (org-canvas-org-get-boolean-property pom "ANONYMOUS_GRADING"))
+         (notify-of-update (org-canvas-org-get-boolean-property pom "NOTIFY_OF_UPDATE"))
+         (group-category-id (org-canvas-org-get-property pom "GROUP_CATEGORY_ID"))
+         (grade-individually (org-canvas-org-get-boolean-property pom "GRADE_INDIVIDUALLY"))
+         (only-visible-to-overrides (org-canvas-org-get-boolean-property pom "ONLY_VISIBLE_TO_OVERRIDES"))
+         (moderated-grading (org-canvas-org-get-boolean-property pom "MODERATED_GRADING"))
+         (position (org-canvas-org-get-property pom "POSITION")))
 
     (when (or (null title) (string-empty-p title))
       (error "Assignment title cannot be empty at point %d" pom))
@@ -150,6 +160,15 @@ Accepts: online_upload, online_url, online_text_entry, media_recording,
             :peer_reviews peer-reviews
             :peer_review_count (when peer-review-count (org-canvas--safe-string-to-number peer-review-count "PEER_REVIEW_COUNT"))
             :peer_reviews_due_at peer-review-due-at
+            :automatic_peer_reviews automatic-peer-reviews
+            :omit_from_final_grade omit-from-grades
+            :anonymous_grading anonymous-grading
+            :notify_of_update notify-of-update
+            :group_category_id (when group-category-id (org-canvas--safe-string-to-number group-category-id "GROUP_CATEGORY_ID"))
+            :grade_group_students_individually grade-individually
+            :only_visible_to_overrides only-visible-to-overrides
+            :moderated_grading moderated-grading
+            :position (when position (org-canvas--safe-string-to-number position "POSITION"))
             :pom pom))))
 
 ;;;; 2. Stage: Transformation
@@ -159,7 +178,12 @@ Accepts: online_upload, online_url, online_text_entry, media_recording,
   (when (plist-get data :peer_reviews)
     (elog-debug org-canvas--logger "[Stage 2: Transform] Peer reviews enabled")
     (puthash "peer_reviews" t assignment)
-    (puthash "automatic_peer_reviews" t assignment)
+    ;; Default automatic_peer_reviews to t when PEER_REVIEWS is set,
+    ;; but allow explicit override via AUTOMATIC_PEER_REVIEWS property
+    (let ((auto (plist-get data :automatic_peer_reviews)))
+      (puthash "automatic_peer_reviews"
+               (if (eq auto nil) t (org-canvas--to-json-boolean auto))
+               assignment))
     (when (plist-get data :peer_review_count)
       (puthash "peer_review_count" (plist-get data :peer_review_count) assignment))
     (when (plist-get data :peer_reviews_due_at)
@@ -206,6 +230,24 @@ Accepts: online_upload, online_url, online_text_entry, media_recording,
 
       ;; Peer reviews
       (org-canvas--assignment-add-peer-reviews data assignment)
+
+      ;; Additional properties
+      (when (plist-get data :omit_from_final_grade)
+        (puthash "omit_from_final_grade" t assignment))
+      (when (plist-get data :anonymous_grading)
+        (puthash "anonymous_grading" t assignment))
+      (when (plist-get data :notify_of_update)
+        (puthash "notify_of_update" t assignment))
+      (when (plist-get data :group_category_id)
+        (puthash "group_category_id" (plist-get data :group_category_id) assignment))
+      (when (plist-get data :grade_group_students_individually)
+        (puthash "grade_group_students_individually" t assignment))
+      (when (plist-get data :only_visible_to_overrides)
+        (puthash "only_visible_to_overrides" t assignment))
+      (when (plist-get data :moderated_grading)
+        (puthash "moderated_grading" t assignment))
+      (when (plist-get data :position)
+        (puthash "position" (plist-get data :position) assignment))
 
       (elog-debug org-canvas--logger "[Stage 2: Transform] Payload complete")
 
@@ -343,6 +385,17 @@ ITEM is the API response alist, POS is the heading position."
        (mapconcat #'identity (append submission-types nil) ",")))
     (when peer-reviews
       (org-canvas--pull-set-boolean-property pos "PEER_REVIEWS" peer-reviews))
+    (org-canvas--pull-set-boolean-property pos "OMIT_FROM_GRADES" (alist-get 'omit_from_final_grade item))
+    (org-canvas--pull-set-boolean-property pos "ANONYMOUS_GRADING" (alist-get 'anonymous_grading item))
+    (org-canvas--pull-set-boolean-property pos "ONLY_VISIBLE_TO_OVERRIDES" (alist-get 'only_visible_to_overrides item))
+    (org-canvas--pull-set-boolean-property pos "MODERATED_GRADING" (alist-get 'moderated_grading item))
+    (org-canvas--pull-set-boolean-property pos "GRADE_INDIVIDUALLY" (alist-get 'grade_group_students_individually item))
+    (let ((gcat-id (alist-get 'group_category_id item)))
+      (when gcat-id
+        (org-canvas-org-set-property pos "GROUP_CATEGORY_ID" (format "%s" gcat-id))))
+    (let ((apos (alist-get 'position item)))
+      (when apos
+        (org-canvas-org-set-property pos "POSITION" (format "%s" apos))))
     (let ((group-link (org-canvas--assignment-resolve-group-link group-id)))
       (when group-link
         (org-canvas-org-set-property pos "GROUP" group-link))))

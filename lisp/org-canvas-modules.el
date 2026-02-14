@@ -270,29 +270,47 @@ MODULES-FILE-DIR is used to resolve relative file links."
          (indent (org-canvas-org-get-number-property pom "INDENT" 0))
          (completion-req (org-canvas-org-get-property pom "COMPLETION_REQUIREMENT"))
          (min-score (org-canvas-org-get-number-property pom "MIN_SCORE"))
+         (external-url (org-canvas-org-get-property pom "EXTERNAL_URL"))
+         (new-tab (org-canvas-org-get-boolean-property pom "NEW_TAB"))
          ;; Resolve the link - try raw buffer text first (has link syntax),
          ;; then fall back to org-get-heading result
-         (link-info (or (org-canvas--module-resolve-link heading-with-links modules-file-dir)
-                        (org-canvas--module-resolve-link raw-heading modules-file-dir))))
+         (link-info (unless external-url
+                      (or (org-canvas--module-resolve-link heading-with-links modules-file-dir)
+                          (org-canvas--module-resolve-link raw-heading modules-file-dir)))))
 
-    (if (not link-info)
-        (org-canvas--module-classify-unlinked-heading
-         heading-with-links raw-heading canvas-id indent pom)
-      ;; Regular linked item
-      (progn
-        (elog-info org-canvas--logger "[Stage 1: Parse] Processing Item: '%s' -> %s (ID: %s)"
-          (plist-get link-info :title)
-          (plist-get link-info :type)
-          (or canvas-id "NEW"))
-        (list :type (plist-get link-info :type)
-              :title (plist-get link-info :title)
-              :content-id (plist-get link-info :content-id)
-              :page-url (plist-get link-info :page-url)
-              :canvas-id canvas-id
-              :indent indent
-              :completion-requirement completion-req
-              :min-score (when (and min-score (> min-score 0)) min-score)
-              :pom pom)))))
+    (cond
+     ;; External URL item
+     (external-url
+      (elog-info org-canvas--logger "[Stage 1: Parse] Processing ExternalUrl: '%s' (ID: %s)"
+        raw-heading (or canvas-id "NEW"))
+      (list :type "ExternalUrl"
+            :title raw-heading
+            :canvas-id canvas-id
+            :indent indent
+            :external-url external-url
+            :new-tab new-tab
+            :completion-requirement completion-req
+            :min-score (when (and min-score (> min-score 0)) min-score)
+            :pom pom))
+     ;; No link resolved
+     ((not link-info)
+      (org-canvas--module-classify-unlinked-heading
+       heading-with-links raw-heading canvas-id indent pom))
+     ;; Regular linked item
+     (t
+      (elog-info org-canvas--logger "[Stage 1: Parse] Processing Item: '%s' -> %s (ID: %s)"
+        (plist-get link-info :title)
+        (plist-get link-info :type)
+        (or canvas-id "NEW"))
+      (list :type (plist-get link-info :type)
+            :title (plist-get link-info :title)
+            :content-id (plist-get link-info :content-id)
+            :page-url (plist-get link-info :page-url)
+            :canvas-id canvas-id
+            :indent indent
+            :completion-requirement completion-req
+            :min-score (when (and min-score (> min-score 0)) min-score)
+            :pom pom)))))
 
 ;;;; 2. Stage: Transformation - Module
 
@@ -355,6 +373,12 @@ MODULES-FILE-DIR is used to resolve relative file links."
       ;; Indent
       (when (plist-get data :indent)
         (puthash "indent" (plist-get data :indent) item))
+
+      ;; External URL
+      (when (plist-get data :external-url)
+        (puthash "external_url" (plist-get data :external-url) item))
+      (when (plist-get data :new-tab)
+        (puthash "new_tab" t item))
 
       ;; Completion requirement
       (when (plist-get data :completion-requirement)
@@ -486,8 +510,9 @@ Returns (success-count . fail-count)."
           (condition-case err
               (let* ((data (org-canvas--module-item-parse-entry modules-file-dir))
                      (item-type (plist-get data :type)))
-                ;; Skip items without content ID (except SubHeader)
+                ;; Skip items without content ID (except SubHeader and ExternalUrl)
                 (if (and (not (string= item-type "SubHeader"))
+                         (not (string= item-type "ExternalUrl"))
                          (not (plist-get data :content-id))
                          (not (plist-get data :page-url)))
                     (progn
@@ -704,6 +729,22 @@ Returns the count of items inserted."
           (org-canvas-org-set-property (point) "CANVAS_ID"
                                        (format "%s" item-id))
           (goto-char (save-excursion (org-end-of-subtree t) (point))))
+         ((equal item-type "ExternalUrl")
+          (let ((ext-url (alist-get 'external_url item))
+                (new-tab (alist-get 'new_tab item)))
+            (insert (format "** %s\n" (or item-title "External Link")))
+            (org-back-to-heading t)
+            (org-canvas-org-set-property (point) "CANVAS_ID"
+                                         (format "%s" item-id))
+            (when ext-url
+              (org-canvas-org-set-property (point) "EXTERNAL_URL" ext-url))
+            (when new-tab
+              (org-canvas-org-set-property (point) "NEW_TAB" "true"))
+            (when indent
+              (org-canvas-org-set-property (point) "INDENT"
+                                           (format "%s" indent)))
+            (goto-char (save-excursion
+                         (org-end-of-subtree t) (point)))))
          (t
           (let ((link (org-canvas--module-resolve-item-link
                        item-type content-id item-title)))

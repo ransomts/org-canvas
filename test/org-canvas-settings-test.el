@@ -71,6 +71,55 @@ Syllabus text here.
      (let ((data (org-canvas--settings-parse-entry)))
        (expect (plist-get data :license) :to-equal "private"))))
 
+  (it "extracts new boolean settings properties"
+    (with-temp-org-buffer
+     "* Course
+:PROPERTIES:
+:ALLOW_STUDENT_DISCUSSION_TOPICS: true
+:ALLOW_STUDENT_DISCUSSION_EDITING: false
+:ALLOW_STUDENT_FORUM_ATTACHMENTS: true
+:LOCK_ALL_ANNOUNCEMENTS: true
+:RESTRICT_STUDENT_FUTURE_VIEW: false
+:RESTRICT_STUDENT_PAST_VIEW: true
+:SHOW_ANNOUNCEMENTS_ON_HOME_PAGE: true
+:HIDE_DISTRIBUTION_GRAPHS: false
+:END:
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--settings-parse-entry)))
+       (expect (plist-get data :allow-student-discussion-topics) :to-equal "true")
+       (expect (plist-get data :allow-student-discussion-editing) :to-equal "false")
+       (expect (plist-get data :allow-student-forum-attachments) :to-equal "true")
+       (expect (plist-get data :lock-all-announcements) :to-equal "true")
+       (expect (plist-get data :restrict-student-future-view) :to-equal "false")
+       (expect (plist-get data :restrict-student-past-view) :to-equal "true")
+       (expect (plist-get data :show-announcements-on-home-page) :to-equal "true")
+       (expect (plist-get data :hide-distribution-graphs) :to-equal "false"))))
+
+  (it "extracts HOME_PAGE_ANNOUNCEMENT_LIMIT as string"
+    (with-temp-org-buffer
+     "* Course
+:PROPERTIES:
+:HOME_PAGE_ANNOUNCEMENT_LIMIT: 3
+:END:
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--settings-parse-entry)))
+       (expect (plist-get data :home-page-announcement-limit) :to-equal "3"))))
+
+  (it "returns nil for missing new settings properties"
+    (with-temp-org-buffer
+     "* Course
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--settings-parse-entry)))
+       (expect (plist-get data :allow-student-discussion-topics) :to-be nil)
+       (expect (plist-get data :lock-all-announcements) :to-be nil)
+       (expect (plist-get data :home-page-announcement-limit) :to-be nil)
+       (expect (plist-get data :hide-distribution-graphs) :to-be nil))))
+
   (it "exports body as HTML"
     (with-temp-org-buffer
      "* Course
@@ -119,7 +168,44 @@ Welcome to the course.
            (payload (org-canvas--settings-build-payload data))
            (course (gethash "course" payload)))
       (expect (gethash "public_syllabus" course) :to-be t)
-      (expect (gethash "is_public" course) :to-equal :json-false))))
+      (expect (gethash "is_public" course) :to-equal :json-false)))
+
+  (it "converts new boolean settings to t/:json-false"
+    (let* ((data '(:title "Course"
+                   :allow-student-discussion-topics "true"
+                   :allow-student-discussion-editing "false"
+                   :allow-student-forum-attachments "true"
+                   :lock-all-announcements "true"
+                   :restrict-student-future-view "false"
+                   :restrict-student-past-view "true"
+                   :show-announcements-on-home-page "true"
+                   :hide-distribution-graphs "false"))
+           (payload (org-canvas--settings-build-payload data))
+           (course (gethash "course" payload)))
+      (expect (gethash "allow_student_discussion_topics" course) :to-be t)
+      (expect (gethash "allow_student_discussion_editing" course) :to-equal :json-false)
+      (expect (gethash "allow_student_forum_attachments" course) :to-be t)
+      (expect (gethash "lock_all_announcements" course) :to-be t)
+      (expect (gethash "restrict_student_future_view" course) :to-equal :json-false)
+      (expect (gethash "restrict_student_past_view" course) :to-be t)
+      (expect (gethash "show_announcements_on_home_page" course) :to-be t)
+      (expect (gethash "hide_distribution_graphs" course) :to-equal :json-false)))
+
+  (it "converts HOME_PAGE_ANNOUNCEMENT_LIMIT to number"
+    (let* ((data '(:title "Course"
+                   :home-page-announcement-limit "3"))
+           (payload (org-canvas--settings-build-payload data))
+           (course (gethash "course" payload)))
+      (expect (gethash "home_page_announcement_limit" course) :to-equal 3)))
+
+  (it "omits new settings when nil"
+    (let* ((data '(:title "Course"))
+           (payload (org-canvas--settings-build-payload data))
+           (course (gethash "course" payload)))
+      (expect (gethash "allow_student_discussion_topics" course nil) :to-be nil)
+      (expect (gethash "lock_all_announcements" course nil) :to-be nil)
+      (expect (gethash "home_page_announcement_limit" course nil) :to-be nil)
+      (expect (gethash "hide_distribution_graphs" course nil) :to-be nil))))
 
 ;;;; Push
 
@@ -240,6 +326,62 @@ Welcome to the course.
                            :to-match "2026-05-15")
                    (expect-synced-timestamp (point))
                    (expect (buffer-string) :to-match "Welcome"))))))
+        (let ((buf (find-buffer-visiting settings-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "sets new boolean and number settings properties on pull"
+    (let* ((temp-dir (make-temp-file "pull-settings" t))
+           (settings-file (expand-file-name "settings.org" temp-dir)))
+      (unwind-protect
+          (let ((org-canvas-settings-file settings-file))
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request)
+                         (lambda (_method _url &rest _args)
+                           '((name . "Course")
+                             (time_zone . "UTC")
+                             (default_view . "modules")
+                             (apply_assignment_group_weights . t)
+                             (hide_final_grades . :json-false)
+                             (public_syllabus . :json-false)
+                             (is_public . :json-false)
+                             (allow_student_discussion_topics . t)
+                             (allow_student_discussion_editing . :json-false)
+                             (allow_student_forum_attachments . t)
+                             (lock_all_announcements . t)
+                             (restrict_student_future_view . :json-false)
+                             (restrict_student_past_view . t)
+                             (show_announcements_on_home_page . t)
+                             (home_page_announcement_limit . 5)
+                             (hide_distribution_graphs . :json-false))))
+                        ((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                        ((symbol-function 'display-buffer) (lambda (_) nil)))
+                (org-canvas-pull-settings)
+                (let ((content (with-temp-buffer
+                                 (insert-file-contents settings-file)
+                                 (buffer-string))))
+                  (with-temp-org-buffer
+                   content
+                   (re-search-forward "^\\*+ " nil t)
+                   (org-back-to-heading)
+                   (expect (org-entry-get (point) "ALLOW_STUDENT_DISCUSSION_TOPICS")
+                           :to-equal "true")
+                   (expect (org-entry-get (point) "ALLOW_STUDENT_DISCUSSION_EDITING")
+                           :to-equal "false")
+                   (expect (org-entry-get (point) "ALLOW_STUDENT_FORUM_ATTACHMENTS")
+                           :to-equal "true")
+                   (expect (org-entry-get (point) "LOCK_ALL_ANNOUNCEMENTS")
+                           :to-equal "true")
+                   (expect (org-entry-get (point) "RESTRICT_STUDENT_FUTURE_VIEW")
+                           :to-equal "false")
+                   (expect (org-entry-get (point) "RESTRICT_STUDENT_PAST_VIEW")
+                           :to-equal "true")
+                   (expect (org-entry-get (point) "SHOW_ANNOUNCEMENTS_ON_HOME_PAGE")
+                           :to-equal "true")
+                   (expect (org-entry-get (point) "HOME_PAGE_ANNOUNCEMENT_LIMIT")
+                           :to-equal "5")
+                   (expect (org-entry-get (point) "HIDE_DISTRIBUTION_GRAPHS")
+                           :to-equal "false"))))))
         (let ((buf (find-buffer-visiting settings-file)))
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t))))

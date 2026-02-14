@@ -200,6 +200,9 @@ Supports: exact value, or [min, max] range."
 	 (one-question (org-canvas-org-get-boolean-property pom "ONE_QUESTION_AT_A_TIME"))
 	 (cant-go-back (org-canvas-org-get-boolean-property pom "CANT_GO_BACK"))
 	 (ip-filter (org-canvas-org-get-property pom "IP_FILTER"))
+	 (show-correct-last-attempt (org-canvas-org-get-boolean-property pom "SHOW_CORRECT_ANSWERS_LAST_ATTEMPT"))
+	 (one-time-results (org-canvas-org-get-boolean-property pom "ONE_TIME_RESULTS"))
+	 (only-visible-to-overrides (org-canvas-org-get-boolean-property pom "ONLY_VISIBLE_TO_OVERRIDES"))
 	 (body-text (org-canvas--quiz-parse-body-text)))
 
     (when (or (null title) (string-empty-p title))
@@ -231,6 +234,9 @@ Supports: exact value, or [min, max] range."
 	  :one_question_at_a_time one-question
 	  :cant_go_back cant-go-back
 	  :ip_filter ip-filter
+	  :show_correct_answers_last_attempt show-correct-last-attempt
+	  :one_time_results one-time-results
+	  :only_visible_to_overrides only-visible-to-overrides
 	  :assignment_group_id (when assignment-group-id (string-to-number assignment-group-id))
 	  :pom pom)))
 
@@ -292,6 +298,15 @@ Supports: exact value, or [min, max] range."
 
     (when-let ((ip (plist-get data :ip_filter)))
       (push `(ip_filter . ,ip) quiz-obj))
+
+    (when (plist-get data :show_correct_answers_last_attempt)
+      (push '(show_correct_answers_last_attempt . t) quiz-obj))
+
+    (when (plist-get data :one_time_results)
+      (push '(one_time_results . t) quiz-obj))
+
+    (when (plist-get data :only_visible_to_overrides)
+      (push '(only_visible_to_overrides . t) quiz-obj))
 
     `((quiz . ,quiz-obj))))
 
@@ -614,7 +629,13 @@ FILE is the quizzes.org path, used for group link resolution."
       (when cant-back
         (org-canvas--pull-set-boolean-property pos "CANT_GO_BACK" cant-back))
       (when ip
-        (org-canvas-org-set-property pos "IP_FILTER" ip)))
+        (org-canvas-org-set-property pos "IP_FILTER" ip))
+      (org-canvas--pull-set-boolean-property pos "SHOW_CORRECT_ANSWERS_LAST_ATTEMPT"
+                                             (alist-get 'show_correct_answers_last_attempt quiz))
+      (org-canvas--pull-set-boolean-property pos "ONE_TIME_RESULTS"
+                                             (alist-get 'one_time_results quiz))
+      (org-canvas--pull-set-boolean-property pos "ONLY_VISIBLE_TO_OVERRIDES"
+                                             (alist-get 'only_visible_to_overrides quiz)))
     (when (and group-id (fboundp 'org-canvas--assignment-resolve-group-link))
       (let ((group-link (org-canvas--assignment-resolve-group-link group-id)))
         (when group-link

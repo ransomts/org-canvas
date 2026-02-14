@@ -54,7 +54,8 @@
          (published (org-canvas-org-get-boolean-property pom "PUBLISHED" t))
          (post-at-raw (org-canvas-org-get-property pom "POST_AT"))
          (post-at (org-canvas-org-parse-timestamp post-at-raw))
-         (allow-comments (org-canvas-org-get-boolean-property pom "ALLOW_COMMENTS")))
+         (allow-comments (org-canvas-org-get-boolean-property pom "ALLOW_COMMENTS"))
+         (specific-sections (org-canvas-org-get-property pom "SPECIFIC_SECTIONS")))
 
     (when (or (null title) (string-empty-p title))
       (error "Announcement title cannot be empty at point %d" pom))
@@ -77,6 +78,7 @@
             :is_announcement t
             :allow_rating nil
             :allow_discussion_comments allow-comments
+            :specific_sections specific-sections
             :pom pom))))
 
 ;;;; 2. Stage: Transformation
@@ -98,6 +100,9 @@
 
       (unless (plist-get data :allow_discussion_comments)
         (push `(lock_at . ,(org-canvas-current-iso8601-timestamp)) base))
+
+      (when (plist-get data :specific_sections)
+        (push `(specific_sections . ,(plist-get data :specific_sections)) base))
 
       (elog-debug org-canvas--logger "[Stage 2: Transform] Payload complete")
       base)))

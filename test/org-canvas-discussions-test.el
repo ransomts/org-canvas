@@ -205,7 +205,77 @@ Content.
      (let ((data (org-canvas--discussion-parse-entry)))
        (expect (plist-get data :delayed_post_at) :to-be nil)
        (expect (plist-get data :due_at) :to-be nil)
-       (expect (plist-get data :lock_at) :to-be nil)))))
+       (expect (plist-get data :lock_at) :to-be nil))))
+
+  (it "parses ALLOW_RATING property"
+    (with-temp-org-buffer
+     "* Rated Discussion
+:PROPERTIES:
+:PUBLISHED: true
+:ALLOW_RATING: true
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--discussion-parse-entry)))
+       (expect (plist-get data :allow_rating) :to-be t))))
+
+  (it "parses ONLY_GRADERS_CAN_RATE property"
+    (with-temp-org-buffer
+     "* Grader Rated Discussion
+:PROPERTIES:
+:PUBLISHED: true
+:ONLY_GRADERS_CAN_RATE: true
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--discussion-parse-entry)))
+       (expect (plist-get data :only_graders_can_rate) :to-be t))))
+
+  (it "parses SORT_BY_RATING property"
+    (with-temp-org-buffer
+     "* Sorted Discussion
+:PROPERTIES:
+:PUBLISHED: true
+:SORT_BY_RATING: true
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--discussion-parse-entry)))
+       (expect (plist-get data :sort_by_rating) :to-be t))))
+
+  (it "parses GROUP_CATEGORY property"
+    (with-temp-org-buffer
+     "* Group Discussion
+:PROPERTIES:
+:PUBLISHED: true
+:GROUP_CATEGORY: 42
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--discussion-parse-entry)))
+       (expect (plist-get data :group_category_id) :to-equal 42))))
+
+  (it "parses SPECIFIC_SECTIONS property"
+    (with-temp-org-buffer
+     "* Sectioned Discussion
+:PROPERTIES:
+:PUBLISHED: true
+:SPECIFIC_SECTIONS: 1,2,3
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--discussion-parse-entry)))
+       (expect (plist-get data :specific_sections) :to-equal "1,2,3")))))
 
 ;;;; Stage 2: Build Payload
 
@@ -290,7 +360,49 @@ Content.
                    :assignment_group_id 42))
            (payload (org-canvas--discussion-build-payload data))
            (assignment (alist-get 'assignment payload)))
-      (expect (alist-get 'assignment_group_id assignment) :to-equal 42))))
+      (expect (alist-get 'assignment_group_id assignment) :to-equal 42)))
+
+  (it "includes allow_rating when true"
+    (let* ((data '(:title "Rated" :message "" :published t
+                   :discussion_type "side_comment" :require_initial_post nil
+                   :allow_rating t))
+           (payload (org-canvas--discussion-build-payload data)))
+      (expect (alist-get 'allow_rating payload) :to-be t)))
+
+  (it "does not include allow_rating when nil"
+    (let* ((data '(:title "Unrated" :message "" :published t
+                   :discussion_type "side_comment" :require_initial_post nil
+                   :allow_rating nil))
+           (payload (org-canvas--discussion-build-payload data)))
+      (expect (alist-get 'allow_rating payload) :to-be nil)))
+
+  (it "includes only_graders_can_rate when true"
+    (let* ((data '(:title "Grader Rated" :message "" :published t
+                   :discussion_type "side_comment" :require_initial_post nil
+                   :only_graders_can_rate t))
+           (payload (org-canvas--discussion-build-payload data)))
+      (expect (alist-get 'only_graders_can_rate payload) :to-be t)))
+
+  (it "includes sort_by_rating when true"
+    (let* ((data '(:title "Sorted" :message "" :published t
+                   :discussion_type "side_comment" :require_initial_post nil
+                   :sort_by_rating t))
+           (payload (org-canvas--discussion-build-payload data)))
+      (expect (alist-get 'sort_by_rating payload) :to-be t)))
+
+  (it "includes group_category_id when present"
+    (let* ((data '(:title "Grouped" :message "" :published t
+                   :discussion_type "side_comment" :require_initial_post nil
+                   :group_category_id 99))
+           (payload (org-canvas--discussion-build-payload data)))
+      (expect (alist-get 'group_category_id payload) :to-equal 99)))
+
+  (it "includes specific_sections when present"
+    (let* ((data '(:title "Sectioned" :message "" :published t
+                   :discussion_type "side_comment" :require_initial_post nil
+                   :specific_sections "1,2,3"))
+           (payload (org-canvas--discussion-build-payload data)))
+      (expect (alist-get 'specific_sections payload) :to-equal "1,2,3"))))
 
 ;;;; Stage 3: Push to API (mocked)
 
@@ -407,7 +519,58 @@ Content.
         '((id . 1) (title . "Disc")
           (message . "<p>Talk about this</p>"))
         (point))
-       (expect (buffer-string) :to-match "Talk about this")))))
+       (expect (buffer-string) :to-match "Talk about this"))))
+
+  (it "sets ALLOW_RATING property"
+    (with-temp-org-buffer
+     "* Discussion
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (cl-letf (((symbol-function 'org-canvas--html-to-org)
+                (lambda (html) html)))
+       (org-canvas--discussion-pull-item
+        '((id . 1) (title . "Discussion")
+          (allow_rating . t)
+          (message . "<p>Content</p>"))
+        (point))
+       (expect (org-entry-get (point) "ALLOW_RATING") :to-equal "true"))))
+
+  (it "sets ONLY_GRADERS_CAN_RATE property"
+    (with-temp-org-buffer
+     "* Discussion
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (cl-letf (((symbol-function 'org-canvas--html-to-org)
+                (lambda (html) html)))
+       (org-canvas--discussion-pull-item
+        '((id . 1) (title . "Discussion")
+          (only_graders_can_rate . t)
+          (message . "<p>Content</p>"))
+        (point))
+       (expect (org-entry-get (point) "ONLY_GRADERS_CAN_RATE") :to-equal "true"))))
+
+  (it "sets SORT_BY_RATING property"
+    (with-temp-org-buffer
+     "* Discussion
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (cl-letf (((symbol-function 'org-canvas--html-to-org)
+                (lambda (html) html)))
+       (org-canvas--discussion-pull-item
+        '((id . 1) (title . "Discussion")
+          (sort_by_rating . t)
+          (message . "<p>Content</p>"))
+        (point))
+       (expect (org-entry-get (point) "SORT_BY_RATING") :to-equal "true")))))
 
 ;;;; Parse Entry GROUP Link Resolution
 

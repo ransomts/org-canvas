@@ -227,7 +227,16 @@ Returns a list of warning issues."
       (:name "PEER_REVIEW_COUNT" :type number)
       (:name "PEER_REVIEW_DUE_AT" :type timestamp)
       (:name "GROUP" :type link :target-file org-canvas-assignment-groups-file :id-property "CANVAS_ID")
-      (:name "RUBRIC_LINK" :type link :target-file org-canvas-rubrics-file :id-property "CANVAS_ID"))
+      (:name "RUBRIC_LINK" :type link :target-file org-canvas-rubrics-file :id-property "CANVAS_ID")
+      (:name "OMIT_FROM_GRADES" :type boolean)
+      (:name "ANONYMOUS_GRADING" :type boolean)
+      (:name "NOTIFY_OF_UPDATE" :type boolean)
+      (:name "AUTOMATIC_PEER_REVIEWS" :type boolean)
+      (:name "GRADE_INDIVIDUALLY" :type boolean)
+      (:name "ONLY_VISIBLE_TO_OVERRIDES" :type boolean)
+      (:name "MODERATED_GRADING" :type boolean)
+      (:name "GROUP_CATEGORY_ID" :type number)
+      (:name "POSITION" :type number))
      :date-order (("UNLOCK_AT" "DUE_AT" "LOCK_AT"))
      :structural-fn org-canvas--validate-assignment-structure)
 
@@ -238,7 +247,8 @@ Returns a list of warning issues."
      ((:name "PUBLISHED" :type boolean)
       (:name "FRONT_PAGE" :type boolean)
       (:name "EDITING_ROLES" :type csv-enum :values ,org-canvas--valid-editing-roles)
-      (:name "TODO_DATE" :type timestamp)))
+      (:name "TODO_DATE" :type timestamp)
+      (:name "NOTIFY_OF_UPDATE" :type boolean)))
 
     (:label "Quizzes"
      :file org-canvas-quizzes-file
@@ -259,6 +269,9 @@ Returns a list of warning issues."
       (:name "SCORING_POLICY" :type enum :values ,org-canvas--valid-scoring-policies)
       (:name "ONE_QUESTION_AT_A_TIME" :type boolean)
       (:name "CANT_GO_BACK" :type boolean)
+      (:name "SHOW_CORRECT_ANSWERS_LAST_ATTEMPT" :type boolean)
+      (:name "ONE_TIME_RESULTS" :type boolean)
+      (:name "ONLY_VISIBLE_TO_OVERRIDES" :type boolean)
       (:name "GROUP" :type link :target-file org-canvas-assignment-groups-file :id-property "CANVAS_ID"))
      :date-order (("UNLOCK_AT" "DUE_AT" "LOCK_AT")))
 
@@ -284,7 +297,8 @@ Returns a list of warning issues."
      :properties
      ((:name "INDENT" :type number)
       (:name "COMPLETION_REQUIREMENT" :type enum :values ,org-canvas--valid-completion-requirements)
-      (:name "MIN_SCORE" :type number)))
+      (:name "MIN_SCORE" :type number)
+      (:name "NEW_TAB" :type boolean)))
 
     (:label "Rubrics"
      :file org-canvas-rubrics-file
@@ -319,6 +333,10 @@ Returns a list of warning issues."
       (:name "AVAILABLE_FROM" :type timestamp)
       (:name "DUE_AT" :type timestamp)
       (:name "LOCK_AT" :type timestamp)
+      (:name "ALLOW_RATING" :type boolean)
+      (:name "ONLY_GRADERS_CAN_RATE" :type boolean)
+      (:name "SORT_BY_RATING" :type boolean)
+      (:name "GROUP_CATEGORY" :type number)
       (:name "GROUP" :type link :target-file org-canvas-assignment-groups-file :id-property "CANVAS_ID"))
      :date-order (("AVAILABLE_FROM" "DUE_AT" "LOCK_AT")))
 
@@ -345,7 +363,30 @@ Returns a list of warning issues."
      :properties
      ((:name "WEIGHT" :type number)
       (:name "DROP_LOWEST" :type number)
-      (:name "DROP_HIGHEST" :type number)))
+      (:name "DROP_HIGHEST" :type number)
+      (:name "POSITION" :type number)))
+
+    (:label "Settings"
+     :file org-canvas-settings-file
+     :query "LEVEL=1"
+     :properties
+     ((:name "APPLY_WEIGHTS" :type boolean)
+      (:name "HIDE_FINAL_GRADES" :type boolean)
+      (:name "PUBLIC_SYLLABUS" :type boolean)
+      (:name "IS_PUBLIC" :type boolean)
+      (:name "DEFAULT_VIEW" :type enum :values ,org-canvas--settings-valid-views)
+      (:name "LICENSE" :type enum :values ,org-canvas--settings-valid-licenses)
+      (:name "START_AT" :type timestamp)
+      (:name "END_AT" :type timestamp)
+      (:name "ALLOW_STUDENT_DISCUSSION_TOPICS" :type boolean)
+      (:name "ALLOW_STUDENT_DISCUSSION_EDITING" :type boolean)
+      (:name "ALLOW_STUDENT_FORUM_ATTACHMENTS" :type boolean)
+      (:name "LOCK_ALL_ANNOUNCEMENTS" :type boolean)
+      (:name "RESTRICT_STUDENT_FUTURE_VIEW" :type boolean)
+      (:name "RESTRICT_STUDENT_PAST_VIEW" :type boolean)
+      (:name "SHOW_ANNOUNCEMENTS_ON_HOME_PAGE" :type boolean)
+      (:name "HOME_PAGE_ANNOUNCEMENT_LIMIT" :type number)
+      (:name "HIDE_DISTRIBUTION_GRAPHS" :type boolean)))
 
     (:label "Sections"
      :file org-canvas-sections-file

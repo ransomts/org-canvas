@@ -599,4 +599,63 @@ Content.
     (org-canvas--page-validate-editing-roles "teachers,students")
     (expect 'message :not :to-have-been-called)))
 
+;;;; NOTIFY_OF_UPDATE Property Tests
+
+(describe "org-canvas--page-parse-entry NOTIFY_OF_UPDATE"
+  (it "parses NOTIFY_OF_UPDATE true"
+    (with-temp-org-buffer
+     "* Updated Page
+:PROPERTIES:
+:PUBLISHED: true
+:NOTIFY_OF_UPDATE: true
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--page-parse-entry)))
+       (expect (plist-get data :notify_of_update) :to-be t))))
+
+  (it "defaults NOTIFY_OF_UPDATE to nil"
+    (with-temp-org-buffer
+     "* Normal Page
+:PROPERTIES:
+:PUBLISHED: true
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--page-parse-entry)))
+       (expect (plist-get data :notify_of_update) :to-be nil))))
+
+  (it "parses NOTIFY_OF_UPDATE false"
+    (with-temp-org-buffer
+     "* Page
+:PROPERTIES:
+:PUBLISHED: true
+:NOTIFY_OF_UPDATE: false
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--page-parse-entry)))
+       (expect (plist-get data :notify_of_update) :to-be nil)))))
+
+(describe "org-canvas--page-build-payload NOTIFY_OF_UPDATE"
+  (it "includes notify_of_update when true"
+    (let* ((data '(:title "Page" :body "<p>Body</p>" :published t
+                   :notify_of_update t))
+           (payload (org-canvas--page-build-payload data))
+           (wiki-page (gethash "wiki_page" payload)))
+      (expect (gethash "notify_of_update" wiki-page) :to-be t)))
+
+  (it "does not include notify_of_update when nil"
+    (let* ((data '(:title "Page" :body "<p>Body</p>" :published t
+                   :notify_of_update nil))
+           (payload (org-canvas--page-build-payload data))
+           (wiki-page (gethash "wiki_page" payload)))
+      (expect (gethash "notify_of_update" wiki-page) :to-be nil))))
+
 ;;; org-canvas-pages-test.el ends here
