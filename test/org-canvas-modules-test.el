@@ -1853,9 +1853,10 @@
 "
      (search-forward "Hidden Link")
      (org-back-to-heading)
-     (let ((data (org-canvas--module-item-parse-entry "/tmp")))
+     (let* ((data (org-canvas--module-item-parse-entry "/tmp"))
+            (result-type (plist-get data :type)))
        (expect (plist-get data :published) :to-be nil)
-       (expect (plist-get data :type) :to-equal "ExternalUrl")))))
+       (expect result-type :to-equal "ExternalUrl")))))
 
 (describe "org-canvas--module-item-build-payload (published)"
   (it "includes published true in payload"
