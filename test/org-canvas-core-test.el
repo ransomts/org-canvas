@@ -3176,10 +3176,11 @@ Page content.
       ;; Will fail for other reasons (no connection), but should not throw user-error
       (with-sync-test-env
         (cl-letf (((symbol-function 'org-canvas--preflight-check) (lambda () nil))
+                  ((symbol-function 'org-canvas-sync-settings) (lambda () nil))
                   ((symbol-function 'org-canvas-sync-outcomes) (lambda () nil))
                   ((symbol-function 'org-canvas-sync-rubrics) (lambda () nil))
                   ((symbol-function 'org-canvas-sync-assignment-groups) (lambda () nil))
-                  ((symbol-function 'org-canvas-sync-sections) (lambda () nil))
+                  ((symbol-function 'org-canvas-pull-sections) (lambda () nil))
                   ((symbol-function 'org-canvas-sync-files) (lambda () nil))
                   ((symbol-function 'org-canvas-sync-pages) (lambda () nil))
                   ((symbol-function 'org-canvas-sync-discussions) (lambda () nil))
@@ -3194,10 +3195,11 @@ Page content.
   (it "resets flag after sync completes"
     (with-sync-test-env
       (cl-letf (((symbol-function 'org-canvas--preflight-check) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-settings) (lambda () nil))
                 ((symbol-function 'org-canvas-sync-outcomes) (lambda () nil))
                 ((symbol-function 'org-canvas-sync-rubrics) (lambda () nil))
                 ((symbol-function 'org-canvas-sync-assignment-groups) (lambda () nil))
-                ((symbol-function 'org-canvas-sync-sections) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-sections) (lambda () nil))
                 ((symbol-function 'org-canvas-sync-files) (lambda () nil))
                 ((symbol-function 'org-canvas-sync-pages) (lambda () nil))
                 ((symbol-function 'org-canvas-sync-discussions) (lambda () nil))
