@@ -227,6 +227,14 @@ Course-level settings such as timezone, homepage view, grading scheme, and licen
 | =SHOW_ANNOUNCEMENTS_ON_HOME_PAGE= | boolean | true, false                                                 | Show announcements on homepage |
 | =HOME_PAGE_ANNOUNCEMENT_LIMIT= | number | Integer                                                         | Number of announcements shown  |
 | =HIDE_DISTRIBUTION_GRAPHS= | boolean | true, false                                                        | Hide grade distribution graphs |
+| =GRADING_STANDARD_ID= | number | Integer                                                                | Canvas grading standard ID     |
+| =LATE_SUBMISSION_DEDUCTION= | number | 0-100                                                            | Points deducted per interval   |
+| =LATE_SUBMISSION_DEDUCTION_ENABLED= | boolean | true, false                                             | Enable late submission penalty  |
+| =LATE_SUBMISSION_INTERVAL= | enum | day, hour                                                           | Deduction frequency            |
+| =LATE_SUBMISSION_MINIMUM_PERCENT= | number | 0-100                                                      | Minimum score for late work    |
+| =LATE_SUBMISSION_MINIMUM_PERCENT_ENABLED= | boolean | true, false                                       | Enable minimum percent floor   |
+| =MISSING_SUBMISSION_DEDUCTION= | number | 0-100                                                          | Deduction for missing work     |
+| =MISSING_SUBMISSION_DEDUCTION_ENABLED= | boolean | true, false                                           | Enable missing work penalty    |
 
 Invalid enum values are replaced with the first valid option and a warning is logged.
 
@@ -286,6 +294,8 @@ Course assignments with due dates, submission types, and grading options.
 | =GRADE_INDIVIDUALLY= | boolean   | Grade group members individually              |
 | =ONLY_VISIBLE_TO_OVERRIDES= | boolean | Only visible to students with overrides  |
 | =MODERATED_GRADING=  | boolean   | Enable moderated grading                      |
+| =MUTED=              | boolean   | Mute assignment (hide grades from students)   |
+| =GRADING_STANDARD_ID= | number  | Canvas grading standard ID                    |
 | =POSITION=           | number    | Position in assignment list                   |
 
 *** Submission Types
@@ -337,8 +347,9 @@ Assignment weight categories for grade calculation.
 |--------------+--------+----------------------------------|
 | =WEIGHT=       | number | Group weight percentage (0-100)  |
 | =DROP_LOWEST=  | number | Number of lowest scores to drop  |
-| =DROP_HIGHEST= | number | Number of highest scores to drop |
-| =POSITION=     | number | Position in group ordering       |
+| =DROP_HIGHEST= | number | Number of highest scores to drop              |
+| =NEVER_DROP=   | string | Comma-separated assignment IDs to never drop  |
+| =POSITION=     | number | Position in group ordering                    |
 
 *** Example
 
@@ -540,6 +551,7 @@ Course navigation structure with ordered content.
 | =MIN_SCORE=              | number  | Required score for min_score completion                                        |
 | =EXTERNAL_URL=           | string  | URL for ExternalUrl items                                                      |
 | =NEW_TAB=                | boolean | Open external URL in new tab                                                   |
+| =PUBLISHED=              | boolean | Whether the item is published (default: true)                                  |
 
 *** Item Type Resolution
 
@@ -834,6 +846,9 @@ Supported link formats:
 |------------+-----------+-------------------------------|
 | =UNLOCK_AT=  | timestamp | Date to make file available   |
 | =LOCK_AT=    | timestamp | Date to hide file             |
+| =USE_JUSTIFICATION= | enum | own_copyright, used_by_permission, fair_use, public_domain, creative_commons |
+| =USAGE_LICENSE= | string | License code (cc_by, cc_by_sa, cc0, etc.) |
+| =COPYRIGHT=  | string    | Copyright notice text         |
 
 *** Example
 

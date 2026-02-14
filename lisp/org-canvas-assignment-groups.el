@@ -63,6 +63,7 @@
            (group-weight (org-canvas-org-get-property pom "WEIGHT"))
            (drop-lowest (org-canvas-org-get-property pom "DROP_LOWEST"))
            (drop-highest (org-canvas-org-get-property pom "DROP_HIGHEST"))
+           (never-drop (org-canvas-org-get-property pom "NEVER_DROP"))
            (position (org-canvas-org-get-property pom "POSITION")))
 
       (when (or (null name) (string-empty-p name))
@@ -79,7 +80,9 @@
                               (when drop-lowest
                                 `(drop_lowest . ,(org-canvas--safe-string-to-number drop-lowest "DROP_LOWEST")))
                               (when drop-highest
-                                `(drop_highest . ,(org-canvas--safe-string-to-number drop-highest "DROP_HIGHEST")))))))
+                                `(drop_highest . ,(org-canvas--safe-string-to-number drop-highest "DROP_HIGHEST")))
+                              (when never-drop
+                                `(never_drop . ,(mapcar #'string-to-number (split-string never-drop "," t " "))))))))
         (when rules
           (elog-info org-canvas--logger "[Stage 1: Parse]   Rules: %S" rules))
 
@@ -181,13 +184,17 @@ ITEM is the API response alist, POS is the heading position."
       (org-canvas-org-set-property pos "POSITION" (format "%s" position)))
     (when rules
       (let ((drop-lowest (alist-get 'drop_lowest rules))
-            (drop-highest (alist-get 'drop_highest rules)))
+            (drop-highest (alist-get 'drop_highest rules))
+            (never-drop (alist-get 'never_drop rules)))
         (when (and drop-lowest (> drop-lowest 0))
           (org-canvas-org-set-property pos "DROP_LOWEST"
                                        (format "%s" drop-lowest)))
         (when (and drop-highest (> drop-highest 0))
           (org-canvas-org-set-property pos "DROP_HIGHEST"
-                                       (format "%s" drop-highest)))))))
+                                       (format "%s" drop-highest)))
+        (when (and never-drop (> (length never-drop) 0))
+          (org-canvas-org-set-property pos "NEVER_DROP"
+                                       (mapconcat #'number-to-string (append never-drop nil) ",")))))))
 
 (org-canvas-define-pull assignment-groups
   :file org-canvas-assignment-groups-file

@@ -54,6 +54,10 @@
     "cc_by_nd" "cc_by_nc_nd" "public_domain")
   "Valid values for LICENSE.")
 
+(defconst org-canvas--settings-valid-late-intervals
+  '("day" "hour")
+  "Valid values for LATE_SUBMISSION_INTERVAL.")
+
 ;;;; 1. Parse
 
 (defun org-canvas--settings-parse-entry ()
@@ -91,6 +95,18 @@ Returns a plist with keys :title, :pom, :time-zone, :default-view,
          (show-announcements-on-home-page (org-canvas-org-get-property pom "SHOW_ANNOUNCEMENTS_ON_HOME_PAGE"))
          (home-page-announcement-limit (org-canvas-org-get-property pom "HOME_PAGE_ANNOUNCEMENT_LIMIT"))
          (hide-distribution-graphs (org-canvas-org-get-property pom "HIDE_DISTRIBUTION_GRAPHS"))
+         (grading-standard-id (org-canvas-org-get-property pom "GRADING_STANDARD_ID"))
+         ;; Late policy properties
+         (late-submission-deduction (org-canvas-org-get-property pom "LATE_SUBMISSION_DEDUCTION"))
+         (late-submission-deduction-enabled (org-canvas-org-get-property pom "LATE_SUBMISSION_DEDUCTION_ENABLED"))
+         (late-submission-interval (org-canvas--validate-property
+                                    (org-canvas-org-get-property pom "LATE_SUBMISSION_INTERVAL")
+                                    org-canvas--settings-valid-late-intervals
+                                    "LATE_SUBMISSION_INTERVAL"))
+         (late-submission-minimum-percent (org-canvas-org-get-property pom "LATE_SUBMISSION_MINIMUM_PERCENT"))
+         (late-submission-minimum-percent-enabled (org-canvas-org-get-property pom "LATE_SUBMISSION_MINIMUM_PERCENT_ENABLED"))
+         (missing-submission-deduction (org-canvas-org-get-property pom "MISSING_SUBMISSION_DEDUCTION"))
+         (missing-submission-deduction-enabled (org-canvas-org-get-property pom "MISSING_SUBMISSION_DEDUCTION_ENABLED"))
          (syllabus-body (org-canvas--export-subtree-body-to-html)))
     (list :title title
           :pom pom
@@ -112,6 +128,14 @@ Returns a plist with keys :title, :pom, :time-zone, :default-view,
           :show-announcements-on-home-page show-announcements-on-home-page
           :home-page-announcement-limit home-page-announcement-limit
           :hide-distribution-graphs hide-distribution-graphs
+          :grading-standard-id grading-standard-id
+          :late-submission-deduction late-submission-deduction
+          :late-submission-deduction-enabled late-submission-deduction-enabled
+          :late-submission-interval late-submission-interval
+          :late-submission-minimum-percent late-submission-minimum-percent
+          :late-submission-minimum-percent-enabled late-submission-minimum-percent-enabled
+          :missing-submission-deduction missing-submission-deduction
+          :missing-submission-deduction-enabled missing-submission-deduction-enabled
           :syllabus-body syllabus-body)))
 
 ;;;; 2. Build Payload
@@ -155,9 +179,58 @@ Returns a hash-table suitable for `json-encode'."
         (puthash "home_page_announcement_limit"
                  (org-canvas--safe-string-to-number limit "HOME_PAGE_ANNOUNCEMENT_LIMIT")
                  course)))
+    (let ((gs-id (plist-get data :grading-standard-id)))
+      (when gs-id
+        (puthash "grading_standard_id"
+                 (org-canvas--safe-string-to-number gs-id "GRADING_STANDARD_ID")
+                 course)))
     (org-canvas--settings-puthash-when course data :syllabus-body "syllabus_body")
     (puthash "course" course payload)
     payload))
+
+(defun org-canvas--settings-build-late-policy-payload (data)
+  "Build a Canvas late policy payload from parsed DATA plist.
+Returns a hash-table wrapped in `late_policy' key, or nil if no
+late policy properties are set."
+  (let ((deduction (plist-get data :late-submission-deduction))
+        (deduction-enabled (plist-get data :late-submission-deduction-enabled))
+        (interval (plist-get data :late-submission-interval))
+        (min-pct (plist-get data :late-submission-minimum-percent))
+        (min-pct-enabled (plist-get data :late-submission-minimum-percent-enabled))
+        (missing-deduction (plist-get data :missing-submission-deduction))
+        (missing-enabled (plist-get data :missing-submission-deduction-enabled)))
+    (when (or deduction deduction-enabled interval min-pct min-pct-enabled
+              missing-deduction missing-enabled)
+      (let ((lp (make-hash-table :test 'equal))
+            (payload (make-hash-table :test 'equal)))
+        (when deduction
+          (puthash "late_submission_deduction"
+                   (org-canvas--safe-string-to-number deduction "LATE_SUBMISSION_DEDUCTION")
+                   lp))
+        (when deduction-enabled
+          (puthash "late_submission_deduction_enabled"
+                   (if (equal deduction-enabled "true") t :json-false)
+                   lp))
+        (when interval
+          (puthash "late_submission_interval" interval lp))
+        (when min-pct
+          (puthash "late_submission_minimum_percent"
+                   (org-canvas--safe-string-to-number min-pct "LATE_SUBMISSION_MINIMUM_PERCENT")
+                   lp))
+        (when min-pct-enabled
+          (puthash "late_submission_minimum_percent_enabled"
+                   (if (equal min-pct-enabled "true") t :json-false)
+                   lp))
+        (when missing-deduction
+          (puthash "missing_submission_deduction"
+                   (org-canvas--safe-string-to-number missing-deduction "MISSING_SUBMISSION_DEDUCTION")
+                   lp))
+        (when missing-enabled
+          (puthash "missing_submission_deduction_enabled"
+                   (if (equal missing-enabled "true") t :json-false)
+                   lp))
+        (puthash "late_policy" lp payload)
+        payload))))
 
 ;;;; 3. Push
 
@@ -184,6 +257,27 @@ Always uses PUT since the course already exists."
            "[Execute] Course settings update failed: %s"
            (error-message-string err))
          (signal (car err) (cdr err)))))))
+
+(defun org-canvas--settings-push-late-policy (late-policy-payload)
+  "Push LATE-POLICY-PAYLOAD to Canvas late policy endpoint.
+Tries PATCH first; if Canvas returns an error (no existing policy),
+falls back to POST."
+  (when late-policy-payload
+    (let ((endpoint (org-canvas-api-course-endpoint "late_policy")))
+      (elog-info org-canvas--logger "[Execute] Syncing late policy...")
+      (condition-case _err
+          (progn
+            (org-canvas-api-request 'PATCH endpoint :data late-policy-payload)
+            (elog-info org-canvas--logger "[Execute] Late policy updated via PATCH"))
+        (error
+         (elog-debug org-canvas--logger "[Execute] PATCH failed, trying POST...")
+         (condition-case err2
+             (progn
+               (org-canvas-api-request 'POST endpoint :data late-policy-payload)
+               (elog-info org-canvas--logger "[Execute] Late policy created via POST"))
+           (error
+            (elog-error org-canvas--logger "[Execute] Late policy sync failed: %s"
+              (error-message-string err2)))))))))
 
 ;;;; 4. Finalize
 
@@ -223,7 +317,9 @@ and pushes them to Canvas via PUT /courses/:id."
         (condition-case err
             (let* ((data (org-canvas--settings-parse-entry))
                    (payload (org-canvas--settings-build-payload data))
+                   (late-policy-payload (org-canvas--settings-build-late-policy-payload data))
                    (response (org-canvas--settings-push data payload)))
+              (org-canvas--settings-push-late-policy late-policy-payload)
               (org-canvas--settings-finalize data response)
               (save-buffer)
               (elog-info org-canvas--logger "========================================")
@@ -248,9 +344,11 @@ Point must be at the heading."
     (goto-char body-start)
     (insert "\n" syllabus-body "\n")))
 
-(defun org-canvas--settings-pull-set-properties (pom response syllabus-body)
+(defun org-canvas--settings-pull-set-properties (pom response syllabus-body
+                                                     &optional late-policy)
   "Set all settings properties at POM from API RESPONSE.
-SYLLABUS-BODY is the pre-extracted syllabus HTML (may be nil)."
+SYLLABUS-BODY is the pre-extracted syllabus HTML (may be nil).
+LATE-POLICY is the late policy API response (may be nil)."
   (let ((time-zone (alist-get 'time_zone response))
         (default-view (alist-get 'default_view response))
         (license (org-canvas--alist-get-non-null 'license response))
@@ -292,6 +390,37 @@ SYLLABUS-BODY is the pre-extracted syllabus HTML (may be nil)."
       (when limit
         (org-canvas-org-set-property pom "HOME_PAGE_ANNOUNCEMENT_LIMIT"
                                      (format "%s" limit))))
+    (let ((gs-id (alist-get 'grading_standard_id response)))
+      (when gs-id
+        (org-canvas-org-set-property pom "GRADING_STANDARD_ID" (format "%s" gs-id))))
+    ;; Late policy properties
+    (when late-policy
+      (let ((lp (alist-get 'late_policy late-policy)))
+        (when lp
+          (let ((deduction (alist-get 'late_submission_deduction lp))
+                (interval (alist-get 'late_submission_interval lp))
+                (min-pct (alist-get 'late_submission_minimum_percent lp))
+                (missing-deduction (alist-get 'missing_submission_deduction lp)))
+            (when deduction
+              (org-canvas-org-set-property pom "LATE_SUBMISSION_DEDUCTION"
+                                           (format "%s" deduction)))
+            (org-canvas--pull-set-boolean-property
+             pom "LATE_SUBMISSION_DEDUCTION_ENABLED"
+             (alist-get 'late_submission_deduction_enabled lp))
+            (when interval
+              (org-canvas-org-set-property pom "LATE_SUBMISSION_INTERVAL" interval))
+            (when min-pct
+              (org-canvas-org-set-property pom "LATE_SUBMISSION_MINIMUM_PERCENT"
+                                           (format "%s" min-pct)))
+            (org-canvas--pull-set-boolean-property
+             pom "LATE_SUBMISSION_MINIMUM_PERCENT_ENABLED"
+             (alist-get 'late_submission_minimum_percent_enabled lp))
+            (when missing-deduction
+              (org-canvas-org-set-property pom "MISSING_SUBMISSION_DEDUCTION"
+                                           (format "%s" missing-deduction)))
+            (org-canvas--pull-set-boolean-property
+             pom "MISSING_SUBMISSION_DEDUCTION_ENABLED"
+             (alist-get 'missing_submission_deduction_enabled lp))))))
     (org-canvas-org-set-property
      pom "LAST_SYNCED"
      (format-time-string "[%Y-%m-%d %a %H:%M]"))
@@ -313,23 +442,28 @@ and heading if they don't exist."
          (name (alist-get 'name response))
          (syllabus-body (org-canvas--alist-get-non-null 'syllabus_body response))
          (settings-file (expand-file-name org-canvas-settings-file)))
-    (org-canvas--pull-confirm-overwrite settings-file "settings")
-    ;; Open or create the settings file
-    (unless (file-exists-p settings-file)
-      (with-temp-file settings-file
-        (insert (format "#+TITLE: Settings\n* %s\n" (or name "Course")))))
-    (with-current-buffer (find-file-noselect settings-file)
-      (goto-char (point-min))
-      (unless (re-search-forward "^\\*+ " nil t)
-        (goto-char (point-max))
-        (insert (format "\n* %s\n" (or name "Course"))))
-      (org-back-to-heading t)
-      ;; Update heading title
-      (when name
-        (org-edit-headline name))
-      (org-canvas--settings-pull-set-properties
-       (point) response syllabus-body)
-      (save-buffer))
+    ;; Fetch late policy (separate endpoint)
+    (let ((late-policy (condition-case nil
+                           (org-canvas-api-request
+                            'GET (org-canvas-api-course-endpoint "late_policy"))
+                         (error nil))))
+      (org-canvas--pull-confirm-overwrite settings-file "settings")
+      ;; Open or create the settings file
+      (unless (file-exists-p settings-file)
+        (with-temp-file settings-file
+          (insert (format "#+TITLE: Settings\n* %s\n" (or name "Course")))))
+      (with-current-buffer (find-file-noselect settings-file)
+        (goto-char (point-min))
+        (unless (re-search-forward "^\\*+ " nil t)
+          (goto-char (point-max))
+          (insert (format "\n* %s\n" (or name "Course"))))
+        (org-back-to-heading t)
+        ;; Update heading title
+        (when name
+          (org-edit-headline name))
+        (org-canvas--settings-pull-set-properties
+         (point) response syllabus-body late-policy)
+        (save-buffer)))
     (elog-info org-canvas--logger "========================================")
     (elog-info org-canvas--logger ">>> SETTINGS PULL COMPLETE")
     (elog-info org-canvas--logger "Course: %s" name)

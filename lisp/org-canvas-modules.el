@@ -213,7 +213,7 @@ Accepts comma-separated Canvas module IDs."
 ;;;; 1. Stage: Extraction - Module Items
 
 (defun org-canvas--module-classify-unlinked-heading
-    (heading-with-links raw-heading canvas-id indent pom)
+    (heading-with-links raw-heading canvas-id indent published pom)
   "Classify a module item heading whose link could not be fully resolved.
 Distinguishes two cases:
   1. Heading contains a [[file:...]] link but the target has no CANVAS_ID
@@ -222,7 +222,7 @@ Distinguishes two cases:
   2. Heading is genuinely plain text — returns a SubHeader plist.
 HEADING-WITH-LINKS is the raw buffer text (from `org-complex-heading-regexp'
 group 4), RAW-HEADING is from `org-get-heading'.  CANVAS-ID, INDENT,
-and POM are passed through to the returned plist."
+PUBLISHED, and POM are passed through to the returned plist."
   (let* ((link-src (or heading-with-links raw-heading))
          (link-file (when (and link-src
                                (string-match "\\[\\[file:\\([^]:]+\\)" link-src))
@@ -237,11 +237,13 @@ and POM are passed through to the returned plist."
                            :title (or link-title raw-heading)
                            :canvas-id canvas-id
                            :indent indent
+                           :published published
                            :pom pom)
                    (list :type "SubHeader"
                          :title raw-heading
                          :canvas-id canvas-id
                          :indent indent
+                         :published published
                          :pom pom))))
     (if link-file
         (elog-warning org-canvas--logger
@@ -272,6 +274,7 @@ MODULES-FILE-DIR is used to resolve relative file links."
          (min-score (org-canvas-org-get-number-property pom "MIN_SCORE"))
          (external-url (org-canvas-org-get-property pom "EXTERNAL_URL"))
          (new-tab (org-canvas-org-get-boolean-property pom "NEW_TAB"))
+         (item-published (org-canvas-org-get-boolean-property pom "PUBLISHED" t))
          ;; Resolve the link - try raw buffer text first (has link syntax),
          ;; then fall back to org-get-heading result
          (link-info (unless external-url
@@ -289,13 +292,14 @@ MODULES-FILE-DIR is used to resolve relative file links."
             :indent indent
             :external-url external-url
             :new-tab new-tab
+            :published item-published
             :completion-requirement completion-req
             :min-score (when (and min-score (> min-score 0)) min-score)
             :pom pom))
      ;; No link resolved
      ((not link-info)
       (org-canvas--module-classify-unlinked-heading
-       heading-with-links raw-heading canvas-id indent pom))
+       heading-with-links raw-heading canvas-id indent item-published pom))
      ;; Regular linked item
      (t
       (elog-info org-canvas--logger "[Stage 1: Parse] Processing Item: '%s' -> %s (ID: %s)"
@@ -308,6 +312,7 @@ MODULES-FILE-DIR is used to resolve relative file links."
             :page-url (plist-get link-info :page-url)
             :canvas-id canvas-id
             :indent indent
+            :published item-published
             :completion-requirement completion-req
             :min-score (when (and min-score (> min-score 0)) min-score)
             :pom pom)))))
@@ -379,6 +384,9 @@ MODULES-FILE-DIR is used to resolve relative file links."
         (puthash "external_url" (plist-get data :external-url) item))
       (when (plist-get data :new-tab)
         (puthash "new_tab" t item))
+
+      ;; Published state
+      (puthash "published" (org-canvas--to-json-boolean (plist-get data :published)) item)
 
       ;; Completion requirement
       (when (plist-get data :completion-requirement)
@@ -721,13 +729,15 @@ Returns the count of items inserted."
              (item-title (alist-get 'title item))
              (item-id (alist-get 'id item))
              (content-id (alist-get 'content_id item))
-             (indent (alist-get 'indent item)))
+             (indent (alist-get 'indent item))
+             (item-published (alist-get 'published item)))
         (cond
          ((equal item-type "SubHeader")
           (insert (format "** %s\n" (or item-title "Section")))
           (org-back-to-heading t)
           (org-canvas-org-set-property (point) "CANVAS_ID"
                                        (format "%s" item-id))
+          (org-canvas--pull-set-boolean-property (point) "PUBLISHED" item-published)
           (goto-char (save-excursion (org-end-of-subtree t) (point))))
          ((equal item-type "ExternalUrl")
           (let ((ext-url (alist-get 'external_url item))
@@ -743,6 +753,7 @@ Returns the count of items inserted."
             (when indent
               (org-canvas-org-set-property (point) "INDENT"
                                            (format "%s" indent)))
+            (org-canvas--pull-set-boolean-property (point) "PUBLISHED" item-published)
             (goto-char (save-excursion
                          (org-end-of-subtree t) (point)))))
          (t
@@ -755,6 +766,7 @@ Returns the count of items inserted."
             (when indent
               (org-canvas-org-set-property (point) "INDENT"
                                            (format "%s" indent)))
+            (org-canvas--pull-set-boolean-property (point) "PUBLISHED" item-published)
             (goto-char (save-excursion
                          (org-end-of-subtree t) (point))))))
         (cl-incf count)))

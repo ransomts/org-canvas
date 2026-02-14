@@ -311,6 +311,9 @@ Returns nil for folder-only headings (no file link)."
              (published (org-canvas-org-get-boolean-property pom "PUBLISHED" t))
              (unlock-at (org-canvas-org-parse-timestamp (org-canvas-org-get-property pom "UNLOCK_AT")))
              (lock-at (org-canvas-org-parse-timestamp (org-canvas-org-get-property pom "LOCK_AT")))
+             (use-justification (org-canvas-org-get-property pom "USE_JUSTIFICATION"))
+             (usage-license (org-canvas-org-get-property pom "USAGE_LICENSE"))
+             (copyright (org-canvas-org-get-property pom "COPYRIGHT"))
              (files-dir (file-name-directory org-canvas-files-file))
              (folder-path (org-canvas--file-get-folder-path pom files-dir))
              (abs-path (expand-file-name link-path files-dir)))
@@ -329,6 +332,9 @@ Returns nil for folder-only headings (no file link)."
               :published published
               :unlock-at unlock-at
               :lock-at lock-at
+              :use-justification use-justification
+              :usage-license usage-license
+              :copyright copyright
               :pom pom)))))
 
 ;;;; 2. Stage: Upload Preparation
@@ -635,6 +641,34 @@ Per Canvas docs, this GET request must be authenticated."
   "Update local Org file with CANVAS_ID using DATA and RESPONSE."
   (org-canvas--finalize-item data response :title-key :display-name))
 
+(defun org-canvas--file-set-usage-rights (file-id data)
+  "Set usage rights on FILE-ID using DATA plist properties.
+Calls PUT /api/v1/courses/:id/usage_rights with file_ids[] and
+usage_rights[...] parameters.  Only called when at least
+USE_JUSTIFICATION is set."
+  (let ((justification (plist-get data :use-justification)))
+    (when justification
+      (let* ((endpoint (org-canvas-api-course-endpoint "usage_rights"))
+             (payload (make-hash-table :test 'equal))
+             (rights (make-hash-table :test 'equal)))
+        (puthash "file_ids" (vector file-id) payload)
+        (puthash "use_justification" justification rights)
+        (let ((license (plist-get data :usage-license)))
+          (when license
+            (puthash "license" license rights)))
+        (let ((copy (plist-get data :copyright)))
+          (when copy
+            (puthash "legal_copyright" copy rights)))
+        (puthash "usage_rights" rights payload)
+        (elog-info org-canvas--logger
+          "[Usage Rights] Setting usage rights for file %s: %s" file-id justification)
+        (condition-case err
+            (org-canvas-api-request 'PUT endpoint :data payload)
+          (error
+           (elog-warning org-canvas--logger
+             "[Usage Rights] Failed for file %s: %s"
+             file-id (error-message-string err))))))))
+
 ;;;; Pre-flight Folder Creation
 
 (defun org-canvas--file-collect-folder-paths (files-file)
@@ -736,6 +770,9 @@ Creates folders as needed and populates the folder cache."
                         (elog-info org-canvas--logger "----------------------------------------")
                         (let ((response (org-canvas--file-push-to-api data)))
                           (org-canvas--file-finalize data response)
+                          (let ((fid (alist-get 'id response)))
+                            (when (and fid (plist-get data :use-justification))
+                              (org-canvas--file-set-usage-rights fid data)))
                           (setq success-count (1+ success-count))
                           (message "Files [%d/%d] Synced '%s'"
                             (+ success-count skip-count fail-count)
@@ -933,6 +970,17 @@ Downloads file contents to the content/ directory."
             (org-canvas-org-set-property pos "CONTENT_TYPE" content-type))
           (when size
             (org-canvas-org-set-property pos "SIZE" (format "%s" size)))
+          (let ((usage-rights (alist-get 'usage_rights item)))
+            (when usage-rights
+              (let ((justification (alist-get 'use_justification usage-rights))
+                    (license (alist-get 'license usage-rights))
+                    (legal-copyright (alist-get 'legal_copyright usage-rights)))
+                (when justification
+                  (org-canvas-org-set-property pos "USE_JUSTIFICATION" justification))
+                (when license
+                  (org-canvas-org-set-property pos "USAGE_LICENSE" license))
+                (when legal-copyright
+                  (org-canvas-org-set-property pos "COPYRIGHT" legal-copyright)))))
           (org-canvas--file-pull-download
            display-name download-url local-path size)
           (cl-incf count)))

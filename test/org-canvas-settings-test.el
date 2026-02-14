@@ -518,4 +518,200 @@ Welcome to the course.
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
 
+;;;; Late Policy + GRADING_STANDARD_ID Tests
+
+(describe "org-canvas--settings-parse-entry (late policy + grading_standard_id)"
+  (it "extracts GRADING_STANDARD_ID"
+    (with-temp-org-buffer
+     "* Course
+:PROPERTIES:
+:GRADING_STANDARD_ID: 42
+:END:
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--settings-parse-entry)))
+       (expect (plist-get data :grading-standard-id) :to-equal "42"))))
+
+  (it "extracts late policy properties"
+    (with-temp-org-buffer
+     "* Course
+:PROPERTIES:
+:LATE_SUBMISSION_DEDUCTION: 10
+:LATE_SUBMISSION_DEDUCTION_ENABLED: true
+:LATE_SUBMISSION_INTERVAL: day
+:LATE_SUBMISSION_MINIMUM_PERCENT: 50
+:LATE_SUBMISSION_MINIMUM_PERCENT_ENABLED: true
+:MISSING_SUBMISSION_DEDUCTION: 100
+:MISSING_SUBMISSION_DEDUCTION_ENABLED: true
+:END:
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--settings-parse-entry)))
+       (expect (plist-get data :late-submission-deduction) :to-equal "10")
+       (expect (plist-get data :late-submission-deduction-enabled) :to-equal "true")
+       (expect (plist-get data :late-submission-interval) :to-equal "day")
+       (expect (plist-get data :late-submission-minimum-percent) :to-equal "50")
+       (expect (plist-get data :late-submission-minimum-percent-enabled) :to-equal "true")
+       (expect (plist-get data :missing-submission-deduction) :to-equal "100")
+       (expect (plist-get data :missing-submission-deduction-enabled) :to-equal "true"))))
+
+  (it "validates LATE_SUBMISSION_INTERVAL"
+    (with-temp-org-buffer
+     "* Course
+:PROPERTIES:
+:LATE_SUBMISSION_INTERVAL: invalid
+:END:
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--settings-parse-entry)))
+       ;; Falls back to first valid value
+       (expect (plist-get data :late-submission-interval) :to-equal "day"))))
+
+  (it "returns nil for missing late policy properties"
+    (with-temp-org-buffer
+     "* Course
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--settings-parse-entry)))
+       (expect (plist-get data :grading-standard-id) :to-be nil)
+       (expect (plist-get data :late-submission-deduction) :to-be nil)
+       (expect (plist-get data :missing-submission-deduction) :to-be nil)))))
+
+(describe "org-canvas--settings-build-payload (grading_standard_id)"
+  (it "includes grading_standard_id in course"
+    (let* ((data '(:title "Course" :grading-standard-id "42"))
+           (payload (org-canvas--settings-build-payload data))
+           (course (gethash "course" payload)))
+      (expect (gethash "grading_standard_id" course) :to-equal 42)))
+
+  (it "omits grading_standard_id when nil"
+    (let* ((data '(:title "Course"))
+           (payload (org-canvas--settings-build-payload data))
+           (course (gethash "course" payload)))
+      (expect (gethash "grading_standard_id" course nil) :to-be nil))))
+
+(describe "org-canvas--settings-build-late-policy-payload"
+  (it "builds payload with all properties"
+    (let* ((data '(:late-submission-deduction "10"
+                   :late-submission-deduction-enabled "true"
+                   :late-submission-interval "day"
+                   :late-submission-minimum-percent "50"
+                   :late-submission-minimum-percent-enabled "true"
+                   :missing-submission-deduction "100"
+                   :missing-submission-deduction-enabled "false"))
+           (payload (org-canvas--settings-build-late-policy-payload data))
+           (lp (gethash "late_policy" payload)))
+      (expect (gethash "late_submission_deduction" lp) :to-equal 10)
+      (expect (gethash "late_submission_deduction_enabled" lp) :to-be t)
+      (expect (gethash "late_submission_interval" lp) :to-equal "day")
+      (expect (gethash "late_submission_minimum_percent" lp) :to-equal 50)
+      (expect (gethash "late_submission_minimum_percent_enabled" lp) :to-be t)
+      (expect (gethash "missing_submission_deduction" lp) :to-equal 100)
+      (expect (gethash "missing_submission_deduction_enabled" lp) :to-equal :json-false)))
+
+  (it "returns nil when no late policy properties"
+    (let ((data '(:title "Course")))
+      (expect (org-canvas--settings-build-late-policy-payload data) :to-be nil)))
+
+  (it "builds partial payload when some properties set"
+    (let* ((data '(:late-submission-deduction "5"))
+           (payload (org-canvas--settings-build-late-policy-payload data))
+           (lp (gethash "late_policy" payload)))
+      (expect (gethash "late_submission_deduction" lp) :to-equal 5)
+      (expect (gethash "late_submission_interval" lp nil) :to-be nil))))
+
+(describe "org-canvas--settings-push-late-policy"
+  (it "calls PATCH on late_policy endpoint"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (let ((payload (make-hash-table :test 'equal))
+              (lp (make-hash-table :test 'equal)))
+          (puthash "late_submission_deduction" 10 lp)
+          (puthash "late_policy" lp payload)
+          (org-canvas--settings-push-late-policy payload)
+          (expect-api-called 'PATCH "late_policy")))))
+
+  (it "does nothing when payload is nil"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (org-canvas--settings-push-late-policy nil)
+        (expect (test-org-canvas-api-called-p 'PATCH "late_policy") :to-be nil)
+        (expect (test-org-canvas-api-called-p 'POST "late_policy") :to-be nil))))
+
+  (it "falls back to POST when PATCH fails"
+    (with-org-canvas-test-config
+      (let ((call-count 0))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method _url &rest _args)
+                     (setq call-count (1+ call-count))
+                     (if (eq method 'PATCH)
+                         (signal 'error '("400 Bad Request"))
+                       '((id . 1))))))
+          (let ((payload (make-hash-table :test 'equal))
+                (lp (make-hash-table :test 'equal)))
+            (puthash "late_submission_deduction" 10 lp)
+            (puthash "late_policy" lp payload)
+            (org-canvas--settings-push-late-policy payload)
+            (expect call-count :to-equal 2)))))))
+
+(describe "org-canvas-pull-settings (late policy + grading_standard_id)"
+  (it "sets GRADING_STANDARD_ID and late policy properties on pull"
+    (let* ((temp-dir (make-temp-file "pull-settings" t))
+           (settings-file (expand-file-name "settings.org" temp-dir)))
+      (unwind-protect
+          (let ((org-canvas-settings-file settings-file)
+                (call-count 0))
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request)
+                         (lambda (_method url &rest _args)
+                           (setq call-count (1+ call-count))
+                           (if (string-match "late_policy" url)
+                               '((late_policy .
+                                  ((late_submission_deduction . 10)
+                                   (late_submission_deduction_enabled . t)
+                                   (late_submission_interval . "day")
+                                   (late_submission_minimum_percent . 50)
+                                   (late_submission_minimum_percent_enabled . t)
+                                   (missing_submission_deduction . 100)
+                                   (missing_submission_deduction_enabled . :json-false))))
+                             '((name . "Course")
+                               (time_zone . "UTC")
+                               (default_view . "modules")
+                               (grading_standard_id . 42)
+                               (apply_assignment_group_weights . :json-false)
+                               (hide_final_grades . :json-false)
+                               (public_syllabus . :json-false)
+                               (is_public . :json-false)))))
+                        ((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                        ((symbol-function 'display-buffer) (lambda (_) nil)))
+                (org-canvas-pull-settings)
+                (let ((content (with-temp-buffer
+                                 (insert-file-contents settings-file)
+                                 (buffer-string))))
+                  (with-temp-org-buffer
+                   content
+                   (re-search-forward "^\\*+ " nil t)
+                   (org-back-to-heading)
+                   (expect (org-entry-get (point) "GRADING_STANDARD_ID")
+                           :to-equal "42")
+                   (expect (org-entry-get (point) "LATE_SUBMISSION_DEDUCTION")
+                           :to-equal "10")
+                   (expect (org-entry-get (point) "LATE_SUBMISSION_DEDUCTION_ENABLED")
+                           :to-equal "true")
+                   (expect (org-entry-get (point) "LATE_SUBMISSION_INTERVAL")
+                           :to-equal "day")
+                   (expect (org-entry-get (point) "LATE_SUBMISSION_MINIMUM_PERCENT")
+                           :to-equal "50")
+                   (expect (org-entry-get (point) "LATE_SUBMISSION_MINIMUM_PERCENT_ENABLED")
+                           :to-equal "true")
+                   (expect (org-entry-get (point) "MISSING_SUBMISSION_DEDUCTION")
+                           :to-equal "100")
+                   (expect (org-entry-get (point) "MISSING_SUBMISSION_DEDUCTION_ENABLED")
+                           :to-equal "false"))))))
+        (let ((buf (find-buffer-visiting settings-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
 ;;; org-canvas-settings-test.el ends here

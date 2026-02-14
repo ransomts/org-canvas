@@ -303,4 +303,78 @@
       (point))
      (expect (org-entry-get (point) "POSITION") :to-be nil))))
 
+;;;; New Property Tests: NEVER_DROP
+
+(describe "org-canvas--assignment-group-parse-entry (never_drop)"
+  (it "parses NEVER_DROP into rules"
+    (with-temp-org-buffer
+     "* Config
+** Protected
+:PROPERTIES:
+:WEIGHT: 30
+:NEVER_DROP: 123,456,789
+:END:
+"
+     (search-forward "Protected")
+     (org-back-to-heading)
+     (let ((data (org-canvas--assignment-group-parse-entry)))
+       (expect (alist-get 'never_drop (plist-get data :rules))
+               :to-equal '(123 456 789)))))
+
+  (it "does not include never_drop when absent"
+    (with-temp-org-buffer
+     "* Config
+** Simple
+:PROPERTIES:
+:WEIGHT: 20
+:END:
+"
+     (search-forward "Simple")
+     (org-back-to-heading)
+     (let ((data (org-canvas--assignment-group-parse-entry)))
+       (expect (alist-get 'never_drop (plist-get data :rules)) :to-be nil)))))
+
+(describe "org-canvas--assignment-group-build-payload (never_drop)"
+  (it "includes never_drop in rules for updates"
+    (let* ((data '(:name "Test" :group_weight 20.0 :canvas-id "123"
+                   :rules ((drop_lowest . 1) (never_drop . (100 200)))))
+           (payload (org-canvas--assignment-group-build-payload data)))
+      (expect (alist-get 'never_drop (alist-get 'rules payload))
+              :to-equal '(100 200))))
+
+  (it "excludes never_drop rules for new groups"
+    (let* ((data '(:name "Test" :group_weight 20.0 :canvas-id nil
+                   :rules ((never_drop . (100 200)))))
+           (payload (org-canvas--assignment-group-build-payload data)))
+      (expect (alist-get 'rules payload) :to-be nil))))
+
+(describe "org-canvas--assignment-group-pull-item (never_drop)"
+  (it "sets NEVER_DROP property from rules"
+    (with-temp-org-buffer
+     "* Group
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (org-canvas--assignment-group-pull-item
+      '((id . 1) (name . "Group") (group_weight . 30)
+        (rules . ((never_drop . [100 200 300]))))
+      (point))
+     (expect (org-entry-get (point) "NEVER_DROP") :to-equal "100,200,300")))
+
+  (it "does not set NEVER_DROP when empty"
+    (with-temp-org-buffer
+     "* Group
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (org-canvas--assignment-group-pull-item
+      '((id . 1) (name . "Group") (group_weight . 30)
+        (rules . ((never_drop . []))))
+      (point))
+     (expect (org-entry-get (point) "NEVER_DROP") :to-be nil))))
+
 ;;; org-canvas-assignment-groups-test.el ends here

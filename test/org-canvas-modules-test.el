@@ -1530,7 +1530,7 @@
   (it "classifies heading with file link as unresolved link"
     (let* ((result (org-canvas--module-classify-unlinked-heading
                     "[[file:assignments.org::*HW1][HW1]]"
-                    "HW1" nil 0 1))
+                    "HW1" nil 0 1 t))
            (result-type (plist-get result :type)))
       (expect result-type :to-equal "Assignment")
       (expect (plist-get result :title) :to-equal "HW1")
@@ -1539,7 +1539,7 @@
   (it "extracts title from display part of file link"
     (let* ((result (org-canvas--module-classify-unlinked-heading
                     "[[file:pages.org::*Welcome][Welcome Page]]"
-                    "Welcome Page" nil 0 1))
+                    "Welcome Page" nil 0 1 t))
            (result-type (plist-get result :type)))
       (expect result-type :to-equal "Page")
       (expect (plist-get result :title) :to-equal "Welcome Page")))
@@ -1547,13 +1547,13 @@
   (it "uses raw-heading as title when link has no display part"
     (let ((result (org-canvas--module-classify-unlinked-heading
                    "[[file:quizzes.org::*Quiz 1]]"
-                   "Quiz 1" nil 0 1)))
+                   "Quiz 1" nil 0 1 t)))
       ;; No ][...]] display part, so link-title is nil, falls back to raw-heading
       (expect (plist-get result :title) :to-equal "Quiz 1")))
 
   (it "classifies plain text heading as SubHeader"
     (let* ((result (org-canvas--module-classify-unlinked-heading
-                    "Section Divider" "Section Divider" nil 0 1))
+                    "Section Divider" "Section Divider" nil 0 1 t))
            (result-type (plist-get result :type)))
       (expect result-type :to-equal "SubHeader")
       (expect (plist-get result :title) :to-equal "Section Divider")))
@@ -1561,7 +1561,7 @@
   (it "preserves canvas-id and indent"
     (let ((result (org-canvas--module-classify-unlinked-heading
                    "[[file:files.org::*Doc][Doc]]"
-                   "Doc" "existing-id" 2 100)))
+                   "Doc" "existing-id" 2 t 100)))
       (expect (plist-get result :canvas-id) :to-equal "existing-id")
       (expect (plist-get result :indent) :to-equal 2)
       (expect (plist-get result :pom) :to-equal 100)))
@@ -1569,7 +1569,7 @@
   (it "determines type from file link filename"
     (let* ((result (org-canvas--module-classify-unlinked-heading
                     "[[file:discussions.org::*Topic][Topic]]"
-                    "Topic" nil 0 1))
+                    "Topic" nil 0 1 t))
            (result-type (plist-get result :type)))
       (expect result-type :to-equal "Discussion")))
 
@@ -1577,13 +1577,13 @@
     ;; When heading-with-links has the link but raw-heading is stripped
     (let* ((result (org-canvas--module-classify-unlinked-heading
                     "[[file:files.org::*Upload][Upload]]"
-                    "Upload" nil 0 1))
+                    "Upload" nil 0 1 t))
            (result-type (plist-get result :type)))
       (expect result-type :to-equal "File")))
 
   (it "falls back to raw-heading when heading-with-links is nil"
     (let* ((result (org-canvas--module-classify-unlinked-heading
-                    nil "Plain Text" nil 0 1))
+                    nil "Plain Text" nil 0 1 t))
            (result-type (plist-get result :type)))
       (expect result-type :to-equal "SubHeader")
       (expect (plist-get result :title) :to-equal "Plain Text"))))
@@ -1826,5 +1826,76 @@
         (let ((buf (find-buffer-visiting modules-file)))
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
+
+;;;; New Property Tests: PUBLISHED for Module Items
+
+(describe "org-canvas--module-item-parse-entry (published)"
+  (it "defaults published to t when not set"
+    (with-temp-org-buffer
+     "* Module
+** Plain Heading
+:PROPERTIES:
+:END:
+"
+     (search-forward "Plain Heading")
+     (org-back-to-heading)
+     (let ((data (org-canvas--module-item-parse-entry "/tmp")))
+       (expect (plist-get data :published) :to-be t))))
+
+  (it "parses PUBLISHED false on external URL item"
+    (with-temp-org-buffer
+     "* Module
+** Hidden Link
+:PROPERTIES:
+:EXTERNAL_URL: https://example.com
+:PUBLISHED: false
+:END:
+"
+     (search-forward "Hidden Link")
+     (org-back-to-heading)
+     (let ((data (org-canvas--module-item-parse-entry "/tmp")))
+       (expect (plist-get data :published) :to-be nil)
+       (expect (plist-get data :type) :to-equal "ExternalUrl")))))
+
+(describe "org-canvas--module-item-build-payload (published)"
+  (it "includes published true in payload"
+    (let* ((data '(:type "SubHeader" :title "Section" :published t))
+           (payload (org-canvas--module-item-build-payload data 1))
+           (item (gethash "module_item" payload)))
+      (expect (gethash "published" item) :to-be t)))
+
+  (it "includes published false as :json-false"
+    (let* ((data '(:type "SubHeader" :title "Section" :published nil))
+           (payload (org-canvas--module-item-build-payload data 1))
+           (item (gethash "module_item" payload)))
+      (expect (gethash "published" item) :to-equal :json-false))))
+
+(describe "org-canvas--module-pull-insert-items (published)"
+  (it "sets PUBLISHED property on pulled items"
+    (with-temp-org-buffer
+     "* Module
+"
+     (goto-char (point-max))
+     (let ((items [((type . "SubHeader") (title . "Section 1")
+                    (id . 1) (published . :json-false))]))
+       (org-canvas--module-pull-insert-items items)
+       (goto-char (point-min))
+       (re-search-forward "Section 1")
+       (org-back-to-heading)
+       (expect (org-entry-get (point) "PUBLISHED") :to-equal "false"))))
+
+  (it "sets PUBLISHED true on linked items"
+    (with-temp-org-buffer
+     "* Module
+"
+     (goto-char (point-max))
+     (let ((items [((type . "ExternalUrl") (title . "Link")
+                    (id . 2) (external_url . "https://x.com")
+                    (published . t))]))
+       (org-canvas--module-pull-insert-items items)
+       (goto-char (point-min))
+       (re-search-forward "Link")
+       (org-back-to-heading)
+       (expect (org-entry-get (point) "PUBLISHED") :to-equal "true")))))
 
 ;;; org-canvas-modules-test.el ends here

@@ -1627,5 +1627,46 @@ EXCEPT is a list of filenames to skip."
           (expect content :to-match "IS_PUBLIC")
           (expect content :to-match "LICENSE"))))))
 
+;;;; Validation Tests for New Properties
+
+(describe "org-canvas--validate-specs includes new properties"
+  (it "validates MUTED as boolean in assignments"
+    (let ((loc (list :file "/f" :line 1 :heading "H")))
+      (expect (org-canvas--validate-check-boolean "true" "MUTED" loc) :to-be nil)
+      (expect (org-canvas--validate-check-boolean "invalid" "MUTED" loc) :to-be-truthy)))
+
+  (it "validates GRADING_STANDARD_ID as number in assignments"
+    (let ((loc (list :file "/f" :line 1 :heading "H")))
+      (expect (org-canvas--validate-check-number "42" "GRADING_STANDARD_ID" loc) :to-be nil)
+      (expect (org-canvas--validate-check-number "abc" "GRADING_STANDARD_ID" loc) :to-be-truthy)))
+
+  (it "validates USE_JUSTIFICATION as enum in files"
+    (let ((loc (list :file "/f" :line 1 :heading "H")))
+      (expect (org-canvas--validate-check-enum "own_copyright" "USE_JUSTIFICATION"
+                                                org-canvas--valid-use-justifications loc)
+              :to-be nil)
+      (expect (org-canvas--validate-check-enum "invalid" "USE_JUSTIFICATION"
+                                                org-canvas--valid-use-justifications loc)
+              :to-be-truthy)))
+
+  (it "validates LATE_SUBMISSION_INTERVAL as enum in settings"
+    (let ((loc (list :file "/f" :line 1 :heading "H")))
+      (expect (org-canvas--validate-check-enum "day" "LATE_SUBMISSION_INTERVAL"
+                                                org-canvas--settings-valid-late-intervals loc)
+              :to-be nil)
+      (expect (org-canvas--validate-check-enum "week" "LATE_SUBMISSION_INTERVAL"
+                                                org-canvas--settings-valid-late-intervals loc)
+              :to-be-truthy)))
+
+  (it "validates LATE_SUBMISSION_DEDUCTION as number"
+    (let ((loc (list :file "/f" :line 1 :heading "H")))
+      (expect (org-canvas--validate-check-number "10" "LATE_SUBMISSION_DEDUCTION" loc) :to-be nil)
+      (expect (org-canvas--validate-check-number "abc" "LATE_SUBMISSION_DEDUCTION" loc) :to-be-truthy)))
+
+  (it "validates MISSING_SUBMISSION_DEDUCTION_ENABLED as boolean"
+    (let ((loc (list :file "/f" :line 1 :heading "H")))
+      (expect (org-canvas--validate-check-boolean "true" "MISSING_SUBMISSION_DEDUCTION_ENABLED" loc) :to-be nil)
+      (expect (org-canvas--validate-check-boolean "yes" "MISSING_SUBMISSION_DEDUCTION_ENABLED" loc) :to-be-truthy))))
+
 (provide 'org-canvas-validate-test)
 ;;; org-canvas-validate-test.el ends here

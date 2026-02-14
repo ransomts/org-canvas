@@ -125,6 +125,8 @@ Accepts: online_upload, online_url, online_text_entry, media_recording,
          (grade-individually (org-canvas-org-get-boolean-property pom "GRADE_INDIVIDUALLY"))
          (only-visible-to-overrides (org-canvas-org-get-boolean-property pom "ONLY_VISIBLE_TO_OVERRIDES"))
          (moderated-grading (org-canvas-org-get-boolean-property pom "MODERATED_GRADING"))
+         (muted (org-canvas-org-get-boolean-property pom "MUTED"))
+         (grading-standard-id (org-canvas-org-get-property pom "GRADING_STANDARD_ID"))
          (position (org-canvas-org-get-property pom "POSITION")))
 
     (when (or (null title) (string-empty-p title))
@@ -168,6 +170,8 @@ Accepts: online_upload, online_url, online_text_entry, media_recording,
             :grade_group_students_individually grade-individually
             :only_visible_to_overrides only-visible-to-overrides
             :moderated_grading moderated-grading
+            :muted muted
+            :grading_standard_id (when grading-standard-id (org-canvas--safe-string-to-number grading-standard-id "GRADING_STANDARD_ID"))
             :position (when position (org-canvas--safe-string-to-number position "POSITION"))
             :pom pom))))
 
@@ -246,6 +250,10 @@ Accepts: online_upload, online_url, online_text_entry, media_recording,
         (puthash "only_visible_to_overrides" t assignment))
       (when (plist-get data :moderated_grading)
         (puthash "moderated_grading" t assignment))
+      (when (plist-get data :muted)
+        (puthash "muted" t assignment))
+      (when (plist-get data :grading_standard_id)
+        (puthash "grading_standard_id" (plist-get data :grading_standard_id) assignment))
       (when (plist-get data :position)
         (puthash "position" (plist-get data :position) assignment))
 
@@ -396,6 +404,10 @@ ITEM is the API response alist, POS is the heading position."
     (let ((apos (alist-get 'position item)))
       (when apos
         (org-canvas-org-set-property pos "POSITION" (format "%s" apos))))
+    (org-canvas--pull-set-boolean-property pos "MUTED" (alist-get 'muted item))
+    (let ((gs-id (alist-get 'grading_standard_id item)))
+      (when gs-id
+        (org-canvas-org-set-property pos "GRADING_STANDARD_ID" (format "%s" gs-id))))
     (let ((group-link (org-canvas--assignment-resolve-group-link group-id)))
       (when group-link
         (org-canvas-org-set-property pos "GROUP" group-link))))

@@ -1147,4 +1147,127 @@ Content.
         (point))
        (expect (org-entry-get (point) "POSITION") :to-equal "5")))))
 
+;;;; New Property Tests: MUTED and GRADING_STANDARD_ID
+
+(describe "org-canvas--assignment-parse-entry (muted + grading_standard_id)"
+  (it "parses MUTED property"
+    (with-temp-org-buffer
+     "* Muted Assignment
+:PROPERTIES:
+:PUBLISHED: true
+:MUTED: true
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--assignment-parse-entry)))
+       (expect (plist-get data :muted) :to-be t))))
+
+  (it "returns nil for missing MUTED"
+    (with-temp-org-buffer
+     "* Assignment
+:PROPERTIES:
+:PUBLISHED: true
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--assignment-parse-entry)))
+       (expect (plist-get data :muted) :to-be nil))))
+
+  (it "parses GRADING_STANDARD_ID"
+    (with-temp-org-buffer
+     "* Graded Assignment
+:PROPERTIES:
+:PUBLISHED: true
+:GRADING_STANDARD_ID: 42
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--assignment-parse-entry)))
+       (expect (plist-get data :grading_standard_id) :to-equal 42))))
+
+  (it "returns nil for missing GRADING_STANDARD_ID"
+    (with-temp-org-buffer
+     "* Assignment
+:PROPERTIES:
+:PUBLISHED: true
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--assignment-parse-entry)))
+       (expect (plist-get data :grading_standard_id) :to-be nil)))))
+
+(describe "org-canvas--assignment-build-payload (muted + grading_standard_id)"
+  (it "includes muted when true"
+    (let* ((data '(:title "Test" :description "" :published t
+                   :grading_type "points" :submission_types ("none")
+                   :muted t))
+           (payload (org-canvas--assignment-build-payload data))
+           (assignment (gethash "assignment" payload)))
+      (expect (gethash "muted" assignment) :to-be t)))
+
+  (it "excludes muted when nil"
+    (let* ((data '(:title "Test" :description "" :published t
+                   :grading_type "points" :submission_types ("none")))
+           (payload (org-canvas--assignment-build-payload data))
+           (assignment (gethash "assignment" payload)))
+      (expect (gethash "muted" assignment) :to-be nil)))
+
+  (it "includes grading_standard_id when present"
+    (let* ((data '(:title "Test" :description "" :published t
+                   :grading_type "points" :submission_types ("none")
+                   :grading_standard_id 42))
+           (payload (org-canvas--assignment-build-payload data))
+           (assignment (gethash "assignment" payload)))
+      (expect (gethash "grading_standard_id" assignment) :to-equal 42)))
+
+  (it "excludes grading_standard_id when nil"
+    (let* ((data '(:title "Test" :description "" :published t
+                   :grading_type "points" :submission_types ("none")))
+           (payload (org-canvas--assignment-build-payload data))
+           (assignment (gethash "assignment" payload)))
+      (expect (gethash "grading_standard_id" assignment) :to-be nil))))
+
+(describe "org-canvas--assignment-pull-item (muted + grading_standard_id)"
+  (it "sets MUTED property"
+    (with-temp-org-buffer
+     "* Assignment
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (cl-letf (((symbol-function 'org-canvas--html-to-org)
+                (lambda (html) html)))
+       (org-canvas--assignment-pull-item
+        '((id . 1) (name . "Assignment")
+          (muted . t)
+          (description . ""))
+        (point))
+       (expect (org-entry-get (point) "MUTED") :to-equal "true"))))
+
+  (it "sets GRADING_STANDARD_ID property"
+    (with-temp-org-buffer
+     "* Assignment
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (cl-letf (((symbol-function 'org-canvas--html-to-org)
+                (lambda (html) html)))
+       (org-canvas--assignment-pull-item
+        '((id . 1) (name . "Assignment")
+          (grading_standard_id . 42)
+          (description . ""))
+        (point))
+       (expect (org-entry-get (point) "GRADING_STANDARD_ID") :to-equal "42")))))
+
 ;;; org-canvas-assignments-test.el ends here

@@ -210,6 +210,10 @@ Returns a list of warning issues."
   '("highest" "latest" "decaying_average" "n_mastery")
   "Valid calculation methods for outcomes.")
 
+(defconst org-canvas--valid-use-justifications
+  '("own_copyright" "used_by_permission" "fair_use" "public_domain" "creative_commons")
+  "Valid use_justification values for file usage rights.")
+
 (defconst org-canvas--validate-specs
   `((:label "Assignments"
      :file org-canvas-assignments-file
@@ -235,6 +239,8 @@ Returns a list of warning issues."
       (:name "GRADE_INDIVIDUALLY" :type boolean)
       (:name "ONLY_VISIBLE_TO_OVERRIDES" :type boolean)
       (:name "MODERATED_GRADING" :type boolean)
+      (:name "MUTED" :type boolean)
+      (:name "GRADING_STANDARD_ID" :type number)
       (:name "GROUP_CATEGORY_ID" :type number)
       (:name "POSITION" :type number))
      :date-order (("UNLOCK_AT" "DUE_AT" "LOCK_AT"))
@@ -298,7 +304,8 @@ Returns a list of warning issues."
      ((:name "INDENT" :type number)
       (:name "COMPLETION_REQUIREMENT" :type enum :values ,org-canvas--valid-completion-requirements)
       (:name "MIN_SCORE" :type number)
-      (:name "NEW_TAB" :type boolean)))
+      (:name "NEW_TAB" :type boolean)
+      (:name "PUBLISHED" :type boolean)))
 
     (:label "Rubrics"
      :file org-canvas-rubrics-file
@@ -354,7 +361,8 @@ Returns a list of warning issues."
      :properties
      ((:name "PUBLISHED" :type boolean)
       (:name "UNLOCK_AT" :type timestamp)
-      (:name "LOCK_AT" :type timestamp))
+      (:name "LOCK_AT" :type timestamp)
+      (:name "USE_JUSTIFICATION" :type enum :values ,org-canvas--valid-use-justifications))
      :structural-fn org-canvas--validate-file-structure)
 
     (:label "Assignment Groups"
@@ -386,7 +394,15 @@ Returns a list of warning issues."
       (:name "RESTRICT_STUDENT_PAST_VIEW" :type boolean)
       (:name "SHOW_ANNOUNCEMENTS_ON_HOME_PAGE" :type boolean)
       (:name "HOME_PAGE_ANNOUNCEMENT_LIMIT" :type number)
-      (:name "HIDE_DISTRIBUTION_GRAPHS" :type boolean)))
+      (:name "HIDE_DISTRIBUTION_GRAPHS" :type boolean)
+      (:name "GRADING_STANDARD_ID" :type number)
+      (:name "LATE_SUBMISSION_DEDUCTION" :type number)
+      (:name "LATE_SUBMISSION_DEDUCTION_ENABLED" :type boolean)
+      (:name "LATE_SUBMISSION_INTERVAL" :type enum :values ,org-canvas--settings-valid-late-intervals)
+      (:name "LATE_SUBMISSION_MINIMUM_PERCENT" :type number)
+      (:name "LATE_SUBMISSION_MINIMUM_PERCENT_ENABLED" :type boolean)
+      (:name "MISSING_SUBMISSION_DEDUCTION" :type number)
+      (:name "MISSING_SUBMISSION_DEDUCTION_ENABLED" :type boolean)))
 
     (:label "Sections"
      :file org-canvas-sections-file

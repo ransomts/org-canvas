@@ -1808,4 +1808,87 @@
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
 
+;;;; New Property Tests: Usage Rights
+
+(describe "org-canvas--file-parse-entry (usage rights)"
+  (it "parses USE_JUSTIFICATION property"
+    (let* ((temp-dir (make-temp-file "files-test" t))
+           (content-dir (expand-file-name "content" temp-dir))
+           (test-file (progn (make-directory content-dir t)
+                             (expand-file-name "test.pdf" content-dir)))
+           (files-file (expand-file-name "files.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file test-file (insert "dummy"))
+            (with-temp-file files-file
+              (insert "* [[file:content/test.pdf][Test PDF]]
+:PROPERTIES:
+:USE_JUSTIFICATION: own_copyright
+:USAGE_LICENSE: cc_by_sa
+:COPYRIGHT: 2026 Me
+:END:
+"))
+            (let ((org-canvas-files-file files-file))
+              (with-current-buffer (find-file-noselect files-file)
+                (goto-char (point-min))
+                (org-back-to-heading)
+                (let ((data (org-canvas--file-parse-entry)))
+                  (expect (plist-get data :use-justification) :to-equal "own_copyright")
+                  (expect (plist-get data :usage-license) :to-equal "cc_by_sa")
+                  (expect (plist-get data :copyright) :to-equal "2026 Me")))))
+        (let ((buf (find-buffer-visiting files-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "returns nil for missing usage rights"
+    (let* ((temp-dir (make-temp-file "files-test" t))
+           (content-dir (expand-file-name "content" temp-dir))
+           (test-file (progn (make-directory content-dir t)
+                             (expand-file-name "test.pdf" content-dir)))
+           (files-file (expand-file-name "files.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file test-file (insert "dummy"))
+            (with-temp-file files-file
+              (insert "* [[file:content/test.pdf][Test PDF]]
+:PROPERTIES:
+:END:
+"))
+            (let ((org-canvas-files-file files-file))
+              (with-current-buffer (find-file-noselect files-file)
+                (goto-char (point-min))
+                (org-back-to-heading)
+                (let ((data (org-canvas--file-parse-entry)))
+                  (expect (plist-get data :use-justification) :to-be nil)
+                  (expect (plist-get data :usage-license) :to-be nil)
+                  (expect (plist-get data :copyright) :to-be nil)))))
+        (let ((buf (find-buffer-visiting files-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
+(describe "org-canvas--file-set-usage-rights"
+  (it "calls PUT on usage_rights endpoint"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (org-canvas--file-set-usage-rights
+         42 '(:use-justification "own_copyright"
+              :usage-license "cc_by_sa"
+              :copyright "2026 Me"))
+        (expect-api-called 'PUT "usage_rights"))))
+
+  (it "does nothing when use-justification is nil"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (org-canvas--file-set-usage-rights 42 '(:use-justification nil))
+        (expect (test-org-canvas-api-called-p 'PUT "usage_rights") :to-be nil))))
+
+  (it "handles API error gracefully"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _)
+                   (signal 'error '("403 Forbidden")))))
+        ;; Should not throw
+        (org-canvas--file-set-usage-rights
+         42 '(:use-justification "own_copyright"))))))
+
 ;;; org-canvas-files-test.el ends here
