@@ -125,6 +125,7 @@ Accepts: online_upload, online_url, online_text_entry, media_recording,
          (grade-individually (org-canvas-org-get-boolean-property pom "GRADE_INDIVIDUALLY"))
          (only-visible-to-overrides (org-canvas-org-get-boolean-property pom "ONLY_VISIBLE_TO_OVERRIDES"))
          (moderated-grading (org-canvas-org-get-boolean-property pom "MODERATED_GRADING"))
+         (grader-count (org-canvas-org-get-property pom "GRADER_COUNT"))
          (muted (org-canvas-org-get-boolean-property pom "MUTED"))
          (turnitin-enabled (org-canvas-org-get-boolean-property pom "TURNITIN_ENABLED"))
          (grading-standard-id (org-canvas-org-get-property pom "GRADING_STANDARD_ID"))
@@ -171,6 +172,7 @@ Accepts: online_upload, online_url, online_text_entry, media_recording,
             :grade_group_students_individually grade-individually
             :only_visible_to_overrides only-visible-to-overrides
             :moderated_grading moderated-grading
+            :grader_count (when grader-count (org-canvas--safe-string-to-number grader-count "GRADER_COUNT"))
             :muted muted
             :turnitin_enabled turnitin-enabled
             :grading_standard_id (when grading-standard-id (org-canvas--safe-string-to-number grading-standard-id "GRADING_STANDARD_ID"))
@@ -251,7 +253,9 @@ Accepts: online_upload, online_url, online_text_entry, media_recording,
       (when (plist-get data :only_visible_to_overrides)
         (puthash "only_visible_to_overrides" t assignment))
       (when (plist-get data :moderated_grading)
-        (puthash "moderated_grading" t assignment))
+        (puthash "moderated_grading" t assignment)
+        (when (plist-get data :grader_count)
+          (puthash "grader_count" (plist-get data :grader_count) assignment)))
       (when (plist-get data :muted)
         (puthash "muted" t assignment))
       (when (plist-get data :turnitin_enabled)
@@ -401,6 +405,9 @@ ITEM is the API response alist, POS is the heading position."
     (org-canvas--pull-set-boolean-property pos "ANONYMOUS_GRADING" (alist-get 'anonymous_grading item))
     (org-canvas--pull-set-boolean-property pos "ONLY_VISIBLE_TO_OVERRIDES" (alist-get 'only_visible_to_overrides item))
     (org-canvas--pull-set-boolean-property pos "MODERATED_GRADING" (alist-get 'moderated_grading item))
+    (let ((gc (alist-get 'grader_count item)))
+      (when (and gc (> gc 0))
+        (org-canvas-org-set-property pos "GRADER_COUNT" (format "%s" gc))))
     (org-canvas--pull-set-boolean-property pos "GRADE_INDIVIDUALLY" (alist-get 'grade_group_students_individually item))
     (let ((gcat-id (alist-get 'group_category_id item)))
       (when gcat-id

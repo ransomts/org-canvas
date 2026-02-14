@@ -300,6 +300,7 @@ Course assignments with due dates, submission types, and grading options.
 | =GRADE_INDIVIDUALLY= | boolean   | Grade group members individually              |
 | =ONLY_VISIBLE_TO_OVERRIDES= | boolean | Only visible to students with overrides  |
 | =MODERATED_GRADING=  | boolean   | Enable moderated grading                      |
+| =GRADER_COUNT=       | number    | Number of graders (required when MODERATED_GRADING is true) |
 | =MUTED=              | boolean   | Mute assignment (hide grades from students)   |
 | =TURNITIN_ENABLED=   | boolean   | Enable Turnitin plagiarism detection           |
 | =GRADING_STANDARD_ID= | number  | Canvas grading standard ID                    |
@@ -890,7 +891,7 @@ Discussion boards for student interaction.
 | =ONLY_GRADERS_CAN_RATE= | boolean | Restrict rating to graders     |
 | =SORT_BY_RATING=  | boolean   | Sort posts by rating                  |
 | =GROUP_CATEGORY=  | number    | Canvas group set ID                   |
-| =SPECIFIC_SECTIONS= | string | Comma-separated section IDs           |
+| =SPECIFIC_SECTIONS= | string | Comma-separated section names (resolved to IDs via sections.org) |
 
 *** Example
 
@@ -934,7 +935,7 @@ Course announcements.
 |----------------+-----------+--------------------------------|
 | =POST_AT=        | timestamp | Scheduled post time            |
 | =ALLOW_COMMENTS= | boolean   | Allow student replies          |
-| =SPECIFIC_SECTIONS= | string | Comma-separated section IDs   |
+| =SPECIFIC_SECTIONS= | string | Comma-separated section names (resolved to IDs via sections.org) |
 
 *** Example
 

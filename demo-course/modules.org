@@ -3,39 +3,59 @@
 :PUBLISHED: true
 :POSITION: 1
 :REQUIRE_SEQUENTIAL_PROGRESSION: true
+:CANVAS_ID: 751431
+:LAST_SYNCED: [2026-02-14 Sat 17:13]
 :END:
 
 ** [[file:pages.org::*Course Home][Course Home]]
 :PROPERTIES:
 :COMPLETION_REQUIREMENT: must_view
 :PUBLISHED: true
+:CANVAS_ID: 5440731
+:LAST_SYNCED: [2026-02-14 Sat 17:13]
 :END:
 
 ** [[file:pages.org::*Software Setup Guide][Software Setup Guide]]
 :PROPERTIES:
 :COMPLETION_REQUIREMENT: must_view
+:CANVAS_ID: 5440732
+:LAST_SYNCED: [2026-02-14 Sat 17:13]
 :END:
 
 ** --- Setup ---
+:PROPERTIES:
+:CANVAS_ID: 5440733
+:LAST_SYNCED: [2026-02-14 Sat 17:13]
+:END:
 
 ** [[file:files.org::*[[file:content/syllabus.pdf][Syllabus.pdf]]][Syllabus.pdf]]
 :PROPERTIES:
 :COMPLETION_REQUIREMENT: must_view
+:CANVAS_ID: 5440734
+:LAST_SYNCED: [2026-02-14 Sat 17:13]
 :END:
 
 ** [[file:announcements.org::*Welcome to DS 101!][Welcome to DS 101!]]
+:PROPERTIES:
+:CANVAS_ID: 5440735
+:LAST_SYNCED: [2026-02-14 Sat 17:13]
+:END:
 
 * Week 02: Python & Data
 :PROPERTIES:
 :PUBLISHED: true
 :POSITION: 2
 :UNLOCK_AT: <2026-08-31 Mon 08:00>
+:CANVAS_ID: 751432
+:LAST_SYNCED: [2026-02-14 Sat 17:13]
 :END:
 
 ** [[file:assignments.org::*Lab 01: Python Basics][Lab 01: Python Basics]]
 :PROPERTIES:
 :COMPLETION_REQUIREMENT: must_submit
 :INDENT:   0
+:CANVAS_ID: 5440736
+:LAST_SYNCED: [2026-02-14 Sat 17:13]
 :END:
 
 ** [[file:quizzes.org::*Quiz 01: Python Fundamentals][Quiz 01: Python Fundamentals]]
@@ -43,22 +63,30 @@
 :COMPLETION_REQUIREMENT: min_score
 :MIN_SCORE: 70
 :INDENT:   0
+:CANVAS_ID: 5440737
+:LAST_SYNCED: [2026-02-14 Sat 17:13]
 :END:
 
 ** [[file:discussions.org::*Introduce Yourself][Introduce Yourself]]
 :PROPERTIES:
 :COMPLETION_REQUIREMENT: must_contribute
+:CANVAS_ID: 5440738
+:LAST_SYNCED: [2026-02-14 Sat 17:13]
 :END:
 
 ** Course Textbook Website
 :PROPERTIES:
 :EXTERNAL_URL: https://wesmckinney.com/book/
 :NEW_TAB:  true
+:CANVAS_ID: 5440739
+:LAST_SYNCED: [2026-02-14 Sat 17:13]
 :END:
 
 ** [[file:files.org::*[[file:content/labs/lab01-starter.py][lab01-starter.py]]][lab01-starter.py]]
 :PROPERTIES:
 :PUBLISHED: false
+:CANVAS_ID: 5440740
+:LAST_SYNCED: [2026-02-14 Sat 17:13]
 :END:
 
 * Week 03: Data Wrangling
@@ -67,11 +95,19 @@
 :POSITION: 3
 :PREREQUISITE_MODULE_IDS:
 :PUBLISH_FINAL_GRADE: true
+:CANVAS_ID: 751433
+:LAST_SYNCED: [2026-02-14 Sat 17:13]
 :END:
 
 ** [[file:assignments.org::*Lab 02: Data Wrangling][Lab 02: Data Wrangling]]
 :PROPERTIES:
 :INDENT:   1
+:CANVAS_ID: 5440741
+:LAST_SYNCED: [2026-02-14 Sat 17:13]
 :END:
 
 ** [[file:quizzes.org::*Quiz 02: Data Wrangling][Quiz 02: Data Wrangling]]
+:PROPERTIES:
+:CANVAS_ID: 5440742
+:LAST_SYNCED: [2026-02-14 Sat 17:13]
+:END:

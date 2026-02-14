@@ -397,12 +397,37 @@ Content.
            (payload (org-canvas--discussion-build-payload data)))
       (expect (alist-get 'group_category_id payload) :to-equal 99)))
 
-  (it "includes specific_sections when present"
-    (let* ((data '(:title "Sectioned" :message "" :published t
-                   :discussion_type "side_comment" :require_initial_post nil
-                   :specific_sections "1,2,3"))
-           (payload (org-canvas--discussion-build-payload data)))
-      (expect (alist-get 'specific_sections payload) :to-equal "1,2,3"))))
+  (it "resolves section names to IDs"
+    (let ((sections-file (make-temp-file "test-sections" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file sections-file
+              (insert "* Section A\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n"))
+            (let* ((org-canvas-sections-file sections-file)
+                   (data '(:title "Sectioned" :message "" :published t
+                           :discussion_type "side_comment" :require_initial_post nil
+                           :specific_sections "Section A"))
+                   (payload (org-canvas--discussion-build-payload data)))
+              (expect (alist-get 'specific_sections payload) :to-equal "100")))
+        (let ((buf (find-buffer-visiting sections-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file sections-file))))
+
+  (it "passes through numeric IDs in specific_sections"
+    (let ((sections-file (make-temp-file "test-sections" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file sections-file
+              (insert "#+TITLE: Sections\n"))
+            (let* ((org-canvas-sections-file sections-file)
+                   (data '(:title "Sectioned" :message "" :published t
+                           :discussion_type "side_comment" :require_initial_post nil
+                           :specific_sections "1,2,3"))
+                   (payload (org-canvas--discussion-build-payload data)))
+              (expect (alist-get 'specific_sections payload) :to-equal "1,2,3")))
+        (let ((buf (find-buffer-visiting sections-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file sections-file)))))
 
 ;;;; Stage 3: Push to API (mocked)
 

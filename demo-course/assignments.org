@@ -11,6 +11,10 @@
 :MAX_ATTEMPTS: 3
 :GROUP:    [[file:assignment-groups.org::*Labs][Labs]]
 :POSITION: 1
+:CANVAS_UPDATED_AT: 2026-02-14T22:12:43Z
+:CANVAS_ID: 2390989
+:LAST_SYNCED: [2026-02-14 Sat 17:12]
+:PAYLOAD_HASH: 3ee019c22fcf6c1e3d413233a97e0938
 :END:
 
 *Lab 01: Introduction to Python*
@@ -20,7 +24,7 @@ In this lab you will practice fundamental Python concepts:
 - Control flow (if/else, loops)
 - Functions and basic I/O
 
-Download the starter code from the Files section and complete all TODO items.  Upload your finished =.py= file and your Jupyter notebook with output cells.
+Download the [[file:files.org::*[[file:content/labs/lab01-starter.py][lab01-starter.py]]][starter code]] and complete all TODO items.  Review the [[file:pages.org::*Software Setup Guide][Software Setup Guide]] if you haven't set up your environment yet.  Upload your finished =.py= file and your Jupyter notebook with output cells.
 
 * Lab 02: Data Wrangling
 :PROPERTIES:
@@ -36,11 +40,15 @@ Download the starter code from the Files section and complete all TODO items.  U
 :GROUP:    [[file:assignment-groups.org::*Labs][Labs]]
 :RUBRIC_LINK: [[file:rubrics.org::*Lab Rubric][Lab Rubric]]
 :POSITION: 2
+:CANVAS_UPDATED_AT: 2026-02-14T22:12:44Z
+:CANVAS_ID: 2390990
+:LAST_SYNCED: [2026-02-14 Sat 17:12]
+:PAYLOAD_HASH: bcde73cb62c7ce1f38c1a642bb2d343f
 :END:
 
 *Lab 02: Data Wrangling with pandas*
 
-Using the provided dataset (=lab02-data.csv=), perform the following tasks:
+Using the provided [[file:files.org::*[[file:content/labs/lab02-data.csv][lab02-data.csv]]][dataset]], perform the following tasks:
 1. Load the data into a DataFrame
 2. Handle missing values
 3. Filter rows matching specific criteria
@@ -64,6 +72,10 @@ Your submission will be graded using the Lab Rubric.
 :AUTOMATIC_PEER_REVIEWS: true
 :TURNITIN_ENABLED: true
 :POSITION: 1
+:CANVAS_UPDATED_AT: 2026-02-14T22:12:46Z
+:CANVAS_ID: 2390991
+:LAST_SYNCED: [2026-02-14 Sat 17:12]
+:PAYLOAD_HASH: 6d11e016e3b60d788a7a02052b981263
 :END:
 
 *Homework 01: Descriptive Statistics Review*
@@ -89,6 +101,10 @@ Submit as a PDF.  Your work will be peer-reviewed by two classmates using the Pe
 :ANONYMOUS_GRADING: true
 :ONLY_VISIBLE_TO_OVERRIDES: false
 :POSITION: 1
+:CANVAS_UPDATED_AT: 2026-02-14T22:12:48Z
+:CANVAS_ID: 2390992
+:LAST_SYNCED: [2026-02-14 Sat 17:12]
+:PAYLOAD_HASH: d727977391db0b88663185d6ef5fa00b
 :END:
 
 *Midterm Exam: Weeks 1-7*
@@ -102,9 +118,9 @@ This exam covers all material from the first half of the course: Python fundamen
 #+NAME: overrides
 | Section                                              | Due At                 | Unlock At              | Lock At                |
 |------------------------------------------------------+------------------------+------------------------+------------------------|
-| [[file:sections.org::*Section A][Section A]]         | <2026-10-19 Mon 23:59> | <2026-10-19 Mon 10:00> | <2026-10-19 Mon 23:59> |
-| [[file:sections.org::*Section B][Section B]]         | <2026-10-20 Tue 23:59> | <2026-10-20 Tue 10:00> | <2026-10-20 Tue 23:59> |
-| [[file:sections.org::*Section C (Online)][Section C (Online)]] | <2026-10-21 Wed 23:59> | <2026-10-19 Mon 08:00> | <2026-10-21 Wed 23:59> |
+| [[file:sections.org::*Section A - MWF 9:00am][Section A - MWF 9:00am]] | <2026-10-19 Mon 23:59> | <2026-10-19 Mon 10:00> | <2026-10-19 Mon 23:59> |
+| [[file:sections.org::*Section B - TTh 1:30pm][Section B - TTh 1:30pm]] | <2026-10-20 Tue 23:59> | <2026-10-20 Tue 10:00> | <2026-10-20 Tue 23:59> |
+| [[file:sections.org::*tsranso-sandbox][tsranso-sandbox]]                         | <2026-10-21 Wed 23:59> | <2026-10-19 Mon 08:00> | <2026-10-21 Wed 23:59> |
 
 * Final Project: Data Analysis
 :PROPERTIES:
@@ -116,11 +132,16 @@ This exam covers all material from the first half of the course: Python fundamen
 :GROUP:    [[file:assignment-groups.org::*Projects][Projects]]
 :RUBRIC_LINK: [[file:rubrics.org::*Project Rubric][Project Rubric]]
 :MODERATED_GRADING: true
+:GRADER_COUNT: 2
 :GRADING_STANDARD_ID: 0
 :NOTIFY_OF_UPDATE: true
 :GRADE_INDIVIDUALLY: true
 :OMIT_FROM_GRADES: false
 :POSITION: 1
+:CANVAS_ID: 2390993
+:LAST_SYNCED: [2026-02-14 Sat 17:12]
+:CANVAS_UPDATED_AT: 2026-02-14T22:12:49Z
+:PAYLOAD_HASH: fcae9d662827f5dacc44e3675b9984ce
 :END:
 
 *Final Project: End-to-End Data Analysis*
@@ -133,7 +154,7 @@ Choose a public dataset and conduct a complete data analysis:
 4. *Statistical Analysis* -- Hypothesis testing or modeling
 5. *Written Report* -- 5-8 page report documenting your process and findings
 
-Submit both your report (PDF) and a link to your code repository.
+Submit both your report (PDF) and a link to your code repository.  See [[file:pages.org::*Student Resources][Student Resources]] for recommended textbooks and tools.
 
 Graded using the Project Rubric by two independent graders (moderated grading).
 
@@ -147,6 +168,10 @@ Graded using the Project Rubric by two independent graders (moderated grading).
 :GROUP:    [[file:assignment-groups.org::*Projects][Projects]]
 :OMIT_FROM_GRADES: true
 :POSITION: 2
+:CANVAS_UPDATED_AT: 2026-02-14T22:12:56Z
+:CANVAS_ID: 2390994
+:LAST_SYNCED: [2026-02-14 Sat 17:12]
+:PAYLOAD_HASH: 3c7dec60d75674af7e29410382f17d0d
 :END:
 
 *Optional: Kaggle Competition Participation*
@@ -164,6 +189,10 @@ Enter any active Kaggle competition and submit your leaderboard URL.  Points awa
 :GROUP_CATEGORY_ID: 1
 :GRADE_INDIVIDUALLY: false
 :POSITION: 3
+:CANVAS_UPDATED_AT: 2026-02-14T22:12:57Z
+:CANVAS_ID: 2390995
+:LAST_SYNCED: [2026-02-14 Sat 17:12]
+:PAYLOAD_HASH: 0d5b68e779ac2430eb1567b72e6ce472
 :END:
 
 *Group Presentation: Data Science in the Real World*

@@ -100,11 +100,6 @@ Set to nil to reduce log verbosity or hide potentially sensitive data."
   :type 'integer
   :group 'org-canvas)
 
-(defcustom org-canvas-delete-concurrency 8
-  "Maximum number of concurrent DELETE requests during mass deletion.
-Used by `org-canvas--delete-items-queued' via `plz-queue'."
-  :type 'integer
-  :group 'org-canvas)
 
 (defcustom org-canvas-detect-conflicts t
   "When non-nil, check for remote changes before overwriting.
@@ -832,7 +827,50 @@ SOURCE-FILE is the file containing the link, used to resolve relative paths."
                     id-property clean-heading abs-file))
                 value)))))))))
 
-;;;; 4d. Cross-file Link Resolution for HTML Export
+;;;; 4d. Section Name → ID Resolution
+
+(defun org-canvas--resolve-section-names-to-ids (names-string)
+  "Resolve comma-separated section NAMES-STRING to comma-separated CANVAS_IDs.
+Look up each name as a heading in the sections file and return its CANVAS_ID.
+Names that are already numeric are passed through unchanged.
+Unresolvable names are warned about and skipped.
+Returns the resolved ID string, or nil if nothing resolved."
+  (when (and names-string (not (string-empty-p names-string)))
+    (let* ((sections-file (when (boundp 'org-canvas-sections-file)
+                            (expand-file-name (symbol-value 'org-canvas-sections-file))))
+           (names (mapcar #'string-trim (split-string names-string "," t)))
+           (ids nil))
+      (dolist (name names)
+        (cond
+         ;; Already a numeric ID — pass through
+         ((string-match-p "\\`[0-9]+\\'" name)
+          (push name ids))
+         ;; Look up in sections file
+         ((and sections-file (file-exists-p sections-file))
+          (let ((canvas-id
+                 (with-current-buffer (find-file-noselect sections-file)
+                   (save-excursion
+                     (goto-char (point-min))
+                     (let ((found nil))
+                       (org-map-entries
+                        (lambda ()
+                          (when (string= (org-get-heading t t t t) name)
+                            (setq found (org-entry-get (point) "CANVAS_ID"))))
+                        "LEVEL=1" 'file)
+                       found)))))
+            (if canvas-id
+                (push canvas-id ids)
+              (elog-warning org-canvas--logger
+                "[Sections] Could not resolve section name '%s' to CANVAS_ID" name)
+              (message "Warning: Section '%s' not found in sections.org" name))))
+         (t
+          (elog-warning org-canvas--logger
+            "[Sections] Cannot resolve section name '%s' (sections file not available)" name)
+          (message "Warning: Cannot resolve section '%s' (no sections file)" name))))
+      (when ids
+        (mapconcat #'identity (nreverse ids) ",")))))
+
+;;;; 4e. Cross-file Link Resolution for HTML Export
 
 (defun org-canvas--unescape-org-brackets (s)
   "Unescape \\=\\[ and \\=\\] in S to [ and ]."
@@ -1901,7 +1939,7 @@ TITLE-FIELD is the alist key for item display names."
         (alist-get title-field item)))))
 
 (defun org-canvas--delete-items-queued (items endpoint-fn id-field title-field &optional skip-fn)
-  "Delete ITEMS from Canvas using concurrent requests via `plz-queue'.
+  "Delete ITEMS from Canvas using synchronous requests.
 ENDPOINT-FN is a function taking an item ID and returning the DELETE URL.
 ID-FIELD and TITLE-FIELD are alist keys for extracting ID/title from each item.
 SKIP-FN, if non-nil, is called with each item; non-nil return skips that item.
@@ -1913,31 +1951,21 @@ Returns (DELETED-COUNT . DELETED-IDS)."
     ;; Short-circuit if nothing to delete
     (if (null to-delete)
         (cons 0 nil)
-      (let* ((deleted-count 0)
-             (deleted-ids nil)
-             (done nil)
-             (headers `(("Authorization" . ,(concat "Bearer " org-canvas-api-token))
-                        ("Content-Type" . "application/json")))
-             (queue (make-plz-queue
-                     :limit org-canvas-delete-concurrency
-                     :finally (lambda () (setq done t)))))
+      (let ((deleted-count 0)
+            (deleted-ids nil))
         (dolist (item to-delete)
           (let ((item-id (alist-get id-field item))
                 (item-title (alist-get title-field item)))
             (elog-info org-canvas--logger "Deleting: '%s' (ID: %s)" item-title item-id)
-            (plz-queue queue 'delete (funcall endpoint-fn item-id)
-              :headers headers
-              :then (lambda (_response)
-                      (push (org-canvas--normalize-id item-id)
-                            deleted-ids)
-                      (setq deleted-count (1+ deleted-count))
-                      (elog-info org-canvas--logger "  -> Deleted '%s' successfully" item-title))
-              :else (lambda (err)
-                      (elog-error org-canvas--logger "  -> Delete failed for '%s': %s"
-                        item-title err)))))
-        (plz-run queue)
-        (while (not done)
-          (accept-process-output nil 0.1))
+            (condition-case err
+                (progn
+                  (org-canvas-api-request 'DELETE (funcall endpoint-fn item-id))
+                  (push (org-canvas--normalize-id item-id) deleted-ids)
+                  (setq deleted-count (1+ deleted-count))
+                  (elog-info org-canvas--logger "  -> Deleted '%s' successfully" item-title))
+              (error
+               (elog-error org-canvas--logger "  -> Delete failed for '%s': %s"
+                 item-title (error-message-string err))))))
         (cons deleted-count deleted-ids)))))
 
 (cl-defun org-canvas--delete-all-items (feature-name

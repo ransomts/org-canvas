@@ -1034,47 +1034,27 @@
       (expect (car result) :to-equal 0)
       (expect (cdr result) :to-be nil)))
 
-  (it "queues delete requests and collects results"
+  (it "deletes items and collects results"
     (with-org-canvas-test-config
-      ;; Mock plz-queue (function) and plz-run to synchronously invoke callbacks.
-      ;; make-plz-queue is a cl-defstruct constructor (inlined) and creates a real struct.
-      (let ((queued-thens nil))
-        (cl-letf (((symbol-function 'plz-queue)
-                   (lambda (queue _method _url &rest args)
-                     (push (plist-get args :then) queued-thens)
-                     queue))
-                  ((symbol-function 'plz-run)
-                   (lambda (queue)
-                     (dolist (then-fn (nreverse queued-thens))
-                       (when then-fn (funcall then-fn nil)))
-                     (when (plz-queue-finally queue)
-                       (funcall (plz-queue-finally queue))))))
-          (let ((result (org-canvas--delete-items-queued
-                         '(((id . 1) (title . "First"))
-                           ((id . 2) (title . "Second")))
-                         (lambda (id) (format "http://example.com/%s" id))
-                         'id 'title)))
-            (expect (car result) :to-equal 2)
-            (expect (member "1" (cdr result)) :to-be-truthy)
-            (expect (member "2" (cdr result)) :to-be-truthy))))))
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (_method _url &rest _args) nil)))
+        (let ((result (org-canvas--delete-items-queued
+                       '(((id . 1) (title . "First"))
+                         ((id . 2) (title . "Second")))
+                       (lambda (id) (format "http://example.com/%s" id))
+                       'id 'title)))
+          (expect (car result) :to-equal 2)
+          (expect (member "1" (cdr result)) :to-be-truthy)
+          (expect (member "2" (cdr result)) :to-be-truthy)))))
 
   (it "continues on error and only counts successes"
     (with-org-canvas-test-config
-      (let ((queued-callbacks nil))
-        (cl-letf (((symbol-function 'plz-queue)
-                   (lambda (queue _method _url &rest args)
-                     (push (cons (plist-get args :then) (plist-get args :else))
-                           queued-callbacks)
-                     queue))
-                  ((symbol-function 'plz-run)
-                   (lambda (queue)
-                     (let ((cbs (nreverse queued-callbacks)))
-                       ;; First: call :else (error)
-                       (when (cdar cbs) (funcall (cdar cbs) "error"))
-                       ;; Second: call :then (success)
-                       (when (caadr cbs) (funcall (caadr cbs) nil)))
-                     (when (plz-queue-finally queue)
-                       (funcall (plz-queue-finally queue))))))
+      (let ((call-count 0))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_method _url &rest _args)
+                     (setq call-count (1+ call-count))
+                     (when (= call-count 1)
+                       (error "Delete failed")))))
           (let ((result (org-canvas--delete-items-queued
                          '(((id . 1) (title . "Fail"))
                            ((id . 2) (title . "Succeed")))
@@ -1085,80 +1065,46 @@
 
   (it "converts numeric IDs to strings in deleted-ids"
     (with-org-canvas-test-config
-      (let ((queued-thens nil))
-        (cl-letf (((symbol-function 'plz-queue)
-                   (lambda (queue _method _url &rest args)
-                     (push (plist-get args :then) queued-thens)
-                     queue))
-                  ((symbol-function 'plz-run)
-                   (lambda (queue)
-                     (dolist (fn (nreverse queued-thens))
-                       (when fn (funcall fn nil)))
-                     (when (plz-queue-finally queue)
-                       (funcall (plz-queue-finally queue))))))
-          (let ((result (org-canvas--delete-items-queued
-                         '(((id . 42) (title . "Numeric")))
-                         (lambda (id) (format "http://example.com/%s" id))
-                         'id 'title)))
-            (expect (car result) :to-equal 1)
-            (expect (car (cdr result)) :to-equal "42"))))))
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (_method _url &rest _args) nil)))
+        (let ((result (org-canvas--delete-items-queued
+                       '(((id . 42) (title . "Numeric")))
+                       (lambda (id) (format "http://example.com/%s" id))
+                       'id 'title)))
+          (expect (car result) :to-equal 1)
+          (expect (car (cdr result)) :to-equal "42")))))
 
   (it "keeps string IDs as-is in deleted-ids"
     (with-org-canvas-test-config
-      (let ((queued-thens nil))
-        (cl-letf (((symbol-function 'plz-queue)
-                   (lambda (queue _method _url &rest args)
-                     (push (plist-get args :then) queued-thens)
-                     queue))
-                  ((symbol-function 'plz-run)
-                   (lambda (queue)
-                     (dolist (fn (nreverse queued-thens))
-                       (when fn (funcall fn nil)))
-                     (when (plz-queue-finally queue)
-                       (funcall (plz-queue-finally queue))))))
-          (let ((result (org-canvas--delete-items-queued
-                         '(((id . "my-page") (title . "String")))
-                         (lambda (id) (format "http://example.com/%s" id))
-                         'id 'title)))
-            (expect (car result) :to-equal 1)
-            (expect (car (cdr result)) :to-equal "my-page"))))))
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (_method _url &rest _args) nil)))
+        (let ((result (org-canvas--delete-items-queued
+                       '(((id . "my-page") (title . "String")))
+                       (lambda (id) (format "http://example.com/%s" id))
+                       'id 'title)))
+          (expect (car result) :to-equal 1)
+          (expect (car (cdr result)) :to-equal "my-page")))))
 
   (it "passes correct URL from endpoint-fn"
     (with-org-canvas-test-config
-      (let ((captured-urls nil)
-            (queued-thens nil))
-        (cl-letf (((symbol-function 'plz-queue)
-                   (lambda (queue _method url &rest args)
-                     (push url captured-urls)
-                     (push (plist-get args :then) queued-thens)
-                     queue))
-                  ((symbol-function 'plz-run)
-                   (lambda (queue)
-                     (dolist (fn (nreverse queued-thens))
-                       (when fn (funcall fn nil)))
-                     (when (plz-queue-finally queue)
-                       (funcall (plz-queue-finally queue))))))
+      (let ((captured-url nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_method url &rest _args)
+                     (setq captured-url url)
+                     nil)))
           (org-canvas--delete-items-queued
            '(((id . 5) (title . "Test")))
            (lambda (id) (format "http://canvas.example.com/items/%s" id))
            'id 'title)
-          (expect (car captured-urls) :to-equal "http://canvas.example.com/items/5")))))
+          (expect captured-url :to-equal "http://canvas.example.com/items/5")))))
 
   (it "skips items with skip-fn and deletes the rest"
     (with-org-canvas-test-config
-      (let ((queued-count 0)
-            (queued-thens nil))
-        (cl-letf (((symbol-function 'plz-queue)
-                   (lambda (queue _method _url &rest args)
-                     (setq queued-count (1+ queued-count))
-                     (push (plist-get args :then) queued-thens)
-                     queue))
-                  ((symbol-function 'plz-run)
-                   (lambda (queue)
-                     (dolist (fn (nreverse queued-thens))
-                       (when fn (funcall fn nil)))
-                     (when (plz-queue-finally queue)
-                       (funcall (plz-queue-finally queue))))))
+      (let ((delete-count 0))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_method _url &rest _args)
+                     (setq delete-count (1+ delete-count))
+                     nil)))
           (let ((result (org-canvas--delete-items-queued
                          '(((id . 1) (title . "Keep") (front_page . t))
                            ((id . 2) (title . "Delete") (front_page . :json-false)))
@@ -1166,7 +1112,7 @@
                          'id 'title
                          (lambda (item) (eq (alist-get 'front_page item) t)))))
             (expect (car result) :to-equal 1)
-            (expect queued-count :to-equal 1)))))))
+            (expect delete-count :to-equal 1)))))))
 
 ;;;; 13. Delete Item at Point Helper
 
@@ -4468,5 +4414,116 @@ Keep this too
             (expect (file-exists-p (expand-file-name "assignments.org" temp-dir))
                     :to-be-truthy))
         (delete-directory temp-dir t)))))
+
+;;;; Section Name → ID Resolution
+
+(describe "org-canvas--resolve-section-names-to-ids"
+  (it "returns nil for nil input"
+    (expect (org-canvas--resolve-section-names-to-ids nil) :to-be nil))
+
+  (it "returns nil for empty string"
+    (expect (org-canvas--resolve-section-names-to-ids "") :to-be nil))
+
+  (it "passes through numeric IDs unchanged"
+    (let ((sections-file (make-temp-file "test-sections" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file sections-file
+              (insert "#+TITLE: Sections\n"))
+            (let ((org-canvas-sections-file sections-file))
+              (expect (org-canvas--resolve-section-names-to-ids "123,456")
+                      :to-equal "123,456")))
+        (let ((buf (find-buffer-visiting sections-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file sections-file))))
+
+  (it "resolves section names to CANVAS_IDs"
+    (let ((sections-file (make-temp-file "test-sections" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file sections-file
+              (insert "* Section A
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+
+* Section B
+:PROPERTIES:
+:CANVAS_ID: 200
+:END:
+"))
+            (let ((org-canvas-sections-file sections-file))
+              (expect (org-canvas--resolve-section-names-to-ids "Section A,Section B")
+                      :to-equal "100,200")))
+        (let ((buf (find-buffer-visiting sections-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file sections-file))))
+
+  (it "handles mixed names and numeric IDs"
+    (let ((sections-file (make-temp-file "test-sections" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file sections-file
+              (insert "* Section A
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+"))
+            (let ((org-canvas-sections-file sections-file))
+              (expect (org-canvas--resolve-section-names-to-ids "Section A,999")
+                      :to-equal "100,999")))
+        (let ((buf (find-buffer-visiting sections-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file sections-file))))
+
+  (it "warns and skips unresolvable names"
+    (let ((sections-file (make-temp-file "test-sections" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file sections-file
+              (insert "* Section A
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+"))
+            (let ((org-canvas-sections-file sections-file))
+              (spy-on 'message)
+              (expect (org-canvas--resolve-section-names-to-ids "Section A,Nonexistent")
+                      :to-equal "100")
+              (expect 'message :to-have-been-called)))
+        (let ((buf (find-buffer-visiting sections-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file sections-file))))
+
+  (it "returns nil when all names unresolvable"
+    (let ((sections-file (make-temp-file "test-sections" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file sections-file
+              (insert "* Other Section\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n"))
+            (let ((org-canvas-sections-file sections-file))
+              (spy-on 'message)
+              (expect (org-canvas--resolve-section-names-to-ids "Nonexistent")
+                      :to-be nil)))
+        (let ((buf (find-buffer-visiting sections-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file sections-file))))
+
+  (it "trims whitespace from names"
+    (let ((sections-file (make-temp-file "test-sections" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file sections-file
+              (insert "* Section A
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+"))
+            (let ((org-canvas-sections-file sections-file))
+              (expect (org-canvas--resolve-section-names-to-ids " Section A , 999 ")
+                      :to-equal "100,999")))
+        (let ((buf (find-buffer-visiting sections-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file sections-file)))))
 
 ;;; org-canvas-core-test.el ends here

@@ -11,6 +11,8 @@
 :UNLOCK_AT: <2026-09-01 Tue 08:00>
 :LOCK_AT:  <2026-09-07 Mon 23:59>
 :GROUP:    [[file:assignment-groups.org::*Labs][Labs]]
+:CANVAS_ID: 639475
+:LAST_SYNCED: [2026-02-14 Sat 17:12]
 :END:
 
 Test your understanding of basic Python concepts from Week 01.
@@ -19,6 +21,8 @@ Test your understanding of basic Python concepts from Week 01.
 :PROPERTIES:
 :TYPE:     multiple_choice_question
 :POINTS:   2.0
+:CANVAS_ID: 9742753
+:LAST_SYNCED: [2026-02-14 Sat 17:12]
 :END:
 
 Which of the following Python data types is *immutable*?
@@ -31,6 +35,8 @@ Which of the following Python data types is *immutable*?
 :PROPERTIES:
 :TYPE:     true_false_question
 :POINTS:   1.0
+:CANVAS_ID: 9742754
+:LAST_SYNCED: [2026-02-14 Sat 17:12]
 :END:
 
 Python lists maintain insertion order.
@@ -41,6 +47,8 @@ Python lists maintain insertion order.
 :PROPERTIES:
 :TYPE:     multiple_answers_question
 :POINTS:   2.0
+:CANVAS_ID: 9742755
+:LAST_SYNCED: [2026-02-14 Sat 17:12]
 :END:
 
 Select *all* valid built-in Python data types.
@@ -54,6 +62,8 @@ Select *all* valid built-in Python data types.
 :PROPERTIES:
 :TYPE:     short_answer_question
 :POINTS:   1.0
+:CANVAS_ID: 9742756
+:LAST_SYNCED: [2026-02-14 Sat 17:12]
 :END:
 
 What built-in function is used to display output to the console?
@@ -64,6 +74,8 @@ What built-in function is used to display output to the console?
 :PROPERTIES:
 :TYPE:     essay_question
 :POINTS:   5.0
+:CANVAS_ID: 9742757
+:LAST_SYNCED: [2026-02-14 Sat 17:12]
 :END:
 
 Explain what a list comprehension is in Python.  Provide an example that filters a list of numbers to keep only even values.
@@ -89,6 +101,8 @@ Explain what a list comprehension is in Python.  Provide an example that filters
 :UNLOCK_AT: <2026-09-08 Tue 08:00>
 :LOCK_AT:  <2026-09-14 Mon 23:59>
 :GROUP:    [[file:assignment-groups.org::*Labs][Labs]]
+:CANVAS_ID: 639476
+:LAST_SYNCED: [2026-02-14 Sat 17:12]
 :END:
 
 Test your knowledge of pandas and data wrangling techniques.
@@ -99,6 +113,8 @@ Access code required -- available from your instructor.
 :PROPERTIES:
 :TYPE:     fill_in_multiple_blanks_question
 :POINTS:   2.0
+:CANVAS_ID: 9742758
+:LAST_SYNCED: [2026-02-14 Sat 17:12]
 :END:
 
 The function [func] reads CSV files, and [lib] is the library that provides it.
@@ -113,6 +129,8 @@ The function [func] reads CSV files, and [lib] is the library that provides it.
 :PROPERTIES:
 :TYPE:     multiple_dropdowns_question
 :POINTS:   2.0
+:CANVAS_ID: 9742759
+:LAST_SYNCED: [2026-02-14 Sat 17:12]
 :END:
 
 To select rows by label use [method], and to select columns by name use [col_method].
@@ -129,6 +147,8 @@ To select rows by label use [method], and to select columns by name use [col_met
 :PROPERTIES:
 :TYPE:     matching_question
 :POINTS:   3.0
+:CANVAS_ID: 9742760
+:LAST_SYNCED: [2026-02-14 Sat 17:12]
 :END:
 
 Match each pandas function to its description.
@@ -142,6 +162,8 @@ Match each pandas function to its description.
 :PROPERTIES:
 :TYPE:     numerical_question
 :POINTS:   1.0
+:CANVAS_ID: 9742761
+:LAST_SYNCED: [2026-02-14 Sat 17:12]
 :END:
 
 How many rows are in a DataFrame created by =pd.DataFrame(np.zeros((5, 3)))=?
@@ -151,6 +173,8 @@ How many rows are in a DataFrame created by =pd.DataFrame(np.zeros((5, 3)))=?
 :PROPERTIES:
 :TYPE:     numerical_question
 :POINTS:   1.0
+:CANVAS_ID: 9742762
+:LAST_SYNCED: [2026-02-14 Sat 17:12]
 :END:
 
 What is pi rounded to one decimal place?
@@ -160,6 +184,8 @@ What is pi rounded to one decimal place?
 :PROPERTIES:
 :TYPE:     file_upload_question
 :POINTS:   5.0
+:CANVAS_ID: 9742763
+:LAST_SYNCED: [2026-02-14 Sat 17:12]
 :END:
 
 Upload your cleaned dataset as a CSV file.
@@ -168,6 +194,8 @@ Upload your cleaned dataset as a CSV file.
 :PROPERTIES:
 :TYPE:     text_only_question
 :POINTS:   0
+:CANVAS_ID: 9742764
+:LAST_SYNCED: [2026-02-14 Sat 17:12]
 :END:
 
 You have completed the auto-graded portion.  The file upload above will be graded manually.
@@ -180,6 +208,8 @@ You have completed the auto-graded portion.  The file upload above will be grade
 :SHOW_CORRECT_ANSWERS: true
 :SHOW_CORRECT_ANSWERS_AT: <2026-09-08 Tue 08:00>
 :HIDE_CORRECT_ANSWERS_AT: <2026-12-11 Fri 23:59>
+:CANVAS_ID: 639477
+:LAST_SYNCED: [2026-02-14 Sat 17:12]
 :END:
 
 Use this practice quiz to check your understanding.  It is ungraded and you can retake it as many times as you like.
@@ -188,6 +218,8 @@ Use this practice quiz to check your understanding.  It is ungraded and you can 
 :PROPERTIES:
 :TYPE:     multiple_choice_question
 :POINTS:   1.0
+:CANVAS_ID: 9742765
+:LAST_SYNCED: [2026-02-14 Sat 17:12]
 :END:
 
 Which library is the standard tool for data manipulation in Python?

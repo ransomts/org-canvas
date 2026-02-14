@@ -4,6 +4,9 @@
 :DISCUSSION_TYPE: threaded
 :PINNED:   true
 :ALLOW_RATING: true
+:CANVAS_ID: 1712599
+:LAST_SYNCED: [2026-02-14 Sat 17:11]
+:PAYLOAD_HASH: e5c0c910300e4da63b8a56435d84d20d
 :END:
 
 Welcome to DS 101!  Take a moment to introduce yourself to your classmates.
@@ -23,6 +26,9 @@ Reply to at least two classmates' posts.
 :AVAILABLE_FROM: <2026-09-14 Mon 08:00>
 :SORT_BY_RATING: true
 :ONLY_GRADERS_CAN_RATE: true
+:CANVAS_ID: 1712600
+:LAST_SYNCED: [2026-02-14 Sat 17:11]
+:PAYLOAD_HASH: 00dfecc972bc48738ffc08bd035766ad
 :END:
 
 Read the article on ethical data collection practices (linked in Modules).
@@ -43,7 +49,7 @@ You must post your response *before* you can see other students' answers.
 :DUE_AT:   <2026-10-16 Fri 23:59>
 :GROUP:    [[file:assignment-groups.org::*Homework][Homework]]
 :GROUP_CATEGORY: 1
-:SPECIFIC_SECTIONS: Section A
+:SPECIFIC_SECTIONS: Section A - MWF 9:00am
 :END:
 
 This is a graded discussion worth 10 points.

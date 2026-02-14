@@ -417,12 +417,37 @@ Content for everyone.
        (expect (plist-get data :specific_sections) :to-be nil)))))
 
 (describe "org-canvas--announcement-build-payload SPECIFIC_SECTIONS"
-  (it "includes specific_sections when present"
-    (let* ((data '(:title "Test" :message "<p>Body</p>" :published t
-                   :specific_sections "section_1,section_2"))
-           (payload (org-canvas--announcement-build-payload data)))
-      (expect (alist-get 'specific_sections payload)
-              :to-equal "section_1,section_2")))
+  (it "resolves section names to IDs via sections file"
+    (let ((sections-file (make-temp-file "test-sections" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file sections-file
+              (insert "* Section A\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n\n* Section B\n:PROPERTIES:\n:CANVAS_ID: 200\n:END:\n"))
+            (let* ((org-canvas-sections-file sections-file)
+                   (data '(:title "Test" :message "<p>Body</p>" :published t
+                           :specific_sections "Section A,Section B"))
+                   (payload (org-canvas--announcement-build-payload data)))
+              (expect (alist-get 'specific_sections payload)
+                      :to-equal "100,200")))
+        (let ((buf (find-buffer-visiting sections-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file sections-file))))
+
+  (it "passes through numeric IDs unchanged"
+    (let ((sections-file (make-temp-file "test-sections" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file sections-file
+              (insert "#+TITLE: Sections\n"))
+            (let* ((org-canvas-sections-file sections-file)
+                   (data '(:title "Test" :message "<p>Body</p>" :published t
+                           :specific_sections "123,456"))
+                   (payload (org-canvas--announcement-build-payload data)))
+              (expect (alist-get 'specific_sections payload)
+                      :to-equal "123,456")))
+        (let ((buf (find-buffer-visiting sections-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file sections-file))))
 
   (it "excludes specific_sections when nil"
     (let* ((data '(:title "Test" :message "<p>Body</p>" :published t

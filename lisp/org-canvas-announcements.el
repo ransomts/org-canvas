@@ -102,7 +102,10 @@
         (push `(lock_at . ,(org-canvas-current-iso8601-timestamp)) base))
 
       (when (plist-get data :specific_sections)
-        (push `(specific_sections . ,(plist-get data :specific_sections)) base))
+        (let ((resolved (org-canvas--resolve-section-names-to-ids
+                         (plist-get data :specific_sections))))
+          (when resolved
+            (push `(specific_sections . ,resolved) base))))
 
       (elog-debug org-canvas--logger "[Stage 2: Transform] Payload complete")
       base)))

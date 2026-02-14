@@ -2,6 +2,9 @@
 :PROPERTIES:
 :PUBLISHED: true
 :ALLOW_COMMENTS: true
+:CANVAS_ID: 1712601
+:LAST_SYNCED: [2026-02-14 Sat 17:12]
+:PAYLOAD_HASH: 0a934c054f5aa34891dcda8f5b6d0afa
 :END:
 
 Welcome to Introduction to Data Science!
@@ -18,6 +21,9 @@ See you on Monday!
 :PUBLISHED: true
 :POST_AT:  <2026-09-04 Fri 09:00>
 :ALLOW_COMMENTS: false
+:CANVAS_ID: 1712602
+:LAST_SYNCED: [2026-02-14 Sat 17:12]
+:PAYLOAD_HASH: f5aeb77b197902877eceaabbbe0adcd7
 :END:
 
 Reminder: *Lab 01: Python Basics* is due this Sunday at 11:59 PM.
@@ -34,7 +40,10 @@ If you need help, visit office hours or the Data Science Tutoring Lab.
 :PUBLISHED: true
 :POST_AT:  <2026-10-05 Mon 08:00>
 :ALLOW_COMMENTS: true
-:SPECIFIC_SECTIONS: Section A,Section B
+:SPECIFIC_SECTIONS: Section A - MWF 9:00am,Section B - TTh 1:30pm
+:CANVAS_ID: 1712603
+:LAST_SYNCED: [2026-02-14 Sat 17:12]
+:PAYLOAD_HASH: 4c213d508cbae56f3d5b781bf0751944
 :END:
 
 We have a special guest lecture this Wednesday!

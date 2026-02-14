@@ -530,6 +530,34 @@ Content.
      (let ((data (org-canvas--assignment-parse-entry)))
        (expect (plist-get data :moderated_grading) :to-be t))))
 
+  (it "parses grader_count"
+    (with-temp-org-buffer
+     "* Moderated Exam
+:PROPERTIES:
+:PUBLISHED: true
+:MODERATED_GRADING: true
+:GRADER_COUNT: 2
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--assignment-parse-entry)))
+       (expect (plist-get data :grader_count) :to-equal 2))))
+
+  (it "returns nil grader_count when absent"
+    (with-temp-org-buffer
+     "* Assignment
+:PROPERTIES:
+:PUBLISHED: true
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--assignment-parse-entry)))
+       (expect (plist-get data :grader_count) :to-be nil))))
+
   (it "parses position"
     (with-temp-org-buffer
      "* Ordered Assignment
@@ -677,6 +705,22 @@ Content.
            (payload (org-canvas--assignment-build-payload data))
            (assignment (gethash "assignment" payload)))
       (expect (gethash "moderated_grading" assignment) :to-be t)))
+
+  (it "includes grader_count when moderated_grading is true"
+    (let* ((data '(:title "Test" :description "" :published t
+                   :grading_type "points" :submission_types ("none")
+                   :moderated_grading t :grader_count 2))
+           (payload (org-canvas--assignment-build-payload data))
+           (assignment (gethash "assignment" payload)))
+      (expect (gethash "grader_count" assignment) :to-equal 2)))
+
+  (it "excludes grader_count when moderated_grading is nil"
+    (let* ((data '(:title "Test" :description "" :published t
+                   :grading_type "points" :submission_types ("none")
+                   :grader_count 2))
+           (payload (org-canvas--assignment-build-payload data))
+           (assignment (gethash "assignment" payload)))
+      (expect (gethash "grader_count" assignment) :to-be nil)))
 
   (it "includes position when present"
     (let* ((data '(:title "Test" :description "" :published t
@@ -1095,6 +1139,40 @@ Content.
           (description . ""))
         (point))
        (expect (org-entry-get (point) "MODERATED_GRADING") :to-equal "true"))))
+
+  (it "sets GRADER_COUNT property"
+    (with-temp-org-buffer
+     "* Assignment
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (cl-letf (((symbol-function 'org-canvas--html-to-org)
+                (lambda (html) html)))
+       (org-canvas--assignment-pull-item
+        '((id . 1) (name . "Assignment")
+          (grader_count . 3)
+          (description . ""))
+        (point))
+       (expect (org-entry-get (point) "GRADER_COUNT") :to-equal "3"))))
+
+  (it "skips GRADER_COUNT when zero"
+    (with-temp-org-buffer
+     "* Assignment
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (cl-letf (((symbol-function 'org-canvas--html-to-org)
+                (lambda (html) html)))
+       (org-canvas--assignment-pull-item
+        '((id . 1) (name . "Assignment")
+          (grader_count . 0)
+          (description . ""))
+        (point))
+       (expect (org-entry-get (point) "GRADER_COUNT") :to-be nil))))
 
   (it "sets GRADE_INDIVIDUALLY property"
     (with-temp-org-buffer

@@ -1673,5 +1673,53 @@ EXCEPT is a list of filenames to skip."
       (expect (org-canvas--validate-check-boolean "true" "MISSING_SUBMISSION_DEDUCTION_ENABLED" loc) :to-be nil)
       (expect (org-canvas--validate-check-boolean "yes" "MISSING_SUBMISSION_DEDUCTION_ENABLED" loc) :to-be-truthy))))
 
+;;;; GRADER_COUNT Validation Tests
+
+(describe "GRADER_COUNT validation"
+  (it "detects invalid GRADER_COUNT"
+    (with-temp-org-buffer
+     "* Test Assignment
+:PROPERTIES:
+:GRADER_COUNT: abc
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Assignments" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Assignment"))))
+       (expect (length issues) :to-be-greater-than 0)
+       (expect (plist-get (car issues) :message) :to-match "GRADER_COUNT"))))
+
+  (it "accepts valid GRADER_COUNT"
+    (with-temp-org-buffer
+     "* Test Assignment
+:PROPERTIES:
+:GRADER_COUNT: 2
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Assignments" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Assignment"))))
+       (expect issues :to-equal nil))))
+
+  (it "returns no issue when GRADER_COUNT is absent"
+    (with-temp-org-buffer
+     "* Test Assignment
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    '((:name "GRADER_COUNT" :type number))
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Assignment"))))
+       (expect issues :to-equal nil)))))
+
 (provide 'org-canvas-validate-test)
 ;;; org-canvas-validate-test.el ends here

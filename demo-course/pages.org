@@ -3,6 +3,10 @@
 :PUBLISHED: true
 :FRONT_PAGE: true
 :EDITING_ROLES: teachers
+:CANVAS_UPDATED_AT: 2026-02-14T22:11:54Z
+:CANVAS_URL: course-home-3
+:LAST_SYNCED: [2026-02-14 Sat 17:11]
+:PAYLOAD_HASH: 71db6050320fce63c15ce7c0b9b9858a
 :END:
 
 Welcome to *Introduction to Data Science (DS 101)*!
@@ -15,7 +19,7 @@ Welcome to *Introduction to Data Science (DS 101)*!
 - Alex Chen (achen@university.edu) -- Labs Section A & B
 - Maria Lopez (mlopez@university.edu) -- Lab Section C (Online)
 
-Use the *Modules* tab on the left to navigate weekly content.  All assignments, readings, and resources are organized by week.
+Use the *Modules* tab on the left to navigate weekly content.  All assignments, readings, and resources are organized by week.  Please review the [[file:files.org::*[[file:content/syllabus.pdf][Syllabus.pdf]]][course syllabus]] before the first class.
 
 * Software Setup Guide
 :PROPERTIES:
@@ -23,6 +27,10 @@ Use the *Modules* tab on the left to navigate weekly content.  All assignments, 
 :EDITING_ROLES: teachers
 :TODO_DATE: <2026-08-28 Fri>
 :NOTIFY_OF_UPDATE: true
+:CANVAS_UPDATED_AT: 2026-02-14T22:11:55Z
+:CANVAS_URL: software-setup-guide-3
+:LAST_SYNCED: [2026-02-14 Sat 17:11]
+:PAYLOAD_HASH: e1cd0e561776818f1f982d74099be6c0
 :END:
 
 Follow these steps to set up your development environment for DS 101.
@@ -58,12 +66,16 @@ import matplotlib.pyplot as plt
 print("All set!")
 #+end_src
 
-If you see "All set!" with no errors, your environment is ready.
+If you see "All set!" with no errors, your environment is ready.  Download the [[file:files.org::*[[file:content/resources/cheatsheet.pdf][Python Cheatsheet.pdf]]][Python Cheatsheet]] for a quick reference.
 
 * Student Resources
 :PROPERTIES:
 :PUBLISHED: true
 :EDITING_ROLES: teachers,students
+:CANVAS_UPDATED_AT: 2026-02-14T22:11:56Z
+:CANVAS_URL: student-resources-3
+:LAST_SYNCED: [2026-02-14 Sat 17:11]
+:PAYLOAD_HASH: 7f11b709b2a6b755cba8538d9f81c66a
 :END:
 
 *Recommended Textbooks:*
@@ -78,3 +90,5 @@ If you see "All set!" with no errors, your environment is ready.
 *Campus Resources:*
 - Data Science Tutoring Lab: Science Hall 105, Mon-Fri 9 AM - 5 PM
 - Writing Center: Library 200, for help with project reports
+
+Download the [[file:files.org::*[[file:content/syllabus.pdf][Syllabus.pdf]]][full syllabus]] for complete course policies and grading breakdown.

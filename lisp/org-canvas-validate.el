@@ -249,6 +249,7 @@ Returns a list of warning issues."
       (:name "GRADE_INDIVIDUALLY" :type boolean)
       (:name "ONLY_VISIBLE_TO_OVERRIDES" :type boolean)
       (:name "MODERATED_GRADING" :type boolean)
+      (:name "GRADER_COUNT" :type number)
       (:name "MUTED" :type boolean)
       (:name "TURNITIN_ENABLED" :type boolean)
       (:name "GRADING_STANDARD_ID" :type number)

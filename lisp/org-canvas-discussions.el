@@ -166,7 +166,10 @@ Returns an alist for the `assignment' key."
       (when (plist-get data :group_category_id)
         (push `(group_category_id . ,(plist-get data :group_category_id)) base))
       (when (plist-get data :specific_sections)
-        (push `(specific_sections . ,(plist-get data :specific_sections)) base))
+        (let ((resolved (org-canvas--resolve-section-names-to-ids
+                         (plist-get data :specific_sections))))
+          (when resolved
+            (push `(specific_sections . ,resolved) base))))
 
       (when (plist-get data :points_possible)
         (elog-debug org-canvas--logger "[Stage 2: Transform] Adding graded assignment: %s pts"
