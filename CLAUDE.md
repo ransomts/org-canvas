@@ -6,9 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 org-canvas is an Emacs Lisp package that synchronizes course content from Org Mode files to Canvas LMS via its REST API. The workflow treats Org files as the "source of truth" - instructors design courses in Org Mode and push changes to Canvas.
 
-### Supported Content Types (12)
+### Supported Content Types (13)
 
-Assignments, quizzes, pages, modules, rubrics, outcomes, discussions, announcements, files, assignment groups, sections, and per-section date overrides.
+Assignments, quizzes (classic), new quizzes, pages, modules, rubrics, outcomes, discussions, announcements, files, assignment groups, sections, and per-section date overrides.
 
 ## Build Commands
 
@@ -101,7 +101,7 @@ Generates `org-canvas-sync-announcements` with logging, error handling, conflict
 
 **Modules using shared infrastructure:** announcements, pages, discussions, assignments, assignment-groups, rubrics
 
-**Modules with custom sync logic (not macro-based):** files (3-step upload), outcomes (hierarchical), quizzes (nested questions), modules (parent-child items), overrides (reconcile-based)
+**Modules with custom sync logic (not macro-based):** files (3-step upload), outcomes (hierarchical), quizzes (nested questions), new-quizzes (nested items, `/api/quiz/v1/` API), modules (parent-child items), overrides (reconcile-based)
 
 **Pull-only modules:** sections (pulled from Canvas via `org-canvas-pull-sections`, not pushed)
 
@@ -179,7 +179,7 @@ The `elog` package is fetched from GitHub via `eldev-use-vc-repository` (not ven
 ### Running Tests
 
 ```bash
-eldev test              # Run all 979 tests
+eldev test              # Run all 1483 tests
 eldev test "core"       # Run tests matching pattern
 ```
 
@@ -233,25 +233,26 @@ test/
 
 ### Test Coverage Summary
 
-**1264 tests total** covering core utilities, all feature modules, and validation (6 tests skip on Emacs 29.x due to org-mode differences). Coverage is ~99% (17 uncovered lines across 15 files).
+**1631 tests total** covering core utilities, all feature modules, and validation (6 tests skip on Emacs 29.x due to org-mode differences). Coverage is ~99%.
 
 | Module            | Tests |
 |-------------------|-------|
-| **core**          | 353   |
+| **core**          | 375   |
+| quizzes           | 183   |
+| new-quizzes       | 96    |
+| modules           | 143   |
 | files             | 136   |
-| modules           | 133   |
-| quizzes           | 123   |
+| **validate**      | 115   |
 | outcomes          | 97    |
-| **validate**      | 72    |
-| assignments       | 69    |
-| pages             | 48    |
-| rubrics           | 48    |
+| assignments       | 96    |
+| rubrics           | 69    |
+| pages             | 53    |
+| discussions       | 48    |
 | sections          | 43    |
 | orchestration     | 38    |
-| discussions       | 34    |
-| announcements     | 31    |
-| settings          | 20    |
-| assignment-groups | 19    |
+| announcements     | 35    |
+| settings          | 27    |
+| assignment-groups | 25    |
 
 **Core tests cover:**
 - Path utilities (`org-canvas--path`)
@@ -274,7 +275,7 @@ test/
 4. **Finalize**: CANVAS_ID saving, LAST_SYNCED timestamps, error handling
 
 **Pull function tests cover:**
-- Canvas-to-Org import for all 12 feature modules
+- Canvas-to-Org import for all 13 feature modules
 - `pull-upsert-heading`, `pull-insert-body`, property/timestamp setting
 - Item link resolution across files (modules → pages/assignments/etc.)
 

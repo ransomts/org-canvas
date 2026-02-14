@@ -1,0 +1,80 @@
+* Course Home
+:PROPERTIES:
+:PUBLISHED: true
+:FRONT_PAGE: true
+:EDITING_ROLES: teachers
+:END:
+
+Welcome to *Introduction to Data Science (DS 101)*!
+
+*Instructor:* Dr. Jane Smith | *Email:* jsmith@university.edu | *Office:* Science Hall 312
+
+*Office Hours:* Tuesdays 2:00-4:00 PM, Thursdays 10:00 AM-12:00 PM, or by appointment.
+
+*Teaching Assistants:*
+- Alex Chen (achen@university.edu) -- Labs Section A & B
+- Maria Lopez (mlopez@university.edu) -- Lab Section C (Online)
+
+Use the *Modules* tab on the left to navigate weekly content.  All assignments, readings, and resources are organized by week.
+
+* Software Setup Guide
+:PROPERTIES:
+:PUBLISHED: true
+:EDITING_ROLES: teachers
+:TODO_DATE: <2026-08-28 Fri>
+:NOTIFY_OF_UPDATE: true
+:END:
+
+Follow these steps to set up your development environment for DS 101.
+
+*Step 1: Install Python 3.10+*
+
+Download from [[https://www.python.org/downloads/][python.org]] or use your system package manager.  Verify with:
+
+#+begin_example
+python --version
+#+end_example
+
+*Step 2: Install Jupyter*
+
+#+begin_example
+pip install jupyterlab
+#+end_example
+
+*Step 3: Install Required Libraries*
+
+#+begin_example
+pip install pandas numpy matplotlib seaborn scikit-learn
+#+end_example
+
+*Step 4: Verify Installation*
+
+Launch Jupyter Lab and run:
+
+#+begin_src python
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+print("All set!")
+#+end_src
+
+If you see "All set!" with no errors, your environment is ready.
+
+* Student Resources
+:PROPERTIES:
+:PUBLISHED: true
+:EDITING_ROLES: teachers,students
+:END:
+
+*Recommended Textbooks:*
+- /Python for Data Analysis/ by Wes McKinney (3rd edition)
+- /Think Stats/ by Allen Downey (free online)
+
+*Online Resources:*
+- [[https://pandas.pydata.org/docs/][pandas Documentation]]
+- [[https://docs.python.org/3/tutorial/][Official Python Tutorial]]
+- [[https://www.kaggle.com/learn][Kaggle Learn]]
+
+*Campus Resources:*
+- Data Science Tutoring Lab: Science Hall 105, Mon-Fri 9 AM - 5 PM
+- Writing Center: Library 200, for help with project reports

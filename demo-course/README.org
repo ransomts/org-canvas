@@ -1,0 +1,75 @@
+#+TITLE: Demo Course: Introduction to Data Science (DS 101)
+
+* Overview
+
+This directory contains a complete, self-contained demo course that showcases every feature of =org-canvas=.  It is designed as a realistic 15-week university course to illustrate how all content types, properties, and linking patterns work together.
+
+*This is a reference example, not a live course.*  The =sections.org= file contains representative CANVAS_ID values for demonstrating override links.  PDF files in =content/= are placeholders.
+
+* What This Demo Covers
+
+** Content Types (all 12)
+
+| File                  | Content Type      | Key Features Demonstrated                     |
+|-----------------------+-------------------+-----------------------------------------------|
+| =settings.org=          | Course settings   | Late policy, visibility, all boolean settings |
+| =assignment-groups.org= | Assignment groups | Weighted groups, drop rules, position         |
+| =assignments.org=       | Assignments       | Rubric links, peer reviews, overrides table,  |
+|                       |                   | moderated grading, group assignments          |
+| =pages.org=             | Pages             | Front page, editing roles, TODO date          |
+| =discussions.org=       | Discussions       | Threaded, graded, ratings, post-first         |
+| =announcements.org=     | Announcements     | Delayed posting, section-specific             |
+| =quizzes.org=           | Quizzes           | All 11 question types, access code, IP filter |
+| =rubrics.org=           | Rubrics           | Simple, multi-level, and mixed criteria       |
+| =outcomes.org=          | Learning outcomes | Multiple calculation methods, rating levels   |
+| =files.org=             | File uploads      | Folder hierarchy, usage rights, date locks    |
+| =modules.org=           | Modules           | Cross-file links, completion requirements,    |
+|                       |                   | external URLs, prerequisites, SubHeaders      |
+| =sections.org=          | Sections          | Pull-only, date restrictions                  |
+
+** Quiz Question Types (all 11)
+
+| Type                          | Demonstrated In        |
+|-------------------------------+------------------------|
+| Multiple Choice               | Quiz 01, Question 1    |
+| True/False                    | Quiz 01, Question 2    |
+| Multiple Answers              | Quiz 01, Question 3    |
+| Short Answer                  | Quiz 01, Question 4    |
+| Essay                         | Quiz 01, Question 5    |
+| Fill in Multiple Blanks       | Quiz 02, Question 1    |
+| Multiple Dropdowns            | Quiz 02, Question 2    |
+| Matching                      | Quiz 02, Question 3    |
+| Numerical (exact)             | Quiz 02, Question 4    |
+| Numerical (range)             | Quiz 02, Question 5    |
+| File Upload                   | Quiz 02, Question 6    |
+| Text Only (instructional)     | Quiz 02, Section Break |
+
+** Other Features
+
+- *Per-section date overrides* -- See the =#+NAME: overrides= table in the Midterm Exam assignment
+- *Multi-level rubric ratings* -- See the Project Rubric (4 rating levels per criterion)
+- *File folder hierarchy* -- Syllabus, Lectures, Labs, Resources folders in =files.org=
+- *Usage rights and licensing* -- Multiple justification types in =files.org=
+- *Cross-file module linking* -- =modules.org= links to pages, assignments, quizzes, discussions, announcements, and files
+- *External URL module items* -- Course Textbook Website in Week 02
+- *SubHeader module items* -- "--- Setup ---" divider in Week 01
+- *Completion requirements* -- must_view, must_submit, must_contribute, min_score
+- *Practice quiz* -- Ungraded self-assessment with show/hide correct answer dates
+- *Graded discussion* -- Midterm Study Group with points and assignment group link
+
+* How to Use
+
+1. Copy this directory and configure =org-canvas-credentials.el= with your Canvas URL and API token
+2. Set =org-canvas-directory= to point to your copy
+3. Run =M-x org-canvas-validate= to check for issues
+4. Run =M-x org-canvas-sync= to push everything to Canvas
+
+* Content Files
+
+The =content/= directory contains:
+- =syllabus.pdf= -- Placeholder (replace with actual syllabus)
+- =lectures/01-intro.pdf= -- Placeholder
+- =lectures/02-python-review.pdf= -- Placeholder
+- =labs/lab01-starter.py= -- Working Python starter code
+- =labs/lab02-data.csv= -- Sample CSV dataset with missing values
+- =resources/cheatsheet.pdf= -- Placeholder

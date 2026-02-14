@@ -26,6 +26,7 @@
                                   "lisp/org-canvas-modules.el"
                                   "lisp/org-canvas-outcomes.el"
                                   "lisp/org-canvas-pages.el"
+                                  "lisp/org-canvas-new-quizzes.el"
                                   "lisp/org-canvas-quizzes.el"
                                   "lisp/org-canvas-rubrics.el"
                                   "lisp/org-canvas-sections.el"

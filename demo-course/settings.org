@@ -1,0 +1,50 @@
+#+TITLE: Settings
+* Introduction to Data Science (DS 101)
+:PROPERTIES:
+:TIME_ZONE: America/New_York
+:DEFAULT_VIEW: modules
+:LICENSE:  cc_by_nc_sa
+:APPLY_WEIGHTS: true
+:HIDE_FINAL_GRADES: false
+:PUBLIC_SYLLABUS: true
+:IS_PUBLIC: false
+:START_AT: <2026-08-24 Mon 08:00>
+:END_AT:   <2026-12-11 Fri 23:59>
+:ALLOW_STUDENT_DISCUSSION_TOPICS: true
+:ALLOW_STUDENT_DISCUSSION_EDITING: true
+:ALLOW_STUDENT_FORUM_ATTACHMENTS: true
+:LOCK_ALL_ANNOUNCEMENTS: false
+:RESTRICT_STUDENT_FUTURE_VIEW: true
+:RESTRICT_STUDENT_PAST_VIEW: false
+:SHOW_ANNOUNCEMENTS_ON_HOME_PAGE: true
+:HOME_PAGE_ANNOUNCEMENT_LIMIT: 3
+:HIDE_DISTRIBUTION_GRAPHS: false
+:GRADING_STANDARD_ID: 0
+:LATE_SUBMISSION_DEDUCTION: 10
+:LATE_SUBMISSION_DEDUCTION_ENABLED: true
+:LATE_SUBMISSION_INTERVAL: day
+:LATE_SUBMISSION_MINIMUM_PERCENT: 50
+:LATE_SUBMISSION_MINIMUM_PERCENT_ENABLED: true
+:MISSING_SUBMISSION_DEDUCTION: 100
+:MISSING_SUBMISSION_DEDUCTION_ENABLED: true
+:END:
+
+*Welcome to DS 101 -- Introduction to Data Science!*
+
+This course provides a hands-on introduction to the tools and techniques of data science.  Students will learn to collect, clean, analyze, and visualize data using Python and its ecosystem.
+
+*Learning Objectives:*
+1. Write Python programs to manipulate and analyze data
+2. Apply statistical methods to draw conclusions from data
+3. Create effective data visualizations
+4. Communicate findings through written reports and presentations
+
+*Grading Breakdown:*
+| Component | Weight |
+|-----------+--------|
+| Labs      |    30% |
+| Homework  |    20% |
+| Exams     |    30% |
+| Projects  |    20% |
+
+Late work is penalized 10% per day, down to a minimum of 50%.  Missing submissions receive a zero.

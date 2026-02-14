@@ -1,0 +1,47 @@
+* Welcome to DS 101!
+:PROPERTIES:
+:PUBLISHED: true
+:ALLOW_COMMENTS: true
+:END:
+
+Welcome to Introduction to Data Science!
+
+I am excited to have you in the course this semester.  Before our first class, please:
+1. Review the *Course Home* page for office hours and TA information
+2. Complete the *Software Setup Guide* (found in Week 01 module)
+3. Introduce yourself in the *Introduce Yourself* discussion
+
+See you on Monday!
+
+* Lab 01 Due Date Reminder
+:PROPERTIES:
+:PUBLISHED: true
+:POST_AT:  <2026-09-04 Fri 09:00>
+:ALLOW_COMMENTS: false
+:END:
+
+Reminder: *Lab 01: Python Basics* is due this Sunday at 11:59 PM.
+
+Make sure to:
+- Upload both your =.py= and =.ipynb= files
+- Test your code before submitting
+- You have up to 3 attempts
+
+If you need help, visit office hours or the Data Science Tutoring Lab.
+
+* Guest Lecture: Data Ethics
+:PROPERTIES:
+:PUBLISHED: true
+:POST_AT:  <2026-10-05 Mon 08:00>
+:ALLOW_COMMENTS: true
+:SPECIFIC_SECTIONS: Section A,Section B
+:END:
+
+We have a special guest lecture this Wednesday!
+
+*Dr. Sarah Johnson* from the Institute for Responsible AI will present on "Ethical Considerations in Data Science."  The talk will cover:
+- Bias in machine learning models
+- Privacy concerns in data collection
+- Responsible use of predictive analytics
+
+This is required for Sections A and B (in-person).  Section C (Online) students can watch the recording posted afterward.

@@ -1270,4 +1270,68 @@ Content.
         (point))
        (expect (org-entry-get (point) "GRADING_STANDARD_ID") :to-equal "42")))))
 
+;;;; TURNITIN_ENABLED Property Tests
+
+(describe "org-canvas--assignment-parse-entry (turnitin_enabled)"
+  (it "parses TURNITIN_ENABLED property"
+    (with-temp-org-buffer
+     "* Essay Assignment
+:PROPERTIES:
+:PUBLISHED: true
+:TURNITIN_ENABLED: true
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--assignment-parse-entry)))
+       (expect (plist-get data :turnitin_enabled) :to-be t))))
+
+  (it "returns nil for missing TURNITIN_ENABLED"
+    (with-temp-org-buffer
+     "* Assignment
+:PROPERTIES:
+:PUBLISHED: true
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--assignment-parse-entry)))
+       (expect (plist-get data :turnitin_enabled) :to-be nil)))))
+
+(describe "org-canvas--assignment-build-payload (turnitin_enabled)"
+  (it "includes turnitin_enabled when true"
+    (let* ((data '(:title "Test" :description "" :published t
+                   :grading_type "points" :submission_types ("none")
+                   :turnitin_enabled t))
+           (payload (org-canvas--assignment-build-payload data))
+           (assignment (gethash "assignment" payload)))
+      (expect (gethash "turnitin_enabled" assignment) :to-be t)))
+
+  (it "excludes turnitin_enabled when nil"
+    (let* ((data '(:title "Test" :description "" :published t
+                   :grading_type "points" :submission_types ("none")))
+           (payload (org-canvas--assignment-build-payload data))
+           (assignment (gethash "assignment" payload)))
+      (expect (gethash "turnitin_enabled" assignment) :to-be nil))))
+
+(describe "org-canvas--assignment-pull-item (turnitin_enabled)"
+  (it "sets TURNITIN_ENABLED property"
+    (with-temp-org-buffer
+     "* Assignment
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (cl-letf (((symbol-function 'org-canvas--html-to-org)
+                (lambda (html) html)))
+       (org-canvas--assignment-pull-item
+        '((id . 1) (name . "Assignment")
+          (turnitin_enabled . t)
+          (description . ""))
+        (point))
+       (expect (org-entry-get (point) "TURNITIN_ENABLED") :to-equal "true")))))
+
 ;;; org-canvas-assignments-test.el ends here

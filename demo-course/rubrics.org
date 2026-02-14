@@ -1,0 +1,37 @@
+* Lab Rubric
+:PROPERTIES:
+:FREE_FORM_CRITERION_COMMENTS: true
+:END:
+| Criterion     | Points | Description                        |
+|---------------+--------+------------------------------------|
+| Code Quality  |     10 | Clean, readable, well-organized    |
+| Correctness   |     10 | Produces expected output           |
+| Documentation |      5 | Comments and docstrings            |
+
+* Project Rubric
+| Criterion     | Points | Description                              |
+|---------------+--------+------------------------------------------|
+| Analysis      |     40 | Depth and correctness of data analysis   |
+| > Excellent   |     40 | Thorough analysis with novel insights    |
+| > Good        |     30 | Solid analysis, minor gaps               |
+| > Adequate    |     20 | Basic analysis, several gaps             |
+| > Poor        |      0 | Missing or incorrect analysis            |
+| Visualization |     30 | Quality of charts and figures            |
+| > Excellent   |     30 | Publication-quality, clear labels        |
+| > Good        |     22 | Effective visuals, minor issues          |
+| > Adequate    |     15 | Basic visuals, hard to interpret         |
+| > Poor        |      0 | Missing or misleading visuals            |
+| Writing       |     30 | Clarity and organization of report       |
+| > Excellent   |     30 | Professional quality, well-structured    |
+| > Good        |     22 | Clear writing, minor organizational gaps |
+| > Adequate    |     15 | Understandable but poorly organized      |
+| > Poor        |      0 | Unclear or missing written component     |
+
+* Peer Review Rubric
+| Criterion    | Points | Description                              |
+|--------------+--------+------------------------------------------|
+| Clarity      |     10 | How clear is the analysis?               |
+| > Excellent  |     10 | Crystal clear, easy to follow            |
+| > Adequate   |      5 | Somewhat clear, some confusion           |
+| > Poor       |      0 | Unclear or hard to follow                |
+| Helpfulness  |     10 | Quality and depth of feedback provided   |

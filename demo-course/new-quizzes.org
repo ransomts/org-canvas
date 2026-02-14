@@ -1,0 +1,123 @@
+* Quiz 01: Data Science Fundamentals
+:PROPERTIES:
+:TIME_LIMIT: 45
+:SHUFFLE_ANSWERS: true
+:ONE_AT_A_TIME: true
+:ALLOWED_ATTEMPTS: 2
+:SCORING_POLICY: keep_highest
+:END:
+
+Test your understanding of core data science concepts from Weeks 1-3.
+
+** What is the primary purpose of exploratory data analysis (EDA)?
+:PROPERTIES:
+:TYPE: choice
+:POINTS: 3
+:END:
+
+- [ ] To build production machine learning models
+- [X] To understand patterns, spot anomalies, and test assumptions in data
+- [ ] To deploy data pipelines to production
+- [ ] To write SQL queries for data extraction
+
+** A p-value of 0.03 means the null hypothesis is false.
+:PROPERTIES:
+:TYPE: true-false
+:POINTS: 2
+:END:
+
+- [ ] True
+- [X] False
+
+** Which of the following are supervised learning algorithms?
+:PROPERTIES:
+:TYPE: multi-answer
+:POINTS: 4
+:END:
+
+- [X] Linear Regression
+- [ ] K-Means Clustering
+- [X] Random Forest
+- [ ] Principal Component Analysis
+- [X] Support Vector Machine
+
+** Name a common Python library used for data manipulation.
+:PROPERTIES:
+:TYPE: short-answer
+:POINTS: 2
+:END:
+
+- [X] pandas
+- [X] Pandas
+- [X] numpy
+- [X] NumPy
+
+** Explain the bias-variance tradeoff in machine learning.
+:PROPERTIES:
+:TYPE: essay
+:POINTS: 10
+:END:
+
+** Match each metric to what it measures
+:PROPERTIES:
+:TYPE: matching
+:POINTS: 6
+:END:
+
+- Precision = Fraction of positive predictions that are correct
+- Recall = Fraction of actual positives that are identified
+- F1 Score = Harmonic mean of precision and recall
+- Accuracy = Fraction of all predictions that are correct
+
+** Arrange the data science workflow steps in order
+:PROPERTIES:
+:TYPE: ordering
+:POINTS: 5
+:END:
+
+1. Define the problem
+2. Collect and clean data
+3. Explore and visualize
+4. Build and evaluate models
+5. Deploy and monitor
+
+** What is the median of the dataset: 3, 7, 8, 12, 14?
+:PROPERTIES:
+:TYPE: numerical
+:POINTS: 2
+:END:
+
+- [X] 8
+
+* Quiz 02: Statistical Methods
+:PROPERTIES:
+:TIME_LIMIT: 30
+:SHUFFLE_ANSWERS: true
+:ALLOWED_ATTEMPTS: 1
+:END:
+
+A shorter quiz on statistical concepts.
+
+** Categorize each test by type
+:PROPERTIES:
+:TYPE: categorization
+:POINTS: 6
+:END:
+
+- Parametric: t-test, ANOVA, linear regression
+- Non-parametric: Mann-Whitney U, Kruskal-Wallis, chi-square
+
+** The Central Limit Theorem states that sample means approach a normal distribution as sample size increases, regardless of the population distribution.
+:PROPERTIES:
+:TYPE: true-false
+:POINTS: 2
+:END:
+
+- [X] True
+- [ ] False
+
+** Upload your completed lab notebook for this module.
+:PROPERTIES:
+:TYPE: file-upload
+:POINTS: 15
+:END:

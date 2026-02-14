@@ -1,36 +1,10 @@
-#+TITLE: Course Sections
-# Sync command: M-x org-canvas-sync-sections
-#
-# Supported properties:
-#   START_AT          - Section start date (Org timestamp)
-#   END_AT            - Section end date (Org timestamp)
-#   RESTRICT_TO_DATES - true | false (restrict enrollment to dates)
-#
-# Date overrides use a #+NAME: overrides table in assignments.org.
-#
-# Auto-generated (do not edit):
-#   CANVAS_ID, LAST_SYNCED
-
-* Section A - MWF 9:00am
-:PROPERTIES:
-:START_AT: <2026-01-15 Thu>
-:END_AT: <2026-05-15 Fri>
-:RESTRICT_TO_DATES: false
-:END:
-
-* Section B - TTh 1:30pm
-:PROPERTIES:
-:START_AT: <2026-01-15 Thu>
-:END_AT: <2026-05-15 Fri>
-:RESTRICT_TO_DATES: false
-:END:
 * Section A - MWF 9:00am
 :PROPERTIES:
 :CANVAS_ID: 320069
 :START_AT: <2026-01-15 Thu 05:00>
 :END_AT:   <2026-05-15 Fri 04:00>
 :RESTRICT_TO_DATES: false
-:LAST_SYNCED: [2026-02-08 Sun 20:18]
+:LAST_SYNCED: [2026-02-14 Sat 13:24]
 :END:
 * Section B - TTh 1:30pm
 :PROPERTIES:
@@ -38,11 +12,11 @@
 :START_AT: <2026-01-15 Thu 05:00>
 :END_AT:   <2026-05-15 Fri 04:00>
 :RESTRICT_TO_DATES: false
-:LAST_SYNCED: [2026-02-08 Sun 20:18]
+:LAST_SYNCED: [2026-02-14 Sat 13:24]
 :END:
 * tsranso-sandbox
 :PROPERTIES:
 :CANVAS_ID: 304213
 :RESTRICT_TO_DATES: false
-:LAST_SYNCED: [2026-02-08 Sun 20:18]
+:LAST_SYNCED: [2026-02-14 Sat 13:24]
 :END:

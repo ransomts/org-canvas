@@ -1,0 +1,35 @@
+#+TITLE: Course Sections
+# Sync command: M-x org-canvas-pull-sections
+#
+# Supported properties:
+#   START_AT          - Section start date (Org timestamp)
+#   END_AT            - Section end date (Org timestamp)
+#   RESTRICT_TO_DATES - true | false (restrict enrollment to dates)
+#
+# Date overrides use a #+NAME: overrides table in assignments.org.
+#
+# Auto-generated (do not edit):
+#   CANVAS_ID, LAST_SYNCED
+
+* Section A
+:PROPERTIES:
+:CANVAS_ID: 10001
+:START_AT: <2026-08-24 Mon>
+:END_AT:   <2026-12-11 Fri>
+:RESTRICT_TO_DATES: true
+:END:
+
+* Section B
+:PROPERTIES:
+:CANVAS_ID: 10002
+:START_AT: <2026-08-24 Mon>
+:END_AT:   <2026-12-11 Fri>
+:RESTRICT_TO_DATES: false
+:END:
+
+* Section C (Online)
+:PROPERTIES:
+:CANVAS_ID: 10003
+:START_AT: <2026-08-24 Mon>
+:END_AT:   <2026-12-11 Fri>
+:END:

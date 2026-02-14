@@ -1,0 +1,41 @@
+* Syllabus
+** [[file:content/syllabus.pdf][Syllabus.pdf]]
+:PROPERTIES:
+:PUBLISHED: true
+:USE_JUSTIFICATION: own_copyright
+:COPYRIGHT: 2026 DS Department
+:END:
+
+* Lectures
+** [[file:content/lectures/01-intro.pdf][01 Introduction to Data Science.pdf]]
+:PROPERTIES:
+:PUBLISHED: true
+:END:
+
+** [[file:content/lectures/02-python-review.pdf][02 Python Review.pdf]]
+:PROPERTIES:
+:PUBLISHED: true
+:END:
+
+* Labs
+** [[file:content/labs/lab01-starter.py][lab01-starter.py]]
+:PROPERTIES:
+:PUBLISHED: true
+:UNLOCK_AT: <2026-08-31 Mon 08:00>
+:LOCK_AT:  <2026-09-09 Wed 23:59>
+:END:
+
+** [[file:content/labs/lab02-data.csv][lab02-data.csv]]
+:PROPERTIES:
+:PUBLISHED: true
+:USE_JUSTIFICATION: public_domain
+:END:
+
+* Resources
+** [[file:content/resources/cheatsheet.pdf][Python Cheatsheet.pdf]]
+:PROPERTIES:
+:PUBLISHED: true
+:USE_JUSTIFICATION: used_by_permission
+:USAGE_LICENSE: cc_by
+:COPYRIGHT: Original Author 2025
+:END:

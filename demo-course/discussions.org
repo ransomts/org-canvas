@@ -1,0 +1,55 @@
+* Introduce Yourself
+:PROPERTIES:
+:PUBLISHED: true
+:DISCUSSION_TYPE: threaded
+:PINNED:   true
+:ALLOW_RATING: true
+:END:
+
+Welcome to DS 101!  Take a moment to introduce yourself to your classmates.
+
+Please share:
+- Your name and major
+- Why you are interested in data science
+- A dataset you find interesting (and why)
+
+Reply to at least two classmates' posts.
+
+* Dataset Ethics Discussion
+:PROPERTIES:
+:PUBLISHED: true
+:DISCUSSION_TYPE: side_comment
+:POST_FIRST: true
+:AVAILABLE_FROM: <2026-09-14 Mon 08:00>
+:SORT_BY_RATING: true
+:ONLY_GRADERS_CAN_RATE: true
+:END:
+
+Read the article on ethical data collection practices (linked in Modules).
+
+Then answer the following:
+1. What are the risks of using publicly scraped data without consent?
+2. Describe a scenario where data collection could cause harm, even if legal.
+3. What safeguards would you recommend for researchers working with personal data?
+
+You must post your response *before* you can see other students' answers.
+
+* Midterm Study Group
+:PROPERTIES:
+:PUBLISHED: true
+:DISCUSSION_TYPE: threaded
+:GRADING_TYPE: points
+:POINTS:   10
+:DUE_AT:   <2026-10-16 Fri 23:59>
+:GROUP:    [[file:assignment-groups.org::*Homework][Homework]]
+:GROUP_CATEGORY: 1
+:SPECIFIC_SECTIONS: Section A
+:END:
+
+This is a graded discussion worth 10 points.
+
+Post at least one question you have about the material covered in Weeks 1-7.  Then respond to at least two classmates with helpful study tips, resource links, or explanations.
+
+Grading criteria:
+- Original question shows genuine engagement with the material (5 pts)
+- Responses are helpful and substantive (5 pts)

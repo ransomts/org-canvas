@@ -1,0 +1,197 @@
+* Quiz 01: Python Fundamentals
+:PROPERTIES:
+:QUIZ_TYPE: assignment
+:TIME_LIMIT: 30
+:PUBLISHED: true
+:SHUFFLE_ANSWERS: true
+:ALLOWED_ATTEMPTS: 2
+:SCORING_POLICY: keep_highest
+:SHOW_CORRECT_ANSWERS: true
+:DUE_AT:   <2026-09-05 Fri 23:59>
+:UNLOCK_AT: <2026-09-01 Tue 08:00>
+:LOCK_AT:  <2026-09-07 Mon 23:59>
+:GROUP:    [[file:assignment-groups.org::*Labs][Labs]]
+:END:
+
+Test your understanding of basic Python concepts from Week 01.
+
+** Question: Immutable Types
+:PROPERTIES:
+:TYPE:     multiple_choice_question
+:POINTS:   2.0
+:END:
+
+Which of the following Python data types is *immutable*?
+- [ ] list
+- [ ] dict
+- [X] tuple
+- [ ] set
+
+** Question: Ordered Collections
+:PROPERTIES:
+:TYPE:     true_false_question
+:POINTS:   1.0
+:END:
+
+Python lists maintain insertion order.
+- [X] True
+- [ ] False
+
+** Question: Valid Types
+:PROPERTIES:
+:TYPE:     multiple_answers_question
+:POINTS:   2.0
+:END:
+
+Select *all* valid built-in Python data types.
+- [X] int
+- [X] str
+- [ ] array
+- [X] float
+- [X] bool
+
+** Question: Print Function
+:PROPERTIES:
+:TYPE:     short_answer_question
+:POINTS:   1.0
+:END:
+
+What built-in function is used to display output to the console?
+- [X] print
+- [X] print()
+
+** Question: List Comprehensions
+:PROPERTIES:
+:TYPE:     essay_question
+:POINTS:   5.0
+:END:
+
+Explain what a list comprehension is in Python.  Provide an example that filters a list of numbers to keep only even values.
+
+* Quiz 02: Data Wrangling
+:PROPERTIES:
+:QUIZ_TYPE: assignment
+:TIME_LIMIT: 45
+:PUBLISHED: true
+:SHUFFLE_ANSWERS: false
+:ALLOWED_ATTEMPTS: 1
+:ONE_QUESTION_AT_A_TIME: true
+:CANT_GO_BACK: true
+:ACCESS_CODE: ds101
+:SHOW_CORRECT_ANSWERS: false
+:HIDE_RESULTS: until_after_last_attempt
+:SCORING_POLICY: keep_latest
+:IP_FILTER: 10.0.0.0/8
+:SHOW_CORRECT_ANSWERS_LAST_ATTEMPT: true
+:ONE_TIME_RESULTS: true
+:ONLY_VISIBLE_TO_OVERRIDES: false
+:DUE_AT:   <2026-09-12 Sat 23:59>
+:UNLOCK_AT: <2026-09-08 Tue 08:00>
+:LOCK_AT:  <2026-09-14 Mon 23:59>
+:GROUP:    [[file:assignment-groups.org::*Labs][Labs]]
+:END:
+
+Test your knowledge of pandas and data wrangling techniques.
+
+Access code required -- available from your instructor.
+
+** Question: CSV Loading
+:PROPERTIES:
+:TYPE:     fill_in_multiple_blanks_question
+:POINTS:   2.0
+:END:
+
+The function [func] reads CSV files, and [lib] is the library that provides it.
+- func
+  - [X] read_csv
+  - [X] pd.read_csv
+- lib
+  - [X] pandas
+  - [X] pd
+
+** Question: Row and Column Selection
+:PROPERTIES:
+:TYPE:     multiple_dropdowns_question
+:POINTS:   2.0
+:END:
+
+To select rows by label use [method], and to select columns by name use [col_method].
+- method
+  - [X] loc
+  - [ ] iloc
+  - [ ] select
+- col_method
+  - [X] bracket notation
+  - [ ] iloc
+  - [ ] query
+
+** Question: pandas Functions
+:PROPERTIES:
+:TYPE:     matching_question
+:POINTS:   3.0
+:END:
+
+Match each pandas function to its description.
+- dropna = Remove rows with missing values
+- fillna = Replace missing values with a specified value
+- groupby = Split data into groups for aggregation
+- merge = Combine two DataFrames by key columns
+- pivot_table = Reshape data from long to wide format
+
+** Question: DataFrame Rows
+:PROPERTIES:
+:TYPE:     numerical_question
+:POINTS:   1.0
+:END:
+
+How many rows are in a DataFrame created by =pd.DataFrame(np.zeros((5, 3)))=?
+- [X] 5
+
+** Question: Approximate Pi
+:PROPERTIES:
+:TYPE:     numerical_question
+:POINTS:   1.0
+:END:
+
+What is pi rounded to one decimal place?
+- [X] [3.0, 3.2]
+
+** Question: Upload Cleaned Data
+:PROPERTIES:
+:TYPE:     file_upload_question
+:POINTS:   5.0
+:END:
+
+Upload your cleaned dataset as a CSV file.
+
+** Text: Section Break
+:PROPERTIES:
+:TYPE:     text_only_question
+:POINTS:   0
+:END:
+
+You have completed the auto-graded portion.  The file upload above will be graded manually.
+
+* Practice: Self-Assessment
+:PROPERTIES:
+:QUIZ_TYPE: practice_quiz
+:PUBLISHED: true
+:SHUFFLE_ANSWERS: true
+:SHOW_CORRECT_ANSWERS: true
+:SHOW_CORRECT_ANSWERS_AT: <2026-09-08 Tue 08:00>
+:HIDE_CORRECT_ANSWERS_AT: <2026-12-11 Fri 23:59>
+:END:
+
+Use this practice quiz to check your understanding.  It is ungraded and you can retake it as many times as you like.
+
+** Question: Quick Review
+:PROPERTIES:
+:TYPE:     multiple_choice_question
+:POINTS:   1.0
+:END:
+
+Which library is the standard tool for data manipulation in Python?
+- [ ] NumPy
+- [X] pandas
+- [ ] Matplotlib
+- [ ] scikit-learn

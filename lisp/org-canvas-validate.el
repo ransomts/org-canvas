@@ -198,6 +198,16 @@ Returns a list of warning issues."
   '("teachers" "students" "members" "public")
   "Valid editing roles for pages.")
 
+(defconst org-canvas--valid-new-quiz-types
+  '("choice" "true-false" "multi-answer" "short-answer"
+    "essay" "file-upload" "numerical" "matching"
+    "ordering" "categorization" "fill-in-the-blank" "hot-spot")
+  "Valid TYPE values for New Quiz items.")
+
+(defconst org-canvas--valid-new-quiz-scoring-policies
+  '("keep_highest" "keep_latest" "keep_average")
+  "Valid scoring policy values for New Quizzes.")
+
 (defconst org-canvas--valid-discussion-types
   '("side_comment" "threaded")
   "Valid discussion types.")
@@ -240,6 +250,7 @@ Returns a list of warning issues."
       (:name "ONLY_VISIBLE_TO_OVERRIDES" :type boolean)
       (:name "MODERATED_GRADING" :type boolean)
       (:name "MUTED" :type boolean)
+      (:name "TURNITIN_ENABLED" :type boolean)
       (:name "GRADING_STANDARD_ID" :type number)
       (:name "GROUP_CATEGORY_ID" :type number)
       (:name "POSITION" :type number))
@@ -373,6 +384,23 @@ Returns a list of warning issues."
       (:name "DROP_LOWEST" :type number)
       (:name "DROP_HIGHEST" :type number)
       (:name "POSITION" :type number)))
+
+    (:label "New Quizzes"
+     :file org-canvas-new-quizzes-file
+     :query "LEVEL=1"
+     :properties
+     ((:name "TIME_LIMIT" :type number)
+      (:name "SHUFFLE_ANSWERS" :type boolean)
+      (:name "ONE_AT_A_TIME" :type boolean)
+      (:name "ALLOWED_ATTEMPTS" :type number)
+      (:name "SCORING_POLICY" :type enum :values ,org-canvas--valid-new-quiz-scoring-policies)))
+
+    (:label "New Quiz Items"
+     :file org-canvas-new-quizzes-file
+     :query "LEVEL=2"
+     :properties
+     ((:name "POINTS" :type number)
+      (:name "TYPE" :type enum :values ,org-canvas--valid-new-quiz-types)))
 
     (:label "Settings"
      :file org-canvas-settings-file

@@ -1,0 +1,42 @@
+* Programming Skills
+** Python Proficiency
+:PROPERTIES:
+:CALCULATION_METHOD: decaying_average
+:CALCULATION_INT: 65
+:MASTERY_POINTS: 3
+:END:
+
+Students demonstrate the ability to write correct, idiomatic Python code for data manipulation tasks.
+
+- [5] Exceeds: Writes elegant, efficient Python using advanced features
+- [3] Meets: Correctly uses core Python constructs for data tasks
+- [1] Approaching: Can write basic Python but struggles with data structures
+- [0] Does Not Meet: Cannot write functional Python code
+
+** Data Manipulation
+:PROPERTIES:
+:CALCULATION_METHOD: highest
+:MASTERY_POINTS: 3
+:END:
+
+Students use pandas and related libraries to clean, transform, and analyze datasets.
+
+- [5] Exceeds: Efficiently chains complex transformations on messy data
+- [3] Meets: Performs standard data cleaning and transformation tasks
+- [1] Approaching: Can load data but struggles with cleaning and reshaping
+- [0] Does Not Meet: Cannot use data manipulation libraries
+
+* Analytical Skills
+** Statistical Reasoning
+:PROPERTIES:
+:CALCULATION_METHOD: n_mastery
+:CALCULATION_INT: 3
+:MASTERY_POINTS: 3
+:END:
+
+Students apply appropriate statistical methods and correctly interpret results.
+
+- [5] Exceeds: Selects optimal methods and provides nuanced interpretation
+- [3] Meets: Applies correct methods and interprets results accurately
+- [1] Approaching: Understands basic statistics but misapplies methods
+- [0] Does Not Meet: Cannot apply or interpret statistical methods

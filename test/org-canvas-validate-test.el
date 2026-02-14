@@ -1635,6 +1635,11 @@ EXCEPT is a list of filenames to skip."
       (expect (org-canvas--validate-check-boolean "true" "MUTED" loc) :to-be nil)
       (expect (org-canvas--validate-check-boolean "invalid" "MUTED" loc) :to-be-truthy)))
 
+  (it "validates TURNITIN_ENABLED as boolean in assignments"
+    (let ((loc (list :file "/f" :line 1 :heading "H")))
+      (expect (org-canvas--validate-check-boolean "true" "TURNITIN_ENABLED" loc) :to-be nil)
+      (expect (org-canvas--validate-check-boolean "invalid" "TURNITIN_ENABLED" loc) :to-be-truthy)))
+
   (it "validates GRADING_STANDARD_ID as number in assignments"
     (let ((loc (list :file "/f" :line 1 :heading "H")))
       (expect (org-canvas--validate-check-number "42" "GRADING_STANDARD_ID" loc) :to-be nil)

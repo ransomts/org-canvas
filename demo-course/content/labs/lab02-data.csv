@@ -1,0 +1,11 @@
+id,name,age,major,gpa,credits,graduation_year
+1,Alice,21,Computer Science,3.8,90,2027
+2,Bob,22,Statistics,3.5,105,2026
+3,Carol,,Data Science,3.9,60,2028
+4,Dave,20,Mathematics,,75,2027
+5,Eve,23,Computer Science,3.2,110,2026
+6,Frank,21,Statistics,3.7,85,
+7,Grace,19,Data Science,3.6,45,2029
+8,Hank,,Mathematics,2.9,95,2027
+9,Ivy,22,Computer Science,3.4,,2026
+10,Jack,20,Statistics,3.8,70,2028

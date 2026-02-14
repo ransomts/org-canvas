@@ -126,6 +126,7 @@ Accepts: online_upload, online_url, online_text_entry, media_recording,
          (only-visible-to-overrides (org-canvas-org-get-boolean-property pom "ONLY_VISIBLE_TO_OVERRIDES"))
          (moderated-grading (org-canvas-org-get-boolean-property pom "MODERATED_GRADING"))
          (muted (org-canvas-org-get-boolean-property pom "MUTED"))
+         (turnitin-enabled (org-canvas-org-get-boolean-property pom "TURNITIN_ENABLED"))
          (grading-standard-id (org-canvas-org-get-property pom "GRADING_STANDARD_ID"))
          (position (org-canvas-org-get-property pom "POSITION")))
 
@@ -171,6 +172,7 @@ Accepts: online_upload, online_url, online_text_entry, media_recording,
             :only_visible_to_overrides only-visible-to-overrides
             :moderated_grading moderated-grading
             :muted muted
+            :turnitin_enabled turnitin-enabled
             :grading_standard_id (when grading-standard-id (org-canvas--safe-string-to-number grading-standard-id "GRADING_STANDARD_ID"))
             :position (when position (org-canvas--safe-string-to-number position "POSITION"))
             :pom pom))))
@@ -252,6 +254,8 @@ Accepts: online_upload, online_url, online_text_entry, media_recording,
         (puthash "moderated_grading" t assignment))
       (when (plist-get data :muted)
         (puthash "muted" t assignment))
+      (when (plist-get data :turnitin_enabled)
+        (puthash "turnitin_enabled" t assignment))
       (when (plist-get data :grading_standard_id)
         (puthash "grading_standard_id" (plist-get data :grading_standard_id) assignment))
       (when (plist-get data :position)
@@ -405,6 +409,7 @@ ITEM is the API response alist, POS is the heading position."
       (when apos
         (org-canvas-org-set-property pos "POSITION" (format "%s" apos))))
     (org-canvas--pull-set-boolean-property pos "MUTED" (alist-get 'muted item))
+    (org-canvas--pull-set-boolean-property pos "TURNITIN_ENABLED" (alist-get 'turnitin_enabled item))
     (let ((gs-id (alist-get 'grading_standard_id item)))
       (when gs-id
         (org-canvas-org-set-property pos "GRADING_STANDARD_ID" (format "%s" gs-id))))

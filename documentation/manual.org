@@ -54,7 +54,8 @@ my-course/
 ├── settings.org               ; Course settings (timezone, homepage, license)
 ├── assignments.org            ; Course assignments
 ├── assignment-groups.org      ; Grade weighting categories
-├── quizzes.org               ; Quizzes with embedded questions
+├── quizzes.org               ; Classic Quizzes with embedded questions
+├── new-quizzes.org           ; New Quizzes (Instructure's newer quiz engine)
 ├── pages.org                 ; Wiki/content pages
 ├── modules.org               ; Course navigation structure
 ├── rubrics.org               ; Grading rubrics
@@ -75,6 +76,7 @@ Each file path is configured via a variable:
 | =org-canvas-assignments-file=       | =assignments.org=          |
 | =org-canvas-assignment-groups-file= | =assignment-groups.org=    |
 | =org-canvas-quizzes-file=           | =quizzes.org=              |
+| =org-canvas-new-quizzes-file=       | =new-quizzes.org=          |
 | =org-canvas-pages-file=             | =pages.org=                |
 | =org-canvas-modules-file=           | =modules.org=              |
 | =org-canvas-rubrics-file=           | =rubrics.org=              |
@@ -101,6 +103,8 @@ assignments.org  -->  rubrics.org
 
 quizzes.org      -->  assignment-groups.org
                  -->  outcomes.org
+
+new-quizzes.org  (no outgoing links)
 
 modules.org      -->  assignments.org
                  -->  quizzes.org
@@ -141,6 +145,7 @@ These files have no outgoing links to other course files:
 | File            | Depends On                                       |
 |-----------------+--------------------------------------------------|
 | =quizzes.org=     | assignment-groups.org, outcomes.org               |
+| =new-quizzes.org= | (none)                                           |
 | =assignments.org= | rubrics.org, assignment-groups.org, outcomes.org |
 |                 | pages.org, files.org                             |
 
@@ -174,10 +179,11 @@ The =org-canvas-sync= function syncs files in proper dependency order:
 8. =discussions.org= (Tier 0)
 9. =announcements.org= (Tier 0)
 10. =quizzes.org= (Tier 1)
-11. =assignments.org= (Tier 1)
-12. =assignment-groups.org= (Tier 1.5) - second pass, with drop rules
-13. Per-section overrides (Tier 1.75)
-14. =modules.org= (Tier 2)
+11. =new-quizzes.org= (Tier 1)
+12. =assignments.org= (Tier 1)
+13. =assignment-groups.org= (Tier 1.5) - second pass, with drop rules
+14. Per-section overrides (Tier 1.75)
+15. =modules.org= (Tier 2)
 
 *Note*: Assignment groups are synced twice because Canvas rejects drop rules for groups with no assignments. Per-section overrides require both sections and assignments/quizzes to exist.
 
@@ -295,6 +301,7 @@ Course assignments with due dates, submission types, and grading options.
 | =ONLY_VISIBLE_TO_OVERRIDES= | boolean | Only visible to students with overrides  |
 | =MODERATED_GRADING=  | boolean   | Enable moderated grading                      |
 | =MUTED=              | boolean   | Mute assignment (hide grades from students)   |
+| =TURNITIN_ENABLED=   | boolean   | Enable Turnitin plagiarism detection           |
 | =GRADING_STANDARD_ID= | number  | Canvas grading standard ID                    |
 | =POSITION=           | number    | Position in assignment list                   |
 
@@ -483,6 +490,137 @@ This exam covers chapters 1-5.
 :TYPE: essay_question
 :POINTS: 20
 :END:
+#+end_src
+
+** new-quizzes.org
+
+New Quizzes using Canvas's newer quiz engine (=/api/quiz/v1/=).
+
+New Quizzes are Instructure's replacement for Classic Quizzes.  They use a completely different API, support richer question types, and are backed by Canvas assignments (identified by =CANVAS_ASSIGNMENT_ID= rather than =CANVAS_ID=).
+
+*** When to use New Quizzes vs Classic Quizzes
+
+Use *New Quizzes* when:
+- Your institution has enabled New Quizzes (requires LTI configuration)
+- You need question types not available in Classic: ordering, categorization, hot-spot, rich fill-in-the-blank
+- You want partial credit scoring on matching/ordering/categorization
+- You want built-in item analysis and moderation tools
+
+Use *Classic Quizzes* (=quizzes.org=) when:
+- Your institution hasn't enabled New Quizzes yet
+- You rely on Classic quiz features like surveys or question groups
+- You need Classic question banks (New Quizzes uses a separate "item banks" system)
+
+*** Structure
+
+- Level 1 headings = Quizzes
+- Level 2 headings = Questions (items) under each quiz
+- List items under questions = Answer choices
+
+*** Quiz Properties
+
+| Property           | Type    | Description                                              |
+|--------------------+---------+----------------------------------------------------------|
+| =CANVAS_ASSIGNMENT_ID= | string  | Canvas assignment ID (auto-populated after sync)    |
+| =TIME_LIMIT=         | number  | Time limit in minutes                                    |
+| =SHUFFLE_ANSWERS=    | boolean | Randomize answer order                                   |
+| =ONE_AT_A_TIME=      | boolean | Show one question per page                               |
+| =ALLOWED_ATTEMPTS=   | number  | Max attempts                                             |
+| =SCORING_POLICY=     | enum    | =keep_highest=, =keep_latest=, or =keep_average=            |
+
+*** Question Properties
+
+| Property         | Type   | Description                  |
+|------------------+--------+------------------------------|
+| =CANVAS_ITEM_ID=   | string | Item UUID (auto-populated)   |
+| =TYPE=             | enum   | Question type (see below)    |
+| =POINTS=           | number | Points for this question     |
+
+*** Question Types
+
+| Org TYPE value       | API Slug             | Answer Format                           |
+|----------------------+----------------------+-----------------------------------------|
+| =choice=               | =choice=               | =[X] Correct= / =[ ] Wrong=                |
+| =true-false=           | =true_false=           | =[X] True= or =[X] False=                  |
+| =multi-answer=         | =multi_answer=         | Multiple =[X]= marks allowed              |
+| =short-answer=         | =short_answer=         | =[X]= for each accepted answer              |
+| =essay=                | =essay=                | No answers needed                         |
+| =file-upload=          | =file_upload=          | No answers needed                         |
+| =numerical=            | =numerical=            | =[X] 42= or =[X] [10, 20]= (range)          |
+| =matching=             | =matching=             | =Left = Right= pairs                       |
+| =ordering=             | =ordering=             | Numbered list =1. item=                     |
+| =categorization=       | =categorization=       | =Category: item1, item2=                   |
+| =fill-in-the-blank=    | =fill_in_the_blank=    | =[X]= for each blank answer                 |
+| =hot-spot=             | =hot_spot=             | Coordinate data (advanced)                |
+
+*** Example
+
+#+begin_src org
+,* Midterm Exam
+:PROPERTIES:
+:TIME_LIMIT: 60
+:SHUFFLE_ANSWERS: true
+:ONE_AT_A_TIME: true
+:ALLOWED_ATTEMPTS: 2
+:SCORING_POLICY: keep_highest
+:END:
+
+This exam covers chapters 1-5.
+
+,** What is 2+2?
+:PROPERTIES:
+:TYPE: choice
+:POINTS: 5
+:END:
+
+- [X] 4
+- [ ] 3
+- [ ] 22
+- [ ] 5
+
+,** The earth is flat.
+:PROPERTIES:
+:TYPE: true-false
+:POINTS: 2
+:END:
+
+- [ ] True
+- [X] False
+
+,** What is the capital of France?
+:PROPERTIES:
+:TYPE: short-answer
+:POINTS: 3
+:END:
+
+- [X] Paris
+- [X] paris
+
+,** Explain the theory of relativity.
+:PROPERTIES:
+:TYPE: essay
+:POINTS: 10
+:END:
+
+,** Match the terms to definitions
+:PROPERTIES:
+:TYPE: matching
+:POINTS: 8
+:END:
+
+- DNA = Deoxyribonucleic acid
+- RNA = Ribonucleic acid
+- ATP = Adenosine triphosphate
+
+,** Arrange in chronological order
+:PROPERTIES:
+:TYPE: ordering
+:POINTS: 5
+:END:
+
+1. World War I
+2. World War II
+3. Moon Landing
 #+end_src
 
 ** pages.org
@@ -1063,7 +1201,8 @@ Content is pulled in dependency order so that cross-references can be reconstruc
 4. Outcomes, Rubrics, Pages, Files, Discussions, Announcements
 5. Assignments (reconstructs GROUP links to assignment-groups.org)
 6. Quizzes (fetches questions as sub-headings)
-7. Modules (reconstructs cross-file links to assignments, pages, etc.)
+7. New Quizzes (fetches items as sub-headings)
+8. Modules (reconstructs cross-file links to assignments, pages, etc.)
 
 ** Per-Module Pull Commands
 
@@ -1108,7 +1247,7 @@ M-x org-canvas-cleanup-orphans
 
 This command:
 
-1. Scans all pushable content types (assignments, pages, quizzes, discussions, announcements, files, rubrics, assignment groups, outcomes, modules)
+1. Scans all pushable content types (assignments, pages, quizzes, new quizzes, discussions, announcements, files, rubrics, assignment groups, outcomes, modules)
 2. For each type, fetches all items from Canvas and compares against local =CANVAS_ID= values
 3. Items on Canvas with no corresponding Org heading are reported as orphans
 4. Displays an orphan report in a =*canvas-orphans*= buffer
@@ -1153,7 +1292,8 @@ The following items are never treated as orphans:
 | =org-canvas-sync-settings=          | Sync course settings                         |
 | =org-canvas-sync-assignments=       | Sync assignments only                        |
 | =org-canvas-sync-assignment-groups= | Sync assignment groups                       |
-| =org-canvas-sync-quizzes=           | Sync quizzes and questions                   |
+| =org-canvas-sync-quizzes=           | Sync classic quizzes and questions            |
+| =org-canvas-sync-new-quizzes=       | Sync New Quizzes and items                   |
 | =org-canvas-sync-pages=             | Sync wiki pages                              |
 | =org-canvas-sync-modules=           | Sync course modules                          |
 | =org-canvas-sync-rubrics=           | Sync rubrics                                 |
@@ -1173,7 +1313,8 @@ The following items are never treated as orphans:
 | =org-canvas-pull-sections=           | Pull course sections                  |
 | =org-canvas-pull-assignment-groups=  | Pull assignment groups                |
 | =org-canvas-pull-assignments=        | Pull assignments with descriptions    |
-| =org-canvas-pull-quizzes=            | Pull quizzes with questions           |
+| =org-canvas-pull-quizzes=            | Pull classic quizzes with questions   |
+| =org-canvas-pull-new-quizzes=        | Pull New Quizzes with items           |
 | =org-canvas-pull-pages=             | Pull wiki pages with body content     |
 | =org-canvas-pull-modules=           | Pull modules with item links          |
 | =org-canvas-pull-rubrics=           | Pull rubrics with criteria tables     |
@@ -1188,7 +1329,8 @@ The following items are never treated as orphans:
 |-----------------------------------------+------------------------------|
 | =org-canvas-delete-all=                   | Delete ALL course content    |
 | =org-canvas-delete-all-assignments=       | Delete all assignments       |
-| =org-canvas-delete-all-quizzes=           | Delete all quizzes           |
+| =org-canvas-delete-all-quizzes=           | Delete all classic quizzes   |
+| =org-canvas-delete-all-new-quizzes=       | Delete all New Quizzes       |
 | =org-canvas-delete-all-pages=             | Delete all pages             |
 | =org-canvas-delete-all-modules=           | Delete all modules           |
 | =org-canvas-delete-all-rubrics=           | Delete all rubrics           |
@@ -1209,7 +1351,8 @@ These commands sync just the item at the current cursor position:
 | =org-canvas-sync-page-at-point=         | Sync page at point           |
 | =org-canvas-sync-discussion-at-point=   | Sync discussion at point     |
 | =org-canvas-sync-announcement-at-point= | Sync announcement at point   |
-| =org-canvas-sync-quiz-at-point=         | Sync quiz at point           |
+| =org-canvas-sync-quiz-at-point=         | Sync classic quiz at point   |
+| =org-canvas-sync-new-quiz-at-point=    | Sync New Quiz at point       |
 
 ** Delete at Point Commands
 
@@ -1267,7 +1410,8 @@ Starting a brand-new course that doesn't exist on Canvas yet (or exists but is e
    - =pages.org= -- syllabus, reference pages, instructions
    - =files.org= -- lecture slides, handouts, datasets
    - =assignments.org= -- homework, projects (link to rubrics and groups)
-   - =quizzes.org= -- quizzes with embedded questions
+   - =quizzes.org= -- classic quizzes with embedded questions
+   - =new-quizzes.org= -- New Quizzes with items
    - =discussions.org= -- discussion boards
    - =announcements.org= -- welcome announcement
    - =modules.org= -- organize everything into weekly modules

@@ -37,6 +37,8 @@
                    (lambda () (push 'announcements call-order)))
                   ((symbol-function 'org-canvas-sync-quizzes)
                    (lambda () (push 'quizzes call-order)))
+                  ((symbol-function 'org-canvas-sync-new-quizzes)
+                   (lambda () (push 'new-quizzes call-order)))
                   ((symbol-function 'org-canvas-sync-assignments)
                    (lambda () (push 'assignments call-order)))
                   ((symbol-function 'org-canvas-sync-overrides)
@@ -71,6 +73,8 @@
                    (lambda () (push 'assignments call-order)))
                   ((symbol-function 'org-canvas-delete-all-quizzes)
                    (lambda () (push 'quizzes call-order)))
+                  ((symbol-function 'org-canvas-delete-all-new-quizzes)
+                   (lambda () (push 'new-quizzes call-order)))
                   ((symbol-function 'org-canvas-delete-all-files)
                    (lambda () (push 'files call-order)))
                   ((symbol-function 'org-canvas-delete-all-announcements)
@@ -155,6 +159,7 @@
                   ((symbol-function 'org-canvas-sync-discussions) (lambda () nil))
                   ((symbol-function 'org-canvas-sync-announcements) (lambda () nil))
                   ((symbol-function 'org-canvas-sync-quizzes) (lambda () nil))
+                  ((symbol-function 'org-canvas-sync-new-quizzes) (lambda () nil))
                   ((symbol-function 'org-canvas-sync-assignments) (lambda () nil))
                   ((symbol-function 'org-canvas-sync-overrides) (lambda () nil))
                   ((symbol-function 'org-canvas-sync-modules) (lambda () nil)))
@@ -180,7 +185,8 @@
               (org-canvas-discussions-file "/tmp/nonexistent/discussions.org")
               (org-canvas-announcements-file "/tmp/nonexistent/announcements.org")
               (org-canvas-assignment-groups-file "/tmp/nonexistent/assignment-groups.org")
-              (org-canvas-sections-file "/tmp/nonexistent/sections.org"))
+              (org-canvas-sections-file "/tmp/nonexistent/sections.org")
+              (org-canvas-new-quizzes-file "/tmp/nonexistent/new-quizzes.org"))
           (org-canvas-status)
           (expect (get-buffer "*canvas-status*") :to-be-truthy)
           (with-current-buffer "*canvas-status*"
@@ -215,7 +221,8 @@
                   (org-canvas-discussions-file "/tmp/nonexistent/discussions.org")
                   (org-canvas-announcements-file "/tmp/nonexistent/announcements.org")
                   (org-canvas-assignment-groups-file "/tmp/nonexistent/assignment-groups.org")
-                  (org-canvas-sections-file "/tmp/nonexistent/sections.org"))
+                  (org-canvas-sections-file "/tmp/nonexistent/sections.org")
+              (org-canvas-new-quizzes-file "/tmp/nonexistent/new-quizzes.org"))
               (cl-letf (((symbol-function 'display-buffer) (lambda (_) nil)))
                 (org-canvas-status)
                 (with-current-buffer "*canvas-status*"
@@ -526,6 +533,8 @@
                    (lambda () (push 'assignments call-order)))
                   ((symbol-function 'org-canvas-pull-quizzes)
                    (lambda () (push 'quizzes call-order)))
+                  ((symbol-function 'org-canvas-pull-new-quizzes)
+                   (lambda () (push 'new-quizzes call-order)))
                   ((symbol-function 'org-canvas-pull-modules)
                    (lambda () (push 'modules call-order))))
         (org-canvas-pull-all)
@@ -537,8 +546,8 @@
         (let ((assign-pos (cl-position 'assignments call-order))
               (modules-pos (cl-position 'modules call-order)))
           (expect assign-pos :to-be-less-than modules-pos))
-        ;; All 12 functions called
-        (expect (length call-order) :to-equal 12)))))
+        ;; All 13 functions called
+        (expect (length call-order) :to-equal 13)))))
 
   (it "handles pull function errors gracefully"
     (with-sync-test-env
@@ -567,6 +576,8 @@
                 ((symbol-function 'org-canvas-pull-assignments)
                  (lambda () nil))
                 ((symbol-function 'org-canvas-pull-quizzes)
+                 (lambda () nil))
+                ((symbol-function 'org-canvas-pull-new-quizzes)
                  (lambda () nil))
                 ((symbol-function 'org-canvas-pull-modules)
                  (lambda () nil)))

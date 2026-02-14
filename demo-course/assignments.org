@@ -1,0 +1,173 @@
+* Lab 01: Python Basics
+:PROPERTIES:
+:POINTS:   20.0
+:GRADING_TYPE: points
+:PUBLISHED: true
+:DUE_AT:   <2026-09-07 Mon 23:59>
+:UNLOCK_AT: <2026-08-31 Mon 08:00>
+:LOCK_AT:  <2026-09-09 Wed 23:59>
+:SUBMISSION: online_upload
+:ALLOWED_EXTENSIONS: py ipynb
+:MAX_ATTEMPTS: 3
+:GROUP:    [[file:assignment-groups.org::*Labs][Labs]]
+:POSITION: 1
+:END:
+
+*Lab 01: Introduction to Python*
+
+In this lab you will practice fundamental Python concepts:
+- Variables and data types
+- Control flow (if/else, loops)
+- Functions and basic I/O
+
+Download the starter code from the Files section and complete all TODO items.  Upload your finished =.py= file and your Jupyter notebook with output cells.
+
+* Lab 02: Data Wrangling
+:PROPERTIES:
+:POINTS:   20.0
+:GRADING_TYPE: points
+:PUBLISHED: true
+:DUE_AT:   <2026-09-14 Mon 23:59>
+:UNLOCK_AT: <2026-09-07 Mon 08:00>
+:LOCK_AT:  <2026-09-16 Wed 23:59>
+:SUBMISSION: online_upload
+:ALLOWED_EXTENSIONS: py ipynb csv
+:MAX_ATTEMPTS: 3
+:GROUP:    [[file:assignment-groups.org::*Labs][Labs]]
+:RUBRIC_LINK: [[file:rubrics.org::*Lab Rubric][Lab Rubric]]
+:POSITION: 2
+:END:
+
+*Lab 02: Data Wrangling with pandas*
+
+Using the provided dataset (=lab02-data.csv=), perform the following tasks:
+1. Load the data into a DataFrame
+2. Handle missing values
+3. Filter rows matching specific criteria
+4. Create a new computed column
+5. Export the cleaned dataset
+
+Your submission will be graded using the Lab Rubric.
+
+* Homework 01: Statistics Review
+:PROPERTIES:
+:POINTS:   50.0
+:GRADING_TYPE: points
+:PUBLISHED: true
+:DUE_AT:   <2026-09-21 Mon 23:59>
+:SUBMISSION: online_text_entry,online_upload
+:ALLOWED_EXTENSIONS: pdf
+:GROUP:    [[file:assignment-groups.org::*Homework][Homework]]
+:PEER_REVIEWS: true
+:PEER_REVIEW_COUNT: 2
+:PEER_REVIEW_DUE_AT: <2026-09-28 Mon 23:59>
+:AUTOMATIC_PEER_REVIEWS: true
+:TURNITIN_ENABLED: true
+:POSITION: 1
+:END:
+
+*Homework 01: Descriptive Statistics Review*
+
+Answer the following questions about descriptive statistics.  Show all work.
+
+1. Define mean, median, and mode.  When is each most appropriate?
+2. Given the dataset =[3, 7, 7, 2, 15, 3, 8, 7]=, compute the mean, median, mode, variance, and standard deviation.
+3. Explain the difference between a population parameter and a sample statistic.
+
+Submit as a PDF.  Your work will be peer-reviewed by two classmates using the Peer Review Rubric.
+
+* Midterm Exam
+:PROPERTIES:
+:POINTS:   100.0
+:GRADING_TYPE: points
+:PUBLISHED: true
+:DUE_AT:   <2026-10-19 Mon 23:59>
+:SUBMISSION: online_upload
+:ALLOWED_EXTENSIONS: pdf
+:GROUP:    [[file:assignment-groups.org::*Exams][Exams]]
+:MUTED:    true
+:ANONYMOUS_GRADING: true
+:ONLY_VISIBLE_TO_OVERRIDES: false
+:POSITION: 1
+:END:
+
+*Midterm Exam: Weeks 1-7*
+
+This exam covers all material from the first half of the course: Python fundamentals, data wrangling, descriptive statistics, and basic visualization.
+
+- Open-notes, closed-internet
+- 2-hour time limit
+- Upload your answers as a single PDF
+
+#+NAME: overrides
+| Section                                              | Due At                 | Unlock At              | Lock At                |
+|------------------------------------------------------+------------------------+------------------------+------------------------|
+| [[file:sections.org::*Section A][Section A]]         | <2026-10-19 Mon 23:59> | <2026-10-19 Mon 10:00> | <2026-10-19 Mon 23:59> |
+| [[file:sections.org::*Section B][Section B]]         | <2026-10-20 Tue 23:59> | <2026-10-20 Tue 10:00> | <2026-10-20 Tue 23:59> |
+| [[file:sections.org::*Section C (Online)][Section C (Online)]] | <2026-10-21 Wed 23:59> | <2026-10-19 Mon 08:00> | <2026-10-21 Wed 23:59> |
+
+* Final Project: Data Analysis
+:PROPERTIES:
+:POINTS:   200.0
+:GRADING_TYPE: points
+:PUBLISHED: true
+:DUE_AT:   <2026-12-07 Mon 23:59>
+:SUBMISSION: online_upload,online_url
+:GROUP:    [[file:assignment-groups.org::*Projects][Projects]]
+:RUBRIC_LINK: [[file:rubrics.org::*Project Rubric][Project Rubric]]
+:MODERATED_GRADING: true
+:GRADING_STANDARD_ID: 0
+:NOTIFY_OF_UPDATE: true
+:GRADE_INDIVIDUALLY: true
+:OMIT_FROM_GRADES: false
+:POSITION: 1
+:END:
+
+*Final Project: End-to-End Data Analysis*
+
+Choose a public dataset and conduct a complete data analysis:
+
+1. *Data Collection & Cleaning* -- Obtain, document, and clean your dataset
+2. *Exploratory Analysis* -- Summary statistics, distributions, correlations
+3. *Visualization* -- At least 4 publication-quality figures
+4. *Statistical Analysis* -- Hypothesis testing or modeling
+5. *Written Report* -- 5-8 page report documenting your process and findings
+
+Submit both your report (PDF) and a link to your code repository.
+
+Graded using the Project Rubric by two independent graders (moderated grading).
+
+* Extra Credit: Kaggle Competition
+:PROPERTIES:
+:POINTS:   10.0
+:GRADING_TYPE: points
+:PUBLISHED: false
+:DUE_AT:   <2026-12-04 Fri 23:59>
+:SUBMISSION: online_url
+:GROUP:    [[file:assignment-groups.org::*Projects][Projects]]
+:OMIT_FROM_GRADES: true
+:POSITION: 2
+:END:
+
+*Optional: Kaggle Competition Participation*
+
+Enter any active Kaggle competition and submit your leaderboard URL.  Points awarded for participation, not ranking.
+
+* Group Presentation
+:PROPERTIES:
+:POINTS:   50.0
+:GRADING_TYPE: points
+:PUBLISHED: true
+:DUE_AT:   <2026-11-23 Mon 23:59>
+:SUBMISSION: online_url
+:GROUP:    [[file:assignment-groups.org::*Projects][Projects]]
+:GROUP_CATEGORY_ID: 1
+:GRADE_INDIVIDUALLY: false
+:POSITION: 3
+:END:
+
+*Group Presentation: Data Science in the Real World*
+
+In groups of 3-4, prepare a 15-minute presentation on a real-world application of data science.  Submit a link to your slide deck.
+
+Topics are first-come, first-served -- sign up in the discussion board.

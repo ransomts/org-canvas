@@ -1674,9 +1674,9 @@ indicator in different positions."
         (and err-msg (string-match-p "Timeout" err-msg)))))
 
 (defun org-canvas--404-on-put-p (err method)
-  "Return non-nil if ERR is a 404 and METHOD is PUT.
+  "Return non-nil if ERR is a 404 and METHOD is PUT or PATCH.
 ERR is a `condition-case' error value."
-  (and (eq method 'PUT)
+  (and (memq method '(PUT PATCH))
        (string-match-p "404" (error-message-string err))))
 
 (cl-defun org-canvas--search-item (endpoint title &key params match-field)

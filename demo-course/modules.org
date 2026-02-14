@@ -1,0 +1,77 @@
+* Week 01: Introduction
+:PROPERTIES:
+:PUBLISHED: true
+:POSITION: 1
+:REQUIRE_SEQUENTIAL_PROGRESSION: true
+:END:
+
+** [[file:pages.org::*Course Home][Course Home]]
+:PROPERTIES:
+:COMPLETION_REQUIREMENT: must_view
+:PUBLISHED: true
+:END:
+
+** [[file:pages.org::*Software Setup Guide][Software Setup Guide]]
+:PROPERTIES:
+:COMPLETION_REQUIREMENT: must_view
+:END:
+
+** --- Setup ---
+
+** [[file:files.org::*[[file:content/syllabus.pdf][Syllabus.pdf]]][Syllabus.pdf]]
+:PROPERTIES:
+:COMPLETION_REQUIREMENT: must_view
+:END:
+
+** [[file:announcements.org::*Welcome to DS 101!][Welcome to DS 101!]]
+
+* Week 02: Python & Data
+:PROPERTIES:
+:PUBLISHED: true
+:POSITION: 2
+:UNLOCK_AT: <2026-08-31 Mon 08:00>
+:END:
+
+** [[file:assignments.org::*Lab 01: Python Basics][Lab 01: Python Basics]]
+:PROPERTIES:
+:COMPLETION_REQUIREMENT: must_submit
+:INDENT:   0
+:END:
+
+** [[file:quizzes.org::*Quiz 01: Python Fundamentals][Quiz 01: Python Fundamentals]]
+:PROPERTIES:
+:COMPLETION_REQUIREMENT: min_score
+:MIN_SCORE: 70
+:INDENT:   0
+:END:
+
+** [[file:discussions.org::*Introduce Yourself][Introduce Yourself]]
+:PROPERTIES:
+:COMPLETION_REQUIREMENT: must_contribute
+:END:
+
+** Course Textbook Website
+:PROPERTIES:
+:EXTERNAL_URL: https://wesmckinney.com/book/
+:NEW_TAB:  true
+:END:
+
+** [[file:files.org::*[[file:content/labs/lab01-starter.py][lab01-starter.py]]][lab01-starter.py]]
+:PROPERTIES:
+:PUBLISHED: false
+:END:
+
+* Week 03: Data Wrangling
+:PROPERTIES:
+:PUBLISHED: false
+:POSITION: 3
+:PREREQUISITE_MODULE_IDS:
+:PUBLISH_FINAL_GRADE: true
+:END:
+
+** [[file:assignments.org::*Lab 02: Data Wrangling][Lab 02: Data Wrangling]]
+:PROPERTIES:
+:INDENT:   1
+:END:
+
+** [[file:quizzes.org::*Quiz 02: Data Wrangling][Quiz 02: Data Wrangling]]
