@@ -896,9 +896,43 @@ Before each PUT request, org-canvas:
 
 1. Reads the =LAST_SYNCED= property from the local Org heading
 2. GETs the item from Canvas and reads its =updated_at= timestamp
-3. If the remote timestamp is newer than =LAST_SYNCED=, the item is *skipped* with a warning
+3. If the remote timestamp is newer than =LAST_SYNCED=, the item is flagged as a *conflict*
 
 This only applies to updates (PUT), not creates (POST).  Items without a =LAST_SYNCED= property (e.g., first sync) are never flagged.
+
+** Interactive Resolution
+
+When a conflict is detected, org-canvas opens a =*canvas-conflict*= buffer showing a side-by-side comparison of the local and remote versions:
+
+- Timestamps (local =LAST_SYNCED= vs remote =updated_at=)
+- Title differences (if the title changed remotely)
+- Body/description preview (truncated to 500 characters)
+
+You then choose an action with a single keypress:
+
+| Key | Action    | Effect                                                   |
+|-----+-----------+----------------------------------------------------------|
+| =p=   | Push      | Overwrite the remote item with your local version        |
+| =l=   | Pull      | Overwrite the local heading with the remote version      |
+| =s=   | Skip      | Leave both versions unchanged, move to the next item     |
+| =P=   | Push All  | Push this and all remaining conflicts without prompting  |
+| =L=   | Pull All  | Pull this and all remaining conflicts without prompting  |
+| =S=   | Skip All  | Skip this and all remaining conflicts without prompting  |
+
+The capital-letter variants apply the chosen action to *all subsequent conflicts* in the current sync, so you only need to decide once if you want a consistent policy.
+
+*** Pull Behavior
+
+When you choose *Pull* (=l= or =L=):
+
+1. The heading title is updated to match the remote version
+2. The module-specific pull function updates properties and body content (the same function used by =org-canvas-pull-*= commands)
+3. =LAST_SYNCED= is refreshed to the current time
+4. =CANVAS_UPDATED_AT= is set from the remote response
+5. =PAYLOAD_HASH= is deleted (so the next sync will detect the item as changed)
+6. The buffer is saved
+
+Pull is available for modules that have a pull-item function: assignments, pages, discussions, announcements, assignment groups, and rubrics.
 
 ** Configuration
 
@@ -1220,13 +1254,11 @@ When multiple people edit content -- some via Org files, others via the Canvas w
 
 1. *Enable conflict detection.*  This is on by default (=org-canvas-detect-conflicts= is =t=).  Before each push, org-canvas compares =LAST_SYNCED= against the remote =updated_at= timestamp.
 
-2. *Check for remote changes.*  If a TA edited an assignment in Canvas and you modified the same heading locally, =org-canvas-sync= reports a =CONFLICT= for that item and skips it.
+2. *Resolve conflicts interactively.*  If a TA edited an assignment in Canvas and you modified the same heading locally, =org-canvas-sync= opens a diff buffer showing both versions and prompts you to *push* (overwrite Canvas), *pull* (accept the TA's changes into your Org file), or *skip* (leave both untouched for now).  Use capital letters (=P=, =L=, =S=) to apply the same choice to all remaining conflicts.
 
-3. *Resolve conflicts.*  Pull the latest version with =M-x org-canvas-pull-assignments= to see what the TA changed.  Merge their changes into your Org file, then sync again.
+3. *Force push when needed.*  If you're confident your local version should always win, use =M-x org-canvas-force-push= to bypass conflict detection entirely.
 
-4. *Force push when needed.*  If you're confident your local version should win, use =M-x org-canvas-force-push= to overwrite remote changes.
-
-5. *Divide responsibilities.*  Consider splitting ownership -- the instructor manages content via Org files, TAs handle grading and student-facing interactions in Canvas.  Conflict detection prevents accidental overwrites in the overlap.
+4. *Divide responsibilities.*  Consider splitting ownership -- the instructor manages content via Org files, TAs handle grading and student-facing interactions in Canvas.  Conflict detection prevents accidental overwrites in the overlap.
 
 ** Removing Content and Cleaning Up
 

@@ -17,7 +17,7 @@ Tested against the Canvas LMS REST API (=/api/v1/=) as of 2026-02-07. Canvas doe
 
 - *Org Mode as Source of Truth*: Design your course in plain text with full Org Mode capabilities
 - *Bidirectional Sync*: Push content to Canvas and pull existing courses into Org files
-- *Conflict Detection*: Warns before overwriting remote changes made directly in Canvas
+- *Conflict Detection*: Interactive push/pull/skip resolution when remote changes are detected
 - *Modular Architecture*: Sync individual content types or the entire course at once
 - *Dependency-Aware*: Syncs in proper order respecting cross-references between files
 - *13 Content Types*: Assignments, quizzes, pages, modules, rubrics, outcomes, discussions, announcements, files, assignment groups, sections, per-section date overrides, and course settings
@@ -173,7 +173,7 @@ See [[file:documentation/manual.org][the full manual]] for:
 - Quiz question types and answer formats
 - Course settings (timezone, homepage, grading, license)
 - Sections and per-section date overrides
-- Conflict detection and force-push
+- Interactive conflict resolution (push/pull/skip) and force-push
 - Canvas-to-Org migration with =org-canvas-pull-all=
 - Orphan cleanup
 - Sync order and dependency management

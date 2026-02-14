@@ -63,9 +63,10 @@ The core module provides macros and helpers to eliminate boilerplate:
   :parse #'org-canvas--announcement-parse-entry
   :build #'org-canvas--announcement-build-payload
   :push #'org-canvas--announcement-push-to-api
-  :finalize #'org-canvas--announcement-finalize)
+  :finalize #'org-canvas--announcement-finalize
+  :pull-item-fn #'org-canvas--announcement-pull-item)
 ```
-Generates `org-canvas-sync-announcements` with logging, error handling, and buffer saving.
+Generates `org-canvas-sync-announcements` with logging, error handling, conflict resolution, and buffer saving. The optional `:pull-item-fn` enables the "pull" option during interactive conflict resolution.
 
 **Delete Macros:**
 ```elisp
@@ -144,6 +145,15 @@ Use `org-canvas-org-save-sync-state` to standardize saving.
 - Continue processing other items if one fails
 - Master sync wraps each feature in `org-canvas--safe-sync` so missing `.org` files are skipped
 - `org-canvas--preflight-check` validates credentials and connection before any sync begins
+
+### Conflict Resolution
+- `org-canvas--conflict-check` returns `(cons 'conflict REMOTE-RESPONSE)` (not bare `'conflict`)
+- `org-canvas--resolve-conflict` shows a diff buffer and prompts: push/pull/skip (capitals = apply to all)
+- `org-canvas--conflict-apply-all` defvar: batch decision bound per-sync by `org-canvas-define-sync`
+- `org-canvas--current-pull-item-fn` defvar: dynamically bound per-sync so `push-to-api` can access it
+- `org-canvas--conflict-pull-local` overwrites local heading via the module's pull-item function
+- Push-to-api returns `'pulled` (not `'conflict`) when user chooses pull — tracked by `:pulled` counter in sync pipeline
+- Modules with `:pull-item-fn` in their `org-canvas-define-sync`: announcements, pages, discussions, assignments, assignment-groups, rubrics
 
 ### Org Interaction
 - Always `org-back-to-heading t` before property access
