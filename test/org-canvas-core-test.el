@@ -125,7 +125,20 @@
           (progn
             (org-canvas-clear-log)
             (expect (file-exists-p temp-file) :to-be t))
-        (delete-file temp-file)))))
+        (delete-file temp-file))))
+
+  (it "refreshes logger file path to current org-canvas-directory"
+    (let* ((temp-dir (make-temp-file "org-canvas-logdir" t))
+           (org-canvas-directory temp-dir)
+           (org-canvas-log-file nil)
+           (org-canvas-log-destination 'file))
+      (unwind-protect
+          (progn
+            (org-canvas-clear-log)
+            (let ((logger-file (plist-get org-canvas--logger :file)))
+              (expect logger-file :to-equal
+                      (expand-file-name "org-canvas.log" temp-dir))))
+        (delete-directory temp-dir t)))))
 
 (describe "org-canvas-set-log-level"
   (it "sets log level to info"

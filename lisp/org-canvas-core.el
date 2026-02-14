@@ -232,7 +232,10 @@ Bound to t by `org-canvas-sync' so sub-sync phases preserve each other's logs.")
 
 (defun org-canvas-clear-log ()
   "Clear the log buffer and log file (when file logging is active).
-Does nothing when `org-canvas--inhibit-log-clear' is non-nil."
+Does nothing when `org-canvas--inhibit-log-clear' is non-nil.
+Also refreshes the logger's file path to the current `org-canvas-directory',
+since the logger is initialized at load time when the directory may not
+yet be set."
   (unless org-canvas--inhibit-log-clear
     (with-current-buffer (get-buffer-create org-canvas--log-buffer-name)
       (let ((inhibit-read-only t))
@@ -241,7 +244,13 @@ Does nothing when `org-canvas--inhibit-log-clear' is non-nil."
     (when (memq org-canvas-log-destination '(file both))
       (let ((log-file (org-canvas--log-file-path)))
         (when (file-exists-p log-file)
-          (delete-file log-file))))))
+          (delete-file log-file)))
+      ;; Refresh the logger's file path to reflect current org-canvas-directory.
+      ;; The logger defvar is evaluated once at load time, when
+      ;; org-canvas-directory may still be "" (its default), causing the log
+      ;; to land in the working directory instead of the course directory.
+      (setq org-canvas--logger
+            (elog-set-file org-canvas--logger (org-canvas--log-file-path))))))
 
 (defun org-canvas--start-operation (operation-name)
   "Clear log, display log buffer, and log OPERATION-NAME banner.
