@@ -294,8 +294,9 @@
 "
      (search-forward "Google")
      (org-back-to-heading)
-     (let ((data (org-canvas--module-item-parse-entry "/tmp/")))
-       (expect (plist-get data :type) :to-equal "ExternalUrl")
+     (let* ((data (org-canvas--module-item-parse-entry "/tmp/"))
+            (data-type (plist-get data :type)))
+       (expect data-type :to-equal "ExternalUrl")
        (expect (plist-get data :external-url) :to-equal "https://www.google.com"))))
 
   (it "parses NEW_TAB property for ExternalUrl"
@@ -309,8 +310,9 @@
 "
      (search-forward "External Link")
      (org-back-to-heading)
-     (let ((data (org-canvas--module-item-parse-entry "/tmp/")))
-       (expect (plist-get data :type) :to-equal "ExternalUrl")
+     (let* ((data (org-canvas--module-item-parse-entry "/tmp/"))
+            (data-type (plist-get data :type)))
+       (expect data-type :to-equal "ExternalUrl")
        (expect (plist-get data :new-tab) :to-be t))))
 
   (it "defaults NEW_TAB to nil when not set"
