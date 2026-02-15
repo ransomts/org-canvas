@@ -51,9 +51,10 @@ This prints your course name if the connection is successful.
 #+begin_example
 my-course/
 ├── org-canvas-credentials.el  ; API credentials (gitignored)
-├── settings.org               ; Course settings (timezone, homepage, license)
+├── settings.org               ; Course settings (timezone, homepage, license, navigation tabs)
 ├── assignments.org            ; Course assignments
 ├── assignment-groups.org      ; Grade weighting categories
+├── group-categories.org      ; Group sets for group assignments/discussions
 ├── quizzes.org               ; Classic Quizzes with embedded questions
 ├── new-quizzes.org           ; New Quizzes (Instructure's newer quiz engine)
 ├── pages.org                 ; Wiki/content pages
@@ -63,6 +64,7 @@ my-course/
 ├── discussions.org           ; Discussion boards
 ├── announcements.org         ; Course announcements
 ├── files.org                 ; File uploads
+├── calendar.org              ; Calendar events (office hours, holidays)
 └── sections.org              ; Course sections & date overrides
 #+end_example
 
@@ -84,6 +86,8 @@ Each file path is configured via a variable:
 | =org-canvas-discussions-file=       | =discussions.org=          |
 | =org-canvas-announcements-file=     | =announcements.org=        |
 | =org-canvas-files-file=             | =files.org=                |
+| =org-canvas-group-categories-file=  | =group-categories.org=     |
+| =org-canvas-calendar-events-file=   | =calendar.org=             |
 | =org-canvas-sections-file=          | =sections.org=             |
 
 All paths are relative to =org-canvas-directory=.
@@ -97,14 +101,19 @@ Course files can contain links to other course files. For example, an assignment
 #+begin_example
 assignments.org  -->  rubrics.org
                  -->  assignment-groups.org
+                 -->  group-categories.org
                  -->  outcomes.org
                  -->  pages.org
                  -->  files.org
+
+discussions.org  -->  assignment-groups.org
+                 -->  group-categories.org
 
 quizzes.org      -->  assignment-groups.org
                  -->  outcomes.org
 
 new-quizzes.org  (no outgoing links)
+calendar.org     (no outgoing links)
 
 modules.org      -->  assignments.org
                  -->  quizzes.org
@@ -131,14 +140,16 @@ These files have no outgoing links to other course files:
 
 | File                  | Canvas Entity     | Notes                         |
 |-----------------------+-------------------+-------------------------------|
-| =outcomes.org=          | Learning Outcomes | Groups (L1) and Outcomes (L2) |
-| =rubrics.org=           | Rubrics           | Grading rubrics               |
-| =assignment-groups.org= | Assignment Groups | Weight categories             |
-| =pages.org=             | Wiki Pages        | Course content pages          |
-| =files.org=             | Files             | Binary file uploads           |
-| =discussions.org=       | Discussions       | Discussion topics             |
-| =announcements.org=     | Announcements     | Course announcements          |
-| =sections.org=          | Sections          | Course sections               |
+| =outcomes.org=          | Learning Outcomes  | Groups (L1) and Outcomes (L2) |
+| =rubrics.org=           | Rubrics            | Grading rubrics               |
+| =assignment-groups.org= | Assignment Groups  | Weight categories             |
+| =group-categories.org=  | Group Categories   | Group sets for group work     |
+| =pages.org=             | Wiki Pages         | Course content pages          |
+| =files.org=             | Files              | Binary file uploads           |
+| =discussions.org=       | Discussions        | Discussion topics             |
+| =announcements.org=     | Announcements      | Course announcements          |
+| =calendar.org=          | Calendar Events    | Office hours, holidays, etc.  |
+| =sections.org=          | Sections           | Course sections               |
 
 *** Tier 1: Depends on Tier 0
 
@@ -169,21 +180,23 @@ Per-section date overrides are defined as tables in =assignments.org= and requir
 
 The =org-canvas-sync= function syncs files in proper dependency order:
 
-1. =settings.org= (Tier -1) - course settings
+1. =settings.org= (Tier -1) - course settings and navigation tabs
 2. =outcomes.org= (Tier 0)
 3. =rubrics.org= (Tier 0)
 4. =assignment-groups.org= (Tier 0) - first pass, without drop rules
-5. =sections.org= (Tier 0) - course sections
-6. =files.org= (Tier 0)
-7. =pages.org= (Tier 0)
-8. =discussions.org= (Tier 0)
-9. =announcements.org= (Tier 0)
-10. =quizzes.org= (Tier 1)
-11. =new-quizzes.org= (Tier 1)
-12. =assignments.org= (Tier 1)
-13. =assignment-groups.org= (Tier 1.5) - second pass, with drop rules
-14. Per-section overrides (Tier 1.75)
-15. =modules.org= (Tier 2)
+5. =group-categories.org= (Tier 0)
+6. =sections.org= (Tier 0) - course sections
+7. =files.org= (Tier 0)
+8. =pages.org= (Tier 0)
+9. =discussions.org= (Tier 0)
+10. =announcements.org= (Tier 0)
+11. =calendar.org= (Tier 0)
+12. =quizzes.org= (Tier 1)
+13. =new-quizzes.org= (Tier 1)
+14. =assignments.org= (Tier 1)
+15. =assignment-groups.org= (Tier 1.5) - second pass, with drop rules
+16. Per-section overrides (Tier 1.75)
+17. =modules.org= (Tier 2)
 
 *Note*: Assignment groups are synced twice because Canvas rejects drop rules for groups with no assignments. Per-section overrides require both sections and assignments/quizzes to exist.
 
@@ -204,7 +217,7 @@ All syncable headings support these properties:
 
 ** settings.org
 
-Course-level settings such as timezone, homepage view, grading scheme, and license.
+Course-level settings such as timezone, homepage view, grading scheme, license, navigation tabs, and course card image.
 
 *** Structure
 
@@ -241,6 +254,7 @@ Course-level settings such as timezone, homepage view, grading scheme, and licen
 | =LATE_SUBMISSION_MINIMUM_PERCENT_ENABLED= | boolean | true, false                                       | Enable minimum percent floor   |
 | =MISSING_SUBMISSION_DEDUCTION= | number | 0-100                                                          | Deduction for missing work     |
 | =MISSING_SUBMISSION_DEDUCTION_ENABLED= | boolean | true, false                                           | Enable missing work penalty    |
+| =COURSE_IMAGE=          | link/URL  | =[[file:images/banner.png]]= or URL                            | Course card image (Dashboard)  |
 
 Invalid enum values are replaced with the first valid option and a warning is logged.
 
@@ -265,6 +279,43 @@ of data analysis with Python.
 #+end_src
 
 The body text is exported as the course syllabus (visible on the Syllabus page in Canvas).
+
+*** Navigation Tabs
+
+Control the order and visibility of sidebar navigation tabs using a =** Navigation= sub-heading under the course heading.  Items in strikethrough (=+Tab+=) are hidden from students.
+
+#+begin_src org
+,** Navigation
+1. Home
+2. Modules
+3. Assignments
+4. Announcements
+5. Grades
+6. +Discussions+
+7. +People+
+#+end_src
+
+Tabs are matched case-insensitively against the Canvas tab labels.  The "Home" and "Settings" tabs cannot be hidden (Canvas does not allow it); a warning is logged if you try.  Only tabs that differ from the current Canvas state are updated.
+
+*** Course Card Image
+
+Set the Dashboard thumbnail for the course using the =COURSE_IMAGE= property:
+
+#+begin_src org
+:COURSE_IMAGE: [[file:images/banner.png]]
+#+end_src
+
+This uploads the local image to Canvas and sets it as the course card image.  You can also use a direct URL:
+
+#+begin_src org
+:COURSE_IMAGE: https://example.com/images/banner.png
+#+end_src
+
+*** Inline Images
+
+Image links in page, announcement, discussion, and assignment body text (=[[file:diagram.png]]=) are automatically uploaded to Canvas and replaced with preview URLs during sync.  Supported formats: PNG, JPEG, GIF, SVG, WebP, BMP.
+
+Images are uploaded to a Canvas folder named =org-canvas-images/= and cached per sync session to avoid re-uploading unchanged files.
 
 ** assignments.org
 
@@ -296,7 +347,7 @@ Course assignments with due dates, submission types, and grading options.
 | =PEER_REVIEW_DUE_AT= | timestamp | Peer review due date                          |
 | =AUTOMATIC_PEER_REVIEWS= | boolean | Auto-assign peer reviews (default: true when PEER_REVIEWS set) |
 | =NOTIFY_OF_UPDATE=   | boolean   | Notify students of changes (write-only)       |
-| =GROUP_CATEGORY_ID=  | number    | Canvas group set ID for group assignments     |
+| =GROUP_CATEGORY_ID=  | number/link | Group set ID or link to group-categories.org |
 | =GRADE_INDIVIDUALLY= | boolean   | Grade group members individually              |
 | =ONLY_VISIBLE_TO_OVERRIDES= | boolean | Only visible to students with overrides  |
 | =MODERATED_GRADING=  | boolean   | Enable moderated grading                      |
@@ -891,7 +942,7 @@ Discussion boards for student interaction.
 | =ALLOW_RATING=    | boolean   | Allow post rating                     |
 | =ONLY_GRADERS_CAN_RATE= | boolean | Restrict rating to graders     |
 | =SORT_BY_RATING=  | boolean   | Sort posts by rating                  |
-| =GROUP_CATEGORY=  | number    | Canvas group set ID                   |
+| =GROUP_CATEGORY=  | number/link | Group set ID or link to group-categories.org |
 | =SPECIFIC_SECTIONS= | string | Comma-separated section names (resolved to IDs via sections.org) |
 
 *** Example
@@ -1076,6 +1127,107 @@ Each row links to a section in =sections.org=. The section's =CANVAS_ID= is reso
 
 The override sync uses a reconcile approach: it GETs existing overrides, matches by =course_section_id=, then PUTs (update), POSTs (create), or DELETEs (remove) as needed.
 
+** group-categories.org
+
+Group sets for group assignments and group discussions.
+
+*** Structure
+
+- Level 1 headings = Group Categories
+
+*** Properties
+
+| Property           | Type   | Valid Values         | Description                               |
+|--------------------+--------+----------------------+-------------------------------------------|
+| =SELF_SIGNUP=        | enum   | enabled, restricted  | Allow students to self-enroll in groups    |
+| =GROUP_LIMIT=        | number | integer              | Max members per group (requires SELF_SIGNUP) |
+| =AUTO_LEADER=        | enum   | first, random        | How to assign group leaders               |
+| =CREATE_GROUP_COUNT= | number | integer              | Number of groups to create automatically  |
+
+*** Example
+
+#+begin_src org
+,* Project Groups
+:PROPERTIES:
+:SELF_SIGNUP: enabled
+:GROUP_LIMIT: 4
+:AUTO_LEADER: first
+:CREATE_GROUP_COUNT: 10
+:END:
+
+,* Lab Partners
+:PROPERTIES:
+:SELF_SIGNUP: restricted
+:GROUP_LIMIT: 2
+:CREATE_GROUP_COUNT: 20
+:END:
+#+end_src
+
+*** Usage in Assignments and Discussions
+
+Assignments and discussions can reference group categories via Org links instead of raw Canvas IDs:
+
+#+begin_src org
+:GROUP_CATEGORY_ID: [[file:group-categories.org::*Project Groups][Project Groups]]
+#+end_src
+
+The link is resolved to the group category's =CANVAS_ID= during sync.  Raw numeric IDs are still accepted for backward compatibility.
+
+** calendar.org
+
+Non-assignment calendar events such as office hours, holidays, and review sessions.
+
+*** Structure
+
+- Level 1 headings = Calendar Events
+- Body text = Event description (exported to HTML)
+
+*** Properties
+
+| Property         | Type      | Description                           |
+|------------------+-----------+---------------------------------------|
+| =START_AT=         | timestamp | Event start time (required)           |
+| =END_AT=           | timestamp | Event end time                        |
+| =ALL_DAY=          | boolean   | All-day event (default: false)        |
+| =LOCATION_NAME=    | string    | Location name                         |
+| =LOCATION_ADDRESS= | string    | Location address                      |
+
+*** Example
+
+#+begin_src org
+,* Office Hours
+:PROPERTIES:
+:START_AT: <2026-09-01 Tue 14:00>
+:END_AT: <2026-09-01 Tue 15:30>
+:LOCATION_NAME: Room 210
+:LOCATION_ADDRESS: 123 University Ave
+:ALL_DAY: false
+:END:
+
+Weekly office hours for DS 101.
+
+,* No Class - Labor Day
+:PROPERTIES:
+:START_AT: <2026-09-07 Mon 00:00>
+:ALL_DAY: true
+:END:
+
+University holiday -- no class meeting.
+
+,* Final Exam Review Session
+:PROPERTIES:
+:START_AT: <2026-12-08 Tue 18:00>
+:END_AT: <2026-12-08 Tue 20:00>
+:LOCATION_NAME: Lecture Hall A
+:END:
+
+Comprehensive review covering all course material.
+#+end_src
+
+*** API Note
+
+Calendar events use a global Canvas API endpoint (not course-scoped).  Events are tied to the course via a =context_code= parameter.  This means calendar events are *not* included in orphan cleanup scanning (which uses course-scoped endpoints).
+
 * Link Resolution
 
 Properties like =GROUP= and =RUBRIC_LINK= can contain Org links to headings in other files. During sync, these links are resolved to Canvas IDs.
@@ -1099,11 +1251,13 @@ Properties like =GROUP= and =RUBRIC_LINK= can contain Org links to headings in o
 
 ** Supported Link Properties
 
-| Property       | Source File           | Used In                           |
-|----------------+-----------------------+-----------------------------------|
-| =GROUP=          | assignment-groups.org | assignments, quizzes, discussions |
-| =RUBRIC_LINK=    | rubrics.org           | assignments                       |
-| (module items) | various               | modules                           |
+| Property           | Source File           | Used In                           |
+|--------------------+-----------------------+-----------------------------------|
+| =GROUP=              | assignment-groups.org | assignments, quizzes, discussions |
+| =RUBRIC_LINK=        | rubrics.org           | assignments                       |
+| =GROUP_CATEGORY_ID=  | group-categories.org  | assignments                       |
+| =GROUP_CATEGORY=     | group-categories.org  | discussions                       |
+| (module items)     | various               | modules                           |
 
 * Conflict Detection
 
@@ -1151,7 +1305,7 @@ When you choose *Pull* (=l= or =L=):
 5. =PAYLOAD_HASH= is deleted (so the next sync will detect the item as changed)
 6. The buffer is saved
 
-Pull is available for modules that have a pull-item function: assignments, pages, discussions, announcements, assignment groups, and rubrics.
+Pull is available for modules that have a pull-item function: assignments, pages, discussions, announcements, assignment groups, rubrics, group categories, and calendar events.
 
 ** Configuration
 
@@ -1197,14 +1351,15 @@ Install pandoc from https://pandoc.org/installing.html or via your system packag
 
 Content is pulled in dependency order so that cross-references can be reconstructed:
 
-1. Settings (course-level configuration)
+1. Settings (course-level configuration and navigation tabs)
 2. Sections (course sections)
 3. Assignment Groups (grade categories)
-4. Outcomes, Rubrics, Pages, Files, Discussions, Announcements
-5. Assignments (reconstructs GROUP links to assignment-groups.org)
-6. Quizzes (fetches questions as sub-headings)
-7. New Quizzes (fetches items as sub-headings)
-8. Modules (reconstructs cross-file links to assignments, pages, etc.)
+4. Group Categories (group sets)
+5. Outcomes, Rubrics, Pages, Files, Discussions, Announcements, Calendar Events
+6. Assignments (reconstructs GROUP and GROUP_CATEGORY_ID links)
+7. Quizzes (fetches questions as sub-headings)
+8. New Quizzes (fetches items as sub-headings)
+9. Modules (reconstructs cross-file links to assignments, pages, etc.)
 
 ** Per-Module Pull Commands
 
@@ -1213,9 +1368,10 @@ Each content type can be pulled individually:
 | Command                              | Description                           |
 |--------------------------------------+---------------------------------------|
 | =org-canvas-pull-all=                  | Pull entire course                    |
-| =org-canvas-pull-settings=             | Pull course settings                  |
+| =org-canvas-pull-settings=             | Pull course settings and tabs         |
 | =org-canvas-pull-sections=             | Pull course sections                  |
 | =org-canvas-pull-assignment-groups=    | Pull assignment groups                |
+| =org-canvas-pull-group-categories=     | Pull group categories                 |
 | =org-canvas-pull-assignments=          | Pull assignments with descriptions    |
 | =org-canvas-pull-quizzes=              | Pull quizzes with questions           |
 | =org-canvas-pull-pages=               | Pull wiki pages with body content     |
@@ -1225,6 +1381,7 @@ Each content type can be pulled individually:
 | =org-canvas-pull-discussions=         | Pull discussion topics                |
 | =org-canvas-pull-announcements=       | Pull announcements                    |
 | =org-canvas-pull-files=               | Pull file metadata and download files |
+| =org-canvas-pull-calendar-events=      | Pull calendar events                  |
 
 ** Heading Matching
 
@@ -1249,7 +1406,7 @@ M-x org-canvas-cleanup-orphans
 
 This command:
 
-1. Scans all pushable content types (assignments, pages, quizzes, new quizzes, discussions, announcements, files, rubrics, assignment groups, outcomes, modules)
+1. Scans all pushable content types (assignments, pages, quizzes, new quizzes, discussions, announcements, files, rubrics, assignment groups, outcomes, modules, group categories)
 2. For each type, fetches all items from Canvas and compares against local =CANVAS_ID= values
 3. Items on Canvas with no corresponding Org heading are reported as orphans
 4. Displays an orphan report in a =*canvas-orphans*= buffer
@@ -1287,85 +1444,95 @@ The following items are never treated as orphans:
 
 ** Sync Commands
 
-| Command                           | Description                                  |
-|-----------------------------------+----------------------------------------------|
-| =org-canvas-sync=                   | Sync all course content (with conflict detection) |
-| =org-canvas-force-push=             | Sync all, bypassing conflict detection       |
-| =org-canvas-sync-settings=          | Sync course settings                         |
-| =org-canvas-sync-assignments=       | Sync assignments only                        |
-| =org-canvas-sync-assignment-groups= | Sync assignment groups                       |
-| =org-canvas-sync-quizzes=           | Sync classic quizzes and questions            |
-| =org-canvas-sync-new-quizzes=       | Sync New Quizzes and items                   |
-| =org-canvas-sync-pages=             | Sync wiki pages                              |
-| =org-canvas-sync-modules=           | Sync course modules                          |
-| =org-canvas-sync-rubrics=           | Sync rubrics                                 |
-| =org-canvas-sync-outcomes=          | Sync learning outcomes                       |
-| =org-canvas-sync-discussions=       | Sync discussion topics                       |
-| =org-canvas-sync-announcements=     | Sync announcements                           |
-| =org-canvas-sync-files=             | Upload files                                 |
-| =org-canvas-sync-sections=          | Sync course sections                         |
-| =org-canvas-sync-overrides=         | Sync per-section overrides                   |
+| Command                              | Description                                  |
+|--------------------------------------+----------------------------------------------|
+| =org-canvas-sync=                      | Sync all course content (with conflict detection) |
+| =org-canvas-force-push=                | Sync all, bypassing conflict detection       |
+| =org-canvas-sync-settings=             | Sync course settings and navigation tabs     |
+| =org-canvas-sync-assignments=          | Sync assignments only                        |
+| =org-canvas-sync-assignment-groups=    | Sync assignment groups                       |
+| =org-canvas-sync-group-categories=     | Sync group categories                        |
+| =org-canvas-sync-quizzes=              | Sync classic quizzes and questions            |
+| =org-canvas-sync-new-quizzes=          | Sync New Quizzes and items                   |
+| =org-canvas-sync-pages=               | Sync wiki pages                              |
+| =org-canvas-sync-modules=             | Sync course modules                          |
+| =org-canvas-sync-rubrics=             | Sync rubrics                                 |
+| =org-canvas-sync-outcomes=            | Sync learning outcomes                       |
+| =org-canvas-sync-discussions=         | Sync discussion topics                       |
+| =org-canvas-sync-announcements=       | Sync announcements                           |
+| =org-canvas-sync-files=               | Upload files                                 |
+| =org-canvas-sync-calendar-events=      | Sync calendar events                         |
+| =org-canvas-sync-sections=            | Sync course sections                         |
+| =org-canvas-sync-overrides=           | Sync per-section overrides                   |
 
 ** Pull Commands
 
-| Command                            | Description                           |
-|------------------------------------+---------------------------------------|
-| =org-canvas-pull-all=                | Import entire Canvas course           |
-| =org-canvas-pull-settings=           | Pull course settings                  |
-| =org-canvas-pull-sections=           | Pull course sections                  |
-| =org-canvas-pull-assignment-groups=  | Pull assignment groups                |
-| =org-canvas-pull-assignments=        | Pull assignments with descriptions    |
-| =org-canvas-pull-quizzes=            | Pull classic quizzes with questions   |
-| =org-canvas-pull-new-quizzes=        | Pull New Quizzes with items           |
-| =org-canvas-pull-pages=             | Pull wiki pages with body content     |
-| =org-canvas-pull-modules=           | Pull modules with item links          |
-| =org-canvas-pull-rubrics=           | Pull rubrics with criteria tables     |
-| =org-canvas-pull-outcomes=          | Pull outcome groups and outcomes      |
-| =org-canvas-pull-discussions=       | Pull discussion topics                |
-| =org-canvas-pull-announcements=     | Pull announcements                    |
-| =org-canvas-pull-files=             | Pull file metadata and download files |
+| Command                              | Description                           |
+|--------------------------------------+---------------------------------------|
+| =org-canvas-pull-all=                  | Import entire Canvas course           |
+| =org-canvas-pull-settings=             | Pull course settings and tabs         |
+| =org-canvas-pull-sections=             | Pull course sections                  |
+| =org-canvas-pull-assignment-groups=    | Pull assignment groups                |
+| =org-canvas-pull-group-categories=     | Pull group categories                 |
+| =org-canvas-pull-assignments=          | Pull assignments with descriptions    |
+| =org-canvas-pull-quizzes=              | Pull classic quizzes with questions   |
+| =org-canvas-pull-new-quizzes=          | Pull New Quizzes with items           |
+| =org-canvas-pull-pages=               | Pull wiki pages with body content     |
+| =org-canvas-pull-modules=             | Pull modules with item links          |
+| =org-canvas-pull-rubrics=             | Pull rubrics with criteria tables     |
+| =org-canvas-pull-outcomes=            | Pull outcome groups and outcomes      |
+| =org-canvas-pull-discussions=         | Pull discussion topics                |
+| =org-canvas-pull-announcements=       | Pull announcements                    |
+| =org-canvas-pull-files=               | Pull file metadata and download files |
+| =org-canvas-pull-calendar-events=      | Pull calendar events                  |
 
 ** Delete Commands
 
-| Command                                 | Description                  |
-|-----------------------------------------+------------------------------|
-| =org-canvas-delete-all=                   | Delete ALL course content    |
-| =org-canvas-delete-all-assignments=       | Delete all assignments       |
-| =org-canvas-delete-all-quizzes=           | Delete all classic quizzes   |
-| =org-canvas-delete-all-new-quizzes=       | Delete all New Quizzes       |
-| =org-canvas-delete-all-pages=             | Delete all pages             |
-| =org-canvas-delete-all-modules=           | Delete all modules           |
-| =org-canvas-delete-all-rubrics=           | Delete all rubrics           |
-| =org-canvas-delete-all-outcomes=          | Delete all outcomes          |
-| =org-canvas-delete-all-discussions=       | Delete all discussions       |
-| =org-canvas-delete-all-announcements=     | Delete all announcements     |
-| =org-canvas-delete-all-files=             | Delete all files             |
-| =org-canvas-delete-all-assignment-groups= | Delete all assignment groups |
-| =org-canvas-delete-all-sections=          | Delete all sections          |
+| Command                                    | Description                  |
+|--------------------------------------------+------------------------------|
+| =org-canvas-delete-all=                      | Delete ALL course content    |
+| =org-canvas-delete-all-assignments=          | Delete all assignments       |
+| =org-canvas-delete-all-quizzes=              | Delete all classic quizzes   |
+| =org-canvas-delete-all-new-quizzes=          | Delete all New Quizzes       |
+| =org-canvas-delete-all-pages=                | Delete all pages             |
+| =org-canvas-delete-all-modules=              | Delete all modules           |
+| =org-canvas-delete-all-rubrics=              | Delete all rubrics           |
+| =org-canvas-delete-all-outcomes=             | Delete all outcomes          |
+| =org-canvas-delete-all-discussions=          | Delete all discussions       |
+| =org-canvas-delete-all-announcements=        | Delete all announcements     |
+| =org-canvas-delete-all-files=                | Delete all files             |
+| =org-canvas-delete-all-assignment-groups=    | Delete all assignment groups |
+| =org-canvas-delete-all-group-categories=     | Delete all group categories  |
+| =org-canvas-delete-all-calendar-events=      | Delete all calendar events   |
+| =org-canvas-delete-all-sections=             | Delete all sections          |
 
 ** Sync at Point Commands
 
 These commands sync just the item at the current cursor position:
 
-| Command                                | Description                  |
-|----------------------------------------+------------------------------|
-| =org-canvas-sync-assignment-at-point=    | Sync assignment at point     |
-| =org-canvas-sync-page-at-point=         | Sync page at point           |
-| =org-canvas-sync-discussion-at-point=   | Sync discussion at point     |
-| =org-canvas-sync-announcement-at-point= | Sync announcement at point   |
-| =org-canvas-sync-quiz-at-point=         | Sync classic quiz at point   |
-| =org-canvas-sync-new-quiz-at-point=    | Sync New Quiz at point       |
+| Command                                    | Description                      |
+|--------------------------------------------+----------------------------------|
+| =org-canvas-sync-assignment-at-point=        | Sync assignment at point         |
+| =org-canvas-sync-page-at-point=             | Sync page at point               |
+| =org-canvas-sync-discussion-at-point=       | Sync discussion at point         |
+| =org-canvas-sync-announcement-at-point=     | Sync announcement at point       |
+| =org-canvas-sync-quiz-at-point=             | Sync classic quiz at point       |
+| =org-canvas-sync-new-quiz-at-point=        | Sync New Quiz at point           |
+| =org-canvas-sync-group-category-at-point=   | Sync group category at point     |
+| =org-canvas-sync-calendar-event-at-point=   | Sync calendar event at point     |
 
 ** Delete at Point Commands
 
 These commands delete the item at the current cursor position:
 
-| Command                               | Description                |
-|---------------------------------------+----------------------------|
-| =org-canvas-delete-assignment-at-point= | Delete assignment at point |
-| =org-canvas-delete-page-at-point=       | Delete page at point       |
-| =org-canvas-delete-file-at-point=       | Delete file at point       |
-| =org-canvas-delete-module-at-point=     | Delete module at point     |
+| Command                                    | Description                      |
+|--------------------------------------------+----------------------------------|
+| =org-canvas-delete-assignment-at-point=      | Delete assignment at point       |
+| =org-canvas-delete-page-at-point=            | Delete page at point             |
+| =org-canvas-delete-file-at-point=            | Delete file at point             |
+| =org-canvas-delete-module-at-point=          | Delete module at point           |
+| =org-canvas-delete-group-category-at-point=  | Delete group category at point   |
+| =org-canvas-delete-calendar-event-at-point=  | Delete calendar event at point   |
 
 ** Utility Commands
 
@@ -1407,6 +1574,7 @@ Starting a brand-new course that doesn't exist on Canvas yet (or exists but is e
 3. *Build course content.*  Fill in the Org files for each content type you need.  A typical order that respects dependencies:
 
    - =assignment-groups.org= -- grade categories (Homework, Labs, Exams)
+   - =group-categories.org= -- group sets for group assignments (optional)
    - =outcomes.org= -- learning outcomes (optional)
    - =rubrics.org= -- grading rubrics (optional)
    - =pages.org= -- syllabus, reference pages, instructions
@@ -1416,6 +1584,7 @@ Starting a brand-new course that doesn't exist on Canvas yet (or exists but is e
    - =new-quizzes.org= -- New Quizzes with items
    - =discussions.org= -- discussion boards
    - =announcements.org= -- welcome announcement
+   - =calendar.org= -- office hours, holidays, review sessions (optional)
    - =modules.org= -- organize everything into weekly modules
 
 4. *Validate offline.*  Run =M-x org-canvas-validate= to catch property errors, missing links, and invalid dates before making any API calls.
@@ -1434,7 +1603,7 @@ Adopting org-canvas for a course that already has content on Canvas.
 
 2. *Install pandoc.*  HTML content (page bodies, assignment descriptions) requires [[https://pandoc.org/][pandoc]] for conversion to Org format.  Without it, HTML is stored as raw markup.
 
-3. *Pull everything.*  Run =M-x org-canvas-pull-all=.  This imports all 12 content types in dependency order, creating one =.org= file per type.  Each heading receives a =CANVAS_ID= and =LAST_SYNCED= property so org-canvas treats them as existing items on future syncs.
+3. *Pull everything.*  Run =M-x org-canvas-pull-all=.  This imports all content types in dependency order, creating one =.org= file per type.  Each heading receives a =CANVAS_ID= and =LAST_SYNCED= property so org-canvas treats them as existing items on future syncs.
 
 4. *Review the import.*  Open each =.org= file and verify the converted content.  Fix any pandoc conversion artifacts (e.g., stray HTML tags in complex formatting).
 

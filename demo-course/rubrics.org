@@ -1,8 +1,8 @@
 * Lab Rubric
 :PROPERTIES:
 :FREE_FORM_CRITERION_COMMENTS: true
-:CANVAS_ID: 123579
-:LAST_SYNCED: [2026-02-14 Sat 17:11]
+:CANVAS_ID: 123583
+:LAST_SYNCED: [2026-02-14 Sat 21:30]
 :PAYLOAD_HASH: 1bf520cdcdb1afbe9ef87750d7556442
 :END:
 | Criterion     | Points | Description                        |
@@ -13,8 +13,8 @@
 
 * Project Rubric
 :PROPERTIES:
-:CANVAS_ID: 123580
-:LAST_SYNCED: [2026-02-14 Sat 17:11]
+:CANVAS_ID: 123584
+:LAST_SYNCED: [2026-02-14 Sat 21:30]
 :PAYLOAD_HASH: d31ecfc63a94930710f27ddcf68cc946
 :END:
 | Criterion     | Points | Description                              |
@@ -37,8 +37,8 @@
 
 * Peer Review Rubric
 :PROPERTIES:
-:CANVAS_ID: 123581
-:LAST_SYNCED: [2026-02-14 Sat 17:11]
+:CANVAS_ID: 123585
+:LAST_SYNCED: [2026-02-14 Sat 21:30]
 :PAYLOAD_HASH: 0dbc93f68f16d148af923408db2e487b
 :END:
 | Criterion    | Points | Description                              |

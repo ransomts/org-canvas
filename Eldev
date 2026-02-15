@@ -31,6 +31,8 @@
                                   "lisp/org-canvas-rubrics.el"
                                   "lisp/org-canvas-sections.el"
                                   "lisp/org-canvas-settings.el"
+                                  "lisp/org-canvas-group-categories.el"
+                                  "lisp/org-canvas-calendar.el"
                                   "lisp/org-canvas-validate.el"))
 ;; Use codecov format with local report file (don't auto-send)
 (setf eldev-undercover-report-format 'codecov)

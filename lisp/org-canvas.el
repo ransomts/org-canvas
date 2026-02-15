@@ -66,6 +66,8 @@
 (require 'org-canvas-rubrics)
 (require 'org-canvas-sections)
 (require 'org-canvas-settings)
+(require 'org-canvas-group-categories)
+(require 'org-canvas-calendar)
 (require 'org-canvas-validate)
 
 ;; Note: Feature-specific file paths (e.g., `org-canvas-rubrics-file`) are now
@@ -99,11 +101,13 @@ LABEL is used for logging (e.g., \"Pages\")."
     ((org-canvas-sync-outcomes "Outcomes")
      (org-canvas-sync-rubrics "Rubrics")
      (org-canvas-sync-assignment-groups "Assignment Groups")
+     (org-canvas-sync-group-categories "Group Categories")
      (org-canvas-pull-sections "Sections")
      (org-canvas-sync-files "Files")
      (org-canvas-sync-pages "Pages")
      (org-canvas-sync-discussions "Discussions")
-     (org-canvas-sync-announcements "Announcements"))
+     (org-canvas-sync-announcements "Announcements")
+     (org-canvas-sync-calendar-events "Calendar Events"))
     ((org-canvas-sync-quizzes "Quizzes")
      (org-canvas-sync-new-quizzes "New Quizzes")
      (org-canvas-sync-assignments "Assignments"))
@@ -138,6 +142,8 @@ LABEL is used for logging (e.g., \"Pages\")."
     (elog-info org-canvas--logger "========================================")
     (elog-info org-canvas--logger ">>> GLOBAL SYNC COMPLETE")
     (elog-info org-canvas--logger "========================================")
+    ;; Clear session-scoped caches
+    (setq org-canvas--image-cache nil)
     (message "Sync complete. See *canvas-log* for details.")))
 
 ;; Delete in REVERSE dependency order:
@@ -154,8 +160,10 @@ LABEL is used for logging (e.g., \"Pages\")."
      (org-canvas-delete-all-discussions "Discussions")
      (org-canvas-delete-all-pages "Pages")
      (org-canvas-delete-all-assignment-groups "Assignment Groups")
+     (org-canvas-delete-all-group-categories "Group Categories")
      (org-canvas-delete-all-rubrics "Rubrics")
-     (org-canvas-delete-all-outcomes "Outcomes")))
+     (org-canvas-delete-all-outcomes "Outcomes")
+     (org-canvas-delete-all-calendar-events "Calendar Events")))
   "Delete tiers in reverse dependency order.  Each tier is a list of (FN LABEL) pairs.")
 
 ;;;###autoload
@@ -196,7 +204,9 @@ Deletion order is reverse of sync order to respect dependencies."
     ("Announcements"     org-canvas-announcements-file     "CANVAS_ID")
     ("Assignment Groups" org-canvas-assignment-groups-file "CANVAS_ID")
     ("Sections"          org-canvas-sections-file          "CANVAS_ID")
-    ("New Quizzes"       org-canvas-new-quizzes-file       "CANVAS_ASSIGNMENT_ID"))
+    ("New Quizzes"       org-canvas-new-quizzes-file       "CANVAS_ASSIGNMENT_ID")
+    ("Group Categories"  org-canvas-group-categories-file  "CANVAS_ID")
+    ("Calendar Events"   org-canvas-calendar-events-file   "CANVAS_ID"))
   "Content types for status reporting: (label file-var id-property).")
 
 (defun org-canvas--status-count-entries (file id-prop)
@@ -297,12 +307,14 @@ LABEL is used for logging."
   '(((org-canvas-pull-settings "Settings"))
     ((org-canvas-pull-sections "Sections")
      (org-canvas-pull-assignment-groups "Assignment Groups")
+     (org-canvas-pull-group-categories "Group Categories")
      (org-canvas-pull-outcomes "Outcomes")
      (org-canvas-pull-rubrics "Rubrics")
      (org-canvas-pull-pages "Pages")
      (org-canvas-pull-files "Files")
      (org-canvas-pull-discussions "Discussions")
-     (org-canvas-pull-announcements "Announcements"))
+     (org-canvas-pull-announcements "Announcements")
+     (org-canvas-pull-calendar-events "Calendar Events"))
     ((org-canvas-pull-assignments "Assignments")
      (org-canvas-pull-quizzes "Quizzes")
      (org-canvas-pull-new-quizzes "New Quizzes"))

@@ -121,7 +121,13 @@ Accepts: online_upload, online_url, online_text_entry, media_recording,
          (omit-from-grades (org-canvas-org-get-boolean-property pom "OMIT_FROM_GRADES"))
          (anonymous-grading (org-canvas-org-get-boolean-property pom "ANONYMOUS_GRADING"))
          (notify-of-update (org-canvas-org-get-boolean-property pom "NOTIFY_OF_UPDATE"))
-         (group-category-id (org-canvas-org-get-property pom "GROUP_CATEGORY_ID"))
+         (group-category-raw (org-canvas-org-get-property pom "GROUP_CATEGORY_ID"))
+         (group-category-id (if (and group-category-raw
+                                     (string-prefix-p "[[" group-category-raw))
+                                (org-canvas--resolve-link-property
+                                 group-category-raw "CANVAS_ID"
+                                 org-canvas-assignments-file)
+                              group-category-raw))
          (grade-individually (org-canvas-org-get-boolean-property pom "GRADE_INDIVIDUALLY"))
          (only-visible-to-overrides (org-canvas-org-get-boolean-property pom "ONLY_VISIBLE_TO_OVERRIDES"))
          (moderated-grading (org-canvas-org-get-boolean-property pom "MODERATED_GRADING"))

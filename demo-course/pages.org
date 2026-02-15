@@ -3,9 +3,9 @@
 :PUBLISHED: true
 :FRONT_PAGE: true
 :EDITING_ROLES: teachers
-:CANVAS_UPDATED_AT: 2026-02-14T22:11:54Z
-:CANVAS_URL: course-home-3
-:LAST_SYNCED: [2026-02-14 Sat 17:11]
+:CANVAS_UPDATED_AT: 2026-02-15T02:31:46Z
+:CANVAS_URL: course-home-4
+:LAST_SYNCED: [2026-02-14 Sat 21:31]
 :PAYLOAD_HASH: 71db6050320fce63c15ce7c0b9b9858a
 :END:
 
@@ -27,10 +27,10 @@ Use the *Modules* tab on the left to navigate weekly content.  All assignments, 
 :EDITING_ROLES: teachers
 :TODO_DATE: <2026-08-28 Fri>
 :NOTIFY_OF_UPDATE: true
-:CANVAS_UPDATED_AT: 2026-02-14T22:11:55Z
-:CANVAS_URL: software-setup-guide-3
-:LAST_SYNCED: [2026-02-14 Sat 17:11]
-:PAYLOAD_HASH: e1cd0e561776818f1f982d74099be6c0
+:CANVAS_UPDATED_AT: 2026-02-15T02:31:47Z
+:CANVAS_URL: software-setup-guide-4
+:LAST_SYNCED: [2026-02-14 Sat 21:31]
+:PAYLOAD_HASH: ebc08caf7e4601dd7a92e4a43aafa767
 :END:
 
 Follow these steps to set up your development environment for DS 101.
@@ -72,9 +72,9 @@ If you see "All set!" with no errors, your environment is ready.  Download the [
 :PROPERTIES:
 :PUBLISHED: true
 :EDITING_ROLES: teachers,students
-:CANVAS_UPDATED_AT: 2026-02-14T22:11:56Z
-:CANVAS_URL: student-resources-3
-:LAST_SYNCED: [2026-02-14 Sat 17:11]
+:CANVAS_UPDATED_AT: 2026-02-15T02:31:49Z
+:CANVAS_URL: student-resources-4
+:LAST_SYNCED: [2026-02-14 Sat 21:31]
 :PAYLOAD_HASH: 7f11b709b2a6b755cba8538d9f81c66a
 :END:
 

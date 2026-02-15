@@ -774,6 +774,14 @@ Returns a list of (success-count . fail-count)."
      :id-property "CANVAS_ID"
      :title-field name
      :list-params nil
+     :skip-fn nil)
+    (:name "Group Categories"
+     :endpoint "group_categories"
+     :file-var org-canvas-group-categories-file
+     :id-field id
+     :id-property "CANVAS_ID"
+     :title-field name
+     :list-params nil
      :skip-fn nil))
   "Registry of pushable features for orphan detection.
 Each entry is a plist describing how to fetch remote items and match them
@@ -965,6 +973,137 @@ SOURCE-DIR is the directory of the source .org file."
                      :heading heading :display display)
                source-dir))))))))
 
+;;;; 4e-img. Inline Image Resolution
+
+(defvar org-canvas--image-cache nil
+  "Hash-table mapping local filename to Canvas preview URL.
+Session-scoped; cleared at end of master sync.")
+
+(defcustom org-canvas-image-folder "org-canvas-images"
+  "Canvas folder name for inline images uploaded by org-canvas."
+  :type 'string
+  :group 'org-canvas)
+
+(defconst org-canvas--image-extensions
+  '("png" "jpg" "jpeg" "gif" "svg" "webp" "bmp")
+  "File extensions recognized as inline images.")
+
+(defun org-canvas--image-cache-init ()
+  "Initialize the image cache from Canvas folder listing.
+Fetches the image folder contents and builds a filename→URL map."
+  (unless org-canvas--image-cache
+    (setq org-canvas--image-cache (make-hash-table :test 'equal))
+    (condition-case nil
+        (let* ((folders-url (org-canvas-api-course-endpoint
+                             (format "folders/by_path/%s" org-canvas-image-folder)))
+               (folder (car (last (org-canvas-api-request 'GET folders-url))))
+               (folder-id (alist-get 'id folder)))
+          (when folder-id
+            (let ((files (org-canvas-api-request-all-pages
+                          'GET (format "%s/api/v1/folders/%s/files"
+                                       org-canvas-base-url folder-id))))
+              (dolist (file files)
+                (let ((name (alist-get 'display_name file))
+                      (url (alist-get 'url file)))
+                  (when (and name url)
+                    (puthash name url org-canvas--image-cache))))
+              (elog-debug org-canvas--logger
+                "[Images] Cache initialized: %d files in %s/"
+                (hash-table-count org-canvas--image-cache)
+                org-canvas-image-folder))))
+      (error
+       (elog-debug org-canvas--logger
+         "[Images] Folder '%s' not found, will create on first upload"
+         org-canvas-image-folder)))))
+
+(defun org-canvas--image-ensure-folder ()
+  "Ensure the image upload folder exists on Canvas.
+Returns the folder ID."
+  (condition-case nil
+      (let* ((url (org-canvas-api-course-endpoint
+                   (format "folders/by_path/%s" org-canvas-image-folder)))
+             (folder (car (last (org-canvas-api-request 'GET url)))))
+        (alist-get 'id folder))
+    (error
+     ;; Create the folder
+     (elog-info org-canvas--logger "[Images] Creating folder: %s" org-canvas-image-folder)
+     (let ((response (org-canvas-api-request
+                      'POST (org-canvas-api-course-endpoint "folders")
+                      :data `((name . ,org-canvas-image-folder)
+                              (parent_folder_path . "/")))))
+       (alist-get 'id response)))))
+
+(defun org-canvas--resolve-image-links (source-dir)
+  "Resolve inline image links in current buffer to Canvas URLs.
+Replaces [[file:IMAGE]] links with Canvas preview URLs.
+SOURCE-DIR is the directory of the source .org file.
+Images are uploaded to the `org-canvas-image-folder' on Canvas."
+  (goto-char (point-min))
+  (let ((image-re (format "\\[\\[file:\\([^]]+\\.\\(%s\\)\\)\\]\\(?:\\[\\([^]]*\\)\\]\\)?\\]"
+                          (regexp-opt org-canvas--image-extensions)))
+        (replacements nil))
+    ;; Collect all matches first (avoid modifying buffer during search)
+    (while (re-search-forward image-re nil t)
+      (let ((link-start (match-beginning 0))
+            (link-end (match-end 0))
+            (rel-path (match-string 1))
+            (display (match-string 3)))
+        (push (list :start link-start :end link-end
+                    :path rel-path :display display)
+              replacements)))
+    ;; Process in reverse order (last match first) to preserve positions
+    (when replacements
+      (org-canvas--image-cache-init)
+      (let ((folder-id nil)
+            (count 0)
+            (total (length replacements)))
+        (dolist (rep replacements)
+          (setq count (1+ count))
+          (let* ((rel-path (plist-get rep :path))
+                 (display (plist-get rep :display))
+                 (abs-path (expand-file-name rel-path source-dir))
+                 (filename (file-name-nondirectory rel-path))
+                 (cached-url (gethash filename org-canvas--image-cache)))
+            (if cached-url
+                ;; Cache hit — replace with Canvas URL
+                (progn
+                  (elog-debug org-canvas--logger "[Images] Cache hit: %s" filename)
+                  (goto-char (plist-get rep :start))
+                  (delete-region (plist-get rep :start) (plist-get rep :end))
+                  (insert (if display
+                              (format "[[%s][%s]]" cached-url display)
+                            (format "[[%s][%s]]" cached-url filename))))
+              ;; Cache miss — upload if file exists
+              (if (file-exists-p abs-path)
+                  (condition-case err
+                      (progn
+                        (elog-info org-canvas--logger
+                          "[Images] Uploading %s (%d/%d)..." filename count total)
+                        (unless folder-id
+                          (setq folder-id (org-canvas--image-ensure-folder)))
+                        (let* ((notify-url (format "%s/api/v1/folders/%s/files"
+                                                   org-canvas-base-url folder-id))
+                               (file-obj (org-canvas--upload-file
+                                          abs-path notify-url))
+                               (preview-url (format "%s/courses/%s/files/%s/preview"
+                                                    org-canvas-base-url
+                                                    org-canvas-course-id
+                                                    (alist-get 'id file-obj))))
+                          ;; Update cache
+                          (puthash filename preview-url org-canvas--image-cache)
+                          ;; Replace link
+                          (goto-char (plist-get rep :start))
+                          (delete-region (plist-get rep :start) (plist-get rep :end))
+                          (insert (if display
+                                      (format "[[%s][%s]]" preview-url display)
+                                    (format "[[%s][%s]]" preview-url filename)))))
+                    (error
+                     (elog-warning org-canvas--logger
+                       "[Images] Failed to upload %s: %s"
+                       filename (error-message-string err))))
+                (elog-warning org-canvas--logger
+                  "[Images] File not found: %s" abs-path)))))))))
+
 (defvar org-export-with-broken-links)
 (defvar org-export-with-sub-superscripts)
 (defvar org-export-use-babel)
@@ -993,6 +1132,8 @@ are resolved to Canvas URLs when the target has a CANVAS_ID."
               (delete-region start (point))))
           ;; Resolve cross-file links to Canvas URLs
           (org-canvas--resolve-body-links source-dir)
+          ;; Resolve inline image links to Canvas URLs
+          (org-canvas--resolve-image-links source-dir)
           ;; Export the subtree to HTML (body only)
           (goto-char (point-min))
           (let ((org-export-with-broken-links 'mark)
@@ -2265,6 +2406,133 @@ and writes org-canvas-credentials.el."
     (setq org-canvas-api-token token)
     (setq org-canvas-course-id course-id)
     (message "org-canvas initialized!  Use M-x org-canvas-status to see sync state.")))
+
+;;;; 11. File Upload Infrastructure
+;;
+;; Self-contained 3-step Canvas file upload, independent of the
+;; files.el module so any feature module can upload files.
+
+(defun org-canvas--guess-content-type (filename)
+  "Guess MIME type for FILENAME based on extension."
+  (let ((ext (downcase (or (file-name-extension filename) ""))))
+    (cond
+     ((string= ext "png")  "image/png")
+     ((member ext '("jpg" "jpeg")) "image/jpeg")
+     ((string= ext "gif")  "image/gif")
+     ((string= ext "svg")  "image/svg+xml")
+     ((string= ext "webp") "image/webp")
+     ((string= ext "bmp")  "image/bmp")
+     ((string= ext "pdf")  "application/pdf")
+     (t "application/octet-stream"))))
+
+(defun org-canvas--upload-build-multipart (upload-params local-path boundary)
+  "Build multipart/form-data body for file upload.
+UPLOAD-PARAMS is the alist from Canvas step 1 response.
+LOCAL-PATH is the local file path.
+BOUNDARY is the multipart boundary string.
+Returns a unibyte string."
+  (let ((body-parts nil)
+        (file-content (with-temp-buffer
+                        (set-buffer-multibyte nil)
+                        (insert-file-contents-literally local-path)
+                        (buffer-string)))
+        (actual-filename (file-name-nondirectory local-path))
+        (actual-content-type (org-canvas--guess-content-type local-path)))
+    ;; Build form fields from upload_params
+    (dolist (param (append upload-params nil))
+      (let* ((key (car param))
+             (raw-value (cdr param))
+             ;; Fix Canvas nulls/unknowns
+             (value (cond
+                     ((and (eq key 'filename) (null raw-value))
+                      actual-filename)
+                     ((and (eq key 'content_type)
+                           (or (null raw-value)
+                               (equal raw-value "unknown/unknown")))
+                      actual-content-type)
+                     (t raw-value))))
+        (when value
+          (push (format "--%s\r\nContent-Disposition: form-data; name=\"%s\"\r\n\r\n%s"
+                        boundary key value)
+                body-parts))))
+    ;; File parameter must be LAST
+    (push (format "--%s\r\nContent-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\nContent-Type: %s\r\n\r\n"
+                  boundary actual-filename actual-content-type)
+          body-parts)
+    ;; Encode form parts as unibyte before concatenating with binary
+    (let* ((body-prefix (encode-coding-string
+                         (concat (mapconcat #'identity (nreverse body-parts) "\r\n") "\r\n")
+                         'raw-text))
+           (body-suffix (encode-coding-string
+                         (format "\r\n--%s--\r\n" boundary)
+                         'raw-text)))
+      (concat body-prefix file-content body-suffix))))
+
+(defun org-canvas--upload-file (local-path &optional notify-url display-name)
+  "Upload LOCAL-PATH to Canvas via the 3-step upload API.
+NOTIFY-URL is the step 1 endpoint (defaults to course files).
+DISPLAY-NAME overrides the filename shown in Canvas.
+Returns the Canvas file object alist (with \\='id key)."
+  (let* ((filename (or display-name (file-name-nondirectory local-path)))
+         (size (file-attribute-size (file-attributes local-path)))
+         (content-type (org-canvas--guess-content-type local-path))
+         (url (or notify-url
+                  (format "%s/api/v1/courses/%s/files"
+                          org-canvas-base-url org-canvas-course-id)))
+         (payload `((name . ,filename)
+                    (size . ,size)
+                    (content_type . ,content-type))))
+    (elog-info org-canvas--logger "[Upload Step 1] Notifying Canvas for '%s'..." filename)
+    ;; Step 1: Notify Canvas
+    (let ((upload-info (org-canvas-api-request 'POST url :data payload)))
+      (let* ((upload-url (alist-get 'upload_url upload-info))
+             (upload-params (alist-get 'upload_params upload-info))
+             (boundary (format "----FormBoundary%s"
+                               (md5 (format "%s%s" (current-time) (random))))))
+        (elog-info org-canvas--logger "[Upload Step 2] Sending file to %s..." upload-url)
+        ;; Step 2: Upload the file
+        (let* ((full-body (org-canvas--upload-build-multipart
+                           upload-params local-path boundary))
+               (url-request-method "POST")
+               (url-request-extra-headers
+                `(("Content-Type" . ,(format "multipart/form-data; boundary=%s" boundary))))
+               (url-request-data full-body)
+               (step2-response
+                (with-current-buffer (url-retrieve-synchronously upload-url nil nil 120)
+                  (goto-char (point-min))
+                  (let (location-header json-response)
+                    (save-excursion
+                      (when (re-search-forward "^[Ll]ocation: \\(.*\\)\r?$" nil t)
+                        (setq location-header (string-trim (match-string 1)))))
+                    (when (re-search-forward "\r?\n\r?\n" nil t)
+                      (setq json-response
+                            (condition-case nil
+                                (json-read-from-string
+                                 (buffer-substring-no-properties (point) (point-max)))
+                              (error nil))))
+                    (kill-buffer)
+                    (cond
+                     ((and json-response (alist-get 'id json-response))
+                      json-response)
+                     (location-header
+                      `((location . ,location-header)))
+                     (json-response json-response)
+                     (t (error "Upload failed: no JSON or Location header")))))))
+          ;; Step 3: Confirm upload
+          (elog-info org-canvas--logger "[Upload Step 3] Confirming upload...")
+          (if (alist-get 'id step2-response)
+              (progn
+                (elog-info org-canvas--logger "[Upload] Complete: file ID %s"
+                           (alist-get 'id step2-response))
+                step2-response)
+            (let* ((location (alist-get 'location step2-response))
+                   (full-url (if (string-prefix-p "http" location)
+                                 location
+                               (concat org-canvas-base-url location)))
+                   (response (org-canvas-api-request 'GET full-url)))
+              (elog-info org-canvas--logger "[Upload] Complete: file ID %s"
+                         (alist-get 'id response))
+              response)))))))
 
 (provide 'org-canvas-core)
 ;;; org-canvas-core.el ends here

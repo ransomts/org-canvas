@@ -714,4 +714,388 @@ Welcome to the course.
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
 
+;;;; Navigation Tab Tests
+
+(describe "org-canvas--settings-parse-navigation"
+  (it "parses visible and hidden tabs from numbered list"
+    (with-temp-org-buffer
+     "* Course
+:PROPERTIES:
+:END:
+
+** Navigation
+1. Home
+2. Modules
+3. +Discussions+
+4. +People+
+"
+     (org-back-to-heading)
+     (let ((nav (org-canvas--settings-parse-navigation)))
+       (expect (length nav) :to-equal 4)
+       (expect (plist-get (nth 0 nav) :label) :to-equal "Home")
+       (expect (plist-get (nth 0 nav) :hidden) :to-be nil)
+       (expect (plist-get (nth 0 nav) :position) :to-equal 1)
+       (expect (plist-get (nth 2 nav) :label) :to-equal "Discussions")
+       (expect (plist-get (nth 2 nav) :hidden) :to-be t)
+       (expect (plist-get (nth 2 nav) :position) :to-equal 3))))
+
+  (it "returns nil when no Navigation heading"
+    (with-temp-org-buffer
+     "* Course
+:PROPERTIES:
+:END:
+
+Syllabus text.
+"
+     (org-back-to-heading)
+     (let ((nav (org-canvas--settings-parse-navigation)))
+       (expect nav :to-be nil))))
+
+  (it "handles empty navigation section"
+    (with-temp-org-buffer
+     "* Course
+:PROPERTIES:
+:END:
+
+** Navigation
+"
+     (org-back-to-heading)
+     (let ((nav (org-canvas--settings-parse-navigation)))
+       (expect nav :to-be nil))))
+
+  (it "handles mixed visible and hidden tabs"
+    (with-temp-org-buffer
+     "* Course
+:PROPERTIES:
+:END:
+
+** Navigation
+1. Home
+2. +Modules+
+3. Assignments
+"
+     (org-back-to-heading)
+     (let ((nav (org-canvas--settings-parse-navigation)))
+       (expect (length nav) :to-equal 3)
+       (expect (plist-get (nth 1 nav) :label) :to-equal "Modules")
+       (expect (plist-get (nth 1 nav) :hidden) :to-be t)
+       (expect (plist-get (nth 2 nav) :label) :to-equal "Assignments")
+       (expect (plist-get (nth 2 nav) :hidden) :to-be nil)))))
+
+(describe "org-canvas--settings-sync-tabs"
+  (it "PUTs changed tabs"
+    (with-org-canvas-test-config
+      (let ((put-calls nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest args)
+                     (cond
+                      ((eq method 'GET)
+                       ;; Return current tabs
+                       '(((id . "home") (label . "Home") (hidden . :json-false) (position . 1))
+                         ((id . "modules") (label . "Modules") (hidden . :json-false) (position . 2))
+                         ((id . "discussions") (label . "Discussions") (hidden . :json-false) (position . 3))))
+                      ((eq method 'PUT)
+                       (push (list url (plist-get args :data)) put-calls)
+                       nil)))))
+          (org-canvas--settings-sync-tabs
+           '((:label "Home" :hidden nil :position 1)
+             (:label "Modules" :hidden nil :position 2)
+             (:label "Discussions" :hidden t :position 3)))
+          ;; Only Discussions should change (hidden)
+          (expect (length put-calls) :to-equal 1)
+          (expect (caar put-calls) :to-match "tabs/discussions")))))
+
+  (it "skips when no navigation specified"
+    (let ((api-called nil))
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _) (setq api-called t) nil)))
+        (org-canvas--settings-sync-tabs nil)
+        (expect api-called :to-be nil))))
+
+  (it "warns when trying to hide Home tab"
+    (with-org-canvas-test-config
+      (spy-on 'elog-warning)
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (method _url &rest _args)
+                   (when (eq method 'GET)
+                     '(((id . "home") (label . "Home") (hidden . :json-false) (position . 1)))))))
+        (org-canvas--settings-sync-tabs
+         '((:label "Home" :hidden t :position 1)))
+        (expect 'elog-warning :to-have-been-called))))
+
+  (it "logs tab changes in dry-run mode"
+    (with-org-canvas-test-config
+      (let ((org-canvas--dry-run t)
+            (api-called nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _) (setq api-called t) nil)))
+          (org-canvas--settings-sync-tabs
+           '((:label "Modules" :hidden nil :position 1)))
+          (expect api-called :to-be nil))))))
+
+(describe "org-canvas--settings-pull-tabs"
+  (it "formats tabs as numbered Org list with strikethrough"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (_method _url &rest _args)
+                   '(((id . "home") (label . "Home") (hidden . :json-false) (position . 1))
+                     ((id . "modules") (label . "Modules") (hidden . :json-false) (position . 2))
+                     ((id . "discussions") (label . "Discussions") (hidden . t) (position . 3))))))
+        (let ((result (org-canvas--settings-pull-tabs)))
+          (expect result :to-match "\\*\\* Navigation")
+          (expect result :to-match "1\\. Home")
+          (expect result :to-match "2\\. Modules")
+          (expect result :to-match "3\\. \\+Discussions\\+")))))
+
+  (it "returns nil when no tabs"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (_method _url &rest _args)
+                   nil)))
+        (let ((result (org-canvas--settings-pull-tabs)))
+          (expect result :to-be nil))))))
+
+;;;; Course Image Tests
+
+(describe "org-canvas--settings-parse-entry (course image)"
+  (it "parses file link as course-image-path"
+    (with-temp-org-buffer
+     "* Course
+:PROPERTIES:
+:COURSE_IMAGE: [[file:images/banner.png]]
+:END:
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--settings-parse-entry)))
+       (expect (plist-get data :course-image-path) :to-match "images/banner\\.png$")
+       (expect (plist-get data :course-image-url) :to-be nil))))
+
+  (it "parses URL as course-image-url"
+    (with-temp-org-buffer
+     "* Course
+:PROPERTIES:
+:COURSE_IMAGE: https://example.com/banner.png
+:END:
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--settings-parse-entry)))
+       (expect (plist-get data :course-image-url) :to-equal "https://example.com/banner.png")
+       (expect (plist-get data :course-image-path) :to-be nil))))
+
+  (it "returns nil for both when COURSE_IMAGE is absent"
+    (with-temp-org-buffer
+     "* Course
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--settings-parse-entry)))
+       (expect (plist-get data :course-image-path) :to-be nil)
+       (expect (plist-get data :course-image-url) :to-be nil)))))
+
+(describe "org-canvas--settings-build-payload (course image)"
+  (it "includes image_url for URL-based image"
+    (let* ((data '(:title "Course" :course-image-url "https://example.com/img.png"))
+           (payload (org-canvas--settings-build-payload data))
+           (course (gethash "course" payload)))
+      (expect (gethash "image_url" course) :to-equal "https://example.com/img.png")
+      (expect (gethash "image_id" course nil) :to-be nil)))
+
+  (it "includes image_id when file was uploaded"
+    (let* ((data '(:title "Course" :course-image-id 42))
+           (payload (org-canvas--settings-build-payload data))
+           (course (gethash "course" payload)))
+      (expect (gethash "image_id" course) :to-equal 42)
+      (expect (gethash "image_url" course nil) :to-be nil)))
+
+  (it "omits image fields when neither set"
+    (let* ((data '(:title "Course"))
+           (payload (org-canvas--settings-build-payload data))
+           (course (gethash "course" payload)))
+      (expect (gethash "image_id" course nil) :to-be nil)
+      (expect (gethash "image_url" course nil) :to-be nil))))
+
+(describe "org-canvas--settings-resolve-course-image"
+  (it "uploads file and adds :course-image-id"
+    (cl-letf (((symbol-function 'org-canvas--upload-file)
+               (lambda (_path &optional _url _name)
+                 '((id . 999)))))
+      (let* ((temp-file (make-temp-file "img-test" nil ".png"))
+             (data (list :course-image-path temp-file)))
+        (unwind-protect
+            (let ((result (org-canvas--settings-resolve-course-image data)))
+              (expect (plist-get result :course-image-id) :to-equal 999))
+          (delete-file temp-file)))))
+
+  (it "warns when file not found"
+    (spy-on 'elog-warning)
+    (let ((data '(:course-image-path "/tmp/nonexistent-img-test.png")))
+      (let ((result (org-canvas--settings-resolve-course-image data)))
+        (expect (plist-get result :course-image-id) :to-be nil)
+        (expect 'elog-warning :to-have-been-called))))
+
+  (it "skips upload in dry-run mode"
+    (let ((org-canvas--dry-run t)
+          (upload-called nil))
+      (cl-letf (((symbol-function 'org-canvas--upload-file)
+                 (lambda (&rest _) (setq upload-called t) '((id . 1)))))
+        (let ((data '(:course-image-path "/tmp/some-image.png")))
+          (org-canvas--settings-resolve-course-image data)
+          (expect upload-called :to-be nil)))))
+
+  (it "passes through data when no image path"
+    (let* ((data '(:title "Course" :course-image-url "https://example.com/x.png"))
+           (result (org-canvas--settings-resolve-course-image data)))
+      (expect (plist-get result :title) :to-equal "Course")
+      (expect (plist-get result :course-image-url) :to-equal "https://example.com/x.png"))))
+
+(describe "org-canvas-pull-settings (course image)"
+  (it "sets COURSE_IMAGE from API response"
+    (let* ((temp-dir (make-temp-file "pull-settings" t))
+           (settings-file (expand-file-name "settings.org" temp-dir)))
+      (unwind-protect
+          (let ((org-canvas-settings-file settings-file))
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request)
+                         (lambda (_method _url &rest _args)
+                           '((name . "Course")
+                             (time_zone . "UTC")
+                             (default_view . "modules")
+                             (apply_assignment_group_weights . :json-false)
+                             (hide_final_grades . :json-false)
+                             (public_syllabus . :json-false)
+                             (is_public . :json-false)
+                             (image_download_url . "https://canvas.example.com/files/123/preview"))))
+                        ((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                        ((symbol-function 'display-buffer) (lambda (_) nil)))
+                (org-canvas-pull-settings)
+                (let ((content (with-temp-buffer
+                                 (insert-file-contents settings-file)
+                                 (buffer-string))))
+                  (with-temp-org-buffer
+                   content
+                   (re-search-forward "^\\*+ " nil t)
+                   (org-back-to-heading)
+                   (expect (org-entry-get (point) "COURSE_IMAGE")
+                           :to-equal "https://canvas.example.com/files/123/preview"))))))
+        (let ((buf (find-buffer-visiting settings-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
+;;;; Additional Navigation Tab Tests
+
+(describe "org-canvas--settings-sync-tabs (edge cases)"
+  (it "warns when tab label not found on Canvas"
+    (with-org-canvas-test-config
+      (spy-on 'elog-warning)
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (method _url &rest _args)
+                   (when (eq method 'GET)
+                     '(((id . "home") (label . "Home") (hidden . :json-false) (position . 1)))))))
+        (org-canvas--settings-sync-tabs
+         '((:label "Nonexistent Tab" :hidden nil :position 2)))
+        (expect 'elog-warning :to-have-been-called))))
+
+  (it "updates tab position without hidden change"
+    (with-org-canvas-test-config
+      (let ((put-payload nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method _url &rest args)
+                     (cond
+                      ((eq method 'GET)
+                       '(((id . "modules") (label . "Modules") (hidden . :json-false) (position . 3))))
+                      ((eq method 'PUT)
+                       (setq put-payload (plist-get args :data))
+                       nil)))))
+          (org-canvas--settings-sync-tabs
+           '((:label "Modules" :hidden nil :position 1)))
+          ;; Should PUT because position changed
+          (expect put-payload :to-be-truthy)
+          (expect (alist-get 'position put-payload) :to-equal 1)))))
+
+  (it "handles PUT error gracefully"
+    (with-org-canvas-test-config
+      (spy-on 'elog-warning)
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (method _url &rest _args)
+                   (cond
+                    ((eq method 'GET)
+                     '(((id . "modules") (label . "Modules") (hidden . :json-false) (position . 1))))
+                    ((eq method 'PUT)
+                     (signal 'error '("500 Internal Server Error")))))))
+        (org-canvas--settings-sync-tabs
+         '((:label "Modules" :hidden t :position 1)))
+        (expect 'elog-warning :to-have-been-called)))))
+
+(describe "org-canvas--settings-pull-tabs (edge cases)"
+  (it "sorts tabs by position"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (_method _url &rest _args)
+                   '(((id . "disc") (label . "Discussions") (hidden . :json-false) (position . 3))
+                     ((id . "home") (label . "Home") (hidden . :json-false) (position . 1))
+                     ((id . "mod") (label . "Modules") (hidden . :json-false) (position . 2))))))
+        (let ((result (org-canvas--settings-pull-tabs)))
+          ;; Home should be first despite being second in API response
+          (expect result :to-match "1\\. Home")
+          (expect result :to-match "2\\. Modules")
+          (expect result :to-match "3\\. Discussions"))))))
+
+;;;; Core Upload Infrastructure Tests
+
+(describe "org-canvas--guess-content-type"
+  (it "returns image/png for .png"
+    (expect (org-canvas--guess-content-type "banner.png") :to-equal "image/png"))
+
+  (it "returns image/jpeg for .jpg"
+    (expect (org-canvas--guess-content-type "photo.jpg") :to-equal "image/jpeg"))
+
+  (it "returns image/jpeg for .jpeg"
+    (expect (org-canvas--guess-content-type "photo.jpeg") :to-equal "image/jpeg"))
+
+  (it "returns image/gif for .gif"
+    (expect (org-canvas--guess-content-type "anim.gif") :to-equal "image/gif"))
+
+  (it "returns image/svg+xml for .svg"
+    (expect (org-canvas--guess-content-type "logo.svg") :to-equal "image/svg+xml"))
+
+  (it "returns application/pdf for .pdf"
+    (expect (org-canvas--guess-content-type "doc.pdf") :to-equal "application/pdf"))
+
+  (it "returns application/octet-stream for unknown"
+    (expect (org-canvas--guess-content-type "file.xyz") :to-equal "application/octet-stream")))
+
+(describe "org-canvas--upload-build-multipart"
+  (it "builds unibyte multipart body"
+    (let* ((temp-file (make-temp-file "upload-test" nil ".txt")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file
+              (insert "hello"))
+            (let ((body (org-canvas--upload-build-multipart
+                         '((key . "val"))
+                         temp-file
+                         "BOUNDARY")))
+              (expect (multibyte-string-p body) :to-be nil)
+              (expect body :to-match "BOUNDARY")
+              (expect body :to-match "name=\"key\"")
+              (expect body :to-match "name=\"file\"")))
+        (delete-file temp-file))))
+
+  (it "fixes null filename param"
+    (let* ((temp-file (make-temp-file "upload-fix" nil ".png")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file
+              (insert "PNG"))
+            (let ((body (org-canvas--upload-build-multipart
+                         '((filename . nil) (content_type . "unknown/unknown"))
+                         temp-file
+                         "BOUNDARY")))
+              ;; Should have actual filename, not "nil"
+              (expect body :not :to-match "name=\"filename\"\r\n\r\nnil")
+              ;; Should have actual content type
+              (expect body :not :to-match "unknown/unknown")))
+        (delete-file temp-file)))))
+
 ;;; org-canvas-settings-test.el ends here

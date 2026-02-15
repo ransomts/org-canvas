@@ -107,6 +107,8 @@ Returns a plist with keys :title, :pom, :time-zone, :default-view,
          (late-submission-minimum-percent-enabled (org-canvas-org-get-property pom "LATE_SUBMISSION_MINIMUM_PERCENT_ENABLED"))
          (missing-submission-deduction (org-canvas-org-get-property pom "MISSING_SUBMISSION_DEDUCTION"))
          (missing-submission-deduction-enabled (org-canvas-org-get-property pom "MISSING_SUBMISSION_DEDUCTION_ENABLED"))
+         ;; Course image (file link or URL)
+         (course-image-raw (org-canvas-org-get-property pom "COURSE_IMAGE"))
          (syllabus-body (org-canvas--export-subtree-body-to-html)))
     (list :title title
           :pom pom
@@ -136,6 +138,16 @@ Returns a plist with keys :title, :pom, :time-zone, :default-view,
           :late-submission-minimum-percent-enabled late-submission-minimum-percent-enabled
           :missing-submission-deduction missing-submission-deduction
           :missing-submission-deduction-enabled missing-submission-deduction-enabled
+          :course-image-path (when (and course-image-raw
+                                        (string-match "\\[\\[file:\\([^]]+\\)\\]" course-image-raw))
+                               (expand-file-name
+                                (match-string 1 course-image-raw)
+                                (file-name-directory
+                                 (buffer-file-name))))
+          :course-image-url (when (and course-image-raw
+                                       (not (string-prefix-p "[[" course-image-raw))
+                                       (string-match-p "^https?://" course-image-raw))
+                              course-image-raw)
           :syllabus-body syllabus-body)))
 
 ;;;; 2. Build Payload
@@ -184,6 +196,13 @@ Returns a hash-table suitable for `json-encode'."
         (puthash "grading_standard_id"
                  (org-canvas--safe-string-to-number gs-id "GRADING_STANDARD_ID")
                  course)))
+    ;; Course image: image_id (from file upload) or image_url (plain URL)
+    (let ((image-id (plist-get data :course-image-id)))
+      (when image-id
+        (puthash "image_id" image-id course)))
+    (let ((image-url (plist-get data :course-image-url)))
+      (when image-url
+        (puthash "image_url" image-url course)))
     (org-canvas--settings-puthash-when course data :syllabus-body "syllabus_body")
     (puthash "course" course payload)
     payload))
@@ -291,6 +310,148 @@ DATA is the parsed settings plist."
     (elog-info org-canvas--logger
       "[Finalize] Saved LAST_SYNCED for course settings")))
 
+;;;; Navigation Tabs
+
+(defconst org-canvas--settings-immutable-tabs '("home" "settings")
+  "Tab labels that Canvas refuses to modify (case-insensitive).")
+
+(defun org-canvas--settings-parse-navigation ()
+  "Parse the ** Navigation sub-heading under the current course heading.
+Returns a list of plists (:label STRING :hidden BOOL :position INT),
+or nil if no Navigation heading exists.
+Items in strikethrough (+Tab+) are hidden."
+  (save-excursion
+    (let ((subtree-end (save-excursion (org-end-of-subtree t) (point)))
+          result)
+      (when (re-search-forward "^\\*\\* Navigation" subtree-end t)
+        (let ((nav-end (save-excursion
+                         (if (re-search-forward "^\\*\\* " subtree-end t)
+                             (match-beginning 0)
+                           subtree-end)))
+              (pos 1))
+          (while (re-search-forward
+                  "^[ \t]*[0-9]+\\.[ \t]+\\(\\+\\(.+\\)\\+\\|\\(.+\\)\\)$"
+                  nav-end t)
+            (let* ((struck (match-string 2))
+                   (plain (match-string 3))
+                   (label (or struck plain)))
+              (push (list :label label :hidden (not (null struck)) :position pos)
+                    result)
+              (setq pos (1+ pos))))))
+      (nreverse result))))
+
+(cl-defun org-canvas--settings-sync-tabs (navigation)
+  "Sync NAVIGATION tab state to Canvas.
+NAVIGATION is a list of (:label :hidden :position) plists.
+Fetches current tabs, diffs against desired state, and PUTs changes."
+  (unless navigation
+    (cl-return-from org-canvas--settings-sync-tabs nil))
+
+  (when org-canvas--dry-run
+    (elog-info org-canvas--logger "[DRY-RUN] Would sync %d navigation tabs" (length navigation))
+    (dolist (tab navigation)
+      (elog-info org-canvas--logger "[DRY-RUN]   %s: position=%d hidden=%s"
+                 (plist-get tab :label) (plist-get tab :position)
+                 (if (plist-get tab :hidden) "yes" "no")))
+    (cl-return-from org-canvas--settings-sync-tabs nil))
+
+  (let* ((url (org-canvas-api-course-endpoint "tabs"))
+         (current-tabs (org-canvas-api-request 'GET url))
+         (changes 0))
+    (dolist (desired navigation)
+      (let* ((label (plist-get desired :label))
+             (label-down (downcase label))
+             (hidden (plist-get desired :hidden))
+             (position (plist-get desired :position)))
+        ;; Guard: skip immutable tabs
+        (if (member label-down org-canvas--settings-immutable-tabs)
+            (when hidden
+              (elog-warning org-canvas--logger
+                "[Tabs] Cannot hide '%s' — Canvas does not allow it" label))
+          ;; Find matching tab by label
+          (let ((tab (cl-find-if
+                      (lambda (t-item)
+                        (string= (downcase (alist-get 'label t-item)) label-down))
+                      current-tabs)))
+            (if (not tab)
+                (elog-warning org-canvas--logger "[Tabs] Tab '%s' not found on Canvas" label)
+              (let* ((tab-id (alist-get 'id tab))
+                     (cur-hidden (eq (alist-get 'hidden tab) t))
+                     (cur-pos (alist-get 'position tab))
+                     (needs-update (or (not (eq hidden cur-hidden))
+                                       (not (equal position cur-pos)))))
+                (when needs-update
+                  (let ((payload `((hidden . ,(if hidden t :json-false))
+                                   (position . ,position)))
+                        (tab-url (org-canvas-api-course-endpoint
+                                  (format "tabs/%s" tab-id))))
+                    (condition-case err
+                        (progn
+                          (org-canvas-api-request 'PUT tab-url :data payload)
+                          (setq changes (1+ changes))
+                          (elog-info org-canvas--logger
+                            "[Tabs] Updated '%s': hidden=%s position=%d"
+                            label (if hidden "yes" "no") position))
+                      (error
+                       (elog-warning org-canvas--logger
+                         "[Tabs] Failed to update '%s': %s"
+                         label (error-message-string err))))))))))))
+    (elog-info org-canvas--logger "[Tabs] %d tab(s) updated" changes)))
+
+(defun org-canvas--settings-pull-tabs ()
+  "Pull navigation tabs from Canvas and write as ** Navigation sub-heading.
+Returns the formatted Org text, or nil if no tabs."
+  (let* ((url (org-canvas-api-course-endpoint "tabs"))
+         (tabs (org-canvas-api-request 'GET url)))
+    (when tabs
+      ;; Sort by position
+      (setq tabs (sort (copy-sequence tabs)
+                       (lambda (a b)
+                         (< (or (alist-get 'position a) 999)
+                            (or (alist-get 'position b) 999)))))
+      (let ((lines nil)
+            (pos 1))
+        (dolist (tab tabs)
+          (let ((label (alist-get 'label tab))
+                (hidden (eq (alist-get 'hidden tab) t)))
+            (push (format "%d. %s"
+                          pos
+                          (if hidden (format "+%s+" label) label))
+                  lines)
+            (setq pos (1+ pos))))
+        (concat "** Navigation\n" (string-join (nreverse lines) "\n") "\n")))))
+
+;;;; Course Image
+
+(defun org-canvas--settings-resolve-course-image (data)
+  "Upload local course image if needed and add :course-image-id to DATA.
+If :course-image-path is set and file exists, uploads it to Canvas
+and returns DATA with :course-image-id added.
+If :course-image-url is set, returns DATA unchanged.
+Otherwise returns DATA unchanged."
+  (let ((image-path (plist-get data :course-image-path)))
+    (if (and image-path (not org-canvas--dry-run))
+        (if (file-exists-p image-path)
+            (progn
+              (elog-info org-canvas--logger "[Image] Uploading course image: %s"
+                         (file-name-nondirectory image-path))
+              (condition-case err
+                  (let* ((file-obj (org-canvas--upload-file image-path))
+                         (file-id (alist-get 'id file-obj)))
+                    (elog-info org-canvas--logger "[Image] Upload complete, file ID: %s" file-id)
+                    (plist-put data :course-image-id file-id))
+                (error
+                 (elog-warning org-canvas--logger "[Image] Upload failed: %s"
+                               (error-message-string err))
+                 data)))
+          (progn
+            (elog-warning org-canvas--logger "[Image] File not found: %s" image-path)
+            data))
+      (when (and image-path org-canvas--dry-run)
+        (elog-info org-canvas--logger "[DRY-RUN] Would upload course image: %s"
+                   (file-name-nondirectory image-path)))
+      data)))
+
 ;;;; Interactive Commands
 
 ;;;###autoload
@@ -316,10 +477,14 @@ and pushes them to Canvas via PUT /courses/:id."
         (org-back-to-heading t)
         (condition-case err
             (let* ((data (org-canvas--settings-parse-entry))
+                   (navigation (org-canvas--settings-parse-navigation))
+                   ;; Upload course image if local file specified
+                   (data (org-canvas--settings-resolve-course-image data))
                    (payload (org-canvas--settings-build-payload data))
                    (late-policy-payload (org-canvas--settings-build-late-policy-payload data))
                    (response (org-canvas--settings-push data payload)))
               (org-canvas--settings-push-late-policy late-policy-payload)
+              (org-canvas--settings-sync-tabs navigation)
               (org-canvas--settings-finalize data response)
               (save-buffer)
               (elog-info org-canvas--logger "========================================")
@@ -421,6 +586,10 @@ LATE-POLICY is the late policy API response (may be nil)."
             (org-canvas--pull-set-boolean-property
              pom "MISSING_SUBMISSION_DEDUCTION_ENABLED"
              (alist-get 'missing_submission_deduction_enabled lp))))))
+    ;; Course image
+    (let ((image-url (org-canvas--alist-get-non-null 'image_download_url response)))
+      (when image-url
+        (org-canvas-org-set-property pom "COURSE_IMAGE" image-url)))
     (org-canvas-org-set-property
      pom "LAST_SYNCED"
      (format-time-string "[%Y-%m-%d %a %H:%M]"))
@@ -438,7 +607,8 @@ and heading if they don't exist."
   (let* ((endpoint (org-canvas-api-course-endpoint ""))
          (response (org-canvas-api-request
                     'GET endpoint
-                    :params '(("include[]" . "syllabus_body"))))
+                    :params '(("include[]" . "syllabus_body")
+                              ("include[]" . "course_image"))))
          (name (alist-get 'name response))
          (syllabus-body (org-canvas--alist-get-non-null 'syllabus_body response))
          (settings-file (expand-file-name org-canvas-settings-file)))
@@ -463,6 +633,28 @@ and heading if they don't exist."
           (org-edit-headline name))
         (org-canvas--settings-pull-set-properties
          (point) response syllabus-body late-policy)
+        ;; Pull navigation tabs
+        (let ((nav-text (condition-case nil
+                            (org-canvas--settings-pull-tabs)
+                          (error nil))))
+          (when nav-text
+            (save-excursion
+              ;; Remove existing ** Navigation if present
+              (goto-char (point-min))
+              (when (re-search-forward "^\\*\\* Navigation" nil t)
+                (beginning-of-line)
+                (let ((start (point))
+                      (end (save-excursion
+                             (if (re-search-forward "^\\*\\* " nil t)
+                                 (match-beginning 0)
+                               (point-max)))))
+                  (delete-region start end)))
+              ;; Insert at end of course heading subtree
+              (goto-char (point-min))
+              (re-search-forward "^\\*+ " nil t)
+              (org-back-to-heading t)
+              (org-end-of-subtree t)
+              (insert "\n" nav-text))))
         (save-buffer)))
     (elog-info org-canvas--logger "========================================")
     (elog-info org-canvas--logger ">>> SETTINGS PULL COMPLETE")

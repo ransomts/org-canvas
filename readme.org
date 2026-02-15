@@ -20,7 +20,7 @@ Tested against the Canvas LMS REST API (=/api/v1/=) as of 2026-02-07. Canvas doe
 - *Conflict Detection*: Interactive push/pull/skip resolution when remote changes are detected
 - *Modular Architecture*: Sync individual content types or the entire course at once
 - *Dependency-Aware*: Syncs in proper order respecting cross-references between files
-- *13 Content Types*: Assignments, quizzes, pages, modules, rubrics, outcomes, discussions, announcements, files, assignment groups, sections, per-section date overrides, and course settings
+- *15 Content Types*: Assignments, quizzes, pages, modules, rubrics, outcomes, discussions, announcements, files, assignment groups, group categories, sections, per-section date overrides, calendar events, and course settings
 - *Canvas Migration*: Import an entire existing Canvas course into Org files with =org-canvas-pull-all=
 - *Orphan Cleanup*: Detect and remove Canvas items that no longer have corresponding Org headings
 - *Resilient Syncing*: Pre-sync credential validation, rate limit retry with backoff, actionable error messages for auth failures, graceful handling of missing files
@@ -57,7 +57,7 @@ The easiest way to set up a new course is the setup wizard:
 M-x org-canvas-init
 #+end_src
 
-This prompts for your Canvas URL, API token, and course ID, tests the connection, writes =org-canvas-credentials.el=, and optionally creates skeleton =.org= files for all 12 content types.
+This prompts for your Canvas URL, API token, and course ID, tests the connection, writes =org-canvas-credentials.el=, and optionally creates skeleton =.org= files for all 14 content types.
 
 Or create =org-canvas-credentials.el= manually in your course directory (not tracked by git):
 
@@ -75,7 +75,7 @@ Create Org files for each content type:
 #+begin_example
 my-course/
 ├── org-canvas-credentials.el  ; Your API credentials (gitignored)
-├── settings.org               ; Course settings (timezone, homepage, license)
+├── settings.org               ; Course settings (timezone, homepage, license, navigation tabs)
 ├── assignments.org            ; Course assignments
 ├── quizzes.org               ; Quizzes with questions
 ├── pages.org                 ; Wiki pages
@@ -86,6 +86,8 @@ my-course/
 ├── announcements.org         ; Course announcements
 ├── files.org                 ; File uploads
 ├── assignment-groups.org     ; Grade weighting categories
+├── group-categories.org      ; Group sets for group assignments/discussions
+├── calendar.org              ; Calendar events (office hours, holidays, review sessions)
 └── sections.org              ; Course sections (pulled from Canvas) & date overrides
 #+end_example
 
@@ -115,7 +117,9 @@ M-x org-canvas-sync-assignments
 M-x org-canvas-sync-quizzes
 M-x org-canvas-sync-pages
 M-x org-canvas-sync-settings
-;; ... etc for all 13 content types
+M-x org-canvas-sync-group-categories
+M-x org-canvas-sync-calendar-events
+;; ... etc for all 15 content types
 
 ;; Sync a single item at cursor
 M-x org-canvas-sync-assignment-at-point
@@ -168,11 +172,12 @@ After syncing, org-canvas automatically adds:
 
 See [[file:documentation/manual.org][the full manual]] for:
 
-- Complete file format specifications for all 13 content types
+- Complete file format specifications for all 15 content types
 - All supported properties and link resolution between files
 - Quiz question types and answer formats
-- Course settings (timezone, homepage, grading, license)
-- Sections and per-section date overrides
+- Course settings (timezone, homepage, grading, license, navigation tabs, course image)
+- Group categories, calendar events, sections, and per-section date overrides
+- Inline image upload for page/announcement/discussion bodies
 - Interactive conflict resolution (push/pull/skip) and force-push
 - Canvas-to-Org migration with =org-canvas-pull-all=
 - Orphan cleanup

@@ -27,7 +27,8 @@
 :LATE_SUBMISSION_MINIMUM_PERCENT_ENABLED: true
 :MISSING_SUBMISSION_DEDUCTION: 100
 :MISSING_SUBMISSION_DEDUCTION_ENABLED: true
-:LAST_SYNCED: [2026-02-14 Sat 17:11]
+:COURSE_IMAGE: https://example.com/images/ds101-banner.png
+:LAST_SYNCED: [2026-02-14 Sat 21:30]
 :END:
 
 *Welcome to DS 101 -- Introduction to Data Science!*
@@ -49,3 +50,12 @@ This course provides a hands-on introduction to the tools and techniques of data
 | Projects  |    20% |
 
 Late work is penalized 10% per day, down to a minimum of 50%.  Missing submissions receive a zero.
+
+** Navigation
+1. Home
+2. Modules
+3. Assignments
+4. Announcements
+5. Grades
+6. +Discussions+
+7. +People+

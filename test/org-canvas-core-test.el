@@ -4526,4 +4526,343 @@ Keep this too
           (when buf (kill-buffer buf)))
         (delete-file sections-file)))))
 
+;;;; Inline Image Resolution Tests
+
+(describe "org-canvas--resolve-image-links"
+  (it "replaces image link with cached URL"
+    (let ((org-canvas--image-cache (make-hash-table :test 'equal)))
+      (puthash "diagram.png" "https://canvas.example.com/files/42/preview"
+               org-canvas--image-cache)
+      (with-temp-buffer
+        (insert "* Heading\nSee [[file:diagram.png]] for details.\n")
+        (org-canvas--resolve-image-links "/tmp/")
+        (expect (buffer-string) :to-match "canvas\\.example\\.com/files/42/preview"))))
+
+  (it "preserves display text in image links"
+    (let ((org-canvas--image-cache (make-hash-table :test 'equal)))
+      (puthash "chart.jpg" "https://canvas.example.com/files/10/preview"
+               org-canvas--image-cache)
+      (with-temp-buffer
+        (insert "* Heading\n[[file:chart.jpg][Sales Chart]]\n")
+        (org-canvas--resolve-image-links "/tmp/")
+        (expect (buffer-string) :to-match "\\[Sales Chart\\]"))))
+
+  (it "handles multiple image links"
+    (let ((org-canvas--image-cache (make-hash-table :test 'equal)))
+      (puthash "a.png" "https://canvas.example.com/a" org-canvas--image-cache)
+      (puthash "b.gif" "https://canvas.example.com/b" org-canvas--image-cache)
+      (with-temp-buffer
+        (insert "* H\n[[file:a.png]] and [[file:b.gif]]\n")
+        (org-canvas--resolve-image-links "/tmp/")
+        (expect (buffer-string) :to-match "canvas\\.example\\.com/a")
+        (expect (buffer-string) :to-match "canvas\\.example\\.com/b"))))
+
+  (it "leaves non-image file links untouched"
+    (let ((org-canvas--image-cache (make-hash-table :test 'equal)))
+      (with-temp-buffer
+        (insert "* H\n[[file:handout.pdf]]\n")
+        (let ((original (buffer-string)))
+          (org-canvas--resolve-image-links "/tmp/")
+          (expect (buffer-string) :to-equal original)))))
+
+  (it "warns on missing local file"
+    (let ((org-canvas--image-cache (make-hash-table :test 'equal)))
+      (spy-on 'elog-warning)
+      (with-temp-buffer
+        (insert "* H\n[[file:missing.png]]\n")
+        (org-canvas--resolve-image-links "/tmp/nonexistent/")
+        (expect 'elog-warning :to-have-been-called))))
+
+  (it "uploads image on cache miss when file exists"
+    (let ((org-canvas--image-cache (make-hash-table :test 'equal))
+          (temp-file (make-temp-file "img-test" nil ".png")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file (insert "PNG"))
+            (cl-letf (((symbol-function 'org-canvas--image-ensure-folder)
+                       (lambda () 123))
+                      ((symbol-function 'org-canvas--upload-file)
+                       (lambda (_path &optional _url _name)
+                         '((id . 555)))))
+              (with-org-canvas-test-config
+                (with-temp-buffer
+                  (insert (format "* H\n[[file:%s]]\n" temp-file))
+                  (org-canvas--resolve-image-links "/")
+                  (expect (buffer-string) :to-match "files/555/preview")
+                  ;; Verify cache was updated
+                  (expect (gethash (file-name-nondirectory temp-file)
+                                   org-canvas--image-cache)
+                          :to-be-truthy)))))
+        (delete-file temp-file))))
+
+  (it "recognizes all image extensions"
+    (let ((org-canvas--image-cache (make-hash-table :test 'equal)))
+      (dolist (ext org-canvas--image-extensions)
+        (puthash (format "test.%s" ext) (format "https://url/%s" ext)
+                 org-canvas--image-cache))
+      (with-temp-buffer
+        (insert "* H\n")
+        (dolist (ext org-canvas--image-extensions)
+          (insert (format "[[file:test.%s]]\n" ext)))
+        (org-canvas--resolve-image-links "/tmp/")
+        (dolist (ext org-canvas--image-extensions)
+          (expect (buffer-string) :to-match (format "url/%s" ext)))))))
+
+(describe "org-canvas--image-cache-init"
+  (it "populates cache from API response"
+    (with-org-canvas-test-config
+      (let ((org-canvas--image-cache nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_method _url &rest _args)
+                     ;; folders/by_path returns a list
+                     '(((id . 42)))))
+                  ((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (_method _url &rest _args)
+                     '(((display_name . "logo.png") (url . "https://files.canvas/logo.png"))
+                       ((display_name . "banner.jpg") (url . "https://files.canvas/banner.jpg"))))))
+          (org-canvas--image-cache-init)
+          (expect (hash-table-count org-canvas--image-cache) :to-equal 2)
+          (expect (gethash "logo.png" org-canvas--image-cache)
+                  :to-equal "https://files.canvas/logo.png")))))
+
+  (it "handles missing folder gracefully"
+    (with-org-canvas-test-config
+      (let ((org-canvas--image-cache nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_method _url &rest _args)
+                     (signal 'error '("404")))))
+          (org-canvas--image-cache-init)
+          ;; Cache should exist but be empty
+          (expect org-canvas--image-cache :to-be-truthy)
+          (expect (hash-table-count org-canvas--image-cache) :to-equal 0)))))
+
+  (it "does not re-initialize if already set"
+    (let ((org-canvas--image-cache (make-hash-table :test 'equal))
+          (api-called nil))
+      (puthash "existing.png" "url" org-canvas--image-cache)
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _) (setq api-called t) nil)))
+        (org-canvas--image-cache-init)
+        (expect api-called :to-be nil)
+        (expect (hash-table-count org-canvas--image-cache) :to-equal 1)))))
+
+(describe "org-canvas--image-ensure-folder"
+  (it "returns existing folder ID"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (_method _url &rest _args)
+                   '(((id . 77))))))
+        (expect (org-canvas--image-ensure-folder) :to-equal 77))))
+
+  (it "creates folder when not found"
+    (with-org-canvas-test-config
+      (let ((call-count 0))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method _url &rest _args)
+                     (setq call-count (1+ call-count))
+                     (if (eq method 'GET)
+                         (signal 'error '("404"))
+                       '((id . 88))))))
+          (expect (org-canvas--image-ensure-folder) :to-equal 88)
+          (expect call-count :to-equal 2))))))
+
+;;;; Pull Helper Tests
+
+(describe "org-canvas--pull-set-boolean-property"
+  (it "sets true when value is t"
+    (with-temp-org-buffer
+     "* Item
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (org-canvas--pull-set-boolean-property (point) "ALLOW_RATING" t)
+     (expect (org-entry-get (point) "ALLOW_RATING") :to-equal "true")))
+
+  (it "sets false when value is nil"
+    (with-temp-org-buffer
+     "* Item
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (org-canvas--pull-set-boolean-property (point) "ALLOW_RATING" nil)
+     (expect (org-entry-get (point) "ALLOW_RATING") :to-equal "false")))
+
+  (it "sets false when value is :json-false"
+    (with-temp-org-buffer
+     "* Item
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (org-canvas--pull-set-boolean-property (point) "PINNED" :json-false)
+     (expect (org-entry-get (point) "PINNED") :to-equal "false"))))
+
+(describe "org-canvas--pull-set-timestamp-property"
+  (it "sets Org timestamp from ISO8601"
+    (with-temp-org-buffer
+     "* Item
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (org-canvas--pull-set-timestamp-property (point) "START_AT" "2026-09-01T14:00:00Z")
+     (expect (org-entry-get (point) "START_AT") :to-match "<2026-09-01")))
+
+  (it "does nothing when iso8601 is nil"
+    (with-temp-org-buffer
+     "* Item
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (org-canvas--pull-set-timestamp-property (point) "START_AT" nil)
+     (expect (org-entry-get (point) "START_AT") :to-be nil)))
+
+  (it "does nothing when iso8601 is empty string"
+    (with-temp-org-buffer
+     "* Item
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (org-canvas--pull-set-timestamp-property (point) "START_AT" "")
+     (expect (org-entry-get (point) "START_AT") :to-be nil))))
+
+(describe "org-canvas--pull-process-item"
+  (it "upserts heading and saves sync state"
+    (let* ((temp-dir (make-temp-file "pull-proc" t))
+           (org-file (expand-file-name "test.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file org-file (insert "#+TITLE: Test\n"))
+            (let ((item '((id . 42) (title . "My Item")))
+                  (item-fn-called nil))
+              (with-current-buffer (find-file-noselect org-file)
+                (org-canvas--pull-process-item
+                 item org-file
+                 (list :id-field 'id :title-field 'title
+                       :id-property "CANVAS_ID"
+                       :item-fn (lambda (_item _pos) (setq item-fn-called t))))
+                (goto-char (point-min))
+                (re-search-forward "^\\* " nil t)
+                (org-back-to-heading)
+                (expect (org-entry-get (point) "CANVAS_ID") :to-equal "42")
+                (expect (org-entry-get (point) "LAST_SYNCED") :to-be-truthy))
+              (expect item-fn-called :to-be t)))
+        (let ((buf (find-buffer-visiting org-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "updates existing heading title"
+    (let* ((temp-dir (make-temp-file "pull-proc2" t))
+           (org-file (expand-file-name "test.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file org-file
+              (insert "#+TITLE: Test\n* Old Title\n:PROPERTIES:\n:CANVAS_ID: 42\n:END:\n"))
+            (let ((item '((id . 42) (title . "New Title"))))
+              (with-current-buffer (find-file-noselect org-file)
+                (org-canvas--pull-process-item
+                 item org-file
+                 (list :id-field 'id :title-field 'title
+                       :id-property "CANVAS_ID"
+                       :item-fn (lambda (_item _pos) nil)))
+                (goto-char (point-min))
+                (re-search-forward "^\\* " nil t)
+                (expect (org-get-heading t t t t) :to-equal "New Title"))))
+        (let ((buf (find-buffer-visiting org-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
+;;;; Upload File Tests
+
+(describe "org-canvas--upload-file"
+  (it "performs 3-step upload and returns file alist"
+    (let* ((temp-file (make-temp-file "upload-test" nil ".png"))
+           (step1-called nil)
+           (step2-called nil))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file (insert "PNGDATA"))
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request)
+                         (lambda (method _url &rest _args)
+                           (cond
+                            ((eq method 'POST)
+                             (setq step1-called t)
+                             '((upload_url . "https://upload.example.com/upload")
+                               (upload_params . ((key . "val")))))
+                            (t '((id . 777) (display_name . "test.png"))))))
+                        ((symbol-function 'url-retrieve-synchronously)
+                         (lambda (_url &rest _args)
+                           (setq step2-called t)
+                           (let ((buf (generate-new-buffer " *upload-test*")))
+                             (with-current-buffer buf
+                               (insert "HTTP/1.1 200 OK\r\n\r\n")
+                               (insert (json-encode '((id . 777)
+                                                      (display_name . "test.png")))))
+                             buf))))
+                (let ((result (org-canvas--upload-file temp-file)))
+                  (expect step1-called :to-be t)
+                  (expect step2-called :to-be t)
+                  (expect (alist-get 'id result) :to-equal 777)))))
+        (delete-file temp-file))))
+
+  (it "follows Location header when no JSON id in step 2"
+    (let* ((temp-file (make-temp-file "upload-loc" nil ".jpg")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file (insert "JPGDATA"))
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request)
+                         (lambda (method _url &rest _args)
+                           (cond
+                            ((eq method 'POST)
+                             '((upload_url . "https://upload.example.com/x")
+                               (upload_params . nil)))
+                            ((eq method 'GET)
+                             '((id . 888) (display_name . "photo.jpg"))))))
+                        ((symbol-function 'url-retrieve-synchronously)
+                         (lambda (_url &rest _args)
+                           (let ((buf (generate-new-buffer " *upload-loc*")))
+                             (with-current-buffer buf
+                               (insert "HTTP/1.1 301 Redirect\r\n")
+                               (insert "Location: https://canvas.test/files/888/confirm\r\n")
+                               (insert "\r\n{\"status\":\"pending\"}"))
+                             buf))))
+                (let ((result (org-canvas--upload-file temp-file)))
+                  (expect (alist-get 'id result) :to-equal 888)))))
+        (delete-file temp-file))))
+
+  (it "uses custom notify-url and display-name"
+    (let* ((temp-file (make-temp-file "upload-custom" nil ".gif"))
+           (notify-url-used nil)
+           (name-used nil))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file (insert "GIFDATA"))
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request)
+                         (lambda (_method url &rest args)
+                           (setq notify-url-used url)
+                           (let ((payload (plist-get args :data)))
+                             (setq name-used (alist-get 'name payload)))
+                           '((upload_url . "https://up.test/x")
+                             (upload_params . nil))))
+                        ((symbol-function 'url-retrieve-synchronously)
+                         (lambda (_url &rest _args)
+                           (let ((buf (generate-new-buffer " *upload-custom*")))
+                             (with-current-buffer buf
+                               (insert "HTTP/1.1 200 OK\r\n\r\n")
+                               (insert (json-encode '((id . 999)))))
+                             buf))))
+                (org-canvas--upload-file temp-file
+                                         "https://custom.api/files"
+                                         "renamed.gif")
+                (expect notify-url-used :to-equal "https://custom.api/files")
+                (expect name-used :to-equal "renamed.gif"))))
+        (delete-file temp-file)))))
+
 ;;; org-canvas-core-test.el ends here

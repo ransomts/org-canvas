@@ -83,7 +83,13 @@ Returns a plist with :grading-type, :points, :due-at, :lock-at,
          (allow-rating (org-canvas-org-get-boolean-property pom "ALLOW_RATING"))
          (only-graders-can-rate (org-canvas-org-get-boolean-property pom "ONLY_GRADERS_CAN_RATE"))
          (sort-by-rating (org-canvas-org-get-boolean-property pom "SORT_BY_RATING"))
-         (group-category-id (org-canvas-org-get-property pom "GROUP_CATEGORY"))
+         (group-category-raw (org-canvas-org-get-property pom "GROUP_CATEGORY"))
+         (group-category-id (if (and group-category-raw
+                                     (string-prefix-p "[[" group-category-raw))
+                                (org-canvas--resolve-link-property
+                                 group-category-raw "CANVAS_ID"
+                                 org-canvas-discussions-file)
+                              group-category-raw))
          (specific-sections (org-canvas-org-get-property pom "SPECIFIC_SECTIONS"))
          (grading (org-canvas--discussion-parse-grading-props pom)))
 

@@ -437,7 +437,24 @@ Returns a list of warning issues."
      :file org-canvas-sections-file
      :query "LEVEL=1"
      :properties ()
-     :structural-fn org-canvas--validate-section-structure))
+     :structural-fn org-canvas--validate-section-structure)
+
+    (:label "Group Categories"
+     :file org-canvas-group-categories-file
+     :query "LEVEL=1"
+     :properties
+     ((:name "SELF_SIGNUP" :type enum :values ,org-canvas--valid-self-signup-values)
+      (:name "GROUP_LIMIT" :type number)
+      (:name "AUTO_LEADER" :type enum :values ,org-canvas--valid-auto-leader-values)
+      (:name "CREATE_GROUP_COUNT" :type number)))
+
+    (:label "Calendar Events"
+     :file org-canvas-calendar-events-file
+     :query "LEVEL=1"
+     :properties
+     ((:name "START_AT" :type timestamp)
+      (:name "END_AT" :type timestamp)
+      (:name "ALL_DAY" :type boolean))))
   "Validation specs for all org-canvas content types.")
 
 ;;;; 5. Structural Validators
