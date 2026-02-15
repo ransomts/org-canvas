@@ -717,6 +717,28 @@ Creates folders as needed and populates the folder cache."
 
 ;;;; Main Sync Functions
 
+(defun org-canvas--file-sync-single-entry (marker)
+  "Process a single file entry at MARKER.
+Returns :success, :skip (folder heading), or :fail."
+  (with-current-buffer (marker-buffer marker)
+    (save-excursion
+      (goto-char (marker-position marker))
+      (condition-case err
+          (let ((data (org-canvas--file-parse-entry)))
+            (if (not data)
+                :skip
+              (elog-info org-canvas--logger "----------------------------------------")
+              (let ((response (org-canvas--file-push-to-api data)))
+                (org-canvas--file-finalize data response)
+                (let ((fid (alist-get 'id response)))
+                  (when (and fid (plist-get data :use-justification))
+                    (org-canvas--file-set-usage-rights fid data))))
+              :success))
+        (error
+         (elog-error org-canvas--logger "[FAILED] At point %d: %s"
+           (marker-position marker) (error-message-string err))
+         :fail)))))
+
 ;;;###autoload
 (defun org-canvas-sync-files ()
   "Synchronize files to Canvas."
@@ -760,34 +782,17 @@ Creates folders as needed and populates the folder cache."
       (elog-info org-canvas--logger "Found %d entries to process" (length targets))
 
       (dolist (marker targets)
-        (with-current-buffer (marker-buffer marker)
-          (save-excursion
-            (goto-char (marker-position marker))
-            (condition-case err
-                (let ((data (org-canvas--file-parse-entry)))
-                  (if data
-                      (progn
-                        (elog-info org-canvas--logger "----------------------------------------")
-                        (let ((response (org-canvas--file-push-to-api data)))
-                          (org-canvas--file-finalize data response)
-                          (let ((fid (alist-get 'id response)))
-                            (when (and fid (plist-get data :use-justification))
-                              (org-canvas--file-set-usage-rights fid data)))
-                          (setq success-count (1+ success-count))
-                          (message "Files [%d/%d] Synced '%s'"
-                            (+ success-count skip-count fail-count)
-                            (length targets)
-                            (plist-get data :display-name))))
-                    ;; Folder heading - skip
-                    (setq skip-count (1+ skip-count))))
-              (error
-               (setq fail-count (1+ fail-count))
-               (elog-error org-canvas--logger "[FAILED] At point %d: %s"
-                 (marker-position marker) (error-message-string err))
-               (message "Files [%d/%d] FAILED: %s"
-                 (+ success-count skip-count fail-count)
-                 (length targets)
-                 (error-message-string err)))))))
+        (let ((result (org-canvas--file-sync-single-entry marker)))
+          (pcase result
+            (:success (setq success-count (1+ success-count))
+                      (message "Files [%d/%d] Synced"
+                        (+ success-count skip-count fail-count)
+                        (length targets)))
+            (:skip (setq skip-count (1+ skip-count)))
+            (:fail (setq fail-count (1+ fail-count))
+                   (message "Files [%d/%d] FAILED"
+                     (+ success-count skip-count fail-count)
+                     (length targets))))))
 
       ;; Save the org file after all modifications
       (with-current-buffer (find-file-noselect files-file)
@@ -937,6 +942,26 @@ SIZE is used for logging; may be nil."
          "[Download] Failed for %s: %s"
          display-name (error-message-string err))))))
 
+(defun org-canvas--file-pull-set-properties (pos item)
+  "Set content-type, size, and usage-rights properties at POS from ITEM."
+  (let ((content-type (alist-get 'content-type item))
+        (size (alist-get 'size item)))
+    (when content-type
+      (org-canvas-org-set-property pos "CONTENT_TYPE" content-type))
+    (when size
+      (org-canvas-org-set-property pos "SIZE" (format "%s" size))))
+  (let ((usage-rights (alist-get 'usage_rights item)))
+    (when usage-rights
+      (let ((justification (alist-get 'use_justification usage-rights))
+            (license (alist-get 'license usage-rights))
+            (legal-copyright (alist-get 'legal_copyright usage-rights)))
+        (when justification
+          (org-canvas-org-set-property pos "USE_JUSTIFICATION" justification))
+        (when license
+          (org-canvas-org-set-property pos "USAGE_LICENSE" license))
+        (when legal-copyright
+          (org-canvas-org-set-property pos "COPYRIGHT" legal-copyright))))))
+
 ;;;###autoload
 (defun org-canvas-pull-files ()
   "Pull file metadata from Canvas into files.org.
@@ -958,31 +983,15 @@ Downloads file contents to the content/ directory."
         (let* ((id (alist-get 'id item))
                (display-name (alist-get 'display_name item))
                (download-url (alist-get 'url item))
-               (content-type (alist-get 'content-type item))
-               (size (alist-get 'size item))
                (local-path (expand-file-name display-name content-dir))
                (heading-text (format "[[file:content/%s][%s]]"
                                      display-name display-name))
                (pos (org-canvas--pull-upsert-heading file id heading-text)))
           (goto-char pos)
           (org-canvas-org-save-sync-state pos id)
-          (when content-type
-            (org-canvas-org-set-property pos "CONTENT_TYPE" content-type))
-          (when size
-            (org-canvas-org-set-property pos "SIZE" (format "%s" size)))
-          (let ((usage-rights (alist-get 'usage_rights item)))
-            (when usage-rights
-              (let ((justification (alist-get 'use_justification usage-rights))
-                    (license (alist-get 'license usage-rights))
-                    (legal-copyright (alist-get 'legal_copyright usage-rights)))
-                (when justification
-                  (org-canvas-org-set-property pos "USE_JUSTIFICATION" justification))
-                (when license
-                  (org-canvas-org-set-property pos "USAGE_LICENSE" license))
-                (when legal-copyright
-                  (org-canvas-org-set-property pos "COPYRIGHT" legal-copyright)))))
+          (org-canvas--file-pull-set-properties pos item)
           (org-canvas--file-pull-download
-           display-name download-url local-path size)
+           display-name download-url local-path (alist-get 'size item))
           (cl-incf count)))
       (save-buffer))
     (elog-info org-canvas--logger "Files pull complete: %d files" count)

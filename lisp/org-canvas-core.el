@@ -837,6 +837,19 @@ SOURCE-FILE is the file containing the link, used to resolve relative paths."
 
 ;;;; 4d. Section Name → ID Resolution
 
+(defun org-canvas--find-section-id-by-name (name sections-file)
+  "Look up section NAME in SECTIONS-FILE and return its CANVAS_ID, or nil."
+  (with-current-buffer (find-file-noselect sections-file)
+    (save-excursion
+      (goto-char (point-min))
+      (let ((found nil))
+        (org-map-entries
+         (lambda ()
+           (when (string= (org-get-heading t t t t) name)
+             (setq found (org-entry-get (point) "CANVAS_ID"))))
+         "LEVEL=1" 'file)
+        found))))
+
 (defun org-canvas--resolve-section-names-to-ids (names-string)
   "Resolve comma-separated section NAMES-STRING to comma-separated CANVAS_IDs.
 Look up each name as a heading in the sections file and return its CANVAS_ID.
@@ -855,17 +868,7 @@ Returns the resolved ID string, or nil if nothing resolved."
           (push name ids))
          ;; Look up in sections file
          ((and sections-file (file-exists-p sections-file))
-          (let ((canvas-id
-                 (with-current-buffer (find-file-noselect sections-file)
-                   (save-excursion
-                     (goto-char (point-min))
-                     (let ((found nil))
-                       (org-map-entries
-                        (lambda ()
-                          (when (string= (org-get-heading t t t t) name)
-                            (setq found (org-entry-get (point) "CANVAS_ID"))))
-                        "LEVEL=1" 'file)
-                       found)))))
+          (let ((canvas-id (org-canvas--find-section-id-by-name name sections-file)))
             (if canvas-id
                 (push canvas-id ids)
               (elog-warning org-canvas--logger
@@ -988,29 +991,33 @@ Session-scoped; cleared at end of master sync.")
   '("png" "jpg" "jpeg" "gif" "svg" "webp" "bmp")
   "File extensions recognized as inline images.")
 
+(defun org-canvas--image-cache-load-folder ()
+  "Fetch image folder contents and populate `org-canvas--image-cache'."
+  (let* ((folders-url (org-canvas-api-course-endpoint
+                       (format "folders/by_path/%s" org-canvas-image-folder)))
+         (folder (car (last (org-canvas-api-request 'GET folders-url))))
+         (folder-id (alist-get 'id folder)))
+    (when folder-id
+      (let ((files (org-canvas-api-request-all-pages
+                    'GET (format "%s/api/v1/folders/%s/files"
+                                 org-canvas-base-url folder-id))))
+        (dolist (file files)
+          (let ((name (alist-get 'display_name file))
+                (url (alist-get 'url file)))
+            (when (and name url)
+              (puthash name url org-canvas--image-cache))))
+        (elog-debug org-canvas--logger
+          "[Images] Cache initialized: %d files in %s/"
+          (hash-table-count org-canvas--image-cache)
+          org-canvas-image-folder)))))
+
 (defun org-canvas--image-cache-init ()
   "Initialize the image cache from Canvas folder listing.
 Fetches the image folder contents and builds a filename→URL map."
   (unless org-canvas--image-cache
     (setq org-canvas--image-cache (make-hash-table :test 'equal))
     (condition-case nil
-        (let* ((folders-url (org-canvas-api-course-endpoint
-                             (format "folders/by_path/%s" org-canvas-image-folder)))
-               (folder (car (last (org-canvas-api-request 'GET folders-url))))
-               (folder-id (alist-get 'id folder)))
-          (when folder-id
-            (let ((files (org-canvas-api-request-all-pages
-                          'GET (format "%s/api/v1/folders/%s/files"
-                                       org-canvas-base-url folder-id))))
-              (dolist (file files)
-                (let ((name (alist-get 'display_name file))
-                      (url (alist-get 'url file)))
-                  (when (and name url)
-                    (puthash name url org-canvas--image-cache))))
-              (elog-debug org-canvas--logger
-                "[Images] Cache initialized: %d files in %s/"
-                (hash-table-count org-canvas--image-cache)
-                org-canvas-image-folder))))
+        (org-canvas--image-cache-load-folder)
       (error
        (elog-debug org-canvas--logger
          "[Images] Folder '%s' not found, will create on first upload"
@@ -1033,6 +1040,51 @@ Returns the folder ID."
                               (parent_folder_path . "/")))))
        (alist-get 'id response)))))
 
+(defun org-canvas--image-replace-link (rep url)
+  "Replace image link described by REP plist with Canvas URL link."
+  (let ((display (plist-get rep :display))
+        (filename (file-name-nondirectory (plist-get rep :path))))
+    (goto-char (plist-get rep :start))
+    (delete-region (plist-get rep :start) (plist-get rep :end))
+    (insert (format "[[%s][%s]]" url (or display filename)))))
+
+(defun org-canvas--resolve-single-image (rep source-dir folder-id-ref count total)
+  "Process a single image link REP in SOURCE-DIR.
+FOLDER-ID-REF is a cons cell whose car is the folder ID (lazily initialized).
+COUNT and TOTAL are for progress logging.
+Checks cache first, then uploads if file exists."
+  (let* ((rel-path (plist-get rep :path))
+         (abs-path (expand-file-name rel-path source-dir))
+         (filename (file-name-nondirectory rel-path))
+         (cached-url (gethash filename org-canvas--image-cache)))
+    (cond
+     (cached-url
+      (elog-debug org-canvas--logger "[Images] Cache hit: %s" filename)
+      (org-canvas--image-replace-link rep cached-url))
+     ((file-exists-p abs-path)
+      (condition-case err
+          (progn
+            (elog-info org-canvas--logger
+              "[Images] Uploading %s (%d/%d)..." filename count total)
+            (unless (car folder-id-ref)
+              (setcar folder-id-ref (org-canvas--image-ensure-folder)))
+            (let* ((notify-url (format "%s/api/v1/folders/%s/files"
+                                       org-canvas-base-url (car folder-id-ref)))
+                   (file-obj (org-canvas--upload-file abs-path notify-url))
+                   (preview-url (format "%s/courses/%s/files/%s/preview"
+                                        org-canvas-base-url
+                                        org-canvas-course-id
+                                        (alist-get 'id file-obj))))
+              (puthash filename preview-url org-canvas--image-cache)
+              (org-canvas--image-replace-link rep preview-url)))
+        (error
+         (elog-warning org-canvas--logger
+           "[Images] Failed to upload %s: %s"
+           filename (error-message-string err)))))
+     (t
+      (elog-warning org-canvas--logger
+        "[Images] File not found: %s" abs-path)))))
+
 (defun org-canvas--resolve-image-links (source-dir)
   "Resolve inline image links in current buffer to Canvas URLs.
 Replaces [[file:IMAGE]] links with Canvas preview URLs.
@@ -1054,55 +1106,13 @@ Images are uploaded to the `org-canvas-image-folder' on Canvas."
     ;; Process in reverse order (last match first) to preserve positions
     (when replacements
       (org-canvas--image-cache-init)
-      (let ((folder-id nil)
+      (let ((folder-id-ref (list nil))
             (count 0)
             (total (length replacements)))
         (dolist (rep replacements)
           (setq count (1+ count))
-          (let* ((rel-path (plist-get rep :path))
-                 (display (plist-get rep :display))
-                 (abs-path (expand-file-name rel-path source-dir))
-                 (filename (file-name-nondirectory rel-path))
-                 (cached-url (gethash filename org-canvas--image-cache)))
-            (if cached-url
-                ;; Cache hit — replace with Canvas URL
-                (progn
-                  (elog-debug org-canvas--logger "[Images] Cache hit: %s" filename)
-                  (goto-char (plist-get rep :start))
-                  (delete-region (plist-get rep :start) (plist-get rep :end))
-                  (insert (if display
-                              (format "[[%s][%s]]" cached-url display)
-                            (format "[[%s][%s]]" cached-url filename))))
-              ;; Cache miss — upload if file exists
-              (if (file-exists-p abs-path)
-                  (condition-case err
-                      (progn
-                        (elog-info org-canvas--logger
-                          "[Images] Uploading %s (%d/%d)..." filename count total)
-                        (unless folder-id
-                          (setq folder-id (org-canvas--image-ensure-folder)))
-                        (let* ((notify-url (format "%s/api/v1/folders/%s/files"
-                                                   org-canvas-base-url folder-id))
-                               (file-obj (org-canvas--upload-file
-                                          abs-path notify-url))
-                               (preview-url (format "%s/courses/%s/files/%s/preview"
-                                                    org-canvas-base-url
-                                                    org-canvas-course-id
-                                                    (alist-get 'id file-obj))))
-                          ;; Update cache
-                          (puthash filename preview-url org-canvas--image-cache)
-                          ;; Replace link
-                          (goto-char (plist-get rep :start))
-                          (delete-region (plist-get rep :start) (plist-get rep :end))
-                          (insert (if display
-                                      (format "[[%s][%s]]" preview-url display)
-                                    (format "[[%s][%s]]" preview-url filename)))))
-                    (error
-                     (elog-warning org-canvas--logger
-                       "[Images] Failed to upload %s: %s"
-                       filename (error-message-string err))))
-                (elog-warning org-canvas--logger
-                  "[Images] File not found: %s" abs-path)))))))))
+          (org-canvas--resolve-single-image
+           rep source-dir folder-id-ref count total))))))
 
 (defvar org-export-with-broken-links)
 (defvar org-export-with-sub-superscripts)
@@ -1857,9 +1867,10 @@ ERR is a `condition-case' error value.  Check both the message and
 error-thrown fields since different callers place the timeout
 indicator in different positions."
   (or (let ((error-thrown (caddr err)))
-        (and error-thrown (string-match-p "Timeout" (format "%s" error-thrown))))
+        (and error-thrown (string-match-p "[Tt]imeout\\|timed out"
+                                         (format "%s" error-thrown))))
       (let ((err-msg (error-message-string err)))
-        (and err-msg (string-match-p "Timeout" err-msg)))))
+        (and err-msg (string-match-p "[Tt]imeout\\|timed out" err-msg)))))
 
 (defun org-canvas--404-on-put-p (err method)
   "Return non-nil if ERR is a 404 and METHOD is PUT or PATCH.
@@ -1927,6 +1938,35 @@ ERR is the original error for re-signaling."
            (org-canvas--handle-timeout-recovery find-fn title post-err)
          (signal (car post-err) (cdr post-err)))))))
 
+(defun org-canvas--push-check-and-resolve-conflict (endpoint id data title)
+  "Check for conflicts on ENDPOINT/ID using DATA.
+TITLE is for logging.  Returns `push', `skip', or `pulled'."
+  (let ((conflict-result (org-canvas--conflict-check endpoint id (plist-get data :pom))))
+    (if (not (and conflict-result (eq (car conflict-result) 'conflict)))
+        'push
+      (let* ((remote-response (cdr conflict-result))
+             (effective-pull-fn org-canvas--current-pull-item-fn)
+             (resolution (org-canvas--resolve-conflict data remote-response)))
+        (pcase resolution
+          ('skip
+           (elog-warning org-canvas--logger
+             "[Conflict] Skipping '%s' — remote item was modified since last sync" title)
+           'skip)
+          ('pull
+           (if effective-pull-fn
+               (progn
+                 (org-canvas--conflict-pull-local data remote-response effective-pull-fn)
+                 (elog-info org-canvas--logger
+                   "[Conflict] Pulled remote version of '%s'" title)
+                 'pulled)
+             (elog-warning org-canvas--logger
+               "[Conflict] No pull function available, skipping '%s'" title)
+             'skip))
+          ('push
+           (elog-info org-canvas--logger
+             "[Conflict] Force-pushing '%s' (user chose overwrite)" title)
+           'push))))))
+
 (cl-defun org-canvas--push-to-api (data payload
 					&key
 					endpoint
@@ -1968,29 +2008,11 @@ Returns the API response alist."
     (when (and org-canvas-detect-conflicts
                (eq method 'PUT)
                (plist-get data :pom))
-      (let ((conflict-result (org-canvas--conflict-check endpoint id (plist-get data :pom))))
-        (when (and conflict-result (eq (car conflict-result) 'conflict))
-          (let* ((remote-response (cdr conflict-result))
-                 (effective-pull-fn org-canvas--current-pull-item-fn)
-                 (resolution (org-canvas--resolve-conflict data remote-response)))
-            (pcase resolution
-              ('skip
-               (elog-warning org-canvas--logger
-                 "[Conflict] Skipping '%s' — remote item was modified since last sync" title)
-               (cl-return-from org-canvas--push-to-api 'conflict))
-              ('pull
-               (if effective-pull-fn
-                   (progn
-                     (org-canvas--conflict-pull-local data remote-response effective-pull-fn)
-                     (elog-info org-canvas--logger
-                       "[Conflict] Pulled remote version of '%s'" title)
-                     (cl-return-from org-canvas--push-to-api 'pulled))
-                 (elog-warning org-canvas--logger
-                   "[Conflict] No pull function available, skipping '%s'" title)
-                 (cl-return-from org-canvas--push-to-api 'conflict)))
-              ('push
-               (elog-info org-canvas--logger
-                 "[Conflict] Force-pushing '%s' (user chose overwrite)" title)))))))
+      (let ((decision (org-canvas--push-check-and-resolve-conflict
+                       endpoint id data title)))
+        (unless (eq decision 'push)
+          (cl-return-from org-canvas--push-to-api
+            (if (eq decision 'pulled) 'pulled 'conflict)))))
 
     (elog-info org-canvas--logger "[Execute] %s '%s' to %s" method title full-endpoint)
 

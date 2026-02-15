@@ -719,56 +719,65 @@ Returns a link string or just the title if resolution fails."
                         org-file heading-name (or title heading-name))
               (or title "Untitled"))))))))
 
+(defun org-canvas--module-pull-insert-subheader (item-title item-id item-published)
+  "Insert a SubHeader heading with ITEM-TITLE, ITEM-ID, and ITEM-PUBLISHED."
+  (insert (format "** %s\n" (or item-title "Section")))
+  (org-back-to-heading t)
+  (org-canvas-org-set-property (point) "CANVAS_ID" (format "%s" item-id))
+  (org-canvas--pull-set-boolean-property (point) "PUBLISHED" item-published)
+  (goto-char (save-excursion (org-end-of-subtree t) (point))))
+
+(defun org-canvas--module-pull-insert-external-url (item item-id item-published)
+  "Insert an ExternalUrl heading from ITEM with ITEM-ID and ITEM-PUBLISHED."
+  (let ((item-title (alist-get 'title item))
+        (ext-url (alist-get 'external_url item))
+        (new-tab (alist-get 'new_tab item))
+        (indent (alist-get 'indent item)))
+    (insert (format "** %s\n" (or item-title "External Link")))
+    (org-back-to-heading t)
+    (org-canvas-org-set-property (point) "CANVAS_ID" (format "%s" item-id))
+    (when ext-url
+      (org-canvas-org-set-property (point) "EXTERNAL_URL" ext-url))
+    (when new-tab
+      (org-canvas-org-set-property (point) "NEW_TAB" "true"))
+    (when indent
+      (org-canvas-org-set-property (point) "INDENT" (format "%s" indent)))
+    (org-canvas--pull-set-boolean-property (point) "PUBLISHED" item-published)
+    (goto-char (save-excursion (org-end-of-subtree t) (point)))))
+
+(defun org-canvas--module-pull-insert-content-item (item item-id item-published)
+  "Insert a content-linked heading from ITEM with ITEM-ID and ITEM-PUBLISHED."
+  (let ((item-type (alist-get 'type item))
+        (item-title (alist-get 'title item))
+        (content-id (alist-get 'content_id item))
+        (indent (alist-get 'indent item)))
+    (let ((link (org-canvas--module-resolve-item-link
+                 item-type content-id item-title)))
+      (insert (format "** %s\n" link))
+      (org-back-to-heading t)
+      (org-canvas-org-set-property (point) "CANVAS_ID" (format "%s" item-id))
+      (when indent
+        (org-canvas-org-set-property (point) "INDENT" (format "%s" indent)))
+      (org-canvas--pull-set-boolean-property (point) "PUBLISHED" item-published)
+      (goto-char (save-excursion (org-end-of-subtree t) (point))))))
+
 (defun org-canvas--module-pull-insert-items (items)
   "Insert level-2 headings for module ITEMS at point.
 Returns the count of items inserted."
   (let ((count 0))
     (insert "\n")
     (dolist (item (append items nil))
-      (let* ((item-type (alist-get 'type item))
-             (item-title (alist-get 'title item))
-             (item-id (alist-get 'id item))
-             (content-id (alist-get 'content_id item))
-             (indent (alist-get 'indent item))
-             (item-published (alist-get 'published item)))
+      (let ((item-type (alist-get 'type item))
+            (item-id (alist-get 'id item))
+            (item-published (alist-get 'published item)))
         (cond
          ((equal item-type "SubHeader")
-          (insert (format "** %s\n" (or item-title "Section")))
-          (org-back-to-heading t)
-          (org-canvas-org-set-property (point) "CANVAS_ID"
-                                       (format "%s" item-id))
-          (org-canvas--pull-set-boolean-property (point) "PUBLISHED" item-published)
-          (goto-char (save-excursion (org-end-of-subtree t) (point))))
+          (org-canvas--module-pull-insert-subheader
+           (alist-get 'title item) item-id item-published))
          ((equal item-type "ExternalUrl")
-          (let ((ext-url (alist-get 'external_url item))
-                (new-tab (alist-get 'new_tab item)))
-            (insert (format "** %s\n" (or item-title "External Link")))
-            (org-back-to-heading t)
-            (org-canvas-org-set-property (point) "CANVAS_ID"
-                                         (format "%s" item-id))
-            (when ext-url
-              (org-canvas-org-set-property (point) "EXTERNAL_URL" ext-url))
-            (when new-tab
-              (org-canvas-org-set-property (point) "NEW_TAB" "true"))
-            (when indent
-              (org-canvas-org-set-property (point) "INDENT"
-                                           (format "%s" indent)))
-            (org-canvas--pull-set-boolean-property (point) "PUBLISHED" item-published)
-            (goto-char (save-excursion
-                         (org-end-of-subtree t) (point)))))
+          (org-canvas--module-pull-insert-external-url item item-id item-published))
          (t
-          (let ((link (org-canvas--module-resolve-item-link
-                       item-type content-id item-title)))
-            (insert (format "** %s\n" link))
-            (org-back-to-heading t)
-            (org-canvas-org-set-property (point) "CANVAS_ID"
-                                         (format "%s" item-id))
-            (when indent
-              (org-canvas-org-set-property (point) "INDENT"
-                                           (format "%s" indent)))
-            (org-canvas--pull-set-boolean-property (point) "PUBLISHED" item-published)
-            (goto-char (save-excursion
-                         (org-end-of-subtree t) (point))))))
+          (org-canvas--module-pull-insert-content-item item item-id item-published)))
         (cl-incf count)))
     count))
 

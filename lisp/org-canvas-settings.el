@@ -207,47 +207,37 @@ Returns a hash-table suitable for `json-encode'."
     (puthash "course" course payload)
     payload))
 
+(defconst org-canvas--late-policy-field-specs
+  '((:late-submission-deduction "late_submission_deduction" number)
+    (:late-submission-deduction-enabled "late_submission_deduction_enabled" boolean)
+    (:late-submission-interval "late_submission_interval" string)
+    (:late-submission-minimum-percent "late_submission_minimum_percent" number)
+    (:late-submission-minimum-percent-enabled "late_submission_minimum_percent_enabled" boolean)
+    (:missing-submission-deduction "missing_submission_deduction" number)
+    (:missing-submission-deduction-enabled "missing_submission_deduction_enabled" boolean))
+  "Field specs for late policy: (DATA-KEY HASH-KEY TYPE).")
+
 (defun org-canvas--settings-build-late-policy-payload (data)
   "Build a Canvas late policy payload from parsed DATA plist.
 Returns a hash-table wrapped in `late_policy' key, or nil if no
 late policy properties are set."
-  (let ((deduction (plist-get data :late-submission-deduction))
-        (deduction-enabled (plist-get data :late-submission-deduction-enabled))
-        (interval (plist-get data :late-submission-interval))
-        (min-pct (plist-get data :late-submission-minimum-percent))
-        (min-pct-enabled (plist-get data :late-submission-minimum-percent-enabled))
-        (missing-deduction (plist-get data :missing-submission-deduction))
-        (missing-enabled (plist-get data :missing-submission-deduction-enabled)))
-    (when (or deduction deduction-enabled interval min-pct min-pct-enabled
-              missing-deduction missing-enabled)
+  (let ((has-any (cl-some (lambda (spec) (plist-get data (car spec)))
+                          org-canvas--late-policy-field-specs)))
+    (when has-any
       (let ((lp (make-hash-table :test 'equal))
             (payload (make-hash-table :test 'equal)))
-        (when deduction
-          (puthash "late_submission_deduction"
-                   (org-canvas--safe-string-to-number deduction "LATE_SUBMISSION_DEDUCTION")
-                   lp))
-        (when deduction-enabled
-          (puthash "late_submission_deduction_enabled"
-                   (if (equal deduction-enabled "true") t :json-false)
-                   lp))
-        (when interval
-          (puthash "late_submission_interval" interval lp))
-        (when min-pct
-          (puthash "late_submission_minimum_percent"
-                   (org-canvas--safe-string-to-number min-pct "LATE_SUBMISSION_MINIMUM_PERCENT")
-                   lp))
-        (when min-pct-enabled
-          (puthash "late_submission_minimum_percent_enabled"
-                   (if (equal min-pct-enabled "true") t :json-false)
-                   lp))
-        (when missing-deduction
-          (puthash "missing_submission_deduction"
-                   (org-canvas--safe-string-to-number missing-deduction "MISSING_SUBMISSION_DEDUCTION")
-                   lp))
-        (when missing-enabled
-          (puthash "missing_submission_deduction_enabled"
-                   (if (equal missing-enabled "true") t :json-false)
-                   lp))
+        (dolist (spec org-canvas--late-policy-field-specs)
+          (let ((val (plist-get data (nth 0 spec)))
+                (hash-key (nth 1 spec))
+                (type (nth 2 spec)))
+            (when val
+              (puthash hash-key
+                       (pcase type
+                         ('number (org-canvas--safe-string-to-number
+                                   val (upcase hash-key)))
+                         ('boolean (if (equal val "true") t :json-false))
+                         (_ val))
+                       lp))))
         (puthash "late_policy" lp payload)
         payload))))
 
@@ -340,6 +330,51 @@ Items in strikethrough (+Tab+) are hidden."
               (setq pos (1+ pos))))))
       (nreverse result))))
 
+(cl-defun org-canvas--settings-sync-single-tab (desired current-tabs)
+  "Sync a single tab DESIRED against CURRENT-TABS from Canvas.
+DESIRED is a (:label :hidden :position) plist.
+Returns t if the tab was updated, nil otherwise."
+  (let* ((label (plist-get desired :label))
+         (label-down (downcase label))
+         (hidden (plist-get desired :hidden))
+         (position (plist-get desired :position)))
+    ;; Guard: skip immutable tabs
+    (when (member label-down org-canvas--settings-immutable-tabs)
+      (when hidden
+        (elog-warning org-canvas--logger
+          "[Tabs] Cannot hide '%s' — Canvas does not allow it" label))
+      (cl-return-from org-canvas--settings-sync-single-tab nil))
+    ;; Find matching tab by label
+    (let ((tab (cl-find-if
+                (lambda (t-item)
+                  (string= (downcase (alist-get 'label t-item)) label-down))
+                current-tabs)))
+      (unless tab
+        (elog-warning org-canvas--logger "[Tabs] Tab '%s' not found on Canvas" label)
+        (cl-return-from org-canvas--settings-sync-single-tab nil))
+      (let* ((tab-id (alist-get 'id tab))
+             (cur-hidden (eq (alist-get 'hidden tab) t))
+             (cur-pos (alist-get 'position tab))
+             (needs-update (or (not (eq hidden cur-hidden))
+                               (not (equal position cur-pos)))))
+        (when needs-update
+          (let ((payload `((hidden . ,(if hidden t :json-false))
+                           (position . ,position)))
+                (tab-url (org-canvas-api-course-endpoint
+                          (format "tabs/%s" tab-id))))
+            (condition-case err
+                (progn
+                  (org-canvas-api-request 'PUT tab-url :data payload)
+                  (elog-info org-canvas--logger
+                    "[Tabs] Updated '%s': hidden=%s position=%d"
+                    label (if hidden "yes" "no") position)
+                  t)
+              (error
+               (elog-warning org-canvas--logger
+                 "[Tabs] Failed to update '%s': %s"
+                 label (error-message-string err))
+               nil))))))))
+
 (cl-defun org-canvas--settings-sync-tabs (navigation)
   "Sync NAVIGATION tab state to Canvas.
 NAVIGATION is a list of (:label :hidden :position) plists.
@@ -359,43 +394,8 @@ Fetches current tabs, diffs against desired state, and PUTs changes."
          (current-tabs (org-canvas-api-request 'GET url))
          (changes 0))
     (dolist (desired navigation)
-      (let* ((label (plist-get desired :label))
-             (label-down (downcase label))
-             (hidden (plist-get desired :hidden))
-             (position (plist-get desired :position)))
-        ;; Guard: skip immutable tabs
-        (if (member label-down org-canvas--settings-immutable-tabs)
-            (when hidden
-              (elog-warning org-canvas--logger
-                "[Tabs] Cannot hide '%s' — Canvas does not allow it" label))
-          ;; Find matching tab by label
-          (let ((tab (cl-find-if
-                      (lambda (t-item)
-                        (string= (downcase (alist-get 'label t-item)) label-down))
-                      current-tabs)))
-            (if (not tab)
-                (elog-warning org-canvas--logger "[Tabs] Tab '%s' not found on Canvas" label)
-              (let* ((tab-id (alist-get 'id tab))
-                     (cur-hidden (eq (alist-get 'hidden tab) t))
-                     (cur-pos (alist-get 'position tab))
-                     (needs-update (or (not (eq hidden cur-hidden))
-                                       (not (equal position cur-pos)))))
-                (when needs-update
-                  (let ((payload `((hidden . ,(if hidden t :json-false))
-                                   (position . ,position)))
-                        (tab-url (org-canvas-api-course-endpoint
-                                  (format "tabs/%s" tab-id))))
-                    (condition-case err
-                        (progn
-                          (org-canvas-api-request 'PUT tab-url :data payload)
-                          (setq changes (1+ changes))
-                          (elog-info org-canvas--logger
-                            "[Tabs] Updated '%s': hidden=%s position=%d"
-                            label (if hidden "yes" "no") position))
-                      (error
-                       (elog-warning org-canvas--logger
-                         "[Tabs] Failed to update '%s': %s"
-                         label (error-message-string err))))))))))))
+      (when (org-canvas--settings-sync-single-tab desired current-tabs)
+        (setq changes (1+ changes))))
     (elog-info org-canvas--logger "[Tabs] %d tab(s) updated" changes)))
 
 (defun org-canvas--settings-pull-tabs ()
@@ -509,6 +509,36 @@ Point must be at the heading."
     (goto-char body-start)
     (insert "\n" syllabus-body "\n")))
 
+(defun org-canvas--settings-pull-late-policy-properties (pom late-policy)
+  "Set late policy properties at POM from LATE-POLICY API response."
+  (when late-policy
+    (let ((lp (alist-get 'late_policy late-policy)))
+      (when lp
+        (let ((deduction (alist-get 'late_submission_deduction lp))
+              (interval (alist-get 'late_submission_interval lp))
+              (min-pct (alist-get 'late_submission_minimum_percent lp))
+              (missing-deduction (alist-get 'missing_submission_deduction lp)))
+          (when deduction
+            (org-canvas-org-set-property pom "LATE_SUBMISSION_DEDUCTION"
+                                         (format "%s" deduction)))
+          (org-canvas--pull-set-boolean-property
+           pom "LATE_SUBMISSION_DEDUCTION_ENABLED"
+           (alist-get 'late_submission_deduction_enabled lp))
+          (when interval
+            (org-canvas-org-set-property pom "LATE_SUBMISSION_INTERVAL" interval))
+          (when min-pct
+            (org-canvas-org-set-property pom "LATE_SUBMISSION_MINIMUM_PERCENT"
+                                         (format "%s" min-pct)))
+          (org-canvas--pull-set-boolean-property
+           pom "LATE_SUBMISSION_MINIMUM_PERCENT_ENABLED"
+           (alist-get 'late_submission_minimum_percent_enabled lp))
+          (when missing-deduction
+            (org-canvas-org-set-property pom "MISSING_SUBMISSION_DEDUCTION"
+                                         (format "%s" missing-deduction)))
+          (org-canvas--pull-set-boolean-property
+           pom "MISSING_SUBMISSION_DEDUCTION_ENABLED"
+           (alist-get 'missing_submission_deduction_enabled lp)))))))
+
 (defun org-canvas--settings-pull-set-properties (pom response syllabus-body
                                                      &optional late-policy)
   "Set all settings properties at POM from API RESPONSE.
@@ -558,34 +588,7 @@ LATE-POLICY is the late policy API response (may be nil)."
     (let ((gs-id (alist-get 'grading_standard_id response)))
       (when gs-id
         (org-canvas-org-set-property pom "GRADING_STANDARD_ID" (format "%s" gs-id))))
-    ;; Late policy properties
-    (when late-policy
-      (let ((lp (alist-get 'late_policy late-policy)))
-        (when lp
-          (let ((deduction (alist-get 'late_submission_deduction lp))
-                (interval (alist-get 'late_submission_interval lp))
-                (min-pct (alist-get 'late_submission_minimum_percent lp))
-                (missing-deduction (alist-get 'missing_submission_deduction lp)))
-            (when deduction
-              (org-canvas-org-set-property pom "LATE_SUBMISSION_DEDUCTION"
-                                           (format "%s" deduction)))
-            (org-canvas--pull-set-boolean-property
-             pom "LATE_SUBMISSION_DEDUCTION_ENABLED"
-             (alist-get 'late_submission_deduction_enabled lp))
-            (when interval
-              (org-canvas-org-set-property pom "LATE_SUBMISSION_INTERVAL" interval))
-            (when min-pct
-              (org-canvas-org-set-property pom "LATE_SUBMISSION_MINIMUM_PERCENT"
-                                           (format "%s" min-pct)))
-            (org-canvas--pull-set-boolean-property
-             pom "LATE_SUBMISSION_MINIMUM_PERCENT_ENABLED"
-             (alist-get 'late_submission_minimum_percent_enabled lp))
-            (when missing-deduction
-              (org-canvas-org-set-property pom "MISSING_SUBMISSION_DEDUCTION"
-                                           (format "%s" missing-deduction)))
-            (org-canvas--pull-set-boolean-property
-             pom "MISSING_SUBMISSION_DEDUCTION_ENABLED"
-             (alist-get 'missing_submission_deduction_enabled lp))))))
+    (org-canvas--settings-pull-late-policy-properties pom late-policy)
     ;; Course image
     (let ((image-url (org-canvas--alist-get-non-null 'image_download_url response)))
       (when image-url
@@ -595,6 +598,26 @@ LATE-POLICY is the late policy API response (may be nil)."
      (format-time-string "[%Y-%m-%d %a %H:%M]"))
     (when syllabus-body
       (org-canvas--settings-replace-syllabus-body syllabus-body))))
+
+(defun org-canvas--settings-insert-navigation-heading (nav-text)
+  "Remove existing ** Navigation heading and insert NAV-TEXT."
+  (save-excursion
+    ;; Remove existing ** Navigation if present
+    (goto-char (point-min))
+    (when (re-search-forward "^\\*\\* Navigation" nil t)
+      (beginning-of-line)
+      (let ((start (point))
+            (end (save-excursion
+                   (if (re-search-forward "^\\*\\* " nil t)
+                       (match-beginning 0)
+                     (point-max)))))
+        (delete-region start end)))
+    ;; Insert at end of course heading subtree
+    (goto-char (point-min))
+    (re-search-forward "^\\*+ " nil t)
+    (org-back-to-heading t)
+    (org-end-of-subtree t)
+    (insert "\n" nav-text)))
 
 ;;;###autoload
 (defun org-canvas-pull-settings ()
@@ -638,23 +661,7 @@ and heading if they don't exist."
                             (org-canvas--settings-pull-tabs)
                           (error nil))))
           (when nav-text
-            (save-excursion
-              ;; Remove existing ** Navigation if present
-              (goto-char (point-min))
-              (when (re-search-forward "^\\*\\* Navigation" nil t)
-                (beginning-of-line)
-                (let ((start (point))
-                      (end (save-excursion
-                             (if (re-search-forward "^\\*\\* " nil t)
-                                 (match-beginning 0)
-                               (point-max)))))
-                  (delete-region start end)))
-              ;; Insert at end of course heading subtree
-              (goto-char (point-min))
-              (re-search-forward "^\\*+ " nil t)
-              (org-back-to-heading t)
-              (org-end-of-subtree t)
-              (insert "\n" nav-text))))
+            (org-canvas--settings-insert-navigation-heading nav-text)))
         (save-buffer)))
     (elog-info org-canvas--logger "========================================")
     (elog-info org-canvas--logger ">>> SETTINGS PULL COMPLETE")

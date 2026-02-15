@@ -594,7 +594,14 @@ FILE is the quizzes.org path, used for group link resolution."
   (let ((quiz-type (alist-get 'quiz_type quiz))
         (time-limit (alist-get 'time_limit quiz))
         (shuffle (alist-get 'shuffle_answers quiz))
-        (group-id (alist-get 'assignment_group_id quiz)))
+        (group-id (alist-get 'assignment_group_id quiz))
+        (access-code (org-canvas--alist-get-non-null 'access_code quiz))
+        (show-correct (alist-get 'show_correct_answers quiz))
+        (hide-results (org-canvas--alist-get-non-null 'hide_results quiz))
+        (scoring (org-canvas--alist-get-non-null 'scoring_policy quiz))
+        (one-q (alist-get 'one_question_at_a_time quiz))
+        (cant-back (alist-get 'cant_go_back quiz))
+        (ip (org-canvas--alist-get-non-null 'ip_filter quiz)))
     (org-canvas-org-save-sync-state pos (alist-get 'id quiz))
     (when quiz-type
       (org-canvas-org-set-property pos "QUIZ_TYPE" quiz-type))
@@ -605,37 +612,30 @@ FILE is the quizzes.org path, used for group link resolution."
     (org-canvas--pull-set-timestamp-property pos "DUE_AT" (alist-get 'due_at quiz))
     (org-canvas--pull-set-timestamp-property pos "UNLOCK_AT" (alist-get 'unlock_at quiz))
     (org-canvas--pull-set-timestamp-property pos "LOCK_AT" (alist-get 'lock_at quiz))
-    (let ((access-code (org-canvas--alist-get-non-null 'access_code quiz))
-          (show-correct (alist-get 'show_correct_answers quiz))
-          (hide-results (org-canvas--alist-get-non-null 'hide_results quiz))
-          (scoring (org-canvas--alist-get-non-null 'scoring_policy quiz))
-          (one-q (alist-get 'one_question_at_a_time quiz))
-          (cant-back (alist-get 'cant_go_back quiz))
-          (ip (org-canvas--alist-get-non-null 'ip_filter quiz)))
-      (when access-code
-        (org-canvas-org-set-property pos "ACCESS_CODE" access-code))
-      (when (not (eq show-correct :null))
-        (org-canvas--pull-set-boolean-property pos "SHOW_CORRECT_ANSWERS" show-correct))
-      (org-canvas--pull-set-timestamp-property pos "SHOW_CORRECT_ANSWERS_AT"
-                                               (alist-get 'show_correct_answers_at quiz))
-      (org-canvas--pull-set-timestamp-property pos "HIDE_CORRECT_ANSWERS_AT"
-                                               (alist-get 'hide_correct_answers_at quiz))
-      (when hide-results
-        (org-canvas-org-set-property pos "HIDE_RESULTS" hide-results))
-      (when scoring
-        (org-canvas-org-set-property pos "SCORING_POLICY" scoring))
-      (when one-q
-        (org-canvas--pull-set-boolean-property pos "ONE_QUESTION_AT_A_TIME" one-q))
-      (when cant-back
-        (org-canvas--pull-set-boolean-property pos "CANT_GO_BACK" cant-back))
-      (when ip
-        (org-canvas-org-set-property pos "IP_FILTER" ip))
-      (org-canvas--pull-set-boolean-property pos "SHOW_CORRECT_ANSWERS_LAST_ATTEMPT"
-                                             (alist-get 'show_correct_answers_last_attempt quiz))
-      (org-canvas--pull-set-boolean-property pos "ONE_TIME_RESULTS"
-                                             (alist-get 'one_time_results quiz))
-      (org-canvas--pull-set-boolean-property pos "ONLY_VISIBLE_TO_OVERRIDES"
-                                             (alist-get 'only_visible_to_overrides quiz)))
+    (when access-code
+      (org-canvas-org-set-property pos "ACCESS_CODE" access-code))
+    (when (not (eq show-correct :null))
+      (org-canvas--pull-set-boolean-property pos "SHOW_CORRECT_ANSWERS" show-correct))
+    (org-canvas--pull-set-timestamp-property pos "SHOW_CORRECT_ANSWERS_AT"
+                                             (alist-get 'show_correct_answers_at quiz))
+    (org-canvas--pull-set-timestamp-property pos "HIDE_CORRECT_ANSWERS_AT"
+                                             (alist-get 'hide_correct_answers_at quiz))
+    (when hide-results
+      (org-canvas-org-set-property pos "HIDE_RESULTS" hide-results))
+    (when scoring
+      (org-canvas-org-set-property pos "SCORING_POLICY" scoring))
+    (when one-q
+      (org-canvas--pull-set-boolean-property pos "ONE_QUESTION_AT_A_TIME" one-q))
+    (when cant-back
+      (org-canvas--pull-set-boolean-property pos "CANT_GO_BACK" cant-back))
+    (when ip
+      (org-canvas-org-set-property pos "IP_FILTER" ip))
+    (org-canvas--pull-set-boolean-property pos "SHOW_CORRECT_ANSWERS_LAST_ATTEMPT"
+                                           (alist-get 'show_correct_answers_last_attempt quiz))
+    (org-canvas--pull-set-boolean-property pos "ONE_TIME_RESULTS"
+                                           (alist-get 'one_time_results quiz))
+    (org-canvas--pull-set-boolean-property pos "ONLY_VISIBLE_TO_OVERRIDES"
+                                           (alist-get 'only_visible_to_overrides quiz))
     (when (and group-id (fboundp 'org-canvas--assignment-resolve-group-link))
       (let ((group-link (org-canvas--assignment-resolve-group-link group-id)))
         (when group-link

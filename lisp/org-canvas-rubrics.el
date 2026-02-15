@@ -141,6 +141,14 @@ Returns a plist (:id KEY :obj HASH :points NUM)."
     (puthash "association_id" org-canvas-course-id ra)
     ra))
 
+(defun org-canvas--rubric-flush-pending-criterion (criterion ratings counter criteria-hash)
+  "Flush CRITERION with RATINGS at COUNTER into CRITERIA-HASH.
+Returns the points for this criterion."
+  (let ((crit (org-canvas--rubric-build-criterion
+               criterion counter (nreverse ratings))))
+    (puthash (plist-get crit :id) (plist-get crit :obj) criteria-hash)
+    (plist-get crit :points)))
+
 (defun org-canvas--rubric-build-payload (data)
   "Convert DATA to Canvas rubric payload using Hash Tables."
   (let ((title (plist-get data :title))
@@ -163,22 +171,20 @@ Returns a plist (:id KEY :obj HASH :points NUM)."
                 (push row pending-ratings)
               ;; New criterion row — flush any pending criterion first
               (when pending-criterion
-                (let ((crit (org-canvas--rubric-build-criterion
-                             pending-criterion counter
-                             (nreverse pending-ratings))))
-                  (puthash (plist-get crit :id) (plist-get crit :obj) criteria-hash)
-                  (setq total-points (+ total-points (plist-get crit :points)))
-                  (setq counter (1+ counter))))
+                (setq total-points
+                      (+ total-points
+                         (org-canvas--rubric-flush-pending-criterion
+                          pending-criterion pending-ratings counter criteria-hash)))
+                (setq counter (1+ counter)))
               (setq pending-criterion row)
               (setq pending-ratings nil))))
         ;; Flush last criterion
         (when pending-criterion
-          (let ((crit (org-canvas--rubric-build-criterion
-                       pending-criterion counter
-                       (nreverse pending-ratings))))
-            (puthash (plist-get crit :id) (plist-get crit :obj) criteria-hash)
-            (setq total-points (+ total-points (plist-get crit :points)))
-            (setq counter (1+ counter)))))
+          (setq total-points
+                (+ total-points
+                   (org-canvas--rubric-flush-pending-criterion
+                    pending-criterion pending-ratings counter criteria-hash)))
+          (setq counter (1+ counter))))
       (puthash "criteria" criteria-hash rubric-obj)
       (elog-info org-canvas--logger "[Stage 2: Transform] Built %d criteria, total points: %d" counter total-points)
       (let ((payload (make-hash-table :test 'equal)))

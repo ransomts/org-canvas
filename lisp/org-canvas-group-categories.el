@@ -133,27 +133,27 @@ PUT is global."
           response)
       (error
        (let ((msg (error-message-string err)))
-         ;; Timeout recovery: search Canvas for the item by name
-         (if (string-match-p "timed out\\|timeout" (downcase msg))
-             (progn
-               (elog-warning org-canvas--logger "[Stage 3: Timeout] Searching for '%s' on Canvas..." title)
-               (let ((found (org-canvas--search-item "group_categories" title :match-field 'name)))
-                 (if found
-                     (progn
-                       (elog-info org-canvas--logger "[Stage 3: Recovery] Found '%s' with ID %s" title (alist-get 'id found))
-                       found)
-                   (elog-error org-canvas--logger "[Stage 3: Recovery] Could not find '%s' after timeout" title)
-                   (signal (car err) (cdr err)))))
-           ;; 404 on PUT: retry as POST
-           (if (and canvas-id (string-match-p "404" msg))
-               (progn
-                 (elog-warning org-canvas--logger "[Stage 3: 404] Stale CANVAS_ID %s, retrying as POST..." canvas-id)
-                 (let* ((post-url (org-canvas-api-course-endpoint "group_categories"))
-                        (response (org-canvas-api-request 'POST post-url :data payload)))
-                   (elog-info org-canvas--logger "[Stage 3: Recovery] POST succeeded for '%s'" title)
-                   response))
-             (elog-error org-canvas--logger "[Stage 3: FAILED] '%s': %s" title msg)
-             (signal (car err) (cdr err)))))))))
+         (cond
+          ;; Timeout recovery: search Canvas for the item by name
+          ((org-canvas--timeout-error-p err)
+           (elog-warning org-canvas--logger "[Stage 3: Timeout] Searching for '%s' on Canvas..." title)
+           (let ((found (org-canvas--search-item "group_categories" title :match-field 'name)))
+             (if found
+                 (progn
+                   (elog-info org-canvas--logger "[Stage 3: Recovery] Found '%s' with ID %s" title (alist-get 'id found))
+                   found)
+               (elog-error org-canvas--logger "[Stage 3: Recovery] Could not find '%s' after timeout" title)
+               (signal (car err) (cdr err)))))
+          ;; 404 on PUT: retry as POST
+          ((and canvas-id (string-match-p "404" msg))
+           (elog-warning org-canvas--logger "[Stage 3: 404] Stale CANVAS_ID %s, retrying as POST..." canvas-id)
+           (let* ((post-url (org-canvas-api-course-endpoint "group_categories"))
+                  (response (org-canvas-api-request 'POST post-url :data payload)))
+             (elog-info org-canvas--logger "[Stage 3: Recovery] POST succeeded for '%s'" title)
+             response))
+          (t
+           (elog-error org-canvas--logger "[Stage 3: FAILED] '%s': %s" title msg)
+           (signal (car err) (cdr err)))))))))
 
 ;;;; 4. Stage: Finalization
 

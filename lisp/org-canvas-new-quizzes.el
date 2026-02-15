@@ -648,6 +648,27 @@ avoid duplication in the API payload."
 
 ;;;; Item Push to API
 
+(defun org-canvas--new-quiz-item-wrap-payload (payload)
+  "Restructure flat PAYLOAD into nested {item: {entry: ...}} format."
+  (let ((entry (make-hash-table :test 'equal))
+        (item (make-hash-table :test 'equal))
+        (wrapped (make-hash-table :test 'equal)))
+    ;; Entry-level fields (inside item.entry)
+    (puthash "item_body" (gethash "item_body" payload) entry)
+    (puthash "interaction_type_slug" (gethash "interaction_type_slug" payload) entry)
+    (when (gethash "interaction_data" payload)
+      (puthash "interaction_data" (gethash "interaction_data" payload) entry))
+    (when (gethash "scoring_data" payload)
+      (puthash "scoring_data" (gethash "scoring_data" payload) entry))
+    (when (gethash "scoring_algorithm" payload)
+      (puthash "scoring_algorithm" (gethash "scoring_algorithm" payload) entry))
+    ;; Item-level fields
+    (puthash "entry_type" (gethash "entry_type" payload) item)
+    (puthash "points_possible" (gethash "points_possible" payload) item)
+    (puthash "entry" entry item)
+    (puthash "item" item wrapped)
+    wrapped))
+
 (cl-defun org-canvas--new-quiz-item-push-to-api (data payload)
   "Send New Quiz item PAYLOAD (from DATA) to Canvas API.
 PAYLOAD is the flat item data from `build-payload'.  It is restructured
@@ -663,27 +684,7 @@ into the nested format required by the New Quizzes Items API:
                         "quizzes/%s/items/%s" quiz-id item-id)
                      (org-canvas--new-quiz-api-endpoint
                       "quizzes/%s/items" quiz-id)))
-         ;; Restructure flat payload into nested item > entry format
-         (entry (make-hash-table :test 'equal))
-         (item (make-hash-table :test 'equal))
-         (wrapped (make-hash-table :test 'equal)))
-
-    ;; Entry-level fields (inside item.entry)
-    (puthash "item_body" (gethash "item_body" payload) entry)
-    (puthash "interaction_type_slug" (gethash "interaction_type_slug" payload) entry)
-    (when (gethash "interaction_data" payload)
-      (puthash "interaction_data" (gethash "interaction_data" payload) entry))
-    (when (gethash "scoring_data" payload)
-      (puthash "scoring_data" (gethash "scoring_data" payload) entry))
-    (when (gethash "scoring_algorithm" payload)
-      (puthash "scoring_algorithm" (gethash "scoring_algorithm" payload) entry))
-
-    ;; Item-level fields
-    (puthash "entry_type" (gethash "entry_type" payload) item)
-    (puthash "points_possible" (gethash "points_possible" payload) item)
-    (puthash "entry" entry item)
-
-    (puthash "item" item wrapped)
+         (wrapped (org-canvas--new-quiz-item-wrap-payload payload)))
 
     (elog-info org-canvas--logger "[New Quiz Item API] %s '%s'" method title)
 
