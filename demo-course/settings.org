@@ -28,7 +28,7 @@
 :MISSING_SUBMISSION_DEDUCTION: 100
 :MISSING_SUBMISSION_DEDUCTION_ENABLED: true
 :COURSE_IMAGE: https://example.com/images/ds101-banner.png
-:LAST_SYNCED: [2026-02-14 Sat 21:30]
+:LAST_SYNCED: [2026-02-15 Sun 09:36]
 :END:
 
 *Welcome to DS 101 -- Introduction to Data Science!*
@@ -57,5 +57,5 @@ Late work is penalized 10% per day, down to a minimum of 50%.  Missing submissio
 3. Assignments
 4. Announcements
 5. Grades
-6. +Discussions+
+6. Discussions
 7. +People+

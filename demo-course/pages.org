@@ -3,9 +3,9 @@
 :PUBLISHED: true
 :FRONT_PAGE: true
 :EDITING_ROLES: teachers
-:CANVAS_UPDATED_AT: 2026-02-15T02:31:46Z
-:CANVAS_URL: course-home-4
-:LAST_SYNCED: [2026-02-14 Sat 21:31]
+:CANVAS_UPDATED_AT: 2026-02-15T14:36:58Z
+:CANVAS_URL: course-home-5
+:LAST_SYNCED: [2026-02-15 Sun 09:36]
 :PAYLOAD_HASH: 71db6050320fce63c15ce7c0b9b9858a
 :END:
 
@@ -27,30 +27,34 @@ Use the *Modules* tab on the left to navigate weekly content.  All assignments, 
 :EDITING_ROLES: teachers
 :TODO_DATE: <2026-08-28 Fri>
 :NOTIFY_OF_UPDATE: true
-:CANVAS_UPDATED_AT: 2026-02-15T02:31:47Z
-:CANVAS_URL: software-setup-guide-4
-:LAST_SYNCED: [2026-02-14 Sat 21:31]
-:PAYLOAD_HASH: ebc08caf7e4601dd7a92e4a43aafa767
+:CANVAS_UPDATED_AT: 2026-02-15T14:46:59Z
+:CANVAS_URL: software-setup-guide-5
+:LAST_SYNCED: [2026-02-15 Sun 09:47]
+:PAYLOAD_HASH: 92bc7b76d7c800f2d45ecc79b4c2ed77
 :END:
+
 
 Follow these steps to set up your development environment for DS 101.
 
 *Step 1: Install Python 3.10+*
 
-Download from [[https://www.python.org/downloads/][python.org]] or use your system package manager.  Verify with:
+Download from [[https://www.python.org/downloads/][python.org]] or use your system package manager. Verify with:
 
+#+name: org20f0c63
 #+begin_example
-python --version
+python --version # we don't want version 2.7
 #+end_example
 
 *Step 2: Install Jupyter*
 
+#+name: org0c5ea5f
 #+begin_example
 pip install jupyterlab
 #+end_example
 
 *Step 3: Install Required Libraries*
 
+#+name: org2685732
 #+begin_example
 pip install pandas numpy matplotlib seaborn scikit-learn
 #+end_example
@@ -59,36 +63,59 @@ pip install pandas numpy matplotlib seaborn scikit-learn
 
 Launch Jupyter Lab and run:
 
-#+begin_src python
+#+begin_src src
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 print("All set!")
 #+end_src
 
-If you see "All set!" with no errors, your environment is ready.  Download the [[file:files.org::*[[file:content/resources/cheatsheet.pdf][Python Cheatsheet.pdf]]][Python Cheatsheet]] for a quick reference.
+If you see "All set!" with no errors, your environment is ready. Download the Python Cheatsheet.pdf][Python Cheatsheet]] for a quick reference.
+
 
 * Student Resources
 :PROPERTIES:
 :PUBLISHED: true
 :EDITING_ROLES: teachers,students
-:CANVAS_UPDATED_AT: 2026-02-15T02:31:49Z
-:CANVAS_URL: student-resources-4
-:LAST_SYNCED: [2026-02-14 Sat 21:31]
+:CANVAS_UPDATED_AT: 2026-02-15T14:37:00Z
+:CANVAS_URL: student-resources-5
+:LAST_SYNCED: [2026-02-15 Sun 09:42]
 :PAYLOAD_HASH: 7f11b709b2a6b755cba8538d9f81c66a
 :END:
 
+
 *Recommended Textbooks:*
+
 - /Python for Data Analysis/ by Wes McKinney (3rd edition)
 - /Think Stats/ by Allen Downey (free online)
 
 *Online Resources:*
+
 - [[https://pandas.pydata.org/docs/][pandas Documentation]]
 - [[https://docs.python.org/3/tutorial/][Official Python Tutorial]]
 - [[https://www.kaggle.com/learn][Kaggle Learn]]
 
 *Campus Resources:*
+
 - Data Science Tutoring Lab: Science Hall 105, Mon-Fri 9 AM - 5 PM
 - Writing Center: Library 200, for help with project reports
 
-Download the [[file:files.org::*[[file:content/syllabus.pdf][Syllabus.pdf]]][full syllabus]] for complete course policies and grading breakdown.
+Download the Syllabus.pdf][full syllabus]] for complete course policies and grading breakdown.
+
+* Course Home
+:PROPERTIES:
+:CANVAS_URL: course-home-4
+:LAST_SYNCED: [2026-02-15 Sun 09:42]
+:END:
+Welcome to *Introduction to Data Science (DS 101)*!
+
+*Instructor:* Dr. Jane Smith | *Email:* jsmith@university.edu | *Office:* Science Hall 312
+
+*Office Hours:* Tuesdays 2:00-4:00 PM, Thursdays 10:00 AM-12:00 PM, or by appointment.
+
+*Teaching Assistants:*
+
+- Alex Chen (achen@university.edu) -- Labs Section A & B
+- Maria Lopez (mlopez@university.edu) -- Lab Section C (Online)
+
+Use the *Modules* tab on the left to navigate weekly content. All assignments, readings, and resources are organized by week. Please review the Syllabus.pdf][course syllabus]] before the first class.

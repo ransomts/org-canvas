@@ -11,10 +11,10 @@
 :MAX_ATTEMPTS: 3
 :GROUP:    [[file:assignment-groups.org::*Labs][Labs]]
 :POSITION: 1
-:CANVAS_UPDATED_AT: 2026-02-15T02:46:07Z
-:CANVAS_ID: 2391080
-:LAST_SYNCED: [2026-02-14 Sat 21:46]
-:PAYLOAD_HASH: 3f1f296696d9c0a9a641bf519177b4a8
+:CANVAS_UPDATED_AT: 2026-02-15T14:38:14Z
+:CANVAS_ID: 2391128
+:LAST_SYNCED: [2026-02-15 Sun 09:38]
+:PAYLOAD_HASH: 24529e50d2eec4c59999f59c8e0d8477
 :END:
 
 *Lab 01: Introduction to Python*
@@ -40,7 +40,10 @@ Download the [[file:files.org::*\[\[file:content/labs/lab01-starter.py\]\[lab01-
 :GROUP:    [[file:assignment-groups.org::*Labs][Labs]]
 :RUBRIC_LINK: [[file:rubrics.org::*Lab Rubric][Lab Rubric]]
 :POSITION: 2
-:CANVAS_UPDATED_AT: 2026-02-15T02:37:51Z
+:CANVAS_UPDATED_AT: 2026-02-15T14:38:15Z
+:CANVAS_ID: 2391129
+:LAST_SYNCED: [2026-02-15 Sun 09:38]
+:PAYLOAD_HASH: 7048d6da33f396434febaf1258acf020
 :END:
 
 *Lab 02: Data Wrangling with pandas*
@@ -69,7 +72,10 @@ Your submission will be graded using the Lab Rubric.
 :AUTOMATIC_PEER_REVIEWS: true
 :TURNITIN_ENABLED: true
 :POSITION: 1
-:CANVAS_UPDATED_AT: 2026-02-15T02:37:52Z
+:CANVAS_UPDATED_AT: 2026-02-15T14:38:17Z
+:CANVAS_ID: 2391130
+:LAST_SYNCED: [2026-02-15 Sun 09:38]
+:PAYLOAD_HASH: 882b0c2c52f7cf06a350432476c5c638
 :END:
 
 *Homework 01: Descriptive Statistics Review*
@@ -95,7 +101,10 @@ Submit as a PDF.  Your work will be peer-reviewed by two classmates using the Pe
 :ANONYMOUS_GRADING: true
 :ONLY_VISIBLE_TO_OVERRIDES: false
 :POSITION: 1
-:CANVAS_UPDATED_AT: 2026-02-15T02:37:53Z
+:CANVAS_UPDATED_AT: 2026-02-15T14:38:18Z
+:CANVAS_ID: 2391131
+:LAST_SYNCED: [2026-02-15 Sun 09:38]
+:PAYLOAD_HASH: 04e29420185dabd6d4caa54d86a39ee4
 :END:
 
 *Midterm Exam: Weeks 1-7*
@@ -129,7 +138,10 @@ This exam covers all material from the first half of the course: Python fundamen
 :GRADE_INDIVIDUALLY: true
 :OMIT_FROM_GRADES: false
 :POSITION: 1
-:CANVAS_UPDATED_AT: 2026-02-15T02:37:55Z
+:CANVAS_UPDATED_AT: 2026-02-15T14:38:20Z
+:CANVAS_ID: 2391132
+:LAST_SYNCED: [2026-02-15 Sun 09:38]
+:PAYLOAD_HASH: 7b914ce15f8ca6af2b9ad5f05a708059
 :END:
 
 *Final Project: End-to-End Data Analysis*
@@ -156,7 +168,10 @@ Graded using the Project Rubric by two independent graders (moderated grading).
 :GROUP:    [[file:assignment-groups.org::*Projects][Projects]]
 :OMIT_FROM_GRADES: true
 :POSITION: 2
-:CANVAS_UPDATED_AT: 2026-02-15T02:37:56Z
+:CANVAS_UPDATED_AT: 2026-02-15T14:38:21Z
+:CANVAS_ID: 2391133
+:LAST_SYNCED: [2026-02-15 Sun 09:38]
+:PAYLOAD_HASH: 5221414cdc2be22ddbaa3fe03e017a88
 :END:
 
 *Optional: Kaggle Competition Participation*
@@ -174,7 +189,10 @@ Enter any active Kaggle competition and submit your leaderboard URL.  Points awa
 :GROUP_CATEGORY_ID: 1
 :GRADE_INDIVIDUALLY: false
 :POSITION: 3
-:CANVAS_UPDATED_AT: 2026-02-15T02:37:57Z
+:CANVAS_UPDATED_AT: 2026-02-15T14:38:23Z
+:CANVAS_ID: 2391134
+:LAST_SYNCED: [2026-02-15 Sun 09:38]
+:PAYLOAD_HASH: 76ee0fe17b9c5fe0ae768c3223e3fe0b
 :END:
 
 *Group Presentation: Data Science in the Real World*

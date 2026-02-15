@@ -5,8 +5,8 @@
 :ONE_AT_A_TIME: true
 :ALLOWED_ATTEMPTS: 2
 :SCORING_POLICY: keep_highest
-:CANVAS_ASSIGNMENT_ID: 2391060
-:LAST_SYNCED: [2026-02-14 Sat 21:32]
+:CANVAS_ASSIGNMENT_ID: 2391125
+:LAST_SYNCED: [2026-02-15 Sun 09:37]
 :END:
 
 Test your understanding of core data science concepts from Weeks 1-3.
@@ -15,8 +15,8 @@ Test your understanding of core data science concepts from Weeks 1-3.
 :PROPERTIES:
 :TYPE: choice
 :POINTS: 3
-:CANVAS_ITEM_ID: 70002
-:LAST_SYNCED: [2026-02-14 Sat 21:32]
+:CANVAS_ITEM_ID: 70023
+:LAST_SYNCED: [2026-02-15 Sun 09:37]
 :END:
 
 - [ ] To build production machine learning models
@@ -28,8 +28,8 @@ Test your understanding of core data science concepts from Weeks 1-3.
 :PROPERTIES:
 :TYPE: true-false
 :POINTS: 2
-:CANVAS_ITEM_ID: 70003
-:LAST_SYNCED: [2026-02-14 Sat 21:32]
+:CANVAS_ITEM_ID: 70024
+:LAST_SYNCED: [2026-02-15 Sun 09:37]
 :END:
 
 - [ ] True
@@ -39,8 +39,8 @@ Test your understanding of core data science concepts from Weeks 1-3.
 :PROPERTIES:
 :TYPE: multi-answer
 :POINTS: 4
-:CANVAS_ITEM_ID: 70004
-:LAST_SYNCED: [2026-02-14 Sat 21:32]
+:CANVAS_ITEM_ID: 70025
+:LAST_SYNCED: [2026-02-15 Sun 09:37]
 :END:
 
 - [X] Linear Regression
@@ -53,8 +53,8 @@ Test your understanding of core data science concepts from Weeks 1-3.
 :PROPERTIES:
 :TYPE: short-answer
 :POINTS: 2
-:CANVAS_ITEM_ID: 70005
-:LAST_SYNCED: [2026-02-14 Sat 21:32]
+:CANVAS_ITEM_ID: 70026
+:LAST_SYNCED: [2026-02-15 Sun 09:37]
 :END:
 
 - [X] pandas
@@ -66,16 +66,16 @@ Test your understanding of core data science concepts from Weeks 1-3.
 :PROPERTIES:
 :TYPE: essay
 :POINTS: 10
-:CANVAS_ITEM_ID: 70006
-:LAST_SYNCED: [2026-02-14 Sat 21:32]
+:CANVAS_ITEM_ID: 70027
+:LAST_SYNCED: [2026-02-15 Sun 09:37]
 :END:
 
 ** Match each metric to what it measures
 :PROPERTIES:
 :TYPE: matching
 :POINTS: 6
-:CANVAS_ITEM_ID: 70007
-:LAST_SYNCED: [2026-02-14 Sat 21:32]
+:CANVAS_ITEM_ID: 70028
+:LAST_SYNCED: [2026-02-15 Sun 09:37]
 :END:
 
 - Precision = Fraction of positive predictions that are correct
@@ -87,8 +87,8 @@ Test your understanding of core data science concepts from Weeks 1-3.
 :PROPERTIES:
 :TYPE: ordering
 :POINTS: 5
-:CANVAS_ITEM_ID: 70008
-:LAST_SYNCED: [2026-02-14 Sat 21:32]
+:CANVAS_ITEM_ID: 70029
+:LAST_SYNCED: [2026-02-15 Sun 09:37]
 :END:
 
 1. Define the problem
@@ -101,8 +101,8 @@ Test your understanding of core data science concepts from Weeks 1-3.
 :PROPERTIES:
 :TYPE: numerical
 :POINTS: 2
-:CANVAS_ITEM_ID: 70009
-:LAST_SYNCED: [2026-02-14 Sat 21:32]
+:CANVAS_ITEM_ID: 70030
+:LAST_SYNCED: [2026-02-15 Sun 09:37]
 :END:
 
 - [X] 8
@@ -112,8 +112,8 @@ Test your understanding of core data science concepts from Weeks 1-3.
 :TIME_LIMIT: 30
 :SHUFFLE_ANSWERS: true
 :ALLOWED_ATTEMPTS: 1
-:CANVAS_ASSIGNMENT_ID: 2391061
-:LAST_SYNCED: [2026-02-14 Sat 21:32]
+:CANVAS_ASSIGNMENT_ID: 2391126
+:LAST_SYNCED: [2026-02-15 Sun 09:37]
 :END:
 
 A shorter quiz on statistical concepts.
@@ -122,8 +122,8 @@ A shorter quiz on statistical concepts.
 :PROPERTIES:
 :TYPE: categorization
 :POINTS: 6
-:CANVAS_ITEM_ID: 70010
-:LAST_SYNCED: [2026-02-14 Sat 21:32]
+:CANVAS_ITEM_ID: 70031
+:LAST_SYNCED: [2026-02-15 Sun 09:37]
 :END:
 
 - Parametric: t-test, ANOVA, linear regression
@@ -133,8 +133,8 @@ A shorter quiz on statistical concepts.
 :PROPERTIES:
 :TYPE: true-false
 :POINTS: 2
-:CANVAS_ITEM_ID: 70011
-:LAST_SYNCED: [2026-02-14 Sat 21:32]
+:CANVAS_ITEM_ID: 70032
+:LAST_SYNCED: [2026-02-15 Sun 09:37]
 :END:
 
 - [X] True
@@ -144,14 +144,14 @@ A shorter quiz on statistical concepts.
 :PROPERTIES:
 :TYPE: file-upload
 :POINTS: 15
-:CANVAS_ITEM_ID: 70012
-:LAST_SYNCED: [2026-02-14 Sat 21:32]
+:CANVAS_ITEM_ID: 70033
+:LAST_SYNCED: [2026-02-15 Sun 09:37]
 :END:
 
 * New Quiz Questions Demo
 :PROPERTIES:
-:CANVAS_ASSIGNMENT_ID: 2391062
-:LAST_SYNCED: [2026-02-14 Sat 21:32]
+:CANVAS_ASSIGNMENT_ID: 2391127
+:LAST_SYNCED: [2026-02-15 Sun 09:37]
 :END:
 
 A demonstration of every supported New Quiz question type.
@@ -160,8 +160,9 @@ A demonstration of every supported New Quiz question type.
 :PROPERTIES:
 :TYPE: choice
 :POINTS: 2
-:CANVAS_ITEM_ID: 70013
-:LAST_SYNCED: [2026-02-14 Sat 21:32]
+:OUTCOME: [[file:../outcomes.org::*Python Proficiency][Python Proficiency]]
+:CANVAS_ITEM_ID: 70034
+:LAST_SYNCED: [2026-02-15 Sun 09:37]
 :END:
 
 - [ ] London
@@ -173,8 +174,8 @@ A demonstration of every supported New Quiz question type.
 :PROPERTIES:
 :TYPE: true-false
 :POINTS: 1
-:CANVAS_ITEM_ID: 70014
-:LAST_SYNCED: [2026-02-14 Sat 21:32]
+:CANVAS_ITEM_ID: 70035
+:LAST_SYNCED: [2026-02-15 Sun 09:37]
 :END:
 
 - [ ] True
@@ -184,8 +185,8 @@ A demonstration of every supported New Quiz question type.
 :PROPERTIES:
 :TYPE: multi-answer
 :POINTS: 3
-:CANVAS_ITEM_ID: 70015
-:LAST_SYNCED: [2026-02-14 Sat 21:32]
+:CANVAS_ITEM_ID: 70036
+:LAST_SYNCED: [2026-02-15 Sun 09:38]
 :END:
 
 - [X] 2
@@ -198,8 +199,8 @@ A demonstration of every supported New Quiz question type.
 :PROPERTIES:
 :TYPE: short-answer
 :POINTS: 2
-:CANVAS_ITEM_ID: 70016
-:LAST_SYNCED: [2026-02-14 Sat 21:32]
+:CANVAS_ITEM_ID: 70037
+:LAST_SYNCED: [2026-02-15 Sun 09:38]
 :END:
 
 - [X] H2O
@@ -209,24 +210,24 @@ A demonstration of every supported New Quiz question type.
 :PROPERTIES:
 :TYPE: essay
 :POINTS: 10
-:CANVAS_ITEM_ID: 70017
-:LAST_SYNCED: [2026-02-14 Sat 21:32]
+:CANVAS_ITEM_ID: 70038
+:LAST_SYNCED: [2026-02-15 Sun 09:38]
 :END:
 
 ** Upload your lab report as a PDF.
 :PROPERTIES:
 :TYPE: file-upload
 :POINTS: 5
-:CANVAS_ITEM_ID: 70018
-:LAST_SYNCED: [2026-02-14 Sat 21:32]
+:CANVAS_ITEM_ID: 70039
+:LAST_SYNCED: [2026-02-15 Sun 09:38]
 :END:
 
 ** What is 7 times 8?
 :PROPERTIES:
 :TYPE: numerical
 :POINTS: 2
-:CANVAS_ITEM_ID: 70019
-:LAST_SYNCED: [2026-02-14 Sat 21:32]
+:CANVAS_ITEM_ID: 70040
+:LAST_SYNCED: [2026-02-15 Sun 09:38]
 :END:
 
 - [X] 56
@@ -235,8 +236,8 @@ A demonstration of every supported New Quiz question type.
 :PROPERTIES:
 :TYPE: matching
 :POINTS: 4
-:CANVAS_ITEM_ID: 70020
-:LAST_SYNCED: [2026-02-14 Sat 21:32]
+:CANVAS_ITEM_ID: 70041
+:LAST_SYNCED: [2026-02-15 Sun 09:38]
 :END:
 
 - Japan = Tokyo
@@ -248,8 +249,8 @@ A demonstration of every supported New Quiz question type.
 :PROPERTIES:
 :TYPE: ordering
 :POINTS: 4
-:CANVAS_ITEM_ID: 70021
-:LAST_SYNCED: [2026-02-14 Sat 21:32]
+:CANVAS_ITEM_ID: 70042
+:LAST_SYNCED: [2026-02-15 Sun 09:38]
 :END:
 
 1. Invention of the printing press
@@ -261,8 +262,8 @@ A demonstration of every supported New Quiz question type.
 :PROPERTIES:
 :TYPE: categorization
 :POINTS: 4
-:CANVAS_ITEM_ID: 70022
-:LAST_SYNCED: [2026-02-14 Sat 21:32]
+:CANVAS_ITEM_ID: 70043
+:LAST_SYNCED: [2026-02-15 Sun 09:38]
 :END:
 
 - Mammals: whale, bat, elephant

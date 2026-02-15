@@ -384,6 +384,7 @@ QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
                   org-canvas--new-quiz-valid-types
                   "TYPE" "choice"))
          (points (org-canvas-org-get-number-property pom "POINTS" 1))
+         (outcome (org-canvas-org-get-property pom "OUTCOME"))
          (body-text (org-canvas--new-quiz-parse-question-text)))
 
     (elog-debug org-canvas--logger "[New Quiz Item Parse] '%s' type=%s" title q-type)
@@ -394,6 +395,7 @@ QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
           :quiz-assignment-id quiz-assignment-id
           :type q-type
           :points points
+          :outcome outcome
           :pom pom)))
 
 ;;;; Item Build Interaction Data

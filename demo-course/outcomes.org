@@ -1,15 +1,15 @@
 * Programming Skills
 :PROPERTIES:
-:CANVAS_ID: 124174
-:LAST_SYNCED: [2026-02-14 Sat 21:30]
+:CANVAS_ID: 124176
+:LAST_SYNCED: [2026-02-15 Sun 09:36]
 :END:
 ** Python Proficiency
 :PROPERTIES:
 :CALCULATION_METHOD: decaying_average
 :CALCULATION_INT: 65
 :MASTERY_POINTS: 3
-:CANVAS_ID: 51476
-:LAST_SYNCED: [2026-02-14 Sat 21:30]
+:CANVAS_ID: 51479
+:LAST_SYNCED: [2026-02-15 Sun 09:36]
 :END:
 
 Students demonstrate the ability to write correct, idiomatic Python code for data manipulation tasks.
@@ -23,8 +23,8 @@ Students demonstrate the ability to write correct, idiomatic Python code for dat
 :PROPERTIES:
 :CALCULATION_METHOD: highest
 :MASTERY_POINTS: 3
-:CANVAS_ID: 51477
-:LAST_SYNCED: [2026-02-14 Sat 21:30]
+:CANVAS_ID: 51480
+:LAST_SYNCED: [2026-02-15 Sun 09:36]
 :END:
 
 Students use pandas and related libraries to clean, transform, and analyze datasets.
@@ -36,16 +36,16 @@ Students use pandas and related libraries to clean, transform, and analyze datas
 
 * Analytical Skills
 :PROPERTIES:
-:CANVAS_ID: 124175
-:LAST_SYNCED: [2026-02-14 Sat 21:30]
+:CANVAS_ID: 124177
+:LAST_SYNCED: [2026-02-15 Sun 09:36]
 :END:
 ** Statistical Reasoning
 :PROPERTIES:
 :CALCULATION_METHOD: n_mastery
 :CALCULATION_INT: 3
 :MASTERY_POINTS: 3
-:CANVAS_ID: 51478
-:LAST_SYNCED: [2026-02-14 Sat 21:30]
+:CANVAS_ID: 51481
+:LAST_SYNCED: [2026-02-15 Sun 09:36]
 :END:
 
 Students apply appropriate statistical methods and correctly interpret results.

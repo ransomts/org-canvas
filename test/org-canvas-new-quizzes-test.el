@@ -524,6 +524,39 @@ Quiz description.
      (let ((data (org-canvas--new-quiz-item-parse-entry "42")))
        (expect (plist-get data :points) :to-equal 1))))
 
+  (it "parses OUTCOME property when present"
+    (with-temp-org-buffer
+     "* Quiz
+** Question with Outcome
+:PROPERTIES:
+:TYPE: choice
+:POINTS: 5
+:OUTCOME: [[file:outcomes.org::*Python Proficiency][Python Proficiency]]
+:END:
+
+- [X] Yes
+- [ ] No
+"
+     (search-forward "Question with Outcome")
+     (org-back-to-heading)
+     (let ((data (org-canvas--new-quiz-item-parse-entry "42")))
+       (expect (plist-get data :outcome)
+               :to-equal "[[file:outcomes.org::*Python Proficiency][Python Proficiency]]"))))
+
+  (it "returns nil for OUTCOME when absent"
+    (with-temp-org-buffer
+     "* Quiz
+** Question without Outcome
+:PROPERTIES:
+:TYPE: essay
+:POINTS: 10
+:END:
+"
+     (search-forward "Question without Outcome")
+     (org-back-to-heading)
+     (let ((data (org-canvas--new-quiz-item-parse-entry "42")))
+       (expect (plist-get data :outcome) :to-be nil))))
+
   (it "validates TYPE property"
     (with-temp-org-buffer
      "* Quiz
