@@ -260,7 +260,7 @@
 
 ;;;; Stage 4: Finalize
 
-(describe "org-canvas--group-category-finalize"
+(describe "group-category finalize"
   (it "saves CANVAS_ID from response"
     (with-temp-org-buffer
      "* Test Groups
@@ -270,7 +270,7 @@
      (org-back-to-heading)
      (let ((data (list :title "Test Groups" :pom (point-marker)))
            (response '((id . 42) (name . "Test Groups"))))
-       (org-canvas--group-category-finalize data response)
+       (org-canvas--finalize-item data response)
        (expect (org-entry-get (point) "CANVAS_ID") :to-equal "42"))))
 
   (it "saves LAST_SYNCED timestamp"
@@ -282,7 +282,7 @@
      (org-back-to-heading)
      (let ((data (list :title "Test Groups" :pom (point-marker)))
            (response '((id . 42))))
-       (org-canvas--group-category-finalize data response)
+       (org-canvas--finalize-item data response)
        (expect (org-entry-get (point) "LAST_SYNCED")
                :to-match "^\\[20[0-9][0-9]-"))))
 
@@ -295,7 +295,7 @@
      (org-back-to-heading)
      (let ((data (list :title "Test Groups" :pom (point-marker)))
            (response '((error . "bad"))))
-       (expect (org-canvas--group-category-finalize data response) :to-throw 'error)))))
+       (expect (org-canvas--finalize-item data response) :to-throw 'error)))))
 
 ;;;; Sync Pipeline Tests
 

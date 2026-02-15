@@ -126,21 +126,6 @@ because Canvas rejects drop rules when no assignments exist yet."
       (elog-debug org-canvas--logger "[Stage 2: Transform] Payload: %S" payload)
       payload)))
 
-;;;; 3. Stage: Execution
-
-(defun org-canvas--assignment-group-push-to-api (data payload)
-  "Send PAYLOAD with DATA to Canvas API.
-Handles 404 on PUT by retrying as POST (stale CANVAS_ID recovery)."
-  (org-canvas--push-to-api data payload
-    :endpoint "assignment_groups"
-    :title-key :name))
-
-;;;; 4. Stage: Finalization
-
-(defun org-canvas--assignment-group-finalize (data response)
-  "Update local Org file with DATA based on the RESPONSE."
-  (org-canvas--finalize-item data response :title-key :name))
-
 ;;;; Main Sync Function
 
 ;; Generate org-canvas-sync-assignment-groups using the pipeline macro
@@ -150,16 +135,15 @@ Handles 404 on PUT by retrying as POST (stale CANVAS_ID recovery)."
   :query "LEVEL=2+WEIGHT={.}"
   :parse #'org-canvas--assignment-group-parse-entry
   :build #'org-canvas--assignment-group-build-payload
-  :push #'org-canvas--assignment-group-push-to-api
-  :finalize #'org-canvas--assignment-group-finalize
+  :endpoint "assignment_groups"
   :title-key :name
   :pull-item-fn #'org-canvas--assignment-group-pull-item)
 
 (org-canvas-define-push-at-point assignment-group
   :parse #'org-canvas--assignment-group-parse-entry
   :build #'org-canvas--assignment-group-build-payload
-  :push #'org-canvas--assignment-group-push-to-api
-  :finalize #'org-canvas--assignment-group-finalize
+  :endpoint "assignment_groups"
+  :title-key :name
   :pull-item-fn #'org-canvas--assignment-group-pull-item)
 
 ;; Generate org-canvas-delete-all-assignment-groups using the delete macro

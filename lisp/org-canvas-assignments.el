@@ -121,13 +121,9 @@ Accepts: online_upload, online_url, online_text_entry, media_recording,
          (omit-from-grades (org-canvas-org-get-boolean-property pom "OMIT_FROM_GRADES"))
          (anonymous-grading (org-canvas-org-get-boolean-property pom "ANONYMOUS_GRADING"))
          (notify-of-update (org-canvas-org-get-boolean-property pom "NOTIFY_OF_UPDATE"))
-         (group-category-raw (org-canvas-org-get-property pom "GROUP_CATEGORY_ID"))
-         (group-category-id (if (and group-category-raw
-                                     (string-prefix-p "[[" group-category-raw))
-                                (org-canvas--resolve-link-property
-                                 group-category-raw "CANVAS_ID"
-                                 org-canvas-assignments-file)
-                              group-category-raw))
+         (group-category-id (org-canvas--resolve-link-or-raw
+                             pom "GROUP_CATEGORY_ID" "CANVAS_ID"
+                             org-canvas-assignments-file))
          (grade-individually (org-canvas-org-get-boolean-property pom "GRADE_INDIVIDUALLY"))
          (only-visible-to-overrides (org-canvas-org-get-boolean-property pom "ONLY_VISIBLE_TO_OVERRIDES"))
          (moderated-grading (org-canvas-org-get-boolean-property pom "MODERATED_GRADING"))
@@ -282,19 +278,11 @@ Accepts: online_upload, online_url, online_text_entry, media_recording,
         (puthash "assignment" assignment payload)
         payload))))
 
-;;;; 3. Stage: Execution
+;;;; 3. Stage: Execution Helper
 
 (defun org-canvas--assignment-search-by-name (name)
   "Search for an assignment with NAME on Canvas.  Return nil on error."
   (org-canvas--search-item "assignments" name :match-field 'name))
-
-(defun org-canvas--assignment-push-to-api (data payload)
-  "Send PAYLOAD using DATA to Canvas API.
-Handles 404 on PUT by retrying as POST (stale CANVAS_ID recovery).
-Handles timeout by searching for the assignment."
-  (org-canvas--push-to-api data payload
-    :endpoint "assignments"
-    :find-fn #'org-canvas--assignment-search-by-name))
 
 (defun org-canvas--assignment-associate-rubric (assignment-id rubric-id)
   "Associate RUBRIC-ID with ASSIGNMENT-ID on Canvas."
@@ -332,13 +320,6 @@ DATA is the parsed assignment plist, RESPONSE is the Canvas API response."
     (when rubric-id
       (org-canvas--assignment-associate-rubric assignment-id rubric-id))))
 
-;;;; 4. Stage: Finalization
-
-(defun org-canvas--assignment-finalize (data response)
-  "Update local Org file with CANVAS_ID using DATA and RESPONSE."
-  (org-canvas--finalize-item data response
-    :post-fn #'org-canvas--assignment-post-finalize))
-
 ;;;; Main Sync Function
 
 ;; Generate org-canvas-sync-assignments using the pipeline macro
@@ -346,8 +327,9 @@ DATA is the parsed assignment plist, RESPONSE is the Canvas API response."
   :file org-canvas-assignments-file
   :parse #'org-canvas--assignment-parse-entry
   :build #'org-canvas--assignment-build-payload
-  :push #'org-canvas--assignment-push-to-api
-  :finalize #'org-canvas--assignment-finalize
+  :endpoint "assignments"
+  :find-fn #'org-canvas--assignment-search-by-name
+  :post-fn #'org-canvas--assignment-post-finalize
   :pull-item-fn #'org-canvas--assignment-pull-item)
 
 ;;;; Push-at-Point
@@ -355,8 +337,9 @@ DATA is the parsed assignment plist, RESPONSE is the Canvas API response."
 (org-canvas-define-push-at-point assignment
   :parse #'org-canvas--assignment-parse-entry
   :build #'org-canvas--assignment-build-payload
-  :push #'org-canvas--assignment-push-to-api
-  :finalize #'org-canvas--assignment-finalize
+  :endpoint "assignments"
+  :find-fn #'org-canvas--assignment-search-by-name
+  :post-fn #'org-canvas--assignment-post-finalize
   :pull-item-fn #'org-canvas--assignment-pull-item)
 
 ;;;; Delete Functions

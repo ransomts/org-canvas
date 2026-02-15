@@ -431,13 +431,13 @@ Content.
 
 ;;;; Stage 3: Push to API (mocked)
 
-(describe "org-canvas--discussion-push-to-api (mocked)"
+(describe "discussion push-to-api (mocked)"
   (it "uses POST for new discussions"
     (with-org-canvas-test-config
       (with-mock-api
         (let ((data '(:title "New" :canvas-id nil))
               (payload '((title . "New"))))
-          (org-canvas--discussion-push-to-api data payload)
+          (org-canvas--push-to-api data payload :endpoint "discussion_topics")
           (expect-api-called 'POST "discussion_topics")))))
 
   (it "uses PUT for existing discussions"
@@ -445,12 +445,12 @@ Content.
       (with-mock-api
         (let ((data '(:title "Existing" :canvas-id "456"))
               (payload '((title . "Existing"))))
-          (org-canvas--discussion-push-to-api data payload)
+          (org-canvas--push-to-api data payload :endpoint "discussion_topics")
           (expect-api-called 'PUT "discussion_topics/456"))))))
 
 ;;;; Stage 4: Finalize
 
-(describe "org-canvas--discussion-finalize"
+(describe "discussion finalize"
   (it "saves CANVAS_ID from response"
     (with-temp-org-buffer
      "* Test Discussion
@@ -460,7 +460,7 @@ Content.
      (org-back-to-heading)
      (let ((data (list :title "Test Discussion" :pom (point-marker)))
            (response '((id . 77777) (title . "Test Discussion"))))
-       (org-canvas--discussion-finalize data response)
+       (org-canvas--finalize-item data response)
        (expect (org-entry-get (point) "CANVAS_ID") :to-equal "77777"))))
 
   (it "saves LAST_SYNCED timestamp"
@@ -472,7 +472,7 @@ Content.
      (org-back-to-heading)
      (let ((data (list :title "Test" :pom (point-marker)))
            (response '((id . 66666))))
-       (org-canvas--discussion-finalize data response)
+       (org-canvas--finalize-item data response)
        (expect (org-entry-get (point) "LAST_SYNCED")
                :to-match "^\\[20[0-9][0-9]-")))))
 

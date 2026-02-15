@@ -182,12 +182,6 @@ Returns the matching item alist or nil."
                   (equal (alist-get 'title item) title))
                 items)))
 
-;;;; 4. Stage: Finalization
-
-(defun org-canvas--calendar-event-finalize (data response)
-  "Update local Org file using DATA and metadata from API RESPONSE."
-  (org-canvas--finalize-item data response))
-
 ;;;; Main Sync Function
 
 ;; Generate org-canvas-sync-calendar-events using the pipeline macro
@@ -196,14 +190,14 @@ Returns the matching item alist or nil."
   :parse #'org-canvas--calendar-event-parse-entry
   :build #'org-canvas--calendar-event-build-payload
   :push #'org-canvas--calendar-event-push-to-api
-  :finalize #'org-canvas--calendar-event-finalize
+  :endpoint "calendar_events"
   :pull-item-fn #'org-canvas--calendar-event-pull-item)
 
 (org-canvas-define-push-at-point calendar-event
   :parse #'org-canvas--calendar-event-parse-entry
   :build #'org-canvas--calendar-event-build-payload
   :push #'org-canvas--calendar-event-push-to-api
-  :finalize #'org-canvas--calendar-event-finalize
+  :endpoint "calendar_events"
   :pull-item-fn #'org-canvas--calendar-event-pull-item)
 
 ;;;; Delete

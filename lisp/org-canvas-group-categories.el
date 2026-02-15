@@ -89,19 +89,12 @@
     (elog-info org-canvas--logger "[Stage 2: Transform] Building payload for '%s'" title)
 
     (let ((base `((name . ,title))))
-
-      (when (plist-get data :self_signup)
-        (push `(self_signup . ,(plist-get data :self_signup)) base))
-
-      (when (plist-get data :group_limit)
-        (push `(group_limit . ,(plist-get data :group_limit)) base))
-
-      (when (plist-get data :auto_leader)
-        (push `(auto_leader . ,(plist-get data :auto_leader)) base))
-
-      (when (plist-get data :create_group_count)
-        (push `(create_group_count . ,(plist-get data :create_group_count)) base))
-
+      (setq base (org-canvas--push-non-nil-fields data
+                   '((:self_signup . self_signup)
+                     (:group_limit . group_limit)
+                     (:auto_leader . auto_leader)
+                     (:create_group_count . create_group_count))
+                   base))
       (elog-debug org-canvas--logger "[Stage 2: Transform] Payload complete")
       base)))
 
@@ -155,12 +148,6 @@ PUT is global."
            (elog-error org-canvas--logger "[Stage 3: FAILED] '%s': %s" title msg)
            (signal (car err) (cdr err)))))))))
 
-;;;; 4. Stage: Finalization
-
-(defun org-canvas--group-category-finalize (data response)
-  "Update local Org file using DATA and metadata from API RESPONSE."
-  (org-canvas--finalize-item data response))
-
 ;;;; Main Sync Function
 
 ;; Generate org-canvas-sync-group-categories using the pipeline macro
@@ -169,14 +156,14 @@ PUT is global."
   :parse #'org-canvas--group-category-parse-entry
   :build #'org-canvas--group-category-build-payload
   :push #'org-canvas--group-category-push-to-api
-  :finalize #'org-canvas--group-category-finalize
+  :endpoint "group_categories"
   :pull-item-fn #'org-canvas--group-category-pull-item)
 
 (org-canvas-define-push-at-point group-category
   :parse #'org-canvas--group-category-parse-entry
   :build #'org-canvas--group-category-build-payload
   :push #'org-canvas--group-category-push-to-api
-  :finalize #'org-canvas--group-category-finalize
+  :endpoint "group_categories"
   :pull-item-fn #'org-canvas--group-category-pull-item)
 
 ;;;; Delete

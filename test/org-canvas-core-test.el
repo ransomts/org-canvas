@@ -2002,21 +2002,21 @@ Content two.
                             :finalize #'identity))
             :to-throw 'error '("org-canvas-define-sync: :build is required")))
 
-  (it "errors when :push is missing"
+  (it "errors when :push and :endpoint are missing"
     (expect (macroexpand '(org-canvas-define-sync test-bad
                             :file some-file
                             :parse #'identity
                             :build #'identity
                             :finalize #'identity))
-            :to-throw 'error '("org-canvas-define-sync: :push is required")))
+            :to-throw 'error '("org-canvas-define-sync: :push or :endpoint is required")))
 
-  (it "errors when :finalize is missing"
+  (it "errors when :finalize and :endpoint are missing"
     (expect (macroexpand '(org-canvas-define-sync test-bad
                             :file some-file
                             :parse #'identity
                             :build #'identity
                             :push #'identity))
-            :to-throw 'error '("org-canvas-define-sync: :finalize is required"))))
+            :to-throw 'error '("org-canvas-define-sync: :finalize or :endpoint is required"))))
 
 (describe "org-canvas-define-delete-all macro validation"
   (it "errors when :endpoint is missing"

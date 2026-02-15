@@ -180,13 +180,14 @@
 
 ;;;; Stage 3: Push to API (mocked)
 
-(describe "org-canvas--assignment-group-push-to-api (mocked)"
+(describe "assignment-group push-to-api (mocked)"
   (it "uses POST for new groups"
     (with-org-canvas-test-config
       (with-mock-api
         (let ((data '(:name "New" :canvas-id nil))
               (payload '((name . "New"))))
-          (org-canvas--assignment-group-push-to-api data payload)
+          (org-canvas--push-to-api data payload
+            :endpoint "assignment_groups" :title-key :name)
           (expect-api-called 'POST "assignment_groups$")))))
 
   (it "uses PUT for existing groups"
@@ -194,12 +195,13 @@
       (with-mock-api
         (let ((data '(:name "Existing" :canvas-id "321"))
               (payload '((name . "Existing"))))
-          (org-canvas--assignment-group-push-to-api data payload)
+          (org-canvas--push-to-api data payload
+            :endpoint "assignment_groups" :title-key :name)
           (expect-api-called 'PUT "assignment_groups/321"))))))
 
 ;;;; Stage 4: Finalize
 
-(describe "org-canvas--assignment-group-finalize"
+(describe "assignment-group finalize"
   (it "saves CANVAS_ID from response"
     (with-temp-org-buffer
      "* Config
@@ -212,7 +214,7 @@
      (org-back-to-heading)
      (let ((data (list :name "Test Group" :pom (point-marker)))
            (response '((id . 55555) (name . "Test Group"))))
-       (org-canvas--assignment-group-finalize data response)
+       (org-canvas--finalize-item data response :title-key :name)
        (expect (org-entry-get (point) "CANVAS_ID") :to-equal "55555"))))
 
   (it "saves LAST_SYNCED timestamp"
@@ -227,7 +229,7 @@
      (org-back-to-heading)
      (let ((data (list :name "Test" :pom (point-marker)))
            (response '((id . 44444))))
-       (org-canvas--assignment-group-finalize data response)
+       (org-canvas--finalize-item data response :title-key :name)
        (expect (org-entry-get (point) "LAST_SYNCED")
                :to-match "^\\[20[0-9][0-9]-")))))
 

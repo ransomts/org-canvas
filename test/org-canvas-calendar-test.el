@@ -317,7 +317,7 @@ This is the event description.
 
 ;;;; Stage 4: Finalize
 
-(describe "org-canvas--calendar-event-finalize"
+(describe "calendar-event finalize"
   (it "saves CANVAS_ID from response"
     (with-temp-org-buffer
      "* Event
@@ -327,7 +327,7 @@ This is the event description.
      (org-back-to-heading)
      (let ((data (list :title "Event" :pom (point-marker)))
            (response '((id . 42) (title . "Event"))))
-       (org-canvas--calendar-event-finalize data response)
+       (org-canvas--finalize-item data response)
        (expect (org-entry-get (point) "CANVAS_ID") :to-equal "42"))))
 
   (it "saves LAST_SYNCED timestamp"
@@ -339,7 +339,7 @@ This is the event description.
      (org-back-to-heading)
      (let ((data (list :title "Event" :pom (point-marker)))
            (response '((id . 42))))
-       (org-canvas--calendar-event-finalize data response)
+       (org-canvas--finalize-item data response)
        (expect (org-entry-get (point) "LAST_SYNCED")
                :to-match "^\\[20[0-9][0-9]-"))))
 
@@ -352,7 +352,7 @@ This is the event description.
      (org-back-to-heading)
      (let ((data (list :title "Event" :pom (point-marker)))
            (response '((error . "bad"))))
-       (expect (org-canvas--calendar-event-finalize data response) :to-throw 'error)))))
+       (expect (org-canvas--finalize-item data response) :to-throw 'error)))))
 
 ;;;; Sync Pipeline Tests
 

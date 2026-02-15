@@ -196,7 +196,7 @@ The `elog` package is fetched from GitHub via `eldev-use-vc-repository` (not ven
 ### Running Tests
 
 ```bash
-eldev test              # Run all 1831 tests
+eldev test              # Run all 1859 tests
 eldev test "core"       # Run tests matching pattern
 ```
 
@@ -250,16 +250,16 @@ test/
 
 ### Test Coverage Summary
 
-**1831 tests total** covering core utilities, all feature modules, and validation (6 tests skip on Emacs 29.x due to org-mode differences). Coverage is ~99%.
+**1859 tests total** covering core utilities, all feature modules, and validation (9 tests skip on Emacs 29.x due to org-mode differences). Coverage is ~99%.
 
 | Module            | Tests |
 |-------------------|-------|
-| **core**          | 375   |
-| quizzes           | 183   |
+| **core**          | 377   |
+| quizzes           | 203   |
 | new-quizzes       | 121   |
 | modules           | 143   |
 | files             | 136   |
-| **validate**      | 115   |
+| **validate**      | 118   |
 | outcomes          | 97    |
 | assignments       | 96    |
 | settings          | 86    |

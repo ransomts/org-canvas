@@ -110,18 +110,6 @@
       (elog-debug org-canvas--logger "[Stage 2: Transform] Payload complete")
       base)))
 
-;;;; 3. Stage: Execution
-
-(defun org-canvas--announcement-push-to-api (data payload)
-  "Send PAYLOAD derived from DATA to Canvas API."
-  (org-canvas--push-to-api data payload :endpoint "discussion_topics"))
-
-;;;; 4. Stage: Finalization
-
-(defun org-canvas--announcement-finalize (data response)
-  "Update local Org file using DATA and metadata from API RESPONSE."
-  (org-canvas--finalize-item data response))
-
 ;;;; Main Sync Function
 
 ;; Generate org-canvas-sync-announcements using the pipeline macro
@@ -129,15 +117,13 @@
   :file org-canvas-announcements-file
   :parse #'org-canvas--announcement-parse-entry
   :build #'org-canvas--announcement-build-payload
-  :push #'org-canvas--announcement-push-to-api
-  :finalize #'org-canvas--announcement-finalize
+  :endpoint "discussion_topics"
   :pull-item-fn #'org-canvas--announcement-pull-item)
 
 (org-canvas-define-push-at-point announcement
   :parse #'org-canvas--announcement-parse-entry
   :build #'org-canvas--announcement-build-payload
-  :push #'org-canvas--announcement-push-to-api
-  :finalize #'org-canvas--announcement-finalize
+  :endpoint "discussion_topics"
   :pull-item-fn #'org-canvas--announcement-pull-item)
 
 ;; Generate org-canvas-delete-all-announcements using the delete macro

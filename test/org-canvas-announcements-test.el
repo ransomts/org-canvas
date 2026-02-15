@@ -186,13 +186,13 @@ No comments allowed.
 
 ;;;; Stage 3: Push to API (mocked)
 
-(describe "org-canvas--announcement-push-to-api (mocked)"
+(describe "announcement push-to-api (mocked)"
   (it "uses POST for new announcements"
     (with-org-canvas-test-config
       (with-mock-api
         (let ((data '(:title "New" :canvas-id nil))
               (payload '((title . "New"))))
-          (org-canvas--announcement-push-to-api data payload)
+          (org-canvas--push-to-api data payload :endpoint "discussion_topics")
           (expect-api-called 'POST "discussion_topics")))))
 
   (it "uses PUT for existing announcements"
@@ -200,12 +200,12 @@ No comments allowed.
       (with-mock-api
         (let ((data '(:title "Existing" :canvas-id "123"))
               (payload '((title . "Existing"))))
-          (org-canvas--announcement-push-to-api data payload)
+          (org-canvas--push-to-api data payload :endpoint "discussion_topics")
           (expect-api-called 'PUT "discussion_topics/123"))))))
 
 ;;;; Stage 4: Finalize
 
-(describe "org-canvas--announcement-finalize"
+(describe "announcement finalize"
   (it "saves CANVAS_ID from response"
     (with-temp-org-buffer
      "* Test Announcement
@@ -215,7 +215,7 @@ No comments allowed.
      (org-back-to-heading)
      (let ((data (list :title "Test Announcement" :pom (point-marker)))
            (response '((id . 99999) (title . "Test Announcement"))))
-       (org-canvas--announcement-finalize data response)
+       (org-canvas--finalize-item data response)
        (expect (org-entry-get (point) "CANVAS_ID") :to-equal "99999"))))
 
   (it "saves LAST_SYNCED timestamp"
@@ -227,7 +227,7 @@ No comments allowed.
      (org-back-to-heading)
      (let ((data (list :title "Test" :pom (point-marker)))
            (response '((id . 88888))))
-       (org-canvas--announcement-finalize data response)
+       (org-canvas--finalize-item data response)
        (expect (org-entry-get (point) "LAST_SYNCED")
                :to-match "^\\[20[0-9][0-9]-"))))
 
@@ -240,7 +240,7 @@ No comments allowed.
      (org-back-to-heading)
      (let ((data (list :title "Test" :pom (point-marker)))
            (response '((error . "something failed"))))
-       (expect (org-canvas--announcement-finalize data response) :to-throw 'error)))))
+       (expect (org-canvas--finalize-item data response) :to-throw 'error)))))
 
 ;;;; Sync Pipeline Tests
 
@@ -313,7 +313,7 @@ Body content.
 
 ;;;; Push to API Error Path
 
-(describe "org-canvas--announcement-push-to-api error path"
+(describe "announcement push-to-api error path"
   (it "re-signals API error"
     (with-org-canvas-test-config
       (cl-letf (((symbol-function 'org-canvas-api-request)
@@ -321,7 +321,7 @@ Body content.
                    (signal 'error '("API Error: 500 Internal Server Error")))))
         (let ((data '(:title "Bad" :canvas-id nil))
               (payload '((title . "Bad"))))
-          (expect (org-canvas--announcement-push-to-api data payload)
+          (expect (org-canvas--push-to-api data payload :endpoint "discussion_topics")
                   :to-throw 'error)))))
 
   (it "re-signals error for existing announcement update"
@@ -331,7 +331,7 @@ Body content.
                    (signal 'error '("API Error: 403 Forbidden")))))
         (let ((data '(:title "Forbidden" :canvas-id "123"))
               (payload '((title . "Forbidden"))))
-          (expect (org-canvas--announcement-push-to-api data payload)
+          (expect (org-canvas--push-to-api data payload :endpoint "discussion_topics")
                   :to-throw 'error))))))
 
 ;;;; Pull Function Tests

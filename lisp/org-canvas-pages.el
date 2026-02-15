@@ -136,28 +136,11 @@ Logs warnings for invalid roles.  Returns RAW unchanged."
       (elog-debug org-canvas--logger "[Stage 2: Transform] Payload complete")
       outer-wrapper)))
 
-;;;; 3. Stage: Execution
+;;;; 3. Stage: Execution Helper
 
 (defun org-canvas--page-search-by-title (title)
   "Search for a page with TITLE on Canvas.  Return nil on error."
   (org-canvas--search-item "pages" title))
-
-(defun org-canvas--page-push-to-api (data payload)
-  "Send PAYLOAD to Canvas API based on DATA.
-Handles 404 on PUT by retrying as POST.
-Handles Timeout by searching for the page."
-  (org-canvas--push-to-api data payload
-    :endpoint "pages"
-    :id-key :canvas-url
-    :find-fn #'org-canvas--page-search-by-title))
-
-;;;; 4. Stage: Finalization
-
-(defun org-canvas--page-finalize (data response)
-  "Update local Org file with CANVAS_URL using DATA and RESPONSE."
-  (org-canvas--finalize-item data response
-    :id-field 'url
-    :id-property "CANVAS_URL"))
 
 ;;;; Main Sync Functions
 
@@ -166,17 +149,22 @@ Handles Timeout by searching for the page."
   :file org-canvas-pages-file
   :parse #'org-canvas--page-parse-entry
   :build #'org-canvas--page-build-payload
-  :push #'org-canvas--page-push-to-api
-  :finalize #'org-canvas--page-finalize
+  :endpoint "pages"
+  :id-key :canvas-url
+  :id-field 'url
+  :id-property "CANVAS_URL"
+  :find-fn #'org-canvas--page-search-by-title
   :pull-item-fn #'org-canvas--page-pull-item)
 
-;; Generate org-canvas-delete-all-pages using the delete macro
 ;; Pages use 'url instead of 'id, and we skip the front page
 (org-canvas-define-push-at-point page
   :parse #'org-canvas--page-parse-entry
   :build #'org-canvas--page-build-payload
-  :push #'org-canvas--page-push-to-api
-  :finalize #'org-canvas--page-finalize
+  :endpoint "pages"
+  :id-key :canvas-url
+  :id-field 'url
+  :id-property "CANVAS_URL"
+  :find-fn #'org-canvas--page-search-by-title
   :pull-item-fn #'org-canvas--page-pull-item)
 
 (org-canvas-define-delete-all pages

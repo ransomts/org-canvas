@@ -18,6 +18,10 @@
 (eldev-use-plugin 'undercover)
 (setf eldev-undercover-fileset '("lisp/org-canvas.el"
                                   "lisp/org-canvas-core.el"
+                                  "lisp/org-canvas-core-config.el"
+                                  "lisp/org-canvas-core-api.el"
+                                  "lisp/org-canvas-core-org.el"
+                                  "lisp/org-canvas-core-sync.el"
                                   "lisp/org-canvas-announcements.el"
                                   "lisp/org-canvas-assignment-groups.el"
                                   "lisp/org-canvas-assignments.el"

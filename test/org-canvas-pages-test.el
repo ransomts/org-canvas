@@ -209,13 +209,15 @@ Content.
 
 ;;;; Stage 3: Push to API (mocked)
 
-(describe "org-canvas--page-push-to-api (mocked)"
+(describe "page push-to-api (mocked)"
   (it "uses POST for new pages"
     (with-org-canvas-test-config
       (with-mock-api
         (let ((data '(:title "New" :canvas-url nil))
               (payload (make-hash-table)))
-          (org-canvas--page-push-to-api data payload)
+          (org-canvas--push-to-api data payload
+            :endpoint "pages" :id-key :canvas-url
+            :find-fn #'org-canvas--page-search-by-title)
           (expect-api-called 'POST "pages$")))))
 
   (it "uses PUT for existing pages"
@@ -223,7 +225,9 @@ Content.
       (with-mock-api
         (let ((data '(:title "Existing" :canvas-url "existing-page"))
               (payload (make-hash-table)))
-          (org-canvas--page-push-to-api data payload)
+          (org-canvas--push-to-api data payload
+            :endpoint "pages" :id-key :canvas-url
+            :find-fn #'org-canvas--page-search-by-title)
           (expect-api-called 'PUT "pages/existing-page"))))))
 
 (describe "org-canvas--page-search-by-title (mocked)"
@@ -246,7 +250,7 @@ Content.
 
 ;;;; Stage 4: Finalize
 
-(describe "org-canvas--page-finalize"
+(describe "page finalize"
   (it "saves CANVAS_URL from response"
     (with-temp-org-buffer
      "* Test Page
@@ -256,7 +260,8 @@ Content.
      (org-back-to-heading)
      (let ((data (list :title "Test Page" :pom (point-marker)))
            (response '((url . "test-page-url") (title . "Test Page"))))
-       (org-canvas--page-finalize data response)
+       (org-canvas--finalize-item data response
+         :id-field 'url :id-property "CANVAS_URL")
        (expect (org-entry-get (point) "CANVAS_URL") :to-equal "test-page-url"))))
 
   (it "saves LAST_SYNCED timestamp"
@@ -268,7 +273,8 @@ Content.
      (org-back-to-heading)
      (let ((data (list :title "Test" :pom (point-marker)))
            (response '((url . "test"))))
-       (org-canvas--page-finalize data response)
+       (org-canvas--finalize-item data response
+         :id-field 'url :id-property "CANVAS_URL")
        (expect (org-entry-get (point) "LAST_SYNCED")
                :to-match "^\\[20[0-9][0-9]-")))))
 
@@ -326,7 +332,7 @@ This is *bold* text.
 
 ;;;; Additional Push to API Tests
 
-(describe "org-canvas--page-push-to-api (mocked)"
+(describe "page push-to-api error recovery (mocked)"
   (it "retries as POST on 404"
     (with-org-canvas-test-config
       (let ((call-count 0))
@@ -338,7 +344,9 @@ This is *bold* text.
                        '((url . "new-page-url"))))))
           (let ((data '(:title "Stale Page" :canvas-url "old-url"))
                 (payload (make-hash-table)))
-            (let ((result (org-canvas--page-push-to-api data payload)))
+            (let ((result (org-canvas--push-to-api data payload
+                            :endpoint "pages" :id-key :canvas-url
+                            :find-fn #'org-canvas--page-search-by-title)))
               (expect (alist-get 'url result) :to-equal "new-page-url")
               (expect call-count :to-equal 2)))))))
 
@@ -358,7 +366,9 @@ This is *bold* text.
                       (t nil)))))
           (let ((data '(:title "Timeout Page" :canvas-url nil))
                 (payload (make-hash-table)))
-            (let ((result (org-canvas--page-push-to-api data payload)))
+            (let ((result (org-canvas--push-to-api data payload
+                            :endpoint "pages" :id-key :canvas-url
+                            :find-fn #'org-canvas--page-search-by-title)))
               (expect (alist-get 'url result) :to-equal "recovered-page")))))))
 
   (it "signals error on non-recoverable failure"
@@ -368,7 +378,9 @@ This is *bold* text.
                    (signal 'error '("Bad Request" nil nil)))))
         (let ((data '(:title "Bad Page" :canvas-url nil))
               (payload (make-hash-table)))
-          (expect (org-canvas--page-push-to-api data payload)
+          (expect (org-canvas--push-to-api data payload
+                    :endpoint "pages" :id-key :canvas-url
+                    :find-fn #'org-canvas--page-search-by-title)
                   :to-throw 'error))))))
 
 ;;;; Additional Find by Title Tests
@@ -392,7 +404,7 @@ This is *bold* text.
 
 ;;;; Additional Finalize Tests
 
-(describe "org-canvas--page-finalize"
+(describe "page finalize error"
   (it "signals error when no URL in response"
     (with-temp-org-buffer
      "* No URL Page
@@ -402,7 +414,9 @@ This is *bold* text.
      (org-back-to-heading)
      (let ((data (list :title "No URL Page" :pom (point-marker)))
            (response '((error . "something went wrong"))))
-       (expect (org-canvas--page-finalize data response) :to-throw 'error)))))
+       (expect (org-canvas--finalize-item data response
+                 :id-field 'url :id-property "CANVAS_URL")
+               :to-throw 'error)))))
 
 ;;;; Delete Page at Point Tests
 

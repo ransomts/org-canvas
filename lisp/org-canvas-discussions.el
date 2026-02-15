@@ -83,13 +83,9 @@ Returns a plist with :grading-type, :points, :due-at, :lock-at,
          (allow-rating (org-canvas-org-get-boolean-property pom "ALLOW_RATING"))
          (only-graders-can-rate (org-canvas-org-get-boolean-property pom "ONLY_GRADERS_CAN_RATE"))
          (sort-by-rating (org-canvas-org-get-boolean-property pom "SORT_BY_RATING"))
-         (group-category-raw (org-canvas-org-get-property pom "GROUP_CATEGORY"))
-         (group-category-id (if (and group-category-raw
-                                     (string-prefix-p "[[" group-category-raw))
-                                (org-canvas--resolve-link-property
-                                 group-category-raw "CANVAS_ID"
-                                 org-canvas-discussions-file)
-                              group-category-raw))
+         (group-category-id (org-canvas--resolve-link-or-raw
+                             pom "GROUP_CATEGORY" "CANVAS_ID"
+                             org-canvas-discussions-file))
          (specific-sections (org-canvas-org-get-property pom "SPECIFIC_SECTIONS"))
          (grading (org-canvas--discussion-parse-grading-props pom)))
 
@@ -135,15 +131,14 @@ Returns a plist with :grading-type, :points, :due-at, :lock-at,
 Returns an alist for the `assignment' key."
   (let ((assignment-data `((points_possible . ,(plist-get data :points_possible))
                            (grading_type . ,(or (plist-get data :grading_type) "points")))))
-    (when (plist-get data :due_at)
-      (push `(due_at . ,(plist-get data :due_at)) assignment-data))
-    (when (plist-get data :lock_at)
-      (push `(lock_at . ,(plist-get data :lock_at)) assignment-data))
+    ;; delayed_post_at maps to unlock_at in the assignment sub-payload
     (when (plist-get data :delayed_post_at)
       (push `(unlock_at . ,(plist-get data :delayed_post_at)) assignment-data))
-    (when (plist-get data :assignment_group_id)
-      (push `(assignment_group_id . ,(plist-get data :assignment_group_id)) assignment-data))
-    assignment-data))
+    (org-canvas--push-non-nil-fields data
+      '((:due_at . due_at)
+        (:lock_at . lock_at)
+        (:assignment_group_id . assignment_group_id))
+      assignment-data)))
 
 (defun org-canvas--discussion-build-payload (data)
   "Convert DATA to Canvas payload."
@@ -156,21 +151,18 @@ Returns an alist for the `assignment' key."
                   (discussion_type . ,(plist-get data :discussion_type))
                   (require_initial_post . ,(org-canvas--to-json-boolean (plist-get data :require_initial_post))))))
 
-      (when (plist-get data :pinned)
-        (push '(pinned . t) base))
-      (when (plist-get data :delayed_post_at)
-        (push `(delayed_post_at . ,(plist-get data :delayed_post_at)) base))
+      ;; Simple non-nil field pushes (booleans are t when truthy)
+      (setq base (org-canvas--push-non-nil-fields data
+                   '((:pinned . pinned)
+                     (:delayed_post_at . delayed_post_at)
+                     (:allow_rating . allow_rating)
+                     (:only_graders_can_rate . only_graders_can_rate)
+                     (:sort_by_rating . sort_by_rating)
+                     (:group_category_id . group_category_id))
+                   base))
+      ;; lock_at only on non-graded discussions (graded uses assignment payload)
       (when (and (plist-get data :lock_at) (not (plist-get data :points_possible)))
         (push `(lock_at . ,(plist-get data :lock_at)) base))
-
-      (when (plist-get data :allow_rating)
-        (push '(allow_rating . t) base))
-      (when (plist-get data :only_graders_can_rate)
-        (push '(only_graders_can_rate . t) base))
-      (when (plist-get data :sort_by_rating)
-        (push '(sort_by_rating . t) base))
-      (when (plist-get data :group_category_id)
-        (push `(group_category_id . ,(plist-get data :group_category_id)) base))
       (when (plist-get data :specific_sections)
         (let ((resolved (org-canvas--resolve-section-names-to-ids
                          (plist-get data :specific_sections))))
@@ -186,19 +178,6 @@ Returns an alist for the `assignment' key."
       (elog-debug org-canvas--logger "[Stage 2: Transform] Payload complete")
       base)))
 
-;;;; 3. Stage: Execution
-
-(defun org-canvas--discussion-push-to-api (data payload)
-  "Send PAYLOAD based on DATA to Canvas API.
-Handles 404 on PUT by retrying as POST (stale CANVAS_ID recovery)."
-  (org-canvas--push-to-api data payload :endpoint "discussion_topics"))
-
-;;;; 4. Stage: Finalization
-
-(defun org-canvas--discussion-finalize (data response)
-  "Update local Org file based on the RESPONSE and DATA."
-  (org-canvas--finalize-item data response))
-
 ;;;; Main Sync Function
 
 ;; Generate org-canvas-sync-discussions using the pipeline macro
@@ -206,15 +185,13 @@ Handles 404 on PUT by retrying as POST (stale CANVAS_ID recovery)."
   :file org-canvas-discussions-file
   :parse #'org-canvas--discussion-parse-entry
   :build #'org-canvas--discussion-build-payload
-  :push #'org-canvas--discussion-push-to-api
-  :finalize #'org-canvas--discussion-finalize
+  :endpoint "discussion_topics"
   :pull-item-fn #'org-canvas--discussion-pull-item)
 
 (org-canvas-define-push-at-point discussion
   :parse #'org-canvas--discussion-parse-entry
   :build #'org-canvas--discussion-build-payload
-  :push #'org-canvas--discussion-push-to-api
-  :finalize #'org-canvas--discussion-finalize
+  :endpoint "discussion_topics"
   :pull-item-fn #'org-canvas--discussion-pull-item)
 
 ;; Generate org-canvas-delete-all-discussions using the delete macro
