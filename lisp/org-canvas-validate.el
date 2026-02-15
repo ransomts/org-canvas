@@ -183,7 +183,7 @@ Returns a list of warning issues."
     "short_answer_question" "fill_in_multiple_blanks_question"
     "multiple_dropdowns_question" "multiple_answers_question"
     "matching_question" "numerical_question" "essay_question"
-    "file_upload_question" "text_only_question")
+    "file_upload_question" "text_only_question" "group")
   "Valid quiz question types.")
 
 (defconst org-canvas--valid-hide-results
@@ -298,7 +298,10 @@ Returns a list of warning issues."
      :query "LEVEL=2"
      :properties
      ((:name "TYPE" :type enum :values ,org-canvas--valid-question-types)
-      (:name "POINTS" :type number)))
+      (:name "POINTS" :type number)
+      (:name "PICK_COUNT" :type number)
+      (:name "QUESTION_POINTS" :type number)
+      (:name "QUESTION_BANK_ID" :type number)))
 
     (:label "Modules"
      :file org-canvas-modules-file
@@ -401,7 +404,8 @@ Returns a list of warning issues."
      :query "LEVEL=2"
      :properties
      ((:name "POINTS" :type number)
-      (:name "TYPE" :type enum :values ,org-canvas--valid-new-quiz-types)))
+      (:name "TYPE" :type enum :values ,org-canvas--valid-new-quiz-types)
+      (:name "OUTCOME" :type link :target-file org-canvas-outcomes-file :id-property "CANVAS_ID")))
 
     (:label "Settings"
      :file org-canvas-settings-file

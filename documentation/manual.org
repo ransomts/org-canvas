@@ -112,7 +112,7 @@ discussions.org  -->  assignment-groups.org
 quizzes.org      -->  assignment-groups.org
                  -->  outcomes.org
 
-new-quizzes.org  (no outgoing links)
+new-quizzes.org  -->  outcomes.org (OUTCOME, local-only)
 calendar.org     (no outgoing links)
 
 modules.org      -->  assignments.org
@@ -489,6 +489,35 @@ Quizzes with embedded questions.
 | =file_upload_question=             | No answers (file submission)             |
 | =text_only_question=               | Body text only (instructions/headers)    |
 
+*** Question Groups (Question Banks)
+
+Question groups randomly select questions from an external question bank at quiz delivery time.  They appear as level 2 headings with ~TYPE: group~.
+
+**** Workflow
+
+1. Create a question bank externally (e.g., using [[https://github.com/gpoore/text2qti][text2qti]] to convert Markdown to QTI)
+2. Import the QTI file into Canvas via Settings > Import Course Content
+3. After import, find the bank ID in the Canvas UI URL (e.g., =courses/123/question_banks/42= means bank ID is 42)
+4. Add a level 2 heading under your quiz with the properties below
+
+**** Question Group Properties
+
+| Property             | Type   | Description                                    |
+|----------------------+--------+------------------------------------------------|
+| =TYPE=               | string | Must be =group=                                |
+| =PICK_COUNT=         | number | Number of questions to randomly select (default 1) |
+| =QUESTION_POINTS=    | number | Points per selected question (default 1)       |
+| =QUESTION_BANK_ID=   | number | Canvas assessment question bank ID (optional)  |
+
+**** Limitations and Caveats
+
+- *Bank ID is create-only*: ~assessment_question_bank_id~ is accepted on POST but ignored on PUT.  To change the bank, delete the group from Canvas and remove ~CANVAS_ID~ from the heading, then re-sync.
+- *Bank ID must be obtained manually*: Canvas has no public API for listing question banks.  Get the ID from the Canvas UI URL after QTI import.
+- *Invalid bank IDs are silently accepted*: Canvas creates the group without linking to a bank.  Verify the bank exists in Canvas before syncing.
+- *Pull does not import groups*: There is no "list all groups" endpoint, so ~org-canvas-pull-quizzes~ cannot discover existing groups.
+- *Bank questions are invisible via API*: Questions from banks are resolved at quiz delivery time and do not appear in the Quiz Questions API response.
+- *Classic Quizzes only*: This feature is for Classic Quizzes.  New Quizzes uses a separate "item banks" system with a different API.
+
 *** Example
 
 #+begin_src org
@@ -542,6 +571,14 @@ This exam covers chapters 1-5.
 :TYPE: essay_question
 :POINTS: 20
 :END:
+
+,** Vocabulary Bank
+:PROPERTIES:
+:TYPE: group
+:PICK_COUNT: 10
+:QUESTION_POINTS: 2
+:QUESTION_BANK_ID: 42
+:END:
 #+end_src
 
 ** new-quizzes.org
@@ -582,11 +619,12 @@ Use *Classic Quizzes* (=quizzes.org=) when:
 
 *** Question Properties
 
-| Property         | Type   | Description                  |
-|------------------+--------+------------------------------|
-| =CANVAS_ITEM_ID=   | string | Item UUID (auto-populated)   |
-| =TYPE=             | enum   | Question type (see below)    |
-| =POINTS=           | number | Points for this question     |
+| Property         | Type   | Description                              |
+|------------------+--------+------------------------------------------|
+| =CANVAS_ITEM_ID=   | string | Item UUID (auto-populated)               |
+| =TYPE=             | enum   | Question type (see below)                |
+| =POINTS=           | number | Points for this question                 |
+| =OUTCOME=          | link   | Link to outcome in outcomes.org (local-only) |
 
 *** Question Types
 
@@ -605,6 +643,23 @@ Use *Classic Quizzes* (=quizzes.org=) when:
 | =hot-spot=             | =hot_spot=             | Coordinate data (advanced)                |
 
 *Unsupported:* =fill-in-the-blank= is not supported.  The Canvas New Quizzes API accepts the question data but the Build editor requires an internal =working_item_body= field (with backtick-delimited blanks) that cannot be set reliably via the API --- POST requests with this field return 502 Bad Gateway when multiple correct answers are present.  Use =short-answer= instead, which provides equivalent auto-graded free-response functionality without the editor limitation.
+
+*** Outcome Alignment
+
+Questions can be linked to learning outcomes in =outcomes.org= via the =OUTCOME= property:
+
+#+begin_src org
+,** What is the capital of France?
+:PROPERTIES:
+:TYPE: choice
+:POINTS: 2
+:OUTCOME: [[file:outcomes.org::*Python Proficiency][Python Proficiency]]
+:END:
+#+end_src
+
+This is a *local-only* property --- the Canvas New Quizzes API does not expose item-level outcome alignment data for reading or writing, so the =OUTCOME= property is not synced to Canvas.  Outcome alignments must be configured manually in the Canvas UI.  The property serves as local documentation of which outcomes each question assesses.
+
+=org-canvas-validate= checks that the link target exists in =outcomes.org= and has a =CANVAS_ID= (i.e., the outcome has been synced).
 
 *** Example
 

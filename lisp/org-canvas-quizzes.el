@@ -9,6 +9,7 @@
 ;; In quizzes.org:
 ;;   - Level 1 headings = Quizzes (with QUIZ_TYPE, TIME_LIMIT, etc.)
 ;;   - Level 2 headings = Questions (with TYPE, POINTS)
+;;   - Level 2 headings with TYPE=group = Question groups (question banks)
 ;;   - List items under questions = Answer choices
 ;;
 ;; QUESTION TYPES
@@ -25,15 +26,31 @@
 ;;   essay_question              - No answers needed
 ;;   file_upload_question        - No answers needed
 ;;
+;; QUESTION GROUPS (QUESTION BANKS)
+;; ================================
+;; Level 2 headings with TYPE=group create question groups that pull
+;; random questions from external question banks.  Properties:
+;;   PICK_COUNT         - Number of questions to randomly select
+;;   QUESTION_POINTS    - Points per selected question
+;;   QUESTION_BANK_ID   - Canvas assessment question bank ID (create-only)
+;;
+;; The bank must be created externally (e.g., via text2qti QTI import).
+;; The bank ID is obtained from the Canvas UI URL after import.
+;; Note: assessment_question_bank_id is accepted on POST but ignored on PUT.
+;;
 ;; API NOTES
 ;; =========
-;; Quizzes and questions are separate API resources.  The quiz description
-;; is just introductory text.  Actual questions are synced via:
+;; Quizzes, questions, and question groups are separate API resources.
+;; The quiz description is just introductory text.  Actual questions are
+;; synced via:
 ;;   POST /api/v1/courses/:course_id/quizzes/:quiz_id/questions
+;; Question groups are synced via:
+;;   POST /api/v1/courses/:course_id/quizzes/:quiz_id/groups
 ;;
 ;; The sync process:
 ;;   1. Create/update the quiz
-;;   2. For each level-2 heading under the quiz, sync the question
+;;   2. Sync question groups (TYPE=group headings)
+;;   3. Sync questions (all other level-2 headings)
 
 ;;; Code:
 
@@ -471,6 +488,113 @@ When CORRECT-ONLY is non-nil, only include correct answers."
   "Save question from DATA with CANVAS_ID from RESPONSE."
   (org-canvas--finalize-item data response :title-key :name))
 
+;;;; Question Groups (Question Banks)
+
+(defun org-canvas--question-group-parse-entry (quiz-canvas-id)
+  "Extract question group data from Org heading at point.
+QUIZ-CANVAS-ID is the Canvas ID of the parent quiz."
+  (org-back-to-heading t)
+
+  (let* ((pom (point-marker))
+	 (name (org-canvas--strip-statistics-cookie (org-get-heading t t t t)))
+	 (canvas-id (org-canvas-org-get-property pom "CANVAS_ID"))
+	 (pick-count (org-canvas-org-get-number-property pom "PICK_COUNT" 1))
+	 (question-points (org-canvas-org-get-number-property pom "QUESTION_POINTS" 1))
+	 (bank-id-str (org-canvas-org-get-property pom "QUESTION_BANK_ID"))
+	 (bank-id (when bank-id-str
+		    (org-canvas--safe-string-to-number bank-id-str "QUESTION_BANK_ID"))))
+
+    (elog-debug org-canvas--logger "[Group Parse] '%s' pick=%s pts=%s bank=%s"
+      name pick-count question-points (or bank-id "none"))
+
+    (list :name name
+	  :canvas-id canvas-id
+	  :quiz-canvas-id quiz-canvas-id
+	  :pick-count pick-count
+	  :question-points question-points
+	  :bank-id bank-id
+	  :pom pom)))
+
+(defun org-canvas--question-group-build-payload (data)
+  "Build Canvas API payload from question group DATA.
+Wraps in `quiz_groups' key as required by the API.
+Only includes `assessment_question_bank_id' on create (POST),
+since the API ignores it on update (PUT)."
+  (let ((group-obj `((name . ,(plist-get data :name))
+		     (pick_count . ,(plist-get data :pick-count))
+		     (question_points . ,(plist-get data :question-points)))))
+    ;; Bank ID is create-only: only include when no CANVAS_ID (POST)
+    (when (and (null (plist-get data :canvas-id))
+	       (plist-get data :bank-id))
+      (push `(assessment_question_bank_id . ,(plist-get data :bank-id)) group-obj))
+    `((quiz_groups . (,group-obj)))))
+
+(defun org-canvas--question-group-push-to-api (data payload)
+  "Send question group PAYLOAD (from DATA) to Canvas API.
+Unwraps the `quiz_groups' response wrapper."
+  (let* ((quiz-id (plist-get data :quiz-canvas-id))
+	 (g-id (plist-get data :canvas-id))
+	 (name (plist-get data :name))
+	 (method (if g-id 'PUT 'POST))
+	 (endpoint (if g-id
+		       (org-canvas-api-course-endpoint "quizzes/%s/groups/%s" quiz-id g-id)
+		     (org-canvas-api-course-endpoint "quizzes/%s/groups" quiz-id))))
+
+    (elog-info org-canvas--logger "[Group API] %s '%s'" method name)
+
+    (condition-case err
+	(let ((response (org-canvas-api-request method endpoint :data payload)))
+	  ;; Response wraps in {"quiz_groups": [QuizGroup]} — unwrap
+	  (let ((groups (alist-get 'quiz_groups response)))
+	    (if (and groups (> (length groups) 0))
+		(aref groups 0)
+	      response)))
+      (error
+       (elog-error org-canvas--logger "[Group API] Failed: %s" (error-message-string err))
+       (signal (car err) (cdr err))))))
+
+(defun org-canvas--question-group-finalize (data response)
+  "Save question group from DATA with CANVAS_ID from RESPONSE."
+  (org-canvas--finalize-item data response :title-key :name))
+
+(defun org-canvas--sync-quiz-groups (quiz-marker quiz-canvas-id)
+  "Sync all question groups under the quiz at QUIZ-MARKER.
+QUIZ-CANVAS-ID is the Canvas ID of the quiz.
+Returns a cons (SUCCESS . FAIL) count."
+  (let ((group-markers nil)
+	(group-success 0))
+    ;; Collect all group markers (level-2 headings with TYPE=group)
+    (with-current-buffer (marker-buffer quiz-marker)
+      (save-excursion
+	(goto-char (marker-position quiz-marker))
+	(let ((subtree-end (save-excursion (org-end-of-subtree t) (point))))
+	  (while (and (outline-next-heading)
+		      (< (point) subtree-end))
+	    (when (and (= (org-outline-level) 2)
+		       (equal (org-entry-get (point) "TYPE") "group"))
+	      (push (point-marker) group-markers)))))
+      (setq group-markers (nreverse group-markers)))
+
+    ;; Sync each group
+    (dolist (g-marker group-markers)
+      (with-current-buffer (marker-buffer g-marker)
+	(save-excursion
+	  (goto-char (marker-position g-marker))
+	  (condition-case err
+	      (let* ((data (org-canvas--question-group-parse-entry quiz-canvas-id))
+		     (payload (org-canvas--question-group-build-payload data))
+		     (response (org-canvas--question-group-push-to-api data payload)))
+		(org-canvas--question-group-finalize data response)
+		(setq group-success (1+ group-success)))
+	    (error
+	     (elog-error org-canvas--logger "[Group] Failed: %s"
+	       (error-message-string err)))))))
+
+    (when (> (length group-markers) 0)
+      (elog-info org-canvas--logger "[Groups] %d/%d synced"
+	group-success (length group-markers)))
+    (cons group-success (- (length group-markers) group-success))))
+
 ;;;; Main Sync Function
 
 (defun org-canvas--sync-quiz-questions (quiz-marker quiz-canvas-id)
@@ -485,7 +609,8 @@ QUIZ-CANVAS-ID is the Canvas ID of the quiz."
 	(let ((subtree-end (save-excursion (org-end-of-subtree t) (point))))
 	  (while (and (outline-next-heading)
 		      (< (point) subtree-end))
-	    (when (= (org-outline-level) 2)
+	    (when (and (= (org-outline-level) 2)
+		       (not (equal (org-entry-get (point) "TYPE") "group")))
 	      (push (point-marker) question-markers)))))
       (setq question-markers (nreverse question-markers)))
 
@@ -526,6 +651,8 @@ QUIZ-CANVAS-ID is the Canvas ID of the quiz."
   (let ((quiz-targets nil)
 	(quiz-success 0)
 	(quiz-fail 0)
+	(group-success 0)
+	(group-fail 0)
 	(question-success 0)
 	(question-fail 0))
 
@@ -551,10 +678,13 @@ QUIZ-CANVAS-ID is the Canvas ID of the quiz."
 		  (+ quiz-success quiz-fail) (length quiz-targets)
 		  (plist-get data :title))
 
-		;; Now sync questions under this quiz
+		;; Now sync groups and questions under this quiz
 		(let ((quiz-id (or (alist-get 'id response)
 				   (plist-get data :canvas-id))))
 		  (when quiz-id
+		    (let ((g-results (org-canvas--sync-quiz-groups marker quiz-id)))
+		      (setq group-success (+ group-success (car g-results)))
+		      (setq group-fail (+ group-fail (cdr g-results))))
 		    (let ((q-results (org-canvas--sync-quiz-questions marker quiz-id)))
 		      (setq question-success (+ question-success (car q-results)))
 		      (setq question-fail (+ question-fail (cdr q-results)))))))
@@ -574,10 +704,12 @@ QUIZ-CANVAS-ID is the Canvas ID of the quiz."
     (elog-info org-canvas--logger "========================================")
     (elog-info org-canvas--logger ">>> QUIZ SYNC COMPLETE")
     (elog-info org-canvas--logger "Quizzes: %d success, %d failed" quiz-success quiz-fail)
+    (elog-info org-canvas--logger "Groups: %d success, %d failed" group-success group-fail)
     (elog-info org-canvas--logger "Questions: %d success, %d failed" question-success question-fail)
     (elog-info org-canvas--logger "========================================")
-    (message "Quiz sync: %d/%d quizzes, %d/%d questions."
+    (message "Quiz sync: %d/%d quizzes, %d/%d groups, %d/%d questions."
 	     quiz-success (+ quiz-success quiz-fail)
+	     group-success (+ group-success group-fail)
 	     question-success (+ question-success question-fail))))
 
 ;;;; Delete Functions

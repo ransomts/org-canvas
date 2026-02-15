@@ -406,7 +406,10 @@ Cleans up on exit."
           (org-canvas-announcements-file (expand-file-name "announcements.org" ,temp-dir-var))
           (org-canvas-assignment-groups-file (expand-file-name "assignment-groups.org" ,temp-dir-var))
           (org-canvas-sections-file (expand-file-name "sections.org" ,temp-dir-var))
-          (org-canvas-settings-file (expand-file-name "settings.org" ,temp-dir-var)))
+          (org-canvas-settings-file (expand-file-name "settings.org" ,temp-dir-var))
+          (org-canvas-new-quizzes-file (expand-file-name "new-quizzes.org" ,temp-dir-var))
+          (org-canvas-group-categories-file (expand-file-name "group-categories.org" ,temp-dir-var))
+          (org-canvas-calendar-events-file (expand-file-name "calendar.org" ,temp-dir-var)))
      (unwind-protect
          (progn ,@body)
        (delete-directory ,temp-dir-var t))))
@@ -417,7 +420,8 @@ EXCEPT is a list of filenames to skip."
   (dolist (f '("assignments.org" "pages.org" "quizzes.org"
                "modules.org" "files.org" "outcomes.org"
                "rubrics.org" "discussions.org" "announcements.org"
-               "assignment-groups.org" "sections.org" "settings.org"))
+               "assignment-groups.org" "sections.org" "settings.org"
+               "new-quizzes.org" "group-categories.org" "calendar.org"))
     (unless (member f except)
       (with-temp-file (expand-file-name f dir)
         (insert "#+TITLE: Test\n")))))
@@ -662,7 +666,67 @@ EXCEPT is a list of filenames to skip."
                                         :test #'string=)
                                :properties)
                     (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Question 1"))))
-       (expect issues :to-equal nil)))))
+       (expect issues :to-equal nil))))
+
+  (it "accepts 'group' as valid TYPE"
+    (with-temp-org-buffer
+     "* Quiz 1
+** Group 1
+:PROPERTIES:
+:TYPE: group
+:PICK_COUNT: 5
+:QUESTION_POINTS: 2
+:END:
+"
+     (search-forward "** Group 1")
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Quiz Questions" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Group 1"))))
+       (expect issues :to-equal nil))))
+
+  (it "validates PICK_COUNT as number"
+    (with-temp-org-buffer
+     "* Quiz 1
+** Group 1
+:PROPERTIES:
+:TYPE: group
+:PICK_COUNT: abc
+:END:
+"
+     (search-forward "** Group 1")
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Quiz Questions" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Group 1"))))
+       (expect (length issues) :to-be-greater-than 0)
+       (expect (plist-get (car issues) :message) :to-match "PICK_COUNT"))))
+
+  (it "validates QUESTION_BANK_ID as number"
+    (with-temp-org-buffer
+     "* Quiz 1
+** Group 1
+:PROPERTIES:
+:TYPE: group
+:QUESTION_BANK_ID: not-a-number
+:END:
+"
+     (search-forward "** Group 1")
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "Quiz Questions" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Group 1"))))
+       (expect (length issues) :to-be-greater-than 0)
+       (expect (plist-get (car issues) :message) :to-match "QUESTION_BANK_ID")))))
 
 (describe "page validation"
   (it "detects invalid EDITING_ROLES"
@@ -1720,6 +1784,68 @@ EXCEPT is a list of filenames to skip."
                     '((:name "GRADER_COUNT" :type number))
                     (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Test Assignment"))))
        (expect issues :to-equal nil)))))
+
+;;;; New Quiz Item OUTCOME Validation Tests
+
+(describe "new quiz item OUTCOME validation"
+  (it "returns nil when OUTCOME is absent"
+    (with-temp-org-buffer
+     "* Quiz
+** Question
+:PROPERTIES:
+:TYPE: choice
+:POINTS: 5
+:END:
+"
+     (search-forward "** Question")
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "New Quiz Items" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Question"))))
+       (expect issues :to-equal nil))))
+
+  (it "returns error for non-link OUTCOME value"
+    (with-temp-org-buffer
+     "* Quiz
+** Question
+:PROPERTIES:
+:TYPE: choice
+:POINTS: 5
+:OUTCOME: Python Proficiency
+:END:
+"
+     (search-forward "** Question")
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-entry-properties
+                    (plist-get (cl-find "New Quiz Items" org-canvas--validate-specs
+                                        :key (lambda (s) (plist-get s :label))
+                                        :test #'string=)
+                               :properties)
+                    (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Question"))))
+       (expect (length issues) :to-equal 1)
+       (expect (plist-get (car issues) :severity) :to-equal 'error)
+       (expect (plist-get (car issues) :message) :to-match "OUTCOME")
+       (expect (plist-get (car issues) :message) :to-match "not a file link"))))
+
+  (it "returns warning when OUTCOME link target has no CANVAS_ID"
+    (let* ((temp-dir (make-temp-file "nq-outcome-val-" t))
+           (outcomes-file (expand-file-name "outcomes.org" temp-dir))
+           (nq-file (expand-file-name "new-quizzes.org" temp-dir)))
+      (unwind-protect
+          (let ((org-canvas-outcomes-file outcomes-file))
+            (with-temp-file outcomes-file
+              (insert "* Programming\n** Python Proficiency\n:PROPERTIES:\n:END:\n"))
+            (let ((link (format "[[file:%s::*Python Proficiency][Python Proficiency]]" outcomes-file)))
+              (let ((issue (org-canvas--validate-check-link
+                            link "OUTCOME" 'org-canvas-outcomes-file
+                            "CANVAS_ID" (list :file nq-file :line 1 :heading "Question"))))
+                (expect issue :not :to-be nil)
+                (expect (plist-get issue :severity) :to-equal 'warning)
+                (expect (plist-get issue :message) :to-match "no CANVAS_ID"))))
+        (delete-directory temp-dir t)))))
 
 (provide 'org-canvas-validate-test)
 ;;; org-canvas-validate-test.el ends here

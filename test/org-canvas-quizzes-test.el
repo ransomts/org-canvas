@@ -2555,4 +2555,398 @@ Content.
        (expect (org-entry-get (point) "ONLY_VISIBLE_TO_OVERRIDES")
                :to-equal "false")))))
 
+;;;; Question Group Tests
+
+(describe "org-canvas--question-group-parse-entry"
+  (it "extracts name, pick_count, question_points, and bank_id"
+    (with-temp-org-buffer
+     "* Quiz
+** Vocabulary Pool
+:PROPERTIES:
+:TYPE: group
+:PICK_COUNT: 10
+:QUESTION_POINTS: 2
+:QUESTION_BANK_ID: 42
+:END:
+"
+     (search-forward "Vocabulary Pool")
+     (org-back-to-heading)
+     (let ((data (org-canvas--question-group-parse-entry "100")))
+       (expect (plist-get data :name) :to-equal "Vocabulary Pool")
+       (expect (plist-get data :quiz-canvas-id) :to-equal "100")
+       (expect (plist-get data :pick-count) :to-equal 10)
+       (expect (plist-get data :question-points) :to-equal 2)
+       (expect (plist-get data :bank-id) :to-equal 42))))
+
+  (it "returns nil bank-id when absent"
+    (with-temp-org-buffer
+     "* Quiz
+** Group Without Bank
+:PROPERTIES:
+:TYPE: group
+:PICK_COUNT: 5
+:QUESTION_POINTS: 3
+:END:
+"
+     (search-forward "Group Without Bank")
+     (org-back-to-heading)
+     (let ((data (org-canvas--question-group-parse-entry "100")))
+       (expect (plist-get data :bank-id) :to-be nil))))
+
+  (it "uses default values for pick_count and question_points"
+    (with-temp-org-buffer
+     "* Quiz
+** Minimal Group
+:PROPERTIES:
+:TYPE: group
+:END:
+"
+     (search-forward "Minimal Group")
+     (org-back-to-heading)
+     (let ((data (org-canvas--question-group-parse-entry "100")))
+       (expect (plist-get data :pick-count) :to-equal 1)
+       (expect (plist-get data :question-points) :to-equal 1))))
+
+  (it "extracts canvas-id when present"
+    (with-temp-org-buffer
+     "* Quiz
+** Existing Group
+:PROPERTIES:
+:TYPE: group
+:CANVAS_ID: 555
+:PICK_COUNT: 5
+:QUESTION_POINTS: 2
+:END:
+"
+     (search-forward "Existing Group")
+     (org-back-to-heading)
+     (let ((data (org-canvas--question-group-parse-entry "100")))
+       (expect (plist-get data :canvas-id) :to-equal "555"))))
+
+  (it "includes pom marker"
+    (with-temp-org-buffer
+     "* Quiz
+** Group
+:PROPERTIES:
+:TYPE: group
+:END:
+"
+     (search-forward "Group")
+     (org-back-to-heading)
+     (let ((data (org-canvas--question-group-parse-entry "100")))
+       (expect (plist-get data :pom) :to-be-truthy)))))
+
+(describe "org-canvas--question-group-build-payload"
+  (it "wraps in quiz_groups key"
+    (let* ((data '(:name "Pool" :pick-count 5 :question-points 2 :canvas-id nil :bank-id nil))
+           (payload (org-canvas--question-group-build-payload data)))
+      (expect (assq 'quiz_groups payload) :to-be-truthy)
+      (let ((groups (alist-get 'quiz_groups payload)))
+        (expect (length groups) :to-equal 1)
+        (expect (alist-get 'name (car groups)) :to-equal "Pool")
+        (expect (alist-get 'pick_count (car groups)) :to-equal 5)
+        (expect (alist-get 'question_points (car groups)) :to-equal 2))))
+
+  (it "includes bank ID on POST (no canvas-id)"
+    (let* ((data '(:name "Pool" :pick-count 5 :question-points 2 :canvas-id nil :bank-id 42))
+           (payload (org-canvas--question-group-build-payload data))
+           (group-obj (car (alist-get 'quiz_groups payload))))
+      (expect (alist-get 'assessment_question_bank_id group-obj) :to-equal 42)))
+
+  (it "excludes bank ID on PUT (has canvas-id)"
+    (let* ((data '(:name "Pool" :pick-count 5 :question-points 2 :canvas-id "99" :bank-id 42))
+           (payload (org-canvas--question-group-build-payload data))
+           (group-obj (car (alist-get 'quiz_groups payload))))
+      (expect (assq 'assessment_question_bank_id group-obj) :to-be nil)))
+
+  (it "handles nil bank-id on POST"
+    (let* ((data '(:name "Pool" :pick-count 3 :question-points 1 :canvas-id nil :bank-id nil))
+           (payload (org-canvas--question-group-build-payload data))
+           (group-obj (car (alist-get 'quiz_groups payload))))
+      (expect (assq 'assessment_question_bank_id group-obj) :to-be nil))))
+
+(describe "org-canvas--question-group-push-to-api (mocked)"
+  (it "POSTs for new groups and unwraps response"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (method url &rest _args)
+                   (expect method :to-equal 'POST)
+                   (expect url :to-match "quizzes/100/groups$")
+                   '((quiz_groups . [((id . 55) (name . "Pool"))])))))
+        (let* ((data '(:name "Pool" :canvas-id nil :quiz-canvas-id "100"))
+               (payload '((quiz_groups . (((name . "Pool"))))))
+               (response (org-canvas--question-group-push-to-api data payload)))
+          (expect (alist-get 'id response) :to-equal 55)))))
+
+  (it "PUTs for existing groups"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (method url &rest _args)
+                   (expect method :to-equal 'PUT)
+                   (expect url :to-match "quizzes/100/groups/55$")
+                   '((quiz_groups . [((id . 55) (name . "Updated Pool"))])))))
+        (let* ((data '(:name "Updated Pool" :canvas-id "55" :quiz-canvas-id "100"))
+               (payload '((quiz_groups . (((name . "Updated Pool"))))))
+               (response (org-canvas--question-group-push-to-api data payload)))
+          (expect (alist-get 'id response) :to-equal 55)))))
+
+  (it "re-signals errors"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (_method _url &rest _args)
+                   (signal 'error '("API error")))))
+        (let ((data '(:name "Pool" :canvas-id nil :quiz-canvas-id "100"))
+              (payload '((quiz_groups . (((name . "Pool")))))))
+          (expect (org-canvas--question-group-push-to-api data payload)
+                  :to-throw 'error))))))
+
+(describe "org-canvas--question-group-finalize"
+  (it "saves CANVAS_ID from response"
+    (with-temp-org-buffer
+     "* Quiz
+** Group
+:PROPERTIES:
+:TYPE: group
+:END:
+"
+     (search-forward "Group")
+     (org-back-to-heading)
+     (let ((data (list :name "Group" :pom (point-marker)))
+           (response '((id . 77))))
+       (org-canvas--question-group-finalize data response)
+       (expect (org-entry-get (point) "CANVAS_ID") :to-equal "77"))))
+
+  (it "saves LAST_SYNCED timestamp"
+    (with-temp-org-buffer
+     "* Quiz
+** Group
+:PROPERTIES:
+:TYPE: group
+:END:
+"
+     (search-forward "Group")
+     (org-back-to-heading)
+     (let ((data (list :name "Group" :pom (point-marker)))
+           (response '((id . 77))))
+       (org-canvas--question-group-finalize data response)
+       (expect (org-entry-get (point) "LAST_SYNCED") :to-match "^\\[20[0-9][0-9]-")))))
+
+(describe "org-canvas--sync-quiz-groups (mocked)"
+  (it "collects only TYPE=group headings"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-temp-org-buffer
+         "* Quiz
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+
+** Question 1
+:PROPERTIES:
+:TYPE: multiple_choice_question
+:END:
+
+- [X] A
+
+** Group 1
+:PROPERTIES:
+:TYPE: group
+:PICK_COUNT: 5
+:END:
+
+** Question 2
+:PROPERTIES:
+:TYPE: essay_question
+:END:
+"
+         (org-back-to-heading)
+         (let ((marker (point-marker)))
+           (let ((results (org-canvas--sync-quiz-groups marker "100")))
+             (expect (car results) :to-equal 1)
+             (expect (cdr results) :to-equal 0)))))))
+
+  (it "returns (0 . 0) when no groups present"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-temp-org-buffer
+         "* Quiz
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+
+** Question 1
+:PROPERTIES:
+:TYPE: multiple_choice_question
+:END:
+
+- [X] A
+"
+         (org-back-to-heading)
+         (let ((marker (point-marker)))
+           (let ((results (org-canvas--sync-quiz-groups marker "100")))
+             (expect (car results) :to-equal 0)
+             (expect (cdr results) :to-equal 0)))))))
+
+  (it "continues after group failure"
+    (with-org-canvas-test-config
+      (let ((call-count 0))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_method _url &rest _args)
+                     (setq call-count (1+ call-count))
+                     (if (= call-count 1)
+                         (signal 'error '("First group failed"))
+                       '((quiz_groups . [((id . 88))]))))))
+          (with-temp-org-buffer
+           "* Quiz
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+
+** Group A
+:PROPERTIES:
+:TYPE: group
+:PICK_COUNT: 3
+:END:
+
+** Group B
+:PROPERTIES:
+:TYPE: group
+:PICK_COUNT: 5
+:END:
+"
+           (org-back-to-heading)
+           (let ((marker (point-marker)))
+             (let ((results (org-canvas--sync-quiz-groups marker "100")))
+               (expect (car results) :to-equal 1)
+               (expect (cdr results) :to-equal 1)))))))))
+
+(describe "org-canvas--sync-quiz-questions skips groups"
+  (it "skips TYPE=group headings during question sync"
+    (with-org-canvas-test-config
+      (let ((question-posts 0))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest _args)
+                     (when (and (eq method 'POST) (string-match "questions$" url))
+                       (setq question-posts (1+ question-posts)))
+                     '((id . 999)))))
+          (with-temp-org-buffer
+           "* Quiz
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+
+** Question 1
+:PROPERTIES:
+:TYPE: multiple_choice_question
+:END:
+
+- [X] A
+
+** Group 1
+:PROPERTIES:
+:TYPE: group
+:PICK_COUNT: 5
+:END:
+
+** Question 2
+:PROPERTIES:
+:TYPE: essay_question
+:END:
+
+Write an essay.
+"
+           (org-back-to-heading)
+           (let ((marker (point-marker)))
+             (org-canvas--sync-quiz-questions marker "100")
+             ;; Only 2 questions should be synced, not the group
+             (expect question-posts :to-equal 2))))))))
+
+(describe "org-canvas-sync-quizzes with groups (mocked)"
+  (it "syncs groups and questions together"
+    (let ((temp-dir (make-temp-file "quiz-group-test" t)))
+      (unwind-protect
+          (let* ((org-file (expand-file-name "quizzes.org" temp-dir))
+                 (group-posts 0)
+                 (question-posts 0))
+            (with-temp-file org-file
+              (insert "* Test Quiz
+:PROPERTIES:
+:END:
+
+** Question 1
+:PROPERTIES:
+:END:
+
+- [X] Answer A
+- [ ] Answer B
+
+** Vocab Bank
+:PROPERTIES:
+:TYPE: group
+:PICK_COUNT: 5
+:QUESTION_POINTS: 2
+:QUESTION_BANK_ID: 42
+:END:
+"))
+            (let ((org-canvas-quizzes-file org-file)
+                  (org-canvas-base-url "https://test.canvas.example.com")
+                  (org-canvas-api-token "test-token")
+                  (org-canvas-course-id "99999"))
+              (with-sync-test-env
+                (cl-letf (((symbol-function 'org-canvas-api-request)
+                           (lambda (method url &rest _args)
+                             (cond
+                              ;; Quiz POST
+                              ((and (eq method 'POST) (string-match "quizzes$" url))
+                               '((id . 100) (title . "Test Quiz")))
+                              ;; Group POST
+                              ((and (eq method 'POST) (string-match "groups$" url))
+                               (setq group-posts (1+ group-posts))
+                               '((quiz_groups . [((id . 55) (name . "Vocab Bank"))])))
+                              ;; Question POST
+                              ((and (eq method 'POST) (string-match "questions$" url))
+                               (setq question-posts (1+ question-posts))
+                               '((id . 200)))
+                              (t nil)))))
+                  (org-canvas-sync-quizzes)
+                  (expect group-posts :to-equal 1)
+                  (expect question-posts :to-equal 1)))))
+        (delete-directory temp-dir t))))
+
+  (it "includes group counts in message"
+    (let ((temp-dir (make-temp-file "quiz-group-test" t)))
+      (unwind-protect
+          (let* ((org-file (expand-file-name "quizzes.org" temp-dir))
+                 (final-message nil))
+            (with-temp-file org-file
+              (insert "* Test Quiz
+:PROPERTIES:
+:END:
+
+** Group 1
+:PROPERTIES:
+:TYPE: group
+:PICK_COUNT: 3
+:END:
+"))
+            (let ((org-canvas-quizzes-file org-file)
+                  (org-canvas-base-url "https://test.canvas.example.com")
+                  (org-canvas-api-token "test-token")
+                  (org-canvas-course-id "99999"))
+              (with-sync-test-env
+                (cl-letf (((symbol-function 'org-canvas-api-request)
+                           (lambda (method url &rest _args)
+                             (cond
+                              ((and (eq method 'POST) (string-match "quizzes$" url))
+                               '((id . 100)))
+                              ((and (eq method 'POST) (string-match "groups$" url))
+                               '((quiz_groups . [((id . 55))])))
+                              (t nil))))
+                          ((symbol-function 'message)
+                           (lambda (fmt &rest args)
+                             (setq final-message (apply #'format fmt args)))))
+                  (org-canvas-sync-quizzes)
+                  (expect final-message :to-match "groups")))))
+        (delete-directory temp-dir t)))))
+
 ;;; org-canvas-quizzes-test.el ends here
