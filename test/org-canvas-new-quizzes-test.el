@@ -601,7 +601,7 @@ Quiz description.
       (expect (alist-get 'value (alist-get 'scoring_data data))
               :to-equal t))))
 
-(describe "org-canvas--new-quiz-item-build-fill-blank-data (shared by short-answer)"
+(describe "org-canvas--new-quiz-item-build-fill-blank-data (used by short-answer)"
   (it "builds blanks array and one scoring entry per correct answer"
     (let ((data (org-canvas--new-quiz-item-build-fill-blank-data
                  '(("Paris" . t) ("paris" . t) ("London" . nil)))))
@@ -785,21 +785,6 @@ Quiz description.
      (org-back-to-heading)
      (let ((data (org-canvas--new-quiz-item-build-interaction-data "multi-answer")))
        (expect (alist-get 'choices data) :to-be-truthy))))
-
-  (it "dispatches to fill-in-the-blank builder"
-    (with-temp-org-buffer
-     "* Quiz
-** FIB
-:PROPERTIES:
-:END:
-
-- [X] answer1
-- [X] answer2
-"
-     (search-forward "FIB")
-     (org-back-to-heading)
-     (let ((data (org-canvas--new-quiz-item-build-interaction-data "fill-in-the-blank")))
-       (expect (alist-get 'scoring_data data) :to-be-truthy))))
 
   (it "dispatches to fill-blank builder for short-answer"
     (with-temp-org-buffer
@@ -1039,16 +1024,7 @@ Quiz description.
       (expect (alist-get 'value sd) :to-be-truthy)
       (expect (alist-get 'scoring_data cleaned) :to-be nil)))
 
-  (it "extracts scoring_data from fill-in-the-blank"
-    (let* ((idata `((blanks . ,(vector '((id . "blank1"))))
-                    (scoring_data . ((value . ,(vector '((id . "blank1") (value . "answer1"))
-                                                       '((id . "blank1") (value . "answer2"))))))))
-           (result (org-canvas--new-quiz-item-build-scoring-data "fill-in-the-blank" idata))
-           (sd (car result))
-           (cleaned (cdr result)))
-      (expect (alist-get 'value sd) :to-be-truthy)
-      (expect (alist-get 'scoring_data cleaned) :to-be nil)
-      (expect (alist-get 'blanks cleaned) :to-be-truthy))))
+)
 
 ;;;; Item Build Payload
 
@@ -1628,8 +1604,6 @@ Quiz description.
             :to-equal "ordering")
     (expect (cdr (assoc "categorization" org-canvas--new-quiz-type-slugs))
             :to-equal "categorization")
-    (expect (cdr (assoc "fill-in-the-blank" org-canvas--new-quiz-type-slugs))
-            :to-equal "rich-fill-blank")
     (expect (cdr (assoc "hot-spot" org-canvas--new-quiz-type-slugs))
             :to-equal "hot-spot")))
 
@@ -1933,7 +1907,7 @@ Quiz description.
 
 (describe "org-canvas--new-quiz-valid-types"
   (it "contains all expected types"
-    (expect (length org-canvas--new-quiz-valid-types) :to-equal 12)
+    (expect (length org-canvas--new-quiz-valid-types) :to-equal 11)
     (expect (member "choice" org-canvas--new-quiz-valid-types) :to-be-truthy)
     (expect (member "true-false" org-canvas--new-quiz-valid-types) :to-be-truthy)
     (expect (member "essay" org-canvas--new-quiz-valid-types) :to-be-truthy)

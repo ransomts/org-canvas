@@ -82,7 +82,6 @@ New Quizzes use /api/quiz/v1/ instead of /api/v1/."
     ("matching"            . "matching")
     ("ordering"            . "ordering")
     ("categorization"      . "categorization")
-    ("fill-in-the-blank"   . "rich-fill-blank")
     ("hot-spot"            . "hot-spot"))
   "Map from Org TYPE property values to New Quizzes interaction_type_slug.")
 
@@ -102,7 +101,6 @@ New Quizzes use /api/quiz/v1/ instead of /api/v1/."
     ("ordering"            . "DeepEquals")
     ("categorization"      . "Categorization")
     ("numerical"           . "Numeric")
-    ("fill-in-the-blank"   . "MultipleMethods")
     ("short-answer"        . "MultipleMethods")
     ("essay"               . "None")
     ("file-upload"         . "None")
@@ -504,7 +502,7 @@ Canvas numeric scoring_data.value is an array of answer objects:
                                           (plist-get num :value)))))))))))
 
 (defun org-canvas--new-quiz-item-build-fill-blank-data (answers)
-  "Build interaction_data for fill-in-the-blank from ANSWERS.
+  "Build interaction_data for short-answer from ANSWERS.
 One scoring entry per correct answer, each with id, nested
 scoring_data (string value), and scoring_algorithm Equivalence."
   (let* ((blank-id (org-canvas--new-quiz-uuid))
@@ -530,7 +528,7 @@ Returns an alist that will be JSON-encoded."
     ("multi-answer"
      (org-canvas--new-quiz-item-build-choice-data
       (org-canvas--new-quiz-parse-checkbox-list)))
-    ((or "fill-in-the-blank" "short-answer")
+    ("short-answer"
      (org-canvas--new-quiz-item-build-fill-blank-data
       (org-canvas--new-quiz-parse-checkbox-list)))
     ("matching"
@@ -559,7 +557,7 @@ CLEANED-INTERACTION-DATA has embedded scoring_data removed to
 avoid duplication in the API payload."
   (pcase q-type
     ;; Types with top-level scoring_data in interaction-data: extract and remove
-    ((or "true-false" "ordering" "numerical" "fill-in-the-blank" "short-answer")
+    ((or "true-false" "ordering" "numerical" "short-answer")
      (let ((sd (alist-get 'scoring_data interaction-data)))
        (cons sd (assq-delete-all 'scoring_data interaction-data))))
 

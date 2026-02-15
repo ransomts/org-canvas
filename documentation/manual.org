@@ -503,7 +503,7 @@ New Quizzes are Instructure's replacement for Classic Quizzes.  They use a compl
 
 Use *New Quizzes* when:
 - Your institution has enabled New Quizzes (requires LTI configuration)
-- You need question types not available in Classic: ordering, categorization, hot-spot, rich fill-in-the-blank
+- You need question types not available in Classic: ordering, categorization, hot-spot
 - You want partial credit scoring on matching/ordering/categorization
 - You want built-in item analysis and moderation tools
 
@@ -551,8 +551,9 @@ Use *Classic Quizzes* (=quizzes.org=) when:
 | =matching=             | =matching=             | =Left = Right= pairs                       |
 | =ordering=             | =ordering=             | Numbered list =1. item=                     |
 | =categorization=       | =categorization=       | =Category: item1, item2=                   |
-| =fill-in-the-blank=    | =fill_in_the_blank=    | =[X]= for each blank answer                 |
 | =hot-spot=             | =hot_spot=             | Coordinate data (advanced)                |
+
+*Unsupported:* =fill-in-the-blank= is not supported.  The Canvas New Quizzes API accepts the question data but the Build editor requires an internal =working_item_body= field (with backtick-delimited blanks) that cannot be set reliably via the API --- POST requests with this field return 502 Bad Gateway when multiple correct answers are present.  Use =short-answer= instead, which provides equivalent auto-graded free-response functionality without the editor limitation.
 
 *** Example
 
