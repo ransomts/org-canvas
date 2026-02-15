@@ -86,7 +86,9 @@ Generates `org-canvas-sync-announcements` with logging, error handling, conflict
 ;; Generic search - replaces duplicated find-by-title/name functions
 (org-canvas--search-item "assignments" title :match-field 'name)
 
-;; Generic push with 404 retry and timeout recovery
+;; Generic push with 404 retry, timeout recovery, and conflict detection
+;; Conflict check is delegated to org-canvas--push-check-and-resolve-conflict
+;; which returns 'push, 'skip, or 'pulled
 (org-canvas--push-to-api data payload
   :endpoint "pages"
   :id-key :canvas-url           ; for pages (default :canvas-id)
@@ -106,6 +108,19 @@ Generates `org-canvas-sync-announcements` with logging, error handling, conflict
 **Modules with custom sync logic (not macro-based):** files (3-step upload), outcomes (hierarchical), quizzes (nested questions), new-quizzes (nested items, `/api/quiz/v1/` API), modules (parent-child items), overrides (reconcile-based)
 
 **Pull-only modules:** sections (pulled from Canvas via `org-canvas-pull-sections`, not pushed)
+
+### Complexity Management
+
+Functions are kept below a cognitive complexity threshold of 15. Common extraction patterns used throughout the codebase:
+
+- **Single-item helpers**: Extract the body of a `dolist` into a named helper (e.g., `org-canvas--settings-sync-single-tab`, `org-canvas--file-sync-single-entry`, `org-canvas--resolve-single-image`)
+- **Data-driven loops**: Replace repetitive `when`-blocks with a field-spec constant and `dolist` + `pcase` (e.g., `org-canvas--late-policy-field-specs` in settings.el)
+- **Conflict extraction**: `org-canvas--push-check-and-resolve-conflict` handles the entire conflict detection block, returning a `push`/`skip`/`pulled` symbol
+- **Timeout detection**: `org-canvas--timeout-error-p` is the shared predicate for timeout errors — use it instead of inline string matching
+- **Payload wrapping**: Extract nested payload restructuring into helpers (e.g., `org-canvas--new-quiz-item-wrap-payload`)
+- **Pull property setters**: Extract property-setting blocks from pull functions into dedicated helpers (e.g., `org-canvas--file-pull-set-properties`, `org-canvas--settings-pull-late-policy-properties`)
+
+Run `eldev complexity` to check current metrics. Target: 0 functions above threshold (>15).
 
 ### Sync State Property
 
@@ -139,7 +154,7 @@ Use `org-canvas-org-save-sync-state` to standardize saving.
 
 ### Error Handling
 - Wrap API calls in `condition-case`
-- On timeout: search Canvas for item, retry if needed
+- On timeout: search Canvas for item, retry if needed — use `org-canvas--timeout-error-p` to detect timeout errors (matches both `"Timeout"` and `"timed out"` case-insensitively)
 - On 404 for PUT: retry as POST
 - On 429 or rate-limit 403: retry with configurable delay (`org-canvas-rate-limit-retries`, `org-canvas-rate-limit-wait`)
 - On 401: actionable message about expired API token
