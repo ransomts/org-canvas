@@ -5,8 +5,8 @@
 :ONE_AT_A_TIME: true
 :ALLOWED_ATTEMPTS: 2
 :SCORING_POLICY: keep_highest
-:CANVAS_ASSIGNMENT_ID: 2390987
-:LAST_SYNCED: [2026-02-14 Sat 17:12]
+:CANVAS_ASSIGNMENT_ID: 2391040
+:LAST_SYNCED: [2026-02-14 Sat 20:45]
 :END:
 
 Test your understanding of core data science concepts from Weeks 1-3.
@@ -15,8 +15,8 @@ Test your understanding of core data science concepts from Weeks 1-3.
 :PROPERTIES:
 :TYPE: choice
 :POINTS: 3
-:CANVAS_ITEM_ID: 69681
-:LAST_SYNCED: [2026-02-14 Sat 17:12]
+:CANVAS_ITEM_ID: 69882
+:LAST_SYNCED: [2026-02-14 Sat 20:45]
 :END:
 
 - [ ] To build production machine learning models
@@ -28,8 +28,8 @@ Test your understanding of core data science concepts from Weeks 1-3.
 :PROPERTIES:
 :TYPE: true-false
 :POINTS: 2
-:CANVAS_ITEM_ID: 69682
-:LAST_SYNCED: [2026-02-14 Sat 17:12]
+:CANVAS_ITEM_ID: 69883
+:LAST_SYNCED: [2026-02-14 Sat 20:45]
 :END:
 
 - [ ] True
@@ -39,8 +39,8 @@ Test your understanding of core data science concepts from Weeks 1-3.
 :PROPERTIES:
 :TYPE: multi-answer
 :POINTS: 4
-:CANVAS_ITEM_ID: 69683
-:LAST_SYNCED: [2026-02-14 Sat 17:12]
+:CANVAS_ITEM_ID: 69884
+:LAST_SYNCED: [2026-02-14 Sat 20:45]
 :END:
 
 - [X] Linear Regression
@@ -53,8 +53,8 @@ Test your understanding of core data science concepts from Weeks 1-3.
 :PROPERTIES:
 :TYPE: short-answer
 :POINTS: 2
-:CANVAS_ITEM_ID: 69685
-:LAST_SYNCED: [2026-02-14 Sat 17:12]
+:CANVAS_ITEM_ID: 69885
+:LAST_SYNCED: [2026-02-14 Sat 20:45]
 :END:
 
 - [X] pandas
@@ -66,16 +66,16 @@ Test your understanding of core data science concepts from Weeks 1-3.
 :PROPERTIES:
 :TYPE: essay
 :POINTS: 10
-:CANVAS_ITEM_ID: 69686
-:LAST_SYNCED: [2026-02-14 Sat 17:12]
+:CANVAS_ITEM_ID: 69886
+:LAST_SYNCED: [2026-02-14 Sat 20:45]
 :END:
 
 ** Match each metric to what it measures
 :PROPERTIES:
 :TYPE: matching
 :POINTS: 6
-:CANVAS_ITEM_ID: 69687
-:LAST_SYNCED: [2026-02-14 Sat 17:12]
+:CANVAS_ITEM_ID: 69887
+:LAST_SYNCED: [2026-02-14 Sat 20:45]
 :END:
 
 - Precision = Fraction of positive predictions that are correct
@@ -87,8 +87,8 @@ Test your understanding of core data science concepts from Weeks 1-3.
 :PROPERTIES:
 :TYPE: ordering
 :POINTS: 5
-:CANVAS_ITEM_ID: 69688
-:LAST_SYNCED: [2026-02-14 Sat 17:12]
+:CANVAS_ITEM_ID: 69888
+:LAST_SYNCED: [2026-02-14 Sat 20:45]
 :END:
 
 1. Define the problem
@@ -101,8 +101,8 @@ Test your understanding of core data science concepts from Weeks 1-3.
 :PROPERTIES:
 :TYPE: numerical
 :POINTS: 2
-:CANVAS_ITEM_ID: 69689
-:LAST_SYNCED: [2026-02-14 Sat 17:12]
+:CANVAS_ITEM_ID: 69889
+:LAST_SYNCED: [2026-02-14 Sat 20:45]
 :END:
 
 - [X] 8
@@ -112,8 +112,8 @@ Test your understanding of core data science concepts from Weeks 1-3.
 :TIME_LIMIT: 30
 :SHUFFLE_ANSWERS: true
 :ALLOWED_ATTEMPTS: 1
-:CANVAS_ASSIGNMENT_ID: 2390988
-:LAST_SYNCED: [2026-02-14 Sat 17:12]
+:CANVAS_ASSIGNMENT_ID: 2391041
+:LAST_SYNCED: [2026-02-14 Sat 20:45]
 :END:
 
 A shorter quiz on statistical concepts.
@@ -122,8 +122,8 @@ A shorter quiz on statistical concepts.
 :PROPERTIES:
 :TYPE: categorization
 :POINTS: 6
-:CANVAS_ITEM_ID: 69690
-:LAST_SYNCED: [2026-02-14 Sat 17:12]
+:CANVAS_ITEM_ID: 69890
+:LAST_SYNCED: [2026-02-14 Sat 20:45]
 :END:
 
 - Parametric: t-test, ANOVA, linear regression
@@ -133,8 +133,8 @@ A shorter quiz on statistical concepts.
 :PROPERTIES:
 :TYPE: true-false
 :POINTS: 2
-:CANVAS_ITEM_ID: 69691
-:LAST_SYNCED: [2026-02-14 Sat 17:12]
+:CANVAS_ITEM_ID: 69891
+:LAST_SYNCED: [2026-02-14 Sat 20:45]
 :END:
 
 - [X] True
@@ -144,6 +144,138 @@ A shorter quiz on statistical concepts.
 :PROPERTIES:
 :TYPE: file-upload
 :POINTS: 15
-:CANVAS_ITEM_ID: 69692
-:LAST_SYNCED: [2026-02-14 Sat 17:12]
+:CANVAS_ITEM_ID: 69892
+:LAST_SYNCED: [2026-02-14 Sat 20:45]
 :END:
+
+* New Quiz Questions Demo
+:PROPERTIES:
+:CANVAS_ASSIGNMENT_ID: 2391042
+:LAST_SYNCED: [2026-02-14 Sat 20:45]
+:END:
+
+A demonstration of every supported New Quiz question type.
+
+** What is the capital of France?
+:PROPERTIES:
+:TYPE: choice
+:POINTS: 2
+:CANVAS_ITEM_ID: 69893
+:LAST_SYNCED: [2026-02-14 Sat 20:45]
+:END:
+
+- [ ] London
+- [X] Paris
+- [ ] Berlin
+- [ ] Madrid
+
+** The Earth is flat.
+:PROPERTIES:
+:TYPE: true-false
+:POINTS: 1
+:CANVAS_ITEM_ID: 69894
+:LAST_SYNCED: [2026-02-14 Sat 20:45]
+:END:
+
+- [ ] True
+- [X] False
+
+** Which of these are prime numbers?
+:PROPERTIES:
+:TYPE: multi-answer
+:POINTS: 3
+:CANVAS_ITEM_ID: 69895
+:LAST_SYNCED: [2026-02-14 Sat 20:45]
+:END:
+
+- [X] 2
+- [X] 3
+- [ ] 4
+- [X] 5
+- [ ] 6
+
+** What is the chemical symbol for water?
+:PROPERTIES:
+:TYPE: short-answer
+:POINTS: 2
+:CANVAS_ITEM_ID: 69896
+:LAST_SYNCED: [2026-02-14 Sat 20:45]
+:END:
+
+- [X] H2O
+- [X] h2o
+
+** Describe the process of photosynthesis.
+:PROPERTIES:
+:TYPE: essay
+:POINTS: 10
+:CANVAS_ITEM_ID: 69897
+:LAST_SYNCED: [2026-02-14 Sat 20:45]
+:END:
+
+** Upload your lab report as a PDF.
+:PROPERTIES:
+:TYPE: file-upload
+:POINTS: 5
+:CANVAS_ITEM_ID: 69898
+:LAST_SYNCED: [2026-02-14 Sat 20:45]
+:END:
+
+** What is 7 times 8?
+:PROPERTIES:
+:TYPE: numerical
+:POINTS: 2
+:CANVAS_ITEM_ID: 69899
+:LAST_SYNCED: [2026-02-14 Sat 20:45]
+:END:
+
+- [X] 56
+
+** Match each country to its capital
+:PROPERTIES:
+:TYPE: matching
+:POINTS: 4
+:CANVAS_ITEM_ID: 69900
+:LAST_SYNCED: [2026-02-14 Sat 20:45]
+:END:
+
+- Japan = Tokyo
+- Brazil = Brasilia
+- Egypt = Cairo
+- Canada = Ottawa
+
+** Arrange these historical events in chronological order
+:PROPERTIES:
+:TYPE: ordering
+:POINTS: 4
+:CANVAS_ITEM_ID: 69901
+:LAST_SYNCED: [2026-02-14 Sat 20:45]
+:END:
+
+1. Invention of the printing press
+2. American Revolution
+3. World War I
+4. Moon landing
+
+** Classify these animals
+:PROPERTIES:
+:TYPE: categorization
+:POINTS: 4
+:CANVAS_ITEM_ID: 69902
+:LAST_SYNCED: [2026-02-14 Sat 20:45]
+:END:
+
+- Mammals: whale, bat, elephant
+- Reptiles: snake, lizard, turtle
+
+** The _____ is the powerhouse of the cell.
+:PROPERTIES:
+:TYPE: fill-in-the-blank
+:POINTS: 2
+:CANVAS_ITEM_ID: 69903
+:LAST_SYNCED: [2026-02-14 Sat 20:45]
+:END:
+
+- [X] mitochondria
+- [X] Mitochondria
+- [X] mitochondrion

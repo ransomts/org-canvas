@@ -543,82 +543,132 @@ Quiz description.
 ;;;; Interaction Data Building
 
 (describe "org-canvas--new-quiz-item-build-choice-data"
-  (it "builds choice data with correct/incorrect answers"
+  (it "builds choices as array with item_body wrapped in <p> tags"
     (let ((data (org-canvas--new-quiz-item-build-choice-data
                  '(("Option A" . t) ("Option B" . nil) ("Option C" . nil)))))
-      (expect (alist-get 'choices data) :to-be-truthy)
       (let* ((choices (append (alist-get 'choices data) nil))
              (first (nth 0 choices)))
         (expect (length choices) :to-equal 3)
-        (expect (alist-get 'item_body first) :to-equal "Option A")
-        (expect (alist-get 'value (alist-get 'scoring_data first)) :to-equal 1))))
+        (expect (alist-get 'item_body first) :to-equal "<p>Option A</p>")
+        ;; No per-choice scoring_data
+        (expect (alist-get 'scoring_data first) :to-be nil))))
 
-  (it "assigns sequential IDs and positions"
+  (it "assigns UUID IDs and sequential positions"
     (let* ((data (org-canvas--new-quiz-item-build-choice-data
                   '(("A" . t) ("B" . nil))))
            (choices (append (alist-get 'choices data) nil)))
-      (expect (alist-get 'id (nth 0 choices)) :to-equal "choice_0")
-      (expect (alist-get 'id (nth 1 choices)) :to-equal "choice_1")
+      ;; IDs are UUID-format strings
+      (expect (alist-get 'id (nth 0 choices)) :to-match "^[0-9a-f]\\{20,\\}$")
+      (expect (alist-get 'id (nth 1 choices)) :to-match "^[0-9a-f]\\{20,\\}$")
+      ;; Different IDs
+      (expect (alist-get 'id (nth 0 choices))
+              :not :to-equal (alist-get 'id (nth 1 choices)))
       (expect (alist-get 'position (nth 0 choices)) :to-equal 1)
-      (expect (alist-get 'position (nth 1 choices)) :to-equal 2))))
+      (expect (alist-get 'position (nth 1 choices)) :to-equal 2)))
+
+  (it "tracks correct answer IDs in _correct_ids"
+    (let* ((data (org-canvas--new-quiz-item-build-choice-data
+                  '(("A" . nil) ("B" . t) ("C" . t))))
+           (choices (append (alist-get 'choices data) nil))
+           (correct-ids (alist-get '_correct_ids data)))
+      (expect (length correct-ids) :to-equal 2)
+      ;; correct IDs should match the IDs of choices at positions 2 and 3
+      (expect (nth 0 correct-ids) :to-equal (alist-get 'id (nth 1 choices)))
+      (expect (nth 1 correct-ids) :to-equal (alist-get 'id (nth 2 choices))))))
 
 (describe "org-canvas--new-quiz-item-build-true-false-data"
-  (it "sets correct answer to true"
+  (it "uses plain string choices"
+    (let ((data (org-canvas--new-quiz-item-build-true-false-data
+                 '(("True" . t) ("False" . nil)))))
+      (expect (alist-get 'true_choice data) :to-equal "True")
+      (expect (alist-get 'false_choice data) :to-equal "False")))
+
+  (it "sets scoring_data value to boolean true when True is correct"
     (let ((data (org-canvas--new-quiz-item-build-true-false-data
                  '(("True" . t) ("False" . nil)))))
       (expect (alist-get 'value (alist-get 'scoring_data data))
-              :to-equal "true")))
+              :to-equal t)))
 
-  (it "sets correct answer to false"
+  (it "sets scoring_data value to :json-false when False is correct"
     (let ((data (org-canvas--new-quiz-item-build-true-false-data
                  '(("True" . nil) ("False" . t)))))
       (expect (alist-get 'value (alist-get 'scoring_data data))
-              :to-equal "false")))
+              :to-equal :json-false)))
 
   (it "handles case-insensitive True"
     (let ((data (org-canvas--new-quiz-item-build-true-false-data
                  '(("true" . t) ("false" . nil)))))
       (expect (alist-get 'value (alist-get 'scoring_data data))
-              :to-equal "true"))))
+              :to-equal t))))
 
-(describe "org-canvas--new-quiz-item-build-short-answer-data"
-  (it "includes only correct answers"
-    (let ((data (org-canvas--new-quiz-item-build-short-answer-data
+(describe "org-canvas--new-quiz-item-build-fill-blank-data (shared by short-answer)"
+  (it "builds blanks array and one scoring entry per correct answer"
+    (let ((data (org-canvas--new-quiz-item-build-fill-blank-data
                  '(("Paris" . t) ("paris" . t) ("London" . nil)))))
-      (let ((values (append (alist-get 'value (alist-get 'scoring_data data)) nil)))
-        (expect (length values) :to-equal 2)
-        (expect (member "Paris" values) :to-be-truthy)
-        (expect (member "paris" values) :to-be-truthy)))))
+      ;; Has blanks array with one blank
+      (let ((blanks (append (alist-get 'blanks data) nil)))
+        (expect (length blanks) :to-equal 1)
+        (expect (alist-get 'id (nth 0 blanks)) :to-match "^[0-9a-f]\\{20,\\}$"))
+      ;; scoring_data has one entry per correct answer, each with string value
+      (let* ((sd (alist-get 'scoring_data data))
+             (entries (append (alist-get 'value sd) nil))
+             (blank-id (alist-get 'id (nth 0 (append (alist-get 'blanks data) nil)))))
+        (expect (length entries) :to-equal 2)
+        ;; Each entry references the same blank
+        (expect (alist-get 'id (nth 0 entries)) :to-equal blank-id)
+        (expect (alist-get 'id (nth 1 entries)) :to-equal blank-id)
+        ;; Each has Equivalence algorithm
+        (expect (alist-get 'scoring_algorithm (nth 0 entries)) :to-equal "Equivalence")
+        (expect (alist-get 'scoring_algorithm (nth 1 entries)) :to-equal "Equivalence")
+        ;; Each nested scoring_data.value is a string
+        (expect (alist-get 'value (alist-get 'scoring_data (nth 0 entries)))
+                :to-equal "Paris")
+        (expect (alist-get 'value (alist-get 'scoring_data (nth 1 entries)))
+                :to-equal "paris")))))
 
 (describe "org-canvas--new-quiz-item-build-matching-data"
-  (it "builds stems and choices from pairs"
+  (it "builds questions with short numeric IDs and flat string answers"
     (let ((data (org-canvas--new-quiz-item-build-matching-data
                  '(("DNA" . "Deoxyribonucleic acid")
                    ("RNA" . "Ribonucleic acid")))))
-      (let ((stems (append (alist-get 'stems data) nil))
-            (choices (append (alist-get 'choices data) nil)))
-        (expect (length stems) :to-equal 2)
-        (expect (length choices) :to-equal 2)
-        (expect (alist-get 'item_body (nth 0 stems)) :to-equal "DNA")
-        (expect (alist-get 'item_body (nth 0 choices)) :to-equal "Deoxyribonucleic acid")
-        ;; Verify scoring_data links stem to choice
-        (expect (alist-get 'value (alist-get 'scoring_data (nth 0 stems)))
-                :to-equal "choice_0")))))
+      (let ((questions (append (alist-get 'questions data) nil))
+            (answers (append (alist-get 'answers data) nil)))
+        (expect (length questions) :to-equal 2)
+        (expect (length answers) :to-equal 2)
+        (expect (alist-get 'item_body (nth 0 questions)) :to-equal "DNA")
+        ;; IDs are short numeric strings (no dashes)
+        (expect (alist-get 'id (nth 0 questions)) :to-match "^[0-9]+$")
+        ;; answers is a flat string array
+        (expect (nth 0 answers) :to-equal "Deoxyribonucleic acid")
+        (expect (nth 1 answers) :to-equal "Ribonucleic acid")
+        ;; No per-question scoring_data
+        (expect (alist-get 'scoring_data (nth 0 questions)) :to-be nil)))))
 
 (describe "org-canvas--new-quiz-item-build-ordering-data"
-  (it "builds ordered choices"
+  (it "builds choices as keyed hash-table with UUID IDs"
     (let ((data (org-canvas--new-quiz-item-build-ordering-data
                  '("First" "Second" "Third"))))
-      (let ((choices (append (alist-get 'choices data) nil)))
-        (expect (length choices) :to-equal 3)
-        (expect (alist-get 'item_body (nth 0 choices)) :to-equal "First"))
-      ;; scoring_data value should contain ordered IDs
+      (let ((choices-ht (alist-get 'choices data)))
+        ;; choices is a hash-table keyed by UUID
+        (expect (hash-table-p choices-ht) :to-be t)
+        (expect (hash-table-count choices-ht) :to-equal 3)
+        ;; Each value has id + item_body
+        (let* ((keys (hash-table-keys choices-ht))
+               (first-key (nth 0 keys))
+               (first-val (gethash first-key choices-ht)))
+          (expect first-key :to-match "^[0-9a-f]\\{20,\\}$")
+          (expect (alist-get 'id first-val) :to-equal first-key)
+          (expect (alist-get 'item_body first-val) :to-be-truthy)))
+      ;; scoring_data value contains ordered IDs
       (let ((value (append (alist-get 'value (alist-get 'scoring_data data)) nil)))
         (expect (length value) :to-equal 3)
-        (expect (nth 0 value) :to-equal "item_0")))))
+        ;; Each ID should be a UUID
+        (expect (nth 0 value) :to-match "^[0-9a-f]\\{20,\\}$")
+        ;; IDs should exist in the hash-table
+        (expect (gethash (nth 0 value) (alist-get 'choices data)) :to-be-truthy)))))
 
 (describe "org-canvas--new-quiz-item-build-categorization-data"
-  (it "builds categories and distractors as keyed objects"
+  (it "builds categories and distractors as keyed objects with UUID IDs"
     (let ((data (org-canvas--new-quiz-item-build-categorization-data
                  '(("Fruit" . ("apple" "banana"))
                    ("Vegetable" . ("carrot"))))))
@@ -626,20 +676,25 @@ Quiz description.
             (dist-ht (alist-get 'distractors data))
             (cat-order (append (alist-get 'category_order data) nil))
             (flat (append (alist-get '_flat_distractors data) nil)))
-        ;; Categories is a hash-table keyed by ID
+        ;; Categories is a hash-table keyed by UUID
         (expect (hash-table-p cats-ht) :to-be t)
         (expect (hash-table-count cats-ht) :to-equal 2)
-        (expect (alist-get 'item_body (gethash "cat_0" cats-ht)) :to-equal "Fruit")
-        ;; Distractors is a hash-table keyed by ID
+        ;; First category in order should be Fruit
+        (let ((first-cat-id (nth 0 cat-order)))
+          (expect first-cat-id :to-match "^[0-9a-f]\\{20,\\}$")
+          (expect (alist-get 'item_body (gethash first-cat-id cats-ht))
+                  :to-equal "Fruit"))
+        ;; Distractors is a hash-table keyed by UUID
         (expect (hash-table-p dist-ht) :to-be t)
         (expect (hash-table-count dist-ht) :to-equal 3)
-        (expect (alist-get 'item_body (gethash "item_0_0" dist-ht)) :to-equal "apple")
-        ;; _flat_distractors has scoring_data for scoring builder
+        ;; _flat_distractors has scoring_data linking to category UUIDs
         (expect (length flat) :to-equal 3)
-        (expect (alist-get 'value (alist-get 'scoring_data (nth 0 flat)))
-                :to-equal "cat_0")
-        ;; category_order lists category IDs in order
-        (expect cat-order :to-equal '("cat_0" "cat_1"))))))
+        (let ((first-cat-id (nth 0 cat-order)))
+          (expect (alist-get 'value (alist-get 'scoring_data (nth 0 flat)))
+                  :to-equal first-cat-id))
+        ;; category_order has 2 UUID entries
+        (expect (length cat-order) :to-equal 2)
+        (expect (nth 0 cat-order) :to-match "^[0-9a-f]\\{20,\\}$")))))
 
 (describe "org-canvas--new-quiz-item-build-numerical-data"
   (it "builds exact numerical data as answer object array"
@@ -667,12 +722,22 @@ Quiz description.
       (expect (alist-get 'end ans) :to-equal "20"))))
 
 (describe "org-canvas--new-quiz-item-build-fill-blank-data"
-  (it "includes only correct answers"
+  (it "builds one entry per correct answer with string values"
     (let ((data (org-canvas--new-quiz-item-build-fill-blank-data
                  '(("correct1" . t) ("wrong" . nil) ("correct2" . t)))))
-      (let ((values (append (alist-get 'value (alist-get 'scoring_data data)) nil)))
-        (expect (length values) :to-equal 2)
-        (expect (member "correct1" values) :to-be-truthy)))))
+      (let* ((sd (alist-get 'scoring_data data))
+             (entries (append (alist-get 'value sd) nil)))
+        ;; One entry per correct answer (not per blank)
+        (expect (length entries) :to-equal 2)
+        ;; Each has Equivalence algorithm and string value
+        (expect (alist-get 'scoring_algorithm (nth 0 entries)) :to-equal "Equivalence")
+        (expect (alist-get 'value (alist-get 'scoring_data (nth 0 entries)))
+                :to-equal "correct1")
+        (expect (alist-get 'value (alist-get 'scoring_data (nth 1 entries)))
+                :to-equal "correct2")
+        ;; All entries share the same blank ID
+        (expect (alist-get 'id (nth 0 entries))
+                :to-equal (alist-get 'id (nth 1 entries)))))))
 
 (describe "org-canvas--new-quiz-item-build-interaction-data"
   (it "dispatches to choice builder"
@@ -736,17 +801,21 @@ Quiz description.
      (let ((data (org-canvas--new-quiz-item-build-interaction-data "fill-in-the-blank")))
        (expect (alist-get 'scoring_data data) :to-be-truthy))))
 
-  (it "returns nil for short-answer type (mapped to essay)"
+  (it "dispatches to fill-blank builder for short-answer"
     (with-temp-org-buffer
      "* Quiz
 ** SA
 :PROPERTIES:
 :END:
+
+- [X] Answer1
+- [X] Answer2
 "
      (search-forward "SA")
      (org-back-to-heading)
-     (expect (org-canvas--new-quiz-item-build-interaction-data "short-answer")
-             :to-be nil)))
+     (let ((data (org-canvas--new-quiz-item-build-interaction-data "short-answer")))
+       (expect (alist-get 'blanks data) :to-be-truthy)
+       (expect (alist-get 'scoring_data data) :to-be-truthy))))
 
   (it "dispatches to matching builder"
     (with-temp-org-buffer
@@ -846,93 +915,105 @@ Quiz description.
 ;;;; Item Scoring Data
 
 (describe "org-canvas--new-quiz-item-build-scoring-data"
-  (it "extracts correct choice ID for choice type"
+  (it "extracts correct choice ID from _correct_ids for choice type"
     (let* ((idata `((choices . ,(vconcat
-                                 '(((id . "choice_0") (scoring_data . ((value . 1))))
-                                   ((id . "choice_1") (scoring_data . ((value . 0)))))))))
+                                 '(((id . "abc-1") (position . 1) (item_body . "<p>A</p>"))
+                                   ((id . "abc-2") (position . 2) (item_body . "<p>B</p>")))))
+                    (_correct_ids . ("abc-1"))))
            (result (org-canvas--new-quiz-item-build-scoring-data "choice" idata))
-           (sd (car result)))
-      (expect (alist-get 'value sd) :to-equal "choice_0")))
+           (sd (car result))
+           (cleaned (cdr result)))
+      (expect (alist-get 'value sd) :to-equal "abc-1")
+      ;; _correct_ids should be removed from cleaned data
+      (expect (alist-get '_correct_ids cleaned) :to-be nil)
+      (expect (alist-get 'choices cleaned) :to-be-truthy)))
 
-  (it "collects all correct IDs for multi-answer type"
+  (it "collects all correct IDs from _correct_ids for multi-answer type"
     (let* ((idata `((choices . ,(vconcat
-                                 '(((id . "choice_0") (scoring_data . ((value . 1))))
-                                   ((id . "choice_1") (scoring_data . ((value . 0))))
-                                   ((id . "choice_2") (scoring_data . ((value . 1)))))))))
+                                 '(((id . "abc-1") (position . 1) (item_body . "<p>A</p>"))
+                                   ((id . "abc-2") (position . 2) (item_body . "<p>B</p>"))
+                                   ((id . "abc-3") (position . 3) (item_body . "<p>C</p>")))))
+                    (_correct_ids . ("abc-1" "abc-3"))))
            (result (org-canvas--new-quiz-item-build-scoring-data "multi-answer" idata))
-           (sd (car result)))
+           (sd (car result))
+           (cleaned (cdr result)))
       (expect (append (alist-get 'value sd) nil)
-              :to-equal '("choice_0" "choice_2"))))
+              :to-equal '("abc-1" "abc-3"))
+      ;; _correct_ids should be removed
+      (expect (alist-get '_correct_ids cleaned) :to-be nil)))
 
   (it "extracts and removes scoring_data from true-false"
-    (let* ((idata `((true_choice . ((id . "true") (position . 1)))
-                    (false_choice . ((id . "false") (position . 2)))
-                    (scoring_data . ((value . "true")))))
+    (let* ((idata `((true_choice . "True")
+                    (false_choice . "False")
+                    (scoring_data . ((value . t)))))
            (result (org-canvas--new-quiz-item-build-scoring-data "true-false" idata))
            (sd (car result))
            (cleaned (cdr result)))
-      (expect (alist-get 'value sd) :to-equal "true")
+      (expect (alist-get 'value sd) :to-equal t)
       (expect (alist-get 'scoring_data cleaned) :to-be nil)))
 
-  (it "returns empty value for short-answer (mapped to essay)"
-    (let* ((result (org-canvas--new-quiz-item-build-scoring-data "short-answer" nil))
-           (sd (car result)))
-      (expect (alist-get 'value sd) :to-equal "")))
-
-  (it "extracts scoring_data from ordering and removes it"
-    (let* ((idata `((choices . ,(vconcat '(((id . "item_0") (position . 1) (item_body . "First"))
-                                           ((id . "item_1") (position . 2) (item_body . "Second")))))
-                    (scoring_data . ((value . ,(vector "item_0" "item_1"))))))
-           (result (org-canvas--new-quiz-item-build-scoring-data "ordering" idata))
+  (it "extracts scoring_data from short-answer and removes it"
+    (let* ((idata `((blanks . ,(vector '((id . "blank1"))))
+                    (scoring_data . ((value . ,(vector '((id . "blank1") (value . "Paris"))))))))
+           (result (org-canvas--new-quiz-item-build-scoring-data "short-answer" idata))
            (sd (car result))
            (cleaned (cdr result)))
       (expect (alist-get 'value sd) :to-be-truthy)
       (expect (alist-get 'scoring_data cleaned) :to-be nil)
-      (expect (alist-get 'choices cleaned) :to-be-truthy)))
+      (expect (alist-get 'blanks cleaned) :to-be-truthy)))
 
-  (it "builds stem-to-choice map for matching"
-    (let* ((idata `((stems . ,(vconcat
-                               '(((id . "stem_0") (item_body . "DNA")
-                                  (scoring_data . ((value . "choice_0"))))
-                                 ((id . "stem_1") (item_body . "RNA")
-                                  (scoring_data . ((value . "choice_1")))))))
-                    (choices . ,(vconcat
-                                '(((id . "choice_0") (item_body . "Deoxy"))
-                                  ((id . "choice_1") (item_body . "Ribo")))))))
+  (it "extracts scoring_data from ordering and removes it"
+    (let* ((choices-ht (make-hash-table :test 'equal)))
+      (puthash "abc-1" '((id . "abc-1") (item_body . "First")) choices-ht)
+      (puthash "abc-2" '((id . "abc-2") (item_body . "Second")) choices-ht)
+      (let* ((idata `((choices . ,choices-ht)
+                      (scoring_data . ((value . ,(vector "abc-1" "abc-2"))))))
+             (result (org-canvas--new-quiz-item-build-scoring-data "ordering" idata))
+             (sd (car result))
+             (cleaned (cdr result)))
+        (expect (alist-get 'value sd) :to-be-truthy)
+        (expect (alist-get 'scoring_data cleaned) :to-be nil)
+        (expect (hash-table-p (alist-get 'choices cleaned)) :to-be t))))
+
+  (it "builds question-to-answer-text map for matching"
+    (let* ((idata `((questions . ,(vconcat
+                                   '(((id . "12345") (item_body . "DNA"))
+                                     ((id . "67890") (item_body . "RNA")))))
+                    (answers . ,(vconcat '("Deoxyribonucleic acid" "Ribonucleic acid")))))
            (result (org-canvas--new-quiz-item-build-scoring-data "matching" idata))
            (sd (car result))
            (cleaned (cdr result)))
-      ;; scoring_data value is a hash-table mapping stem IDs to choice IDs
+      ;; scoring_data value is a hash-table mapping question IDs to answer text
       (expect (hash-table-p (alist-get 'value sd)) :to-be t)
-      (expect (gethash "stem_0" (alist-get 'value sd)) :to-equal "choice_0")
-      (expect (gethash "stem_1" (alist-get 'value sd)) :to-equal "choice_1")
-      ;; stems should have scoring_data stripped
-      (let ((stems (append (alist-get 'stems cleaned) nil)))
-        (expect (alist-get 'scoring_data (nth 0 stems)) :to-be nil))))
+      (expect (gethash "12345" (alist-get 'value sd)) :to-equal "Deoxyribonucleic acid")
+      (expect (gethash "67890" (alist-get 'value sd)) :to-equal "Ribonucleic acid")
+      ;; questions and answers should still be present in cleaned data
+      (expect (alist-get 'questions cleaned) :to-be-truthy)
+      (expect (alist-get 'answers cleaned) :to-be-truthy)))
 
   (it "builds per-category scoring for categorization"
     (let* ((cats-ht (make-hash-table :test 'equal))
            (dist-ht (make-hash-table :test 'equal)))
-      (puthash "cat_0" '((id . "cat_0") (item_body . "Fruit")) cats-ht)
-      (puthash "cat_1" '((id . "cat_1") (item_body . "Veg")) cats-ht)
-      (puthash "item_0_0" '((id . "item_0_0") (item_body . "apple")) dist-ht)
-      (puthash "item_1_0" '((id . "item_1_0") (item_body . "carrot")) dist-ht)
+      (puthash "abc-cat-1" '((id . "abc-cat-1") (item_body . "Fruit")) cats-ht)
+      (puthash "abc-cat-2" '((id . "abc-cat-2") (item_body . "Veg")) cats-ht)
+      (puthash "abc-item-1" '((id . "abc-item-1") (item_body . "apple")) dist-ht)
+      (puthash "abc-item-2" '((id . "abc-item-2") (item_body . "carrot")) dist-ht)
       (let* ((idata `((categories . ,cats-ht)
                       (distractors . ,dist-ht)
-                      (category_order . ,(vector "cat_0" "cat_1"))
+                      (category_order . ,(vector "abc-cat-1" "abc-cat-2"))
                       (_flat_distractors
                        . ,(vconcat
-                           '(((id . "item_0_0") (item_body . "apple")
-                              (scoring_data . ((value . "cat_0"))))
-                             ((id . "item_1_0") (item_body . "carrot")
-                              (scoring_data . ((value . "cat_1")))))))))
+                           '(((id . "abc-item-1") (item_body . "apple")
+                              (scoring_data . ((value . "abc-cat-1"))))
+                             ((id . "abc-item-2") (item_body . "carrot")
+                              (scoring_data . ((value . "abc-cat-2")))))))))
              (result (org-canvas--new-quiz-item-build-scoring-data "categorization" idata))
              (sd (car result))
              (cleaned (cdr result)))
         ;; scoring_data value is a vector of per-category entries
         (let ((cats (append (alist-get 'value sd) nil)))
           (expect (length cats) :to-equal 2)
-          (expect (alist-get 'id (nth 0 cats)) :to-equal "cat_0")
+          (expect (alist-get 'id (nth 0 cats)) :to-equal "abc-cat-1")
           (expect (alist-get 'scoring_algorithm (nth 0 cats)) :to-equal "AllOrNothing"))
         ;; _flat_distractors should be removed from cleaned data
         (expect (alist-get '_flat_distractors cleaned) :to-be nil)
@@ -959,12 +1040,15 @@ Quiz description.
       (expect (alist-get 'scoring_data cleaned) :to-be nil)))
 
   (it "extracts scoring_data from fill-in-the-blank"
-    (let* ((idata `((scoring_data . ((value . ,(vector "answer1" "answer2"))))))
+    (let* ((idata `((blanks . ,(vector '((id . "blank1"))))
+                    (scoring_data . ((value . ,(vector '((id . "blank1") (value . "answer1"))
+                                                       '((id . "blank1") (value . "answer2"))))))))
            (result (org-canvas--new-quiz-item-build-scoring-data "fill-in-the-blank" idata))
            (sd (car result))
            (cleaned (cdr result)))
       (expect (alist-get 'value sd) :to-be-truthy)
-      (expect (alist-get 'scoring_data cleaned) :to-be nil))))
+      (expect (alist-get 'scoring_data cleaned) :to-be nil)
+      (expect (alist-get 'blanks cleaned) :to-be-truthy))))
 
 ;;;; Item Build Payload
 
@@ -1081,7 +1165,32 @@ Quiz description.
                         :pom (point-marker)))
             (payload (org-canvas--new-quiz-item-build-payload data)))
        (expect (gethash "item_body" payload) :to-match "Geography")
-       (expect (gethash "item_body" payload) :to-match "capital of France")))))
+       (expect (gethash "item_body" payload) :to-match "capital of France"))))
+
+  (it "sends no interaction_data for numerical type"
+    (with-temp-org-buffer
+     "* Quiz
+** What is pi?
+:PROPERTIES:
+:TYPE: numerical
+:END:
+
+- [X] 3.14
+"
+     (search-forward "What is pi")
+     (org-back-to-heading)
+     (unless test-org-canvas-emacs-30-p
+       (signal 'buttercup-pending "Requires Emacs 30+ org-mode"))
+     (let* ((data (list :title "What is pi?"
+                        :text ""
+                        :type "numerical"
+                        :points 1
+                        :pom (point-marker)))
+            (payload (org-canvas--new-quiz-item-build-payload data)))
+       ;; numerical interaction_data should be nil (Canvas stores null)
+       (expect (gethash "interaction_data" payload nil) :to-be nil)
+       ;; but scoring_data should still be present
+       (expect (gethash "scoring_data" payload) :to-be-truthy)))))
 
 ;;;; Item Push to API
 
@@ -1291,7 +1400,38 @@ Quiz description.
        (with-mock-api
          (let ((results (org-canvas--sync-new-quiz-items (point-marker) "42")))
            (expect (car results) :to-equal 0)
-           (expect (cdr results) :to-equal 0)))))))
+           (expect (cdr results) :to-equal 0))))))
+
+  (it "skips items not in debug-types list"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:CANVAS_ASSIGNMENT_ID: 42
+:END:
+
+** Q1
+:PROPERTIES:
+:TYPE: choice
+:END:
+
+- [X] Yes
+- [ ] No
+
+** Q2
+:PROPERTIES:
+:TYPE: essay
+:END:
+"
+     (org-back-to-heading)
+     (with-org-canvas-test-config
+       (let ((org-canvas--new-quiz-debug-types '("choice")))
+         (cl-letf (((symbol-function 'org-canvas-api-request)
+                    (lambda (_m _u &rest _)
+                      '((id . "item-1")))))
+           (let ((results (org-canvas--sync-new-quiz-items (point-marker) "42")))
+             ;; Only choice item should be synced, essay skipped
+             (expect (car results) :to-equal 1)
+             (expect (cdr results) :to-equal 0))))))))
 
 ;;;; Main Sync Function
 
@@ -1475,7 +1615,7 @@ Quiz description.
     (expect (cdr (assoc "multi-answer" org-canvas--new-quiz-type-slugs))
             :to-equal "multi-answer")
     (expect (cdr (assoc "short-answer" org-canvas--new-quiz-type-slugs))
-            :to-equal "essay")
+            :to-equal "rich-fill-blank")
     (expect (cdr (assoc "essay" org-canvas--new-quiz-type-slugs))
             :to-equal "essay")
     (expect (cdr (assoc "file-upload" org-canvas--new-quiz-type-slugs))
@@ -1498,9 +1638,9 @@ Quiz description.
     (expect (cdr (assoc "choice" org-canvas--new-quiz-scoring-algorithms))
             :to-equal "Equivalence")
     (expect (cdr (assoc "multi-answer" org-canvas--new-quiz-scoring-algorithms))
-            :to-equal "AllOrNothing")
+            :to-equal "PartialScore")
     (expect (cdr (assoc "matching" org-canvas--new-quiz-scoring-algorithms))
-            :to-equal "DeepEquals")
+            :to-equal "PartialDeep")
     (expect (cdr (assoc "categorization" org-canvas--new-quiz-scoring-algorithms))
             :to-equal "Categorization")
     (expect (cdr (assoc "numerical" org-canvas--new-quiz-scoring-algorithms))
@@ -1513,13 +1653,13 @@ Quiz description.
     (expect (org-canvas--new-quiz-item-scoring-algorithm "choice")
             :to-equal "Equivalence"))
 
-  (it "returns AllOrNothing for multi-answer"
+  (it "returns PartialScore for multi-answer"
     (expect (org-canvas--new-quiz-item-scoring-algorithm "multi-answer")
-            :to-equal "AllOrNothing"))
+            :to-equal "PartialScore"))
 
-  (it "returns DeepEquals for matching"
+  (it "returns PartialDeep for matching"
     (expect (org-canvas--new-quiz-item-scoring-algorithm "matching")
-            :to-equal "DeepEquals"))
+            :to-equal "PartialDeep"))
 
   (it "returns Categorization for categorization"
     (expect (org-canvas--new-quiz-item-scoring-algorithm "categorization")
@@ -1533,9 +1673,9 @@ Quiz description.
     (expect (org-canvas--new-quiz-item-scoring-algorithm "essay")
             :to-equal "None"))
 
-  (it "returns None for short-answer (mapped to essay)"
+  (it "returns MultipleMethods for short-answer"
     (expect (org-canvas--new-quiz-item-scoring-algorithm "short-answer")
-            :to-equal "None"))
+            :to-equal "MultipleMethods"))
 
   (it "returns None for file-upload"
     (expect (org-canvas--new-quiz-item-scoring-algorithm "file-upload")
@@ -1554,7 +1694,7 @@ Quiz description.
     (expect (org-canvas--new-quiz-slug-to-type "numeric")
             :to-equal "numerical")
     (expect (org-canvas--new-quiz-slug-to-type "rich-fill-blank")
-            :to-equal "fill-in-the-blank")
+            :to-equal "short-answer")
     (expect (org-canvas--new-quiz-slug-to-type "choice")
             :to-equal "choice")
     (expect (org-canvas--new-quiz-slug-to-type "essay")

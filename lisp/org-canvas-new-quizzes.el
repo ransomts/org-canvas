@@ -53,6 +53,11 @@
   :type 'file
   :group 'org-canvas)
 
+(defvar org-canvas--new-quiz-debug-types nil
+  "When non-nil, only sync item types in this list during debugging.
+Set to a list of type strings like (\"choice\" \"true-false\") to restrict.
+Set to nil to sync all types (normal operation).")
+
 ;;;; API Helper
 
 (defun org-canvas--new-quiz-api-endpoint (suffix &rest args)
@@ -71,7 +76,7 @@ New Quizzes use /api/quiz/v1/ instead of /api/v1/."
     ("true-false"          . "true-false")
     ("multi-answer"        . "multi-answer")
     ("essay"               . "essay")
-    ("short-answer"        . "essay")
+    ("short-answer"        . "rich-fill-blank")
     ("file-upload"         . "file-upload")
     ("numerical"           . "numeric")
     ("matching"            . "matching")
@@ -92,13 +97,13 @@ New Quizzes use /api/quiz/v1/ instead of /api/v1/."
 (defconst org-canvas--new-quiz-scoring-algorithms
   '(("choice"             . "Equivalence")
     ("true-false"          . "Equivalence")
-    ("multi-answer"        . "AllOrNothing")
-    ("matching"            . "DeepEquals")
+    ("multi-answer"        . "PartialScore")
+    ("matching"            . "PartialDeep")
     ("ordering"            . "DeepEquals")
     ("categorization"      . "Categorization")
     ("numerical"           . "Numeric")
-    ("fill-in-the-blank"   . "Equivalence")
-    ("short-answer"        . "None")
+    ("fill-in-the-blank"   . "MultipleMethods")
+    ("short-answer"        . "MultipleMethods")
     ("essay"               . "None")
     ("file-upload"         . "None")
     ("hot-spot"            . "None"))
@@ -110,6 +115,23 @@ New Quizzes use /api/quiz/v1/ instead of /api/v1/."
       "Equivalence"))
 
 ;;;; Helper Functions
+
+(defun org-canvas--new-quiz-uuid ()
+  "Generate a random hex ID string for New Quiz item IDs.
+Uses plain hex without dashes because Canvas normalizes JSON object
+keys by replacing dashes with underscores, which breaks key lookups
+when IDs are used as both hash-table keys and values."
+  (format "%08x%04x%04x%04x%012x"
+          (random (expt 16 8))
+          (random (expt 16 4))
+          (random (expt 16 4))
+          (random (expt 16 4))
+          (random (expt 16 12))))
+
+(defun org-canvas--new-quiz-numeric-id ()
+  "Generate a random short numeric ID string for matching questions.
+Canvas uses short numeric strings like \"87146\" for matching question IDs."
+  (format "%d" (+ 10000 (random 90000))))
 
 (defun org-canvas--new-quiz-parse-body-text ()
   "Get the body text of current heading, excluding subheadings.
@@ -379,60 +401,61 @@ QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
 ;;;; Item Build Interaction Data
 
 (defun org-canvas--new-quiz-item-build-choice-data (answers)
-  "Build interaction_data for choice question from ANSWERS."
-  (let ((choices (cl-loop for (text . correct) in answers
-                          for i from 0
-                          collect `((id . ,(format "choice_%d" i))
-                                    (position . ,(1+ i))
-                                    (item_body . ,text)
-                                    (scoring_data . ((value . ,(if correct 1 0))))))))
-    `((choices . ,(vconcat choices)))))
+  "Build interaction_data for choice question from ANSWERS.
+Returns alist with `choices' array and `_correct_ids' list for scoring.
+Canvas stores choices as an array of objects with UUID IDs."
+  (let* ((correct-ids nil)
+         (choices (cl-loop for (text . correct) in answers
+                           for i from 0
+                           for id = (org-canvas--new-quiz-uuid)
+                           when correct do (push id correct-ids)
+                           collect `((id . ,id)
+                                     (position . ,(1+ i))
+                                     (item_body . ,(format "<p>%s</p>" text))))))
+    `((choices . ,(vconcat choices))
+      (_correct_ids . ,(nreverse correct-ids)))))
 
 (defun org-canvas--new-quiz-item-build-true-false-data (answers)
-  "Build interaction_data for true/false question from ANSWERS."
+  "Build interaction_data for true/false question from ANSWERS.
+Canvas expects true_choice/false_choice as plain strings and
+scoring_data value as boolean."
   (let ((true-correct nil))
     (dolist (ans answers)
       (when (cdr ans)
         (setq true-correct (string= (downcase (car ans)) "true"))))
-    `((true_choice . ((id . "true") (position . 1)))
-      (false_choice . ((id . "false") (position . 2)))
-      (scoring_data . ((value . ,(if true-correct "true" "false")))))))
-
-(defun org-canvas--new-quiz-item-build-short-answer-data (answers)
-  "Build interaction_data for short answer question from ANSWERS."
-  (let ((correct (cl-loop for (text . is-correct) in answers
-                          when is-correct
-                          collect text)))
-    `((scoring_data . ((value . ,(vconcat correct)))))))
+    `((true_choice . "True")
+      (false_choice . "False")
+      (scoring_data . ((value . ,(if true-correct t :json-false)))))))
 
 (defun org-canvas--new-quiz-item-build-matching-data (pairs)
-  "Build interaction_data for matching question from PAIRS."
-  (let ((stems nil)
-        (choices nil))
+  "Build interaction_data for matching question from PAIRS.
+Canvas expects `questions' (array of objects with short numeric IDs)
+and `answers' (flat string array).
+Scoring maps question_id → answer text."
+  (let ((questions nil)
+        (answers nil))
     (cl-loop for (left . right) in pairs
-             for i from 0
              do (progn
-                  (push `((id . ,(format "stem_%d" i))
-                          (position . ,(1+ i))
-                          (item_body . ,left)
-                          (scoring_data . ((value . ,(format "choice_%d" i)))))
-                        stems)
-                  (push `((id . ,(format "choice_%d" i))
-                          (position . ,(1+ i))
-                          (item_body . ,right))
-                        choices)))
-    `((stems . ,(vconcat (nreverse stems)))
-      (choices . ,(vconcat (nreverse choices))))))
+                  (push `((id . ,(org-canvas--new-quiz-numeric-id))
+                          (item_body . ,left))
+                        questions)
+                  (push right answers)))
+    `((questions . ,(vconcat (nreverse questions)))
+      (answers . ,(vconcat (nreverse answers))))))
 
 (defun org-canvas--new-quiz-item-build-ordering-data (items)
-  "Build interaction_data for ordering question from ITEMS."
-  (let ((choices (cl-loop for item in items
-                          for i from 0
-                          collect `((id . ,(format "item_%d" i))
-                                    (position . ,(1+ i))
-                                    (item_body . ,item)))))
-    `((choices . ,(vconcat choices))
-      (scoring_data . ((value . ,(vconcat (mapcar (lambda (c) (alist-get 'id c)) choices))))))))
+  "Build interaction_data for ordering question from ITEMS.
+Canvas stores ordering choices as a keyed object (hash-table),
+not an array.  Each key is a UUID, value is an alist with id + item_body."
+  (let ((choices-ht (make-hash-table :test 'equal))
+        (ordered-ids nil))
+    (dolist (item items)
+      (let ((id (org-canvas--new-quiz-uuid)))
+        (push id ordered-ids)
+        (puthash id `((id . ,id) (item_body . ,item)) choices-ht)))
+    (setq ordered-ids (nreverse ordered-ids))
+    `((choices . ,choices-ht)
+      (scoring_data . ((value . ,(vconcat ordered-ids)))))))
 
 (defun org-canvas--new-quiz-item-build-categorization-data (categories)
   "Build interaction_data for categorization question from CATEGORIES.
@@ -443,13 +466,11 @@ not arrays.  category_order is an array of category IDs."
         (cat-order nil)
         (all-items nil))
     (cl-loop for (cat . items) in categories
-             for ci from 0
-             do (let ((cat-id (format "cat_%d" ci)))
+             do (let ((cat-id (org-canvas--new-quiz-uuid)))
                   (push cat-id cat-order)
                   (puthash cat-id `((id . ,cat-id) (item_body . ,cat)) cats-ht)
                   (cl-loop for item in items
-                           for ii from 0
-                           do (let ((item-id (format "item_%d_%d" ci ii)))
+                           do (let ((item-id (org-canvas--new-quiz-uuid)))
                                 (puthash item-id
                                          `((id . ,item-id) (item_body . ,item))
                                          distractors-ht)
@@ -483,11 +504,18 @@ Canvas numeric scoring_data.value is an array of answer objects:
                                           (plist-get num :value)))))))))))
 
 (defun org-canvas--new-quiz-item-build-fill-blank-data (answers)
-  "Build interaction_data for fill-in-the-blank question from ANSWERS."
-  (let ((correct (cl-loop for (text . is-correct) in answers
-                          when is-correct
-                          collect text)))
-    `((scoring_data . ((value . ,(vconcat correct)))))))
+  "Build interaction_data for fill-in-the-blank from ANSWERS.
+One scoring entry per correct answer, each with id, nested
+scoring_data (string value), and scoring_algorithm Equivalence."
+  (let* ((blank-id (org-canvas--new-quiz-uuid))
+         (entries (cl-loop for (text . is-correct) in answers
+                           when is-correct
+                           collect `((id . ,blank-id)
+                                     (scoring_data . ((value . ,text)))
+                                     (scoring_algorithm . "Equivalence")))))
+    `((blanks . ,(vector `((id . ,blank-id))))
+      (scoring_data
+       . ((value . ,(vconcat entries)))))))
 
 (defun org-canvas--new-quiz-item-build-interaction-data (q-type)
   "Build interaction_data for Q-TYPE from current heading content.
@@ -499,14 +527,12 @@ Returns an alist that will be JSON-encoded."
     ("true-false"
      (org-canvas--new-quiz-item-build-true-false-data
       (org-canvas--new-quiz-parse-checkbox-list)))
-    ((or "multi-answer" "fill-in-the-blank")
-     (if (string= q-type "multi-answer")
-         (org-canvas--new-quiz-item-build-choice-data
-          (org-canvas--new-quiz-parse-checkbox-list))
-       (org-canvas--new-quiz-item-build-fill-blank-data
-        (org-canvas--new-quiz-parse-checkbox-list))))
-    ("short-answer"
-     nil)
+    ("multi-answer"
+     (org-canvas--new-quiz-item-build-choice-data
+      (org-canvas--new-quiz-parse-checkbox-list)))
+    ((or "fill-in-the-blank" "short-answer")
+     (org-canvas--new-quiz-item-build-fill-blank-data
+      (org-canvas--new-quiz-parse-checkbox-list)))
     ("matching"
      (org-canvas--new-quiz-item-build-matching-data
       (org-canvas--new-quiz-parse-matching-list)))
@@ -533,37 +559,34 @@ CLEANED-INTERACTION-DATA has embedded scoring_data removed to
 avoid duplication in the API payload."
   (pcase q-type
     ;; Types with top-level scoring_data in interaction-data: extract and remove
-    ((or "true-false" "ordering" "numerical" "fill-in-the-blank")
+    ((or "true-false" "ordering" "numerical" "fill-in-the-blank" "short-answer")
      (let ((sd (alist-get 'scoring_data interaction-data)))
        (cons sd (assq-delete-all 'scoring_data interaction-data))))
 
-    ;; Choice: find the single correct choice
+    ;; Choice: extract single correct ID from _correct_ids, then remove it
     ("choice"
-     (let (correct-id)
-       (dolist (c (append (alist-get 'choices interaction-data) nil))
-         (when (eq 1 (alist-get 'value (alist-get 'scoring_data c)))
-           (setq correct-id (alist-get 'id c))))
+     (let ((correct-id (car (alist-get '_correct_ids interaction-data))))
+       (setq interaction-data
+             (cl-remove-if (lambda (pair) (eq (car pair) '_correct_ids))
+                           interaction-data))
        (cons `((value . ,correct-id)) interaction-data)))
 
-    ;; Multi-answer: collect all correct choice IDs
+    ;; Multi-answer: extract all correct IDs from _correct_ids, then remove it
     ("multi-answer"
-     (let (ids)
-       (dolist (c (append (alist-get 'choices interaction-data) nil))
-         (when (eq 1 (alist-get 'value (alist-get 'scoring_data c)))
-           (push (alist-get 'id c) ids)))
-       (cons `((value . ,(vconcat (nreverse ids)))) interaction-data)))
+     (let ((ids (alist-get '_correct_ids interaction-data)))
+       (setq interaction-data
+             (cl-remove-if (lambda (pair) (eq (car pair) '_correct_ids))
+                           interaction-data))
+       (cons `((value . ,(vconcat ids))) interaction-data)))
 
-    ;; Matching: build stem->choice map, strip scoring from stems
+    ;; Matching: build question_id → answer_text map
     ("matching"
      (let ((value (make-hash-table :test 'equal))
-           cleaned)
-       (dolist (stem (append (alist-get 'stems interaction-data) nil))
-         (puthash (alist-get 'id stem)
-                  (alist-get 'value (alist-get 'scoring_data stem))
-                  value)
-         (push (cl-remove-if (lambda (pair) (eq (car pair) 'scoring_data)) stem)
-               cleaned))
-       (setf (alist-get 'stems interaction-data) (vconcat (nreverse cleaned)))
+           (questions (append (alist-get 'questions interaction-data) nil))
+           (answers (append (alist-get 'answers interaction-data) nil)))
+       (cl-loop for q in questions
+                for ans in answers
+                do (puthash (alist-get 'id q) ans value))
        (cons `((value . ,value)) interaction-data)))
 
     ;; Categorization: build per-category scoring from _flat_distractors
@@ -713,7 +736,8 @@ into the nested format required by the New Quizzes Items API:
   "Sync all items under the New Quiz at QUIZ-MARKER.
 QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
   (let ((item-markers nil)
-        (item-success 0))
+        (item-success 0)
+        (item-skipped 0))
     ;; Collect all item markers (level-2 headings under this quiz)
     (with-current-buffer (marker-buffer quiz-marker)
       (save-excursion
@@ -732,17 +756,28 @@ QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
           (goto-char (marker-position m))
           (condition-case err
               (let* ((data (org-canvas--new-quiz-item-parse-entry quiz-assignment-id))
-                     (payload (org-canvas--new-quiz-item-build-payload data))
-                     (response (org-canvas--new-quiz-item-push-to-api data payload)))
-                (org-canvas--new-quiz-item-finalize data response)
-                (setq item-success (1+ item-success)))
+                     (q-type (plist-get data :type)))
+                (if (and org-canvas--new-quiz-debug-types
+                         (not (member q-type org-canvas--new-quiz-debug-types)))
+                    (progn
+                      (elog-info org-canvas--logger
+                        "[DEBUG SKIP] Skipping type '%s' for '%s'"
+                        q-type (plist-get data :title))
+                      (setq item-skipped (1+ item-skipped)))
+                  (let* ((payload (org-canvas--new-quiz-item-build-payload data))
+                         (response (org-canvas--new-quiz-item-push-to-api data payload)))
+                    (org-canvas--new-quiz-item-finalize data response)
+                    (setq item-success (1+ item-success)))))
             (error
              (elog-error org-canvas--logger "[New Quiz Item] Failed: %s"
                (error-message-string err)))))))
 
+    (when (> item-skipped 0)
+      (elog-info org-canvas--logger "[New Quiz Items] %d skipped (debug filter)"
+        item-skipped))
     (elog-info org-canvas--logger "[New Quiz Items] %d/%d synced"
-      item-success (length item-markers))
-    (cons item-success (- (length item-markers) item-success))))
+      item-success (- (length item-markers) item-skipped))
+    (cons item-success (- (length item-markers) item-success item-skipped))))
 
 ;;;; Main Sync Function
 
