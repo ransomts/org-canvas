@@ -39,6 +39,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'diff)
 (require 'elog)
 (require 'json)
 (require 'org)
@@ -1734,6 +1735,39 @@ when no LAST_SYNCED exists (legacy item, first sync)."
 (defconst org-canvas--conflict-buffer-name "*canvas-conflict*"
   "Buffer name for the conflict resolution diff display.")
 
+(defun org-canvas-demo-conflict ()
+  "Display a sample conflict diff buffer for evaluating the UI.
+Shows the `diff-mode' conflict resolution interface with mock data,
+then prompts for an action.  No API calls are made."
+  (interactive)
+  (let* ((org-canvas--current-pull-item-fn #'ignore)
+         (data (list :title "Software Setup Guide"
+                     :description (concat
+                                   "<p>Follow these steps to set up your "
+                                   "development environment for DS 101.</p>\n"
+                                   "<p><strong>Step 1: Install Python 3.10+</strong></p>\n"
+                                   "<p>Download from python.org</p>\n"
+                                   "<p><strong>Step 2: Install VS Code</strong></p>\n"
+                                   "<p>Download from code.visualstudio.com</p>")
+                     :pom nil))
+         (remote `((title . "Software Setup Guide")
+                   (updated_at . ,(format-time-string "%Y-%m-%dT%H:%M:%SZ"))
+                   (body . ,(concat
+                             "<p>Follow these steps to set up your "
+                             "development environment for DS 101.</p>\n"
+                             "<p><strong>Step 1: Install Python 3.12+</strong></p>\n"
+                             "<p>Download from python.org/downloads</p>\n"
+                             "<p><strong>Step 2: Install VS Code</strong></p>\n"
+                             "<p>Download from code.visualstudio.com</p>\n"
+                             "<p><strong>Step 3: Install Git</strong></p>\n"
+                             "<p>Download from git-scm.com</p>"))))
+         (buf (org-canvas--conflict-format-diff data remote))
+         (choice (unwind-protect
+                     (org-canvas--conflict-prompt t)
+                   (when (buffer-live-p buf)
+                     (kill-buffer buf)))))
+    (message "Demo conflict resolved with: %s" choice)))
+
 (defun org-canvas--conflict-format-diff (data remote-response)
   "Create a diff buffer comparing local DATA with REMOTE-RESPONSE.
 Returns the buffer.  The caller should kill it after resolution."
@@ -1748,35 +1782,48 @@ Returns the buffer.  The caller should kill it after resolution."
                           (alist-get 'description remote-response)))
          (local-body (plist-get data :description))
          (has-pull-fn (not (null org-canvas--current-pull-item-fn)))
-         (buf (get-buffer-create org-canvas--conflict-buffer-name)))
-    (with-current-buffer buf
-      (let ((inhibit-read-only t))
-        (erase-buffer)
-        (insert (format "=== Conflict: %s ===\n\n" (or title "untitled")))
-        (insert (format "  Local LAST_SYNCED:   %s\n" (or last-synced "unknown")))
-        (insert (format "  Remote updated_at:   %s\n\n" (or remote-updated "unknown")))
-        (when (and remote-title title
-                   (not (string= title remote-title)))
-          (insert (format "--- Title ---\n  Local:  %s\n  Remote: %s\n\n"
-                          title remote-title)))
-        (when (or local-body remote-body)
-          (insert "--- Body Preview ---\n")
-          (insert (format "  Local:\n%s\n\n"
-                          (if local-body
-                              (truncate-string-to-width local-body 500)
-                            "    (none)")))
-          (insert (format "  Remote:\n%s\n\n"
-                          (if remote-body
-                              (truncate-string-to-width remote-body 500)
-                            "    (none)"))))
-        (insert "--- Actions ---\n")
-        (insert "  p = Push (overwrite Canvas)\n")
-        (when has-pull-fn
-          (insert "  l = Pull (overwrite local)\n"))
-        (insert "  s = Skip\n")
-        (insert "  P/L/S = Apply to all remaining conflicts\n"))
-      (special-mode)
-      (goto-char (point-min)))
+         (buf (get-buffer-create org-canvas--conflict-buffer-name))
+         (local-text (or local-body "(none)"))
+         (remote-text (or remote-body "(none)"))
+         (local-file (make-temp-file "canvas-local-"))
+         (remote-file (make-temp-file "canvas-remote-")))
+    (unwind-protect
+        (progn
+          (with-temp-file local-file (insert local-text))
+          (with-temp-file remote-file (insert remote-text))
+          (with-current-buffer buf
+            (let ((inhibit-read-only t))
+              (erase-buffer)
+              (insert (format "=== Conflict: %s ===\n\n" (or title "untitled")))
+              (insert (format "  Local LAST_SYNCED:   %s\n" (or last-synced "unknown")))
+              (insert (format "  Remote updated_at:   %s\n\n" (or remote-updated "unknown")))
+              (when (and remote-title title
+                         (not (string= title remote-title)))
+                (insert (format "--- Title ---\n  Local:  %s\n  Remote: %s\n\n"
+                                title remote-title)))
+              ;; Insert unified diff with diff-mode coloring
+              (insert "--- Body Diff ---\n")
+              (insert "  Lines starting with - (red)  = YOUR local Org file\n")
+              (insert "  Lines starting with + (green) = Canvas (remote)\n\n")
+              (let ((diff-buf (diff-no-select local-file remote-file
+                                             '("-u" "--label=Local"
+                                               "--label=Remote")
+                                             'noasync)))
+                (insert-buffer-substring diff-buf)
+                (kill-buffer diff-buf))
+              (insert "\n--- Actions ---\n")
+              (insert "  p = Push (overwrite Canvas)\n")
+              (when has-pull-fn
+                (insert "  l = Pull (overwrite local)\n"))
+              (insert "  s = Skip\n")
+              (insert (if has-pull-fn
+                          "  P/L/S = Apply to all remaining conflicts\n"
+                        "  P/S = Apply to all remaining conflicts\n")))
+            (diff-mode)
+            (view-mode 1)
+            (goto-char (point-min))))
+      (delete-file local-file)
+      (delete-file remote-file))
     (display-buffer buf)
     buf))
 
@@ -2301,14 +2348,17 @@ Example:
 ;;;; 9. Push-at-Point Infrastructure
 
 (defun org-canvas--push-at-point-runtime (feature-name parse-fn build-fn
-                                                       push-fn finalize-fn title-key)
+                                                       push-fn finalize-fn
+                                                       title-key pull-item-fn)
   "Runtime body for generated push-at-point functions.
 FEATURE-NAME is the module name string.  PARSE-FN, BUILD-FN,
 PUSH-FN, FINALIZE-FN are the 4-stage pipeline functions.
-TITLE-KEY is the plist key for the display name."
+TITLE-KEY is the plist key for the display name.
+PULL-ITEM-FN, when non-nil, enables the pull option during conflict resolution."
   (org-back-to-heading t)
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
-  (let* ((data (funcall parse-fn))
+  (let* ((org-canvas--current-pull-item-fn pull-item-fn)
+         (data (funcall parse-fn))
          (title (plist-get data title-key))
          (payload (funcall build-fn data))
          (payload-hash (md5 (json-encode payload)))
@@ -2331,7 +2381,7 @@ TITLE-KEY is the plist key for the display name."
 (defmacro org-canvas-define-push-at-point (feature &rest args)
   "Define a sync-at-point function for FEATURE.
 FEATURE is a symbol like \\='page.  ARGS is a plist with keys:
-  :parse, :build, :push, :finalize (required), :title-key."
+  :parse, :build, :push, :finalize (required), :title-key, :pull-item-fn."
   (declare (indent 1))
   (let* ((feature-name (symbol-name feature))
          (fn-name (intern (format "org-canvas-sync-%s-at-point" feature-name)))
@@ -2339,7 +2389,8 @@ FEATURE is a symbol like \\='page.  ARGS is a plist with keys:
          (build-fn (plist-get args :build))
          (push-fn (plist-get args :push))
          (finalize-fn (plist-get args :finalize))
-         (title-key (or (plist-get args :title-key) :title)))
+         (title-key (or (plist-get args :title-key) :title))
+         (pull-item-fn (plist-get args :pull-item-fn)))
     (unless parse-fn (error "org-canvas-define-push-at-point: :parse is required"))
     (unless build-fn (error "org-canvas-define-push-at-point: :build is required"))
     (unless push-fn (error "org-canvas-define-push-at-point: :push is required"))
@@ -2350,7 +2401,8 @@ FEATURE is a symbol like \\='page.  ARGS is a plist with keys:
          ,(format "Sync the %s at point to Canvas." feature-name)
          (interactive)
          (org-canvas--push-at-point-runtime
-          ,feature-name ,parse-fn ,build-fn ,push-fn ,finalize-fn ,title-key)))))
+          ,feature-name ,parse-fn ,build-fn ,push-fn ,finalize-fn
+          ,title-key ,pull-item-fn)))))
 
 ;;;; 10. Setup Wizard
 

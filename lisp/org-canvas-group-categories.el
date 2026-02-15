@@ -176,7 +176,8 @@ PUT is global."
   :parse #'org-canvas--group-category-parse-entry
   :build #'org-canvas--group-category-build-payload
   :push #'org-canvas--group-category-push-to-api
-  :finalize #'org-canvas--group-category-finalize)
+  :finalize #'org-canvas--group-category-finalize
+  :pull-item-fn #'org-canvas--group-category-pull-item)
 
 ;;;; Delete
 

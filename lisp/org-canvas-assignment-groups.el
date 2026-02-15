@@ -159,7 +159,8 @@ Handles 404 on PUT by retrying as POST (stale CANVAS_ID recovery)."
   :parse #'org-canvas--assignment-group-parse-entry
   :build #'org-canvas--assignment-group-build-payload
   :push #'org-canvas--assignment-group-push-to-api
-  :finalize #'org-canvas--assignment-group-finalize)
+  :finalize #'org-canvas--assignment-group-finalize
+  :pull-item-fn #'org-canvas--assignment-group-pull-item)
 
 ;; Generate org-canvas-delete-all-assignment-groups using the delete macro
 ;; Note: Canvas requires at least one assignment group, so the default

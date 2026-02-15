@@ -3758,6 +3758,25 @@ Page content.
           (unwind-protect
               (with-current-buffer buf
                 (expect (buffer-string) :not :to-match "l = Pull"))
+            (when (buffer-live-p buf) (kill-buffer buf)))))))
+
+  (it "shows P/L/S when pull-item-fn is set, P/S when nil"
+    (let ((data (list :title "Item" :pom nil))
+          (remote '((title . "Item") (updated_at . "2026-02-01T10:00:00Z"))))
+      ;; With pull-item-fn: should show P/L/S
+      (let ((org-canvas--current-pull-item-fn #'ignore))
+        (let ((buf (org-canvas--conflict-format-diff data remote)))
+          (unwind-protect
+              (with-current-buffer buf
+                (expect (buffer-string) :to-match "P/L/S"))
+            (when (buffer-live-p buf) (kill-buffer buf)))))
+      ;; Without pull-item-fn: should show P/S
+      (let ((org-canvas--current-pull-item-fn nil))
+        (let ((buf (org-canvas--conflict-format-diff data remote)))
+          (unwind-protect
+              (with-current-buffer buf
+                (expect (buffer-string) :to-match "P/S")
+                (expect (buffer-string) :not :to-match "P/L/S"))
             (when (buffer-live-p buf) (kill-buffer buf))))))))
 
 (describe "org-canvas--conflict-prompt"
@@ -4340,6 +4359,31 @@ Keep this too
     (expect (macroexpand '(org-canvas-define-push-at-point test-feat
                             :parse #'ignore :build #'ignore :finalize #'ignore))
             :to-throw 'error)))
+
+(describe "org-canvas--push-at-point-runtime"
+  (it "binds org-canvas--current-pull-item-fn from pull-item-fn arg"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-temp-org-buffer
+         "* Test Page
+:PROPERTIES:
+:CANVAS_ID: 99
+:END:
+"
+         (org-back-to-heading)
+         (let ((captured-pull-fn nil))
+           (cl-letf (((symbol-function 'display-buffer) #'ignore))
+             (org-canvas--push-at-point-runtime
+              "test"
+              (lambda () (list :title "Test" :canvas-id "99" :pom (point)))
+              (lambda (_data) '((title . "Test")))
+              (lambda (_data _payload)
+                (setq captured-pull-fn org-canvas--current-pull-item-fn)
+                '((id . 99)))
+              (lambda (_data _response) nil)
+              :title
+              #'my-pull-fn))
+           (expect captured-pull-fn :to-equal #'my-pull-fn)))))))
 
 (describe "org-canvas-init"
   (it "creates credentials file and sets variables"

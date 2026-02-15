@@ -203,7 +203,8 @@ Returns the matching item alist or nil."
   :parse #'org-canvas--calendar-event-parse-entry
   :build #'org-canvas--calendar-event-build-payload
   :push #'org-canvas--calendar-event-push-to-api
-  :finalize #'org-canvas--calendar-event-finalize)
+  :finalize #'org-canvas--calendar-event-finalize
+  :pull-item-fn #'org-canvas--calendar-event-pull-item)
 
 ;;;; Delete
 
