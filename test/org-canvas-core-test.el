@@ -4909,4 +4909,325 @@ Keep this too
                 (expect name-used :to-equal "renamed.gif"))))
         (delete-file temp-file)))))
 
+;;;; resolve-link-or-raw with Org link value
+
+(describe "org-canvas--resolve-link-or-raw"
+  (it "resolves an Org link by delegating to resolve-link-property"
+    (with-org-canvas-test-config
+      (let* ((target-file (make-temp-file "link-target-" nil ".org"))
+             (source-file (make-temp-file "link-source-" nil ".org")))
+        (unwind-protect
+            (progn
+              (with-temp-file target-file
+                (insert "* Target Heading\n:PROPERTIES:\n:CANVAS_ID: 42\n:END:\n"))
+              (with-temp-file source-file
+                (insert (format "* Source\n:PROPERTIES:\n:GROUP: [[file:%s::*Target Heading][Target Heading]]\n:END:\n"
+                                target-file)))
+              (with-current-buffer (find-file-noselect source-file)
+                (unwind-protect
+                    (progn
+                      (goto-char (point-min))
+                      (org-back-to-heading)
+                      (let ((result (org-canvas--resolve-link-or-raw
+                                     (point) "GROUP" "CANVAS_ID" source-file)))
+                        (expect result :to-equal "42")))
+                  (kill-buffer))))
+          (delete-file target-file)
+          (delete-file source-file)))))
+
+  (it "returns raw value when not a link"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer
+       "* Item
+:PROPERTIES:
+:GROUP_CATEGORY_ID: 789
+:END:
+"
+       (org-back-to-heading)
+       (let ((result (org-canvas--resolve-link-or-raw
+                      (point) "GROUP_CATEGORY_ID" "CANVAS_ID" "dummy.el")))
+         (expect result :to-equal "789"))))))
+
+;;;; Section name resolution when file unavailable
+
+(describe "org-canvas--resolve-section-names-to-ids"
+  (it "warns when sections file is not available"
+    (let ((org-canvas-sections-file "/nonexistent/sections.org")
+          (warnings nil))
+      (cl-letf (((symbol-function 'message)
+                 (lambda (fmt &rest args)
+                   (push (apply #'format fmt args) warnings))))
+        (let ((result (org-canvas--resolve-section-names-to-ids "Section A")))
+          (expect result :to-be nil)
+          (expect (cl-some (lambda (w) (string-match-p "Cannot resolve section" w))
+                           warnings)
+                  :to-be-truthy))))))
+
+;;;; Image upload failure in resolve-single-image
+
+(describe "org-canvas--resolve-single-image"
+  (it "handles upload failure gracefully"
+    (with-org-canvas-test-config
+      (let* ((temp-dir (make-temp-file "img-test-" t))
+             (img-file (expand-file-name "test.png" temp-dir))
+             (org-canvas--image-cache (make-hash-table :test 'equal))
+             (org-canvas-image-folder "course-images")
+             (folder-id-ref (list 99))
+             (replaced nil))
+        (unwind-protect
+            (progn
+              (with-temp-file img-file (insert "PNGDATA"))
+              (cl-letf (((symbol-function 'org-canvas--upload-file)
+                         (lambda (&rest _) (error "Network error")))
+                        ((symbol-function 'org-canvas--image-replace-link)
+                         (lambda (&rest _) (setq replaced t))))
+                (let ((rep (list :path "test.png" :start 1 :end 20 :display nil)))
+                  ;; Should not error, just warn
+                  (org-canvas--resolve-single-image rep temp-dir folder-id-ref 1 1)
+                  ;; Image should NOT have been replaced (upload failed)
+                  (expect replaced :to-be nil))))
+          (delete-directory temp-dir t))))))
+
+;;;; conflict-format-diff with LAST_SYNCED and name-based remote
+
+(describe "org-canvas--conflict-format-diff"
+  (it "reads LAST_SYNCED from pom and uses name field for title"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer
+       "* My Item
+:PROPERTIES:
+:CANVAS_ID: 123
+:LAST_SYNCED: [2026-01-15 Thu 14:30]
+:END:
+
+Local body content.
+"
+       (org-back-to-heading)
+       (let ((org-canvas--current-pull-item-fn nil)
+             (data (list :title "My Item"
+                         :description "Local body content."
+                         :pom (point-marker)))
+             (remote '((name . "Remote Item Name")
+                       (updated_at . "2026-02-01T10:00:00Z")
+                       (description . "Remote body."))))
+         (let ((buf (org-canvas--conflict-format-diff data remote)))
+           (unwind-protect
+               (with-current-buffer buf
+                 (let ((content (buffer-string)))
+                   ;; Should contain the remote title from 'name field
+                   (expect content :to-match "Remote Item Name")
+                   ;; Should contain timestamps
+                   (expect content :to-match "2026-01-15")
+                   (expect content :to-match "2026-02-01")))
+             (when (buffer-live-p buf)
+               (kill-buffer buf)))))))))
+
+;;;; conflict-pull-local overwrites heading and calls pull-item-fn
+
+(describe "org-canvas--conflict-pull-local"
+  (it "renames heading and invokes pull-item-fn"
+    (with-temp-org-buffer
+     "* Old Title
+:PROPERTIES:
+:CANVAS_ID: 456
+:END:
+
+Old body.
+"
+     (org-back-to-heading)
+     (let* ((pom (point-marker))
+            (pull-called nil)
+            (data (list :title "Old Title" :pom pom))
+            (remote '((title . "New Remote Title")
+                      (updated_at . "2026-02-10T08:00:00Z")
+                      (body . "New body."))))
+       (org-canvas--conflict-pull-local
+        data remote
+        (lambda (_response _pos)
+          (setq pull-called t)))
+       ;; Heading should be renamed
+       (goto-char (marker-position pom))
+       (org-back-to-heading)
+       (expect (org-get-heading t t t t) :to-equal "New Remote Title")
+       ;; pull-item-fn should have been called
+       (expect pull-called :to-be-truthy)
+       ;; Sync metadata should be updated
+       (expect (org-entry-get (marker-position pom) "LAST_SYNCED") :to-match "^\\[20")
+       (expect (org-entry-get (marker-position pom) "CANVAS_UPDATED_AT")
+               :to-equal "2026-02-10T08:00:00Z")
+       ;; PAYLOAD_HASH should be deleted
+       (expect (org-entry-get (marker-position pom) "PAYLOAD_HASH") :to-be nil)))))
+
+;;;; demo-conflict via mocked prompt
+
+(describe "org-canvas-demo-conflict"
+  (it "runs the demo and returns a resolution choice"
+    (let ((demo-message nil))
+      (cl-letf (((symbol-function 'org-canvas--conflict-prompt)
+                 (lambda (_has-pull) 'push))
+                ((symbol-function 'message)
+                 (lambda (fmt &rest args)
+                   (setq demo-message (apply #'format fmt args)))))
+        (org-canvas-demo-conflict)
+        (expect demo-message :to-match "push")))))
+
+;;;; push-at-point payload hash skip
+
+(describe "org-canvas--push-at-point-runtime"
+  (it "skips sync when payload hash matches"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer
+       "* Test Page
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+
+Body.
+"
+       (org-back-to-heading)
+       (let* ((payload '((title . "Test Page") (body . "Body.")))
+              (payload-hash (md5 (json-encode payload)))
+              (api-called nil))
+         ;; Set the stored hash to match
+         (org-entry-put (point) "PAYLOAD_HASH" payload-hash)
+         (save-buffer)
+         (cl-letf (((symbol-function 'org-canvas-clear-log) #'ignore)
+                   ((symbol-function 'display-buffer) #'ignore))
+           (org-canvas--push-at-point-runtime
+            "page"
+            (lambda () (list :title "Test Page" :canvas-id "100" :pom (point)))
+            (lambda (_data) payload)
+            (lambda (_data _payload) (setq api-called t) '((id . 100)))
+            (lambda (_data _response) nil)
+            :title
+            nil))
+         ;; API should NOT have been called (skipped)
+         (expect api-called :to-be nil))))))
+
+;;;; define-push-at-point macro validation for missing :finalize/:endpoint
+
+(describe "org-canvas-define-push-at-point macro validation"
+  (it "errors when neither :finalize nor :endpoint provided"
+    (expect (macroexpand '(org-canvas-define-push-at-point test-feat
+                            :parse #'identity :build #'identity
+                            :push #'identity))
+            :to-throw 'error)))
+
+;;;; org-canvas-init validation and abort paths
+
+(describe "org-canvas-init"
+  (it "rejects empty course-id"
+    (cl-letf (((symbol-function 'read-directory-name)
+               (lambda (&rest _) "/tmp/test-course/"))
+              ((symbol-function 'read-string)
+               (lambda (prompt &rest _)
+                 (cond
+                  ((string-match-p "URL" prompt) "https://canvas.example.com")
+                  ((string-match-p "token" prompt) "valid-token")
+                  ((string-match-p "Course" prompt) "")))))
+      (expect (org-canvas-init) :to-throw 'user-error)))
+
+  (it "aborts when connection fails and user declines"
+    (let ((temp-dir (make-temp-file "init-test-" t)))
+      (unwind-protect
+          (cl-letf (((symbol-function 'read-directory-name)
+                     (lambda (&rest _) temp-dir))
+                    ((symbol-function 'read-string)
+                     (lambda (prompt &rest _)
+                       (cond
+                        ((string-match-p "URL" prompt) "https://canvas.example.com")
+                        ((string-match-p "token" prompt) "valid-token")
+                        ((string-match-p "Course" prompt) "12345"))))
+                    ((symbol-function 'org-canvas-api-request)
+                     (lambda (&rest _) (error "Connection refused")))
+                    ((symbol-function 'y-or-n-p)
+                     (lambda (&rest _) nil)))
+            (expect (org-canvas-init) :to-throw 'user-error))
+        (delete-directory temp-dir t)))))
+
+;;;; upload-file step-2 fallback paths
+
+(describe "org-canvas--upload-file step-2 fallbacks"
+  (it "returns JSON when step-2 has JSON without id but no Location"
+    (let* ((temp-file (make-temp-file "upload-json-" nil ".txt")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file (insert "filedata"))
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request)
+                         (lambda (method url &rest _args)
+                           (cond
+                            ;; Step 1: notify
+                            ((eq method 'POST)
+                             '((upload_url . "https://up.test/x")
+                               (upload_params . nil)))
+                            ;; Step 3: confirm via GET on location
+                            ((eq method 'GET)
+                             '((id . 777))))))
+                        ((symbol-function 'url-retrieve-synchronously)
+                         (lambda (_url &rest _args)
+                           (let ((buf (generate-new-buffer " *upload-json*")))
+                             (with-current-buffer buf
+                               ;; JSON response without 'id, no Location header
+                               (insert "HTTP/1.1 200 OK\r\n\r\n")
+                               (insert (json-encode '((status . "pending")
+                                                      (location . "/files/777/confirm")))))
+                             buf))))
+                (let ((result (org-canvas--upload-file temp-file)))
+                  ;; Should follow the location from the JSON body
+                  (expect (alist-get 'id result) :to-equal 777)))))
+        (delete-file temp-file))))
+
+  (it "errors when step-2 has no JSON and no Location header"
+    (let* ((temp-file (make-temp-file "upload-empty-" nil ".txt")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file (insert "filedata"))
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request)
+                         (lambda (_method _url &rest _args)
+                           '((upload_url . "https://up.test/x")
+                             (upload_params . nil))))
+                        ((symbol-function 'url-retrieve-synchronously)
+                         (lambda (_url &rest _args)
+                           (let ((buf (generate-new-buffer " *upload-empty*")))
+                             (with-current-buffer buf
+                               ;; No valid JSON, no Location
+                               (insert "HTTP/1.1 200 OK\r\n\r\n")
+                               (insert "not json"))
+                             buf))))
+                (expect (org-canvas--upload-file temp-file)
+                        :to-throw 'error))))
+        (delete-file temp-file))))
+
+  (it "prepends base-url to relative location"
+    (let* ((temp-file (make-temp-file "upload-rel-" nil ".txt"))
+           (get-url nil))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file (insert "filedata"))
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request)
+                         (lambda (method url &rest _args)
+                           (cond
+                            ((eq method 'POST)
+                             '((upload_url . "https://up.test/x")
+                               (upload_params . nil)))
+                            ((eq method 'GET)
+                             (setq get-url url)
+                             '((id . 555))))))
+                        ((symbol-function 'url-retrieve-synchronously)
+                         (lambda (_url &rest _args)
+                           (let ((buf (generate-new-buffer " *upload-rel*")))
+                             (with-current-buffer buf
+                               (insert "HTTP/1.1 301 Redirect\r\n")
+                               (insert "Location: /api/v1/files/555/confirm\r\n")
+                               (insert "\r\n"))
+                             buf))))
+                (let ((result (org-canvas--upload-file temp-file)))
+                  (expect (alist-get 'id result) :to-equal 555)
+                  ;; Should have prepended base-url
+                  (expect get-url :to-match "^https://test.canvas.example.com/api/v1/files/555/confirm")))))
+        (delete-file temp-file)))))
+
 ;;; org-canvas-core-test.el ends here

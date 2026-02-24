@@ -98,29 +98,59 @@ All paths are relative to =org-canvas-directory=.
 
 Course files can contain links to other course files. For example, an assignment may reference a rubric, an assignment group, or link to a page for instructions. These links are resolved during sync to obtain Canvas IDs.
 
-#+begin_example
-assignments.org  -->  rubrics.org
-                 -->  assignment-groups.org
-                 -->  group-categories.org
-                 -->  outcomes.org
-                 -->  pages.org
-                 -->  files.org
+#+begin_src mermaid
+graph TD
+    %% ── Source files (with outgoing links) ──
+    modules["modules.org"]
+    assignments["assignments.org"]
+    discussions["discussions.org"]
+    quizzes["quizzes.org"]
+    nq["new-quizzes.org"]
+    overrides["overrides tables<br/>(in assignments.org)"]
 
-discussions.org  -->  assignment-groups.org
-                 -->  group-categories.org
+    %% ── Target files (receiving links) ──
+    ag["assignment-groups.org"]
+    rubrics["rubrics.org"]
+    gc["group-categories.org"]
+    outcomes["outcomes.org"]
+    pages["pages.org"]
+    files["files.org"]
+    sections["sections.org"]
+    announcements["announcements.org"]
 
-quizzes.org      -->  assignment-groups.org
-                 -->  outcomes.org
+    %% ── Property links (resolved to Canvas IDs during sync) ──
+    assignments -->|"GROUP"| ag
+    assignments -->|"RUBRIC_LINK"| rubrics
+    assignments -->|"GROUP_CATEGORY_ID"| gc
 
-new-quizzes.org  -->  outcomes.org (OUTCOME, local-only)
-calendar.org     (no outgoing links)
+    discussions -->|"GROUP"| ag
+    discussions -->|"GROUP_CATEGORY"| gc
+    discussions -->|"SPECIFIC_SECTIONS"| sections
 
-modules.org      -->  assignments.org
-                 -->  quizzes.org
-                 -->  discussions.org
-                 -->  pages.org
-                 -->  files.org
-#+end_example
+    quizzes -->|"ASSIGNMENT_GROUP"| ag
+
+    nq -.->|"OUTCOME (local only)"| outcomes
+
+    %% ── Module item links (heading links resolved to content IDs) ──
+    modules ==>|"item heading"| pages
+    modules ==>|"item heading"| assignments
+    modules ==>|"item heading"| quizzes
+    modules ==>|"item heading"| discussions
+    modules ==>|"item heading"| files
+    modules ==>|"item heading"| announcements
+
+    %% ── Override table links (section references in date tables) ──
+    overrides -->|"table row"| sections
+#+end_src
+
+Three types of cross-file links appear in the diagram:
+
+- *Property links* (thin arrows): An Org property like =:GROUP:= contains a =[[file:...]]= link. During sync, the link target's =CANVAS_ID= is read and included in the API payload.
+- *Module item links* (thick arrows): Level-2 headings in =modules.org= that are file links. The linked heading's =CANVAS_ID= (or =CANVAS_URL= for pages) becomes the module item's =content_id=.
+- *Override table links* (thin arrows from "overrides tables"): Rows in =#+NAME: overrides= tables within =assignments.org= link to sections. The section's =CANVAS_ID= becomes the override's =course_section_id=.
+- *Local-only links* (dashed arrow): The =OUTCOME= property on new-quiz items points to =outcomes.org= for validation but is not sent to Canvas (outcome alignment uses a separate API).
+
+In addition, *body text* in assignments, discussions, announcements, pages, calendar events, and settings can contain inline =[[file:...]]= links. These are resolved to Canvas URLs during HTML export (e.g., a link to =pages.org::*Syllabus= becomes =https://canvas.example.com/courses/123/pages/syllabus=).
 
 ** Sync Tiers
 
