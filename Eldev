@@ -9,8 +9,6 @@
 (eldev-use-package-archive 'melpa)
 
 (eldev-add-extra-dependencies 'runtime '(elog))
-(eldev-add-extra-dependencies 'runtime 'compat)
-(eldev-add-extra-dependencies 'test 'compat)
 
 (eldev-use-plugin 'autoloads)
 

@@ -7,6 +7,7 @@
 
 ;;; Code:
 
+(require 'json)
 (require 'elog)
 
 ;;;; 1. Configuration Layer

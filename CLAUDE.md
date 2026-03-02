@@ -187,9 +187,9 @@ Use `org-canvas-org-save-sync-state` to standardize saving.
 
 ## Dependencies
 
-External: `plz`, `elog`, `compat`, `org` (9.6+), `ox-html`
+External: `plz`, `elog`, `org` (9.6+), `ox-html`
 
-The `elog` package is fetched from GitHub via `eldev-use-vc-repository` (not vendored). The `compat` library provides forward compatibility for core Emacs functions across versions.
+The `elog` package is fetched from GitHub via `eldev-use-vc-repository` (not vendored).
 
 ## Testing
 
@@ -453,14 +453,9 @@ In `org-canvas--assignment-group-build-payload`, only include rules when updatin
   `((name . ,name) (group_weight . ,weight)))
 ```
 
-### Emacs Version Compatibility and the `compat` Library
+### Emacs Version Compatibility
 
-The `compat` library provides forward compatibility shims for **core Emacs Lisp functions**, allowing newer function signatures and behaviors to work on older Emacs versions. It's useful for:
-- `string-empty-p`, `string-join`, etc. on older Emacs
-- Newer `seq-*` functions
-- Other core Emacs additions
-
-**However**, `compat` does NOT help with **org-mode internal behavior differences**. Org-mode ships with Emacs but has its own version (e.g., org 9.6 in Emacs 29.x, org 9.7 in Emacs 30.x). Functions like `org-back-to-heading`, `org-end-of-subtree`, and `org-get-heading` may behave differently between org-mode versions, especially in programmatically created buffers.
+Org-mode ships with Emacs but has its own version (e.g., org 9.6 in Emacs 29.x, org 9.7 in Emacs 30.x). Functions like `org-back-to-heading`, `org-end-of-subtree`, and `org-get-heading` may behave differently between org-mode versions, especially in programmatically created buffers.
 
 **Testing across Emacs versions:**
 

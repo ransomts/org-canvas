@@ -56,6 +56,7 @@
 
 (require 'org-canvas-core)
 (require 'ox-html)
+(require 'cl-lib)
 (require 'elog)
 
 ;;;; Configuration

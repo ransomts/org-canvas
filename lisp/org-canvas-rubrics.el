@@ -41,6 +41,7 @@
 
 (require 'org-canvas-core)
 (require 'org-table)
+(require 'cl-lib)
 (require 'elog)
 
 ;;;; Configuration
