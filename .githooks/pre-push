@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# pre-push hook: run tests + enforce minimum code coverage
+set -euo pipefail
+
+COVERAGE_TARGET=99
+
+echo "Running tests with coverage..."
+output=$(eldev test -u "on,text,dontsend" 2>&1)
+
+# Check for test failures
+if echo "$output" | grep -qE '[0-9]+ failed'; then
+    failed=$(echo "$output" | grep -oP '\d+ failed' | grep -oP '^\d+')
+    if [ "$failed" -gt 0 ]; then
+        echo "BLOCKED: $failed test(s) failed."
+        echo "$output" | grep -E 'FAILED|failed' | tail -20
+        exit 1
+    fi
+fi
+
+# Parse per-module coverage lines and compute weighted average
+total_relevant=0
+total_covered=0
+
+while IFS= read -r line; do
+    relevant=$(echo "$line" | grep -oP 'Relevant: \K\d+')
+    covered=$(echo "$line" | grep -oP 'Covered: \K\d+')
+    total_relevant=$((total_relevant + relevant))
+    total_covered=$((total_covered + covered))
+done < <(echo "$output" | grep -P '^org-canvas.*Percent')
+
+if [ "$total_relevant" -eq 0 ]; then
+    echo "BLOCKED: Could not parse coverage report."
+    exit 1
+fi
+
+coverage=$((total_covered * 100 / total_relevant))
+
+echo "Coverage: ${coverage}% (${total_covered}/${total_relevant} lines)"
+
+if [ "$coverage" -lt "$COVERAGE_TARGET" ]; then
+    echo "BLOCKED: Coverage ${coverage}% is below target ${COVERAGE_TARGET}%."
+    exit 1
+fi
+
+echo "All checks passed (${coverage}% >= ${COVERAGE_TARGET}%)."

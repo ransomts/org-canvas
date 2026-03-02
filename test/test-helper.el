@@ -10,7 +10,6 @@
 ;;; Code:
 
 (require 'cl-lib)
-(require 'compat)
 (require 'org-canvas-core)
 
 ;;;; Test Configuration
