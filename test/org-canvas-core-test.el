@@ -5230,4 +5230,47 @@ Body.
                   (expect get-url :to-match "^https://test.canvas.example.com/api/v1/files/555/confirm")))))
         (delete-file temp-file)))))
 
+;;;; Shared Rubric Association
+
+(describe "org-canvas--associate-rubric"
+  (it "sends correct payload for Assignment type"
+    (with-org-canvas-test-config
+      (let (sent-method sent-url sent-data)
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest args)
+                     (setq sent-method method
+                           sent-url url
+                           sent-data (plist-get args :data))
+                     '((id . 1)))))
+          (org-canvas--associate-rubric 42 "99" "Assignment")
+          (expect sent-method :to-equal 'POST)
+          (expect sent-url :to-match "rubric_associations")
+          (let ((assoc (gethash "rubric_association" sent-data)))
+            (expect (gethash "rubric_id" assoc) :to-equal 99)
+            (expect (gethash "association_id" assoc) :to-equal 42)
+            (expect (gethash "association_type" assoc) :to-equal "Assignment")
+            (expect (gethash "purpose" assoc) :to-equal "grading"))))))
+
+  (it "sends correct payload for Discussion type"
+    (with-org-canvas-test-config
+      (let (sent-data)
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_method _url &rest args)
+                     (setq sent-data (plist-get args :data))
+                     '((id . 1)))))
+          (org-canvas--associate-rubric 55 "77" "Discussion")
+          (let ((assoc (gethash "rubric_association" sent-data)))
+            (expect (gethash "association_type" assoc) :to-equal "Discussion")
+            (expect (gethash "association_id" assoc) :to-equal 55)
+            (expect (gethash "rubric_id" assoc) :to-equal 77))))))
+
+  (it "handles API errors gracefully"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (_method _url &rest _args)
+                   (error "API failure"))))
+        ;; Should not signal an error
+        (expect (org-canvas--associate-rubric 1 "2" "Assignment")
+                :not :to-throw)))))
+
 ;;; org-canvas-core-test.el ends here

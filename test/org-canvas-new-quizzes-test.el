@@ -1962,4 +1962,53 @@ Quiz description.
       (expect (org-canvas--path "new-quizzes.org")
               :to-equal "/tmp/test-course/new-quizzes.org"))))
 
+;;;; GROUP Link Resolution
+
+(describe "org-canvas--new-quiz-parse-entry GROUP link"
+  (it "resolves GROUP link to assignment_group_id"
+    (let ((groups-file (make-temp-file "test-groups" nil ".org"))
+          (nq-file (make-temp-file "test-nq" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file groups-file
+              (insert "* Exams\n:PROPERTIES:\n:CANVAS_ID: 777\n:END:\n"))
+            (with-temp-file nq-file
+              (insert (format "* Midterm\n:PROPERTIES:\n:GROUP: [[file:%s::*Exams][Exams]]\n:END:\n\nQuiz description.\n"
+                              groups-file)))
+            (let ((org-canvas-new-quizzes-file nq-file))
+              (with-current-buffer (find-file-noselect nq-file)
+                (goto-char (point-min))
+                (org-back-to-heading)
+                (let ((data (org-canvas--new-quiz-parse-entry)))
+                  (expect (plist-get data :assignment_group_id) :to-equal 777)))))
+        (let ((buf (find-buffer-visiting groups-file)))
+          (when buf (kill-buffer buf)))
+        (let ((buf (find-buffer-visiting nq-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file groups-file)
+        (delete-file nq-file))))
+
+  (it "returns nil assignment_group_id when no GROUP"
+    (with-temp-org-buffer
+     "* Simple Quiz
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--new-quiz-parse-entry)))
+       (expect (plist-get data :assignment_group_id) :to-be nil)))))
+
+(describe "org-canvas--new-quiz-build-payload GROUP"
+  (it "includes assignment_group_id when present"
+    (let* ((data (list :title "Exam"
+                       :assignment_group_id 42))
+           (payload (org-canvas--new-quiz-build-payload data)))
+      (expect (gethash "assignment_group_id" payload) :to-equal 42)))
+
+  (it "omits assignment_group_id when nil"
+    (let* ((data (list :title "Quiz"
+                       :assignment_group_id nil))
+           (payload (org-canvas--new-quiz-build-payload data)))
+      (expect (gethash "assignment_group_id" payload nil) :to-be nil))))
+
 ;;; org-canvas-new-quizzes-test.el ends here

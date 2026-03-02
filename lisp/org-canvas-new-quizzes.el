@@ -44,6 +44,7 @@
 
 (require 'org-canvas-core)
 (require 'ox-html)
+(require 'cl-lib)
 (require 'elog)
 
 ;;;; Configuration
@@ -246,6 +247,11 @@ Supports: exact value, or [min, max] range."
                           (org-canvas-org-get-property pom "SCORING_POLICY")
                           org-canvas--new-quiz-valid-scoring-policies
                           "SCORING_POLICY" nil))
+         (group-link (org-canvas-org-get-property pom "GROUP"))
+         (assignment-group-id (when group-link
+                                (org-canvas--resolve-link-property
+                                 group-link "CANVAS_ID"
+                                 org-canvas-new-quizzes-file)))
          (body-text (org-canvas--new-quiz-parse-body-text)))
 
     (when (or (null title) (string-empty-p title))
@@ -266,6 +272,8 @@ Supports: exact value, or [min, max] range."
           :allowed_attempts (when attempts
                               (org-canvas--safe-string-to-number attempts "ALLOWED_ATTEMPTS"))
           :scoring_policy scoring-policy
+          :assignment_group_id (when assignment-group-id
+                                 (string-to-number assignment-group-id))
           :pom pom)))
 
 ;;;; Quiz Build Payload
@@ -292,6 +300,9 @@ Supports: exact value, or [min, max] range."
 
     (when-let ((scoring (plist-get data :scoring_policy)))
       (puthash "scoring_policy" scoring payload))
+
+    (when-let ((group-id (plist-get data :assignment_group_id)))
+      (puthash "assignment_group_id" group-id payload))
 
     payload))
 

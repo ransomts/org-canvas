@@ -635,4 +635,63 @@ Content.
         (delete-file groups-file)
         (delete-file disc-file)))))
 
+;;;; RUBRIC_LINK Tests
+
+(describe "org-canvas--discussion-parse-entry RUBRIC_LINK"
+  (it "resolves RUBRIC_LINK to rubric-id"
+    (let ((rubrics-file (make-temp-file "test-rubrics" nil ".org"))
+          (disc-file (make-temp-file "test-disc" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file rubrics-file
+              (insert "* Essay Rubric\n:PROPERTIES:\n:CANVAS_ID: 555\n:END:\n"))
+            (with-temp-file disc-file
+              (insert (format "* Graded Discussion\n:PROPERTIES:\n:PUBLISHED: true\n:RUBRIC_LINK: [[file:%s::*Essay Rubric][Essay Rubric]]\n:END:\n\nContent.\n"
+                              rubrics-file)))
+            (let ((org-canvas-discussions-file disc-file))
+              (with-current-buffer (find-file-noselect disc-file)
+                (goto-char (point-min))
+                (org-back-to-heading)
+                (let ((data (org-canvas--discussion-parse-entry)))
+                  (expect (plist-get data :rubric-id) :to-equal "555")))))
+        (let ((buf (find-buffer-visiting rubrics-file)))
+          (when buf (kill-buffer buf)))
+        (let ((buf (find-buffer-visiting disc-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file rubrics-file)
+        (delete-file disc-file))))
+
+  (it "returns nil rubric-id when no RUBRIC_LINK"
+    (with-temp-org-buffer
+     "* Plain Discussion
+:PROPERTIES:
+:PUBLISHED: true
+:END:
+
+Content.
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--discussion-parse-entry)))
+       (expect (plist-get data :rubric-id) :to-be nil)))))
+
+(describe "org-canvas--discussion-post-finalize"
+  (it "calls associate-rubric when rubric-id present"
+    (let (called-args)
+      (cl-letf (((symbol-function 'org-canvas--associate-rubric)
+                 (lambda (item-id rubric-id assoc-type)
+                   (setq called-args (list item-id rubric-id assoc-type)))))
+        (org-canvas--discussion-post-finalize
+         '(:title "Test" :rubric-id "99")
+         '((id . 42)))
+        (expect called-args :to-equal '(42 "99" "Discussion")))))
+
+  (it "does not call associate-rubric when no rubric-id"
+    (let ((called nil))
+      (cl-letf (((symbol-function 'org-canvas--associate-rubric)
+                 (lambda (&rest _) (setq called t))))
+        (org-canvas--discussion-post-finalize
+         '(:title "Test" :rubric-id nil)
+         '((id . 42)))
+        (expect called :to-be nil)))))
+
 ;;; org-canvas-discussions-test.el ends here

@@ -1847,5 +1847,296 @@ EXCEPT is a list of filenames to skip."
                 (expect (plist-get issue :message) :to-match "no CANVAS_ID"))))
         (delete-directory temp-dir t)))))
 
+;;;; Cross-Module Structural Validators
+
+(describe "org-canvas--validate-module-item-link"
+  (it "returns nil for items with EXTERNAL_URL"
+    (with-temp-org-buffer
+     "* Module
+** External Site
+:PROPERTIES:
+:EXTERNAL_URL: https://example.com
+:END:
+"
+     (search-forward "External Site")
+     (org-back-to-heading)
+     (let ((loc (list :file (buffer-file-name) :line 2 :heading "External Site")))
+       (expect (org-canvas--validate-module-item-link loc) :to-be nil))))
+
+  (it "returns nil for plain-text SubHeaders"
+    (with-temp-org-buffer
+     "* Module
+** Week 1 Overview
+:PROPERTIES:
+:END:
+"
+     (search-forward "Week 1 Overview")
+     (org-back-to-heading)
+     (let ((loc (list :file (buffer-file-name) :line 2 :heading "Week 1 Overview")))
+       (expect (org-canvas--validate-module-item-link loc) :to-be nil))))
+
+  (it "returns error for link to missing file"
+    (with-temp-org-buffer
+     "* Module
+** [[file:nonexistent.org::*Heading][Heading]]
+:PROPERTIES:
+:END:
+"
+     (search-forward "Heading")
+     (org-back-to-heading)
+     (let* ((loc (list :file (buffer-file-name) :line 2 :heading "Link"))
+            (issues (org-canvas--validate-module-item-link loc)))
+       (expect issues :not :to-be nil)
+       (expect (plist-get (car issues) :severity) :to-equal 'error)
+       (expect (plist-get (car issues) :message) :to-match "missing file"))))
+
+  (it "returns error for link to missing heading"
+    (let ((target-file (make-temp-file "test-pages" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file target-file
+              (insert "* Existing Page\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"))
+            (with-temp-org-buffer
+             (format "* Module\n** [[file:%s::*Missing Page][Missing Page]]\n:PROPERTIES:\n:END:\n" target-file)
+             (search-forward "Missing Page")
+             (org-back-to-heading)
+             (let* ((loc (list :file (buffer-file-name) :line 2 :heading "Link"))
+                    (issues (org-canvas--validate-module-item-link loc)))
+               (expect issues :not :to-be nil)
+               (expect (plist-get (car issues) :severity) :to-equal 'error)
+               (expect (plist-get (car issues) :message) :to-match "missing heading"))))
+        (let ((buf (find-buffer-visiting target-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file target-file))))
+
+  (it "returns warning when target heading has no CANVAS_ID"
+    (let ((target-file (make-temp-file "test-pages" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file target-file
+              (insert "* Unsynced Page\n:PROPERTIES:\n:END:\n"))
+            (with-temp-org-buffer
+             (format "* Module\n** [[file:%s::*Unsynced Page][Unsynced Page]]\n:PROPERTIES:\n:END:\n" target-file)
+             (search-forward "Unsynced Page")
+             (org-back-to-heading)
+             (let* ((loc (list :file (buffer-file-name) :line 2 :heading "Link"))
+                    (issues (org-canvas--validate-module-item-link loc)))
+               (expect issues :not :to-be nil)
+               (expect (plist-get (car issues) :severity) :to-equal 'warning)
+               (expect (plist-get (car issues) :message) :to-match "no CANVAS_ID"))))
+        (let ((buf (find-buffer-visiting target-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file target-file))))
+
+  (it "returns nil for valid link with CANVAS_ID"
+    (let ((target-file (make-temp-file "test-pages" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file target-file
+              (insert "* Synced Page\n:PROPERTIES:\n:CANVAS_ID: 123\n:END:\n"))
+            (with-temp-org-buffer
+             (format "* Module\n** [[file:%s::*Synced Page][Synced Page]]\n:PROPERTIES:\n:END:\n" target-file)
+             (search-forward "Synced Page")
+             (org-back-to-heading)
+             (let* ((loc (list :file (buffer-file-name) :line 2 :heading "Link"))
+                    (issues (org-canvas--validate-module-item-link loc)))
+               (expect issues :to-be nil))))
+        (let ((buf (find-buffer-visiting target-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file target-file)))))
+
+(describe "org-canvas--validate-quiz-point-total"
+  (it "returns nil when POINTS matches question total"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:POINTS: 30
+:END:
+** Q1
+:PROPERTIES:
+:POINTS: 10
+:END:
+** Q2
+:PROPERTIES:
+:POINTS: 20
+:END:
+"
+     (org-back-to-heading)
+     (let ((loc (list :file (buffer-file-name) :line 1 :heading "Quiz")))
+       (expect (org-canvas--validate-quiz-point-total loc) :to-be nil))))
+
+  (it "returns warning when POINTS does not match total"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:POINTS: 100
+:END:
+** Q1
+:PROPERTIES:
+:POINTS: 10
+:END:
+** Q2
+:PROPERTIES:
+:POINTS: 20
+:END:
+"
+     (org-back-to-heading)
+     (let* ((loc (list :file (buffer-file-name) :line 1 :heading "Quiz"))
+            (issues (org-canvas--validate-quiz-point-total loc)))
+       (expect issues :not :to-be nil)
+       (expect (plist-get (car issues) :severity) :to-equal 'warning)
+       (expect (plist-get (car issues) :message) :to-match "100")
+       (expect (plist-get (car issues) :message) :to-match "30"))))
+
+  (it "returns nil when no POINTS property"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:END:
+** Q1
+:PROPERTIES:
+:POINTS: 10
+:END:
+"
+     (org-back-to-heading)
+     (let ((loc (list :file (buffer-file-name) :line 1 :heading "Quiz")))
+       (expect (org-canvas--validate-quiz-point-total loc) :to-be nil))))
+
+  (it "handles question groups with PICK_COUNT * QUESTION_POINTS"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:POINTS: 30
+:END:
+** Regular Question
+:PROPERTIES:
+:POINTS: 10
+:END:
+** Question Group
+:PROPERTIES:
+:TYPE: group
+:PICK_COUNT: 2
+:QUESTION_POINTS: 10
+:END:
+"
+     (org-back-to-heading)
+     (let ((loc (list :file (buffer-file-name) :line 1 :heading "Quiz")))
+       (expect (org-canvas--validate-quiz-point-total loc) :to-be nil)))))
+
+(describe "org-canvas--validate-drop-rules"
+  (it "returns nil when no drop rules"
+    (with-temp-org-buffer
+     "* Homework
+:PROPERTIES:
+:WEIGHT: 40
+:END:
+"
+     (org-back-to-heading)
+     (let ((loc (list :file (buffer-file-name) :line 1 :heading "Homework")))
+       (expect (org-canvas--validate-drop-rules loc) :to-be nil))))
+
+  (it "returns warning when drops exceed assignment count"
+    (let* ((temp-dir (make-temp-file "drop-test-" t))
+           (assign-file (expand-file-name "assignments.org" temp-dir))
+           (groups-file (expand-file-name "assignment-groups.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file assign-file
+              (insert "* Assignment 1\n:PROPERTIES:\n:GROUP: [[file:assignment-groups.org::*Homework][Homework]]\n:END:\n"))
+            (with-temp-file groups-file
+              (insert "* Homework\n:PROPERTIES:\n:DROP_LOWEST: 2\n:END:\n"))
+            (let ((org-canvas-assignments-file assign-file))
+              (with-current-buffer (find-file-noselect groups-file)
+                (goto-char (point-min))
+                (org-back-to-heading)
+                (let* ((loc (list :file groups-file :line 1 :heading "Homework"))
+                       (issues (org-canvas--validate-drop-rules loc)))
+                  (expect issues :not :to-be nil)
+                  (expect (plist-get (car issues) :severity) :to-equal 'warning)
+                  (expect (plist-get (car issues) :message) :to-match "Drop rules")))))
+        (delete-directory temp-dir t))))
+
+  (it "returns nil when drops are within count"
+    (let* ((temp-dir (make-temp-file "drop-test-" t))
+           (assign-file (expand-file-name "assignments.org" temp-dir))
+           (groups-file (expand-file-name "assignment-groups.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file assign-file
+              (insert "* HW 1\n:PROPERTIES:\n:GROUP: [[file:assignment-groups.org::*Homework][Homework]]\n:END:\n* HW 2\n:PROPERTIES:\n:GROUP: [[file:assignment-groups.org::*Homework][Homework]]\n:END:\n* HW 3\n:PROPERTIES:\n:GROUP: [[file:assignment-groups.org::*Homework][Homework]]\n:END:\n"))
+            (with-temp-file groups-file
+              (insert "* Homework\n:PROPERTIES:\n:DROP_LOWEST: 1\n:END:\n"))
+            (let ((org-canvas-assignments-file assign-file))
+              (with-current-buffer (find-file-noselect groups-file)
+                (goto-char (point-min))
+                (org-back-to-heading)
+                (let* ((loc (list :file groups-file :line 1 :heading "Homework"))
+                       (issues (org-canvas--validate-drop-rules loc)))
+                  (expect issues :to-be nil)))))
+        (delete-directory temp-dir t)))))
+
+(describe "org-canvas--validate-override-section-ids"
+  (it "returns warning for section link without CANVAS_ID"
+    (let* ((temp-dir (make-temp-file "override-test-" t))
+           (sections-file (expand-file-name "sections.org" temp-dir))
+           (assign-file (expand-file-name "assignments.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file sections-file
+              (insert "* Section A\n:PROPERTIES:\n:END:\n"))
+            (let ((link (format "[[file:%s::*Section A][Section A]]" sections-file)))
+              (with-temp-file assign-file
+                (insert (format "| %s | <2027-01-15> |\n" link)))
+              (with-current-buffer (find-file-noselect assign-file)
+                (goto-char (point-min))
+                (let* ((issues (org-canvas--validate-override-section-ids
+                                assign-file "Test Assignment")))
+                  (expect issues :not :to-be nil)
+                  (expect (plist-get (car issues) :severity) :to-equal 'warning)
+                  (expect (plist-get (car issues) :message) :to-match "no CANVAS_ID")))))
+        (delete-directory temp-dir t))))
+
+  (it "returns nil for section link with CANVAS_ID"
+    (let* ((temp-dir (make-temp-file "override-test-" t))
+           (sections-file (expand-file-name "sections.org" temp-dir))
+           (assign-file (expand-file-name "assignments.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file sections-file
+              (insert "* Section B\n:PROPERTIES:\n:CANVAS_ID: 200\n:END:\n"))
+            (let ((link (format "[[file:%s::*Section B][Section B]]" sections-file)))
+              (with-temp-file assign-file
+                (insert (format "| %s | <2027-01-15> |\n" link)))
+              (with-current-buffer (find-file-noselect assign-file)
+                (goto-char (point-min))
+                (let* ((issues (org-canvas--validate-override-section-ids
+                                assign-file "Test Assignment")))
+                  (expect issues :to-be nil)))))
+        (delete-directory temp-dir t)))))
+
+(describe "discussion RUBRIC_LINK validation"
+  (it "includes RUBRIC_LINK in discussions spec"
+    (let ((disc-spec (cl-find-if
+                      (lambda (s) (equal (plist-get s :label) "Discussions"))
+                      org-canvas--validate-specs)))
+      (expect disc-spec :to-be-truthy)
+      (let ((rubric-prop (cl-find-if
+                          (lambda (p) (equal (plist-get p :name) "RUBRIC_LINK"))
+                          (plist-get disc-spec :properties))))
+        (expect rubric-prop :to-be-truthy)
+        (expect (plist-get rubric-prop :type) :to-equal 'link)))))
+
+(describe "new quiz GROUP validation"
+  (it "includes GROUP in new quizzes spec"
+    (let ((nq-spec (cl-find-if
+                    (lambda (s) (equal (plist-get s :label) "New Quizzes"))
+                    org-canvas--validate-specs)))
+      (expect nq-spec :to-be-truthy)
+      (let ((group-prop (cl-find-if
+                         (lambda (p) (equal (plist-get p :name) "GROUP"))
+                         (plist-get nq-spec :properties))))
+        (expect group-prop :to-be-truthy)
+        (expect (plist-get group-prop :type) :to-equal 'link)))))
+
 (provide 'org-canvas-validate-test)
 ;;; org-canvas-validate-test.el ends here

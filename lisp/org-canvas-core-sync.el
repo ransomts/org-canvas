@@ -560,6 +560,31 @@ Updates title, LAST_SYNCED, and deletes stale PAYLOAD_HASH."
       (org-entry-delete pos "PAYLOAD_HASH")
       (save-buffer))))
 
+;;;; 6d. Rubric Association
+;;
+;; Canvas rubrics can be associated with assignments or discussions.
+;; This helper is shared between the assignments and discussions modules.
+
+(defun org-canvas--associate-rubric (item-id rubric-id association-type)
+  "Associate RUBRIC-ID with ITEM-ID on Canvas.
+ASSOCIATION-TYPE is \"Assignment\" or \"Discussion\"."
+  (elog-info org-canvas--logger "[Rubric] Associating rubric %s with %s %s"
+             rubric-id (downcase association-type) item-id)
+  (let* ((endpoint (org-canvas-api-course-endpoint "rubric_associations"))
+         (payload (make-hash-table :test 'equal))
+         (assoc (make-hash-table :test 'equal)))
+    (puthash "rubric_id" (string-to-number rubric-id) assoc)
+    (puthash "association_id" item-id assoc)
+    (puthash "association_type" association-type assoc)
+    (puthash "purpose" "grading" assoc)
+    (puthash "rubric_association" assoc payload)
+    (condition-case err
+        (progn
+          (org-canvas-api-request 'POST endpoint :data payload)
+          (elog-info org-canvas--logger "[Rubric] Association created"))
+      (error
+       (elog-warning org-canvas--logger "[Rubric] Association failed: %s" (error-message-string err))))))
+
 ;;;; 7. Push-to-API Infrastructure
 ;;
 ;; These helpers standardize the "Execute" stage of the pipeline.

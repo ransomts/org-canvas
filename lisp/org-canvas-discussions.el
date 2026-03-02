@@ -87,6 +87,10 @@ Returns a plist with :grading-type, :points, :due-at, :lock-at,
                              pom "GROUP_CATEGORY" "CANVAS_ID"
                              org-canvas-discussions-file))
          (specific-sections (org-canvas-org-get-property pom "SPECIFIC_SECTIONS"))
+         (rubric-link (org-canvas-org-get-property pom "RUBRIC_LINK"))
+         (rubric-id (when rubric-link
+                      (org-canvas--resolve-link-property rubric-link "CANVAS_ID"
+                                                         org-canvas-discussions-file)))
          (grading (org-canvas--discussion-parse-grading-props pom)))
 
     (when (or (null title) (string-empty-p title))
@@ -122,6 +126,7 @@ Returns a plist with :grading-type, :points, :due-at, :lock-at,
             :sort_by_rating sort-by-rating
             :group_category_id (when group-category-id (org-canvas--safe-string-to-number group-category-id "GROUP_CATEGORY"))
             :specific_sections specific-sections
+            :rubric-id rubric-id
             :pom pom))))
 
 ;;;; 2. Stage: Transformation
@@ -178,6 +183,16 @@ Returns an alist for the `assignment' key."
       (elog-debug org-canvas--logger "[Stage 2: Transform] Payload complete")
       base)))
 
+;;;; Post-Finalize: Rubric Association
+
+(defun org-canvas--discussion-post-finalize (data response)
+  "Associate rubric with discussion after finalize.
+DATA is the parsed discussion plist, RESPONSE is the Canvas API response."
+  (let ((rubric-id (plist-get data :rubric-id))
+        (discussion-id (alist-get 'id response)))
+    (when rubric-id
+      (org-canvas--associate-rubric discussion-id rubric-id "Discussion"))))
+
 ;;;; Main Sync Function
 
 ;; Generate org-canvas-sync-discussions using the pipeline macro
@@ -186,12 +201,14 @@ Returns an alist for the `assignment' key."
   :parse #'org-canvas--discussion-parse-entry
   :build #'org-canvas--discussion-build-payload
   :endpoint "discussion_topics"
+  :post-fn #'org-canvas--discussion-post-finalize
   :pull-item-fn #'org-canvas--discussion-pull-item)
 
 (org-canvas-define-push-at-point discussion
   :parse #'org-canvas--discussion-parse-entry
   :build #'org-canvas--discussion-build-payload
   :endpoint "discussion_topics"
+  :post-fn #'org-canvas--discussion-post-finalize
   :pull-item-fn #'org-canvas--discussion-pull-item)
 
 ;; Generate org-canvas-delete-all-discussions using the delete macro

@@ -286,22 +286,7 @@ Accepts: online_upload, online_url, online_text_entry, media_recording,
 
 (defun org-canvas--assignment-associate-rubric (assignment-id rubric-id)
   "Associate RUBRIC-ID with ASSIGNMENT-ID on Canvas."
-  (elog-info org-canvas--logger "[Rubric] Associating rubric %s with assignment %s"
-             rubric-id assignment-id)
-  (let* ((endpoint (org-canvas-api-course-endpoint "rubric_associations"))
-         (payload (make-hash-table :test 'equal))
-         (assoc (make-hash-table :test 'equal)))
-    (puthash "rubric_id" (string-to-number rubric-id) assoc)
-    (puthash "association_id" assignment-id assoc)
-    (puthash "association_type" "Assignment" assoc)
-    (puthash "purpose" "grading" assoc)
-    (puthash "rubric_association" assoc payload)
-    (condition-case err
-        (progn
-          (org-canvas-api-request 'POST endpoint :data payload)
-          (elog-info org-canvas--logger "[Rubric] Association created"))
-      (error
-       (elog-warning org-canvas--logger "[Rubric] Association failed: %s" (error-message-string err))))))
+  (org-canvas--associate-rubric assignment-id rubric-id "Assignment"))
 
 (defun org-canvas--assignment-post-finalize (data response)
   "Verify assignment properties and associate rubric.
