@@ -10,7 +10,7 @@
 
 (describe "org-canvas--discussion-parse-entry"
   (describe "common fields"
-    (it "extracts title from heading"
+    (it "extracts discussion title from heading"
       (with-temp-org-buffer
        "* Week 1 Discussion
 :PROPERTIES:

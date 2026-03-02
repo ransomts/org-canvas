@@ -42,13 +42,13 @@
     (expect (org-canvas--module-parse-prerequisite-ids "123, 456, 789")
             :to-equal '("123" "456" "789")))
 
-  (it "returns nil for nil input"
+  (it "returns nil for nil prerequisite-ids input"
     (expect (org-canvas--module-parse-prerequisite-ids nil) :to-be nil)))
 
 ;;;; Stage 1: Parse Module Entry
 
 (describe "org-canvas--module-parse-entry"
-  (it "extracts title from heading"
+  (it "extracts module title from heading"
     (with-temp-org-buffer
      "* Week 1 - Introduction
 :PROPERTIES:
@@ -741,7 +741,7 @@
     (expect (org-canvas--module-resolve-link "[[broken link" "/tmp/")
             :to-be nil))
 
-  (it "returns nil for nil input"
+  (it "returns nil for nil link input"
     (expect (org-canvas--module-resolve-link nil "/tmp/")
             :to-be nil))
 
@@ -1904,5 +1904,72 @@
        (re-search-forward "Link")
        (org-back-to-heading)
        (expect (org-entry-get (point) "PUBLISHED") :to-equal "true")))))
+
+;;;; Cross-file module link resolution integration
+
+(describe "cross-file module link resolution"
+  (it "resolves correct heading when target file has multiple headings"
+    (let* ((temp-dir (make-temp-file "module-link-test" t))
+           (pages-file (expand-file-name "pages.org" temp-dir)))
+      (unwind-protect
+          (progn
+            ;; Create pages.org with 3 headings, only the middle one has the target ID
+            (with-temp-file pages-file
+              (insert "* First Page\n:PROPERTIES:\n:CANVAS_URL: first-page\n:END:\n\n")
+              (insert "* Target Page\n:PROPERTIES:\n:CANVAS_URL: target-url\n:END:\n\n")
+              (insert "* Third Page\n:PROPERTIES:\n:CANVAS_URL: third-page\n:END:\n"))
+            ;; Module item links to the middle heading
+            (with-temp-org-buffer
+             (format "* Module\n** [[file:pages.org::*Target Page][My Target]]\n:PROPERTIES:\n:END:\n")
+             (search-forward "My Target")
+             (org-back-to-heading)
+             (let ((data (org-canvas--module-item-parse-entry temp-dir)))
+               (expect (plist-get data :page-url) :to-equal "target-url")
+               (expect (plist-get data :title) :to-equal "My Target"))))
+        (let ((buf (find-buffer-visiting pages-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "resolves CANVAS_ID from assignments file"
+    (let* ((temp-dir (make-temp-file "module-link-test" t))
+           (assign-file (expand-file-name "assignments.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file assign-file
+              (insert "* Homework 1\n:PROPERTIES:\n:CANVAS_ID: 5001\n:END:\n\n")
+              (insert "* Homework 2\n:PROPERTIES:\n:CANVAS_ID: 5002\n:END:\n\n")
+              (insert "* Final Exam\n:PROPERTIES:\n:CANVAS_ID: 5003\n:END:\n"))
+            (with-temp-org-buffer
+             (format "* Module\n** [[file:assignments.org::*Homework 2][HW2 Link]]\n:PROPERTIES:\n:END:\n")
+             (search-forward "HW2 Link")
+             (org-back-to-heading)
+             (let ((data (org-canvas--module-item-parse-entry temp-dir)))
+               (expect (plist-get data :content-id) :to-equal 5002)
+               (expect (plist-get data :type) :to-equal "Assignment")
+               (expect (plist-get data :title) :to-equal "HW2 Link"))))
+        (let ((buf (find-buffer-visiting assign-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "returns nil content-id when linked heading has no CANVAS_ID"
+    (let* ((temp-dir (make-temp-file "module-link-test" t))
+           (pages-file (expand-file-name "pages.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file pages-file
+              (insert "* Synced Page\n:PROPERTIES:\n:CANVAS_URL: synced\n:END:\n\n")
+              (insert "* Unsynced Page\n:PROPERTIES:\n:END:\n"))
+            (with-temp-org-buffer
+             (format "* Module\n** [[file:pages.org::*Unsynced Page][Unsynced]]\n:PROPERTIES:\n:END:\n")
+             (search-forward "Unsynced")
+             (org-back-to-heading)
+             (let ((data (org-canvas--module-item-parse-entry temp-dir)))
+               ;; Should classify as SubHeader or have nil content-id
+               ;; since the target heading has no CANVAS_ID/CANVAS_URL
+               (expect (plist-get data :content-id) :to-be nil)
+               (expect (plist-get data :page-url) :to-be nil))))
+        (let ((buf (find-buffer-visiting pages-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
 
 ;;; org-canvas-modules-test.el ends here

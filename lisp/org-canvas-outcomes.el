@@ -113,8 +113,7 @@ rating list item (- [N] ...).  Skips the :PROPERTIES: drawer."
          (title (org-canvas--strip-statistics-cookie (org-get-heading t t t t)))
          (canvas-id (org-canvas-org-get-property pom "CANVAS_ID")))
 
-    (when (or (null title) (string-empty-p title))
-      (error "Outcome group title cannot be empty at point %d" pom))
+    (org-canvas--require-title title pom "Outcome group")
 
     (elog-info org-canvas--logger "[Stage 1: Parse] Outcome Group: '%s' (ID: %s)"
       title (or canvas-id "NEW"))
@@ -142,8 +141,7 @@ rating list item (- [N] ...).  Skips the :PROPERTIES: drawer."
             (org-up-heading-safe)
             (org-canvas-org-get-property (point) "CANVAS_ID"))))
 
-    (when (or (null title) (string-empty-p title))
-      (error "Outcome title cannot be empty at point %d" pom))
+    (org-canvas--require-title title pom "Outcome")
 
     (elog-info org-canvas--logger "[Stage 1: Parse] Outcome: '%s' (ID: %s)" title (or canvas-id "NEW"))
     (elog-debug org-canvas--logger "[Stage 1: Parse] Calculation: %s, Mastery: %s pts"

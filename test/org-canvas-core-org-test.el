@@ -153,6 +153,34 @@
      (expect (org-canvas-org-get-number-property (point) "POINTS" 42)
              :to-equal 42))))
 
+(describe "org-canvas--require-title"
+  (it "does nothing for non-empty title"
+    (expect (org-canvas--require-title "My Title" 1 "Test") :not :to-throw))
+
+  (it "errors when title is nil"
+    (expect (org-canvas--require-title nil 1 "Page") :to-throw 'error))
+
+  (it "errors when title is empty string"
+    (expect (org-canvas--require-title "" 42 "Assignment") :to-throw 'error))
+
+  (it "includes entity name and point in error message"
+    (condition-case err
+        (org-canvas--require-title "" 99 "Quiz")
+      (error
+       (expect (error-message-string err)
+               :to-match "Quiz title cannot be empty at point 99"))))
+
+  (it "handles marker pom by extracting position"
+    (with-temp-org-buffer
+     "* Heading\n"
+     (org-back-to-heading)
+     (let ((m (point-marker)))
+       (condition-case err
+           (org-canvas--require-title "" m "New Quiz")
+         (error
+          (expect (error-message-string err)
+                  :to-match "New Quiz title cannot be empty at point")))))))
+
 (describe "org-canvas-org-set-property"
   (it "sets property on Org entry"
     (with-temp-org-buffer
@@ -296,7 +324,7 @@
               (expect result :to-equal "2024-03-01T00:00:00Z")))
         (set-time-zone-rule orig-tz))))
 
-  (it "returns nil for nil input"
+  (it "returns nil for nil timestamp input"
     (expect (org-canvas-org-parse-timestamp nil) :to-be nil)))
 
 (describe "org-canvas-current-iso8601-timestamp"
@@ -1136,7 +1164,7 @@ Page content.
 ;;;; Section Name → ID Resolution
 
 (describe "org-canvas--resolve-section-names-to-ids"
-  (it "returns nil for nil input"
+  (it "returns nil for nil sections input"
     (expect (org-canvas--resolve-section-names-to-ids nil) :to-be nil))
 
   (it "returns nil for empty string"

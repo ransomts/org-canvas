@@ -9,7 +9,7 @@
 ;;;; Stage 1: Parse Entry
 
 (describe "org-canvas--page-parse-entry"
-  (it "extracts title from heading"
+  (it "extracts page title from heading"
     (with-temp-org-buffer
      "* Course Syllabus
 :PROPERTIES:

@@ -259,8 +259,7 @@ Supports: exact value, or [min, max] range."
                        org-canvas-new-quizzes-file)))
          (body-text (org-canvas--new-quiz-parse-body-text)))
 
-    (when (or (null title) (string-empty-p title))
-      (error "New Quiz title cannot be empty at point %d" (marker-position pom)))
+    (org-canvas--require-title title pom "New Quiz")
 
     (elog-info org-canvas--logger "[New Quiz Parse] Quiz: '%s' (ID: %s)"
       title (or canvas-id "NEW"))

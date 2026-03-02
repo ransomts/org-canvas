@@ -9,7 +9,7 @@
 ;;;; Stage 1: Parse Entry
 
 (describe "org-canvas--announcement-parse-entry"
-  (it "extracts title from heading"
+  (it "extracts announcement title from heading"
     (with-temp-org-buffer
      "* Important Announcement
 :PROPERTIES:

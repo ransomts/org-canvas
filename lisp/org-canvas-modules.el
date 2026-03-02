@@ -192,8 +192,7 @@ Accepts comma-separated Canvas module IDs."
          (require-sequential (org-canvas-org-get-boolean-property pom "REQUIRE_SEQUENTIAL_PROGRESSION"))
          (publish-final-grade (org-canvas-org-get-boolean-property pom "PUBLISH_FINAL_GRADE")))
 
-    (when (or (null title) (string-empty-p title))
-      (error "Module title cannot be empty at point %d" pom))
+    (org-canvas--require-title title pom "Module")
 
     (elog-info org-canvas--logger "[Stage 1: Parse] Processing Module: '%s' (ID: %s)"
       title (or canvas-id "NEW"))

@@ -110,7 +110,7 @@ What would happen if X occurred?
 ;;;; Stage 1: Parse Quiz Entry
 
 (describe "org-canvas--quiz-parse-entry"
-  (it "extracts title from heading"
+  (it "extracts quiz title from heading"
     (with-temp-org-buffer
      "* Midterm Quiz
 :PROPERTIES:

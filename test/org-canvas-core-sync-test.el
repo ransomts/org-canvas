@@ -1035,7 +1035,7 @@ Content two.
     (let ((result (org-canvas--parse-iso8601-time "2026-01-15T10:00:00Z")))
       (expect result :to-be-truthy)))
 
-  (it "returns nil for nil input"
+  (it "returns nil for nil ISO8601 input"
     (expect (org-canvas--parse-iso8601-time nil) :to-be nil))
 
   (it "returns nil for :null input"
@@ -1704,7 +1704,7 @@ Keep this too
     (let ((result (org-canvas--iso8601-to-org-timestamp "2026-01-15T10:00:00Z")))
       (expect result :to-match "<2026-01-15")))
 
-  (it "returns nil for nil input"
+  (it "returns nil for nil active-timestamp input"
     (expect (org-canvas--iso8601-to-org-timestamp nil) :to-be nil))
 
   (it "returns nil for :null"
@@ -1719,7 +1719,7 @@ Keep this too
                    "2026-01-15T10:00:00Z")))
       (expect result :to-match "\\[2026-01-15")))
 
-  (it "returns nil for nil input"
+  (it "returns nil for nil inactive-timestamp input"
     (expect (org-canvas--iso8601-to-org-inactive-timestamp nil) :to-be nil)))
 
 (describe "org-canvas-define-pull"
@@ -2394,6 +2394,131 @@ Body.
                 :not :to-throw)))))
 
 ;;; org-canvas-core-test.el ends here
+
+;;;; Rate-limit retry through push pipeline
+
+(describe "rate-limit retry through push pipeline"
+  (it "succeeds after 429 retry on POST"
+    (with-org-canvas-test-config
+      (let ((call-count 0)
+            (org-canvas-rate-limit-retries 2)
+            (org-canvas-rate-limit-wait 0))
+        (cl-letf (((symbol-function 'plz)
+                   (lambda (&rest _args)
+                     (setq call-count (1+ call-count))
+                     (if (= call-count 1)
+                         (signal 'plz-error
+                                 (make-plz-error
+                                  :response (make-plz-response :status 429 :body "rate limit")))
+                       '((id . 42) (title . "New Item"))))))
+          (let ((data '(:title "New Item" :canvas-id nil))
+                (payload '((title . "New Item"))))
+            (let ((result (org-canvas--push-to-api data payload :endpoint "assignments")))
+              (expect (alist-get 'id result) :to-equal 42)
+              (expect call-count :to-equal 2)))))))
+
+  (it "succeeds after 429 retry on PUT"
+    (with-org-canvas-test-config
+      (let ((call-count 0)
+            (org-canvas-rate-limit-retries 2)
+            (org-canvas-rate-limit-wait 0)
+            (org-canvas-detect-conflicts nil))
+        (cl-letf (((symbol-function 'plz)
+                   (lambda (&rest _args)
+                     (setq call-count (1+ call-count))
+                     (if (= call-count 1)
+                         (signal 'plz-error
+                                 (make-plz-error
+                                  :response (make-plz-response :status 429 :body "rate limit")))
+                       '((id . 100) (title . "Updated"))))))
+          (let ((data '(:title "Updated" :canvas-id "100"))
+                (payload '((title . "Updated"))))
+            (let ((result (org-canvas--push-to-api data payload :endpoint "assignments")))
+              (expect (alist-get 'id result) :to-equal 100)
+              (expect call-count :to-equal 2))))))))
+
+;;;; Conflict batch flow integration
+
+(describe "conflict batch flow"
+  (it "auto-pushes second conflict after user chooses Push All on first"
+    (with-org-canvas-test-config
+      (let ((org-canvas-detect-conflicts t)
+            (org-canvas--conflict-apply-all nil)
+            (org-canvas--current-pull-item-fn nil)
+            (prompt-count 0)
+            (put-count 0))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method _url &rest _args)
+                     (pcase method
+                       ;; GET always returns a "newer" item (conflict)
+                       ('GET '((id . 1) (updated_at . "2026-03-01T10:00:00Z")))
+                       ('PUT (setq put-count (1+ put-count))
+                             '((id . 1))))))
+                  ((symbol-function 'org-canvas--conflict-prompt)
+                   (lambda (_has-pull)
+                     (setq prompt-count (1+ prompt-count))
+                     'push-all)))
+          ;; First push: conflict detected, user prompted, chooses "Push All"
+          (with-temp-org-buffer
+           "* Item 1\n:PROPERTIES:\n:CANVAS_ID: 1\n:LAST_SYNCED: [2026-01-01 Thu 10:00]\n:END:\n"
+           (org-back-to-heading)
+           (let ((data1 (list :title "Item 1" :canvas-id "1" :pom (point-marker)))
+                 (payload1 '((title . "Item 1"))))
+             (org-canvas--push-to-api data1 payload1 :endpoint "items")
+             ;; User was prompted once
+             (expect prompt-count :to-equal 1)
+             ;; PUT was called (force push)
+             (expect put-count :to-equal 1)))
+          ;; Second push: conflict detected, but apply-all is already 'push
+          (with-temp-org-buffer
+           "* Item 2\n:PROPERTIES:\n:CANVAS_ID: 2\n:LAST_SYNCED: [2026-01-01 Thu 10:00]\n:END:\n"
+           (org-back-to-heading)
+           (let ((data2 (list :title "Item 2" :canvas-id "2" :pom (point-marker)))
+                 (payload2 '((title . "Item 2"))))
+             (org-canvas--push-to-api data2 payload2 :endpoint "items")
+             ;; No additional prompt (apply-all active)
+             (expect prompt-count :to-equal 1)
+             ;; PUT was called again
+             (expect put-count :to-equal 2)))))))
+
+  (it "auto-skips second conflict after user chooses Skip All on first"
+    (with-org-canvas-test-config
+      (let ((org-canvas-detect-conflicts t)
+            (org-canvas--conflict-apply-all nil)
+            (org-canvas--current-pull-item-fn nil)
+            (prompt-count 0)
+            (put-count 0))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method _url &rest _args)
+                     (pcase method
+                       ('GET '((id . 1) (updated_at . "2026-03-01T10:00:00Z")))
+                       ('PUT (setq put-count (1+ put-count))
+                             '((id . 1))))))
+                  ((symbol-function 'org-canvas--conflict-prompt)
+                   (lambda (_has-pull)
+                     (setq prompt-count (1+ prompt-count))
+                     'skip-all)))
+          ;; First push: conflict, user chooses "Skip All"
+          ;; push-to-api returns 'conflict for both skip and skip-all
+          (with-temp-org-buffer
+           "* Item A\n:PROPERTIES:\n:CANVAS_ID: 10\n:LAST_SYNCED: [2026-01-01 Thu 10:00]\n:END:\n"
+           (org-back-to-heading)
+           (let ((data (list :title "Item A" :canvas-id "10" :pom (point-marker)))
+                 (payload '((title . "Item A"))))
+             (let ((result (org-canvas--push-to-api data payload :endpoint "items")))
+               (expect result :to-equal 'conflict))))
+          ;; Second push: auto-skipped without prompt
+          (with-temp-org-buffer
+           "* Item B\n:PROPERTIES:\n:CANVAS_ID: 20\n:LAST_SYNCED: [2026-01-01 Thu 10:00]\n:END:\n"
+           (org-back-to-heading)
+           (let ((data (list :title "Item B" :canvas-id "20" :pom (point-marker)))
+                 (payload '((title . "Item B"))))
+             (let ((result (org-canvas--push-to-api data payload :endpoint "items")))
+               (expect result :to-equal 'conflict))))
+          ;; Prompt was only shown once
+          (expect prompt-count :to-equal 1)
+          ;; No PUTs were sent
+          (expect put-count :to-equal 0))))))
 
 (provide 'org-canvas-core-sync-test)
 ;;; org-canvas-core-sync-test.el ends here

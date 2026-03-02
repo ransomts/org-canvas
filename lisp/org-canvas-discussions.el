@@ -93,8 +93,7 @@ Returns a plist with :grading-type, :points, :due-at, :lock-at,
                                                          org-canvas-discussions-file)))
          (grading (org-canvas--discussion-parse-grading-props pom)))
 
-    (when (or (null title) (string-empty-p title))
-      (error "Discussion title cannot be empty at point %d" pom))
+    (org-canvas--require-title title pom "Discussion")
 
     (elog-info org-canvas--logger "[Stage 1: Parse] Processing Discussion: '%s' (ID: %s)" title (or canvas-id "NEW"))
     (elog-debug org-canvas--logger "[Stage 1: Parse] Properties: type=%s, graded=%s, points=%s, post-first=%s, pinned=%s"

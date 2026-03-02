@@ -659,13 +659,14 @@ Re-signal ERR if item not found."
       (elog-error org-canvas--logger "[Recovery] Item not found after timeout")
       (signal (car err) (cdr err)))))
 
-(defun org-canvas--handle-404-retry (endpoint payload find-fn title _err)
+(defun org-canvas--handle-404-retry (endpoint payload find-fn title _err &optional post-url)
   "Retry as POST after 404 on PUT.
 ENDPOINT is the base endpoint, PAYLOAD the data to send.
 FIND-FN and TITLE are used for timeout recovery on the retry.
-ERR is the original error for re-signaling."
+ERR is the original error for re-signaling.
+POST-URL, when non-nil, overrides the default course-scoped POST URL."
   (elog-warning org-canvas--logger "[Recovery] Item not found (404). Retrying as POST...")
-  (let ((new-endpoint (org-canvas-api-course-endpoint endpoint)))
+  (let ((new-endpoint (or post-url (org-canvas-api-course-endpoint endpoint))))
     (condition-case post-err
         (let ((response (org-canvas-api-request 'POST new-endpoint :data payload)))
           (elog-info org-canvas--logger "[Recovery] POST successful")
@@ -710,7 +711,9 @@ TITLE is for logging.  Returns `push', `skip', or `pulled'."
 					endpoint
 					id-key
 					title-key
-					find-fn)
+					find-fn
+					post-url-fn
+					put-url-fn)
   "Generic push-to-API with 404 retry and optional timeout recovery.
 
 DATA is the parsed entry plist (must contain :canvas-id or :canvas-url).
@@ -721,6 +724,8 @@ Keyword arguments:
   ID-KEY - Key in DATA for Canvas ID (default: :canvas-id).
   TITLE-KEY - Key in DATA for title (default: :title).
   FIND-FN - Optional function (TITLE) to search for item after timeout.
+  POST-URL-FN - Optional () -> URL for POST (overrides course-scoped default).
+  PUT-URL-FN - Optional (ID) -> URL for PUT (overrides course-scoped default).
 
 Handle:
   - POST for new items (no ID), PUT for existing items
@@ -733,9 +738,12 @@ Returns the API response alist."
          (id (plist-get data id-key))
          (title (plist-get data title-key))
          (method (if id 'PUT 'POST))
-         (full-endpoint (if id
-                            (org-canvas-api-course-endpoint (format "%s/%%s" endpoint) id)
-                          (org-canvas-api-course-endpoint endpoint))))
+         (full-endpoint (cond
+                         ((and id put-url-fn) (funcall put-url-fn id))
+                         ((and (not id) post-url-fn) (funcall post-url-fn))
+                         (id (org-canvas-api-course-endpoint (format "%s/%%s" endpoint) id))
+                         (t (org-canvas-api-course-endpoint endpoint))))
+         (post-url (when post-url-fn (funcall post-url-fn))))
 
     ;; Dry-run: skip API call and return a mock response
     (when org-canvas--dry-run
@@ -768,7 +776,7 @@ Returns the API response alist."
 
         ;; CASE 2: 404 on PUT -> Retry as POST (stale ID)
         ((org-canvas--404-on-put-p err method)
-         (org-canvas--handle-404-retry endpoint payload find-fn title err))
+         (org-canvas--handle-404-retry endpoint payload find-fn title err post-url))
 
         ;; Default: Re-throw
         (t (signal (car err) (cdr err))))))))

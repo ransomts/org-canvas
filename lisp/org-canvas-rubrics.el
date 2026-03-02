@@ -72,8 +72,7 @@
                 (beginning-of-line)
                 (org-table-to-lisp))))))
 
-    (when (or (null title) (string-empty-p title))
-      (error "Rubric title cannot be empty at point %d" pom))
+    (org-canvas--require-title title pom "Rubric")
 
     (elog-info org-canvas--logger "[Stage 1: Parse] Processing Rubric: '%s' (ID: %s)" title (or canvas-id "NEW"))
     (elog-debug org-canvas--logger "[Stage 1: Parse] Properties: free-form=%s" free-form)

@@ -17,7 +17,7 @@
     (expect (org-canvas--assignment-parse-extensions "py txt pdf")
             :to-equal '("py" "txt" "pdf")))
 
-  (it "returns nil for nil input"
+  (it "returns nil for nil extensions input"
     (expect (org-canvas--assignment-parse-extensions nil) :to-be nil)))
 
 (describe "org-canvas--assignment-parse-submission-types"
@@ -37,7 +37,7 @@
 
 (describe "org-canvas--assignment-parse-entry"
   (describe "common fields"
-    (it "extracts title from heading"
+    (it "extracts assignment title from heading"
       (with-temp-org-buffer
        "* Homework 1
 :PROPERTIES:
@@ -294,7 +294,7 @@ Content.
 ;;;; Resolve Link ID Tests
 
 (describe "org-canvas--assignment-resolve-link-id"
-  (it "returns nil for nil input"
+  (it "returns nil for nil link input"
     (expect (org-canvas--assignment-resolve-link-id nil "CANVAS_ID") :to-be nil))
 
   (it "returns nil for invalid link format"

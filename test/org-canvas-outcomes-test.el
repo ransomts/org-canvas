@@ -99,7 +99,7 @@ Description text.
 ;;;; Stage 1: Parse Outcome Group Entry
 
 (describe "org-canvas--outcome-group-parse-entry"
-  (it "extracts title from heading"
+  (it "extracts outcome group title from heading"
     (with-temp-org-buffer
      "* Communication Skills
 :PROPERTIES:
@@ -149,7 +149,7 @@ Description text.
 ;;;; Stage 1: Parse Outcome Entry
 
 (describe "org-canvas--outcome-parse-entry"
-  (it "extracts title from heading"
+  (it "extracts outcome title from heading"
     (with-temp-org-buffer
      "* Group
 :PROPERTIES:

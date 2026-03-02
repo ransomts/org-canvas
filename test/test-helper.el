@@ -201,5 +201,137 @@ calls PULL-FN, and asserts (expect (org-entry-get (point) PROPERTY) MATCHER VALU
   "Assert that LAST_SYNCED at POM is a valid recent timestamp."
   (expect (org-entry-get pom "LAST_SYNCED") :to-match "^\\[20[0-9][0-9]-"))
 
+;;;; Mock Data Builders
+
+(defun test-org-canvas-make-response (defaults &optional overrides)
+  "Merge OVERRIDES into DEFAULTS alist, returning a new alist.
+Keys in OVERRIDES win over keys in DEFAULTS."
+  (let ((result (copy-alist defaults)))
+    (dolist (pair overrides)
+      (setf (alist-get (car pair) result nil nil #'equal) (cdr pair)))
+    result))
+
+(defun test-org-canvas-make-page (&optional overrides)
+  "Build a mock Canvas page API response alist.
+OVERRIDES is an alist of keys to override."
+  (test-org-canvas-make-response
+   '((url . "test-page")
+     (title . "Test Page")
+     (body . "<p>Page body</p>")
+     (published . t)
+     (front_page . :json-false)
+     (editing_roles . "teachers")
+     (created_at . "2026-01-01T00:00:00Z")
+     (updated_at . "2026-01-01T00:00:00Z"))
+   overrides))
+
+(defun test-org-canvas-make-assignment (&optional overrides)
+  "Build a mock Canvas assignment API response alist.
+OVERRIDES is an alist of keys to override."
+  (test-org-canvas-make-response
+   '((id . 1001)
+     (name . "Test Assignment")
+     (description . "<p>Do the work</p>")
+     (points_possible . 100)
+     (grading_type . "points")
+     (published . t)
+     (submission_types . ("online_upload"))
+     (due_at . "2026-06-01T23:59:00Z")
+     (created_at . "2026-01-01T00:00:00Z")
+     (updated_at . "2026-01-01T00:00:00Z"))
+   overrides))
+
+(defun test-org-canvas-make-discussion (&optional overrides)
+  "Build a mock Canvas discussion API response alist.
+OVERRIDES is an alist of keys to override."
+  (test-org-canvas-make-response
+   '((id . 2001)
+     (title . "Test Discussion")
+     (message . "<p>Discuss this</p>")
+     (discussion_type . "side_comment")
+     (published . t)
+     (pinned . :json-false)
+     (require_initial_post . :json-false))
+   overrides))
+
+(defun test-org-canvas-make-announcement (&optional overrides)
+  "Build a mock Canvas announcement API response alist.
+OVERRIDES is an alist of keys to override."
+  (test-org-canvas-make-response
+   '((id . 3001)
+     (title . "Test Announcement")
+     (message . "<p>Attention</p>")
+     (is_announcement . t)
+     (published . t))
+   overrides))
+
+(defun test-org-canvas-make-module (&optional overrides)
+  "Build a mock Canvas module API response alist.
+OVERRIDES is an alist of keys to override."
+  (test-org-canvas-make-response
+   '((id . 4001)
+     (name . "Test Module")
+     (position . 1)
+     (published . t)
+     (items_count . 0)
+     (items_url . "https://test.canvas.example.com/api/v1/courses/99999/modules/4001/items"))
+   overrides))
+
+(defun test-org-canvas-make-rubric (&optional overrides)
+  "Build a mock Canvas rubric API response alist.
+OVERRIDES is an alist of keys to override."
+  (test-org-canvas-make-response
+   '((id . 5001)
+     (title . "Test Rubric")
+     (points_possible . 20)
+     (free_form_criterion_comments . :json-false))
+   overrides))
+
+(defun test-org-canvas-make-quiz (&optional overrides)
+  "Build a mock Canvas quiz API response alist.
+OVERRIDES is an alist of keys to override."
+  (test-org-canvas-make-response
+   '((id . 6001)
+     (title . "Test Quiz")
+     (quiz_type . "assignment")
+     (published . t)
+     (time_limit . 30)
+     (points_possible . 50))
+   overrides))
+
+(defun test-org-canvas-make-calendar-event (&optional overrides)
+  "Build a mock Canvas calendar event API response alist.
+OVERRIDES is an alist of keys to override."
+  (test-org-canvas-make-response
+   '((id . 7001)
+     (title . "Test Event")
+     (start_at . "2026-06-01T14:00:00Z")
+     (end_at . "2026-06-01T15:00:00Z")
+     (all_day . :json-false)
+     (description . "<p>Event description</p>"))
+   overrides))
+
+(defun test-org-canvas-make-outcome (&optional overrides)
+  "Build a mock Canvas outcome API response alist.
+OVERRIDES is an alist of keys to override."
+  (test-org-canvas-make-response
+   '((id . 8001)
+     (title . "Test Outcome")
+     (calculation_method . "highest")
+     (mastery_points . 3)
+     (points_possible . 5))
+   overrides))
+
+(defun test-org-canvas-make-group-category (&optional overrides)
+  "Build a mock Canvas group category API response alist.
+OVERRIDES is an alist of keys to override."
+  (test-org-canvas-make-response
+   '((id . 9001)
+     (name . "Test Group Category")
+     (self_signup . nil)
+     (group_limit . nil)
+     (auto_leader . nil))
+   overrides))
+
 (provide 'test-helper)
 ;;; test-helper.el ends here

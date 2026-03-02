@@ -66,8 +66,7 @@
            (never-drop (org-canvas-org-get-property pom "NEVER_DROP"))
            (position (org-canvas-org-get-property pom "POSITION")))
 
-      (when (or (null name) (string-empty-p name))
-        (error "Assignment group name cannot be empty at point %d" pom))
+      (org-canvas--require-title name pom "Assignment group")
 
       (elog-info org-canvas--logger "[Stage 1: Parse] Assignment Group: '%s'" name)
       (elog-info org-canvas--logger "[Stage 1: Parse]   ID: %s" (or canvas-id "NEW"))

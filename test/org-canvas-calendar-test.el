@@ -9,7 +9,7 @@
 ;;;; Stage 1: Parse Entry
 
 (describe "org-canvas--calendar-event-parse-entry"
-  (it "extracts title from heading"
+  (it "extracts calendar event title from heading"
     (with-temp-org-buffer
      "* Office Hours
 :PROPERTIES:

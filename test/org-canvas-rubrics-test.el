@@ -9,7 +9,7 @@
 ;;;; Stage 1: Parse Entry
 
 (describe "org-canvas--rubric-parse-entry"
-  (it "extracts title from heading"
+  (it "extracts rubric title from heading"
     (with-temp-org-buffer
      "* Essay Rubric
 :PROPERTIES:

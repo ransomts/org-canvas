@@ -29,7 +29,7 @@
     (expect (org-canvas--file-extract-link-path "Just a folder heading")
             :to-be nil))
 
-  (it "returns nil for nil input"
+  (it "returns nil for nil link-path input"
     (expect (org-canvas--file-extract-link-path nil)
             :to-be nil))
 
@@ -46,7 +46,7 @@
     (expect (org-canvas--file-get-display-name "Folder Name")
             :to-equal "Folder Name"))
 
-  (it "returns nil for nil input"
+  (it "returns nil for nil display-name input"
     (expect (org-canvas--file-get-display-name nil)
             :to-be nil))
 

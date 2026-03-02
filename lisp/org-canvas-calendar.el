@@ -60,8 +60,7 @@
          (location-name (org-canvas-org-get-property pom "LOCATION_NAME"))
          (location-address (org-canvas-org-get-property pom "LOCATION_ADDRESS")))
 
-    (when (or (null title) (string-empty-p title))
-      (error "Calendar event title cannot be empty at point %d" pom))
+    (org-canvas--require-title title pom "Calendar event")
 
     (unless start-at
       (error "Calendar event '%s' requires START_AT property" title))
@@ -122,52 +121,14 @@ The payload is wrapped in a `calendar_event' key as required by the API."
 
 ;;;; 3. Stage: Execution
 
-(cl-defun org-canvas--calendar-event-push-to-api (data payload)
+(defun org-canvas--calendar-event-push-to-api (data payload)
   "Send PAYLOAD derived from DATA to Canvas API.
 Calendar events use global endpoints (not course-scoped)."
-  (let* ((canvas-id (plist-get data :canvas-id))
-         (title (plist-get data :title))
-         (method (if canvas-id 'PUT 'POST))
-         (endpoint (if canvas-id
-                       (format "%s/api/v1/calendar_events/%s" org-canvas-base-url canvas-id)
-                     (format "%s/api/v1/calendar_events" org-canvas-base-url))))
-
-    ;; Dry-run check
-    (when org-canvas--dry-run
-      (elog-info org-canvas--logger "[DRY-RUN] Would %s calendar event '%s' to %s"
-                 method title endpoint)
-      (cl-return-from org-canvas--calendar-event-push-to-api
-        `((id . ,(or canvas-id "dry-run")))))
-
-    (elog-info org-canvas--logger "[Stage 3: Execute] %s '%s' to %s" method title endpoint)
-
-    (condition-case err
-        (let ((response (org-canvas-api-request method endpoint :data payload)))
-          (elog-info org-canvas--logger "[Stage 3: Execute] Success for '%s'" title)
-          response)
-      (error
-       (let ((msg (error-message-string err)))
-         (cond
-          ;; Timeout recovery: search for event by title
-          ((org-canvas--timeout-error-p err)
-           (elog-warning org-canvas--logger "[Stage 3: Timeout] Searching for '%s' on Canvas..." title)
-           (let ((found (org-canvas--calendar-event-search title)))
-             (if found
-                 (progn
-                   (elog-info org-canvas--logger "[Stage 3: Recovery] Found '%s' with ID %s" title (alist-get 'id found))
-                   found)
-               (elog-error org-canvas--logger "[Stage 3: Recovery] Could not find '%s' after timeout" title)
-               (signal (car err) (cdr err)))))
-          ;; 404 on PUT: retry as POST
-          ((and canvas-id (string-match-p "404" msg))
-           (elog-warning org-canvas--logger "[Stage 3: 404] Stale CANVAS_ID %s, retrying as POST..." canvas-id)
-           (let* ((post-url (format "%s/api/v1/calendar_events" org-canvas-base-url))
-                  (response (org-canvas-api-request 'POST post-url :data payload)))
-             (elog-info org-canvas--logger "[Stage 3: Recovery] POST succeeded for '%s'" title)
-             response))
-          (t
-           (elog-error org-canvas--logger "[Stage 3: FAILED] '%s': %s" title msg)
-           (signal (car err) (cdr err)))))))))
+  (org-canvas--push-to-api data payload
+    :endpoint "calendar_events"
+    :find-fn #'org-canvas--calendar-event-search
+    :post-url-fn (lambda () (format "%s/api/v1/calendar_events" org-canvas-base-url))
+    :put-url-fn (lambda (id) (format "%s/api/v1/calendar_events/%s" org-canvas-base-url id))))
 
 (defun org-canvas--calendar-event-search (title)
   "Search Canvas for a calendar event matching TITLE.

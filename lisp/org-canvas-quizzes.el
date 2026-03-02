@@ -223,8 +223,7 @@ Supports: exact value, or [min, max] range."
 	 (only-visible-to-overrides (org-canvas-org-get-boolean-property pom "ONLY_VISIBLE_TO_OVERRIDES"))
 	 (body-text (org-canvas--quiz-parse-body-text)))
 
-    (when (or (null title) (string-empty-p title))
-      (error "Quiz title cannot be empty at point %d" (marker-position pom)))
+    (org-canvas--require-title title pom "Quiz")
 
     (elog-info org-canvas--logger "[Quiz Parse] Quiz: '%s' (ID: %s)" title (or canvas-id "NEW"))
     (when assignment-group-id

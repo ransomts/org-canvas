@@ -57,8 +57,7 @@
          (allow-comments (org-canvas-org-get-boolean-property pom "ALLOW_COMMENTS"))
          (specific-sections (org-canvas-org-get-property pom "SPECIFIC_SECTIONS")))
 
-    (when (or (null title) (string-empty-p title))
-      (error "Announcement title cannot be empty at point %d" pom))
+    (org-canvas--require-title title pom "Announcement")
 
     (elog-info org-canvas--logger "[Stage 1: Parse] Processing Announcement: '%s' (ID: %s)" title (or canvas-id "NEW"))
     (elog-debug org-canvas--logger "[Stage 1: Parse] Properties: published=%s, post-at=%s, allow-comments=%s"

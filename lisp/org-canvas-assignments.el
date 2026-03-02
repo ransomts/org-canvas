@@ -133,8 +133,7 @@ Accepts: online_upload, online_url, online_text_entry, media_recording,
          (grading-standard-id (org-canvas-org-get-property pom "GRADING_STANDARD_ID"))
          (position (org-canvas-org-get-property pom "POSITION")))
 
-    (when (or (null title) (string-empty-p title))
-      (error "Assignment title cannot be empty at point %d" pom))
+    (org-canvas--require-title title pom "Assignment")
 
     (elog-info org-canvas--logger "[Stage 1: Parse] Processing Assignment: '%s' (ID: %s)" title (or canvas-id "NEW"))
     (elog-debug org-canvas--logger "[Stage 1: Parse] Points: %s, Due: %s, Submission: %s"

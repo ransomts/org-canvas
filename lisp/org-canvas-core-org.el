@@ -74,6 +74,14 @@ Returns VALUE if valid, DEFAULT if nil, or DEFAULT with a warning if invalid."
         property-name value (or default (car allowed)))
       (or default (car allowed)))))
 
+(defun org-canvas--require-title (title pom entity-name)
+  "Signal an error when TITLE is nil or empty.
+POM is the point-or-marker (printed as integer in the message).
+ENTITY-NAME is a human-readable label like \"Announcement\"."
+  (when (or (null title) (string-empty-p title))
+    (error "%s title cannot be empty at point %d"
+           entity-name (if (markerp pom) (marker-position pom) pom))))
+
 (defun org-canvas--push-non-nil-fields (data fields base)
   "Push non-nil fields from DATA plist into BASE alist.
 FIELDS is a list of (PLIST-KEY . API-KEY) cons cells.

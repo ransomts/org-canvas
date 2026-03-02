@@ -9,7 +9,7 @@
 ;;;; Stage 1: Parse Entry
 
 (describe "org-canvas--group-category-parse-entry"
-  (it "extracts title from heading"
+  (it "extracts group category title from heading"
     (with-temp-org-buffer
      "* Project Groups
 :PROPERTIES:
@@ -218,13 +218,13 @@
           (let ((result (org-canvas--group-category-push-to-api data payload)))
             (expect (alist-get 'id result) :to-equal "dry-run"))))))
 
-  (it "returns dry-run with existing ID when dry-run is active"
+  (it "returns dry-run response for existing items"
     (with-org-canvas-test-config
       (let ((org-canvas--dry-run t))
         (let ((data '(:title "Dry" :canvas-id "42"))
               (payload '((name . "Dry"))))
           (let ((result (org-canvas--group-category-push-to-api data payload)))
-            (expect (alist-get 'id result) :to-equal "42")))))))
+            (expect (alist-get 'id result) :to-equal "dry-run")))))))
 
 ;;;; Stage 4: Finalize
 

@@ -28,7 +28,6 @@
 
 (require 'org-canvas-core)
 (require 'elog)
-(require 'cl-lib)
 
 ;;;; Configuration
 
@@ -66,8 +65,7 @@
                        "AUTO_LEADER"))
          (create-group-count (org-canvas-org-get-property pom "CREATE_GROUP_COUNT")))
 
-    (when (or (null title) (string-empty-p title))
-      (error "Group category title cannot be empty at point %d" pom))
+    (org-canvas--require-title title pom "Group category")
 
     (elog-info org-canvas--logger "[Stage 1: Parse] Processing Group Category: '%s' (ID: %s)" title (or canvas-id "NEW"))
     (elog-debug org-canvas--logger "[Stage 1: Parse] Properties: self-signup=%s, group-limit=%s, auto-leader=%s"
@@ -100,53 +98,14 @@
 
 ;;;; 3. Stage: Execution
 
-(cl-defun org-canvas--group-category-push-to-api (data payload)
+(defun org-canvas--group-category-push-to-api (data payload)
   "Send PAYLOAD derived from DATA to Canvas API.
 Group categories use split endpoints: POST is course-scoped,
 PUT is global."
-  (let* ((canvas-id (plist-get data :canvas-id))
-         (title (plist-get data :title))
-         (method (if canvas-id 'PUT 'POST))
-         (endpoint (if canvas-id
-                       (format "%s/api/v1/group_categories/%s" org-canvas-base-url canvas-id)
-                     (org-canvas-api-course-endpoint "group_categories"))))
-
-    ;; Dry-run check
-    (when org-canvas--dry-run
-      (elog-info org-canvas--logger "[DRY-RUN] Would %s group category '%s' to %s"
-                 method title endpoint)
-      (cl-return-from org-canvas--group-category-push-to-api
-        `((id . ,(or canvas-id "dry-run")))))
-
-    (elog-info org-canvas--logger "[Stage 3: Execute] %s '%s' to %s" method title endpoint)
-
-    (condition-case err
-        (let ((response (org-canvas-api-request method endpoint :data payload)))
-          (elog-info org-canvas--logger "[Stage 3: Execute] Success for '%s'" title)
-          response)
-      (error
-       (let ((msg (error-message-string err)))
-         (cond
-          ;; Timeout recovery: search Canvas for the item by name
-          ((org-canvas--timeout-error-p err)
-           (elog-warning org-canvas--logger "[Stage 3: Timeout] Searching for '%s' on Canvas..." title)
-           (let ((found (org-canvas--search-item "group_categories" title :match-field 'name)))
-             (if found
-                 (progn
-                   (elog-info org-canvas--logger "[Stage 3: Recovery] Found '%s' with ID %s" title (alist-get 'id found))
-                   found)
-               (elog-error org-canvas--logger "[Stage 3: Recovery] Could not find '%s' after timeout" title)
-               (signal (car err) (cdr err)))))
-          ;; 404 on PUT: retry as POST
-          ((and canvas-id (string-match-p "404" msg))
-           (elog-warning org-canvas--logger "[Stage 3: 404] Stale CANVAS_ID %s, retrying as POST..." canvas-id)
-           (let* ((post-url (org-canvas-api-course-endpoint "group_categories"))
-                  (response (org-canvas-api-request 'POST post-url :data payload)))
-             (elog-info org-canvas--logger "[Stage 3: Recovery] POST succeeded for '%s'" title)
-             response))
-          (t
-           (elog-error org-canvas--logger "[Stage 3: FAILED] '%s': %s" title msg)
-           (signal (car err) (cdr err)))))))))
+  (org-canvas--push-to-api data payload
+    :endpoint "group_categories"
+    :find-fn (lambda (title) (org-canvas--search-item "group_categories" title :match-field 'name))
+    :put-url-fn (lambda (id) (format "%s/api/v1/group_categories/%s" org-canvas-base-url id))))
 
 ;;;; Main Sync Function
 
