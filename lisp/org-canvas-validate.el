@@ -13,6 +13,7 @@
 ;;; Code:
 
 (require 'org-canvas-core)
+(require 'org-table)
 (require 'cl-lib)
 (require 'compile)
 
@@ -402,7 +403,8 @@ Returns a list of warning issues."
       (:name "ONE_AT_A_TIME" :type boolean)
       (:name "ALLOWED_ATTEMPTS" :type number)
       (:name "SCORING_POLICY" :type enum :values ,org-canvas--valid-new-quiz-scoring-policies)
-      (:name "GROUP" :type link :target-file org-canvas-assignment-groups-file :id-property "CANVAS_ID")))
+      (:name "GROUP" :type link :target-file org-canvas-assignment-groups-file :id-property "CANVAS_ID")
+      (:name "RUBRIC_LINK" :type link :target-file org-canvas-rubrics-file :id-property "CANVAS_ID")))
 
     (:label "New Quiz Items"
      :file org-canvas-new-quizzes-file
@@ -468,15 +470,57 @@ Returns a list of warning issues."
 
 ;;;; 5. Structural Validators
 
+(defun org-canvas--validate-rubric-outcome-links (table-data file loc)
+  "Validate outcome links in 4th column of rubric TABLE-DATA.
+FILE is the rubrics file path.  LOC is a (:file :line :heading) plist.
+Returns a list of issues."
+  (let ((issues nil))
+    (dolist (row table-data)
+      (unless (or (eq row 'hline)
+                  ;; Skip rating rows (> prefix)
+                  (and (listp row) (stringp (nth 0 row))
+                       (string-match-p "\\`> " (string-trim-left (nth 0 row)))))
+        (let ((outcome-cell (nth 3 row)))
+          (when (and outcome-cell
+                     (not (string-empty-p (string-trim outcome-cell))))
+            (cond
+             ((not (string-match "\\[\\[file:" outcome-cell))
+              (push (org-canvas--validate-make-issue
+                     'warning loc nil
+                     (format "Rubric criterion '%s' outcome is not a file link"
+                             (nth 0 row)))
+                    issues))
+             (t
+              (let ((resolved (org-canvas--resolve-link-property
+                               outcome-cell "CANVAS_ID" file)))
+                (unless resolved
+                  (push (org-canvas--validate-make-issue
+                         'warning loc nil
+                         (format "Rubric criterion '%s' outcome link has no CANVAS_ID (sync outcomes first)"
+                                 (nth 0 row)))
+                        issues)))))))))
+    (nreverse issues)))
+
 (defun org-canvas--validate-rubric-structure (loc)
   "Check that the rubric heading at point has an org-table.
+Also validates outcome links in the optional 4th column.
 LOC is a (:file :line :heading) plist."
-  (let ((end (save-excursion (org-end-of-subtree t) (point))))
+  (let ((end (save-excursion (org-end-of-subtree t) (point)))
+        (issues nil))
     (save-excursion
-      (unless (re-search-forward "^|" end t)
-        (list (org-canvas--validate-make-issue
-               'error loc nil
-               "Rubric has no criteria table (expected an org-table under heading)"))))))
+      (if (not (re-search-forward "^|" end t))
+          (push (org-canvas--validate-make-issue
+                 'error loc nil
+                 "Rubric has no criteria table (expected an org-table under heading)")
+                issues)
+        ;; Table exists — validate outcome links in 4th column
+        (beginning-of-line)
+        (let ((table-data (org-table-to-lisp)))
+          (when table-data
+            (let ((outcome-issues (org-canvas--validate-rubric-outcome-links
+                                   table-data (plist-get loc :file) loc)))
+              (setq issues (nconc issues outcome-issues)))))))
+    issues))
 
 (defun org-canvas--validate-file-structure (loc)
   "Check file heading structure: link existence, file on disk, size.

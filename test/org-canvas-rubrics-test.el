@@ -1004,4 +1004,228 @@ Keep this body
            (let ((ratings (gethash "ratings" correctness)))
              (expect (gethash "description" (gethash "0" ratings)) :to-equal "Full Marks"))))))))
 
+;;;; Outcome Links in 4th Column
+
+(describe "org-canvas--rubric-build-criterion with outcome-id"
+  (it "adds learning_outcome_id when outcome-id is provided"
+    (let ((crit (org-canvas--rubric-build-criterion
+                 '("Quality" "10" "Desc") 0 nil "51479")))
+      (let ((obj (plist-get crit :obj)))
+        (expect (gethash "learning_outcome_id" obj) :to-equal "51479"))))
+
+  (it "omits learning_outcome_id when outcome-id is nil"
+    (let ((crit (org-canvas--rubric-build-criterion
+                 '("Quality" "10" "Desc") 0 nil nil)))
+      (let ((obj (plist-get crit :obj)))
+        (expect (gethash "learning_outcome_id" obj) :to-be nil))))
+
+  (it "includes learning_outcome_id with custom ratings"
+    (let ((crit (org-canvas--rubric-build-criterion
+                 '("Quality" "10" "Desc") 0
+                 '(("> Good" "10" "") ("> Poor" "0" ""))
+                 "99999")))
+      (let ((obj (plist-get crit :obj)))
+        (expect (gethash "learning_outcome_id" obj) :to-equal "99999")
+        (expect (gethash "ratings" obj) :to-be-truthy)))))
+
+(describe "org-canvas--rubric-build-payload with outcome links"
+  (it "resolves 4th column outcome link to learning_outcome_id"
+    (let* ((temp-dir (make-temp-file "rubric-outcome-test" t))
+           (outcomes-file (expand-file-name "outcomes.org" temp-dir))
+           (rubrics-file (expand-file-name "rubrics.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file outcomes-file
+              (insert "* Programming Skills\n** Python Proficiency\n:PROPERTIES:\n:CANVAS_ID: 51479\n:END:\n"))
+            (let ((org-canvas-rubrics-file rubrics-file)
+                  (org-canvas-outcomes-file outcomes-file)
+                  (org-canvas-course-id "99999"))
+              (let* ((link (format "[[file:%s::*Python Proficiency][Python Proficiency]]" outcomes-file))
+                     (data (list :title "Test" :free-form nil
+                                 :criteria (list (list "Code Quality" "10" "Clean" link)
+                                                 (list "Correctness" "10" "Correct" ""))))
+                     (payload (org-canvas--rubric-build-payload data))
+                     (rubric (gethash "rubric" payload))
+                     (criteria (gethash "criteria" rubric))
+                     (c0 (gethash "0" criteria))
+                     (c1 (gethash "1" criteria)))
+                (expect (gethash "learning_outcome_id" c0) :to-equal "51479")
+                (expect (gethash "learning_outcome_id" c1) :to-be nil))))
+        (let ((buf (find-buffer-visiting outcomes-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "handles 3-column tables without errors (backward compat)"
+    (let* ((data '(:title "Test" :free-form nil
+                   :criteria (("Quality" "10" "Desc")
+                              ("Format" "5" "Clean"))))
+           (payload (org-canvas--rubric-build-payload data))
+           (rubric (gethash "rubric" payload))
+           (criteria (gethash "criteria" rubric))
+           (c0 (gethash "0" criteria))
+           (c1 (gethash "1" criteria)))
+      (expect (gethash "learning_outcome_id" c0) :to-be nil)
+      (expect (gethash "learning_outcome_id" c1) :to-be nil)))
+
+  (it "ignores 4th column on rating rows"
+    (let* ((data '(:title "Test" :free-form nil
+                   :criteria (("Quality" "10" "Desc" "some-link")
+                              ("> Good" "10" "" "ignored")
+                              ("> Poor" "0" "" "also-ignored"))))
+           (payload (org-canvas--rubric-build-payload data))
+           (rubric (gethash "rubric" payload))
+           (criteria (gethash "criteria" rubric)))
+      ;; Should have 1 criterion (rating rows are grouped, not separate criteria)
+      (expect (gethash "0" criteria) :to-be-truthy)
+      (expect (gethash "1" criteria) :to-be nil)))
+
+  (it "handles mixed criteria with and without outcome links"
+    (let* ((temp-dir (make-temp-file "rubric-outcome-mix" t))
+           (outcomes-file (expand-file-name "outcomes.org" temp-dir))
+           (rubrics-file (expand-file-name "rubrics.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file outcomes-file
+              (insert "* Skills\n** Python\n:PROPERTIES:\n:CANVAS_ID: 111\n:END:\n** Data\n:PROPERTIES:\n:CANVAS_ID: 222\n:END:\n"))
+            (let ((org-canvas-rubrics-file rubrics-file)
+                  (org-canvas-outcomes-file outcomes-file)
+                  (org-canvas-course-id "99999"))
+              (let* ((link1 (format "[[file:%s::*Python][Python]]" outcomes-file))
+                     (link2 (format "[[file:%s::*Data][Data]]" outcomes-file))
+                     (data (list :title "Test" :free-form nil
+                                 :criteria (list (list "Quality" "10" "" link1)
+                                                 (list "Middle" "5" "" "")
+                                                 (list "End" "10" "" link2))))
+                     (payload (org-canvas--rubric-build-payload data))
+                     (rubric (gethash "rubric" payload))
+                     (criteria (gethash "criteria" rubric)))
+                (expect (gethash "learning_outcome_id" (gethash "0" criteria)) :to-equal "111")
+                (expect (gethash "learning_outcome_id" (gethash "1" criteria)) :to-be nil)
+                (expect (gethash "learning_outcome_id" (gethash "2" criteria)) :to-equal "222"))))
+        (let ((buf (find-buffer-visiting outcomes-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
+(describe "org-canvas--rubric-pull-item with outcome links"
+  (it "includes 4th column with outcome link when learning_outcome_id present"
+    (let* ((temp-dir (make-temp-file "rubric-pull-outcome" t))
+           (outcomes-file (expand-file-name "outcomes.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file outcomes-file
+              (insert "* Skills\n** Python Proficiency\n:PROPERTIES:\n:CANVAS_ID: 51479\n:END:\n"))
+            (let ((org-canvas-outcomes-file outcomes-file))
+              (with-temp-org-buffer
+               "* My Rubric
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+               (org-back-to-heading)
+               (let ((item '((id . 1) (title . "My Rubric")
+                             (data . [((description . "Code Quality")
+                                       (points . 10)
+                                       (long_description . "")
+                                       (learning_outcome_id . 51479))
+                                      ((description . "Correctness")
+                                       (points . 10)
+                                       (long_description . ""))]))))
+                 (org-canvas--rubric-pull-item item (point))
+                 (let ((content (buffer-string)))
+                   ;; Should have 4-column header
+                   (expect content :to-match "| Criterion | Points | Description | Outcome |")
+                   ;; Code Quality should have outcome link
+                   (expect content :to-match "Python Proficiency")
+                   ;; Correctness should have empty outcome column
+                   (expect content :to-match "| Correctness | 10 |  |  |"))))))
+        (let ((buf (find-buffer-visiting outcomes-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "uses 3-column format when no criteria have outcomes"
+    (with-temp-org-buffer
+     "* My Rubric
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (let ((item '((id . 1) (title . "My Rubric")
+                   (data . [((description . "Quality")
+                             (points . 10)
+                             (long_description . "Well written"))]))))
+       (org-canvas--rubric-pull-item item (point))
+       (let ((content (buffer-string)))
+         (expect content :to-match "| Criterion | Points | Description |")
+         (expect content :not :to-match "Outcome")))))
+
+  (it "falls back to outcome ID when title not found in outcomes.org"
+    (let* ((temp-dir (make-temp-file "rubric-pull-nolookup" t))
+           (outcomes-file (expand-file-name "outcomes.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file outcomes-file
+              (insert "* Skills\n** Other Outcome\n:PROPERTIES:\n:CANVAS_ID: 999\n:END:\n"))
+            (let ((org-canvas-outcomes-file outcomes-file))
+              (with-temp-org-buffer
+               "* My Rubric
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+               (org-back-to-heading)
+               (let ((item '((id . 1) (title . "My Rubric")
+                             (data . [((description . "Quality")
+                                       (points . 10)
+                                       (long_description . "")
+                                       (learning_outcome_id . 12345))]))))
+                 (org-canvas--rubric-pull-item item (point))
+                 ;; Should fall back to just the numeric ID
+                 (expect (buffer-string) :to-match "12345")))))
+        (let ((buf (find-buffer-visiting outcomes-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
+(describe "org-canvas--rubric-outcome-title"
+  (it "returns heading title for matching CANVAS_ID"
+    (let* ((temp-dir (make-temp-file "outcome-title-test" t))
+           (outcomes-file (expand-file-name "outcomes.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file outcomes-file
+              (insert "* Group\n** My Outcome\n:PROPERTIES:\n:CANVAS_ID: 42\n:END:\n"))
+            (let ((org-canvas-outcomes-file outcomes-file))
+              (expect (org-canvas--rubric-outcome-title 42) :to-equal "My Outcome")))
+        (let ((buf (find-buffer-visiting outcomes-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "returns nil when CANVAS_ID not found"
+    (let* ((temp-dir (make-temp-file "outcome-title-test" t))
+           (outcomes-file (expand-file-name "outcomes.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file outcomes-file
+              (insert "* Group\n** Other\n:PROPERTIES:\n:CANVAS_ID: 99\n:END:\n"))
+            (let ((org-canvas-outcomes-file outcomes-file))
+              (expect (org-canvas--rubric-outcome-title 42) :to-be nil)))
+        (let ((buf (find-buffer-visiting outcomes-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "returns nil when outcomes file does not exist"
+    (let ((org-canvas-outcomes-file "/nonexistent/outcomes.org"))
+      (expect (org-canvas--rubric-outcome-title 42) :to-be nil))))
+
+(describe "org-canvas--rubric-pull-has-outcomes"
+  (it "returns non-nil when any criterion has learning_outcome_id"
+    (expect (org-canvas--rubric-pull-has-outcomes
+             [((learning_outcome_id . 42)) ((description . "Foo"))])
+            :to-be-truthy))
+
+  (it "returns nil when no criteria have learning_outcome_id"
+    (expect (org-canvas--rubric-pull-has-outcomes
+             [((description . "Foo")) ((description . "Bar"))])
+            :to-be nil)))
+
 ;;; org-canvas-rubrics-test.el ends here

@@ -124,12 +124,17 @@ graph TD
     assignments -->|"GROUP_CATEGORY_ID"| gc
 
     discussions -->|"GROUP"| ag
+    discussions -->|"RUBRIC_LINK"| rubrics
     discussions -->|"GROUP_CATEGORY"| gc
     discussions -->|"SPECIFIC_SECTIONS"| sections
 
     quizzes -->|"ASSIGNMENT_GROUP"| ag
 
+    nq -->|"RUBRIC_LINK"| rubrics
+    nq -->|"GROUP"| ag
     nq -.->|"OUTCOME (local only)"| outcomes
+
+    rubrics -->|"criterion OUTCOME"| outcomes
 
     %% ── Module item links (heading links resolved to content IDs) ──
     modules ==>|"item heading"| pages
@@ -171,7 +176,7 @@ These files have no outgoing links to other course files:
 | File                  | Canvas Entity     | Notes                         |
 |-----------------------+-------------------+-------------------------------|
 | =outcomes.org=          | Learning Outcomes  | Groups (L1) and Outcomes (L2) |
-| =rubrics.org=           | Rubrics            | Grading rubrics               |
+| =rubrics.org=           | Rubrics            | Grading rubrics (criteria may link to outcomes) |
 | =assignment-groups.org= | Assignment Groups  | Weight categories             |
 | =group-categories.org=  | Group Categories   | Group sets for group work     |
 | =pages.org=             | Wiki Pages         | Course content pages          |
@@ -186,7 +191,7 @@ These files have no outgoing links to other course files:
 | File            | Depends On                                       |
 |-----------------+--------------------------------------------------|
 | =quizzes.org=     | assignment-groups.org, outcomes.org               |
-| =new-quizzes.org= | (none)                                           |
+| =new-quizzes.org= | rubrics.org, assignment-groups.org                |
 | =assignments.org= | rubrics.org, assignment-groups.org, outcomes.org |
 |                 | pages.org, files.org                             |
 
@@ -646,6 +651,8 @@ Use *Classic Quizzes* (=quizzes.org=) when:
 | =ONE_AT_A_TIME=      | boolean | Show one question per page                               |
 | =ALLOWED_ATTEMPTS=   | number  | Max attempts                                             |
 | =SCORING_POLICY=     | enum    | =keep_highest=, =keep_latest=, or =keep_average=            |
+| =GROUP=              | link    | Link to assignment group in assignment-groups.org         |
+| =RUBRIC_LINK=        | link    | Link to rubric in rubrics.org (uses backing assignment)   |
 
 *** Question Properties
 
@@ -900,10 +907,17 @@ Grading rubrics with criteria.
 
 *** Table Format
 
-| Criterion Description | Points | Long Description (optional) |
-|-----------------------+--------+-----------------------------|
-| Code Quality          |     10 | Well-formatted, readable    |
-| Correctness           |     15 | Passes all test cases       |
+| Criterion Description | Points | Long Description (optional) | Outcome (optional)                                                |
+|-----------------------+--------+-----------------------------+-------------------------------------------------------------------|
+| Code Quality          |     10 | Well-formatted, readable    | [[file:outcomes.org::*Python Proficiency][Python Proficiency]]   |
+| Correctness           |     15 | Passes all test cases       |                                                                   |
+
+- Column 1: Criterion name (shown in rubric)
+- Column 2: Maximum points
+- Column 3: Optional longer description
+- Column 4: Optional link to an outcome in =outcomes.org= (for mastery tracking)
+
+The 4th column is backward compatible---3-column tables work as before.  When present, the link is resolved to a =CANVAS_ID= and sent as =learning_outcome_id= on the criterion.
 
 Tables without =>=  rows use the default 2-level rating (Full Marks / No Marks).
 
@@ -930,16 +944,16 @@ Criteria without => = rows keep the default 2-level rating.  You can mix criteri
 :FREE_FORM_CRITERION_COMMENTS: true
 :END:
 
-| Criterion     | Points | Description                     |
-|---------------+--------+---------------------------------|
-| Correctness   |     50 | Code produces correct output    |
-| > Excellent   |     50 | All tests pass, edge cases too  |
-| > Good        |     35 | Most tests pass                 |
-| > Fair        |     20 | Some tests pass                 |
-| > Poor        |      0 | Does not compile                |
-| Style         |     20 | Follows coding conventions      |
-| Documentation |     15 | Clear comments and docstrings   |
-| Efficiency    |     15 | Reasonable time/space complexity |
+| Criterion     | Points | Description                      | Outcome                                                            |
+|---------------+--------+----------------------------------+--------------------------------------------------------------------|
+| Correctness   |     50 | Code produces correct output     | [[file:outcomes.org::*Python Proficiency][Python Proficiency]]    |
+| > Excellent   |     50 | All tests pass, edge cases too   |                                                                    |
+| > Good        |     35 | Most tests pass                  |                                                                    |
+| > Fair        |     20 | Some tests pass                  |                                                                    |
+| > Poor        |      0 | Does not compile                 |                                                                    |
+| Style         |     20 | Follows coding conventions       |                                                                    |
+| Documentation |     15 | Clear comments and docstrings    |                                                                    |
+| Efficiency    |     15 | Reasonable time/space complexity  |                                                                    |
 #+end_src
 
 ** outcomes.org
@@ -1336,13 +1350,14 @@ Properties like =GROUP= and =RUBRIC_LINK= can contain Org links to headings in o
 
 ** Supported Link Properties
 
-| Property           | Source File           | Used In                           |
-|--------------------+-----------------------+-----------------------------------|
-| =GROUP=              | assignment-groups.org | assignments, quizzes, discussions |
-| =RUBRIC_LINK=        | rubrics.org           | assignments                       |
-| =GROUP_CATEGORY_ID=  | group-categories.org  | assignments                       |
-| =GROUP_CATEGORY=     | group-categories.org  | discussions                       |
-| (module items)     | various               | modules                           |
+| Property             | Source File           | Used In                                |
+|----------------------+-----------------------+----------------------------------------|
+| =GROUP=                | assignment-groups.org | assignments, quizzes, discussions, new-quizzes |
+| =RUBRIC_LINK=          | rubrics.org           | assignments, discussions, new-quizzes  |
+| =GROUP_CATEGORY_ID=    | group-categories.org  | assignments                            |
+| =GROUP_CATEGORY=       | group-categories.org  | discussions                            |
+| =OUTCOME= (table col)  | outcomes.org          | rubric criteria (4th column)           |
+| (module items)       | various               | modules                               |
 
 * Conflict Detection
 

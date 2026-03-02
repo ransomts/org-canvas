@@ -12,14 +12,15 @@
 ;;
 ;; TABLE FORMAT
 ;; ============
-;; | Criterion Description | Points | Long Description (optional) |
-;; |-----------------------+--------+-----------------------------|
-;; | Code Quality          |     10 | Well-formatted, readable    |
-;; | Correctness           |     15 | Passes all test cases       |
+;; | Criterion Description | Points | Long Description (optional) | Outcome (optional)                                              |
+;; |-----------------------+--------+-----------------------------+-----------------------------------------------------------------|
+;; | Code Quality          |     10 | Well-formatted, readable    | [[file:outcomes.org::*Python Proficiency][Python Proficiency]] |
+;; | Correctness           |     15 | Passes all test cases       |                                                                 |
 ;;
 ;; Column 1: Short criterion name (shown in rubric)
 ;; Column 2: Maximum points for this criterion
 ;; Column 3: Optional longer description
+;; Column 4: Optional link to an outcome in outcomes.org (for mastery tracking)
 ;;
 ;; PROPERTIES
 ;; ==========
@@ -98,10 +99,11 @@
        (stringp (nth 0 row))
        (string-match-p "\\`> " (string-trim-left (nth 0 row)))))
 
-(defun org-canvas--rubric-build-criterion (row counter &optional rating-rows)
+(defun org-canvas--rubric-build-criterion (row counter &optional rating-rows outcome-id)
   "Build a hash-table for a single criterion from table ROW at COUNTER.
 If RATING-ROWS is non-nil, build ratings from those rows instead of
 the default 2-level (Full Marks / No Marks).
+When OUTCOME-ID is non-nil, set learning_outcome_id on the criterion.
 Returns a plist (:id KEY :obj HASH :points NUM)."
   (let* ((desc (nth 0 row))
          (points (org-canvas--safe-string-to-number (or (nth 1 row) "0") "POINTS"))
@@ -112,6 +114,8 @@ Returns a plist (:id KEY :obj HASH :points NUM)."
     (puthash "description" desc crit-obj)
     (puthash "points" points crit-obj)
     (puthash "long_description" long-desc crit-obj)
+    (when outcome-id
+      (puthash "learning_outcome_id" outcome-id crit-obj))
     (if rating-rows
         ;; Custom multi-level ratings from > rows
         (let ((idx 0))
@@ -142,11 +146,13 @@ Returns a plist (:id KEY :obj HASH :points NUM)."
     (puthash "association_id" org-canvas-course-id ra)
     ra))
 
-(defun org-canvas--rubric-flush-pending-criterion (criterion ratings counter criteria-hash)
+(defun org-canvas--rubric-flush-pending-criterion (criterion ratings counter criteria-hash
+                                                  &optional outcome-id)
   "Flush CRITERION with RATINGS at COUNTER into CRITERIA-HASH.
+OUTCOME-ID, when non-nil, is passed through to the criterion builder.
 Returns the points for this criterion."
   (let ((crit (org-canvas--rubric-build-criterion
-               criterion counter (nreverse ratings))))
+               criterion counter (nreverse ratings) outcome-id)))
     (puthash (plist-get crit :id) (plist-get crit :obj) criteria-hash)
     (plist-get crit :points)))
 
@@ -164,7 +170,8 @@ Returns the points for this criterion."
       (puthash "free_form_criterion_comments" (org-canvas--to-json-boolean free-form) rubric-obj)
       ;; Group rating rows (> prefix) with their parent criterion
       (let ((pending-criterion nil)
-            (pending-ratings nil))
+            (pending-ratings nil)
+            (pending-outcome-id nil))
         (dolist (row criteria-rows)
           (unless (eq row 'hline)
             (if (org-canvas--rubric-rating-row-p row)
@@ -175,16 +182,27 @@ Returns the points for this criterion."
                 (setq total-points
                       (+ total-points
                          (org-canvas--rubric-flush-pending-criterion
-                          pending-criterion pending-ratings counter criteria-hash)))
+                          pending-criterion pending-ratings counter criteria-hash
+                          pending-outcome-id)))
                 (setq counter (1+ counter)))
               (setq pending-criterion row)
-              (setq pending-ratings nil))))
+              (setq pending-ratings nil)
+              ;; Resolve optional 4th column (outcome link)
+              (let ((outcome-cell (nth 3 row)))
+                (setq pending-outcome-id
+                      (when (and outcome-cell
+                                 (not (string-empty-p (string-trim outcome-cell)))
+                                 (string-match "\\[\\[file:" outcome-cell))
+                        (org-canvas--resolve-link-property
+                         outcome-cell "CANVAS_ID"
+                         org-canvas-rubrics-file)))))))
         ;; Flush last criterion
         (when pending-criterion
           (setq total-points
                 (+ total-points
                    (org-canvas--rubric-flush-pending-criterion
-                    pending-criterion pending-ratings counter criteria-hash)))
+                    pending-criterion pending-ratings counter criteria-hash
+                    pending-outcome-id)))
           (setq counter (1+ counter))))
       (puthash "criteria" criteria-hash rubric-obj)
       (elog-info org-canvas--logger "[Stage 2: Transform] Built %d criteria, total points: %d" counter total-points)
@@ -494,6 +512,64 @@ Custom means more than 2 ratings, or names other than Full Marks/No Marks."
           (> (or (alist-get 'points a) 0)
              (or (alist-get 'points b) 0)))))
 
+(defun org-canvas--rubric-outcome-title (outcome-id)
+  "Look up the title of an outcome with OUTCOME-ID in outcomes.org.
+Returns the heading title string, or nil if not found."
+  (when (and outcome-id
+             (boundp 'org-canvas-outcomes-file)
+             (file-exists-p org-canvas-outcomes-file))
+    (with-current-buffer (find-file-noselect org-canvas-outcomes-file)
+      (let ((id-str (if (numberp outcome-id)
+                        (number-to-string outcome-id)
+                      (format "%s" outcome-id))))
+        (save-excursion
+          (goto-char (point-min))
+          (catch 'found
+            (org-map-entries
+             (lambda ()
+               (when (equal (org-entry-get (point) "CANVAS_ID") id-str)
+                 (throw 'found (org-get-heading t t t t))))
+             "LEVEL=2" 'file)
+            nil))))))
+
+(defun org-canvas--rubric-pull-has-outcomes (criteria)
+  "Return non-nil if any criterion in CRITERIA has a learning_outcome_id."
+  (cl-some (lambda (c) (alist-get 'learning_outcome_id c))
+           (append criteria nil)))
+
+(defun org-canvas--rubric-pull-outcome-col (outcome-id)
+  "Build the outcome column text for a pulled criterion.
+Returns an Org file link when OUTCOME-ID resolves, the raw ID as fallback,
+or empty string when OUTCOME-ID is nil."
+  (if outcome-id
+      (let ((title (org-canvas--rubric-outcome-title outcome-id)))
+        (if title
+            (format "[[file:outcomes.org::*%s][%s]]" title title)
+          (format "%s" outcome-id)))
+    ""))
+
+(defun org-canvas--rubric-pull-insert-criterion (c has-outcomes)
+  "Insert a single criterion C into the current buffer.
+HAS-OUTCOMES controls whether a 4th outcome column is emitted."
+  (let ((desc (replace-regexp-in-string "|" "/" (or (alist-get 'description c) "")))
+        (pts (or (alist-get 'points c) 0))
+        (long-desc (replace-regexp-in-string "|" "/" (or (alist-get 'long_description c) "")))
+        (ratings (alist-get 'ratings c))
+        (outcome-id (alist-get 'learning_outcome_id c)))
+    (if has-outcomes
+        (insert (format "| %s | %s | %s | %s |\n"
+                        desc pts long-desc
+                        (org-canvas--rubric-pull-outcome-col outcome-id)))
+      (insert (format "| %s | %s | %s |\n" desc pts long-desc)))
+    ;; Insert custom rating rows if present
+    (when (org-canvas--rubric-has-custom-ratings ratings)
+      (dolist (r (org-canvas--rubric-sort-ratings ratings))
+        (let ((rdesc (replace-regexp-in-string "|" "/" (or (alist-get 'description r) "")))
+              (rpts (or (alist-get 'points r) 0)))
+          (if has-outcomes
+              (insert (format "| > %s | %s | | |\n" rdesc rpts))
+            (insert (format "| > %s | %s | |\n" rdesc rpts))))))))
+
 (defun org-canvas--rubric-pull-item (item pos)
   "Set per-item properties for a pulled rubric.
 ITEM is the API response alist, POS is the heading position."
@@ -502,28 +578,18 @@ ITEM is the API response alist, POS is the heading position."
       (let ((body-start (save-excursion
                           (org-end-of-meta-data t) (point)))
             (body-end (save-excursion
-                        (org-end-of-subtree t) (point))))
+                        (org-end-of-subtree t) (point)))
+            (has-outcomes (org-canvas--rubric-pull-has-outcomes criteria)))
         (delete-region body-start body-end)
         (goto-char body-start)
-        (insert "\n| Criterion | Points | Description |\n")
-        (insert "|---|---|---|\n")
+        (if has-outcomes
+            (progn
+              (insert "\n| Criterion | Points | Description | Outcome |\n")
+              (insert "|---|---|---|---|\n"))
+          (insert "\n| Criterion | Points | Description |\n")
+          (insert "|---|---|---|\n"))
         (dolist (c (append criteria nil))
-          (let ((desc (or (alist-get 'description c) ""))
-                (pts (or (alist-get 'points c) 0))
-                (long-desc (or (alist-get 'long_description c) ""))
-                (ratings (alist-get 'ratings c)))
-            (insert (format "| %s | %s | %s |\n"
-                            (replace-regexp-in-string "|" "/" desc)
-                            pts
-                            (replace-regexp-in-string "|" "/" long-desc)))
-            ;; Insert custom rating rows if present
-            (when (org-canvas--rubric-has-custom-ratings ratings)
-              (dolist (r (org-canvas--rubric-sort-ratings ratings))
-                (let ((rdesc (or (alist-get 'description r) ""))
-                      (rpts (or (alist-get 'points r) 0)))
-                  (insert (format "| > %s | %s | |\n"
-                                  (replace-regexp-in-string "|" "/" rdesc)
-                                  rpts)))))))
+          (org-canvas--rubric-pull-insert-criterion c has-outcomes))
         (insert "\n")))))
 
 (org-canvas-define-pull rubrics

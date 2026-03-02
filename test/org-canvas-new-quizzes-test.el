@@ -2011,4 +2011,112 @@ Quiz description.
            (payload (org-canvas--new-quiz-build-payload data)))
       (expect (gethash "assignment_group_id" payload nil) :to-be nil))))
 
+;;;; RUBRIC_LINK Tests
+
+(describe "org-canvas--new-quiz-parse-entry RUBRIC_LINK"
+  (it "resolves RUBRIC_LINK to rubric-id"
+    (let ((rubrics-file (make-temp-file "test-rubrics" nil ".org"))
+          (nq-file (make-temp-file "test-nq" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file rubrics-file
+              (insert "* Lab Rubric\n:PROPERTIES:\n:CANVAS_ID: 123587\n:END:\n\n| C | P |\n|---+---|\n| X | 5 |\n"))
+            (with-temp-file nq-file
+              (insert (format "* Quiz A\n:PROPERTIES:\n:RUBRIC_LINK: [[file:%s::*Lab Rubric][Lab Rubric]]\n:END:\n\nBody text\n"
+                              rubrics-file)))
+            (let ((org-canvas-new-quizzes-file nq-file)
+                  (org-canvas-rubrics-file rubrics-file))
+              (with-current-buffer (find-file-noselect nq-file)
+                (goto-char (point-min))
+                (org-back-to-heading)
+                (let ((data (org-canvas--new-quiz-parse-entry)))
+                  (expect (plist-get data :rubric-id) :to-equal "123587")))))
+        (let ((buf (find-buffer-visiting rubrics-file)))
+          (when buf (kill-buffer buf)))
+        (let ((buf (find-buffer-visiting nq-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file rubrics-file)
+        (delete-file nq-file))))
+
+  (it "returns nil rubric-id when RUBRIC_LINK absent"
+    (with-temp-org-buffer
+     "* Quiz B
+:PROPERTIES:
+:END:
+
+Body text
+"
+     (org-back-to-heading)
+     (let ((data (org-canvas--new-quiz-parse-entry)))
+       (expect (plist-get data :rubric-id) :to-be nil)))))
+
+(describe "org-canvas-sync-new-quiz-at-point RUBRIC_LINK integration"
+  (it "calls associate-rubric when RUBRIC_LINK is set"
+    (with-org-canvas-test-config
+      (let ((assoc-calls nil))
+        (cl-letf (((symbol-function 'org-canvas--new-quiz-push-to-api)
+                   (lambda (_data _payload)
+                     '((id . "q1") (assignment_id . 5001))))
+                  ((symbol-function 'org-canvas--new-quiz-finalize)
+                   (lambda (_data _response) nil))
+                  ((symbol-function 'org-canvas--sync-new-quiz-items)
+                   (lambda (_marker _quiz-id) (cons 0 0)))
+                  ((symbol-function 'org-canvas--associate-rubric)
+                   (lambda (item-id rubric-id assoc-type)
+                     (push (list item-id rubric-id assoc-type) assoc-calls)))
+                  ((symbol-function 'save-buffer)
+                   (lambda (&rest _) nil)))
+          (with-temp-org-buffer
+           "* Quiz With Rubric
+:PROPERTIES:
+:END:
+
+Body text
+"
+           (org-back-to-heading)
+           ;; Manually set rubric-id in parse result
+           (cl-letf (((symbol-function 'org-canvas--new-quiz-parse-entry)
+                      (lambda ()
+                        (list :title "Quiz With Rubric"
+                              :canvas-id nil
+                              :rubric-id "999"
+                              :pom (point-marker)))))
+             (org-canvas-sync-new-quiz-at-point)
+             (expect (length assoc-calls) :to-equal 1)
+             (expect (nth 0 (car assoc-calls)) :to-equal 5001)
+             (expect (nth 1 (car assoc-calls)) :to-equal "999")
+             (expect (nth 2 (car assoc-calls)) :to-equal "Assignment")))))))
+
+  (it "does not call associate-rubric when RUBRIC_LINK is absent"
+    (with-org-canvas-test-config
+      (let ((assoc-calls nil))
+        (cl-letf (((symbol-function 'org-canvas--new-quiz-push-to-api)
+                   (lambda (_data _payload)
+                     '((id . "q2") (assignment_id . 5002))))
+                  ((symbol-function 'org-canvas--new-quiz-finalize)
+                   (lambda (_data _response) nil))
+                  ((symbol-function 'org-canvas--sync-new-quiz-items)
+                   (lambda (_marker _quiz-id) (cons 0 0)))
+                  ((symbol-function 'org-canvas--associate-rubric)
+                   (lambda (item-id rubric-id assoc-type)
+                     (push (list item-id rubric-id assoc-type) assoc-calls)))
+                  ((symbol-function 'save-buffer)
+                   (lambda (&rest _) nil)))
+          (with-temp-org-buffer
+           "* Quiz Without Rubric
+:PROPERTIES:
+:END:
+
+Body text
+"
+           (org-back-to-heading)
+           (cl-letf (((symbol-function 'org-canvas--new-quiz-parse-entry)
+                      (lambda ()
+                        (list :title "Quiz Without Rubric"
+                              :canvas-id nil
+                              :rubric-id nil
+                              :pom (point-marker)))))
+             (org-canvas-sync-new-quiz-at-point)
+             (expect assoc-calls :to-be nil))))))))
+
 ;;; org-canvas-new-quizzes-test.el ends here

@@ -5,11 +5,11 @@
 :LAST_SYNCED: [2026-02-15 Sun 09:36]
 :PAYLOAD_HASH: 1bf520cdcdb1afbe9ef87750d7556442
 :END:
-| Criterion     | Points | Description                        |
-|---------------+--------+------------------------------------|
-| Code Quality  |     10 | Clean, readable, well-organized    |
-| Correctness   |     10 | Produces expected output           |
-| Documentation |      5 | Comments and docstrings            |
+| Criterion     | Points | Description                        | Outcome                                                              |
+|---------------+--------+------------------------------------+----------------------------------------------------------------------|
+| Code Quality  |     10 | Clean, readable, well-organized    | [[file:outcomes.org::*Python Proficiency][Python Proficiency]]       |
+| Correctness   |     10 | Produces expected output           |                                                                      |
+| Documentation |      5 | Comments and docstrings            |                                                                      |
 
 * Project Rubric
 :PROPERTIES:

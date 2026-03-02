@@ -252,6 +252,11 @@ Supports: exact value, or [min, max] range."
                                 (org-canvas--resolve-link-property
                                  group-link "CANVAS_ID"
                                  org-canvas-new-quizzes-file)))
+         (rubric-link (org-canvas-org-get-property pom "RUBRIC_LINK"))
+         (rubric-id (when rubric-link
+                      (org-canvas--resolve-link-property
+                       rubric-link "CANVAS_ID"
+                       org-canvas-new-quizzes-file)))
          (body-text (org-canvas--new-quiz-parse-body-text)))
 
     (when (or (null title) (string-empty-p title))
@@ -274,6 +279,7 @@ Supports: exact value, or [min, max] range."
           :scoring_policy scoring-policy
           :assignment_group_id (when assignment-group-id
                                  (string-to-number assignment-group-id))
+          :rubric-id rubric-id
           :pom pom)))
 
 ;;;; Quiz Build Payload
@@ -846,7 +852,14 @@ QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
                     (let ((q-results (org-canvas--sync-new-quiz-items
                                      marker quiz-id)))
                       (setq item-success (+ item-success (car q-results)))
-                      (setq item-fail (+ item-fail (cdr q-results)))))))
+                      (setq item-fail (+ item-fail (cdr q-results))))))
+
+                ;; Associate rubric if RUBRIC_LINK is set
+                (let ((rubric-id (plist-get data :rubric-id))
+                      (assignment-id (alist-get 'assignment_id response)))
+                  (when rubric-id
+                    (org-canvas--associate-rubric
+                     assignment-id rubric-id "Assignment"))))
             (error
              (setq quiz-fail (1+ quiz-fail))
              (elog-error org-canvas--logger "[FAILED] New Quiz at point %d: %s"
@@ -889,6 +902,11 @@ QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
                        (plist-get data :canvas-id))))
       (when quiz-id
         (org-canvas--sync-new-quiz-items (point-marker) quiz-id)))
+    ;; Associate rubric if RUBRIC_LINK is set
+    (let ((rubric-id (plist-get data :rubric-id))
+          (assignment-id (alist-get 'assignment_id response)))
+      (when rubric-id
+        (org-canvas--associate-rubric assignment-id rubric-id "Assignment")))
     (save-buffer)
     (message "New Quiz '%s' synced." (plist-get data :title))))
 

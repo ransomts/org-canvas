@@ -242,9 +242,9 @@
 :PROPERTIES:
 :END:
 
-| Criterion | Excellent | Good | Poor |
-|-----------+-----------+------+------|
-| Writing   |        10 |    7 |    3 |
+| Criterion | Points | Description |
+|-----------+--------+-------------|
+| Writing   |     10 | Clear text  |
 "
      (org-back-to-heading t)
      (expect (org-canvas--validate-rubric-structure
@@ -2139,6 +2139,131 @@ EXCEPT is a list of filenames to skip."
         (expect group-prop :to-be-truthy)
         (let ((prop-type (plist-get group-prop :type)))
           (expect prop-type :to-equal 'link))))))
+
+;;;; Rubric Outcome Link Validation
+
+(describe "org-canvas--validate-rubric-outcome-links"
+  (it "returns nil for table with valid outcome links"
+    (let* ((temp-dir (make-temp-file "validate-rubric-outcome" t))
+           (outcomes-file (expand-file-name "outcomes.org" temp-dir))
+           (rubrics-file (expand-file-name "rubrics.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file outcomes-file
+              (insert "* Group\n** Python\n:PROPERTIES:\n:CANVAS_ID: 42\n:END:\n"))
+            (let ((org-canvas-outcomes-file outcomes-file))
+              (let ((link (format "[[file:%s::*Python][Python]]" outcomes-file))
+                    (loc (list :file rubrics-file :line 5 :heading "Test")))
+                (expect (org-canvas--validate-rubric-outcome-links
+                         (list (list "Quality" "10" "Desc" link))
+                         rubrics-file loc)
+                        :to-be nil))))
+        (let ((buf (find-buffer-visiting outcomes-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "warns for outcome link with no CANVAS_ID"
+    (let* ((temp-dir (make-temp-file "validate-rubric-outcome" t))
+           (outcomes-file (expand-file-name "outcomes.org" temp-dir))
+           (rubrics-file (expand-file-name "rubrics.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file outcomes-file
+              (insert "* Group\n** Python\n:PROPERTIES:\n:END:\n"))
+            (let ((org-canvas-outcomes-file outcomes-file))
+              (let ((link (format "[[file:%s::*Python][Python]]" outcomes-file))
+                    (loc (list :file rubrics-file :line 5 :heading "Test")))
+                (let ((issues (org-canvas--validate-rubric-outcome-links
+                               (list (list "Quality" "10" "Desc" link))
+                               rubrics-file loc)))
+                  (expect (length issues) :to-equal 1)
+                  (expect (plist-get (car issues) :severity) :to-equal 'warning)
+                  (expect (plist-get (car issues) :message) :to-match "no CANVAS_ID")))))
+        (let ((buf (find-buffer-visiting outcomes-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "warns for non-link text in 4th column"
+    (let ((loc (list :file "/tmp/rubrics.org" :line 5 :heading "Test")))
+      (let ((issues (org-canvas--validate-rubric-outcome-links
+                     (list (list "Quality" "10" "Desc" "plain text"))
+                     "/tmp/rubrics.org" loc)))
+        (expect (length issues) :to-equal 1)
+        (expect (plist-get (car issues) :severity) :to-equal 'warning)
+        (expect (plist-get (car issues) :message) :to-match "not a file link"))))
+
+  (it "returns nil for 3-column table (backward compat)"
+    (let ((loc (list :file "/tmp/rubrics.org" :line 5 :heading "Test")))
+      (expect (org-canvas--validate-rubric-outcome-links
+               (list (list "Quality" "10" "Desc"))
+               "/tmp/rubrics.org" loc)
+              :to-be nil)))
+
+  (it "skips rating rows"
+    (let ((loc (list :file "/tmp/rubrics.org" :line 5 :heading "Test")))
+      (expect (org-canvas--validate-rubric-outcome-links
+               (list (list "> Good" "10" "" "ignored-link"))
+               "/tmp/rubrics.org" loc)
+              :to-be nil)))
+
+  (it "skips empty 4th column"
+    (let ((loc (list :file "/tmp/rubrics.org" :line 5 :heading "Test")))
+      (expect (org-canvas--validate-rubric-outcome-links
+               (list (list "Quality" "10" "Desc" ""))
+               "/tmp/rubrics.org" loc)
+              :to-be nil))))
+
+(describe "org-canvas--validate-rubric-structure with outcome links"
+  (it "validates outcome links in 4th column"
+    (with-temp-org-buffer
+     "* Test Rubric
+:PROPERTIES:
+:END:
+
+| Criterion | Points | Description | Outcome     |
+|-----------+--------+-------------+-------------|
+| Quality   |     10 | Desc        | plain text  |
+"
+     (org-back-to-heading t)
+     (let ((issues (org-canvas--validate-rubric-structure
+                    (list :file (buffer-file-name) :line (line-number-at-pos)
+                          :heading "Test Rubric"))))
+       ;; Should warn about "plain text" not being a file link
+       (expect (cl-some (lambda (i) (string-match "not a file link" (plist-get i :message)))
+                        issues)
+               :to-be-truthy))))
+
+  (it "passes for 3-column table"
+    (with-temp-org-buffer
+     "* Test Rubric
+:PROPERTIES:
+:END:
+
+| Criterion | Points | Description |
+|-----------+--------+-------------|
+| Quality   |     10 | Desc        |
+"
+     (org-back-to-heading t)
+     (expect (org-canvas--validate-rubric-structure
+              (list :file (buffer-file-name) :line (line-number-at-pos)
+                    :heading "Test Rubric"))
+             :to-be nil))))
+
+;;;; New Quiz RUBRIC_LINK Validation
+
+(describe "new quiz RUBRIC_LINK validation"
+  (it "includes RUBRIC_LINK in new quizzes spec"
+    (let ((nq-spec (cl-find-if
+                    (lambda (s) (equal (plist-get s :label) "New Quizzes"))
+                    org-canvas--validate-specs)))
+      (expect nq-spec :to-be-truthy)
+      (let ((rubric-prop (cl-find-if
+                          (lambda (p) (equal (plist-get p :name) "RUBRIC_LINK"))
+                          (plist-get nq-spec :properties))))
+        (expect rubric-prop :to-be-truthy)
+        (expect (plist-get rubric-prop :type) :to-equal 'link)
+        (expect (plist-get rubric-prop :target-file)
+                :to-equal 'org-canvas-rubrics-file)))))
 
 (provide 'org-canvas-validate-test)
 ;;; org-canvas-validate-test.el ends here
