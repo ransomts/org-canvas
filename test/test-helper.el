@@ -112,6 +112,87 @@ Suppresses `org-canvas-clear-log' and `display-buffer' side effects."
              ((symbol-function 'display-buffer) (lambda (_) nil)))
      ,@body))
 
+(defmacro with-html-to-org-identity (&rest body)
+  "Execute BODY with `org-canvas--html-to-org' as identity function."
+  (declare (indent 0))
+  `(cl-letf (((symbol-function 'org-canvas--html-to-org) (lambda (html) html)))
+     ,@body))
+
+(defmacro with-nonexistent-canvas-files (&rest body)
+  "Execute BODY with all `org-canvas-*-file' vars set to nonexistent paths."
+  (declare (indent 0))
+  `(let ((org-canvas-assignments-file "/tmp/nonexistent/assignments.org")
+         (org-canvas-pages-file "/tmp/nonexistent/pages.org")
+         (org-canvas-quizzes-file "/tmp/nonexistent/quizzes.org")
+         (org-canvas-modules-file "/tmp/nonexistent/modules.org")
+         (org-canvas-files-file "/tmp/nonexistent/files.org")
+         (org-canvas-outcomes-file "/tmp/nonexistent/outcomes.org")
+         (org-canvas-rubrics-file "/tmp/nonexistent/rubrics.org")
+         (org-canvas-discussions-file "/tmp/nonexistent/discussions.org")
+         (org-canvas-announcements-file "/tmp/nonexistent/announcements.org")
+         (org-canvas-assignment-groups-file "/tmp/nonexistent/assignment-groups.org")
+         (org-canvas-sections-file "/tmp/nonexistent/sections.org")
+         (org-canvas-new-quizzes-file "/tmp/nonexistent/new-quizzes.org")
+         (org-canvas-group-categories-file "/tmp/nonexistent/group-categories.org")
+         (org-canvas-calendar-events-file "/tmp/nonexistent/calendar.org"))
+     ,@body))
+
+;;;; Test Generators
+
+(defun test-org-canvas-define-common-parse-tests (parse-fn &rest opts)
+  "Generate 4 standard parse-entry tests for PARSE-FN.
+Call inside a `describe' block.  OPTS is a plist:
+  :id-property  Org property name (default \"CANVAS_ID\")
+  :id-key       Plist key in parsed data (default :canvas-id)
+  :extra-props  Additional property lines to insert (e.g. \":START_AT: ...\n\")
+  :body         Body text after properties (default \"\nBody.\n\")"
+  (let ((id-property (or (plist-get opts :id-property) "CANVAS_ID"))
+        (id-key (or (plist-get opts :id-key) :canvas-id))
+        (extra-props (or (plist-get opts :extra-props) ""))
+        (body (or (plist-get opts :body) "\nBody.\n")))
+
+    (it "includes pom in data"
+      (with-temp-org-buffer
+       (concat "* Test\n:PROPERTIES:\n" extra-props ":END:\n" body)
+       (org-back-to-heading)
+       (let ((data (funcall parse-fn)))
+         (expect (plist-get data :pom) :to-be-truthy))))
+
+    (it "extracts canvas-id when present"
+      (with-temp-org-buffer
+       (concat "* Test\n:PROPERTIES:\n:" id-property ": 12345\n"
+               extra-props ":END:\n" body)
+       (org-back-to-heading)
+       (let ((data (funcall parse-fn)))
+         (expect (plist-get data id-key) :to-equal "12345"))))
+
+    (it "returns nil canvas-id for new items"
+      (with-temp-org-buffer
+       (concat "* Test\n:PROPERTIES:\n" extra-props ":END:\n" body)
+       (org-back-to-heading)
+       (let ((data (funcall parse-fn)))
+         (expect (plist-get data id-key) :to-be nil))))
+
+    (it "errors on empty title"
+      (with-temp-org-buffer
+       (concat "* \n:PROPERTIES:\n" extra-props ":END:\n" body)
+       (org-back-to-heading)
+       (expect (funcall parse-fn) :to-throw 'error)))))
+
+(defmacro with-pull-property-test (pull-fn response property matcher value)
+  "Test that PULL-FN with RESPONSE sets Org PROPERTY as expected.
+Creates a temp buffer with CANVAS_ID: 1, mocks html-to-org as identity,
+calls PULL-FN, and asserts (expect (org-entry-get (point) PROPERTY) MATCHER VALUE)."
+  (declare (indent 2))
+  `(with-temp-org-buffer
+    "* Test\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+    (org-back-to-heading)
+    (with-html-to-org-identity
+      (funcall ,pull-fn ,response (point))
+      (expect (org-entry-get (point) ,property) ,matcher ,value))))
+
+;;;; Assertion Helpers
+
 (defun expect-api-called (method endpoint)
   "Assert that the mock API was called with METHOD matching ENDPOINT."
   (expect (test-org-canvas-api-called-p method endpoint) :to-be-truthy))
@@ -119,31 +200,6 @@ Suppresses `org-canvas-clear-log' and `display-buffer' side effects."
 (defun expect-synced-timestamp (pom)
   "Assert that LAST_SYNCED at POM is a valid recent timestamp."
   (expect (org-entry-get pom "LAST_SYNCED") :to-match "^\\[20[0-9][0-9]-"))
-
-;;;; Sample Data Generators
-
-(defun test-org-canvas-make-announcement-org ()
-  "Return sample announcement Org content."
-  "* Test Announcement
-:PROPERTIES:
-:PUBLISHED: true
-:DELAYED_POST_AT: <2024-01-15 Mon 09:00>
-:END:
-
-This is the announcement body.
-")
-
-(defun test-org-canvas-make-page-org ()
-  "Return sample page Org content."
-  "* Test Page
-:PROPERTIES:
-:PUBLISHED: true
-:FRONT_PAGE: false
-:EDITING_ROLES: teachers
-:END:
-
-This is the page body content.
-")
 
 (provide 'test-helper)
 ;;; test-helper.el ends here

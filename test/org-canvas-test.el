@@ -185,20 +185,7 @@
           (org-canvas-base-url "https://test.canvas.example.com"))
       (cl-letf (((symbol-function 'display-buffer) (lambda (_) nil)))
         ;; Set all file vars to nonexistent paths so status reports "file not found"
-        (let ((org-canvas-assignments-file "/tmp/nonexistent/assignments.org")
-              (org-canvas-pages-file "/tmp/nonexistent/pages.org")
-              (org-canvas-quizzes-file "/tmp/nonexistent/quizzes.org")
-              (org-canvas-modules-file "/tmp/nonexistent/modules.org")
-              (org-canvas-files-file "/tmp/nonexistent/files.org")
-              (org-canvas-outcomes-file "/tmp/nonexistent/outcomes.org")
-              (org-canvas-rubrics-file "/tmp/nonexistent/rubrics.org")
-              (org-canvas-discussions-file "/tmp/nonexistent/discussions.org")
-              (org-canvas-announcements-file "/tmp/nonexistent/announcements.org")
-              (org-canvas-assignment-groups-file "/tmp/nonexistent/assignment-groups.org")
-              (org-canvas-sections-file "/tmp/nonexistent/sections.org")
-              (org-canvas-new-quizzes-file "/tmp/nonexistent/new-quizzes.org")
-              (org-canvas-group-categories-file "/tmp/nonexistent/group-categories.org")
-              (org-canvas-calendar-events-file "/tmp/nonexistent/calendar.org"))
+        (with-nonexistent-canvas-files
           (org-canvas-status)
           (expect (get-buffer "*canvas-status*") :to-be-truthy)
           (with-current-buffer "*canvas-status*"
@@ -248,19 +235,7 @@
   (it "shows file not found for missing files"
     (let ((org-canvas-course-id "99999")
           (org-canvas-base-url "https://test.canvas.example.com"))
-      (let ((org-canvas-assignments-file "/tmp/nonexistent/assignments.org")
-            (org-canvas-pages-file "/tmp/nonexistent/pages.org")
-            (org-canvas-quizzes-file "/tmp/nonexistent/quizzes.org")
-            (org-canvas-modules-file "/tmp/nonexistent/modules.org")
-            (org-canvas-files-file "/tmp/nonexistent/files.org")
-            (org-canvas-outcomes-file "/tmp/nonexistent/outcomes.org")
-            (org-canvas-rubrics-file "/tmp/nonexistent/rubrics.org")
-            (org-canvas-discussions-file "/tmp/nonexistent/discussions.org")
-            (org-canvas-announcements-file "/tmp/nonexistent/announcements.org")
-            (org-canvas-assignment-groups-file "/tmp/nonexistent/assignment-groups.org")
-            (org-canvas-sections-file "/tmp/nonexistent/sections.org")
-            (org-canvas-group-categories-file "/tmp/nonexistent/group-categories.org")
-            (org-canvas-calendar-events-file "/tmp/nonexistent/calendar.org"))
+      (with-nonexistent-canvas-files
         (cl-letf (((symbol-function 'display-buffer) (lambda (_) nil)))
           (org-canvas-status)
           (with-current-buffer "*canvas-status*"

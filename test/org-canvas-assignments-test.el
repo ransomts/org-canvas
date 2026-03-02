@@ -36,9 +36,10 @@
 ;;;; Stage 1: Parse Entry
 
 (describe "org-canvas--assignment-parse-entry"
-  (it "extracts title from heading"
-    (with-temp-org-buffer
-     "* Homework 1
+  (describe "common fields"
+    (it "extracts title from heading"
+      (with-temp-org-buffer
+       "* Homework 1
 :PROPERTIES:
 :PUBLISHED: true
 :POINTS: 100
@@ -46,33 +47,16 @@
 
 Complete the exercises.
 "
-     (org-back-to-heading)
-     (let ((data (org-canvas--assignment-parse-entry)))
-       (expect (plist-get data :title) :to-equal "Homework 1"))))
+       (org-back-to-heading)
+       (let ((data (org-canvas--assignment-parse-entry)))
+         (expect (plist-get data :title) :to-equal "Homework 1"))))
 
-  (it "errors on empty title"
-    (with-temp-org-buffer
-     (concat "* " "\n:PROPERTIES:\n:POINTS: 100\n:END:\n\nBody.\n")
-     (org-back-to-heading)
-     (expect (org-canvas--assignment-parse-entry) :to-throw 'error)))
+    (test-org-canvas-define-common-parse-tests
+     #'org-canvas--assignment-parse-entry)
 
-  (it "extracts canvas-id when present"
-    (with-temp-org-buffer
-     "* Assignment
-:PROPERTIES:
-:CANVAS_ID: 11111
-:PUBLISHED: true
-:END:
-
-Content.
-"
-     (org-back-to-heading)
-     (let ((data (org-canvas--assignment-parse-entry)))
-       (expect (plist-get data :canvas-id) :to-equal "11111"))))
-
-  (it "parses points_possible"
-    (with-temp-org-buffer
-     "* Assignment
+    (it "parses points_possible"
+      (with-temp-org-buffer
+       "* Assignment
 :PROPERTIES:
 :PUBLISHED: true
 :POINTS: 50
@@ -80,26 +64,27 @@ Content.
 
 Content.
 "
-     (org-back-to-heading)
-     (let ((data (org-canvas--assignment-parse-entry)))
-       (expect (plist-get data :points_possible) :to-equal 50))))
+       (org-back-to-heading)
+       (let ((data (org-canvas--assignment-parse-entry)))
+         (expect (plist-get data :points_possible) :to-equal 50)))))
 
-  (it "parses grading_type (default points)"
-    (with-temp-org-buffer
-     "* Assignment
+  (describe "submission types"
+    (it "parses grading_type (default points)"
+      (with-temp-org-buffer
+       "* Assignment
 :PROPERTIES:
 :PUBLISHED: true
 :END:
 
 Content.
 "
-     (org-back-to-heading)
-     (let ((data (org-canvas--assignment-parse-entry)))
-       (expect (plist-get data :grading_type) :to-equal "points"))))
+       (org-back-to-heading)
+       (let ((data (org-canvas--assignment-parse-entry)))
+         (expect (plist-get data :grading_type) :to-equal "points"))))
 
-  (it "parses custom grading_type"
-    (with-temp-org-buffer
-     "* Pass/Fail Assignment
+    (it "parses custom grading_type"
+      (with-temp-org-buffer
+       "* Pass/Fail Assignment
 :PROPERTIES:
 :PUBLISHED: true
 :GRADING_TYPE: pass_fail
@@ -107,13 +92,13 @@ Content.
 
 Content.
 "
-     (org-back-to-heading)
-     (let ((data (org-canvas--assignment-parse-entry)))
-       (expect (plist-get data :grading_type) :to-equal "pass_fail"))))
+       (org-back-to-heading)
+       (let ((data (org-canvas--assignment-parse-entry)))
+         (expect (plist-get data :grading_type) :to-equal "pass_fail"))))
 
-  (it "parses submission_types"
-    (with-temp-org-buffer
-     "* Upload Assignment
+    (it "parses submission_types"
+      (with-temp-org-buffer
+       "* Upload Assignment
 :PROPERTIES:
 :PUBLISHED: true
 :SUBMISSION: online_upload
@@ -121,13 +106,14 @@ Content.
 
 Upload your work.
 "
-     (org-back-to-heading)
-     (let ((data (org-canvas--assignment-parse-entry)))
-       (expect (plist-get data :submission_types) :to-equal '("online_upload")))))
+       (org-back-to-heading)
+       (let ((data (org-canvas--assignment-parse-entry)))
+         (expect (plist-get data :submission_types) :to-equal '("online_upload"))))))
 
-  (it "parses allowed_extensions"
-    (with-temp-org-buffer
-     "* Code Assignment
+  (describe "optional fields"
+    (it "parses allowed_extensions"
+      (with-temp-org-buffer
+       "* Code Assignment
 :PROPERTIES:
 :PUBLISHED: true
 :SUBMISSION: online_upload
@@ -136,13 +122,13 @@ Upload your work.
 
 Submit code.
 "
-     (org-back-to-heading)
-     (let ((data (org-canvas--assignment-parse-entry)))
-       (expect (plist-get data :allowed_extensions) :to-equal '("py" "txt")))))
+       (org-back-to-heading)
+       (let ((data (org-canvas--assignment-parse-entry)))
+         (expect (plist-get data :allowed_extensions) :to-equal '("py" "txt")))))
 
-  (it "parses max_attempts"
-    (with-temp-org-buffer
-     "* Assignment
+    (it "parses max_attempts"
+      (with-temp-org-buffer
+       "* Assignment
 :PROPERTIES:
 :PUBLISHED: true
 :MAX_ATTEMPTS: 3
@@ -150,13 +136,13 @@ Submit code.
 
 Content.
 "
-     (org-back-to-heading)
-     (let ((data (org-canvas--assignment-parse-entry)))
-       (expect (plist-get data :allowed_attempts) :to-equal 3))))
+       (org-back-to-heading)
+       (let ((data (org-canvas--assignment-parse-entry)))
+         (expect (plist-get data :allowed_attempts) :to-equal 3))))
 
-  (it "parses peer_reviews"
-    (with-temp-org-buffer
-     "* Peer Review Assignment
+    (it "parses peer_reviews"
+      (with-temp-org-buffer
+       "* Peer Review Assignment
 :PROPERTIES:
 :PUBLISHED: true
 :PEER_REVIEWS: true
@@ -165,58 +151,61 @@ Content.
 
 Content.
 "
-     (org-back-to-heading)
-     (let ((data (org-canvas--assignment-parse-entry)))
-       (expect (plist-get data :peer_reviews) :to-be t)
-       (expect (plist-get data :peer_review_count) :to-equal 2)))))
+       (org-back-to-heading)
+       (let ((data (org-canvas--assignment-parse-entry)))
+         (expect (plist-get data :peer_reviews) :to-be t)
+         (expect (plist-get data :peer_review_count) :to-equal 2))))))
 
 ;;;; Stage 2: Build Payload
 
 (describe "org-canvas--assignment-build-payload"
-  (it "wraps in assignment key"
-    (let* ((data '(:title "Test" :description "" :published t
-                   :grading_type "points" :submission_types ("none")))
-           (payload (org-canvas--assignment-build-payload data)))
-      (expect (gethash "assignment" payload) :to-be-truthy)))
+  (describe "required fields"
+    (it "wraps in assignment key"
+      (let* ((data '(:title "Test" :description "" :published t
+                     :grading_type "points" :submission_types ("none")))
+             (payload (org-canvas--assignment-build-payload data)))
+        (expect (gethash "assignment" payload) :to-be-truthy)))
 
-  (it "includes name in payload"
-    (let* ((data '(:title "My Assignment" :description "" :published t
-                   :grading_type "points" :submission_types ("none")))
-           (payload (org-canvas--assignment-build-payload data))
-           (assignment (gethash "assignment" payload)))
-      (expect (gethash "name" assignment) :to-equal "My Assignment")))
+    (it "includes name in payload"
+      (let* ((data '(:title "My Assignment" :description "" :published t
+                     :grading_type "points" :submission_types ("none")))
+             (payload (org-canvas--assignment-build-payload data))
+             (assignment (gethash "assignment" payload)))
+        (expect (gethash "name" assignment) :to-equal "My Assignment")))
 
-  (it "includes points_possible"
-    (let* ((data '(:title "Test" :description "" :published t :points_possible 75
-                   :grading_type "points" :submission_types ("none")))
-           (payload (org-canvas--assignment-build-payload data))
-           (assignment (gethash "assignment" payload)))
-      (expect (gethash "points_possible" assignment) :to-equal 75)))
+    (it "includes points_possible"
+      (let* ((data '(:title "Test" :description "" :published t :points_possible 75
+                     :grading_type "points" :submission_types ("none")))
+             (payload (org-canvas--assignment-build-payload data))
+             (assignment (gethash "assignment" payload)))
+        (expect (gethash "points_possible" assignment) :to-equal 75))))
 
-  (it "includes submission_types"
-    (let* ((data '(:title "Test" :description "" :published t
-                   :grading_type "points" :submission_types ("online_upload" "online_text_entry")))
-           (payload (org-canvas--assignment-build-payload data))
-           (assignment (gethash "assignment" payload)))
-      (expect (gethash "submission_types" assignment)
-              :to-equal '("online_upload" "online_text_entry"))))
+  (describe "submission fields"
+    (it "includes submission_types"
+      (let* ((data '(:title "Test" :description "" :published t
+                     :grading_type "points" :submission_types ("online_upload" "online_text_entry")))
+             (payload (org-canvas--assignment-build-payload data))
+             (assignment (gethash "assignment" payload)))
+        (expect (gethash "submission_types" assignment)
+                :to-equal '("online_upload" "online_text_entry"))))
 
-  (it "includes allowed_extensions"
-    (let* ((data '(:title "Test" :description "" :published t
-                   :grading_type "points" :submission_types ("online_upload")
-                   :allowed_extensions ("py" "txt")))
-           (payload (org-canvas--assignment-build-payload data))
-           (assignment (gethash "assignment" payload)))
-      (expect (gethash "allowed_extensions" assignment) :to-equal '("py" "txt"))))
+    (it "includes allowed_extensions"
+      (let* ((data '(:title "Test" :description "" :published t
+                     :grading_type "points" :submission_types ("online_upload")
+                     :allowed_extensions ("py" "txt")))
+             (payload (org-canvas--assignment-build-payload data))
+             (assignment (gethash "assignment" payload)))
+        (expect (gethash "allowed_extensions" assignment) :to-equal '("py" "txt")))))
 
-  (it "includes peer review settings"
-    (let* ((data '(:title "Test" :description "" :published t
-                   :grading_type "points" :submission_types ("none")
-                   :peer_reviews t :peer_review_count 3))
-           (payload (org-canvas--assignment-build-payload data))
-           (assignment (gethash "assignment" payload)))
-      (expect (gethash "peer_reviews" assignment) :to-be t)
-      (expect (gethash "peer_review_count" assignment) :to-equal 3))))
+  (describe "optional fields"
+    (it "includes peer review settings"
+      (let* ((data '(:title "Test" :description "" :published t
+                     :grading_type "points" :submission_types ("none")
+                     :peer_reviews t :peer_review_count 3))
+             (payload (org-canvas--assignment-build-payload data))
+             (assignment (gethash "assignment" payload)))
+        (expect (gethash "peer_reviews" assignment) :to-be t)
+        (expect (gethash "peer_review_count" assignment) :to-equal 3)))))
 
 ;;;; Stage 3: Push to API (mocked)
 
@@ -344,22 +333,10 @@ Content.
 ;;;; Additional Parse Tests
 
 (describe "org-canvas--assignment-parse-entry"
-  (it "returns nil canvas-id for new assignments"
-    (with-temp-org-buffer
-     "* New Assignment
-:PROPERTIES:
-:PUBLISHED: true
-:END:
-
-Content.
-"
-     (org-back-to-heading)
-     (let ((data (org-canvas--assignment-parse-entry)))
-       (expect (plist-get data :canvas-id) :to-be nil))))
-
-  (it "parses due_at timestamp"
-    (with-temp-org-buffer
-     "* Timed Assignment
+  (describe "timestamps"
+    (it "parses due_at timestamp"
+      (with-temp-org-buffer
+       "* Timed Assignment
 :PROPERTIES:
 :PUBLISHED: true
 :DUE_AT: <2025-06-15 Sun 23:59>
@@ -367,14 +344,14 @@ Content.
 
 Content.
 "
-     (org-back-to-heading)
-     (let ((data (org-canvas--assignment-parse-entry)))
-       (expect (plist-get data :due_at) :to-be-truthy)
-       (expect (plist-get data :due_at) :to-match "T.*Z"))))
+       (org-back-to-heading)
+       (let ((data (org-canvas--assignment-parse-entry)))
+         (expect (plist-get data :due_at) :to-be-truthy)
+         (expect (plist-get data :due_at) :to-match "T.*Z"))))
 
-  (it "parses unlock_at and lock_at timestamps"
-    (with-temp-org-buffer
-     "* Locked Assignment
+    (it "parses unlock_at and lock_at timestamps"
+      (with-temp-org-buffer
+       "* Locked Assignment
 :PROPERTIES:
 :PUBLISHED: true
 :UNLOCK_AT: <2025-06-01 Sun 00:00>
@@ -383,51 +360,28 @@ Content.
 
 Content.
 "
-     (org-back-to-heading)
-     (let ((data (org-canvas--assignment-parse-entry)))
-       (expect (plist-get data :unlock_at) :to-be-truthy)
-       (expect (plist-get data :lock_at) :to-be-truthy))))
+       (org-back-to-heading)
+       (let ((data (org-canvas--assignment-parse-entry)))
+         (expect (plist-get data :unlock_at) :to-be-truthy)
+         (expect (plist-get data :lock_at) :to-be-truthy)))))
 
-  (it "parses published=false"
-    (with-temp-org-buffer
-     "* Draft Assignment
+  (describe "boolean fields"
+    (it "parses published=false"
+      (with-temp-org-buffer
+       "* Draft Assignment
 :PROPERTIES:
 :PUBLISHED: false
 :END:
 
 Content.
 "
-     (org-back-to-heading)
-     (let ((data (org-canvas--assignment-parse-entry)))
-       (expect (plist-get data :published) :to-be nil))))
+       (org-back-to-heading)
+       (let ((data (org-canvas--assignment-parse-entry)))
+         (expect (plist-get data :published) :to-be nil))))
 
-  (it "includes pom marker"
-    (with-temp-org-buffer
-     "* Assignment
-:PROPERTIES:
-:END:
-
-Content.
-"
-     (org-back-to-heading)
-     (let ((data (org-canvas--assignment-parse-entry)))
-       (expect (plist-get data :pom) :to-be-truthy))))
-
-  (it "exports description to HTML"
-    (with-temp-org-buffer
-     "* Assignment
-:PROPERTIES:
-:END:
-
-This is *bold* text.
-"
-     (org-back-to-heading)
-     (let ((data (org-canvas--assignment-parse-entry)))
-       (expect (plist-get data :description) :to-match "<"))))
-
-  (it "parses omit_from_final_grade"
-    (with-temp-org-buffer
-     "* Extra Credit
+    (it "parses omit_from_final_grade"
+      (with-temp-org-buffer
+       "* Extra Credit
 :PROPERTIES:
 :PUBLISHED: true
 :OMIT_FROM_GRADES: true
@@ -435,13 +389,13 @@ This is *bold* text.
 
 Content.
 "
-     (org-back-to-heading)
-     (let ((data (org-canvas--assignment-parse-entry)))
-       (expect (plist-get data :omit_from_final_grade) :to-be t))))
+       (org-back-to-heading)
+       (let ((data (org-canvas--assignment-parse-entry)))
+         (expect (plist-get data :omit_from_final_grade) :to-be t))))
 
-  (it "parses anonymous_grading"
-    (with-temp-org-buffer
-     "* Anonymous Exam
+    (it "parses anonymous_grading"
+      (with-temp-org-buffer
+       "* Anonymous Exam
 :PROPERTIES:
 :PUBLISHED: true
 :ANONYMOUS_GRADING: true
@@ -449,13 +403,13 @@ Content.
 
 Content.
 "
-     (org-back-to-heading)
-     (let ((data (org-canvas--assignment-parse-entry)))
-       (expect (plist-get data :anonymous_grading) :to-be t))))
+       (org-back-to-heading)
+       (let ((data (org-canvas--assignment-parse-entry)))
+         (expect (plist-get data :anonymous_grading) :to-be t))))
 
-  (it "parses notify_of_update"
-    (with-temp-org-buffer
-     "* Updated Assignment
+    (it "parses notify_of_update"
+      (with-temp-org-buffer
+       "* Updated Assignment
 :PROPERTIES:
 :PUBLISHED: true
 :NOTIFY_OF_UPDATE: true
@@ -463,13 +417,13 @@ Content.
 
 Content.
 "
-     (org-back-to-heading)
-     (let ((data (org-canvas--assignment-parse-entry)))
-       (expect (plist-get data :notify_of_update) :to-be t))))
+       (org-back-to-heading)
+       (let ((data (org-canvas--assignment-parse-entry)))
+         (expect (plist-get data :notify_of_update) :to-be t))))
 
-  (it "parses automatic_peer_reviews"
-    (with-temp-org-buffer
-     "* Peer Assignment
+    (it "parses automatic_peer_reviews"
+      (with-temp-org-buffer
+       "* Peer Assignment
 :PROPERTIES:
 :PUBLISHED: true
 :PEER_REVIEWS: true
@@ -478,41 +432,13 @@ Content.
 
 Content.
 "
-     (org-back-to-heading)
-     (let ((data (org-canvas--assignment-parse-entry)))
-       (expect (plist-get data :automatic_peer_reviews) :to-be nil))))
+       (org-back-to-heading)
+       (let ((data (org-canvas--assignment-parse-entry)))
+         (expect (plist-get data :automatic_peer_reviews) :to-be nil))))
 
-  (it "parses group_category_id"
-    (with-temp-org-buffer
-     "* Group Project
-:PROPERTIES:
-:PUBLISHED: true
-:GROUP_CATEGORY_ID: 42
-:END:
-
-Content.
-"
-     (org-back-to-heading)
-     (let ((data (org-canvas--assignment-parse-entry)))
-       (expect (plist-get data :group_category_id) :to-equal 42))))
-
-  (it "parses grade_group_students_individually"
-    (with-temp-org-buffer
-     "* Group Assignment
-:PROPERTIES:
-:PUBLISHED: true
-:GRADE_INDIVIDUALLY: true
-:END:
-
-Content.
-"
-     (org-back-to-heading)
-     (let ((data (org-canvas--assignment-parse-entry)))
-       (expect (plist-get data :grade_group_students_individually) :to-be t))))
-
-  (it "parses only_visible_to_overrides"
-    (with-temp-org-buffer
-     "* Section-Only Assignment
+    (it "parses only_visible_to_overrides"
+      (with-temp-org-buffer
+       "* Section-Only Assignment
 :PROPERTIES:
 :PUBLISHED: true
 :ONLY_VISIBLE_TO_OVERRIDES: true
@@ -520,13 +446,13 @@ Content.
 
 Content.
 "
-     (org-back-to-heading)
-     (let ((data (org-canvas--assignment-parse-entry)))
-       (expect (plist-get data :only_visible_to_overrides) :to-be t))))
+       (org-back-to-heading)
+       (let ((data (org-canvas--assignment-parse-entry)))
+         (expect (plist-get data :only_visible_to_overrides) :to-be t))))
 
-  (it "parses moderated_grading"
-    (with-temp-org-buffer
-     "* Moderated Exam
+    (it "parses moderated_grading"
+      (with-temp-org-buffer
+       "* Moderated Exam
 :PROPERTIES:
 :PUBLISHED: true
 :MODERATED_GRADING: true
@@ -534,13 +460,54 @@ Content.
 
 Content.
 "
-     (org-back-to-heading)
-     (let ((data (org-canvas--assignment-parse-entry)))
-       (expect (plist-get data :moderated_grading) :to-be t))))
+       (org-back-to-heading)
+       (let ((data (org-canvas--assignment-parse-entry)))
+         (expect (plist-get data :moderated_grading) :to-be t))))
 
-  (it "parses grader_count"
-    (with-temp-org-buffer
-     "* Moderated Exam
+    (it "parses grade_group_students_individually"
+      (with-temp-org-buffer
+       "* Group Assignment
+:PROPERTIES:
+:PUBLISHED: true
+:GRADE_INDIVIDUALLY: true
+:END:
+
+Content.
+"
+       (org-back-to-heading)
+       (let ((data (org-canvas--assignment-parse-entry)))
+         (expect (plist-get data :grade_group_students_individually) :to-be t)))))
+
+  (describe "optional fields"
+    (it "exports description to HTML"
+      (with-temp-org-buffer
+       "* Assignment
+:PROPERTIES:
+:END:
+
+This is *bold* text.
+"
+       (org-back-to-heading)
+       (let ((data (org-canvas--assignment-parse-entry)))
+         (expect (plist-get data :description) :to-match "<"))))
+
+    (it "parses group_category_id"
+      (with-temp-org-buffer
+       "* Group Project
+:PROPERTIES:
+:PUBLISHED: true
+:GROUP_CATEGORY_ID: 42
+:END:
+
+Content.
+"
+       (org-back-to-heading)
+       (let ((data (org-canvas--assignment-parse-entry)))
+         (expect (plist-get data :group_category_id) :to-equal 42))))
+
+    (it "parses grader_count"
+      (with-temp-org-buffer
+       "* Moderated Exam
 :PROPERTIES:
 :PUBLISHED: true
 :MODERATED_GRADING: true
@@ -549,26 +516,26 @@ Content.
 
 Content.
 "
-     (org-back-to-heading)
-     (let ((data (org-canvas--assignment-parse-entry)))
-       (expect (plist-get data :grader_count) :to-equal 2))))
+       (org-back-to-heading)
+       (let ((data (org-canvas--assignment-parse-entry)))
+         (expect (plist-get data :grader_count) :to-equal 2))))
 
-  (it "returns nil grader_count when absent"
-    (with-temp-org-buffer
-     "* Assignment
+    (it "returns nil grader_count when absent"
+      (with-temp-org-buffer
+       "* Assignment
 :PROPERTIES:
 :PUBLISHED: true
 :END:
 
 Content.
 "
-     (org-back-to-heading)
-     (let ((data (org-canvas--assignment-parse-entry)))
-       (expect (plist-get data :grader_count) :to-be nil))))
+       (org-back-to-heading)
+       (let ((data (org-canvas--assignment-parse-entry)))
+         (expect (plist-get data :grader_count) :to-be nil))))
 
-  (it "parses position"
-    (with-temp-org-buffer
-     "* Ordered Assignment
+    (it "parses position"
+      (with-temp-org-buffer
+       "* Ordered Assignment
 :PROPERTIES:
 :PUBLISHED: true
 :POSITION: 5
@@ -576,167 +543,171 @@ Content.
 
 Content.
 "
-     (org-back-to-heading)
-     (let ((data (org-canvas--assignment-parse-entry)))
-       (expect (plist-get data :position) :to-equal 5)))))
+       (org-back-to-heading)
+       (let ((data (org-canvas--assignment-parse-entry)))
+         (expect (plist-get data :position) :to-equal 5))))))
 
 ;;;; Additional Build Payload Tests
 
 (describe "org-canvas--assignment-build-payload"
-  (it "includes due_at when present"
-    (let* ((data '(:title "Test" :description "" :published t
-                   :grading_type "points" :submission_types ("none")
-                   :due_at "2025-06-15T23:59:00Z"))
-           (payload (org-canvas--assignment-build-payload data))
-           (assignment (gethash "assignment" payload)))
-      (expect (gethash "due_at" assignment) :to-equal "2025-06-15T23:59:00Z")))
+  (describe "required fields"
+    (it "includes due_at when present"
+      (let* ((data '(:title "Test" :description "" :published t
+                     :grading_type "points" :submission_types ("none")
+                     :due_at "2025-06-15T23:59:00Z"))
+             (payload (org-canvas--assignment-build-payload data))
+             (assignment (gethash "assignment" payload)))
+        (expect (gethash "due_at" assignment) :to-equal "2025-06-15T23:59:00Z")))
 
-  (it "includes unlock_at and lock_at when present"
-    (let* ((data '(:title "Test" :description "" :published t
-                   :grading_type "points" :submission_types ("none")
-                   :unlock_at "2025-06-01T00:00:00Z"
-                   :lock_at "2025-06-30T23:59:00Z"))
-           (payload (org-canvas--assignment-build-payload data))
-           (assignment (gethash "assignment" payload)))
-      (expect (gethash "unlock_at" assignment) :to-equal "2025-06-01T00:00:00Z")
-      (expect (gethash "lock_at" assignment) :to-equal "2025-06-30T23:59:00Z")))
+    (it "includes unlock_at and lock_at when present"
+      (let* ((data '(:title "Test" :description "" :published t
+                     :grading_type "points" :submission_types ("none")
+                     :unlock_at "2025-06-01T00:00:00Z"
+                     :lock_at "2025-06-30T23:59:00Z"))
+             (payload (org-canvas--assignment-build-payload data))
+             (assignment (gethash "assignment" payload)))
+        (expect (gethash "unlock_at" assignment) :to-equal "2025-06-01T00:00:00Z")
+        (expect (gethash "lock_at" assignment) :to-equal "2025-06-30T23:59:00Z")))
 
-  (it "includes assignment_group_id when present"
-    (let* ((data '(:title "Grouped" :description "" :published t
-                   :grading_type "points" :submission_types ("none")
-                   :assignment_group_id 999))
-           (payload (org-canvas--assignment-build-payload data))
-           (assignment (gethash "assignment" payload)))
-      (expect (gethash "assignment_group_id" assignment) :to-equal 999)))
+    (it "includes assignment_group_id when present"
+      (let* ((data '(:title "Grouped" :description "" :published t
+                     :grading_type "points" :submission_types ("none")
+                     :assignment_group_id 999))
+             (payload (org-canvas--assignment-build-payload data))
+             (assignment (gethash "assignment" payload)))
+        (expect (gethash "assignment_group_id" assignment) :to-equal 999)))
 
-  (it "sets published to :json-false when false"
-    (let* ((data '(:title "Draft" :description "" :published nil
-                   :grading_type "points" :submission_types ("none")))
-           (payload (org-canvas--assignment-build-payload data))
-           (assignment (gethash "assignment" payload)))
-      (expect (gethash "published" assignment) :to-equal :json-false)))
+    (it "sets published to :json-false when false"
+      (let* ((data '(:title "Draft" :description "" :published nil
+                     :grading_type "points" :submission_types ("none")))
+             (payload (org-canvas--assignment-build-payload data))
+             (assignment (gethash "assignment" payload)))
+        (expect (gethash "published" assignment) :to-equal :json-false))))
 
-  (it "includes allowed_attempts when present"
-    (let* ((data '(:title "Test" :description "" :published t
-                   :grading_type "points" :submission_types ("none")
-                   :allowed_attempts 3))
-           (payload (org-canvas--assignment-build-payload data))
-           (assignment (gethash "assignment" payload)))
-      (expect (gethash "allowed_attempts" assignment) :to-equal 3)))
+  (describe "submission fields"
+    (it "includes allowed_attempts when present"
+      (let* ((data '(:title "Test" :description "" :published t
+                     :grading_type "points" :submission_types ("none")
+                     :allowed_attempts 3))
+             (payload (org-canvas--assignment-build-payload data))
+             (assignment (gethash "assignment" payload)))
+        (expect (gethash "allowed_attempts" assignment) :to-equal 3))))
 
-  (it "includes peer_reviews_due_at when peer reviews enabled"
-    (let* ((data '(:title "Peer" :description "" :published t
-                   :grading_type "points" :submission_types ("none")
-                   :peer_reviews t :peer_reviews_due_at "2025-07-01T00:00:00Z"))
-           (payload (org-canvas--assignment-build-payload data))
-           (assignment (gethash "assignment" payload)))
-      (expect (gethash "peer_reviews_due_at" assignment) :to-equal "2025-07-01T00:00:00Z")))
+  (describe "peer review fields"
+    (it "includes peer_reviews_due_at when peer reviews enabled"
+      (let* ((data '(:title "Peer" :description "" :published t
+                     :grading_type "points" :submission_types ("none")
+                     :peer_reviews t :peer_reviews_due_at "2025-07-01T00:00:00Z"))
+             (payload (org-canvas--assignment-build-payload data))
+             (assignment (gethash "assignment" payload)))
+        (expect (gethash "peer_reviews_due_at" assignment) :to-equal "2025-07-01T00:00:00Z")))
 
-  (it "includes omit_from_final_grade when true"
-    (let* ((data '(:title "Test" :description "" :published t
-                   :grading_type "points" :submission_types ("none")
-                   :omit_from_final_grade t))
-           (payload (org-canvas--assignment-build-payload data))
-           (assignment (gethash "assignment" payload)))
-      (expect (gethash "omit_from_final_grade" assignment) :to-be t)))
+    (it "defaults automatic_peer_reviews to t when peer_reviews enabled but automatic not set"
+      (let* ((data '(:title "Test" :description "" :published t
+                     :grading_type "points" :submission_types ("none")
+                     :peer_reviews t))
+             (payload (org-canvas--assignment-build-payload data))
+             (assignment (gethash "assignment" payload)))
+        (expect (gethash "automatic_peer_reviews" assignment) :to-be t)))
 
-  (it "excludes omit_from_final_grade when nil"
-    (let* ((data '(:title "Test" :description "" :published t
-                   :grading_type "points" :submission_types ("none")
-                   :omit_from_final_grade nil))
-           (payload (org-canvas--assignment-build-payload data))
-           (assignment (gethash "assignment" payload)))
-      (expect (gethash "omit_from_final_grade" assignment) :to-be nil)))
+    (it "defaults automatic_peer_reviews to t when AUTOMATIC_PEER_REVIEWS is explicitly false"
+      (let* ((data '(:title "Test" :description "" :published t
+                     :grading_type "points" :submission_types ("none")
+                     :peer_reviews t :automatic_peer_reviews nil))
+             (payload (org-canvas--assignment-build-payload data))
+             (assignment (gethash "assignment" payload)))
+        ;; org-canvas-org-get-boolean-property returns nil for "false",
+        ;; which the build function treats the same as "not set" (defaults to t)
+        (expect (gethash "automatic_peer_reviews" assignment) :to-be t))))
 
-  (it "includes anonymous_grading when true"
-    (let* ((data '(:title "Test" :description "" :published t
-                   :grading_type "points" :submission_types ("none")
-                   :anonymous_grading t))
-           (payload (org-canvas--assignment-build-payload data))
-           (assignment (gethash "assignment" payload)))
-      (expect (gethash "anonymous_grading" assignment) :to-be t)))
+  (describe "optional fields"
+    (it "includes omit_from_final_grade when true"
+      (let* ((data '(:title "Test" :description "" :published t
+                     :grading_type "points" :submission_types ("none")
+                     :omit_from_final_grade t))
+             (payload (org-canvas--assignment-build-payload data))
+             (assignment (gethash "assignment" payload)))
+        (expect (gethash "omit_from_final_grade" assignment) :to-be t)))
 
-  (it "includes notify_of_update when true"
-    (let* ((data '(:title "Test" :description "" :published t
-                   :grading_type "points" :submission_types ("none")
-                   :notify_of_update t))
-           (payload (org-canvas--assignment-build-payload data))
-           (assignment (gethash "assignment" payload)))
-      (expect (gethash "notify_of_update" assignment) :to-be t)))
+    (it "excludes omit_from_final_grade when nil"
+      (let* ((data '(:title "Test" :description "" :published t
+                     :grading_type "points" :submission_types ("none")
+                     :omit_from_final_grade nil))
+             (payload (org-canvas--assignment-build-payload data))
+             (assignment (gethash "assignment" payload)))
+        (expect (gethash "omit_from_final_grade" assignment) :to-be nil)))
 
-  (it "defaults automatic_peer_reviews to t when peer_reviews enabled but automatic not set"
-    (let* ((data '(:title "Test" :description "" :published t
-                   :grading_type "points" :submission_types ("none")
-                   :peer_reviews t))
-           (payload (org-canvas--assignment-build-payload data))
-           (assignment (gethash "assignment" payload)))
-      (expect (gethash "automatic_peer_reviews" assignment) :to-be t)))
+    (it "includes anonymous_grading when true"
+      (let* ((data '(:title "Test" :description "" :published t
+                     :grading_type "points" :submission_types ("none")
+                     :anonymous_grading t))
+             (payload (org-canvas--assignment-build-payload data))
+             (assignment (gethash "assignment" payload)))
+        (expect (gethash "anonymous_grading" assignment) :to-be t)))
 
-  (it "defaults automatic_peer_reviews to t when AUTOMATIC_PEER_REVIEWS is explicitly false"
-    (let* ((data '(:title "Test" :description "" :published t
-                   :grading_type "points" :submission_types ("none")
-                   :peer_reviews t :automatic_peer_reviews nil))
-           (payload (org-canvas--assignment-build-payload data))
-           (assignment (gethash "assignment" payload)))
-      ;; org-canvas-org-get-boolean-property returns nil for "false",
-      ;; which the build function treats the same as "not set" (defaults to t)
-      (expect (gethash "automatic_peer_reviews" assignment) :to-be t)))
+    (it "includes notify_of_update when true"
+      (let* ((data '(:title "Test" :description "" :published t
+                     :grading_type "points" :submission_types ("none")
+                     :notify_of_update t))
+             (payload (org-canvas--assignment-build-payload data))
+             (assignment (gethash "assignment" payload)))
+        (expect (gethash "notify_of_update" assignment) :to-be t)))
 
-  (it "includes group_category_id when present"
-    (let* ((data '(:title "Test" :description "" :published t
-                   :grading_type "points" :submission_types ("none")
-                   :group_category_id 42))
-           (payload (org-canvas--assignment-build-payload data))
-           (assignment (gethash "assignment" payload)))
-      (expect (gethash "group_category_id" assignment) :to-equal 42)))
+    (it "includes group_category_id when present"
+      (let* ((data '(:title "Test" :description "" :published t
+                     :grading_type "points" :submission_types ("none")
+                     :group_category_id 42))
+             (payload (org-canvas--assignment-build-payload data))
+             (assignment (gethash "assignment" payload)))
+        (expect (gethash "group_category_id" assignment) :to-equal 42)))
 
-  (it "includes grade_group_students_individually when true"
-    (let* ((data '(:title "Test" :description "" :published t
-                   :grading_type "points" :submission_types ("none")
-                   :grade_group_students_individually t))
-           (payload (org-canvas--assignment-build-payload data))
-           (assignment (gethash "assignment" payload)))
-      (expect (gethash "grade_group_students_individually" assignment) :to-be t)))
+    (it "includes grade_group_students_individually when true"
+      (let* ((data '(:title "Test" :description "" :published t
+                     :grading_type "points" :submission_types ("none")
+                     :grade_group_students_individually t))
+             (payload (org-canvas--assignment-build-payload data))
+             (assignment (gethash "assignment" payload)))
+        (expect (gethash "grade_group_students_individually" assignment) :to-be t)))
 
-  (it "includes only_visible_to_overrides when true"
-    (let* ((data '(:title "Test" :description "" :published t
-                   :grading_type "points" :submission_types ("none")
-                   :only_visible_to_overrides t))
-           (payload (org-canvas--assignment-build-payload data))
-           (assignment (gethash "assignment" payload)))
-      (expect (gethash "only_visible_to_overrides" assignment) :to-be t)))
+    (it "includes only_visible_to_overrides when true"
+      (let* ((data '(:title "Test" :description "" :published t
+                     :grading_type "points" :submission_types ("none")
+                     :only_visible_to_overrides t))
+             (payload (org-canvas--assignment-build-payload data))
+             (assignment (gethash "assignment" payload)))
+        (expect (gethash "only_visible_to_overrides" assignment) :to-be t)))
 
-  (it "includes moderated_grading when true"
-    (let* ((data '(:title "Test" :description "" :published t
-                   :grading_type "points" :submission_types ("none")
-                   :moderated_grading t))
-           (payload (org-canvas--assignment-build-payload data))
-           (assignment (gethash "assignment" payload)))
-      (expect (gethash "moderated_grading" assignment) :to-be t)))
+    (it "includes moderated_grading when true"
+      (let* ((data '(:title "Test" :description "" :published t
+                     :grading_type "points" :submission_types ("none")
+                     :moderated_grading t))
+             (payload (org-canvas--assignment-build-payload data))
+             (assignment (gethash "assignment" payload)))
+        (expect (gethash "moderated_grading" assignment) :to-be t)))
 
-  (it "includes grader_count when moderated_grading is true"
-    (let* ((data '(:title "Test" :description "" :published t
-                   :grading_type "points" :submission_types ("none")
-                   :moderated_grading t :grader_count 2))
-           (payload (org-canvas--assignment-build-payload data))
-           (assignment (gethash "assignment" payload)))
-      (expect (gethash "grader_count" assignment) :to-equal 2)))
+    (it "includes grader_count when moderated_grading is true"
+      (let* ((data '(:title "Test" :description "" :published t
+                     :grading_type "points" :submission_types ("none")
+                     :moderated_grading t :grader_count 2))
+             (payload (org-canvas--assignment-build-payload data))
+             (assignment (gethash "assignment" payload)))
+        (expect (gethash "grader_count" assignment) :to-equal 2)))
 
-  (it "excludes grader_count when moderated_grading is nil"
-    (let* ((data '(:title "Test" :description "" :published t
-                   :grading_type "points" :submission_types ("none")
-                   :grader_count 2))
-           (payload (org-canvas--assignment-build-payload data))
-           (assignment (gethash "assignment" payload)))
-      (expect (gethash "grader_count" assignment) :to-be nil)))
+    (it "excludes grader_count when moderated_grading is nil"
+      (let* ((data '(:title "Test" :description "" :published t
+                     :grading_type "points" :submission_types ("none")
+                     :grader_count 2))
+             (payload (org-canvas--assignment-build-payload data))
+             (assignment (gethash "assignment" payload)))
+        (expect (gethash "grader_count" assignment) :to-be nil)))
 
-  (it "includes position when present"
-    (let* ((data '(:title "Test" :description "" :published t
-                   :grading_type "points" :submission_types ("none")
-                   :position 5))
-           (payload (org-canvas--assignment-build-payload data))
-           (assignment (gethash "assignment" payload)))
-      (expect (gethash "position" assignment) :to-equal 5))))
+    (it "includes position when present"
+      (let* ((data '(:title "Test" :description "" :published t
+                     :grading_type "points" :submission_types ("none")
+                     :position 5))
+             (payload (org-canvas--assignment-build-payload data))
+             (assignment (gethash "assignment" payload)))
+        (expect (gethash "position" assignment) :to-equal 5)))))
 
 ;;;; Additional Push to API Tests
 
@@ -1070,8 +1041,7 @@ Content.
 :END:
 "
                (org-back-to-heading)
-               (cl-letf (((symbol-function 'org-canvas--html-to-org)
-                          (lambda (html) html)))
+               (with-html-to-org-identity
                  (org-canvas--assignment-pull-item
                   '((id . 1) (name . "Assignment")
                     (points_possible . 100)
@@ -1087,157 +1057,67 @@ Content.
         (delete-file groups-file))))
 
   (it "sets OMIT_FROM_GRADES property"
-    (with-temp-org-buffer
-     "* Assignment
-:PROPERTIES:
-:CANVAS_ID: 1
-:END:
-"
-     (org-back-to-heading)
-     (cl-letf (((symbol-function 'org-canvas--html-to-org)
-                (lambda (html) html)))
-       (org-canvas--assignment-pull-item
-        '((id . 1) (name . "Assignment")
-          (omit_from_final_grade . t)
-          (description . ""))
-        (point))
-       (expect (org-entry-get (point) "OMIT_FROM_GRADES") :to-equal "true"))))
+    (with-pull-property-test #'org-canvas--assignment-pull-item
+      '((id . 1) (name . "Assignment")
+        (omit_from_final_grade . t)
+        (description . ""))
+      "OMIT_FROM_GRADES" :to-equal "true"))
 
   (it "sets ANONYMOUS_GRADING property"
-    (with-temp-org-buffer
-     "* Assignment
-:PROPERTIES:
-:CANVAS_ID: 1
-:END:
-"
-     (org-back-to-heading)
-     (cl-letf (((symbol-function 'org-canvas--html-to-org)
-                (lambda (html) html)))
-       (org-canvas--assignment-pull-item
-        '((id . 1) (name . "Assignment")
-          (anonymous_grading . t)
-          (description . ""))
-        (point))
-       (expect (org-entry-get (point) "ANONYMOUS_GRADING") :to-equal "true"))))
+    (with-pull-property-test #'org-canvas--assignment-pull-item
+      '((id . 1) (name . "Assignment")
+        (anonymous_grading . t)
+        (description . ""))
+      "ANONYMOUS_GRADING" :to-equal "true"))
 
   (it "sets ONLY_VISIBLE_TO_OVERRIDES property"
-    (with-temp-org-buffer
-     "* Assignment
-:PROPERTIES:
-:CANVAS_ID: 1
-:END:
-"
-     (org-back-to-heading)
-     (cl-letf (((symbol-function 'org-canvas--html-to-org)
-                (lambda (html) html)))
-       (org-canvas--assignment-pull-item
-        '((id . 1) (name . "Assignment")
-          (only_visible_to_overrides . t)
-          (description . ""))
-        (point))
-       (expect (org-entry-get (point) "ONLY_VISIBLE_TO_OVERRIDES") :to-equal "true"))))
+    (with-pull-property-test #'org-canvas--assignment-pull-item
+      '((id . 1) (name . "Assignment")
+        (only_visible_to_overrides . t)
+        (description . ""))
+      "ONLY_VISIBLE_TO_OVERRIDES" :to-equal "true"))
 
   (it "sets MODERATED_GRADING property"
-    (with-temp-org-buffer
-     "* Assignment
-:PROPERTIES:
-:CANVAS_ID: 1
-:END:
-"
-     (org-back-to-heading)
-     (cl-letf (((symbol-function 'org-canvas--html-to-org)
-                (lambda (html) html)))
-       (org-canvas--assignment-pull-item
-        '((id . 1) (name . "Assignment")
-          (moderated_grading . t)
-          (description . ""))
-        (point))
-       (expect (org-entry-get (point) "MODERATED_GRADING") :to-equal "true"))))
+    (with-pull-property-test #'org-canvas--assignment-pull-item
+      '((id . 1) (name . "Assignment")
+        (moderated_grading . t)
+        (description . ""))
+      "MODERATED_GRADING" :to-equal "true"))
 
   (it "sets GRADER_COUNT property"
-    (with-temp-org-buffer
-     "* Assignment
-:PROPERTIES:
-:CANVAS_ID: 1
-:END:
-"
-     (org-back-to-heading)
-     (cl-letf (((symbol-function 'org-canvas--html-to-org)
-                (lambda (html) html)))
-       (org-canvas--assignment-pull-item
-        '((id . 1) (name . "Assignment")
-          (grader_count . 3)
-          (description . ""))
-        (point))
-       (expect (org-entry-get (point) "GRADER_COUNT") :to-equal "3"))))
+    (with-pull-property-test #'org-canvas--assignment-pull-item
+      '((id . 1) (name . "Assignment")
+        (grader_count . 3)
+        (description . ""))
+      "GRADER_COUNT" :to-equal "3"))
 
   (it "skips GRADER_COUNT when zero"
-    (with-temp-org-buffer
-     "* Assignment
-:PROPERTIES:
-:CANVAS_ID: 1
-:END:
-"
-     (org-back-to-heading)
-     (cl-letf (((symbol-function 'org-canvas--html-to-org)
-                (lambda (html) html)))
-       (org-canvas--assignment-pull-item
-        '((id . 1) (name . "Assignment")
-          (grader_count . 0)
-          (description . ""))
-        (point))
-       (expect (org-entry-get (point) "GRADER_COUNT") :to-be nil))))
+    (with-pull-property-test #'org-canvas--assignment-pull-item
+      '((id . 1) (name . "Assignment")
+        (grader_count . 0)
+        (description . ""))
+      "GRADER_COUNT" :to-be nil))
 
   (it "sets GRADE_INDIVIDUALLY property"
-    (with-temp-org-buffer
-     "* Assignment
-:PROPERTIES:
-:CANVAS_ID: 1
-:END:
-"
-     (org-back-to-heading)
-     (cl-letf (((symbol-function 'org-canvas--html-to-org)
-                (lambda (html) html)))
-       (org-canvas--assignment-pull-item
-        '((id . 1) (name . "Assignment")
-          (grade_group_students_individually . t)
-          (description . ""))
-        (point))
-       (expect (org-entry-get (point) "GRADE_INDIVIDUALLY") :to-equal "true"))))
+    (with-pull-property-test #'org-canvas--assignment-pull-item
+      '((id . 1) (name . "Assignment")
+        (grade_group_students_individually . t)
+        (description . ""))
+      "GRADE_INDIVIDUALLY" :to-equal "true"))
 
   (it "sets GROUP_CATEGORY_ID property"
-    (with-temp-org-buffer
-     "* Assignment
-:PROPERTIES:
-:CANVAS_ID: 1
-:END:
-"
-     (org-back-to-heading)
-     (cl-letf (((symbol-function 'org-canvas--html-to-org)
-                (lambda (html) html)))
-       (org-canvas--assignment-pull-item
-        '((id . 1) (name . "Assignment")
-          (group_category_id . 42)
-          (description . ""))
-        (point))
-       (expect (org-entry-get (point) "GROUP_CATEGORY_ID") :to-equal "42"))))
+    (with-pull-property-test #'org-canvas--assignment-pull-item
+      '((id . 1) (name . "Assignment")
+        (group_category_id . 42)
+        (description . ""))
+      "GROUP_CATEGORY_ID" :to-equal "42"))
 
   (it "sets POSITION property"
-    (with-temp-org-buffer
-     "* Assignment
-:PROPERTIES:
-:CANVAS_ID: 1
-:END:
-"
-     (org-back-to-heading)
-     (cl-letf (((symbol-function 'org-canvas--html-to-org)
-                (lambda (html) html)))
-       (org-canvas--assignment-pull-item
-        '((id . 1) (name . "Assignment")
-          (position . 5)
-          (description . ""))
-        (point))
-       (expect (org-entry-get (point) "POSITION") :to-equal "5")))))
+    (with-pull-property-test #'org-canvas--assignment-pull-item
+      '((id . 1) (name . "Assignment")
+        (position . 5)
+        (description . ""))
+      "POSITION" :to-equal "5")))
 
 ;;;; New Property Tests: MUTED and GRADING_STANDARD_ID
 
@@ -1329,38 +1209,18 @@ Content.
 
 (describe "org-canvas--assignment-pull-item (muted + grading_standard_id)"
   (it "sets MUTED property"
-    (with-temp-org-buffer
-     "* Assignment
-:PROPERTIES:
-:CANVAS_ID: 1
-:END:
-"
-     (org-back-to-heading)
-     (cl-letf (((symbol-function 'org-canvas--html-to-org)
-                (lambda (html) html)))
-       (org-canvas--assignment-pull-item
-        '((id . 1) (name . "Assignment")
-          (muted . t)
-          (description . ""))
-        (point))
-       (expect (org-entry-get (point) "MUTED") :to-equal "true"))))
+    (with-pull-property-test #'org-canvas--assignment-pull-item
+      '((id . 1) (name . "Assignment")
+        (muted . t)
+        (description . ""))
+      "MUTED" :to-equal "true"))
 
   (it "sets GRADING_STANDARD_ID property"
-    (with-temp-org-buffer
-     "* Assignment
-:PROPERTIES:
-:CANVAS_ID: 1
-:END:
-"
-     (org-back-to-heading)
-     (cl-letf (((symbol-function 'org-canvas--html-to-org)
-                (lambda (html) html)))
-       (org-canvas--assignment-pull-item
-        '((id . 1) (name . "Assignment")
-          (grading_standard_id . 42)
-          (description . ""))
-        (point))
-       (expect (org-entry-get (point) "GRADING_STANDARD_ID") :to-equal "42")))))
+    (with-pull-property-test #'org-canvas--assignment-pull-item
+      '((id . 1) (name . "Assignment")
+        (grading_standard_id . 42)
+        (description . ""))
+      "GRADING_STANDARD_ID" :to-equal "42")))
 
 ;;;; TURNITIN_ENABLED Property Tests
 
@@ -1410,20 +1270,10 @@ Content.
 
 (describe "org-canvas--assignment-pull-item (turnitin_enabled)"
   (it "sets TURNITIN_ENABLED property"
-    (with-temp-org-buffer
-     "* Assignment
-:PROPERTIES:
-:CANVAS_ID: 1
-:END:
-"
-     (org-back-to-heading)
-     (cl-letf (((symbol-function 'org-canvas--html-to-org)
-                (lambda (html) html)))
-       (org-canvas--assignment-pull-item
-        '((id . 1) (name . "Assignment")
-          (turnitin_enabled . t)
-          (description . ""))
-        (point))
-       (expect (org-entry-get (point) "TURNITIN_ENABLED") :to-equal "true")))))
+    (with-pull-property-test #'org-canvas--assignment-pull-item
+      '((id . 1) (name . "Assignment")
+        (turnitin_enabled . t)
+        (description . ""))
+      "TURNITIN_ENABLED" :to-equal "true")))
 
 ;;; org-canvas-assignments-test.el ends here

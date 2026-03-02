@@ -77,6 +77,9 @@ Logs warnings for invalid roles.  Returns RAW unchanged."
          (todo-date (org-canvas-org-parse-timestamp (org-canvas-org-get-property pom "TODO_DATE")))
          (notify-of-update (org-canvas-org-get-boolean-property pom "NOTIFY_OF_UPDATE")))
 
+    (when (or (null title) (string-empty-p title))
+      (error "Page title cannot be empty at point %d" pom))
+
     (elog-info org-canvas--logger "[Stage 1: Parse] Processing Page: '%s' (URL: %s)" title (or canvas-url "NEW"))
     (elog-debug org-canvas--logger "[Stage 1: Parse] Properties: published=%s, front-page=%s, editing-roles=%s"
       published front-page (or editing-roles "default"))

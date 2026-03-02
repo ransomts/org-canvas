@@ -19,26 +19,8 @@
      (let ((data (org-canvas--group-category-parse-entry)))
        (expect (plist-get data :title) :to-equal "Project Groups"))))
 
-  (it "extracts canvas-id when present"
-    (with-temp-org-buffer
-     "* Study Groups
-:PROPERTIES:
-:CANVAS_ID: 555
-:END:
-"
-     (org-back-to-heading)
-     (let ((data (org-canvas--group-category-parse-entry)))
-       (expect (plist-get data :canvas-id) :to-equal "555"))))
-
-  (it "returns nil canvas-id for new group categories"
-    (with-temp-org-buffer
-     "* New Groups
-:PROPERTIES:
-:END:
-"
-     (org-back-to-heading)
-     (let ((data (org-canvas--group-category-parse-entry)))
-       (expect (plist-get data :canvas-id) :to-be nil))))
+  (test-org-canvas-define-common-parse-tests
+   #'org-canvas--group-category-parse-entry)
 
   (it "parses SELF_SIGNUP=enabled"
     (with-temp-org-buffer
@@ -131,21 +113,7 @@
        (expect (plist-get data :auto_leader) :to-be nil)
        (expect (plist-get data :create_group_count) :to-be nil))))
 
-  (it "includes pom in data"
-    (with-temp-org-buffer
-     "* Test
-:PROPERTIES:
-:END:
-"
-     (org-back-to-heading)
-     (let ((data (org-canvas--group-category-parse-entry)))
-       (expect (plist-get data :pom) :to-be-truthy))))
-
-  (it "errors on empty title"
-    (with-temp-org-buffer
-     (concat "* " "\n:PROPERTIES:\n:END:\n")
-     (org-back-to-heading)
-     (expect (org-canvas--group-category-parse-entry) :to-throw 'error))))
+)
 
 ;;;; Stage 2: Build Payload
 

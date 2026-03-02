@@ -1743,8 +1743,7 @@ Content.
 :END:
 "
      (goto-char (point-max))
-     (cl-letf (((symbol-function 'org-canvas--html-to-org)
-                (lambda (html) html)))
+     (with-html-to-org-identity
        (org-canvas--quiz-insert-question-body "What is 2+2?")
        (expect (buffer-string) :to-match "What is 2+2?"))))
 
@@ -1815,8 +1814,7 @@ Content.
 :END:
 "
      (org-back-to-heading)
-     (cl-letf (((symbol-function 'org-canvas--html-to-org)
-                (lambda (html) html)))
+     (with-html-to-org-identity
        (org-canvas--quiz-pull-insert-question
         '((question_name . "Q1")
           (question_text . "What is 2+2?")
@@ -2095,91 +2093,94 @@ Content.
        (expect (plist-get data :ip_filter) :to-equal "192.168.1.0/24")))))
 
 (describe "org-canvas--quiz-build-payload new properties"
-  (it "includes unlock_at when present"
-    (let* ((data '(:title "Test" :quiz_type "assignment" :unlock_at "2026-06-01T00:00:00Z"))
-           (payload (org-canvas--quiz-build-payload data)))
-      (expect (alist-get 'unlock_at (alist-get 'quiz payload))
-              :to-equal "2026-06-01T00:00:00Z")))
+  (describe "date properties"
+    (it "includes unlock_at when present"
+      (let* ((data '(:title "Test" :quiz_type "assignment" :unlock_at "2026-06-01T00:00:00Z"))
+             (payload (org-canvas--quiz-build-payload data)))
+        (expect (alist-get 'unlock_at (alist-get 'quiz payload))
+                :to-equal "2026-06-01T00:00:00Z")))
 
-  (it "includes lock_at when present"
-    (let* ((data '(:title "Test" :quiz_type "assignment" :lock_at "2026-06-30T23:59:00Z"))
-           (payload (org-canvas--quiz-build-payload data)))
-      (expect (alist-get 'lock_at (alist-get 'quiz payload))
-              :to-equal "2026-06-30T23:59:00Z")))
+    (it "includes lock_at when present"
+      (let* ((data '(:title "Test" :quiz_type "assignment" :lock_at "2026-06-30T23:59:00Z"))
+             (payload (org-canvas--quiz-build-payload data)))
+        (expect (alist-get 'lock_at (alist-get 'quiz payload))
+                :to-equal "2026-06-30T23:59:00Z")))
 
-  (it "includes access_code when present"
-    (let* ((data '(:title "Test" :quiz_type "assignment" :access_code "secret123"))
-           (payload (org-canvas--quiz-build-payload data)))
-      (expect (alist-get 'access_code (alist-get 'quiz payload))
-              :to-equal "secret123")))
+    (it "includes show_correct_answers_at when present"
+      (let* ((data '(:title "Test" :quiz_type "assignment"
+                     :show_correct_answers_at "2026-07-01T00:00:00Z"))
+             (payload (org-canvas--quiz-build-payload data)))
+        (expect (alist-get 'show_correct_answers_at (alist-get 'quiz payload))
+                :to-equal "2026-07-01T00:00:00Z")))
 
-  (it "excludes access_code when nil"
-    (let* ((data '(:title "Test" :quiz_type "assignment" :access_code nil))
-           (payload (org-canvas--quiz-build-payload data)))
-      (expect (assq 'access_code (alist-get 'quiz payload)) :to-be nil)))
+    (it "includes hide_correct_answers_at when present"
+      (let* ((data '(:title "Test" :quiz_type "assignment"
+                     :hide_correct_answers_at "2026-08-01T00:00:00Z"))
+             (payload (org-canvas--quiz-build-payload data)))
+        (expect (alist-get 'hide_correct_answers_at (alist-get 'quiz payload))
+                :to-equal "2026-08-01T00:00:00Z"))))
 
-  (it "includes show_correct_answers true"
-    (let* ((data '(:title "Test" :quiz_type "assignment" :show_correct_answers t))
-           (payload (org-canvas--quiz-build-payload data)))
-      (expect (alist-get 'show_correct_answers (alist-get 'quiz payload)) :to-be t)))
+  (describe "boolean properties"
+    (it "includes show_correct_answers true"
+      (let* ((data '(:title "Test" :quiz_type "assignment" :show_correct_answers t))
+             (payload (org-canvas--quiz-build-payload data)))
+        (expect (alist-get 'show_correct_answers (alist-get 'quiz payload)) :to-be t)))
 
-  (it "includes show_correct_answers json-false when nil"
-    (let* ((data '(:title "Test" :quiz_type "assignment" :show_correct_answers nil))
-           (payload (org-canvas--quiz-build-payload data)))
-      (expect (alist-get 'show_correct_answers (alist-get 'quiz payload))
-              :to-equal :json-false)))
+    (it "includes show_correct_answers json-false when nil"
+      (let* ((data '(:title "Test" :quiz_type "assignment" :show_correct_answers nil))
+             (payload (org-canvas--quiz-build-payload data)))
+        (expect (alist-get 'show_correct_answers (alist-get 'quiz payload))
+                :to-equal :json-false)))
 
-  (it "includes show_correct_answers_at when present"
-    (let* ((data '(:title "Test" :quiz_type "assignment"
-                   :show_correct_answers_at "2026-07-01T00:00:00Z"))
-           (payload (org-canvas--quiz-build-payload data)))
-      (expect (alist-get 'show_correct_answers_at (alist-get 'quiz payload))
-              :to-equal "2026-07-01T00:00:00Z")))
+    (it "includes one_question_at_a_time when true"
+      (let* ((data '(:title "Test" :quiz_type "assignment" :one_question_at_a_time t))
+             (payload (org-canvas--quiz-build-payload data)))
+        (expect (alist-get 'one_question_at_a_time (alist-get 'quiz payload)) :to-be t)))
 
-  (it "includes hide_correct_answers_at when present"
-    (let* ((data '(:title "Test" :quiz_type "assignment"
-                   :hide_correct_answers_at "2026-08-01T00:00:00Z"))
-           (payload (org-canvas--quiz-build-payload data)))
-      (expect (alist-get 'hide_correct_answers_at (alist-get 'quiz payload))
-              :to-equal "2026-08-01T00:00:00Z")))
+    (it "excludes one_question_at_a_time when nil"
+      (let* ((data '(:title "Test" :quiz_type "assignment" :one_question_at_a_time nil))
+             (payload (org-canvas--quiz-build-payload data)))
+        (expect (assq 'one_question_at_a_time (alist-get 'quiz payload)) :to-be nil)))
 
-  (it "includes hide_results when present"
-    (let* ((data '(:title "Test" :quiz_type "assignment" :hide_results "always"))
-           (payload (org-canvas--quiz-build-payload data)))
-      (expect (alist-get 'hide_results (alist-get 'quiz payload))
-              :to-equal "always")))
+    (it "includes cant_go_back when true"
+      (let* ((data '(:title "Test" :quiz_type "assignment" :cant_go_back t))
+             (payload (org-canvas--quiz-build-payload data)))
+        (expect (alist-get 'cant_go_back (alist-get 'quiz payload)) :to-be t))))
 
-  (it "excludes hide_results when nil"
-    (let* ((data '(:title "Test" :quiz_type "assignment" :hide_results nil))
-           (payload (org-canvas--quiz-build-payload data)))
-      (expect (assq 'hide_results (alist-get 'quiz payload)) :to-be nil)))
+  (describe "access code and filters"
+    (it "includes access_code when present"
+      (let* ((data '(:title "Test" :quiz_type "assignment" :access_code "secret123"))
+             (payload (org-canvas--quiz-build-payload data)))
+        (expect (alist-get 'access_code (alist-get 'quiz payload))
+                :to-equal "secret123")))
 
-  (it "includes scoring_policy when present"
-    (let* ((data '(:title "Test" :quiz_type "assignment" :scoring_policy "keep_latest"))
-           (payload (org-canvas--quiz-build-payload data)))
-      (expect (alist-get 'scoring_policy (alist-get 'quiz payload))
-              :to-equal "keep_latest")))
+    (it "excludes access_code when nil"
+      (let* ((data '(:title "Test" :quiz_type "assignment" :access_code nil))
+             (payload (org-canvas--quiz-build-payload data)))
+        (expect (assq 'access_code (alist-get 'quiz payload)) :to-be nil)))
 
-  (it "includes one_question_at_a_time when true"
-    (let* ((data '(:title "Test" :quiz_type "assignment" :one_question_at_a_time t))
-           (payload (org-canvas--quiz-build-payload data)))
-      (expect (alist-get 'one_question_at_a_time (alist-get 'quiz payload)) :to-be t)))
+    (it "includes ip_filter when present"
+      (let* ((data '(:title "Test" :quiz_type "assignment" :ip_filter "10.0.0.0/8"))
+             (payload (org-canvas--quiz-build-payload data)))
+        (expect (alist-get 'ip_filter (alist-get 'quiz payload))
+                :to-equal "10.0.0.0/8")))
 
-  (it "excludes one_question_at_a_time when nil"
-    (let* ((data '(:title "Test" :quiz_type "assignment" :one_question_at_a_time nil))
-           (payload (org-canvas--quiz-build-payload data)))
-      (expect (assq 'one_question_at_a_time (alist-get 'quiz payload)) :to-be nil)))
+    (it "includes hide_results when present"
+      (let* ((data '(:title "Test" :quiz_type "assignment" :hide_results "always"))
+             (payload (org-canvas--quiz-build-payload data)))
+        (expect (alist-get 'hide_results (alist-get 'quiz payload))
+                :to-equal "always")))
 
-  (it "includes cant_go_back when true"
-    (let* ((data '(:title "Test" :quiz_type "assignment" :cant_go_back t))
-           (payload (org-canvas--quiz-build-payload data)))
-      (expect (alist-get 'cant_go_back (alist-get 'quiz payload)) :to-be t)))
+    (it "excludes hide_results when nil"
+      (let* ((data '(:title "Test" :quiz_type "assignment" :hide_results nil))
+             (payload (org-canvas--quiz-build-payload data)))
+        (expect (assq 'hide_results (alist-get 'quiz payload)) :to-be nil)))
 
-  (it "includes ip_filter when present"
-    (let* ((data '(:title "Test" :quiz_type "assignment" :ip_filter "10.0.0.0/8"))
-           (payload (org-canvas--quiz-build-payload data)))
-      (expect (alist-get 'ip_filter (alist-get 'quiz payload))
-              :to-equal "10.0.0.0/8"))))
+    (it "includes scoring_policy when present"
+      (let* ((data '(:title "Test" :quiz_type "assignment" :scoring_policy "keep_latest"))
+             (payload (org-canvas--quiz-build-payload data)))
+        (expect (alist-get 'scoring_policy (alist-get 'quiz payload))
+                :to-equal "keep_latest")))))
 
 (describe "org-canvas--quiz-pull-set-properties new properties"
   (it "sets ACCESS_CODE property"

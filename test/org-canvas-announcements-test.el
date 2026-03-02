@@ -22,32 +22,7 @@ Body text here.
      (let ((data (org-canvas--announcement-parse-entry)))
        (expect (plist-get data :title) :to-equal "Important Announcement"))))
 
-  (it "extracts canvas-id when present"
-    (with-temp-org-buffer
-     "* Test Announcement
-:PROPERTIES:
-:CANVAS_ID: 12345
-:PUBLISHED: true
-:END:
-
-Content.
-"
-     (org-back-to-heading)
-     (let ((data (org-canvas--announcement-parse-entry)))
-       (expect (plist-get data :canvas-id) :to-equal "12345"))))
-
-  (it "returns nil canvas-id for new announcements"
-    (with-temp-org-buffer
-     "* New Announcement
-:PROPERTIES:
-:PUBLISHED: true
-:END:
-
-Content.
-"
-     (org-back-to-heading)
-     (let ((data (org-canvas--announcement-parse-entry)))
-       (expect (plist-get data :canvas-id) :to-be nil))))
+  (test-org-canvas-define-common-parse-tests #'org-canvas--announcement-parse-entry)
 
   (it "parses published property (default true)"
     (with-temp-org-buffer
@@ -86,24 +61,6 @@ Body.
      (org-back-to-heading)
      (let ((data (org-canvas--announcement-parse-entry)))
        (expect (plist-get data :is_announcement) :to-be t))))
-
-  (it "includes pom in data"
-    (with-temp-org-buffer
-     "* Test
-:PROPERTIES:
-:END:
-
-Body.
-"
-     (org-back-to-heading)
-     (let ((data (org-canvas--announcement-parse-entry)))
-       (expect (plist-get data :pom) :to-be-truthy))))
-
-  (it "errors on empty title"
-    (with-temp-org-buffer
-     (concat "* " "\n:PROPERTIES:\n:END:\n\nBody.\n")
-     (org-back-to-heading)
-     (expect (org-canvas--announcement-parse-entry) :to-throw 'error)))
 
   (it "parses POST_AT timestamp"
     (with-temp-org-buffer
@@ -338,38 +295,16 @@ Body content.
 
 (describe "org-canvas--announcement-pull-item"
   (it "sets DELAYED_POST_AT from ISO timestamp"
-    (with-temp-org-buffer
-     "* Announcement
-:PROPERTIES:
-:CANVAS_ID: 1
-:END:
-"
-     (org-back-to-heading)
-     (cl-letf (((symbol-function 'org-canvas--html-to-org)
-                (lambda (html) html)))
-       (org-canvas--announcement-pull-item
-        '((id . 1) (title . "Announcement")
-          (delayed_post_at . "2026-06-15T09:00:00Z")
-          (message . "<p>Hello</p>"))
-        (point))
-       (expect (org-entry-get (point) "DELAYED_POST_AT") :to-match "<2026-06-15"))))
+    (with-pull-property-test #'org-canvas--announcement-pull-item
+      '((id . 1) (title . "Announcement") (delayed_post_at . "2026-06-15T09:00:00Z")
+        (message . "<p>Hello</p>"))
+      "DELAYED_POST_AT" :to-match "<2026-06-15"))
 
   (it "skips DELAYED_POST_AT when nil"
-    (with-temp-org-buffer
-     "* Announcement
-:PROPERTIES:
-:CANVAS_ID: 1
-:END:
-"
-     (org-back-to-heading)
-     (cl-letf (((symbol-function 'org-canvas--html-to-org)
-                (lambda (html) html)))
-       (org-canvas--announcement-pull-item
-        '((id . 1) (title . "Announcement")
-          (delayed_post_at . nil)
-          (message . "<p>Hello</p>"))
-        (point))
-       (expect (org-entry-get (point) "DELAYED_POST_AT") :to-be nil))))
+    (with-pull-property-test #'org-canvas--announcement-pull-item
+      '((id . 1) (title . "Announcement") (delayed_post_at . nil)
+        (message . "<p>Hello</p>"))
+      "DELAYED_POST_AT" :to-be nil))
 
   (it "inserts body text"
     (with-temp-org-buffer

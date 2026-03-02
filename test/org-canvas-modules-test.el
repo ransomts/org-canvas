@@ -415,103 +415,109 @@
 ;;;; Stage 2: Build Module Item Payload
 
 (describe "org-canvas--module-item-build-payload"
-  (it "wraps in module_item key"
-    (let* ((data '(:type "SubHeader" :title "Section"))
-           (payload (org-canvas--module-item-build-payload data 1)))
-      (expect (gethash "module_item" payload) :to-be-truthy)))
+  (describe "common fields"
+    (it "wraps in module_item key"
+      (let* ((data '(:type "SubHeader" :title "Section"))
+             (payload (org-canvas--module-item-build-payload data 1)))
+        (expect (gethash "module_item" payload) :to-be-truthy)))
 
-  (it "includes type and title"
-    (let* ((data '(:type "Page" :title "Syllabus"))
-           (payload (org-canvas--module-item-build-payload data 1))
-           (item (gethash "module_item" payload)))
-      (expect (gethash "type" item) :to-equal "Page")
-      (expect (gethash "title" item) :to-equal "Syllabus")))
+    (it "includes type and title"
+      (let* ((data '(:type "Page" :title "Syllabus"))
+             (payload (org-canvas--module-item-build-payload data 1))
+             (item (gethash "module_item" payload)))
+        (expect (gethash "type" item) :to-equal "Page")
+        (expect (gethash "title" item) :to-equal "Syllabus")))
 
-  (it "includes position"
-    (let* ((data '(:type "SubHeader" :title "Test"))
-           (payload (org-canvas--module-item-build-payload data 3))
-           (item (gethash "module_item" payload)))
-      (expect (gethash "position" item) :to-equal 3)))
+    (it "includes position"
+      (let* ((data '(:type "SubHeader" :title "Test"))
+             (payload (org-canvas--module-item-build-payload data 3))
+             (item (gethash "module_item" payload)))
+        (expect (gethash "position" item) :to-equal 3))))
 
-  (it "includes content_id when present"
-    (let* ((data '(:type "Assignment" :title "HW1" :content-id 999))
-           (payload (org-canvas--module-item-build-payload data 1))
-           (item (gethash "module_item" payload)))
-      (expect (gethash "content_id" item) :to-equal 999)))
+  (describe "content_id"
+    (it "includes content_id when present"
+      (let* ((data '(:type "Assignment" :title "HW1" :content-id 999))
+             (payload (org-canvas--module-item-build-payload data 1))
+             (item (gethash "module_item" payload)))
+        (expect (gethash "content_id" item) :to-equal 999)))
 
-  (it "excludes content_id when not present"
-    (let* ((data '(:type "SubHeader" :title "Section"))
-           (payload (org-canvas--module-item-build-payload data 1))
-           (item (gethash "module_item" payload)))
-      (expect (gethash "content_id" item) :to-be nil)))
+    (it "excludes content_id when not present"
+      (let* ((data '(:type "SubHeader" :title "Section"))
+             (payload (org-canvas--module-item-build-payload data 1))
+             (item (gethash "module_item" payload)))
+        (expect (gethash "content_id" item) :to-be nil))))
 
-  (it "includes page_url for Page type"
-    (let* ((data '(:type "Page" :title "Syllabus" :page-url "syllabus"))
-           (payload (org-canvas--module-item-build-payload data 1))
-           (item (gethash "module_item" payload)))
-      (expect (gethash "page_url" item) :to-equal "syllabus")))
+  (describe "page URL"
+    (it "includes page_url for Page type"
+      (let* ((data '(:type "Page" :title "Syllabus" :page-url "syllabus"))
+             (payload (org-canvas--module-item-build-payload data 1))
+             (item (gethash "module_item" payload)))
+        (expect (gethash "page_url" item) :to-equal "syllabus")))
 
-  (it "excludes page_url for non-Page types"
-    (let* ((data '(:type "Assignment" :title "HW1" :page-url "should-not-appear"))
-           (payload (org-canvas--module-item-build-payload data 1))
-           (item (gethash "module_item" payload)))
-      (expect (gethash "page_url" item) :to-be nil)))
+    (it "excludes page_url for non-Page types"
+      (let* ((data '(:type "Assignment" :title "HW1" :page-url "should-not-appear"))
+             (payload (org-canvas--module-item-build-payload data 1))
+             (item (gethash "module_item" payload)))
+        (expect (gethash "page_url" item) :to-be nil))))
 
-  (it "includes indent"
-    (let* ((data '(:type "SubHeader" :title "Test" :indent 1))
-           (payload (org-canvas--module-item-build-payload data 1))
-           (item (gethash "module_item" payload)))
-      (expect (gethash "indent" item) :to-equal 1)))
+  (describe "indent"
+    (it "includes indent"
+      (let* ((data '(:type "SubHeader" :title "Test" :indent 1))
+             (payload (org-canvas--module-item-build-payload data 1))
+             (item (gethash "module_item" payload)))
+        (expect (gethash "indent" item) :to-equal 1)))
 
-  (it "excludes indent when nil"
-    (let* ((data '(:type "SubHeader" :title "Test"))
-           (payload (org-canvas--module-item-build-payload data 1))
-           (item (gethash "module_item" payload)))
-      (expect (gethash "indent" item) :to-be nil)))
+    (it "excludes indent when nil"
+      (let* ((data '(:type "SubHeader" :title "Test"))
+             (payload (org-canvas--module-item-build-payload data 1))
+             (item (gethash "module_item" payload)))
+        (expect (gethash "indent" item) :to-be nil))))
 
-  (it "includes completion_requirement type"
-    (let* ((data '(:type "Assignment" :title "HW1" :completion-requirement "must_submit"))
-           (payload (org-canvas--module-item-build-payload data 1))
-           (item (gethash "module_item" payload)))
-      (expect (gethash "completion_requirement[type]" item) :to-equal "must_submit")))
+  (describe "completion requirements"
+    (it "includes completion_requirement type"
+      (let* ((data '(:type "Assignment" :title "HW1" :completion-requirement "must_submit"))
+             (payload (org-canvas--module-item-build-payload data 1))
+             (item (gethash "module_item" payload)))
+        (expect (gethash "completion_requirement[type]" item) :to-equal "must_submit")))
 
-  (it "includes completion_requirement min_score"
-    (let* ((data '(:type "Quiz" :title "Quiz 1" :completion-requirement "min_score" :min-score 80))
-           (payload (org-canvas--module-item-build-payload data 1))
-           (item (gethash "module_item" payload)))
-      (expect (gethash "completion_requirement[type]" item) :to-equal "min_score")
-      (expect (gethash "completion_requirement[min_score]" item) :to-equal 80)))
+    (it "includes completion_requirement min_score"
+      (let* ((data '(:type "Quiz" :title "Quiz 1" :completion-requirement "min_score" :min-score 80))
+             (payload (org-canvas--module-item-build-payload data 1))
+             (item (gethash "module_item" payload)))
+        (expect (gethash "completion_requirement[type]" item) :to-equal "min_score")
+        (expect (gethash "completion_requirement[min_score]" item) :to-equal 80)))
 
-  (it "excludes min_score when not specified"
-    (let* ((data '(:type "Page" :title "Reading" :completion-requirement "must_view"))
-           (payload (org-canvas--module-item-build-payload data 1))
-           (item (gethash "module_item" payload)))
-      (expect (gethash "completion_requirement[type]" item) :to-equal "must_view")
-      (expect (gethash "completion_requirement[min_score]" item) :to-be nil)))
+    (it "excludes min_score when not specified"
+      (let* ((data '(:type "Page" :title "Reading" :completion-requirement "must_view"))
+             (payload (org-canvas--module-item-build-payload data 1))
+             (item (gethash "module_item" payload)))
+        (expect (gethash "completion_requirement[type]" item) :to-equal "must_view")
+        (expect (gethash "completion_requirement[min_score]" item) :to-be nil))))
 
-  (it "includes external_url for ExternalUrl type"
-    (let* ((data '(:type "ExternalUrl" :title "Google" :external-url "https://www.google.com"))
-           (payload (org-canvas--module-item-build-payload data 1))
-           (item (gethash "module_item" payload)))
-      (expect (gethash "external_url" item) :to-equal "https://www.google.com")))
+  (describe "external URL items"
+    (it "includes external_url for ExternalUrl type"
+      (let* ((data '(:type "ExternalUrl" :title "Google" :external-url "https://www.google.com"))
+             (payload (org-canvas--module-item-build-payload data 1))
+             (item (gethash "module_item" payload)))
+        (expect (gethash "external_url" item) :to-equal "https://www.google.com")))
 
-  (it "includes new_tab when set"
-    (let* ((data '(:type "ExternalUrl" :title "Link" :external-url "https://example.com" :new-tab t))
-           (payload (org-canvas--module-item-build-payload data 1))
-           (item (gethash "module_item" payload)))
-      (expect (gethash "new_tab" item) :to-be t)))
+    (it "includes new_tab when set"
+      (let* ((data '(:type "ExternalUrl" :title "Link" :external-url "https://example.com" :new-tab t))
+             (payload (org-canvas--module-item-build-payload data 1))
+             (item (gethash "module_item" payload)))
+        (expect (gethash "new_tab" item) :to-be t)))
 
-  (it "excludes new_tab when nil"
-    (let* ((data '(:type "ExternalUrl" :title "Link" :external-url "https://example.com"))
-           (payload (org-canvas--module-item-build-payload data 1))
-           (item (gethash "module_item" payload)))
-      (expect (gethash "new_tab" item) :to-be nil)))
+    (it "excludes new_tab when nil"
+      (let* ((data '(:type "ExternalUrl" :title "Link" :external-url "https://example.com"))
+             (payload (org-canvas--module-item-build-payload data 1))
+             (item (gethash "module_item" payload)))
+        (expect (gethash "new_tab" item) :to-be nil)))
 
-  (it "excludes external_url when not present"
-    (let* ((data '(:type "SubHeader" :title "Section"))
-           (payload (org-canvas--module-item-build-payload data 1))
-           (item (gethash "module_item" payload)))
-      (expect (gethash "external_url" item) :to-be nil))))
+    (it "excludes external_url when not present"
+      (let* ((data '(:type "SubHeader" :title "Section"))
+             (payload (org-canvas--module-item-build-payload data 1))
+             (item (gethash "module_item" payload)))
+        (expect (gethash "external_url" item) :to-be nil)))))
 
 ;;;; Stage 3: Push to API (mocked)
 

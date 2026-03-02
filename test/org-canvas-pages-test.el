@@ -22,32 +22,9 @@ Welcome to the course.
      (let ((data (org-canvas--page-parse-entry)))
        (expect (plist-get data :title) :to-equal "Course Syllabus"))))
 
-  (it "extracts canvas-url when present"
-    (with-temp-org-buffer
-     "* My Page
-:PROPERTIES:
-:CANVAS_URL: my-page-url
-:PUBLISHED: true
-:END:
-
-Content.
-"
-     (org-back-to-heading)
-     (let ((data (org-canvas--page-parse-entry)))
-       (expect (plist-get data :canvas-url) :to-equal "my-page-url"))))
-
-  (it "returns nil canvas-url for new pages"
-    (with-temp-org-buffer
-     "* New Page
-:PROPERTIES:
-:PUBLISHED: true
-:END:
-
-Content.
-"
-     (org-back-to-heading)
-     (let ((data (org-canvas--page-parse-entry)))
-       (expect (plist-get data :canvas-url) :to-be nil))))
+  (test-org-canvas-define-common-parse-tests
+   #'org-canvas--page-parse-entry
+   :id-property "CANVAS_URL" :id-key :canvas-url)
 
   (it "parses published property (default true)"
     (with-temp-org-buffer
@@ -74,18 +51,6 @@ Welcome!
      (org-back-to-heading)
      (let ((data (org-canvas--page-parse-entry)))
        (expect (plist-get data :front_page) :to-be t))))
-
-  (it "includes pom in data"
-    (with-temp-org-buffer
-     "* Test
-:PROPERTIES:
-:END:
-
-Body.
-"
-     (org-back-to-heading)
-     (let ((data (org-canvas--page-parse-entry)))
-       (expect (plist-get data :pom) :to-be-truthy))))
 
   (it "parses EDITING_ROLES property"
     (with-temp-org-buffer

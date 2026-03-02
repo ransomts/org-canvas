@@ -55,97 +55,102 @@
             :to-equal "Week 1 - Introduction")))
 
 (describe "org-canvas--file-guess-content-type"
-  (it "returns application/pdf for PDF files"
-    (expect (org-canvas--file-guess-content-type "document.pdf")
-            :to-equal "application/pdf"))
+  (describe "document types"
+    (it "returns application/pdf for PDF files"
+      (expect (org-canvas--file-guess-content-type "document.pdf")
+              :to-equal "application/pdf"))
 
-  (it "returns image/png for PNG files"
-    (expect (org-canvas--file-guess-content-type "image.png")
-            :to-equal "image/png"))
+    (it "returns text/plain for TXT files"
+      (expect (org-canvas--file-guess-content-type "notes.txt")
+              :to-equal "text/plain"))
 
-  (it "returns image/jpeg for JPG files"
-    (expect (org-canvas--file-guess-content-type "photo.jpg")
-            :to-equal "image/jpeg"))
+    (it "returns text/html for HTML files"
+      (expect (org-canvas--file-guess-content-type "page.html")
+              :to-equal "text/html"))
 
-  (it "returns text/plain for TXT files"
-    (expect (org-canvas--file-guess-content-type "notes.txt")
-            :to-equal "text/plain"))
+    (it "returns text/csv for CSV files"
+      (expect (org-canvas--file-guess-content-type "data.csv")
+              :to-equal "text/csv"))
 
-  (it "returns text/html for HTML files"
-    (expect (org-canvas--file-guess-content-type "page.html")
-            :to-equal "text/html"))
+    (it "returns text/markdown for MD files"
+      (expect (org-canvas--file-guess-content-type "readme.md")
+              :to-equal "text/markdown"))
 
-  (it "returns application/json for JSON files"
-    (expect (org-canvas--file-guess-content-type "data.json")
-            :to-equal "application/json"))
+    (it "returns application/msword for DOC files"
+      (expect (org-canvas--file-guess-content-type "document.doc")
+              :to-equal "application/msword"))
 
-  (it "returns text/x-python for Python files"
-    (expect (org-canvas--file-guess-content-type "script.py")
-            :to-equal "text/x-python"))
+    (it "returns application/vnd.ms-excel for XLS files"
+      (expect (org-canvas--file-guess-content-type "spreadsheet.xls")
+              :to-equal "application/vnd.ms-excel"))
 
-  (it "returns application/zip for ZIP files"
-    (expect (org-canvas--file-guess-content-type "archive.zip")
-            :to-equal "application/zip"))
+    (it "returns application/vnd.ms-powerpoint for PPT files"
+      (expect (org-canvas--file-guess-content-type "slides.ppt")
+              :to-equal "application/vnd.ms-powerpoint")))
 
-  (it "returns application/octet-stream for unknown extensions"
-    (expect (org-canvas--file-guess-content-type "file.xyz")
-            :to-equal "application/octet-stream"))
+  (describe "image types"
+    (it "returns image/png for PNG files"
+      (expect (org-canvas--file-guess-content-type "image.png")
+              :to-equal "image/png"))
 
-  (it "handles uppercase extensions"
-    (expect (org-canvas--file-guess-content-type "DOCUMENT.PDF")
-            :to-equal "application/pdf"))
+    (it "returns image/jpeg for JPG files"
+      (expect (org-canvas--file-guess-content-type "photo.jpg")
+              :to-equal "image/jpeg"))
 
-  (it "handles files without extensions"
-    (expect (org-canvas--file-guess-content-type "Makefile")
-            :to-equal "application/octet-stream"))
+    (it "returns image/gif for GIF files"
+      (expect (org-canvas--file-guess-content-type "animation.gif")
+              :to-equal "image/gif"))
 
-  (it "returns text/css for CSS files"
-    (expect (org-canvas--file-guess-content-type "style.css")
-            :to-equal "text/css"))
+    (it "returns image/svg+xml for SVG files"
+      (expect (org-canvas--file-guess-content-type "icon.svg")
+              :to-equal "image/svg+xml")))
 
-  (it "returns application/javascript for JS files"
-    (expect (org-canvas--file-guess-content-type "script.js")
-            :to-equal "application/javascript"))
+  (describe "code and data types"
+    (it "returns application/json for JSON files"
+      (expect (org-canvas--file-guess-content-type "data.json")
+              :to-equal "application/json"))
 
-  (it "returns image/gif for GIF files"
-    (expect (org-canvas--file-guess-content-type "animation.gif")
-            :to-equal "image/gif"))
+    (it "returns text/x-python for Python files"
+      (expect (org-canvas--file-guess-content-type "script.py")
+              :to-equal "text/x-python"))
 
-  (it "returns image/svg+xml for SVG files"
-    (expect (org-canvas--file-guess-content-type "icon.svg")
-            :to-equal "image/svg+xml"))
+    (it "returns text/css for CSS files"
+      (expect (org-canvas--file-guess-content-type "style.css")
+              :to-equal "text/css"))
 
-  (it "returns application/gzip for GZ files"
-    (expect (org-canvas--file-guess-content-type "archive.gz")
-            :to-equal "application/gzip"))
+    (it "returns application/javascript for JS files"
+      (expect (org-canvas--file-guess-content-type "script.js")
+              :to-equal "application/javascript"))
 
-  (it "returns application/x-tar for TAR files"
-    (expect (org-canvas--file-guess-content-type "backup.tar")
-            :to-equal "application/x-tar"))
+    (it "returns application/xml for XML files"
+      (expect (org-canvas--file-guess-content-type "config.xml")
+              :to-equal "application/xml")))
 
-  (it "returns text/markdown for MD files"
-    (expect (org-canvas--file-guess-content-type "readme.md")
-            :to-equal "text/markdown"))
+  (describe "archive types"
+    (it "returns application/zip for ZIP files"
+      (expect (org-canvas--file-guess-content-type "archive.zip")
+              :to-equal "application/zip"))
 
-  (it "returns text/csv for CSV files"
-    (expect (org-canvas--file-guess-content-type "data.csv")
-            :to-equal "text/csv"))
+    (it "returns application/gzip for GZ files"
+      (expect (org-canvas--file-guess-content-type "archive.gz")
+              :to-equal "application/gzip"))
 
-  (it "returns application/msword for DOC files"
-    (expect (org-canvas--file-guess-content-type "document.doc")
-            :to-equal "application/msword"))
+    (it "returns application/x-tar for TAR files"
+      (expect (org-canvas--file-guess-content-type "backup.tar")
+              :to-equal "application/x-tar")))
 
-  (it "returns application/vnd.ms-excel for XLS files"
-    (expect (org-canvas--file-guess-content-type "spreadsheet.xls")
-            :to-equal "application/vnd.ms-excel"))
+  (describe "other types"
+    (it "returns application/octet-stream for unknown extensions"
+      (expect (org-canvas--file-guess-content-type "file.xyz")
+              :to-equal "application/octet-stream"))
 
-  (it "returns application/vnd.ms-powerpoint for PPT files"
-    (expect (org-canvas--file-guess-content-type "slides.ppt")
-            :to-equal "application/vnd.ms-powerpoint"))
+    (it "handles uppercase extensions"
+      (expect (org-canvas--file-guess-content-type "DOCUMENT.PDF")
+              :to-equal "application/pdf"))
 
-  (it "returns application/xml for XML files"
-    (expect (org-canvas--file-guess-content-type "config.xml")
-            :to-equal "application/xml")))
+    (it "handles files without extensions"
+      (expect (org-canvas--file-guess-content-type "Makefile")
+              :to-equal "application/octet-stream"))))
 
 (describe "org-canvas--file-get-folder-path"
   (it "returns empty string for top-level headings"

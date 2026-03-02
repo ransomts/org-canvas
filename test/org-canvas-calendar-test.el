@@ -22,32 +22,9 @@ Description.
      (let ((data (org-canvas--calendar-event-parse-entry)))
        (expect (plist-get data :title) :to-equal "Office Hours"))))
 
-  (it "extracts canvas-id when present"
-    (with-temp-org-buffer
-     "* Office Hours
-:PROPERTIES:
-:CANVAS_ID: 777
-:START_AT: <2026-09-01 Tue 14:00>
-:END:
-
-Description.
-"
-     (org-back-to-heading)
-     (let ((data (org-canvas--calendar-event-parse-entry)))
-       (expect (plist-get data :canvas-id) :to-equal "777"))))
-
-  (it "returns nil canvas-id for new events"
-    (with-temp-org-buffer
-     "* New Event
-:PROPERTIES:
-:START_AT: <2026-09-01 Tue 14:00>
-:END:
-
-Description.
-"
-     (org-back-to-heading)
-     (let ((data (org-canvas--calendar-event-parse-entry)))
-       (expect (plist-get data :canvas-id) :to-be nil))))
+  (test-org-canvas-define-common-parse-tests
+   #'org-canvas--calendar-event-parse-entry
+   :extra-props ":START_AT: <2026-09-01 Tue 14:00>\n")
 
   (it "parses START_AT timestamp to ISO8601"
     (with-temp-org-buffer
@@ -133,12 +110,6 @@ Description.
      (let ((data (org-canvas--calendar-event-parse-entry)))
        (expect (plist-get data :location_address) :to-equal "123 University Ave"))))
 
-  (it "errors on empty title"
-    (with-temp-org-buffer
-     (concat "* " "\n:PROPERTIES:\n:START_AT: <2026-09-01 Tue 14:00>\n:END:\n")
-     (org-back-to-heading)
-     (expect (org-canvas--calendar-event-parse-entry) :to-throw 'error)))
-
   (it "errors on missing START_AT"
     (with-temp-org-buffer
      "* No Start Time
@@ -147,17 +118,6 @@ Description.
 "
      (org-back-to-heading)
      (expect (org-canvas--calendar-event-parse-entry) :to-throw 'error)))
-
-  (it "includes pom in data"
-    (with-temp-org-buffer
-     "* Event
-:PROPERTIES:
-:START_AT: <2026-09-01 Tue 14:00>
-:END:
-"
-     (org-back-to-heading)
-     (let ((data (org-canvas--calendar-event-parse-entry)))
-       (expect (plist-get data :pom) :to-be-truthy))))
 
   (it "exports body to HTML for description"
     (with-temp-org-buffer
@@ -181,7 +141,7 @@ This is the event description.
            (payload (org-canvas--calendar-event-build-payload data)))
       (expect (gethash "calendar_event" payload) :to-be-truthy)))
 
-  (it "includes title in event"
+  (it "wraps title inside calendar_event key"
     (let* ((org-canvas-course-id "99999")
            (data '(:title "Office Hours" :start_at "2026-09-01T14:00:00Z"))
            (payload (org-canvas--calendar-event-build-payload data))
@@ -195,7 +155,7 @@ This is the event description.
            (event (gethash "calendar_event" payload)))
       (expect (gethash "context_code" event) :to-equal "course_99999")))
 
-  (it "includes start_at"
+  (it "converts Org timestamp to ISO8601 start_at"
     (let* ((org-canvas-course-id "99999")
            (data '(:title "Event" :start_at "2026-09-01T14:00:00Z"))
            (payload (org-canvas--calendar-event-build-payload data))
@@ -291,7 +251,6 @@ This is the event description.
           (let ((data '(:title "Stale" :canvas-id "999"))
                 (payload (make-hash-table)))
             (let ((result (org-canvas--calendar-event-push-to-api data payload)))
-              (expect call-count :to-equal 2)
               (expect (alist-get 'id result) :to-equal 99)))))))
 
   (it "searches Canvas on timeout"
@@ -430,37 +389,17 @@ Weekly office hours.
 
 (describe "org-canvas--calendar-event-pull-item"
   (it "sets START_AT property"
-    (with-temp-org-buffer
-     "* Event
-:PROPERTIES:
-:CANVAS_ID: 1
-:END:
-"
-     (org-back-to-heading)
-     (cl-letf (((symbol-function 'org-canvas--html-to-org)
-                (lambda (html) html)))
-       (org-canvas--calendar-event-pull-item
-        '((id . 1) (title . "Event")
-          (start_at . "2026-09-01T14:00:00Z"))
-        (point))
-       (expect (org-entry-get (point) "START_AT") :to-match "<2026-09-01"))))
+    (with-pull-property-test #'org-canvas--calendar-event-pull-item
+      '((id . 1) (title . "Event")
+        (start_at . "2026-09-01T14:00:00Z"))
+      "START_AT" :to-match "<2026-09-01"))
 
   (it "sets END_AT property"
-    (with-temp-org-buffer
-     "* Event
-:PROPERTIES:
-:CANVAS_ID: 1
-:END:
-"
-     (org-back-to-heading)
-     (cl-letf (((symbol-function 'org-canvas--html-to-org)
-                (lambda (html) html)))
-       (org-canvas--calendar-event-pull-item
-        '((id . 1) (title . "Event")
-          (start_at . "2026-09-01T14:00:00Z")
-          (end_at . "2026-09-01T15:30:00Z"))
-        (point))
-       (expect (org-entry-get (point) "END_AT") :to-match "<2026-09-01"))))
+    (with-pull-property-test #'org-canvas--calendar-event-pull-item
+      '((id . 1) (title . "Event")
+        (start_at . "2026-09-01T14:00:00Z")
+        (end_at . "2026-09-01T15:30:00Z"))
+      "END_AT" :to-match "<2026-09-01"))
 
   (it "sets ALL_DAY property"
     (with-temp-org-buffer

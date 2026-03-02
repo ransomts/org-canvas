@@ -22,26 +22,8 @@
      (let ((data (org-canvas--assignment-group-parse-entry)))
        (expect (plist-get data :name) :to-equal "Homework"))))
 
-  (it "errors on empty name"
-    (with-temp-org-buffer
-     (concat "* Config\n** " "\n:PROPERTIES:\n:WEIGHT: 30\n:END:\n")
-     (search-forward "** ")
-     (org-back-to-heading)
-     (expect (org-canvas--assignment-group-parse-entry) :to-throw 'error)))
-
-  (it "extracts canvas-id when present"
-    (with-temp-org-buffer
-     "* Config
-** Exams
-:PROPERTIES:
-:WEIGHT: 40
-:CANVAS_ID: 22222
-:END:
-"
-     (search-forward "Exams")
-     (org-back-to-heading)
-     (let ((data (org-canvas--assignment-group-parse-entry)))
-       (expect (plist-get data :canvas-id) :to-equal "22222"))))
+  (test-org-canvas-define-common-parse-tests
+   #'org-canvas--assignment-group-parse-entry)
 
   (it "parses group_weight"
     (with-temp-org-buffer
@@ -125,18 +107,7 @@
      (let ((data (org-canvas--assignment-group-parse-entry)))
        (expect (plist-get data :position) :to-be nil))))
 
-  (it "includes pom in data"
-    (with-temp-org-buffer
-     "* Config
-** Test
-:PROPERTIES:
-:WEIGHT: 10
-:END:
-"
-     (search-forward "Test")
-     (org-back-to-heading)
-     (let ((data (org-canvas--assignment-group-parse-entry)))
-       (expect (plist-get data :pom) :to-be-truthy)))))
+)
 
 ;;;; Stage 2: Build Payload
 

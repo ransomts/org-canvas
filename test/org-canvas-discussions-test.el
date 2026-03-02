@@ -9,42 +9,26 @@
 ;;;; Stage 1: Parse Entry
 
 (describe "org-canvas--discussion-parse-entry"
-  (it "extracts title from heading"
-    (with-temp-org-buffer
-     "* Week 1 Discussion
+  (describe "common fields"
+    (it "extracts title from heading"
+      (with-temp-org-buffer
+       "* Week 1 Discussion
 :PROPERTIES:
 :PUBLISHED: true
 :END:
 
 Share your thoughts.
 "
-     (org-back-to-heading)
-     (let ((data (org-canvas--discussion-parse-entry)))
-       (expect (plist-get data :title) :to-equal "Week 1 Discussion"))))
+       (org-back-to-heading)
+       (let ((data (org-canvas--discussion-parse-entry)))
+         (expect (plist-get data :title) :to-equal "Week 1 Discussion"))))
 
-  (it "extracts canvas-id when present"
-    (with-temp-org-buffer
-     "* Discussion
-:PROPERTIES:
-:CANVAS_ID: 55555
-:PUBLISHED: true
-:END:
+    (test-org-canvas-define-common-parse-tests #'org-canvas--discussion-parse-entry))
 
-Content.
-"
-     (org-back-to-heading)
-     (let ((data (org-canvas--discussion-parse-entry)))
-       (expect (plist-get data :canvas-id) :to-equal "55555"))))
-
-  (it "errors on empty title"
-    (with-temp-org-buffer
-     (concat "* " "\n:PROPERTIES:\n:END:\n\nBody.\n")
-     (org-back-to-heading)
-     (expect (org-canvas--discussion-parse-entry) :to-throw 'error)))
-
-  (it "parses discussion_type property"
-    (with-temp-org-buffer
-     "* Threaded Discussion
+  (describe "discussion-specific fields"
+    (it "parses discussion_type property"
+      (with-temp-org-buffer
+       "* Threaded Discussion
 :PROPERTIES:
 :DISCUSSION_TYPE: threaded
 :PUBLISHED: true
@@ -52,42 +36,26 @@ Content.
 
 Content.
 "
-     (org-back-to-heading)
-     (let ((data (org-canvas--discussion-parse-entry)))
-       (expect (plist-get data :discussion_type) :to-equal "threaded"))))
+       (org-back-to-heading)
+       (let ((data (org-canvas--discussion-parse-entry)))
+         (expect (plist-get data :discussion_type) :to-equal "threaded"))))
 
-  (it "defaults discussion_type to side_comment"
-    (with-temp-org-buffer
-     "* Discussion
+    (it "defaults discussion_type to side_comment"
+      (with-temp-org-buffer
+       "* Discussion
 :PROPERTIES:
 :PUBLISHED: true
 :END:
 
 Content.
 "
-     (org-back-to-heading)
-     (let ((data (org-canvas--discussion-parse-entry)))
-       (expect (plist-get data :discussion_type) :to-equal "side_comment"))))
+       (org-back-to-heading)
+       (let ((data (org-canvas--discussion-parse-entry)))
+         (expect (plist-get data :discussion_type) :to-equal "side_comment"))))
 
-  (it "parses grading properties"
-    (with-temp-org-buffer
-     "* Graded Discussion
-:PROPERTIES:
-:PUBLISHED: true
-:GRADING_TYPE: points
-:POINTS: 25
-:END:
-
-Participate for points.
-"
-     (org-back-to-heading)
-     (let ((data (org-canvas--discussion-parse-entry)))
-       (expect (plist-get data :grading_type) :to-equal "points")
-       (expect (plist-get data :points_possible) :to-equal 25))))
-
-  (it "parses post_first property"
-    (with-temp-org-buffer
-     "* Discussion
+    (it "parses post_first property"
+      (with-temp-org-buffer
+       "* Discussion
 :PROPERTIES:
 :PUBLISHED: true
 :POST_FIRST: true
@@ -95,25 +63,13 @@ Participate for points.
 
 Content.
 "
-     (org-back-to-heading)
-     (let ((data (org-canvas--discussion-parse-entry)))
-       (expect (plist-get data :require_initial_post) :to-be t))))
+       (org-back-to-heading)
+       (let ((data (org-canvas--discussion-parse-entry)))
+         (expect (plist-get data :require_initial_post) :to-be t))))
 
-  (it "includes pom in data"
-    (with-temp-org-buffer
-     "* Test
-:PROPERTIES:
-:END:
-
-Body.
-"
-     (org-back-to-heading)
-     (let ((data (org-canvas--discussion-parse-entry)))
-       (expect (plist-get data :pom) :to-be-truthy))))
-
-  (it "parses PINNED property"
-    (with-temp-org-buffer
-     "* Pinned Discussion
+    (it "parses PINNED property"
+      (with-temp-org-buffer
+       "* Pinned Discussion
 :PROPERTIES:
 :PINNED: true
 :PUBLISHED: true
@@ -121,26 +77,26 @@ Body.
 
 Content.
 "
-     (org-back-to-heading)
-     (let ((data (org-canvas--discussion-parse-entry)))
-       (expect (plist-get data :pinned) :to-be t))))
+       (org-back-to-heading)
+       (let ((data (org-canvas--discussion-parse-entry)))
+         (expect (plist-get data :pinned) :to-be t))))
 
-  (it "defaults PINNED to nil"
-    (with-temp-org-buffer
-     "* Normal Discussion
+    (it "defaults PINNED to nil"
+      (with-temp-org-buffer
+       "* Normal Discussion
 :PROPERTIES:
 :PUBLISHED: true
 :END:
 
 Content.
 "
-     (org-back-to-heading)
-     (let ((data (org-canvas--discussion-parse-entry)))
-       (expect (plist-get data :pinned) :to-be nil))))
+       (org-back-to-heading)
+       (let ((data (org-canvas--discussion-parse-entry)))
+         (expect (plist-get data :pinned) :to-be nil))))
 
-  (it "parses AVAILABLE_FROM as delayed_post_at"
-    (with-temp-org-buffer
-     "* Delayed Discussion
+    (it "parses AVAILABLE_FROM as delayed_post_at"
+      (with-temp-org-buffer
+       "* Delayed Discussion
 :PROPERTIES:
 :PUBLISHED: true
 :AVAILABLE_FROM: <2026-02-01 Sun 08:00>
@@ -148,17 +104,17 @@ Content.
 
 Content.
 "
-     (org-back-to-heading)
-     (let ((data (org-canvas--discussion-parse-entry)))
-       (expect (plist-get data :delayed_post_at) :to-match "^2026-02-01T"))))
+       (org-back-to-heading)
+       (let ((data (org-canvas--discussion-parse-entry)))
+         (expect (plist-get data :delayed_post_at) :to-match "^2026-02-01T"))))
 
-  (it "parses DUE_AT timestamp"
-    (let ((old-tz (getenv "TZ")))
-      (unwind-protect
-          (progn
-            (set-time-zone-rule "UTC")
-            (with-temp-org-buffer
-             "* Graded Discussion
+    (it "parses DUE_AT timestamp"
+      (let ((old-tz (getenv "TZ")))
+        (unwind-protect
+            (progn
+              (set-time-zone-rule "UTC")
+              (with-temp-org-buffer
+               "* Graded Discussion
 :PROPERTIES:
 :PUBLISHED: true
 :GRADING_TYPE: points
@@ -168,18 +124,18 @@ Content.
 
 Content.
 "
-             (org-back-to-heading)
-             (let ((data (org-canvas--discussion-parse-entry)))
-               (expect (plist-get data :due_at) :to-match "^2026-03-15T"))))
-        (set-time-zone-rule old-tz))))
+               (org-back-to-heading)
+               (let ((data (org-canvas--discussion-parse-entry)))
+                 (expect (plist-get data :due_at) :to-match "^2026-03-15T"))))
+          (set-time-zone-rule old-tz))))
 
-  (it "parses LOCK_AT timestamp"
-    (let ((old-tz (getenv "TZ")))
-      (unwind-protect
-          (progn
-            (set-time-zone-rule "UTC")
-            (with-temp-org-buffer
-             "* Discussion
+    (it "parses LOCK_AT timestamp"
+      (let ((old-tz (getenv "TZ")))
+        (unwind-protect
+            (progn
+              (set-time-zone-rule "UTC")
+              (with-temp-org-buffer
+               "* Discussion
 :PROPERTIES:
 :PUBLISHED: true
 :LOCK_AT: <2026-04-01 Wed 23:59>
@@ -187,29 +143,29 @@ Content.
 
 Content.
 "
-             (org-back-to-heading)
-             (let ((data (org-canvas--discussion-parse-entry)))
-               (expect (plist-get data :lock_at) :to-match "^2026-04-01T"))))
-        (set-time-zone-rule old-tz))))
+               (org-back-to-heading)
+               (let ((data (org-canvas--discussion-parse-entry)))
+                 (expect (plist-get data :lock_at) :to-match "^2026-04-01T"))))
+          (set-time-zone-rule old-tz))))
 
-  (it "returns nil for absent date properties"
-    (with-temp-org-buffer
-     "* Simple Discussion
+    (it "returns nil for absent date properties"
+      (with-temp-org-buffer
+       "* Simple Discussion
 :PROPERTIES:
 :PUBLISHED: true
 :END:
 
 Content.
 "
-     (org-back-to-heading)
-     (let ((data (org-canvas--discussion-parse-entry)))
-       (expect (plist-get data :delayed_post_at) :to-be nil)
-       (expect (plist-get data :due_at) :to-be nil)
-       (expect (plist-get data :lock_at) :to-be nil))))
+       (org-back-to-heading)
+       (let ((data (org-canvas--discussion-parse-entry)))
+         (expect (plist-get data :delayed_post_at) :to-be nil)
+         (expect (plist-get data :due_at) :to-be nil)
+         (expect (plist-get data :lock_at) :to-be nil))))
 
-  (it "parses ALLOW_RATING property"
-    (with-temp-org-buffer
-     "* Rated Discussion
+    (it "parses ALLOW_RATING property"
+      (with-temp-org-buffer
+       "* Rated Discussion
 :PROPERTIES:
 :PUBLISHED: true
 :ALLOW_RATING: true
@@ -217,13 +173,13 @@ Content.
 
 Content.
 "
-     (org-back-to-heading)
-     (let ((data (org-canvas--discussion-parse-entry)))
-       (expect (plist-get data :allow_rating) :to-be t))))
+       (org-back-to-heading)
+       (let ((data (org-canvas--discussion-parse-entry)))
+         (expect (plist-get data :allow_rating) :to-be t))))
 
-  (it "parses ONLY_GRADERS_CAN_RATE property"
-    (with-temp-org-buffer
-     "* Grader Rated Discussion
+    (it "parses ONLY_GRADERS_CAN_RATE property"
+      (with-temp-org-buffer
+       "* Grader Rated Discussion
 :PROPERTIES:
 :PUBLISHED: true
 :ONLY_GRADERS_CAN_RATE: true
@@ -231,13 +187,13 @@ Content.
 
 Content.
 "
-     (org-back-to-heading)
-     (let ((data (org-canvas--discussion-parse-entry)))
-       (expect (plist-get data :only_graders_can_rate) :to-be t))))
+       (org-back-to-heading)
+       (let ((data (org-canvas--discussion-parse-entry)))
+         (expect (plist-get data :only_graders_can_rate) :to-be t))))
 
-  (it "parses SORT_BY_RATING property"
-    (with-temp-org-buffer
-     "* Sorted Discussion
+    (it "parses SORT_BY_RATING property"
+      (with-temp-org-buffer
+       "* Sorted Discussion
 :PROPERTIES:
 :PUBLISHED: true
 :SORT_BY_RATING: true
@@ -245,13 +201,30 @@ Content.
 
 Content.
 "
-     (org-back-to-heading)
-     (let ((data (org-canvas--discussion-parse-entry)))
-       (expect (plist-get data :sort_by_rating) :to-be t))))
+       (org-back-to-heading)
+       (let ((data (org-canvas--discussion-parse-entry)))
+         (expect (plist-get data :sort_by_rating) :to-be t)))))
 
-  (it "parses GROUP_CATEGORY property"
-    (with-temp-org-buffer
-     "* Group Discussion
+  (describe "graded discussion fields"
+    (it "parses grading properties"
+      (with-temp-org-buffer
+       "* Graded Discussion
+:PROPERTIES:
+:PUBLISHED: true
+:GRADING_TYPE: points
+:POINTS: 25
+:END:
+
+Participate for points.
+"
+       (org-back-to-heading)
+       (let ((data (org-canvas--discussion-parse-entry)))
+         (expect (plist-get data :grading_type) :to-equal "points")
+         (expect (plist-get data :points_possible) :to-equal 25))))
+
+    (it "parses GROUP_CATEGORY property"
+      (with-temp-org-buffer
+       "* Group Discussion
 :PROPERTIES:
 :PUBLISHED: true
 :GROUP_CATEGORY: 42
@@ -259,13 +232,13 @@ Content.
 
 Content.
 "
-     (org-back-to-heading)
-     (let ((data (org-canvas--discussion-parse-entry)))
-       (expect (plist-get data :group_category_id) :to-equal 42))))
+       (org-back-to-heading)
+       (let ((data (org-canvas--discussion-parse-entry)))
+         (expect (plist-get data :group_category_id) :to-equal 42))))
 
-  (it "parses SPECIFIC_SECTIONS property"
-    (with-temp-org-buffer
-     "* Sectioned Discussion
+    (it "parses SPECIFIC_SECTIONS property"
+      (with-temp-org-buffer
+       "* Sectioned Discussion
 :PROPERTIES:
 :PUBLISHED: true
 :SPECIFIC_SECTIONS: 1,2,3
@@ -273,161 +246,166 @@ Content.
 
 Content.
 "
-     (org-back-to-heading)
-     (let ((data (org-canvas--discussion-parse-entry)))
-       (expect (plist-get data :specific_sections) :to-equal "1,2,3")))))
+       (org-back-to-heading)
+       (let ((data (org-canvas--discussion-parse-entry)))
+         (expect (plist-get data :specific_sections) :to-equal "1,2,3"))))))
 
 ;;;; Stage 2: Build Payload
 
 (describe "org-canvas--discussion-build-payload"
-  (it "includes title in payload"
-    (let* ((data '(:title "My Discussion" :message "<p>Topic</p>" :published t
-                   :discussion_type "side_comment" :require_initial_post nil))
-           (payload (org-canvas--discussion-build-payload data)))
-      (expect (alist-get 'title payload) :to-equal "My Discussion")))
+  (describe "required fields"
+    (it "includes title in payload"
+      (let* ((data '(:title "My Discussion" :message "<p>Topic</p>" :published t
+                     :discussion_type "side_comment" :require_initial_post nil))
+             (payload (org-canvas--discussion-build-payload data)))
+        (expect (alist-get 'title payload) :to-equal "My Discussion")))
 
-  (it "includes message in payload"
-    (let* ((data '(:title "Test" :message "<p>Discuss this</p>" :published t
-                   :discussion_type "side_comment" :require_initial_post nil))
-           (payload (org-canvas--discussion-build-payload data)))
-      (expect (alist-get 'message payload) :to-equal "<p>Discuss this</p>")))
+    (it "includes message in payload"
+      (let* ((data '(:title "Test" :message "<p>Discuss this</p>" :published t
+                     :discussion_type "side_comment" :require_initial_post nil))
+             (payload (org-canvas--discussion-build-payload data)))
+        (expect (alist-get 'message payload) :to-equal "<p>Discuss this</p>"))))
 
-  (it "includes discussion_type"
-    (let* ((data '(:title "Test" :message "" :published t
-                   :discussion_type "threaded" :require_initial_post nil))
-           (payload (org-canvas--discussion-build-payload data)))
-      (expect (alist-get 'discussion_type payload) :to-equal "threaded")))
+  (describe "discussion options"
+    (it "includes discussion_type"
+      (let* ((data '(:title "Test" :message "" :published t
+                     :discussion_type "threaded" :require_initial_post nil))
+             (payload (org-canvas--discussion-build-payload data)))
+        (expect (alist-get 'discussion_type payload) :to-equal "threaded")))
 
-  (it "includes assignment for graded discussions"
-    (let* ((data '(:title "Graded" :message "" :published t
-                   :discussion_type "side_comment" :require_initial_post nil
-                   :points_possible 20 :grading_type "points"))
-           (payload (org-canvas--discussion-build-payload data)))
-      (expect (alist-get 'assignment payload) :to-be-truthy)
-      (expect (alist-get 'points_possible (alist-get 'assignment payload)) :to-equal 20)))
+    (it "includes require_initial_post"
+      (let* ((data '(:title "Test" :message "" :published t
+                     :discussion_type "side_comment" :require_initial_post t))
+             (payload (org-canvas--discussion-build-payload data)))
+        (expect (alist-get 'require_initial_post payload) :to-be t)))
 
-  (it "includes require_initial_post"
-    (let* ((data '(:title "Test" :message "" :published t
-                   :discussion_type "side_comment" :require_initial_post t))
-           (payload (org-canvas--discussion-build-payload data)))
-      (expect (alist-get 'require_initial_post payload) :to-be t)))
+    (it "includes pinned when true"
+      (let* ((data '(:title "Pinned" :message "" :published t
+                     :discussion_type "side_comment" :require_initial_post nil
+                     :pinned t))
+             (payload (org-canvas--discussion-build-payload data)))
+        (expect (alist-get 'pinned payload) :to-be t)))
 
-  (it "includes pinned when true"
-    (let* ((data '(:title "Pinned" :message "" :published t
-                   :discussion_type "side_comment" :require_initial_post nil
-                   :pinned t))
-           (payload (org-canvas--discussion-build-payload data)))
-      (expect (alist-get 'pinned payload) :to-be t)))
+    (it "does not include pinned when nil"
+      (let* ((data '(:title "Normal" :message "" :published t
+                     :discussion_type "side_comment" :require_initial_post nil
+                     :pinned nil))
+             (payload (org-canvas--discussion-build-payload data)))
+        (expect (alist-get 'pinned payload) :to-be nil))))
 
-  (it "does not include pinned when nil"
-    (let* ((data '(:title "Normal" :message "" :published t
-                   :discussion_type "side_comment" :require_initial_post nil
-                   :pinned nil))
-           (payload (org-canvas--discussion-build-payload data)))
-      (expect (alist-get 'pinned payload) :to-be nil)))
+  (describe "scheduling"
+    (it "includes delayed_post_at at top level"
+      (let* ((data '(:title "Delayed" :message "" :published t
+                     :discussion_type "side_comment" :require_initial_post nil
+                     :delayed_post_at "2026-02-01T08:00:00Z"))
+             (payload (org-canvas--discussion-build-payload data)))
+        (expect (alist-get 'delayed_post_at payload) :to-equal "2026-02-01T08:00:00Z")))
 
-  (it "includes delayed_post_at at top level"
-    (let* ((data '(:title "Delayed" :message "" :published t
-                   :discussion_type "side_comment" :require_initial_post nil
-                   :delayed_post_at "2026-02-01T08:00:00Z"))
-           (payload (org-canvas--discussion-build-payload data)))
-      (expect (alist-get 'delayed_post_at payload) :to-equal "2026-02-01T08:00:00Z")))
+    (it "includes lock_at for non-graded discussions"
+      (let* ((data '(:title "Locking" :message "" :published t
+                     :discussion_type "side_comment" :require_initial_post nil
+                     :lock_at "2026-04-01T23:59:00Z"))
+             (payload (org-canvas--discussion-build-payload data)))
+        (expect (alist-get 'lock_at payload) :to-equal "2026-04-01T23:59:00Z")))
 
-  (it "includes lock_at for non-graded discussions"
-    (let* ((data '(:title "Locking" :message "" :published t
-                   :discussion_type "side_comment" :require_initial_post nil
-                   :lock_at "2026-04-01T23:59:00Z"))
-           (payload (org-canvas--discussion-build-payload data)))
-      (expect (alist-get 'lock_at payload) :to-equal "2026-04-01T23:59:00Z")))
+    (it "puts dates in assignment sub-object for graded discussions"
+      (let* ((data '(:title "Graded" :message "" :published t
+                     :discussion_type "side_comment" :require_initial_post nil
+                     :points_possible 20 :grading_type "points"
+                     :due_at "2026-03-15T23:59:00Z"
+                     :lock_at "2026-04-01T23:59:00Z"
+                     :delayed_post_at "2026-02-01T08:00:00Z"))
+             (payload (org-canvas--discussion-build-payload data))
+             (assignment (alist-get 'assignment payload)))
+        (expect (alist-get 'due_at assignment) :to-equal "2026-03-15T23:59:00Z")
+        (expect (alist-get 'lock_at assignment) :to-equal "2026-04-01T23:59:00Z")
+        (expect (alist-get 'unlock_at assignment) :to-equal "2026-02-01T08:00:00Z"))))
 
-  (it "puts dates in assignment sub-object for graded discussions"
-    (let* ((data '(:title "Graded" :message "" :published t
-                   :discussion_type "side_comment" :require_initial_post nil
-                   :points_possible 20 :grading_type "points"
-                   :due_at "2026-03-15T23:59:00Z"
-                   :lock_at "2026-04-01T23:59:00Z"
-                   :delayed_post_at "2026-02-01T08:00:00Z"))
-           (payload (org-canvas--discussion-build-payload data))
-           (assignment (alist-get 'assignment payload)))
-      (expect (alist-get 'due_at assignment) :to-equal "2026-03-15T23:59:00Z")
-      (expect (alist-get 'lock_at assignment) :to-equal "2026-04-01T23:59:00Z")
-      (expect (alist-get 'unlock_at assignment) :to-equal "2026-02-01T08:00:00Z")))
+  (describe "grading"
+    (it "includes assignment for graded discussions"
+      (let* ((data '(:title "Graded" :message "" :published t
+                     :discussion_type "side_comment" :require_initial_post nil
+                     :points_possible 20 :grading_type "points"))
+             (payload (org-canvas--discussion-build-payload data)))
+        (expect (alist-get 'assignment payload) :to-be-truthy)
+        (expect (alist-get 'points_possible (alist-get 'assignment payload)) :to-equal 20)))
 
-  (it "includes assignment_group_id for graded discussions"
-    (let* ((data '(:title "Grouped" :message "" :published t
-                   :discussion_type "side_comment" :require_initial_post nil
-                   :points_possible 10 :grading_type "points"
-                   :assignment_group_id 42))
-           (payload (org-canvas--discussion-build-payload data))
-           (assignment (alist-get 'assignment payload)))
-      (expect (alist-get 'assignment_group_id assignment) :to-equal 42)))
+    (it "includes assignment_group_id for graded discussions"
+      (let* ((data '(:title "Grouped" :message "" :published t
+                     :discussion_type "side_comment" :require_initial_post nil
+                     :points_possible 10 :grading_type "points"
+                     :assignment_group_id 42))
+             (payload (org-canvas--discussion-build-payload data))
+             (assignment (alist-get 'assignment payload)))
+        (expect (alist-get 'assignment_group_id assignment) :to-equal 42)))
 
-  (it "includes allow_rating when true"
-    (let* ((data '(:title "Rated" :message "" :published t
-                   :discussion_type "side_comment" :require_initial_post nil
-                   :allow_rating t))
-           (payload (org-canvas--discussion-build-payload data)))
-      (expect (alist-get 'allow_rating payload) :to-be t)))
+    (it "includes group_category_id when present"
+      (let* ((data '(:title "Grouped" :message "" :published t
+                     :discussion_type "side_comment" :require_initial_post nil
+                     :group_category_id 99))
+             (payload (org-canvas--discussion-build-payload data)))
+        (expect (alist-get 'group_category_id payload) :to-equal 99)))
 
-  (it "does not include allow_rating when nil"
-    (let* ((data '(:title "Unrated" :message "" :published t
-                   :discussion_type "side_comment" :require_initial_post nil
-                   :allow_rating nil))
-           (payload (org-canvas--discussion-build-payload data)))
-      (expect (alist-get 'allow_rating payload) :to-be nil)))
+    (it "resolves section names to IDs"
+      (let ((sections-file (make-temp-file "test-sections" nil ".org")))
+        (unwind-protect
+            (progn
+              (with-temp-file sections-file
+                (insert "* Section A\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n"))
+              (let* ((org-canvas-sections-file sections-file)
+                     (data '(:title "Sectioned" :message "" :published t
+                             :discussion_type "side_comment" :require_initial_post nil
+                             :specific_sections "Section A"))
+                     (payload (org-canvas--discussion-build-payload data)))
+                (expect (alist-get 'specific_sections payload) :to-equal "100")))
+          (let ((buf (find-buffer-visiting sections-file)))
+            (when buf (kill-buffer buf)))
+          (delete-file sections-file))))
 
-  (it "includes only_graders_can_rate when true"
-    (let* ((data '(:title "Grader Rated" :message "" :published t
-                   :discussion_type "side_comment" :require_initial_post nil
-                   :only_graders_can_rate t))
-           (payload (org-canvas--discussion-build-payload data)))
-      (expect (alist-get 'only_graders_can_rate payload) :to-be t)))
+    (it "passes through numeric IDs in specific_sections"
+      (let ((sections-file (make-temp-file "test-sections" nil ".org")))
+        (unwind-protect
+            (progn
+              (with-temp-file sections-file
+                (insert "#+TITLE: Sections\n"))
+              (let* ((org-canvas-sections-file sections-file)
+                     (data '(:title "Sectioned" :message "" :published t
+                             :discussion_type "side_comment" :require_initial_post nil
+                             :specific_sections "1,2,3"))
+                     (payload (org-canvas--discussion-build-payload data)))
+                (expect (alist-get 'specific_sections payload) :to-equal "1,2,3")))
+          (let ((buf (find-buffer-visiting sections-file)))
+            (when buf (kill-buffer buf)))
+          (delete-file sections-file)))))
 
-  (it "includes sort_by_rating when true"
-    (let* ((data '(:title "Sorted" :message "" :published t
-                   :discussion_type "side_comment" :require_initial_post nil
-                   :sort_by_rating t))
-           (payload (org-canvas--discussion-build-payload data)))
-      (expect (alist-get 'sort_by_rating payload) :to-be t)))
+  (describe "rating options"
+    (it "includes allow_rating when true"
+      (let* ((data '(:title "Rated" :message "" :published t
+                     :discussion_type "side_comment" :require_initial_post nil
+                     :allow_rating t))
+             (payload (org-canvas--discussion-build-payload data)))
+        (expect (alist-get 'allow_rating payload) :to-be t)))
 
-  (it "includes group_category_id when present"
-    (let* ((data '(:title "Grouped" :message "" :published t
-                   :discussion_type "side_comment" :require_initial_post nil
-                   :group_category_id 99))
-           (payload (org-canvas--discussion-build-payload data)))
-      (expect (alist-get 'group_category_id payload) :to-equal 99)))
+    (it "does not include allow_rating when nil"
+      (let* ((data '(:title "Unrated" :message "" :published t
+                     :discussion_type "side_comment" :require_initial_post nil
+                     :allow_rating nil))
+             (payload (org-canvas--discussion-build-payload data)))
+        (expect (alist-get 'allow_rating payload) :to-be nil)))
 
-  (it "resolves section names to IDs"
-    (let ((sections-file (make-temp-file "test-sections" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file sections-file
-              (insert "* Section A\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n"))
-            (let* ((org-canvas-sections-file sections-file)
-                   (data '(:title "Sectioned" :message "" :published t
-                           :discussion_type "side_comment" :require_initial_post nil
-                           :specific_sections "Section A"))
-                   (payload (org-canvas--discussion-build-payload data)))
-              (expect (alist-get 'specific_sections payload) :to-equal "100")))
-        (let ((buf (find-buffer-visiting sections-file)))
-          (when buf (kill-buffer buf)))
-        (delete-file sections-file))))
+    (it "includes only_graders_can_rate when true"
+      (let* ((data '(:title "Grader Rated" :message "" :published t
+                     :discussion_type "side_comment" :require_initial_post nil
+                     :only_graders_can_rate t))
+             (payload (org-canvas--discussion-build-payload data)))
+        (expect (alist-get 'only_graders_can_rate payload) :to-be t)))
 
-  (it "passes through numeric IDs in specific_sections"
-    (let ((sections-file (make-temp-file "test-sections" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file sections-file
-              (insert "#+TITLE: Sections\n"))
-            (let* ((org-canvas-sections-file sections-file)
-                   (data '(:title "Sectioned" :message "" :published t
-                           :discussion_type "side_comment" :require_initial_post nil
-                           :specific_sections "1,2,3"))
-                   (payload (org-canvas--discussion-build-payload data)))
-              (expect (alist-get 'specific_sections payload) :to-equal "1,2,3")))
-        (let ((buf (find-buffer-visiting sections-file)))
-          (when buf (kill-buffer buf)))
-        (delete-file sections-file)))))
+    (it "includes sort_by_rating when true"
+      (let* ((data '(:title "Sorted" :message "" :published t
+                     :discussion_type "side_comment" :require_initial_post nil
+                     :sort_by_rating t))
+             (payload (org-canvas--discussion-build-payload data)))
+        (expect (alist-get 'sort_by_rating payload) :to-be t)))))
 
 ;;;; Stage 3: Push to API (mocked)
 
@@ -497,38 +475,16 @@ Content.
 
 (describe "org-canvas--discussion-pull-item"
   (it "sets DISCUSSION_TYPE property"
-    (with-temp-org-buffer
-     "* Discussion
-:PROPERTIES:
-:CANVAS_ID: 1
-:END:
-"
-     (org-back-to-heading)
-     (cl-letf (((symbol-function 'org-canvas--html-to-org)
-                (lambda (html) html)))
-       (org-canvas--discussion-pull-item
-        '((id . 1) (title . "Discussion")
-          (discussion_type . "threaded")
-          (message . "<p>Discuss</p>"))
-        (point))
-       (expect (org-entry-get (point) "DISCUSSION_TYPE") :to-equal "threaded"))))
+    (with-pull-property-test #'org-canvas--discussion-pull-item
+      '((id . 1) (title . "Discussion") (discussion_type . "threaded")
+        (message . "<p>Discuss</p>"))
+      "DISCUSSION_TYPE" :to-equal "threaded"))
 
   (it "sets DELAYED_POST_AT when present"
-    (with-temp-org-buffer
-     "* Discussion
-:PROPERTIES:
-:CANVAS_ID: 1
-:END:
-"
-     (org-back-to-heading)
-     (cl-letf (((symbol-function 'org-canvas--html-to-org)
-                (lambda (html) html)))
-       (org-canvas--discussion-pull-item
-        '((id . 1) (title . "Discussion")
-          (delayed_post_at . "2026-06-15T09:00:00Z")
-          (message . "<p>Later</p>"))
-        (point))
-       (expect (org-entry-get (point) "DELAYED_POST_AT") :to-match "<2026-06-15"))))
+    (with-pull-property-test #'org-canvas--discussion-pull-item
+      '((id . 1) (title . "Discussion") (delayed_post_at . "2026-06-15T09:00:00Z")
+        (message . "<p>Later</p>"))
+      "DELAYED_POST_AT" :to-match "<2026-06-15"))
 
   (it "inserts body text"
     (with-temp-org-buffer
@@ -547,55 +503,22 @@ Content.
        (expect (buffer-string) :to-match "Talk about this"))))
 
   (it "sets ALLOW_RATING property"
-    (with-temp-org-buffer
-     "* Discussion
-:PROPERTIES:
-:CANVAS_ID: 1
-:END:
-"
-     (org-back-to-heading)
-     (cl-letf (((symbol-function 'org-canvas--html-to-org)
-                (lambda (html) html)))
-       (org-canvas--discussion-pull-item
-        '((id . 1) (title . "Discussion")
-          (allow_rating . t)
-          (message . "<p>Content</p>"))
-        (point))
-       (expect (org-entry-get (point) "ALLOW_RATING") :to-equal "true"))))
+    (with-pull-property-test #'org-canvas--discussion-pull-item
+      '((id . 1) (title . "Discussion") (allow_rating . t)
+        (message . "<p>Content</p>"))
+      "ALLOW_RATING" :to-equal "true"))
 
   (it "sets ONLY_GRADERS_CAN_RATE property"
-    (with-temp-org-buffer
-     "* Discussion
-:PROPERTIES:
-:CANVAS_ID: 1
-:END:
-"
-     (org-back-to-heading)
-     (cl-letf (((symbol-function 'org-canvas--html-to-org)
-                (lambda (html) html)))
-       (org-canvas--discussion-pull-item
-        '((id . 1) (title . "Discussion")
-          (only_graders_can_rate . t)
-          (message . "<p>Content</p>"))
-        (point))
-       (expect (org-entry-get (point) "ONLY_GRADERS_CAN_RATE") :to-equal "true"))))
+    (with-pull-property-test #'org-canvas--discussion-pull-item
+      '((id . 1) (title . "Discussion") (only_graders_can_rate . t)
+        (message . "<p>Content</p>"))
+      "ONLY_GRADERS_CAN_RATE" :to-equal "true"))
 
   (it "sets SORT_BY_RATING property"
-    (with-temp-org-buffer
-     "* Discussion
-:PROPERTIES:
-:CANVAS_ID: 1
-:END:
-"
-     (org-back-to-heading)
-     (cl-letf (((symbol-function 'org-canvas--html-to-org)
-                (lambda (html) html)))
-       (org-canvas--discussion-pull-item
-        '((id . 1) (title . "Discussion")
-          (sort_by_rating . t)
-          (message . "<p>Content</p>"))
-        (point))
-       (expect (org-entry-get (point) "SORT_BY_RATING") :to-equal "true")))))
+    (with-pull-property-test #'org-canvas--discussion-pull-item
+      '((id . 1) (title . "Discussion") (sort_by_rating . t)
+        (message . "<p>Content</p>"))
+      "SORT_BY_RATING" :to-equal "true")))
 
 ;;;; Parse Entry GROUP Link Resolution
 
