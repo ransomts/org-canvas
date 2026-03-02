@@ -2013,6 +2013,44 @@ Quiz description.
 
 ;;;; RUBRIC_LINK Tests
 
+(describe "org-canvas-sync-new-quizzes RUBRIC_LINK integration"
+  (it "calls associate-rubric during bulk sync when RUBRIC_LINK is set"
+    (let* ((temp-dir (make-temp-file "nq-rubric-sync" t))
+           (test-file (expand-file-name "new-quizzes.org" temp-dir))
+           (rubrics-file (expand-file-name "rubrics.org" temp-dir))
+           (assoc-calls nil))
+      (unwind-protect
+          (progn
+            (with-temp-file rubrics-file
+              (insert "* Lab Rubric\n:PROPERTIES:\n:CANVAS_ID: 777\n:END:\n\n| C | P |\n|---+---|\n| X | 5 |\n"))
+            (with-temp-file test-file
+              (insert (format "* Quiz With Rubric
+:PROPERTIES:
+:RUBRIC_LINK: [[file:%s::*Lab Rubric][Lab Rubric]]
+:END:
+
+Body text
+" rubrics-file)))
+            (let ((org-canvas-new-quizzes-file test-file)
+                  (org-canvas-rubrics-file rubrics-file))
+              (with-org-canvas-test-config
+                (cl-letf (((symbol-function 'org-canvas-api-request)
+                           (lambda (_m _u &rest _)
+                             '((assignment_id . 8001) (id . "nq-1"))))
+                          ((symbol-function 'org-canvas--associate-rubric)
+                           (lambda (item-id rubric-id assoc-type)
+                             (push (list item-id rubric-id assoc-type) assoc-calls))))
+                  (with-sync-test-env
+                    (org-canvas-sync-new-quizzes)
+                    (expect (length assoc-calls) :to-equal 1)
+                    (expect (nth 0 (car assoc-calls)) :to-equal 8001)
+                    (expect (nth 1 (car assoc-calls)) :to-equal "777")
+                    (expect (nth 2 (car assoc-calls)) :to-equal "Assignment"))))))
+        (dolist (f (list test-file rubrics-file))
+          (let ((buf (find-buffer-visiting f)))
+            (when buf (kill-buffer buf))))
+        (delete-directory temp-dir t)))))
+
 (describe "org-canvas--new-quiz-parse-entry RUBRIC_LINK"
   (it "resolves RUBRIC_LINK to rubric-id"
     (let ((rubrics-file (make-temp-file "test-rubrics" nil ".org"))

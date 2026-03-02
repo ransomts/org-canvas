@@ -1217,6 +1217,45 @@ Keep this body
     (let ((org-canvas-outcomes-file "/nonexistent/outcomes.org"))
       (expect (org-canvas--rubric-outcome-title 42) :to-be nil))))
 
+(describe "org-canvas--rubric-pull-insert-criterion with outcomes and custom ratings"
+  (it "inserts 4-column rating rows when has-outcomes is t"
+    (let* ((temp-dir (make-temp-file "rubric-pull-rating-outcome" t))
+           (outcomes-file (expand-file-name "outcomes.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file outcomes-file
+              (insert "* Group\n** Py\n:PROPERTIES:\n:CANVAS_ID: 77\n:END:\n"))
+            (let ((org-canvas-outcomes-file outcomes-file))
+              (with-temp-buffer
+                (let ((c '((description . "Quality") (points . 10) (long_description . "")
+                           (learning_outcome_id . 77)
+                           (ratings . [((description . "Great") (points . 10))
+                                       ((description . "OK") (points . 5))
+                                       ((description . "Bad") (points . 0))]))))
+                  (org-canvas--rubric-pull-insert-criterion c t)
+                  (let ((content (buffer-string)))
+                    ;; Rating rows should have 4 columns (extra empty col)
+                    (expect content :to-match "| > Great | 10 | | |")
+                    (expect content :to-match "| > OK | 5 | | |")
+                    (expect content :to-match "| > Bad | 0 | | |"))))))
+        (let ((buf (find-buffer-visiting outcomes-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
+(describe "org-canvas--rubric-outcome-title with string outcome-id"
+  (it "handles string outcome-id"
+    (let* ((temp-dir (make-temp-file "outcome-title-str" t))
+           (outcomes-file (expand-file-name "outcomes.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file outcomes-file
+              (insert "* Group\n** My Outcome\n:PROPERTIES:\n:CANVAS_ID: 42\n:END:\n"))
+            (let ((org-canvas-outcomes-file outcomes-file))
+              (expect (org-canvas--rubric-outcome-title "42") :to-equal "My Outcome")))
+        (let ((buf (find-buffer-visiting outcomes-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
 (describe "org-canvas--rubric-pull-has-outcomes"
   (it "returns non-nil when any criterion has learning_outcome_id"
     (expect (org-canvas--rubric-pull-has-outcomes
