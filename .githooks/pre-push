@@ -74,6 +74,7 @@ for version in 29 30; do
   output=$(nix-shell \
     -I "nixpkgs=$archive" \
     -p "$package" \
+    --keep PATH \
     --run "$cmd" 2>&1)
 
   echo "$output"
@@ -108,8 +109,8 @@ for version in 29 30; do
       exit 1
     fi
 
-    # Integer division: 6446 * 100 / 6510 = 99
-    coverage=$((total_covered * 100 / total_relevant))
+    # Round to nearest integer (add half-divisor before dividing)
+    coverage=$(( (total_covered * 100 + total_relevant / 2) / total_relevant ))
 
     echo "Coverage: ${coverage}% (${total_covered}/${total_relevant} lines)"
 

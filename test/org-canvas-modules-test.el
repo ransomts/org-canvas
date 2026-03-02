@@ -1943,9 +1943,11 @@
              (format "* Module\n** [[file:assignments.org::*Homework 2][HW2 Link]]\n:PROPERTIES:\n:END:\n")
              (search-forward "HW2 Link")
              (org-back-to-heading)
-             (let ((data (org-canvas--module-item-parse-entry temp-dir)))
+             (let* ((data (org-canvas--module-item-parse-entry temp-dir))
+                    ;; Pre-bind :type to avoid Emacs 29 oclosure shadowing
+                    (data-type (plist-get data :type)))
                (expect (plist-get data :content-id) :to-equal 5002)
-               (expect (plist-get data :type) :to-equal "Assignment")
+               (expect data-type :to-equal "Assignment")
                (expect (plist-get data :title) :to-equal "HW2 Link"))))
         (let ((buf (find-buffer-visiting assign-file)))
           (when buf (kill-buffer buf)))
