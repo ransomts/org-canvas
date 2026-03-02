@@ -2124,7 +2124,8 @@ EXCEPT is a list of filenames to skip."
                           (lambda (p) (equal (plist-get p :name) "RUBRIC_LINK"))
                           (plist-get disc-spec :properties))))
         (expect rubric-prop :to-be-truthy)
-        (expect (plist-get rubric-prop :type) :to-equal 'link)))))
+        (let ((prop-type (plist-get rubric-prop :type)))
+          (expect prop-type :to-equal 'link))))))
 
 (describe "new quiz GROUP validation"
   (it "includes GROUP in new quizzes spec"
@@ -2136,7 +2137,8 @@ EXCEPT is a list of filenames to skip."
                          (lambda (p) (equal (plist-get p :name) "GROUP"))
                          (plist-get nq-spec :properties))))
         (expect group-prop :to-be-truthy)
-        (expect (plist-get group-prop :type) :to-equal 'link)))))
+        (let ((prop-type (plist-get group-prop :type)))
+          (expect prop-type :to-equal 'link))))))
 
 (provide 'org-canvas-validate-test)
 ;;; org-canvas-validate-test.el ends here
