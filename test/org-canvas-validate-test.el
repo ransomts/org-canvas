@@ -2257,11 +2257,12 @@ EXCEPT is a list of filenames to skip."
                     (lambda (s) (equal (plist-get s :label) "New Quizzes"))
                     org-canvas--validate-specs)))
       (expect nq-spec :to-be-truthy)
-      (let ((rubric-prop (cl-find-if
-                          (lambda (p) (equal (plist-get p :name) "RUBRIC_LINK"))
-                          (plist-get nq-spec :properties))))
+      (let* ((rubric-prop (cl-find-if
+                           (lambda (p) (equal (plist-get p :name) "RUBRIC_LINK"))
+                           (plist-get nq-spec :properties)))
+             (rubric-type (plist-get rubric-prop :type)))
         (expect rubric-prop :to-be-truthy)
-        (expect (plist-get rubric-prop :type) :to-equal 'link)
+        (expect rubric-type :to-equal 'link)
         (expect (plist-get rubric-prop :target-file)
                 :to-equal 'org-canvas-rubrics-file)))))
 
