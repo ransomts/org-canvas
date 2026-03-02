@@ -28,7 +28,7 @@ echo ""
 # Gate 2: No new functions above cognitive complexity threshold (>15).
 # Budget allows the 2 pre-existing macro violations; any increase is blocked.
 echo "Checking cognitive complexity..."
-complexity_output=$(eldev complexity 2>&1)
+complexity_output=$(eldev complexity 2>&1) || true
 violations=$(echo "$complexity_output" | grep -oP '\d+(?= above cognitive threshold)' || echo "0")
 
 if [ "$violations" -gt "$COMPLEXITY_BUDGET" ]; then
