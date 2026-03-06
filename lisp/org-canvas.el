@@ -69,6 +69,7 @@
 (require 'org-canvas-group-categories)
 (require 'org-canvas-calendar)
 (require 'org-canvas-validate)
+(require 'org-canvas-submissions)
 
 ;; Note: Feature-specific file paths (e.g., `org-canvas-rubrics-file`) are now
 ;; defined in their respective modules.
