@@ -2,7 +2,7 @@
 #+AUTHOR: Tim Ransom
 #+OPTIONS: toc:nil num:nil
 
-[[https://github.com/ransomts/org-canvas][https://img.shields.io/badge/status-experimental-critical.svg]]
+[[https://github.com/ransomts/org-canvas][https://img.shields.io/badge/status-beta-yellow.svg]]
 [[https://github.com/ransomts/org-canvas/blob/main/LICENSE][https://img.shields.io/github/license/ransomts/org-canvas.svg]]
 [[https://github.com/ransomts/org-canvas/actions/workflows/ci.yml][https://github.com/ransomts/org-canvas/actions/workflows/ci.yml/badge.svg]]
 [[https://codecov.io/gh/ransomts/org-canvas][https://codecov.io/gh/ransomts/org-canvas/graph/badge.svg]]
@@ -20,7 +20,8 @@ Tested against the Canvas LMS REST API (=/api/v1/=) as of 2026-02-07. Canvas doe
 - *Conflict Detection*: Interactive push/pull/skip resolution when remote changes are detected
 - *Modular Architecture*: Sync individual content types or the entire course at once
 - *Dependency-Aware*: Syncs in proper order respecting cross-references between files
-- *15 Content Types*: Assignments, quizzes, pages, modules, rubrics, outcomes, discussions, announcements, files, assignment groups, group categories, sections, per-section date overrides, calendar events, and course settings
+- *16 Content Types*: Assignments, classic quizzes, New Quizzes, pages, modules, rubrics, outcomes, discussions, announcements, files, assignment groups, group categories, sections, per-section date overrides, calendar events, and course settings
+- *Submission Grading*: View submissions, post comments, download attachments, and push grades back to Canvas -- all from Emacs
 - *Canvas Migration*: Import an entire existing Canvas course into Org files with =org-canvas-pull-all=
 - *Orphan Cleanup*: Detect and remove Canvas items that no longer have corresponding Org headings
 - *Resilient Syncing*: Pre-sync credential validation, rate limit retry with backoff, actionable error messages for auth failures, graceful handling of missing files
@@ -57,7 +58,7 @@ The easiest way to set up a new course is the setup wizard:
 M-x org-canvas-init
 #+end_src
 
-This prompts for your Canvas URL, API token, and course ID, tests the connection, writes =org-canvas-credentials.el=, and optionally creates skeleton =.org= files for all 14 content types.
+This prompts for your Canvas URL, API token, and course ID, tests the connection, writes =org-canvas-credentials.el=, and optionally creates skeleton =.org= files for all content types.
 
 Or create =org-canvas-credentials.el= manually in your course directory (not tracked by git):
 
@@ -77,7 +78,8 @@ my-course/
 ├── org-canvas-credentials.el  ; Your API credentials (gitignored)
 ├── settings.org               ; Course settings (timezone, homepage, license, navigation tabs)
 ├── assignments.org            ; Course assignments
-├── quizzes.org               ; Quizzes with questions
+├── quizzes.org               ; Classic quizzes with questions
+├── new-quizzes.org           ; New Quizzes (Canvas next-gen quiz engine)
 ├── pages.org                 ; Wiki pages
 ├── modules.org               ; Course structure/navigation
 ├── rubrics.org               ; Grading rubrics
@@ -115,11 +117,12 @@ M-x org-canvas-force-push
 ;; Sync individual content types
 M-x org-canvas-sync-assignments
 M-x org-canvas-sync-quizzes
+M-x org-canvas-sync-new-quizzes
 M-x org-canvas-sync-pages
 M-x org-canvas-sync-settings
 M-x org-canvas-sync-group-categories
 M-x org-canvas-sync-calendar-events
-;; ... etc for all 15 content types
+;; ... etc for all 16 content types
 
 ;; Sync a single item at cursor
 M-x org-canvas-sync-assignment-at-point
@@ -131,6 +134,9 @@ M-x org-canvas-pull-all
 M-x org-canvas-pull-assignments
 M-x org-canvas-pull-pages
 ;; ... etc for all content types
+
+;; View, comment on, and grade submissions
+M-x org-canvas-submissions-view
 
 ;; Find and remove orphaned Canvas items
 M-x org-canvas-cleanup-orphans
@@ -168,18 +174,40 @@ After syncing, org-canvas automatically adds:
 :LAST_SYNCED: [2025-02-02 Sun 10:30]
 #+end_src
 
+* Viewing and Grading Submissions
+
+org-canvas includes a submissions viewer for reviewing student work, posting comments, downloading attachments, and pushing grades -- all without leaving Emacs.
+
+#+begin_src elisp
+M-x org-canvas-submissions-view
+#+end_src
+
+This prompts for an assignment, fetches submissions from Canvas, and opens an interactive buffer with keybindings:
+
+| Key | Action                               |
+|-----+--------------------------------------|
+| =v= | Toggle between summary table and detail view |
+| =c= | Post a comment on the submission at point     |
+| =d= | Download submission attachments               |
+| =S= | Push modified grades to Canvas                |
+| =g= | Refresh submissions from Canvas               |
+| =q= | Quit                                          |
+
+In detail view, edit the =:SCORE:= property on any student heading and press =S= to push grade changes. org-canvas detects which scores changed and confirms before pushing.
+
 * Documentation
 
 See [[file:documentation/manual.org][the full manual]] for:
 
-- Complete file format specifications for all 15 content types
+- Complete file format specifications for all 16 content types
 - All supported properties and link resolution between files
-- Quiz question types and answer formats
+- Classic quiz and New Quiz question types and answer formats
 - Course settings (timezone, homepage, grading, license, navigation tabs, course image)
 - Group categories, calendar events, sections, and per-section date overrides
 - Inline image upload for page/announcement/discussion bodies
 - Interactive conflict resolution (push/pull/skip) and force-push
 - Canvas-to-Org migration with =org-canvas-pull-all=
+- Submission viewing, commenting, and grade writing
 - Orphan cleanup
 - Sync order and dependency management
 - Logging and configuration options
@@ -187,7 +215,7 @@ See [[file:documentation/manual.org][the full manual]] for:
 
 * Dependencies
 
-- Emacs 27.1+
+- Emacs 29.1+
 - Org Mode 9.6+
 - [[https://github.com/alphapapa/plz.el][plz]] - HTTP library
 - [[https://github.com/Kinneyzhang/elog][elog]] - Logging framework
