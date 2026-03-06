@@ -360,9 +360,7 @@ Searches from point for the ** Comments sub-heading under the current heading."
       (let ((end (save-excursion (org-end-of-subtree t) (point))))
         (if (re-search-forward "^\\*\\* Comments$" end t)
             (progn
-              (forward-line 0)
               (forward-line 1)
-              (goto-char (line-end-position))
               ;; Find end of comments section
               (while (and (< (point) end)
                           (looking-at "^- "))

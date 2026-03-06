@@ -486,7 +486,7 @@
      (expect (buffer-string) :to-match "New comment")
      (expect (buffer-string) :to-match "\\*You\\*")))
 
-  (it "inserts new comment in existing Comments section"
+  (it "appends after multiple existing comments"
     (with-temp-org-buffer
      "* Adams, Alice\n:PROPERTIES:\n:SUBMISSION_ID: 50001\n:END:\n\n** Comments\n- *Prof* <2026-01-01 Thu 00:00> :: First\n- *TA* <2026-01-02 Fri 00:00> :: Second\n"
      (org-back-to-heading)
@@ -494,7 +494,9 @@
        (org-canvas--submissions-append-comment-to-buffer "Adams, Alice" "Third"))
      (let ((content (buffer-string)))
        (expect content :to-match "Third")
-       (expect content :to-match "\\*You\\*"))))
+       (expect (string-match "Second" content)
+               :to-be-less-than
+               (string-match "Third" content)))))
 
   (it "creates Comments section when missing"
     (with-temp-org-buffer
@@ -669,6 +671,39 @@
                     (push (cons url filename) downloaded)))
                  ((symbol-function 'make-directory) (lambda (_dir &rest _) nil)))
          (org-canvas-submissions-download-attachments))
+       (expect (length downloaded) :to-equal 1)
+       (expect (cdar downloaded) :to-equal "hw.pdf"))))
+
+  (it "falls back to submissions-directory when org-canvas-directory is nil"
+    (with-temp-org-buffer
+     "* Adams, Alice\n:PROPERTIES:\n:SUBMISSION_ID: 50001\n:END:\n\n** Attachments\n- [[https://example.com/files/1/download][hw.pdf]]\n"
+     (org-back-to-heading)
+     (setq-local org-canvas-submissions--current-view 'detail)
+     (setq-local org-canvas-submissions--assignment-name "HW")
+     (org-canvas-submissions-mode 1)
+     (let ((org-canvas-directory nil)
+           (downloaded-dir nil))
+       (cl-letf (((symbol-function 'org-canvas--submissions-download-file)
+                  (lambda (_url dir _filename)
+                    (setq downloaded-dir dir)))
+                 ((symbol-function 'make-directory) (lambda (_dir &rest _) nil)))
+         (org-canvas-submissions-download-attachments))
+       (expect downloaded-dir :to-be-truthy))))
+
+  (it "stops collecting at next sub-heading after Attachments"
+    (with-temp-org-buffer
+     "* Adams, Alice\n:PROPERTIES:\n:SUBMISSION_ID: 50001\n:END:\n\n** Attachments\n- [[https://example.com/files/1/download][hw.pdf]]\n** Comments\n- *Prof* <2026-01-01 Thu 00:00> :: Comment with [[https://example.com/not-an-attachment][link]]\n"
+     (org-back-to-heading)
+     (setq-local org-canvas-submissions--current-view 'detail)
+     (setq-local org-canvas-submissions--assignment-name "HW")
+     (org-canvas-submissions-mode 1)
+     (let ((downloaded nil))
+       (cl-letf (((symbol-function 'org-canvas--submissions-download-file)
+                  (lambda (url _dir filename)
+                    (push (cons url filename) downloaded)))
+                 ((symbol-function 'make-directory) (lambda (_dir &rest _) nil)))
+         (org-canvas-submissions-download-attachments))
+       ;; Only the attachment link, not the link in Comments
        (expect (length downloaded) :to-equal 1)
        (expect (cdar downloaded) :to-equal "hw.pdf")))))
 
