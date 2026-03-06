@@ -132,7 +132,14 @@
     (let* ((subs (list
                   (test-org-canvas-make-submission '((score . nil)))))
            (stats (org-canvas--submissions-compute-stats subs)))
-      (expect (plist-get stats :average) :to-equal nil))))
+      (expect (plist-get stats :average) :to-equal nil)))
+
+  (it "counts graded status"
+    (let* ((subs (list
+                  (test-org-canvas-make-submission
+                   '((workflow_state . "graded") (score . 95)))))
+           (stats (org-canvas--submissions-compute-stats subs)))
+      (expect (plist-get stats :graded) :to-equal 1))))
 
 ;;;; Format Helpers
 
@@ -147,7 +154,13 @@
       (expect (org-canvas--submissions-format-stats stats)
               :to-match "1 late")
       (expect (org-canvas--submissions-format-stats stats)
-              :to-match "Average: 85.3/100"))))
+              :to-match "Average: 85.3/100")))
+
+  (it "includes graded count when present"
+    (let ((stats '(:submitted 5 :missing 0 :late 0 :graded 3
+                   :total 8 :average nil :points nil)))
+      (expect (org-canvas--submissions-format-stats stats)
+              :to-match "3 graded"))))
 
 (describe "org-canvas--submissions-format-number"
   (it "formats integers without decimals"
@@ -165,7 +178,13 @@
   (it "returns empty string when no score"
     (let ((sub (test-org-canvas-make-submission '((score . nil)))))
       (expect (org-canvas--submissions-format-score sub)
-              :to-equal ""))))
+              :to-equal "")))
+
+  (it "formats score without points when points_possible is nil"
+    (let ((sub (test-org-canvas-make-submission
+                '((score . 88) (assignment . nil)))))
+      (expect (org-canvas--submissions-format-score sub)
+              :to-equal "88"))))
 
 (describe "org-canvas--submissions-user-sortable-name"
   (it "returns sortable_name from user"
@@ -256,6 +275,21 @@
         (org-canvas--submissions-render-detail "HW" "1" subs)
         (expect (buffer-string) :to-match "My answer is 42."))))
 
+  (it "sorts students alphabetically"
+    (let ((subs (list
+                 (test-org-canvas-make-submission
+                  '((user . ((id . 5002)
+                             (sortable_name . "Zeta, Zara")
+                             (name . "Zara Zeta")))))
+                 (test-org-canvas-make-submission))))
+      (with-temp-buffer
+        (org-mode)
+        (org-canvas--submissions-render-detail "HW" "1" subs)
+        (let ((content (buffer-string)))
+          (expect (string-match "Adams" content)
+                  :to-be-less-than
+                  (string-match "Zeta" content))))))
+
   (it "skips body when nil"
     (let ((subs (list (test-org-canvas-make-submission '((body . nil))))))
       (with-temp-buffer
@@ -322,7 +356,23 @@
   (it "skips when nil"
     (with-temp-buffer
       (org-canvas--submissions-render-rubric nil)
-      (expect (buffer-string) :to-equal ""))))
+      (expect (buffer-string) :to-equal "")))
+
+  (it "handles hash-table rubric"
+    (let ((ht (make-hash-table :test 'equal)))
+      (puthash 'crit_1 '((points . 20) (rating_description . "Great")) ht)
+      (with-temp-buffer
+        (org-mode)
+        (org-canvas--submissions-render-rubric ht)
+        (expect (buffer-string) :to-match "Great")
+        (expect (buffer-string) :to-match "20"))))
+
+  (it "falls back to rating_id when description is nil"
+    (with-temp-buffer
+      (org-mode)
+      (org-canvas--submissions-render-rubric
+       '((crit_1 . ((points . 10) (rating_id . "rat_42")))))
+      (expect (buffer-string) :to-match "rat_42"))))
 
 ;;;; View Toggle
 
@@ -355,7 +405,65 @@
         (expect org-canvas-submissions--current-view :to-equal 'summary)
         (expect (buffer-string) :to-match "| Adams, Alice")))))
 
+;;;; View Toggle Error Paths
+
+(describe "org-canvas-submissions-toggle-view error paths"
+  (it "errors when not in submissions mode"
+    (with-temp-buffer
+      (expect (org-canvas-submissions-toggle-view) :to-throw 'user-error)))
+
+  (it "errors when no cached data"
+    (with-temp-buffer
+      (org-mode)
+      (org-canvas-submissions-mode 1)
+      (setq-local org-canvas-submissions--data nil)
+      (setq-local org-canvas-submissions--current-view 'summary)
+      (expect (org-canvas-submissions-toggle-view) :to-throw 'user-error))))
+
 ;;;; Comment Writing
+
+(describe "org-canvas-submissions-add-comment"
+  (it "posts comment via interactive flow"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-temp-org-buffer
+         "* Adams, Alice\n:PROPERTIES:\n:SUBMISSION_ID: 50001\n:END:\n"
+         (org-back-to-heading)
+         (setq-local org-canvas-submissions--assignment-id "1001")
+         (setq-local org-canvas-submissions--current-view 'detail)
+         (org-canvas-submissions-mode 1)
+         (cl-letf (((symbol-function 'read-string) (lambda (_) "Nice!"))
+                   ((symbol-function 'y-or-n-p) (lambda (_) t)))
+           (org-canvas-submissions-add-comment))
+         (expect-api-called 'PUT "assignments/1001/submissions/50001")
+         (expect (buffer-string) :to-match "Nice!")))))
+
+  (it "errors when not in detail view"
+    (with-temp-buffer
+      (org-canvas-submissions-mode 1)
+      (setq-local org-canvas-submissions--current-view 'summary)
+      (expect (org-canvas-submissions-add-comment) :to-throw 'user-error)))
+
+  (it "errors when not in submissions mode"
+    (with-temp-buffer
+      (expect (org-canvas-submissions-add-comment) :to-throw 'user-error)))
+
+  (it "errors on empty comment"
+    (with-temp-org-buffer
+     "* Adams, Alice\n:PROPERTIES:\n:SUBMISSION_ID: 50001\n:END:\n"
+     (org-back-to-heading)
+     (setq-local org-canvas-submissions--current-view 'detail)
+     (org-canvas-submissions-mode 1)
+     (cl-letf (((symbol-function 'read-string) (lambda (_) "")))
+       (expect (org-canvas-submissions-add-comment) :to-throw 'user-error))))
+
+  (it "errors when no SUBMISSION_ID"
+    (with-temp-org-buffer
+     "* Adams, Alice\n:PROPERTIES:\n:END:\n"
+     (org-back-to-heading)
+     (setq-local org-canvas-submissions--current-view 'detail)
+     (org-canvas-submissions-mode 1)
+     (expect (org-canvas-submissions-add-comment) :to-throw 'user-error))))
 
 (describe "org-canvas--submissions-post-comment"
   (it "sends PUT request with comment data"
@@ -377,6 +485,16 @@
        (org-canvas--submissions-append-comment-to-buffer "Adams, Alice" "New comment"))
      (expect (buffer-string) :to-match "New comment")
      (expect (buffer-string) :to-match "\\*You\\*")))
+
+  (it "inserts new comment in existing Comments section"
+    (with-temp-org-buffer
+     "* Adams, Alice\n:PROPERTIES:\n:SUBMISSION_ID: 50001\n:END:\n\n** Comments\n- *Prof* <2026-01-01 Thu 00:00> :: First\n- *TA* <2026-01-02 Fri 00:00> :: Second\n"
+     (org-back-to-heading)
+     (let ((inhibit-read-only t))
+       (org-canvas--submissions-append-comment-to-buffer "Adams, Alice" "Third"))
+     (let ((content (buffer-string)))
+       (expect content :to-match "Third")
+       (expect content :to-match "\\*You\\*"))))
 
   (it "creates Comments section when missing"
     (with-temp-org-buffer
@@ -516,6 +634,84 @@
       (expect (org-canvas--submissions-normalize-status sub)
               :to-equal 'submitted))))
 
+;;;; File Download
+
+(describe "org-canvas-submissions-download-attachments"
+  (it "errors when not in submissions mode"
+    (with-temp-buffer
+      (expect (org-canvas-submissions-download-attachments) :to-throw 'user-error)))
+
+  (it "errors when not in detail view"
+    (with-temp-buffer
+      (org-canvas-submissions-mode 1)
+      (setq-local org-canvas-submissions--current-view 'summary)
+      (expect (org-canvas-submissions-download-attachments) :to-throw 'user-error)))
+
+  (it "errors when no attachments found"
+    (with-temp-org-buffer
+     "* Adams, Alice\n:PROPERTIES:\n:SUBMISSION_ID: 50001\n:END:\n"
+     (org-back-to-heading)
+     (setq-local org-canvas-submissions--current-view 'detail)
+     (setq-local org-canvas-submissions--assignment-name "HW")
+     (org-canvas-submissions-mode 1)
+     (expect (org-canvas-submissions-download-attachments) :to-throw 'user-error)))
+
+  (it "downloads attachment files"
+    (with-temp-org-buffer
+     "* Adams, Alice\n:PROPERTIES:\n:SUBMISSION_ID: 50001\n:END:\n\n** Attachments\n- [[https://example.com/files/1/download][hw.pdf]]\n"
+     (org-back-to-heading)
+     (setq-local org-canvas-submissions--current-view 'detail)
+     (setq-local org-canvas-submissions--assignment-name "HW")
+     (org-canvas-submissions-mode 1)
+     (let ((downloaded nil))
+       (cl-letf (((symbol-function 'org-canvas--submissions-download-file)
+                  (lambda (url _dir filename)
+                    (push (cons url filename) downloaded)))
+                 ((symbol-function 'make-directory) (lambda (_dir &rest _) nil)))
+         (org-canvas-submissions-download-attachments))
+       (expect (length downloaded) :to-equal 1)
+       (expect (cdar downloaded) :to-equal "hw.pdf")))))
+
+(describe "org-canvas--submissions-download-file"
+  (it "calls url-copy-file with auth token"
+    (let ((org-canvas-api-token "test-token")
+          (copied-url nil))
+      (cl-letf (((symbol-function 'url-copy-file)
+                 (lambda (url _path &rest _) (setq copied-url url))))
+        (org-canvas--submissions-download-file
+         "https://example.com/download" "/tmp" "test.pdf"))
+      (expect copied-url :to-match "access_token=test-token")
+      (expect copied-url :to-match "\\?access_token")))
+
+  (it "uses & separator when URL already has query params"
+    (let ((org-canvas-api-token "test-token")
+          (copied-url nil))
+      (cl-letf (((symbol-function 'url-copy-file)
+                 (lambda (url _path &rest _) (setq copied-url url))))
+        (org-canvas--submissions-download-file
+         "https://example.com/download?foo=bar" "/tmp" "test.pdf"))
+      (expect copied-url :to-match "&access_token=test-token"))))
+
+;;;; Refresh Error Paths
+
+(describe "org-canvas-submissions-refresh error paths"
+  (it "errors when not in submissions mode"
+    (with-temp-buffer
+      (expect (org-canvas-submissions-refresh) :to-throw 'user-error)))
+
+  (it "errors when no assignment ID"
+    (with-temp-buffer
+      (org-canvas-submissions-mode 1)
+      (setq-local org-canvas-submissions--assignment-id nil)
+      (expect (org-canvas-submissions-refresh) :to-throw 'user-error))))
+
+;;;; Push-grades Error Path
+
+(describe "org-canvas-submissions-push-grades error path"
+  (it "errors when not in submissions mode"
+    (with-temp-buffer
+      (expect (org-canvas-submissions-push-grades) :to-throw 'user-error))))
+
 ;;;; Score Parsing
 
 (describe "org-canvas--submissions-parse-score"
@@ -605,6 +801,31 @@
      (setq-local org-canvas-submissions--original-scores '((5001 . "92")))
      (let ((changes (org-canvas--submissions-collect-detail-changes)))
        (expect (plist-get (car changes) :new-score) :to-equal "95")))))
+
+;;;; Change Detection — Dispatcher
+
+(describe "org-canvas--submissions-collect-grade-changes"
+  (it "dispatches to detail collector in detail view"
+    (with-temp-org-buffer
+     "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:END:\n"
+     (setq-local org-canvas-submissions--current-view 'detail)
+     (setq-local org-canvas-submissions--original-scores '((5001 . "92")))
+     (let ((changes (org-canvas--submissions-collect-grade-changes)))
+       (expect (length changes) :to-equal 1))))
+
+  (it "dispatches to summary collector in summary view"
+    (with-temp-buffer
+      (org-mode)
+      (insert "| Student | Status | Submitted At | Score |\n")
+      (insert "|---------+--------+--------------+-------|\n")
+      (insert "| Adams, Alice | submitted | <2026-02-15> | 99 |\n")
+      (org-table-align)
+      (setq-local org-canvas-submissions--current-view 'summary)
+      (setq-local org-canvas-submissions--original-scores '((5001 . "92")))
+      (setq-local org-canvas-submissions--data
+                  (list (test-org-canvas-make-submission)))
+      (let ((changes (org-canvas--submissions-collect-grade-changes)))
+        (expect (length changes) :to-equal 1)))))
 
 ;;;; Change Detection — Summary View
 
