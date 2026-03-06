@@ -608,6 +608,7 @@ LATE-POLICY is the late policy API response (may be nil)."
       (beginning-of-line)
       (let ((start (point))
             (end (save-excursion
+                   (forward-line 1)
                    (if (re-search-forward "^\\*\\* " nil t)
                        (match-beginning 0)
                      (point-max)))))

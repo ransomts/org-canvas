@@ -783,6 +783,38 @@
               (expect (plist-get counts :last-synced) :to-match "2026")))
         (let ((buf (find-buffer-visiting test-file)))
           (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "tracks newest LAST_SYNCED across multiple synced entries"
+    (let* ((temp-dir (make-temp-file "status-test" t))
+           (test-file (expand-file-name "test.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file test-file
+              (insert "* Old Item
+:PROPERTIES:
+:CANVAS_ID: 100
+:LAST_SYNCED: [2025-06-01 Sun]
+:END:
+* Newer Item
+:PROPERTIES:
+:CANVAS_ID: 200
+:LAST_SYNCED: [2026-03-01 Sun]
+:END:
+* No Timestamp Item
+:PROPERTIES:
+:CANVAS_ID: 300
+:END:
+* Pending Item
+:PROPERTIES:
+:END:
+"))
+            (let ((counts (org-canvas--status-count-entries test-file "CANVAS_ID")))
+              (expect (plist-get counts :synced) :to-equal 3)
+              (expect (plist-get counts :pending) :to-equal 1)
+              (expect (plist-get counts :last-synced) :to-match "2026-03-01")))
+        (let ((buf (find-buffer-visiting test-file)))
+          (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
 
 ;;;; Cascading failure resilience

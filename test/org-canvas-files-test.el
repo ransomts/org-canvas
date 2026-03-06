@@ -1896,4 +1896,215 @@
         (org-canvas--file-set-usage-rights
          42 '(:use-justification "own_copyright"))))))
 
+;;;; Coverage: debug log root folder path (Line 324)
+
+(describe "org-canvas--file-parse-entry root folder debug log"
+  (it "logs 'root' when folder-path is empty (top-level file)"
+    (let* ((temp-dir (make-temp-file "files-test" t))
+           (content-dir (expand-file-name "content" temp-dir))
+           (test-file (progn (make-directory content-dir t)
+                             (expand-file-name "doc.pdf" content-dir)))
+           (files-file (expand-file-name "files.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file test-file (insert "dummy"))
+            (with-temp-file files-file
+              (insert "* [[file:content/doc.pdf][My Document]]
+:PROPERTIES:
+:END:
+"))
+            (let ((org-canvas-files-file files-file))
+              (with-current-buffer (find-file-noselect files-file)
+                (goto-char (point-min))
+                (org-back-to-heading)
+                (let ((data (org-canvas--file-parse-entry)))
+                  ;; Top-level file: folder-path should be empty
+                  (expect (plist-get data :folder-path) :to-equal "")
+                  (expect (plist-get data :display-name) :to-equal "My Document"))
+                (kill-buffer))))
+        (delete-directory temp-dir t)))))
+
+;;;; Coverage: push-to-api error path with root folder (Line 618)
+
+(describe "org-canvas--file-push-to-api error log with root folder"
+  (before-each
+    (setq org-canvas--file-root-folder-cache nil)
+    (setq org-canvas--file-folder-cache (make-hash-table :test 'equal)))
+
+  (it "logs 'root' in error message when folder-path is empty and upload fails"
+    (with-org-canvas-test-config
+      (let ((error-logged nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest _args)
+                     (cond
+                      ((and (eq method 'GET) (string-match "folders/root" url))
+                       '((id . 100) (name . "course files")))
+                      ((eq method 'POST)
+                       (signal 'error '("Step 1 notify failed"))))))
+                  ((symbol-function 'elog-error)
+                   (lambda (_logger fmt &rest args)
+                     (when (string-match "Upload failed" fmt)
+                       (setq error-logged (apply #'format fmt args))))))
+          (let ((temp-file (make-temp-file "test" nil ".pdf")))
+            (unwind-protect
+                (progn
+                  (with-temp-file temp-file (insert "content"))
+                  (let ((data (list :display-name "Test.pdf"
+                                    :local-path temp-file
+                                    :folder-path "")))
+                    (expect (org-canvas--file-push-to-api data) :to-throw 'error)
+                    (expect error-logged :to-match "root")))
+              (delete-file temp-file)))))))
+
+  (it "logs folder name in error message when folder-path is non-empty"
+    (with-org-canvas-test-config
+      (let ((error-logged nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest _args)
+                     (cond
+                      ((and (eq method 'GET) (string-match "folders/root" url))
+                       '((id . 100) (name . "course files")))
+                      ((eq method 'POST)
+                       (signal 'error '("Step 1 notify failed"))))))
+                  ((symbol-function 'org-canvas--file-resolve-folder-by-path)
+                   (lambda (_path) '((id . 200) (name . "Labs"))))
+                  ((symbol-function 'elog-error)
+                   (lambda (_logger fmt &rest args)
+                     (when (string-match "Upload failed" fmt)
+                       (setq error-logged (apply #'format fmt args))))))
+          (let ((temp-file (make-temp-file "test" nil ".pdf")))
+            (unwind-protect
+                (progn
+                  (with-temp-file temp-file (insert "content"))
+                  (let ((data (list :display-name "Lab1.pdf"
+                                    :local-path temp-file
+                                    :folder-path "Labs")))
+                    (expect (org-canvas--file-push-to-api data) :to-throw 'error)
+                    (expect error-logged :to-match "Labs")))
+              (delete-file temp-file))))))))
+
+;;;; Coverage: file-sync-single-entry with usage rights (Line 735)
+
+(describe "org-canvas--file-sync-single-entry with usage rights"
+  (it "calls set-usage-rights when USE_JUSTIFICATION is present and push returns id"
+    (let* ((temp-dir (make-temp-file "files-test" t))
+           (content-dir (expand-file-name "content" temp-dir))
+           (test-file (progn (make-directory content-dir t)
+                             (expand-file-name "test.pdf" content-dir)))
+           (files-file (expand-file-name "files.org" temp-dir))
+           (usage-rights-called nil))
+      (unwind-protect
+          (progn
+            (with-temp-file test-file (insert "dummy"))
+            (with-temp-file files-file
+              (insert "* [[file:content/test.pdf][Test PDF]]
+:PROPERTIES:
+:USE_JUSTIFICATION: own_copyright
+:END:
+"))
+            (let ((org-canvas-files-file files-file))
+              (with-current-buffer (find-file-noselect files-file)
+                (goto-char (point-min))
+                (org-back-to-heading)
+                (let ((marker (point-marker)))
+                  (cl-letf (((symbol-function 'org-canvas--file-push-to-api)
+                             (lambda (_data)
+                               '((id . 42) (display_name . "test.pdf"))))
+                            ((symbol-function 'org-canvas--file-finalize)
+                             (lambda (_data _resp) nil))
+                            ((symbol-function 'org-canvas--file-set-usage-rights)
+                             (lambda (fid _data)
+                               (setq usage-rights-called fid))))
+                    (let ((result (org-canvas--file-sync-single-entry marker)))
+                      (expect result :to-equal :success)
+                      (expect usage-rights-called :to-equal 42))))
+                (kill-buffer))))
+        (delete-directory temp-dir t))))
+
+  (it "does not call set-usage-rights when USE_JUSTIFICATION is absent"
+    (let* ((temp-dir (make-temp-file "files-test" t))
+           (content-dir (expand-file-name "content" temp-dir))
+           (test-file (progn (make-directory content-dir t)
+                             (expand-file-name "test.pdf" content-dir)))
+           (files-file (expand-file-name "files.org" temp-dir))
+           (usage-rights-called nil))
+      (unwind-protect
+          (progn
+            (with-temp-file test-file (insert "dummy"))
+            (with-temp-file files-file
+              (insert "* [[file:content/test.pdf][Test PDF]]
+:PROPERTIES:
+:END:
+"))
+            (let ((org-canvas-files-file files-file))
+              (with-current-buffer (find-file-noselect files-file)
+                (goto-char (point-min))
+                (org-back-to-heading)
+                (let ((marker (point-marker)))
+                  (cl-letf (((symbol-function 'org-canvas--file-push-to-api)
+                             (lambda (_data)
+                               '((id . 42) (display_name . "test.pdf"))))
+                            ((symbol-function 'org-canvas--file-finalize)
+                             (lambda (_data _resp) nil))
+                            ((symbol-function 'org-canvas--file-set-usage-rights)
+                             (lambda (_fid _data)
+                               (setq usage-rights-called t))))
+                    (let ((result (org-canvas--file-sync-single-entry marker)))
+                      (expect result :to-equal :success)
+                      (expect usage-rights-called :to-be nil))))
+                (kill-buffer))))
+        (delete-directory temp-dir t)))))
+
+;;;; Coverage: file-pull-set-properties usage_rights (Lines 955-963)
+
+(describe "org-canvas--file-pull-set-properties usage rights"
+  (it "sets USE_JUSTIFICATION, USAGE_LICENSE, and COPYRIGHT from usage_rights"
+    (with-temp-org-buffer
+     "* [[file:test.pdf][Test PDF]]
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (let ((item '((content-type . "application/pdf")
+                   (size . 2048)
+                   (usage_rights . ((use_justification . "own_copyright")
+                                    (license . "cc_by_sa")
+                                    (legal_copyright . "2026 Author"))))))
+       (org-canvas--file-pull-set-properties (point) item)
+       (expect (org-entry-get (point) "USE_JUSTIFICATION") :to-equal "own_copyright")
+       (expect (org-entry-get (point) "USAGE_LICENSE") :to-equal "cc_by_sa")
+       (expect (org-entry-get (point) "COPYRIGHT") :to-equal "2026 Author"))))
+
+  (it "sets partial usage rights when only justification is present"
+    (with-temp-org-buffer
+     "* [[file:test.pdf][Test PDF]]
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (let ((item '((content-type . "application/pdf")
+                   (size . 512)
+                   (usage_rights . ((use_justification . "fair_use"))))))
+       (org-canvas--file-pull-set-properties (point) item)
+       (expect (org-entry-get (point) "USE_JUSTIFICATION") :to-equal "fair_use")
+       (expect (org-entry-get (point) "USAGE_LICENSE") :to-be nil)
+       (expect (org-entry-get (point) "COPYRIGHT") :to-be nil))))
+
+  (it "does not set usage properties when usage_rights is absent"
+    (with-temp-org-buffer
+     "* [[file:test.pdf][Test PDF]]
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (let ((item '((content-type . "application/pdf")
+                   (size . 1024))))
+       (org-canvas--file-pull-set-properties (point) item)
+       (expect (org-entry-get (point) "USE_JUSTIFICATION") :to-be nil)
+       (expect (org-entry-get (point) "USAGE_LICENSE") :to-be nil)
+       (expect (org-entry-get (point) "COPYRIGHT") :to-be nil)))))
+
 ;;; org-canvas-files-test.el ends here

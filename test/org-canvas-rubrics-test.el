@@ -715,6 +715,19 @@ Keep this body
           (expect result :to-equal nil))))))
 
 (describe "org-canvas--rubric-log-linked-assignments"
+  (it "logs warning when no assignments reference the rubric"
+    (with-org-canvas-test-config
+      (spy-on 'elog-warning)
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (_method _url &rest _args)
+                   ;; Return assignments that don't match rubric-id 123
+                   [((id . 1) (name . "HW1") (rubric_id . 999))
+                    ((id . 2) (name . "HW2") (rubric_id . 888))])))
+        (org-canvas--rubric-log-linked-assignments "123")
+        (expect 'elog-warning :to-have-been-called-with
+                org-canvas--logger
+                "  [Assignments] No assignments reference this rubric"))))
+
   (it "handles API error gracefully"
     (with-org-canvas-test-config
       (spy-on 'elog-warning)

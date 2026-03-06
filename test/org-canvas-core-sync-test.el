@@ -1471,7 +1471,32 @@ Content two.
        (org-canvas--conflict-pull-local data remote
          (lambda (_item _pos) nil))
        (org-back-to-heading)
-       (expect (org-get-heading t t t t) :to-equal "Updated Name")))))
+       (expect (org-get-heading t t t t) :to-equal "Updated Name"))))
+
+  (it "handles integer pom (non-marker)"
+    (with-temp-org-buffer
+     "* Integer POM Test
+:PROPERTIES:
+:CANVAS_ID: 300
+:PAYLOAD_HASH: oldhash
+:END:
+"
+     (org-back-to-heading)
+     (let* ((pom (point))
+            (data (list :title "Integer POM Test" :pom pom))
+            (remote '((title . "Renamed via Integer")
+                      (updated_at . "2026-03-01T09:00:00Z")))
+            (pull-called nil))
+       (org-canvas--conflict-pull-local data remote
+         (lambda (_item _pos) (setq pull-called t)))
+       (expect pull-called :to-be-truthy)
+       (goto-char pom)
+       (org-back-to-heading)
+       (expect (org-get-heading t t t t) :to-equal "Renamed via Integer")
+       (expect (org-entry-get pom "PAYLOAD_HASH") :to-be nil)
+       (expect (org-entry-get pom "CANVAS_UPDATED_AT")
+               :to-equal "2026-03-01T09:00:00Z")
+       (expect (org-entry-get pom "LAST_SYNCED") :to-be-truthy)))))
 
 (describe "org-canvas--push-to-api conflict resolution"
   (it "proceeds with PUT when user chooses push"
@@ -2254,6 +2279,39 @@ Body.
             :title
             nil))
          ;; API should NOT have been called (skipped)
+         (expect api-called :to-be nil))))))
+
+;;;; push-at-point-runtime canvas-url fallback
+
+(describe "org-canvas--push-at-point-runtime"
+  (it "uses canvas-url for skip detection when canvas-id absent"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer
+       "* Test Page
+:PROPERTIES:
+:CANVAS_URL: my-page-slug
+:END:
+
+Body.
+"
+       (org-back-to-heading)
+       (let* ((payload '((wiki_page (title . "Test Page") (body . "Body."))))
+              (payload-hash (md5 (json-encode payload)))
+              (api-called nil))
+         ;; Set stored hash to match — should skip
+         (org-entry-put (point) "PAYLOAD_HASH" payload-hash)
+         (save-buffer)
+         (cl-letf (((symbol-function 'org-canvas-clear-log) #'ignore)
+                   ((symbol-function 'display-buffer) #'ignore))
+           (org-canvas--push-at-point-runtime
+            "page"
+            (lambda () (list :title "Test Page" :canvas-url "my-page-slug" :pom (point)))
+            (lambda (_data) payload)
+            (lambda (_data _payload) (setq api-called t) '((url . "my-page-slug")))
+            (lambda (_data _response) nil)
+            :title
+            nil))
+         ;; Should be skipped because hash matches AND canvas-url is truthy
          (expect api-called :to-be nil))))))
 
 ;;;; define-push-at-point macro validation for missing :finalize/:endpoint

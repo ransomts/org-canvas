@@ -1945,6 +1945,86 @@ EXCEPT is a list of filenames to skip."
           (when buf (kill-buffer buf)))
         (delete-file target-file)))))
 
+(describe "org-canvas--validate-module-item-link with escaped brackets"
+  (it "unescapes \\[ in heading name before searching"
+    (let ((target-file (make-temp-file "test-pages" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file target-file
+              (insert "* Page [Extra\n:PROPERTIES:\n:CANVAS_ID: 42\n:END:\n"))
+            (with-temp-org-buffer
+             (format "* Module\n** [[file:%s::*Page \\[Extra][Page Extra]]\n:PROPERTIES:\n:END:\n" target-file)
+             (search-forward "Page Extra")
+             (org-back-to-heading)
+             (let* ((loc (list :file (buffer-file-name) :line 2 :heading "Link"))
+                    (issues (org-canvas--validate-module-item-link loc)))
+               (expect issues :to-be nil))))
+        (let ((buf (find-buffer-visiting target-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file target-file)))))
+
+(describe "org-canvas--validate-override-section-ids"
+  (it "reports warning when override section link target has no CANVAS_ID"
+    (let ((sections-file (make-temp-file "test-sections" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file sections-file
+              (insert "* Section A\n:PROPERTIES:\n:END:\n"))
+            (with-temp-org-buffer
+             (format "| [[file:%s::*Section A][Section A]] | <2027-01-15 Fri 23:59> |\n" sections-file)
+             (goto-char (point-min))
+             (let ((issues (org-canvas--validate-override-section-ids
+                            (buffer-file-name) "Assignment 1")))
+               (expect issues :not :to-be nil)
+               (expect (length issues) :to-equal 1)
+               (expect (plist-get (car issues) :severity) :to-equal 'warning)
+               (expect (plist-get (car issues) :message) :to-match "no CANVAS_ID"))))
+        (let ((buf (find-buffer-visiting sections-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file sections-file))))
+
+  (it "returns nil when section link target has CANVAS_ID"
+    (let ((sections-file (make-temp-file "test-sections" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file sections-file
+              (insert "* Section A\n:PROPERTIES:\n:CANVAS_ID: 99\n:END:\n"))
+            (with-temp-org-buffer
+             (format "| [[file:%s::*Section A][Section A]] | <2027-01-15 Fri 23:59> |\n" sections-file)
+             (goto-char (point-min))
+             (let ((issues (org-canvas--validate-override-section-ids
+                            (buffer-file-name) "Assignment 1")))
+               (expect issues :to-be nil))))
+        (let ((buf (find-buffer-visiting sections-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file sections-file)))))
+
+(describe "org-canvas--validate-drop-rules"
+  (it "warns when only DROP_LOWEST is set and exceeds assignment count"
+    (let ((assignments-file (make-temp-file "test-assignments" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file assignments-file
+              (insert "* HW 1\n:PROPERTIES:\n:GROUP: Homework\n:END:\n"))
+            (let ((org-canvas-assignments-file assignments-file))
+              (with-temp-org-buffer
+               "* Homework
+:PROPERTIES:
+:DROP_LOWEST: 2
+:END:
+"
+               (org-back-to-heading t)
+               (let* ((loc (list :file (buffer-file-name)
+                                 :line (line-number-at-pos)
+                                 :heading "Homework"))
+                      (issues (org-canvas--validate-drop-rules loc)))
+                 (expect issues :not :to-be nil)
+                 (expect (plist-get (car issues) :severity) :to-equal 'warning)
+                 (expect (plist-get (car issues) :message) :to-match "Drop rules")))))
+        (let ((buf (find-buffer-visiting assignments-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file assignments-file)))))
+
 (describe "org-canvas--validate-quiz-point-total"
   (it "returns nil when POINTS matches question total"
     (with-temp-org-buffer
@@ -2265,6 +2345,32 @@ EXCEPT is a list of filenames to skip."
         (expect rubric-type :to-equal 'link)
         (expect (plist-get rubric-prop :target-file)
                 :to-equal 'org-canvas-rubrics-file)))))
+
+;;;; Coverage: validate-assignment-structure with section ID issues (Line 608)
+
+(describe "org-canvas--validate-assignment-structure with section ID issues"
+  (it "collects section ID issues from override table"
+    (let* ((temp-dir (make-temp-file "val-assign-struct-" t))
+           (sections-file (expand-file-name "sections.org" temp-dir))
+           (assign-file (expand-file-name "assignments.org" temp-dir)))
+      (unwind-protect
+          (progn
+            ;; Section without CANVAS_ID
+            (with-temp-file sections-file
+              (insert "* Section A\n:PROPERTIES:\n:END:\n"))
+            (let ((link (format "[[file:%s::*Section A][Section A]]" sections-file)))
+              (with-temp-file assign-file
+                (insert (format "* Assignment 1\n:PROPERTIES:\n:POINTS: 100\n:END:\n\n#+NAME: overrides\n| Section | Due At |\n|---------+--------|\n| %s | <2027-01-15 Fri 23:59> |\n" link)))
+              (with-current-buffer (find-file-noselect assign-file)
+                (goto-char (point-min))
+                (org-back-to-heading t)
+                (let ((issues (org-canvas--validate-assignment-structure
+                               (list :file assign-file :line 1 :heading "Assignment 1"))))
+                  (expect issues :not :to-be nil)
+                  (expect (cl-some (lambda (i) (string-match "no CANVAS_ID" (plist-get i :message)))
+                                   issues)
+                          :to-be-truthy)))))
+        (delete-directory temp-dir t)))))
 
 (provide 'org-canvas-validate-test)
 ;;; org-canvas-validate-test.el ends here

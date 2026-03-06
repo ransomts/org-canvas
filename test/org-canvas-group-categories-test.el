@@ -333,6 +333,37 @@
                   (org-canvas-delete-all-group-categories)
                   (expect (length deleted-urls) :to-equal 1)
                   (expect (car deleted-urls) :to-match "api/v1/group_categories/42")))))
+        (delete-directory temp-dir t))))
+
+  (it "logs warning when DELETE fails for a group category"
+    (let ((temp-dir (make-temp-file "gc-test" t)))
+      (unwind-protect
+          (let* ((org-file (expand-file-name "group-categories.org" temp-dir))
+                 (warning-logged nil))
+            (with-temp-file org-file
+              (insert "* Failing Groups
+:PROPERTIES:
+:CANVAS_ID: 55
+:END:
+"))
+            (let ((org-canvas-group-categories-file org-file)
+                  (org-canvas-base-url "https://test.canvas.example.com")
+                  (org-canvas-api-token "test-token")
+                  (org-canvas-course-id "99999"))
+              (with-sync-test-env
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (lambda (_method _url &optional _params)
+                             '(((id . 55) (name . "Failing Groups")))))
+                          ((symbol-function 'org-canvas-api-request)
+                           (lambda (method _url &rest _args)
+                             (when (eq method 'DELETE)
+                               (signal 'error '("Connection refused")))))
+                          ((symbol-function 'elog-warning)
+                           (lambda (_logger fmt &rest _args)
+                             (when (string-match-p "Failed to delete" fmt)
+                               (setq warning-logged t)))))
+                  (org-canvas-delete-all-group-categories)
+                  (expect warning-logged :to-be t)))))
         (delete-directory temp-dir t)))))
 
 ;;;; Pull Function Tests

@@ -483,22 +483,13 @@ Return the matching item alist, or nil if not found."
 (defun org-canvas--module-collect-item-markers (module-pom)
   "Collect deduplicated markers for all child headings of MODULE-POM."
   (let ((item-markers nil))
-    ;; Collect all level-2 children of this module
-    (save-excursion
-      (goto-char module-pom)
-      (let ((module-level (org-current-level)))
-        (while (and (org-get-next-sibling)
-                    (> (org-current-level) module-level))
-          (when (= (org-current-level) (1+ module-level))
-            (push (point-marker) item-markers)))))
-    ;; Also check immediate children using outline structure
     (save-excursion
       (goto-char module-pom)
       (when (org-goto-first-child)
         (push (point-marker) item-markers)
         (while (org-get-next-sibling)
           (push (point-marker) item-markers))))
-    (delete-dups (nreverse item-markers))))
+    (nreverse item-markers)))
 
 (defun org-canvas--module-sync-items (module-id module-pom modules-file-dir)
   "Sync all items for MODULE-ID starting from MODULE-POM.

@@ -282,7 +282,7 @@ Returns a plist (:link-path PATH :display-name NAME :raw-heading TEXT)."
             (beginning-of-line)
             (when (looking-at org-complex-heading-regexp)
               (match-string-no-properties 4))))
-         (raw-heading (or heading-with-links (org-get-heading t t t t))))
+         (raw-heading heading-with-links))
     (list :link-path (org-canvas--file-extract-link-path raw-heading)
           :display-name (org-canvas--file-get-display-name raw-heading)
           :raw-heading raw-heading)))
@@ -683,7 +683,7 @@ Returns a list of folder paths that need to exist for file uploads."
                    (beginning-of-line)
                    (when (looking-at org-complex-heading-regexp)
                      (match-string-no-properties 4))))
-                (raw-heading (or heading-with-links (org-get-heading t t t t)))
+                (raw-heading heading-with-links)
                 (link-path (org-canvas--file-extract-link-path raw-heading)))
            ;; Only process actual files (headings with links)
            (when link-path

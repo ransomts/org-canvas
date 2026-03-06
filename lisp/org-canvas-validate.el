@@ -595,9 +595,9 @@ LOC is a (:file :line :heading) plist."
           (forward-line 1)
           (when (looking-at "^|-")
             (forward-line 1))
-          (let ((row-issues (org-canvas--validate-override-rows
-                             (plist-get loc :file) (plist-get loc :heading)))
-                (save-pos (point)))
+          (let* ((save-pos (point))
+                 (row-issues (org-canvas--validate-override-rows
+                              (plist-get loc :file) (plist-get loc :heading))))
             (when row-issues
               (setq issues (nconc issues row-issues)))
             ;; Check section CANVAS_IDs in override links

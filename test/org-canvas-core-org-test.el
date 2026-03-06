@@ -725,7 +725,16 @@ x = 42
      (goto-char (point-min))
      (let ((html (org-canvas--export-subtree-body-to-html)))
        (expect html :to-be-truthy)
-       (expect html :to-match "42")))))
+       (expect html :to-match "42"))))
+
+  (it "falls back to default-directory when buffer has no file"
+    (with-temp-buffer
+      (insert "* Heading\n:PROPERTIES:\n:END:\n\nSome content here.\n")
+      (org-mode)
+      (goto-char (point-min))
+      (let ((html (org-canvas--export-subtree-body-to-html)))
+        (expect html :to-be-truthy)
+        (expect html :to-match "Some content here")))))
 
 ;;;; Bracket-Escaped Link Resolution
 

@@ -1396,6 +1396,25 @@
                            (file-name-directory temp-modules))))
                 (expect (plist-get data :min-score) :to-be nil))
               (kill-buffer)))
+        (delete-file temp-modules))))
+
+  (it "includes min-score for ExternalUrl items"
+    (let ((temp-modules (make-temp-file "modules-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-modules
+              (insert "* Module\n** Google Docs\n:PROPERTIES:\n:EXTERNAL_URL: https://docs.google.com\n:COMPLETION_REQUIREMENT: min_score\n:MIN_SCORE: 90\n:END:\n"))
+            (with-current-buffer (find-file-noselect temp-modules)
+              (goto-char (point-min))
+              (search-forward "Google Docs")
+              (org-back-to-heading)
+              (let* ((data (org-canvas--module-item-parse-entry
+                            (file-name-directory temp-modules)))
+                     (result-type (plist-get data :type)))
+                (expect result-type :to-equal "ExternalUrl")
+                (expect (plist-get data :min-score) :to-equal 90)
+                (expect (plist-get data :completion-requirement) :to-equal "min_score"))
+              (kill-buffer)))
         (delete-file temp-modules)))))
 
 (describe "org-canvas--module-sync-items integration"
@@ -1713,7 +1732,40 @@
 
   (it "returns Untitled when title and file both nil"
     (expect (org-canvas--module-resolve-item-link "UnknownType" 1 nil)
-            :to-equal "Untitled")))
+            :to-equal "Untitled"))
+
+  (it "uses heading-name as display text when title is nil"
+    (let* ((temp-dir (make-temp-file "mod-link-nil-title" t))
+           (pages-file (expand-file-name "pages.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file pages-file
+              (insert "* My Page\n:PROPERTIES:\n:CANVAS_URL: my-page\n:END:\n"))
+            (let ((org-canvas-directory temp-dir))
+              (let ((link (org-canvas--module-resolve-item-link
+                           "Page" "my-page" nil)))
+                ;; When title is nil, (or title heading-name) falls back to heading-name
+                (expect link :to-match "\\[\\[file:")
+                (expect link :to-match "My Page"))))
+        (let ((buf (find-buffer-visiting pages-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "returns Untitled when heading not found in existing file"
+    (let* ((temp-dir (make-temp-file "mod-link-no-match" t))
+           (pages-file (expand-file-name "pages.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file pages-file
+              (insert "* Some Other Page\n:PROPERTIES:\n:CANVAS_URL: other\n:END:\n"))
+            (let ((org-canvas-directory temp-dir))
+              (let ((link (org-canvas--module-resolve-item-link
+                           "Page" "nonexistent-id" nil)))
+                ;; heading-name is nil and title is nil → "Untitled"
+                (expect link :to-equal "Untitled"))))
+        (let ((buf (find-buffer-visiting pages-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
 
 (describe "org-canvas--module-pull-insert-items"
   (it "inserts SubHeader as L2 heading"
@@ -1776,6 +1828,26 @@
      (expect (org-entry-get (point) "EXTERNAL_URL")
              :to-equal "https://example.com")
      (expect (org-entry-get (point) "NEW_TAB") :to-be nil)))
+
+  (it "sets INDENT property on ExternalUrl when indent is present"
+    (with-temp-org-buffer
+     "* Module
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (goto-char (save-excursion (org-end-of-subtree t) (point)))
+     (org-canvas--module-pull-insert-items
+      [((type . "ExternalUrl") (title . "Indented Link")
+        (id . 303) (external_url . "https://example.com/indented")
+        (new_tab . nil) (indent . 2))])
+     (goto-char (point-min))
+     (search-forward "Indented Link")
+     (org-back-to-heading)
+     (expect (org-entry-get (point) "INDENT") :to-equal "2")
+     (expect (org-entry-get (point) "EXTERNAL_URL")
+             :to-equal "https://example.com/indented")))
 
   (it "inserts linked items with INDENT"
     (with-temp-org-buffer

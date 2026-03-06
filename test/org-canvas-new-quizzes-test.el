@@ -1135,6 +1135,25 @@ Quiz description.
        (expect (gethash "scoring_algorithm" payload) :to-equal "None")
        (expect (alist-get 'value (gethash "scoring_data" payload)) :to-equal ""))))
 
+  (it "falls back to raw type when not in type-slugs"
+    (with-temp-org-buffer
+     "* Quiz
+** Unknown Q
+:PROPERTIES:
+:TYPE: custom-widget
+:END:
+"
+     (search-forward "Unknown Q")
+     (org-back-to-heading)
+     (let* ((data (list :title "Unknown Q"
+                        :text ""
+                        :type "custom-widget"
+                        :points 1
+                        :pom (point-marker)))
+            (payload (org-canvas--new-quiz-item-build-payload data)))
+       ;; "custom-widget" is not in type-slugs, so slug = q-type itself
+       (expect (gethash "interaction_type_slug" payload) :to-equal "custom-widget"))))
+
   (it "uses title as item_body when text is empty"
     (with-temp-org-buffer
      "* Quiz
@@ -1477,6 +1496,28 @@ Quiz description.
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t))))
 
+  (it "uses id fallback when assignment_id absent in sync response"
+    (let* ((temp-dir (make-temp-file "nq-id-fb-test" t))
+           (test-file (expand-file-name "new-quizzes.org" temp-dir)))
+      (unwind-protect
+          (let ((org-canvas-new-quizzes-file test-file))
+            (with-temp-file test-file
+              (insert "* ID Fallback Quiz\n:PROPERTIES:\n:END:\n\n** Q1\n:PROPERTIES:\n:TYPE: choice\n:END:\n\n- [X] Yes\n- [ ] No\n"))
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request)
+                         (lambda (_m _u &rest _)
+                           ;; Response has id but no assignment_id
+                           '((id . "fallback-77")))))
+                (with-sync-test-env
+                  (org-canvas-sync-new-quizzes)
+                  (let ((content (with-temp-buffer
+                                   (insert-file-contents test-file)
+                                   (buffer-string))))
+                    (expect content :to-match "CANVAS_ASSIGNMENT_ID"))))))
+        (let ((buf (find-buffer-visiting test-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
   (it "errors when file not found"
     (let ((org-canvas-new-quizzes-file "/tmp/nonexistent/new-quizzes.org"))
       (with-sync-test-env
@@ -1533,6 +1574,28 @@ Quiz description.
        (cl-letf (((symbol-function 'org-canvas-api-request)
                   (lambda (_m _u &rest _)
                     '((assignment_id . 42) (id . "item-1")))))
+         (org-canvas-sync-new-quiz-at-point)
+         (expect (org-entry-get (point) "CANVAS_ASSIGNMENT_ID") :to-be-truthy)))))
+
+  (it "uses id fallback for quiz-id when assignment_id absent at point"
+    (with-temp-org-buffer
+     "* ID Fallback Quiz
+:PROPERTIES:
+:END:
+
+** Q1
+:PROPERTIES:
+:TYPE: choice
+:END:
+
+- [X] Yes
+- [ ] No
+"
+     (org-back-to-heading)
+     (with-org-canvas-test-config
+       (cl-letf (((symbol-function 'org-canvas-api-request)
+                  (lambda (_m _u &rest _)
+                    '((id . "only-id-99")))))
          (org-canvas-sync-new-quiz-at-point)
          (expect (org-entry-get (point) "CANVAS_ASSIGNMENT_ID") :to-be-truthy)))))
 
@@ -1609,6 +1672,34 @@ Quiz description.
                 (with-sync-test-env
                   ;; Should not throw
                   (org-canvas-delete-all-new-quizzes)))))
+        (let ((buf (find-buffer-visiting test-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "uses id fallback when assignment_id absent in delete-all"
+    (let* ((temp-dir (make-temp-file "nq-delete-id-fb" t))
+           (test-file (expand-file-name "new-quizzes.org" temp-dir)))
+      (unwind-protect
+          (let ((org-canvas-new-quizzes-file test-file)
+                (deleted-urls nil))
+            (with-temp-file test-file
+              (insert "* Quiz\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 50\n:END:\n"))
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                         (lambda (_m _u &optional _p)
+                           ;; Response has id but no assignment_id
+                           '(((id . 50) (title . "Quiz No AssignID")))))
+                        ((symbol-function 'org-canvas-api-request)
+                         (lambda (method url &rest _)
+                           (when (eq method 'DELETE)
+                             (push url deleted-urls))
+                           nil))
+                        ((symbol-function 'y-or-n-p) (lambda (_) t)))
+                (with-sync-test-env
+                  (org-canvas-delete-all-new-quizzes)
+                  ;; Should have extracted id=50 and formed the delete URL
+                  (expect (length deleted-urls) :to-equal 1)
+                  (expect (car deleted-urls) :to-match "50")))))
         (let ((buf (find-buffer-visiting test-file)))
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
@@ -1736,6 +1827,25 @@ Quiz description.
        (expect (org-entry-get pos "ALLOWED_ATTEMPTS") :to-equal "3")
        (expect (org-entry-get pos "SCORING_POLICY") :to-equal "keep_highest")))))
 
+(describe "org-canvas--new-quiz-pull-set-properties id fallback"
+  (it "uses id when assignment_id is absent"
+    (with-temp-org-buffer
+     "* Pull Fallback Quiz
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (let ((pos (point)))
+       (org-canvas--new-quiz-pull-set-properties
+        pos '((id . 77)
+              (time_limit . 30)
+              (shuffle_answers . nil)
+              (one_at_a_time . nil)
+              (allowed_attempts . 1)
+              (scoring_policy . "keep_latest")))
+       (expect (org-entry-get pos "CANVAS_ASSIGNMENT_ID") :to-equal "77")
+       (expect (org-entry-get pos "TIME_LIMIT") :to-equal "30")))))
+
 (describe "org-canvas--new-quiz-pull-insert-item"
   (it "inserts item as L2 heading with properties"
     (with-temp-org-buffer
@@ -1833,6 +1943,31 @@ Quiz description.
                                  (buffer-string))))
                   (expect content :to-match "What is 2\\+2\\?")
                   (expect content :to-match "CANVAS_ITEM_ID")))))
+        (let ((buf (find-buffer-visiting test-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "uses id fallback when assignment_id absent in pull response"
+    (let* ((temp-dir (make-temp-file "nq-pull-id-fb" t))
+           (test-file (expand-file-name "new-quizzes.org" temp-dir)))
+      (unwind-protect
+          (let ((org-canvas-new-quizzes-file test-file))
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                         (lambda (_method url &optional _params)
+                           (if (string-match-p "items" url)
+                               nil
+                             ;; Response has id but no assignment_id
+                             '(((id . 88) (title . "ID-Only Quiz")
+                                (time_limit . 45))))))
+                        ((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                        ((symbol-function 'display-buffer) (lambda (_) nil)))
+                (org-canvas-pull-new-quizzes)
+                (let ((content (with-temp-buffer
+                                 (insert-file-contents test-file)
+                                 (buffer-string))))
+                  (expect content :to-match "ID-Only Quiz")
+                  (expect content :to-match "CANVAS_ASSIGNMENT_ID: 88")))))
         (let ((buf (find-buffer-visiting test-file)))
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
@@ -2156,5 +2291,75 @@ Body text
                               :pom (point-marker)))))
              (org-canvas-sync-new-quiz-at-point)
              (expect assoc-calls :to-be nil))))))))
+
+;;;; Coverage: quiz-id falls back to canvas-id when response lacks id fields (Lines 849, 901)
+
+(describe "new quiz sync quiz-id fallback to canvas-id"
+  (it "uses canvas-id when response has no assignment_id or id (at-point)"
+    (with-org-canvas-test-config
+      (let ((items-synced nil))
+        (with-temp-org-buffer
+         "* Quiz Fallback
+:PROPERTIES:
+:CANVAS_ID: 42
+:END:
+
+Body text
+"
+         (org-back-to-heading)
+         (cl-letf (((symbol-function 'org-canvas--new-quiz-parse-entry)
+                    (lambda ()
+                      (list :title "Quiz Fallback"
+                            :canvas-id 42
+                            :rubric-id nil
+                            :pom (point-marker))))
+                   ((symbol-function 'org-canvas--new-quiz-build-payload)
+                    (lambda (_data) '((title . "Quiz Fallback"))))
+                   ((symbol-function 'org-canvas--new-quiz-push-to-api)
+                    (lambda (_data _payload) '((status . "ok"))))
+                   ((symbol-function 'org-canvas--new-quiz-finalize)
+                    (lambda (_data _response) nil))
+                   ((symbol-function 'org-canvas--sync-new-quiz-items)
+                    (lambda (_marker quiz-id)
+                      (setq items-synced quiz-id)
+                      (cons 0 0)))
+                   ((symbol-function 'save-buffer)
+                    (lambda (&rest _) nil)))
+           (org-canvas-sync-new-quiz-at-point)
+           (expect items-synced :to-equal 42))))))
+
+  (it "uses canvas-id when response has no assignment_id or id (batch sync)"
+    (let* ((temp-dir (make-temp-file "nq-batch-" t))
+           (nq-file (expand-file-name "new-quizzes.org" temp-dir))
+           (items-synced nil))
+      (unwind-protect
+          (progn
+            (with-temp-file nq-file
+              (insert "* Quiz Batch\n:PROPERTIES:\n:CANVAS_ID: 77\n:END:\n\nBody\n"))
+            (let ((org-canvas-new-quizzes-file nq-file))
+              (with-org-canvas-test-config
+                (cl-letf (((symbol-function 'org-canvas-clear-log) #'ignore)
+                          ((symbol-function 'display-buffer) #'ignore)
+                          ((symbol-function 'org-canvas--new-quiz-parse-entry)
+                           (lambda ()
+                             (list :title "Quiz Batch"
+                                   :canvas-id 77
+                                   :rubric-id nil
+                                   :pom (point-marker))))
+                          ((symbol-function 'org-canvas--new-quiz-build-payload)
+                           (lambda (_data) '((title . "Quiz Batch"))))
+                          ((symbol-function 'org-canvas--new-quiz-push-to-api)
+                           (lambda (_data _payload) '((status . "ok"))))
+                          ((symbol-function 'org-canvas--new-quiz-finalize)
+                           (lambda (_data _response) nil))
+                          ((symbol-function 'org-canvas--sync-new-quiz-items)
+                           (lambda (_marker quiz-id)
+                             (setq items-synced quiz-id)
+                             (cons 0 0))))
+                  (org-canvas-sync-new-quizzes)
+                  (expect items-synced :to-equal 77)))))
+        (let ((buf (find-buffer-visiting nq-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
 
 ;;; org-canvas-new-quizzes-test.el ends here

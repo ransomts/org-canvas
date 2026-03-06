@@ -731,4 +731,15 @@ Just a description, no override table.
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
 
+;;;; Override Sync Preflight Tests
+
+(describe "org-canvas--override-sync-preflight"
+  (it "falls back to org-canvas--path when org-canvas-assignments-file unbound"
+    (let ((old-val org-canvas-assignments-file)
+          (org-canvas-directory "/tmp/nonexistent-dir-for-test/"))
+      (makunbound 'org-canvas-assignments-file)
+      (unwind-protect
+          (expect (org-canvas--override-sync-preflight) :to-throw 'error)
+        (setq org-canvas-assignments-file old-val)))))
+
 ;;; org-canvas-sections-test.el ends here

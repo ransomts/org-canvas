@@ -618,6 +618,14 @@ Content.
              (assignment (gethash "assignment" payload)))
         ;; org-canvas-org-get-boolean-property returns nil for "false",
         ;; which the build function treats the same as "not set" (defaults to t)
+        (expect (gethash "automatic_peer_reviews" assignment) :to-be t)))
+
+    (it "converts explicit automatic_peer_reviews true to json boolean"
+      (let* ((data '(:title "Test" :description "" :published t
+                     :grading_type "points" :submission_types ("none")
+                     :peer_reviews t :automatic_peer_reviews t))
+             (payload (org-canvas--assignment-build-payload data))
+             (assignment (gethash "assignment" payload)))
         (expect (gethash "automatic_peer_reviews" assignment) :to-be t))))
 
   (describe "optional fields"

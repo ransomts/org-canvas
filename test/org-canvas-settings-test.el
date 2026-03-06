@@ -1098,4 +1098,187 @@ Syllabus text.
               (expect body :not :to-match "unknown/unknown")))
         (delete-file temp-file)))))
 
+;;;; Coverage: late policy POST also fails (Lines 288-289)
+
+(describe "org-canvas--settings-push-late-policy (both PATCH and POST fail)"
+  (it "logs error when both PATCH and POST fail"
+    (with-org-canvas-test-config
+      (let ((error-logged nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method _url &rest _args)
+                     (cond
+                      ((eq method 'PATCH)
+                       (signal 'error '("400 Bad Request")))
+                      ((eq method 'POST)
+                       (signal 'error '("403 Forbidden"))))))
+                  ((symbol-function 'elog-error)
+                   (lambda (_logger fmt &rest args)
+                     (when (string-match "Late policy sync failed" fmt)
+                       (setq error-logged (apply #'format fmt args))))))
+          (let ((payload (make-hash-table :test 'equal))
+                (lp (make-hash-table :test 'equal)))
+            (puthash "late_submission_deduction" 10 lp)
+            (puthash "late_policy" lp payload)
+            ;; Should not throw — the error is caught and logged
+            (org-canvas--settings-push-late-policy payload)
+            (expect error-logged :to-match "403 Forbidden")))))))
+
+;;;; Coverage: Navigation parse when no next ** heading (Line 319)
+
+(describe "org-canvas--settings-parse-navigation (last heading)"
+  (it "parses navigation bounded by next level-2 heading"
+    (with-temp-org-buffer
+     "* Course
+:PROPERTIES:
+:END:
+
+** Navigation
+1. Home
+2. Modules
+
+** Syllabus
+Some text.
+"
+     (org-back-to-heading)
+     (let ((result (org-canvas--settings-parse-navigation)))
+       (expect (length result) :to-equal 2)
+       (expect (plist-get (nth 0 result) :label) :to-equal "Home")
+       (expect (plist-get (nth 1 result) :label) :to-equal "Modules"))))
+
+  (it "parses navigation when it is the last level-2 heading"
+    (with-temp-org-buffer
+     "* Course
+:PROPERTIES:
+:END:
+
+** Navigation
+1. Home
+2. +Grades+
+3. Modules
+"
+     (org-back-to-heading)
+     (let ((result (org-canvas--settings-parse-navigation)))
+       (expect (length result) :to-equal 3)
+       (expect (plist-get (nth 0 result) :label) :to-equal "Home")
+       (expect (plist-get (nth 0 result) :hidden) :to-be nil)
+       (expect (plist-get (nth 1 result) :label) :to-equal "Grades")
+       (expect (plist-get (nth 1 result) :hidden) :to-be-truthy)
+       (expect (plist-get (nth 2 result) :label) :to-equal "Modules")
+       (expect (plist-get (nth 2 result) :hidden) :to-be nil)))))
+
+;;;; Coverage: image upload error (Lines 444-446)
+
+(describe "org-canvas--settings-resolve-course-image (upload error)"
+  (it "logs warning and returns data unchanged when upload raises error"
+    (let* ((temp-file (make-temp-file "img-test" nil ".png"))
+           (warning-logged nil))
+      (unwind-protect
+          (cl-letf (((symbol-function 'org-canvas--upload-file)
+                     (lambda (_path &optional _url _name)
+                       (signal 'error '("Network timeout"))))
+                    ((symbol-function 'elog-warning)
+                     (lambda (_logger fmt &rest args)
+                       (when (string-match "Upload failed" fmt)
+                         (setq warning-logged (apply #'format fmt args))))))
+            (let* ((data (list :course-image-path temp-file :title "Course"))
+                   (result (org-canvas--settings-resolve-course-image data)))
+              ;; Should return data without :course-image-id
+              (expect (plist-get result :course-image-id) :to-be nil)
+              (expect (plist-get result :title) :to-equal "Course")
+              (expect warning-logged :to-match "Network timeout")))
+        (delete-file temp-file)))))
+
+;;;; Coverage: insert-navigation-heading (Lines 604-620)
+
+(describe "org-canvas--settings-insert-navigation-heading"
+  (it "inserts navigation at end of subtree when none existed before"
+    (with-temp-org-buffer
+     "* Course
+:PROPERTIES:
+:END:
+
+Body text.
+"
+     (org-canvas--settings-insert-navigation-heading
+      "** Navigation\n1. Home\n2. Modules\n")
+     (expect (buffer-string) :to-match "\\*\\* Navigation")
+     (expect (buffer-string) :to-match "1\\. Home")
+     (expect (buffer-string) :to-match "2\\. Modules")))
+
+  (it "removes existing Navigation and preserves following heading"
+    (with-temp-org-buffer
+     "* Course
+:PROPERTIES:
+:END:
+
+** Navigation
+1. Old Tab
+
+** Syllabus
+Keep this.
+"
+     (org-canvas--settings-insert-navigation-heading
+      "** Navigation\n1. New Tab\n")
+     (let ((content (buffer-string)))
+       (expect content :to-match "New Tab")
+       (expect content :not :to-match "Old Tab")
+       (expect content :to-match "Syllabus")
+       (expect content :to-match "Keep this"))))
+
+  (it "removes existing Navigation when it is the last heading"
+    (with-temp-org-buffer
+     "* Course
+:PROPERTIES:
+:END:
+
+** Navigation
+1. Old Tab
+"
+     (org-canvas--settings-insert-navigation-heading
+      "** Navigation\n1. New Tab\n")
+     (let ((content (buffer-string)))
+       (expect content :to-match "New Tab")
+       (expect content :not :to-match "Old Tab")))))
+
+;;;; Coverage: pull-settings with navigation tabs (Line 664)
+
+(describe "org-canvas-pull-settings (with navigation tabs)"
+  (it "inserts navigation heading when tabs are pulled successfully"
+    (let* ((temp-dir (make-temp-file "pull-settings" t))
+           (settings-file (expand-file-name "settings.org" temp-dir)))
+      (unwind-protect
+          (let ((org-canvas-settings-file settings-file))
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request)
+                         (lambda (_method url &rest _args)
+                           (cond
+                            ((string-match "late_policy" url)
+                             nil)
+                            ((string-match "tabs" url)
+                             '(((id . "home") (label . "Home") (hidden . :json-false) (position . 1))
+                               ((id . "modules") (label . "Modules") (hidden . :json-false) (position . 2))
+                               ((id . "grades") (label . "Grades") (hidden . t) (position . 3))))
+                            (t
+                             '((name . "Test Course")
+                               (time_zone . "UTC")
+                               (default_view . "modules")
+                               (apply_assignment_group_weights . :json-false)
+                               (hide_final_grades . :json-false)
+                               (public_syllabus . :json-false)
+                               (is_public . :json-false))))))
+                        ((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                        ((symbol-function 'display-buffer) (lambda (_) nil)))
+                (org-canvas-pull-settings)
+                (let ((content (with-temp-buffer
+                                 (insert-file-contents settings-file)
+                                 (buffer-string))))
+                  ;; Navigation heading should be present
+                  (expect content :to-match "\\*\\* Navigation")
+                  (expect content :to-match "1\\. Home")
+                  (expect content :to-match "2\\. Modules")
+                  (expect content :to-match "3\\. \\+Grades\\+")))))
+        (let ((buf (find-buffer-visiting settings-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
 ;;; org-canvas-settings-test.el ends here
