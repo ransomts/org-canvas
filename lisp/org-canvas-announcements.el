@@ -43,42 +43,52 @@
 
 ;;;; 1. Stage: Extraction
 
+(defun org-canvas--announcement-read-props (pom)
+  "Read raw property strings from the announcement heading at POM."
+  (list :title-raw (org-get-heading t t t t)
+        :canvas-id (org-entry-get pom "CANVAS_ID")
+        :published-raw (org-entry-get pom "PUBLISHED")
+        :post-at-raw (org-entry-get pom "POST_AT")
+        :allow-comments-raw (org-entry-get pom "ALLOW_COMMENTS")
+        :specific-sections (org-entry-get pom "SPECIFIC_SECTIONS")))
+
+(defun org-canvas--announcement-transform-props (raw)
+  "Transform raw property strings RAW into typed announcement data.
+Pure function — no buffer access."
+  (list :title (org-canvas--strip-statistics-cookie (plist-get raw :title-raw))
+        :canvas-id (plist-get raw :canvas-id)
+        :published (org-canvas--interpret-boolean (plist-get raw :published-raw) t)
+        :delayed_post_at (org-canvas-org-parse-timestamp (plist-get raw :post-at-raw))
+        :allow_discussion_comments (org-canvas--interpret-boolean
+                                    (plist-get raw :allow-comments-raw))
+        :specific_sections (plist-get raw :specific-sections)))
+
 (defun org-canvas--announcement-parse-entry ()
   "Extract data from the Org heading at point."
   (org-back-to-heading t)
   (elog-debug org-canvas--logger "[Stage 1: Parse] Starting extraction at point %d" (point))
 
   (let* ((pom (point))
-         (title (org-canvas--strip-statistics-cookie (org-get-heading t t t t)))
-         (canvas-id (org-canvas-org-get-property pom "CANVAS_ID"))
-         (published (org-canvas-org-get-boolean-property pom "PUBLISHED" t))
-         (post-at-raw (org-canvas-org-get-property pom "POST_AT"))
-         (post-at (org-canvas-org-parse-timestamp post-at-raw))
-         (allow-comments (org-canvas-org-get-boolean-property pom "ALLOW_COMMENTS"))
-         (specific-sections (org-canvas-org-get-property pom "SPECIFIC_SECTIONS")))
+         (raw (org-canvas--announcement-read-props pom))
+         (data (org-canvas--announcement-transform-props raw)))
 
-    (org-canvas--require-title title pom "Announcement")
+    (org-canvas--require-title (plist-get data :title) pom "Announcement")
 
-    (elog-info org-canvas--logger "[Stage 1: Parse] Processing Announcement: '%s' (ID: %s)" title (or canvas-id "NEW"))
+    (elog-info org-canvas--logger "[Stage 1: Parse] Processing Announcement: '%s' (ID: %s)"
+              (plist-get data :title) (or (plist-get data :canvas-id) "NEW"))
     (elog-debug org-canvas--logger "[Stage 1: Parse] Properties: published=%s, post-at=%s, allow-comments=%s"
-                published (or post-at "immediate") allow-comments)
+                (plist-get data :published)
+                (or (plist-get data :delayed_post_at) "immediate")
+                (plist-get data :allow_discussion_comments))
 
     ;; Extract Body content (resolves cross-file links to Canvas URLs)
     (elog-debug org-canvas--logger "[Stage 1: Export] Exporting subtree to HTML...")
     (let ((content (org-canvas--export-subtree-body-to-html)))
       (elog-info org-canvas--logger "[Stage 1: Parse] Body size: %d chars" (length content))
 
-      (list :title title
-            :message content
-            :canvas-id canvas-id
-            :published published
-            :delayed_post_at post-at
-            :discussion_type "side_comment"
-            :is_announcement t
-            :allow_rating nil
-            :allow_discussion_comments allow-comments
-            :specific_sections specific-sections
-            :pom pom))))
+      (plist-put data :message content)
+      (plist-put data :pom pom)
+      data)))
 
 ;;;; 2. Stage: Transformation
 

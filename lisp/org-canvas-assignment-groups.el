@@ -51,6 +51,44 @@
 
 ;;;; 1. Stage: Extraction
 
+(defun org-canvas--assignment-group-read-props (pom)
+  "Read raw property strings from the assignment group heading at POM."
+  (list :title-raw (org-get-heading t t t t)
+        :canvas-id (org-entry-get pom "CANVAS_ID")
+        :weight-raw (org-entry-get pom "WEIGHT")
+        :drop-lowest-raw (org-entry-get pom "DROP_LOWEST")
+        :drop-highest-raw (org-entry-get pom "DROP_HIGHEST")
+        :never-drop-raw (org-entry-get pom "NEVER_DROP")
+        :position-raw (org-entry-get pom "POSITION")))
+
+(defun org-canvas--assignment-group-transform-props (raw)
+  "Transform raw property strings RAW into typed assignment group data.
+Pure function — no buffer access."
+  (let* ((name (org-canvas--strip-statistics-cookie (plist-get raw :title-raw)))
+         (weight-raw (plist-get raw :weight-raw))
+         (drop-lowest (plist-get raw :drop-lowest-raw))
+         (drop-highest (plist-get raw :drop-highest-raw))
+         (never-drop (plist-get raw :never-drop-raw))
+         (position (plist-get raw :position-raw))
+         (rules (delq nil (list
+                           (when drop-lowest
+                             `(drop_lowest . ,(org-canvas--safe-string-to-number
+                                               drop-lowest "DROP_LOWEST")))
+                           (when drop-highest
+                             `(drop_highest . ,(org-canvas--safe-string-to-number
+                                                drop-highest "DROP_HIGHEST")))
+                           (when never-drop
+                             `(never_drop . ,(mapcar #'string-to-number
+                                                     (split-string never-drop "," t " "))))))))
+    (list :name name
+          :canvas-id (plist-get raw :canvas-id)
+          :group_weight (if weight-raw
+                            (org-canvas--safe-string-to-number weight-raw "WEIGHT")
+                          0.0)
+          :rules rules
+          :position (when position
+                      (org-canvas--safe-string-to-number position "POSITION")))))
+
 (defun org-canvas--assignment-group-parse-entry ()
   "Extract assignment group data from the Org heading at point."
   (org-back-to-heading t)
@@ -58,39 +96,19 @@
         (pom (point)))
     (elog-debug org-canvas--logger "[Stage 1: Parse] At point %d, level %d" pom level)
 
-    (let* ((name (org-canvas--strip-statistics-cookie (org-get-heading t t t t)))
-           (canvas-id (org-canvas-org-get-property pom "CANVAS_ID"))
-           (group-weight (org-canvas-org-get-property pom "WEIGHT"))
-           (drop-lowest (org-canvas-org-get-property pom "DROP_LOWEST"))
-           (drop-highest (org-canvas-org-get-property pom "DROP_HIGHEST"))
-           (never-drop (org-canvas-org-get-property pom "NEVER_DROP"))
-           (position (org-canvas-org-get-property pom "POSITION")))
+    (let ((data (org-canvas--assignment-group-transform-props
+                 (org-canvas--assignment-group-read-props pom))))
 
-      (org-canvas--require-title name pom "Assignment group")
+      (org-canvas--require-title (plist-get data :name) pom "Assignment group")
 
-      (elog-info org-canvas--logger "[Stage 1: Parse] Assignment Group: '%s'" name)
-      (elog-info org-canvas--logger "[Stage 1: Parse]   ID: %s" (or canvas-id "NEW"))
-      (elog-info org-canvas--logger "[Stage 1: Parse]   Weight: %s%%" (or group-weight "0"))
-      (elog-info org-canvas--logger "[Stage 1: Parse]   Drop Lowest: %s" (or drop-lowest "0"))
-      (elog-info org-canvas--logger "[Stage 1: Parse]   Drop Highest: %s" (or drop-highest "0"))
+      (elog-info org-canvas--logger "[Stage 1: Parse] Assignment Group: '%s'" (plist-get data :name))
+      (elog-info org-canvas--logger "[Stage 1: Parse]   ID: %s" (or (plist-get data :canvas-id) "NEW"))
+      (elog-info org-canvas--logger "[Stage 1: Parse]   Weight: %s%%" (plist-get data :group_weight))
+      (when (plist-get data :rules)
+        (elog-info org-canvas--logger "[Stage 1: Parse]   Rules: %S" (plist-get data :rules)))
 
-      ;; Build rules as a flat alist for Canvas API
-      (let ((rules (delq nil (list
-                              (when drop-lowest
-                                `(drop_lowest . ,(org-canvas--safe-string-to-number drop-lowest "DROP_LOWEST")))
-                              (when drop-highest
-                                `(drop_highest . ,(org-canvas--safe-string-to-number drop-highest "DROP_HIGHEST")))
-                              (when never-drop
-                                `(never_drop . ,(mapcar #'string-to-number (split-string never-drop "," t " "))))))))
-        (when rules
-          (elog-info org-canvas--logger "[Stage 1: Parse]   Rules: %S" rules))
-
-        (list :name name
-              :canvas-id canvas-id
-              :group_weight (if group-weight (org-canvas--safe-string-to-number group-weight "WEIGHT") 0.0)
-              :rules rules
-              :position (when position (org-canvas--safe-string-to-number position "POSITION"))
-              :pom pom)))))
+      (plist-put data :pom pom)
+      data)))
 
 ;;;; 2. Stage: Transformation
 

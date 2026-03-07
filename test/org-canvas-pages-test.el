@@ -6,6 +6,49 @@
 (require 'test-helper)
 (require 'org-canvas-pages)
 
+;;;; Transform (pure, no buffer)
+
+(describe "org-canvas--page-transform-props"
+  (it "strips statistics cookie from title"
+    (let ((result (org-canvas--page-transform-props
+                   '(:title-raw "Page Title [1/3]" :canvas-url nil
+                     :published-raw nil :front-page-raw nil
+                     :editing-roles-raw nil :todo-date-raw nil
+                     :notify-of-update-raw nil))))
+      (expect (plist-get result :title) :to-equal "Page Title")))
+
+  (it "defaults published to true"
+    (let ((result (org-canvas--page-transform-props
+                   '(:title-raw "Test" :canvas-url nil
+                     :published-raw nil :front-page-raw nil
+                     :editing-roles-raw nil :todo-date-raw nil
+                     :notify-of-update-raw nil))))
+      (expect (plist-get result :published) :to-be t)))
+
+  (it "interprets front_page boolean"
+    (let ((result (org-canvas--page-transform-props
+                   '(:title-raw "Home" :canvas-url nil
+                     :published-raw nil :front-page-raw "true"
+                     :editing-roles-raw nil :todo-date-raw nil
+                     :notify-of-update-raw nil))))
+      (expect (plist-get result :front_page) :to-be t)))
+
+  (it "passes through editing_roles"
+    (let ((result (org-canvas--page-transform-props
+                   '(:title-raw "Test" :canvas-url nil
+                     :published-raw nil :front-page-raw nil
+                     :editing-roles-raw "teachers,students" :todo-date-raw nil
+                     :notify-of-update-raw nil))))
+      (expect (plist-get result :editing_roles) :to-equal "teachers,students")))
+
+  (it "parses TODO_DATE to ISO8601"
+    (let ((result (org-canvas--page-transform-props
+                   '(:title-raw "Test" :canvas-url nil
+                     :published-raw nil :front-page-raw nil
+                     :editing-roles-raw nil :todo-date-raw "<2026-03-01 Sun 10:00>"
+                     :notify-of-update-raw nil))))
+      (expect (plist-get result :student_todo_at) :to-match "2026-03-01T"))))
+
 ;;;; Stage 1: Parse Entry
 
 (describe "org-canvas--page-parse-entry"

@@ -56,19 +56,18 @@
 
 ;;;; Helper Functions
 
+(defconst org-canvas--file-to-item-type-alist
+  '(("pages" . "Page") ("assignments" . "Assignment") ("discussions" . "Discussion")
+    ("quizzes" . "Quiz") ("files" . "File") ("announcements" . "Discussion"))
+  "Alist mapping Org filename stems to Canvas module item types.")
+
 (defun org-canvas--module-item-type-from-file (filepath)
   "Determine the Canvas module item type from FILEPATH.
 Returns one of: File, Page, Discussion, Assignment, Quiz,
 SubHeader, ExternalUrl."
-  (let ((basename (file-name-nondirectory filepath)))
-    (cond
-     ((string-match-p "pages\\.org$" basename) "Page")
-     ((string-match-p "assignments\\.org$" basename) "Assignment")
-     ((string-match-p "discussions\\.org$" basename) "Discussion")
-     ((string-match-p "quizzes\\.org$" basename) "Quiz")
-     ((string-match-p "files\\.org$" basename) "File")
-     ((string-match-p "announcements\\.org$" basename) "Discussion") ; Announcements are discussions
-     (t "Page")))) ; Default to Page
+  (let ((stem (file-name-base filepath)))
+    (or (alist-get stem org-canvas--file-to-item-type-alist nil nil #'equal)
+        "Page")))
 
 (defun org-canvas--module-resolve-file-path (file modules-file-dir)
   "Resolve FILE relative to MODULES-FILE-DIR, with basename fallback.
@@ -176,40 +175,121 @@ Accepts comma-separated Canvas module IDs."
 
 ;;;; 1. Stage: Extraction - Module
 
+(defun org-canvas--module-read-props (pom)
+  "Read raw property strings from the module heading at POM."
+  (list :title-raw (org-get-heading t t t t)
+        :canvas-id (org-entry-get pom "CANVAS_ID")
+        :published-raw (org-entry-get pom "PUBLISHED")
+        :position-raw (org-entry-get pom "POSITION")
+        :unlock-at-raw (org-entry-get pom "UNLOCK_AT")
+        :prerequisite-module-ids (org-entry-get pom "PREREQUISITE_MODULE_IDS")
+        :require-sequential-raw (org-entry-get pom "REQUIRE_SEQUENTIAL_PROGRESSION")
+        :publish-final-grade-raw (org-entry-get pom "PUBLISH_FINAL_GRADE")))
+
+(defun org-canvas--module-transform-props (raw)
+  "Transform raw property strings RAW into typed module data.
+Pure function — no buffer access."
+  (let* ((title (org-canvas--strip-statistics-cookie (plist-get raw :title-raw)))
+         (position (org-canvas--interpret-number (plist-get raw :position-raw))))
+    (list :title title
+          :canvas-id (plist-get raw :canvas-id)
+          :published (org-canvas--interpret-boolean (plist-get raw :published-raw) t)
+          :position (when (> position 0) position)
+          :unlock-at (org-canvas-org-parse-timestamp (plist-get raw :unlock-at-raw))
+          :prerequisite-module-ids (org-canvas--module-parse-prerequisite-ids
+                                   (plist-get raw :prerequisite-module-ids))
+          :require-sequential-progress (org-canvas--interpret-boolean
+                                        (plist-get raw :require-sequential-raw))
+          :publish-final-grade (org-canvas--interpret-boolean
+                                (plist-get raw :publish-final-grade-raw)))))
+
 (defun org-canvas--module-parse-entry ()
   "Extract module data from the Org heading at point (level 1)."
   (org-back-to-heading t)
   (elog-debug org-canvas--logger "[Stage 1: Parse] Starting module extraction at point %d" (point))
 
   (let* ((pom (point))
-         (title (org-canvas--strip-statistics-cookie (org-get-heading t t t t)))
-         (canvas-id (org-canvas-org-get-property pom "CANVAS_ID"))
-         (published (org-canvas-org-get-boolean-property pom "PUBLISHED" t))
-         (position (org-canvas-org-get-number-property pom "POSITION"))
-         (unlock-at (org-canvas-org-parse-timestamp (org-canvas-org-get-property pom "UNLOCK_AT")))
-         (prereq-ids (org-canvas--module-parse-prerequisite-ids
-                      (org-canvas-org-get-property pom "PREREQUISITE_MODULE_IDS")))
-         (require-sequential (org-canvas-org-get-boolean-property pom "REQUIRE_SEQUENTIAL_PROGRESSION"))
-         (publish-final-grade (org-canvas-org-get-boolean-property pom "PUBLISH_FINAL_GRADE")))
+         (raw (org-canvas--module-read-props pom))
+         (data (org-canvas--module-transform-props raw)))
 
-    (org-canvas--require-title title pom "Module")
+    (org-canvas--require-title (plist-get data :title) pom "Module")
 
     (elog-info org-canvas--logger "[Stage 1: Parse] Processing Module: '%s' (ID: %s)"
-      title (or canvas-id "NEW"))
-    (elog-debug org-canvas--logger "[Stage 1: Parse] Position: %d, Unlock: %s, Sequential: %s"
-      position (or unlock-at "none") require-sequential)
+      (plist-get data :title) (or (plist-get data :canvas-id) "NEW"))
+    (elog-debug org-canvas--logger "[Stage 1: Parse] Position: %s, Unlock: %s, Sequential: %s"
+      (or (plist-get data :position) "none")
+      (or (plist-get data :unlock-at) "none")
+      (plist-get data :require-sequential-progress))
 
-    (list :title title
-          :canvas-id canvas-id
-          :published published
-          :position (when (> position 0) position)
-          :unlock-at unlock-at
-          :prerequisite-module-ids prereq-ids
-          :require-sequential-progress require-sequential
-          :publish-final-grade publish-final-grade
-          :pom pom)))
+    (plist-put data :pom pom)
+    data))
 
 ;;;; 1. Stage: Extraction - Module Items
+
+(defun org-canvas--module-item-read-props (pom modules-file-dir)
+  "Read raw property strings from the module item heading at POM.
+MODULES-FILE-DIR is used to resolve relative file links."
+  (let* ((raw-heading (org-get-heading t t t t))
+         ;; Get raw heading text from buffer with link syntax preserved.
+         ;; org-get-heading strips [[...][...]] markup in Org 9.7+ (Emacs 30).
+         (heading-with-links
+          (save-excursion
+            (beginning-of-line)
+            (when (looking-at org-complex-heading-regexp)
+              (match-string-no-properties 4))))
+         (external-url (org-entry-get pom "EXTERNAL_URL"))
+         ;; Resolve the link - try raw buffer text first (has link syntax),
+         ;; then fall back to org-get-heading result
+         (link-info (unless external-url
+                      (or (org-canvas--module-resolve-link heading-with-links modules-file-dir)
+                          (org-canvas--module-resolve-link raw-heading modules-file-dir)))))
+    (list :title-raw raw-heading
+          :heading-with-links heading-with-links
+          :canvas-id (org-entry-get pom "CANVAS_ID")
+          :indent-raw (org-entry-get pom "INDENT")
+          :completion-requirement (org-entry-get pom "COMPLETION_REQUIREMENT")
+          :min-score-raw (org-entry-get pom "MIN_SCORE")
+          :external-url external-url
+          :new-tab-raw (org-entry-get pom "NEW_TAB")
+          :published-raw (org-entry-get pom "PUBLISHED")
+          :link-info link-info)))
+
+(defun org-canvas--module-item-transform-props (raw)
+  "Transform raw property strings RAW into typed module item data.
+Pure function — no buffer access."
+  (let* ((title (org-canvas--strip-statistics-cookie (plist-get raw :title-raw)))
+         (indent (org-canvas--interpret-number (plist-get raw :indent-raw) 0))
+         (min-score (org-canvas--interpret-number (plist-get raw :min-score-raw)))
+         (new-tab (org-canvas--interpret-boolean (plist-get raw :new-tab-raw)))
+         (published (org-canvas--interpret-boolean (plist-get raw :published-raw) t))
+         (external-url (plist-get raw :external-url))
+         (link-info (plist-get raw :link-info))
+         (completion-req (plist-get raw :completion-requirement)))
+    (cond
+     ;; External URL item
+     (external-url
+      (list :type "ExternalUrl"
+            :title title
+            :canvas-id (plist-get raw :canvas-id)
+            :indent indent
+            :external-url external-url
+            :new-tab new-tab
+            :published published
+            :completion-requirement completion-req
+            :min-score (when (and min-score (> min-score 0)) min-score)))
+     ;; Regular linked item
+     (link-info
+      (list :type (plist-get link-info :type)
+            :title (plist-get link-info :title)
+            :content-id (plist-get link-info :content-id)
+            :page-url (plist-get link-info :page-url)
+            :canvas-id (plist-get raw :canvas-id)
+            :indent indent
+            :published published
+            :completion-requirement completion-req
+            :min-score (when (and min-score (> min-score 0)) min-score)))
+     ;; No link resolved — return nil to signal wrapper should classify
+     (t nil))))
 
 (defun org-canvas--module-classify-unlinked-heading
     (heading-with-links raw-heading canvas-id indent published pom)
@@ -259,62 +339,32 @@ MODULES-FILE-DIR is used to resolve relative file links."
   (elog-debug org-canvas--logger "[Stage 1: Parse] Starting item extraction at point %d" (point))
 
   (let* ((pom (point))
-         (raw-heading (org-canvas--strip-statistics-cookie (org-get-heading t t t t)))
-         ;; Get raw heading text from buffer with link syntax preserved.
-         ;; org-get-heading strips [[...][...]] markup in Org 9.7+ (Emacs 30).
-         (heading-with-links
-          (save-excursion
-            (beginning-of-line)
-            (when (looking-at org-complex-heading-regexp)
-              (match-string-no-properties 4))))
-         (canvas-id (org-canvas-org-get-property pom "CANVAS_ID"))
-         (indent (org-canvas-org-get-number-property pom "INDENT" 0))
-         (completion-req (org-canvas-org-get-property pom "COMPLETION_REQUIREMENT"))
-         (min-score (org-canvas-org-get-number-property pom "MIN_SCORE"))
-         (external-url (org-canvas-org-get-property pom "EXTERNAL_URL"))
-         (new-tab (org-canvas-org-get-boolean-property pom "NEW_TAB"))
-         (item-published (org-canvas-org-get-boolean-property pom "PUBLISHED" t))
-         ;; Resolve the link - try raw buffer text first (has link syntax),
-         ;; then fall back to org-get-heading result
-         (link-info (unless external-url
-                      (or (org-canvas--module-resolve-link heading-with-links modules-file-dir)
-                          (org-canvas--module-resolve-link raw-heading modules-file-dir)))))
+         (raw (org-canvas--module-item-read-props pom modules-file-dir))
+         (data (org-canvas--module-item-transform-props raw)))
 
     (cond
-     ;; External URL item
-     (external-url
-      (elog-info org-canvas--logger "[Stage 1: Parse] Processing ExternalUrl: '%s' (ID: %s)"
-        raw-heading (or canvas-id "NEW"))
-      (list :type "ExternalUrl"
-            :title raw-heading
-            :canvas-id canvas-id
-            :indent indent
-            :external-url external-url
-            :new-tab new-tab
-            :published item-published
-            :completion-requirement completion-req
-            :min-score (when (and min-score (> min-score 0)) min-score)
-            :pom pom))
-     ;; No link resolved
-     ((not link-info)
-      (org-canvas--module-classify-unlinked-heading
-       heading-with-links raw-heading canvas-id indent item-published pom))
-     ;; Regular linked item
+     ;; External URL or linked item — transform-props returned a result
+     (data
+      (let ((item-type (plist-get data :type))
+            (title (plist-get data :title))
+            (canvas-id (plist-get data :canvas-id)))
+        (if (string= item-type "ExternalUrl")
+            (elog-info org-canvas--logger "[Stage 1: Parse] Processing ExternalUrl: '%s' (ID: %s)"
+              title (or canvas-id "NEW"))
+          (elog-info org-canvas--logger "[Stage 1: Parse] Processing Item: '%s' -> %s (ID: %s)"
+            title item-type (or canvas-id "NEW"))))
+      (plist-put data :pom pom)
+      data)
+     ;; No link resolved — classify as SubHeader or unresolved link
      (t
-      (elog-info org-canvas--logger "[Stage 1: Parse] Processing Item: '%s' -> %s (ID: %s)"
-        (plist-get link-info :title)
-        (plist-get link-info :type)
-        (or canvas-id "NEW"))
-      (list :type (plist-get link-info :type)
-            :title (plist-get link-info :title)
-            :content-id (plist-get link-info :content-id)
-            :page-url (plist-get link-info :page-url)
-            :canvas-id canvas-id
-            :indent indent
-            :published item-published
-            :completion-requirement completion-req
-            :min-score (when (and min-score (> min-score 0)) min-score)
-            :pom pom)))))
+      (let ((result (org-canvas--module-classify-unlinked-heading
+                     (plist-get raw :heading-with-links)
+                     (org-canvas--strip-statistics-cookie (plist-get raw :title-raw))
+                     (plist-get raw :canvas-id)
+                     (org-canvas--interpret-number (plist-get raw :indent-raw) 0)
+                     (org-canvas--interpret-boolean (plist-get raw :published-raw) t)
+                     pom)))
+        result)))))
 
 ;;;; 2. Stage: Transformation - Module
 
@@ -474,9 +524,19 @@ Return the matching item alist, or nil if not found."
 
 ;;;; 4. Stage: Finalization
 
+(defun org-canvas--module-sync-children (data response)
+  "Sync module items for the module described by DATA and RESPONSE."
+  (let ((module-id (alist-get 'id response))
+        (modules-file-dir (file-name-directory
+                           (expand-file-name org-canvas-modules-file))))
+    (when module-id
+      (elog-info org-canvas--logger "[Module Items] Syncing items for module %s..." module-id)
+      (org-canvas--module-sync-items module-id (point) modules-file-dir))))
+
 (defun org-canvas--module-finalize (data response)
-  "Update local Org file with CANVAS_ID using DATA and RESPONSE."
-  (org-canvas--finalize-item data response))
+  "Finalize module sync for DATA/RESPONSE and sync child items."
+  (org-canvas--finalize-item data response
+    :post-fn #'org-canvas--module-sync-children))
 
 ;;;; Main Sync Functions
 
@@ -529,100 +589,12 @@ Returns (success-count . fail-count)."
 
     (cons success-count fail-count)))
 
-(defun org-canvas--module-sync-one (marker modules-file-dir)
-  "Sync a single module at MARKER and its child items.
-MODULES-FILE-DIR is the directory containing modules.org.
-Returns a plist (:module-ok BOOL :item-success N :item-fail N)."
-  (with-current-buffer (marker-buffer marker)
-    (save-excursion
-      (goto-char (marker-position marker))
-      (condition-case err
-          (let* ((data (org-canvas--module-parse-entry))
-                 (payload (org-canvas--module-build-payload data))
-                 (response (org-canvas--module-push-to-api data payload))
-                 (module-id (alist-get 'id response))
-                 (i-success 0) (i-fail 0))
-            (org-canvas--module-finalize data response)
-            (when module-id
-              (elog-info org-canvas--logger "[Module Items] Syncing items for module %s..." module-id)
-              (let ((item-counts (org-canvas--module-sync-items
-                                  module-id (marker-position marker) modules-file-dir)))
-                (setq i-success (car item-counts))
-                (setq i-fail (cdr item-counts))))
-            (list :module-ok t :title (plist-get data :title)
-                  :item-success i-success :item-fail i-fail))
-        (error
-         (elog-error org-canvas--logger "[FAILED] Module at point %d: %s"
-           (marker-position marker) (error-message-string err))
-         (list :module-ok nil :error-msg (error-message-string err)
-               :item-success 0 :item-fail 0))))))
-
-(defun org-canvas--module-sync-preflight ()
-  "Validate modules file and verify course access.
-Returns the expanded modules file path."
-  (let ((modules-file (expand-file-name org-canvas-modules-file)))
-    (unless (and modules-file (file-exists-p modules-file))
-      (error "Modules file not found: %s" modules-file))
-    (display-buffer (get-buffer-create org-canvas--log-buffer-name))
-    (elog-info org-canvas--logger "========================================")
-    (elog-info org-canvas--logger ">>> STARTING MODULE SYNC")
-    (elog-info org-canvas--logger "File: %s" modules-file)
-    (elog-info org-canvas--logger "Course: %s | URL: %s" org-canvas-course-id org-canvas-base-url)
-    (elog-info org-canvas--logger "========================================")
-    (elog-info org-canvas--logger "[Pre-flight] Verifying course access...")
-    (condition-case err
-        (progn
-          (org-canvas-api-request 'GET (org-canvas-api-course-endpoint ""))
-          (elog-info org-canvas--logger "[Pre-flight] Course accessible"))
-      (error
-       (elog-warning org-canvas--logger "[Pre-flight] Warning: %s" (error-message-string err))))
-    modules-file))
-
-;;;###autoload
-(defun org-canvas-sync-modules ()
-  "Synchronize modules and their items to Canvas."
-  (interactive)
-  (org-canvas-clear-log)
-  (let* ((modules-file (org-canvas--module-sync-preflight))
-         (module-markers nil)
-          (module-success 0)
-          (module-fail 0)
-          (item-success 0)
-          (item-fail 0)
-          (modules-file-dir (file-name-directory modules-file)))
-
-      (with-current-buffer (find-file-noselect modules-file)
-        (setq module-markers (org-map-entries (lambda () (point-marker)) "LEVEL=1" 'file)))
-
-      (elog-info org-canvas--logger "Found %d modules to sync" (length module-markers))
-
-      (dolist (marker module-markers)
-        (elog-info org-canvas--logger "========================================")
-        (let ((result (org-canvas--module-sync-one marker modules-file-dir)))
-          (if (plist-get result :module-ok)
-              (progn
-                (setq module-success (1+ module-success))
-                (message "Modules [%d/%d] Synced '%s'"
-                  (+ module-success module-fail) (length module-markers)
-                  (plist-get result :title)))
-            (setq module-fail (1+ module-fail))
-            (message "Modules [%d/%d] FAILED: %s"
-              (+ module-success module-fail) (length module-markers)
-              (plist-get result :error-msg)))
-          (setq item-success (+ item-success (plist-get result :item-success)))
-          (setq item-fail (+ item-fail (plist-get result :item-fail)))))
-
-      (with-current-buffer (find-file-noselect modules-file)
-        (save-buffer)
-        (elog-info org-canvas--logger "Saved %s" modules-file))
-
-      (elog-info org-canvas--logger "========================================")
-      (elog-info org-canvas--logger ">>> MODULE SYNC COMPLETE")
-      (elog-info org-canvas--logger "Modules: %d success, %d failed" module-success module-fail)
-      (elog-info org-canvas--logger "Items: %d success, %d failed" item-success item-fail)
-      (elog-info org-canvas--logger "========================================")
-      (message "Module Sync: %d modules (%d items) succeeded, %d modules (%d items) failed."
-               module-success item-success module-fail item-fail)))
+(org-canvas-define-sync modules
+  :file org-canvas-modules-file
+  :parse #'org-canvas--module-parse-entry
+  :build #'org-canvas--module-build-payload
+  :push #'org-canvas--module-push-to-api
+  :finalize #'org-canvas--module-finalize)
 
 ;;;; Delete Functions
 

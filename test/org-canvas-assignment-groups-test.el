@@ -6,6 +6,52 @@
 (require 'test-helper)
 (require 'org-canvas-assignment-groups)
 
+;;;; Transform (pure, no buffer)
+
+(describe "org-canvas--assignment-group-transform-props"
+  (it "strips statistics cookie from name"
+    (let ((result (org-canvas--assignment-group-transform-props
+                   '(:title-raw "Homework [1/3]" :canvas-id nil
+                     :weight-raw "30" :drop-lowest-raw nil :drop-highest-raw nil
+                     :never-drop-raw nil :position-raw nil))))
+      (expect (plist-get result :name) :to-equal "Homework")))
+
+  (it "converts weight to number"
+    (let ((result (org-canvas--assignment-group-transform-props
+                   '(:title-raw "Labs" :canvas-id nil
+                     :weight-raw "25" :drop-lowest-raw nil :drop-highest-raw nil
+                     :never-drop-raw nil :position-raw nil))))
+      (expect (plist-get result :group_weight) :to-equal 25)))
+
+  (it "defaults weight to 0.0 when absent"
+    (let ((result (org-canvas--assignment-group-transform-props
+                   '(:title-raw "Labs" :canvas-id nil
+                     :weight-raw nil :drop-lowest-raw nil :drop-highest-raw nil
+                     :never-drop-raw nil :position-raw nil))))
+      (expect (plist-get result :group_weight) :to-equal 0.0)))
+
+  (it "builds drop rules"
+    (let ((result (org-canvas--assignment-group-transform-props
+                   '(:title-raw "Quizzes" :canvas-id nil
+                     :weight-raw "20" :drop-lowest-raw "2" :drop-highest-raw nil
+                     :never-drop-raw nil :position-raw nil))))
+      (expect (alist-get 'drop_lowest (plist-get result :rules)) :to-equal 2)))
+
+  (it "parses never-drop comma list"
+    (let ((result (org-canvas--assignment-group-transform-props
+                   '(:title-raw "Quizzes" :canvas-id nil
+                     :weight-raw "20" :drop-lowest-raw nil :drop-highest-raw nil
+                     :never-drop-raw "101,102,103" :position-raw nil))))
+      (expect (alist-get 'never_drop (plist-get result :rules))
+              :to-equal '(101 102 103))))
+
+  (it "converts position to number"
+    (let ((result (org-canvas--assignment-group-transform-props
+                   '(:title-raw "Labs" :canvas-id nil
+                     :weight-raw "30" :drop-lowest-raw nil :drop-highest-raw nil
+                     :never-drop-raw nil :position-raw "3"))))
+      (expect (plist-get result :position) :to-equal 3))))
+
 ;;;; Stage 1: Parse Entry
 
 (describe "org-canvas--assignment-group-parse-entry"

@@ -6,6 +6,60 @@
 (require 'test-helper)
 (require 'org-canvas-discussions)
 
+;;;; Transform (pure, no buffer)
+
+(describe "org-canvas--discussion-transform-props"
+  (it "strips statistics cookie from title"
+    (let ((result (org-canvas--discussion-transform-props
+                   '(:title-raw "Discussion [2/3]" :canvas-id nil
+                     :published-raw nil :discussion-type-raw nil
+                     :post-first-raw nil :pinned-raw nil :available-from-raw nil
+                     :allow-rating-raw nil :only-graders-can-rate-raw nil
+                     :sort-by-rating-raw nil :specific-sections nil
+                     :grading-type-raw nil :points-raw nil :due-at-raw nil
+                     :lock-at-raw nil :assignment-group-id-raw nil
+                     :group-category-id-raw nil :rubric-id nil))))
+      (expect (plist-get result :title) :to-equal "Discussion")))
+
+  (it "defaults discussion_type to side_comment"
+    (let ((result (org-canvas--discussion-transform-props
+                   '(:title-raw "Test" :canvas-id nil
+                     :published-raw nil :discussion-type-raw nil
+                     :post-first-raw nil :pinned-raw nil :available-from-raw nil
+                     :allow-rating-raw nil :only-graders-can-rate-raw nil
+                     :sort-by-rating-raw nil :specific-sections nil
+                     :grading-type-raw nil :points-raw nil :due-at-raw nil
+                     :lock-at-raw nil :assignment-group-id-raw nil
+                     :group-category-id-raw nil :rubric-id nil))))
+      (expect (plist-get result :discussion_type) :to-equal "side_comment")))
+
+  (it "converts points to number"
+    (let ((result (org-canvas--discussion-transform-props
+                   '(:title-raw "Test" :canvas-id nil
+                     :published-raw nil :discussion-type-raw nil
+                     :post-first-raw nil :pinned-raw nil :available-from-raw nil
+                     :allow-rating-raw nil :only-graders-can-rate-raw nil
+                     :sort-by-rating-raw nil :specific-sections nil
+                     :grading-type-raw "points" :points-raw "10" :due-at-raw nil
+                     :lock-at-raw nil :assignment-group-id-raw nil
+                     :group-category-id-raw nil :rubric-id nil))))
+      (expect (plist-get result :points_possible) :to-equal 10)))
+
+  (it "interprets boolean properties"
+    (let ((result (org-canvas--discussion-transform-props
+                   '(:title-raw "Test" :canvas-id nil
+                     :published-raw "false" :discussion-type-raw nil
+                     :post-first-raw "true" :pinned-raw "true" :available-from-raw nil
+                     :allow-rating-raw "true" :only-graders-can-rate-raw nil
+                     :sort-by-rating-raw nil :specific-sections nil
+                     :grading-type-raw nil :points-raw nil :due-at-raw nil
+                     :lock-at-raw nil :assignment-group-id-raw nil
+                     :group-category-id-raw nil :rubric-id nil))))
+      (expect (plist-get result :published) :to-be nil)
+      (expect (plist-get result :require_initial_post) :to-be t)
+      (expect (plist-get result :pinned) :to-be t)
+      (expect (plist-get result :allow_rating) :to-be t))))
+
 ;;;; Stage 1: Parse Entry
 
 (describe "org-canvas--discussion-parse-entry"

@@ -49,20 +49,75 @@
 
 ;;;; 1. Stage: Extraction
 
-(defun org-canvas--discussion-parse-grading-props (pom)
-  "Extract grading-related properties from the heading at POM.
-Returns a plist with :grading-type, :points, :due-at, :lock-at,
-:assignment-group-id keys."
-  (let* ((grading-type (org-canvas-org-get-property pom "GRADING_TYPE"))
-         (points (org-canvas-org-get-property pom "POINTS"))
-         (due-at (org-canvas-org-parse-timestamp (org-canvas-org-get-property pom "DUE_AT")))
-         (lock-at (org-canvas-org-parse-timestamp (org-canvas-org-get-property pom "LOCK_AT")))
-         (group-link (org-canvas-org-get-property pom "GROUP"))
-         (assignment-group-id (when group-link
-                                (org-canvas--resolve-link-property group-link "CANVAS_ID"
-                                                                   org-canvas-discussions-file))))
-    (list :grading-type grading-type :points points :due-at due-at
-          :lock-at lock-at :assignment-group-id assignment-group-id)))
+(defun org-canvas--discussion-read-props (pom)
+  "Read raw property strings from the discussion heading at POM.
+Link properties (GROUP, GROUP_CATEGORY, RUBRIC_LINK) are resolved
+here since they require file I/O."
+  (let* ((group-link (org-entry-get pom "GROUP"))
+         (rubric-link (org-entry-get pom "RUBRIC_LINK"))
+         (group-category-raw (org-canvas--resolve-link-or-raw
+                              pom "GROUP_CATEGORY" "CANVAS_ID"
+                              org-canvas-discussions-file)))
+    (list :title-raw (org-get-heading t t t t)
+          :canvas-id (org-entry-get pom "CANVAS_ID")
+          :published-raw (org-entry-get pom "PUBLISHED")
+          :discussion-type-raw (org-entry-get pom "DISCUSSION_TYPE")
+          :post-first-raw (org-entry-get pom "POST_FIRST")
+          :pinned-raw (org-entry-get pom "PINNED")
+          :available-from-raw (org-entry-get pom "AVAILABLE_FROM")
+          :allow-rating-raw (org-entry-get pom "ALLOW_RATING")
+          :only-graders-can-rate-raw (org-entry-get pom "ONLY_GRADERS_CAN_RATE")
+          :sort-by-rating-raw (org-entry-get pom "SORT_BY_RATING")
+          :specific-sections (org-entry-get pom "SPECIFIC_SECTIONS")
+          ;; Grading props
+          :grading-type-raw (org-entry-get pom "GRADING_TYPE")
+          :points-raw (org-entry-get pom "POINTS")
+          :due-at-raw (org-entry-get pom "DUE_AT")
+          :lock-at-raw (org-entry-get pom "LOCK_AT")
+          ;; Resolved links (I/O)
+          :assignment-group-id-raw (when group-link
+                                     (org-canvas--resolve-link-property
+                                      group-link "CANVAS_ID"
+                                      org-canvas-discussions-file))
+          :group-category-id-raw group-category-raw
+          :rubric-id (when rubric-link
+                       (org-canvas--resolve-link-property
+                        rubric-link "CANVAS_ID"
+                        org-canvas-discussions-file)))))
+
+(defun org-canvas--discussion-transform-props (raw)
+  "Transform raw property strings RAW into typed discussion data.
+Pure function — no buffer access."
+  (let ((points (plist-get raw :points-raw))
+        (agid (plist-get raw :assignment-group-id-raw))
+        (gcid (plist-get raw :group-category-id-raw)))
+    (list :title (org-canvas--strip-statistics-cookie (plist-get raw :title-raw))
+          :canvas-id (plist-get raw :canvas-id)
+          :published (org-canvas--interpret-boolean (plist-get raw :published-raw) t)
+          :discussion_type (org-canvas--validate-property
+                            (plist-get raw :discussion-type-raw)
+                            '("side_comment" "threaded")
+                            "DISCUSSION_TYPE" "side_comment")
+          :grading_type (plist-get raw :grading-type-raw)
+          :points_possible (when points
+                             (org-canvas--safe-string-to-number points "POINTS"))
+          :require_initial_post (org-canvas--interpret-boolean
+                                 (plist-get raw :post-first-raw))
+          :pinned (org-canvas--interpret-boolean (plist-get raw :pinned-raw))
+          :delayed_post_at (org-canvas-org-parse-timestamp
+                            (plist-get raw :available-from-raw))
+          :due_at (org-canvas-org-parse-timestamp (plist-get raw :due-at-raw))
+          :lock_at (org-canvas-org-parse-timestamp (plist-get raw :lock-at-raw))
+          :assignment_group_id (when agid (string-to-number agid))
+          :allow_rating (org-canvas--interpret-boolean (plist-get raw :allow-rating-raw))
+          :only_graders_can_rate (org-canvas--interpret-boolean
+                                  (plist-get raw :only-graders-can-rate-raw))
+          :sort_by_rating (org-canvas--interpret-boolean
+                           (plist-get raw :sort-by-rating-raw))
+          :group_category_id (when gcid
+                               (org-canvas--safe-string-to-number gcid "GROUP_CATEGORY"))
+          :specific_sections (plist-get raw :specific-sections)
+          :rubric-id (plist-get raw :rubric-id))))
 
 (defun org-canvas--discussion-parse-entry ()
   "Extract discussion data from the Org heading at point."
@@ -70,63 +125,28 @@ Returns a plist with :grading-type, :points, :due-at, :lock-at,
   (elog-debug org-canvas--logger "[Stage 1: Parse] Starting extraction at point %d" (point))
 
   (let* ((pom (point))
-         (title (org-canvas--strip-statistics-cookie (org-get-heading t t t t)))
-         (canvas-id (org-canvas-org-get-property pom "CANVAS_ID"))
-         (published (org-canvas-org-get-boolean-property pom "PUBLISHED" t))
-         (discussion-type (org-canvas--validate-property
-                          (org-canvas-org-get-property pom "DISCUSSION_TYPE")
-                          '("side_comment" "threaded")
-                          "DISCUSSION_TYPE" "side_comment"))
-         (post-first (org-canvas-org-get-boolean-property pom "POST_FIRST"))
-         (pinned (org-canvas-org-get-boolean-property pom "PINNED"))
-         (available-from (org-canvas-org-parse-timestamp (org-canvas-org-get-property pom "AVAILABLE_FROM")))
-         (allow-rating (org-canvas-org-get-boolean-property pom "ALLOW_RATING"))
-         (only-graders-can-rate (org-canvas-org-get-boolean-property pom "ONLY_GRADERS_CAN_RATE"))
-         (sort-by-rating (org-canvas-org-get-boolean-property pom "SORT_BY_RATING"))
-         (group-category-id (org-canvas--resolve-link-or-raw
-                             pom "GROUP_CATEGORY" "CANVAS_ID"
-                             org-canvas-discussions-file))
-         (specific-sections (org-canvas-org-get-property pom "SPECIFIC_SECTIONS"))
-         (rubric-link (org-canvas-org-get-property pom "RUBRIC_LINK"))
-         (rubric-id (when rubric-link
-                      (org-canvas--resolve-link-property rubric-link "CANVAS_ID"
-                                                         org-canvas-discussions-file)))
-         (grading (org-canvas--discussion-parse-grading-props pom)))
+         (raw (org-canvas--discussion-read-props pom))
+         (data (org-canvas--discussion-transform-props raw)))
 
-    (org-canvas--require-title title pom "Discussion")
+    (org-canvas--require-title (plist-get data :title) pom "Discussion")
 
-    (elog-info org-canvas--logger "[Stage 1: Parse] Processing Discussion: '%s' (ID: %s)" title (or canvas-id "NEW"))
+    (elog-info org-canvas--logger "[Stage 1: Parse] Processing Discussion: '%s' (ID: %s)"
+              (plist-get data :title) (or (plist-get data :canvas-id) "NEW"))
     (elog-debug org-canvas--logger "[Stage 1: Parse] Properties: type=%s, graded=%s, points=%s, post-first=%s, pinned=%s"
-      discussion-type (if (plist-get grading :grading-type) "yes" "no")
-      (or (plist-get grading :points) "N/A") post-first pinned)
+      (plist-get data :discussion_type)
+      (if (plist-get data :grading_type) "yes" "no")
+      (or (plist-get data :points_possible) "N/A")
+      (plist-get data :require_initial_post)
+      (plist-get data :pinned))
 
     ;; Extract Body content (resolves cross-file links to Canvas URLs)
     (elog-debug org-canvas--logger "[Stage 1: Export] Exporting subtree to HTML...")
-    (let ((content (org-canvas--export-subtree-body-to-html))
-          (points (plist-get grading :points))
-          (agid (plist-get grading :assignment-group-id)))
+    (let ((content (org-canvas--export-subtree-body-to-html)))
       (elog-info org-canvas--logger "[Stage 1: Parse] Body size: %d chars" (length content))
 
-      (list :title title
-            :message content
-            :canvas-id canvas-id
-            :published published
-            :discussion_type discussion-type
-            :grading_type (plist-get grading :grading-type)
-            :points_possible (when points (org-canvas--safe-string-to-number points "POINTS"))
-            :require_initial_post post-first
-            :pinned pinned
-            :delayed_post_at available-from
-            :due_at (plist-get grading :due-at)
-            :lock_at (plist-get grading :lock-at)
-            :assignment_group_id (when agid (string-to-number agid))
-            :allow_rating allow-rating
-            :only_graders_can_rate only-graders-can-rate
-            :sort_by_rating sort-by-rating
-            :group_category_id (when group-category-id (org-canvas--safe-string-to-number group-category-id "GROUP_CATEGORY"))
-            :specific_sections specific-sections
-            :rubric-id rubric-id
-            :pom pom))))
+      (plist-put data :message content)
+      (plist-put data :pom pom)
+      data)))
 
 ;;;; 2. Stage: Transformation
 

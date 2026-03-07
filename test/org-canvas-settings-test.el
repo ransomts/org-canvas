@@ -6,6 +6,120 @@
 (require 'test-helper)
 (require 'org-canvas-settings)
 
+;;;; Transform Props
+
+(describe "org-canvas--settings-transform-props"
+  (it "passes title through from :title-raw"
+    (let ((result (org-canvas--settings-transform-props
+                   '(:title-raw "Data Science 101"))))
+      (expect (plist-get result :title) :to-equal "Data Science 101")))
+
+  (it "validates DEFAULT_VIEW against allowed values"
+    (let ((result (org-canvas--settings-transform-props
+                   '(:title-raw "Course" :default-view-raw "invalid_view"))))
+      (expect (plist-get result :default-view) :to-equal "feed")))
+
+  (it "passes valid DEFAULT_VIEW through"
+    (let ((result (org-canvas--settings-transform-props
+                   '(:title-raw "Course" :default-view-raw "modules"))))
+      (expect (plist-get result :default-view) :to-equal "modules")))
+
+  (it "validates LICENSE against allowed values"
+    (let ((result (org-canvas--settings-transform-props
+                   '(:title-raw "Course" :license-raw "bad_license"))))
+      (expect (plist-get result :license) :to-equal "private")))
+
+  (it "passes valid LICENSE through"
+    (let ((result (org-canvas--settings-transform-props
+                   '(:title-raw "Course" :license-raw "cc_by_sa"))))
+      (expect (plist-get result :license) :to-equal "cc_by_sa")))
+
+  (it "parses START_AT timestamp to ISO8601"
+    (let* ((tz (getenv "TZ")))
+      (unwind-protect
+          (progn
+            (set-time-zone-rule "UTC")
+            (let ((result (org-canvas--settings-transform-props
+                           '(:title-raw "Course"
+                             :start-at-raw "[2026-01-15 Thu 09:00]"))))
+              (expect (plist-get result :start-at)
+                      :to-equal "2026-01-15T09:00:00Z")))
+        (set-time-zone-rule tz))))
+
+  (it "parses END_AT timestamp to ISO8601"
+    (let* ((tz (getenv "TZ")))
+      (unwind-protect
+          (progn
+            (set-time-zone-rule "UTC")
+            (let ((result (org-canvas--settings-transform-props
+                           '(:title-raw "Course"
+                             :end-at-raw "[2026-05-15 Fri 17:00]"))))
+              (expect (plist-get result :end-at)
+                      :to-equal "2026-05-15T17:00:00Z")))
+        (set-time-zone-rule tz))))
+
+  (it "returns nil for missing timestamp properties"
+    (let ((result (org-canvas--settings-transform-props
+                   '(:title-raw "Course"))))
+      (expect (plist-get result :start-at) :to-be nil)
+      (expect (plist-get result :end-at) :to-be nil)))
+
+  (it "passes string properties through unchanged"
+    (let ((result (org-canvas--settings-transform-props
+                   '(:title-raw "Course"
+                     :time-zone "America/New_York"
+                     :apply-weights "true"
+                     :hide-final-grades "false"
+                     :public-syllabus "true"
+                     :is-public "false"
+                     :grading-standard-id "42"
+                     :home-page-announcement-limit "3"
+                     :late-submission-deduction "10"
+                     :missing-submission-deduction "50"))))
+      (expect (plist-get result :time-zone) :to-equal "America/New_York")
+      (expect (plist-get result :apply-weights) :to-equal "true")
+      (expect (plist-get result :hide-final-grades) :to-equal "false")
+      (expect (plist-get result :public-syllabus) :to-equal "true")
+      (expect (plist-get result :is-public) :to-equal "false")
+      (expect (plist-get result :grading-standard-id) :to-equal "42")
+      (expect (plist-get result :home-page-announcement-limit) :to-equal "3")
+      (expect (plist-get result :late-submission-deduction) :to-equal "10")
+      (expect (plist-get result :missing-submission-deduction) :to-equal "50")))
+
+  (it "detects course-image URL"
+    (let ((result (org-canvas--settings-transform-props
+                   '(:title-raw "Course"
+                     :course-image-raw "https://example.com/image.png"))))
+      (expect (plist-get result :course-image-url)
+              :to-equal "https://example.com/image.png")
+      (expect (plist-get result :course-image-file-path) :to-be nil)))
+
+  (it "extracts file path from course-image Org link"
+    (let ((result (org-canvas--settings-transform-props
+                   '(:title-raw "Course"
+                     :course-image-raw "[[file:images/banner.png]]"))))
+      (expect (plist-get result :course-image-file-path)
+              :to-equal "images/banner.png")
+      (expect (plist-get result :course-image-url) :to-be nil)))
+
+  (it "returns nil for course-image when not set"
+    (let ((result (org-canvas--settings-transform-props
+                   '(:title-raw "Course"))))
+      (expect (plist-get result :course-image-file-path) :to-be nil)
+      (expect (plist-get result :course-image-url) :to-be nil)))
+
+  (it "validates LATE_SUBMISSION_INTERVAL against allowed values"
+    (let ((result (org-canvas--settings-transform-props
+                   '(:title-raw "Course"
+                     :late-submission-interval-raw "week"))))
+      (expect (plist-get result :late-submission-interval) :to-equal "day")))
+
+  (it "passes valid LATE_SUBMISSION_INTERVAL through"
+    (let ((result (org-canvas--settings-transform-props
+                   '(:title-raw "Course"
+                     :late-submission-interval-raw "hour"))))
+      (expect (plist-get result :late-submission-interval) :to-equal "hour"))))
+
 ;;;; Parse
 
 (describe "org-canvas--settings-parse-entry"

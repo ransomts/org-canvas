@@ -107,6 +107,313 @@ What would happen if X occurred?
        (expect (cdr (nth 1 answers)) :to-be t)
        (expect (cdr (nth 2 answers)) :to-be nil)))))
 
+;;;; Transform Props
+
+(describe "org-canvas--quiz-transform-props"
+  (it "strips statistics cookie from title"
+    (let* ((props '(:title-raw "Midterm [2/5]"
+                    :canvas-id nil :quiz-type-raw nil
+                    :time-limit-raw nil :published-raw nil
+                    :shuffle-raw nil :allowed-attempts-raw nil
+                    :due-at-raw nil :assignment-group-id-raw nil
+                    :unlock-at-raw nil :lock-at-raw nil
+                    :access_code nil :show-correct-raw nil
+                    :show-correct-at-raw nil :hide-correct-at-raw nil
+                    :hide-results-raw nil :scoring-policy-raw nil
+                    :one-question-raw nil :cant-go-back-raw nil
+                    :ip_filter nil :show-correct-last-raw nil
+                    :one-time-results-raw nil :only-visible-raw nil))
+           (result (org-canvas--quiz-transform-props props)))
+      (expect (plist-get result :title) :to-equal "Midterm")))
+
+  (it "interprets published default-true"
+    (let* ((props '(:title-raw "Quiz" :canvas-id nil :quiz-type-raw nil
+                    :time-limit-raw nil :published-raw nil
+                    :shuffle-raw nil :allowed-attempts-raw nil
+                    :due-at-raw nil :assignment-group-id-raw nil
+                    :unlock-at-raw nil :lock-at-raw nil
+                    :access_code nil :show-correct-raw nil
+                    :show-correct-at-raw nil :hide-correct-at-raw nil
+                    :hide-results-raw nil :scoring-policy-raw nil
+                    :one-question-raw nil :cant-go-back-raw nil
+                    :ip_filter nil :show-correct-last-raw nil
+                    :one-time-results-raw nil :only-visible-raw nil))
+           (result (org-canvas--quiz-transform-props props)))
+      (expect (plist-get result :published) :to-be t)))
+
+  (it "interprets published false"
+    (let* ((props '(:title-raw "Quiz" :canvas-id nil :quiz-type-raw nil
+                    :time-limit-raw nil :published-raw "false"
+                    :shuffle-raw nil :allowed-attempts-raw nil
+                    :due-at-raw nil :assignment-group-id-raw nil
+                    :unlock-at-raw nil :lock-at-raw nil
+                    :access_code nil :show-correct-raw nil
+                    :show-correct-at-raw nil :hide-correct-at-raw nil
+                    :hide-results-raw nil :scoring-policy-raw nil
+                    :one-question-raw nil :cant-go-back-raw nil
+                    :ip_filter nil :show-correct-last-raw nil
+                    :one-time-results-raw nil :only-visible-raw nil))
+           (result (org-canvas--quiz-transform-props props)))
+      (expect (plist-get result :published) :to-be nil)))
+
+  (it "interprets shuffle_answers boolean"
+    (let* ((props '(:title-raw "Quiz" :canvas-id nil :quiz-type-raw nil
+                    :time-limit-raw nil :published-raw nil
+                    :shuffle-raw "true" :allowed-attempts-raw nil
+                    :due-at-raw nil :assignment-group-id-raw nil
+                    :unlock-at-raw nil :lock-at-raw nil
+                    :access_code nil :show-correct-raw nil
+                    :show-correct-at-raw nil :hide-correct-at-raw nil
+                    :hide-results-raw nil :scoring-policy-raw nil
+                    :one-question-raw nil :cant-go-back-raw nil
+                    :ip_filter nil :show-correct-last-raw nil
+                    :one-time-results-raw nil :only-visible-raw nil))
+           (result (org-canvas--quiz-transform-props props)))
+      (expect (plist-get result :shuffle_answers) :to-be t)))
+
+  (it "validates quiz_type with default"
+    (let* ((props '(:title-raw "Quiz" :canvas-id nil :quiz-type-raw nil
+                    :time-limit-raw nil :published-raw nil
+                    :shuffle-raw nil :allowed-attempts-raw nil
+                    :due-at-raw nil :assignment-group-id-raw nil
+                    :unlock-at-raw nil :lock-at-raw nil
+                    :access_code nil :show-correct-raw nil
+                    :show-correct-at-raw nil :hide-correct-at-raw nil
+                    :hide-results-raw nil :scoring-policy-raw nil
+                    :one-question-raw nil :cant-go-back-raw nil
+                    :ip_filter nil :show-correct-last-raw nil
+                    :one-time-results-raw nil :only-visible-raw nil))
+           (result (org-canvas--quiz-transform-props props)))
+      (expect (plist-get result :quiz_type) :to-equal "assignment")))
+
+  (it "validates quiz_type with valid value"
+    (let* ((props '(:title-raw "Quiz" :canvas-id nil
+                    :quiz-type-raw "practice_quiz"
+                    :time-limit-raw nil :published-raw nil
+                    :shuffle-raw nil :allowed-attempts-raw nil
+                    :due-at-raw nil :assignment-group-id-raw nil
+                    :unlock-at-raw nil :lock-at-raw nil
+                    :access_code nil :show-correct-raw nil
+                    :show-correct-at-raw nil :hide-correct-at-raw nil
+                    :hide-results-raw nil :scoring-policy-raw nil
+                    :one-question-raw nil :cant-go-back-raw nil
+                    :ip_filter nil :show-correct-last-raw nil
+                    :one-time-results-raw nil :only-visible-raw nil))
+           (result (org-canvas--quiz-transform-props props)))
+      (expect (plist-get result :quiz_type) :to-equal "practice_quiz")))
+
+  (it "converts time_limit to number"
+    (let* ((props '(:title-raw "Quiz" :canvas-id nil :quiz-type-raw nil
+                    :time-limit-raw "30" :published-raw nil
+                    :shuffle-raw nil :allowed-attempts-raw nil
+                    :due-at-raw nil :assignment-group-id-raw nil
+                    :unlock-at-raw nil :lock-at-raw nil
+                    :access_code nil :show-correct-raw nil
+                    :show-correct-at-raw nil :hide-correct-at-raw nil
+                    :hide-results-raw nil :scoring-policy-raw nil
+                    :one-question-raw nil :cant-go-back-raw nil
+                    :ip_filter nil :show-correct-last-raw nil
+                    :one-time-results-raw nil :only-visible-raw nil))
+           (result (org-canvas--quiz-transform-props props)))
+      (expect (plist-get result :time_limit) :to-equal 30)))
+
+  (it "leaves time_limit nil when not set"
+    (let* ((props '(:title-raw "Quiz" :canvas-id nil :quiz-type-raw nil
+                    :time-limit-raw nil :published-raw nil
+                    :shuffle-raw nil :allowed-attempts-raw nil
+                    :due-at-raw nil :assignment-group-id-raw nil
+                    :unlock-at-raw nil :lock-at-raw nil
+                    :access_code nil :show-correct-raw nil
+                    :show-correct-at-raw nil :hide-correct-at-raw nil
+                    :hide-results-raw nil :scoring-policy-raw nil
+                    :one-question-raw nil :cant-go-back-raw nil
+                    :ip_filter nil :show-correct-last-raw nil
+                    :one-time-results-raw nil :only-visible-raw nil))
+           (result (org-canvas--quiz-transform-props props)))
+      (expect (plist-get result :time_limit) :to-be nil)))
+
+  (it "converts allowed_attempts to number"
+    (let* ((props '(:title-raw "Quiz" :canvas-id nil :quiz-type-raw nil
+                    :time-limit-raw nil :published-raw nil
+                    :shuffle-raw nil :allowed-attempts-raw "3"
+                    :due-at-raw nil :assignment-group-id-raw nil
+                    :unlock-at-raw nil :lock-at-raw nil
+                    :access_code nil :show-correct-raw nil
+                    :show-correct-at-raw nil :hide-correct-at-raw nil
+                    :hide-results-raw nil :scoring-policy-raw nil
+                    :one-question-raw nil :cant-go-back-raw nil
+                    :ip_filter nil :show-correct-last-raw nil
+                    :one-time-results-raw nil :only-visible-raw nil))
+           (result (org-canvas--quiz-transform-props props)))
+      (expect (plist-get result :allowed_attempts) :to-equal 3)))
+
+  (it "parses due_at timestamp"
+    (let* ((old-tz (getenv "TZ")))
+      (unwind-protect
+          (progn
+            (set-time-zone-rule "UTC")
+            (let* ((props '(:title-raw "Quiz" :canvas-id nil
+                            :quiz-type-raw nil :time-limit-raw nil
+                            :published-raw nil :shuffle-raw nil
+                            :allowed-attempts-raw nil
+                            :due-at-raw "<2026-06-15 Sun 23:59>"
+                            :assignment-group-id-raw nil
+                            :unlock-at-raw nil :lock-at-raw nil
+                            :access_code nil :show-correct-raw nil
+                            :show-correct-at-raw nil
+                            :hide-correct-at-raw nil
+                            :hide-results-raw nil
+                            :scoring-policy-raw nil
+                            :one-question-raw nil
+                            :cant-go-back-raw nil :ip_filter nil
+                            :show-correct-last-raw nil
+                            :one-time-results-raw nil
+                            :only-visible-raw nil))
+                   (result (org-canvas--quiz-transform-props props)))
+              (expect (plist-get result :due_at)
+                      :to-equal "2026-06-15T23:59:00Z")))
+        (set-time-zone-rule old-tz))))
+
+  (it "validates hide_results property"
+    (let* ((props '(:title-raw "Quiz" :canvas-id nil :quiz-type-raw nil
+                    :time-limit-raw nil :published-raw nil
+                    :shuffle-raw nil :allowed-attempts-raw nil
+                    :due-at-raw nil :assignment-group-id-raw nil
+                    :unlock-at-raw nil :lock-at-raw nil
+                    :access_code nil :show-correct-raw nil
+                    :show-correct-at-raw nil :hide-correct-at-raw nil
+                    :hide-results-raw "always"
+                    :scoring-policy-raw nil
+                    :one-question-raw nil :cant-go-back-raw nil
+                    :ip_filter nil :show-correct-last-raw nil
+                    :one-time-results-raw nil :only-visible-raw nil))
+           (result (org-canvas--quiz-transform-props props)))
+      (expect (plist-get result :hide_results) :to-equal "always")))
+
+  (it "validates scoring_policy property"
+    (let* ((props '(:title-raw "Quiz" :canvas-id nil :quiz-type-raw nil
+                    :time-limit-raw nil :published-raw nil
+                    :shuffle-raw nil :allowed-attempts-raw nil
+                    :due-at-raw nil :assignment-group-id-raw nil
+                    :unlock-at-raw nil :lock-at-raw nil
+                    :access_code nil :show-correct-raw nil
+                    :show-correct-at-raw nil :hide-correct-at-raw nil
+                    :hide-results-raw nil
+                    :scoring-policy-raw "keep_latest"
+                    :one-question-raw nil :cant-go-back-raw nil
+                    :ip_filter nil :show-correct-last-raw nil
+                    :one-time-results-raw nil :only-visible-raw nil))
+           (result (org-canvas--quiz-transform-props props)))
+      (expect (plist-get result :scoring_policy) :to-equal "keep_latest")))
+
+  (it "converts assignment_group_id string to number"
+    (let* ((props '(:title-raw "Quiz" :canvas-id nil :quiz-type-raw nil
+                    :time-limit-raw nil :published-raw nil
+                    :shuffle-raw nil :allowed-attempts-raw nil
+                    :due-at-raw nil :assignment-group-id-raw "42"
+                    :unlock-at-raw nil :lock-at-raw nil
+                    :access_code nil :show-correct-raw nil
+                    :show-correct-at-raw nil :hide-correct-at-raw nil
+                    :hide-results-raw nil :scoring-policy-raw nil
+                    :one-question-raw nil :cant-go-back-raw nil
+                    :ip_filter nil :show-correct-last-raw nil
+                    :one-time-results-raw nil :only-visible-raw nil))
+           (result (org-canvas--quiz-transform-props props)))
+      (expect (plist-get result :assignment_group_id) :to-equal 42)))
+
+  (it "passes through string fields unchanged"
+    (let* ((props '(:title-raw "Quiz" :canvas-id "999"
+                    :quiz-type-raw nil :time-limit-raw nil
+                    :published-raw nil :shuffle-raw nil
+                    :allowed-attempts-raw nil :due-at-raw nil
+                    :assignment-group-id-raw nil
+                    :unlock-at-raw nil :lock-at-raw nil
+                    :access_code "secret123" :show-correct-raw nil
+                    :show-correct-at-raw nil :hide-correct-at-raw nil
+                    :hide-results-raw nil :scoring-policy-raw nil
+                    :one-question-raw nil :cant-go-back-raw nil
+                    :ip_filter "192.168.1.0/24"
+                    :show-correct-last-raw nil
+                    :one-time-results-raw nil :only-visible-raw nil))
+           (result (org-canvas--quiz-transform-props props)))
+      (expect (plist-get result :canvas-id) :to-equal "999")
+      (expect (plist-get result :access_code) :to-equal "secret123")
+      (expect (plist-get result :ip_filter) :to-equal "192.168.1.0/24")))
+
+  (it "interprets one_question_at_a_time boolean"
+    (let* ((props '(:title-raw "Quiz" :canvas-id nil :quiz-type-raw nil
+                    :time-limit-raw nil :published-raw nil
+                    :shuffle-raw nil :allowed-attempts-raw nil
+                    :due-at-raw nil :assignment-group-id-raw nil
+                    :unlock-at-raw nil :lock-at-raw nil
+                    :access_code nil :show-correct-raw nil
+                    :show-correct-at-raw nil :hide-correct-at-raw nil
+                    :hide-results-raw nil :scoring-policy-raw nil
+                    :one-question-raw "true" :cant-go-back-raw nil
+                    :ip_filter nil :show-correct-last-raw nil
+                    :one-time-results-raw nil :only-visible-raw nil))
+           (result (org-canvas--quiz-transform-props props)))
+      (expect (plist-get result :one_question_at_a_time) :to-be t))))
+
+(describe "org-canvas--question-transform-props"
+  (it "strips statistics cookie from title"
+    (let* ((props '(:title-raw "Question [1/3]" :canvas-id nil
+                    :type-raw nil :points-raw nil
+                    :quiz-canvas-id "100" :text "prompt"))
+           (result (org-canvas--question-transform-props props)))
+      (expect (plist-get result :name) :to-equal "Question")))
+
+  (it "defaults question_type to multiple_choice_question"
+    (let* ((props '(:title-raw "Q1" :canvas-id nil
+                    :type-raw nil :points-raw nil
+                    :quiz-canvas-id "100" :text "prompt"))
+           (result (org-canvas--question-transform-props props)))
+      (expect (plist-get result :question_type)
+              :to-equal "multiple_choice_question")))
+
+  (it "validates custom question_type"
+    (let* ((props '(:title-raw "Q1" :canvas-id nil
+                    :type-raw "essay_question" :points-raw nil
+                    :quiz-canvas-id "100" :text "prompt"))
+           (result (org-canvas--question-transform-props props)))
+      (expect (plist-get result :question_type)
+              :to-equal "essay_question")))
+
+  (it "converts points to number with default 1"
+    (let* ((props '(:title-raw "Q1" :canvas-id nil
+                    :type-raw nil :points-raw nil
+                    :quiz-canvas-id "100" :text "prompt"))
+           (result (org-canvas--question-transform-props props)))
+      (expect (plist-get result :points_possible) :to-equal 1)))
+
+  (it "converts points string to number"
+    (let* ((props '(:title-raw "Q1" :canvas-id nil
+                    :type-raw nil :points-raw "10"
+                    :quiz-canvas-id "100" :text "prompt"))
+           (result (org-canvas--question-transform-props props)))
+      (expect (plist-get result :points_possible) :to-equal 10)))
+
+  (it "passes through quiz-canvas-id"
+    (let* ((props '(:title-raw "Q1" :canvas-id nil
+                    :type-raw nil :points-raw nil
+                    :quiz-canvas-id "99999" :text "prompt"))
+           (result (org-canvas--question-transform-props props)))
+      (expect (plist-get result :quiz-canvas-id) :to-equal "99999")))
+
+  (it "passes through canvas-id"
+    (let* ((props '(:title-raw "Q1" :canvas-id "555"
+                    :type-raw nil :points-raw nil
+                    :quiz-canvas-id "100" :text "prompt"))
+           (result (org-canvas--question-transform-props props)))
+      (expect (plist-get result :canvas-id) :to-equal "555")))
+
+  (it "passes through text"
+    (let* ((props '(:title-raw "Q1" :canvas-id nil
+                    :type-raw nil :points-raw nil
+                    :quiz-canvas-id "100" :text "What is 2+2?"))
+           (result (org-canvas--question-transform-props props)))
+      (expect (plist-get result :text) :to-equal "What is 2+2?"))))
+
 ;;;; Stage 1: Parse Quiz Entry
 
 (describe "org-canvas--quiz-parse-entry"
@@ -1531,44 +1838,49 @@ Content.
 
 ;;;; Coverage Gap Tests
 
-(describe "org-canvas-sync-quizzes quiz-id fallback"
+(describe "org-canvas--quiz-sync-children quiz-id fallback"
   (it "uses canvas-id from data when response has no id"
-    (let ((temp-file (make-temp-file "quizzes-" nil ".org"))
-          (sync-questions-quiz-id nil))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert "* My Quiz
+    (let ((sync-questions-quiz-id nil))
+      (cl-letf (((symbol-function 'org-canvas--sync-quiz-groups)
+                 (lambda (_marker _quiz-id) (cons 0 0)))
+                ((symbol-function 'org-canvas--sync-quiz-questions)
+                 (lambda (_marker quiz-id)
+                   (setq sync-questions-quiz-id quiz-id)
+                   (cons 0 0))))
+        (with-temp-org-buffer
+         "* My Quiz
 :PROPERTIES:
 :CANVAS_ID: 888
 :END:
 
 Quiz description.
-"))
-            (let ((org-canvas-quizzes-file temp-file))
-              (with-org-canvas-test-config
-                (cl-letf (((symbol-function 'org-canvas--quiz-parse-entry)
-                           (lambda ()
-                             '(:title "My Quiz" :canvas-id "888" :pom 1
-                               :description "Quiz description.")))
-                          ((symbol-function 'org-canvas--quiz-build-payload)
-                           (lambda (_data) (make-hash-table)))
-                          ((symbol-function 'org-canvas--quiz-push-to-api)
-                           (lambda (_data _payload)
-                             ;; Return response with NO id field
-                             '((title . "My Quiz"))))
-                          ((symbol-function 'org-canvas--quiz-finalize)
-                           (lambda (&rest _) nil))
-                          ((symbol-function 'org-canvas--sync-quiz-questions)
-                           (lambda (_marker quiz-id)
-                             (setq sync-questions-quiz-id quiz-id)
-                             (cons 0 0)))
-                          ((symbol-function 'display-buffer)
-                           (lambda (&rest _) nil)))
-                  (org-canvas-sync-quizzes)
-                  ;; Should use the canvas-id "888" from data since response has no id
-                  (expect sync-questions-quiz-id :to-equal "888")))))
-        (delete-file temp-file)))))
+"
+         (org-back-to-heading)
+         (let ((data '(:title "My Quiz" :canvas-id "888" :pom nil))
+               (response '((title . "My Quiz"))))
+           (org-canvas--quiz-sync-children data response)
+           ;; Should use the canvas-id "888" from data since response has no id
+           (expect sync-questions-quiz-id :to-equal "888"))))))
+
+  (it "prefers response id over data canvas-id"
+    (let ((sync-questions-quiz-id nil))
+      (cl-letf (((symbol-function 'org-canvas--sync-quiz-groups)
+                 (lambda (_marker _quiz-id) (cons 0 0)))
+                ((symbol-function 'org-canvas--sync-quiz-questions)
+                 (lambda (_marker quiz-id)
+                   (setq sync-questions-quiz-id quiz-id)
+                   (cons 0 0))))
+        (with-temp-org-buffer
+         "* My Quiz
+:PROPERTIES:
+:CANVAS_ID: 888
+:END:
+"
+         (org-back-to-heading)
+         (let ((data '(:title "My Quiz" :canvas-id "888" :pom nil))
+               (response '((id . 999) (title . "My Quiz"))))
+           (org-canvas--quiz-sync-children data response)
+           (expect sync-questions-quiz-id :to-equal 999)))))))
 
 ;;;; Validation Tests
 
@@ -2914,7 +3226,7 @@ Write an essay.
                   (expect question-posts :to-equal 1)))))
         (delete-directory temp-dir t))))
 
-  (it "includes group counts in message"
+  (it "reports quiz sync summary via pipeline"
     (let ((temp-dir (make-temp-file "quiz-group-test" t)))
       (unwind-protect
           (let* ((org-file (expand-file-name "quizzes.org" temp-dir))
@@ -2947,7 +3259,9 @@ Write an essay.
                            (lambda (fmt &rest args)
                              (setq final-message (apply #'format fmt args)))))
                   (org-canvas-sync-quizzes)
-                  (expect final-message :to-match "groups")))))
+                  ;; Pipeline reports standard summary with success/skipped/failed
+                  (expect final-message :to-match "success")
+                  (expect final-message :to-match "Quizzes sync")))))
         (delete-directory temp-dir t)))))
 
 ;;; org-canvas-quizzes-test.el ends here

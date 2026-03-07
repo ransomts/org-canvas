@@ -33,6 +33,118 @@
     (expect (org-canvas--assignment-parse-submission-types nil)
             :to-equal '("none"))))
 
+;;;; Transform (pure, no buffer)
+
+(describe "org-canvas--assignment-transform-props"
+  (it "strips statistics cookie from title"
+    (let ((result (org-canvas--assignment-transform-props
+                   '(:title-raw "Homework 1 [1/3]" :canvas-id nil
+                     :points-raw nil :grading-type-raw nil :published-raw nil
+                     :due-at-raw nil :unlock-at-raw nil :lock-at-raw nil
+                     :submission-raw nil :allowed-extensions-raw nil
+                     :max-attempts-raw nil :peer-reviews-raw nil
+                     :peer-review-count-raw nil :peer-review-due-at-raw nil
+                     :automatic-peer-reviews-raw nil :omit-from-grades-raw nil
+                     :anonymous-grading-raw nil :notify-of-update-raw nil
+                     :grade-individually-raw nil :only-visible-to-overrides-raw nil
+                     :moderated-grading-raw nil :grader-count-raw nil
+                     :muted-raw nil :turnitin-enabled-raw nil
+                     :grading-standard-id-raw nil :position-raw nil
+                     :assignment-group-id-raw nil :rubric-id nil
+                     :group-category-id-raw nil))))
+      (expect (plist-get result :title) :to-equal "Homework 1")))
+
+  (it "converts points to number"
+    (let ((result (org-canvas--assignment-transform-props
+                   '(:title-raw "HW" :canvas-id nil
+                     :points-raw "100" :grading-type-raw nil :published-raw nil
+                     :due-at-raw nil :unlock-at-raw nil :lock-at-raw nil
+                     :submission-raw nil :allowed-extensions-raw nil
+                     :max-attempts-raw nil :peer-reviews-raw nil
+                     :peer-review-count-raw nil :peer-review-due-at-raw nil
+                     :automatic-peer-reviews-raw nil :omit-from-grades-raw nil
+                     :anonymous-grading-raw nil :notify-of-update-raw nil
+                     :grade-individually-raw nil :only-visible-to-overrides-raw nil
+                     :moderated-grading-raw nil :grader-count-raw nil
+                     :muted-raw nil :turnitin-enabled-raw nil
+                     :grading-standard-id-raw nil :position-raw nil
+                     :assignment-group-id-raw nil :rubric-id nil
+                     :group-category-id-raw nil))))
+      (expect (plist-get result :points_possible) :to-equal 100)))
+
+  (it "defaults published to true"
+    (let ((result (org-canvas--assignment-transform-props
+                   '(:title-raw "HW" :canvas-id nil
+                     :points-raw nil :grading-type-raw nil :published-raw nil
+                     :due-at-raw nil :unlock-at-raw nil :lock-at-raw nil
+                     :submission-raw nil :allowed-extensions-raw nil
+                     :max-attempts-raw nil :peer-reviews-raw nil
+                     :peer-review-count-raw nil :peer-review-due-at-raw nil
+                     :automatic-peer-reviews-raw nil :omit-from-grades-raw nil
+                     :anonymous-grading-raw nil :notify-of-update-raw nil
+                     :grade-individually-raw nil :only-visible-to-overrides-raw nil
+                     :moderated-grading-raw nil :grader-count-raw nil
+                     :muted-raw nil :turnitin-enabled-raw nil
+                     :grading-standard-id-raw nil :position-raw nil
+                     :assignment-group-id-raw nil :rubric-id nil
+                     :group-category-id-raw nil))))
+      (expect (plist-get result :published) :to-be t)))
+
+  (it "parses due_at timestamp"
+    (let ((result (org-canvas--assignment-transform-props
+                   '(:title-raw "HW" :canvas-id nil
+                     :points-raw nil :grading-type-raw nil :published-raw nil
+                     :due-at-raw "<2026-09-15 Mon 10:00>" :unlock-at-raw nil
+                     :lock-at-raw nil :submission-raw nil
+                     :allowed-extensions-raw nil :max-attempts-raw nil
+                     :peer-reviews-raw nil :peer-review-count-raw nil
+                     :peer-review-due-at-raw nil :automatic-peer-reviews-raw nil
+                     :omit-from-grades-raw nil :anonymous-grading-raw nil
+                     :notify-of-update-raw nil :grade-individually-raw nil
+                     :only-visible-to-overrides-raw nil :moderated-grading-raw nil
+                     :grader-count-raw nil :muted-raw nil
+                     :turnitin-enabled-raw nil :grading-standard-id-raw nil
+                     :position-raw nil :assignment-group-id-raw nil
+                     :rubric-id nil :group-category-id-raw nil))))
+      (expect (plist-get result :due_at) :to-match "2026-09-15T")))
+
+  (it "defaults grading_type to points"
+    (let ((result (org-canvas--assignment-transform-props
+                   '(:title-raw "HW" :canvas-id nil
+                     :points-raw nil :grading-type-raw nil :published-raw nil
+                     :due-at-raw nil :unlock-at-raw nil :lock-at-raw nil
+                     :submission-raw nil :allowed-extensions-raw nil
+                     :max-attempts-raw nil :peer-reviews-raw nil
+                     :peer-review-count-raw nil :peer-review-due-at-raw nil
+                     :automatic-peer-reviews-raw nil :omit-from-grades-raw nil
+                     :anonymous-grading-raw nil :notify-of-update-raw nil
+                     :grade-individually-raw nil :only-visible-to-overrides-raw nil
+                     :moderated-grading-raw nil :grader-count-raw nil
+                     :muted-raw nil :turnitin-enabled-raw nil
+                     :grading-standard-id-raw nil :position-raw nil
+                     :assignment-group-id-raw nil :rubric-id nil
+                     :group-category-id-raw nil))))
+      (expect (plist-get result :grading_type) :to-equal "points")))
+
+  (it "parses submission types"
+    (let ((result (org-canvas--assignment-transform-props
+                   '(:title-raw "HW" :canvas-id nil
+                     :points-raw nil :grading-type-raw nil :published-raw nil
+                     :due-at-raw nil :unlock-at-raw nil :lock-at-raw nil
+                     :submission-raw "online_upload,online_text_entry"
+                     :allowed-extensions-raw nil :max-attempts-raw nil
+                     :peer-reviews-raw nil :peer-review-count-raw nil
+                     :peer-review-due-at-raw nil :automatic-peer-reviews-raw nil
+                     :omit-from-grades-raw nil :anonymous-grading-raw nil
+                     :notify-of-update-raw nil :grade-individually-raw nil
+                     :only-visible-to-overrides-raw nil :moderated-grading-raw nil
+                     :grader-count-raw nil :muted-raw nil
+                     :turnitin-enabled-raw nil :grading-standard-id-raw nil
+                     :position-raw nil :assignment-group-id-raw nil
+                     :rubric-id nil :group-category-id-raw nil))))
+      (expect (plist-get result :submission_types)
+              :to-equal '("online_upload" "online_text_entry")))))
+
 ;;;; Stage 1: Parse Entry
 
 (describe "org-canvas--assignment-parse-entry"

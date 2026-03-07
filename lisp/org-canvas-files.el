@@ -120,36 +120,35 @@ Uses ancestor headings that don't have file links to build the path."
         (mapconcat #'identity path-parts "/")
       "")))
 
+(defconst org-canvas--mime-type-alist
+  '(;; Documents
+    ("pdf" . "application/pdf")
+    ("doc" . "application/msword") ("docx" . "application/msword")
+    ("xls" . "application/vnd.ms-excel") ("xlsx" . "application/vnd.ms-excel")
+    ("ppt" . "application/vnd.ms-powerpoint") ("pptx" . "application/vnd.ms-powerpoint")
+    ;; Code
+    ("py" . "text/x-python") ("python" . "text/x-python")
+    ("js" . "application/javascript") ("javascript" . "application/javascript")
+    ("html" . "text/html") ("htm" . "text/html")
+    ("css" . "text/css") ("json" . "application/json") ("xml" . "application/xml")
+    ("txt" . "text/plain") ("text" . "text/plain")
+    ("md" . "text/markdown") ("markdown" . "text/markdown")
+    ("csv" . "text/csv")
+    ;; Images
+    ("png" . "image/png")
+    ("jpg" . "image/jpeg") ("jpeg" . "image/jpeg")
+    ("gif" . "image/gif") ("svg" . "image/svg+xml")
+    ;; Archives
+    ("zip" . "application/zip")
+    ("gz" . "application/gzip") ("gzip" . "application/gzip")
+    ("tar" . "application/x-tar"))
+  "Alist mapping file extensions to MIME content types.")
+
 (defun org-canvas--file-guess-content-type (filename)
   "Guess the MIME content type based on FILENAME extension."
   (let ((ext (downcase (or (file-name-extension filename) ""))))
-    (cond
-     ;; Documents
-     ((string= ext "pdf") "application/pdf")
-     ((member ext '("doc" "docx")) "application/msword")
-     ((member ext '("xls" "xlsx")) "application/vnd.ms-excel")
-     ((member ext '("ppt" "pptx")) "application/vnd.ms-powerpoint")
-     ;; Code
-     ((member ext '("py" "python")) "text/x-python")
-     ((member ext '("js" "javascript")) "application/javascript")
-     ((member ext '("html" "htm")) "text/html")
-     ((member ext '("css")) "text/css")
-     ((member ext '("json")) "application/json")
-     ((member ext '("xml")) "application/xml")
-     ((member ext '("txt" "text")) "text/plain")
-     ((member ext '("md" "markdown")) "text/markdown")
-     ((member ext '("csv")) "text/csv")
-     ;; Images
-     ((member ext '("png")) "image/png")
-     ((member ext '("jpg" "jpeg")) "image/jpeg")
-     ((member ext '("gif")) "image/gif")
-     ((member ext '("svg")) "image/svg+xml")
-     ;; Archives
-     ((member ext '("zip")) "application/zip")
-     ((member ext '("gz" "gzip")) "application/gzip")
-     ((member ext '("tar")) "application/x-tar")
-     ;; Default
-     (t "application/octet-stream"))))
+    (or (alist-get ext org-canvas--mime-type-alist nil nil #'equal)
+        "application/octet-stream")))
 
 ;;;; Folder Operations
 
@@ -287,6 +286,47 @@ Returns a plist (:link-path PATH :display-name NAME :raw-heading TEXT)."
           :display-name (org-canvas--file-get-display-name raw-heading)
           :raw-heading raw-heading)))
 
+(defun org-canvas--file-read-props (pom)
+  "Read raw property strings from the file heading at POM.
+Returns a plist with raw values, or nil for folder-only headings."
+  (let* ((heading-info (org-canvas--file-extract-heading-link))
+         (link-path (plist-get heading-info :link-path))
+         (display-name (plist-get heading-info :display-name))
+         (raw-heading (plist-get heading-info :raw-heading)))
+    (elog-debug org-canvas--logger "[Stage 1: Parse] Heading text: %s" raw-heading)
+    (elog-debug org-canvas--logger "[Stage 1: Parse] Link path: %s" (or link-path "NONE"))
+    (if (not link-path)
+        (progn
+          (elog-debug org-canvas--logger "[Stage 1: Parse] Skipping folder heading: %s" raw-heading)
+          nil)
+      (let* ((files-dir (file-name-directory org-canvas-files-file))
+             (folder-path (org-canvas--file-get-folder-path pom files-dir))
+             (abs-path (expand-file-name link-path files-dir)))
+        (list :display-name display-name
+              :local-path abs-path
+              :folder-path folder-path
+              :canvas-id (org-entry-get pom "CANVAS_ID")
+              :published-raw (org-entry-get pom "PUBLISHED")
+              :unlock-at-raw (org-entry-get pom "UNLOCK_AT")
+              :lock-at-raw (org-entry-get pom "LOCK_AT")
+              :use-justification (org-entry-get pom "USE_JUSTIFICATION")
+              :usage-license (org-entry-get pom "USAGE_LICENSE")
+              :copyright (org-entry-get pom "COPYRIGHT"))))))
+
+(defun org-canvas--file-transform-props (raw)
+  "Transform raw property strings RAW into typed file data.
+Pure function — no buffer access."
+  (list :display-name (plist-get raw :display-name)
+        :local-path (plist-get raw :local-path)
+        :folder-path (plist-get raw :folder-path)
+        :canvas-id (plist-get raw :canvas-id)
+        :published (org-canvas--interpret-boolean (plist-get raw :published-raw) t)
+        :unlock-at (org-canvas-org-parse-timestamp (plist-get raw :unlock-at-raw))
+        :lock-at (org-canvas-org-parse-timestamp (plist-get raw :lock-at-raw))
+        :use-justification (plist-get raw :use-justification)
+        :usage-license (plist-get raw :usage-license)
+        :copyright (plist-get raw :copyright)))
+
 (defun org-canvas--file-parse-entry ()
   "Extract file data from the Org heading at point.
 Returns nil for folder-only headings (no file link)."
@@ -294,48 +334,22 @@ Returns nil for folder-only headings (no file link)."
   (elog-debug org-canvas--logger "[Stage 1: Parse] Starting extraction at point %d" (point))
 
   (let* ((pom (point))
-         (heading-info (org-canvas--file-extract-heading-link))
-         (link-path (plist-get heading-info :link-path))
-         (display-name (plist-get heading-info :display-name))
-         (raw-heading (plist-get heading-info :raw-heading)))
-
-    (elog-debug org-canvas--logger "[Stage 1: Parse] Heading text: %s" raw-heading)
-    (elog-debug org-canvas--logger "[Stage 1: Parse] Link path: %s" (or link-path "NONE"))
+         (raw (org-canvas--file-read-props pom)))
 
     ;; Only process entries with file links
-    (if (not link-path)
-        (progn
-          (elog-debug org-canvas--logger "[Stage 1: Parse] Skipping folder heading: %s" raw-heading)
-          nil)
-      (let* ((canvas-id (org-canvas-org-get-property pom "CANVAS_ID"))
-             (published (org-canvas-org-get-boolean-property pom "PUBLISHED" t))
-             (unlock-at (org-canvas-org-parse-timestamp (org-canvas-org-get-property pom "UNLOCK_AT")))
-             (lock-at (org-canvas-org-parse-timestamp (org-canvas-org-get-property pom "LOCK_AT")))
-             (use-justification (org-canvas-org-get-property pom "USE_JUSTIFICATION"))
-             (usage-license (org-canvas-org-get-property pom "USAGE_LICENSE"))
-             (copyright (org-canvas-org-get-property pom "COPYRIGHT"))
-             (files-dir (file-name-directory org-canvas-files-file))
-             (folder-path (org-canvas--file-get-folder-path pom files-dir))
-             (abs-path (expand-file-name link-path files-dir)))
+    (when raw
+      (let ((data (org-canvas--file-transform-props raw)))
 
         (elog-info org-canvas--logger "[Stage 1: Parse] Processing File: '%s' (ID: %s)"
-          display-name (or canvas-id "NEW"))
-        (elog-debug org-canvas--logger "[Stage 1: Parse] Local path: %s" abs-path)
-        (elog-debug org-canvas--logger "[Stage 1: Parse] Canvas folder: %s" (if (string-empty-p folder-path) "root" folder-path))
+          (plist-get data :display-name) (or (plist-get data :canvas-id) "NEW"))
+        (elog-debug org-canvas--logger "[Stage 1: Parse] Local path: %s" (plist-get data :local-path))
+        (elog-debug org-canvas--logger "[Stage 1: Parse] Canvas folder: %s"
+          (if (string-empty-p (plist-get data :folder-path)) "root" (plist-get data :folder-path)))
 
-        (org-canvas--file-validate-local abs-path display-name)
+        (org-canvas--file-validate-local (plist-get data :local-path) (plist-get data :display-name))
 
-        (list :display-name display-name
-              :local-path abs-path
-              :folder-path folder-path
-              :canvas-id canvas-id
-              :published published
-              :unlock-at unlock-at
-              :lock-at lock-at
-              :use-justification use-justification
-              :usage-license usage-license
-              :copyright copyright
-              :pom pom)))))
+        (plist-put data :pom pom)
+        data))))
 
 ;;;; 2. Stage: Upload Preparation
 
@@ -646,28 +660,23 @@ Per Canvas docs, this GET request must be authenticated."
 Calls PUT /api/v1/courses/:id/usage_rights with file_ids[] and
 usage_rights[...] parameters.  Only called when at least
 USE_JUSTIFICATION is set."
-  (let ((justification (plist-get data :use-justification)))
-    (when justification
-      (let* ((endpoint (org-canvas-api-course-endpoint "usage_rights"))
-             (payload (make-hash-table :test 'equal))
-             (rights (make-hash-table :test 'equal)))
-        (puthash "file_ids" (vector file-id) payload)
-        (puthash "use_justification" justification rights)
-        (let ((license (plist-get data :usage-license)))
-          (when license
-            (puthash "license" license rights)))
-        (let ((copy (plist-get data :copyright)))
-          (when copy
-            (puthash "legal_copyright" copy rights)))
-        (puthash "usage_rights" rights payload)
-        (elog-info org-canvas--logger
-          "[Usage Rights] Setting usage rights for file %s: %s" file-id justification)
-        (condition-case err
-            (org-canvas-api-request 'PUT endpoint :data payload)
-          (error
-           (elog-warning org-canvas--logger
-             "[Usage Rights] Failed for file %s: %s"
-             file-id (error-message-string err))))))))
+  (when-let* ((justification (plist-get data :use-justification)))
+    (let* ((endpoint (org-canvas-api-course-endpoint "usage_rights"))
+           (payload (make-hash-table :test 'equal))
+           (rights (make-hash-table :test 'equal)))
+      (puthash "file_ids" (vector file-id) payload)
+      (puthash "use_justification" justification rights)
+      (org-canvas--puthash-when rights data :usage-license "license")
+      (org-canvas--puthash-when rights data :copyright "legal_copyright")
+      (puthash "usage_rights" rights payload)
+      (elog-info org-canvas--logger
+        "[Usage Rights] Setting usage rights for file %s: %s" file-id justification)
+      (condition-case err
+          (org-canvas-api-request 'PUT endpoint :data payload)
+        (error
+         (elog-warning org-canvas--logger
+           "[Usage Rights] Failed for file %s: %s"
+           file-id (error-message-string err)))))))
 
 ;;;; Pre-flight Folder Creation
 

@@ -54,41 +54,57 @@
 
 ;;;; 1. Stage: Extraction
 
+(defun org-canvas--rubric-read-props (pom)
+  "Read raw property strings and table data from the rubric heading at POM.
+Table extraction requires buffer access (org-table-to-lisp)."
+  (let ((table-data
+         (save-excursion
+           (save-restriction
+             (org-narrow-to-subtree)
+             (goto-char (point-min))
+             (when (re-search-forward org-table-line-regexp nil t)
+               (beginning-of-line)
+               (org-table-to-lisp))))))
+    (list :title-raw (org-get-heading t t t t)
+          :canvas-id (org-entry-get pom "CANVAS_ID")
+          :free-form-raw (org-entry-get pom "FREE_FORM_CRITERION_COMMENTS")
+          :criteria table-data)))
+
+(defun org-canvas--rubric-transform-props (raw)
+  "Transform raw property strings RAW into typed rubric data.
+Pure function — no buffer access."
+  (list :title (org-canvas--strip-statistics-cookie (plist-get raw :title-raw))
+        :canvas-id (plist-get raw :canvas-id)
+        :free-form (org-canvas--interpret-boolean (plist-get raw :free-form-raw))
+        :criteria (plist-get raw :criteria)))
+
 (defun org-canvas--rubric-parse-entry ()
   "Extract rubric data and the associated table from the Org heading at point."
   (org-back-to-heading t)
   (elog-debug org-canvas--logger "[Stage 1: Parse] Starting extraction at point %d" (point))
 
   (let* ((pom (point))
-         (title (org-canvas--strip-statistics-cookie (org-get-heading t t t t)))
-         (canvas-id (org-canvas-org-get-property pom "CANVAS_ID"))
-         (free-form (org-canvas-org-get-boolean-property pom "FREE_FORM_CRITERION_COMMENTS"))
-         (table-data
-          (save-excursion
-            (save-restriction
-              (org-narrow-to-subtree)
-              (goto-char (point-min))
-              (when (re-search-forward org-table-line-regexp nil t)
-                (beginning-of-line)
-                (org-table-to-lisp))))))
+         (raw (org-canvas--rubric-read-props pom))
+         (data (org-canvas--rubric-transform-props raw)))
 
-    (org-canvas--require-title title pom "Rubric")
+    (org-canvas--require-title (plist-get data :title) pom "Rubric")
 
-    (elog-info org-canvas--logger "[Stage 1: Parse] Processing Rubric: '%s' (ID: %s)" title (or canvas-id "NEW"))
-    (elog-debug org-canvas--logger "[Stage 1: Parse] Properties: free-form=%s" free-form)
+    (elog-info org-canvas--logger "[Stage 1: Parse] Processing Rubric: '%s' (ID: %s)"
+              (plist-get data :title) (or (plist-get data :canvas-id) "NEW"))
+    (elog-debug org-canvas--logger "[Stage 1: Parse] Properties: free-form=%s"
+               (plist-get data :free-form))
 
-    (unless table-data
-      (elog-error org-canvas--logger "[Stage 1: Parse] No table found for rubric '%s'" title)
-      (error "No table found for rubric '%s'" title))
+    (unless (plist-get data :criteria)
+      (elog-error org-canvas--logger "[Stage 1: Parse] No table found for rubric '%s'"
+                  (plist-get data :title))
+      (error "No table found for rubric '%s'" (plist-get data :title)))
 
-    (let ((row-count (length (cl-remove-if (lambda (r) (eq r 'hline)) table-data))))
+    (let ((row-count (length (cl-remove-if (lambda (r) (eq r 'hline))
+                                           (plist-get data :criteria)))))
       (elog-info org-canvas--logger "[Stage 1: Parse] Found %d criteria rows in table" row-count))
 
-    (list :title title
-          :canvas-id canvas-id
-          :free-form free-form
-          :criteria table-data
-          :pom pom)))
+    (plist-put data :pom pom)
+    data))
 
 ;;;; 2. Stage: Transformation
 
@@ -155,56 +171,60 @@ Returns the points for this criterion."
     (puthash (plist-get crit :id) (plist-get crit :obj) criteria-hash)
     (plist-get crit :points)))
 
+(defun org-canvas--rubric-resolve-outcome-id (row)
+  "Resolve outcome CANVAS_ID from the 4th column of criterion ROW.
+Returns the outcome ID string, or nil."
+  (let ((outcome-cell (nth 3 row)))
+    (when (and outcome-cell
+               (not (string-empty-p (string-trim outcome-cell)))
+               (string-match "\\[\\[file:" outcome-cell))
+      (org-canvas--resolve-link-property
+       outcome-cell "CANVAS_ID" org-canvas-rubrics-file))))
+
+(defun org-canvas--rubric-build-criteria (criteria-rows criteria-hash)
+  "Process CRITERIA-ROWS into CRITERIA-HASH, grouping ratings with criteria.
+Returns total points across all criteria."
+  (let ((pending-criterion nil)
+        (pending-ratings nil)
+        (pending-outcome-id nil)
+        (counter 0)
+        (total-points 0))
+    (dolist (row criteria-rows)
+      (unless (eq row 'hline)
+        (if (org-canvas--rubric-rating-row-p row)
+            (push row pending-ratings)
+          (when pending-criterion
+            (setq total-points
+                  (+ total-points
+                     (org-canvas--rubric-flush-pending-criterion
+                      pending-criterion pending-ratings counter criteria-hash
+                      pending-outcome-id)))
+            (setq counter (1+ counter)))
+          (setq pending-criterion row)
+          (setq pending-ratings nil)
+          (setq pending-outcome-id (org-canvas--rubric-resolve-outcome-id row)))))
+    (when pending-criterion
+      (setq total-points
+            (+ total-points
+               (org-canvas--rubric-flush-pending-criterion
+                pending-criterion pending-ratings counter criteria-hash
+                pending-outcome-id)))
+      (setq counter (1+ counter)))
+    (elog-info org-canvas--logger "[Stage 2: Transform] Built %d criteria, total points: %d"
+      counter total-points)
+    total-points))
+
 (defun org-canvas--rubric-build-payload (data)
   "Convert DATA to Canvas rubric payload using Hash Tables."
-  (let ((title (plist-get data :title))
-        (criteria-rows (plist-get data :criteria))
-        (free-form (plist-get data :free-form)))
+  (let ((title (plist-get data :title)))
     (elog-info org-canvas--logger "[Stage 2: Transform] Building payload for '%s'" title)
     (let ((rubric-obj (make-hash-table :test 'equal))
-          (criteria-hash (make-hash-table :test 'equal))
-          (counter 0)
-          (total-points 0))
+          (criteria-hash (make-hash-table :test 'equal)))
       (puthash "title" title rubric-obj)
-      (puthash "free_form_criterion_comments" (org-canvas--to-json-boolean free-form) rubric-obj)
-      ;; Group rating rows (> prefix) with their parent criterion
-      (let ((pending-criterion nil)
-            (pending-ratings nil)
-            (pending-outcome-id nil))
-        (dolist (row criteria-rows)
-          (unless (eq row 'hline)
-            (if (org-canvas--rubric-rating-row-p row)
-                ;; Accumulate rating row
-                (push row pending-ratings)
-              ;; New criterion row — flush any pending criterion first
-              (when pending-criterion
-                (setq total-points
-                      (+ total-points
-                         (org-canvas--rubric-flush-pending-criterion
-                          pending-criterion pending-ratings counter criteria-hash
-                          pending-outcome-id)))
-                (setq counter (1+ counter)))
-              (setq pending-criterion row)
-              (setq pending-ratings nil)
-              ;; Resolve optional 4th column (outcome link)
-              (let ((outcome-cell (nth 3 row)))
-                (setq pending-outcome-id
-                      (when (and outcome-cell
-                                 (not (string-empty-p (string-trim outcome-cell)))
-                                 (string-match "\\[\\[file:" outcome-cell))
-                        (org-canvas--resolve-link-property
-                         outcome-cell "CANVAS_ID"
-                         org-canvas-rubrics-file)))))))
-        ;; Flush last criterion
-        (when pending-criterion
-          (setq total-points
-                (+ total-points
-                   (org-canvas--rubric-flush-pending-criterion
-                    pending-criterion pending-ratings counter criteria-hash
-                    pending-outcome-id)))
-          (setq counter (1+ counter))))
+      (puthash "free_form_criterion_comments"
+               (org-canvas--to-json-boolean (plist-get data :free-form)) rubric-obj)
+      (org-canvas--rubric-build-criteria (plist-get data :criteria) criteria-hash)
       (puthash "criteria" criteria-hash rubric-obj)
-      (elog-info org-canvas--logger "[Stage 2: Transform] Built %d criteria, total points: %d" counter total-points)
       (let ((payload (make-hash-table :test 'equal)))
         (puthash "rubric" rubric-obj payload)
         (puthash "rubric_association" (org-canvas--rubric-build-association) payload)

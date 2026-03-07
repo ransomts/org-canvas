@@ -244,6 +244,62 @@ FEATURE-NAME is the module name.  COUNTERS is a plist with
 ;; Modules with hash-table payloads (rubrics, modules, files) use all kebab-case
 ;; since they remap everything manually in build-payload.
 
+(defun org-canvas--make-push-fn-form (endpoint id-key title-key find-fn)
+  "Build a push lambda form for endpoint-based sync macros.
+Returns a quoted lambda that calls `org-canvas--push-to-api'
+with ENDPOINT and optional ID-KEY, TITLE-KEY, FIND-FN."
+  `(lambda (data payload)
+     (org-canvas--push-to-api data payload
+       :endpoint ,endpoint
+       ,@(when id-key `(:id-key ,id-key))
+       ,@(when title-key `(:title-key ,title-key))
+       ,@(when find-fn `(:find-fn ,find-fn)))))
+
+(defun org-canvas--make-finalize-fn-form (id-field id-property title-key post-fn)
+  "Build a finalize lambda form for endpoint-based sync macros.
+Returns a quoted lambda that calls `org-canvas--finalize-item'
+with optional ID-FIELD, ID-PROPERTY, TITLE-KEY, POST-FN."
+  `(lambda (data response)
+     (org-canvas--finalize-item data response
+       ,@(when id-field `(:id-field ,id-field))
+       ,@(when id-property `(:id-property ,id-property))
+       ,@(when title-key `(:title-key ,title-key))
+       ,@(when post-fn `(:post-fn ,post-fn)))))
+
+(defun org-canvas--sync-run-pipeline (feature-name sync-file query
+                                                   parse-fn build-fn push-fn
+                                                   finalize-fn
+                                                   &optional pull-item-fn title-key)
+  "Run the full sync pipeline for FEATURE-NAME.
+SYNC-FILE is the expanded org file path.  QUERY is the org match query.
+PARSE-FN, BUILD-FN, PUSH-FN, FINALIZE-FN are the 4-stage pipeline functions.
+PULL-ITEM-FN enables interactive conflict pull.  TITLE-KEY is the plist key
+for the display name in logs."
+  (org-canvas-clear-log)
+  (let ((org-canvas--conflict-apply-all nil)
+        (org-canvas--current-pull-item-fn pull-item-fn)
+        (feature-upper (upcase feature-name)))
+    (org-canvas--sync-validate-file feature-upper sync-file)
+    (let* ((entries (org-canvas--sync-collect-entries sync-file query feature-name))
+           (targets (plist-get entries :targets))
+           (all-ids-before (plist-get entries :all-ids-before))
+           (counters (list :success 0 :skip 0 :fail 0 :pulled 0))
+           (synced-ids (list nil))
+           (ctx (list :parse-fn parse-fn
+                      :build-fn build-fn
+                      :push-fn push-fn
+                      :finalize-fn finalize-fn
+                      :feature-name feature-name
+                      :feature-upper feature-upper
+                      :total-count (length targets)
+                      :counters counters
+                      :synced-ids synced-ids
+                      :title-key title-key)))
+      (dolist (marker targets)
+        (org-canvas--sync-process-entry marker ctx))
+      (org-canvas--sync-warn-orphans all-ids-before (car synced-ids) feature-name)
+      (org-canvas--sync-log-summary feature-name sync-file counters))))
+
 (defmacro org-canvas-define-sync (feature &rest args)
   "Define a sync function for FEATURE using the 4-stage pipeline pattern.
 
@@ -279,39 +335,25 @@ Example usage:
     :endpoint \"discussion_topics\")"
   (declare (indent 1))
   (let* ((feature-name (symbol-name feature))
-         (feature-upper (upcase feature-name))
          (sync-fn-name (intern (format "org-canvas-sync-%s" feature-name)))
          (file-expr (plist-get args :file))
          (query (or (plist-get args :query) "LEVEL=1"))
          (parse-fn (plist-get args :parse))
          (build-fn (plist-get args :build))
          (endpoint (plist-get args :endpoint))
-         (id-key (plist-get args :id-key))
-         (id-field (plist-get args :id-field))
-         (id-property (plist-get args :id-property))
-         (find-fn (plist-get args :find-fn))
-         (post-fn (plist-get args :post-fn))
          (title-key (plist-get args :title-key))
          (pull-item-fn (plist-get args :pull-item-fn))
-         ;; Auto-generate push-fn from :endpoint when :push not provided
          (push-fn (or (plist-get args :push)
                       (when endpoint
-                        `(lambda (data payload)
-                           (org-canvas--push-to-api data payload
-                             :endpoint ,endpoint
-                             ,@(when id-key `(:id-key ,id-key))
-                             ,@(when title-key `(:title-key ,title-key))
-                             ,@(when find-fn `(:find-fn ,find-fn)))))))
-         ;; Auto-generate finalize-fn from :endpoint when :finalize not provided
+                        (org-canvas--make-push-fn-form
+                         endpoint (plist-get args :id-key)
+                         title-key (plist-get args :find-fn)))))
          (finalize-fn (or (plist-get args :finalize)
                           (when endpoint
-                            `(lambda (data response)
-                               (org-canvas--finalize-item data response
-                                 ,@(when id-field `(:id-field ,id-field))
-                                 ,@(when id-property `(:id-property ,id-property))
-                                 ,@(when title-key `(:title-key ,title-key))
-                                 ,@(when post-fn `(:post-fn ,post-fn))))))))
-    ;; Validate required args
+                            (org-canvas--make-finalize-fn-form
+                             (plist-get args :id-field)
+                             (plist-get args :id-property)
+                             title-key (plist-get args :post-fn))))))
     (unless file-expr (error "org-canvas-define-sync: :file is required"))
     (unless parse-fn (error "org-canvas-define-sync: :parse is required"))
     (unless build-fn (error "org-canvas-define-sync: :build is required"))
@@ -322,34 +364,10 @@ Example usage:
        (defun ,sync-fn-name ()
          ,(format "Synchronize %s to Canvas using the 4-stage pipeline." feature-name)
          (interactive)
-         (org-canvas-clear-log)
-         (let ((org-canvas--conflict-apply-all nil)
-               (org-canvas--current-pull-item-fn ,pull-item-fn)
-               (sync-file (expand-file-name ,file-expr)))
-           (org-canvas--sync-validate-file ,feature-upper sync-file)
-           (let* ((entries (org-canvas--sync-collect-entries
-                            sync-file ,query ,feature-name))
-                  (targets (plist-get entries :targets))
-                  (all-ids-before (plist-get entries :all-ids-before))
-                  (counters (list :success 0 :skip 0 :fail 0 :pulled 0))
-                  (synced-ids (list nil))
-                  (ctx (list :parse-fn ,parse-fn
-                             :build-fn ,build-fn
-                             :push-fn ,push-fn
-                             :finalize-fn ,finalize-fn
-                             :feature-name ,feature-name
-                             :feature-upper ,feature-upper
-                             :total-count (length targets)
-                             :counters counters
-                             :synced-ids synced-ids
-                             :title-key ,title-key)))
-             ;; Process each entry through the pipeline
-             (dolist (marker targets)
-               (org-canvas--sync-process-entry marker ctx))
-             (org-canvas--sync-warn-orphans all-ids-before (car synced-ids)
-                                            ,feature-name)
-             (org-canvas--sync-log-summary
-              ,feature-name sync-file counters)))))))
+         (org-canvas--sync-run-pipeline
+          ,feature-name (expand-file-name ,file-expr)
+          ,query ,parse-fn ,build-fn ,push-fn ,finalize-fn
+          ,pull-item-fn ,title-key)))))
 
 ;;;; 6b. Conflict Detection
 ;;
@@ -1091,31 +1109,19 @@ if not explicitly given."
          (parse-fn (plist-get args :parse))
          (build-fn (plist-get args :build))
          (endpoint (plist-get args :endpoint))
-         (id-key (plist-get args :id-key))
-         (id-field (plist-get args :id-field))
-         (id-property (plist-get args :id-property))
-         (find-fn (plist-get args :find-fn))
-         (post-fn (plist-get args :post-fn))
          (title-key (or (plist-get args :title-key) :title))
          (pull-item-fn (plist-get args :pull-item-fn))
-         ;; Auto-generate push-fn from :endpoint when :push not provided
          (push-fn (or (plist-get args :push)
                       (when endpoint
-                        `(lambda (data payload)
-                           (org-canvas--push-to-api data payload
-                             :endpoint ,endpoint
-                             ,@(when id-key `(:id-key ,id-key))
-                             ,@(when (not (eq title-key :title)) `(:title-key ,title-key))
-                             ,@(when find-fn `(:find-fn ,find-fn)))))))
-         ;; Auto-generate finalize-fn from :endpoint when :finalize not provided
+                        (org-canvas--make-push-fn-form
+                         endpoint (plist-get args :id-key)
+                         title-key (plist-get args :find-fn)))))
          (finalize-fn (or (plist-get args :finalize)
                           (when endpoint
-                            `(lambda (data response)
-                               (org-canvas--finalize-item data response
-                                 ,@(when id-field `(:id-field ,id-field))
-                                 ,@(when id-property `(:id-property ,id-property))
-                                 ,@(when (not (eq title-key :title)) `(:title-key ,title-key))
-                                 ,@(when post-fn `(:post-fn ,post-fn))))))))
+                            (org-canvas--make-finalize-fn-form
+                             (plist-get args :id-field)
+                             (plist-get args :id-property)
+                             title-key (plist-get args :post-fn))))))
     (unless parse-fn (error "org-canvas-define-push-at-point: :parse is required"))
     (unless build-fn (error "org-canvas-define-push-at-point: :build is required"))
     (unless push-fn (error "org-canvas-define-push-at-point: :push or :endpoint is required"))

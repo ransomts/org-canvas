@@ -104,23 +104,74 @@ rating list item (- [N] ...).  Skips the :PROPERTIES: drawer."
 
 ;;;; 1. Stage: Extraction
 
+(defun org-canvas--outcome-group-read-props ()
+  "Read raw outcome group properties from the Org heading at point.
+Returns a plist with :title-raw and :canvas-id."
+  (let ((pom (point)))
+    (list :title-raw (org-get-heading t t t t)
+          :canvas-id (org-entry-get pom "CANVAS_ID"))))
+
+(defun org-canvas--outcome-group-transform-props (raw)
+  "Transform RAW outcome group properties into final form.
+Strips statistics cookies from :title-raw to produce :title."
+  (list :title (org-canvas--strip-statistics-cookie (plist-get raw :title-raw))
+        :canvas-id (plist-get raw :canvas-id)))
+
 (defun org-canvas--outcome-group-parse-entry ()
   "Extract outcome group data from a level-1 Org heading at point."
   (org-back-to-heading t)
   (elog-debug org-canvas--logger "[Stage 1: Parse] Parsing outcome group at point %d" (point))
 
   (let* ((pom (point))
-         (title (org-canvas--strip-statistics-cookie (org-get-heading t t t t)))
-         (canvas-id (org-canvas-org-get-property pom "CANVAS_ID")))
+         (raw (org-canvas--outcome-group-read-props))
+         (data (org-canvas--outcome-group-transform-props raw))
+         (title (plist-get data :title)))
 
     (org-canvas--require-title title pom "Outcome group")
 
     (elog-info org-canvas--logger "[Stage 1: Parse] Outcome Group: '%s' (ID: %s)"
-      title (or canvas-id "NEW"))
+      title (or (plist-get data :canvas-id) "NEW"))
 
     (list :title title
-          :canvas-id canvas-id
+          :canvas-id (plist-get data :canvas-id)
           :pom pom)))
+
+(defun org-canvas--outcome-read-props ()
+  "Read raw outcome properties from the Org heading at point.
+Returns a plist with raw string values from the buffer, including
+:title-raw, :canvas-id, :calculation-method, :calculation-int-raw,
+:mastery-points-raw, :description, :ratings, and :parent-group-id-raw."
+  (let ((pom (point)))
+    (list :title-raw (org-get-heading t t t t)
+          :canvas-id (org-entry-get pom "CANVAS_ID")
+          :calculation-method (or (org-entry-get pom "CALCULATION_METHOD") "highest")
+          :calculation-int-raw (org-entry-get pom "CALCULATION_INT")
+          :mastery-points-raw (org-entry-get pom "MASTERY_POINTS")
+          :description (org-canvas--outcome-get-description)
+          :ratings (org-canvas--outcome-parse-ratings)
+          :parent-group-id-raw (save-excursion
+                                 (org-up-heading-safe)
+                                 (org-entry-get (point) "CANVAS_ID")))))
+
+(defun org-canvas--outcome-transform-props (raw)
+  "Transform RAW outcome properties into final form.
+Strips statistics cookies from title, converts numeric strings
+via `org-canvas--safe-string-to-number', and converts parent group
+ID via `string-to-number'.  Pass-through keys: :canvas-id,
+:calculation-method (as :calculation_method), :description, :ratings."
+  (let ((calc-int-raw (plist-get raw :calculation-int-raw))
+        (mastery-raw (plist-get raw :mastery-points-raw))
+        (parent-raw (plist-get raw :parent-group-id-raw)))
+    (list :title (org-canvas--strip-statistics-cookie (plist-get raw :title-raw))
+          :description (plist-get raw :description)
+          :canvas-id (plist-get raw :canvas-id)
+          :calculation_method (plist-get raw :calculation-method)
+          :calculation_int (when calc-int-raw
+                             (org-canvas--safe-string-to-number calc-int-raw "CALCULATION_INT"))
+          :mastery_points (when mastery-raw
+                            (org-canvas--safe-string-to-number mastery-raw "MASTERY_POINTS"))
+          :ratings (plist-get raw :ratings)
+          :parent-group-id (when parent-raw (string-to-number parent-raw)))))
 
 (defun org-canvas--outcome-parse-entry ()
   "Extract outcome data from a level-2 Org heading at point."
@@ -128,34 +179,27 @@ rating list item (- [N] ...).  Skips the :PROPERTIES: drawer."
   (elog-debug org-canvas--logger "[Stage 1: Parse] Parsing outcome at point %d" (point))
 
   (let* ((pom (point))
-         (title (org-canvas--strip-statistics-cookie (org-get-heading t t t t)))
-         (canvas-id (org-canvas-org-get-property pom "CANVAS_ID"))
-         (calculation-method (or (org-canvas-org-get-property pom "CALCULATION_METHOD") "highest"))
-         (calculation-int (org-canvas-org-get-property pom "CALCULATION_INT"))
-         (mastery-points (org-canvas-org-get-property pom "MASTERY_POINTS"))
-         (description (org-canvas--outcome-get-description))
-         (ratings (org-canvas--outcome-parse-ratings))
-         ;; Get parent group ID
-         (parent-group-id
-          (save-excursion
-            (org-up-heading-safe)
-            (org-canvas-org-get-property (point) "CANVAS_ID"))))
+         (raw (org-canvas--outcome-read-props))
+         (data (org-canvas--outcome-transform-props raw))
+         (title (plist-get data :title)))
 
     (org-canvas--require-title title pom "Outcome")
 
-    (elog-info org-canvas--logger "[Stage 1: Parse] Outcome: '%s' (ID: %s)" title (or canvas-id "NEW"))
+    (elog-info org-canvas--logger "[Stage 1: Parse] Outcome: '%s' (ID: %s)"
+      title (or (plist-get data :canvas-id) "NEW"))
     (elog-debug org-canvas--logger "[Stage 1: Parse] Calculation: %s, Mastery: %s pts"
-      calculation-method (or mastery-points "auto"))
-    (elog-debug org-canvas--logger "[Stage 1: Parse] Found %d ratings" (length ratings))
+      (plist-get data :calculation_method) (or (plist-get data :mastery_points) "auto"))
+    (elog-debug org-canvas--logger "[Stage 1: Parse] Found %d ratings"
+      (length (plist-get data :ratings)))
 
     (list :title title
-          :description description
-          :canvas-id canvas-id
-          :calculation_method calculation-method
-          :calculation_int (when calculation-int (org-canvas--safe-string-to-number calculation-int "CALCULATION_INT"))
-          :mastery_points (when mastery-points (org-canvas--safe-string-to-number mastery-points "MASTERY_POINTS"))
-          :ratings ratings
-          :parent-group-id (when parent-group-id (string-to-number parent-group-id))
+          :description (plist-get data :description)
+          :canvas-id (plist-get data :canvas-id)
+          :calculation_method (plist-get data :calculation_method)
+          :calculation_int (plist-get data :calculation_int)
+          :mastery_points (plist-get data :mastery_points)
+          :ratings (plist-get data :ratings)
+          :parent-group-id (plist-get data :parent-group-id)
           :pom pom)))
 
 ;;;; 2. Stage: Transformation
@@ -317,41 +361,6 @@ rating list item (- [N] ...).  Skips the :PROPERTIES: drawer."
   "Update local Org file with outcome CANVAS_ID using DATA and RESPONSE."
   (org-canvas--finalize-item data response))
 
-;;;; Sync Phase Helper
-
-(defun org-canvas--outcome-sync-phase (file level phase-name process-fn)
-  "Run one phase of outcome sync: collect markers at LEVEL in FILE, iterate.
-PHASE-NAME is a display string (e.g., \"Outcome Groups\").
-PROCESS-FN is called at each marker position; it should return a display
-title string on success.
-Returns a cons cell (SUCCESS-COUNT . FAIL-COUNT)."
-  (let ((targets nil) (success-count 0) (fail-count 0))
-    (with-current-buffer (find-file-noselect file)
-      (setq targets (org-map-entries
-                     (lambda () (point-marker))
-                     (format "LEVEL=%d" level) 'file)))
-
-    (elog-info org-canvas--logger "Found %d %s" (length targets) (downcase phase-name))
-
-    (dolist (marker targets)
-      (elog-info org-canvas--logger "----------------------------------------")
-      (with-current-buffer (marker-buffer marker)
-        (save-excursion
-          (goto-char (marker-position marker))
-          (condition-case err
-              (let ((title (funcall process-fn)))
-                (setq success-count (1+ success-count))
-                (message "%s [%d/%d] Synced '%s'"
-                  phase-name (+ success-count fail-count) (length targets) title))
-            (error
-             (setq fail-count (1+ fail-count))
-             (elog-error org-canvas--logger "[FAILED] %s at point %d: %s"
-               phase-name (marker-position marker) (error-message-string err))
-             (message "%s [%d/%d] FAILED: %s"
-               phase-name (+ success-count fail-count) (length targets)
-               (error-message-string err)))))))
-    (cons success-count fail-count)))
-
 ;;;; Main Sync Function
 
 (defun org-canvas--outcome-sync-preflight ()
@@ -378,47 +387,24 @@ Returns the root group ID, or signals an error."
 First syncs outcome groups (level-1 headings), then outcomes (level-2 headings)."
   (interactive)
   (org-canvas-clear-log)
-  (let ((root-group-id (org-canvas--outcome-sync-preflight))
-        (group-success 0))
+  (let ((org-canvas--inhibit-log-clear t)
+        (root-group-id (org-canvas--outcome-sync-preflight)))
     ;; Phase 1: Sync outcome groups (level-1 headings)
-    (elog-info org-canvas--logger "========================================")
-    (elog-info org-canvas--logger "Phase 1: Syncing Outcome Groups")
-    (elog-info org-canvas--logger "========================================")
-    (let ((group-counts
-           (org-canvas--outcome-sync-phase
-            org-canvas-outcomes-file 1 "Outcome Groups"
-            (lambda ()
-              (let* ((data (org-canvas--outcome-group-parse-entry))
-                     (response (org-canvas--outcome-group-push-to-api data root-group-id)))
-                (org-canvas--outcome-group-finalize data response)
-                (plist-get data :title))))))
-      (setq group-success (car group-counts))
-      (with-current-buffer (find-file-noselect org-canvas-outcomes-file)
-        (save-buffer))
-      (elog-info org-canvas--logger "Groups: %d success, %d failed"
-        (car group-counts) (cdr group-counts)))
+    (org-canvas--sync-run-pipeline
+     "outcome-groups" (expand-file-name org-canvas-outcomes-file) "LEVEL=1"
+     #'org-canvas--outcome-group-parse-entry
+     #'org-canvas--outcome-group-build-payload
+     (lambda (data _payload)
+       (org-canvas--outcome-group-push-to-api data root-group-id))
+     #'org-canvas--outcome-group-finalize)
     ;; Phase 2: Sync outcomes (level-2 headings)
-    (elog-info org-canvas--logger "========================================")
-    (elog-info org-canvas--logger "Phase 2: Syncing Outcomes")
-    (elog-info org-canvas--logger "========================================")
-    (let ((outcome-counts
-           (org-canvas--outcome-sync-phase
-            org-canvas-outcomes-file 2 "Outcomes"
-            (lambda ()
-              (let* ((data (org-canvas--outcome-parse-entry))
-                     (response (org-canvas--outcome-push-to-api data)))
-                (org-canvas--outcome-finalize data response)
-                (plist-get data :title))))))
-      (with-current-buffer (find-file-noselect org-canvas-outcomes-file)
-        (save-buffer)
-        (elog-info org-canvas--logger "Saved %s" org-canvas-outcomes-file))
-      (elog-info org-canvas--logger "========================================")
-      (elog-info org-canvas--logger ">>> OUTCOME SYNC COMPLETE")
-      (elog-info org-canvas--logger "Groups: %d | Outcomes: %d"
-        group-success (car outcome-counts))
-      (elog-info org-canvas--logger "========================================")
-      (message "Outcome sync: %d groups, %d outcomes synced."
-        group-success (car outcome-counts)))))
+    (org-canvas--sync-run-pipeline
+     "outcomes" (expand-file-name org-canvas-outcomes-file) "LEVEL=2"
+     #'org-canvas--outcome-parse-entry
+     #'org-canvas--outcome-build-payload
+     (lambda (data _payload)
+       (org-canvas--outcome-push-to-api data))
+     #'org-canvas--outcome-finalize)))
 
 ;;;; Delete Functions
 

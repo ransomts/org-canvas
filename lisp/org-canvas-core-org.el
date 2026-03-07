@@ -19,6 +19,22 @@
   "Get Org PROPERTY at POM (point or marker)."
   (org-entry-get pom property))
 
+(defun org-canvas--interpret-boolean (value &optional default-true)
+  "Interpret string VALUE as a boolean (pure, no buffer access).
+If DEFAULT-TRUE is non-nil, returns t unless VALUE is \"false\".
+Otherwise returns t only if VALUE is \"true\".
+VALUE may be nil (property not set)."
+  (if default-true
+      (not (string-equal "false" value))
+    (string-equal "true" value)))
+
+(defun org-canvas--interpret-number (value &optional default)
+  "Interpret string VALUE as a number (pure, no buffer access).
+Returns DEFAULT (or 0) if VALUE is nil or empty."
+  (if (and value (stringp value) (not (string-empty-p value)))
+      (string-to-number value)
+    (or default 0)))
+
 (defun org-canvas-org-get-boolean-property (pom property &optional default-true)
   "Get PROPERTY at POM as a boolean value.
 If DEFAULT-TRUE is non-nil, returns t unless property is \"false\".
@@ -31,9 +47,7 @@ Otherwise, returns t only if property is \"true\"."
           property value (if default-true "true" "false")))
       (message "Warning: %s '%s' is not true/false, using %s"
         property value (if default-true "true" "false")))
-    (if default-true
-	(not (string-equal "false" value))
-      (string-equal "true" value))))
+    (org-canvas--interpret-boolean value default-true)))
 
 (defun org-canvas--to-json-boolean (value)
   "Convert VALUE to Canvas JSON boolean (t or :json-false)."
@@ -87,10 +101,19 @@ ENTITY-NAME is a human-readable label like \"Announcement\"."
 FIELDS is a list of (PLIST-KEY . API-KEY) cons cells.
 Returns the modified BASE."
   (dolist (field fields)
-    (let ((value (plist-get data (car field))))
-      (when value
-        (push (cons (cdr field) value) base))))
+    (when-let* ((value (plist-get data (car field))))
+      (push (cons (cdr field) value) base)))
   base)
+
+(defun org-canvas--puthash-when (hash data key api-key &optional boolean-p)
+  "Conditionally set API-KEY in HASH from DATA plist KEY when non-nil.
+When BOOLEAN-P is non-nil, convert \"true\"/\"false\" to t/:json-false."
+  (when-let* ((val (plist-get data key)))
+    (puthash api-key
+             (if boolean-p
+                 (if (equal val "true") t :json-false)
+               val)
+             hash)))
 
 (defun org-canvas-clear-sync-properties (pom)
   "Clear all sync-related properties from entry at POM."
@@ -395,6 +418,25 @@ context.  Otherwise return the raw string."
          "LEVEL=1" 'file)
         found))))
 
+(defun org-canvas--resolve-single-section-name (name sections-file)
+  "Resolve a single section NAME to its CANVAS_ID.
+SECTIONS-FILE is the expanded path to sections.org (may be nil).
+Returns the ID string, or nil if unresolvable."
+  (cond
+   ((string-match-p "\\`[0-9]+\\'" name) name)
+   ((and sections-file (file-exists-p sections-file))
+    (let ((canvas-id (org-canvas--find-section-id-by-name name sections-file)))
+      (unless canvas-id
+        (elog-warning org-canvas--logger
+          "[Sections] Could not resolve section name '%s' to CANVAS_ID" name)
+        (message "Warning: Section '%s' not found in sections.org" name))
+      canvas-id))
+   (t
+    (elog-warning org-canvas--logger
+      "[Sections] Cannot resolve section name '%s' (sections file not available)" name)
+    (message "Warning: Cannot resolve section '%s' (no sections file)" name)
+    nil)))
+
 (defun org-canvas--resolve-section-names-to-ids (names-string)
   "Resolve comma-separated section NAMES-STRING to comma-separated CANVAS_IDs.
 Look up each name as a heading in the sections file and return its CANVAS_ID.
@@ -405,26 +447,12 @@ Returns the resolved ID string, or nil if nothing resolved."
     (let* ((sections-file (when (boundp 'org-canvas-sections-file)
                             (expand-file-name (symbol-value 'org-canvas-sections-file))))
            (names (mapcar #'string-trim (split-string names-string "," t)))
-           (ids nil))
-      (dolist (name names)
-        (cond
-         ;; Already a numeric ID — pass through
-         ((string-match-p "\\`[0-9]+\\'" name)
-          (push name ids))
-         ;; Look up in sections file
-         ((and sections-file (file-exists-p sections-file))
-          (let ((canvas-id (org-canvas--find-section-id-by-name name sections-file)))
-            (if canvas-id
-                (push canvas-id ids)
-              (elog-warning org-canvas--logger
-                "[Sections] Could not resolve section name '%s' to CANVAS_ID" name)
-              (message "Warning: Section '%s' not found in sections.org" name))))
-         (t
-          (elog-warning org-canvas--logger
-            "[Sections] Cannot resolve section name '%s' (sections file not available)" name)
-          (message "Warning: Cannot resolve section '%s' (no sections file)" name))))
+           (ids (delq nil (mapcar (lambda (name)
+                                    (org-canvas--resolve-single-section-name
+                                     name sections-file))
+                                  names))))
       (when ids
-        (mapconcat #'identity (nreverse ids) ",")))))
+        (mapconcat #'identity ids ",")))))
 
 ;;;; 4e. Cross-file Link Resolution for HTML Export
 

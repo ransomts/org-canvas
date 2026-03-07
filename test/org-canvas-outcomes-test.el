@@ -96,6 +96,123 @@ Description text.
        (expect desc :not :to-match "CALCULATION_METHOD")
        (expect desc :to-match "Description text")))))
 
+;;;; Transform Props
+
+(describe "org-canvas--outcome-group-transform-props"
+  (it "strips statistics cookie from title"
+    (let ((result (org-canvas--outcome-group-transform-props
+                   '(:title-raw "Communication Skills [2/3]" :canvas-id nil))))
+      (expect (plist-get result :title) :to-equal "Communication Skills")))
+
+  (it "passes through plain title unchanged"
+    (let ((result (org-canvas--outcome-group-transform-props
+                   '(:title-raw "Writing" :canvas-id nil))))
+      (expect (plist-get result :title) :to-equal "Writing")))
+
+  (it "passes through canvas-id"
+    (let ((result (org-canvas--outcome-group-transform-props
+                   '(:title-raw "Group" :canvas-id "11111"))))
+      (expect (plist-get result :canvas-id) :to-equal "11111")))
+
+  (it "passes through nil canvas-id for new groups"
+    (let ((result (org-canvas--outcome-group-transform-props
+                   '(:title-raw "Group" :canvas-id nil))))
+      (expect (plist-get result :canvas-id) :to-be nil))))
+
+(describe "org-canvas--outcome-transform-props"
+  (it "strips statistics cookie from title"
+    (let ((result (org-canvas--outcome-transform-props
+                   '(:title-raw "Outcome [1/2]" :canvas-id nil
+                     :calculation-method "highest" :calculation-int-raw nil
+                     :mastery-points-raw nil :description "" :ratings nil
+                     :parent-group-id-raw nil))))
+      (expect (plist-get result :title) :to-equal "Outcome")))
+
+  (it "passes through canvas-id"
+    (let ((result (org-canvas--outcome-transform-props
+                   '(:title-raw "Outcome" :canvas-id "22222"
+                     :calculation-method "highest" :calculation-int-raw nil
+                     :mastery-points-raw nil :description "" :ratings nil
+                     :parent-group-id-raw nil))))
+      (expect (plist-get result :canvas-id) :to-equal "22222")))
+
+  (it "converts calculation-int-raw to number"
+    (let ((result (org-canvas--outcome-transform-props
+                   '(:title-raw "Outcome" :canvas-id nil
+                     :calculation-method "decaying_average"
+                     :calculation-int-raw "65"
+                     :mastery-points-raw nil :description "" :ratings nil
+                     :parent-group-id-raw nil))))
+      (expect (plist-get result :calculation_int) :to-equal 65)))
+
+  (it "leaves calculation_int nil when raw is nil"
+    (let ((result (org-canvas--outcome-transform-props
+                   '(:title-raw "Outcome" :canvas-id nil
+                     :calculation-method "highest" :calculation-int-raw nil
+                     :mastery-points-raw nil :description "" :ratings nil
+                     :parent-group-id-raw nil))))
+      (expect (plist-get result :calculation_int) :to-be nil)))
+
+  (it "converts mastery-points-raw to number"
+    (let ((result (org-canvas--outcome-transform-props
+                   '(:title-raw "Outcome" :canvas-id nil
+                     :calculation-method "highest" :calculation-int-raw nil
+                     :mastery-points-raw "3"
+                     :description "" :ratings nil
+                     :parent-group-id-raw nil))))
+      (expect (plist-get result :mastery_points) :to-equal 3)))
+
+  (it "leaves mastery_points nil when raw is nil"
+    (let ((result (org-canvas--outcome-transform-props
+                   '(:title-raw "Outcome" :canvas-id nil
+                     :calculation-method "highest" :calculation-int-raw nil
+                     :mastery-points-raw nil :description "" :ratings nil
+                     :parent-group-id-raw nil))))
+      (expect (plist-get result :mastery_points) :to-be nil)))
+
+  (it "passes through ratings unchanged"
+    (let* ((ratings '(((points . 4) (description . "Exceeds"))
+                      ((points . 3) (description . "Meets"))))
+           (result (org-canvas--outcome-transform-props
+                    (list :title-raw "Outcome" :canvas-id nil
+                          :calculation-method "highest" :calculation-int-raw nil
+                          :mastery-points-raw nil :description ""
+                          :ratings ratings :parent-group-id-raw nil))))
+      (expect (plist-get result :ratings) :to-equal ratings)))
+
+  (it "converts parent-group-id-raw to number"
+    (let ((result (org-canvas--outcome-transform-props
+                   '(:title-raw "Outcome" :canvas-id nil
+                     :calculation-method "highest" :calculation-int-raw nil
+                     :mastery-points-raw nil :description "" :ratings nil
+                     :parent-group-id-raw "100"))))
+      (expect (plist-get result :parent-group-id) :to-equal 100)))
+
+  (it "leaves parent-group-id nil when raw is nil"
+    (let ((result (org-canvas--outcome-transform-props
+                   '(:title-raw "Outcome" :canvas-id nil
+                     :calculation-method "highest" :calculation-int-raw nil
+                     :mastery-points-raw nil :description "" :ratings nil
+                     :parent-group-id-raw nil))))
+      (expect (plist-get result :parent-group-id) :to-be nil)))
+
+  (it "passes through description unchanged"
+    (let ((result (org-canvas--outcome-transform-props
+                   '(:title-raw "Outcome" :canvas-id nil
+                     :calculation-method "highest" :calculation-int-raw nil
+                     :mastery-points-raw nil
+                     :description "Students will write clearly."
+                     :ratings nil :parent-group-id-raw nil))))
+      (expect (plist-get result :description) :to-equal "Students will write clearly.")))
+
+  (it "passes through calculation_method as :calculation_method"
+    (let ((result (org-canvas--outcome-transform-props
+                   '(:title-raw "Outcome" :canvas-id nil
+                     :calculation-method "n_mastery" :calculation-int-raw "5"
+                     :mastery-points-raw nil :description "" :ratings nil
+                     :parent-group-id-raw nil))))
+      (expect (plist-get result :calculation_method) :to-equal "n_mastery"))))
+
 ;;;; Stage 1: Parse Outcome Group Entry
 
 (describe "org-canvas--outcome-group-parse-entry"

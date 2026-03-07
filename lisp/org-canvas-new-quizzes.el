@@ -231,55 +231,98 @@ Supports: exact value, or [min, max] range."
 
 ;;;; Quiz Parsing (Level 1)
 
-(defun org-canvas--new-quiz-parse-entry ()
-  "Extract New Quiz data from the Org heading at point."
-  (org-back-to-heading t)
-  (elog-debug org-canvas--logger "[New Quiz Parse] Starting at point %d" (point))
-
+(defun org-canvas--new-quiz-read-props ()
+  "Read raw property strings from the Org heading at point.
+Returns a plist of raw values with no transformations applied."
   (let* ((pom (point-marker))
-         (title (org-canvas--strip-statistics-cookie (org-get-heading t t t t)))
-         (canvas-id (org-canvas-org-get-property pom "CANVAS_ASSIGNMENT_ID"))
-         (time-limit (org-canvas-org-get-property pom "TIME_LIMIT"))
-         (shuffle (org-canvas-org-get-boolean-property pom "SHUFFLE_ANSWERS"))
-         (one-at-a-time (org-canvas-org-get-boolean-property pom "ONE_AT_A_TIME"))
-         (attempts (org-canvas-org-get-property pom "ALLOWED_ATTEMPTS"))
-         (scoring-policy (org-canvas--validate-property
-                          (org-canvas-org-get-property pom "SCORING_POLICY")
-                          org-canvas--new-quiz-valid-scoring-policies
-                          "SCORING_POLICY" nil))
-         (group-link (org-canvas-org-get-property pom "GROUP"))
+         (title-raw (org-get-heading t t t t))
+         (canvas-id (org-entry-get pom "CANVAS_ASSIGNMENT_ID"))
+         (time-limit-raw (org-entry-get pom "TIME_LIMIT"))
+         (shuffle-raw (org-entry-get pom "SHUFFLE_ANSWERS"))
+         (one-at-a-time-raw (org-entry-get pom "ONE_AT_A_TIME"))
+         (attempts-raw (org-entry-get pom "ALLOWED_ATTEMPTS"))
+         (scoring-policy-raw (org-entry-get pom "SCORING_POLICY"))
+         (group-link (org-entry-get pom "GROUP"))
          (assignment-group-id (when group-link
                                 (org-canvas--resolve-link-property
                                  group-link "CANVAS_ID"
                                  org-canvas-new-quizzes-file)))
-         (rubric-link (org-canvas-org-get-property pom "RUBRIC_LINK"))
+         (rubric-link (org-entry-get pom "RUBRIC_LINK"))
          (rubric-id (when rubric-link
                       (org-canvas--resolve-link-property
                        rubric-link "CANVAS_ID"
                        org-canvas-new-quizzes-file)))
          (body-text (org-canvas--new-quiz-parse-body-text)))
+    (list :title-raw title-raw
+          :canvas-id canvas-id
+          :time-limit-raw time-limit-raw
+          :shuffle-raw shuffle-raw
+          :one-at-a-time-raw one-at-a-time-raw
+          :attempts-raw attempts-raw
+          :scoring-policy-raw scoring-policy-raw
+          :assignment-group-id assignment-group-id
+          :rubric-id rubric-id
+          :body-text body-text
+          :pom pom)))
+
+(defun org-canvas--new-quiz-transform-props (props)
+  "Apply pure transformations to raw PROPS plist.
+No buffer access — only string/number/boolean conversions."
+  (let* ((title (org-canvas--strip-statistics-cookie
+                 (plist-get props :title-raw)))
+         (time-limit-raw (plist-get props :time-limit-raw))
+         (shuffle (org-canvas--interpret-boolean
+                   (plist-get props :shuffle-raw)))
+         (one-at-a-time (org-canvas--interpret-boolean
+                         (plist-get props :one-at-a-time-raw)))
+         (attempts-raw (plist-get props :attempts-raw))
+         (scoring-policy (org-canvas--validate-property
+                          (plist-get props :scoring-policy-raw)
+                          org-canvas--new-quiz-valid-scoring-policies
+                          "SCORING_POLICY" nil))
+         (assignment-group-id (plist-get props :assignment-group-id)))
+    (list :title title
+          :canvas-id (plist-get props :canvas-id)
+          :time_limit (when time-limit-raw
+                        (org-canvas--safe-string-to-number
+                         time-limit-raw "TIME_LIMIT"))
+          :shuffle_answers shuffle
+          :one_at_a_time one-at-a-time
+          :allowed_attempts (when attempts-raw
+                              (org-canvas--safe-string-to-number
+                               attempts-raw "ALLOWED_ATTEMPTS"))
+          :scoring_policy scoring-policy
+          :assignment_group_id (when assignment-group-id
+                                 (string-to-number assignment-group-id))
+          :rubric-id (plist-get props :rubric-id)
+          :body-text (plist-get props :body-text)
+          :pom (plist-get props :pom))))
+
+(defun org-canvas--new-quiz-parse-entry ()
+  "Extract New Quiz data from the Org heading at point.
+Reads raw properties, transforms them, and exports description to HTML."
+  (org-back-to-heading t)
+  (elog-debug org-canvas--logger "[New Quiz Parse] Starting at point %d" (point))
+
+  (let* ((raw (org-canvas--new-quiz-read-props))
+         (data (org-canvas--new-quiz-transform-props raw))
+         (title (plist-get data :title))
+         (canvas-id (plist-get data :canvas-id))
+         (body-text (plist-get data :body-text))
+         (pom (plist-get data :pom)))
 
     (org-canvas--require-title title pom "New Quiz")
 
     (elog-info org-canvas--logger "[New Quiz Parse] Quiz: '%s' (ID: %s)"
       title (or canvas-id "NEW"))
 
-    (list :title title
-          :description (when (> (length body-text) 0)
-                         (let ((org-export-with-sub-superscripts nil))
-                           (org-export-string-as body-text 'html t)))
-          :canvas-id canvas-id
-          :time_limit (when time-limit
-                        (org-canvas--safe-string-to-number time-limit "TIME_LIMIT"))
-          :shuffle_answers shuffle
-          :one_at_a_time one-at-a-time
-          :allowed_attempts (when attempts
-                              (org-canvas--safe-string-to-number attempts "ALLOWED_ATTEMPTS"))
-          :scoring_policy scoring-policy
-          :assignment_group_id (when assignment-group-id
-                                 (string-to-number assignment-group-id))
-          :rubric-id rubric-id
-          :pom pom)))
+    ;; Replace :body-text with HTML :description in final result
+    (plist-put data :description
+               (when (and body-text (> (length body-text) 0))
+                 (let ((org-export-with-sub-superscripts nil))
+                   (org-export-string-as body-text 'html t))))
+    (plist-put data :body-text nil)
+    data))
 
 ;;;; Quiz Build Payload
 
@@ -364,55 +407,91 @@ Returns response with assignment_id."
 
 ;;;; Quiz Finalize
 
+(defun org-canvas--new-quiz-sync-children (data response)
+  "Sync items and associate rubric for the new quiz in DATA/RESPONSE."
+  (let ((quiz-id (or (alist-get 'assignment_id response)
+                     (alist-get 'id response)
+                     (plist-get data :canvas-id)))
+        (marker (point-marker)))
+    (when quiz-id
+      (org-canvas--sync-new-quiz-items marker quiz-id))
+    ;; Associate rubric if RUBRIC_LINK is set
+    (let ((rubric-id (plist-get data :rubric-id))
+          (assignment-id (alist-get 'assignment_id response)))
+      (when rubric-id
+        (org-canvas--associate-rubric assignment-id rubric-id "Assignment")))))
+
 (defun org-canvas--new-quiz-finalize (data response)
-  "Save New Quiz pointed to in DATA with CANVAS_ASSIGNMENT_ID from RESPONSE."
-  (let* ((id (or (alist-get 'assignment_id response)
-                 (alist-get 'id response)))
-         (pom (plist-get data :pom))
-         (title (plist-get data :title)))
-    (unless pom
-      (error "Finalize: missing :pom in data for '%s'" title))
-    (if id
-        (progn
-          (elog-info org-canvas--logger
-            "[Finalize] Saving CANVAS_ASSIGNMENT_ID=%s for '%s'" id title)
-          (org-canvas-org-save-sync-state pom id "CANVAS_ASSIGNMENT_ID")
-          (let ((updated-at (alist-get 'updated_at response)))
-            (when updated-at
-              (org-canvas-org-set-property pom "CANVAS_UPDATED_AT"
-                                           (format "%s" updated-at))))
-          (elog-info org-canvas--logger "[Finalize] Complete for '%s'" title))
-      (elog-error org-canvas--logger "[Finalize] No assignment_id in response for '%s'!" title)
-      (error "No assignment_id in API response for '%s'" title))))
+  "Finalize new quiz DATA with RESPONSE and sync child items.
+Falls back to \\='id when \\='assignment_id is absent in RESPONSE."
+  (let ((effective-response
+         (if (alist-get 'assignment_id response)
+             response
+           ;; Fallback: copy assignment_id from id
+           (cons (cons 'assignment_id (alist-get 'id response)) response))))
+    (org-canvas--finalize-item data effective-response
+      :id-field 'assignment_id
+      :id-property "CANVAS_ASSIGNMENT_ID"
+      :post-fn #'org-canvas--new-quiz-sync-children)))
 
 ;;;; Item/Question Parsing (Level 2)
 
-(defun org-canvas--new-quiz-item-parse-entry (quiz-assignment-id)
-  "Extract item data from Org heading at point.
-QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
-  (org-back-to-heading t)
-
+(defun org-canvas--new-quiz-item-read-props (quiz-assignment-id)
+  "Read raw property strings from the quiz item heading at point.
+QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz.
+Returns a plist of raw values with no transformations applied."
   (let* ((pom (point-marker))
-         (title (org-canvas--strip-statistics-cookie (org-get-heading t t t t)))
-         (canvas-id (org-canvas-org-get-property pom "CANVAS_ITEM_ID"))
+         (title-raw (org-get-heading t t t t))
+         (canvas-id (org-entry-get pom "CANVAS_ITEM_ID"))
+         (type-raw (org-entry-get pom "TYPE"))
+         (points-raw (org-entry-get pom "POINTS"))
+         (outcome (org-entry-get pom "OUTCOME"))
+         (body-text (org-canvas--new-quiz-parse-question-text)))
+    (list :title-raw title-raw
+          :canvas-id canvas-id
+          :quiz-assignment-id quiz-assignment-id
+          :type-raw type-raw
+          :points-raw points-raw
+          :outcome outcome
+          :text body-text
+          :pom pom)))
+
+(defun org-canvas--new-quiz-item-transform-props (props)
+  "Apply pure transformations to raw item PROPS plist.
+No buffer access — only string/number/boolean conversions."
+  (let* ((title (org-canvas--strip-statistics-cookie
+                 (plist-get props :title-raw)))
          (q-type (org-canvas--validate-property
-                  (org-canvas-org-get-property pom "TYPE")
+                  (plist-get props :type-raw)
                   org-canvas--new-quiz-valid-types
                   "TYPE" "choice"))
-         (points (org-canvas-org-get-number-property pom "POINTS" 1))
-         (outcome (org-canvas-org-get-property pom "OUTCOME"))
-         (body-text (org-canvas--new-quiz-parse-question-text)))
+         (points-raw (plist-get props :points-raw))
+         (points (if (and points-raw (not (string-empty-p points-raw)))
+                     (org-canvas--safe-string-to-number points-raw "POINTS")
+                   1)))
+    (list :title title
+          :text (plist-get props :text)
+          :canvas-id (plist-get props :canvas-id)
+          :quiz-assignment-id (plist-get props :quiz-assignment-id)
+          :type q-type
+          :points points
+          :outcome (plist-get props :outcome)
+          :pom (plist-get props :pom))))
+
+(defun org-canvas--new-quiz-item-parse-entry (quiz-assignment-id)
+  "Extract item data from Org heading at point.
+QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz.
+Reads raw properties and transforms them."
+  (org-back-to-heading t)
+
+  (let* ((raw (org-canvas--new-quiz-item-read-props quiz-assignment-id))
+         (data (org-canvas--new-quiz-item-transform-props raw))
+         (title (plist-get data :title))
+         (q-type (plist-get data :type)))
 
     (elog-debug org-canvas--logger "[New Quiz Item Parse] '%s' type=%s" title q-type)
 
-    (list :title title
-          :text body-text
-          :canvas-id canvas-id
-          :quiz-assignment-id quiz-assignment-id
-          :type q-type
-          :points points
-          :outcome outcome
-          :pom pom)))
+    data))
 
 ;;;; Item Build Interaction Data
 
@@ -533,38 +612,26 @@ scoring_data (string value), and scoring_algorithm Equivalence."
       (scoring_data
        . ((value . ,(vconcat entries)))))))
 
+(defconst org-canvas--new-quiz-interaction-dispatch
+  `(("choice"         ,#'org-canvas--new-quiz-parse-checkbox-list       . ,#'org-canvas--new-quiz-item-build-choice-data)
+    ("true-false"     ,#'org-canvas--new-quiz-parse-checkbox-list       . ,#'org-canvas--new-quiz-item-build-true-false-data)
+    ("multi-answer"   ,#'org-canvas--new-quiz-parse-checkbox-list       . ,#'org-canvas--new-quiz-item-build-choice-data)
+    ("short-answer"   ,#'org-canvas--new-quiz-parse-checkbox-list       . ,#'org-canvas--new-quiz-item-build-fill-blank-data)
+    ("matching"       ,#'org-canvas--new-quiz-parse-matching-list       . ,#'org-canvas--new-quiz-item-build-matching-data)
+    ("ordering"       ,#'org-canvas--new-quiz-parse-ordering-list       . ,#'org-canvas--new-quiz-item-build-ordering-data)
+    ("categorization" ,#'org-canvas--new-quiz-parse-categorization-list . ,#'org-canvas--new-quiz-item-build-categorization-data)
+    ("numerical"      ,#'org-canvas--new-quiz-parse-numerical-answer    . ,#'org-canvas--new-quiz-item-build-numerical-data))
+  "Dispatch table for new quiz interaction data: (TYPE PARSER . BUILDER).")
+
 (defun org-canvas--new-quiz-item-build-interaction-data (q-type)
   "Build interaction_data for Q-TYPE from current heading content.
 Returns an alist that will be JSON-encoded."
-  (pcase q-type
-    ("choice"
-     (org-canvas--new-quiz-item-build-choice-data
-      (org-canvas--new-quiz-parse-checkbox-list)))
-    ("true-false"
-     (org-canvas--new-quiz-item-build-true-false-data
-      (org-canvas--new-quiz-parse-checkbox-list)))
-    ("multi-answer"
-     (org-canvas--new-quiz-item-build-choice-data
-      (org-canvas--new-quiz-parse-checkbox-list)))
-    ("short-answer"
-     (org-canvas--new-quiz-item-build-fill-blank-data
-      (org-canvas--new-quiz-parse-checkbox-list)))
-    ("matching"
-     (org-canvas--new-quiz-item-build-matching-data
-      (org-canvas--new-quiz-parse-matching-list)))
-    ("ordering"
-     (org-canvas--new-quiz-item-build-ordering-data
-      (org-canvas--new-quiz-parse-ordering-list)))
-    ("categorization"
-     (org-canvas--new-quiz-item-build-categorization-data
-      (org-canvas--new-quiz-parse-categorization-list)))
-    ("numerical"
-     (let ((num (org-canvas--new-quiz-parse-numerical-answer)))
-       (when num
-         (org-canvas--new-quiz-item-build-numerical-data num))))
-    ((or "essay" "file-upload" "hot-spot")
-     nil)
-    (_ nil)))
+  (when-let* ((entry (assoc q-type org-canvas--new-quiz-interaction-dispatch #'equal)))
+    (let* ((parser (cadr entry))
+           (builder (cddr entry))
+           (parsed (funcall parser)))
+      (when parsed
+        (funcall builder parsed)))))
 
 ;;;; Item Scoring Data
 
@@ -798,90 +865,12 @@ QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
 
 ;;;; Main Sync Function
 
-;;;###autoload
-(defun org-canvas-sync-new-quizzes ()
-  "Synchronize New Quizzes and their items."
-  (interactive)
-  (org-canvas-clear-log)
-  (unless (and org-canvas-new-quizzes-file
-               (file-exists-p org-canvas-new-quizzes-file))
-    (error "New Quizzes file not found: %s" org-canvas-new-quizzes-file))
-
-  (display-buffer (get-buffer-create org-canvas--log-buffer-name))
-  (elog-info org-canvas--logger "========================================")
-  (elog-info org-canvas--logger ">>> STARTING NEW QUIZ SYNC")
-  (elog-info org-canvas--logger "File: %s" org-canvas-new-quizzes-file)
-  (elog-info org-canvas--logger "Course: %s | URL: %s"
-    org-canvas-course-id org-canvas-base-url)
-  (elog-info org-canvas--logger "========================================")
-
-  (let ((quiz-targets nil)
-        (quiz-success 0)
-        (quiz-fail 0)
-        (item-success 0)
-        (item-fail 0))
-
-    ;; Collect all level-1 headings (quizzes)
-    (with-current-buffer (find-file-noselect org-canvas-new-quizzes-file)
-      (setq quiz-targets (org-map-entries (lambda () (point-marker)) "LEVEL=1" 'file)))
-
-    (elog-info org-canvas--logger "Found %d New Quizzes to sync" (length quiz-targets))
-
-    ;; Sync each quiz and its items
-    (dolist (marker quiz-targets)
-      (elog-info org-canvas--logger "----------------------------------------")
-      (with-current-buffer (marker-buffer marker)
-        (save-excursion
-          (goto-char (marker-position marker))
-          (condition-case err
-              (let* ((data (org-canvas--new-quiz-parse-entry))
-                     (payload (org-canvas--new-quiz-build-payload data))
-                     (response (org-canvas--new-quiz-push-to-api data payload)))
-                (org-canvas--new-quiz-finalize data response)
-                (setq quiz-success (1+ quiz-success))
-                (message "New Quizzes [%d/%d] Synced '%s'"
-                  (+ quiz-success quiz-fail) (length quiz-targets)
-                  (plist-get data :title))
-
-                ;; Now sync items under this quiz
-                (let ((quiz-id (or (alist-get 'assignment_id response)
-                                   (alist-get 'id response)
-                                   (plist-get data :canvas-id))))
-                  (when quiz-id
-                    (let ((q-results (org-canvas--sync-new-quiz-items
-                                     marker quiz-id)))
-                      (setq item-success (+ item-success (car q-results)))
-                      (setq item-fail (+ item-fail (cdr q-results))))))
-
-                ;; Associate rubric if RUBRIC_LINK is set
-                (let ((rubric-id (plist-get data :rubric-id))
-                      (assignment-id (alist-get 'assignment_id response)))
-                  (when rubric-id
-                    (org-canvas--associate-rubric
-                     assignment-id rubric-id "Assignment"))))
-            (error
-             (setq quiz-fail (1+ quiz-fail))
-             (elog-error org-canvas--logger "[FAILED] New Quiz at point %d: %s"
-               (marker-position marker) (error-message-string err))
-             (message "New Quizzes [%d/%d] FAILED: %s"
-               (+ quiz-success quiz-fail) (length quiz-targets)
-               (error-message-string err)))))))
-
-    ;; Save the org file
-    (with-current-buffer (find-file-noselect org-canvas-new-quizzes-file)
-      (save-buffer)
-      (elog-info org-canvas--logger "Saved %s" org-canvas-new-quizzes-file))
-
-    (elog-info org-canvas--logger "========================================")
-    (elog-info org-canvas--logger ">>> NEW QUIZ SYNC COMPLETE")
-    (elog-info org-canvas--logger "Quizzes: %d success, %d failed"
-      quiz-success quiz-fail)
-    (elog-info org-canvas--logger "Items: %d success, %d failed"
-      item-success item-fail)
-    (elog-info org-canvas--logger "========================================")
-    (message "New Quiz sync: %d/%d quizzes, %d/%d items."
-             quiz-success (+ quiz-success quiz-fail)
-             item-success (+ item-success item-fail))))
+(org-canvas-define-sync new-quizzes
+  :file org-canvas-new-quizzes-file
+  :parse #'org-canvas--new-quiz-parse-entry
+  :build #'org-canvas--new-quiz-build-payload
+  :push #'org-canvas--new-quiz-push-to-api
+  :finalize #'org-canvas--new-quiz-finalize)
 
 ;;;; Sync at Point
 

@@ -205,6 +205,203 @@ What would happen?
        (expect (plist-get num :start) :to-equal 10)
        (expect (plist-get num :end) :to-equal 20)))))
 
+;;;; Transform Props (Pure)
+
+(describe "org-canvas--new-quiz-transform-props"
+  (it "strips statistics cookie from title"
+    (let ((result (org-canvas--new-quiz-transform-props
+                   '(:title-raw "Midterm [2/5]"
+                     :canvas-id nil :time-limit-raw nil
+                     :shuffle-raw nil :one-at-a-time-raw nil
+                     :attempts-raw nil :scoring-policy-raw nil
+                     :assignment-group-id nil :rubric-id nil
+                     :body-text "" :pom nil))))
+      (expect (plist-get result :title) :to-equal "Midterm")))
+
+  (it "interprets boolean shuffle as true"
+    (let ((result (org-canvas--new-quiz-transform-props
+                   '(:title-raw "Quiz"
+                     :canvas-id nil :time-limit-raw nil
+                     :shuffle-raw "true" :one-at-a-time-raw nil
+                     :attempts-raw nil :scoring-policy-raw nil
+                     :assignment-group-id nil :rubric-id nil
+                     :body-text "" :pom nil))))
+      (expect (plist-get result :shuffle_answers) :to-be t)))
+
+  (it "interprets boolean shuffle as nil when absent"
+    (let ((result (org-canvas--new-quiz-transform-props
+                   '(:title-raw "Quiz"
+                     :canvas-id nil :time-limit-raw nil
+                     :shuffle-raw nil :one-at-a-time-raw nil
+                     :attempts-raw nil :scoring-policy-raw nil
+                     :assignment-group-id nil :rubric-id nil
+                     :body-text "" :pom nil))))
+      (expect (plist-get result :shuffle_answers) :to-be nil)))
+
+  (it "interprets one-at-a-time boolean"
+    (let ((result (org-canvas--new-quiz-transform-props
+                   '(:title-raw "Quiz"
+                     :canvas-id nil :time-limit-raw nil
+                     :shuffle-raw nil :one-at-a-time-raw "true"
+                     :attempts-raw nil :scoring-policy-raw nil
+                     :assignment-group-id nil :rubric-id nil
+                     :body-text "" :pom nil))))
+      (expect (plist-get result :one_at_a_time) :to-be t)))
+
+  (it "converts time-limit to number"
+    (let ((result (org-canvas--new-quiz-transform-props
+                   '(:title-raw "Quiz"
+                     :canvas-id nil :time-limit-raw "60"
+                     :shuffle-raw nil :one-at-a-time-raw nil
+                     :attempts-raw nil :scoring-policy-raw nil
+                     :assignment-group-id nil :rubric-id nil
+                     :body-text "" :pom nil))))
+      (expect (plist-get result :time_limit) :to-equal 60)))
+
+  (it "returns nil time-limit when absent"
+    (let ((result (org-canvas--new-quiz-transform-props
+                   '(:title-raw "Quiz"
+                     :canvas-id nil :time-limit-raw nil
+                     :shuffle-raw nil :one-at-a-time-raw nil
+                     :attempts-raw nil :scoring-policy-raw nil
+                     :assignment-group-id nil :rubric-id nil
+                     :body-text "" :pom nil))))
+      (expect (plist-get result :time_limit) :to-be nil)))
+
+  (it "converts allowed-attempts to number"
+    (let ((result (org-canvas--new-quiz-transform-props
+                   '(:title-raw "Quiz"
+                     :canvas-id nil :time-limit-raw nil
+                     :shuffle-raw nil :one-at-a-time-raw nil
+                     :attempts-raw "3" :scoring-policy-raw nil
+                     :assignment-group-id nil :rubric-id nil
+                     :body-text "" :pom nil))))
+      (expect (plist-get result :allowed_attempts) :to-equal 3)))
+
+  (it "validates scoring policy with fallback"
+    (spy-on 'elog-warning)
+    (let ((result (org-canvas--new-quiz-transform-props
+                   '(:title-raw "Quiz"
+                     :canvas-id nil :time-limit-raw nil
+                     :shuffle-raw nil :one-at-a-time-raw nil
+                     :attempts-raw nil :scoring-policy-raw "bad_policy"
+                     :assignment-group-id nil :rubric-id nil
+                     :body-text "" :pom nil))))
+      (expect (plist-get result :scoring_policy) :to-equal "keep_highest")))
+
+  (it "passes through valid scoring policy"
+    (let ((result (org-canvas--new-quiz-transform-props
+                   '(:title-raw "Quiz"
+                     :canvas-id nil :time-limit-raw nil
+                     :shuffle-raw nil :one-at-a-time-raw nil
+                     :attempts-raw nil :scoring-policy-raw "keep_latest"
+                     :assignment-group-id nil :rubric-id nil
+                     :body-text "" :pom nil))))
+      (expect (plist-get result :scoring_policy) :to-equal "keep_latest")))
+
+  (it "converts assignment-group-id to number"
+    (let ((result (org-canvas--new-quiz-transform-props
+                   '(:title-raw "Quiz"
+                     :canvas-id nil :time-limit-raw nil
+                     :shuffle-raw nil :one-at-a-time-raw nil
+                     :attempts-raw nil :scoring-policy-raw nil
+                     :assignment-group-id "42" :rubric-id nil
+                     :body-text "" :pom nil))))
+      (expect (plist-get result :assignment_group_id) :to-equal 42)))
+
+  (it "passes through canvas-id and rubric-id"
+    (let ((result (org-canvas--new-quiz-transform-props
+                   '(:title-raw "Quiz"
+                     :canvas-id "98765" :time-limit-raw nil
+                     :shuffle-raw nil :one-at-a-time-raw nil
+                     :attempts-raw nil :scoring-policy-raw nil
+                     :assignment-group-id nil :rubric-id "rubric-1"
+                     :body-text "" :pom nil))))
+      (expect (plist-get result :canvas-id) :to-equal "98765")
+      (expect (plist-get result :rubric-id) :to-equal "rubric-1")))
+
+  (it "passes through body-text unchanged"
+    (let ((result (org-canvas--new-quiz-transform-props
+                   '(:title-raw "Quiz"
+                     :canvas-id nil :time-limit-raw nil
+                     :shuffle-raw nil :one-at-a-time-raw nil
+                     :attempts-raw nil :scoring-policy-raw nil
+                     :assignment-group-id nil :rubric-id nil
+                     :body-text "Some description" :pom nil))))
+      (expect (plist-get result :body-text) :to-equal "Some description"))))
+
+(describe "org-canvas--new-quiz-item-transform-props"
+  (it "strips statistics cookie from title"
+    (let ((result (org-canvas--new-quiz-item-transform-props
+                   '(:title-raw "Question [1/3]"
+                     :canvas-id nil :quiz-assignment-id "42"
+                     :type-raw "choice" :points-raw "5"
+                     :outcome nil :text "" :pom nil))))
+      (expect (plist-get result :title) :to-equal "Question")))
+
+  (it "validates type with fallback to choice"
+    (spy-on 'elog-warning)
+    (let ((result (org-canvas--new-quiz-item-transform-props
+                   '(:title-raw "Q" :canvas-id nil
+                     :quiz-assignment-id "42" :type-raw "invalid_type"
+                     :points-raw nil :outcome nil :text "" :pom nil))))
+      (expect (plist-get result :type) :to-equal "choice")))
+
+  (it "defaults type to choice when absent"
+    (let* ((result (org-canvas--new-quiz-item-transform-props
+                    '(:title-raw "Q" :canvas-id nil
+                      :quiz-assignment-id "42" :type-raw nil
+                      :points-raw nil :outcome nil :text "" :pom nil)))
+           (result-type (plist-get result :type)))
+      (expect result-type :to-equal "choice")))
+
+  (it "converts points to number"
+    (let ((result (org-canvas--new-quiz-item-transform-props
+                   '(:title-raw "Q" :canvas-id nil
+                     :quiz-assignment-id "42" :type-raw "essay"
+                     :points-raw "10" :outcome nil :text "" :pom nil))))
+      (expect (plist-get result :points) :to-equal 10)))
+
+  (it "defaults points to 1 when absent"
+    (let ((result (org-canvas--new-quiz-item-transform-props
+                   '(:title-raw "Q" :canvas-id nil
+                     :quiz-assignment-id "42" :type-raw "essay"
+                     :points-raw nil :outcome nil :text "" :pom nil))))
+      (expect (plist-get result :points) :to-equal 1)))
+
+  (it "defaults points to 1 when empty string"
+    (let ((result (org-canvas--new-quiz-item-transform-props
+                   '(:title-raw "Q" :canvas-id nil
+                     :quiz-assignment-id "42" :type-raw "essay"
+                     :points-raw "" :outcome nil :text "" :pom nil))))
+      (expect (plist-get result :points) :to-equal 1)))
+
+  (it "passes through quiz-assignment-id"
+    (let ((result (org-canvas--new-quiz-item-transform-props
+                   '(:title-raw "Q" :canvas-id nil
+                     :quiz-assignment-id "quiz-99" :type-raw "choice"
+                     :points-raw "5" :outcome nil :text "" :pom nil))))
+      (expect (plist-get result :quiz-assignment-id) :to-equal "quiz-99")))
+
+  (it "passes through canvas-id and outcome"
+    (let ((result (org-canvas--new-quiz-item-transform-props
+                   '(:title-raw "Q" :canvas-id "item-uuid"
+                     :quiz-assignment-id "42" :type-raw "choice"
+                     :points-raw "5"
+                     :outcome "[[file:outcomes.org::*Skill][Skill]]"
+                     :text "" :pom nil))))
+      (expect (plist-get result :canvas-id) :to-equal "item-uuid")
+      (expect (plist-get result :outcome)
+              :to-equal "[[file:outcomes.org::*Skill][Skill]]")))
+
+  (it "passes through body text"
+    (let ((result (org-canvas--new-quiz-item-transform-props
+                   '(:title-raw "Q" :canvas-id nil
+                     :quiz-assignment-id "42" :type-raw "choice"
+                     :points-raw "5" :outcome nil
+                     :text "Consider this." :pom nil))))
+      (expect (plist-get result :text) :to-equal "Consider this."))))
+
 ;;;; Quiz Parsing (Level 1)
 
 (describe "org-canvas--new-quiz-parse-entry"
@@ -2335,23 +2532,14 @@ Body text
       (unwind-protect
           (progn
             (with-temp-file nq-file
-              (insert "* Quiz Batch\n:PROPERTIES:\n:CANVAS_ID: 77\n:END:\n\nBody\n"))
+              (insert "* Quiz Batch\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 77\n:END:\n\nBody\n"))
             (let ((org-canvas-new-quizzes-file nq-file))
               (with-org-canvas-test-config
                 (cl-letf (((symbol-function 'org-canvas-clear-log) #'ignore)
                           ((symbol-function 'display-buffer) #'ignore)
-                          ((symbol-function 'org-canvas--new-quiz-parse-entry)
-                           (lambda ()
-                             (list :title "Quiz Batch"
-                                   :canvas-id 77
-                                   :rubric-id nil
-                                   :pom (point-marker))))
-                          ((symbol-function 'org-canvas--new-quiz-build-payload)
-                           (lambda (_data) '((title . "Quiz Batch"))))
-                          ((symbol-function 'org-canvas--new-quiz-push-to-api)
-                           (lambda (_data _payload) '((status . "ok"))))
-                          ((symbol-function 'org-canvas--new-quiz-finalize)
-                           (lambda (_data _response) nil))
+                          ((symbol-function 'org-canvas-api-request)
+                           (lambda (_m _u &rest _)
+                             '((assignment_id . 77))))
                           ((symbol-function 'org-canvas--sync-new-quiz-items)
                            (lambda (_marker quiz-id)
                              (setq items-synced quiz-id)

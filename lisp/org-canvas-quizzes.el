@@ -181,81 +181,114 @@ Supports: exact value, or [min, max] range."
 
 ;;;; Quiz Parsing (Level 1)
 
+(defun org-canvas--quiz-read-props (pom)
+  "Read raw quiz properties from org buffer at POM.
+Returns a plist of raw string values."
+  (list :title-raw (org-get-heading t t t t)
+	:canvas-id (org-entry-get pom "CANVAS_ID")
+	:quiz-type-raw (org-entry-get pom "QUIZ_TYPE")
+	:time-limit-raw (org-entry-get pom "TIME_LIMIT")
+	:published-raw (org-entry-get pom "PUBLISHED")
+	:shuffle-raw (org-entry-get pom "SHUFFLE_ANSWERS")
+	:allowed-attempts-raw (org-entry-get pom "ALLOWED_ATTEMPTS")
+	:due-at-raw (org-entry-get pom "DUE_AT")
+	:group-link (org-entry-get pom "GROUP")
+	:assignment-group-id-raw (org-canvas--resolve-link-property
+				  (org-entry-get pom "GROUP")
+				  "CANVAS_ID" org-canvas-quizzes-file)
+	:unlock-at-raw (org-entry-get pom "UNLOCK_AT")
+	:lock-at-raw (org-entry-get pom "LOCK_AT")
+	:access_code (org-entry-get pom "ACCESS_CODE")
+	:show-correct-raw (org-entry-get pom "SHOW_CORRECT_ANSWERS")
+	:show-correct-at-raw (org-entry-get pom "SHOW_CORRECT_ANSWERS_AT")
+	:hide-correct-at-raw (org-entry-get pom "HIDE_CORRECT_ANSWERS_AT")
+	:hide-results-raw (org-entry-get pom "HIDE_RESULTS")
+	:scoring-policy-raw (org-entry-get pom "SCORING_POLICY")
+	:one-question-raw (org-entry-get pom "ONE_QUESTION_AT_A_TIME")
+	:cant-go-back-raw (org-entry-get pom "CANT_GO_BACK")
+	:ip_filter (org-entry-get pom "IP_FILTER")
+	:show-correct-last-raw (org-entry-get pom "SHOW_CORRECT_ANSWERS_LAST_ATTEMPT")
+	:one-time-results-raw (org-entry-get pom "ONE_TIME_RESULTS")
+	:only-visible-raw (org-entry-get pom "ONLY_VISIBLE_TO_OVERRIDES")
+	:body-text (org-canvas--quiz-parse-body-text)))
+
+(defun org-canvas--quiz-transform-props (props)
+  "Transform raw PROPS plist into final quiz data (pure, no buffer access)."
+  (let ((title (org-canvas--strip-statistics-cookie (plist-get props :title-raw)))
+	(time-limit-raw (plist-get props :time-limit-raw))
+	(attempts-raw (plist-get props :allowed-attempts-raw))
+	(due-at-raw (plist-get props :due-at-raw))
+	(unlock-at-raw (plist-get props :unlock-at-raw))
+	(lock-at-raw (plist-get props :lock-at-raw))
+	(show-correct-at-raw (plist-get props :show-correct-at-raw))
+	(hide-correct-at-raw (plist-get props :hide-correct-at-raw))
+	(group-id-raw (plist-get props :assignment-group-id-raw)))
+    (list :title title
+	  :canvas-id (plist-get props :canvas-id)
+	  :quiz_type (org-canvas--validate-property
+		      (plist-get props :quiz-type-raw)
+		      '("assignment" "practice_quiz" "graded_survey" "survey")
+		      "QUIZ_TYPE" "assignment")
+	  :time_limit (when time-limit-raw
+			(org-canvas--safe-string-to-number time-limit-raw "TIME_LIMIT"))
+	  :published (org-canvas--interpret-boolean (plist-get props :published-raw) t)
+	  :shuffle_answers (org-canvas--interpret-boolean (plist-get props :shuffle-raw))
+	  :allowed_attempts (when attempts-raw
+			      (org-canvas--safe-string-to-number attempts-raw "ALLOWED_ATTEMPTS"))
+	  :due_at (when due-at-raw (org-canvas-org-parse-timestamp due-at-raw))
+	  :unlock_at (when unlock-at-raw (org-canvas-org-parse-timestamp unlock-at-raw))
+	  :lock_at (when lock-at-raw (org-canvas-org-parse-timestamp lock-at-raw))
+	  :access_code (plist-get props :access_code)
+	  :show_correct_answers (org-canvas--interpret-boolean (plist-get props :show-correct-raw) t)
+	  :show_correct_answers_at (when show-correct-at-raw
+				     (org-canvas-org-parse-timestamp show-correct-at-raw))
+	  :hide_correct_answers_at (when hide-correct-at-raw
+				     (org-canvas-org-parse-timestamp hide-correct-at-raw))
+	  :hide_results (org-canvas--validate-property
+			 (plist-get props :hide-results-raw)
+			 '("always" "until_after_last_attempt")
+			 "HIDE_RESULTS" nil)
+	  :scoring_policy (org-canvas--validate-property
+			   (plist-get props :scoring-policy-raw)
+			   '("keep_highest" "keep_latest")
+			   "SCORING_POLICY" nil)
+	  :one_question_at_a_time (org-canvas--interpret-boolean
+				   (plist-get props :one-question-raw))
+	  :cant_go_back (org-canvas--interpret-boolean (plist-get props :cant-go-back-raw))
+	  :ip_filter (plist-get props :ip_filter)
+	  :show_correct_answers_last_attempt (org-canvas--interpret-boolean
+					      (plist-get props :show-correct-last-raw))
+	  :one_time_results (org-canvas--interpret-boolean
+			     (plist-get props :one-time-results-raw))
+	  :only_visible_to_overrides (org-canvas--interpret-boolean
+				      (plist-get props :only-visible-raw))
+	  :assignment_group_id (when group-id-raw (string-to-number group-id-raw)))))
+
 (defun org-canvas--quiz-parse-entry ()
   "Extract quiz data from the Org heading at point."
   (org-back-to-heading t)
   (elog-debug org-canvas--logger "[Quiz Parse] Starting at point %d" (point))
 
   (let* ((pom (point-marker))
-	 (title (org-canvas--strip-statistics-cookie (org-get-heading t t t t)))
-	 (canvas-id (org-canvas-org-get-property pom "CANVAS_ID"))
-	 (quiz-type (org-canvas--validate-property
-		    (org-canvas-org-get-property pom "QUIZ_TYPE")
-		    '("assignment" "practice_quiz" "graded_survey" "survey")
-		    "QUIZ_TYPE" "assignment"))
-	 (time-limit (org-canvas-org-get-property pom "TIME_LIMIT"))
-	 (published (org-canvas-org-get-boolean-property pom "PUBLISHED" t))
-	 (shuffle (org-canvas-org-get-boolean-property pom "SHUFFLE_ANSWERS"))
-	 (attempts (org-canvas-org-get-property pom "ALLOWED_ATTEMPTS"))
-	 (due-at (org-canvas-org-get-property pom "DUE_AT"))
-	 (group-link (org-canvas-org-get-property pom "GROUP"))
-	 (assignment-group-id (org-canvas--resolve-link-property
-			       group-link "CANVAS_ID" org-canvas-quizzes-file))
-	 (unlock-at (org-canvas-org-get-property pom "UNLOCK_AT"))
-	 (lock-at (org-canvas-org-get-property pom "LOCK_AT"))
-	 (access-code (org-canvas-org-get-property pom "ACCESS_CODE"))
-	 (show-correct (org-canvas-org-get-boolean-property pom "SHOW_CORRECT_ANSWERS" t))
-	 (show-correct-at (org-canvas-org-get-property pom "SHOW_CORRECT_ANSWERS_AT"))
-	 (hide-correct-at (org-canvas-org-get-property pom "HIDE_CORRECT_ANSWERS_AT"))
-	 (hide-results (org-canvas--validate-property
-			(org-canvas-org-get-property pom "HIDE_RESULTS")
-			'("always" "until_after_last_attempt")
-			"HIDE_RESULTS" nil))
-	 (scoring-policy (org-canvas--validate-property
-			  (org-canvas-org-get-property pom "SCORING_POLICY")
-			  '("keep_highest" "keep_latest")
-			  "SCORING_POLICY" nil))
-	 (one-question (org-canvas-org-get-boolean-property pom "ONE_QUESTION_AT_A_TIME"))
-	 (cant-go-back (org-canvas-org-get-boolean-property pom "CANT_GO_BACK"))
-	 (ip-filter (org-canvas-org-get-property pom "IP_FILTER"))
-	 (show-correct-last-attempt (org-canvas-org-get-boolean-property pom "SHOW_CORRECT_ANSWERS_LAST_ATTEMPT"))
-	 (one-time-results (org-canvas-org-get-boolean-property pom "ONE_TIME_RESULTS"))
-	 (only-visible-to-overrides (org-canvas-org-get-boolean-property pom "ONLY_VISIBLE_TO_OVERRIDES"))
-	 (body-text (org-canvas--quiz-parse-body-text)))
+	 (raw (org-canvas--quiz-read-props pom))
+	 (data (org-canvas--quiz-transform-props raw))
+	 (title (plist-get data :title))
+	 (body-text (plist-get raw :body-text)))
 
     (org-canvas--require-title title pom "Quiz")
 
-    (elog-info org-canvas--logger "[Quiz Parse] Quiz: '%s' (ID: %s)" title (or canvas-id "NEW"))
-    (when assignment-group-id
-      (elog-debug org-canvas--logger "[Quiz Parse] Assignment Group ID: %s" assignment-group-id))
+    (elog-info org-canvas--logger "[Quiz Parse] Quiz: '%s' (ID: %s)"
+      title (or (plist-get data :canvas-id) "NEW"))
+    (when (plist-get data :assignment_group_id)
+      (elog-debug org-canvas--logger "[Quiz Parse] Assignment Group ID: %s"
+	(plist-get data :assignment_group_id)))
 
-    (list :title title
-	  :description (when (> (length body-text) 0)
-			 (let ((org-export-with-sub-superscripts nil))
-			   (org-export-string-as body-text 'html t)))
-	  :canvas-id canvas-id
-	  :published published
-	  :quiz_type quiz-type
-	  :time_limit (when time-limit (org-canvas--safe-string-to-number time-limit "TIME_LIMIT"))
-	  :shuffle_answers shuffle
-	  :allowed_attempts (when attempts (org-canvas--safe-string-to-number attempts "ALLOWED_ATTEMPTS"))
-	  :due_at (when due-at (org-canvas-org-parse-timestamp due-at))
-	  :unlock_at (when unlock-at (org-canvas-org-parse-timestamp unlock-at))
-	  :lock_at (when lock-at (org-canvas-org-parse-timestamp lock-at))
-	  :access_code access-code
-	  :show_correct_answers show-correct
-	  :show_correct_answers_at (when show-correct-at (org-canvas-org-parse-timestamp show-correct-at))
-	  :hide_correct_answers_at (when hide-correct-at (org-canvas-org-parse-timestamp hide-correct-at))
-	  :hide_results hide-results
-	  :scoring_policy scoring-policy
-	  :one_question_at_a_time one-question
-	  :cant_go_back cant-go-back
-	  :ip_filter ip-filter
-	  :show_correct_answers_last_attempt show-correct-last-attempt
-	  :one_time_results one-time-results
-	  :only_visible_to_overrides only-visible-to-overrides
-	  :assignment_group_id (when assignment-group-id (string-to-number assignment-group-id))
-	  :pom pom)))
+    (plist-put data :description
+	       (when (> (length body-text) 0)
+		 (let ((org-export-with-sub-superscripts nil))
+		   (org-export-string-as body-text 'html t))))
+    (plist-put data :pom pom)
+    data))
 
 (defun org-canvas--quiz-build-payload (data)
   "Convert quiz DATA to Canvas payload."
@@ -341,12 +374,54 @@ Supports: exact value, or [min, max] range."
         "[Verify] '%s': assignment_group_id mismatch! Expected %s, got %s"
         (plist-get data :title) expected-group actual-group))))
 
+(defun org-canvas--quiz-sync-children (data response)
+  "Sync question groups and questions for the quiz in DATA/RESPONSE."
+  (let ((quiz-id (or (alist-get 'id response)
+                     (plist-get data :canvas-id)))
+        (marker (point-marker)))
+    (when quiz-id
+      (org-canvas--sync-quiz-groups marker quiz-id)
+      (org-canvas--sync-quiz-questions marker quiz-id))))
+
 (defun org-canvas--quiz-finalize (data response)
   "Save quiz pointed to in DATA with CANVAS_ID from RESPONSE to org heading."
   (org-canvas--finalize-item data response
-    :post-fn #'org-canvas--quiz-verify-response))
+    :post-fn (lambda (data response)
+               (org-canvas--quiz-verify-response data response)
+               (org-canvas--quiz-sync-children data response))))
 
 ;;;; Question Parsing (Level 2)
+
+(defun org-canvas--question-read-props (pom quiz-canvas-id)
+  "Read raw question properties from org buffer at POM.
+QUIZ-CANVAS-ID is the Canvas ID of the parent quiz.
+Returns a plist of raw string values."
+  (list :title-raw (org-get-heading t t t t)
+        :canvas-id (org-entry-get pom "CANVAS_ID")
+        :type-raw (org-entry-get pom "TYPE")
+        :points-raw (org-entry-get pom "POINTS")
+        :quiz-canvas-id quiz-canvas-id
+        :text (org-canvas--quiz-parse-question-text)))
+
+(defun org-canvas--question-transform-props (props)
+  "Transform raw PROPS plist into final question data (pure, no buffer access)."
+  (list :name (org-canvas--strip-statistics-cookie (plist-get props :title-raw))
+        :text (plist-get props :text)
+        :canvas-id (plist-get props :canvas-id)
+        :quiz-canvas-id (plist-get props :quiz-canvas-id)
+        :question_type (org-canvas--validate-property
+                        (plist-get props :type-raw)
+                        '("multiple_choice_question" "true_false_question"
+                          "short_answer_question"
+                          "fill_in_multiple_blanks_question"
+                          "multiple_dropdowns_question"
+                          "multiple_answers_question"
+                          "matching_question" "numerical_question"
+                          "essay_question" "file_upload_question"
+                          "text_only_question")
+                        "TYPE" "multiple_choice_question")
+        :points_possible (org-canvas--interpret-number
+                          (plist-get props :points-raw) 1)))
 
 (defun org-canvas--question-parse-entry (quiz-canvas-id)
   "Extract question data from Org heading at point.
@@ -354,28 +429,14 @@ QUIZ-CANVAS-ID is the Canvas ID of the parent quiz."
   (org-back-to-heading t)
 
   (let* ((pom (point-marker))
-	 (title (org-canvas--strip-statistics-cookie (org-get-heading t t t t)))
-	 (canvas-id (org-canvas-org-get-property pom "CANVAS_ID"))
-	 (q-type (org-canvas--validate-property
-		  (org-canvas-org-get-property pom "TYPE")
-		  '("multiple_choice_question" "true_false_question"
-		    "short_answer_question" "fill_in_multiple_blanks_question"
-		    "multiple_dropdowns_question" "multiple_answers_question"
-		    "matching_question" "numerical_question" "essay_question"
-		    "file_upload_question" "text_only_question")
-		  "TYPE" "multiple_choice_question"))
-	 (points (org-canvas-org-get-number-property pom "POINTS" 1))
-	 (body-text (org-canvas--quiz-parse-question-text)))
+         (raw (org-canvas--question-read-props pom quiz-canvas-id))
+         (data (org-canvas--question-transform-props raw)))
 
-    (elog-debug org-canvas--logger "[Question Parse] '%s' type=%s" title q-type)
+    (elog-debug org-canvas--logger "[Question Parse] '%s' type=%s"
+      (plist-get data :name) (plist-get data :question_type))
 
-    (list :name title
-	  :text body-text
-	  :canvas-id canvas-id
-	  :quiz-canvas-id quiz-canvas-id
-	  :question_type q-type
-	  :points_possible points
-	  :pom pom)))
+    (plist-put data :pom pom)
+    data))
 
 (defun org-canvas--question-build-checkbox-answers ()
   "Build answers from checkbox list where all items get weights."
@@ -429,24 +490,21 @@ When CORRECT-ONLY is non-nil, only include correct answers."
            (answer_exact . ,(plist-get num :value))
            (answer_weight . ,org-canvas--answer-weight-correct)))))))
 
+(defconst org-canvas--question-answer-builders
+  `(("multiple_choice_question"         . ,#'org-canvas--question-build-checkbox-answers)
+    ("true_false_question"              . ,#'org-canvas--question-build-checkbox-answers)
+    ("multiple_answers_question"        . ,#'org-canvas--question-build-checkbox-answers)
+    ("short_answer_question"            . ,#'org-canvas--question-build-short-answers)
+    ("fill_in_multiple_blanks_question" . ,(lambda () (org-canvas--question-build-blank-answers t)))
+    ("multiple_dropdowns_question"      . ,(lambda () (org-canvas--question-build-blank-answers nil)))
+    ("matching_question"                . ,#'org-canvas--question-build-matching-answers)
+    ("numerical_question"               . ,#'org-canvas--question-build-numerical-answer))
+  "Alist mapping question types to answer builder functions.")
+
 (defun org-canvas--question-build-answers (q-type)
   "Build answers array based on Q-TYPE from current heading content."
-  (pcase q-type
-    ((or "multiple_choice_question" "true_false_question" "multiple_answers_question")
-     (org-canvas--question-build-checkbox-answers))
-    ("short_answer_question"
-     (org-canvas--question-build-short-answers))
-    ("fill_in_multiple_blanks_question"
-     (org-canvas--question-build-blank-answers t))
-    ("multiple_dropdowns_question"
-     (org-canvas--question-build-blank-answers nil))
-    ("matching_question"
-     (org-canvas--question-build-matching-answers))
-    ("numerical_question"
-     (org-canvas--question-build-numerical-answer))
-    ((or "essay_question" "file_upload_question" "text_only_question")
-     nil)
-    (_ nil)))
+  (when-let* ((builder (alist-get q-type org-canvas--question-answer-builders nil nil #'equal)))
+    (funcall builder)))
 
 (defun org-canvas--question-build-payload (data)
   "Build Canvas API payload from question DATA."
@@ -633,84 +691,12 @@ QUIZ-CANVAS-ID is the Canvas ID of the quiz."
       question-success (length question-markers))
     (cons question-success (- (length question-markers) question-success))))
 
-;;;###autoload
-(defun org-canvas-sync-quizzes ()
-  "Synchronize quizzes and their questions."
-  (interactive)
-  (org-canvas-clear-log)
-  (unless (and org-canvas-quizzes-file (file-exists-p org-canvas-quizzes-file))
-    (error "Quizzes file not found: %s" org-canvas-quizzes-file))
-
-  (display-buffer (get-buffer-create org-canvas--log-buffer-name))
-  (elog-info org-canvas--logger "========================================")
-  (elog-info org-canvas--logger ">>> STARTING QUIZ SYNC")
-  (elog-info org-canvas--logger "File: %s" org-canvas-quizzes-file)
-  (elog-info org-canvas--logger "Course: %s | URL: %s" org-canvas-course-id org-canvas-base-url)
-  (elog-info org-canvas--logger "========================================")
-
-  (let ((quiz-targets nil)
-	(quiz-success 0)
-	(quiz-fail 0)
-	(group-success 0)
-	(group-fail 0)
-	(question-success 0)
-	(question-fail 0))
-
-    ;; Collect all level-1 headings (quizzes)
-    (with-current-buffer (find-file-noselect org-canvas-quizzes-file)
-      (setq quiz-targets (org-map-entries (lambda () (point-marker)) "LEVEL=1" 'file)))
-
-    (elog-info org-canvas--logger "Found %d quizzes to sync" (length quiz-targets))
-
-    ;; Sync each quiz and its questions
-    (dolist (marker quiz-targets)
-      (elog-info org-canvas--logger "----------------------------------------")
-      (with-current-buffer (marker-buffer marker)
-	(save-excursion
-	  (goto-char (marker-position marker))
-	  (condition-case err
-	      (let* ((data (org-canvas--quiz-parse-entry))
-		     (payload (org-canvas--quiz-build-payload data))
-		     (response (org-canvas--quiz-push-to-api data payload)))
-		(org-canvas--quiz-finalize data response)
-		(setq quiz-success (1+ quiz-success))
-		(message "Quizzes [%d/%d] Synced '%s'"
-		  (+ quiz-success quiz-fail) (length quiz-targets)
-		  (plist-get data :title))
-
-		;; Now sync groups and questions under this quiz
-		(let ((quiz-id (or (alist-get 'id response)
-				   (plist-get data :canvas-id))))
-		  (when quiz-id
-		    (let ((g-results (org-canvas--sync-quiz-groups marker quiz-id)))
-		      (setq group-success (+ group-success (car g-results)))
-		      (setq group-fail (+ group-fail (cdr g-results))))
-		    (let ((q-results (org-canvas--sync-quiz-questions marker quiz-id)))
-		      (setq question-success (+ question-success (car q-results)))
-		      (setq question-fail (+ question-fail (cdr q-results)))))))
-	    (error
-	     (setq quiz-fail (1+ quiz-fail))
-	     (elog-error org-canvas--logger "[FAILED] Quiz at point %d: %s"
-	       (marker-position marker) (error-message-string err))
-	     (message "Quizzes [%d/%d] FAILED: %s"
-	       (+ quiz-success quiz-fail) (length quiz-targets)
-	       (error-message-string err)))))))
-
-    ;; Save the org file
-    (with-current-buffer (find-file-noselect org-canvas-quizzes-file)
-      (save-buffer)
-      (elog-info org-canvas--logger "Saved %s" org-canvas-quizzes-file))
-
-    (elog-info org-canvas--logger "========================================")
-    (elog-info org-canvas--logger ">>> QUIZ SYNC COMPLETE")
-    (elog-info org-canvas--logger "Quizzes: %d success, %d failed" quiz-success quiz-fail)
-    (elog-info org-canvas--logger "Groups: %d success, %d failed" group-success group-fail)
-    (elog-info org-canvas--logger "Questions: %d success, %d failed" question-success question-fail)
-    (elog-info org-canvas--logger "========================================")
-    (message "Quiz sync: %d/%d quizzes, %d/%d groups, %d/%d questions."
-	     quiz-success (+ quiz-success quiz-fail)
-	     group-success (+ group-success group-fail)
-	     question-success (+ question-success question-fail))))
+(org-canvas-define-sync quizzes
+  :file org-canvas-quizzes-file
+  :parse #'org-canvas--quiz-parse-entry
+  :build #'org-canvas--quiz-build-payload
+  :push #'org-canvas--quiz-push-to-api
+  :finalize #'org-canvas--quiz-finalize)
 
 ;;;; Delete Functions
 
@@ -720,54 +706,54 @@ QUIZ-CANVAS-ID is the Canvas ID of the quiz."
 
 ;;;; Pull
 
+(defconst org-canvas--quiz-pull-property-specs
+  '(;; (api-key property-name type)
+    ;; Types: string = set if non-nil, format = format as string,
+    ;;        boolean = set-boolean, boolean-nonnull = set-boolean if not :null,
+    ;;        timestamp = set-timestamp, string-nonnull = set if non-null
+    (quiz_type "QUIZ_TYPE" string)
+    (time_limit "TIME_LIMIT" format)
+    (shuffle_answers "SHUFFLE_ANSWERS" boolean)
+    (due_at "DUE_AT" timestamp)
+    (unlock_at "UNLOCK_AT" timestamp)
+    (lock_at "LOCK_AT" timestamp)
+    (access_code "ACCESS_CODE" string-nonnull)
+    (show_correct_answers "SHOW_CORRECT_ANSWERS" boolean-nonnull)
+    (show_correct_answers_at "SHOW_CORRECT_ANSWERS_AT" timestamp)
+    (hide_correct_answers_at "HIDE_CORRECT_ANSWERS_AT" timestamp)
+    (hide_results "HIDE_RESULTS" string-nonnull)
+    (scoring_policy "SCORING_POLICY" string-nonnull)
+    (one_question_at_a_time "ONE_QUESTION_AT_A_TIME" boolean)
+    (cant_go_back "CANT_GO_BACK" boolean)
+    (ip_filter "IP_FILTER" string-nonnull)
+    (show_correct_answers_last_attempt "SHOW_CORRECT_ANSWERS_LAST_ATTEMPT" boolean)
+    (one_time_results "ONE_TIME_RESULTS" boolean)
+    (only_visible_to_overrides "ONLY_VISIBLE_TO_OVERRIDES" boolean))
+  "Specs for pulling quiz properties: (api-key property-name type).")
+
+(defun org-canvas--quiz-pull-set-single-property (pos prop-name val type)
+  "Set a single quiz property PROP-NAME at POS from VAL using TYPE."
+  (pcase type
+    ('string (when val (org-canvas-org-set-property pos prop-name val)))
+    ('format (when val (org-canvas-org-set-property pos prop-name (format "%s" val))))
+    ('boolean (when val (org-canvas--pull-set-boolean-property pos prop-name val)))
+    ('boolean-nonnull
+     (when (not (eq val :null))
+       (org-canvas--pull-set-boolean-property pos prop-name val)))
+    ('timestamp (org-canvas--pull-set-timestamp-property pos prop-name val))
+    ('string-nonnull (when val (org-canvas-org-set-property pos prop-name val)))))
+
 (defun org-canvas--quiz-pull-set-properties (pos quiz file)
   "Set all properties on heading at POS from QUIZ API response.
 FILE is the quizzes.org path, used for group link resolution."
-  (let ((quiz-type (alist-get 'quiz_type quiz))
-        (time-limit (alist-get 'time_limit quiz))
-        (shuffle (alist-get 'shuffle_answers quiz))
-        (group-id (alist-get 'assignment_group_id quiz))
-        (access-code (org-canvas--alist-get-non-null 'access_code quiz))
-        (show-correct (alist-get 'show_correct_answers quiz))
-        (hide-results (org-canvas--alist-get-non-null 'hide_results quiz))
-        (scoring (org-canvas--alist-get-non-null 'scoring_policy quiz))
-        (one-q (alist-get 'one_question_at_a_time quiz))
-        (cant-back (alist-get 'cant_go_back quiz))
-        (ip (org-canvas--alist-get-non-null 'ip_filter quiz)))
-    (org-canvas-org-save-sync-state pos (alist-get 'id quiz))
-    (when quiz-type
-      (org-canvas-org-set-property pos "QUIZ_TYPE" quiz-type))
-    (when time-limit
-      (org-canvas-org-set-property pos "TIME_LIMIT" (format "%s" time-limit)))
-    (when shuffle
-      (org-canvas--pull-set-boolean-property pos "SHUFFLE_ANSWERS" shuffle))
-    (org-canvas--pull-set-timestamp-property pos "DUE_AT" (alist-get 'due_at quiz))
-    (org-canvas--pull-set-timestamp-property pos "UNLOCK_AT" (alist-get 'unlock_at quiz))
-    (org-canvas--pull-set-timestamp-property pos "LOCK_AT" (alist-get 'lock_at quiz))
-    (when access-code
-      (org-canvas-org-set-property pos "ACCESS_CODE" access-code))
-    (when (not (eq show-correct :null))
-      (org-canvas--pull-set-boolean-property pos "SHOW_CORRECT_ANSWERS" show-correct))
-    (org-canvas--pull-set-timestamp-property pos "SHOW_CORRECT_ANSWERS_AT"
-                                             (alist-get 'show_correct_answers_at quiz))
-    (org-canvas--pull-set-timestamp-property pos "HIDE_CORRECT_ANSWERS_AT"
-                                             (alist-get 'hide_correct_answers_at quiz))
-    (when hide-results
-      (org-canvas-org-set-property pos "HIDE_RESULTS" hide-results))
-    (when scoring
-      (org-canvas-org-set-property pos "SCORING_POLICY" scoring))
-    (when one-q
-      (org-canvas--pull-set-boolean-property pos "ONE_QUESTION_AT_A_TIME" one-q))
-    (when cant-back
-      (org-canvas--pull-set-boolean-property pos "CANT_GO_BACK" cant-back))
-    (when ip
-      (org-canvas-org-set-property pos "IP_FILTER" ip))
-    (org-canvas--pull-set-boolean-property pos "SHOW_CORRECT_ANSWERS_LAST_ATTEMPT"
-                                           (alist-get 'show_correct_answers_last_attempt quiz))
-    (org-canvas--pull-set-boolean-property pos "ONE_TIME_RESULTS"
-                                           (alist-get 'one_time_results quiz))
-    (org-canvas--pull-set-boolean-property pos "ONLY_VISIBLE_TO_OVERRIDES"
-                                           (alist-get 'only_visible_to_overrides quiz))
+  (org-canvas-org-save-sync-state pos (alist-get 'id quiz))
+  (dolist (spec org-canvas--quiz-pull-property-specs)
+    (let ((val (if (memq (nth 2 spec) '(string-nonnull))
+                   (org-canvas--alist-get-non-null (nth 0 spec) quiz)
+                 (alist-get (nth 0 spec) quiz))))
+      (org-canvas--quiz-pull-set-single-property pos (nth 1 spec) val (nth 2 spec))))
+  ;; Resolve assignment group link (special case)
+  (let ((group-id (alist-get 'assignment_group_id quiz)))
     (when (and group-id (fboundp 'org-canvas--assignment-resolve-group-link))
       (let ((group-link (org-canvas--assignment-resolve-group-link group-id)))
         (when group-link

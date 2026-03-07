@@ -81,104 +81,138 @@ Accepts: online_upload, online_url, online_text_entry, media_recording,
 
 ;;;; 1. Stage: Extraction
 
+(defun org-canvas--assignment-read-props (pom)
+  "Read raw property strings from the assignment heading at POM.
+Link properties (GROUP, RUBRIC_LINK, GROUP_CATEGORY_ID) are resolved
+here since they require file I/O."
+  (let ((group-link (org-entry-get pom "GROUP"))
+        (rubric-link (org-entry-get pom "RUBRIC_LINK")))
+    (list :title-raw (org-get-heading t t t t)
+          :canvas-id (org-entry-get pom "CANVAS_ID")
+          :points-raw (org-entry-get pom "POINTS")
+          :grading-type-raw (org-entry-get pom "GRADING_TYPE")
+          :published-raw (org-entry-get pom "PUBLISHED")
+          :due-at-raw (org-entry-get pom "DUE_AT")
+          :unlock-at-raw (org-entry-get pom "UNLOCK_AT")
+          :lock-at-raw (org-entry-get pom "LOCK_AT")
+          :submission-raw (org-entry-get pom "SUBMISSION")
+          :allowed-extensions-raw (org-entry-get pom "ALLOWED_EXTENSIONS")
+          :max-attempts-raw (org-entry-get pom "MAX_ATTEMPTS")
+          :peer-reviews-raw (org-entry-get pom "PEER_REVIEWS")
+          :peer-review-count-raw (org-entry-get pom "PEER_REVIEW_COUNT")
+          :peer-review-due-at-raw (org-entry-get pom "PEER_REVIEW_DUE_AT")
+          :automatic-peer-reviews-raw (org-entry-get pom "AUTOMATIC_PEER_REVIEWS")
+          :omit-from-grades-raw (org-entry-get pom "OMIT_FROM_GRADES")
+          :anonymous-grading-raw (org-entry-get pom "ANONYMOUS_GRADING")
+          :notify-of-update-raw (org-entry-get pom "NOTIFY_OF_UPDATE")
+          :grade-individually-raw (org-entry-get pom "GRADE_INDIVIDUALLY")
+          :only-visible-to-overrides-raw (org-entry-get pom "ONLY_VISIBLE_TO_OVERRIDES")
+          :moderated-grading-raw (org-entry-get pom "MODERATED_GRADING")
+          :grader-count-raw (org-entry-get pom "GRADER_COUNT")
+          :muted-raw (org-entry-get pom "MUTED")
+          :turnitin-enabled-raw (org-entry-get pom "TURNITIN_ENABLED")
+          :grading-standard-id-raw (org-entry-get pom "GRADING_STANDARD_ID")
+          :position-raw (org-entry-get pom "POSITION")
+          ;; Resolved links (I/O)
+          :assignment-group-id-raw (org-canvas--assignment-resolve-link-id group-link "CANVAS_ID")
+          :rubric-id (org-canvas--assignment-resolve-link-id rubric-link "CANVAS_ID")
+          :group-category-id-raw (org-canvas--resolve-link-or-raw
+                                  pom "GROUP_CATEGORY_ID" "CANVAS_ID"
+                                  org-canvas-assignments-file))))
+
+(defun org-canvas--assignment-transform-props (raw)
+  "Transform raw property strings RAW into typed assignment data.
+Pure function — no buffer access."
+  (let ((points (plist-get raw :points-raw))
+        (max-attempts (plist-get raw :max-attempts-raw))
+        (agid (plist-get raw :assignment-group-id-raw))
+        (peer-count (plist-get raw :peer-review-count-raw))
+        (gcid (plist-get raw :group-category-id-raw))
+        (grader-count (plist-get raw :grader-count-raw))
+        (gsid (plist-get raw :grading-standard-id-raw))
+        (position (plist-get raw :position-raw)))
+    (list :title (org-canvas--strip-statistics-cookie (plist-get raw :title-raw))
+          :canvas-id (plist-get raw :canvas-id)
+          :points_possible (when points (org-canvas--safe-string-to-number points "POINTS"))
+          :grading_type (org-canvas--validate-property
+                         (plist-get raw :grading-type-raw)
+                         '("points" "percent" "letter_grade" "gpa_scale" "pass_fail" "not_graded")
+                         "GRADING_TYPE" "points")
+          :published (org-canvas--interpret-boolean (plist-get raw :published-raw) t)
+          :due_at (org-canvas-org-parse-timestamp (plist-get raw :due-at-raw))
+          :unlock_at (org-canvas-org-parse-timestamp (plist-get raw :unlock-at-raw))
+          :lock_at (org-canvas-org-parse-timestamp (plist-get raw :lock-at-raw))
+          :submission_types (org-canvas--assignment-parse-submission-types
+                             (plist-get raw :submission-raw))
+          :allowed_extensions (org-canvas--assignment-parse-extensions
+                               (plist-get raw :allowed-extensions-raw))
+          :allowed_attempts (when max-attempts
+                              (org-canvas--safe-string-to-number max-attempts "MAX_ATTEMPTS"))
+          :assignment_group_id (when agid (string-to-number agid))
+          :rubric-id (plist-get raw :rubric-id)
+          :peer_reviews (org-canvas--interpret-boolean (plist-get raw :peer-reviews-raw))
+          :peer_review_count (when peer-count
+                               (org-canvas--safe-string-to-number peer-count "PEER_REVIEW_COUNT"))
+          :peer_reviews_due_at (org-canvas-org-parse-timestamp
+                                (plist-get raw :peer-review-due-at-raw))
+          :automatic_peer_reviews (org-canvas--interpret-boolean
+                                   (plist-get raw :automatic-peer-reviews-raw))
+          :omit_from_final_grade (org-canvas--interpret-boolean
+                                  (plist-get raw :omit-from-grades-raw))
+          :anonymous_grading (org-canvas--interpret-boolean
+                              (plist-get raw :anonymous-grading-raw))
+          :notify_of_update (org-canvas--interpret-boolean
+                             (plist-get raw :notify-of-update-raw))
+          :group_category_id (when gcid
+                               (org-canvas--safe-string-to-number gcid "GROUP_CATEGORY_ID"))
+          :grade_group_students_individually (org-canvas--interpret-boolean
+                                              (plist-get raw :grade-individually-raw))
+          :only_visible_to_overrides (org-canvas--interpret-boolean
+                                      (plist-get raw :only-visible-to-overrides-raw))
+          :moderated_grading (org-canvas--interpret-boolean
+                              (plist-get raw :moderated-grading-raw))
+          :grader_count (when grader-count
+                          (org-canvas--safe-string-to-number grader-count "GRADER_COUNT"))
+          :muted (org-canvas--interpret-boolean (plist-get raw :muted-raw))
+          :turnitin_enabled (org-canvas--interpret-boolean
+                             (plist-get raw :turnitin-enabled-raw))
+          :grading_standard_id (when gsid
+                                 (org-canvas--safe-string-to-number gsid "GRADING_STANDARD_ID"))
+          :position (when position
+                      (org-canvas--safe-string-to-number position "POSITION")))))
+
 (defun org-canvas--assignment-parse-entry ()
   "Extract assignment data from the Org heading at point."
   (org-back-to-heading t)
   (elog-debug org-canvas--logger "[Stage 1: Parse] Starting extraction at point %d" (point))
 
   (let* ((pom (point))
-         (title (org-canvas--strip-statistics-cookie (org-get-heading t t t t)))
-         (canvas-id (org-canvas-org-get-property pom "CANVAS_ID"))
-         ;; Core properties
-         (points (org-canvas-org-get-property pom "POINTS"))
-         (grading-type (org-canvas--validate-property
-                        (org-canvas-org-get-property pom "GRADING_TYPE")
-                        '("points" "percent" "letter_grade" "gpa_scale" "pass_fail" "not_graded")
-                        "GRADING_TYPE" "points"))
-         (published (org-canvas-org-get-boolean-property pom "PUBLISHED" t))
-         ;; Dates
-         (due-at (org-canvas-org-parse-timestamp (org-canvas-org-get-property pom "DUE_AT")))
-         (unlock-at (org-canvas-org-parse-timestamp (org-canvas-org-get-property pom "UNLOCK_AT")))
-         (lock-at (org-canvas-org-parse-timestamp (org-canvas-org-get-property pom "LOCK_AT")))
-         ;; Submission settings
-         (submission-types (org-canvas--assignment-parse-submission-types
-                            (org-canvas-org-get-property pom "SUBMISSION")))
-         (allowed-extensions (org-canvas--assignment-parse-extensions
-                              (org-canvas-org-get-property pom "ALLOWED_EXTENSIONS")))
-         (max-attempts (org-canvas-org-get-property pom "MAX_ATTEMPTS"))
-         ;; Links to other entities
-         (group-link (org-canvas-org-get-property pom "GROUP"))
-         (assignment-group-id (org-canvas--assignment-resolve-link-id group-link "CANVAS_ID"))
-         (rubric-link (org-canvas-org-get-property pom "RUBRIC_LINK"))
-         (rubric-id (org-canvas--assignment-resolve-link-id rubric-link "CANVAS_ID"))
-         ;; Peer reviews
-         (peer-reviews (org-canvas-org-get-boolean-property pom "PEER_REVIEWS"))
-         (peer-review-count (org-canvas-org-get-property pom "PEER_REVIEW_COUNT"))
-         (peer-review-due-at (org-canvas-org-parse-timestamp
-                              (org-canvas-org-get-property pom "PEER_REVIEW_DUE_AT")))
-         (automatic-peer-reviews (org-canvas-org-get-boolean-property pom "AUTOMATIC_PEER_REVIEWS"))
-         ;; Additional properties
-         (omit-from-grades (org-canvas-org-get-boolean-property pom "OMIT_FROM_GRADES"))
-         (anonymous-grading (org-canvas-org-get-boolean-property pom "ANONYMOUS_GRADING"))
-         (notify-of-update (org-canvas-org-get-boolean-property pom "NOTIFY_OF_UPDATE"))
-         (group-category-id (org-canvas--resolve-link-or-raw
-                             pom "GROUP_CATEGORY_ID" "CANVAS_ID"
-                             org-canvas-assignments-file))
-         (grade-individually (org-canvas-org-get-boolean-property pom "GRADE_INDIVIDUALLY"))
-         (only-visible-to-overrides (org-canvas-org-get-boolean-property pom "ONLY_VISIBLE_TO_OVERRIDES"))
-         (moderated-grading (org-canvas-org-get-boolean-property pom "MODERATED_GRADING"))
-         (grader-count (org-canvas-org-get-property pom "GRADER_COUNT"))
-         (muted (org-canvas-org-get-boolean-property pom "MUTED"))
-         (turnitin-enabled (org-canvas-org-get-boolean-property pom "TURNITIN_ENABLED"))
-         (grading-standard-id (org-canvas-org-get-property pom "GRADING_STANDARD_ID"))
-         (position (org-canvas-org-get-property pom "POSITION")))
+         (raw (org-canvas--assignment-read-props pom))
+         (data (org-canvas--assignment-transform-props raw)))
 
-    (org-canvas--require-title title pom "Assignment")
+    (org-canvas--require-title (plist-get data :title) pom "Assignment")
 
-    (elog-info org-canvas--logger "[Stage 1: Parse] Processing Assignment: '%s' (ID: %s)" title (or canvas-id "NEW"))
+    (elog-info org-canvas--logger "[Stage 1: Parse] Processing Assignment: '%s' (ID: %s)"
+              (plist-get data :title) (or (plist-get data :canvas-id) "NEW"))
     (elog-debug org-canvas--logger "[Stage 1: Parse] Points: %s, Due: %s, Submission: %s"
-                (or points "0") (or due-at "none") submission-types)
-    (when assignment-group-id
-      (elog-debug org-canvas--logger "[Stage 1: Parse] Assignment Group ID: %s" assignment-group-id))
-    (when rubric-id
-      (elog-debug org-canvas--logger "[Stage 1: Parse] Rubric ID: %s" rubric-id))
+                (or (plist-get data :points_possible) "0")
+                (or (plist-get data :due_at) "none")
+                (plist-get data :submission_types))
+    (when (plist-get data :assignment_group_id)
+      (elog-debug org-canvas--logger "[Stage 1: Parse] Assignment Group ID: %s"
+                  (plist-get data :assignment_group_id)))
+    (when (plist-get data :rubric-id)
+      (elog-debug org-canvas--logger "[Stage 1: Parse] Rubric ID: %s"
+                  (plist-get data :rubric-id)))
 
     ;; Extract description (resolves cross-file links to Canvas URLs)
     (elog-debug org-canvas--logger "[Stage 1: Export] Exporting subtree to HTML...")
     (let ((description (org-canvas--export-subtree-body-to-html)))
       (elog-info org-canvas--logger "[Stage 1: Parse] Description size: %d chars" (length description))
 
-      (list :title title
-            :description description
-            :canvas-id canvas-id
-            :points_possible (when points (org-canvas--safe-string-to-number points "POINTS"))
-            :grading_type grading-type
-            :published published
-            :due_at due-at
-            :unlock_at unlock-at
-            :lock_at lock-at
-            :submission_types submission-types
-            :allowed_extensions allowed-extensions
-            :allowed_attempts (when max-attempts (org-canvas--safe-string-to-number max-attempts "MAX_ATTEMPTS"))
-            :assignment_group_id (when assignment-group-id (string-to-number assignment-group-id))
-            :rubric-id rubric-id
-            :peer_reviews peer-reviews
-            :peer_review_count (when peer-review-count (org-canvas--safe-string-to-number peer-review-count "PEER_REVIEW_COUNT"))
-            :peer_reviews_due_at peer-review-due-at
-            :automatic_peer_reviews automatic-peer-reviews
-            :omit_from_final_grade omit-from-grades
-            :anonymous_grading anonymous-grading
-            :notify_of_update notify-of-update
-            :group_category_id (when group-category-id (org-canvas--safe-string-to-number group-category-id "GROUP_CATEGORY_ID"))
-            :grade_group_students_individually grade-individually
-            :only_visible_to_overrides only-visible-to-overrides
-            :moderated_grading moderated-grading
-            :grader_count (when grader-count (org-canvas--safe-string-to-number grader-count "GRADER_COUNT"))
-            :muted muted
-            :turnitin_enabled turnitin-enabled
-            :grading_standard_id (when grading-standard-id (org-canvas--safe-string-to-number grading-standard-id "GRADING_STANDARD_ID"))
-            :position (when position (org-canvas--safe-string-to-number position "POSITION"))
-            :pom pom))))
+      (plist-put data :description description)
+      (plist-put data :pom pom)
+      data)))
 
 ;;;; 2. Stage: Transformation
 
@@ -193,37 +227,34 @@ Accepts: online_upload, online_url, online_text_entry, media_recording,
       (puthash "automatic_peer_reviews"
                (if (eq auto nil) t (org-canvas--to-json-boolean auto))
                assignment))
-    (when (plist-get data :peer_review_count)
-      (puthash "peer_review_count" (plist-get data :peer_review_count) assignment))
-    (when (plist-get data :peer_reviews_due_at)
-      (puthash "peer_reviews_due_at" (plist-get data :peer_reviews_due_at) assignment))))
+    (org-canvas--puthash-when assignment data :peer_review_count "peer_review_count")
+    (org-canvas--puthash-when assignment data :peer_reviews_due_at "peer_reviews_due_at")))
+
+(defconst org-canvas--assignment-optional-field-specs
+  '(;; (:data-key "hash-key" type)  type: bool = always t, value = use raw value
+    (:omit_from_final_grade "omit_from_final_grade" bool)
+    (:anonymous_grading "anonymous_grading" bool)
+    (:notify_of_update "notify_of_update" bool)
+    (:group_category_id "group_category_id" value)
+    (:grade_group_students_individually "grade_group_students_individually" bool)
+    (:only_visible_to_overrides "only_visible_to_overrides" bool)
+    (:moderated_grading "moderated_grading" bool)
+    (:muted "muted" bool)
+    (:turnitin_enabled "turnitin_enabled" bool)
+    (:grading_standard_id "grading_standard_id" value)
+    (:position "position" value))
+  "Specs for optional assignment fields: (data-key hash-key type).")
 
 (defun org-canvas--assignment-add-optional-fields (data assignment)
   "Add optional fields from DATA to ASSIGNMENT hash-table."
-  (when (plist-get data :omit_from_final_grade)
-    (puthash "omit_from_final_grade" t assignment))
-  (when (plist-get data :anonymous_grading)
-    (puthash "anonymous_grading" t assignment))
-  (when (plist-get data :notify_of_update)
-    (puthash "notify_of_update" t assignment))
-  (when (plist-get data :group_category_id)
-    (puthash "group_category_id" (plist-get data :group_category_id) assignment))
-  (when (plist-get data :grade_group_students_individually)
-    (puthash "grade_group_students_individually" t assignment))
-  (when (plist-get data :only_visible_to_overrides)
-    (puthash "only_visible_to_overrides" t assignment))
-  (when (plist-get data :moderated_grading)
-    (puthash "moderated_grading" t assignment)
-    (when (plist-get data :grader_count)
-      (puthash "grader_count" (plist-get data :grader_count) assignment)))
-  (when (plist-get data :muted)
-    (puthash "muted" t assignment))
-  (when (plist-get data :turnitin_enabled)
-    (puthash "turnitin_enabled" t assignment))
-  (when (plist-get data :grading_standard_id)
-    (puthash "grading_standard_id" (plist-get data :grading_standard_id) assignment))
-  (when (plist-get data :position)
-    (puthash "position" (plist-get data :position) assignment)))
+  (dolist (spec org-canvas--assignment-optional-field-specs)
+    (when-let* ((val (plist-get data (nth 0 spec))))
+      (puthash (nth 1 spec)
+               (if (eq (nth 2 spec) 'bool) t val)
+               assignment)))
+  ;; grader_count only applies when moderated_grading is enabled
+  (when (and (plist-get data :moderated_grading) (plist-get data :grader_count))
+    (puthash "grader_count" (plist-get data :grader_count) assignment)))
 
 (defun org-canvas--assignment-build-payload (data)
   "Convert DATA to Canvas assignment payload."
@@ -239,24 +270,19 @@ Accepts: online_upload, online_url, online_text_entry, media_recording,
       (puthash "submission_types" (plist-get data :submission_types) assignment)
 
       ;; Points and grading
-      (when (plist-get data :points_possible)
-        (puthash "points_possible" (plist-get data :points_possible) assignment))
+      (org-canvas--puthash-when assignment data :points_possible "points_possible")
       (puthash "grading_type" (plist-get data :grading_type) assignment)
 
       ;; Dates
       (when (plist-get data :due_at)
         (elog-debug org-canvas--logger "[Stage 2: Transform] Due at: %s" (plist-get data :due_at))
         (puthash "due_at" (plist-get data :due_at) assignment))
-      (when (plist-get data :unlock_at)
-        (puthash "unlock_at" (plist-get data :unlock_at) assignment))
-      (when (plist-get data :lock_at)
-        (puthash "lock_at" (plist-get data :lock_at) assignment))
+      (org-canvas--puthash-when assignment data :unlock_at "unlock_at")
+      (org-canvas--puthash-when assignment data :lock_at "lock_at")
 
       ;; Submission settings
-      (when (plist-get data :allowed_extensions)
-        (puthash "allowed_extensions" (plist-get data :allowed_extensions) assignment))
-      (when (plist-get data :allowed_attempts)
-        (puthash "allowed_attempts" (plist-get data :allowed_attempts) assignment))
+      (org-canvas--puthash-when assignment data :allowed_extensions "allowed_extensions")
+      (org-canvas--puthash-when assignment data :allowed_attempts "allowed_attempts")
 
       ;; Assignment group
       (when (plist-get data :assignment_group_id)

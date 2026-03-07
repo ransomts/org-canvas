@@ -44,45 +44,55 @@
 
 ;;;; 1. Stage: Extraction
 
+(defun org-canvas--calendar-event-read-props (pom)
+  "Read raw property strings from the calendar event heading at POM."
+  (list :title-raw (org-get-heading t t t t)
+        :canvas-id (org-entry-get pom "CANVAS_ID")
+        :start-at-raw (org-entry-get pom "START_AT")
+        :end-at-raw (org-entry-get pom "END_AT")
+        :all-day-raw (org-entry-get pom "ALL_DAY")
+        :location-name (org-entry-get pom "LOCATION_NAME")
+        :location-address (org-entry-get pom "LOCATION_ADDRESS")))
+
+(defun org-canvas--calendar-event-transform-props (raw)
+  "Transform raw property strings RAW into typed calendar event data.
+Pure function — no buffer access."
+  (list :title (org-canvas--strip-statistics-cookie (plist-get raw :title-raw))
+        :canvas-id (plist-get raw :canvas-id)
+        :start_at (org-canvas-org-parse-timestamp (plist-get raw :start-at-raw))
+        :end_at (org-canvas-org-parse-timestamp (plist-get raw :end-at-raw))
+        :all_day (org-canvas--interpret-boolean (plist-get raw :all-day-raw))
+        :location_name (plist-get raw :location-name)
+        :location_address (plist-get raw :location-address)))
+
 (defun org-canvas--calendar-event-parse-entry ()
   "Extract data from the Org heading at point."
   (org-back-to-heading t)
   (elog-debug org-canvas--logger "[Stage 1: Parse] Starting extraction at point %d" (point))
 
   (let* ((pom (point))
-         (title (org-canvas--strip-statistics-cookie (org-get-heading t t t t)))
-         (canvas-id (org-canvas-org-get-property pom "CANVAS_ID"))
-         (start-at (org-canvas-org-parse-timestamp
-                    (org-canvas-org-get-property pom "START_AT")))
-         (end-at (org-canvas-org-parse-timestamp
-                  (org-canvas-org-get-property pom "END_AT")))
-         (all-day (org-canvas-org-get-boolean-property pom "ALL_DAY"))
-         (location-name (org-canvas-org-get-property pom "LOCATION_NAME"))
-         (location-address (org-canvas-org-get-property pom "LOCATION_ADDRESS")))
+         (raw (org-canvas--calendar-event-read-props pom))
+         (data (org-canvas--calendar-event-transform-props raw)))
 
-    (org-canvas--require-title title pom "Calendar event")
+    (org-canvas--require-title (plist-get data :title) pom "Calendar event")
 
-    (unless start-at
-      (error "Calendar event '%s' requires START_AT property" title))
+    (unless (plist-get data :start_at)
+      (error "Calendar event '%s' requires START_AT property" (plist-get data :title)))
 
-    (elog-info org-canvas--logger "[Stage 1: Parse] Processing Calendar Event: '%s' (ID: %s)" title (or canvas-id "NEW"))
+    (elog-info org-canvas--logger "[Stage 1: Parse] Processing Calendar Event: '%s' (ID: %s)"
+              (plist-get data :title) (or (plist-get data :canvas-id) "NEW"))
     (elog-debug org-canvas--logger "[Stage 1: Parse] Properties: start=%s, end=%s, all-day=%s, location=%s"
-               start-at (or end-at "nil") all-day (or location-name "nil"))
+               (plist-get data :start_at) (or (plist-get data :end_at) "nil")
+               (plist-get data :all_day) (or (plist-get data :location_name) "nil"))
 
     ;; Extract description (resolves cross-file links to Canvas URLs)
     (elog-debug org-canvas--logger "[Stage 1: Export] Exporting subtree to HTML...")
     (let ((description (org-canvas--export-subtree-body-to-html)))
       (elog-info org-canvas--logger "[Stage 1: Parse] Description size: %d chars" (length description))
 
-      (list :title title
-            :canvas-id canvas-id
-            :start_at start-at
-            :end_at end-at
-            :all_day all-day
-            :location_name location-name
-            :location_address location-address
-            :description description
-            :pom pom))))
+      (plist-put data :description description)
+      (plist-put data :pom pom)
+      data)))
 
 ;;;; 2. Stage: Transformation
 
@@ -100,20 +110,12 @@ The payload is wrapped in a `calendar_event' key as required by the API."
       (puthash "start_at" (plist-get data :start_at) event)
 
       ;; Optional fields
-      (when (plist-get data :end_at)
-        (puthash "end_at" (plist-get data :end_at) event))
-
+      (org-canvas--puthash-when event data :end_at "end_at")
       (when (plist-get data :all_day)
         (puthash "all_day" t event))
-
-      (when (plist-get data :description)
-        (puthash "description" (plist-get data :description) event))
-
-      (when (plist-get data :location_name)
-        (puthash "location_name" (plist-get data :location_name) event))
-
-      (when (plist-get data :location_address)
-        (puthash "location_address" (plist-get data :location_address) event))
+      (org-canvas--puthash-when event data :description "description")
+      (org-canvas--puthash-when event data :location_name "location_name")
+      (org-canvas--puthash-when event data :location_address "location_address")
 
       (puthash "calendar_event" event payload)
       (elog-debug org-canvas--logger "[Stage 2: Transform] Payload complete")

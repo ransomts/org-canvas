@@ -96,20 +96,18 @@ Returns a plist with :submitted :missing :late :graded :average :total :points."
         (scores nil) (total (length submissions))
         (points nil))
     (dolist (sub submissions)
-      (let ((status (org-canvas--submissions-normalize-status sub))
-            (score (alist-get 'score sub)))
-        (pcase status
-          ('submitted (cl-incf submitted))
-          ('missing (cl-incf missing))
-          ('late (cl-incf late))
-          ('graded (cl-incf graded)))
+      (pcase (org-canvas--submissions-normalize-status sub)
+        ('submitted (cl-incf submitted))
+        ('missing (cl-incf missing))
+        ('late (cl-incf late))
+        ('graded (cl-incf graded)))
+      (let ((score (alist-get 'score sub)))
         (when (and score (numberp score))
-          (push score scores))
-        (unless points
-          (let ((pts (alist-get 'points_possible
-                                (alist-get 'assignment sub))))
-            (when (and pts (numberp pts))
-              (setq points pts))))))
+          (push score scores)))
+      (unless points
+        (let ((pts (alist-get 'points_possible (alist-get 'assignment sub))))
+          (when (and pts (numberp pts))
+            (setq points pts)))))
     (list :submitted submitted :missing missing :late late :graded graded
           :total total :points points
           :average (when scores

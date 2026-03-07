@@ -194,6 +194,124 @@
      (expect (org-canvas--file-get-folder-path (point) "/tmp/")
              :to-equal "Folder"))))
 
+(describe "org-canvas--file-transform-props"
+  (it "passes through display-name unchanged"
+    (let ((result (org-canvas--file-transform-props
+                   '(:display-name "Syllabus.pdf" :local-path "/tmp/syllabus.pdf"
+                     :folder-path "Documents" :canvas-id nil
+                     :published-raw nil :unlock-at-raw nil :lock-at-raw nil
+                     :use-justification nil :usage-license nil :copyright nil))))
+      (expect (plist-get result :display-name) :to-equal "Syllabus.pdf")))
+
+  (it "passes through local-path unchanged"
+    (let ((result (org-canvas--file-transform-props
+                   '(:display-name "Test" :local-path "/home/user/docs/test.pdf"
+                     :folder-path "" :canvas-id nil
+                     :published-raw nil :unlock-at-raw nil :lock-at-raw nil
+                     :use-justification nil :usage-license nil :copyright nil))))
+      (expect (plist-get result :local-path) :to-equal "/home/user/docs/test.pdf")))
+
+  (it "passes through folder-path unchanged"
+    (let ((result (org-canvas--file-transform-props
+                   '(:display-name "Test" :local-path "/tmp/test.pdf"
+                     :folder-path "Labs/Week1" :canvas-id nil
+                     :published-raw nil :unlock-at-raw nil :lock-at-raw nil
+                     :use-justification nil :usage-license nil :copyright nil))))
+      (expect (plist-get result :folder-path) :to-equal "Labs/Week1")))
+
+  (it "passes through canvas-id unchanged"
+    (let ((result (org-canvas--file-transform-props
+                   '(:display-name "Test" :local-path "/tmp/test.pdf"
+                     :folder-path "" :canvas-id "42"
+                     :published-raw nil :unlock-at-raw nil :lock-at-raw nil
+                     :use-justification nil :usage-license nil :copyright nil))))
+      (expect (plist-get result :canvas-id) :to-equal "42")))
+
+  (it "defaults published to true when nil"
+    (let ((result (org-canvas--file-transform-props
+                   '(:display-name "Test" :local-path "/tmp/test.pdf"
+                     :folder-path "" :canvas-id nil
+                     :published-raw nil :unlock-at-raw nil :lock-at-raw nil
+                     :use-justification nil :usage-license nil :copyright nil))))
+      (expect (plist-get result :published) :to-be t)))
+
+  (it "interprets published=false"
+    (let ((result (org-canvas--file-transform-props
+                   '(:display-name "Test" :local-path "/tmp/test.pdf"
+                     :folder-path "" :canvas-id nil
+                     :published-raw "false" :unlock-at-raw nil :lock-at-raw nil
+                     :use-justification nil :usage-license nil :copyright nil))))
+      (expect (plist-get result :published) :to-be nil)))
+
+  (it "interprets published=true"
+    (let ((result (org-canvas--file-transform-props
+                   '(:display-name "Test" :local-path "/tmp/test.pdf"
+                     :folder-path "" :canvas-id nil
+                     :published-raw "true" :unlock-at-raw nil :lock-at-raw nil
+                     :use-justification nil :usage-license nil :copyright nil))))
+      (expect (plist-get result :published) :to-be t)))
+
+  (it "parses UNLOCK_AT to ISO8601"
+    (let ((result (org-canvas--file-transform-props
+                   '(:display-name "Test" :local-path "/tmp/test.pdf"
+                     :folder-path "" :canvas-id nil
+                     :published-raw nil :unlock-at-raw "<2024-06-15 Sat 10:00>"
+                     :lock-at-raw nil
+                     :use-justification nil :usage-license nil :copyright nil))))
+      (expect (plist-get result :unlock-at) :to-match "2024-06-15T")))
+
+  (it "parses LOCK_AT to ISO8601"
+    (let ((result (org-canvas--file-transform-props
+                   '(:display-name "Test" :local-path "/tmp/test.pdf"
+                     :folder-path "" :canvas-id nil
+                     :published-raw nil :unlock-at-raw nil
+                     :lock-at-raw "<2024-09-01 Sun 10:00>"
+                     :use-justification nil :usage-license nil :copyright nil))))
+      (expect (plist-get result :lock-at) :to-match "2024-09-01T")))
+
+  (it "returns nil for absent UNLOCK_AT"
+    (let ((result (org-canvas--file-transform-props
+                   '(:display-name "Test" :local-path "/tmp/test.pdf"
+                     :folder-path "" :canvas-id nil
+                     :published-raw nil :unlock-at-raw nil :lock-at-raw nil
+                     :use-justification nil :usage-license nil :copyright nil))))
+      (expect (plist-get result :unlock-at) :to-be nil)))
+
+  (it "returns nil for absent LOCK_AT"
+    (let ((result (org-canvas--file-transform-props
+                   '(:display-name "Test" :local-path "/tmp/test.pdf"
+                     :folder-path "" :canvas-id nil
+                     :published-raw nil :unlock-at-raw nil :lock-at-raw nil
+                     :use-justification nil :usage-license nil :copyright nil))))
+      (expect (plist-get result :lock-at) :to-be nil)))
+
+  (it "passes through use-justification unchanged"
+    (let ((result (org-canvas--file-transform-props
+                   '(:display-name "Test" :local-path "/tmp/test.pdf"
+                     :folder-path "" :canvas-id nil
+                     :published-raw nil :unlock-at-raw nil :lock-at-raw nil
+                     :use-justification "fair_use" :usage-license nil
+                     :copyright nil))))
+      (expect (plist-get result :use-justification) :to-equal "fair_use")))
+
+  (it "passes through usage-license unchanged"
+    (let ((result (org-canvas--file-transform-props
+                   '(:display-name "Test" :local-path "/tmp/test.pdf"
+                     :folder-path "" :canvas-id nil
+                     :published-raw nil :unlock-at-raw nil :lock-at-raw nil
+                     :use-justification nil :usage-license "cc_by_sa"
+                     :copyright nil))))
+      (expect (plist-get result :usage-license) :to-equal "cc_by_sa")))
+
+  (it "passes through copyright unchanged"
+    (let ((result (org-canvas--file-transform-props
+                   '(:display-name "Test" :local-path "/tmp/test.pdf"
+                     :folder-path "" :canvas-id nil
+                     :published-raw nil :unlock-at-raw nil :lock-at-raw nil
+                     :use-justification nil :usage-license nil
+                     :copyright "2024 University"))))
+      (expect (plist-get result :copyright) :to-equal "2024 University"))))
+
 ;;;; Stage 1: Parse Entry
 
 (describe "org-canvas--file-parse-entry"

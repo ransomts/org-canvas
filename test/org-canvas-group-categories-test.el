@@ -6,6 +6,40 @@
 (require 'test-helper)
 (require 'org-canvas-group-categories)
 
+;;;; Transform (pure, no buffer)
+
+(describe "org-canvas--group-category-transform-props"
+  (it "strips statistics cookie from title"
+    (let ((result (org-canvas--group-category-transform-props
+                   '(:title-raw "Project Groups [2/3]" :canvas-id nil
+                     :self-signup-raw nil :group-limit-raw nil
+                     :auto-leader-raw nil :create-group-count-raw nil))))
+      (expect (plist-get result :title) :to-equal "Project Groups")))
+
+  (it "validates self-signup values"
+    (let ((result (org-canvas--group-category-transform-props
+                   '(:title-raw "Groups" :canvas-id nil
+                     :self-signup-raw "enabled" :group-limit-raw nil
+                     :auto-leader-raw nil :create-group-count-raw nil))))
+      (expect (plist-get result :self_signup) :to-equal "enabled")))
+
+  (it "converts group-limit to number"
+    (let ((result (org-canvas--group-category-transform-props
+                   '(:title-raw "Groups" :canvas-id nil
+                     :self-signup-raw nil :group-limit-raw "5"
+                     :auto-leader-raw nil :create-group-count-raw nil))))
+      (expect (plist-get result :group_limit) :to-equal 5)))
+
+  (it "returns nil for absent optional fields"
+    (let ((result (org-canvas--group-category-transform-props
+                   '(:title-raw "Groups" :canvas-id nil
+                     :self-signup-raw nil :group-limit-raw nil
+                     :auto-leader-raw nil :create-group-count-raw nil))))
+      (expect (plist-get result :self_signup) :to-be nil)
+      (expect (plist-get result :group_limit) :to-be nil)
+      (expect (plist-get result :auto_leader) :to-be nil)
+      (expect (plist-get result :create_group_count) :to-be nil))))
+
 ;;;; Stage 1: Parse Entry
 
 (describe "org-canvas--group-category-parse-entry"

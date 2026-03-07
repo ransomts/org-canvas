@@ -46,38 +46,56 @@
 
 ;;;; 1. Stage: Extraction
 
+(defun org-canvas--group-category-read-props (pom)
+  "Read raw property strings from the group category heading at POM."
+  (list :title-raw (org-get-heading t t t t)
+        :canvas-id (org-entry-get pom "CANVAS_ID")
+        :self-signup-raw (org-entry-get pom "SELF_SIGNUP")
+        :group-limit-raw (org-entry-get pom "GROUP_LIMIT")
+        :auto-leader-raw (org-entry-get pom "AUTO_LEADER")
+        :create-group-count-raw (org-entry-get pom "CREATE_GROUP_COUNT")))
+
+(defun org-canvas--group-category-transform-props (raw)
+  "Transform raw property strings RAW into typed group category data.
+Pure function — no buffer access."
+  (let ((group-limit (plist-get raw :group-limit-raw))
+        (create-count (plist-get raw :create-group-count-raw)))
+    (list :title (org-canvas--strip-statistics-cookie (plist-get raw :title-raw))
+          :canvas-id (plist-get raw :canvas-id)
+          :self_signup (org-canvas--validate-property
+                        (plist-get raw :self-signup-raw)
+                        org-canvas--valid-self-signup-values
+                        "SELF_SIGNUP")
+          :group_limit (when group-limit
+                         (org-canvas--safe-string-to-number group-limit "GROUP_LIMIT"))
+          :auto_leader (org-canvas--validate-property
+                        (plist-get raw :auto-leader-raw)
+                        org-canvas--valid-auto-leader-values
+                        "AUTO_LEADER")
+          :create_group_count (when create-count
+                                (org-canvas--safe-string-to-number
+                                 create-count "CREATE_GROUP_COUNT")))))
+
 (defun org-canvas--group-category-parse-entry ()
   "Extract data from the Org heading at point."
   (org-back-to-heading t)
   (elog-debug org-canvas--logger "[Stage 1: Parse] Starting extraction at point %d" (point))
 
   (let* ((pom (point))
-         (title (org-canvas--strip-statistics-cookie (org-get-heading t t t t)))
-         (canvas-id (org-canvas-org-get-property pom "CANVAS_ID"))
-         (self-signup (org-canvas--validate-property
-                       (org-canvas-org-get-property pom "SELF_SIGNUP")
-                       org-canvas--valid-self-signup-values
-                       "SELF_SIGNUP"))
-         (group-limit (org-canvas-org-get-property pom "GROUP_LIMIT"))
-         (auto-leader (org-canvas--validate-property
-                       (org-canvas-org-get-property pom "AUTO_LEADER")
-                       org-canvas--valid-auto-leader-values
-                       "AUTO_LEADER"))
-         (create-group-count (org-canvas-org-get-property pom "CREATE_GROUP_COUNT")))
+         (data (org-canvas--group-category-transform-props
+                (org-canvas--group-category-read-props pom))))
 
-    (org-canvas--require-title title pom "Group category")
+    (org-canvas--require-title (plist-get data :title) pom "Group category")
 
-    (elog-info org-canvas--logger "[Stage 1: Parse] Processing Group Category: '%s' (ID: %s)" title (or canvas-id "NEW"))
+    (elog-info org-canvas--logger "[Stage 1: Parse] Processing Group Category: '%s' (ID: %s)"
+              (plist-get data :title) (or (plist-get data :canvas-id) "NEW"))
     (elog-debug org-canvas--logger "[Stage 1: Parse] Properties: self-signup=%s, group-limit=%s, auto-leader=%s"
-               (or self-signup "nil") (or group-limit "nil") (or auto-leader "nil"))
+               (or (plist-get data :self_signup) "nil")
+               (or (plist-get data :group_limit) "nil")
+               (or (plist-get data :auto_leader) "nil"))
 
-    (list :title title
-          :canvas-id canvas-id
-          :self_signup self-signup
-          :group_limit (when group-limit (org-canvas--safe-string-to-number group-limit "GROUP_LIMIT"))
-          :auto_leader auto-leader
-          :create_group_count (when create-group-count (org-canvas--safe-string-to-number create-group-count "CREATE_GROUP_COUNT"))
-          :pom pom)))
+    (plist-put data :pom pom)
+    data))
 
 ;;;; 2. Stage: Transformation
 

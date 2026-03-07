@@ -6,6 +6,29 @@
 (require 'test-helper)
 (require 'org-canvas-rubrics)
 
+;;;; Transform (pure, no buffer)
+
+(describe "org-canvas--rubric-transform-props"
+  (it "strips statistics cookie from title"
+    (let ((result (org-canvas--rubric-transform-props
+                   '(:title-raw "Rubric [1/2]" :canvas-id nil
+                     :free-form-raw nil :criteria ((("A") ("B")))))))
+      (expect (plist-get result :title) :to-equal "Rubric")))
+
+  (it "interprets free-form boolean"
+    (let ((result (org-canvas--rubric-transform-props
+                   '(:title-raw "Test" :canvas-id nil
+                     :free-form-raw "true" :criteria ((("A")))))))
+      (expect (plist-get result :free-form) :to-be t)))
+
+  (it "passes through criteria table data"
+    (let* ((table '(("Criterion" "Excellent" "Good") hline ("Analysis" "5" "3")))
+           (result (org-canvas--rubric-transform-props
+                    (list :title-raw "Test" :canvas-id "42"
+                          :free-form-raw nil :criteria table))))
+      (expect (plist-get result :criteria) :to-equal table)
+      (expect (plist-get result :canvas-id) :to-equal "42"))))
+
 ;;;; Stage 1: Parse Entry
 
 (describe "org-canvas--rubric-parse-entry"

@@ -45,6 +45,171 @@
   (it "returns nil for nil prerequisite-ids input"
     (expect (org-canvas--module-parse-prerequisite-ids nil) :to-be nil)))
 
+;;;; Transform Functions
+
+(describe "org-canvas--module-transform-props"
+  (it "strips statistics cookie from title"
+    (let ((data (org-canvas--module-transform-props
+                 '(:title-raw "Week 1 [1/3]" :canvas-id nil
+                   :published-raw nil :position-raw nil
+                   :unlock-at-raw nil :prerequisite-module-ids nil
+                   :require-sequential-raw nil :publish-final-grade-raw nil))))
+      (expect (plist-get data :title) :to-equal "Week 1")))
+
+  (it "interprets published true by default"
+    (let ((data (org-canvas--module-transform-props
+                 '(:title-raw "Mod" :canvas-id nil
+                   :published-raw nil :position-raw nil
+                   :unlock-at-raw nil :prerequisite-module-ids nil
+                   :require-sequential-raw nil :publish-final-grade-raw nil))))
+      (expect (plist-get data :published) :to-be t)))
+
+  (it "interprets published false"
+    (let ((data (org-canvas--module-transform-props
+                 '(:title-raw "Mod" :canvas-id nil
+                   :published-raw "false" :position-raw nil
+                   :unlock-at-raw nil :prerequisite-module-ids nil
+                   :require-sequential-raw nil :publish-final-grade-raw nil))))
+      (expect (plist-get data :published) :to-be nil)))
+
+  (it "converts position to number and omits zero"
+    (let ((data (org-canvas--module-transform-props
+                 '(:title-raw "Mod" :canvas-id nil
+                   :published-raw nil :position-raw "3"
+                   :unlock-at-raw nil :prerequisite-module-ids nil
+                   :require-sequential-raw nil :publish-final-grade-raw nil))))
+      (expect (plist-get data :position) :to-equal 3)))
+
+  (it "omits position when zero or nil"
+    (let ((data (org-canvas--module-transform-props
+                 '(:title-raw "Mod" :canvas-id nil
+                   :published-raw nil :position-raw nil
+                   :unlock-at-raw nil :prerequisite-module-ids nil
+                   :require-sequential-raw nil :publish-final-grade-raw nil))))
+      (expect (plist-get data :position) :to-be nil)))
+
+  (it "passes through prerequisite-module-ids"
+    (let ((data (org-canvas--module-transform-props
+                 '(:title-raw "Mod" :canvas-id nil
+                   :published-raw nil :position-raw nil
+                   :unlock-at-raw nil :prerequisite-module-ids "100, 200"
+                   :require-sequential-raw nil :publish-final-grade-raw nil))))
+      (expect (plist-get data :prerequisite-module-ids) :to-equal '("100" "200"))))
+
+  (it "interprets require-sequential-progress boolean"
+    (let ((data (org-canvas--module-transform-props
+                 '(:title-raw "Mod" :canvas-id nil
+                   :published-raw nil :position-raw nil
+                   :unlock-at-raw nil :prerequisite-module-ids nil
+                   :require-sequential-raw "true" :publish-final-grade-raw nil))))
+      (expect (plist-get data :require-sequential-progress) :to-be t)))
+
+  (it "interprets publish-final-grade boolean"
+    (let ((data (org-canvas--module-transform-props
+                 '(:title-raw "Mod" :canvas-id nil
+                   :published-raw nil :position-raw nil
+                   :unlock-at-raw nil :prerequisite-module-ids nil
+                   :require-sequential-raw nil :publish-final-grade-raw "true"))))
+      (expect (plist-get data :publish-final-grade) :to-be t)))
+
+  (it "passes through canvas-id"
+    (let ((data (org-canvas--module-transform-props
+                 '(:title-raw "Mod" :canvas-id "999"
+                   :published-raw nil :position-raw nil
+                   :unlock-at-raw nil :prerequisite-module-ids nil
+                   :require-sequential-raw nil :publish-final-grade-raw nil))))
+      (expect (plist-get data :canvas-id) :to-equal "999"))))
+
+(describe "org-canvas--module-item-transform-props"
+  (it "strips statistics cookie from title for ExternalUrl"
+    (let ((data (org-canvas--module-item-transform-props
+                 '(:title-raw "Link [2/5]" :heading-with-links nil
+                   :canvas-id nil :indent-raw nil
+                   :completion-requirement nil :min-score-raw nil
+                   :external-url "https://example.com" :new-tab-raw nil
+                   :published-raw nil :link-info nil))))
+      (expect (plist-get data :title) :to-equal "Link")
+      (expect (plist-get data :type) :to-equal "ExternalUrl")))
+
+  (it "interprets published true by default for items"
+    (let ((data (org-canvas--module-item-transform-props
+                 '(:title-raw "Item" :heading-with-links nil
+                   :canvas-id nil :indent-raw nil
+                   :completion-requirement nil :min-score-raw nil
+                   :external-url "https://x.com" :new-tab-raw nil
+                   :published-raw nil :link-info nil))))
+      (expect (plist-get data :published) :to-be t)))
+
+  (it "interprets new-tab boolean"
+    (let ((data (org-canvas--module-item-transform-props
+                 '(:title-raw "Item" :heading-with-links nil
+                   :canvas-id nil :indent-raw nil
+                   :completion-requirement nil :min-score-raw nil
+                   :external-url "https://x.com" :new-tab-raw "true"
+                   :published-raw nil :link-info nil))))
+      (expect (plist-get data :new-tab) :to-be t)))
+
+  (it "converts indent to number"
+    (let ((data (org-canvas--module-item-transform-props
+                 '(:title-raw "Item" :heading-with-links nil
+                   :canvas-id nil :indent-raw "2"
+                   :completion-requirement nil :min-score-raw nil
+                   :external-url "https://x.com" :new-tab-raw nil
+                   :published-raw nil :link-info nil))))
+      (expect (plist-get data :indent) :to-equal 2)))
+
+  (it "converts min-score and omits zero"
+    (let ((data (org-canvas--module-item-transform-props
+                 '(:title-raw "Item" :heading-with-links nil
+                   :canvas-id nil :indent-raw nil
+                   :completion-requirement "min_score" :min-score-raw "80"
+                   :external-url "https://x.com" :new-tab-raw nil
+                   :published-raw nil :link-info nil))))
+      (expect (plist-get data :min-score) :to-equal 80)))
+
+  (it "omits min-score when zero"
+    (let ((data (org-canvas--module-item-transform-props
+                 '(:title-raw "Item" :heading-with-links nil
+                   :canvas-id nil :indent-raw nil
+                   :completion-requirement "min_score" :min-score-raw nil
+                   :external-url "https://x.com" :new-tab-raw nil
+                   :published-raw nil :link-info nil))))
+      (expect (plist-get data :min-score) :to-be nil)))
+
+  (it "returns linked item data when link-info present"
+    (let ((data (org-canvas--module-item-transform-props
+                 '(:title-raw "Ignored" :heading-with-links nil
+                   :canvas-id "42" :indent-raw "1"
+                   :completion-requirement "must_view" :min-score-raw nil
+                   :external-url nil :new-tab-raw nil
+                   :published-raw "true"
+                   :link-info (:type "Assignment" :title "Lab 1"
+                               :content-id 555 :page-url nil)))))
+      (expect (plist-get data :type) :to-equal "Assignment")
+      (expect (plist-get data :title) :to-equal "Lab 1")
+      (expect (plist-get data :content-id) :to-equal 555)
+      (expect (plist-get data :canvas-id) :to-equal "42")
+      (expect (plist-get data :indent) :to-equal 1)
+      (expect (plist-get data :completion-requirement) :to-equal "must_view")))
+
+  (it "returns nil when no external-url and no link-info"
+    (let ((data (org-canvas--module-item-transform-props
+                 '(:title-raw "Plain Text" :heading-with-links nil
+                   :canvas-id nil :indent-raw nil
+                   :completion-requirement nil :min-score-raw nil
+                   :external-url nil :new-tab-raw nil
+                   :published-raw nil :link-info nil))))
+      (expect data :to-be nil)))
+
+  (it "passes through canvas-id for ExternalUrl"
+    (let ((data (org-canvas--module-item-transform-props
+                 '(:title-raw "Link" :heading-with-links nil
+                   :canvas-id "77" :indent-raw nil
+                   :completion-requirement nil :min-score-raw nil
+                   :external-url "https://x.com" :new-tab-raw nil
+                   :published-raw nil :link-info nil))))
+      (expect (plist-get data :canvas-id) :to-equal "77"))))
+
 ;;;; Stage 1: Parse Module Entry
 
 (describe "org-canvas--module-parse-entry"

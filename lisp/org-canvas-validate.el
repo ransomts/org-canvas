@@ -470,6 +470,25 @@ Returns a list of warning issues."
 
 ;;;; 5. Structural Validators
 
+(defun org-canvas--validate-single-outcome-link (row file loc)
+  "Validate the outcome link in ROW's 4th column.
+FILE is the rubrics file path.  LOC is a (:file :line :heading) plist.
+Returns an issue or nil."
+  (let ((criterion (nth 0 row))
+        (outcome-cell (nth 3 row)))
+    (when (and outcome-cell
+               (not (string-empty-p (string-trim outcome-cell))))
+      (cond
+       ((not (string-match "\\[\\[file:" outcome-cell))
+        (org-canvas--validate-make-issue
+         'warning loc nil
+         (format "Rubric criterion '%s' outcome is not a file link" criterion)))
+       ((not (org-canvas--resolve-link-property outcome-cell "CANVAS_ID" file))
+        (org-canvas--validate-make-issue
+         'warning loc nil
+         (format "Rubric criterion '%s' outcome link has no CANVAS_ID (sync outcomes first)"
+                 criterion)))))))
+
 (defun org-canvas--validate-rubric-outcome-links (table-data file loc)
   "Validate outcome links in 4th column of rubric TABLE-DATA.
 FILE is the rubrics file path.  LOC is a (:file :line :heading) plist.
@@ -477,28 +496,10 @@ Returns a list of issues."
   (let ((issues nil))
     (dolist (row table-data)
       (unless (or (eq row 'hline)
-                  ;; Skip rating rows (> prefix)
                   (and (listp row) (stringp (nth 0 row))
                        (string-match-p "\\`> " (string-trim-left (nth 0 row)))))
-        (let ((outcome-cell (nth 3 row)))
-          (when (and outcome-cell
-                     (not (string-empty-p (string-trim outcome-cell))))
-            (cond
-             ((not (string-match "\\[\\[file:" outcome-cell))
-              (push (org-canvas--validate-make-issue
-                     'warning loc nil
-                     (format "Rubric criterion '%s' outcome is not a file link"
-                             (nth 0 row)))
-                    issues))
-             (t
-              (let ((resolved (org-canvas--resolve-link-property
-                               outcome-cell "CANVAS_ID" file)))
-                (unless resolved
-                  (push (org-canvas--validate-make-issue
-                         'warning loc nil
-                         (format "Rubric criterion '%s' outcome link has no CANVAS_ID (sync outcomes first)"
-                                 (nth 0 row)))
-                        issues)))))))))
+        (let ((issue (org-canvas--validate-single-outcome-link row file loc)))
+          (when issue (push issue issues)))))
     (nreverse issues)))
 
 (defun org-canvas--validate-rubric-structure (loc)
@@ -583,32 +584,48 @@ FILE and HEADING identify the location.  Point must be at the first data row."
       (forward-line 1))
     (nreverse issues)))
 
-(defun org-canvas--validate-assignment-structure (loc)
+(cl-defun org-canvas--validate-assignment-structure (loc)
   "Check override table in assignment if present.
 LOC is a (:file :line :heading) plist."
-  (let ((end (save-excursion (org-end-of-subtree t) (point)))
-        (issues nil))
+  (let ((end (save-excursion (org-end-of-subtree t) (point))))
     (save-excursion
-      (when (re-search-forward "^#\\+NAME: overrides" end t)
-        (forward-line 1)
-        (when (looking-at "^|")
-          (forward-line 1)
-          (when (looking-at "^|-")
-            (forward-line 1))
-          (let* ((save-pos (point))
-                 (row-issues (org-canvas--validate-override-rows
-                              (plist-get loc :file) (plist-get loc :heading))))
-            (when row-issues
-              (setq issues (nconc issues row-issues)))
-            ;; Check section CANVAS_IDs in override links
-            (goto-char save-pos)
-            (let ((id-issues (org-canvas--validate-override-section-ids
-                              (plist-get loc :file) (plist-get loc :heading))))
-              (when id-issues
-                (setq issues (nconc issues id-issues))))))))
-    issues))
+      (unless (re-search-forward "^#\\+NAME: overrides" end t)
+        (cl-return-from org-canvas--validate-assignment-structure nil))
+      (forward-line 1)
+      (unless (looking-at "^|")
+        (cl-return-from org-canvas--validate-assignment-structure nil))
+      (forward-line 1)
+      (when (looking-at "^|-")
+        (forward-line 1))
+      (let* ((save-pos (point))
+             (file (plist-get loc :file))
+             (heading (plist-get loc :heading))
+             (row-issues (org-canvas--validate-override-rows file heading)))
+        (goto-char save-pos)
+        (let ((id-issues (org-canvas--validate-override-section-ids file heading)))
+          (nconc row-issues id-issues))))))
 
 ;;;; 5b. Cross-Module Structural Validators
+
+(defun org-canvas--validate-module-item-target (abs-path clean-heading file-path loc)
+  "Validate that CLEAN-HEADING exists in ABS-PATH and has a CANVAS_ID.
+FILE-PATH is the relative path for error messages.  LOC is the location plist.
+Returns a list of issues."
+  (let ((heading-point (org-canvas--find-heading-in-file abs-path clean-heading)))
+    (cond
+     ((not heading-point)
+      (list (org-canvas--validate-make-issue
+             'error loc nil
+             (format "Module item links to missing heading: '%s' in %s"
+                     clean-heading file-path))))
+     (t
+      (with-current-buffer (find-file-noselect abs-path)
+        (unless (or (org-entry-get heading-point "CANVAS_ID")
+                    (org-entry-get heading-point "CANVAS_URL"))
+          (list (org-canvas--validate-make-issue
+                 'warning loc nil
+                 (format "Module item target '%s' has no CANVAS_ID (sync it first)"
+                         clean-heading)))))))))
 
 (cl-defun org-canvas--validate-module-item-link (loc)
   "Check that module item link at point resolves to a synced heading.
@@ -616,46 +633,24 @@ LOC is a (:file :line :heading) plist.
 Skips items with EXTERNAL_URL property or plain-text SubHeaders."
   (when (org-entry-get (point) "EXTERNAL_URL")
     (cl-return-from org-canvas--validate-module-item-link nil))
-  (let* ((raw-heading (save-excursion
-                        (org-back-to-heading t)
-                        (looking-at org-complex-heading-regexp)
-                        (match-string-no-properties 4)))
-         (issues nil))
+  (let ((raw-heading (save-excursion
+                       (org-back-to-heading t)
+                       (looking-at org-complex-heading-regexp)
+                       (match-string-no-properties 4))))
     (when (and raw-heading (string-match "\\[\\[file:\\([^]]+\\)::\\*\\(.+?\\)\\]" raw-heading))
       (let* ((file-path (match-string 1 raw-heading))
-             (heading-name (match-string 2 raw-heading))
              (source-dir (file-name-directory (plist-get loc :file)))
              (abs-path (expand-file-name file-path source-dir)))
-        (cond
-         ((not (file-exists-p abs-path))
-          (push (org-canvas--validate-make-issue
-                 'error loc nil
-                 (format "Module item links to missing file: %s" file-path))
-                issues))
-         (t
+        (if (not (file-exists-p abs-path))
+            (list (org-canvas--validate-make-issue
+                   'error loc nil
+                   (format "Module item links to missing file: %s" file-path)))
           (let ((clean-heading (replace-regexp-in-string
                                 "\\\\[][]"
                                 (lambda (m) (substring m 1))
-                                heading-name)))
-            (let ((heading-point (org-canvas--find-heading-in-file abs-path clean-heading)))
-              (cond
-               ((not heading-point)
-                (push (org-canvas--validate-make-issue
-                       'error loc nil
-                       (format "Module item links to missing heading: '%s' in %s"
-                               clean-heading file-path))
-                      issues))
-               (t
-                (with-current-buffer (find-file-noselect abs-path)
-                  (let ((has-id (or (org-entry-get heading-point "CANVAS_ID")
-                                    (org-entry-get heading-point "CANVAS_URL"))))
-                    (unless has-id
-                      (push (org-canvas--validate-make-issue
-                             'warning loc nil
-                             (format "Module item target '%s' has no CANVAS_ID (sync it first)"
-                                     clean-heading))
-                            issues))))))))))))
-    (nreverse issues)))
+                                (match-string 2 raw-heading))))
+            (org-canvas--validate-module-item-target
+             abs-path clean-heading file-path loc)))))))
 
 (defun org-canvas--validate-quiz-question-points (pos)
   "Return the point value for the question at POS.
@@ -694,6 +689,23 @@ LOC is a (:file :line :heading) plist."
                    (format "Quiz POINTS is %s but question total is %s"
                            declared-points (number-to-string sum))))))))))
 
+(defun org-canvas--count-assignments-in-group (group-name assignments-file)
+  "Count assignments in GROUP-NAME by scanning ASSIGNMENTS-FILE."
+  (if (and assignments-file (file-exists-p assignments-file))
+      (let ((count 0))
+        (with-current-buffer (find-file-noselect assignments-file)
+          (save-excursion
+            (goto-char (point-min))
+            (org-map-entries
+             (lambda ()
+               (let ((group-prop (org-entry-get (point) "GROUP")))
+                 (when (and group-prop
+                            (string-match (regexp-quote group-name) group-prop))
+                   (setq count (1+ count)))))
+             "LEVEL=1" 'file)))
+        count)
+    0))
+
 (defun org-canvas--validate-drop-rules (loc)
   "Check that drop rules don't exceed assignment count for this group.
 LOC is a (:file :line :heading) plist."
@@ -701,24 +713,14 @@ LOC is a (:file :line :heading) plist."
         (drop-highest (org-entry-get (point) "DROP_HIGHEST")))
     (when (or drop-lowest drop-highest)
       (let* ((group-name (plist-get loc :heading))
-             (assignments-file (and (boundp 'org-canvas-assignments-file)
-                                    (expand-file-name
-                                     (symbol-value 'org-canvas-assignments-file))))
              (drop-low (if drop-lowest (string-to-number drop-lowest) 0))
              (drop-high (if drop-highest (string-to-number drop-highest) 0))
              (total-drops (+ drop-low drop-high))
-             (assignment-count 0))
-        (when (and assignments-file (file-exists-p assignments-file))
-          (with-current-buffer (find-file-noselect assignments-file)
-            (save-excursion
-              (goto-char (point-min))
-              (org-map-entries
-               (lambda ()
-                 (let ((group-prop (org-entry-get (point) "GROUP")))
-                   (when (and group-prop
-                              (string-match (regexp-quote group-name) group-prop))
-                     (setq assignment-count (1+ assignment-count)))))
-               "LEVEL=1" 'file))))
+             (assignments-file (and (boundp 'org-canvas-assignments-file)
+                                    (expand-file-name
+                                     (symbol-value 'org-canvas-assignments-file))))
+             (assignment-count (org-canvas--count-assignments-in-group
+                                group-name assignments-file)))
         (when (and (> total-drops 0) (>= total-drops assignment-count))
           (list (org-canvas--validate-make-issue
                  'warning loc "DROP_LOWEST"

@@ -6,6 +6,59 @@
 (require 'test-helper)
 (require 'org-canvas-announcements)
 
+;;;; Transform (pure, no buffer)
+
+(describe "org-canvas--announcement-transform-props"
+  (it "strips statistics cookie from title"
+    (let ((result (org-canvas--announcement-transform-props
+                   '(:title-raw "My Announcement [1/3]" :canvas-id nil
+                     :published-raw nil :post-at-raw nil
+                     :allow-comments-raw nil :specific-sections nil))))
+      (expect (plist-get result :title) :to-equal "My Announcement")))
+
+  (it "defaults published to true when nil"
+    (let ((result (org-canvas--announcement-transform-props
+                   '(:title-raw "Test" :canvas-id nil
+                     :published-raw nil :post-at-raw nil
+                     :allow-comments-raw nil :specific-sections nil))))
+      (expect (plist-get result :published) :to-be t)))
+
+  (it "interprets published=false"
+    (let ((result (org-canvas--announcement-transform-props
+                   '(:title-raw "Test" :canvas-id nil
+                     :published-raw "false" :post-at-raw nil
+                     :allow-comments-raw nil :specific-sections nil))))
+      (expect (plist-get result :published) :to-be nil)))
+
+  (it "parses POST_AT to ISO8601"
+    (let ((result (org-canvas--announcement-transform-props
+                   '(:title-raw "Test" :canvas-id nil
+                     :published-raw nil :post-at-raw "<2024-06-15 Sat 10:00>"
+                     :allow-comments-raw nil :specific-sections nil))))
+      (expect (plist-get result :delayed_post_at) :to-match "2024-06-15T")))
+
+  (it "returns nil for absent POST_AT"
+    (let ((result (org-canvas--announcement-transform-props
+                   '(:title-raw "Test" :canvas-id nil
+                     :published-raw nil :post-at-raw nil
+                     :allow-comments-raw nil :specific-sections nil))))
+      (expect (plist-get result :delayed_post_at) :to-be nil)))
+
+  (it "interprets ALLOW_COMMENTS boolean"
+    (let ((result (org-canvas--announcement-transform-props
+                   '(:title-raw "Test" :canvas-id nil
+                     :published-raw nil :post-at-raw nil
+                     :allow-comments-raw "true" :specific-sections nil))))
+      (expect (plist-get result :allow_discussion_comments) :to-be t)))
+
+  (it "passes through canvas-id and specific-sections"
+    (let ((result (org-canvas--announcement-transform-props
+                   '(:title-raw "Test" :canvas-id "42"
+                     :published-raw nil :post-at-raw nil
+                     :allow-comments-raw nil :specific-sections "sec1,sec2"))))
+      (expect (plist-get result :canvas-id) :to-equal "42")
+      (expect (plist-get result :specific_sections) :to-equal "sec1,sec2"))))
+
 ;;;; Stage 1: Parse Entry
 
 (describe "org-canvas--announcement-parse-entry"
@@ -48,19 +101,6 @@ Draft content.
      (org-back-to-heading)
      (let ((data (org-canvas--announcement-parse-entry)))
        (expect (plist-get data :published) :to-be nil))))
-
-  (it "sets is_announcement to t"
-    (with-temp-org-buffer
-     "* Test
-:PROPERTIES:
-:PUBLISHED: true
-:END:
-
-Body.
-"
-     (org-back-to-heading)
-     (let ((data (org-canvas--announcement-parse-entry)))
-       (expect (plist-get data :is_announcement) :to-be t))))
 
   (it "parses POST_AT timestamp"
     (with-temp-org-buffer

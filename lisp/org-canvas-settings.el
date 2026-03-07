@@ -60,108 +60,130 @@
 
 ;;;; 1. Parse
 
+(defun org-canvas--settings-read-props (pom)
+  "Read raw property strings from the Org buffer at POM.
+Returns a plist of raw string values keyed by their property names.
+No transformations are applied; all values are raw `org-entry-get' results."
+  (list :title-raw (org-canvas--strip-statistics-cookie
+                    (org-get-heading t t t t))
+        :time-zone (org-entry-get pom "TIME_ZONE")
+        :default-view-raw (org-entry-get pom "DEFAULT_VIEW")
+        :apply-weights (org-entry-get pom "APPLY_WEIGHTS")
+        :hide-final-grades (org-entry-get pom "HIDE_FINAL_GRADES")
+        :public-syllabus (org-entry-get pom "PUBLIC_SYLLABUS")
+        :is-public (org-entry-get pom "IS_PUBLIC")
+        :license-raw (org-entry-get pom "LICENSE")
+        :start-at-raw (org-entry-get pom "START_AT")
+        :end-at-raw (org-entry-get pom "END_AT")
+        :allow-student-discussion-topics (org-entry-get pom "ALLOW_STUDENT_DISCUSSION_TOPICS")
+        :allow-student-discussion-editing (org-entry-get pom "ALLOW_STUDENT_DISCUSSION_EDITING")
+        :allow-student-forum-attachments (org-entry-get pom "ALLOW_STUDENT_FORUM_ATTACHMENTS")
+        :lock-all-announcements (org-entry-get pom "LOCK_ALL_ANNOUNCEMENTS")
+        :restrict-student-future-view (org-entry-get pom "RESTRICT_STUDENT_FUTURE_VIEW")
+        :restrict-student-past-view (org-entry-get pom "RESTRICT_STUDENT_PAST_VIEW")
+        :show-announcements-on-home-page (org-entry-get pom "SHOW_ANNOUNCEMENTS_ON_HOME_PAGE")
+        :home-page-announcement-limit (org-entry-get pom "HOME_PAGE_ANNOUNCEMENT_LIMIT")
+        :hide-distribution-graphs (org-entry-get pom "HIDE_DISTRIBUTION_GRAPHS")
+        :grading-standard-id (org-entry-get pom "GRADING_STANDARD_ID")
+        ;; Late policy properties
+        :late-submission-deduction (org-entry-get pom "LATE_SUBMISSION_DEDUCTION")
+        :late-submission-deduction-enabled (org-entry-get pom "LATE_SUBMISSION_DEDUCTION_ENABLED")
+        :late-submission-interval-raw (org-entry-get pom "LATE_SUBMISSION_INTERVAL")
+        :late-submission-minimum-percent (org-entry-get pom "LATE_SUBMISSION_MINIMUM_PERCENT")
+        :late-submission-minimum-percent-enabled (org-entry-get pom "LATE_SUBMISSION_MINIMUM_PERCENT_ENABLED")
+        :missing-submission-deduction (org-entry-get pom "MISSING_SUBMISSION_DEDUCTION")
+        :missing-submission-deduction-enabled (org-entry-get pom "MISSING_SUBMISSION_DEDUCTION_ENABLED")
+        ;; Course image (file link or URL)
+        :course-image-raw (org-entry-get pom "COURSE_IMAGE")))
+
+(defun org-canvas--settings-transform-props (raw)
+  "Apply pure transformations to RAW property plist.
+Validates enums, parses timestamps, and detects course image type.
+Returns a plist with transformed keys (no `-raw' suffixes)."
+  (let ((title (plist-get raw :title-raw))
+        (default-view (org-canvas--validate-property
+                       (plist-get raw :default-view-raw)
+                       org-canvas--settings-valid-views
+                       "DEFAULT_VIEW"))
+        (license (org-canvas--validate-property
+                  (plist-get raw :license-raw)
+                  org-canvas--settings-valid-licenses
+                  "LICENSE"))
+        (start-at (org-canvas-org-parse-timestamp
+                   (plist-get raw :start-at-raw)))
+        (end-at (org-canvas-org-parse-timestamp
+                 (plist-get raw :end-at-raw)))
+        (late-submission-interval (org-canvas--validate-property
+                                   (plist-get raw :late-submission-interval-raw)
+                                   org-canvas--settings-valid-late-intervals
+                                   "LATE_SUBMISSION_INTERVAL"))
+        (course-image-raw (plist-get raw :course-image-raw)))
+    (list :title title
+          :time-zone (plist-get raw :time-zone)
+          :default-view default-view
+          :apply-weights (plist-get raw :apply-weights)
+          :hide-final-grades (plist-get raw :hide-final-grades)
+          :public-syllabus (plist-get raw :public-syllabus)
+          :is-public (plist-get raw :is-public)
+          :license license
+          :start-at start-at
+          :end-at end-at
+          :allow-student-discussion-topics (plist-get raw :allow-student-discussion-topics)
+          :allow-student-discussion-editing (plist-get raw :allow-student-discussion-editing)
+          :allow-student-forum-attachments (plist-get raw :allow-student-forum-attachments)
+          :lock-all-announcements (plist-get raw :lock-all-announcements)
+          :restrict-student-future-view (plist-get raw :restrict-student-future-view)
+          :restrict-student-past-view (plist-get raw :restrict-student-past-view)
+          :show-announcements-on-home-page (plist-get raw :show-announcements-on-home-page)
+          :home-page-announcement-limit (plist-get raw :home-page-announcement-limit)
+          :hide-distribution-graphs (plist-get raw :hide-distribution-graphs)
+          :grading-standard-id (plist-get raw :grading-standard-id)
+          :late-submission-deduction (plist-get raw :late-submission-deduction)
+          :late-submission-deduction-enabled (plist-get raw :late-submission-deduction-enabled)
+          :late-submission-interval late-submission-interval
+          :late-submission-minimum-percent (plist-get raw :late-submission-minimum-percent)
+          :late-submission-minimum-percent-enabled (plist-get raw :late-submission-minimum-percent-enabled)
+          :missing-submission-deduction (plist-get raw :missing-submission-deduction)
+          :missing-submission-deduction-enabled (plist-get raw :missing-submission-deduction-enabled)
+          ;; Course image: extract file path or detect URL
+          :course-image-file-path (when (and course-image-raw
+                                             (string-match "\\[\\[file:\\([^]]+\\)\\]" course-image-raw))
+                                    (match-string 1 course-image-raw))
+          :course-image-url (when (and course-image-raw
+                                       (not (string-prefix-p "[[" course-image-raw))
+                                       (string-match-p "^https?://" course-image-raw))
+                              course-image-raw))))
+
 (defun org-canvas--settings-parse-entry ()
   "Parse course settings from the first heading in the current buffer.
 Returns a plist with keys :title, :pom, :time-zone, :default-view,
 :apply-weights, :hide-final-grades, :public-syllabus, :is-public,
-:license, :start-at, :end-at, :syllabus-body."
+:license, :start-at, :end-at, :syllabus-body, and more.
+Delegates to `org-canvas--settings-read-props' for buffer access
+and `org-canvas--settings-transform-props' for pure transformations."
   (org-back-to-heading t)
   (let* ((pom (point-marker))
-         (title (org-canvas--strip-statistics-cookie
-                 (org-get-heading t t t t)))
-         (time-zone (org-canvas-org-get-property pom "TIME_ZONE"))
-         (default-view (org-canvas--validate-property
-                        (org-canvas-org-get-property pom "DEFAULT_VIEW")
-                        org-canvas--settings-valid-views
-                        "DEFAULT_VIEW"))
-         (apply-weights (org-canvas-org-get-property pom "APPLY_WEIGHTS"))
-         (hide-final (org-canvas-org-get-property pom "HIDE_FINAL_GRADES"))
-         (public-syllabus (org-canvas-org-get-property pom "PUBLIC_SYLLABUS"))
-         (is-public (org-canvas-org-get-property pom "IS_PUBLIC"))
-         (license (org-canvas--validate-property
-                   (org-canvas-org-get-property pom "LICENSE")
-                   org-canvas--settings-valid-licenses
-                   "LICENSE"))
-         (start-at (org-canvas-org-parse-timestamp
-                    (org-canvas-org-get-property pom "START_AT")))
-         (end-at (org-canvas-org-parse-timestamp
-                  (org-canvas-org-get-property pom "END_AT")))
-         (allow-student-discussion-topics (org-canvas-org-get-property pom "ALLOW_STUDENT_DISCUSSION_TOPICS"))
-         (allow-student-discussion-editing (org-canvas-org-get-property pom "ALLOW_STUDENT_DISCUSSION_EDITING"))
-         (allow-student-forum-attachments (org-canvas-org-get-property pom "ALLOW_STUDENT_FORUM_ATTACHMENTS"))
-         (lock-all-announcements (org-canvas-org-get-property pom "LOCK_ALL_ANNOUNCEMENTS"))
-         (restrict-student-future-view (org-canvas-org-get-property pom "RESTRICT_STUDENT_FUTURE_VIEW"))
-         (restrict-student-past-view (org-canvas-org-get-property pom "RESTRICT_STUDENT_PAST_VIEW"))
-         (show-announcements-on-home-page (org-canvas-org-get-property pom "SHOW_ANNOUNCEMENTS_ON_HOME_PAGE"))
-         (home-page-announcement-limit (org-canvas-org-get-property pom "HOME_PAGE_ANNOUNCEMENT_LIMIT"))
-         (hide-distribution-graphs (org-canvas-org-get-property pom "HIDE_DISTRIBUTION_GRAPHS"))
-         (grading-standard-id (org-canvas-org-get-property pom "GRADING_STANDARD_ID"))
-         ;; Late policy properties
-         (late-submission-deduction (org-canvas-org-get-property pom "LATE_SUBMISSION_DEDUCTION"))
-         (late-submission-deduction-enabled (org-canvas-org-get-property pom "LATE_SUBMISSION_DEDUCTION_ENABLED"))
-         (late-submission-interval (org-canvas--validate-property
-                                    (org-canvas-org-get-property pom "LATE_SUBMISSION_INTERVAL")
-                                    org-canvas--settings-valid-late-intervals
-                                    "LATE_SUBMISSION_INTERVAL"))
-         (late-submission-minimum-percent (org-canvas-org-get-property pom "LATE_SUBMISSION_MINIMUM_PERCENT"))
-         (late-submission-minimum-percent-enabled (org-canvas-org-get-property pom "LATE_SUBMISSION_MINIMUM_PERCENT_ENABLED"))
-         (missing-submission-deduction (org-canvas-org-get-property pom "MISSING_SUBMISSION_DEDUCTION"))
-         (missing-submission-deduction-enabled (org-canvas-org-get-property pom "MISSING_SUBMISSION_DEDUCTION_ENABLED"))
-         ;; Course image (file link or URL)
-         (course-image-raw (org-canvas-org-get-property pom "COURSE_IMAGE"))
-         (syllabus-body (org-canvas--export-subtree-body-to-html)))
-    (list :title title
-          :pom pom
-          :time-zone time-zone
-          :default-view default-view
-          :apply-weights apply-weights
-          :hide-final-grades hide-final
-          :public-syllabus public-syllabus
-          :is-public is-public
-          :license license
-          :start-at start-at
-          :end-at end-at
-          :allow-student-discussion-topics allow-student-discussion-topics
-          :allow-student-discussion-editing allow-student-discussion-editing
-          :allow-student-forum-attachments allow-student-forum-attachments
-          :lock-all-announcements lock-all-announcements
-          :restrict-student-future-view restrict-student-future-view
-          :restrict-student-past-view restrict-student-past-view
-          :show-announcements-on-home-page show-announcements-on-home-page
-          :home-page-announcement-limit home-page-announcement-limit
-          :hide-distribution-graphs hide-distribution-graphs
-          :grading-standard-id grading-standard-id
-          :late-submission-deduction late-submission-deduction
-          :late-submission-deduction-enabled late-submission-deduction-enabled
-          :late-submission-interval late-submission-interval
-          :late-submission-minimum-percent late-submission-minimum-percent
-          :late-submission-minimum-percent-enabled late-submission-minimum-percent-enabled
-          :missing-submission-deduction missing-submission-deduction
-          :missing-submission-deduction-enabled missing-submission-deduction-enabled
-          :course-image-path (when (and course-image-raw
-                                        (string-match "\\[\\[file:\\([^]]+\\)\\]" course-image-raw))
-                               (expand-file-name
-                                (match-string 1 course-image-raw)
-                                (file-name-directory
-                                 (buffer-file-name))))
-          :course-image-url (when (and course-image-raw
-                                       (not (string-prefix-p "[[" course-image-raw))
-                                       (string-match-p "^https?://" course-image-raw))
-                              course-image-raw)
-          :syllabus-body syllabus-body)))
+         (raw (org-canvas--settings-read-props pom))
+         (transformed (org-canvas--settings-transform-props raw))
+         (syllabus-body (org-canvas--export-subtree-body-to-html))
+         ;; Resolve course image file path relative to buffer
+         (course-image-file-path (plist-get transformed :course-image-file-path))
+         (course-image-path (when course-image-file-path
+                              (expand-file-name
+                               course-image-file-path
+                               (file-name-directory
+                                (buffer-file-name))))))
+    (plist-put transformed :pom pom)
+    (plist-put transformed :syllabus-body syllabus-body)
+    (plist-put transformed :course-image-path course-image-path)
+    transformed))
 
 ;;;; 2. Build Payload
 
 (defun org-canvas--settings-puthash-when (course data key api-key &optional boolean-p)
   "Conditionally set API-KEY in COURSE hash from DATA plist KEY.
 When BOOLEAN-P is non-nil, convert \"true\"/\"false\" to t/:json-false."
-  (let ((val (plist-get data key)))
-    (when val
-      (puthash api-key
-               (if boolean-p
-                   (if (equal val "true") t :json-false)
-                 val)
-               course))))
+  (org-canvas--puthash-when course data key api-key boolean-p))
 
 (defun org-canvas--settings-build-payload (data)
   "Build a Canvas course update payload from parsed DATA plist.
@@ -186,23 +208,17 @@ Returns a hash-table suitable for `json-encode'."
     (org-canvas--settings-puthash-when course data :restrict-student-past-view "restrict_student_past_view" t)
     (org-canvas--settings-puthash-when course data :show-announcements-on-home-page "show_announcements_on_home_page" t)
     (org-canvas--settings-puthash-when course data :hide-distribution-graphs "hide_distribution_graphs" t)
-    (let ((limit (plist-get data :home-page-announcement-limit)))
-      (when limit
-        (puthash "home_page_announcement_limit"
-                 (org-canvas--safe-string-to-number limit "HOME_PAGE_ANNOUNCEMENT_LIMIT")
-                 course)))
-    (let ((gs-id (plist-get data :grading-standard-id)))
-      (when gs-id
-        (puthash "grading_standard_id"
-                 (org-canvas--safe-string-to-number gs-id "GRADING_STANDARD_ID")
-                 course)))
+    (when-let* ((limit (plist-get data :home-page-announcement-limit)))
+      (puthash "home_page_announcement_limit"
+               (org-canvas--safe-string-to-number limit "HOME_PAGE_ANNOUNCEMENT_LIMIT")
+               course))
+    (when-let* ((gs-id (plist-get data :grading-standard-id)))
+      (puthash "grading_standard_id"
+               (org-canvas--safe-string-to-number gs-id "GRADING_STANDARD_ID")
+               course))
     ;; Course image: image_id (from file upload) or image_url (plain URL)
-    (let ((image-id (plist-get data :course-image-id)))
-      (when image-id
-        (puthash "image_id" image-id course)))
-    (let ((image-url (plist-get data :course-image-url)))
-      (when image-url
-        (puthash "image_url" image-url course)))
+    (org-canvas--puthash-when course data :course-image-id "image_id")
+    (org-canvas--puthash-when course data :course-image-url "image_url")
     (org-canvas--settings-puthash-when course data :syllabus-body "syllabus_body")
     (puthash "course" course payload)
     payload))
@@ -217,6 +233,14 @@ Returns a hash-table suitable for `json-encode'."
     (:missing-submission-deduction-enabled "missing_submission_deduction_enabled" boolean))
   "Field specs for late policy: (DATA-KEY HASH-KEY TYPE).")
 
+(defun org-canvas--convert-field-value (val hash-key type)
+  "Convert VAL to the appropriate type for HASH-KEY.
+TYPE is one of: number, boolean, or string (default)."
+  (pcase type
+    ('number (org-canvas--safe-string-to-number val (upcase hash-key)))
+    ('boolean (if (equal val "true") t :json-false))
+    (_ val)))
+
 (defun org-canvas--settings-build-late-policy-payload (data)
   "Build a Canvas late policy payload from parsed DATA plist.
 Returns a hash-table wrapped in `late_policy' key, or nil if no
@@ -227,16 +251,10 @@ late policy properties are set."
       (let ((lp (make-hash-table :test 'equal))
             (payload (make-hash-table :test 'equal)))
         (dolist (spec org-canvas--late-policy-field-specs)
-          (let ((val (plist-get data (nth 0 spec)))
-                (hash-key (nth 1 spec))
-                (type (nth 2 spec)))
+          (let ((val (plist-get data (nth 0 spec))))
             (when val
-              (puthash hash-key
-                       (pcase type
-                         ('number (org-canvas--safe-string-to-number
-                                   val (upcase hash-key)))
-                         ('boolean (if (equal val "true") t :json-false))
-                         (_ val))
+              (puthash (nth 1 spec)
+                       (org-canvas--convert-field-value val (nth 1 spec) (nth 2 spec))
                        lp))))
         (puthash "late_policy" lp payload)
         payload))))
@@ -509,35 +527,32 @@ Point must be at the heading."
     (goto-char body-start)
     (insert "\n" syllabus-body "\n")))
 
+(defconst org-canvas--late-policy-pull-specs
+  '(;; (api-key property-name type)  type: value = format as string, boolean = set-boolean
+    (late_submission_deduction "LATE_SUBMISSION_DEDUCTION" value)
+    (late_submission_deduction_enabled "LATE_SUBMISSION_DEDUCTION_ENABLED" boolean)
+    (late_submission_interval "LATE_SUBMISSION_INTERVAL" string)
+    (late_submission_minimum_percent "LATE_SUBMISSION_MINIMUM_PERCENT" value)
+    (late_submission_minimum_percent_enabled "LATE_SUBMISSION_MINIMUM_PERCENT_ENABLED" boolean)
+    (missing_submission_deduction "MISSING_SUBMISSION_DEDUCTION" value)
+    (missing_submission_deduction_enabled "MISSING_SUBMISSION_DEDUCTION_ENABLED" boolean))
+  "Specs for pulling late policy properties: (api-key property-name type).")
+
+(defun org-canvas--settings-pull-single-late-property (pom prop-name val type)
+  "Set a single late policy property PROP-NAME at POM from VAL using TYPE."
+  (pcase type
+    ('boolean (org-canvas--pull-set-boolean-property pom prop-name val))
+    ('string (when val (org-canvas-org-set-property pom prop-name val)))
+    ('value (when val (org-canvas-org-set-property pom prop-name (format "%s" val))))))
+
 (defun org-canvas--settings-pull-late-policy-properties (pom late-policy)
   "Set late policy properties at POM from LATE-POLICY API response."
   (when late-policy
     (let ((lp (alist-get 'late_policy late-policy)))
       (when lp
-        (let ((deduction (alist-get 'late_submission_deduction lp))
-              (interval (alist-get 'late_submission_interval lp))
-              (min-pct (alist-get 'late_submission_minimum_percent lp))
-              (missing-deduction (alist-get 'missing_submission_deduction lp)))
-          (when deduction
-            (org-canvas-org-set-property pom "LATE_SUBMISSION_DEDUCTION"
-                                         (format "%s" deduction)))
-          (org-canvas--pull-set-boolean-property
-           pom "LATE_SUBMISSION_DEDUCTION_ENABLED"
-           (alist-get 'late_submission_deduction_enabled lp))
-          (when interval
-            (org-canvas-org-set-property pom "LATE_SUBMISSION_INTERVAL" interval))
-          (when min-pct
-            (org-canvas-org-set-property pom "LATE_SUBMISSION_MINIMUM_PERCENT"
-                                         (format "%s" min-pct)))
-          (org-canvas--pull-set-boolean-property
-           pom "LATE_SUBMISSION_MINIMUM_PERCENT_ENABLED"
-           (alist-get 'late_submission_minimum_percent_enabled lp))
-          (when missing-deduction
-            (org-canvas-org-set-property pom "MISSING_SUBMISSION_DEDUCTION"
-                                         (format "%s" missing-deduction)))
-          (org-canvas--pull-set-boolean-property
-           pom "MISSING_SUBMISSION_DEDUCTION_ENABLED"
-           (alist-get 'missing_submission_deduction_enabled lp)))))))
+        (dolist (spec org-canvas--late-policy-pull-specs)
+          (org-canvas--settings-pull-single-late-property
+           pom (nth 1 spec) (alist-get (nth 0 spec) lp) (nth 2 spec)))))))
 
 (defun org-canvas--settings-pull-set-properties (pom response syllabus-body
                                                      &optional late-policy)

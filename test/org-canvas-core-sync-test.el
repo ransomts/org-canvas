@@ -1600,23 +1600,21 @@ Content two.
 
 (describe "org-canvas-define-sync conflict bindings"
   (it "binds conflict-apply-all to nil per sync"
-    ;; Verify the generated function resets the defvar
-    (let ((org-canvas--conflict-apply-all 'push))
-      ;; We test this by expanding the macro and checking
-      ;; the generated form contains the let-binding
-      (let ((expanded (macroexpand
-                       '(org-canvas-define-sync test-feature
-                          :file "/tmp/test.org"
-                          :parse #'identity
-                          :build #'identity
-                          :push #'identity
-                          :finalize #'identity
-                          :pull-item-fn #'ignore))))
-        ;; The expanded form should contain org-canvas--conflict-apply-all
-        (expect (format "%S" expanded)
-                :to-match "org-canvas--conflict-apply-all")
-        (expect (format "%S" expanded)
-                :to-match "org-canvas--current-pull-item-fn")))))
+    ;; Verify the macro delegates to sync-run-pipeline (which handles bindings)
+    (let ((expanded (macroexpand
+                     '(org-canvas-define-sync test-feature
+                        :file "/tmp/test.org"
+                        :parse #'identity
+                        :build #'identity
+                        :push #'identity
+                        :finalize #'identity
+                        :pull-item-fn #'ignore))))
+      ;; The expanded form should call sync-run-pipeline
+      (expect (format "%S" expanded)
+              :to-match "org-canvas--sync-run-pipeline")
+      ;; Pull-item-fn should be passed through
+      (expect (format "%S" expanded)
+              :to-match "ignore"))))
 
 ;;;; Pull Helpers
 
@@ -1965,6 +1963,113 @@ Keep this too
               :title
               #'my-pull-fn))
            (expect captured-pull-fn :to-equal #'my-pull-fn)))))))
+
+;;;; Compile-time form builders
+
+(describe "org-canvas--make-push-fn-form"
+  (it "generates a lambda with endpoint only"
+    (let ((form (org-canvas--make-push-fn-form "pages" nil nil nil)))
+      (expect (car form) :to-equal 'lambda)
+      (expect (format "%S" form) :to-match ":endpoint \"pages\"")))
+
+  (it "includes id-key when provided"
+    (let ((form (org-canvas--make-push-fn-form "pages" :canvas-url nil nil)))
+      (expect (format "%S" form) :to-match ":id-key :canvas-url")))
+
+  (it "includes title-key when provided"
+    (let ((form (org-canvas--make-push-fn-form "pages" nil :name nil)))
+      (expect (format "%S" form) :to-match ":title-key :name")))
+
+  (it "includes find-fn when provided"
+    (let ((form (org-canvas--make-push-fn-form "pages" nil nil '#'my-find)))
+      (expect (format "%S" form) :to-match "my-find")))
+
+  (it "omits optional keys when nil"
+    (let ((form-str (format "%S" (org-canvas--make-push-fn-form "items" nil nil nil))))
+      (expect form-str :not :to-match ":id-key")
+      (expect form-str :not :to-match ":title-key")
+      (expect form-str :not :to-match ":find-fn"))))
+
+(describe "org-canvas--make-finalize-fn-form"
+  (it "generates a lambda with no optional keys"
+    (let ((form (org-canvas--make-finalize-fn-form nil nil nil nil)))
+      (expect (car form) :to-equal 'lambda)
+      (let ((form-str (format "%S" form)))
+        (expect form-str :not :to-match ":id-field")
+        (expect form-str :not :to-match ":id-property")
+        (expect form-str :not :to-match ":post-fn"))))
+
+  (it "includes id-field when provided"
+    (let ((form (org-canvas--make-finalize-fn-form 'url nil nil nil)))
+      (expect (format "%S" form) :to-match ":id-field")))
+
+  (it "includes id-property when provided"
+    (let ((form (org-canvas--make-finalize-fn-form nil "CANVAS_URL" nil nil)))
+      (expect (format "%S" form) :to-match ":id-property \"CANVAS_URL\"")))
+
+  (it "includes post-fn when provided"
+    (let ((form (org-canvas--make-finalize-fn-form nil nil nil '#'my-post)))
+      (expect (format "%S" form) :to-match "my-post"))))
+
+;;;; Runtime sync pipeline
+
+(describe "org-canvas--sync-run-pipeline"
+  (it "runs the full pipeline for entries in a file"
+    (let ((temp-dir (make-temp-file "pipeline-test" t)))
+      (unwind-protect
+          (let* ((org-file (expand-file-name "test.org" temp-dir))
+                 (parse-count 0))
+            (with-temp-file org-file
+              (insert "* Entry One\n:PROPERTIES:\n:END:\n\n* Entry Two\n:PROPERTIES:\n:END:\n"))
+            (let ((org-canvas-base-url "https://test.example.com")
+                  (org-canvas-api-token "test-token")
+                  (org-canvas-course-id "99999"))
+              (with-sync-test-env
+                (cl-letf (((symbol-function 'org-canvas-api-request)
+                           (lambda (_method _url &rest _args)
+                             (setq parse-count (1+ parse-count))
+                             '((id . 1)))))
+                  (org-canvas--sync-run-pipeline
+                   "test" org-file "LEVEL=1"
+                   #'org-canvas--announcement-parse-entry
+                   #'org-canvas--announcement-build-payload
+                   (lambda (data payload)
+                     (org-canvas--push-to-api data payload :endpoint "test"))
+                   (lambda (data response)
+                     (org-canvas--finalize-item data response))
+                   nil nil)
+                  (expect parse-count :to-be-truthy)))))
+        (delete-directory temp-dir t))))
+
+  (it "binds conflict-apply-all to nil"
+    (let ((org-canvas--conflict-apply-all 'push)
+          (captured-val 'not-set))
+      (cl-letf (((symbol-function 'org-canvas-clear-log) #'ignore)
+                ((symbol-function 'org-canvas--sync-validate-file)
+                 (lambda (_upper _file)
+                   (setq captured-val org-canvas--conflict-apply-all)))
+                ((symbol-function 'org-canvas--sync-collect-entries)
+                 (lambda (&rest _) (list :targets nil :all-ids-before nil)))
+                ((symbol-function 'org-canvas--sync-warn-orphans) #'ignore)
+                ((symbol-function 'org-canvas--sync-log-summary) #'ignore))
+        (org-canvas--sync-run-pipeline "test" "/tmp/test.org" "LEVEL=1"
+                                       #'ignore #'ignore #'ignore #'ignore)
+        (expect captured-val :to-be nil))))
+
+  (it "binds current-pull-item-fn from argument"
+    (let ((captured-fn nil))
+      (cl-letf (((symbol-function 'org-canvas-clear-log) #'ignore)
+                ((symbol-function 'org-canvas--sync-validate-file)
+                 (lambda (&rest _)
+                   (setq captured-fn org-canvas--current-pull-item-fn)))
+                ((symbol-function 'org-canvas--sync-collect-entries)
+                 (lambda (&rest _) (list :targets nil :all-ids-before nil)))
+                ((symbol-function 'org-canvas--sync-warn-orphans) #'ignore)
+                ((symbol-function 'org-canvas--sync-log-summary) #'ignore))
+        (org-canvas--sync-run-pipeline "test" "/tmp/test.org" "LEVEL=1"
+                                       #'ignore #'ignore #'ignore #'ignore
+                                       #'my-pull-fn)
+        (expect captured-fn :to-equal #'my-pull-fn)))))
 
 ;;;; Pull Helper Tests
 

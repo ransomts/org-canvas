@@ -51,15 +51,39 @@
 (defun org-canvas--page-validate-editing-roles (raw)
   "Validate comma-separated EDITING_ROLES string RAW.
 Logs warnings for invalid roles.  Returns RAW unchanged."
-  (let ((roles (mapcar #'string-trim (split-string raw "," t))))
-    (dolist (role roles)
-      (unless (member role '("teachers" "students" "members" "public"))
-        (when (boundp 'org-canvas--logger)
-          (elog-warning org-canvas--logger
-            "[Validate] EDITING_ROLES: '%s' is not valid (expected: teachers, students, members, public)"
-            role))
-        (message "Warning: EDITING_ROLES '%s' is not valid" role))))
+  (when raw
+    (let ((roles (mapcar #'string-trim (split-string raw "," t))))
+      (dolist (role roles)
+        (unless (member role '("teachers" "students" "members" "public"))
+          (when (boundp 'org-canvas--logger)
+            (elog-warning org-canvas--logger
+              "[Validate] EDITING_ROLES: '%s' is not valid (expected: teachers, students, members, public)"
+              role))
+          (message "Warning: EDITING_ROLES '%s' is not valid" role)))))
   raw)
+
+(defun org-canvas--page-read-props (pom)
+  "Read raw property strings from the page heading at POM."
+  (list :title-raw (org-get-heading t t t t)
+        :canvas-url (org-entry-get pom "CANVAS_URL")
+        :published-raw (org-entry-get pom "PUBLISHED")
+        :front-page-raw (org-entry-get pom "FRONT_PAGE")
+        :editing-roles-raw (org-entry-get pom "EDITING_ROLES")
+        :todo-date-raw (org-entry-get pom "TODO_DATE")
+        :notify-of-update-raw (org-entry-get pom "NOTIFY_OF_UPDATE")))
+
+(defun org-canvas--page-transform-props (raw)
+  "Transform raw property strings RAW into typed page data.
+Pure function — no buffer access."
+  (list :title (org-canvas--strip-statistics-cookie (plist-get raw :title-raw))
+        :canvas-url (plist-get raw :canvas-url)
+        :published (org-canvas--interpret-boolean (plist-get raw :published-raw) t)
+        :front_page (org-canvas--interpret-boolean (plist-get raw :front-page-raw))
+        :editing_roles (org-canvas--page-validate-editing-roles
+                        (plist-get raw :editing-roles-raw))
+        :student_todo_at (org-canvas-org-parse-timestamp (plist-get raw :todo-date-raw))
+        :notify_of_update (org-canvas--interpret-boolean
+                           (plist-get raw :notify-of-update-raw))))
 
 (defun org-canvas--page-parse-entry ()
   "Extract wiki page data from the Org heading at point."
@@ -67,21 +91,16 @@ Logs warnings for invalid roles.  Returns RAW unchanged."
   (elog-debug org-canvas--logger "[Stage 1: Parse] Starting extraction at point %d" (point))
 
   (let* ((pom (point))
-         (title (org-canvas--strip-statistics-cookie (org-get-heading t t t t)))
-         (canvas-url (org-canvas-org-get-property pom "CANVAS_URL"))
-         (published (org-canvas-org-get-boolean-property pom "PUBLISHED" t))
-         (front-page (org-canvas-org-get-boolean-property pom "FRONT_PAGE"))
-         (editing-roles (let ((raw (org-canvas-org-get-property pom "EDITING_ROLES")))
-                          (when raw
-                            (org-canvas--page-validate-editing-roles raw))))
-         (todo-date (org-canvas-org-parse-timestamp (org-canvas-org-get-property pom "TODO_DATE")))
-         (notify-of-update (org-canvas-org-get-boolean-property pom "NOTIFY_OF_UPDATE")))
+         (raw (org-canvas--page-read-props pom))
+         (data (org-canvas--page-transform-props raw)))
 
-    (org-canvas--require-title title pom "Page")
+    (org-canvas--require-title (plist-get data :title) pom "Page")
 
-    (elog-info org-canvas--logger "[Stage 1: Parse] Processing Page: '%s' (URL: %s)" title (or canvas-url "NEW"))
+    (elog-info org-canvas--logger "[Stage 1: Parse] Processing Page: '%s' (URL: %s)"
+              (plist-get data :title) (or (plist-get data :canvas-url) "NEW"))
     (elog-debug org-canvas--logger "[Stage 1: Parse] Properties: published=%s, front-page=%s, editing-roles=%s"
-      published front-page (or editing-roles "default"))
+      (plist-get data :published) (plist-get data :front_page)
+      (or (plist-get data :editing_roles) "default"))
 
     ;; Perform the export safely, resolving cross-file links to Canvas URLs
     (elog-debug org-canvas--logger "[Stage 1: Export] Exporting subtree to HTML...")
@@ -94,15 +113,9 @@ Logs warnings for invalid roles.  Returns RAW unchanged."
 
       (elog-info org-canvas--logger "[Stage 1: Parse] Body size: %d chars" (length content))
 
-      (list :title title
-            :body content
-            :canvas-url canvas-url
-            :published published
-            :front_page front-page
-            :editing_roles editing-roles
-            :student_todo_at todo-date
-            :notify_of_update notify-of-update
-            :pom pom))))
+      (plist-put data :body content)
+      (plist-put data :pom pom)
+      data)))
 
 ;;;; 2. Stage: Transformation
 
@@ -126,10 +139,8 @@ Logs warnings for invalid roles.  Returns RAW unchanged."
         (puthash "front_page" t inner-page)
         (elog-debug org-canvas--logger "[Stage 2: Transform] Setting as front page"))
 
-      (when (plist-get data :editing_roles)
-        (puthash "editing_roles" (plist-get data :editing_roles) inner-page))
-      (when (plist-get data :student_todo_at)
-        (puthash "student_todo_at" (plist-get data :student_todo_at) inner-page))
+      (org-canvas--puthash-when inner-page data :editing_roles "editing_roles")
+      (org-canvas--puthash-when inner-page data :student_todo_at "student_todo_at")
       (when (plist-get data :notify_of_update)
         (puthash "notify_of_update" t inner-page))
 
