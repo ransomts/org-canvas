@@ -648,6 +648,9 @@ Returns a cons (SUCCESS . FAIL) count."
 	     (elog-error org-canvas--logger "[Group] Failed: %s"
 	       (error-message-string err)))))))
 
+    ;; Release markers to avoid memory leaks
+    (dolist (m group-markers) (set-marker m nil))
+
     (when (> (length group-markers) 0)
       (elog-info org-canvas--logger "[Groups] %d/%d synced"
 	group-success (length group-markers)))
@@ -686,6 +689,9 @@ QUIZ-CANVAS-ID is the Canvas ID of the quiz."
 	    (error
 	     (elog-error org-canvas--logger "[Question] Failed: %s"
 	       (error-message-string err)))))))
+
+    ;; Release markers to avoid memory leaks
+    (dolist (m question-markers) (set-marker m nil))
 
     (elog-info org-canvas--logger "[Questions] %d/%d synced"
       question-success (length question-markers))

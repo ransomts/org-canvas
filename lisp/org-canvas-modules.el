@@ -587,6 +587,9 @@ Returns (success-count . fail-count)."
              (elog-error org-canvas--logger "[FAILED] Item at point %d: %s"
                (marker-position marker) (error-message-string err)))))))
 
+    ;; Release markers to avoid memory leaks
+    (dolist (m item-markers) (set-marker m nil))
+
     (cons success-count fail-count)))
 
 (org-canvas-define-sync modules

@@ -263,7 +263,7 @@ ID via `string-to-number'.  Pass-through keys: :canvas-id,
               (org-canvas-api-request 'PUT endpoint :data payload)
             (error
              ;; 404 -> Create new
-             (if (string-match "404" (error-message-string err))
+             (if (org-canvas--404-error-p err)
                  (progn
                    (elog-warning org-canvas--logger "[Stage 3: Recovery] Group not found, creating...")
                    (org-canvas--outcome-group-create data root-group-id))
@@ -321,7 +321,7 @@ ID via `string-to-number'.  Pass-through keys: :canvas-id,
           (condition-case err
               (org-canvas-api-request 'PUT endpoint :data payload)
             (error
-             (if (string-match "404" (error-message-string err))
+             (if (org-canvas--404-error-p err)
                  (progn
                    (elog-warning org-canvas--logger "[Stage 3: Recovery] Outcome not found, creating...")
                    (org-canvas--outcome-create data parent-group-id))

@@ -120,35 +120,8 @@ Uses ancestor headings that don't have file links to build the path."
         (mapconcat #'identity path-parts "/")
       "")))
 
-(defconst org-canvas--mime-type-alist
-  '(;; Documents
-    ("pdf" . "application/pdf")
-    ("doc" . "application/msword") ("docx" . "application/msword")
-    ("xls" . "application/vnd.ms-excel") ("xlsx" . "application/vnd.ms-excel")
-    ("ppt" . "application/vnd.ms-powerpoint") ("pptx" . "application/vnd.ms-powerpoint")
-    ;; Code
-    ("py" . "text/x-python") ("python" . "text/x-python")
-    ("js" . "application/javascript") ("javascript" . "application/javascript")
-    ("html" . "text/html") ("htm" . "text/html")
-    ("css" . "text/css") ("json" . "application/json") ("xml" . "application/xml")
-    ("txt" . "text/plain") ("text" . "text/plain")
-    ("md" . "text/markdown") ("markdown" . "text/markdown")
-    ("csv" . "text/csv")
-    ;; Images
-    ("png" . "image/png")
-    ("jpg" . "image/jpeg") ("jpeg" . "image/jpeg")
-    ("gif" . "image/gif") ("svg" . "image/svg+xml")
-    ;; Archives
-    ("zip" . "application/zip")
-    ("gz" . "application/gzip") ("gzip" . "application/gzip")
-    ("tar" . "application/x-tar"))
-  "Alist mapping file extensions to MIME content types.")
-
-(defun org-canvas--file-guess-content-type (filename)
-  "Guess the MIME content type based on FILENAME extension."
-  (let ((ext (downcase (or (file-name-extension filename) ""))))
-    (or (alist-get ext org-canvas--mime-type-alist nil nil #'equal)
-        "application/octet-stream")))
+(defalias 'org-canvas--file-guess-content-type #'org-canvas--guess-content-type
+  "Alias — canonical definition is in core-api.el.")
 
 ;;;; Folder Operations
 
@@ -400,51 +373,8 @@ Returns the upload parameters."
       (alist-get 'upload_url response))
     response))
 
-(defun org-canvas--file-fix-upload-param (key raw-value filename content-type)
-  "Fix null/unknown values in Canvas upload param.
-KEY is the param symbol, RAW-VALUE its original value.
-FILENAME and CONTENT-TYPE are the actual local values."
-  (cond
-   ((and (eq key 'filename) (null raw-value)) filename)
-   ((and (eq key 'content_type)
-         (or (null raw-value) (string= raw-value "unknown/unknown")))
-    content-type)
-   (t raw-value)))
-
-(defun org-canvas--file-build-multipart-body (upload-params local-path boundary)
-  "Build a multipart/form-data body for file upload.
-UPLOAD-PARAMS is the alist of parameters from Canvas step 1 response.
-LOCAL-PATH is the path to the local file to upload.
-BOUNDARY is the multipart boundary string.
-Returns the full unibyte body string ready for HTTP upload."
-  (let ((body-parts nil)
-        (file-content (with-temp-buffer
-                        (set-buffer-multibyte nil)
-                        (insert-file-contents-literally local-path)
-                        (buffer-string)))
-        (actual-filename (file-name-nondirectory local-path))
-        (actual-content-type (org-canvas--file-guess-content-type local-path)))
-    (elog-debug org-canvas--logger "[Stage 3: Upload Step 2] Building multipart form with params: %s"
-      (mapconcat (lambda (p) (format "%s" (car p))) upload-params ", "))
-    (dolist (param (append upload-params nil))
-      (let ((value (org-canvas--file-fix-upload-param
-                    (car param) (cdr param) actual-filename actual-content-type)))
-        (when value
-          (push (format "--%s\r\nContent-Disposition: form-data; name=\"%s\"\r\n\r\n%s"
-                        boundary (car param) value)
-                body-parts))))
-    (elog-debug org-canvas--logger "[Stage 3: Upload Step 2] Adding file parameter LAST: %s" actual-filename)
-    (push (format "--%s\r\nContent-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\nContent-Type: %s\r\n\r\n"
-                  boundary actual-filename actual-content-type)
-          body-parts)
-    ;; Encode form parts as unibyte to stay compatible with binary file content
-    (let* ((body-prefix (encode-coding-string
-                         (concat (mapconcat #'identity (nreverse body-parts) "\r\n") "\r\n")
-                         'raw-text))
-           (body-suffix (encode-coding-string
-                         (format "\r\n--%s--\r\n" boundary)
-                         'raw-text)))
-      (concat body-prefix file-content body-suffix))))
+(defalias 'org-canvas--file-build-multipart-body #'org-canvas--upload-build-multipart
+  "Alias — canonical definition is in core-api.el.")
 
 (defun org-canvas--file-extract-response-parts ()
   "Parse HTTP status, Location header, and JSON body from current buffer.
@@ -478,7 +408,7 @@ Returns either a file object alist, a location alist, or signals an error."
          (response-body (plist-get parts :body)))
     (when status-line
       (elog-debug org-canvas--logger "[Stage 3: Upload Step 2] HTTP status: %s" status-line))
-    (kill-buffer)
+    ;; Buffer cleanup is handled by caller's unwind-protect
     ;; Log HTTP errors with diagnostic details
     (when (and status-line (>= (string-to-number status-line) 400))
       (elog-error org-canvas--logger
@@ -514,22 +444,29 @@ with `location' key."
          (upload-params (alist-get 'upload_params upload-info))
          (boundary (format "----FormBoundary%s" (md5 (format "%s%s" (current-time) (random))))))
 
+    (unless upload-url
+      (error "Canvas API returned no upload_url in step 1 response: %S" upload-info))
+
     ;; Log upload_params from Canvas (these must be sent exactly as-is)
     (elog-debug org-canvas--logger "[Stage 3: Upload Step 2] upload_url: %s" upload-url)
     (elog-debug org-canvas--logger "[Stage 3: Upload Step 2] upload_params from Canvas: %S" upload-params)
 
     ;; Build multipart form data
     (let* ((full-body (org-canvas--file-build-multipart-body upload-params local-path boundary))
-           ;; Use url-retrieve-synchronously for the upload (not to Canvas API directly)
            (url-request-method "POST")
            (url-request-extra-headers
             `(("Content-Type" . ,(format "multipart/form-data; boundary=%s" boundary))))
-           (url-request-data full-body))
+           (url-request-data full-body)
+           (buf (url-retrieve-synchronously
+                 upload-url nil nil org-canvas-upload-timeout)))
 
       (elog-debug org-canvas--logger "[Stage 3: Upload Step 2] Sending to %s" upload-url)
 
-      (with-current-buffer (url-retrieve-synchronously upload-url nil nil 120)
-        (org-canvas--file-parse-upload-response local-path upload-url)))))
+      (unwind-protect
+          (with-current-buffer buf
+            (org-canvas--file-parse-upload-response local-path upload-url))
+        (when (buffer-live-p buf)
+          (kill-buffer buf))))))
 
 (defun org-canvas--file-confirm-with-retry (url max-retries)
   "GET URL with exponential-backoff retries up to MAX-RETRIES.

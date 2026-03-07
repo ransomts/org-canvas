@@ -54,6 +54,13 @@ Set to nil to reduce log verbosity or hide potentially sensitive data."
   :type 'boolean
   :group 'org-canvas)
 
+(defcustom org-canvas-upload-timeout 120
+  "Timeout for file upload requests in seconds.
+Used by `url-retrieve-synchronously' during Canvas 3-step file uploads.
+Separate from `org-canvas-request-timeout' which governs plz API calls."
+  :type 'integer
+  :group 'org-canvas)
+
 (defcustom org-canvas-rate-limit-retries 3
   "Number of times to retry after a rate-limit (429/403) response."
   :type 'integer

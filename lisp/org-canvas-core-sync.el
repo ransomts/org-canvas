@@ -778,11 +778,16 @@ indicator in different positions."
       (let ((err-msg (error-message-string err)))
         (and err-msg (string-match-p "[Tt]imeout\\|timed out" err-msg)))))
 
+(defun org-canvas--404-error-p (err)
+  "Return non-nil if ERR represents an HTTP 404 response.
+ERR is a `condition-case' error value."
+  (string-match-p "404" (error-message-string err)))
+
 (defun org-canvas--404-on-put-p (err method)
   "Return non-nil if ERR is a 404 and METHOD is PUT or PATCH.
 ERR is a `condition-case' error value."
   (and (memq method '(PUT PATCH))
-       (string-match-p "404" (error-message-string err))))
+       (org-canvas--404-error-p err)))
 
 (cl-defun org-canvas--search-item (endpoint title &key params match-field)
   "Search for an item on Canvas by title.
@@ -840,8 +845,7 @@ POST-URL, when non-nil, overrides the default course-scoped POST URL."
           (elog-info org-canvas--logger "[Recovery] POST successful")
           response)
       (error
-       (if (and find-fn (caddr post-err)
-                (string-match "Timeout" (format "%s" (caddr post-err))))
+       (if (and find-fn (org-canvas--timeout-error-p post-err))
            (org-canvas--handle-timeout-recovery find-fn title post-err)
          (signal (car post-err) (cdr post-err)))))))
 

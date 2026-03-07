@@ -384,7 +384,7 @@ Returns response with assignment_id."
        (cond
         ;; 404 on PATCH -> retry as POST (stale ID)
         ((and (eq method 'PATCH)
-              (string-match-p "404" (error-message-string err)))
+              (org-canvas--404-error-p err))
          (elog-warning org-canvas--logger
            "[Recovery] Item not found (404). Retrying as POST...")
          (condition-case post-err
@@ -777,7 +777,7 @@ into the nested format required by the New Quizzes Items API:
        (cond
         ;; 404 on PATCH -> retry as POST (stale CANVAS_ITEM_ID)
         ((and (eq method 'PATCH)
-              (string-match-p "404" (error-message-string err)))
+              (org-canvas--404-error-p err))
          (elog-warning org-canvas--logger
            "[Recovery] Item not found (404). Retrying as POST...")
          (condition-case post-err
@@ -848,6 +848,9 @@ QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
             (error
              (elog-error org-canvas--logger "[New Quiz Item] Failed: %s"
                (error-message-string err)))))))
+
+    ;; Release markers to avoid memory leaks
+    (dolist (m item-markers) (set-marker m nil))
 
     (when (> item-skipped 0)
       (elog-info org-canvas--logger "[New Quiz Items] %d skipped (debug filter)"

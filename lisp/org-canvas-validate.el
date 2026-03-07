@@ -625,10 +625,12 @@ LOC is a (:file :line :heading) plist."
         (while (re-search-forward "^\\*\\* " end t)
           (push (point-marker) markers)))
       (when markers
-        (let ((sum (cl-loop for m in (nreverse markers)
-                            sum (org-canvas--validate-quiz-question-points
-                                 (marker-position m))))
-              (declared (string-to-number declared-points)))
+        (let* ((ordered (nreverse markers))
+               (sum (cl-loop for m in ordered
+                             sum (org-canvas--validate-quiz-question-points
+                                  (marker-position m))))
+               (declared (string-to-number declared-points)))
+          (dolist (m ordered) (set-marker m nil))
           (unless (= declared sum)
             (list (org-canvas--validate-make-issue
                    'warning loc "POINTS"

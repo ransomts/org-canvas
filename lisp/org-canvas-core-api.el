@@ -249,18 +249,36 @@ ASSOCIATION-TYPE is \"Assignment\" or \"Discussion\"."
 ;; Self-contained 3-step Canvas file upload, independent of the
 ;; files.el module so any feature module can upload files.
 
+(defconst org-canvas--mime-type-alist
+  '(;; Documents
+    ("pdf" . "application/pdf")
+    ("doc" . "application/msword") ("docx" . "application/msword")
+    ("xls" . "application/vnd.ms-excel") ("xlsx" . "application/vnd.ms-excel")
+    ("ppt" . "application/vnd.ms-powerpoint") ("pptx" . "application/vnd.ms-powerpoint")
+    ;; Code
+    ("py" . "text/x-python") ("python" . "text/x-python")
+    ("js" . "application/javascript") ("javascript" . "application/javascript")
+    ("html" . "text/html") ("htm" . "text/html")
+    ("css" . "text/css") ("json" . "application/json") ("xml" . "application/xml")
+    ("txt" . "text/plain") ("text" . "text/plain")
+    ("md" . "text/markdown") ("markdown" . "text/markdown")
+    ("csv" . "text/csv")
+    ;; Images
+    ("png" . "image/png")
+    ("jpg" . "image/jpeg") ("jpeg" . "image/jpeg")
+    ("gif" . "image/gif") ("svg" . "image/svg+xml")
+    ("webp" . "image/webp") ("bmp" . "image/bmp")
+    ;; Archives
+    ("zip" . "application/zip")
+    ("gz" . "application/gzip") ("gzip" . "application/gzip")
+    ("tar" . "application/x-tar"))
+  "Alist mapping file extensions to MIME content types.")
+
 (defun org-canvas--guess-content-type (filename)
   "Guess MIME type for FILENAME based on extension."
   (let ((ext (downcase (or (file-name-extension filename) ""))))
-    (cond
-     ((string= ext "png")  "image/png")
-     ((member ext '("jpg" "jpeg")) "image/jpeg")
-     ((string= ext "gif")  "image/gif")
-     ((string= ext "svg")  "image/svg+xml")
-     ((string= ext "webp") "image/webp")
-     ((string= ext "bmp")  "image/bmp")
-     ((string= ext "pdf")  "application/pdf")
-     (t "application/octet-stream"))))
+    (or (alist-get ext org-canvas--mime-type-alist nil nil #'equal)
+        "application/octet-stream")))
 
 (defun org-canvas--upload-build-multipart (upload-params local-path boundary)
   "Build multipart/form-data body for file upload.
@@ -326,6 +344,8 @@ Returns the Canvas file object alist (with \\='id key)."
              (upload-params (alist-get 'upload_params upload-info))
              (boundary (format "----FormBoundary%s"
                                (md5 (format "%s%s" (current-time) (random))))))
+        (unless upload-url
+          (error "Canvas API returned no upload_url in step 1 response: %S" upload-info))
         (elog-info org-canvas--logger "[Upload Step 2] Sending file to %s..." upload-url)
         ;; Step 2: Upload the file
         (let* ((full-body (org-canvas--upload-build-multipart
@@ -334,27 +354,31 @@ Returns the Canvas file object alist (with \\='id key)."
                (url-request-extra-headers
                 `(("Content-Type" . ,(format "multipart/form-data; boundary=%s" boundary))))
                (url-request-data full-body)
+               (step2-buf (url-retrieve-synchronously
+                           upload-url nil nil org-canvas-upload-timeout))
                (step2-response
-                (with-current-buffer (url-retrieve-synchronously upload-url nil nil 120)
-                  (goto-char (point-min))
-                  (let (location-header json-response)
-                    (save-excursion
-                      (when (re-search-forward "^[Ll]ocation: \\(.*\\)\r?$" nil t)
-                        (setq location-header (string-trim (match-string 1)))))
-                    (when (re-search-forward "\r?\n\r?\n" nil t)
-                      (setq json-response
-                            (condition-case nil
-                                (json-read-from-string
-                                 (buffer-substring-no-properties (point) (point-max)))
-                              (error nil))))
-                    (kill-buffer)
-                    (cond
-                     ((and json-response (alist-get 'id json-response))
-                      json-response)
-                     (location-header
-                      `((location . ,location-header)))
-                     (json-response json-response)
-                     (t (error "Upload failed: no JSON or Location header")))))))
+                (unwind-protect
+                    (with-current-buffer step2-buf
+                      (goto-char (point-min))
+                      (let (location-header json-response)
+                        (save-excursion
+                          (when (re-search-forward "^[Ll]ocation: \\(.*\\)\r?$" nil t)
+                            (setq location-header (string-trim (match-string 1)))))
+                        (when (re-search-forward "\r?\n\r?\n" nil t)
+                          (setq json-response
+                                (condition-case nil
+                                    (json-read-from-string
+                                     (buffer-substring-no-properties (point) (point-max)))
+                                  (error nil))))
+                        (cond
+                         ((and json-response (alist-get 'id json-response))
+                          json-response)
+                         (location-header
+                          `((location . ,location-header)))
+                         (json-response json-response)
+                         (t (error "Upload failed: no JSON or Location header")))))
+                  (when (buffer-live-p step2-buf)
+                    (kill-buffer step2-buf)))))
           ;; Step 3: Confirm upload
           (elog-info org-canvas--logger "[Upload Step 3] Confirming upload...")
           (if (alist-get 'id step2-response)
