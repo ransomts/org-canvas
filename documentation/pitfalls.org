@@ -58,13 +58,13 @@ If you sync a module that references an assignment that hasn't been synced yet, 
 
 These are *completely different systems* with different APIs, different files, and different property names:
 
-| Aspect         | Classic (=quizzes.org=)     | New (=new-quizzes.org=)        |
-|----------------+---------------------------+------------------------------|
-| API            | =/api/v1/quizzes=           | =/api/quiz/v1/=                |
+| Aspect         | Classic (=quizzes.org=)     | New (=new-quizzes.org=)            |
+|----------------+---------------------------+----------------------------------|
+| API            | =/api/v1/quizzes=           | =/api/quiz/v1/=                    |
 | ID property    | =CANVAS_ID=                 | =CANVAS_ID= + =CANVAS_ASSIGNMENT_ID= |
-| Question types | 11 types                  | 11 types (different set)     |
-| Scoring        | keep_highest, keep_latest | + keep_average               |
-| Question banks | Question groups           | Item banks (not supported)   |
+| Question types | 11 types                  | 11 types (different set)         |
+| Scoring        | keep_highest, keep_latest | + keep_average                   |
+| Question banks | Question groups           | Item banks (not supported)       |
 
 Check which system your institution uses before creating quiz files.  Some institutions have disabled Classic Quizzes entirely.
 

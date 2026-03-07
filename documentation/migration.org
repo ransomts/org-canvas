@@ -112,69 +112,69 @@ This table maps Canvas web form fields to their Org property equivalents.
 
 ** Assignments
 
-| Canvas UI Field            | Org Property               | Notes                                  |
-|----------------------------+----------------------------+----------------------------------------|
-| Points                     | =:POINTS:=                   |                                        |
-| Assignment Group           | =:GROUP:=                    | Link to =assignment-groups.org=          |
-| Display Grade as           | =:GRADING_TYPE:=             | points, percent, letter_grade, ...     |
-| Submission Type             | =:SUBMISSION:=               | online_upload, online_text_entry, ...  |
-| Allowed File Types         | =:ALLOWED_EXTENSIONS:=       | Comma-separated                        |
-| Due                        | =:DUE_AT:=                   | Org timestamp                          |
-| Available from / Until     | =:UNLOCK_AT:= / =:LOCK_AT:=   | Org timestamps                         |
-| "This is a Group Assignment" | =:GROUP_CATEGORY_ID:=      | Link to =group-categories.org=           |
-| Require Peer Reviews       | =:PEER_REVIEWS:=             |                                        |
-| Rubric (via Add Rubric)    | =:RUBRIC_LINK:=              | Link to =rubrics.org=                    |
-| Description (rich text)    | Body text under heading    | Exported to HTML                       |
+| Canvas UI Field              | Org Property            | Notes                                 |
+|------------------------------+-------------------------+---------------------------------------|
+| Points                       | =:POINTS:=                |                                       |
+| Assignment Group             | =:GROUP:=                 | Link to =assignment-groups.org=         |
+| Display Grade as             | =:GRADING_TYPE:=          | points, percent, letter_grade, ...    |
+| Submission Type              | =:SUBMISSION:=            | online_upload, online_text_entry, ... |
+| Allowed File Types           | =:ALLOWED_EXTENSIONS:=    | Comma-separated                       |
+| Due                          | =:DUE_AT:=                | Org timestamp                         |
+| Available from / Until       | =:UNLOCK_AT:= / =:LOCK_AT:= | Org timestamps                        |
+| "This is a Group Assignment" | =:GROUP_CATEGORY_ID:=     | Link to =group-categories.org=          |
+| Require Peer Reviews         | =:PEER_REVIEWS:=          |                                       |
+| Rubric (via Add Rubric)      | =:RUBRIC_LINK:=           | Link to =rubrics.org=                   |
+| Description (rich text)      | Body text under heading | Exported to HTML                      |
 
 ** Quizzes
 
-| Canvas UI Field          | Org Property               | Notes                            |
-|--------------------------+----------------------------+----------------------------------|
-| Quiz Type                | =:QUIZ_TYPE:=                | assignment, practice_quiz, ...   |
-| Time Limit               | =:TIME_LIMIT:=               | Minutes                          |
-| Shuffle Answers          | =:SHUFFLE_ANSWERS:=          |                                  |
-| Allow Multiple Attempts  | =:ALLOWED_ATTEMPTS:=         | -1 = unlimited                   |
-| Quiz Password            | =:ACCESS_CODE:=              |                                  |
-| Let Students See Correct | =:SHOW_CORRECT_ANSWERS:=     |                                  |
-| One Question at a Time   | =:ONE_QUESTION_AT_A_TIME:=   |                                  |
-| Lock After Answering     | =:CANT_GO_BACK:=             |                                  |
-| Questions (rich editor)  | Level 2 sub-headings       | With =:TYPE:= and =:POINTS:=        |
+| Canvas UI Field          | Org Property             | Notes                          |
+|--------------------------+--------------------------+--------------------------------|
+| Quiz Type                | =:QUIZ_TYPE:=              | assignment, practice_quiz, ... |
+| Time Limit               | =:TIME_LIMIT:=             | Minutes                        |
+| Shuffle Answers          | =:SHUFFLE_ANSWERS:=        |                                |
+| Allow Multiple Attempts  | =:ALLOWED_ATTEMPTS:=       | -1 = unlimited                 |
+| Quiz Password            | =:ACCESS_CODE:=            |                                |
+| Let Students See Correct | =:SHOW_CORRECT_ANSWERS:=   |                                |
+| One Question at a Time   | =:ONE_QUESTION_AT_A_TIME:= |                                |
+| Lock After Answering     | =:CANT_GO_BACK:=           |                                |
+| Questions (rich editor)  | Level 2 sub-headings     | With =:TYPE:= and =:POINTS:=       |
 
 ** Pages
 
-| Canvas UI Field   | Org Property       | Notes                      |
-|-------------------+--------------------+----------------------------|
-| Title             | Heading text       |                            |
-| Body (rich text)  | Body under heading | Exported to HTML           |
-| Front Page toggle | =:FRONT_PAGE:=       |                            |
-| Who can edit      | =:EDITING_ROLES:=    | teachers, students, ...    |
-| Published toggle  | =:PUBLISHED:=        |                            |
+| Canvas UI Field   | Org Property       | Notes                   |
+|-------------------+--------------------+-------------------------|
+| Title             | Heading text       |                         |
+| Body (rich text)  | Body under heading | Exported to HTML        |
+| Front Page toggle | =:FRONT_PAGE:=       |                         |
+| Who can edit      | =:EDITING_ROLES:=    | teachers, students, ... |
+| Published toggle  | =:PUBLISHED:=        |                         |
 
 ** Modules
 
-| Canvas UI Field         | Org Property                   | Notes                         |
-|-------------------------+--------------------------------+-------------------------------|
-| Module name             | Level 1 heading text           |                               |
-| Lock until              | =:UNLOCK_AT:=                    |                               |
-| Sequential progression  | =:REQUIRE_SEQUENTIAL_PROGRESSION:= |                            |
-| Add Item → Assignment   | Level 2 heading with link      | =[[file:assignments.org::*Name][Name]]= |
-| Indent                  | =:INDENT:=                       | 0-5                          |
-| Completion requirement  | =:COMPLETION_REQUIREMENT:=       | must_view, must_submit, ...  |
-| Add Item → External URL | =:ITEM_TYPE: ExternalUrl=        | + =:EXTERNAL_URL:=             |
-| Add Item → Text Header  | =:ITEM_TYPE: SubHeader=          |                               |
+| Canvas UI Field         | Org Property                     | Notes                                 |
+|-------------------------+----------------------------------+---------------------------------------|
+| Module name             | Level 1 heading text             |                                       |
+| Lock until              | =:UNLOCK_AT:=                      |                                       |
+| Sequential progression  | =:REQUIRE_SEQUENTIAL_PROGRESSION:= |                                       |
+| Add Item → Assignment   | Level 2 heading with link        | =[[file:assignments.org::*Name][Name]]= |
+| Indent                  | =:INDENT:=                         | 0-5                                   |
+| Completion requirement  | =:COMPLETION_REQUIREMENT:=         | must_view, must_submit, ...           |
+| Add Item → External URL | =:ITEM_TYPE: ExternalUrl=          | + =:EXTERNAL_URL:=                      |
+| Add Item → Text Header  | =:ITEM_TYPE: SubHeader=            |                                       |
 
 ** Course Settings
 
-| Canvas UI Field      | Org Property (in settings.org) | Notes                        |
-|----------------------+--------------------------------+------------------------------|
-| Time Zone            | =:TIME_ZONE:=                    | IANA format                  |
-| Home Page            | =:DEFAULT_VIEW:=                 | modules, wiki, ...           |
-| Weight groups        | =:APPLY_WEIGHTS:=                |                              |
-| Course License       | =:LICENSE:=                      | private, cc_by, ...          |
-| Start/End Date       | =:START_AT:= / =:END_AT:=         |                              |
-| Late Policy          | =:LATE_SUBMISSION_DEDUCTION:=    | + interval, minimum, etc.    |
-| Navigation tabs      | =** Navigation= sub-heading     | Numbered list, strikethrough = hidden |
-| Course Image         | =:COURSE_IMAGE:=                 | File link or URL             |
+| Canvas UI Field | Org Property (in settings.org) | Notes                                 |
+|-----------------+--------------------------------+---------------------------------------|
+| Time Zone       | =:TIME_ZONE:=                    | IANA format                           |
+| Home Page       | =:DEFAULT_VIEW:=                 | modules, wiki, ...                    |
+| Weight groups   | =:APPLY_WEIGHTS:=                |                                       |
+| Course License  | =:LICENSE:=                      | private, cc_by, ...                   |
+| Start/End Date  | =:START_AT:= / =:END_AT:=          |                                       |
+| Late Policy     | =:LATE_SUBMISSION_DEDUCTION:=    | + interval, minimum, etc.             |
+| Navigation tabs | =** Navigation= sub-heading      | Numbered list, strikethrough = hidden |
+| Course Image    | =:COURSE_IMAGE:=                 | File link or URL                      |
 
 * Common Questions from Switchers
 
