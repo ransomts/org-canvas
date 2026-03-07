@@ -2,7 +2,7 @@
 
 ;; Author: Tim Ransom
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "27.1") (plz "0.9") (elog "2.0") (org "9.6"))
+;; Package-Requires: ((emacs "28.1") (plz "0.9") (elog "2.0") (org "9.6") (transient "0.4"))
 
 ;; Keywords: comm, tools
 ;; URL: https://github.com/ransomts/org-canvas
@@ -138,21 +138,31 @@ LABEL is used for logging (e.g., \"Pages\")."
         (org-canvas--sync-in-progress t)
         (org-canvas--sync-global-counters (list :success 0 :skip 0 :fail 0 :dry-run 0)))
     (elog-info org-canvas--logger "========================================")
-    (elog-info org-canvas--logger ">>> STARTING GLOBAL SYNC")
+    (if org-canvas--dry-run
+        (elog-info org-canvas--logger ">>> DRY RUN — no changes will be made")
+      (elog-info org-canvas--logger ">>> STARTING GLOBAL SYNC"))
     (elog-info org-canvas--logger "Course: %s | URL: %s" org-canvas-course-id org-canvas-base-url)
     (elog-info org-canvas--logger "========================================")
     (org-canvas--preflight-check)
     ;; Tiers -1 and 0
+    (elog-info org-canvas--logger "--- Tier -1: Settings ---")
     (message "Syncing: Settings...")
     (org-canvas--run-tier (nth 0 org-canvas--sync-tiers) #'org-canvas--safe-sync)
+    (elog-info org-canvas--logger "--- Tier 0: %s ---"
+      (org-canvas--tier-description (nth 1 org-canvas--sync-tiers)))
     (message "Syncing: %s..." (org-canvas--tier-description (nth 1 org-canvas--sync-tiers)))
     (org-canvas--run-tier (nth 1 org-canvas--sync-tiers) #'org-canvas--safe-sync)
     (elog-info org-canvas--logger
       "[Note] Same-tier cross-references (e.g., page→page) may require a second sync to fully resolve")
     ;; Tiers 1 through 2
-    (dolist (tier (nthcdr 2 org-canvas--sync-tiers))
-      (message "Syncing: %s..." (org-canvas--tier-description tier))
-      (org-canvas--run-tier tier #'org-canvas--safe-sync))
+    (let ((tier-num 1))
+      (dolist (tier (nthcdr 2 org-canvas--sync-tiers))
+        (elog-info org-canvas--logger "--- Tier %s: %s ---"
+          (pcase tier-num (1 "1") (2 "1.5") (3 "1.75") (4 "2") (_ (number-to-string tier-num)))
+          (org-canvas--tier-description tier))
+        (message "Syncing: %s..." (org-canvas--tier-description tier))
+        (org-canvas--run-tier tier #'org-canvas--safe-sync)
+        (setq tier-num (1+ tier-num))))
     (elog-info org-canvas--logger "========================================")
     (elog-info org-canvas--logger ">>> GLOBAL SYNC COMPLETE")
     (elog-info org-canvas--logger "========================================")
@@ -162,10 +172,15 @@ LABEL is used for logging (e.g., \"Pages\")."
         (message "Dry-run complete: %d would sync, %d skipped. See *canvas-log* for details."
                  (plist-get org-canvas--sync-global-counters :dry-run)
                  (plist-get org-canvas--sync-global-counters :skip))
-      (message "Sync complete: %d synced, %d skipped, %d failed. See *canvas-log* for details."
-               (plist-get org-canvas--sync-global-counters :success)
-               (plist-get org-canvas--sync-global-counters :skip)
-               (plist-get org-canvas--sync-global-counters :fail)))))
+      (let ((fail-count (plist-get org-canvas--sync-global-counters :fail)))
+        (message "%sSync complete: %d synced, %d skipped, %d failed.%s"
+                 (if (> fail-count 0) "WARNING: " "")
+                 (plist-get org-canvas--sync-global-counters :success)
+                 (plist-get org-canvas--sync-global-counters :skip)
+                 fail-count
+                 (if (> fail-count 0)
+                     " Check *canvas-log* for error details."
+                   ""))))))
 
 ;; Delete in REVERSE dependency order:
 ;;   Tier 2:  Modules (reference all content types)
@@ -193,10 +208,19 @@ LABEL is used for logging (e.g., \"Pages\")."
 This is a destructive operation that removes all synced content from Canvas.
 Deletion order is reverse of sync order to respect dependencies."
   (interactive)
-  (unless (yes-or-no-p
-           (format "WARNING: This will DELETE ALL content from Canvas course %s.  Are you sure? "
-                   org-canvas-course-id))
-    (user-error "Aborted"))
+  (let ((synced-count 0))
+    (dolist (entry org-canvas--status-content-types)
+      (let ((file-var (cadr entry))
+            (id-prop (caddr entry)))
+        (when (and (boundp file-var)
+                   (file-exists-p (expand-file-name (symbol-value file-var))))
+          (let ((counts (org-canvas--status-count-entries
+                         (expand-file-name (symbol-value file-var)) id-prop)))
+            (setq synced-count (+ synced-count (plist-get counts :synced)))))))
+    (unless (yes-or-no-p
+             (format "WARNING: This will DELETE ALL content from Canvas course %s (~%d synced items).  Are you sure? "
+                     org-canvas-course-id synced-count))
+      (user-error "Aborted")))
   (unless (yes-or-no-p "This cannot be undone.  Do you wish to continue? ")
     (user-error "Aborted"))
   (org-canvas-clear-log)
@@ -272,7 +296,7 @@ ID-PROP is the property used to identify synced items."
                           (if unsaved " [unsaved]" "")))
           (insert (format "  Synced: %-4d  Pending: %-4d" synced pending))
           (when (and legacy (> legacy 0))
-            (insert (format "  Legacy: %d" legacy)))
+            (insert (format "  Legacy: %d (synced before change tracking)" legacy)))
           (when last-synced
             (insert (format "  Last: %s" last-synced)))
           (insert "\n"))))))
@@ -373,6 +397,20 @@ Canvas courses who want to adopt org-canvas."
     (unless (yes-or-no-p
              "Pandoc not found.  HTML will be stored raw.  Continue? ")
       (user-error "Aborted")))
+  ;; Warn about existing content that will be overwritten
+  (let ((existing 0))
+    (dolist (entry org-canvas--status-content-types)
+      (let ((file-var (cadr entry)))
+        (when (and (boundp file-var)
+                   (file-exists-p (expand-file-name (symbol-value file-var))))
+          (let ((counts (org-canvas--status-count-entries
+                         (expand-file-name (symbol-value file-var))
+                         (caddr entry))))
+            (setq existing (+ existing (plist-get counts :synced)))))))
+    (when (> existing 0)
+      (unless (yes-or-no-p
+               (format "Pull will overwrite %d existing local headings.  Continue? " existing))
+        (user-error "Aborted"))))
   (org-canvas-clear-log)
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (let ((org-canvas--inhibit-log-clear t)
@@ -542,7 +580,8 @@ Org heading locally (e.g., because the heading was deleted from the Org file)."
       (let ((buf (org-canvas--orphan-format-buffer all-orphans)))
         (display-buffer buf)
         (when (yes-or-no-p
-               (format "Found %d orphan(s).  Delete them from Canvas? " total-orphans))
+               (format "Found %d orphan(s) (listed in *canvas-orphans*).  Delete them from Canvas? "
+                       total-orphans))
           (org-canvas--orphan-delete-all all-orphans)
           (message "Orphan cleanup complete. %d item(s) deleted." total-orphans))))))
 
