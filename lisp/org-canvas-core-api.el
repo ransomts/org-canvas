@@ -216,11 +216,12 @@ Returns a flat list of all items across all pages."
                                   `(("per_page" . ,(number-to-string per-page))
                                     ("page" . ,(number-to-string page)))))
              (page-items (append (org-canvas-api-request method url :params page-params) nil)))
-        (setq all-items (append all-items page-items))
+        (dolist (item page-items)
+          (push item all-items))
         (if (< (length page-items) per-page)
             (setq done t)
           (setq page (1+ page)))))
-    all-items))
+    (nreverse all-items)))
 
 ;;;; 3b. Rubric Association
 

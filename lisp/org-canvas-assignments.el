@@ -348,25 +348,40 @@ DATA is the parsed assignment plist, RESPONSE is the Canvas API response."
 
 ;;;; Pull
 
+(defvar org-canvas--assignment-group-id-cache nil
+  "Cons cell (FILE . HASH-TABLE) mapping group ID strings to names.
+Built lazily on first call, invalidated when the groups file changes.")
+
+(defun org-canvas--assignment-build-group-cache (groups-file)
+  "Build a cache cons (GROUPS-FILE . hash-table) from GROUPS-FILE."
+  (let ((cache (make-hash-table :test 'equal)))
+    (when (file-exists-p groups-file)
+      (with-current-buffer (find-file-noselect groups-file)
+        (save-excursion
+          (goto-char (point-min))
+          (org-map-entries
+           (lambda ()
+             (let ((id (org-entry-get (point) "CANVAS_ID")))
+               (when id
+                 (puthash id (org-get-heading t t t t) cache))))
+           "LEVEL=1" 'file))))
+    (cons groups-file cache)))
+
 (defun org-canvas--assignment-resolve-group-link (group-id)
   "Resolve assignment GROUP-ID to an Org link to assignment-groups.org.
-Returns a string like \"[[file:assignment-groups.org::*Name][Name]]\" or nil."
+Returns a string like \"[[file:assignment-groups.org::*Name][Name]]\" or nil.
+Uses a cached lookup table to avoid repeated file scans."
   (when group-id
-    (let* ((groups-file (expand-file-name org-canvas-assignment-groups-file))
-           (group-name nil))
-      (when (file-exists-p groups-file)
-        (with-current-buffer (find-file-noselect groups-file)
-          (save-excursion
-            (goto-char (point-min))
-            (org-map-entries
-             (lambda ()
-               (when (equal (org-entry-get (point) "CANVAS_ID")
-                            (format "%s" group-id))
-                 (setq group-name (org-get-heading t t t t))))
-             "LEVEL=1" 'file))))
-      (when group-name
-        (format "[[file:assignment-groups.org::*%s][%s]]"
-                group-name group-name)))))
+    (let ((groups-file (expand-file-name org-canvas-assignment-groups-file)))
+      (when (or (null org-canvas--assignment-group-id-cache)
+                (not (equal (car org-canvas--assignment-group-id-cache) groups-file)))
+        (setq org-canvas--assignment-group-id-cache
+              (org-canvas--assignment-build-group-cache groups-file)))
+      (let ((group-name (gethash (format "%s" group-id)
+                                 (cdr org-canvas--assignment-group-id-cache))))
+        (when group-name
+          (format "[[file:assignment-groups.org::*%s][%s]]"
+                  group-name group-name))))))
 
 (defun org-canvas--assignment-pull-item (item pos)
   "Set per-item properties for a pulled assignment.

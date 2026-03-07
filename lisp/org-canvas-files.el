@@ -620,7 +620,8 @@ USE_JUSTIFICATION is set."
 (defun org-canvas--file-collect-folder-paths (files-file)
   "Collect all unique folder paths from FILES-FILE.
 Returns a list of folder paths that need to exist for file uploads."
-  (let ((folder-paths nil))
+  (let ((folder-paths nil)
+        (seen (make-hash-table :test 'equal)))
     (with-current-buffer (find-file-noselect files-file)
       (org-map-entries
        (lambda ()
@@ -637,7 +638,8 @@ Returns a list of folder paths that need to exist for file uploads."
                                  (point)
                                  (file-name-directory files-file))))
                (unless (or (string-empty-p folder-path)
-                           (member folder-path folder-paths))
+                           (gethash folder-path seen))
+                 (puthash folder-path t seen)
                  (push folder-path folder-paths))))))
        t 'file))
     (nreverse folder-paths)))
