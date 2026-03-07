@@ -2692,5 +2692,63 @@ Body.
      (let ((raw (org-canvas--test--after-read-cov-read-props (point))))
        (expect (plist-get raw :extra) :to-equal "injected")))))
 
+;;;; Global counter accumulation
+
+(describe "org-canvas--sync-log-summary global counters"
+  (it "accumulates counts into org-canvas--sync-global-counters"
+    (let* ((temp-file (make-temp-file "sum-test" nil ".org"))
+           (org-canvas--sync-global-counters (list :success 0 :skip 0 :fail 0)))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file (insert "* Test\n"))
+            (org-canvas--sync-log-summary "test" temp-file
+                                          (list :success 3 :skip 1 :fail 2))
+            (org-canvas--sync-log-summary "test2" temp-file
+                                          (list :success 5 :skip 0 :fail 1))
+            (expect (plist-get org-canvas--sync-global-counters :success) :to-equal 8)
+            (expect (plist-get org-canvas--sync-global-counters :skip) :to-equal 1)
+            (expect (plist-get org-canvas--sync-global-counters :fail) :to-equal 3))
+        (let ((buf (find-buffer-visiting temp-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file temp-file))))
+
+  (it "does not accumulate when global counters are nil"
+    (let* ((temp-file (make-temp-file "sum-test" nil ".org"))
+           (org-canvas--sync-global-counters nil))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file (insert "* Test\n"))
+            ;; Should not error when counters are nil
+            (expect (org-canvas--sync-log-summary "test" temp-file
+                                                  (list :success 1 :skip 0 :fail 0))
+                    :not :to-throw))
+        (let ((buf (find-buffer-visiting temp-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file temp-file)))))
+
+;;;; Duplicate CANVAS_ID warning
+
+(describe "org-canvas--sync-collect-entries"
+  (it "warns in minibuffer about duplicate CANVAS_IDs"
+    (let* ((temp-file (make-temp-file "dup-test" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file
+              (insert "* Item A\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n\n")
+              (insert "* Item B\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n"))
+            (spy-on 'message)
+            (spy-on 'elog-warning)
+            (org-canvas--sync-collect-entries temp-file "LEVEL=1" "test")
+            (expect 'message :to-have-been-called)
+            (let ((found nil))
+              (dolist (call (spy-calls-all-args 'message))
+                (when (and (stringp (car call))
+                           (string-match-p "CANVAS_ID 100 appears 2 times" (apply #'format call)))
+                  (setq found t)))
+              (expect found :to-be-truthy)))
+        (let ((buf (find-buffer-visiting temp-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file temp-file)))))
+
 (provide 'org-canvas-core-sync-test)
 ;;; org-canvas-core-sync-test.el ends here

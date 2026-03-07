@@ -71,6 +71,8 @@
 (require 'org-canvas-validate)
 (require 'org-canvas-submissions)
 (require 'org-canvas-setup)
+(when (require 'transient nil t)
+  (require 'org-canvas-transient))
 
 ;; Note: Feature-specific file paths (e.g., `org-canvas-rubrics-file`) are now
 ;; defined in their respective modules.
@@ -83,8 +85,14 @@ LABEL is used for logging (e.g., \"Pages\")."
     (error
      (let ((msg (error-message-string err)))
        (if (string-match-p "file not found\\|no such file" (downcase msg))
-           (elog-info org-canvas--logger "[Skip] %s: %s" label msg)
+           (elog-info org-canvas--logger
+             "[Skip] %s: %s\n  To import from Canvas: M-x org-canvas-pull-%s\n  To create skeleton files: M-x org-canvas-init"
+             label msg (downcase (replace-regexp-in-string " " "-" label)))
          (elog-error org-canvas--logger "[FAILED] %s: %s" label msg))))))
+
+(defun org-canvas--tier-description (tier)
+  "Return a comma-separated string of labels in TIER."
+  (mapconcat #'cadr tier ", "))
 
 (defun org-canvas--run-tier (tier wrapper-fn)
   "Run each (FUNCTION LABEL) entry in TIER through WRAPPER-FN."
@@ -127,26 +135,33 @@ LABEL is used for logging (e.g., \"Pages\")."
   (org-canvas-clear-log)
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (let ((org-canvas--inhibit-log-clear t)
-        (org-canvas--sync-in-progress t))
+        (org-canvas--sync-in-progress t)
+        (org-canvas--sync-global-counters (list :success 0 :skip 0 :fail 0)))
     (elog-info org-canvas--logger "========================================")
     (elog-info org-canvas--logger ">>> STARTING GLOBAL SYNC")
     (elog-info org-canvas--logger "Course: %s | URL: %s" org-canvas-course-id org-canvas-base-url)
     (elog-info org-canvas--logger "========================================")
     (org-canvas--preflight-check)
     ;; Tiers -1 and 0
+    (message "Syncing: Settings...")
     (org-canvas--run-tier (nth 0 org-canvas--sync-tiers) #'org-canvas--safe-sync)
+    (message "Syncing: %s..." (org-canvas--tier-description (nth 1 org-canvas--sync-tiers)))
     (org-canvas--run-tier (nth 1 org-canvas--sync-tiers) #'org-canvas--safe-sync)
     (elog-info org-canvas--logger
       "[Note] Same-tier cross-references (e.g., page→page) may require a second sync to fully resolve")
     ;; Tiers 1 through 2
     (dolist (tier (nthcdr 2 org-canvas--sync-tiers))
+      (message "Syncing: %s..." (org-canvas--tier-description tier))
       (org-canvas--run-tier tier #'org-canvas--safe-sync))
     (elog-info org-canvas--logger "========================================")
     (elog-info org-canvas--logger ">>> GLOBAL SYNC COMPLETE")
     (elog-info org-canvas--logger "========================================")
     ;; Clear session-scoped caches
     (setq org-canvas--image-cache nil)
-    (message "Sync complete. See *canvas-log* for details.")))
+    (message "Sync complete: %d synced, %d skipped, %d failed. See *canvas-log* for details."
+             (plist-get org-canvas--sync-global-counters :success)
+             (plist-get org-canvas--sync-global-counters :skip)
+             (plist-get org-canvas--sync-global-counters :fail))))
 
 ;; Delete in REVERSE dependency order:
 ;;   Tier 2:  Modules (reference all content types)

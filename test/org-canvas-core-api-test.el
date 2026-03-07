@@ -419,18 +419,18 @@
   (it "errors when API token is empty"
     (let ((org-canvas-api-token ""))
       (expect (org-canvas--preflight-check) :to-throw 'error
-              '("API token not configured.  Set org-canvas-api-token in org-canvas-credentials.el"))))
+              '("API token not configured.  Set org-canvas-api-token in org-canvas-credentials.el\nRun M-x org-canvas-init for guided setup"))))
 
   (it "errors when API token is nil"
     (let ((org-canvas-api-token nil))
       (expect (org-canvas--preflight-check) :to-throw 'error
-              '("API token not configured.  Set org-canvas-api-token in org-canvas-credentials.el"))))
+              '("API token not configured.  Set org-canvas-api-token in org-canvas-credentials.el\nRun M-x org-canvas-init for guided setup"))))
 
   (it "errors when course ID is empty"
     (let ((org-canvas-api-token "valid-token")
           (org-canvas-course-id ""))
       (expect (org-canvas--preflight-check) :to-throw 'error
-              '("Course ID not configured.  Set org-canvas-course-id in org-canvas-credentials.el"))))
+              '("Course ID not configured.  Set org-canvas-course-id in org-canvas-credentials.el\nRun M-x org-canvas-init for guided setup"))))
 
   (it "signals connection error with actionable message"
     (let ((org-canvas-api-token "valid-token")
@@ -456,6 +456,7 @@
           (org-canvas-rate-limit-retries 2)
           (org-canvas-rate-limit-wait 0)
           (call-count 0))
+      (spy-on 'message)
       (cl-letf (((symbol-function 'plz)
                  (lambda (&rest _args)
                    (setq call-count (1+ call-count))
@@ -466,7 +467,9 @@
                      '((id . 1))))))
         (let ((result (org-canvas-api-request 'GET "https://test.example.com/api/v1/test")))
           (expect call-count :to-equal 2)
-          (expect (alist-get 'id result) :to-equal 1)))))
+          (expect (alist-get 'id result) :to-equal 1)
+          (expect 'message :to-have-been-called-with
+                  "Rate limited by Canvas (HTTP %d). Retrying in %ds..." 429 0)))))
 
   (it "fails after exhausting retries"
     (let ((org-canvas-api-token "test-token")

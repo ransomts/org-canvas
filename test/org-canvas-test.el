@@ -62,7 +62,63 @@
         ;; modules should be last
         (expect (car (last call-order)) :to-equal 'modules)
         ;; assignment-groups called twice (first pass and re-sync)
-        (expect (cl-count 'assignment-groups call-order) :to-equal 2))))))
+        (expect (cl-count 'assignment-groups call-order) :to-equal 2)))))
+
+  (it "emits tier progress messages during sync"
+    (with-sync-test-env
+      (spy-on 'message)
+      (cl-letf (((symbol-function 'org-canvas--preflight-check) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-settings) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-outcomes) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-rubrics) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-assignment-groups) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-group-categories) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-sections) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-files) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-pages) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-discussions) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-announcements) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-calendar-events) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-quizzes) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-new-quizzes) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-assignments) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-overrides) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-modules) (lambda () nil)))
+        (org-canvas-sync)
+        (let ((found nil))
+          (dolist (call (spy-calls-all-args 'message))
+            (when (and (stringp (car call))
+                       (string-match-p "^Syncing:" (car call)))
+              (setq found t)))
+          (expect found :to-be-truthy)))))
+
+  (it "shows aggregate counts in final sync message"
+    (with-sync-test-env
+      (spy-on 'message)
+      (cl-letf (((symbol-function 'org-canvas--preflight-check) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-settings) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-outcomes) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-rubrics) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-assignment-groups) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-group-categories) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-sections) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-files) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-pages) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-discussions) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-announcements) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-calendar-events) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-quizzes) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-new-quizzes) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-assignments) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-overrides) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-modules) (lambda () nil)))
+        (org-canvas-sync)
+        (let ((found nil))
+          (dolist (call (spy-calls-all-args 'message))
+            (when (and (stringp (car call))
+                       (string-match-p "Sync complete:.*synced.*skipped.*failed" (car call)))
+              (setq found t)))
+          (expect found :to-be-truthy))))))
 
 ;;;; org-canvas-delete-all orchestration
 
@@ -133,6 +189,19 @@
      (lambda () (error "PAGES file not found: /tmp/nonexistent.org"))
      "Pages")
     (expect 'elog-info :to-have-been-called))
+
+  (it "suggests pull command and init when file not found"
+    (spy-on 'elog-info)
+    (org-canvas--safe-sync
+     (lambda () (error "PAGES file not found: /tmp/nonexistent.org"))
+     "Pages")
+    (let ((found nil))
+      (dolist (call (spy-calls-all-args 'elog-info))
+        (when (and (>= (length call) 3)
+                   (stringp (nth 1 call))
+                   (string-match-p "org-canvas-pull" (nth 1 call)))
+          (setq found t)))
+      (expect found :to-be-truthy)))
 
   (it "logs error for non-file-related failures"
     (spy-on 'elog-error)

@@ -37,7 +37,8 @@
                                   "lisp/org-canvas-calendar.el"
                                   "lisp/org-canvas-validate.el"
                                   "lisp/org-canvas-submissions.el"
-                                  "lisp/org-canvas-setup.el"))
+                                  "lisp/org-canvas-setup.el"
+                                  "lisp/org-canvas-transient.el"))
 ;; Use codecov format with local report file (don't auto-send)
 (setf eldev-undercover-report-format 'codecov)
 (setf eldev-undercover-send-report nil)

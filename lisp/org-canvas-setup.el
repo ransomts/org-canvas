@@ -49,8 +49,8 @@ and writes org-canvas-credentials.el."
   (interactive)
   (let* ((dir (read-directory-name "Course directory: " nil nil t))
          (url (read-string "Canvas base URL: " "https://canvas.instructure.com"))
-         (token (read-string "API token: "))
-         (course-id (read-string "Course ID: ")))
+         (token (read-passwd "API token (Canvas > Account > Settings > + New Access Token): "))
+         (course-id (read-string "Course ID (number from your Canvas course URL): ")))
     ;; Validate inputs
     (when (string-empty-p token)
       (user-error "API token cannot be empty"))

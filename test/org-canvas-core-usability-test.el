@@ -437,16 +437,18 @@
 
 (describe "org-canvas-init"
   (it "creates credentials file and sets variables"
-    (let* ((temp-dir (make-temp-file "init-test" t))
-           (read-index 0)
-           (reads (list temp-dir "https://test.canvas.example.com" "token123" "12345")))
+    (let* ((temp-dir (make-temp-file "init-test" t)))
       (unwind-protect
           (cl-letf (((symbol-function 'read-directory-name)
-                     (lambda (&rest _) (nth 0 reads)))
+                     (lambda (&rest _) temp-dir))
                     ((symbol-function 'read-string)
-                     (lambda (_prompt &optional initial &rest _)
-                       (setq read-index (1+ read-index))
-                       (or initial (nth read-index reads))))
+                     (lambda (prompt &optional initial &rest _)
+                       (or initial
+                           (cond
+                            ((string-match-p "^Canvas base" prompt) "https://test.canvas.example.com")
+                            ((string-match-p "^Course ID" prompt) "12345")))))
+                    ((symbol-function 'read-passwd)
+                     (lambda (&rest _) "token123"))
                     ((symbol-function 'org-canvas-api-request)
                      (lambda (_method _url &rest _args) '((name . "Test Course"))))
                     ((symbol-function 'y-or-n-p) (lambda (_) nil)))
@@ -464,20 +466,24 @@
                (lambda (&rest _) "/tmp/test/"))
               ((symbol-function 'read-string)
                (lambda (_prompt &optional initial &rest _)
-                 (or initial ""))))
+                 (or initial "")))
+              ((symbol-function 'read-passwd)
+               (lambda (&rest _) "")))
       (expect (org-canvas-init) :to-throw 'user-error)))
 
   (it "handles connection failure with user prompt"
-    (let* ((temp-dir (make-temp-file "init-test" t))
-           (read-index 0)
-           (reads (list temp-dir "https://test.canvas.example.com" "token123" "12345")))
+    (let* ((temp-dir (make-temp-file "init-test" t)))
       (unwind-protect
           (cl-letf (((symbol-function 'read-directory-name)
-                     (lambda (&rest _) (nth 0 reads)))
+                     (lambda (&rest _) temp-dir))
                     ((symbol-function 'read-string)
-                     (lambda (_prompt &optional initial &rest _)
-                       (setq read-index (1+ read-index))
-                       (or initial (nth read-index reads))))
+                     (lambda (prompt &optional initial &rest _)
+                       (or initial
+                           (cond
+                            ((string-match-p "^Canvas base" prompt) "https://test.canvas.example.com")
+                            ((string-match-p "^Course ID" prompt) "12345")))))
+                    ((symbol-function 'read-passwd)
+                     (lambda (&rest _) "token123"))
                     ((symbol-function 'org-canvas-api-request)
                      (lambda (_method _url &rest _args)
                        (signal 'error '("Connection refused"))))
@@ -490,16 +496,18 @@
         (delete-directory temp-dir t))))
 
   (it "creates skeleton files when requested"
-    (let* ((temp-dir (make-temp-file "init-test" t))
-           (read-index 0)
-           (reads (list temp-dir "https://test.canvas.example.com" "token123" "12345")))
+    (let* ((temp-dir (make-temp-file "init-test" t)))
       (unwind-protect
           (cl-letf (((symbol-function 'read-directory-name)
-                     (lambda (&rest _) (nth 0 reads)))
+                     (lambda (&rest _) temp-dir))
                     ((symbol-function 'read-string)
-                     (lambda (_prompt &optional initial &rest _)
-                       (setq read-index (1+ read-index))
-                       (or initial (nth read-index reads))))
+                     (lambda (prompt &optional initial &rest _)
+                       (or initial
+                           (cond
+                            ((string-match-p "^Canvas base" prompt) "https://test.canvas.example.com")
+                            ((string-match-p "^Course ID" prompt) "12345")))))
+                    ((symbol-function 'read-passwd)
+                     (lambda (&rest _) "token123"))
                     ((symbol-function 'org-canvas-api-request)
                      (lambda (_method _url &rest _args) '((name . "Course"))))
                     ((symbol-function 'y-or-n-p) (lambda (_) t)))
@@ -518,9 +526,10 @@
               ((symbol-function 'read-string)
                (lambda (prompt &rest _)
                  (cond
-                  ((string-match-p "URL" prompt) "https://canvas.example.com")
-                  ((string-match-p "token" prompt) "valid-token")
-                  ((string-match-p "Course" prompt) "")))))
+                  ((string-match-p "^Canvas base" prompt) "https://canvas.example.com")
+                  ((string-match-p "^Course ID" prompt) ""))))
+              ((symbol-function 'read-passwd)
+               (lambda (&rest _) "valid-token")))
       (expect (org-canvas-init) :to-throw 'user-error)))
 
   (it "aborts when connection fails and user declines"
@@ -531,9 +540,10 @@
                     ((symbol-function 'read-string)
                      (lambda (prompt &rest _)
                        (cond
-                        ((string-match-p "URL" prompt) "https://canvas.example.com")
-                        ((string-match-p "token" prompt) "valid-token")
-                        ((string-match-p "Course" prompt) "12345"))))
+                        ((string-match-p "^Canvas base" prompt) "https://canvas.example.com")
+                        ((string-match-p "^Course ID" prompt) "12345"))))
+                    ((symbol-function 'read-passwd)
+                     (lambda (&rest _) "valid-token"))
                     ((symbol-function 'org-canvas-api-request)
                      (lambda (&rest _) (error "Connection refused")))
                     ((symbol-function 'y-or-n-p)

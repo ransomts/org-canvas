@@ -31,6 +31,10 @@ Bound per-sync by `org-canvas-define-sync'.")
 Dynamically bound by the sync pipeline so `org-canvas--push-to-api'
 can access it without changing per-module push function signatures.")
 
+(defvar org-canvas--sync-global-counters nil
+  "When non-nil, a plist accumulating counts across sync modules.
+Bound by `org-canvas-sync' to aggregate success/skip/fail totals.")
+
 ;;;; 5b. Declarative Parse Macro
 ;;
 ;; Generates read-props, transform-props, and parse-entry from a
@@ -231,7 +235,9 @@ Returns a plist (:targets MARKERS :all-ids-before IDS)."
                  (when (> count 1)
                    (elog-warning org-canvas--logger
                      "[Duplicate] CANVAS_ID %s appears %d times in %s"
-                     id count sync-file)))
+                     id count sync-file)
+                   (message "WARNING: CANVAS_ID %s appears %d times in %s"
+                            id count sync-file)))
                id-counts))
     (list :targets targets :all-ids-before all-ids-before)))
 
@@ -383,7 +389,15 @@ FEATURE-NAME is the module name.  COUNTERS is a plist with
                  (capitalize feature-name) success-count skip-count
                  fail-count conflict-count pulled-count)
       (message "%s sync: %d success, %d skipped, %d failed."
-               (capitalize feature-name) success-count skip-count fail-count))))
+               (capitalize feature-name) success-count skip-count fail-count))
+    ;; Accumulate into global counters when running inside org-canvas-sync
+    (when org-canvas--sync-global-counters
+      (plist-put org-canvas--sync-global-counters :success
+                 (+ (plist-get org-canvas--sync-global-counters :success) success-count))
+      (plist-put org-canvas--sync-global-counters :skip
+                 (+ (plist-get org-canvas--sync-global-counters :skip) skip-count))
+      (plist-put org-canvas--sync-global-counters :fail
+                 (+ (plist-get org-canvas--sync-global-counters :fail) fail-count)))))
 
 ;; Plist key convention in parse-entry return values:
 ;; - kebab-case (:canvas-id, :pom, :local-path) for internal pipeline fields

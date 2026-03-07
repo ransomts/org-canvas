@@ -54,9 +54,9 @@ placeholder for the API token (requires double quotes for expansion)."
 (defun org-canvas--ensure-credentials ()
   "Signal error if API token or course ID are not configured."
   (when (or (null org-canvas-api-token) (string-empty-p org-canvas-api-token))
-    (error "API token not configured.  Set org-canvas-api-token in org-canvas-credentials.el"))
+    (error "API token not configured.  Set org-canvas-api-token in org-canvas-credentials.el\nRun M-x org-canvas-init for guided setup"))
   (when (or (null org-canvas-course-id) (string-empty-p org-canvas-course-id))
-    (error "Course ID not configured.  Set org-canvas-course-id in org-canvas-credentials.el")))
+    (error "Course ID not configured.  Set org-canvas-course-id in org-canvas-credentials.el\nRun M-x org-canvas-init for guided setup")))
 
 (defun org-canvas--api-handle-plz-error (err full-url)
   "Handle a plz-error ERR from a request to FULL-URL.
@@ -79,6 +79,8 @@ or signal an error for terminal failures."
       (elog-warning org-canvas--logger
         "[API] Rate limited (HTTP %d). Waiting %ds..."
         status org-canvas-rate-limit-wait)
+      (message "Rate limited by Canvas (HTTP %d). Retrying in %ds..."
+               status org-canvas-rate-limit-wait)
       (sleep-for org-canvas-rate-limit-wait)
       :retry)
 
