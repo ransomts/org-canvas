@@ -225,7 +225,7 @@ Content.
               (payload (make-hash-table)))
           (org-canvas--push-to-api data payload
             :endpoint "pages" :id-key :canvas-url
-            :find-fn #'org-canvas--page-search-by-title)
+            :find-fn (lambda (title) (org-canvas--search-item "pages" title)))
           (expect-api-called 'POST "pages$")))))
 
   (it "uses PUT for existing pages"
@@ -235,16 +235,16 @@ Content.
               (payload (make-hash-table)))
           (org-canvas--push-to-api data payload
             :endpoint "pages" :id-key :canvas-url
-            :find-fn #'org-canvas--page-search-by-title)
+            :find-fn (lambda (title) (org-canvas--search-item "pages" title)))
           (expect-api-called 'PUT "pages/existing-page"))))))
 
-(describe "org-canvas--page-search-by-title (mocked)"
+(describe "page search (mocked)"
   (it "searches pages endpoint"
     (with-org-canvas-test-config
       (with-mock-api
         (setq test-org-canvas-api-responses
               '(("pages" . [((url . "test-page") (title . "Test Page"))])))
-        (org-canvas--page-search-by-title "Test Page")
+        (org-canvas--search-item "pages" "Test Page")
         (expect-api-called 'GET "pages"))))
 
   (it "returns matching page"
@@ -253,7 +253,7 @@ Content.
         (setq test-org-canvas-api-responses
               '(("pages" . [((url . "syllabus") (title . "Syllabus"))
                             ((url . "other") (title . "Other"))])))
-        (let ((result (org-canvas--page-search-by-title "Syllabus")))
+        (let ((result (org-canvas--search-item "pages" "Syllabus")))
           (expect (alist-get 'url result) :to-equal "syllabus"))))))
 
 ;;;; Stage 4: Finalize
@@ -354,7 +354,7 @@ This is *bold* text.
                 (payload (make-hash-table)))
             (let ((result (org-canvas--push-to-api data payload
                             :endpoint "pages" :id-key :canvas-url
-                            :find-fn #'org-canvas--page-search-by-title)))
+                            :find-fn (lambda (title) (org-canvas--search-item "pages" title)))))
               (expect (alist-get 'url result) :to-equal "new-page-url")
               (expect call-count :to-equal 2)))))))
 
@@ -376,7 +376,7 @@ This is *bold* text.
                 (payload (make-hash-table)))
             (let ((result (org-canvas--push-to-api data payload
                             :endpoint "pages" :id-key :canvas-url
-                            :find-fn #'org-canvas--page-search-by-title)))
+                            :find-fn (lambda (title) (org-canvas--search-item "pages" title)))))
               (expect (alist-get 'url result) :to-equal "recovered-page")))))))
 
   (it "signals error on non-recoverable failure"
@@ -388,18 +388,18 @@ This is *bold* text.
               (payload (make-hash-table)))
           (expect (org-canvas--push-to-api data payload
                     :endpoint "pages" :id-key :canvas-url
-                    :find-fn #'org-canvas--page-search-by-title)
+                    :find-fn (lambda (title) (org-canvas--search-item "pages" title)))
                   :to-throw 'error))))))
 
 ;;;; Additional Find by Title Tests
 
-(describe "org-canvas--page-search-by-title (mocked)"
+(describe "page search (mocked)"
   (it "returns nil when no match"
     (with-org-canvas-test-config
       (with-mock-api
         (setq test-org-canvas-api-responses
               '(("pages" . [((url . "other") (title . "Other Page"))])))
-        (let ((result (org-canvas--page-search-by-title "Nonexistent")))
+        (let ((result (org-canvas--search-item "pages" "Nonexistent")))
           (expect result :to-be nil)))))
 
   (it "returns nil on API error"
@@ -407,7 +407,7 @@ This is *bold* text.
       (cl-letf (((symbol-function 'org-canvas-api-request)
                  (lambda (&rest _)
                    (signal 'error '("API error")))))
-        (let ((result (org-canvas--page-search-by-title "Any")))
+        (let ((result (org-canvas--search-item "pages" "Any")))
           (expect result :to-be nil))))))
 
 ;;;; Additional Finalize Tests
@@ -554,7 +554,7 @@ Page content.
                              '(((url . "home") (title . "Home") (front_page . t))
                                ((url . "other") (title . "Other") (front_page . nil)))))
                           ((symbol-function 'org-canvas--delete-items-queued)
-                           (lambda (items _endpoint-fn _id-field _title-field &optional skip-fn)
+                           (lambda (items _endpoint-fn _id-field _title-field &optional skip-fn _delete-data)
                              (let ((to-delete (if skip-fn (cl-remove-if skip-fn items) items)))
                                (setq deleted-count (length to-delete))
                                (cons (length to-delete) nil)))))

@@ -44,55 +44,21 @@
 
 ;;;; 1. Stage: Extraction
 
-(defun org-canvas--calendar-event-read-props (pom)
-  "Read raw property strings from the calendar event heading at POM."
-  (list :title-raw (org-get-heading t t t t)
-        :canvas-id (org-entry-get pom "CANVAS_ID")
-        :start-at-raw (org-entry-get pom "START_AT")
-        :end-at-raw (org-entry-get pom "END_AT")
-        :all-day-raw (org-entry-get pom "ALL_DAY")
-        :location-name (org-entry-get pom "LOCATION_NAME")
-        :location-address (org-entry-get pom "LOCATION_ADDRESS")))
-
-(defun org-canvas--calendar-event-transform-props (raw)
-  "Transform raw property strings RAW into typed calendar event data.
-Pure function — no buffer access."
-  (list :title (org-canvas--strip-statistics-cookie (plist-get raw :title-raw))
-        :canvas-id (plist-get raw :canvas-id)
-        :start_at (org-canvas-org-parse-timestamp (plist-get raw :start-at-raw))
-        :end_at (org-canvas-org-parse-timestamp (plist-get raw :end-at-raw))
-        :all_day (org-canvas--interpret-boolean (plist-get raw :all-day-raw))
-        :location_name (plist-get raw :location-name)
-        :location_address (plist-get raw :location-address)))
-
-(defun org-canvas--calendar-event-parse-entry ()
-  "Extract data from the Org heading at point."
-  (org-back-to-heading t)
-  (elog-debug org-canvas--logger "[Stage 1: Parse] Starting extraction at point %d" (point))
-
-  (let* ((pom (point))
-         (raw (org-canvas--calendar-event-read-props pom))
-         (data (org-canvas--calendar-event-transform-props raw)))
-
-    (org-canvas--require-title (plist-get data :title) pom "Calendar event")
-
+(org-canvas-define-parse calendar-event
+  :body :description
+  :entity-name "Calendar event"
+  :after-transform
+  (lambda (data)
     (unless (plist-get data :start_at)
-      (error "Calendar event '%s' requires START_AT property" (plist-get data :title)))
-
-    (elog-info org-canvas--logger "[Stage 1: Parse] Processing Calendar Event: '%s' (ID: %s)"
-              (plist-get data :title) (or (plist-get data :canvas-id) "NEW"))
-    (elog-debug org-canvas--logger "[Stage 1: Parse] Properties: start=%s, end=%s, all-day=%s, location=%s"
-               (plist-get data :start_at) (or (plist-get data :end_at) "nil")
-               (plist-get data :all_day) (or (plist-get data :location_name) "nil"))
-
-    ;; Extract description (resolves cross-file links to Canvas URLs)
-    (elog-debug org-canvas--logger "[Stage 1: Export] Exporting subtree to HTML...")
-    (let ((description (org-canvas--export-subtree-body-to-html)))
-      (elog-info org-canvas--logger "[Stage 1: Parse] Description size: %d chars" (length description))
-
-      (plist-put data :description description)
-      (plist-put data :pom pom)
-      data)))
+      (error "Calendar event '%s' requires START_AT property"
+             (plist-get data :title)))
+    data)
+  :properties
+  (("START_AT"         :start_at         :type timestamp)
+   ("END_AT"           :end_at           :type timestamp)
+   ("ALL_DAY"          :all_day          :type boolean)
+   ("LOCATION_NAME"    :location_name    :type string)
+   ("LOCATION_ADDRESS" :location_address :type string)))
 
 ;;;; 2. Stage: Transformation
 
@@ -165,44 +131,16 @@ Returns the matching item alist or nil."
 
 ;;;; Delete
 
-(defun org-canvas-delete-all-calendar-events ()
-  "Delete all calendar events for this course from Canvas.
-Uses global endpoint with context_codes filter."
-  (interactive)
-  (org-canvas-clear-log)
-  (display-buffer (get-buffer-create org-canvas--log-buffer-name))
-  (let* ((context-code (format "course_%s" org-canvas-course-id))
-         (url (format "%s/api/v1/calendar_events" org-canvas-base-url))
-         (items (org-canvas-api-request-all-pages
-                 'GET url
-                 `(("context_codes[]" . ,context-code)
-                   ("type" . "event")))))
-    (elog-info org-canvas--logger "[Delete] Found %d calendar events" (length items))
-    (dolist (item items)
-      (let* ((id (alist-get 'id item))
-             (title (alist-get 'title item))
-             (del-url (format "%s/api/v1/calendar_events/%s" org-canvas-base-url id)))
-        (condition-case err
-            (progn
-              (org-canvas-api-request 'DELETE del-url
-                                      :data '((cancel_reason . "Deleted by org-canvas")))
-              (elog-info org-canvas--logger "[Delete] Deleted calendar event '%s' (ID: %s)" title id))
-          (error
-           (elog-warning org-canvas--logger "[Delete] Failed to delete '%s': %s"
-                         title (error-message-string err))))))
-    ;; Clear CANVAS_ID and LAST_SYNCED from local file
-    (let ((file (expand-file-name org-canvas-calendar-events-file)))
-      (when (file-exists-p file)
-        (org-canvas--for-each-entry
-         file "LEVEL=1"
-         (lambda ()
-           (let ((pom (point)))
-             (org-entry-delete pom "CANVAS_ID")
-             (org-entry-delete pom "LAST_SYNCED")
-             (org-entry-delete pom "PAYLOAD_HASH"))))
-        (with-current-buffer (find-file-noselect file)
-          (save-buffer))))
-    (elog-info org-canvas--logger "[Delete] Calendar events deletion complete")))
+(org-canvas-define-delete-all calendar-events
+  :endpoint "calendar_events"
+  :file org-canvas-calendar-events-file
+  :list-url-fn (lambda ()
+                 (format "%s/api/v1/calendar_events" org-canvas-base-url))
+  :list-params (list (cons "context_codes[]" (format "course_%s" org-canvas-course-id))
+                     (cons "type" "event"))
+  :delete-url-fn (lambda (id)
+                   (format "%s/api/v1/calendar_events/%s" org-canvas-base-url id))
+  :delete-data '((cancel_reason . "Deleted by org-canvas")))
 
 ;;;###autoload
 (defun org-canvas-delete-calendar-event-at-point ()

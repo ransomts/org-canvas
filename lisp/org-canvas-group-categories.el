@@ -36,66 +36,17 @@
   :type 'file
   :group 'org-canvas)
 
-(defconst org-canvas--valid-self-signup-values
-  '("enabled" "restricted")
-  "Valid values for SELF_SIGNUP.")
-
-(defconst org-canvas--valid-auto-leader-values
-  '("first" "random")
-  "Valid values for AUTO_LEADER.")
-
 ;;;; 1. Stage: Extraction
 
-(defun org-canvas--group-category-read-props (pom)
-  "Read raw property strings from the group category heading at POM."
-  (list :title-raw (org-get-heading t t t t)
-        :canvas-id (org-entry-get pom "CANVAS_ID")
-        :self-signup-raw (org-entry-get pom "SELF_SIGNUP")
-        :group-limit-raw (org-entry-get pom "GROUP_LIMIT")
-        :auto-leader-raw (org-entry-get pom "AUTO_LEADER")
-        :create-group-count-raw (org-entry-get pom "CREATE_GROUP_COUNT")))
-
-(defun org-canvas--group-category-transform-props (raw)
-  "Transform raw property strings RAW into typed group category data.
-Pure function — no buffer access."
-  (let ((group-limit (plist-get raw :group-limit-raw))
-        (create-count (plist-get raw :create-group-count-raw)))
-    (list :title (org-canvas--strip-statistics-cookie (plist-get raw :title-raw))
-          :canvas-id (plist-get raw :canvas-id)
-          :self_signup (org-canvas--validate-property
-                        (plist-get raw :self-signup-raw)
-                        org-canvas--valid-self-signup-values
-                        "SELF_SIGNUP")
-          :group_limit (when group-limit
-                         (org-canvas--safe-string-to-number group-limit "GROUP_LIMIT"))
-          :auto_leader (org-canvas--validate-property
-                        (plist-get raw :auto-leader-raw)
-                        org-canvas--valid-auto-leader-values
-                        "AUTO_LEADER")
-          :create_group_count (when create-count
-                                (org-canvas--safe-string-to-number
-                                 create-count "CREATE_GROUP_COUNT")))))
-
-(defun org-canvas--group-category-parse-entry ()
-  "Extract data from the Org heading at point."
-  (org-back-to-heading t)
-  (elog-debug org-canvas--logger "[Stage 1: Parse] Starting extraction at point %d" (point))
-
-  (let* ((pom (point))
-         (data (org-canvas--group-category-transform-props
-                (org-canvas--group-category-read-props pom))))
-
-    (org-canvas--require-title (plist-get data :title) pom "Group category")
-
-    (elog-info org-canvas--logger "[Stage 1: Parse] Processing Group Category: '%s' (ID: %s)"
-              (plist-get data :title) (or (plist-get data :canvas-id) "NEW"))
-    (elog-debug org-canvas--logger "[Stage 1: Parse] Properties: self-signup=%s, group-limit=%s, auto-leader=%s"
-               (or (plist-get data :self_signup) "nil")
-               (or (plist-get data :group_limit) "nil")
-               (or (plist-get data :auto_leader) "nil"))
-
-    (plist-put data :pom pom)
-    data))
+(org-canvas-define-parse group-category
+  :entity-name "Group category"
+  :properties
+  (("SELF_SIGNUP"        :self_signup        :type enum
+    :values org-canvas--valid-self-signup-values)
+   ("GROUP_LIMIT"        :group_limit        :type number)
+   ("AUTO_LEADER"        :auto_leader        :type enum
+    :values org-canvas--valid-auto-leader-values)
+   ("CREATE_GROUP_COUNT" :create_group_count :type number)))
 
 ;;;; 2. Stage: Transformation
 
@@ -145,40 +96,12 @@ PUT is global."
 
 ;;;; Delete
 
-(defun org-canvas-delete-all-group-categories ()
-  "Delete all group categories from Canvas.
-Uses course-scoped GET but global DELETE endpoint."
-  (interactive)
-  (org-canvas-clear-log)
-  (display-buffer (get-buffer-create org-canvas--log-buffer-name))
-  (let ((url (org-canvas-api-course-endpoint "group_categories")))
-    (elog-info org-canvas--logger "[Delete] Fetching group categories...")
-    (let ((items (org-canvas-api-request-all-pages 'GET url)))
-      (elog-info org-canvas--logger "[Delete] Found %d group categories" (length items))
-      (dolist (item items)
-        (let* ((id (alist-get 'id item))
-               (name (alist-get 'name item))
-               (del-url (format "%s/api/v1/group_categories/%s" org-canvas-base-url id)))
-          (condition-case err
-              (progn
-                (org-canvas-api-request 'DELETE del-url)
-                (elog-info org-canvas--logger "[Delete] Deleted group category '%s' (ID: %s)" name id))
-            (error
-             (elog-warning org-canvas--logger "[Delete] Failed to delete '%s': %s"
-                           name (error-message-string err))))))
-      ;; Clear CANVAS_ID and LAST_SYNCED from local file
-      (let ((file (expand-file-name org-canvas-group-categories-file)))
-        (when (file-exists-p file)
-          (org-canvas--for-each-entry
-           file "LEVEL=1"
-           (lambda ()
-             (let ((pom (point)))
-               (org-entry-delete pom "CANVAS_ID")
-               (org-entry-delete pom "LAST_SYNCED")
-               (org-entry-delete pom "PAYLOAD_HASH"))))
-          (with-current-buffer (find-file-noselect file)
-            (save-buffer))))
-      (elog-info org-canvas--logger "[Delete] Group categories deletion complete"))))
+(org-canvas-define-delete-all group-categories
+  :endpoint "group_categories"
+  :file org-canvas-group-categories-file
+  :title-field 'name
+  :delete-url-fn (lambda (id)
+                   (format "%s/api/v1/group_categories/%s" org-canvas-base-url id)))
 
 ;;;###autoload
 (defun org-canvas-delete-group-category-at-point ()

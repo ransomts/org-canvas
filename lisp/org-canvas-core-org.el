@@ -915,6 +915,7 @@ Returns the course name as a string.  Signals an error if the request fails."
 	 (response (org-canvas-api-request 'GET endpoint)))
     (alist-get 'name response)))
 
+;;;###autoload
 (defun org-canvas-test-connection ()
   "Interactive command to test the Canvas API connection."
   (interactive)

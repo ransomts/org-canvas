@@ -252,5 +252,78 @@ DESTINATION should be one of: buffer, file, both."
 	  (elog-set-file org-canvas--logger (org-canvas--log-file-path))))
   (message "org-canvas log destination set to: %s" destination))
 
+;;;; 3. Shared Enum Constants
+;;
+;; Canonical definitions for enum values used by both feature modules
+;; and the validation engine.  Avoids duplicating these lists in
+;; multiple files.
+
+(defconst org-canvas--valid-grading-types
+  '("points" "percent" "letter_grade" "gpa_scale" "pass_fail" "not_graded")
+  "Valid grading types for assignments and graded discussions.")
+
+(defconst org-canvas--valid-submission-types
+  '("online_upload" "online_url" "online_text_entry" "media_recording"
+    "on_paper" "external_tool" "none")
+  "Valid submission types for assignments.")
+
+(defconst org-canvas--valid-quiz-types
+  '("assignment" "practice_quiz" "graded_survey" "survey")
+  "Valid quiz types.")
+
+(defconst org-canvas--valid-question-types
+  '("multiple_choice_question" "true_false_question"
+    "short_answer_question" "fill_in_multiple_blanks_question"
+    "multiple_dropdowns_question" "multiple_answers_question"
+    "matching_question" "numerical_question" "essay_question"
+    "file_upload_question" "text_only_question" "group")
+  "Valid quiz question types.")
+
+(defconst org-canvas--valid-hide-results
+  '("always" "until_after_last_attempt")
+  "Valid hide_results values for quizzes.")
+
+(defconst org-canvas--valid-scoring-policies
+  '("keep_highest" "keep_latest")
+  "Valid scoring_policy values for quizzes.")
+
+(defconst org-canvas--valid-editing-roles
+  '("teachers" "students" "members" "public")
+  "Valid editing roles for pages.")
+
+(defconst org-canvas--valid-discussion-types
+  '("side_comment" "threaded")
+  "Valid discussion types.")
+
+(defconst org-canvas--valid-completion-requirements
+  '("must_view" "must_submit" "must_contribute" "min_score")
+  "Valid completion requirement types for module items.")
+
+(defconst org-canvas--valid-calculation-methods
+  '("highest" "latest" "decaying_average" "n_mastery")
+  "Valid calculation methods for outcomes.")
+
+(defconst org-canvas--valid-use-justifications
+  '("own_copyright" "used_by_permission" "fair_use" "public_domain" "creative_commons")
+  "Valid use_justification values for file usage rights.")
+
+(defconst org-canvas--valid-new-quiz-types
+  '("choice" "true-false" "multi-answer" "short-answer"
+    "essay" "file-upload" "numerical" "matching"
+    "ordering" "categorization" "fill-in-the-blank" "hot-spot")
+  "Valid TYPE values for New Quiz items.")
+
+(defconst org-canvas--valid-new-quiz-scoring-policies
+  '("keep_highest" "keep_latest" "keep_average")
+  "Valid scoring policy values for New Quizzes.")
+
+(defconst org-canvas--valid-self-signup-values
+  '("enabled" "restricted")
+  "Valid values for SELF_SIGNUP.")
+
+(defconst org-canvas--valid-auto-leader-values
+  '("first" "random")
+  "Valid values for AUTO_LEADER.")
+
 (provide 'org-canvas-core-config)
 ;;; org-canvas-core-config.el ends here

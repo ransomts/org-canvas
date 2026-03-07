@@ -212,7 +212,7 @@
                      '(((id . 1) (title . "Item 1"))
                        ((id . 2) (title . "Item 2")))))
                   ((symbol-function 'org-canvas--delete-items-queued)
-                   (lambda (items endpoint-fn id-field title-field &optional skip-fn)
+                   (lambda (items endpoint-fn id-field title-field &optional skip-fn _delete-data)
                      (setq queued-args (list items endpoint-fn id-field title-field skip-fn))
                      (cons 2 '("1" "2")))))
           (let ((deleted (org-canvas--delete-all-items "items"
@@ -232,7 +232,7 @@
                      '(((id . 1) (title . "Keep") (front_page . t))
                        ((id . 2) (title . "Delete") (front_page . :json-false)))))
                   ((symbol-function 'org-canvas--delete-items-queued)
-                   (lambda (_items _endpoint-fn _id-field _title-field &optional skip-fn)
+                   (lambda (_items _endpoint-fn _id-field _title-field &optional skip-fn _delete-data)
                      (setq queued-skip-fn skip-fn)
                      (cons 1 '("2")))))
           (org-canvas--delete-all-items "pages"
@@ -248,7 +248,7 @@
                    (lambda (_method _url &optional _params)
                      '(((url . "my-page") (name . "My Page")))))
                   ((symbol-function 'org-canvas--delete-items-queued)
-                   (lambda (items endpoint-fn id-field title-field &optional _skip-fn)
+                   (lambda (items endpoint-fn id-field title-field &optional _skip-fn _delete-data)
                      (setq queued-args (list items endpoint-fn id-field title-field))
                      (cons 1 '("my-page")))))
           (let ((deleted (org-canvas--delete-all-items "pages"
@@ -267,7 +267,7 @@
                    (lambda (_method _url &optional _params)
                      '(((id . 42) (title . "Test")))))
                   ((symbol-function 'org-canvas--delete-items-queued)
-                   (lambda (_items endpoint-fn _id-field _title-field &optional _skip-fn)
+                   (lambda (_items endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
                      (setq captured-endpoint-fn endpoint-fn)
                      (cons 1 '("42")))))
           (org-canvas--delete-all-items "items"
@@ -299,7 +299,7 @@
                          (lambda (_method _url &optional _params)
                            '(((id . 1) (title . "Item 1")))))
                         ((symbol-function 'org-canvas--delete-items-queued)
-                         (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn)
+                         (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
                            (cons 1 '("1")))))
                 (org-canvas--delete-all-items "items"
                   :endpoint "items"
@@ -504,7 +504,7 @@
                      (setq captured-params params)
                      nil))
                   ((symbol-function 'org-canvas--delete-items-queued)
-                   (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn)
+                   (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
                      (cons 0 nil))))
           (org-canvas--delete-all-items "items"
             :endpoint "items"
@@ -517,7 +517,7 @@
       (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
                  (lambda (_method _url &optional _params) nil))
                 ((symbol-function 'org-canvas--delete-items-queued)
-                 (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn)
+                 (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
                    (cons 0 nil))))
         (let ((deleted (org-canvas--delete-all-items "items"
                          :endpoint "items"
@@ -530,7 +530,7 @@
                  (lambda (_method _url &optional _params)
                    '(((id . 1) (title . "Item")))))
                 ((symbol-function 'org-canvas--delete-items-queued)
-                 (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn)
+                 (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
                    (cons 1 '("1")))))
         (let ((deleted (org-canvas--delete-all-items "items"
                          :endpoint "items"
@@ -759,7 +759,7 @@ Content two.
       (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
                  (lambda (_method _url &optional _params) nil))
                 ((symbol-function 'org-canvas--delete-items-queued)
-                 (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn)
+                 (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
                    (cons 0 nil))))
         (let ((deleted (org-canvas--delete-all-items "items"
                          :endpoint "items"
@@ -789,7 +789,7 @@ Content two.
                            '(((id . 1) (title . "Item A"))
                              ((id . 2) (title . "Item B")))))
                         ((symbol-function 'org-canvas--delete-items-queued)
-                         (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn)
+                         (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
                            ;; Simulate: item 1 deleted, item 2 failed
                            (cons 1 '("1")))))
                 (org-canvas--delete-all-items "items"
@@ -810,7 +810,7 @@ Content two.
                  (lambda (_method _url &optional _params)
                    '(((id . 1) (title . "Item")))))
                 ((symbol-function 'org-canvas--delete-items-queued)
-                 (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn)
+                 (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
                    (cons 1 '("1")))))
         ;; Should not error even with nil file
         (let ((deleted (org-canvas--delete-all-items "items"

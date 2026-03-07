@@ -2270,20 +2270,20 @@ Quiz description.
 
 ;;;; Constants
 
-(describe "org-canvas--new-quiz-valid-types"
+(describe "org-canvas--valid-new-quiz-types"
   (it "contains all expected types"
-    (expect (length org-canvas--new-quiz-valid-types) :to-equal 11)
-    (expect (member "choice" org-canvas--new-quiz-valid-types) :to-be-truthy)
-    (expect (member "true-false" org-canvas--new-quiz-valid-types) :to-be-truthy)
-    (expect (member "essay" org-canvas--new-quiz-valid-types) :to-be-truthy)
-    (expect (member "hot-spot" org-canvas--new-quiz-valid-types) :to-be-truthy)))
+    (expect (length org-canvas--valid-new-quiz-types) :to-equal 12)
+    (expect (member "choice" org-canvas--valid-new-quiz-types) :to-be-truthy)
+    (expect (member "true-false" org-canvas--valid-new-quiz-types) :to-be-truthy)
+    (expect (member "essay" org-canvas--valid-new-quiz-types) :to-be-truthy)
+    (expect (member "hot-spot" org-canvas--valid-new-quiz-types) :to-be-truthy)))
 
-(describe "org-canvas--new-quiz-valid-scoring-policies"
+(describe "org-canvas--valid-new-quiz-scoring-policies"
   (it "contains valid scoring policies"
-    (expect (length org-canvas--new-quiz-valid-scoring-policies) :to-equal 3)
-    (expect (member "keep_highest" org-canvas--new-quiz-valid-scoring-policies)
+    (expect (length org-canvas--valid-new-quiz-scoring-policies) :to-equal 3)
+    (expect (member "keep_highest" org-canvas--valid-new-quiz-scoring-policies)
             :to-be-truthy)
-    (expect (member "keep_average" org-canvas--new-quiz-valid-scoring-policies)
+    (expect (member "keep_average" org-canvas--valid-new-quiz-scoring-policies)
             :to-be-truthy)))
 
 ;;;; Configuration

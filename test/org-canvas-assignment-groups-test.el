@@ -396,4 +396,33 @@
       (point))
      (expect (org-entry-get (point) "NEVER_DROP") :to-be nil))))
 
+;;;; Delete at Point
+
+(describe "org-canvas-delete-assignment-group-at-point"
+  (it "deletes assignment group and clears properties"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-temp-org-buffer
+         "* Test
+:PROPERTIES:
+:CANVAS_ID: 42
+:LAST_SYNCED: [2024-01-01 Mon]
+:END:
+"
+         (org-back-to-heading)
+         (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+           (org-canvas-delete-assignment-group-at-point)
+           (expect-api-called 'DELETE "assignment_groups/42")
+           (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)
+           (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil))))))
+
+  (it "errors when no CANVAS_ID"
+    (with-temp-org-buffer
+     "* New
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (expect (org-canvas-delete-assignment-group-at-point) :to-throw 'user-error))))
+
 ;;; org-canvas-assignment-groups-test.el ends here

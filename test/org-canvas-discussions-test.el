@@ -671,4 +671,47 @@ Content.
          '((id . 42)))
         (expect called :to-be nil)))))
 
+;;;; Delete at Point
+
+(describe "org-canvas-delete-discussion-at-point"
+  (it "deletes discussion and clears properties"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-temp-org-buffer
+         "* Test
+:PROPERTIES:
+:CANVAS_ID: 42
+:LAST_SYNCED: [2024-01-01 Mon]
+:END:
+"
+         (org-back-to-heading)
+         (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+           (org-canvas-delete-discussion-at-point)
+           (expect-api-called 'DELETE "discussion_topics/42")
+           (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)
+           (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil))))))
+
+  (it "errors when no CANVAS_ID"
+    (with-temp-org-buffer
+     "* New
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (expect (org-canvas-delete-discussion-at-point) :to-throw 'user-error)))
+
+  (it "aborts when user says no"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-temp-org-buffer
+         "* Test
+:PROPERTIES:
+:CANVAS_ID: 42
+:END:
+"
+         (org-back-to-heading)
+         (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil)))
+           (org-canvas-delete-discussion-at-point)
+           (expect (org-entry-get (point) "CANVAS_ID") :to-equal "42")))))))
+
 ;;; org-canvas-discussions-test.el ends here

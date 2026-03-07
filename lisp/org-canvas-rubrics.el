@@ -233,11 +233,6 @@ Returns total points across all criteria."
 
 ;;;; 3. Stage: Execution
 
-(defun org-canvas--rubric-search-by-title (title)
-  "Search for a rubric with TITLE on Canvas.  Return nil on error."
-  ;; Rubrics API doesn't support search_term, so we fetch all and filter
-  (org-canvas--search-item "rubrics" title :params nil))
-
 (defun org-canvas--rubric-delete-by-id (id)
   "Delete rubric with ID from Canvas."
   (elog-info org-canvas--logger "[Stage 3: Delete] Deleting rubric ID: %s" id)
@@ -255,7 +250,7 @@ it before creating new one."
     (elog-info org-canvas--logger "[Stage 3: Execute] Starting push for rubric '%s'" title)
 
     ;; Check for existing rubric with same title
-    (let ((existing (org-canvas--rubric-search-by-title title)))
+    (let ((existing (org-canvas--search-item "rubrics" title :params nil)))
       (when existing
         (let ((existing-id (alist-get 'id existing)))
           (elog-warning org-canvas--logger "[Stage 3: Conflict] Rubric '%s' already exists (ID: %s). Deleting..." title existing-id)
@@ -274,7 +269,7 @@ it before creating new one."
        (elog-error org-canvas--logger "[Stage 3: Execute] POST failed: %s" (error-message-string err))
        (if (org-canvas--timeout-error-p err)
            (org-canvas--handle-timeout-recovery
-            #'org-canvas--rubric-search-by-title title err)
+            (lambda (t_) (org-canvas--search-item "rubrics" t_ :params nil)) title err)
          (signal (car err) (cdr err)))))))
 
 ;;;; 4. Stage: Finalization
@@ -615,6 +610,9 @@ ITEM is the API response alist, POS is the heading position."
   :file org-canvas-rubrics-file
   :endpoint "rubrics"
   :item-fn #'org-canvas--rubric-pull-item)
+
+(org-canvas-define-delete-at-point rubric
+  :endpoint "rubrics/%s")
 
 (provide 'org-canvas-rubrics)
 ;;; org-canvas-rubrics.el ends here

@@ -13,36 +13,36 @@
     (let ((result (org-canvas--calendar-event-transform-props
                    '(:title-raw "Office Hours [2/3]" :canvas-id nil
                      :start-at-raw "<2026-09-01 Tue 14:00>" :end-at-raw nil
-                     :all-day-raw nil :location-name nil :location-address nil))))
+                     :all-day-raw nil :location-name-raw nil :location-address-raw nil))))
       (expect (plist-get result :title) :to-equal "Office Hours")))
 
   (it "parses START_AT to ISO8601"
     (let ((result (org-canvas--calendar-event-transform-props
                    '(:title-raw "Event" :canvas-id nil
                      :start-at-raw "<2026-09-01 Tue 14:00>" :end-at-raw nil
-                     :all-day-raw nil :location-name nil :location-address nil))))
+                     :all-day-raw nil :location-name-raw nil :location-address-raw nil))))
       (expect (plist-get result :start_at) :to-match "2026-09-01T")))
 
   (it "returns nil for absent END_AT"
     (let ((result (org-canvas--calendar-event-transform-props
                    '(:title-raw "Event" :canvas-id nil
                      :start-at-raw "<2026-09-01 Tue 14:00>" :end-at-raw nil
-                     :all-day-raw nil :location-name nil :location-address nil))))
+                     :all-day-raw nil :location-name-raw nil :location-address-raw nil))))
       (expect (plist-get result :end_at) :to-be nil)))
 
   (it "interprets ALL_DAY boolean"
     (let ((result (org-canvas--calendar-event-transform-props
                    '(:title-raw "Event" :canvas-id nil
                      :start-at-raw "<2026-09-01 Tue 14:00>" :end-at-raw nil
-                     :all-day-raw "true" :location-name nil :location-address nil))))
+                     :all-day-raw "true" :location-name-raw nil :location-address-raw nil))))
       (expect (plist-get result :all_day) :to-be t)))
 
   (it "passes through location strings"
     (let ((result (org-canvas--calendar-event-transform-props
                    '(:title-raw "Event" :canvas-id nil
                      :start-at-raw "<2026-09-01 Tue 14:00>" :end-at-raw nil
-                     :all-day-raw nil :location-name "Room 101"
-                     :location-address "123 Main St"))))
+                     :all-day-raw nil :location-name-raw "Room 101"
+                     :location-address-raw "123 Main St"))))
       (expect (plist-get result :location_name) :to-equal "Room 101")
       (expect (plist-get result :location_address) :to-equal "123 Main St"))))
 
@@ -412,7 +412,8 @@ Weekly office hours.
                   (org-canvas-api-token "test-token")
                   (org-canvas-course-id "99999"))
               (with-sync-test-env
-                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t))
+                          ((symbol-function 'org-canvas-api-request-all-pages)
                            (lambda (_method _url &optional _params)
                              '(((id . 42) (title . "Event")))))
                           ((symbol-function 'org-canvas-api-request)
@@ -559,7 +560,8 @@ Weekly office hours.
             (let ((org-canvas-calendar-events-file cal-file))
               (with-org-canvas-test-config
                 (with-sync-test-env
-                  (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                  (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t))
+                            ((symbol-function 'org-canvas-api-request-all-pages)
                              (lambda (_method _url &optional _params)
                                '(((id . 10) (title . "Event A")))))
                             ((symbol-function 'org-canvas-api-request)
@@ -580,7 +582,8 @@ Weekly office hours.
     (with-org-canvas-test-config
       (with-sync-test-env
         (let ((org-canvas-calendar-events-file "/tmp/nonexistent-cal.org"))
-          (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t))
+                    ((symbol-function 'org-canvas-api-request-all-pages)
                      (lambda (_method _url &optional _params)
                        '(((id . 99) (title . "Bad Event")))))
                     ((symbol-function 'org-canvas-api-request)

@@ -54,7 +54,7 @@ Logs warnings for invalid roles.  Returns RAW unchanged."
   (when raw
     (let ((roles (mapcar #'string-trim (split-string raw "," t))))
       (dolist (role roles)
-        (unless (member role '("teachers" "students" "members" "public"))
+        (unless (member role org-canvas--valid-editing-roles)
           (when (boundp 'org-canvas--logger)
             (elog-warning org-canvas--logger
               "[Validate] EDITING_ROLES: '%s' is not valid (expected: teachers, students, members, public)"
@@ -62,60 +62,21 @@ Logs warnings for invalid roles.  Returns RAW unchanged."
           (message "Warning: EDITING_ROLES '%s' is not valid" role)))))
   raw)
 
-(defun org-canvas--page-read-props (pom)
-  "Read raw property strings from the page heading at POM."
-  (list :title-raw (org-get-heading t t t t)
-        :canvas-url (org-entry-get pom "CANVAS_URL")
-        :published-raw (org-entry-get pom "PUBLISHED")
-        :front-page-raw (org-entry-get pom "FRONT_PAGE")
-        :editing-roles-raw (org-entry-get pom "EDITING_ROLES")
-        :todo-date-raw (org-entry-get pom "TODO_DATE")
-        :notify-of-update-raw (org-entry-get pom "NOTIFY_OF_UPDATE")))
-
-(defun org-canvas--page-transform-props (raw)
-  "Transform raw property strings RAW into typed page data.
-Pure function — no buffer access."
-  (list :title (org-canvas--strip-statistics-cookie (plist-get raw :title-raw))
-        :canvas-url (plist-get raw :canvas-url)
-        :published (org-canvas--interpret-boolean (plist-get raw :published-raw) t)
-        :front_page (org-canvas--interpret-boolean (plist-get raw :front-page-raw))
-        :editing_roles (org-canvas--page-validate-editing-roles
-                        (plist-get raw :editing-roles-raw))
-        :student_todo_at (org-canvas-org-parse-timestamp (plist-get raw :todo-date-raw))
-        :notify_of_update (org-canvas--interpret-boolean
-                           (plist-get raw :notify-of-update-raw))))
-
-(defun org-canvas--page-parse-entry ()
-  "Extract wiki page data from the Org heading at point."
-  (org-back-to-heading t)
-  (elog-debug org-canvas--logger "[Stage 1: Parse] Starting extraction at point %d" (point))
-
-  (let* ((pom (point))
-         (raw (org-canvas--page-read-props pom))
-         (data (org-canvas--page-transform-props raw)))
-
-    (org-canvas--require-title (plist-get data :title) pom "Page")
-
-    (elog-info org-canvas--logger "[Stage 1: Parse] Processing Page: '%s' (URL: %s)"
-              (plist-get data :title) (or (plist-get data :canvas-url) "NEW"))
-    (elog-debug org-canvas--logger "[Stage 1: Parse] Properties: published=%s, front-page=%s, editing-roles=%s"
-      (plist-get data :published) (plist-get data :front_page)
-      (or (plist-get data :editing_roles) "default"))
-
-    ;; Perform the export safely, resolving cross-file links to Canvas URLs
-    (elog-debug org-canvas--logger "[Stage 1: Export] Exporting subtree to HTML...")
-    (let ((content
-           (condition-case export-err
-               (org-canvas--export-subtree-body-to-html)
-             (error
-              (elog-error org-canvas--logger "[Stage 1: Export] Failed: %s" (error-message-string export-err))
-              (signal (car export-err) (cdr export-err))))))
-
-      (elog-info org-canvas--logger "[Stage 1: Parse] Body size: %d chars" (length content))
-
-      (plist-put data :body content)
-      (plist-put data :pom pom)
-      data)))
+(org-canvas-define-parse page
+  :body :body
+  :id-key :canvas-url
+  :id-property "CANVAS_URL"
+  :entity-name "Page"
+  :after-transform
+  (lambda (data)
+    (org-canvas--page-validate-editing-roles (plist-get data :editing_roles))
+    data)
+  :properties
+  (("PUBLISHED"       :published       :type boolean :default t)
+   ("FRONT_PAGE"      :front_page      :type boolean)
+   ("EDITING_ROLES"   :editing_roles   :type string)
+   ("TODO_DATE"       :student_todo_at :type timestamp)
+   ("NOTIFY_OF_UPDATE" :notify_of_update :type boolean)))
 
 ;;;; 2. Stage: Transformation
 
@@ -149,12 +110,6 @@ Pure function — no buffer access."
       (elog-debug org-canvas--logger "[Stage 2: Transform] Payload complete")
       outer-wrapper)))
 
-;;;; 3. Stage: Execution Helper
-
-(defun org-canvas--page-search-by-title (title)
-  "Search for a page with TITLE on Canvas.  Return nil on error."
-  (org-canvas--search-item "pages" title))
-
 ;;;; Main Sync Functions
 
 ;; Generate org-canvas-sync-pages using the pipeline macro
@@ -166,7 +121,7 @@ Pure function — no buffer access."
   :id-key :canvas-url
   :id-field 'url
   :id-property "CANVAS_URL"
-  :find-fn #'org-canvas--page-search-by-title
+  :find-fn (lambda (title) (org-canvas--search-item "pages" title))
   :pull-item-fn #'org-canvas--page-pull-item)
 
 ;; Pages use 'url instead of 'id, and we skip the front page
@@ -177,7 +132,7 @@ Pure function — no buffer access."
   :id-key :canvas-url
   :id-field 'url
   :id-property "CANVAS_URL"
-  :find-fn #'org-canvas--page-search-by-title
+  :find-fn (lambda (title) (org-canvas--search-item "pages" title))
   :pull-item-fn #'org-canvas--page-pull-item)
 
 (org-canvas-define-delete-all pages

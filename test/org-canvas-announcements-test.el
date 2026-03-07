@@ -13,49 +13,49 @@
     (let ((result (org-canvas--announcement-transform-props
                    '(:title-raw "My Announcement [1/3]" :canvas-id nil
                      :published-raw nil :post-at-raw nil
-                     :allow-comments-raw nil :specific-sections nil))))
+                     :allow-comments-raw nil :specific-sections-raw nil))))
       (expect (plist-get result :title) :to-equal "My Announcement")))
 
   (it "defaults published to true when nil"
     (let ((result (org-canvas--announcement-transform-props
                    '(:title-raw "Test" :canvas-id nil
                      :published-raw nil :post-at-raw nil
-                     :allow-comments-raw nil :specific-sections nil))))
+                     :allow-comments-raw nil :specific-sections-raw nil))))
       (expect (plist-get result :published) :to-be t)))
 
   (it "interprets published=false"
     (let ((result (org-canvas--announcement-transform-props
                    '(:title-raw "Test" :canvas-id nil
                      :published-raw "false" :post-at-raw nil
-                     :allow-comments-raw nil :specific-sections nil))))
+                     :allow-comments-raw nil :specific-sections-raw nil))))
       (expect (plist-get result :published) :to-be nil)))
 
   (it "parses POST_AT to ISO8601"
     (let ((result (org-canvas--announcement-transform-props
                    '(:title-raw "Test" :canvas-id nil
                      :published-raw nil :post-at-raw "<2024-06-15 Sat 10:00>"
-                     :allow-comments-raw nil :specific-sections nil))))
+                     :allow-comments-raw nil :specific-sections-raw nil))))
       (expect (plist-get result :delayed_post_at) :to-match "2024-06-15T")))
 
   (it "returns nil for absent POST_AT"
     (let ((result (org-canvas--announcement-transform-props
                    '(:title-raw "Test" :canvas-id nil
                      :published-raw nil :post-at-raw nil
-                     :allow-comments-raw nil :specific-sections nil))))
+                     :allow-comments-raw nil :specific-sections-raw nil))))
       (expect (plist-get result :delayed_post_at) :to-be nil)))
 
   (it "interprets ALLOW_COMMENTS boolean"
     (let ((result (org-canvas--announcement-transform-props
                    '(:title-raw "Test" :canvas-id nil
                      :published-raw nil :post-at-raw nil
-                     :allow-comments-raw "true" :specific-sections nil))))
+                     :allow-comments-raw "true" :specific-sections-raw nil))))
       (expect (plist-get result :allow_discussion_comments) :to-be t)))
 
   (it "passes through canvas-id and specific-sections"
     (let ((result (org-canvas--announcement-transform-props
                    '(:title-raw "Test" :canvas-id "42"
                      :published-raw nil :post-at-raw nil
-                     :allow-comments-raw nil :specific-sections "sec1,sec2"))))
+                     :allow-comments-raw nil :specific-sections-raw "sec1,sec2"))))
       (expect (plist-get result :canvas-id) :to-equal "42")
       (expect (plist-get result :specific_sections) :to-equal "sec1,sec2"))))
 
@@ -301,7 +301,7 @@ Body content.
                            (lambda (_method _url &optional _params)
                              '(((id . 111) (title . "Announcement")))))
                           ((symbol-function 'org-canvas--delete-items-queued)
-                           (lambda (items _endpoint-fn _id-field _title-field &optional _skip-fn)
+                           (lambda (items _endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
                              (setq deleted-count (length items))
                              (cons (length items) (mapcar (lambda (i) (number-to-string (alist-get 'id i))) items)))))
                   (org-canvas-delete-all-announcements)
@@ -429,5 +429,48 @@ Content for everyone.
                    :specific_sections nil))
            (payload (org-canvas--announcement-build-payload data)))
       (expect (assq 'specific_sections payload) :to-be nil))))
+
+;;;; Delete at Point
+
+(describe "org-canvas-delete-announcement-at-point"
+  (it "deletes announcement and clears properties"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-temp-org-buffer
+         "* Test
+:PROPERTIES:
+:CANVAS_ID: 42
+:LAST_SYNCED: [2024-01-01 Mon]
+:END:
+"
+         (org-back-to-heading)
+         (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+           (org-canvas-delete-announcement-at-point)
+           (expect-api-called 'DELETE "discussion_topics/42")
+           (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)
+           (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil))))))
+
+  (it "errors when no CANVAS_ID"
+    (with-temp-org-buffer
+     "* New
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (expect (org-canvas-delete-announcement-at-point) :to-throw 'user-error)))
+
+  (it "aborts when user says no"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-temp-org-buffer
+         "* Test
+:PROPERTIES:
+:CANVAS_ID: 42
+:END:
+"
+         (org-back-to-heading)
+         (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil)))
+           (org-canvas-delete-announcement-at-point)
+           (expect (org-entry-get (point) "CANVAS_ID") :to-equal "42")))))))
 
 ;;; org-canvas-announcements-test.el ends here

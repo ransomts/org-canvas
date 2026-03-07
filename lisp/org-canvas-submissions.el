@@ -297,6 +297,7 @@ SUBMISSIONS is the list of submission alists."
 
 ;;;; View Toggle
 
+;;;###autoload
 (defun org-canvas-submissions-toggle-view ()
   "Toggle between summary and detail views using cached data."
   (interactive)
@@ -319,6 +320,7 @@ SUBMISSIONS is the list of submission alists."
 
 ;;;; Comment Writing
 
+;;;###autoload
 (defun org-canvas-submissions-add-comment ()
   "Post a text comment on the submission at point.
 Must be on or inside a student heading in detail view."
@@ -375,6 +377,7 @@ Searches from point for the ** Comments sub-heading under the current heading."
 
 ;;;; File Download
 
+;;;###autoload
 (defun org-canvas-submissions-download-attachments ()
   "Download attachments for the submission at point.
 Files are saved to submissions/files/<assignment>/<student>/."
@@ -449,6 +452,7 @@ to a buffer in `org-canvas-submissions-directory'."
      selected-name assignment-id submissions
      org-canvas-submissions-default-view)))
 
+;;;###autoload
 (defun org-canvas-submissions-refresh ()
   "Re-fetch and re-render submissions for the current buffer."
   (interactive)
@@ -633,6 +637,7 @@ DIFFS is a list of plists with :user-id and :new-score."
     (org-canvas-api-request 'POST url
       :data `((grade_data . ,grade-data)))))
 
+;;;###autoload
 (cl-defun org-canvas-submissions-push-grades ()
   "Push all modified grades from the current buffer to Canvas.
 Compare current scores against the snapshot taken at render time."

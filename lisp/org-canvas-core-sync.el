@@ -31,6 +31,154 @@ Bound per-sync by `org-canvas-define-sync'.")
 Dynamically bound by the sync pipeline so `org-canvas--push-to-api'
 can access it without changing per-module push function signatures.")
 
+;;;; 5b. Declarative Parse Macro
+;;
+;; Generates read-props, transform-props, and parse-entry from a
+;; declarative property spec.
+
+(defun org-canvas--parse-gen-raw-key (prop-name)
+  "Generate a raw plist key from Org PROP-NAME string.
+E.g., \"PUBLISHED\" → :published-raw, \"POST_AT\" → :post-at-raw."
+  (intern (format ":%s-raw" (downcase (replace-regexp-in-string "_" "-" prop-name)))))
+
+(defun org-canvas--parse-gen-transform-form (prop-name data-key type default values)
+  "Generate the transform expression for a single property.
+PROP-NAME is the Org property name.  DATA-KEY is the output plist key.
+TYPE is one of: string, boolean, timestamp, number, enum.
+DEFAULT is the default value for booleans.  VALUES is the enum list."
+  (let ((raw-key (org-canvas--parse-gen-raw-key prop-name)))
+    (pcase type
+      ('boolean
+       (if default
+           `(org-canvas--interpret-boolean (plist-get raw ,raw-key) ,default)
+         `(org-canvas--interpret-boolean (plist-get raw ,raw-key))))
+      ('timestamp
+       `(org-canvas-org-parse-timestamp (plist-get raw ,raw-key)))
+      ('number
+       `(let ((v (plist-get raw ,raw-key)))
+          (when v (org-canvas--safe-string-to-number v ,prop-name))))
+      ('enum
+       `(org-canvas--validate-property
+         (plist-get raw ,raw-key) ,values ,prop-name
+         ,(when default default)))
+      (_ ; string
+       `(plist-get raw ,raw-key)))))
+
+(defmacro org-canvas-define-parse (feature &rest args)
+  "Define read-props, transform-props, and parse-entry for FEATURE.
+
+FEATURE is an unquoted symbol like \\='announcement.
+
+ARGS is a plist with the following keys:
+  :properties - List of (ORG-PROP DATA-KEY &rest OPTS) property specs.
+                Each spec defines one Org property to read and transform.
+                OPTS is a plist: :type (string|boolean|timestamp|number|enum),
+                :default (for booleans/enums), :values (for enums).
+  :body - Output plist key for exported HTML body (nil = no body export).
+  :title-key - Output plist key for the title (default :title).
+  :id-key - Output plist key for the canvas ID (default :canvas-id).
+  :id-property - Org property name for canvas ID (default \"CANVAS_ID\").
+  :entity-name - Display name for error messages (default: capitalized FEATURE).
+  :after-read - (lambda (raw pom) raw) — post-read hook for link resolution.
+  :after-transform - (lambda (data) data) — post-transform hook for computed fields.
+
+Example:
+  (org-canvas-define-parse announcement
+    :body :message
+    :properties
+    ((\"PUBLISHED\"      :published                :type boolean  :default t)
+     (\"POST_AT\"        :delayed_post_at          :type timestamp)
+     (\"ALLOW_COMMENTS\" :allow_discussion_comments :type boolean)
+     (\"SPECIFIC_SECTIONS\" :specific_sections      :type string)))"
+  (declare (indent 1))
+  (let* ((feature-name (symbol-name feature))
+         (read-fn (intern (format "org-canvas--%s-read-props" feature-name)))
+         (transform-fn (intern (format "org-canvas--%s-transform-props" feature-name)))
+         (parse-fn (intern (format "org-canvas--%s-parse-entry" feature-name)))
+         (props (plist-get args :properties))
+         (body-key (plist-get args :body))
+         (title-key (or (plist-get args :title-key) :title))
+         (id-key (or (plist-get args :id-key) :canvas-id))
+         (id-property (or (plist-get args :id-property) "CANVAS_ID"))
+         (entity-name (or (plist-get args :entity-name)
+                          (capitalize feature-name)))
+         (after-read (plist-get args :after-read))
+         (after-transform (plist-get args :after-transform))
+         ;; Generate the raw-key for id-property
+         (id-raw-key (if (string= id-property "CANVAS_ID")
+                         :canvas-id
+                       (intern (format ":%s" (downcase
+                                              (replace-regexp-in-string
+                                               "_" "-" id-property))))))
+         ;; Build read-props body: list of :key-raw (org-entry-get pom "PROP")
+         (read-forms
+          (apply #'append
+                 (mapcar (lambda (spec)
+                           (let ((prop-name (nth 0 spec))
+                                 (raw-key (org-canvas--parse-gen-raw-key (nth 0 spec))))
+                             (list raw-key `(org-entry-get pom ,prop-name))))
+                         props)))
+         ;; Build transform-props body: list of :data-key (transform-expr)
+         (transform-forms
+          (apply #'append
+                 (mapcar (lambda (spec)
+                           (let* ((prop-name (nth 0 spec))
+                                  (data-key (nth 1 spec))
+                                  (opts (cddr spec))
+                                  (type (or (plist-get opts :type) 'string))
+                                  (default (plist-get opts :default))
+                                  (values (plist-get opts :values)))
+                             (list data-key
+                                   (org-canvas--parse-gen-transform-form
+                                    prop-name data-key type default values))))
+                         props))))
+    `(progn
+       (defun ,read-fn (pom)
+         ,(format "Read raw property strings from the %s heading at POM." feature-name)
+         ,(let ((base-form `(list :title-raw (org-get-heading t t t t)
+                                  ,id-raw-key (org-entry-get pom ,id-property)
+                                  ,@read-forms)))
+            (if after-read
+                `(let ((raw ,base-form))
+                   (funcall ,after-read raw pom))
+              base-form)))
+
+       (defun ,transform-fn (raw)
+         ,(format "Transform raw property strings RAW into typed %s data.\nPure function — no buffer access." feature-name)
+         ,(let ((base-form `(list ,title-key (org-canvas--strip-statistics-cookie
+                                              (plist-get raw :title-raw))
+                                  ,id-key (plist-get raw ,id-raw-key)
+                                  ,@transform-forms)))
+            (if after-transform
+                `(let ((data ,base-form))
+                   (funcall ,after-transform data))
+              base-form)))
+
+       (defun ,parse-fn ()
+         ,(format "Extract %s data from the Org heading at point." feature-name)
+         (org-back-to-heading t)
+         (elog-debug org-canvas--logger
+                     "[Stage 1: Parse] Starting extraction at point %%d" (point))
+         (let* ((pom (point))
+                (raw (,read-fn pom))
+                (data (,transform-fn raw)))
+           (org-canvas--require-title (plist-get data ,title-key) pom ,entity-name)
+           (elog-info org-canvas--logger
+                      "[Stage 1: Parse] Processing %s: '%%s' (ID: %%s)"
+                      ,entity-name
+                      (plist-get data ,title-key)
+                      (or (plist-get data ,id-key) "NEW"))
+           ,@(when body-key
+               `((elog-debug org-canvas--logger
+                             "[Stage 1: Export] Exporting subtree to HTML...")
+                 (let ((content (org-canvas--export-subtree-body-to-html)))
+                   (elog-info org-canvas--logger
+                              "[Stage 1: Parse] Body size: %%d chars"
+                              (length content))
+                   (plist-put data ,body-key content))))
+           (plist-put data :pom pom)
+           data)))))
+
 ;;;; 6. Sync Pipeline Infrastructure
 ;;
 ;; Runtime helpers called by the generated sync functions.
@@ -419,6 +567,7 @@ when no LAST_SYNCED exists (legacy item, first sync)."
 (defconst org-canvas--conflict-buffer-name "*canvas-conflict*"
   "Buffer name for the conflict resolution diff display.")
 
+;;;###autoload
 (defun org-canvas-demo-conflict ()
   "Display a sample conflict diff buffer for evaluating the UI.
 Shows the `diff-mode' conflict resolution interface with mock data,
@@ -865,11 +1014,14 @@ TITLE-FIELD is the alist key for item display names."
       (elog-info org-canvas--logger "Skipping: '%s'"
         (alist-get title-field item)))))
 
-(defun org-canvas--delete-items-queued (items endpoint-fn id-field title-field &optional skip-fn)
+(defun org-canvas--delete-items-queued (items endpoint-fn id-field
+                                       title-field &optional skip-fn
+                                       delete-data)
   "Delete ITEMS from Canvas using synchronous requests.
 ENDPOINT-FN is a function taking an item ID and returning the DELETE URL.
 ID-FIELD and TITLE-FIELD are alist keys for extracting ID/title from each item.
 SKIP-FN, if non-nil, is called with each item; non-nil return skips that item.
+DELETE-DATA, if non-nil, is an alist of extra data sent with DELETE.
 Returns (DELETED-COUNT . DELETED-IDS)."
   (let* ((to-delete (if skip-fn (cl-remove-if skip-fn items) items))
          (skipped (- (length items) (length to-delete))))
@@ -886,7 +1038,10 @@ Returns (DELETED-COUNT . DELETED-IDS)."
             (elog-info org-canvas--logger "Deleting: '%s' (ID: %s)" item-title item-id)
             (condition-case err
                 (progn
-                  (org-canvas-api-request 'DELETE (funcall endpoint-fn item-id))
+                  (if delete-data
+                      (org-canvas-api-request 'DELETE (funcall endpoint-fn item-id)
+                                              :data delete-data)
+                    (org-canvas-api-request 'DELETE (funcall endpoint-fn item-id)))
                   (push (org-canvas--normalize-id item-id) deleted-ids)
                   (setq deleted-count (1+ deleted-count))
                   (elog-info org-canvas--logger "  -> Deleted '%s' successfully" item-title))
@@ -903,7 +1058,10 @@ Returns (DELETED-COUNT . DELETED-IDS)."
                                         title-field
                                         id-property
                                         list-params
-                                        skip-fn)
+                                        skip-fn
+                                        list-url-fn
+                                        delete-url-fn
+                                        delete-data)
   "Generic implementation for deleting all items of a feature type.
 
 FEATURE-NAME is a string like \"announcements\" or \"pages\".
@@ -916,21 +1074,27 @@ Keyword arguments:
   ID-PROPERTY - Org property name for ID (default: \"CANVAS_ID\").
   LIST-PARAMS - Extra params for GET request.
   SKIP-FN - Optional function taking an item, returns non-nil to skip.
+  LIST-URL-FN - Optional function returning the list URL (overrides ENDPOINT).
+  DELETE-URL-FN - Optional function taking item-id, returning the delete URL.
+  DELETE-DATA - Optional alist of extra data to send with DELETE request.
 
 Returns the count of successfully deleted items."
   (let* ((id-field (or id-field 'id))
          (title-field (or title-field 'title))
          (id-property (or id-property "CANVAS_ID"))
-         (full-endpoint (org-canvas-api-course-endpoint endpoint))
+         (full-endpoint (if list-url-fn
+                            (funcall list-url-fn)
+                          (org-canvas-api-course-endpoint endpoint)))
          (remote-items (org-canvas-api-request-all-pages 'GET full-endpoint list-params)))
 
     (elog-info org-canvas--logger "Found %d %s on Canvas" (length remote-items) feature-name)
 
-    (let* ((result (org-canvas--delete-items-queued
-                    remote-items
-                    (lambda (item-id)
-                      (org-canvas-api-course-endpoint (format "%s/%%s" endpoint) item-id))
-                    id-field title-field skip-fn))
+    (let* ((del-fn (or delete-url-fn
+                       (lambda (item-id)
+                         (org-canvas-api-course-endpoint (format "%s/%%s" endpoint) item-id))))
+           (result (org-canvas--delete-items-queued
+                    remote-items del-fn
+                    id-field title-field skip-fn delete-data))
            (deleted-count (car result)))
 
       ;; Cleanup local properties
@@ -986,11 +1150,13 @@ Return non-nil if deletion succeeded."
 (cl-defun org-canvas--delete-all-runtime (feature-name &key endpoint file
                                                         id-field title-field
                                                         id-property list-params
-                                                        skip-fn)
+                                                        skip-fn list-url-fn
+                                                        delete-url-fn delete-data)
   "Runtime body for generated delete-all functions.
 FEATURE-NAME is the module name string.  ENDPOINT, FILE, ID-FIELD,
-TITLE-FIELD, ID-PROPERTY, LIST-PARAMS, and SKIP-FN are passed
-through to `org-canvas--delete-all-items'."
+TITLE-FIELD, ID-PROPERTY, LIST-PARAMS, SKIP-FN, LIST-URL-FN,
+DELETE-URL-FN, and DELETE-DATA are passed through to
+`org-canvas--delete-all-items'."
   (org-canvas-clear-log)
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (let ((feature-upper (upcase feature-name)))
@@ -1001,14 +1167,16 @@ through to `org-canvas--delete-all-items'."
                           :endpoint endpoint :file file
                           :id-field id-field :title-field title-field
                           :id-property id-property :list-params list-params
-                          :skip-fn skip-fn)))
+                          :skip-fn skip-fn :list-url-fn list-url-fn
+                          :delete-url-fn delete-url-fn :delete-data delete-data)))
     (message "%s deletion complete. %d removed." (capitalize feature-name) deleted-count)))
 
 (defmacro org-canvas-define-delete-all (feature &rest args)
   "Define a delete-all function for FEATURE.
 FEATURE is a symbol like \\='pages.  ARGS is a plist with keys:
   :endpoint, :file (required), :id-field, :title-field,
-  :id-property, :list-params, :skip-fn."
+  :id-property, :list-params, :skip-fn, :list-url-fn,
+  :delete-url-fn, :delete-data."
   (declare (indent 1))
   (let* ((feature-name (symbol-name feature))
          (fn-name (intern (format "org-canvas-delete-all-%s" feature-name)))
@@ -1018,7 +1186,10 @@ FEATURE is a symbol like \\='pages.  ARGS is a plist with keys:
          (title-field (or (plist-get args :title-field) ''title))
          (id-property (or (plist-get args :id-property) "CANVAS_ID"))
          (list-params (plist-get args :list-params))
-         (skip-fn (plist-get args :skip-fn)))
+         (skip-fn (plist-get args :skip-fn))
+         (list-url-fn (plist-get args :list-url-fn))
+         (delete-url-fn (plist-get args :delete-url-fn))
+         (delete-data (plist-get args :delete-data)))
     (unless endpoint (error "org-canvas-define-delete-all: :endpoint is required"))
     (unless file-expr (error "org-canvas-define-delete-all: :file is required"))
     `(progn
@@ -1033,7 +1204,8 @@ FEATURE is a symbol like \\='pages.  ARGS is a plist with keys:
            :endpoint ,endpoint :file ,file-expr
            :id-field ,id-field :title-field ,title-field
            :id-property ,id-property :list-params ,list-params
-           :skip-fn ,skip-fn)))))
+           :skip-fn ,skip-fn :list-url-fn ,list-url-fn
+           :delete-url-fn ,delete-url-fn :delete-data ,delete-data)))))
 
 (defmacro org-canvas-define-delete-at-point (feature &rest args)
   "Define a delete-at-point function for FEATURE.

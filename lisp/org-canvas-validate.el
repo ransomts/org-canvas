@@ -103,6 +103,23 @@ PROPERTY names the property.  LOC is a (:file :line :heading) plist."
         'error loc property
         (format "%s: '%s' is not a valid Org timestamp" property value))))))
 
+(defun org-canvas--validate-resolve-file-link (value id-property source-file loc property
+                                                     not-link-msg unresolved-msg
+                                                     &optional not-link-severity)
+  "Check VALUE as a file link, verifying ID-PROPERTY resolves.
+SOURCE-FILE is the file containing the link (for relative path resolution).
+LOC is a (:file :line :heading) plist.  PROPERTY is the property name (or nil).
+NOT-LINK-MSG is the message when VALUE is not a file link.
+UNRESOLVED-MSG is the warning message when the link target has no ID-PROPERTY.
+NOT-LINK-SEVERITY is the severity for non-link values (default: \\='error).
+Returns nil (valid) or an issue plist."
+  (cond
+   ((not (string-match "\\[\\[file:" value))
+    (org-canvas--validate-make-issue (or not-link-severity 'error)
+                                     loc property not-link-msg))
+   ((not (org-canvas--resolve-link-property value id-property source-file))
+    (org-canvas--validate-make-issue 'warning loc property unresolved-msg))))
+
 (defun org-canvas--validate-check-link (value property target-file-var id-property loc)
   "Check that VALUE is a valid Org file link and resolves.
 PROPERTY is the property name for error messages.
@@ -110,23 +127,12 @@ TARGET-FILE-VAR is the symbol of the target file variable.
 ID-PROPERTY is the Canvas ID property expected on the target heading.
 LOC is a (:file :line :heading) plist."
   (when value
-    (cond
-     ((not (string-match "\\[\\[file:" value))
-      (org-canvas--validate-make-issue
-       'error loc property
-       (format "%s: '%s' is not a file link (expected [[file:...::*heading][...]])"
-               property value)))
-     (t
-      (let ((resolved (org-canvas--resolve-link-property
-                       value id-property (plist-get loc :file))))
-        (cond
-         ;; resolve-link-property returns nil for missing file or heading
-         ((not resolved)
-          (org-canvas--validate-make-issue
-           'warning loc property
-           (format "%s: link target has no %s (sync target first)"
-                   property id-property)))
-         (t nil)))))))
+    (org-canvas--validate-resolve-file-link
+     value id-property (plist-get loc :file) loc property
+     (format "%s: '%s' is not a file link (expected [[file:...::*heading][...]])"
+             property value)
+     (format "%s: link target has no %s (sync target first)"
+             property id-property))))
 
 ;;;; 3. Date Ordering Check
 
@@ -165,65 +171,9 @@ Returns a list of warning issues."
     (nreverse issues)))
 
 ;;;; 4. Validation Specs
-
-(defconst org-canvas--valid-grading-types
-  '("points" "percent" "letter_grade" "gpa_scale" "pass_fail" "not_graded")
-  "Valid grading types for assignments and graded discussions.")
-
-(defconst org-canvas--valid-submission-types
-  '("online_upload" "online_url" "online_text_entry" "media_recording"
-    "on_paper" "external_tool" "none")
-  "Valid submission types for assignments.")
-
-(defconst org-canvas--valid-quiz-types
-  '("assignment" "practice_quiz" "graded_survey" "survey")
-  "Valid quiz types.")
-
-(defconst org-canvas--valid-question-types
-  '("multiple_choice_question" "true_false_question"
-    "short_answer_question" "fill_in_multiple_blanks_question"
-    "multiple_dropdowns_question" "multiple_answers_question"
-    "matching_question" "numerical_question" "essay_question"
-    "file_upload_question" "text_only_question" "group")
-  "Valid quiz question types.")
-
-(defconst org-canvas--valid-hide-results
-  '("always" "until_after_last_attempt")
-  "Valid hide_results values for quizzes.")
-
-(defconst org-canvas--valid-scoring-policies
-  '("keep_highest" "keep_latest")
-  "Valid scoring_policy values for quizzes.")
-
-(defconst org-canvas--valid-editing-roles
-  '("teachers" "students" "members" "public")
-  "Valid editing roles for pages.")
-
-(defconst org-canvas--valid-new-quiz-types
-  '("choice" "true-false" "multi-answer" "short-answer"
-    "essay" "file-upload" "numerical" "matching"
-    "ordering" "categorization" "fill-in-the-blank" "hot-spot")
-  "Valid TYPE values for New Quiz items.")
-
-(defconst org-canvas--valid-new-quiz-scoring-policies
-  '("keep_highest" "keep_latest" "keep_average")
-  "Valid scoring policy values for New Quizzes.")
-
-(defconst org-canvas--valid-discussion-types
-  '("side_comment" "threaded")
-  "Valid discussion types.")
-
-(defconst org-canvas--valid-completion-requirements
-  '("must_view" "must_submit" "must_contribute" "min_score")
-  "Valid completion requirement types for module items.")
-
-(defconst org-canvas--valid-calculation-methods
-  '("highest" "latest" "decaying_average" "n_mastery")
-  "Valid calculation methods for outcomes.")
-
-(defconst org-canvas--valid-use-justifications
-  '("own_copyright" "used_by_permission" "fair_use" "public_domain" "creative_commons")
-  "Valid use_justification values for file usage rights.")
+;;
+;; Enum constants are defined in org-canvas-core-config.el and inherited
+;; via (require 'org-canvas-core).
 
 (defconst org-canvas--validate-specs
   `((:label "Assignments"
@@ -478,16 +428,12 @@ Returns an issue or nil."
         (outcome-cell (nth 3 row)))
     (when (and outcome-cell
                (not (string-empty-p (string-trim outcome-cell))))
-      (cond
-       ((not (string-match "\\[\\[file:" outcome-cell))
-        (org-canvas--validate-make-issue
-         'warning loc nil
-         (format "Rubric criterion '%s' outcome is not a file link" criterion)))
-       ((not (org-canvas--resolve-link-property outcome-cell "CANVAS_ID" file))
-        (org-canvas--validate-make-issue
-         'warning loc nil
-         (format "Rubric criterion '%s' outcome link has no CANVAS_ID (sync outcomes first)"
-                 criterion)))))))
+      (org-canvas--validate-resolve-file-link
+       outcome-cell "CANVAS_ID" file loc nil
+       (format "Rubric criterion '%s' outcome is not a file link" criterion)
+       (format "Rubric criterion '%s' outcome link has no CANVAS_ID (sync outcomes first)"
+               criterion)
+       'warning))))
 
 (defun org-canvas--validate-rubric-outcome-links (table-data file loc)
   "Validate outcome links in 4th column of rubric TABLE-DATA.

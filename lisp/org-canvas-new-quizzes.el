@@ -86,13 +86,6 @@ New Quizzes use /api/quiz/v1/ instead of /api/v1/."
     ("hot-spot"            . "hot-spot"))
   "Map from Org TYPE property values to New Quizzes interaction_type_slug.")
 
-(defconst org-canvas--new-quiz-valid-types
-  (mapcar #'car org-canvas--new-quiz-type-slugs)
-  "Valid TYPE values for New Quiz items.")
-
-(defconst org-canvas--new-quiz-valid-scoring-policies
-  '("keep_highest" "keep_latest" "keep_average")
-  "Valid SCORING_POLICY values for New Quizzes.")
 
 (defconst org-canvas--new-quiz-scoring-algorithms
   '(("choice"             . "Equivalence")
@@ -278,7 +271,7 @@ No buffer access — only string/number/boolean conversions."
          (attempts-raw (plist-get props :attempts-raw))
          (scoring-policy (org-canvas--validate-property
                           (plist-get props :scoring-policy-raw)
-                          org-canvas--new-quiz-valid-scoring-policies
+                          org-canvas--valid-new-quiz-scoring-policies
                           "SCORING_POLICY" nil))
          (assignment-group-id (plist-get props :assignment-group-id)))
     (list :title title
@@ -463,7 +456,7 @@ No buffer access — only string/number/boolean conversions."
                  (plist-get props :title-raw)))
          (q-type (org-canvas--validate-property
                   (plist-get props :type-raw)
-                  org-canvas--new-quiz-valid-types
+                  org-canvas--valid-new-quiz-types
                   "TYPE" "choice"))
          (points-raw (plist-get props :points-raw))
          (points (if (and points-raw (not (string-empty-p points-raw)))

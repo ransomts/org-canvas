@@ -353,6 +353,7 @@ Returns the expanded assignments file path."
     (elog-info org-canvas--logger "========================================")
     assignments-file))
 
+;;;###autoload
 (defun org-canvas-sync-overrides ()
   "Sync per-section date overrides for all assignments.
 Scans assignments.org for `#+NAME: overrides' tables and

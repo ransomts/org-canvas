@@ -58,11 +58,6 @@ Accepts comma or space separated values like \"py, txt\" or \"py txt\"."
   (when ext-string
     (split-string ext-string "[, \t]+" t)))
 
-(defconst org-canvas--valid-submission-types
-  '("online_upload" "online_url" "online_text_entry" "media_recording"
-    "on_paper" "external_tool" "none")
-  "Valid Canvas submission types.")
-
 (defun org-canvas--assignment-parse-submission-types (type-string)
   "Convert TYPE-STRING to Canvas submission_types array.
 Accepts: online_upload, online_url, online_text_entry, media_recording,
@@ -136,7 +131,7 @@ Pure function — no buffer access."
           :points_possible (when points (org-canvas--safe-string-to-number points "POINTS"))
           :grading_type (org-canvas--validate-property
                          (plist-get raw :grading-type-raw)
-                         '("points" "percent" "letter_grade" "gpa_scale" "pass_fail" "not_graded")
+                         org-canvas--valid-grading-types
                          "GRADING_TYPE" "points")
           :published (org-canvas--interpret-boolean (plist-get raw :published-raw) t)
           :due_at (org-canvas-org-parse-timestamp (plist-get raw :due-at-raw))
@@ -305,10 +300,6 @@ Pure function — no buffer access."
 
 ;;;; 3. Stage: Execution Helper
 
-(defun org-canvas--assignment-search-by-name (name)
-  "Search for an assignment with NAME on Canvas.  Return nil on error."
-  (org-canvas--search-item "assignments" name :match-field 'name))
-
 (defun org-canvas--assignment-associate-rubric (assignment-id rubric-id)
   "Associate RUBRIC-ID with ASSIGNMENT-ID on Canvas."
   (org-canvas--associate-rubric assignment-id rubric-id "Assignment"))
@@ -338,7 +329,7 @@ DATA is the parsed assignment plist, RESPONSE is the Canvas API response."
   :parse #'org-canvas--assignment-parse-entry
   :build #'org-canvas--assignment-build-payload
   :endpoint "assignments"
-  :find-fn #'org-canvas--assignment-search-by-name
+  :find-fn (lambda (name) (org-canvas--search-item "assignments" name :match-field 'name))
   :post-fn #'org-canvas--assignment-post-finalize
   :pull-item-fn #'org-canvas--assignment-pull-item)
 
@@ -348,7 +339,7 @@ DATA is the parsed assignment plist, RESPONSE is the Canvas API response."
   :parse #'org-canvas--assignment-parse-entry
   :build #'org-canvas--assignment-build-payload
   :endpoint "assignments"
-  :find-fn #'org-canvas--assignment-search-by-name
+  :find-fn (lambda (name) (org-canvas--search-item "assignments" name :match-field 'name))
   :post-fn #'org-canvas--assignment-post-finalize
   :pull-item-fn #'org-canvas--assignment-pull-item)
 

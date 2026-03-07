@@ -29,11 +29,15 @@ eldev package        # Create distributable package
 
 ```
 lisp/
-├── org-canvas.el           # Main entry point, orchestrates all modules
-├── org-canvas-core.el      # Shared infrastructure (config, logging, API, Org utilities)
+├── org-canvas.el              # Main entry point, orchestrates all modules
+├── org-canvas-core.el         # Meta-require for all core-* files
+├── org-canvas-core-config.el  # Config, constants, shared enum values
+├── org-canvas-core-api.el     # API request helpers, curl, rate limiting
+├── org-canvas-core-org.el     # Org property/buffer helpers, HTML export
+├── org-canvas-core-sync.el    # Sync pipeline macros, push/pull/delete infra
 ├── org-canvas-credentials.el  # Secrets (API token, course ID) - not in git
-├── org-canvas-validate.el  # Offline validation engine (no API contact)
-└── org-canvas-{feature}.el # Feature modules (pages, rubrics, announcements, etc.)
+├── org-canvas-validate.el     # Offline validation engine (no API contact)
+└── org-canvas-{feature}.el    # Feature modules (pages, rubrics, announcements, etc.)
 ```
 
 ### Dependency Rules
@@ -68,6 +72,25 @@ The core module provides macros and helpers to eliminate boilerplate:
 ```
 Generates `org-canvas-sync-announcements` with logging, error handling, conflict resolution, and buffer saving. The optional `:pull-item-fn` enables the "pull" option during interactive conflict resolution.
 
+**Declarative Parse Macro:**
+```elisp
+(org-canvas-define-parse announcement
+  :body :message              ;; export subtree HTML into this key
+  :properties
+  (("PUBLISHED"      :published                :type boolean :default t)
+   ("POST_AT"        :delayed_post_at          :type timestamp)
+   ("ALLOW_COMMENTS" :allow_discussion_comments :type boolean)
+   ("SPECIFIC_SECTIONS" :specific_sections      :type string)))
+```
+Generates three functions from a declarative spec:
+- `org-canvas--{feature}-read-props (pom)` — raw `org-entry-get` calls
+- `org-canvas--{feature}-transform-props (raw)` — pure typed conversion
+- `org-canvas--{feature}-parse-entry ()` — full parse pipeline
+
+Type dispatch: `boolean` (with optional `:default`), `timestamp`, `number`, `enum` (with `:values`), `string` (pass-through). Hooks: `:after-read`, `:after-transform` for non-standard modules.
+
+**Modules using `org-canvas-define-parse`:** announcements, pages, calendar, group-categories, assignment-groups
+
 **Delete Macros:**
 ```elisp
 (org-canvas-define-delete-all pages
@@ -75,7 +98,11 @@ Generates `org-canvas-sync-announcements` with logging, error handling, conflict
   :file org-canvas-pages-file
   :id-field 'url              ; optional, default 'id
   :id-property "CANVAS_URL"   ; optional, default "CANVAS_ID"
-  :skip-fn (lambda (item) (eq (alist-get 'front_page item) t)))
+  :skip-fn (lambda (item) (eq (alist-get 'front_page item) t))
+  ;; For non-course-scoped endpoints:
+  :list-url-fn (lambda () (format "%s/api/v1/calendar_events" org-canvas-base-url))
+  :delete-url-fn (lambda (id) (format "%s/api/v1/group_categories/%s" org-canvas-base-url id))
+  :delete-data '((cancel_reason . "Deleted by org-canvas")))
 
 (org-canvas-define-delete-at-point assignment
   :endpoint "assignments/%s")
@@ -92,7 +119,7 @@ Generates `org-canvas-sync-announcements` with logging, error handling, conflict
 (org-canvas--push-to-api data payload
   :endpoint "pages"
   :id-key :canvas-url           ; for pages (default :canvas-id)
-  :find-fn #'org-canvas--page-search-by-title)  ; for timeout recovery
+  :find-fn (lambda (title) (org-canvas--search-item "pages" title)))
 
 ;; Generic finalize with optional post-processing
 (org-canvas--finalize-item data response
@@ -196,7 +223,7 @@ The `elog` package is fetched from GitHub via `eldev-use-vc-repository` (not ven
 ### Running Tests
 
 ```bash
-eldev test              # Run all 1859 tests
+eldev test              # Run all 2264 tests
 eldev test "core"       # Run tests matching pattern
 ```
 
@@ -250,28 +277,33 @@ test/
 
 ### Test Coverage Summary
 
-**1859 tests total** covering core utilities, all feature modules, and validation (9 tests skip on Emacs 29.x due to org-mode differences). Coverage is ~99%.
+**2264 tests total** covering core utilities, all feature modules, and validation (9 tests skip on Emacs 29.x due to org-mode differences). Coverage is ~99%.
 
 | Module            | Tests |
 |-------------------|-------|
-| **core**          | 377   |
-| quizzes           | 203   |
-| new-quizzes       | 121   |
-| modules           | 143   |
-| files             | 136   |
-| **validate**      | 118   |
-| outcomes          | 97    |
-| assignments       | 96    |
-| settings          | 86    |
-| rubrics           | 69    |
-| pages             | 53    |
-| calendar          | 51    |
-| discussions       | 48    |
-| sections          | 43    |
-| orchestration     | 38    |
-| announcements     | 35    |
-| group-categories  | 31    |
-| assignment-groups | 25    |
+| quizzes           | 227   |
+| **core-sync**     | 184   |
+| modules           | 174   |
+| new-quizzes       | 166   |
+| files             | 163   |
+| **validate**      | 162   |
+| **core-org**      | 128   |
+| assignments       | 120   |
+| outcomes          | 112   |
+| submissions       | 105   |
+| settings          | 96    |
+| rubrics           | 92    |
+| discussions       | 57    |
+| pages             | 55    |
+| **core-api**      | 54    |
+| calendar          | 52    |
+| **core-config**   | 51    |
+| sections          | 44    |
+| group-categories  | 43    |
+| orchestration     | 41    |
+| announcements     | 41    |
+| assignment-groups | 36    |
+| **core-usability**| 33    |
 
 **Core tests cover:**
 - Path utilities (`org-canvas--path`)

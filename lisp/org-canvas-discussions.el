@@ -96,7 +96,7 @@ Pure function — no buffer access."
           :published (org-canvas--interpret-boolean (plist-get raw :published-raw) t)
           :discussion_type (org-canvas--validate-property
                             (plist-get raw :discussion-type-raw)
-                            '("side_comment" "threaded")
+                            org-canvas--valid-discussion-types
                             "DISCUSSION_TYPE" "side_comment")
           :grading_type (plist-get raw :grading-type-raw)
           :points_possible (when points
@@ -236,6 +236,9 @@ DATA is the parsed discussion plist, RESPONSE is the Canvas API response."
   :endpoint "discussion_topics"
   :file org-canvas-discussions-file
   :skip-fn (lambda (item) (eq (alist-get 'is_announcement item) t)))
+
+(org-canvas-define-delete-at-point discussion
+  :endpoint "discussion_topics/%s")
 
 ;;;; Pull
 

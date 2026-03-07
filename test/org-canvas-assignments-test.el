@@ -329,7 +329,7 @@ Content.
               (payload (make-hash-table)))
           (org-canvas--push-to-api data payload
             :endpoint "assignments"
-            :find-fn #'org-canvas--assignment-search-by-name)
+            :find-fn (lambda (name) (org-canvas--search-item "assignments" name :match-field 'name)))
           (expect-api-called 'POST "assignments$")))))
 
   (it "uses PUT for existing assignments"
@@ -339,16 +339,16 @@ Content.
               (payload (make-hash-table)))
           (org-canvas--push-to-api data payload
             :endpoint "assignments"
-            :find-fn #'org-canvas--assignment-search-by-name)
+            :find-fn (lambda (name) (org-canvas--search-item "assignments" name :match-field 'name)))
           (expect-api-called 'PUT "assignments/789"))))))
 
-(describe "org-canvas--assignment-search-by-name (mocked)"
+(describe "assignment search (mocked)"
   (it "searches assignments endpoint"
     (with-org-canvas-test-config
       (with-mock-api
         (setq test-org-canvas-api-responses
               '(("assignments" . [((id . 100) (name . "Homework 1"))])))
-        (org-canvas--assignment-search-by-name "Homework 1")
+        (org-canvas--search-item "assignments" "Homework 1" :match-field 'name)
         (expect-api-called 'GET "assignments"))))
 
   (it "returns matching assignment"
@@ -357,7 +357,7 @@ Content.
         (setq test-org-canvas-api-responses
               '(("assignments" . [((id . 100) (name . "Lab 1"))
                                   ((id . 101) (name . "Lab 2"))])))
-        (let ((result (org-canvas--assignment-search-by-name "Lab 1")))
+        (let ((result (org-canvas--search-item "assignments" "Lab 1" :match-field 'name)))
           (expect (alist-get 'id result) :to-equal 100))))))
 
 ;;;; Stage 4: Finalize
@@ -845,7 +845,7 @@ Content.
                 (payload (make-hash-table)))
             (let ((result (org-canvas--push-to-api data payload
                             :endpoint "assignments"
-                            :find-fn #'org-canvas--assignment-search-by-name)))
+                            :find-fn (lambda (name) (org-canvas--search-item "assignments" name :match-field 'name)))))
               (expect (alist-get 'id result) :to-equal 999)
               (expect call-count :to-equal 2)))))))
 
@@ -865,7 +865,7 @@ Content.
                 (payload (make-hash-table)))
             (let ((result (org-canvas--push-to-api data payload
                             :endpoint "assignments"
-                            :find-fn #'org-canvas--assignment-search-by-name)))
+                            :find-fn (lambda (name) (org-canvas--search-item "assignments" name :match-field 'name)))))
               (expect (alist-get 'id result) :to-equal 888)))))))
 
   (it "signals error on non-recoverable failure"
@@ -877,18 +877,19 @@ Content.
               (payload (make-hash-table)))
           (expect (org-canvas--push-to-api data payload
                     :endpoint "assignments"
-                    :find-fn #'org-canvas--assignment-search-by-name)
+                    :find-fn (lambda (name) (org-canvas--search-item "assignments" name :match-field 'name)))
                   :to-throw 'error))))))
 
 ;;;; Additional Find by Name Tests
 
-(describe "org-canvas--assignment-search-by-name (mocked)"
+(describe "assignment search (mocked)"
   (it "returns nil when no match"
     (with-org-canvas-test-config
       (with-mock-api
         (setq test-org-canvas-api-responses
               '(("assignments" . [((id . 100) (name . "Other"))])))
-        (let ((result (org-canvas--assignment-search-by-name "Nonexistent")))
+        (let ((result (org-canvas--search-item "assignments" "Nonexistent"
+                       :match-field 'name)))
           (expect result :to-be nil)))))
 
   (it "returns nil on API error"
@@ -896,7 +897,8 @@ Content.
       (cl-letf (((symbol-function 'org-canvas-api-request)
                  (lambda (&rest _)
                    (signal 'error '("API error")))))
-        (let ((result (org-canvas--assignment-search-by-name "Any")))
+        (let ((result (org-canvas--search-item "assignments" "Any"
+                       :match-field 'name)))
           (expect result :to-be nil))))))
 
 ;;;; Associate Rubric Tests

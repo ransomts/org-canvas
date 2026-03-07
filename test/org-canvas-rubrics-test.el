@@ -338,13 +338,13 @@ Just some text, no table.
             (expect (org-canvas--rubric-push-to-api data payload)
                     :to-throw 'error)))))))
 
-(describe "org-canvas--rubric-search-by-title (mocked)"
+(describe "rubric search (mocked)"
   (it "searches rubrics endpoint"
     (with-org-canvas-test-config
       (with-mock-api
         (setq test-org-canvas-api-responses
               '(("rubrics" . [((id . 100) (title . "Essay Rubric"))])))
-        (org-canvas--rubric-search-by-title "Essay Rubric")
+        (org-canvas--search-item "rubrics" "Essay Rubric" :params nil)
         (expect-api-called 'GET "rubrics"))))
 
   (it "returns matching rubric"
@@ -353,7 +353,7 @@ Just some text, no table.
         (setq test-org-canvas-api-responses
               '(("rubrics" . [((id . 100) (title . "Rubric A"))
                               ((id . 101) (title . "Rubric B"))])))
-        (let ((result (org-canvas--rubric-search-by-title "Rubric A")))
+        (let ((result (org-canvas--search-item "rubrics" "Rubric A" :params nil)))
           (expect (alist-get 'id result) :to-equal 100))))))
 
 ;;;; Rubric Dissociation
@@ -1302,5 +1302,34 @@ Keep this body
     (expect (org-canvas--rubric-pull-has-outcomes
              [((description . "Foo")) ((description . "Bar"))])
             :to-be nil)))
+
+;;;; Delete at Point
+
+(describe "org-canvas-delete-rubric-at-point"
+  (it "deletes rubric and clears properties"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-temp-org-buffer
+         "* Test
+:PROPERTIES:
+:CANVAS_ID: 42
+:LAST_SYNCED: [2024-01-01 Mon]
+:END:
+"
+         (org-back-to-heading)
+         (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+           (org-canvas-delete-rubric-at-point)
+           (expect-api-called 'DELETE "rubrics/42")
+           (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)
+           (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil))))))
+
+  (it "errors when no CANVAS_ID"
+    (with-temp-org-buffer
+     "* New
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (expect (org-canvas-delete-rubric-at-point) :to-throw 'user-error))))
 
 ;;; org-canvas-rubrics-test.el ends here

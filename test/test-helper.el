@@ -179,6 +179,81 @@ Call inside a `describe' block.  OPTS is a plist:
        (org-back-to-heading)
        (expect (funcall parse-fn) :to-throw 'error)))))
 
+(defun test-org-canvas-define-common-transform-tests (transform-fn &rest opts)
+  "Generate standard transform-props tests for TRANSFORM-FN.
+Call inside a `describe' block.  OPTS is a plist:
+  :defaults - Default raw plist for inputs (required)
+  :title-key - Output plist key for title (default :title)
+  :tests - List of test specs, each a plist:
+    :raw-key     Raw input plist key
+    :data-key    Output plist key to check
+    :type        One of: boolean, timestamp, string
+    :default     For boolean: default value when absent"
+  (let ((defaults (plist-get opts :defaults))
+        (title-key (or (plist-get opts :title-key) :title))
+        (tests (plist-get opts :tests)))
+
+    (it "strips statistics cookie from title"
+      (let* ((input (plist-put (copy-sequence defaults) :title-raw "My Title [1/3]"))
+             (result (funcall transform-fn input)))
+        (expect (plist-get result title-key) :to-equal "My Title")))
+
+    (dolist (spec tests)
+      (let ((raw-key (plist-get spec :raw-key))
+            (data-key (plist-get spec :data-key))
+            (type (plist-get spec :type))
+            (default (plist-get spec :default)))
+        (pcase type
+          ('boolean
+           (if default
+               (progn
+                 (it (format "defaults %s to %s" data-key default)
+                   (let* ((input (plist-put (copy-sequence defaults) raw-key nil))
+                          (result (funcall transform-fn input)))
+                     (expect (plist-get result data-key) :to-be default)))
+                 (it (format "interprets %s=false" data-key)
+                   (let* ((input (plist-put (copy-sequence defaults) raw-key "false"))
+                          (result (funcall transform-fn input)))
+                     (expect (plist-get result data-key) :to-be nil))))
+             (it (format "interprets %s=true" data-key)
+               (let* ((input (plist-put (copy-sequence defaults) raw-key "true"))
+                      (result (funcall transform-fn input)))
+                 (expect (plist-get result data-key) :to-be t)))
+             (it (format "returns nil for absent %s" data-key)
+               (let* ((input (plist-put (copy-sequence defaults) raw-key nil))
+                      (result (funcall transform-fn input)))
+                 (expect (plist-get result data-key) :to-be nil)))))
+          ('timestamp
+           (it (format "parses %s to ISO8601" data-key)
+             (let* ((input (plist-put (copy-sequence defaults)
+                                      raw-key "<2026-06-15 Mon 10:00>"))
+                    (result (funcall transform-fn input)))
+               (expect (plist-get result data-key) :to-match "2026-06-15T")))
+           (it (format "returns nil for absent %s" data-key)
+             (let* ((input (plist-put (copy-sequence defaults) raw-key nil))
+                    (result (funcall transform-fn input)))
+               (expect (plist-get result data-key) :to-be nil)))))))))
+
+(defun test-org-canvas-define-common-push-tests (push-fn &rest opts)
+  "Generate POST/PUT selection tests for PUSH-FN.
+Call inside a `describe' block.  OPTS is a plist:
+  :endpoint - API endpoint string (required)
+  :id-key - Plist key for Canvas ID (default :canvas-id)"
+  (let ((endpoint (plist-get opts :endpoint))
+        (id-key (or (plist-get opts :id-key) :canvas-id)))
+
+    (it "uses POST for new items"
+      (with-org-canvas-test-config
+        (with-mock-api
+          (funcall push-fn (list id-key nil :title "Test" :pom 1) '((a . 1)))
+          (expect-api-called 'POST endpoint))))
+
+    (it "uses PUT for existing items"
+      (with-org-canvas-test-config
+        (with-mock-api
+          (funcall push-fn (list id-key "42" :title "Test" :pom 1) '((a . 1)))
+          (expect-api-called 'PUT endpoint))))))
+
 (defmacro with-pull-property-test (pull-fn response property matcher value)
   "Test that PULL-FN with RESPONSE sets Org PROPERTY as expected.
 Creates a temp buffer with CANVAS_ID: 1, mocks html-to-org as identity,
