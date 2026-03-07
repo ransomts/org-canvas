@@ -2661,5 +2661,36 @@ Body.
           ;; No PUTs were sent
           (expect put-count :to-equal 0))))))
 
+;;;; Macro helper coverage
+
+(describe "org-canvas--parse-gen-transform-form"
+  (it "generates enum form with default value"
+    (let ((form (org-canvas--parse-gen-transform-form
+                 "STATUS" :status 'enum "active"
+                 '("active" "inactive"))))
+      ;; Should produce a validate-property call with the default
+      (expect form :to-contain 'org-canvas--validate-property)
+      (expect (nth 4 form) :to-equal "active"))))
+
+(describe "org-canvas-define-parse :after-read hook"
+  (it "generates read-fn that calls after-read"
+    (eval
+     '(org-canvas-define-parse test--after-read-cov
+        :after-read (lambda (raw _pom)
+                      (plist-put raw :extra "injected")
+                      raw)
+        :properties
+        (("TITLE_PROP" :title-prop :type string)))
+     t)
+    (with-temp-org-buffer
+     "* Heading
+:PROPERTIES:
+:TITLE_PROP: hello
+:END:
+"
+     (org-back-to-heading)
+     (let ((raw (org-canvas--test--after-read-cov-read-props (point))))
+       (expect (plist-get raw :extra) :to-equal "injected")))))
+
 (provide 'org-canvas-core-sync-test)
 ;;; org-canvas-core-sync-test.el ends here

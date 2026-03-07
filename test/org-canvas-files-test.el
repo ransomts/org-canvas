@@ -1514,7 +1514,12 @@
                            buf))))
               (expect (org-canvas--file-upload-step2-send upload-info temp-file)
                       :to-throw 'error)))
-        (delete-file temp-file)))))
+        (delete-file temp-file))))
+
+  (it "errors when upload_url is nil"
+    (let ((upload-info '((upload_params . ((key . "abc"))))))
+      (expect (org-canvas--file-upload-step2-send upload-info "/tmp/fake.pdf")
+              :to-throw 'error))))
 
 ;;;; Folder Path Resolution Edge Cases
 
@@ -2039,6 +2044,31 @@
                   ;; Top-level file: folder-path should be empty
                   (expect (plist-get data :folder-path) :to-equal "")
                   (expect (plist-get data :display-name) :to-equal "My Document"))
+                (kill-buffer))))
+        (delete-directory temp-dir t))))
+
+  (it "logs folder name when folder-path is non-empty"
+    (let* ((temp-dir (make-temp-file "files-test" t))
+           (content-dir (expand-file-name "content" temp-dir))
+           (test-file (progn (make-directory content-dir t)
+                             (expand-file-name "doc.pdf" content-dir)))
+           (files-file (expand-file-name "files.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file test-file (insert "dummy"))
+            (with-temp-file files-file
+              (insert "* Labs
+** [[file:content/doc.pdf][Lab 1]]
+:PROPERTIES:
+:END:
+"))
+            (let ((org-canvas-files-file files-file))
+              (with-current-buffer (find-file-noselect files-file)
+                (goto-char (point-min))
+                (search-forward "Lab 1")
+                (org-back-to-heading)
+                (let ((data (org-canvas--file-parse-entry)))
+                  (expect (plist-get data :folder-path) :to-equal "Labs"))
                 (kill-buffer))))
         (delete-directory temp-dir t)))))
 

@@ -531,5 +531,20 @@
           (expect call-count :to-equal 2)
           (expect (alist-get 'id result) :to-equal 1))))))
 
+(describe "org-canvas--upload-file"
+  (it "errors when Canvas returns no upload_url"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (_method _url &rest _args)
+                   ;; Canvas returns response without upload_url
+                   '((upload_params . ((key . "abc")))))))
+        (let ((temp-file (make-temp-file "upload-test" nil ".pdf")))
+          (unwind-protect
+              (progn
+                (with-temp-file temp-file (insert "content"))
+                (expect (org-canvas--upload-file temp-file)
+                        :to-throw 'error))
+            (delete-file temp-file)))))))
+
 (provide 'org-canvas-core-api-test)
 ;;; org-canvas-core-api-test.el ends here

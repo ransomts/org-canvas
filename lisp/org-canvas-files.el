@@ -316,8 +316,10 @@ Returns nil for folder-only headings (no file link)."
         (elog-info org-canvas--logger "[Stage 1: Parse] Processing File: '%s' (ID: %s)"
           (plist-get data :display-name) (or (plist-get data :canvas-id) "NEW"))
         (elog-debug org-canvas--logger "[Stage 1: Parse] Local path: %s" (plist-get data :local-path))
-        (elog-debug org-canvas--logger "[Stage 1: Parse] Canvas folder: %s"
-          (if (string-empty-p (plist-get data :folder-path)) "root" (plist-get data :folder-path)))
+        (let ((folder-display (if (string-empty-p (plist-get data :folder-path))
+                                  "root"
+                                (plist-get data :folder-path))))
+          (elog-debug org-canvas--logger "[Stage 1: Parse] Canvas folder: %s" folder-display))
 
         (org-canvas--file-validate-local (plist-get data :local-path) (plist-get data :display-name))
 

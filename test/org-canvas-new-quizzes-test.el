@@ -755,6 +755,26 @@ Quiz description.
      (let ((data (org-canvas--new-quiz-item-parse-entry "42")))
        (expect (plist-get data :outcome) :to-be nil))))
 
+  (it "includes body text in question-text when present"
+    (with-temp-org-buffer
+     "* Quiz
+** What is 2+2?
+:PROPERTIES:
+:TYPE: choice
+:END:
+
+Consider the following expression.
+
+- [X] 4
+- [ ] 3
+"
+     (search-forward "What is 2+2")
+     (org-back-to-heading)
+     (let ((data (org-canvas--new-quiz-item-parse-entry "42")))
+       ;; text-html should contain both the title and the body text
+       (expect (plist-get data :text-html) :to-match "What is 2\\+2")
+       (expect (plist-get data :text-html) :to-match "Consider the following"))))
+
   (it "validates TYPE property"
     (with-temp-org-buffer
      "* Quiz

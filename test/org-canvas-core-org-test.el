@@ -1500,5 +1500,29 @@ Page content.
                   (expect replaced :to-be nil))))
           (delete-directory temp-dir t))))))
 
+;;;; Pull-item macro :after-pull coverage
+
+(defvar test--after-pull-cov-called nil)
+
+(describe "org-canvas-define-pull-item :after-pull hook"
+  (it "calls after-pull function with item and pos"
+    (setq test--after-pull-cov-called nil)
+    (eval
+     '(org-canvas-define-pull-item test--after-pull-cov
+        :after-pull (lambda (item _pos)
+                      (setq test--after-pull-cov-called item))
+        :properties
+        ((some_field "SOME_FIELD" :type string)))
+     t)
+    (with-temp-org-buffer
+     "* Test Heading
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (let ((item '((some_field . "value1"))))
+       (org-canvas--test--after-pull-cov-pull-item item (point))
+       (expect test--after-pull-cov-called :to-equal item)))))
+
 (provide 'org-canvas-core-org-test)
 ;;; org-canvas-core-org-test.el ends here
