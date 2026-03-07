@@ -135,35 +135,11 @@ Returns the matching item alist or nil."
                    (format "%s/api/v1/calendar_events/%s" org-canvas-base-url id))
   :delete-data '((cancel_reason . "Deleted by org-canvas")))
 
-;;;###autoload
-(defun org-canvas-delete-calendar-event-at-point ()
-  "Delete the Canvas calendar event at the current Org heading.
-Uses global endpoint DELETE /calendar_events/:id."
-  (interactive)
-  (org-back-to-heading t)
-  (let* ((pom (point))
-         (canvas-id (org-canvas-org-get-property pom "CANVAS_ID"))
-         (title (org-get-heading t t t t)))
-    (unless canvas-id
-      (user-error "No CANVAS_ID property found for this heading"))
-    (when (y-or-n-p (format "Delete '%s' from Canvas? " title))
-      (org-canvas-clear-log)
-      (display-buffer (get-buffer-create org-canvas--log-buffer-name))
-      (elog-info org-canvas--logger "Deleting calendar event '%s' (ID: %s)..." title canvas-id)
-      (condition-case err
-          (let ((url (format "%s/api/v1/calendar_events/%s" org-canvas-base-url canvas-id)))
-            (org-canvas-api-request 'DELETE url
-                                    :data '((cancel_reason . "Deleted by org-canvas")))
-            (org-entry-delete pom "CANVAS_ID")
-            (org-entry-delete pom "LAST_SYNCED")
-            (org-entry-delete pom "PAYLOAD_HASH")
-            (save-buffer)
-            (elog-info org-canvas--logger "Deleted calendar event '%s'" title)
-            (message "Deleted '%s' from Canvas" title))
-        (error
-         (elog-error org-canvas--logger "Failed to delete '%s': %s"
-                     title (error-message-string err))
-         (message "Delete failed: %s" (error-message-string err)))))))
+(org-canvas-define-delete-at-point calendar-event
+  :delete-url-fn (lambda (id)
+                   (format "%s/api/v1/calendar_events/%s"
+                           org-canvas-base-url id))
+  :delete-data ((cancel_reason . "Deleted by org-canvas")))
 
 ;;;; Pull
 

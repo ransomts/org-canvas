@@ -1137,14 +1137,20 @@ Returns the count of successfully deleted items."
 (cl-defun org-canvas--delete-item-at-point (feature-name
                                             &key
                                             endpoint
-                                            id-property)
+                                            id-property
+                                            delete-url-fn
+                                            delete-data
+                                            post-delete-fn)
   "Generic implementation for deleting the item at the current Org heading.
 
 FEATURE-NAME is a string like \"assignment\" or \"page\".
 
 Keyword arguments:
-  ENDPOINT - API endpoint pattern with %s for ID (e.g., \"assignments/%s\").
+  ENDPOINT - API endpoint pattern with %s for ID.
   ID-PROPERTY - Org property name for ID (default: \"CANVAS_ID\").
+  DELETE-URL-FN - Function (id) returning full URL, overrides ENDPOINT.
+  DELETE-DATA - Extra alist data to include in DELETE request.
+  POST-DELETE-FN - Function (pom) called after API delete for cleanup.
 
 Return non-nil if deletion succeeded."
   (org-back-to-heading t)
@@ -1159,19 +1165,29 @@ Return non-nil if deletion succeeded."
     (when (y-or-n-p (format "Delete '%s' from Canvas? " title))
       (org-canvas-clear-log)
       (display-buffer (get-buffer-create org-canvas--log-buffer-name))
-      (elog-info org-canvas--logger "Deleting %s '%s' (ID: %s)..." feature-name title canvas-id)
+      (elog-info org-canvas--logger "Deleting %s '%s' (ID: %s)..."
+                 feature-name title canvas-id)
 
       (condition-case err
-          (progn
-            (org-canvas-api-request 'DELETE
-				    (org-canvas-api-course-endpoint endpoint canvas-id))
-            (elog-info org-canvas--logger "Successfully deleted from Canvas")
+          (let ((url (if delete-url-fn
+                        (funcall delete-url-fn canvas-id)
+                      (org-canvas-api-course-endpoint
+                       endpoint canvas-id))))
+            (if delete-data
+                (org-canvas-api-request 'DELETE url
+                                        :data delete-data)
+              (org-canvas-api-request 'DELETE url))
+            (elog-info org-canvas--logger
+                       "Successfully deleted from Canvas")
+            (when post-delete-fn
+              (funcall post-delete-fn pom))
             (org-canvas-clear-sync-properties pom)
             (elog-info org-canvas--logger "Cleaned local properties")
             (message "%s '%s' deleted." (capitalize feature-name) title)
             t)
         (error
-         (elog-error org-canvas--logger "Failed to delete: %s" (error-message-string err))
+         (elog-error org-canvas--logger "Failed to delete: %s"
+                     (error-message-string err))
          (message "Failed to delete %s. Check logs." feature-name)
          nil)))))
 
@@ -1241,26 +1257,38 @@ FEATURE is a symbol like \\='pages.  ARGS is a plist with keys:
 FEATURE is a symbol like \\='page or \\='assignment.
 
 ARGS is a plist with the following keys:
-  :endpoint - API endpoint pattern with %s (required)
-  :id-property - Org property name (default: \"CANVAS_ID\")
+  :endpoint      - API endpoint pattern with %s (required unless
+                   :delete-url-fn provided)
+  :id-property   - Org property name (default: \"CANVAS_ID\")
+  :delete-url-fn - Lambda (id) returning full URL (overrides :endpoint)
+  :delete-data   - Alist data to include in DELETE request
+  :post-delete-fn - Function (pom) for post-delete cleanup
 
 Example:
   (org-canvas-define-delete-at-point assignment
     :endpoint \"assignments/%s\")"
   (declare (indent 1))
   (let* ((feature-name (symbol-name feature))
-         (fn-name (intern (format "org-canvas-delete-%s-at-point" feature-name)))
+         (fn-name (intern (format "org-canvas-delete-%s-at-point"
+                                  feature-name)))
          (endpoint (plist-get args :endpoint))
-         (id-property (or (plist-get args :id-property) "CANVAS_ID")))
-    (unless endpoint (error "org-canvas-define-delete-at-point: :endpoint is required"))
+         (id-property (or (plist-get args :id-property) "CANVAS_ID"))
+         (delete-url-fn (plist-get args :delete-url-fn))
+         (delete-data (plist-get args :delete-data))
+         (post-delete-fn (plist-get args :post-delete-fn)))
+    (unless (or endpoint delete-url-fn)
+      (error "org-canvas-define-delete-at-point: :endpoint or :delete-url-fn required"))
     `(progn
        ;;;###autoload
        (defun ,fn-name ()
          ,(format "Delete the Canvas %s associated with the current Org heading." feature-name)
          (interactive)
          (org-canvas--delete-item-at-point ,feature-name
-                                           :endpoint ,endpoint
-                                           :id-property ,id-property)))))
+           :endpoint ,endpoint
+           :id-property ,id-property
+           :delete-url-fn ,delete-url-fn
+           :delete-data ',delete-data
+           :post-delete-fn ,post-delete-fn)))))
 
 ;;;; 9. Push-at-Point Infrastructure
 

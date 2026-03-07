@@ -912,9 +912,9 @@ Content two.
             :to-throw 'error '("org-canvas-define-delete-all: :file is required"))))
 
 (describe "org-canvas-define-delete-at-point macro validation"
-  (it "errors when :endpoint is missing"
+  (it "errors when neither :endpoint nor :delete-url-fn provided"
     (expect (macroexpand '(org-canvas-define-delete-at-point test-bad))
-            :to-throw 'error '("org-canvas-define-delete-at-point: :endpoint is required"))))
+            :to-throw 'error '("org-canvas-define-delete-at-point: :endpoint or :delete-url-fn required"))))
 
 (describe "org-canvas--push-to-api 404→POST non-timeout error"
   (it "re-throws non-timeout POST error after 404 retry"

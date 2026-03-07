@@ -906,34 +906,10 @@ Returns :success, :skip (folder heading), or :fail."
       (message "Deletion complete. %d files, %d folders removed."
                deleted-file-count deleted-folder-count))))
 
-;;;###autoload
-(defun org-canvas-delete-file-at-point ()
-  "Delete the Canvas file associated with the current Org heading."
-  (interactive)
-  (org-back-to-heading t)
-  (let* ((pom (point))
-         (canvas-id (org-canvas-org-get-property pom "CANVAS_ID"))
-         (raw-heading (org-get-heading t t t t))
-         (display-name (org-canvas--file-get-display-name raw-heading)))
-
-    (unless canvas-id
-      (user-error "No CANVAS_ID property found for this heading"))
-
-    (when (y-or-n-p (format "Delete '%s' from Canvas? " display-name))
-      (org-canvas-clear-log)
-      (display-buffer (get-buffer-create org-canvas--log-buffer-name))
-      (elog-info org-canvas--logger "Deleting file '%s' (ID: %s)..." display-name canvas-id)
-
-      (condition-case err
-          (progn
-            (org-canvas-api-request 'DELETE (format "%s/api/v1/files/%s" org-canvas-base-url canvas-id))
-            (elog-info org-canvas--logger "Successfully deleted from Canvas")
-            (org-canvas-clear-sync-properties pom)
-            (elog-info org-canvas--logger "Cleaned local properties")
-            (message "File '%s' deleted." display-name))
-        (error
-         (elog-error org-canvas--logger "Failed to delete: %s" (error-message-string err))
-         (message "Failed to delete file. Check logs."))))))
+(org-canvas-define-delete-at-point file
+  :delete-url-fn (lambda (id)
+                   (format "%s/api/v1/files/%s"
+                           org-canvas-base-url id)))
 
 ;;;; Pull
 

@@ -613,33 +613,9 @@ Returns (success-count . fail-count)."
       (while (org-get-next-sibling)
         (org-canvas-clear-sync-properties (point))))))
 
-;;;###autoload
-(defun org-canvas-delete-module-at-point ()
-  "Delete the Canvas module associated with the current Org heading."
-  (interactive)
-  (org-back-to-heading t)
-  (let* ((pom (point))
-         (canvas-id (org-canvas-org-get-property pom "CANVAS_ID"))
-         (title (org-canvas--strip-statistics-cookie (org-get-heading t t t t))))
-
-    (unless canvas-id
-      (user-error "No CANVAS_ID property found for this heading"))
-
-    (when (y-or-n-p (format "Delete module '%s' (and all items) from Canvas? " title))
-      (org-canvas-clear-log)
-      (display-buffer (get-buffer-create org-canvas--log-buffer-name))
-      (elog-info org-canvas--logger "Deleting module '%s' (ID: %s)..." title canvas-id)
-
-      (condition-case err
-          (progn
-            (org-canvas-api-request 'DELETE (org-canvas-api-course-endpoint "modules/%s" canvas-id))
-            (elog-info org-canvas--logger "Successfully deleted from Canvas")
-            (org-canvas--module-clear-children-properties pom)
-            (elog-info org-canvas--logger "Cleaned local properties")
-            (message "Module '%s' deleted." title))
-        (error
-         (elog-error org-canvas--logger "Failed to delete: %s" (error-message-string err))
-         (message "Failed to delete module. Check logs."))))))
+(org-canvas-define-delete-at-point module
+  :endpoint "modules/%s"
+  :post-delete-fn #'org-canvas--module-clear-children-properties)
 
 ;;;; Pull
 
