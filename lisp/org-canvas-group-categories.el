@@ -87,13 +87,6 @@ PUT is global."
   :endpoint "group_categories"
   :pull-item-fn #'org-canvas--group-category-pull-item)
 
-(org-canvas-define-push-at-point group-category
-  :parse #'org-canvas--group-category-parse-entry
-  :build #'org-canvas--group-category-build-payload
-  :push #'org-canvas--group-category-push-to-api
-  :endpoint "group_categories"
-  :pull-item-fn #'org-canvas--group-category-pull-item)
-
 ;;;; Delete
 
 (org-canvas-define-delete-all group-categories
@@ -134,18 +127,11 @@ Uses global endpoint DELETE /group_categories/:id."
 
 ;;;; Pull
 
-(defun org-canvas--group-category-pull-item (item pos)
-  "Set per-item properties for a pulled group category.
-ITEM is the API response alist, POS is the heading position."
-  (let ((self-signup (org-canvas--alist-get-non-null 'self_signup item))
-        (group-limit (alist-get 'group_limit item))
-        (auto-leader (org-canvas--alist-get-non-null 'auto_leader item)))
-    (when self-signup
-      (org-canvas-org-set-property pos "SELF_SIGNUP" self-signup))
-    (when (and group-limit (> group-limit 0))
-      (org-canvas-org-set-property pos "GROUP_LIMIT" (format "%s" group-limit)))
-    (when auto-leader
-      (org-canvas-org-set-property pos "AUTO_LEADER" auto-leader))))
+(org-canvas-define-pull-item group-category
+  :properties
+  ((self_signup  "SELF_SIGNUP"  :type non-null)
+   (group_limit  "GROUP_LIMIT"  :type number)
+   (auto_leader  "AUTO_LEADER"  :type non-null)))
 
 (org-canvas-define-pull group-categories
   :file org-canvas-group-categories-file

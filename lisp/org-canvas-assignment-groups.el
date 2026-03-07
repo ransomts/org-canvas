@@ -125,13 +125,6 @@ because Canvas rejects drop rules when no assignments exist yet."
   :title-key :name
   :pull-item-fn #'org-canvas--assignment-group-pull-item)
 
-(org-canvas-define-push-at-point assignment-group
-  :parse #'org-canvas--assignment-group-parse-entry
-  :build #'org-canvas--assignment-group-build-payload
-  :endpoint "assignment_groups"
-  :title-key :name
-  :pull-item-fn #'org-canvas--assignment-group-pull-item)
-
 ;; Generate org-canvas-delete-all-assignment-groups using the delete macro
 ;; Note: Canvas requires at least one assignment group, so the default
 ;; 'Assignments' group cannot be deleted (will error on last group)

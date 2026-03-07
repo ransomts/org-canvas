@@ -1002,15 +1002,8 @@ Content two.
 
 ;;;; Push-at-Point Macro
 
-(describe "org-canvas-define-push-at-point"
-  (it "validates required args at macro expansion"
-    (expect (macroexpand '(org-canvas-define-push-at-point test-feature
-                            :build #'identity :push #'identity :finalize #'identity))
-            :to-throw 'error))
-
-  (it "generates a function with the correct name"
-    ;; The macro should generate org-canvas-sync-page-at-point etc.
-    ;; Test that the pages module generated it (function should exist)
+(describe "org-canvas-define-sync at-point generation"
+  (it "generates sync-page-at-point from sync macro"
     (expect (fboundp 'org-canvas-sync-page-at-point) :to-be-truthy))
 
   (it "generates sync-announcement-at-point"
@@ -1026,7 +1019,17 @@ Content two.
     (expect (fboundp 'org-canvas-sync-rubric-at-point) :to-be-truthy))
 
   (it "generates sync-assignment-group-at-point"
-    (expect (fboundp 'org-canvas-sync-assignment-group-at-point) :to-be-truthy)))
+    (expect (fboundp 'org-canvas-sync-assignment-group-at-point) :to-be-truthy))
+
+  (it "singularizes group-categories correctly"
+    (expect (fboundp 'org-canvas-sync-group-category-at-point) :to-be-truthy))
+
+  (it "singularizes calendar-events correctly"
+    (expect (fboundp 'org-canvas-sync-calendar-event-at-point) :to-be-truthy))
+
+  (it "suppresses at-point with :no-at-point"
+    ;; new-quizzes has :no-at-point t, its at-point is hand-written
+    (expect (fboundp 'org-canvas-sync-new-quiz-at-point) :to-be-truthy)))
 
 ;;;; Conflict Detection
 
@@ -1923,22 +1926,6 @@ Keep this too
           (setq orphan-warned t)))
       (expect orphan-warned :to-be nil))))
 
-(describe "org-canvas-define-push-at-point macro validation"
-  (it "errors when :parse is missing"
-    (expect (macroexpand '(org-canvas-define-push-at-point test-feat
-                            :build #'ignore :push #'ignore :finalize #'ignore))
-            :to-throw 'error))
-
-  (it "errors when :build is missing"
-    (expect (macroexpand '(org-canvas-define-push-at-point test-feat
-                            :parse #'ignore :push #'ignore :finalize #'ignore))
-            :to-throw 'error))
-
-  (it "errors when :push is missing"
-    (expect (macroexpand '(org-canvas-define-push-at-point test-feat
-                            :parse #'ignore :build #'ignore :finalize #'ignore))
-            :to-throw 'error)))
-
 (describe "org-canvas--push-at-point-runtime"
   (it "binds org-canvas--current-pull-item-fn from pull-item-fn arg"
     (with-org-canvas-test-config
@@ -2418,15 +2405,6 @@ Body.
             nil))
          ;; Should be skipped because hash matches AND canvas-url is truthy
          (expect api-called :to-be nil))))))
-
-;;;; define-push-at-point macro validation for missing :finalize/:endpoint
-
-(describe "org-canvas-define-push-at-point macro validation"
-  (it "errors when neither :finalize nor :endpoint provided"
-    (expect (macroexpand '(org-canvas-define-push-at-point test-feat
-                            :parse #'identity :build #'identity
-                            :push #'identity))
-            :to-throw 'error)))
 
 ;;;; upload-file step-2 fallback paths
 

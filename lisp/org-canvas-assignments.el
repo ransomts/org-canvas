@@ -333,16 +333,6 @@ DATA is the parsed assignment plist, RESPONSE is the Canvas API response."
   :post-fn #'org-canvas--assignment-post-finalize
   :pull-item-fn #'org-canvas--assignment-pull-item)
 
-;;;; Push-at-Point
-
-(org-canvas-define-push-at-point assignment
-  :parse #'org-canvas--assignment-parse-entry
-  :build #'org-canvas--assignment-build-payload
-  :endpoint "assignments"
-  :find-fn (lambda (name) (org-canvas--search-item "assignments" name :match-field 'name))
-  :post-fn #'org-canvas--assignment-post-finalize
-  :pull-item-fn #'org-canvas--assignment-pull-item)
-
 ;;;; Delete Functions
 
 ;; Generate org-canvas-delete-all-assignments using the delete macro

@@ -448,6 +448,21 @@ for the display name in logs."
       (org-canvas--sync-warn-orphans all-ids-before (car synced-ids) feature-name)
       (org-canvas--sync-log-summary feature-name sync-file counters))))
 
+(defconst org-canvas--singular-overrides
+  '(("group-categories" . "group-category")
+    ("new-quizzes" . "new-quiz")
+    ("quizzes" . "quiz"))
+  "Irregular plural-to-singular mappings for module names.")
+
+(defun org-canvas--singularize (name)
+  "Singularize module NAME for function naming.
+Uses `org-canvas--singular-overrides' for irregular forms,
+otherwise strips trailing \"s\"."
+  (or (cdr (assoc name org-canvas--singular-overrides))
+      (if (string-suffix-p "s" name)
+          (substring name 0 -1)
+        name)))
+
 (defmacro org-canvas-define-sync (feature &rest args)
   "Define a sync function for FEATURE using the 4-stage pipeline pattern.
 
@@ -469,6 +484,7 @@ ARGS is a plist with the following keys:
   :title-key - Plist key for display name in logs (default: :title)
   :pull-item-fn - Optional function to pull remote data into local heading
                   for interactive conflict resolution
+  :no-at-point - When non-nil, suppress generating the sync-at-point function
 
 When :endpoint is provided but :push is not, a push function is auto-generated
 that calls `org-canvas--push-to-api' with the given endpoint and options.
@@ -491,6 +507,7 @@ Example usage:
          (endpoint (plist-get args :endpoint))
          (title-key (plist-get args :title-key))
          (pull-item-fn (plist-get args :pull-item-fn))
+         (no-at-point (plist-get args :no-at-point))
          (push-fn (or (plist-get args :push)
                       (when endpoint
                         (org-canvas--make-push-fn-form
@@ -501,7 +518,9 @@ Example usage:
                             (org-canvas--make-finalize-fn-form
                              (plist-get args :id-field)
                              (plist-get args :id-property)
-                             title-key (plist-get args :post-fn))))))
+                             title-key (plist-get args :post-fn)))))
+         (singular (org-canvas--singularize feature-name))
+         (at-point-fn-name (intern (format "org-canvas-sync-%s-at-point" singular))))
     (unless file-expr (error "org-canvas-define-sync: :file is required"))
     (unless parse-fn (error "org-canvas-define-sync: :parse is required"))
     (unless build-fn (error "org-canvas-define-sync: :build is required"))
@@ -515,7 +534,16 @@ Example usage:
          (org-canvas--sync-run-pipeline
           ,feature-name (expand-file-name ,file-expr)
           ,query ,parse-fn ,build-fn ,push-fn ,finalize-fn
-          ,pull-item-fn ,title-key)))))
+          ,pull-item-fn ,title-key))
+       ,@(unless no-at-point
+           `(;;;###autoload
+             (defun ,at-point-fn-name ()
+               ,(format "Sync the %s at point to Canvas." singular)
+               (interactive)
+               (org-canvas--push-at-point-runtime
+                ,singular
+                ,parse-fn ,build-fn ,push-fn ,finalize-fn
+                ,(or title-key :title) ,pull-item-fn)))))))
 
 ;;;; 6b. Conflict Detection
 ;;
@@ -1266,46 +1294,6 @@ PULL-ITEM-FN, when non-nil, enables the pull option during conflict resolution."
         (save-buffer)
         (elog-info org-canvas--logger "[Sync] '%s' synced successfully" title)
         (message "%s '%s' synced." (capitalize feature-name) title)))))
-
-(defmacro org-canvas-define-push-at-point (feature &rest args)
-  "Define a sync-at-point function for FEATURE.
-FEATURE is a symbol like \\='page.  ARGS is a plist with keys:
-  :parse, :build (required), :push, :finalize, :endpoint,
-  :id-key, :id-field, :id-property, :find-fn, :post-fn,
-  :title-key, :pull-item-fn.
-When :endpoint is provided, :push and :finalize are auto-generated
-if not explicitly given."
-  (declare (indent 1))
-  (let* ((feature-name (symbol-name feature))
-         (fn-name (intern (format "org-canvas-sync-%s-at-point" feature-name)))
-         (parse-fn (plist-get args :parse))
-         (build-fn (plist-get args :build))
-         (endpoint (plist-get args :endpoint))
-         (title-key (or (plist-get args :title-key) :title))
-         (pull-item-fn (plist-get args :pull-item-fn))
-         (push-fn (or (plist-get args :push)
-                      (when endpoint
-                        (org-canvas--make-push-fn-form
-                         endpoint (plist-get args :id-key)
-                         title-key (plist-get args :find-fn)))))
-         (finalize-fn (or (plist-get args :finalize)
-                          (when endpoint
-                            (org-canvas--make-finalize-fn-form
-                             (plist-get args :id-field)
-                             (plist-get args :id-property)
-                             title-key (plist-get args :post-fn))))))
-    (unless parse-fn (error "org-canvas-define-push-at-point: :parse is required"))
-    (unless build-fn (error "org-canvas-define-push-at-point: :build is required"))
-    (unless push-fn (error "org-canvas-define-push-at-point: :push or :endpoint is required"))
-    (unless finalize-fn (error "org-canvas-define-push-at-point: :finalize or :endpoint is required"))
-    `(progn
-       ;;;###autoload
-       (defun ,fn-name ()
-         ,(format "Sync the %s at point to Canvas." feature-name)
-         (interactive)
-         (org-canvas--push-at-point-runtime
-          ,feature-name ,parse-fn ,build-fn ,push-fn ,finalize-fn
-          ,title-key ,pull-item-fn)))))
 
 ;;;; 10. Setup Wizard
 

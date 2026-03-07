@@ -124,17 +124,6 @@ Logs warnings for invalid roles.  Returns RAW unchanged."
   :find-fn (lambda (title) (org-canvas--search-item "pages" title))
   :pull-item-fn #'org-canvas--page-pull-item)
 
-;; Pages use 'url instead of 'id, and we skip the front page
-(org-canvas-define-push-at-point page
-  :parse #'org-canvas--page-parse-entry
-  :build #'org-canvas--page-build-payload
-  :endpoint "pages"
-  :id-key :canvas-url
-  :id-field 'url
-  :id-property "CANVAS_URL"
-  :find-fn (lambda (title) (org-canvas--search-item "pages" title))
-  :pull-item-fn #'org-canvas--page-pull-item)
-
 (org-canvas-define-delete-all pages
   :endpoint "pages"
   :file org-canvas-pages-file

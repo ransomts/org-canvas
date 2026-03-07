@@ -301,13 +301,6 @@ it before creating new one."
   :finalize #'org-canvas--rubric-finalize
   :pull-item-fn #'org-canvas--rubric-pull-item)
 
-(org-canvas-define-push-at-point rubric
-  :parse #'org-canvas--rubric-parse-entry
-  :build #'org-canvas--rubric-build-payload
-  :push #'org-canvas--rubric-push-to-api
-  :finalize #'org-canvas--rubric-finalize
-  :pull-item-fn #'org-canvas--rubric-pull-item)
-
 ;;;; Rubric Dissociation
 
 (defun org-canvas--rubric-delete-association (assoc-id assignment-name)

@@ -122,13 +122,6 @@ Returns the matching item alist or nil."
   :endpoint "calendar_events"
   :pull-item-fn #'org-canvas--calendar-event-pull-item)
 
-(org-canvas-define-push-at-point calendar-event
-  :parse #'org-canvas--calendar-event-parse-entry
-  :build #'org-canvas--calendar-event-build-payload
-  :push #'org-canvas--calendar-event-push-to-api
-  :endpoint "calendar_events"
-  :pull-item-fn #'org-canvas--calendar-event-pull-item)
-
 ;;;; Delete
 
 (org-canvas-define-delete-all calendar-events
@@ -174,24 +167,14 @@ Uses global endpoint DELETE /calendar_events/:id."
 
 ;;;; Pull
 
-(defun org-canvas--calendar-event-pull-item (item pos)
-  "Set per-item properties for a pulled calendar event.
-ITEM is the API response alist, POS is the heading position."
-  (let ((start-at (alist-get 'start_at item))
-        (end-at (alist-get 'end_at item))
-        (all-day (alist-get 'all_day item))
-        (location-name (org-canvas--alist-get-non-null 'location_name item))
-        (location-address (org-canvas--alist-get-non-null 'location_address item))
-        (description (org-canvas--alist-get-non-null 'description item)))
-    (org-canvas--pull-set-timestamp-property pos "START_AT" start-at)
-    (org-canvas--pull-set-timestamp-property pos "END_AT" end-at)
-    (org-canvas--pull-set-boolean-property pos "ALL_DAY" all-day)
-    (when location-name
-      (org-canvas-org-set-property pos "LOCATION_NAME" location-name))
-    (when location-address
-      (org-canvas-org-set-property pos "LOCATION_ADDRESS" location-address))
-    (when description
-      (org-canvas--pull-insert-body description))))
+(org-canvas-define-pull-item calendar-event
+  :body-field description
+  :properties
+  ((start_at         "START_AT"         :type timestamp)
+   (end_at           "END_AT"           :type timestamp)
+   (all_day          "ALL_DAY"          :type boolean)
+   (location_name    "LOCATION_NAME"    :type non-null)
+   (location_address "LOCATION_ADDRESS" :type non-null)))
 
 ;;;###autoload
 (defun org-canvas-pull-calendar-events ()

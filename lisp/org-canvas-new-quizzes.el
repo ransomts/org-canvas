@@ -863,7 +863,8 @@ QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
   :parse #'org-canvas--new-quiz-parse-entry
   :build #'org-canvas--new-quiz-build-payload
   :push #'org-canvas--new-quiz-push-to-api
-  :finalize #'org-canvas--new-quiz-finalize)
+  :finalize #'org-canvas--new-quiz-finalize
+  :no-at-point t)
 
 ;;;; Sync at Point
 

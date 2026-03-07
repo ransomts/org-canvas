@@ -803,7 +803,76 @@ Returns a string like \"[2026-01-15 Thu 10:00]\" or nil."
     (let ((time (date-to-time iso8601)))
       (format-time-string "[%Y-%m-%d %a %H:%M]" time t))))
 
-;;;; 4f. Pull Macro
+;;;; 4f. Declarative Pull-Item Macro
+
+(defun org-canvas--pull-item-set-property (pos api-field property
+                                               type item)
+  "Set PROPERTY on heading at POS from ITEM's API-FIELD.
+TYPE controls conversion: string, boolean, timestamp, number."
+  (let ((value (alist-get api-field item)))
+    (pcase type
+      ('boolean
+       (org-canvas--pull-set-boolean-property pos property value))
+      ('timestamp
+       (org-canvas--pull-set-timestamp-property pos property value))
+      ('number
+       (when (and value (not (eq value :null))
+                  (or (not (numberp value)) (/= value 0)))
+         (org-canvas-org-set-property pos property
+                                      (format "%s" value))))
+      ('non-null
+       (let ((v (org-canvas--alist-get-non-null api-field item)))
+         (when v (org-canvas-org-set-property pos property v))))
+      (_  ;; string (default)
+       (when (and value (not (eq value :null)))
+         (org-canvas-org-set-property pos property
+                                      (format "%s" value)))))))
+
+(defmacro org-canvas-define-pull-item (feature &rest args)
+  "Define a pull-item function for FEATURE from a property spec.
+
+FEATURE is a symbol like \\='announcement or \\='discussion.
+
+ARGS is a plist with the following keys:
+  :body-field  - API alist key for body HTML (optional)
+  :after-pull  - Function (item pos) for custom logic (optional)
+  :properties  - List of (API-FIELD ORG-PROPERTY :type TYPE) specs
+
+Type can be: string (default), boolean, timestamp, number, non-null.
+
+Example:
+  (org-canvas-define-pull-item discussion
+    :body-field \\='message
+    :properties
+    ((discussion_type  \"DISCUSSION_TYPE\"  :type string)
+     (allow_rating     \"ALLOW_RATING\"     :type boolean)))"
+  (declare (indent 1))
+  (let* ((feature-name (symbol-name feature))
+         (fn-name (intern (format "org-canvas--%s-pull-item"
+                                  feature-name)))
+         (body-field (plist-get args :body-field))
+         (after-pull (plist-get args :after-pull))
+         (properties (plist-get args :properties)))
+    `(defun ,fn-name (item pos)
+       ,(format "Set per-item properties for a pulled %s.\n\
+ITEM is the API response alist, POS is the heading position."
+                feature-name)
+       ,@(mapcar
+          (lambda (spec)
+            (let ((api-field (nth 0 spec))
+                  (org-prop (nth 1 spec))
+                  (type (or (plist-get (nthcdr 2 spec) :type)
+                            'string)))
+              `(org-canvas--pull-item-set-property
+                pos ',api-field ,org-prop ',type item)))
+          properties)
+       ,@(when body-field
+           `((org-canvas--pull-insert-body
+              (alist-get ',body-field item))))
+       ,@(when after-pull
+           `((funcall ,after-pull item pos))))))
+
+;;;; 4g. Pull Macro
 
 (defun org-canvas--pull-confirm-overwrite (file feature-name)
   "Prompt user to confirm overwrite if FILE already has content.

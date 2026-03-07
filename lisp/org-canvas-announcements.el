@@ -90,12 +90,6 @@
   :endpoint "discussion_topics"
   :pull-item-fn #'org-canvas--announcement-pull-item)
 
-(org-canvas-define-push-at-point announcement
-  :parse #'org-canvas--announcement-parse-entry
-  :build #'org-canvas--announcement-build-payload
-  :endpoint "discussion_topics"
-  :pull-item-fn #'org-canvas--announcement-pull-item)
-
 ;; Generate org-canvas-delete-all-announcements using the delete macro
 (org-canvas-define-delete-all announcements
   :endpoint "discussion_topics"
@@ -107,14 +101,10 @@
 
 ;;;; Pull
 
-(defun org-canvas--announcement-pull-item (item pos)
-  "Set per-item properties for a pulled announcement.
-ITEM is the API response alist, POS is the heading position."
-  (let ((delayed-post (alist-get 'delayed_post_at item)))
-    (when delayed-post
-      (let ((ts (org-canvas--iso8601-to-org-timestamp delayed-post)))
-        (when ts (org-canvas-org-set-property pos "DELAYED_POST_AT" ts)))))
-  (org-canvas--pull-insert-body (alist-get 'message item)))
+(org-canvas-define-pull-item announcement
+  :body-field message
+  :properties
+  ((delayed_post_at "DELAYED_POST_AT" :type timestamp)))
 
 (org-canvas-define-pull announcements
   :file org-canvas-announcements-file

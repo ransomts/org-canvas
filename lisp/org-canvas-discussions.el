@@ -223,13 +223,6 @@ DATA is the parsed discussion plist, RESPONSE is the Canvas API response."
   :post-fn #'org-canvas--discussion-post-finalize
   :pull-item-fn #'org-canvas--discussion-pull-item)
 
-(org-canvas-define-push-at-point discussion
-  :parse #'org-canvas--discussion-parse-entry
-  :build #'org-canvas--discussion-build-payload
-  :endpoint "discussion_topics"
-  :post-fn #'org-canvas--discussion-post-finalize
-  :pull-item-fn #'org-canvas--discussion-pull-item)
-
 ;; Generate org-canvas-delete-all-discussions using the delete macro
 ;; Skip announcements (is_announcement = t) since those have their own delete
 (org-canvas-define-delete-all discussions
@@ -242,20 +235,14 @@ DATA is the parsed discussion plist, RESPONSE is the Canvas API response."
 
 ;;;; Pull
 
-(defun org-canvas--discussion-pull-item (item pos)
-  "Set per-item properties for a pulled discussion.
-ITEM is the API response alist, POS is the heading position."
-  (let ((discussion-type (alist-get 'discussion_type item))
-        (delayed-post (alist-get 'delayed_post_at item)))
-    (when discussion-type
-      (org-canvas-org-set-property pos "DISCUSSION_TYPE" discussion-type))
-    (when delayed-post
-      (let ((ts (org-canvas--iso8601-to-org-timestamp delayed-post)))
-        (when ts (org-canvas-org-set-property pos "DELAYED_POST_AT" ts)))))
-  (org-canvas--pull-set-boolean-property pos "ALLOW_RATING" (alist-get 'allow_rating item))
-  (org-canvas--pull-set-boolean-property pos "ONLY_GRADERS_CAN_RATE" (alist-get 'only_graders_can_rate item))
-  (org-canvas--pull-set-boolean-property pos "SORT_BY_RATING" (alist-get 'sort_by_rating item))
-  (org-canvas--pull-insert-body (alist-get 'message item)))
+(org-canvas-define-pull-item discussion
+  :body-field message
+  :properties
+  ((discussion_type       "DISCUSSION_TYPE"       :type string)
+   (delayed_post_at       "DELAYED_POST_AT"       :type timestamp)
+   (allow_rating          "ALLOW_RATING"          :type boolean)
+   (only_graders_can_rate "ONLY_GRADERS_CAN_RATE" :type boolean)
+   (sort_by_rating        "SORT_BY_RATING"        :type boolean)))
 
 (org-canvas-define-pull discussions
   :file org-canvas-discussions-file
