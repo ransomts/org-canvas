@@ -2551,4 +2551,43 @@ Body text
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
 
+;;;; Coverage: sync-children id fallback chain
+
+(describe "org-canvas--new-quiz-sync-children"
+  (it "uses id when assignment_id is absent"
+    (with-org-canvas-test-config
+      (let ((synced-quiz-id nil))
+        (cl-letf (((symbol-function 'org-canvas--sync-new-quiz-items)
+                   (lambda (_marker quiz-id)
+                     (setq synced-quiz-id quiz-id))))
+          (with-temp-org-buffer
+           "* Quiz
+:PROPERTIES:
+:CANVAS_ID: 99
+:END:
+"
+           (org-back-to-heading t)
+           (org-canvas--new-quiz-sync-children
+            '(:canvas-id "99" :rubric-id nil)
+            '((id . 77)))
+           (expect synced-quiz-id :to-equal 77))))))
+
+  (it "falls back to canvas-id when response has no id fields"
+    (with-org-canvas-test-config
+      (let ((synced-quiz-id nil))
+        (cl-letf (((symbol-function 'org-canvas--sync-new-quiz-items)
+                   (lambda (_marker quiz-id)
+                     (setq synced-quiz-id quiz-id))))
+          (with-temp-org-buffer
+           "* Quiz
+:PROPERTIES:
+:CANVAS_ID: 55
+:END:
+"
+           (org-back-to-heading t)
+           (org-canvas--new-quiz-sync-children
+            '(:canvas-id "55" :rubric-id nil)
+            '((other_field . "x")))
+           (expect synced-quiz-id :to-equal "55")))))))
+
 ;;; org-canvas-new-quizzes-test.el ends here

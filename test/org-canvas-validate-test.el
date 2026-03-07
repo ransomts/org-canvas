@@ -353,6 +353,21 @@ Some body text.
               (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Assignment 1"))
              :to-be nil)))
 
+  (it "returns nil when override block exists but no table follows"
+    (with-temp-org-buffer
+     "* Assignment 1
+:PROPERTIES:
+:POINTS: 100
+:END:
+
+#+NAME: overrides
+Not a table row here.
+"
+     (org-back-to-heading t)
+     (expect (org-canvas--validate-assignment-structure
+              (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Assignment 1"))
+             :to-be nil)))
+
   (it "returns warning for override row without file link"
     (with-temp-org-buffer
      "* Assignment 1
@@ -2133,6 +2148,26 @@ EXCEPT is a list of filenames to skip."
                        (issues (org-canvas--validate-drop-rules loc)))
                   (expect issues :not :to-be nil)
                   (expect (plist-get (car issues) :severity) :to-equal 'warning)
+                  (expect (plist-get (car issues) :message) :to-match "Drop rules")))))
+        (delete-directory temp-dir t))))
+
+  (it "warns when only DROP_HIGHEST exceeds assignment count"
+    (let* ((temp-dir (make-temp-file "drop-test-" t))
+           (assign-file (expand-file-name "assignments.org" temp-dir))
+           (groups-file (expand-file-name "assignment-groups.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file assign-file
+              (insert "* HW 1\n:PROPERTIES:\n:GROUP: [[file:assignment-groups.org::*Homework][Homework]]\n:END:\n"))
+            (with-temp-file groups-file
+              (insert "* Homework\n:PROPERTIES:\n:DROP_HIGHEST: 2\n:END:\n"))
+            (let ((org-canvas-assignments-file assign-file))
+              (with-current-buffer (find-file-noselect groups-file)
+                (goto-char (point-min))
+                (org-back-to-heading)
+                (let* ((loc (list :file groups-file :line 1 :heading "Homework"))
+                       (issues (org-canvas--validate-drop-rules loc)))
+                  (expect issues :not :to-be nil)
                   (expect (plist-get (car issues) :message) :to-match "Drop rules")))))
         (delete-directory temp-dir t))))
 
