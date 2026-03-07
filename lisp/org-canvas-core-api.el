@@ -79,9 +79,10 @@ or signal an error for terminal failures."
       (elog-warning org-canvas--logger
         "[API] Rate limited (HTTP %d). Waiting %ds..."
         status org-canvas-rate-limit-wait)
-      (message "Rate limited by Canvas (HTTP %d). Retrying in %ds..."
-               status org-canvas-rate-limit-wait)
-      (sleep-for org-canvas-rate-limit-wait)
+      (dotimes (i org-canvas-rate-limit-wait)
+        (message "Rate limited (HTTP %d). Retrying in %ds..."
+                 status (- org-canvas-rate-limit-wait i))
+        (sleep-for 1))
       :retry)
 
      ;; Authentication failure (401)
@@ -214,6 +215,7 @@ Returns a flat list of all items across all pages."
         (all-items nil)
         (done nil))
     (while (not done)
+      (message "Fetching page %d (%d items so far)..." page (length all-items))
       (let* ((page-params (append (or params '())
                                   `(("per_page" . ,(number-to-string per-page))
                                     ("page" . ,(number-to-string page)))))
@@ -245,7 +247,8 @@ ASSOCIATION-TYPE is \"Assignment\" or \"Discussion\"."
           (org-canvas-api-request 'POST endpoint :data payload)
           (elog-info org-canvas--logger "[Rubric] Association created"))
       (error
-       (elog-warning org-canvas--logger "[Rubric] Association failed: %s" (error-message-string err))))))
+       (elog-warning org-canvas--logger "[Rubric] Association failed: %s" (error-message-string err))
+       (message "WARNING: Rubric association failed for %s: %s" item-id (error-message-string err))))))
 
 ;;;; 3c. File Upload Infrastructure
 ;;

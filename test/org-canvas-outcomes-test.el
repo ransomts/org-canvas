@@ -1532,4 +1532,31 @@ Description B.
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
 
+(describe "org-canvas-pull-outcomes progress"
+  (it "shows per-group progress in echo area"
+    (let* ((temp-dir (make-temp-file "pull-outcomes-progress" t))
+           (outcomes-file (expand-file-name "outcomes.org" temp-dir)))
+      (unwind-protect
+          (let ((org-canvas-outcomes-file outcomes-file))
+            (with-org-canvas-test-config
+              (with-sync-test-env
+                (with-temp-file outcomes-file (insert ""))
+                (spy-on 'message)
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (lambda (_method _url &optional _params)
+                             '(((id . 10) (title . "Group A"))
+                               ((id . 20) (title . "Group B")))))
+                          ((symbol-function 'org-canvas--outcome-pull-process-group)
+                           (lambda (_gid) 0))
+                          ((symbol-function 'org-canvas--html-to-org)
+                           (lambda (html) html)))
+                  (org-canvas-pull-outcomes)
+                  (expect 'message :to-have-been-called-with
+                          "Outcomes [%d/%d] Pulling group '%s'..." 1 2 "Group A")
+                  (expect 'message :to-have-been-called-with
+                          "Outcomes [%d/%d] Pulling group '%s'..." 2 2 "Group B")))))
+        (let ((buf (find-buffer-visiting outcomes-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
 ;;; org-canvas-outcomes-test.el ends here

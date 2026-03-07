@@ -1524,5 +1524,51 @@ Page content.
        (org-canvas--test--after-pull-cov-pull-item item (point))
        (expect test--after-pull-cov-called :to-equal item)))))
 
+(describe "org-canvas--resolve-single-image echo area warnings"
+  (it "shows warning when image upload fails"
+    (with-org-canvas-test-config
+      (let ((temp-dir (make-temp-file "img-test-" t)))
+        (unwind-protect
+            (let ((img-file (expand-file-name "test.png" temp-dir)))
+              (with-temp-file img-file (insert "fake-png"))
+              (spy-on 'message)
+              (spy-on 'elog-warning)
+              (spy-on 'elog-info)
+              (let ((org-canvas--image-cache (make-hash-table :test 'equal)))
+                (cl-letf (((symbol-function 'org-canvas--image-ensure-folder)
+                           (lambda () 1))
+                          ((symbol-function 'org-canvas--upload-file)
+                           (lambda (&rest _) (error "Upload failed"))))
+                  (org-canvas--resolve-single-image
+                   (list :start 0 :end 10 :path "test.png" :display nil)
+                   temp-dir (list nil) 1 1)
+                  (expect 'message :to-have-been-called-with
+                          "WARNING: Image upload failed: %s" "test.png"))))
+          (delete-directory temp-dir t)))))
+
+  (it "shows warning when image file not found"
+    (with-org-canvas-test-config
+      (spy-on 'message)
+      (spy-on 'elog-warning)
+      (let ((org-canvas--image-cache (make-hash-table :test 'equal)))
+        (org-canvas--resolve-single-image
+         (list :start 0 :end 10 :path "nonexistent.png" :display nil)
+         "/tmp/no-such-dir" (list nil) 1 1)
+        (expect 'message :to-have-been-called-with
+                "WARNING: Image not found: %s"
+                (expand-file-name "nonexistent.png" "/tmp/no-such-dir"))))))
+
+(describe "org-canvas--resolve-image-links progress"
+  (it "shows per-image progress messages"
+    (with-org-canvas-test-config
+      (spy-on 'message)
+      (spy-on 'org-canvas--resolve-single-image)
+      (spy-on 'org-canvas--image-cache-init)
+      (with-temp-buffer
+        (insert "[[file:img1.png]] and [[file:img2.png]]")
+        (org-canvas--resolve-image-links "/tmp/")
+        (expect 'message :to-have-been-called-with "Images [%d/%d] Processing..." 1 2)
+        (expect 'message :to-have-been-called-with "Images [%d/%d] Processing..." 2 2)))))
+
 (provide 'org-canvas-core-org-test)
 ;;; org-canvas-core-org-test.el ends here

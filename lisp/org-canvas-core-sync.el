@@ -240,6 +240,7 @@ Returns a plist (:targets MARKERS :all-ids-before IDS)."
                             id count sync-file)))
                id-counts))
     (org-canvas--sync-warn-duplicate-titles targets sync-file)
+    (org-canvas--sync-warn-stale-headings targets sync-file)
     (list :targets targets :all-ids-before all-ids-before)))
 
 (defun org-canvas--sync-warn-duplicate-titles (targets sync-file)
@@ -258,6 +259,32 @@ Returns a plist (:targets MARKERS :all-ids-before IDS)."
                    "[Duplicate Title] '%s' appears %d times in %s — timeout recovery may match wrong item"
                    title count sync-file)))
              title-counts)))
+
+(defun org-canvas--sync-warn-stale-headings (targets _sync-file)
+  "Warn about headings in TARGETS that were previously synced.
+Detects headings with LAST_SYNCED but no CANVAS_ID/CANVAS_URL,
+which would create duplicates on Canvas.  _SYNC-FILE is unused.
+Prompts user to continue if stale headings are found."
+  (let ((stale-titles nil))
+    (dolist (m targets)
+      (with-current-buffer (marker-buffer m)
+        (save-excursion
+          (goto-char (marker-position m))
+          (let ((title (org-get-heading t t t t)))
+            (when (and (org-entry-get (point) "LAST_SYNCED")
+                       (not (or (org-entry-get (point) "CANVAS_ID")
+                                (org-entry-get (point) "CANVAS_URL"))))
+              (push title stale-titles)
+              (elog-warning org-canvas--logger
+                "[Stale] '%s' was previously synced but has no CANVAS_ID" title))))))
+    (when stale-titles
+      (message "WARNING: %d heading(s) will create duplicates on Canvas: %s"
+               (length stale-titles)
+               (mapconcat (lambda (s) (format "'%s'" s)) (nreverse stale-titles) ", "))
+      (unless (y-or-n-p
+               (format "%d heading(s) have LAST_SYNCED but no CANVAS_ID — sync will create duplicates.  Continue? "
+                       (length stale-titles)))
+        (user-error "Aborted — restore CANVAS_ID properties or delete LAST_SYNCED to fix")))))
 
 (defun org-canvas--sync-finalize-push (response data payload-hash ctx)
   "Finalize a successful push RESPONSE for DATA.
@@ -362,6 +389,9 @@ CTX is a plist with keys:
                 (org-canvas--sync-execute-pipeline data payload ctx))
             (error
              (plist-put counters :fail (1+ (plist-get counters :fail)))
+             (plist-put counters :failed-titles
+                        (cons heading-title
+                              (or (plist-get counters :failed-titles) nil)))
              (elog-error org-canvas--logger "[FAILED] %s '%s': %s"
                feature-upper heading-title (error-message-string err))
              (message "%s [%d/%d] FAILED '%s': %s"
@@ -415,7 +445,12 @@ FEATURE-NAME is the module name.  COUNTERS is a plist with
                    (capitalize feature-name) success-count skip-count
                    fail-count conflict-count pulled-count)
         (message "%s sync: %d success, %d skipped, %d failed."
-                 (capitalize feature-name) success-count skip-count fail-count))))
+                 (capitalize feature-name) success-count skip-count fail-count))
+      (let ((failed-titles (plist-get counters :failed-titles)))
+        (when failed-titles
+          (elog-warning org-canvas--logger "Failed items: %s"
+            (mapconcat (lambda (title) (format "'%s'" title))
+                       (nreverse failed-titles) ", "))))))
     (elog-info org-canvas--logger "========================================")
     ;; Accumulate into global counters when running inside org-canvas-sync
     (when org-canvas--sync-global-counters
@@ -768,7 +803,10 @@ Returns \\='push, \\='pull, or \\='skip."
       ('push-all (setq org-canvas--conflict-apply-all 'push) 'push)
       ('pull-all (setq org-canvas--conflict-apply-all 'pull) 'pull)
       ('skip-all (setq org-canvas--conflict-apply-all 'skip) 'skip)
-      (_ choice))))
+      (_ (progn
+           (elog-warning org-canvas--logger
+             "[Conflict] Unexpected choice %S, defaulting to skip" choice)
+           'skip)))))
 
 (defun org-canvas--conflict-pull-local (data remote-response pull-item-fn)
   "Overwrite local heading with REMOTE-RESPONSE data.
@@ -1081,11 +1119,16 @@ Returns (DELETED-COUNT . DELETED-IDS)."
     (if (null to-delete)
         (cons 0 nil)
       (let ((deleted-count 0)
-            (deleted-ids nil))
+            (failed-count 0)
+            (deleted-ids nil)
+            (del-total (length to-delete))
+            (del-idx 0))
         (dolist (item to-delete)
+          (cl-incf del-idx)
           (let ((item-id (alist-get id-field item))
                 (item-title (alist-get title-field item)))
             (elog-info org-canvas--logger "Deleting: '%s' (ID: %s)" item-title item-id)
+            (message "Deleting [%d/%d] '%s'..." del-idx del-total item-title)
             (condition-case err
                 (progn
                   (if delete-data
@@ -1096,8 +1139,17 @@ Returns (DELETED-COUNT . DELETED-IDS)."
                   (setq deleted-count (1+ deleted-count))
                   (elog-info org-canvas--logger "  -> Deleted '%s' successfully" item-title))
               (error
+               (setq failed-count (1+ failed-count))
                (elog-error org-canvas--logger "  -> Delete failed for '%s': %s"
-                 item-title (error-message-string err))))))
+                 item-title (error-message-string err))
+               (message "WARNING: Delete failed for '%s': %s"
+                        item-title (error-message-string err))))))
+        (when (> failed-count 0)
+          (elog-warning org-canvas--logger
+            "Delete summary: %d succeeded, %d failed out of %d"
+            deleted-count failed-count (length to-delete))
+          (message "WARNING: %d of %d deletions failed. See *canvas-log*."
+                   failed-count (length to-delete)))
         (cons deleted-count deleted-ids)))))
 
 (cl-defun org-canvas--delete-all-items (feature-name

@@ -650,14 +650,19 @@ Checks cache first, then uploads if file exists."
                                         org-canvas-course-id
                                         (alist-get 'id file-obj))))
               (puthash filename preview-url org-canvas--image-cache)
-              (org-canvas--image-replace-link rep preview-url)))
+              (org-canvas--image-replace-link rep preview-url)
+              t))
         (error
          (elog-warning org-canvas--logger
            "[Images] Failed to upload %s: %s"
-           filename (error-message-string err)))))
+           filename (error-message-string err))
+         (message "WARNING: Image upload failed: %s" filename)
+         nil)))
      (t
       (elog-warning org-canvas--logger
-        "[Images] File not found: %s" abs-path)))))
+        "[Images] File not found: %s" abs-path)
+      (message "WARNING: Image not found: %s" abs-path)
+      nil))))
 
 (defun org-canvas--resolve-image-links (source-dir)
   "Resolve inline image links in current buffer to Canvas URLs.
@@ -682,11 +687,19 @@ Images are uploaded to the `org-canvas-image-folder' on Canvas."
       (org-canvas--image-cache-init)
       (let ((folder-id-ref (list nil))
             (count 0)
+            (failed 0)
             (total (length replacements)))
         (dolist (rep replacements)
           (setq count (1+ count))
-          (org-canvas--resolve-single-image
-           rep source-dir folder-id-ref count total))))))
+          (message "Images [%d/%d] Processing..." count total)
+          (unless (org-canvas--resolve-single-image
+                   rep source-dir folder-id-ref count total)
+            (setq failed (1+ failed))))
+        (when (> failed 0)
+          (elog-warning org-canvas--logger
+            "[Images] %d of %d images failed to process" failed total)
+          (message "WARNING: %d of %d images failed. See *canvas-log*."
+                   failed total))))))
 
 (defvar org-export-with-broken-links)
 (defvar org-export-with-sub-superscripts)
@@ -998,8 +1011,19 @@ Returns the course name as a string.  Signals an error if the request fails."
 	(elog-info org-canvas--logger "Success! Connected to course: %s" name)
 	(message "Success! Connected to course: %s" name))
     (error
-     (elog-error org-canvas--logger "Connection Failed: %s" err)
-     (message "Connection Failed. Check *canvas-log* for details."))))
+     (let ((msg (error-message-string err)))
+       (elog-error org-canvas--logger "Connection Failed: %s" msg)
+       (cond
+        ((string-match-p "401" msg)
+         (message "Connection failed: authentication error (HTTP 401). Regenerate your API token."))
+        ((string-match-p "403" msg)
+         (message "Connection failed: permission denied (HTTP 403). Check your token scope."))
+        ((string-match-p "404" msg)
+         (message "Connection failed: course not found (HTTP 404). Check your course ID."))
+        ((string-match-p "resolve\\|getaddrinfo\\|network\\|unreachable" msg)
+         (message "Connection failed: network error. Check your URL and internet connection."))
+        (t
+         (message "Connection failed: %s" msg)))))))
 
 (defun org-canvas--preflight-check ()
   "Validate credentials and connection before syncing.

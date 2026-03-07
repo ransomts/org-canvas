@@ -2255,4 +2255,50 @@
        (expect (org-entry-get (point) "USAGE_LICENSE") :to-be nil)
        (expect (org-entry-get (point) "COPYRIGHT") :to-be nil)))))
 
+(describe "org-canvas--file-confirm-with-retry echo area message"
+  (it "shows retry progress in echo area"
+    (with-org-canvas-test-config
+      (let ((attempt-count 0))
+        (spy-on 'message)
+        (spy-on 'sleep-for)
+        (spy-on 'elog-warning)
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _)
+                     (setq attempt-count (1+ attempt-count))
+                     (if (< attempt-count 3)
+                         (error "Not ready yet")
+                       '((id . 42))))))
+          (org-canvas--file-confirm-with-retry "https://test.example.com/confirm" 3)
+          (expect 'message :to-have-been-called-with
+                  "File upload: retry %d/%d after %ds..." 2 3 2))))))
+
+(describe "org-canvas-pull-files progress"
+  (it "shows per-file progress in echo area"
+    (let* ((temp-dir (make-temp-file "pull-files-test" t))
+           (files-file (expand-file-name "files.org" temp-dir))
+           (content-dir (expand-file-name "content" temp-dir)))
+      (unwind-protect
+          (let ((org-canvas-files-file files-file))
+            (with-org-canvas-test-config
+              (with-sync-test-env
+                (with-temp-file files-file (insert ""))
+                (make-directory content-dir t)
+                (spy-on 'message)
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (lambda (_method _url &optional _params)
+                             '(((id . 1) (display_name . "file1.pdf") (url . "http://x") (size . 100))
+                               ((id . 2) (display_name . "file2.pdf") (url . "http://y") (size . 200)))))
+                          ((symbol-function 'org-canvas--file-pull-download)
+                           (lambda (&rest _) nil))
+                          ((symbol-function 'org-canvas--html-to-org)
+                           (lambda (html) html)))
+                  (org-canvas-pull-files)
+                  (expect 'message :to-have-been-called-with
+                          "Files [%d/%d] Pulling '%s'..." 1 2 "file1.pdf")
+                  (expect 'message :to-have-been-called-with
+                          "Files [%d/%d] Pulling '%s'..." 2 2 "file2.pdf")))))
+        (let ((buf (find-buffer-visiting files-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
 ;;; org-canvas-files-test.el ends here

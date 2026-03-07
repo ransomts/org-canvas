@@ -483,6 +483,7 @@ Returns the API response or signals the last error."
                 (elog-warning org-canvas--logger
                   "[Stage 3: Upload Step 3] Retry %d/%d after %ds..."
                   attempt max-retries delay)
+                (message "File upload: retry %d/%d after %ds..." attempt max-retries delay)
                 (sleep-for delay)))
             (setq response (org-canvas-api-request 'GET url)))
         (error
@@ -901,6 +902,7 @@ Downloads file contents to the content/ directory."
                        "content" (file-name-directory file)))
          (endpoint (org-canvas-api-course-endpoint "files"))
          (remote (org-canvas-api-request-all-pages 'GET endpoint))
+         (total (length remote))
          (count 0))
     (unless (file-exists-p file)
       (with-temp-file file (insert "")))
@@ -908,6 +910,7 @@ Downloads file contents to the content/ directory."
       (make-directory content-dir t))
     (with-current-buffer (find-file-noselect file)
       (dolist (item remote)
+        (cl-incf count)
         (let* ((id (alist-get 'id item))
                (display-name (alist-get 'display_name item))
                (download-url (alist-get 'url item))
@@ -915,12 +918,12 @@ Downloads file contents to the content/ directory."
                (heading-text (format "[[file:content/%s][%s]]"
                                      display-name display-name))
                (pos (org-canvas--pull-upsert-heading file id heading-text)))
+          (message "Files [%d/%d] Pulling '%s'..." count total display-name)
           (goto-char pos)
           (org-canvas-org-save-sync-state pos id)
           (org-canvas--file-pull-set-properties pos item)
           (org-canvas--file-pull-download
-           display-name download-url local-path (alist-get 'size item))
-          (cl-incf count)))
+           display-name download-url local-path (alist-get 'size item))))
       (save-buffer))
     (elog-info org-canvas--logger "Files pull complete: %d files" count)
     (message "Files pull complete: %d files." count)))

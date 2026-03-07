@@ -2999,5 +2999,93 @@ Content here.
           (when buf (kill-buffer buf)))
         (delete-file temp-file)))))
 
+(describe "org-canvas--resolve-conflict unexpected choice"
+  (it "returns skip for unexpected choice symbol"
+    (spy-on 'elog-warning)
+    (let ((org-canvas--conflict-apply-all nil)
+          (org-canvas--current-pull-item-fn nil))
+      (cl-letf (((symbol-function 'org-canvas--conflict-format-diff)
+                 (lambda (_data _remote) (get-buffer-create "*test-diff*")))
+                ((symbol-function 'org-canvas--conflict-prompt)
+                 (lambda (_has-pull) 'unexpected-value)))
+        (let ((result (org-canvas--resolve-conflict '(:title "Test") '((title . "Test")))))
+          (expect result :to-equal 'skip)
+          (expect 'elog-warning :to-have-been-called))))))
+
+(describe "org-canvas--sync-warn-stale-headings"
+  (it "warns and prompts when heading has LAST_SYNCED but no CANVAS_ID"
+    (with-temp-org-buffer
+     "* Stale Item
+:PROPERTIES:
+:LAST_SYNCED: [2025-01-01 Wed 10:00]
+:END:
+"
+     (spy-on 'message)
+     (spy-on 'elog-warning)
+     (spy-on 'y-or-n-p :and-return-value t)
+     (let ((markers (org-map-entries (lambda () (point-marker)) nil 'file)))
+       (org-canvas--sync-warn-stale-headings markers (buffer-file-name))
+       (expect 'message :to-have-been-called)
+       (expect 'y-or-n-p :to-have-been-called))))
+
+  (it "aborts when user declines stale heading prompt"
+    (with-temp-org-buffer
+     "* Stale Item
+:PROPERTIES:
+:LAST_SYNCED: [2025-01-01 Wed 10:00]
+:END:
+"
+     (spy-on 'message)
+     (spy-on 'y-or-n-p :and-return-value nil)
+     (let ((markers (org-map-entries (lambda () (point-marker)) nil 'file)))
+       (expect (org-canvas--sync-warn-stale-headings markers (buffer-file-name))
+               :to-throw 'user-error))))
+
+  (it "does not warn for normal heading with CANVAS_ID"
+    (with-temp-org-buffer
+     "* Normal Item
+:PROPERTIES:
+:CANVAS_ID: 123
+:LAST_SYNCED: [2025-01-01 Wed 10:00]
+:END:
+"
+     (spy-on 'message)
+     (spy-on 'elog-warning)
+     (let ((markers (org-map-entries (lambda () (point-marker)) nil 'file)))
+       (org-canvas--sync-warn-stale-headings markers (buffer-file-name))
+       (expect 'message :not :to-have-been-called))))
+
+  (it "does not warn for new heading without LAST_SYNCED"
+    (with-temp-org-buffer
+     "* New Item
+"
+     (spy-on 'message)
+     (spy-on 'elog-warning)
+     (let ((markers (org-map-entries (lambda () (point-marker)) nil 'file)))
+       (org-canvas--sync-warn-stale-headings markers (buffer-file-name))
+       (expect 'message :not :to-have-been-called))))
+
+  (it "lists all stale headings in single warning when multiple exist"
+    (with-temp-org-buffer
+     "* Stale A
+:PROPERTIES:
+:LAST_SYNCED: [2025-01-01 Wed 10:00]
+:END:
+* Stale B
+:PROPERTIES:
+:LAST_SYNCED: [2025-02-01 Wed 10:00]
+:END:
+"
+     (spy-on 'message)
+     (spy-on 'elog-warning)
+     (spy-on 'y-or-n-p :and-return-value t)
+     (let ((markers (org-map-entries (lambda () (point-marker)) nil 'file)))
+       (org-canvas--sync-warn-stale-headings markers (buffer-file-name))
+       ;; One consolidated message + one prompt
+       (expect 'message :to-have-been-called-times 1)
+       (expect 'y-or-n-p :to-have-been-called-times 1)
+       ;; Both titles logged individually
+       (expect 'elog-warning :to-have-been-called-times 2)))))
+
 (provide 'org-canvas-core-sync-test)
 ;;; org-canvas-core-sync-test.el ends here

@@ -454,9 +454,10 @@
     (let ((org-canvas-api-token "test-token")
           (org-canvas-course-id "12345")
           (org-canvas-rate-limit-retries 2)
-          (org-canvas-rate-limit-wait 0)
+          (org-canvas-rate-limit-wait 1)
           (call-count 0))
       (spy-on 'message)
+      (spy-on 'sleep-for)
       (cl-letf (((symbol-function 'plz)
                  (lambda (&rest _args)
                    (setq call-count (1+ call-count))
@@ -469,13 +470,14 @@
           (expect call-count :to-equal 2)
           (expect (alist-get 'id result) :to-equal 1)
           (expect 'message :to-have-been-called-with
-                  "Rate limited by Canvas (HTTP %d). Retrying in %ds..." 429 0)))))
+                  "Rate limited (HTTP %d). Retrying in %ds..." 429 1)))))
 
   (it "fails after exhausting retries"
     (let ((org-canvas-api-token "test-token")
           (org-canvas-course-id "12345")
           (org-canvas-rate-limit-retries 1)
-          (org-canvas-rate-limit-wait 0))
+          (org-canvas-rate-limit-wait 1))
+      (spy-on 'sleep-for)
       (cl-letf (((symbol-function 'plz)
                  (lambda (&rest _args)
                    (signal 'plz-error
@@ -520,8 +522,9 @@
     (let ((org-canvas-api-token "test-token")
           (org-canvas-course-id "12345")
           (org-canvas-rate-limit-retries 1)
-          (org-canvas-rate-limit-wait 0)
+          (org-canvas-rate-limit-wait 1)
           (call-count 0))
+      (spy-on 'sleep-for)
       (cl-letf (((symbol-function 'plz)
                  (lambda (&rest _args)
                    (setq call-count (1+ call-count))
@@ -533,6 +536,80 @@
         (let ((result (org-canvas-api-request 'GET "https://test.example.com/api/v1/test")))
           (expect call-count :to-equal 2)
           (expect (alist-get 'id result) :to-equal 1))))))
+
+(describe "org-canvas-api-request-all-pages pagination progress"
+  (it "shows progress for each page fetched"
+    (with-org-canvas-test-config
+      (let ((call-count 0))
+        (spy-on 'message)
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_method _url &rest _args)
+                     (setq call-count (1+ call-count))
+                     (if (= call-count 1)
+                         ;; First page: 100 items (full page triggers next)
+                         (make-list 100 '((id . 1)))
+                       ;; Second page: fewer than 100 (done)
+                       (make-list 5 '((id . 2)))))))
+          (org-canvas-api-request-all-pages 'GET "https://test.example.com/api/v1/pages")
+          (expect 'message :to-have-been-called-with
+                  "Fetching page %d (%d items so far)..." 1 0)
+          (expect 'message :to-have-been-called-with
+                  "Fetching page %d (%d items so far)..." 2 100)))))
+
+  (it "shows progress for single page"
+    (with-org-canvas-test-config
+      (spy-on 'message)
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (_method _url &rest _args) '((id . 1)))))
+        (org-canvas-api-request-all-pages 'GET "https://test.example.com/api/v1/pages")
+        (expect 'message :to-have-been-called-with
+                "Fetching page %d (%d items so far)..." 1 0)))))
+
+(describe "org-canvas--api-handle-plz-error rate-limit countdown"
+  (it "calls sleep-for 1 second at a time instead of full duration"
+    (with-org-canvas-test-config
+      (let ((org-canvas-rate-limit-wait 3)
+            (org-canvas-rate-limit-retries 1))
+        (spy-on 'sleep-for)
+        (spy-on 'message)
+        (let ((result (org-canvas--api-handle-plz-error
+                       (cons 'plz-error
+                             (make-plz-error
+                              :response (make-plz-response :status 429 :body "rate limit")))
+                       "https://test.example.com/api")))
+          (expect result :to-equal :retry)
+          (expect 'sleep-for :to-have-been-called-times 3)
+          (expect 'sleep-for :to-have-been-called-with 1)))))
+
+  (it "shows descending countdown messages"
+    (with-org-canvas-test-config
+      (let ((org-canvas-rate-limit-wait 3)
+            (org-canvas-rate-limit-retries 1)
+            (messages nil))
+        (spy-on 'sleep-for)
+        (spy-on 'message :and-call-fake
+                (lambda (fmt &rest args)
+                  (push (apply #'format fmt args) messages)))
+        (org-canvas--api-handle-plz-error
+         (cons 'plz-error
+               (make-plz-error
+                :response (make-plz-response :status 429 :body "rate limit")))
+         "https://test.example.com/api")
+        (setq messages (nreverse messages))
+        (expect (nth 0 messages) :to-match "Retrying in 3s")
+        (expect (nth 1 messages) :to-match "Retrying in 2s")
+        (expect (nth 2 messages) :to-match "Retrying in 1s")))))
+
+(describe "org-canvas--associate-rubric failure message"
+  (it "shows warning in echo area on failure"
+    (with-org-canvas-test-config
+      (spy-on 'message)
+      (spy-on 'elog-warning)
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _) (error "Network error"))))
+        (org-canvas--associate-rubric "42" "99" "Assignment")
+        (expect 'message :to-have-been-called-with
+                "WARNING: Rubric association failed for %s: %s" "42" "Network error")))))
 
 (describe "org-canvas--upload-file"
   (it "errors when Canvas returns no upload_url"
