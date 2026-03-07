@@ -89,9 +89,16 @@ is newer, warn and skip the item.  Set to nil or use
 (defun org-canvas--path (filename)
   "Return the absolute path to FILENAME in `org-canvas-directory`.
 Falls back to `org-directory` or `user-emacs-directory`
-if `org-canvas-directory` is nil."
-  (let ((base (or org-canvas-directory
-		  (if (boundp 'org-directory) org-directory user-emacs-directory))))
+if `org-canvas-directory` is not set, and warns about the fallback."
+  (let* ((dir-set (and org-canvas-directory
+                       (not (string-empty-p org-canvas-directory))))
+         (base (if dir-set
+                   org-canvas-directory
+                 (if (boundp 'org-directory) org-directory user-emacs-directory))))
+    (unless dir-set
+      (when (boundp 'org-canvas--logger)
+        (elog-warning org-canvas--logger
+          "[Config] org-canvas-directory not set, falling back to %s" base)))
     (expand-file-name filename base)))
 
 ;;;; 2. Logging Layer
@@ -107,6 +114,11 @@ if `org-canvas-directory` is nil."
   :type '(choice (const :tag "Buffer only" buffer)
 		 (const :tag "File only" file)
 		 (const :tag "Buffer and file" both))
+  :set (lambda (sym val)
+         (set-default sym val)
+         (when (and (boundp 'org-canvas--logger)
+                    (fboundp 'org-canvas-set-log-destination))
+           (org-canvas-set-log-destination val)))
   :group 'org-canvas)
 
 (defcustom org-canvas-log-file nil

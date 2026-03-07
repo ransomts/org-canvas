@@ -31,6 +31,21 @@
       (insert ";;; org-canvas-credentials.el ends here\n"))
     file))
 
+(defun org-canvas--suggest-gitignore (dir)
+  "Suggest adding credentials to .gitignore in DIR."
+  (let ((gitignore (expand-file-name ".gitignore" dir)))
+    (if (not (file-exists-p gitignore))
+        (when (y-or-n-p
+               "No .gitignore found.  Create one to protect credentials? ")
+          (with-temp-file gitignore
+            (insert "org-canvas-credentials.el\n")))
+      (with-temp-buffer
+        (insert-file-contents gitignore)
+        (unless (string-match-p "org-canvas-credentials" (buffer-string))
+          (when (y-or-n-p "Add org-canvas-credentials.el to .gitignore? ")
+            (append-to-file
+             "org-canvas-credentials.el\n" nil gitignore)))))))
+
 (defun org-canvas--create-skeleton-files (dir)
   "Create minimal skeleton .org files in DIR."
   (dolist (filename org-canvas--skeleton-files)
@@ -56,6 +71,15 @@ and writes org-canvas-credentials.el."
       (user-error "API token cannot be empty"))
     (when (string-empty-p course-id)
       (user-error "Course ID cannot be empty"))
+    (unless (string-prefix-p "https://" url)
+      (unless (y-or-n-p "URL does not start with https://.  Continue anyway? ")
+        (user-error "Aborted")))
+    ;; Check for existing credentials file
+    (let ((cred-file (expand-file-name "org-canvas-credentials.el" dir)))
+      (when (file-exists-p cred-file)
+        (unless (y-or-n-p (format "%s already exists.  Overwrite? "
+                                  (file-name-nondirectory cred-file)))
+          (user-error "Aborted"))))
     ;; Test connection before writing config
     (message "Testing connection...")
     (let ((org-canvas-base-url url)
@@ -73,6 +97,8 @@ and writes org-canvas-credentials.el."
     ;; Write credentials
     (let ((cred-file (org-canvas--write-credentials-file dir url token course-id)))
       (message "Credentials saved to %s" cred-file))
+    ;; Suggest .gitignore protection
+    (org-canvas--suggest-gitignore dir)
     ;; Optionally create skeleton files
     (when (y-or-n-p "Create skeleton .org files for all content types? ")
       (org-canvas--create-skeleton-files dir)

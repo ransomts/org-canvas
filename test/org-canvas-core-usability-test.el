@@ -551,5 +551,128 @@
             (expect (org-canvas-init) :to-throw 'user-error))
         (delete-directory temp-dir t)))))
 
+(describe "org-canvas-init overwrite warning"
+  (it "prompts when credentials file already exists"
+    (let ((temp-dir (make-temp-file "init-overwrite-" t)))
+      (unwind-protect
+          (progn
+            ;; Create existing credentials file
+            (with-temp-file (expand-file-name "org-canvas-credentials.el" temp-dir)
+              (insert ";; existing"))
+            (cl-letf (((symbol-function 'read-directory-name)
+                       (lambda (&rest _) temp-dir))
+                      ((symbol-function 'read-string)
+                       (lambda (prompt &rest _)
+                         (cond
+                          ((string-match-p "^Canvas base" prompt) "https://canvas.example.com")
+                          ((string-match-p "^Course ID" prompt) "12345"))))
+                      ((symbol-function 'read-passwd)
+                       (lambda (&rest _) "valid-token"))
+                      ((symbol-function 'y-or-n-p)
+                       (lambda (_prompt) nil)))  ;; decline overwrite
+              (expect (org-canvas-init) :to-throw 'user-error)))
+        (delete-directory temp-dir t))))
+
+  (it "does not prompt when credentials file is absent"
+    (let ((temp-dir (make-temp-file "init-no-overwrite-" t))
+          (y-or-n-calls nil))
+      (unwind-protect
+          (cl-letf (((symbol-function 'read-directory-name)
+                     (lambda (&rest _) temp-dir))
+                    ((symbol-function 'read-string)
+                     (lambda (prompt &rest _)
+                       (cond
+                        ((string-match-p "^Canvas base" prompt) "https://canvas.example.com")
+                        ((string-match-p "^Course ID" prompt) "12345"))))
+                    ((symbol-function 'read-passwd)
+                     (lambda (&rest _) "valid-token"))
+                    ((symbol-function 'org-canvas-api-request)
+                     (lambda (&rest _) '((name . "Test Course"))))
+                    ((symbol-function 'y-or-n-p)
+                     (lambda (prompt)
+                       (push prompt y-or-n-calls)
+                       nil)))  ;; decline skeleton files etc.
+            (org-canvas-init)
+            ;; No prompt should contain "already exists"
+            (expect (cl-some (lambda (p) (string-match-p "already exists" p))
+                             y-or-n-calls)
+                    :to-be nil))
+        (delete-directory temp-dir t)))))
+
+(describe "org-canvas-init URL validation"
+  (it "prompts when URL does not start with https://"
+    (let ((temp-dir (make-temp-file "init-url-" t)))
+      (unwind-protect
+          (cl-letf (((symbol-function 'read-directory-name)
+                     (lambda (&rest _) temp-dir))
+                    ((symbol-function 'read-string)
+                     (lambda (prompt &rest _)
+                       (cond
+                        ((string-match-p "^Canvas base" prompt) "http://canvas.example.com")
+                        ((string-match-p "^Course ID" prompt) "12345"))))
+                    ((symbol-function 'read-passwd)
+                     (lambda (&rest _) "valid-token"))
+                    ((symbol-function 'y-or-n-p)
+                     (lambda (_prompt) nil)))  ;; decline https warning
+            (expect (org-canvas-init) :to-throw 'user-error))
+        (delete-directory temp-dir t)))))
+
+(describe "org-canvas-init .gitignore"
+  (it "offers to create .gitignore when none exists"
+    (let ((temp-dir (make-temp-file "init-gitignore-" t)))
+      (unwind-protect
+          (cl-letf (((symbol-function 'read-directory-name)
+                     (lambda (&rest _) temp-dir))
+                    ((symbol-function 'read-string)
+                     (lambda (prompt &rest _)
+                       (cond
+                        ((string-match-p "^Canvas base" prompt) "https://canvas.example.com")
+                        ((string-match-p "^Course ID" prompt) "12345"))))
+                    ((symbol-function 'read-passwd)
+                     (lambda (&rest _) "valid-token"))
+                    ((symbol-function 'org-canvas-api-request)
+                     (lambda (&rest _) '((name . "Test Course"))))
+                    ((symbol-function 'y-or-n-p)
+                     (lambda (prompt)
+                       (cond
+                        ((string-match-p "gitignore" prompt) t)
+                        (t nil)))))
+            (org-canvas-init)
+            (let ((gitignore (expand-file-name ".gitignore" temp-dir)))
+              (expect (file-exists-p gitignore) :to-be-truthy)
+              (with-temp-buffer
+                (insert-file-contents gitignore)
+                (expect (buffer-string) :to-match "org-canvas-credentials"))))
+        (delete-directory temp-dir t))))
+
+  (it "offers to append to existing .gitignore"
+    (let ((temp-dir (make-temp-file "init-gitignore-append-" t)))
+      (unwind-protect
+          (progn
+            (with-temp-file (expand-file-name ".gitignore" temp-dir)
+              (insert "*.elc\n"))
+            (cl-letf (((symbol-function 'read-directory-name)
+                       (lambda (&rest _) temp-dir))
+                      ((symbol-function 'read-string)
+                       (lambda (prompt &rest _)
+                         (cond
+                          ((string-match-p "^Canvas base" prompt) "https://canvas.example.com")
+                          ((string-match-p "^Course ID" prompt) "12345"))))
+                      ((symbol-function 'read-passwd)
+                       (lambda (&rest _) "valid-token"))
+                      ((symbol-function 'org-canvas-api-request)
+                       (lambda (&rest _) '((name . "Test Course"))))
+                      ((symbol-function 'y-or-n-p)
+                       (lambda (prompt)
+                         (cond
+                          ((string-match-p "gitignore" prompt) t)
+                          (t nil)))))
+              (org-canvas-init)
+              (with-temp-buffer
+                (insert-file-contents (expand-file-name ".gitignore" temp-dir))
+                (expect (buffer-string) :to-match "\\*.elc")
+                (expect (buffer-string) :to-match "org-canvas-credentials"))))
+        (delete-directory temp-dir t)))))
+
 (provide 'org-canvas-core-usability-test)
 ;;; org-canvas-core-usability-test.el ends here
