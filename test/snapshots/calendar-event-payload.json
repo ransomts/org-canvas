@@ -1,0 +1,11 @@
+{
+  "calendar_event": {
+    "context_code": "course_99999",
+    "description": "<p>Drop by my office.</p>",
+    "end_at": "2026-04-01T15:00:00Z",
+    "location_address": "Science Building",
+    "location_name": "Room 301",
+    "start_at": "2026-04-01T14:00:00Z",
+    "title": "Office Hours"
+  }
+}

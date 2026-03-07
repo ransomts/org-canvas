@@ -1,0 +1,27 @@
+{
+  "rubric": {
+    "criteria": {
+      "0": {
+        "description": "description",
+        "long_description": "long_description",
+        "points": 0,
+        "ratings": {
+          "0": {
+            "description": "Full Marks",
+            "points": 0
+          },
+          "1": {
+            "description": "No Marks",
+            "points": 0
+          }
+        }
+      }
+    },
+    "free_form_criterion_comments": false,
+    "title": "Essay Rubric"
+  },
+  "rubric_association": {
+    "association_id": "99999",
+    "association_type": "Course"
+  }
+}

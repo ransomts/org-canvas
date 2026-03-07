@@ -1,0 +1,22 @@
+{
+  "question": {
+    "answers": [
+      {
+        "answer_text": "4",
+        "answer_weight": 100
+      },
+      {
+        "answer_text": "5",
+        "answer_weight": 0
+      },
+      {
+        "answer_text": "3",
+        "answer_weight": 0
+      }
+    ],
+    "question_name": "What is 2+2?",
+    "question_text": "<p>What is 2+2?</p>",
+    "question_type": "multiple_choice_question",
+    "points_possible": 5
+  }
+}

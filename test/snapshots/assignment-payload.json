@@ -1,0 +1,15 @@
+{
+  "assignment": {
+    "allowed_extensions": "pdf,docx",
+    "assignment_group_id": 42,
+    "description": "<p>Write a 5-page essay.</p>",
+    "due_at": "2026-04-15T23:59:00Z",
+    "grading_type": "points",
+    "lock_at": "2026-04-16T23:59:00Z",
+    "name": "Essay 1",
+    "points_possible": 100,
+    "published": true,
+    "submission_types": "online_upload",
+    "unlock_at": "2026-04-01T00:00:00Z"
+  }
+}

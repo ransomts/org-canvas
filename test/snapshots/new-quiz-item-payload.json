@@ -1,0 +1,29 @@
+{
+  "entry_type": "Item",
+  "interaction_data": {
+    "choices": [
+      {
+        "id": "00000000000000000000000000000001",
+        "position": 1,
+        "item_body": "<p>Paris</p>"
+      },
+      {
+        "id": "00000000000000000000000000000002",
+        "position": 2,
+        "item_body": "<p>London</p>"
+      },
+      {
+        "id": "00000000000000000000000000000003",
+        "position": 3,
+        "item_body": "<p>Berlin</p>"
+      }
+    ]
+  },
+  "interaction_type_slug": "choice",
+  "item_body": "<p>Capital of France?</p>",
+  "points_possible": 5,
+  "scoring_algorithm": "Equivalence",
+  "scoring_data": {
+    "value": "00000000000000000000000000000001"
+  }
+}

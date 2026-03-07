@@ -1,0 +1,14 @@
+{
+  "quiz": {
+    "scoring_policy": "keep_highest",
+    "show_correct_answers": true,
+    "due_at": "2026-04-15T23:59:00Z",
+    "allowed_attempts": 2,
+    "shuffle_answers": true,
+    "time_limit": 60,
+    "description": "<p>Good luck!</p>",
+    "title": "Midterm Quiz",
+    "quiz_type": "assignment",
+    "published": false
+  }
+}

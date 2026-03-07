@@ -1,0 +1,8 @@
+{
+  "position": 1,
+  "name": "Homework",
+  "group_weight": 30,
+  "rules": {
+    "drop_lowest": 1
+  }
+}

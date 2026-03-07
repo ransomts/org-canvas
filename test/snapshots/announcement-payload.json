@@ -1,0 +1,9 @@
+{
+  "lock_at": "2026-01-01T00:00:00Z",
+  "delayed_post_at": "2026-04-01T09:00:00Z",
+  "title": "Week 3 Update",
+  "message": "<p>Remember to submit by Friday.</p>",
+  "published": true,
+  "is_announcement": true,
+  "discussion_type": "side_comment"
+}
