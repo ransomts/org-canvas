@@ -2750,5 +2750,254 @@ Body.
           (when buf (kill-buffer buf)))
         (delete-file temp-file)))))
 
+;;;; Heading title in error messages
+
+(describe "org-canvas--sync-process-entry error includes heading title"
+  (it "includes heading title when parse-fn errors"
+    (with-temp-org-buffer
+     "* My Assignment
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (let* ((marker (point-marker))
+            (counters (list :success 0 :skip 0 :fail 0))
+            (ctx (list :parse-fn (lambda () (error "Parse failed"))
+                       :build-fn #'ignore
+                       :push-fn #'ignore
+                       :finalize-fn #'ignore
+                       :feature-name "assignments"
+                       :feature-upper "ASSIGNMENTS"
+                       :total-count 1
+                       :counters counters
+                       :synced-ids (list nil))))
+       (spy-on 'elog-error)
+       (org-canvas--sync-process-entry marker ctx)
+       (expect (plist-get counters :fail) :to-equal 1)
+       (let ((found nil))
+         (dolist (call (spy-calls-all-args 'elog-error))
+           (when (>= (length call) 3)
+             (let ((formatted (apply #'format (cdr call))))
+               (when (and (string-match-p "ASSIGNMENTS" formatted)
+                          (string-match-p "My Assignment" formatted))
+                 (setq found t)))))
+         (expect found :to-be-truthy)))))
+
+  (it "includes heading title when build-fn errors"
+    (with-temp-org-buffer
+     "* Quiz One
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (let* ((marker (point-marker))
+            (counters (list :success 0 :skip 0 :fail 0))
+            (ctx (list :parse-fn (lambda () (list :title "Quiz One"))
+                       :build-fn (lambda (_) (error "Build failed"))
+                       :push-fn #'ignore
+                       :finalize-fn #'ignore
+                       :feature-name "quizzes"
+                       :feature-upper "QUIZZES"
+                       :total-count 1
+                       :counters counters
+                       :synced-ids (list nil))))
+       (spy-on 'elog-error)
+       (org-canvas--sync-process-entry marker ctx)
+       (let ((found nil))
+         (dolist (call (spy-calls-all-args 'elog-error))
+           (when (and (>= (length call) 3)
+                      (stringp (nth 1 call)))
+             (let ((formatted (apply #'format (cdr call))))
+               (when (string-match-p "Quiz One" formatted)
+                 (setq found t)))))
+         (expect found :to-be-truthy))))))
+
+;;;; Sync-at-point stage logging
+
+(describe "org-canvas--push-at-point-runtime stage logging"
+  (it "logs stage markers during sync"
+    (with-temp-org-buffer
+     "* Test Page
+:PROPERTIES:
+:END:
+
+Content here.
+"
+     (org-back-to-heading)
+     (spy-on 'elog-info)
+     (cl-letf (((symbol-function 'display-buffer) (lambda (_) nil))
+               ((symbol-function 'save-buffer) (lambda () nil)))
+       (org-canvas--push-at-point-runtime
+        "pages"
+        (lambda () (list :title "Test Page" :canvas-id nil :pom (point-marker)))
+        (lambda (_) '((title . "Test Page")))
+        (lambda (_data _payload) '((url . "test-page")))
+        (lambda (_data _response) nil)
+        :title nil))
+     (let ((found-sync-at-point nil)
+           (found-stage-2 nil)
+           (found-stage-3 nil)
+           (found-stage-4 nil))
+       (dolist (call (spy-calls-all-args 'elog-info))
+         (when (>= (length call) 2)
+           (let ((fmt (nth 1 call)))
+             (when (stringp fmt)
+               (when (string-match-p "SYNC-AT-POINT" fmt) (setq found-sync-at-point t))
+               (when (string-match-p "Stage 2" fmt) (setq found-stage-2 t))
+               (when (string-match-p "Stage 3" fmt) (setq found-stage-3 t))
+               (when (string-match-p "Stage 4" fmt) (setq found-stage-4 t))))))
+       (expect found-sync-at-point :to-be-truthy)
+       (expect found-stage-2 :to-be-truthy)
+       (expect found-stage-3 :to-be-truthy)
+       (expect found-stage-4 :to-be-truthy))))
+
+  (it "logs skip without push/finalize stages when unchanged"
+    (with-temp-org-buffer
+     "* Test Page
+:PROPERTIES:
+:CANVAS_URL: existing-page
+:PAYLOAD_HASH: placeholder
+:END:
+
+Content here.
+"
+     (org-back-to-heading)
+     (let* ((data (list :title "Test Page" :canvas-url "existing-page" :pom (point-marker)))
+            (payload '((title . "Test Page")))
+            (hash (md5 (json-encode payload))))
+       ;; Set the stored hash to match
+       (org-entry-put (point) "PAYLOAD_HASH" hash)
+       (save-buffer)
+       (spy-on 'elog-info)
+       (cl-letf (((symbol-function 'display-buffer) (lambda (_) nil)))
+         (org-canvas--push-at-point-runtime
+          "pages"
+          (lambda () data)
+          (lambda (_) payload)
+          (lambda (_data _payload) (error "Should not be called"))
+          (lambda (_data _response) (error "Should not be called"))
+          :title nil))
+       (let ((found-skip nil)
+             (found-stage-3 nil))
+         (dolist (call (spy-calls-all-args 'elog-info))
+           (when (>= (length call) 2)
+             (let ((fmt (nth 1 call)))
+               (when (stringp fmt)
+                 (when (string-match-p "Skip" fmt) (setq found-skip t))
+                 (when (string-match-p "Stage 3" fmt) (setq found-stage-3 t))))))
+         (expect found-skip :to-be-truthy)
+         (expect found-stage-3 :to-be nil))))))
+
+;;;; Duplicate heading title warnings
+
+(describe "org-canvas--sync-warn-duplicate-titles"
+  (it "warns when duplicate titles exist"
+    (with-temp-org-buffer
+     "* Same Title
+:PROPERTIES:
+:END:
+
+* Same Title
+:PROPERTIES:
+:END:
+
+* Different Title
+:PROPERTIES:
+:END:
+"
+     (let ((markers (org-map-entries (lambda () (point-marker)) "LEVEL=1" 'file)))
+       (spy-on 'elog-warning)
+       (org-canvas--sync-warn-duplicate-titles markers (buffer-file-name))
+       (let ((found nil))
+         (dolist (call (spy-calls-all-args 'elog-warning))
+           (when (and (>= (length call) 3)
+                      (stringp (nth 1 call))
+                      (string-match-p "Duplicate Title" (nth 1 call)))
+             (let ((formatted (apply #'format (cdr call))))
+               (when (string-match-p "Same Title" formatted)
+                 (setq found t)))))
+         (expect found :to-be-truthy)))))
+
+  (it "does not warn when all titles are distinct"
+    (with-temp-org-buffer
+     "* Title A
+:PROPERTIES:
+:END:
+
+* Title B
+:PROPERTIES:
+:END:
+"
+     (let ((markers (org-map-entries (lambda () (point-marker)) "LEVEL=1" 'file)))
+       (spy-on 'elog-warning)
+       (org-canvas--sync-warn-duplicate-titles markers (buffer-file-name))
+       (expect 'elog-warning :not :to-have-been-called)))))
+
+;;;; Dry-run counter
+
+(describe "org-canvas--sync-execute-pipeline dry-run counter"
+  (it "increments dry-run counter instead of success"
+    (with-temp-org-buffer
+     "* Dry Run Item
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (let* ((org-canvas--dry-run t)
+            (counters (list :success 0 :skip 0 :fail 0 :dry-run 0))
+            (ctx (list :push-fn #'ignore
+                       :feature-name "pages"
+                       :total-count 1
+                       :counters counters
+                       :synced-ids (list nil)))
+            (data (list :title "Dry Run Item" :canvas-id nil))
+            (payload '((title . "Dry Run Item"))))
+       (org-canvas--sync-execute-pipeline data payload ctx)
+       (expect (plist-get counters :dry-run) :to-equal 1)
+       (expect (plist-get counters :success) :to-equal 0)))))
+
+(describe "org-canvas--sync-log-summary dry-run format"
+  (it "shows dry-run format when dry-run count > 0"
+    (let ((temp-file (make-temp-file "summary-test" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file (insert "* Item\n"))
+            (spy-on 'elog-info)
+            (spy-on 'message)
+            (org-canvas--sync-log-summary "test" temp-file
+             '(:success 0 :skip 2 :fail 0 :dry-run 3))
+            (let ((found nil))
+              (dolist (call (spy-calls-all-args 'elog-info))
+                (when (and (>= (length call) 2)
+                           (stringp (nth 1 call))
+                           (string-match-p "Would sync" (nth 1 call)))
+                  (setq found t)))
+              (expect found :to-be-truthy))
+            (let ((found nil))
+              (dolist (call (spy-calls-all-args 'message))
+                (when (and (stringp (car call))
+                           (string-match-p "dry-run" (car call)))
+                  (setq found t)))
+              (expect found :to-be-truthy)))
+        (let ((buf (find-buffer-visiting temp-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file temp-file))))
+
+  (it "accumulates dry-run count into global counters"
+    (let ((temp-file (make-temp-file "summary-test" nil ".org"))
+          (org-canvas--sync-global-counters (list :success 0 :skip 0 :fail 0 :dry-run 0)))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file (insert "* Item\n"))
+            (spy-on 'elog-info)
+            (spy-on 'message)
+            (org-canvas--sync-log-summary "test" temp-file
+             '(:success 0 :skip 1 :fail 0 :dry-run 5))
+            (expect (plist-get org-canvas--sync-global-counters :dry-run)
+                    :to-equal 5))
+        (let ((buf (find-buffer-visiting temp-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file temp-file)))))
+
 (provide 'org-canvas-core-sync-test)
 ;;; org-canvas-core-sync-test.el ends here

@@ -239,7 +239,25 @@ Returns a plist (:targets MARKERS :all-ids-before IDS)."
                    (message "WARNING: CANVAS_ID %s appears %d times in %s"
                             id count sync-file)))
                id-counts))
+    (org-canvas--sync-warn-duplicate-titles targets sync-file)
     (list :targets targets :all-ids-before all-ids-before)))
+
+(defun org-canvas--sync-warn-duplicate-titles (targets sync-file)
+  "Warn about duplicate heading titles among TARGETS markers in SYNC-FILE."
+  (let ((title-counts (make-hash-table :test 'equal)))
+    (dolist (m targets)
+      (with-current-buffer (marker-buffer m)
+        (save-excursion
+          (goto-char (marker-position m))
+          (let ((title (org-get-heading t t t t)))
+            (when title
+              (puthash title (1+ (gethash title title-counts 0)) title-counts))))))
+    (maphash (lambda (title count)
+               (when (> count 1)
+                 (elog-warning org-canvas--logger
+                   "[Duplicate Title] '%s' appears %d times in %s — timeout recovery may match wrong item"
+                   title count sync-file)))
+             title-counts)))
 
 (defun org-canvas--sync-finalize-push (response data payload-hash ctx)
   "Finalize a successful push RESPONSE for DATA.
@@ -300,7 +318,7 @@ CTX is the sync context plist (see `org-canvas--sync-process-entry')."
         (if canvas-id "UPDATE" "CREATE") title)
       (message "%s [DRY-RUN] Would %s '%s'"
         cap-feature (if canvas-id "update" "create") title)
-      (plist-put counters :success (1+ (plist-get counters :success))))
+      (plist-put counters :dry-run (1+ (or (plist-get counters :dry-run) 0))))
      (t
       (let ((response (funcall push-fn data payload)))
         (cond
@@ -337,19 +355,20 @@ CTX is a plist with keys:
     (with-current-buffer (marker-buffer marker)
       (save-excursion
         (goto-char (marker-position marker))
-        (condition-case err
-            (let* ((data (funcall parse-fn))
-                   (payload (funcall build-fn data)))
-              (org-canvas--sync-execute-pipeline data payload ctx))
-          (error
-           (plist-put counters :fail (1+ (plist-get counters :fail)))
-           (elog-error org-canvas--logger "[FAILED] %s at point %d: %s"
-             feature-upper (marker-position marker) (error-message-string err))
-           (message "%s [%d/%d] FAILED: %s"
-             (capitalize feature-name)
-             (+ (plist-get counters :success) (plist-get counters :skip)
-                (plist-get counters :fail))
-             total-count (error-message-string err))))))))
+        (let ((heading-title (org-get-heading t t t t)))
+          (condition-case err
+              (let* ((data (funcall parse-fn))
+                     (payload (funcall build-fn data)))
+                (org-canvas--sync-execute-pipeline data payload ctx))
+            (error
+             (plist-put counters :fail (1+ (plist-get counters :fail)))
+             (elog-error org-canvas--logger "[FAILED] %s '%s': %s"
+               feature-upper heading-title (error-message-string err))
+             (message "%s [%d/%d] FAILED '%s': %s"
+               (capitalize feature-name)
+               (+ (plist-get counters :success) (plist-get counters :skip)
+                  (plist-get counters :fail))
+               total-count heading-title (error-message-string err)))))))))
 
 (defun org-canvas--sync-warn-orphans (all-ids-before synced-ids feature-name)
   "Warn about CANVAS_IDs in ALL-IDS-BEFORE not present in SYNCED-IDS.
@@ -363,33 +382,41 @@ FEATURE-NAME is used in the log message."
 (defun org-canvas--sync-log-summary (feature-name sync-file counters)
   "Save SYNC-FILE and log completion summary.
 FEATURE-NAME is the module name.  COUNTERS is a plist with
-:success, :skip, :fail, and optionally :conflict and :pulled counts."
+:success, :skip, :fail, and optionally :conflict, :pulled, and :dry-run counts."
   (let ((feature-upper (upcase feature-name))
         (success-count (plist-get counters :success))
         (skip-count (plist-get counters :skip))
         (fail-count (plist-get counters :fail))
         (conflict-count (or (plist-get counters :conflict) 0))
         (pulled-count (or (plist-get counters :pulled) 0))
+        (dry-run-count (or (plist-get counters :dry-run) 0))
         (extra-counts 0))
     (with-current-buffer (find-file-noselect sync-file)
       (save-buffer)
       (elog-info org-canvas--logger "Saved %s" sync-file))
     (elog-info org-canvas--logger "========================================")
     (elog-info org-canvas--logger ">>> %s SYNC COMPLETE" feature-upper)
-    (setq extra-counts (+ conflict-count pulled-count))
-    (if (> extra-counts 0)
-        (elog-info org-canvas--logger
-          "Success: %d | Skipped: %d | Failed: %d | Conflicts: %d | Pulled: %d"
-          success-count skip-count fail-count conflict-count pulled-count)
-      (elog-info org-canvas--logger "Success: %d | Skipped: %d | Failed: %d"
-        success-count skip-count fail-count))
+    (cond
+     ((> dry-run-count 0)
+      (elog-info org-canvas--logger "Would sync: %d | Skipped: %d"
+        dry-run-count skip-count)
+      (message "%s dry-run: %d would sync, %d skipped."
+               (capitalize feature-name) dry-run-count skip-count))
+     (t
+      (setq extra-counts (+ conflict-count pulled-count))
+      (if (> extra-counts 0)
+          (elog-info org-canvas--logger
+            "Success: %d | Skipped: %d | Failed: %d | Conflicts: %d | Pulled: %d"
+            success-count skip-count fail-count conflict-count pulled-count)
+        (elog-info org-canvas--logger "Success: %d | Skipped: %d | Failed: %d"
+          success-count skip-count fail-count))
+      (if (> extra-counts 0)
+          (message "%s sync: %d success, %d skipped, %d failed, %d conflicts, %d pulled."
+                   (capitalize feature-name) success-count skip-count
+                   fail-count conflict-count pulled-count)
+        (message "%s sync: %d success, %d skipped, %d failed."
+                 (capitalize feature-name) success-count skip-count fail-count))))
     (elog-info org-canvas--logger "========================================")
-    (if (> extra-counts 0)
-        (message "%s sync: %d success, %d skipped, %d failed, %d conflicts, %d pulled."
-                 (capitalize feature-name) success-count skip-count
-                 fail-count conflict-count pulled-count)
-      (message "%s sync: %d success, %d skipped, %d failed."
-               (capitalize feature-name) success-count skip-count fail-count))
     ;; Accumulate into global counters when running inside org-canvas-sync
     (when org-canvas--sync-global-counters
       (plist-put org-canvas--sync-global-counters :success
@@ -397,7 +424,10 @@ FEATURE-NAME is the module name.  COUNTERS is a plist with
       (plist-put org-canvas--sync-global-counters :skip
                  (+ (plist-get org-canvas--sync-global-counters :skip) skip-count))
       (plist-put org-canvas--sync-global-counters :fail
-                 (+ (plist-get org-canvas--sync-global-counters :fail) fail-count)))))
+                 (+ (plist-get org-canvas--sync-global-counters :fail) fail-count))
+      (plist-put org-canvas--sync-global-counters :dry-run
+                 (+ (or (plist-get org-canvas--sync-global-counters :dry-run) 0)
+                    dry-run-count)))))
 
 ;; Plist key convention in parse-entry return values:
 ;; - kebab-case (:canvas-id, :pom, :local-path) for internal pipeline fields
@@ -445,7 +475,7 @@ for the display name in logs."
     (let* ((entries (org-canvas--sync-collect-entries sync-file query feature-name))
            (targets (plist-get entries :targets))
            (all-ids-before (plist-get entries :all-ids-before))
-           (counters (list :success 0 :skip 0 :fail 0 :pulled 0))
+           (counters (list :success 0 :skip 0 :fail 0 :pulled 0 :dry-run 0))
            (synced-ids (list nil))
            (ctx (list :parse-fn parse-fn
                       :build-fn build-fn
@@ -1294,6 +1324,7 @@ TITLE-KEY is the plist key for the display name.
 PULL-ITEM-FN, when non-nil, enables the pull option during conflict resolution."
   (org-back-to-heading t)
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
+  (elog-info org-canvas--logger ">>> SYNC-AT-POINT: %s" feature-name)
   (let* ((org-canvas--current-pull-item-fn pull-item-fn)
          (data (funcall parse-fn))
          (title (plist-get data title-key))
@@ -1302,13 +1333,17 @@ PULL-ITEM-FN, when non-nil, enables the pull option during conflict resolution."
          (stored-hash (org-entry-get (point) "PAYLOAD_HASH"))
          (canvas-id (or (plist-get data :canvas-id)
                         (plist-get data :canvas-url))))
+    (elog-info org-canvas--logger "[Stage 2: Build] '%s'" title)
     (if (and stored-hash
              (string= payload-hash stored-hash)
              canvas-id)
         (progn
           (elog-info org-canvas--logger "[Skip] '%s' unchanged" title)
           (message "%s '%s' unchanged — skipped." (capitalize feature-name) title))
+      (elog-info org-canvas--logger "[Stage 3: Push] '%s' (%s)"
+        title (if canvas-id "UPDATE" "CREATE"))
       (let ((response (funcall push-fn data payload)))
+        (elog-info org-canvas--logger "[Stage 4: Finalize] '%s'" title)
         (funcall finalize-fn data response)
         (org-entry-put (point) "PAYLOAD_HASH" payload-hash)
         (save-buffer)

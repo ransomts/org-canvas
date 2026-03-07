@@ -136,7 +136,7 @@ LABEL is used for logging (e.g., \"Pages\")."
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (let ((org-canvas--inhibit-log-clear t)
         (org-canvas--sync-in-progress t)
-        (org-canvas--sync-global-counters (list :success 0 :skip 0 :fail 0)))
+        (org-canvas--sync-global-counters (list :success 0 :skip 0 :fail 0 :dry-run 0)))
     (elog-info org-canvas--logger "========================================")
     (elog-info org-canvas--logger ">>> STARTING GLOBAL SYNC")
     (elog-info org-canvas--logger "Course: %s | URL: %s" org-canvas-course-id org-canvas-base-url)
@@ -158,10 +158,14 @@ LABEL is used for logging (e.g., \"Pages\")."
     (elog-info org-canvas--logger "========================================")
     ;; Clear session-scoped caches
     (setq org-canvas--image-cache nil)
-    (message "Sync complete: %d synced, %d skipped, %d failed. See *canvas-log* for details."
-             (plist-get org-canvas--sync-global-counters :success)
-             (plist-get org-canvas--sync-global-counters :skip)
-             (plist-get org-canvas--sync-global-counters :fail))))
+    (if (> (plist-get org-canvas--sync-global-counters :dry-run) 0)
+        (message "Dry-run complete: %d would sync, %d skipped. See *canvas-log* for details."
+                 (plist-get org-canvas--sync-global-counters :dry-run)
+                 (plist-get org-canvas--sync-global-counters :skip))
+      (message "Sync complete: %d synced, %d skipped, %d failed. See *canvas-log* for details."
+               (plist-get org-canvas--sync-global-counters :success)
+               (plist-get org-canvas--sync-global-counters :skip)
+               (plist-get org-canvas--sync-global-counters :fail)))))
 
 ;; Delete in REVERSE dependency order:
 ;;   Tier 2:  Modules (reference all content types)
@@ -228,8 +232,8 @@ Deletion order is reverse of sync order to respect dependencies."
 
 (defun org-canvas--status-count-entries (file id-prop)
   "Count synced and pending entries in FILE using ID-PROP.
-Returns a plist (:synced N :pending N :last-synced TS-OR-NIL)."
-  (let ((synced 0) (pending 0) (last-synced nil))
+Returns a plist (:synced N :pending N :legacy N :last-synced TS-OR-NIL)."
+  (let ((synced 0) (pending 0) (legacy 0) (last-synced nil))
     (with-current-buffer (find-file-noselect file)
       (save-excursion
         (goto-char (point-min))
@@ -240,11 +244,12 @@ Returns a plist (:synced N :pending N :last-synced TS-OR-NIL)."
              (if id
                  (progn
                    (setq synced (1+ synced))
+                   (unless ts (setq legacy (1+ legacy)))
                    (when (and ts (or (not last-synced) (string> ts last-synced)))
                      (setq last-synced ts)))
                (setq pending (1+ pending)))))
          "LEVEL=1" 'file)))
-    (list :synced synced :pending pending :last-synced last-synced)))
+    (list :synced synced :pending pending :legacy legacy :last-synced last-synced)))
 
 (defun org-canvas--status-report-file (buf label file-var id-prop)
   "Report sync status for content type LABEL to buffer BUF.
@@ -259,9 +264,15 @@ ID-PROP is the property used to identify synced items."
         (let* ((counts (org-canvas--status-count-entries file id-prop))
                (synced (plist-get counts :synced))
                (pending (plist-get counts :pending))
-               (last-synced (plist-get counts :last-synced)))
-          (insert (format " (%s)\n" (file-name-nondirectory file)))
+               (legacy (plist-get counts :legacy))
+               (last-synced (plist-get counts :last-synced))
+               (unsaved (buffer-modified-p (find-buffer-visiting file))))
+          (insert (format " (%s)%s\n"
+                          (file-name-nondirectory file)
+                          (if unsaved " [unsaved]" "")))
           (insert (format "  Synced: %-4d  Pending: %-4d" synced pending))
+          (when (and legacy (> legacy 0))
+            (insert (format "  Legacy: %d" legacy)))
           (when last-synced
             (insert (format "  Last: %s" last-synced)))
           (insert "\n"))))))
@@ -309,14 +320,25 @@ No properties are modified and no API requests are sent."
 
 ;;;; Pull All (Canvas → Org Migration)
 
+(defvar org-canvas--pull-counters nil
+  "When non-nil, a plist accumulating counts across pull modules.
+Bound by `org-canvas-pull-all' to aggregate pull/fail totals.")
+
 (defun org-canvas--safe-pull (pull-fn label)
   "Call PULL-FN, catching errors gracefully.
 LABEL is used for logging."
   (condition-case err
-      (funcall pull-fn)
+      (progn
+        (funcall pull-fn)
+        (when org-canvas--pull-counters
+          (plist-put org-canvas--pull-counters :success
+                     (1+ (plist-get org-canvas--pull-counters :success)))))
     (error
      (elog-warning org-canvas--logger "[Pull] %s failed: %s"
-       label (error-message-string err)))))
+       label (error-message-string err))
+     (when org-canvas--pull-counters
+       (plist-put org-canvas--pull-counters :fail
+                  (1+ (plist-get org-canvas--pull-counters :fail)))))))
 
 ;; Pull in dependency order:
 ;;   Settings, then structural items, then linked items, then modules
@@ -353,7 +375,8 @@ Canvas courses who want to adopt org-canvas."
       (user-error "Aborted")))
   (org-canvas-clear-log)
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
-  (let ((org-canvas--inhibit-log-clear t))
+  (let ((org-canvas--inhibit-log-clear t)
+        (org-canvas--pull-counters (list :success 0 :fail 0)))
     (elog-info org-canvas--logger "========================================")
     (elog-info org-canvas--logger ">>> STARTING FULL COURSE PULL")
     (elog-info org-canvas--logger "Course: %s | URL: %s"
@@ -361,11 +384,14 @@ Canvas courses who want to adopt org-canvas."
     (elog-info org-canvas--logger "========================================")
     (org-canvas--preflight-check)
     (dolist (tier org-canvas--pull-tiers)
+      (message "Pulling: %s..." (org-canvas--tier-description tier))
       (org-canvas--run-tier tier #'org-canvas--safe-pull))
     (elog-info org-canvas--logger "========================================")
     (elog-info org-canvas--logger ">>> FULL COURSE PULL COMPLETE")
     (elog-info org-canvas--logger "========================================")
-    (message "Course pull complete.  See *canvas-log* for details.")))
+    (message "Pull complete: %d pulled, %d failed. See *canvas-log* for details."
+             (plist-get org-canvas--pull-counters :success)
+             (plist-get org-canvas--pull-counters :fail))))
 
 ;;;; Orphan Cleanup
 

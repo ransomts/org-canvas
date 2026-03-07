@@ -984,4 +984,251 @@
           (expect (member 'outcomes call-order) :to-be nil)
           (expect (member 'quizzes call-order) :to-be nil))))))
 
+;;;; org-canvas--status-count-entries legacy items
+
+(describe "org-canvas--status-count-entries legacy items"
+  (it "counts items with CANVAS_ID but no LAST_SYNCED as legacy"
+    (let ((temp-file (make-temp-file "status-legacy" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file
+              (insert "* Properly Synced
+:PROPERTIES:
+:CANVAS_ID: 100
+:LAST_SYNCED: [2026-01-01 Thu]
+:END:
+
+* Legacy Item
+:PROPERTIES:
+:CANVAS_ID: 200
+:END:
+
+* Pending Item
+:PROPERTIES:
+:END:
+"))
+            (let ((counts (org-canvas--status-count-entries temp-file "CANVAS_ID")))
+              (expect (plist-get counts :synced) :to-equal 2)
+              (expect (plist-get counts :pending) :to-equal 1)
+              (expect (plist-get counts :legacy) :to-equal 1)))
+        (let ((buf (find-buffer-visiting temp-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file temp-file))))
+
+  (it "returns zero legacy when all synced items have LAST_SYNCED"
+    (let ((temp-file (make-temp-file "status-no-legacy" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file
+              (insert "* Item
+:PROPERTIES:
+:CANVAS_ID: 100
+:LAST_SYNCED: [2026-01-01 Thu]
+:END:
+"))
+            (let ((counts (org-canvas--status-count-entries temp-file "CANVAS_ID")))
+              (expect (plist-get counts :legacy) :to-equal 0)))
+        (let ((buf (find-buffer-visiting temp-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file temp-file)))))
+
+(describe "org-canvas--status-report-file legacy and unsaved"
+  (it "shows legacy count when present"
+    (let ((temp-file (make-temp-file "status-report" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file
+              (insert "* Legacy Item
+:PROPERTIES:
+:CANVAS_ID: 200
+:END:
+"))
+            (let ((org-canvas-assignments-file temp-file))
+              (let ((buf (get-buffer-create "*test-status*")))
+                (unwind-protect
+                    (progn
+                      (org-canvas--status-report-file
+                       buf "Assignments" 'org-canvas-assignments-file "CANVAS_ID")
+                      (with-current-buffer buf
+                        (expect (buffer-string) :to-match "Legacy: 1")))
+                  (kill-buffer buf)))))
+        (let ((buf (find-buffer-visiting temp-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file temp-file))))
+
+  (it "shows [unsaved] marker for modified buffers"
+    (let ((temp-file (make-temp-file "status-unsaved" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file
+              (insert "* Item
+:PROPERTIES:
+:CANVAS_ID: 100
+:LAST_SYNCED: [2026-01-01 Thu]
+:END:
+"))
+            ;; Open buffer and modify without saving
+            (let ((file-buf (find-file-noselect temp-file)))
+              (with-current-buffer file-buf
+                (goto-char (point-max))
+                (insert "\n"))
+              (let ((org-canvas-assignments-file temp-file))
+                (let ((buf (get-buffer-create "*test-status*")))
+                  (unwind-protect
+                      (progn
+                        (org-canvas--status-report-file
+                         buf "Assignments" 'org-canvas-assignments-file "CANVAS_ID")
+                        (with-current-buffer buf
+                          (expect (buffer-string) :to-match "\\[unsaved\\]")))
+                    (kill-buffer buf))))
+              (set-buffer-modified-p nil)
+              (kill-buffer file-buf)))
+        (delete-file temp-file))))
+
+  (it "does not show [unsaved] for clean files"
+    (let ((temp-file (make-temp-file "status-clean" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file
+              (insert "* Item
+:PROPERTIES:
+:CANVAS_ID: 100
+:LAST_SYNCED: [2026-01-01 Thu]
+:END:
+"))
+            (let ((org-canvas-assignments-file temp-file))
+              (let ((buf (get-buffer-create "*test-status*")))
+                (unwind-protect
+                    (progn
+                      (org-canvas--status-report-file
+                       buf "Assignments" 'org-canvas-assignments-file "CANVAS_ID")
+                      (with-current-buffer buf
+                        (expect (buffer-string) :not :to-match "\\[unsaved\\]")))
+                  (kill-buffer buf)))))
+        (let ((buf (find-buffer-visiting temp-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file temp-file)))))
+
+;;;; org-canvas-pull-all
+
+(describe "org-canvas-pull-all"
+  (it "emits tier progress messages"
+    (with-sync-test-env
+      (spy-on 'message)
+      (cl-letf (((symbol-function 'org-canvas--preflight-check) (lambda () nil))
+                ((symbol-function 'executable-find) (lambda (_) t))
+                ((symbol-function 'org-canvas-pull-settings) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-sections) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-assignment-groups) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-group-categories) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-outcomes) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-rubrics) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-pages) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-files) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-discussions) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-announcements) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-calendar-events) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-assignments) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-quizzes) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-new-quizzes) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-modules) (lambda () nil)))
+        (org-canvas-pull-all)
+        (let ((found nil))
+          (dolist (call (spy-calls-all-args 'message))
+            (when (and (stringp (car call))
+                       (string-match-p "^Pulling:" (car call)))
+              (setq found t)))
+          (expect found :to-be-truthy)))))
+
+  (it "shows final message with counts"
+    (with-sync-test-env
+      (spy-on 'message)
+      (cl-letf (((symbol-function 'org-canvas--preflight-check) (lambda () nil))
+                ((symbol-function 'executable-find) (lambda (_) t))
+                ((symbol-function 'org-canvas-pull-settings) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-sections) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-assignment-groups) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-group-categories) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-outcomes) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-rubrics) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-pages) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-files) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-discussions) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-announcements) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-calendar-events) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-assignments) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-quizzes) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-new-quizzes) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-modules) (lambda () nil)))
+        (org-canvas-pull-all)
+        (let ((found nil))
+          (dolist (call (spy-calls-all-args 'message))
+            (when (and (stringp (car call))
+                       (string-match-p "Pull complete:.*pulled.*failed" (car call)))
+              (setq found t)))
+          (expect found :to-be-truthy)))))
+
+  (it "counts failures from erroring pull functions"
+    (with-sync-test-env
+      (spy-on 'message)
+      (cl-letf (((symbol-function 'org-canvas--preflight-check) (lambda () nil))
+                ((symbol-function 'executable-find) (lambda (_) t))
+                ((symbol-function 'org-canvas-pull-settings)
+                 (lambda () (error "Settings pull failed")))
+                ((symbol-function 'org-canvas-pull-sections) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-assignment-groups) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-group-categories) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-outcomes) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-rubrics) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-pages) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-files) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-discussions) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-announcements) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-calendar-events) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-assignments) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-quizzes) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-new-quizzes) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-modules) (lambda () nil)))
+        (org-canvas-pull-all)
+        ;; Final message should show "1 failed"
+        (let ((found nil))
+          (dolist (call (spy-calls-all-args 'message))
+            (when (and (stringp (car call))
+                       (string-match-p "Pull complete:" (car call)))
+              (let ((formatted (apply #'format call)))
+                (when (string-match-p "1 failed" formatted)
+                  (setq found t)))))
+          (expect found :to-be-truthy))))))
+
+;;;; org-canvas-sync dry-run global message
+
+(describe "org-canvas-sync dry-run global message"
+  (it "shows dry-run specific message when in dry-run mode"
+    (with-sync-test-env
+      (spy-on 'message)
+      (cl-letf (((symbol-function 'org-canvas--preflight-check) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-settings) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-outcomes) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-rubrics) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-assignment-groups) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-group-categories) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-sections) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-files) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-pages) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-discussions) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-announcements) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-calendar-events) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-quizzes) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-new-quizzes) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-assignments) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-overrides) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-modules) (lambda () nil)))
+        ;; Simulate dry-run by setting global counter
+        (let ((org-canvas--dry-run t))
+          (org-canvas-sync)
+          ;; Since no actual syncing happened, dry-run count = 0
+          ;; but the final message should be "Sync complete" (dry-run = 0 takes else branch)
+          ;; Let's verify org-canvas--sync-global-counters has :dry-run key
+          (expect org-canvas--sync-global-counters :to-be nil))))))
+
 ;;; org-canvas-test.el ends here

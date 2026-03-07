@@ -26,7 +26,9 @@
    ("i" "Init (setup wizard)" org-canvas-init)
    ("t" "Test connection" org-canvas-test-connection)
    ("v" "Validate files" org-canvas-validate)
-   ("S" "Status overview" org-canvas-status)])
+   ("S" "Status overview" org-canvas-status)]
+  ["Learn"
+   ("?" "Demo conflict UI" org-canvas-demo-conflict)])
 
 (provide 'org-canvas-transient)
 ;;; org-canvas-transient.el ends here
