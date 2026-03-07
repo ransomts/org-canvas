@@ -167,8 +167,7 @@ Fetches events via the global calendar API filtered by course context code."
          (file (expand-file-name org-canvas-calendar-events-file)))
     (org-canvas--pull-confirm-overwrite file "calendar events")
     (unless (file-exists-p file)
-      (with-temp-file file
-        (insert "#+TITLE: Calendar Events\n")))
+      (with-temp-file file (insert "")))
     (with-current-buffer (find-file-noselect file)
       (dolist (item items)
         (let ((id (alist-get 'id item))
