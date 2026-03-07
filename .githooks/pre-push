@@ -60,11 +60,14 @@ for version in 29 30; do
   echo " Emacs $version ($package)"
   echo "========================================"
 
+  COVERAGE_JSON=$(mktemp /tmp/org-canvas-coverage-XXXXXX.json)
+
   # Only enable coverage instrumentation on Emacs 30 (primary target).
   # Emacs 29 runs plain tests — catches version-specific regressions without
   # the overhead of undercover instrumentation.
+  # Use codecov JSON format (text reporter has overflow-error on Emacs 30.1).
   if [ "$version" -eq 30 ]; then
-    cmd="emacs --version | head -1 && eldev test -u \"on,text,dontsend\""
+    cmd="emacs --version | head -1 && eldev test -u \"on,codecov,dontsend\" -U \"$COVERAGE_JSON\""
   else
     cmd="emacs --version | head -1 && eldev test"
   fi
@@ -86,23 +89,37 @@ for version in 29 30; do
     if [ "$failed" -gt 0 ]; then
       echo "BLOCKED: $failed test(s) failed on Emacs $version."
       echo "$output" | grep -E 'FAILED|failed' | tail -20
+      rm -f "$COVERAGE_JSON"
       exit 1
     fi
   fi
 
   # Gate 4: Enforce minimum code coverage (Emacs 30 only).
-  # Parse per-module "Relevant: N Covered: M" lines from undercover output,
-  # sum them into a weighted average, and compare against the target.
+  # Parse coverage from codecov JSON: sum line hits across all source files.
   if [ "$version" -eq 30 ]; then
-    total_relevant=0
-    total_covered=0
+    if [ ! -s "$COVERAGE_JSON" ]; then
+      echo "BLOCKED: Coverage JSON was not generated."
+      rm -f "$COVERAGE_JSON"
+      exit 1
+    fi
 
-    while IFS= read -r line; do
-      relevant=$(echo "$line" | grep -oP 'Relevant: \K\d+')
-      covered=$(echo "$line" | grep -oP 'Covered: \K\d+')
-      total_relevant=$((total_relevant + relevant))
-      total_covered=$((total_covered + covered))
-    done < <(echo "$output" | grep -P '^org-canvas.*Percent')
+    # Extract coverage arrays, count non-null entries (relevant) and non-zero entries (covered)
+    eval "$(python3 -c "
+import json, sys
+with open('$COVERAGE_JSON') as f:
+    data = json.load(f)
+relevant = covered = 0
+for sf in data['source_files']:
+    for hit in sf['coverage']:
+        if hit is not None:
+            relevant += 1
+            if hit > 0:
+                covered += 1
+print(f'total_relevant={relevant}')
+print(f'total_covered={covered}')
+")"
+
+    rm -f "$COVERAGE_JSON"
 
     if [ "$total_relevant" -eq 0 ]; then
       echo "BLOCKED: Could not parse coverage report."
