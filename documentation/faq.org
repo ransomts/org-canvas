@@ -66,7 +66,7 @@ Add an override table under the assignment heading:
 
 Description...
 
-#+NAME: overrides
+,#+NAME: overrides
 | Section                                      | Due At                 | Unlock At | Lock At |
 |----------------------------------------------+------------------------+-----------+---------|
 | [[file:sections.org::*Section A][Section A]] | <2026-09-16 Tue 23:59> |           |         |
@@ -297,6 +297,20 @@ Level-1 headings in =files.org= map to Canvas folders:
 #+end_src
 
 This creates "Lecture Slides" and "Datasets" folders in Canvas.
+
+** Can I nest folders inside folders?
+
+Yes.  Org heading nesting determines the folder hierarchy.  Headings without file links become folders, and deeper headings create subfolders:
+
+#+begin_src org
+,* Course Materials
+,** Slides
+,*** [[file:content/lecture1.pdf][Lecture 1]]
+,** Labs
+,*** [[file:content/lab1.zip][Lab 1 Starter]]
+#+end_src
+
+This creates =Course Materials/Slides/= and =Course Materials/Labs/= as nested folders on Canvas, with the files uploaded into their respective subfolders.  You can nest as deeply as you like.
 
 ** What file types can I upload?
 
