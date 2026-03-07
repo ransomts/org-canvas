@@ -45,19 +45,6 @@
   :type 'file
   :group 'org-canvas)
 
-(defconst org-canvas--settings-valid-views
-  '("feed" "wiki" "modules" "syllabus" "assignments")
-  "Valid values for DEFAULT_VIEW.")
-
-(defconst org-canvas--settings-valid-licenses
-  '("private" "cc_by" "cc_by_sa" "cc_by_nc" "cc_by_nc_sa"
-    "cc_by_nd" "cc_by_nc_nd" "public_domain")
-  "Valid values for LICENSE.")
-
-(defconst org-canvas--settings-valid-late-intervals
-  '("day" "hour")
-  "Valid values for LATE_SUBMISSION_INTERVAL.")
-
 ;;;; 1. Parse
 
 (defun org-canvas--settings-read-props (pom)
@@ -103,11 +90,11 @@ Returns a plist with transformed keys (no `-raw' suffixes)."
   (let ((title (plist-get raw :title-raw))
         (default-view (org-canvas--validate-property
                        (plist-get raw :default-view-raw)
-                       org-canvas--settings-valid-views
+                       org-canvas--valid-views
                        "DEFAULT_VIEW"))
         (license (org-canvas--validate-property
                   (plist-get raw :license-raw)
-                  org-canvas--settings-valid-licenses
+                  org-canvas--valid-licenses
                   "LICENSE"))
         (start-at (org-canvas-org-parse-timestamp
                    (plist-get raw :start-at-raw)))
@@ -115,7 +102,7 @@ Returns a plist with transformed keys (no `-raw' suffixes)."
                  (plist-get raw :end-at-raw)))
         (late-submission-interval (org-canvas--validate-property
                                    (plist-get raw :late-submission-interval-raw)
-                                   org-canvas--settings-valid-late-intervals
+                                   org-canvas--valid-late-intervals
                                    "LATE_SUBMISSION_INTERVAL"))
         (course-image-raw (plist-get raw :course-image-raw)))
     (list :title title

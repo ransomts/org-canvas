@@ -222,5 +222,154 @@ Returns a flat list of all items across all pages."
           (setq page (1+ page)))))
     all-items))
 
+;;;; 3b. Rubric Association
+
+(defun org-canvas--associate-rubric (item-id rubric-id association-type)
+  "Associate RUBRIC-ID with ITEM-ID on Canvas.
+ASSOCIATION-TYPE is \"Assignment\" or \"Discussion\"."
+  (elog-info org-canvas--logger "[Rubric] Associating rubric %s with %s %s"
+             rubric-id (downcase association-type) item-id)
+  (let* ((endpoint (org-canvas-api-course-endpoint "rubric_associations"))
+         (payload (make-hash-table :test 'equal))
+         (assoc (make-hash-table :test 'equal)))
+    (puthash "rubric_id" (string-to-number rubric-id) assoc)
+    (puthash "association_id" item-id assoc)
+    (puthash "association_type" association-type assoc)
+    (puthash "purpose" "grading" assoc)
+    (puthash "rubric_association" assoc payload)
+    (condition-case err
+        (progn
+          (org-canvas-api-request 'POST endpoint :data payload)
+          (elog-info org-canvas--logger "[Rubric] Association created"))
+      (error
+       (elog-warning org-canvas--logger "[Rubric] Association failed: %s" (error-message-string err))))))
+
+;;;; 3c. File Upload Infrastructure
+;;
+;; Self-contained 3-step Canvas file upload, independent of the
+;; files.el module so any feature module can upload files.
+
+(defun org-canvas--guess-content-type (filename)
+  "Guess MIME type for FILENAME based on extension."
+  (let ((ext (downcase (or (file-name-extension filename) ""))))
+    (cond
+     ((string= ext "png")  "image/png")
+     ((member ext '("jpg" "jpeg")) "image/jpeg")
+     ((string= ext "gif")  "image/gif")
+     ((string= ext "svg")  "image/svg+xml")
+     ((string= ext "webp") "image/webp")
+     ((string= ext "bmp")  "image/bmp")
+     ((string= ext "pdf")  "application/pdf")
+     (t "application/octet-stream"))))
+
+(defun org-canvas--upload-build-multipart (upload-params local-path boundary)
+  "Build multipart/form-data body for file upload.
+UPLOAD-PARAMS is the alist from Canvas step 1 response.
+LOCAL-PATH is the local file path.
+BOUNDARY is the multipart boundary string.
+Returns a unibyte string."
+  (let ((body-parts nil)
+        (file-content (with-temp-buffer
+                        (set-buffer-multibyte nil)
+                        (insert-file-contents-literally local-path)
+                        (buffer-string)))
+        (actual-filename (file-name-nondirectory local-path))
+        (actual-content-type (org-canvas--guess-content-type local-path)))
+    ;; Build form fields from upload_params
+    (dolist (param (append upload-params nil))
+      (let* ((key (car param))
+             (raw-value (cdr param))
+             ;; Fix Canvas nulls/unknowns
+             (value (cond
+                     ((and (eq key 'filename) (null raw-value))
+                      actual-filename)
+                     ((and (eq key 'content_type)
+                           (or (null raw-value)
+                               (equal raw-value "unknown/unknown")))
+                      actual-content-type)
+                     (t raw-value))))
+        (when value
+          (push (format "--%s\r\nContent-Disposition: form-data; name=\"%s\"\r\n\r\n%s"
+                        boundary key value)
+                body-parts))))
+    ;; File parameter must be LAST
+    (push (format "--%s\r\nContent-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\nContent-Type: %s\r\n\r\n"
+                  boundary actual-filename actual-content-type)
+          body-parts)
+    ;; Encode form parts as unibyte before concatenating with binary
+    (let* ((body-prefix (encode-coding-string
+                         (concat (mapconcat #'identity (nreverse body-parts) "\r\n") "\r\n")
+                         'raw-text))
+           (body-suffix (encode-coding-string
+                         (format "\r\n--%s--\r\n" boundary)
+                         'raw-text)))
+      (concat body-prefix file-content body-suffix))))
+
+(defun org-canvas--upload-file (local-path &optional notify-url display-name)
+  "Upload LOCAL-PATH to Canvas via the 3-step upload API.
+NOTIFY-URL is the step 1 endpoint (defaults to course files).
+DISPLAY-NAME overrides the filename shown in Canvas.
+Returns the Canvas file object alist (with \\='id key)."
+  (let* ((filename (or display-name (file-name-nondirectory local-path)))
+         (size (file-attribute-size (file-attributes local-path)))
+         (content-type (org-canvas--guess-content-type local-path))
+         (url (or notify-url
+                  (format "%s/api/v1/courses/%s/files"
+                          org-canvas-base-url org-canvas-course-id)))
+         (payload `((name . ,filename)
+                    (size . ,size)
+                    (content_type . ,content-type))))
+    (elog-info org-canvas--logger "[Upload Step 1] Notifying Canvas for '%s'..." filename)
+    ;; Step 1: Notify Canvas
+    (let ((upload-info (org-canvas-api-request 'POST url :data payload)))
+      (let* ((upload-url (alist-get 'upload_url upload-info))
+             (upload-params (alist-get 'upload_params upload-info))
+             (boundary (format "----FormBoundary%s"
+                               (md5 (format "%s%s" (current-time) (random))))))
+        (elog-info org-canvas--logger "[Upload Step 2] Sending file to %s..." upload-url)
+        ;; Step 2: Upload the file
+        (let* ((full-body (org-canvas--upload-build-multipart
+                           upload-params local-path boundary))
+               (url-request-method "POST")
+               (url-request-extra-headers
+                `(("Content-Type" . ,(format "multipart/form-data; boundary=%s" boundary))))
+               (url-request-data full-body)
+               (step2-response
+                (with-current-buffer (url-retrieve-synchronously upload-url nil nil 120)
+                  (goto-char (point-min))
+                  (let (location-header json-response)
+                    (save-excursion
+                      (when (re-search-forward "^[Ll]ocation: \\(.*\\)\r?$" nil t)
+                        (setq location-header (string-trim (match-string 1)))))
+                    (when (re-search-forward "\r?\n\r?\n" nil t)
+                      (setq json-response
+                            (condition-case nil
+                                (json-read-from-string
+                                 (buffer-substring-no-properties (point) (point-max)))
+                              (error nil))))
+                    (kill-buffer)
+                    (cond
+                     ((and json-response (alist-get 'id json-response))
+                      json-response)
+                     (location-header
+                      `((location . ,location-header)))
+                     (json-response json-response)
+                     (t (error "Upload failed: no JSON or Location header")))))))
+          ;; Step 3: Confirm upload
+          (elog-info org-canvas--logger "[Upload Step 3] Confirming upload...")
+          (if (alist-get 'id step2-response)
+              (progn
+                (elog-info org-canvas--logger "[Upload] Complete: file ID %s"
+                           (alist-get 'id step2-response))
+                step2-response)
+            (let* ((location (alist-get 'location step2-response))
+                   (full-url (if (string-prefix-p "http" location)
+                                 location
+                               (concat org-canvas-base-url location)))
+                   (response (org-canvas-api-request 'GET full-url)))
+              (elog-info org-canvas--logger "[Upload] Complete: file ID %s"
+                         (alist-get 'id response))
+              response)))))))
+
 (provide 'org-canvas-core-api)
 ;;; org-canvas-core-api.el ends here

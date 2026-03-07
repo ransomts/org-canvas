@@ -1736,10 +1736,10 @@ EXCEPT is a list of filenames to skip."
   (it "validates LATE_SUBMISSION_INTERVAL as enum in settings"
     (let ((loc (list :file "/f" :line 1 :heading "H")))
       (expect (org-canvas--validate-check-enum "day" "LATE_SUBMISSION_INTERVAL"
-                                                org-canvas--settings-valid-late-intervals loc)
+                                                org-canvas--valid-late-intervals loc)
               :to-be nil)
       (expect (org-canvas--validate-check-enum "week" "LATE_SUBMISSION_INTERVAL"
-                                                org-canvas--settings-valid-late-intervals loc)
+                                                org-canvas--valid-late-intervals loc)
               :to-be-truthy)))
 
   (it "validates LATE_SUBMISSION_DEDUCTION as number"

@@ -317,6 +317,19 @@ DESTINATION should be one of: buffer, file, both."
   '("keep_highest" "keep_latest" "keep_average")
   "Valid scoring policy values for New Quizzes.")
 
+(defconst org-canvas--valid-views
+  '("feed" "wiki" "modules" "syllabus" "assignments")
+  "Valid values for DEFAULT_VIEW in settings.")
+
+(defconst org-canvas--valid-licenses
+  '("private" "cc_by" "cc_by_sa" "cc_by_nc" "cc_by_nc_sa"
+    "cc_by_nd" "cc_by_nc_nd" "public_domain")
+  "Valid values for LICENSE in settings.")
+
+(defconst org-canvas--valid-late-intervals
+  '("day" "hour")
+  "Valid values for LATE_SUBMISSION_INTERVAL in settings.")
+
 (defconst org-canvas--valid-self-signup-values
   '("enabled" "restricted")
   "Valid values for SELF_SIGNUP.")

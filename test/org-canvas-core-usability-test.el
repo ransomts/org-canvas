@@ -7,6 +7,7 @@
 (require 'org-canvas-core)
 (require 'org-canvas-pages)
 (require 'org-canvas-announcements)
+(require 'org-canvas-setup)
 
 ;;;; Usability Audit Tests
 
