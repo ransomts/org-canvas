@@ -1,0 +1,203 @@
+#+TITLE: Migrating to org-canvas
+#+AUTHOR: Tim Ransom
+#+OPTIONS: toc:2 num:t
+
+A guide for instructors currently managing courses through the Canvas web UI who want to switch to an Org Mode workflow.
+
+* Why Switch?
+
+** What You Gain
+
+- *Version control.*  Every change is a git commit.  Roll back a bad edit, compare semesters, see who changed what and when.
+- *Plain text.*  Your course lives in files you own, not locked in a web platform.  Search with grep, edit with macros, diff with standard tools.
+- *Batch operations.*  Change every assignment's due date with a search-and-replace.  Create 15 weeks of modules from a template.  No clicking through pages one by one.
+- *Reproducibility.*  Copy a semester by duplicating a directory and changing dates.  No "import course" wizard with unpredictable results.
+- *Offline work.*  Edit your entire course on a plane.  Sync when you're back online.
+- *Automation.*  Script course creation, validate before publishing, integrate with CI.
+- *Conflict detection.*  Know when a TA changed something on Canvas before you overwrite it.
+- *Keyboard-driven.*  Everything through Emacs commands, no mouse-heavy web UI.
+
+** What You Give Up
+
+- *Real-time WYSIWYG editing.*  You write Org markup, not rich text.  The Canvas preview is one sync away, not instant.
+- *Drag-and-drop.*  Module reordering is heading reordering in a text file.  Faster once you're used to it, but different.
+- *Canvas-native features.*  Some Canvas features (SpeedGrader, Analytics, Conversations) are only available in the web UI.  org-canvas covers content management and basic grading, not the entire Canvas experience.
+- *Collaborative real-time editing.*  Two people can't edit the same Org file simultaneously the way two people can both use the Canvas UI.  Use git branches or divide file ownership instead.
+- *Point-and-click simplicity.*  There's a learning curve.  You need to know Org Mode basics and be comfortable in Emacs.
+
+** Who Benefits Most
+
+- Instructors who already use Emacs or Org Mode.
+- Instructors who teach the same course repeatedly and want easy semester-to-semester copying.
+- Instructors who value version control and plain-text workflows.
+- Instructors managing large courses (50+ assignments, multiple sections) where batch operations save significant time.
+- Instructors in technical fields who are comfortable with text-based tools.
+
+* The Mental Model Shift
+
+** Canvas Web UI: "Edit in Place"
+
+In the Canvas UI, you edit content directly on Canvas.  The platform is both your editor and your delivery system.  Changes are live immediately.
+
+#+begin_example
+Edit on Canvas → Students see it
+#+end_example
+
+** org-canvas: "Edit Locally, Push to Canvas"
+
+With org-canvas, you edit Org files on your computer and explicitly push changes to Canvas.  Your Org files are the source of truth.
+
+#+begin_example
+Edit .org file → Validate → Sync → Students see it
+#+end_example
+
+This is the same model as writing code: edit locally, test, deploy.
+
+** Key Implications
+
+- *Canvas becomes read-only (mostly).*  After switching, treat Canvas as the delivery platform, not the editor.  Edits made directly in Canvas will show as conflicts on the next sync.
+- *Sync is explicit.*  Nothing happens on Canvas until you run a sync command.  This is a feature, not a limitation -- you can draft changes over days without affecting students.
+- *Properties replace form fields.*  Instead of filling in a web form, you set Org properties (=:POINTS: 100=, =:DUE_AT: <2026-09-15 Mon 23:59>=).
+- *Links replace dropdowns.*  Instead of selecting "Labs" from an assignment group dropdown, you write =:GROUP: [[file:assignment-groups.org::*Labs][Labs]]=.
+
+* Migration Path
+
+** Phase 1: Import Your Existing Course
+
+Don't start from scratch.  Import what you already have.
+
+1. Install org-canvas and [[https://pandoc.org/][pandoc]].
+2. Run =M-x org-canvas-init= with your existing course ID.
+3. Run =M-x org-canvas-pull-all=.
+
+This creates =.org= files for every content type with all your existing content, including =CANVAS_ID= properties so org-canvas knows these items already exist on Canvas.
+
+4. Review the imported files.  Fix any HTML-to-Org conversion artifacts.
+5. Initialize git:
+
+   #+begin_src bash
+   git init
+   echo "org-canvas-credentials.el" >> .gitignore
+   git add *.org .gitignore
+   git commit -m "Import from Canvas"
+   #+end_src
+
+** Phase 2: Coexistence (Optional)
+
+You don't have to go all-in immediately.  During the transition:
+
+- *Edit some content in Org, some in Canvas.*  org-canvas only syncs files that exist.  If you haven't created =discussions.org=, discussions are untouched.
+- *Conflict detection protects you.*  If you edit something in Canvas and also in Org, the sync will show you both versions and let you choose.
+- *Pull individual types.*  Use =M-x org-canvas-pull-pages= (etc.) to refresh your local files with any Canvas-side changes.
+
+** Phase 3: Full Org Workflow
+
+Once comfortable, manage everything through Org files:
+
+1. Make all content edits in Org files.
+2. Use =M-x org-canvas-validate= to catch errors before syncing.
+3. Use =M-x org-canvas-sync= to push changes.
+4. Use git for version history.
+5. Use =M-x org-canvas-submissions-view= for grading.
+
+Continue using the Canvas web UI for:
+- SpeedGrader (detailed rubric grading, annotations)
+- Analytics and reports
+- Student Conversations (messaging)
+- Live quiz proctoring
+
+* Mapping Canvas UI to Org Properties
+
+This table maps Canvas web form fields to their Org property equivalents.
+
+** Assignments
+
+| Canvas UI Field            | Org Property               | Notes                                  |
+|----------------------------+----------------------------+----------------------------------------|
+| Points                     | =:POINTS:=                   |                                        |
+| Assignment Group           | =:GROUP:=                    | Link to =assignment-groups.org=          |
+| Display Grade as           | =:GRADING_TYPE:=             | points, percent, letter_grade, ...     |
+| Submission Type             | =:SUBMISSION:=               | online_upload, online_text_entry, ...  |
+| Allowed File Types         | =:ALLOWED_EXTENSIONS:=       | Comma-separated                        |
+| Due                        | =:DUE_AT:=                   | Org timestamp                          |
+| Available from / Until     | =:UNLOCK_AT:= / =:LOCK_AT:=   | Org timestamps                         |
+| "This is a Group Assignment" | =:GROUP_CATEGORY_ID:=      | Link to =group-categories.org=           |
+| Require Peer Reviews       | =:PEER_REVIEWS:=             |                                        |
+| Rubric (via Add Rubric)    | =:RUBRIC_LINK:=              | Link to =rubrics.org=                    |
+| Description (rich text)    | Body text under heading    | Exported to HTML                       |
+
+** Quizzes
+
+| Canvas UI Field          | Org Property               | Notes                            |
+|--------------------------+----------------------------+----------------------------------|
+| Quiz Type                | =:QUIZ_TYPE:=                | assignment, practice_quiz, ...   |
+| Time Limit               | =:TIME_LIMIT:=               | Minutes                          |
+| Shuffle Answers          | =:SHUFFLE_ANSWERS:=          |                                  |
+| Allow Multiple Attempts  | =:ALLOWED_ATTEMPTS:=         | -1 = unlimited                   |
+| Quiz Password            | =:ACCESS_CODE:=              |                                  |
+| Let Students See Correct | =:SHOW_CORRECT_ANSWERS:=     |                                  |
+| One Question at a Time   | =:ONE_QUESTION_AT_A_TIME:=   |                                  |
+| Lock After Answering     | =:CANT_GO_BACK:=             |                                  |
+| Questions (rich editor)  | Level 2 sub-headings       | With =:TYPE:= and =:POINTS:=        |
+
+** Pages
+
+| Canvas UI Field   | Org Property       | Notes                      |
+|-------------------+--------------------+----------------------------|
+| Title             | Heading text       |                            |
+| Body (rich text)  | Body under heading | Exported to HTML           |
+| Front Page toggle | =:FRONT_PAGE:=       |                            |
+| Who can edit      | =:EDITING_ROLES:=    | teachers, students, ...    |
+| Published toggle  | =:PUBLISHED:=        |                            |
+
+** Modules
+
+| Canvas UI Field         | Org Property                   | Notes                         |
+|-------------------------+--------------------------------+-------------------------------|
+| Module name             | Level 1 heading text           |                               |
+| Lock until              | =:UNLOCK_AT:=                    |                               |
+| Sequential progression  | =:REQUIRE_SEQUENTIAL_PROGRESSION:= |                            |
+| Add Item → Assignment   | Level 2 heading with link      | =[[file:assignments.org::*Name][Name]]= |
+| Indent                  | =:INDENT:=                       | 0-5                          |
+| Completion requirement  | =:COMPLETION_REQUIREMENT:=       | must_view, must_submit, ...  |
+| Add Item → External URL | =:ITEM_TYPE: ExternalUrl=        | + =:EXTERNAL_URL:=             |
+| Add Item → Text Header  | =:ITEM_TYPE: SubHeader=          |                               |
+
+** Course Settings
+
+| Canvas UI Field      | Org Property (in settings.org) | Notes                        |
+|----------------------+--------------------------------+------------------------------|
+| Time Zone            | =:TIME_ZONE:=                    | IANA format                  |
+| Home Page            | =:DEFAULT_VIEW:=                 | modules, wiki, ...           |
+| Weight groups        | =:APPLY_WEIGHTS:=                |                              |
+| Course License       | =:LICENSE:=                      | private, cc_by, ...          |
+| Start/End Date       | =:START_AT:= / =:END_AT:=         |                              |
+| Late Policy          | =:LATE_SUBMISSION_DEDUCTION:=    | + interval, minimum, etc.    |
+| Navigation tabs      | =** Navigation= sub-heading     | Numbered list, strikethrough = hidden |
+| Course Image         | =:COURSE_IMAGE:=                 | File link or URL             |
+
+* Common Questions from Switchers
+
+** "What if I need to edit something quickly in Canvas?"
+
+Go ahead -- org-canvas has conflict detection.  On the next sync, it will notice the change and let you choose: keep Canvas version, keep Org version, or skip.  For emergency fixes (typos, wrong dates), editing directly in Canvas is fine.  Just pull the change into your Org file afterward.
+
+** "What about TAs who don't use Emacs?"
+
+They can continue using Canvas.  Conflict detection handles the overlap.  See the [[file:workflows.org::*Multi-Instructor Workflow][multi-instructor workflow]] for strategies.
+
+** "How do I handle content I can't manage with org-canvas?"
+
+org-canvas covers 16 content types, but some Canvas features (e.g., Conversations, Analytics, Attendance, external LTI tools) are outside its scope.  Use the Canvas web UI for those.  org-canvas only touches the content types you give it =.org= files for.
+
+** "Is my content safe?"
+
+Your Org files are local files under your control.  Use git for backup and history.  org-canvas never deletes anything on Canvas unless you explicitly run a delete command.  Syncing creates or updates -- it never deletes.
+
+** "What if I stop using org-canvas?"
+
+Your Canvas course continues to work normally.  The =CANVAS_ID=, =LAST_SYNCED=, and other properties in your Org files are just metadata -- Canvas doesn't know or care about them.  You can stop syncing anytime and your Canvas course is unaffected.
+
+** "Can I use org-canvas for just part of my course?"
+
+Absolutely.  Only create =.org= files for the content types you want to manage.  If you only want to manage assignments and modules through Org, create just =assignments.org= and =modules.org=.  Everything else stays Canvas-only.

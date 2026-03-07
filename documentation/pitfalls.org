@@ -1,0 +1,186 @@
+#+TITLE: org-canvas Pitfalls & Gotchas
+#+AUTHOR: Tim Ransom
+#+OPTIONS: toc:2 num:t
+
+Things that can trip you up, organized from most common to least.
+
+* Don't Delete CANVAS_ID
+
+If you remove the =CANVAS_ID= property from a heading that was previously synced, org-canvas will create a *duplicate* on Canvas instead of updating the existing item.
+
+org-canvas warns you about this ("N heading(s) have LAST_SYNCED but no CANVAS_ID") and asks whether to continue.  If you see this warning:
+
+- *To update the existing item:* Restore the =CANVAS_ID= (check git history: =git log -p -- assignments.org=).
+- *To create a new item:* Also delete the =LAST_SYNCED= property so org-canvas treats it as genuinely new.
+
+* Pull Sections Before Syncing Overrides
+
+Per-section date overrides (the =#+NAME: overrides= table in =assignments.org=) link to headings in =sections.org=.  If =sections.org= doesn't have the right =CANVAS_ID= values, override sync will fail.
+
+#+begin_src elisp
+;; Do this first
+M-x org-canvas-pull-sections
+
+;; Then this works
+M-x org-canvas-sync-overrides
+#+end_src
+
+=org-canvas-sync= handles this automatically (sections are Tier 0, overrides are Tier 1.75).  This pitfall only applies when syncing overrides individually.
+
+* Assignment Group Drop Rules Need Two Phases
+
+Canvas rejects drop rules (=DROP_LOWEST=, =DROP_HIGHEST=) when creating a new assignment group that has no assignments yet:
+
+#+begin_example
+"Drop rules cannot be higher than the number of assignments"
+#+end_example
+
+=org-canvas-sync= handles this automatically with a two-phase sync: create groups without rules (Tier 0.5), sync assignments (Tier 1.5), then re-sync groups with rules (Tier 2).
+
+If you sync assignment groups individually (=M-x org-canvas-sync-assignment-groups=) on a fresh course, the drop rules will be silently skipped on the first sync.  Run it again after assignments exist.
+
+* Sync Order Matters for Individual Syncs
+
+When using =org-canvas-sync=, dependency order is handled automatically.  But when syncing individual content types, you must respect the dependency chain:
+
+#+begin_example
+assignment-groups  →  before  →  assignments (GROUP link)
+rubrics            →  before  →  assignments (RUBRIC_LINK)
+group-categories   →  before  →  assignments (GROUP_CATEGORY_ID)
+sections           →  before  →  overrides (section links)
+outcomes           →  before  →  rubrics (OUTCOME links)
+everything above   →  before  →  modules (links to all types)
+#+end_example
+
+If you sync a module that references an assignment that hasn't been synced yet, the module item will fail to resolve the link.
+
+* New Quizzes vs Classic Quizzes
+
+These are *completely different systems* with different APIs, different files, and different property names:
+
+| Aspect         | Classic (=quizzes.org=)     | New (=new-quizzes.org=)        |
+|----------------+---------------------------+------------------------------|
+| API            | =/api/v1/quizzes=           | =/api/quiz/v1/=                |
+| ID property    | =CANVAS_ID=                 | =CANVAS_ID= + =CANVAS_ASSIGNMENT_ID= |
+| Question types | 11 types                  | 11 types (different set)     |
+| Scoring        | keep_highest, keep_latest | + keep_average               |
+| Question banks | Question groups           | Item banks (not supported)   |
+
+Check which system your institution uses before creating quiz files.  Some institutions have disabled Classic Quizzes entirely.
+
+* Pages Use CANVAS_URL, Not CANVAS_ID
+
+Pages are identified by URL slug, not numeric ID.  The property is =CANVAS_URL=, not =CANVAS_ID=.  This is a Canvas API quirk -- pages are accessed at =/api/v1/courses/:id/pages/:url= rather than by numeric ID.
+
+You don't need to set this manually -- it's auto-populated after sync.  But if you're searching for a page's identifier in your Org file, look for =CANVAS_URL=.
+
+* Body Text Is Exported to HTML
+
+The body text under a heading (assignments, pages, discussions, announcements, calendar events) is exported to HTML using =ox-html= before being sent to Canvas.  This means:
+
+- Org formatting (bold, lists, tables, code blocks) works.
+- Raw HTML in the body is passed through.
+- Very complex Org features (dynamic blocks, babel results) may not convert cleanly.
+- Inline images (=[[file:diagram.png]]=) are uploaded to Canvas automatically.
+
+If your content looks wrong on Canvas, check the exported HTML by setting =org-canvas-log-request-bodies= to =t= and reviewing the log.
+
+* Boolean Properties Are Strings
+
+In Org mode, all properties are strings.  org-canvas converts them:
+
+| Org Property Value | Canvas API Value |
+|--------------------+------------------|
+| =true=               | =true=             |
+| =false=              | =false= (JSON)     |
+
+Don't use =t=, =nil=, =yes=, =no=, =1=, =0= -- only =true= and =false= are recognized.  Other values are passed as-is and may cause unexpected behavior.
+
+* Timestamps Must Be Active
+
+org-canvas expects *active* Org timestamps (angle brackets):
+
+#+begin_example
+GOOD: <2026-09-15 Mon 23:59>
+BAD:  [2026-09-15 Mon 23:59]    ← inactive timestamp, will be ignored
+BAD:  2026-09-15                 ← plain text, not a timestamp
+#+end_example
+
+Use =C-c .= in Org mode to insert active timestamps.
+
+* The Payload Hash Skip
+
+After a successful sync, org-canvas stores a hash of the payload in =PAYLOAD_HASH=.  On the next sync, if the hash matches, the API call is skipped entirely.  This makes repeated syncs fast.
+
+*Gotcha:* If you change something on Canvas (not in Org) and then sync, the hash still matches, so org-canvas skips the item.  To force a re-sync:
+
+- Delete the =PAYLOAD_HASH= property from the heading, or
+- Use =M-x org-canvas-force-push=, or
+- Make any change to the Org heading (even adding and removing a space).
+
+* Image Links Must Be Local Files
+
+Inline images in body text must be local file links:
+
+#+begin_example
+GOOD: [[file:images/diagram.png]]
+BAD:  [[https://example.com/diagram.png]]   ← not uploaded, passed as URL
+#+end_example
+
+URLs are left as-is in the exported HTML.  Only =[[file:...]]= links trigger the upload-and-replace behavior.
+
+Images are uploaded to a =org-canvas-images/= folder on Canvas and cached per sync session.
+
+* Heading Order = Canvas Order
+
+For modules, the order of level-1 headings in =modules.org= determines the module order on Canvas.  Similarly, level-2 headings determine item order within a module.
+
+For other content types (assignments, pages, etc.), Canvas determines ordering separately.  The =POSITION= property on assignments and assignment groups controls their display order.
+
+* Rate Limits on Large Courses
+
+Canvas rate-limits API requests.  org-canvas automatically retries on 429 responses with a countdown in the echo area.  But for very large courses (100+ items), the initial sync can take a while.
+
+Tips:
+- Sync individual content types during development (=M-x org-canvas-sync-assignments=).
+- Use dry-run (=M-x org-canvas-sync-dry-run=) to preview without API calls.
+- The payload hash skip means subsequent syncs only touch changed items.
+
+* Credentials File Must Not Be Committed
+
+=org-canvas-credentials.el= contains your API token.  The init wizard offers to add it to =.gitignore=, but if you skipped that:
+
+#+begin_src bash
+echo "org-canvas-credentials.el" >> .gitignore
+#+end_src
+
+If you accidentally committed it, revoke the token in Canvas (Account > Settings > Approved Integrations) and generate a new one.
+
+* Pandoc Is Required for Pulling HTML Content
+
+=org-canvas-pull-all= (and individual pull commands) convert HTML content to Org format using [[https://pandoc.org/][pandoc]].  Without pandoc:
+
+- Pull still works, but HTML content is stored as raw HTML with a warning comment.
+- Properties and metadata are imported normally.
+
+Install pandoc from https://pandoc.org/installing.html or your system package manager.
+
+* Calendar Events Use a Global API Endpoint
+
+Unlike other content types, calendar events use Canvas's global calendar API (not the course-scoped API).  This means:
+
+- Orphan cleanup does not scan calendar events (no course-scoped list endpoint).
+- If you delete a calendar event heading from your Org file, use =M-x org-canvas-delete-calendar-event-at-point= before removing it, or it will be orphaned.
+
+* Strikethrough in Navigation = Hidden Tab
+
+In =settings.org= under the =** Navigation= heading, strikethrough marks a tab as hidden from students:
+
+#+begin_example
+1. Home
+2. Modules
+3. +Discussions+    ← hidden from students
+4. +People+         ← hidden from students
+#+end_example
+
+"Home" and "Settings" cannot be hidden (Canvas restriction).  A warning is logged if you try.

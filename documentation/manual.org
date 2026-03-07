@@ -8,6 +8,15 @@ org-canvas synchronizes Org Mode files with Canvas LMS. Each course content type
 
 The primary workflow treats Org files as the "source of truth" -- you design your course entirely in Org Mode and push changes to Canvas. For instructors with existing Canvas courses, =org-canvas-pull-all= imports the entire course into Org files. The package tracks sync state via properties (=CANVAS_ID=, =LAST_SYNCED=) so it knows whether to create new items or update existing ones, and detects conflicts when items are modified directly in Canvas.
 
+** Related Documentation
+
+- [[file:workflows.org][Workflows Guide]] -- Task-oriented guide organized by time scale (semester, weekly, daily, per-assignment)
+- [[file:faq.org][FAQ & Recipes]] -- Quick answers to "how do I..." questions
+- [[file:cheatsheet.org][Quick Reference Card]] -- All properties and commands on one page
+- [[file:migration.org][Migration Guide]] -- Switching from Canvas web UI to Org Mode
+- [[file:pitfalls.org][Pitfalls & Gotchas]] -- Common mistakes and how to avoid them
+- [[file:../demo-course/README.org][Demo Course]] -- Complete example course showcasing all features
+
 * Getting Started
 
 ** Prerequisites

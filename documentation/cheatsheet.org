@@ -1,0 +1,316 @@
+#+TITLE: org-canvas Quick Reference
+#+AUTHOR: Tim Ransom
+#+OPTIONS: toc:nil num:nil
+
+* Commands
+
+** Sync
+
+| Key (in dispatch) | Command                         | Description                   |
+|--------------------+---------------------------------+-------------------------------|
+| =s s=                | =org-canvas-sync=                 | Sync all (with conflicts)     |
+| =s d=                | =org-canvas-sync-dry-run=         | Preview sync (no API calls)   |
+| =s f=                | =org-canvas-force-push=           | Sync all, skip conflicts      |
+| =s @=                | /sync-at-point submenu/           | Sync single heading           |
+
+** Pull
+
+| Key (in dispatch) | Command                         | Description                  |
+|--------------------+---------------------------------+------------------------------|
+| =p a=                | =org-canvas-pull-all=             | Import entire Canvas course  |
+| =p P=                | /pull-single submenu/             | Pull one content type        |
+
+** Delete
+
+| Key (in dispatch) | Command                         | Description                  |
+|--------------------+---------------------------------+------------------------------|
+| =D d=                | =org-canvas-delete-all=           | Delete ALL course content    |
+| =D c=                | =org-canvas-cleanup-orphans=      | Find and remove orphans      |
+| =D X=                | /delete-at-point submenu/         | Delete single heading        |
+
+** Tools
+
+| Key (in dispatch) | Command                         | Description                    |
+|--------------------+---------------------------------+--------------------------------|
+| =t i=                | =org-canvas-init=                 | Setup wizard                   |
+| =t t=                | =org-canvas-test-connection=      | Test API connection            |
+| =t v=                | =org-canvas-validate=             | Validate offline (no API)      |
+| =t s=                | =org-canvas-status=               | Sync status overview           |
+| =g v=                | =org-canvas-submissions-view=     | View/grade submissions         |
+
+Open the dispatch menu: =M-x org-canvas-dispatch=
+
+* File Structure
+
+| File                  | Heading Level | Body Is      | ID Property   |
+|-----------------------+---------------+--------------+---------------|
+| =settings.org=          | 1 = course    | syllabus     | =CANVAS_ID=    |
+| =assignment-groups.org= | 2 = groups    | /none/       | =CANVAS_ID=    |
+| =assignments.org=       | 1 = items     | description  | =CANVAS_ID=    |
+| =quizzes.org=           | 1=quiz, 2=Q  | Q text       | =CANVAS_ID=    |
+| =new-quizzes.org=       | 1=quiz, 2=Q  | Q text       | =CANVAS_ID=    |
+| =pages.org=             | 1 = pages     | page content | =CANVAS_URL=   |
+| =modules.org=           | 1=mod, 2=item | item link   | =CANVAS_ID=    |
+| =rubrics.org=           | 1 = rubrics   | criteria tbl | =CANVAS_ID=    |
+| =outcomes.org=          | 1=grp, 2=out | description  | =CANVAS_ID=    |
+| =discussions.org=       | 1 = topics    | initial post | =CANVAS_ID=    |
+| =announcements.org=     | 1 = items     | message      | =CANVAS_ID=    |
+| =files.org=             | any = files   | /none/       | =CANVAS_ID=    |
+| =sections.org=          | 1 = sections  | /none/       | =CANVAS_ID=    |
+| =group-categories.org=  | 1 = groups    | /none/       | =CANVAS_ID=    |
+| =calendar.org=          | 1 = events    | description  | =CANVAS_ID=    |
+
+* Common Properties (all content types)
+
+| Property          | Type      | Description                             |
+|-------------------+-----------+-----------------------------------------|
+| =CANVAS_ID=        | auto      | Canvas ID (set after sync)              |
+| =LAST_SYNCED=      | auto      | Last sync timestamp                     |
+| =CANVAS_UPDATED_AT= | auto     | Remote modification time                |
+| =PAYLOAD_HASH=     | auto      | Hash for skip-if-unchanged              |
+| =PUBLISHED=        | boolean   | Visible to students (default: =true=)     |
+
+* Properties by File
+
+** settings.org
+
+| Property                                  | Type    | Values / Notes                               |
+|-------------------------------------------+---------+----------------------------------------------|
+| =TIME_ZONE=                                 | string  | IANA (e.g., =America/New_York=)                |
+| =DEFAULT_VIEW=                              | enum    | feed, wiki, modules, syllabus, assignments   |
+| =APPLY_WEIGHTS=                             | bool    | Weight assignment groups                     |
+| =LICENSE=                                   | enum    | private, cc_by, cc_by_sa, cc_by_nc, ...     |
+| =START_AT= / =END_AT=                        | ts      | Course start/end dates                       |
+| =COURSE_IMAGE=                              | link    | =[[file:img.png]]= or URL                     |
+| =LATE_SUBMISSION_DEDUCTION=                 | number  | 0-100, points per interval                   |
+| =LATE_SUBMISSION_INTERVAL=                  | enum    | day, hour                                    |
+| =LATE_SUBMISSION_MINIMUM_PERCENT=           | number  | 0-100                                        |
+| =MISSING_SUBMISSION_DEDUCTION=              | number  | 0-100                                        |
+| =HIDE_FINAL_GRADES=                         | bool    |                                              |
+| =PUBLIC_SYLLABUS=                           | bool    |                                              |
+| =GRADING_STANDARD_ID=                       | number  |                                              |
+
+Navigation: =** Navigation= sub-heading with numbered list.  Strikethrough (=+Tab+=) hides tab.
+
+** assignments.org
+
+| Property              | Type    | Values / Notes                                    |
+|-----------------------+---------+---------------------------------------------------|
+| =POINTS=                | number  | Points possible                                   |
+| =DUE_AT=                | ts      | Due date                                          |
+| =UNLOCK_AT= / =LOCK_AT=  | ts      | Available window                                  |
+| =SUBMISSION=            | string  | online_upload, online_text_entry, online_url, none |
+| =ALLOWED_EXTENSIONS=    | string  | Comma-separated: =py,txt,ipynb=                     |
+| =GROUP=                 | link    | =[[file:assignment-groups.org::*Labs][Labs]]=         |
+| =RUBRIC_LINK=           | link    | =[[file:rubrics.org::*Name][Name]]=                  |
+| =GRADING_TYPE=          | string  | points, percent, letter_grade, pass_fail          |
+| =MAX_ATTEMPTS=          | number  | -1 = unlimited                                    |
+| =PEER_REVIEWS=          | bool    | Enable peer reviews                               |
+| =PEER_REVIEW_COUNT=     | number  | Reviews per student                               |
+| =GROUP_CATEGORY_ID=     | link/num | =[[file:group-categories.org::*Name][Name]]=        |
+| =GRADE_INDIVIDUALLY=    | bool    | Grade group members separately                    |
+| =ANONYMOUS_GRADING=     | bool    |                                                   |
+| =MODERATED_GRADING=     | bool    | Requires =GRADER_COUNT=                             |
+| =OMIT_FROM_GRADES=      | bool    |                                                   |
+| =ONLY_VISIBLE_TO_OVERRIDES= | bool |                                                  |
+| =POSITION=              | number  |                                                   |
+
+Override table: =#+NAME: overrides= with Section, Due At, Unlock At, Lock At columns.
+
+** assignment-groups.org
+
+| Property      | Type   | Notes                                      |
+|---------------+--------+--------------------------------------------|
+| =WEIGHT=        | number | Group weight percentage (0-100)            |
+| =DROP_LOWEST=   | number | Lowest scores to drop                      |
+| =DROP_HIGHEST=  | number | Highest scores to drop                     |
+| =NEVER_DROP=    | string | Comma-separated assignment IDs             |
+| =POSITION=      | number |                                            |
+
+Structure: L1 = container (ignored), L2 = groups.
+
+** quizzes.org
+
+| Property                     | Type   | Values / Notes                         |
+|------------------------------+--------+----------------------------------------|
+| =QUIZ_TYPE=                    | string | assignment, practice_quiz, graded_survey, survey |
+| =TIME_LIMIT=                   | number | Minutes                                |
+| =SHUFFLE_ANSWERS=              | bool   |                                        |
+| =ALLOWED_ATTEMPTS=             | number | -1 = unlimited                         |
+| =DUE_AT= / =UNLOCK_AT= / =LOCK_AT= | ts    |                                       |
+| =ACCESS_CODE=                  | string | Password for quiz access               |
+| =SCORING_POLICY=               | string | keep_highest, keep_latest              |
+| =SHOW_CORRECT_ANSWERS=         | bool   |                                        |
+| =ONE_QUESTION_AT_A_TIME=       | bool   |                                        |
+| =CANT_GO_BACK=                 | bool   | Requires =ONE_QUESTION_AT_A_TIME=        |
+| =IP_FILTER=                    | string | IP range                               |
+| =GROUP=                        | link   | Assignment group link                  |
+
+Question properties: =TYPE= + =POINTS=.  Types: multiple_choice, true_false, short_answer, essay, matching, numerical, multiple_answers, fill_in_multiple_blanks, multiple_dropdowns, file_upload, text_only.
+
+Answers: =[X]= = correct, =[ ]= = wrong.  Matching: =Left = Right=.  Numerical: =[X] 42= or =[X] [1, 10]=.
+
+** new-quizzes.org
+
+| Property             | Type   | Values / Notes                              |
+|----------------------+--------+---------------------------------------------|
+| =TIME_LIMIT=           | number | Minutes                                     |
+| =SHUFFLE_ANSWERS=      | bool   |                                             |
+| =ONE_AT_A_TIME=        | bool   |                                             |
+| =ALLOWED_ATTEMPTS=     | number |                                             |
+| =SCORING_POLICY=       | enum   | keep_highest, keep_latest, keep_average     |
+| =GROUP=                | link   | Assignment group link                       |
+| =RUBRIC_LINK=          | link   | Rubric link (uses backing assignment)       |
+
+Question: =TYPE= + =POINTS= + optional =OUTCOME= link.  Types: choice, true-false, multi-answer, short-answer, essay, file-upload, numerical, matching, ordering, categorization, hot-spot.
+
+** pages.org
+
+| Property          | Type   | Notes                                    |
+|-------------------+--------+------------------------------------------|
+| =CANVAS_URL=        | auto   | Page URL slug                            |
+| =FRONT_PAGE=        | bool   | Course homepage                          |
+| =EDITING_ROLES=     | string | teachers, students, members, public      |
+| =TODO_DATE=         | ts     | Student to-do date                       |
+| =NOTIFY_OF_UPDATE=  | bool   | Write-only                               |
+
+** modules.org
+
+Module properties: =UNLOCK_AT=, =REQUIRE_SEQUENTIAL_PROGRESSION=, =PREREQUISITE_MODULE_IDS=.
+
+Item properties: =ITEM_TYPE= (Assignment, Quiz, Page, Discussion, File, SubHeader, ExternalUrl), =INDENT= (0-5), =COMPLETION_REQUIREMENT= (must_view, must_submit, must_contribute, min_score), =MIN_SCORE=, =EXTERNAL_URL=, =NEW_TAB=.
+
+Item body = =[[file:assignments.org::*Name][Name]]= link.
+
+** rubrics.org
+
+Properties: =FREE_FORM_CRITERION_COMMENTS=, =HIDE_SCORE_TOTAL= (both boolean).
+
+Criteria table: | Criterion | Points | Long Description | Outcome link |
+
+Multi-level ratings: rows prefixed with => =:
+
+#+begin_example
+| Code Quality |   10 | ...           |
+| > Excellent  |   10 | Outstanding   |
+| > Good       |    7 | Solid         |
+| > Poor       |    0 | Unacceptable  |
+#+end_example
+
+** outcomes.org
+
+| Property           | Type   | Values                                        |
+|--------------------+--------+-----------------------------------------------|
+| =CALCULATION_METHOD= | string | highest, latest, decaying_average, n_mastery  |
+| =CALCULATION_INT=    | number | Variable for method                           |
+| =MASTERY_POINTS=     | number | Mastery threshold                             |
+
+Ratings: =- [5] Description= list items.  Structure: L1 = groups, L2 = outcomes.
+
+** discussions.org
+
+| Property              | Type    | Values / Notes                       |
+|-----------------------+---------+--------------------------------------|
+| =DISCUSSION_TYPE=       | string  | side_comment, threaded               |
+| =PINNED=                | bool    |                                      |
+| =POST_FIRST=            | bool    | Must post before seeing others       |
+| =AVAILABLE_FROM=        | ts      |                                      |
+| =LOCK_AT=               | ts      |                                      |
+| =POINTS= / =DUE_AT= / =GROUP= | various | For graded discussions             |
+| =GRADING_TYPE=          | string  | points, percent                      |
+| =ALLOW_RATING=          | bool    |                                      |
+| =GROUP_CATEGORY=        | link/num |                                     |
+| =SPECIFIC_SECTIONS=     | string  | Comma-separated section names        |
+
+** announcements.org
+
+| Property          | Type   | Notes                  |
+|-------------------+--------+------------------------|
+| =POST_AT=           | ts     | Scheduled post time    |
+| =ALLOW_COMMENTS=    | bool   | Allow replies          |
+| =SPECIFIC_SECTIONS= | string | Comma-separated names  |
+
+** files.org
+
+| Property         | Type   | Notes                                              |
+|------------------+--------+----------------------------------------------------|
+| =UNLOCK_AT=        | ts     |                                                    |
+| =LOCK_AT=          | ts     |                                                    |
+| =USE_JUSTIFICATION= | enum  | own_copyright, used_by_permission, fair_use, ...   |
+| =USAGE_LICENSE=    | string | cc_by, cc_by_sa, cc0, ...                          |
+| =COPYRIGHT=        | string | Copyright notice                                   |
+
+Heading = =[[file:path][Display Name]]=.  Plain headings = folders.
+
+** sections.org (pull-only)
+
+| Property          | Type   | Notes                     |
+|-------------------+--------+---------------------------|
+| =START_AT= / =END_AT= | ts    | Section dates             |
+| =RESTRICT_TO_DATES= | bool  | Restrict to section dates |
+
+** group-categories.org
+
+| Property           | Type   | Values                   |
+|--------------------+--------+--------------------------|
+| =SELF_SIGNUP=        | enum   | enabled, restricted      |
+| =GROUP_LIMIT=        | number | Max members per group    |
+| =AUTO_LEADER=        | enum   | first, random            |
+| =CREATE_GROUP_COUNT= | number | Groups to create         |
+
+** calendar.org
+
+| Property         | Type   | Notes                  |
+|------------------+--------+------------------------|
+| =START_AT=         | ts     | Required               |
+| =END_AT=           | ts     |                        |
+| =ALL_DAY=          | bool   |                        |
+| =LOCATION_NAME=    | string |                        |
+| =LOCATION_ADDRESS= | string |                        |
+
+* Type Legend
+
+| Abbreviation | Meaning                                       |
+|--------------+-----------------------------------------------|
+| ts           | Org timestamp: =<2026-09-15 Mon 23:59>=         |
+| bool         | =true= or =false=                                 |
+| enum         | One of the listed values                      |
+| link         | =[[file:other.org::*Heading][Heading]]=           |
+| auto         | Set automatically by org-canvas after sync    |
+| number       | Integer                                       |
+| string       | Free text                                     |
+
+* Sync Order
+
+#+begin_example
+Tier 0:   settings, sections (pull)
+Tier 0.5: assignment-groups (phase 1, no drop rules)
+Tier 1:   group-categories, outcomes, rubrics, pages,
+          files, discussions, announcements, calendar
+Tier 1.5: assignments, quizzes, new-quizzes
+Tier 1.75: overrides
+Tier 2:   assignment-groups (phase 2, with drop rules)
+Tier 3:   modules
+#+end_example
+
+* Conflict Resolution Keys
+
+| Key | Action                              |
+|-----+-------------------------------------|
+| =p=   | Push (overwrite Canvas)             |
+| =l=   | Pull (accept Canvas, update local)  |
+| =s=   | Skip (leave both untouched)         |
+| =P=   | Push ALL remaining                  |
+| =L=   | Pull ALL remaining                  |
+| =S=   | Skip ALL remaining                  |
+
+* Submissions Viewer Keys
+
+| Key | Action                         |
+|-----+--------------------------------|
+| =v=   | Toggle summary/detail view     |
+| =c=   | Post comment                   |
+| =d=   | Download attachments           |
+| =S=   | Push changed grades            |
+| =g=   | Refresh from Canvas            |
+| =q=   | Quit                           |

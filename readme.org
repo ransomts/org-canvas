@@ -209,6 +209,10 @@ In detail view, edit the =:SCORE:= property on any student heading and press =S=
 - [[file:documentation/manual.org][Reference Manual]] -- Complete file format specs, all properties, command reference, architecture
 - [[file:documentation/workflows.org][Workflows Guide]] -- Semester setup, weekly/daily/per-assignment workflows, grading, multi-instructor collaboration
 - [[file:documentation/faq.org][FAQ & Recipes]] -- Quick answers to "how do I..." questions for assignments, quizzes, modules, grading, and more
+- [[file:documentation/cheatsheet.org][Quick Reference Card]] -- All properties, commands, and keybindings on one page
+- [[file:documentation/migration.org][Migration Guide]] -- Switching from Canvas web UI to an Org Mode workflow
+- [[file:documentation/pitfalls.org][Pitfalls & Gotchas]] -- Common mistakes and how to avoid them
+- [[file:demo-course/README.org][Demo Course]] -- Complete example course (DS 101) showcasing all content types
 - [[file:CONTRIBUTING.md][Contributing]] -- Development setup, coding conventions, testing practices, PR process
 
 * Dependencies
