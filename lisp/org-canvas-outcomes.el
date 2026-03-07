@@ -87,12 +87,8 @@ rating list item (- [N] ...).  Skips the :PROPERTIES: drawer."
     (save-restriction
       (org-narrow-to-subtree)
       (goto-char (point-min))
-      ;; Skip the heading line
-      (forward-line 1)
-      ;; Skip property drawer if present
-      (when (looking-at "[ \t]*:PROPERTIES:")
-        (re-search-forward "^[ \t]*:END:" nil t)
-        (forward-line 1))
+      ;; Skip heading line and property drawer
+      (org-end-of-meta-data t)
       ;; Collect non-list text until we hit a list or end
       (let ((start (point))
             (end (point)))

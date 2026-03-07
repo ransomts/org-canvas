@@ -738,11 +738,9 @@ Updates title, LAST_SYNCED, and deletes stale PAYLOAD_HASH."
         (goto-char (if (markerp pom) (marker-position pom) pom))
         (org-back-to-heading t)
         ;; Update heading title
-        (let* ((old-heading (org-get-heading t t t t))
-               (new-heading remote-title))
-          (when (and old-heading (not (string= old-heading new-heading)))
-            (re-search-forward org-complex-heading-regexp (line-end-position) t)
-            (replace-match new-heading t t nil 4)))))
+        (let ((old-heading (org-get-heading t t t t)))
+          (when (and old-heading (not (string= old-heading remote-title)))
+            (org-edit-headline remote-title)))))
     ;; Call module-specific pull-item to update properties/body
     (let ((pos (if (markerp pom) (marker-position pom) pom)))
       (funcall pull-item-fn remote-response pos)
