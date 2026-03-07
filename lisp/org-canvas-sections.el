@@ -383,7 +383,8 @@ reconciles them with Canvas assignment overrides."
                   (setq total-created (+ total-created (nth 0 counts)))
                   (setq total-updated (+ total-updated (nth 1 counts)))
                   (setq total-deleted (+ total-deleted (nth 2 counts)))
-                  (setq assignments-processed (1+ assignments-processed))))))))
+                  (setq assignments-processed (1+ assignments-processed))))))
+          (dolist (m markers) (set-marker m nil))))
 
       (elog-info org-canvas--logger "========================================")
       (elog-info org-canvas--logger ">>> OVERRIDE SYNC COMPLETE")

@@ -222,6 +222,7 @@ Returns a list of (success-count . fail-count)."
 	     (setq fail-count (1+ fail-count))
 	     (elog-error org-canvas--logger "[FAILED] At point %d: %s"
 	       (marker-position marker) (error-message-string err)))))))
+    (dolist (m targets) (set-marker m nil))
     (cons success-count fail-count)))
 
 ;;;; 4b. Shared Constants

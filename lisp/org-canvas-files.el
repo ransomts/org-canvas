@@ -740,6 +740,8 @@ Returns :success, :skip (folder heading), or :fail."
                      (+ success-count skip-count fail-count)
                      (length targets))))))
 
+      (dolist (m targets) (set-marker m nil))
+
       ;; Save the org file after all modifications
       (with-current-buffer (find-file-noselect files-file)
         (save-buffer)

@@ -770,7 +770,8 @@ Returns a list of issues."
               (goto-char (marker-position marker))
               (setq issues (nconc issues
                                   (org-canvas--validate-entry-at-marker
-                                   props date-order structural-fn file))))))))
+                                   props date-order structural-fn file))))
+            (dolist (m markers) (set-marker m nil))))))
     issues))
 
 ;;;; 7. Report Buffer and Mode

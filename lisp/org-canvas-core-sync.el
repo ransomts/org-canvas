@@ -445,6 +445,7 @@ for the display name in logs."
                       :title-key title-key)))
       (dolist (marker targets)
         (org-canvas--sync-process-entry marker ctx))
+      (dolist (m targets) (set-marker m nil))
       (org-canvas--sync-warn-orphans all-ids-before (car synced-ids) feature-name)
       (org-canvas--sync-log-summary feature-name sync-file counters))))
 
