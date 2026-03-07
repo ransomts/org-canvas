@@ -1714,7 +1714,9 @@ Bind =org-canvas-dispatch= to a key for quick access:
 
 * Example Workflows
 
-This section describes common end-to-end workflows that instructors follow when using org-canvas.
+For detailed, step-by-step workflows organized by time scale (semester, weekly, daily, per-assignment), see the dedicated [[file:workflows.org][Workflows Guide]].  For quick "how do I..." answers, see the [[file:faq.org][FAQ & Recipes]].
+
+This section provides a concise overview of common end-to-end workflows.
 
 ** New Course from Scratch
 

@@ -1,0 +1,488 @@
+#+TITLE: org-canvas FAQ & Recipes
+#+AUTHOR: Tim Ransom
+#+OPTIONS: toc:2 num:t
+
+Answers to common questions and step-by-step recipes for specific tasks.  For full property documentation, see the [[file:manual.org][reference manual]].  For end-to-end workflows, see the [[file:workflows.org][workflows guide]].
+
+* General
+
+** How do I get started?
+
+Run =M-x org-canvas-init=.  The setup wizard prompts for your Canvas URL, API token, and course ID, tests the connection, and creates your credentials file.  See [[file:workflows.org::*New Course from Scratch][Semester Setup: New Course from Scratch]].
+
+** What's the minimum I need to sync a single assignment?
+
+A credentials file and one heading in =assignments.org=:
+
+#+begin_src org
+,* My Assignment
+:PROPERTIES:
+:POINTS: 10
+:SUBMISSION: online_upload
+:END:
+
+Assignment description goes here.
+#+end_src
+
+Then =M-x org-canvas-sync-assignments=.
+
+** Do I need all 14 =.org= files?
+
+No.  Only create files for the content types you use.  Missing files are silently skipped during sync.
+
+** Can I use org-canvas with multiple courses?
+
+Yes.  Each course is a separate directory with its own =org-canvas-credentials.el=.  Open a file in the course directory before running org-canvas commands, and it will load that directory's credentials.
+
+** Does org-canvas modify my Org files?
+
+Only to add/update sync properties: =CANVAS_ID=, =LAST_SYNCED=, =CANVAS_UPDATED_AT=, and =PAYLOAD_HASH=.  It never modifies your content, headings, or body text (except during a pull, which you explicitly invoke).
+
+** Is there a way to preview changes before syncing?
+
+Yes: =M-x org-canvas-sync-dry-run=.  This shows what would be created, updated, or skipped without making any API calls.
+
+** How do I undo a sync?
+
+org-canvas doesn't have a built-in undo.  To revert:
+
+- *Local changes*: Use git (=git checkout -- file.org=).
+- *Canvas changes*: Delete the item from Canvas (=M-x org-canvas-delete-assignment-at-point=) and re-sync, or edit the Org heading and force-push.
+
+Keeping your Org files in git is strongly recommended for this reason.
+
+* Assignments
+
+** How do I set different due dates for different sections?
+
+Add an override table under the assignment heading:
+
+#+begin_src org
+,* Homework 1
+:PROPERTIES:
+:POINTS: 50
+:DUE_AT: <2026-09-15 Mon 23:59>
+:END:
+
+Description...
+
+#+NAME: overrides
+| Section                                      | Due At                 | Unlock At | Lock At |
+|----------------------------------------------+------------------------+-----------+---------|
+| [[file:sections.org::*Section A][Section A]] | <2026-09-16 Tue 23:59> |           |         |
+| [[file:sections.org::*Section B][Section B]] | <2026-09-18 Thu 23:59> |           |         |
+#+end_src
+
+Pull sections first (=M-x org-canvas-pull-sections=), then sync overrides (=M-x org-canvas-sync-overrides=).
+
+** How do I allow multiple submission types?
+
+Comma-separate the values in the =SUBMISSION= property:
+
+#+begin_src org
+:SUBMISSION: online_upload,online_text_entry
+#+end_src
+
+** How do I create a group assignment?
+
+1. Define a group category in =group-categories.org=.
+2. Link the assignment to it:
+
+#+begin_src org
+:GROUP_CATEGORY_ID: [[file:group-categories.org::*Lab Partners][Lab Partners]]
+:GRADE_INDIVIDUALLY: false
+#+end_src
+
+** How do I make an assignment only visible to specific sections?
+
+Set =ONLY_VISIBLE_TO_OVERRIDES= to =true= and add override table entries only for the sections that should see it:
+
+#+begin_src org
+:ONLY_VISIBLE_TO_OVERRIDES: true
+#+end_src
+
+** How do I attach a rubric to an assignment?
+
+Create the rubric in =rubrics.org=, then link it from the assignment:
+
+#+begin_src org
+:RUBRIC_LINK: [[file:rubrics.org::*Code Quality][Code Quality]]
+#+end_src
+
+The rubric is synced first (it's a dependency), then the association is created during assignment sync.
+
+** How do I enable peer reviews?
+
+#+begin_src org
+:PEER_REVIEWS: true
+:PEER_REVIEW_COUNT: 3
+:PEER_REVIEW_DUE_AT: <2026-09-20 Sat 23:59>
+:AUTOMATIC_PEER_REVIEWS: true
+#+end_src
+
+* Quizzes
+
+** What's the difference between classic quizzes and New Quizzes?
+
+- *Classic quizzes* (=quizzes.org=): The original Canvas quiz engine.  Questions are defined as sub-headings with answer lists.
+- *New Quizzes* (=new-quizzes.org=): Canvas's next-generation quiz engine with a different API (=/api/quiz/v1/=).  Uses a separate item format.
+
+Check your institution's Canvas instance to see which is available.  Some institutions have migrated entirely to New Quizzes.
+
+** How do I create a multiple-choice question?
+
+In =quizzes.org=, add a sub-heading under the quiz:
+
+#+begin_src org
+,* Chapter 1 Quiz
+:PROPERTIES:
+:QUIZ_TYPE: assignment
+:POINTS: 20
+:TIME_LIMIT: 30
+:END:
+
+,** What is 2 + 2?
+:PROPERTIES:
+:QUESTION_TYPE: multiple_choice_question
+:POINTS: 5
+:END:
+
+- [X] 4
+- [ ] 3
+- [ ] 5
+- [ ] 22
+#+end_src
+
+Use =[X]= to mark the correct answer.
+
+** How do I create other question types?
+
+See [[file:manual.org::*quizzes.org][the manual's quiz section]] for all question types including true/false, fill-in-the-blank, matching, essay, numerical, and multiple-answer.
+
+** How do I set a time limit?
+
+#+begin_src org
+:TIME_LIMIT: 60
+#+end_src
+
+The value is in minutes.
+
+* Pages
+
+** How do I set a page as the course homepage?
+
+Set it as the front page:
+
+#+begin_src org
+,* Welcome
+:PROPERTIES:
+:FRONT_PAGE: true
+:PUBLISHED: true
+:END:
+
+Welcome to the course!
+#+end_src
+
+Then in =settings.org=, set =:DEFAULT_VIEW: wiki=.
+
+** How do I include images in a page?
+
+Use standard Org file links in the body text:
+
+#+begin_src org
+,* Lab Instructions
+Here's the circuit diagram:
+
+[[file:images/circuit.png]]
+#+end_src
+
+During sync, the image is uploaded to Canvas and the link is replaced with a Canvas preview URL.  Supported formats: PNG, JPEG, GIF, SVG, WebP, BMP.
+
+** How do I control who can edit a page?
+
+Use the =EDITING_ROLES= property:
+
+#+begin_src org
+:EDITING_ROLES: teachers
+#+end_src
+
+Valid values: =teachers=, =students=, =members=, =public= (comma-separated for multiple).
+
+* Modules
+
+** How do I reorder modules?
+
+Module order in Canvas matches the heading order in =modules.org=.  Rearrange the level-1 headings and re-sync.
+
+** How do I reorder items within a module?
+
+Same principle -- item order matches the level-2 heading order under the module.  Rearrange and re-sync.
+
+** How do I add an external link to a module?
+
+#+begin_src org
+,** Course Textbook
+:PROPERTIES:
+:ITEM_TYPE: ExternalUrl
+:EXTERNAL_URL: https://example.com/textbook
+:NEW_TAB: true
+:END:
+#+end_src
+
+** How do I add a text divider (sub-header) to a module?
+
+#+begin_src org
+,** --- Week 3 Resources ---
+:PROPERTIES:
+:ITEM_TYPE: SubHeader
+:END:
+#+end_src
+
+** How do I set module prerequisites?
+
+Use the =PREREQUISITE_MODULE_IDS= property with the Canvas IDs of required modules:
+
+#+begin_src org
+,* Week 2: Variables
+:PROPERTIES:
+:PREREQUISITE_MODULE_IDS: 12345
+:REQUIRE_SEQUENTIAL_PROGRESSION: true
+:END:
+#+end_src
+
+** How do I indent module items?
+
+Use the =INDENT= property (0-5):
+
+#+begin_src org
+,** Required Reading
+:PROPERTIES:
+:ITEM_TYPE: SubHeader
+:END:
+
+,** Chapter 1 Notes
+:PROPERTIES:
+:ITEM_TYPE: Page
+:INDENT: 1
+:COMPLETION_REQUIREMENT: must_view
+:END:
+[[file:pages.org::*Chapter 1 Notes][Chapter 1 Notes]]
+#+end_src
+
+* Files
+
+** How do I upload files to Canvas?
+
+List them in =files.org= with file links:
+
+#+begin_src org
+,* Lecture Materials
+,** [[file:slides/lecture-01.pdf][Lecture 1 Slides]]
+,** [[file:slides/lecture-02.pdf][Lecture 2 Slides]]
+#+end_src
+
+Level-1 headings become Canvas folders.  Level-2 headings with file links are the actual files.
+
+** How do I organize files into folders?
+
+Level-1 headings in =files.org= map to Canvas folders:
+
+#+begin_src org
+,* Lecture Slides
+,** [[file:slides/week1.pdf][Week 1]]
+,** [[file:slides/week2.pdf][Week 2]]
+
+,* Datasets
+,** [[file:data/iris.csv][Iris Dataset]]
+#+end_src
+
+This creates "Lecture Slides" and "Datasets" folders in Canvas.
+
+** What file types can I upload?
+
+Any file type that Canvas accepts.  The MIME type is detected automatically from the file extension.
+
+* Discussions and Announcements
+
+** How do I schedule an announcement for later?
+
+Use the =POST_AT= property:
+
+#+begin_src org
+,* Midterm Reminder
+:PROPERTIES:
+:POST_AT: <2026-10-12 Mon 08:00>
+:END:
+
+The midterm is next Wednesday.  Review session Tuesday at 7pm.
+#+end_src
+
+** How do I create a graded discussion?
+
+Set it up as an assignment-linked discussion.  Create the discussion in =discussions.org= and reference it from =assignments.org= using the appropriate properties.
+
+** How do I lock comments on an announcement?
+
+Announcements are locked by default on Canvas.  To allow comments:
+
+#+begin_src org
+:ALLOW_COMMENTS: true
+#+end_src
+
+* Calendar Events
+
+** How do I add office hours to the calendar?
+
+#+begin_src org
+,* Office Hours - Week 1
+:PROPERTIES:
+:START_AT: <2026-09-02 Mon 14:00>
+:END_AT: <2026-09-02 Mon 16:00>
+:LOCATION: Room 301
+:END:
+
+Drop-in office hours.  No appointment needed.
+#+end_src
+
+** How do I add recurring events?
+
+Canvas doesn't support recurring events via the API.  Create individual headings for each occurrence, or use Org macros/snippets to generate them.
+
+* Outcomes and Rubrics
+
+** How do I create an outcome group hierarchy?
+
+Use nested headings in =outcomes.org=:
+
+#+begin_src org
+,* Course Outcomes
+,** Programming Skills
+,*** Can write a for loop
+:PROPERTIES:
+:POINTS: 5
+:MASTERY_POINTS: 3
+:RATINGS: Exceeds=5, Meets=3, Below=1
+:END:
+
+,*** Can define a function
+:PROPERTIES:
+:POINTS: 5
+:MASTERY_POINTS: 3
+:RATINGS: Exceeds=5, Meets=3, Below=1
+:END:
+#+end_src
+
+** How do I align a rubric criterion to an outcome?
+
+Add an =OUTCOME= property to the rubric criterion linking to =outcomes.org=:
+
+#+begin_src org
+:OUTCOME: [[file:outcomes.org::*Can write a for loop][Can write a for loop]]
+#+end_src
+
+* Grading
+
+** How do I view and grade submissions?
+
+#+begin_src elisp
+M-x org-canvas-submissions-view
+#+end_src
+
+Select an assignment, then use the keybindings in the submissions buffer:
+
+| Key | Action                         |
+|-----+--------------------------------|
+| =v=   | Toggle summary/detail view     |
+| =c=   | Post a comment                 |
+| =d=   | Download attachments           |
+| =S=   | Push changed grades to Canvas  |
+| =g=   | Refresh from Canvas            |
+| =q=   | Quit                           |
+
+** How do I download all submissions for an assignment?
+
+In the submissions viewer, press =d= on each student.  There isn't a "download all" feature -- use Canvas's bulk download (SpeedGrader) for that.
+
+** How do I leave feedback?
+
+In the submissions viewer, navigate to the student's entry and press =c=.  Type your comment and confirm.  The comment appears immediately on Canvas.
+
+* Sync and Conflicts
+
+** What does "payload hash skip" mean?
+
+It means the item hasn't changed since the last sync.  org-canvas hashes the payload and compares it to the stored =PAYLOAD_HASH= property.  If they match, the API call is skipped entirely.
+
+** Why is my item being re-synced even though I didn't change it?
+
+Some properties are time-dependent (e.g., =LOCK_AT= in the past causes Canvas to change the item state).  If the payload hash differs from what's stored, org-canvas syncs it.  This is usually harmless.
+
+** What triggers a conflict?
+
+A conflict is detected when:
+
+1. The item has a =CANVAS_ID= (it's been synced before).
+2. The item has a =LAST_SYNCED= timestamp.
+3. The remote =updated_at= timestamp is newer than =LAST_SYNCED=.
+
+This means someone (or something) modified the item on Canvas after your last sync.
+
+** How do I resolve conflicts for the whole file at once?
+
+During conflict resolution, use capital letters:
+
+- *P* = Push all remaining conflicts
+- *L* = Pull (accept Canvas version) for all remaining
+- *S* = Skip all remaining
+
+** How do I disable conflict detection?
+
+#+begin_src elisp
+(setq org-canvas-detect-conflicts nil)
+#+end_src
+
+This makes every sync a blind push.  Use with caution.
+
+** What happens if the API times out?
+
+org-canvas has automatic timeout recovery.  It searches Canvas for the item by title to check if the create/update actually succeeded, and retries if needed.  You'll see a message in the echo area.
+
+** What does the rate limit countdown mean?
+
+Canvas throttled your requests (HTTP 429).  org-canvas automatically retries with a per-second countdown in the echo area so you can see progress.  Configure retry behavior:
+
+#+begin_src elisp
+(setq org-canvas-rate-limit-retries 3)  ;; default
+(setq org-canvas-rate-limit-wait 10)    ;; seconds between retries
+#+end_src
+
+* Troubleshooting
+
+** "Authentication failed (HTTP 401)"
+
+Your API token expired.  Generate a new one at Canvas > Account > Settings > Approved Integrations, then update =org-canvas-credentials.el=.
+
+** "Permission denied (HTTP 403)"
+
+Your token lacks the required scope.  Ensure it has full access to the course.
+
+** "N heading(s) have LAST_SYNCED but no CANVAS_ID"
+
+A heading was previously synced but its =CANVAS_ID= was removed.  Syncing would create a duplicate.  Either restore the =CANVAS_ID= (check git history) or remove =LAST_SYNCED= to treat it as new.
+
+** My sync seems stuck
+
+Check the echo area for progress messages ("Assignments [3/10]...") and the rate-limit countdown.  If truly stuck, check =M-x org-canvas-set-log-level= (set to =debug=) and review the =*canvas-log*= buffer.
+
+** Pandoc conversion looks wrong
+
+HTML-to-Org conversion isn't perfect for complex formatting.  Review pulled content and fix any artifacts manually.  Common issues: nested tables, complex CSS styling, embedded iframes.
+
+** How do I see what API calls are being made?
+
+#+begin_src elisp
+(setq org-canvas-log-level 'debug)
+(setq org-canvas-log-request-bodies t)
+#+end_src
+
+The log includes curl commands you can copy/paste to a terminal for debugging.

@@ -1,0 +1,579 @@
+#+TITLE: org-canvas Workflows
+#+AUTHOR: Tim Ransom
+#+OPTIONS: toc:3 num:t
+
+This guide describes how to use org-canvas at different time scales -- from setting up a course at the start of the semester to grading a single assignment on a Tuesday afternoon.  It complements the [[file:manual.org][reference manual]], which documents every property and command.
+
+* Semester Setup
+
+The beginning-of-semester workflow depends on whether you're building a course from scratch, importing an existing Canvas course, or copying from a previous semester.
+
+** New Course from Scratch
+
+#+begin_quote
+Time: 1-3 hours depending on course size.  Most of this is writing content, not fighting the tool.
+#+end_quote
+
+*** 1. Initialize the project
+
+Run =M-x org-canvas-init=.  The wizard prompts for your Canvas URL, API token, and course ID.  It tests the connection, writes =org-canvas-credentials.el=, and optionally generates skeleton =.org= files for all content types.
+
+If you already have a course directory, the wizard warns before overwriting an existing credentials file and offers to add it to =.gitignore=.
+
+*** 2. Set up grade categories
+
+Edit =assignment-groups.org= first -- assignments reference these groups, so they need to exist before anything else:
+
+#+begin_src org
+,* Assignment Groups
+,** Homework
+:PROPERTIES:
+:WEIGHT: 30
+:DROP_LOWEST: 1
+:END:
+
+,** Labs
+:PROPERTIES:
+:WEIGHT: 40
+:END:
+
+,** Exams
+:PROPERTIES:
+:WEIGHT: 30
+:END:
+#+end_src
+
+*** 3. Build supporting content
+
+Work through the dependency chain.  You don't need every file -- only create what your course uses:
+
+| Order | File                  | Why this order                              |
+|-------+-----------------------+---------------------------------------------|
+|     1 | =assignment-groups.org= | Assignments link to these                   |
+|     2 | =group-categories.org=  | Group assignments reference these (optional) |
+|     3 | =outcomes.org=          | Rubrics can align to outcomes (optional)    |
+|     4 | =rubrics.org=           | Assignments link to rubrics (optional)      |
+|     5 | =pages.org=             | Modules link to pages                       |
+|     6 | =files.org=             | Modules link to files                       |
+|     7 | =assignments.org=       | Modules link to assignments                 |
+|     8 | =quizzes.org=           | Modules link to quizzes                     |
+|     9 | =discussions.org=       | Modules link to discussions                 |
+|    10 | =announcements.org=     | Independent                                 |
+|    11 | =calendar.org=          | Independent                                 |
+|    12 | =modules.org=           | Links to everything above                   |
+
+*** 4. Configure course settings
+
+Edit =settings.org= with timezone, homepage view, term dates, and navigation tabs:
+
+#+begin_src org
+,* Data Science 101
+:PROPERTIES:
+:TIME_ZONE: America/New_York
+:DEFAULT_VIEW: modules
+:APPLY_WEIGHTS: true
+:LICENSE: private
+:START_AT: <2026-08-25 Mon 00:00>
+:END_AT: <2026-12-15 Tue 23:59>
+:END:
+
+Welcome to Data Science 101!
+
+,** Navigation
+1. Home
+2. Modules
+3. Assignments
+4. Announcements
+5. Grades
+6. +Discussions+
+7. +People+
+#+end_src
+
+*** 5. Validate, preview, push
+
+#+begin_src elisp
+;; Check for errors offline (no API calls)
+M-x org-canvas-validate
+
+;; See what would happen without touching Canvas
+M-x org-canvas-sync-dry-run
+
+;; Push everything in dependency order
+M-x org-canvas-sync
+#+end_src
+
+*** 6. Verify and commit
+
+Open Canvas in a browser and spot-check.  Then:
+
+#+begin_src bash
+git init
+echo "org-canvas-credentials.el" >> .gitignore
+git add *.org .gitignore
+git commit -m "Initial course setup"
+#+end_src
+
+** Importing an Existing Canvas Course
+
+#+begin_quote
+Time: 15-30 minutes.  Most is reviewing the import.
+#+end_quote
+
+1. Run =M-x org-canvas-init= with the existing course ID.  Choose *not* to generate skeleton files.
+2. Install [[https://pandoc.org/][pandoc]] if you want HTML content converted to Org format.
+3. Run =M-x org-canvas-pull-all=.  This imports all content types in dependency order.
+4. Review each =.org= file for conversion artifacts (stray HTML tags, broken formatting).
+5. Make a small edit, run =M-x org-canvas-sync= to verify the round-trip works.
+6. Initialize git and commit.
+
+** Copying from a Previous Semester
+
+#+begin_quote
+Time: 30-60 minutes.  Mostly updating dates.
+#+end_quote
+
+1. *Copy the directory* and update =org-canvas-credentials.el= with the new course ID.
+
+2. *Strip sync state* so everything is created fresh:
+
+   #+begin_src bash
+   sed -i '/:CANVAS_ID:/d; /:CANVAS_URL:/d; /:LAST_SYNCED:/d; /:CANVAS_UPDATED_AT:/d; /:PAYLOAD_HASH:/d' *.org
+   #+end_src
+
+3. *Update dates.*  Search for timestamps and adjust to the new semester.  Don't forget override tables in =assignments.org=.
+
+4. *Update sections.*  If section names changed, edit =sections.org=.
+
+5. *Validate and push:*
+
+   #+begin_src elisp
+   M-x org-canvas-validate  ;; catches past-date warnings
+   M-x org-canvas-sync
+   #+end_src
+
+* Weekly Workflow
+
+A typical week involves adding new content, updating existing items, and keeping modules current.
+
+** Adding a New Assignment
+
+1. Open =assignments.org= and add a heading:
+
+   #+begin_src org
+   ,* Homework 3: Data Visualization
+   :PROPERTIES:
+   :POINTS: 50
+   :DUE_AT: <2026-09-22 Mon 23:59>
+   :SUBMISSION: online_upload
+   :ALLOWED_EXTENSIONS: py,ipynb
+   :GROUP: [[file:assignment-groups.org::*Homework][Homework]]
+   :END:
+
+   Create a visualization of the provided dataset using matplotlib.
+   #+end_src
+
+2. If the assignment should appear in a module, add a reference in =modules.org=:
+
+   #+begin_src org
+   ,** Homework 3
+   :PROPERTIES:
+   :ITEM_TYPE: Assignment
+   :COMPLETION_REQUIREMENT: must_submit
+   :END:
+   [[file:assignments.org::*Homework 3: Data Visualization][Homework 3: Data Visualization]]
+   #+end_src
+
+3. Sync just the changed files, or sync everything:
+
+   #+begin_src elisp
+   ;; Option A: Sync individual files
+   M-x org-canvas-sync-assignments
+   M-x org-canvas-sync-modules
+
+   ;; Option B: Sync everything (unchanged items are skipped)
+   M-x org-canvas-sync
+   #+end_src
+
+** Adding a New Week/Module
+
+1. Add the module heading in =modules.org= with links to assignments, pages, quizzes, and discussions for that week.
+
+2. Create the referenced content in their respective =.org= files if they don't exist yet.
+
+3. Run =M-x org-canvas-sync=.  Dependencies are resolved automatically -- content is created before the module that references it.
+
+** Updating Due Dates
+
+Edit the =DUE_AT=, =UNLOCK_AT=, or =LOCK_AT= timestamps in =assignments.org=.  Then sync just that assignment:
+
+#+begin_src elisp
+;; With cursor on the assignment heading:
+M-x org-canvas-sync-assignment-at-point
+#+end_src
+
+For per-section date changes, update the override table under the assignment heading and run =M-x org-canvas-sync-overrides=.
+
+** Publishing a Page or Announcement
+
+Write the content in =pages.org= or =announcements.org=, then sync:
+
+#+begin_src elisp
+;; Sync just announcements
+M-x org-canvas-sync-announcements
+
+;; Or sync a single announcement at point
+M-x org-canvas-sync-announcement-at-point
+#+end_src
+
+Announcements can be scheduled with =POST_AT=:
+
+#+begin_src org
+,* Week 3 Reminder
+:PROPERTIES:
+:POST_AT: <2026-09-19 Fri 08:00>
+:END:
+
+Don't forget: Homework 2 is due Monday!
+#+end_src
+
+** End-of-Week Review
+
+Quick check that everything is in order:
+
+#+begin_src elisp
+;; Overview of sync state across all files
+M-x org-canvas-status
+
+;; Validate all files for errors
+M-x org-canvas-validate
+#+end_src
+
+Commit your changes:
+
+#+begin_src bash
+git add *.org
+git commit -m "Week 3 content"
+#+end_src
+
+* Daily Workflow
+
+Day-to-day tasks during a running course.
+
+** Quick Edit and Push
+
+The fastest path for a single change:
+
+1. Open the relevant =.org= file.
+2. Navigate to the heading (use =C-c C-j= for Org goto, or search).
+3. Make your edit.
+4. Run the at-point sync command (e.g., =M-x org-canvas-sync-page-at-point=).
+
+All at-point commands are available from the transient menu: =M-x org-canvas-dispatch= then =@= for sync-at-point.
+
+** Posting an Announcement
+
+#+begin_src org
+,* Office Hours Moved
+:PROPERTIES:
+:PUBLISHED: true
+:END:
+
+Office hours this week will be held in Room 204 instead of 301.
+#+end_src
+
+Then =M-x org-canvas-sync-announcement-at-point=.
+
+** Checking Sync Status
+
+Run =M-x org-canvas-status= to see a summary of all content types:
+
+- How many items are synced per module
+- Whether any items have never been synced
+- Whether any files have unsaved changes
+
+** Handling Conflicts
+
+If a TA or co-instructor edited something in Canvas:
+
+1. Run =M-x org-canvas-sync= as normal.
+2. When a conflict is detected, org-canvas opens a diff buffer showing both versions.
+3. Choose: *push* (your version wins), *pull* (Canvas version wins), or *skip* (deal with it later).
+4. Use capital letters (*P*, *L*, *S*) to apply the same choice to all remaining conflicts.
+
+If you're certain your local files should always win: =M-x org-canvas-force-push=.
+
+* Per-Assignment Workflow
+
+The full lifecycle of a single assignment, from creation to final grades.
+
+** 1. Create the Assignment
+
+Add a heading in =assignments.org= with properties for points, due date, submission type, and optionally a rubric and assignment group link.  See [[file:manual.org::*assignments.org][the manual]] for all properties.
+
+** 2. Attach a Rubric (Optional)
+
+Create the rubric in =rubrics.org=:
+
+#+begin_src org
+,* Code Quality Rubric
+,** Correctness
+| Rating    | Points | Description            |
+|-----------+--------+------------------------|
+| Excellent |     40 | All tests pass         |
+| Good      |     30 | Most tests pass        |
+| Poor      |     10 | Few tests pass         |
+
+,** Style
+| Rating    | Points | Description            |
+|-----------+--------+------------------------|
+| Excellent |     10 | Clean, well-documented |
+| Good      |      7 | Mostly readable        |
+| Poor      |      3 | Hard to follow         |
+#+end_src
+
+Link it from the assignment:
+
+#+begin_src org
+:RUBRIC_LINK: [[file:rubrics.org::*Code Quality Rubric][Code Quality Rubric]]
+#+end_src
+
+** 3. Add to a Module
+
+In =modules.org=, add the assignment as a module item:
+
+#+begin_src org
+,** Lab 3
+:PROPERTIES:
+:ITEM_TYPE: Assignment
+:COMPLETION_REQUIREMENT: must_submit
+:END:
+[[file:assignments.org::*Lab 3: Functions][Lab 3: Functions]]
+#+end_src
+
+** 4. Push to Canvas
+
+#+begin_src elisp
+M-x org-canvas-sync
+#+end_src
+
+This creates the rubric, assignment, rubric association, and module item in the correct order.
+
+** 5. Set Per-Section Dates (Optional)
+
+If sections have different due dates, add an override table under the assignment:
+
+#+begin_src org
+#+NAME: overrides
+| Section                                      | Due At                 | Unlock At              | Lock At |
+|----------------------------------------------+------------------------+------------------------+---------|
+| [[file:sections.org::*Section A][Section A]] | <2026-09-16 Tue 23:59> | <2026-09-01 Mon 00:00> |         |
+| [[file:sections.org::*Section B][Section B]] | <2026-09-18 Thu 23:59> | <2026-09-01 Mon 00:00> |         |
+#+end_src
+
+Run =M-x org-canvas-sync-overrides= to push the overrides.
+
+** 6. Grade Submissions
+
+After the due date:
+
+#+begin_src elisp
+;; Open the submissions viewer
+M-x org-canvas-submissions-view
+#+end_src
+
+Select the assignment from the prompt.  The viewer opens with all submissions.
+
+| Key | Action                                        |
+|-----+-----------------------------------------------|
+| =v=   | Toggle between summary table and detail view  |
+| =c=   | Post a comment on the submission at point     |
+| =d=   | Download submission attachments               |
+| =S=   | Push modified grades to Canvas                |
+| =g=   | Refresh submissions from Canvas               |
+| =q=   | Quit                                          |
+
+*** Grading workflow
+
+1. Press =v= to switch to detail view (one heading per student).
+2. Edit the =:SCORE:= property on each student's heading.
+3. Press =c= to leave feedback comments.
+4. Press =d= to download and review attached files.
+5. Press =S= to push all changed grades to Canvas.
+
+** 7. Clean Up (End of Semester)
+
+If you need to remove the assignment:
+
+#+begin_src elisp
+;; Delete from Canvas (with cursor on the heading)
+M-x org-canvas-delete-assignment-at-point
+
+;; Then remove the heading from the Org file
+#+end_src
+
+Or remove the heading from the Org file first, then use =M-x org-canvas-cleanup-orphans= to find and delete the stranded Canvas item.
+
+* Grading Workflow
+
+A focused guide on grading, since it's the most frequent daily task.
+
+** Viewing Submissions
+
+#+begin_src elisp
+M-x org-canvas-submissions-view
+#+end_src
+
+You'll be prompted to select an assignment.  The viewer fetches all submissions and displays them.
+
+** Summary View vs Detail View
+
+- *Summary view* (default): A table with one row per student showing name, status, score, and submission date.
+- *Detail view*: One Org heading per student with full submission details, downloadable attachments, and editable =:SCORE:= property.
+
+Press =v= to toggle between them.
+
+** Downloading Attachments
+
+In either view, press =d= with point on a student's submission to download their attachments to a local directory.
+
+** Posting Comments
+
+Press =c= to post a comment.  You'll be prompted for the comment text.  The comment is immediately visible to the student on Canvas.
+
+** Pushing Grades
+
+1. In detail view, edit the =:SCORE:= property on any student headings.
+2. Press =S=.  org-canvas detects which scores changed and confirms before pushing.
+3. Changed grades are sent to Canvas.
+
+** Batch Grading Tips
+
+- Use Org's narrowing (=C-x n s=) to focus on one student at a time.
+- Use =org-sparse-tree= (=C-c /=) to filter by property values (e.g., find all ungraded submissions).
+- Grade one assignment at a time -- the submissions viewer is scoped to a single assignment.
+
+* End-of-Semester Workflow
+
+Tasks to wrap up a course and prepare for the next semester.
+
+** Final Grade Check
+
+1. Run =M-x org-canvas-status= to verify all content is synced.
+2. Open Canvas to confirm final grades are posted.
+3. Run =M-x org-canvas-validate= one last time.
+
+** Archive the Course
+
+#+begin_src bash
+git add *.org
+git commit -m "Final course state - Fall 2026"
+git tag "fall-2026-final"
+#+end_src
+
+** Prepare for Next Semester
+
+See [[*Copying from a Previous Semester]] above.  The key steps:
+
+1. Copy the directory.
+2. Update credentials with the new course ID.
+3. Strip =CANVAS_ID=, =LAST_SYNCED=, =CANVAS_UPDATED_AT=, and =PAYLOAD_HASH= from all headings.
+4. Update all dates.
+5. Validate and push.
+
+** Clean Up Canvas
+
+If the old course should be cleaned:
+
+#+begin_src elisp
+;; Remove all content from the old Canvas course
+M-x org-canvas-delete-all
+#+end_src
+
+This prompts for confirmation before deleting.
+
+* Multi-Instructor Workflow
+
+When multiple people contribute to the same course.
+
+** Shared Org Files in Git
+
+The recommended setup:
+
+1. Store all =.org= files in a git repository.
+2. Each instructor has their own =org-canvas-credentials.el= (gitignored).
+3. All credentials point to the same Canvas course ID.
+4. Use branches or divide ownership by file.
+
+** Dividing Ownership
+
+The simplest conflict-free approach: each person owns specific files.
+
+| Person     | Files                                          |
+|------------+------------------------------------------------|
+| Instructor | =settings.org=, =modules.org=, =assignment-groups.org= |
+| TA 1       | =assignments.org=, =rubrics.org=                   |
+| TA 2       | =pages.org=, =discussions.org=, =announcements.org=   |
+
+** Handling Overlapping Edits
+
+If multiple people edit the same file:
+
+1. Pull the latest from git.
+2. Run =M-x org-canvas-sync=.
+3. If someone edited directly in Canvas, the conflict resolution UI appears.
+4. Choose push/pull/skip per item.
+
+** Canvas-Only Collaborators
+
+If some TAs only use the Canvas web UI:
+
+- Enable conflict detection (on by default).
+- Before syncing, be aware that their changes will show as conflicts.
+- Use =pull= to accept their changes, or =push= to overwrite.
+- Consider having Canvas-only TAs restrict their edits to areas you don't manage in Org (e.g., they grade, you manage content).
+
+* Maintenance Tasks
+
+Periodic tasks to keep your course clean.
+
+** Orphan Cleanup
+
+Run periodically to find Canvas items with no corresponding Org heading:
+
+#+begin_src elisp
+M-x org-canvas-cleanup-orphans
+#+end_src
+
+This is especially useful after deleting headings from Org files or after a semester copy.
+
+** Checking for Stale Headings
+
+If you see a warning like "N heading(s) have LAST_SYNCED but no CANVAS_ID", a previously-synced heading lost its =CANVAS_ID=.  Either:
+
+- Restore the =CANVAS_ID= property (find it in Canvas or git history).
+- Delete the =LAST_SYNCED= property to treat it as a new item.
+
+** Log Management
+
+#+begin_src elisp
+;; Check logs for errors
+M-x org-canvas-set-log-level  ;; set to "debug" for verbose output
+
+;; Clear accumulated logs
+M-x org-canvas-clear-log
+
+;; Change where logs go
+M-x org-canvas-set-log-destination  ;; buffer, file, or both
+#+end_src
+
+** Validation
+
+Run =M-x org-canvas-validate= before any major sync to catch:
+
+- Invalid property values (bad booleans, unknown enums)
+- Missing required properties
+- Broken cross-file links
+- Past due dates
+- Duplicate titles
+
+Validation makes no API calls -- it's safe and fast to run anytime.

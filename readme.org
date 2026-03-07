@@ -206,21 +206,10 @@ In detail view, edit the =:SCORE:= property on any student heading and press =S=
 
 * Documentation
 
-See [[file:documentation/manual.org][the full manual]] for:
-
-- Complete file format specifications for all 16 content types
-- All supported properties and link resolution between files
-- Classic quiz and New Quiz question types and answer formats
-- Course settings (timezone, homepage, grading, license, navigation tabs, course image)
-- Group categories, calendar events, sections, and per-section date overrides
-- Inline image upload for page/announcement/discussion bodies
-- Interactive conflict resolution (push/pull/skip) and force-push
-- Canvas-to-Org migration with =org-canvas-pull-all=
-- Submission viewing, commenting, and grade writing
-- Orphan cleanup
-- Sync order and dependency management
-- Logging and configuration options
-- Troubleshooting tips
+- [[file:documentation/manual.org][Reference Manual]] -- Complete file format specs, all properties, command reference, architecture
+- [[file:documentation/workflows.org][Workflows Guide]] -- Semester setup, weekly/daily/per-assignment workflows, grading, multi-instructor collaboration
+- [[file:documentation/faq.org][FAQ & Recipes]] -- Quick answers to "how do I..." questions for assignments, quizzes, modules, grading, and more
+- [[file:CONTRIBUTING.md][Contributing]] -- Development setup, coding conventions, testing practices, PR process
 
 * Dependencies
 
