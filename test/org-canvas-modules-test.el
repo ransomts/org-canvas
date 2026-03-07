@@ -122,14 +122,15 @@
 
 (describe "org-canvas--module-item-transform-props"
   (it "strips statistics cookie from title for ExternalUrl"
-    (let ((data (org-canvas--module-item-transform-props
-                 '(:title-raw "Link [2/5]" :heading-with-links nil
-                   :canvas-id nil :indent-raw nil
-                   :completion-requirement nil :min-score-raw nil
-                   :external-url "https://example.com" :new-tab-raw nil
-                   :published-raw nil :link-info nil))))
+    (let* ((data (org-canvas--module-item-transform-props
+                  '(:title-raw "Link [2/5]" :heading-with-links nil
+                    :canvas-id nil :indent-raw nil
+                    :completion-requirement nil :min-score-raw nil
+                    :external-url "https://example.com" :new-tab-raw nil
+                    :published-raw nil :link-info nil)))
+           (data-type (plist-get data :type)))
       (expect (plist-get data :title) :to-equal "Link")
-      (expect (plist-get data :type) :to-equal "ExternalUrl")))
+      (expect data-type :to-equal "ExternalUrl")))
 
   (it "interprets published true by default for items"
     (let ((data (org-canvas--module-item-transform-props
@@ -177,15 +178,16 @@
       (expect (plist-get data :min-score) :to-be nil)))
 
   (it "returns linked item data when link-info present"
-    (let ((data (org-canvas--module-item-transform-props
-                 '(:title-raw "Ignored" :heading-with-links nil
-                   :canvas-id "42" :indent-raw "1"
-                   :completion-requirement "must_view" :min-score-raw nil
-                   :external-url nil :new-tab-raw nil
-                   :published-raw "true"
-                   :link-info (:type "Assignment" :title "Lab 1"
-                               :content-id 555 :page-url nil)))))
-      (expect (plist-get data :type) :to-equal "Assignment")
+    (let* ((data (org-canvas--module-item-transform-props
+                  '(:title-raw "Ignored" :heading-with-links nil
+                    :canvas-id "42" :indent-raw "1"
+                    :completion-requirement "must_view" :min-score-raw nil
+                    :external-url nil :new-tab-raw nil
+                    :published-raw "true"
+                    :link-info (:type "Assignment" :title "Lab 1"
+                                :content-id 555 :page-url nil))))
+           (data-type (plist-get data :type)))
+      (expect data-type :to-equal "Assignment")
       (expect (plist-get data :title) :to-equal "Lab 1")
       (expect (plist-get data :content-id) :to-equal 555)
       (expect (plist-get data :canvas-id) :to-equal "42")

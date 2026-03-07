@@ -341,11 +341,12 @@ What would happen?
 
   (it "validates type with fallback to choice"
     (spy-on 'elog-warning)
-    (let ((result (org-canvas--new-quiz-item-transform-props
-                   '(:title-raw "Q" :canvas-id nil
-                     :quiz-assignment-id "42" :type-raw "invalid_type"
-                     :points-raw nil :outcome nil :text "" :pom nil))))
-      (expect (plist-get result :type) :to-equal "choice")))
+    (let* ((result (org-canvas--new-quiz-item-transform-props
+                    '(:title-raw "Q" :canvas-id nil
+                      :quiz-assignment-id "42" :type-raw "invalid_type"
+                      :points-raw nil :outcome nil :text "" :pom nil)))
+           (result-type (plist-get result :type)))
+      (expect result-type :to-equal "choice")))
 
   (it "defaults type to choice when absent"
     (let* ((result (org-canvas--new-quiz-item-transform-props
