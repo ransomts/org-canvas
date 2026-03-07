@@ -1258,66 +1258,40 @@ Read this carefully.
 ;;;; Question Build Payload Tests
 
 (describe "org-canvas--question-build-payload"
-  :var ((original-export nil))
-
-  (before-each
-    (setq original-export (symbol-function 'org-export-string-as))
-    (fset 'org-export-string-as (lambda (s _type _body-only) (format "<p>%s</p>" s))))
-
-  (after-each
-    (fset 'org-export-string-as original-export))
-
   (it "includes answers array when present"
-    (with-temp-org-buffer
-     "* Quiz
-** Question
-:PROPERTIES:
-:END:
+    ;; build-payload is now pure — supply pre-computed data
+    (let* ((data (list :name "Question"
+                       :text-html "<p>Some text</p>"
+                       :question_type "multiple_choice_question"
+                       :points_possible 1
+                       :answers '(((answer_text . "Correct")
+                                   (answer_weight . 100))
+                                  ((answer_text . "Wrong")
+                                   (answer_weight . 0)))))
+           (payload (org-canvas--question-build-payload data))
+           (question (alist-get 'question payload)))
+      (expect (alist-get 'answers question) :to-be-truthy)))
 
-- [X] Correct
-- [ ] Wrong
-"
-     (search-forward "Question")
-     (org-back-to-heading)
-     (let* ((data (org-canvas--question-parse-entry "123"))
-            (payload (org-canvas--question-build-payload data))
-            (question (alist-get 'question payload)))
-       (expect (alist-get 'answers question) :to-be-truthy))))
-
-  (it "converts text to HTML"
-    (with-temp-org-buffer
-     "* Quiz
-** Question
-:PROPERTIES:
-:END:
-
-Some question text.
-
-- [X] Answer
-"
-     (search-forward "Question")
-     (org-back-to-heading)
-     (let* ((data (org-canvas--question-parse-entry "123"))
-            (payload (org-canvas--question-build-payload data))
-            (question (alist-get 'question payload)))
-       (expect (alist-get 'question_text question) :to-match "<p>"))))
+  (it "uses pre-computed HTML for question_text"
+    (let* ((data (list :name "Question"
+                       :text-html "<p>Some question text.</p>"
+                       :question_type "multiple_choice_question"
+                       :points_possible 1
+                       :answers '(((answer_text . "Answer")
+                                   (answer_weight . 100)))))
+           (payload (org-canvas--question-build-payload data))
+           (question (alist-get 'question payload)))
+      (expect (alist-get 'question_text question) :to-match "<p>")))
 
   (it "omits answers for essay questions"
-    (with-temp-org-buffer
-     "* Quiz
-** Essay
-:PROPERTIES:
-:TYPE: essay_question
-:END:
-
-Write about...
-"
-     (search-forward "Essay")
-     (org-back-to-heading)
-     (let* ((data (org-canvas--question-parse-entry "123"))
-            (payload (org-canvas--question-build-payload data))
-            (question (alist-get 'question payload)))
-       (expect (assq 'answers question) :to-be nil)))))
+    (let* ((data (list :name "Essay"
+                       :text-html "<p>Write about...</p>"
+                       :question_type "essay_question"
+                       :points_possible 1
+                       :answers nil))
+           (payload (org-canvas--question-build-payload data))
+           (question (alist-get 'question payload)))
+      (expect (assq 'answers question) :to-be nil))))
 
 ;;;; Additional Push to API Tests
 

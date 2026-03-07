@@ -60,7 +60,7 @@
           (or (getenv "JUNIT_REPORT_FILE") "test-results.xml"))))
 
 ;; Exclude vendor directory from linting
-(setf eldev-lint-ignored-fileset '("vendor/" "test/"))
+(setf eldev-lint-ignored-fileset '("vendor/" "test/" "scripts/"))
 
 ;;; Code Complexity Analyzer
 

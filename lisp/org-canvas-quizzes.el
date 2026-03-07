@@ -430,12 +430,18 @@ QUIZ-CANVAS-ID is the Canvas ID of the parent quiz."
 
   (let* ((pom (point-marker))
          (raw (org-canvas--question-read-props pom quiz-canvas-id))
-         (data (org-canvas--question-transform-props raw)))
+         (data (org-canvas--question-transform-props raw))
+         (q-type (plist-get data :question_type))
+         (text-html (let ((org-export-with-sub-superscripts nil))
+                      (org-export-string-as (plist-get data :text) 'html t)))
+         (answers (org-canvas--question-build-answers q-type)))
 
     (elog-debug org-canvas--logger "[Question Parse] '%s' type=%s"
-      (plist-get data :name) (plist-get data :question_type))
+      (plist-get data :name) q-type)
 
     (plist-put data :pom pom)
+    (plist-put data :text-html text-html)
+    (plist-put data :answers answers)
     data))
 
 (defun org-canvas--question-build-checkbox-answers ()
@@ -507,16 +513,12 @@ When CORRECT-ONLY is non-nil, only include correct answers."
     (funcall builder)))
 
 (defun org-canvas--question-build-payload (data)
-  "Build Canvas API payload from question DATA."
-  (let* ((q-type (plist-get data :question_type))
-	 (text-html (let ((org-export-with-sub-superscripts nil))
-		     (org-export-string-as (plist-get data :text) 'html t)))
-	 (answers (save-excursion
-		    (goto-char (marker-position (plist-get data :pom)))
-		    (org-canvas--question-build-answers q-type)))
+  "Build Canvas API payload from question DATA (pure, no buffer access)."
+  (let* ((text-html (plist-get data :text-html))
+	 (answers (plist-get data :answers))
 	 (question-obj `((question_name . ,(plist-get data :name))
 			 (question_text . ,text-html)
-			 (question_type . ,q-type)
+			 (question_type . ,(plist-get data :question_type))
 			 (points_possible . ,(plist-get data :points_possible)))))
 
     (when answers

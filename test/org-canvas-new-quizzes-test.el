@@ -1274,16 +1274,18 @@ Quiz description.
 "
      (search-forward "What is 2+2")
      (org-back-to-heading)
-     (let* ((data (list :title "What is 2+2?"
+     (let* ((interaction-data (org-canvas--new-quiz-item-build-interaction-data "choice"))
+            (data (list :title "What is 2+2?"
                         :text ""
                         :type "choice"
                         :points 5
-                        :pom (point-marker)))
+                        :text-html "<p>What is 2+2?</p>"
+                        :interaction-data interaction-data))
             (payload (org-canvas--new-quiz-item-build-payload data)))
        (expect (gethash "interaction_type_slug" payload) :to-equal "choice")
        (expect (gethash "points_possible" payload) :to-equal 5)
        (expect (gethash "entry_type" payload) :to-equal "Item")
-       ;; item_body uses title as question stem when text is empty
+       ;; item_body uses pre-computed HTML
        (expect (gethash "item_body" payload) :to-match "What is 2\\+2")
        (expect (gethash "interaction_data" payload) :to-be-truthy)
        ;; scoring fields
@@ -1303,95 +1305,65 @@ Quiz description.
 "
      (search-forward "TF Question")
      (org-back-to-heading)
-     (let* ((data (list :title "TF Question"
+     (let* ((interaction-data (org-canvas--new-quiz-item-build-interaction-data "true-false"))
+            (data (list :title "TF Question"
                         :text ""
                         :type "true-false"
                         :points 1
-                        :pom (point-marker)))
+                        :text-html "<p>TF Question</p>"
+                        :interaction-data interaction-data))
             (payload (org-canvas--new-quiz-item-build-payload data)))
        (expect (gethash "interaction_type_slug" payload) :to-equal "true-false")
        (expect (gethash "scoring_algorithm" payload) :to-equal "Equivalence")
        (expect (gethash "scoring_data" payload) :to-be-truthy))))
 
   (it "omits interaction_data for essay"
-    (with-temp-org-buffer
-     "* Quiz
-** Write an essay
-:PROPERTIES:
-:TYPE: essay
-:END:
-"
-     (search-forward "Write an essay")
-     (org-back-to-heading)
-     (let* ((data (list :title "Write an essay"
-                        :text ""
-                        :type "essay"
-                        :points 10
-                        :pom (point-marker)))
-            (payload (org-canvas--new-quiz-item-build-payload data)))
-       (expect (gethash "interaction_data" payload nil) :to-be nil)
-       (expect (gethash "scoring_algorithm" payload) :to-equal "None")
-       (expect (alist-get 'value (gethash "scoring_data" payload)) :to-equal ""))))
+    ;; build-payload is now pure — no buffer needed
+    (let* ((data (list :title "Write an essay"
+                       :text ""
+                       :type "essay"
+                       :points 10
+                       :text-html "<p>Write an essay</p>"
+                       :interaction-data nil))
+           (payload (org-canvas--new-quiz-item-build-payload data)))
+      (expect (gethash "interaction_data" payload nil) :to-be nil)
+      (expect (gethash "scoring_algorithm" payload) :to-equal "None")
+      (expect (alist-get 'value (gethash "scoring_data" payload)) :to-equal "")))
 
   (it "falls back to raw type when not in type-slugs"
-    (with-temp-org-buffer
-     "* Quiz
-** Unknown Q
-:PROPERTIES:
-:TYPE: custom-widget
-:END:
-"
-     (search-forward "Unknown Q")
-     (org-back-to-heading)
-     (let* ((data (list :title "Unknown Q"
-                        :text ""
-                        :type "custom-widget"
-                        :points 1
-                        :pom (point-marker)))
-            (payload (org-canvas--new-quiz-item-build-payload data)))
-       ;; "custom-widget" is not in type-slugs, so slug = q-type itself
-       (expect (gethash "interaction_type_slug" payload) :to-equal "custom-widget"))))
+    ;; build-payload is now pure — no buffer needed
+    (let* ((data (list :title "Unknown Q"
+                       :text ""
+                       :type "custom-widget"
+                       :points 1
+                       :text-html "<p>Unknown Q</p>"
+                       :interaction-data nil))
+           (payload (org-canvas--new-quiz-item-build-payload data)))
+      ;; "custom-widget" is not in type-slugs, so slug = q-type itself
+      (expect (gethash "interaction_type_slug" payload) :to-equal "custom-widget")))
 
-  (it "uses title as item_body when text is empty"
-    (with-temp-org-buffer
-     "* Quiz
-** Capital of France?
-:PROPERTIES:
-:TYPE: short-answer
-:END:
+  (it "uses pre-computed text-html as item_body"
+    ;; build-payload is now pure — no buffer needed
+    (let* ((data (list :title "Capital of France?"
+                       :text ""
+                       :type "short-answer"
+                       :points 1
+                       :text-html "<p>Capital of France?</p>"
+                       :interaction-data nil))
+           (payload (org-canvas--new-quiz-item-build-payload data)))
+      (expect (gethash "item_body" payload) :to-match "Capital of France")))
 
-- [X] Paris
-"
-     (search-forward "Capital of France")
-     (org-back-to-heading)
-     (let* ((data (list :title "Capital of France?"
-                        :text ""
-                        :type "short-answer"
-                        :points 1
-                        :pom (point-marker)))
-            (payload (org-canvas--new-quiz-item-build-payload data)))
-       (expect (gethash "item_body" payload) :to-match "Capital of France"))))
-
-  (it "combines title and body text when both present"
-    (with-temp-org-buffer
-     "* Quiz
-** Geography
-:PROPERTIES:
-:TYPE: short-answer
-:END:
-
-- [X] Paris
-"
-     (search-forward "Geography")
-     (org-back-to-heading)
-     (let* ((data (list :title "Geography"
-                        :text "What is the capital of France?"
-                        :type "short-answer"
-                        :points 1
-                        :pom (point-marker)))
-            (payload (org-canvas--new-quiz-item-build-payload data)))
-       (expect (gethash "item_body" payload) :to-match "Geography")
-       (expect (gethash "item_body" payload) :to-match "capital of France"))))
+  (it "uses pre-computed text-html with combined title and body"
+    ;; build-payload is now pure — no buffer needed
+    (let* ((data (list :title "Geography"
+                       :text "What is the capital of France?"
+                       :type "short-answer"
+                       :points 1
+                       :text-html "<p>Geography\n\nWhat is the capital of France?</p>"
+                       :interaction-data nil))
+           (payload (org-canvas--new-quiz-item-build-payload data)))
+      (expect (gethash "item_body" payload) :to-match "Geography")
+      (expect (gethash "item_body" payload) :to-match "capital of France")))
 
   (it "sends no interaction_data for numerical type"
     (with-temp-org-buffer
@@ -1407,11 +1379,13 @@ Quiz description.
      (org-back-to-heading)
      (unless test-org-canvas-emacs-30-p
        (signal 'buttercup-pending "Requires Emacs 30+ org-mode"))
-     (let* ((data (list :title "What is pi?"
+     (let* ((interaction-data (org-canvas--new-quiz-item-build-interaction-data "numerical"))
+            (data (list :title "What is pi?"
                         :text ""
                         :type "numerical"
                         :points 1
-                        :pom (point-marker)))
+                        :text-html "<p>What is pi?</p>"
+                        :interaction-data interaction-data))
             (payload (org-canvas--new-quiz-item-build-payload data)))
        ;; numerical interaction_data should be nil (Canvas stores null)
        (expect (gethash "interaction_data" payload nil) :to-be nil)

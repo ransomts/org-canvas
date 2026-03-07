@@ -480,10 +480,19 @@ Reads raw properties and transforms them."
   (let* ((raw (org-canvas--new-quiz-item-read-props quiz-assignment-id))
          (data (org-canvas--new-quiz-item-transform-props raw))
          (title (plist-get data :title))
-         (q-type (plist-get data :type)))
+         (q-type (plist-get data :type))
+         (question-text (let ((body (or (plist-get data :text) "")))
+                          (if (string-empty-p body)
+                              title
+                            (concat title "\n\n" body))))
+         (text-html (let ((org-export-with-sub-superscripts nil))
+                      (org-export-string-as question-text 'html t)))
+         (interaction-data (org-canvas--new-quiz-item-build-interaction-data q-type)))
 
     (elog-debug org-canvas--logger "[New Quiz Item Parse] '%s' type=%s" title q-type)
 
+    (plist-put data :text-html text-html)
+    (plist-put data :interaction-data interaction-data)
     data))
 
 ;;;; Item Build Interaction Data
@@ -693,18 +702,11 @@ avoid duplication in the API payload."
 ;;;; Item Build Payload
 
 (defun org-canvas--new-quiz-item-build-payload (data)
-  "Build Canvas API payload from New Quiz item DATA."
+  "Build Canvas API payload from New Quiz item DATA (pure, no buffer access)."
   (let* ((q-type (plist-get data :type))
          (slug (or (cdr (assoc q-type org-canvas--new-quiz-type-slugs)) q-type))
-         (question-text (let ((body (or (plist-get data :text) "")))
-                          (if (string-empty-p body)
-                              (plist-get data :title)
-                            (concat (plist-get data :title) "\n\n" body))))
-         (text-html (let ((org-export-with-sub-superscripts nil))
-                      (org-export-string-as question-text 'html t)))
-         (interaction-data (save-excursion
-                             (goto-char (marker-position (plist-get data :pom)))
-                             (org-canvas--new-quiz-item-build-interaction-data q-type)))
+         (text-html (plist-get data :text-html))
+         (interaction-data (plist-get data :interaction-data))
          (scoring-result (org-canvas--new-quiz-item-build-scoring-data
                           q-type interaction-data))
          (scoring-data (car scoring-result))
