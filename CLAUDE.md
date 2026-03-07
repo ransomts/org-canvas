@@ -214,7 +214,7 @@ Use `org-canvas-org-save-sync-state` to standardize saving.
 
 ## Dependencies
 
-External: `plz`, `elog`, `org` (9.6+), `ox-html`
+External: `plz`, `elog`, `transient` (0.4+), `org` (9.6+), `ox-html`
 
 The `elog` package is fetched from GitHub via `eldev-use-vc-repository` (not vendored).
 
@@ -223,7 +223,7 @@ The `elog` package is fetched from GitHub via `eldev-use-vc-repository` (not ven
 ### Running Tests
 
 ```bash
-eldev test              # Run all 2264 tests
+eldev test              # Run all 2361 tests
 eldev test "core"       # Run tests matching pattern
 ```
 
@@ -277,33 +277,36 @@ test/
 
 ### Test Coverage Summary
 
-**2264 tests total** covering core utilities, all feature modules, and validation (9 tests skip on Emacs 29.x due to org-mode differences). Coverage is ~99%.
+**2361 tests total** covering core utilities, all feature modules, and validation (9 tests skip on Emacs 29.x due to org-mode differences). Coverage is 99.99% (6732/6733 lines).
 
 | Module            | Tests |
 |-------------------|-------|
 | quizzes           | 227   |
-| **core-sync**     | 184   |
+| **core-sync**     | 202   |
 | modules           | 174   |
-| new-quizzes       | 166   |
-| files             | 163   |
-| **validate**      | 162   |
-| **core-org**      | 128   |
+| new-quizzes       | 169   |
+| files             | 167   |
+| **validate**      | 164   |
+| **core-org**      | 132   |
 | assignments       | 120   |
-| outcomes          | 112   |
+| outcomes          | 113   |
 | submissions       | 105   |
 | settings          | 96    |
 | rubrics           | 92    |
+| **core-api**      | 64    |
 | discussions       | 57    |
+| orchestration     | 55    |
 | pages             | 55    |
-| **core-api**      | 54    |
 | calendar          | 52    |
 | **core-config**   | 51    |
 | sections          | 44    |
 | group-categories  | 43    |
-| orchestration     | 41    |
 | announcements     | 41    |
+| **core-usability**| 38    |
 | assignment-groups | 36    |
-| **core-usability**| 33    |
+| snapshot          | 15    |
+| transient         | 12    |
+| fuzz              | 9     |
 
 **Core tests cover:**
 - Path utilities (`org-canvas--path`)

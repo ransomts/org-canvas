@@ -12,15 +12,31 @@ The primary workflow treats Org files as the "source of truth" -- you design you
 
 ** Prerequisites
 
-- Emacs 27.1 or later
+- Emacs 28.1 or later
 - Org Mode 9.6 or later
+- [[https://github.com/magit/transient][transient]] 0.4+ (built into Emacs 29+)
 - A Canvas LMS instance with API access
 - A Canvas API token (generate from Account > Settings > Approved Integrations)
 - [[https://pandoc.org/][pandoc]] (optional) -- required for HTML-to-Org conversion when pulling content from Canvas
 
 ** Configuration
 
-Create =org-canvas-credentials.el= in your course directory:
+The easiest way to set up a new course is the setup wizard:
+
+#+begin_src elisp
+M-x org-canvas-init
+#+end_src
+
+The wizard prompts for your Canvas URL, API token, and course ID.  It:
+
+- Tests the connection before saving
+- Writes =org-canvas-credentials.el=
+- Warns before overwriting an existing credentials file
+- Validates the URL starts with =https://=
+- Offers to create or update =.gitignore= to protect credentials
+- Optionally generates skeleton =.org= files for all content types
+
+Or create =org-canvas-credentials.el= manually in your course directory:
 
 #+begin_src elisp
 ;;; org-canvas-credentials.el --- Canvas API credentials  -*- lexical-binding: t; -*-
@@ -41,6 +57,15 @@ Create =org-canvas-credentials.el= in your course directory:
 #+begin_src elisp
 M-x org-canvas-test-connection
 #+end_src
+
+On failure, specific error messages indicate the cause:
+
+| Error               | Meaning                                   |
+|---------------------+-------------------------------------------|
+| HTTP 401            | API token expired -- regenerate it        |
+| HTTP 403            | Token lacks required scope                |
+| HTTP 404            | Course ID not found                       |
+| Network error       | URL wrong or no internet connection       |
 
 This prints your course name if the connection is successful.
 
@@ -1562,7 +1587,6 @@ The following items are never treated as orphans:
 | =org-canvas-sync-announcements=       | Sync announcements                           |
 | =org-canvas-sync-files=               | Upload files                                 |
 | =org-canvas-sync-calendar-events=      | Sync calendar events                         |
-| =org-canvas-sync-sections=            | Sync course sections                         |
 | =org-canvas-sync-overrides=           | Sync per-section overrides                   |
 
 ** Pull Commands
@@ -1616,8 +1640,11 @@ These commands sync just the item at the current cursor position:
 | =org-canvas-sync-page-at-point=             | Sync page at point               |
 | =org-canvas-sync-discussion-at-point=       | Sync discussion at point         |
 | =org-canvas-sync-announcement-at-point=     | Sync announcement at point       |
+| =org-canvas-sync-module-at-point=           | Sync module at point             |
+| =org-canvas-sync-rubric-at-point=           | Sync rubric at point             |
 | =org-canvas-sync-quiz-at-point=             | Sync classic quiz at point       |
 | =org-canvas-sync-new-quiz-at-point=        | Sync New Quiz at point           |
+| =org-canvas-sync-assignment-group-at-point= | Sync assignment group at point   |
 | =org-canvas-sync-group-category-at-point=   | Sync group category at point     |
 | =org-canvas-sync-calendar-event-at-point=   | Sync calendar event at point     |
 
@@ -1629,8 +1656,12 @@ These commands delete the item at the current cursor position:
 |--------------------------------------------+----------------------------------|
 | =org-canvas-delete-assignment-at-point=      | Delete assignment at point       |
 | =org-canvas-delete-page-at-point=            | Delete page at point             |
+| =org-canvas-delete-discussion-at-point=      | Delete discussion at point       |
+| =org-canvas-delete-announcement-at-point=    | Delete announcement at point     |
 | =org-canvas-delete-file-at-point=            | Delete file at point             |
 | =org-canvas-delete-module-at-point=          | Delete module at point           |
+| =org-canvas-delete-rubric-at-point=          | Delete rubric at point           |
+| =org-canvas-delete-assignment-group-at-point= | Delete assignment group at point |
 | =org-canvas-delete-group-category-at-point=  | Delete group category at point   |
 | =org-canvas-delete-calendar-event-at-point=  | Delete calendar event at point   |
 
@@ -1647,6 +1678,39 @@ These commands delete the item at the current cursor position:
 | =org-canvas-clear-log=            | Clear log buffer and log file                 |
 | =org-canvas-set-log-level=        | Set logging level interactively               |
 | =org-canvas-set-log-destination=  | Set log destination interactively             |
+| =org-canvas-dispatch=             | Open the transient command menu               |
+
+** Command Menu (Transient)
+
+All commands are accessible through a transient popup menu:
+
+#+begin_src elisp
+M-x org-canvas-dispatch
+#+end_src
+
+The menu is organized into groups:
+
+| Group       | Key | Description                                      |
+|-------------+-----+--------------------------------------------------|
+| Sync        | =s=   | Sync all, dry-run, force push, sync-at-point...  |
+| Pull        | =p=   | Pull all, pull single content type...            |
+| Delete      | =D=   | Delete all, cleanup orphans, delete-at-point...  |
+| Submissions | =g=   | Pull submissions, push grades                    |
+| Tools       | =i=   | Init, test connection, validate, status          |
+| Log         | =l=   | Set log level/destination, clear log             |
+| Learn       | =?=   | Demo conflict resolution UI                      |
+
+Sub-menus are available for per-item operations:
+
+- *Sync at point* (=@=): Sync a single heading -- page, assignment, discussion, announcement, module, rubric, assignment group, calendar event, quiz, new quiz, or group category.
+- *Pull single* (=P=): Pull one content type from Canvas (all 16 types available).
+- *Delete at point* (=X=): Delete a single item from Canvas.
+
+Bind =org-canvas-dispatch= to a key for quick access:
+
+#+begin_src elisp
+(global-set-key (kbd "C-c C") #'org-canvas-dispatch)
+#+end_src
 
 * Example Workflows
 
@@ -1848,9 +1912,13 @@ Your API token has expired or been revoked. Generate a new one at Canvas > Accou
 
 Your token lacks the required scope. Ensure the token has full access to the course, or generate a new token with broader permissions.
 
+*** "N heading(s) have LAST_SYNCED but no CANVAS_ID"
+
+A heading was previously synced (has =LAST_SYNCED=) but its =CANVAS_ID= was removed.  Syncing it again would create a duplicate on Canvas instead of updating the existing item.  Either restore the =CANVAS_ID= property or delete the =LAST_SYNCED= property to treat it as a new item.
+
 *** "Rate limited after N retries"
 
-Canvas throttles API requests. org-canvas automatically retries on 429 responses, but if the rate limit persists, try reducing the batch size or waiting a few minutes. Configure retry behavior:
+Canvas throttles API requests. org-canvas automatically retries on 429 responses with a per-second countdown in the echo area so Emacs doesn't appear frozen.  If the rate limit persists after all retries, try waiting a few minutes. Configure retry behavior:
 
 | Variable                        | Default | Description                    |
 |---------------------------------+---------+--------------------------------|
@@ -1877,7 +1945,7 @@ Logging destination is controlled by =org-canvas-log-destination=:
 | =file=        | Log to file (=org-canvas.log= in course directory)   |
 | =both=        | Log to both buffer and file                        |
 
-Change settings interactively:
+Change settings interactively or via Customize (changes take effect immediately):
 
 #+begin_src elisp
 M-x org-canvas-set-log-level        ;; trace, debug, info, warning, error

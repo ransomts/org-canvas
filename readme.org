@@ -95,6 +95,15 @@ my-course/
 
 ** Basic Usage
 
+All commands are accessible through a transient menu:
+
+#+begin_src elisp
+;; Open the command menu (recommended — shows all commands with keybindings)
+M-x org-canvas-dispatch
+#+end_src
+
+Or call commands directly:
+
 #+begin_src elisp
 ;; Test your connection
 M-x org-canvas-test-connection
@@ -215,10 +224,11 @@ See [[file:documentation/manual.org][the full manual]] for:
 
 * Dependencies
 
-- Emacs 29.1+
+- Emacs 28.1+
 - Org Mode 9.6+
 - [[https://github.com/alphapapa/plz.el][plz]] - HTTP library
 - [[https://github.com/Kinneyzhang/elog][elog]] - Logging framework
+- [[https://github.com/magit/transient][transient]] (0.4+) - Command menu (built into Emacs 29+)
 - [[https://pandoc.org/][pandoc]] (optional) - Required for HTML-to-Org conversion when pulling content from Canvas
 
 * Development
