@@ -85,7 +85,8 @@
     (with-current-buffer (get-buffer-create "*canvas-log*")
       (let ((inhibit-read-only t))
         (insert "Some log content")))
-    (org-canvas-clear-log)
+    (let ((org-canvas-log-destination 'buffer))
+      (org-canvas-clear-log))
     (with-current-buffer (get-buffer-create "*canvas-log*")
       (expect (buffer-string) :to-equal "")))
 

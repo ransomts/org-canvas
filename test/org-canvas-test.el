@@ -1275,6 +1275,7 @@
       (cl-letf (((symbol-function 'org-canvas--preflight-check) (lambda () nil))
                 ((symbol-function 'executable-find) (lambda (_) t))
                 ((symbol-function 'yes-or-no-p) (lambda (_) nil))
+                ((symbol-function 'file-exists-p) (lambda (_) t))
                 ((symbol-function 'org-canvas--status-count-entries)
                  (lambda (_file _id-prop) (list :synced 5 :pending 0 :legacy 0 :unsaved 0))))
         (expect (org-canvas-pull-all) :to-throw 'user-error)))))
