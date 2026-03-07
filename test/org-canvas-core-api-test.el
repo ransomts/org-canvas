@@ -288,7 +288,47 @@
                      (setq error-logged t)
                      nil)))
           (org-canvas-test-connection)
-          (expect error-logged :to-be t))))))
+          (expect error-logged :to-be t)))))
+
+  (it "shows 401 specific message"
+    (with-org-canvas-test-config
+      (spy-on 'message)
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (_method _url &rest _args)
+                   (signal 'error '("HTTP 401 Unauthorized")))))
+        (org-canvas-test-connection)
+        (expect 'message :to-have-been-called-with
+                "Connection failed: authentication error (HTTP 401). Regenerate your API token."))))
+
+  (it "shows 403 specific message"
+    (with-org-canvas-test-config
+      (spy-on 'message)
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (_method _url &rest _args)
+                   (signal 'error '("HTTP 403 Forbidden")))))
+        (org-canvas-test-connection)
+        (expect 'message :to-have-been-called-with
+                "Connection failed: permission denied (HTTP 403). Check your token scope."))))
+
+  (it "shows 404 specific message"
+    (with-org-canvas-test-config
+      (spy-on 'message)
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (_method _url &rest _args)
+                   (signal 'error '("HTTP 404 Not Found")))))
+        (org-canvas-test-connection)
+        (expect 'message :to-have-been-called-with
+                "Connection failed: course not found (HTTP 404). Check your course ID."))))
+
+  (it "shows network error specific message"
+    (with-org-canvas-test-config
+      (spy-on 'message)
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (_method _url &rest _args)
+                   (signal 'error '("Could not resolve host: canvas.example.com")))))
+        (org-canvas-test-connection)
+        (expect 'message :to-have-been-called-with
+                "Connection failed: network error. Check your URL and internet connection.")))))
 
 (describe "org-canvas-api-request body logging"
   (it "logs request body when org-canvas-log-request-bodies is t"

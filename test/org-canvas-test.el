@@ -1234,6 +1234,49 @@
           ;; Since no actual syncing happened, dry-run count = 0
           ;; but the final message should be "Sync complete" (dry-run = 0 takes else branch)
           ;; Let's verify org-canvas--sync-global-counters has :dry-run key
-          (expect org-canvas--sync-global-counters :to-be nil))))))
+          (expect org-canvas--sync-global-counters :to-be nil)))))
+
+  (it "shows dry-run complete message when dry-run counter > 0"
+    (with-sync-test-env
+      (spy-on 'message)
+      (cl-letf (((symbol-function 'org-canvas--preflight-check) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-settings)
+                 (lambda ()
+                   ;; Simulate a dry-run skip by incrementing the counter
+                   (plist-put org-canvas--sync-global-counters :dry-run 3)
+                   (plist-put org-canvas--sync-global-counters :skip 1)))
+                ((symbol-function 'org-canvas-sync-outcomes) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-rubrics) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-assignment-groups) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-group-categories) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-sections) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-files) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-pages) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-discussions) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-announcements) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-calendar-events) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-assignments) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-quizzes) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-new-quizzes) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-overrides) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-modules) (lambda () nil)))
+        (let ((org-canvas--dry-run t))
+          (org-canvas-sync)
+          (let ((found nil))
+            (dolist (call (spy-calls-all-args 'message))
+              (when (and (stringp (car call))
+                         (string-match-p "Dry-run complete:" (car call)))
+                (setq found t)))
+            (expect found :to-be-truthy)))))))
+
+(describe "org-canvas-pull-all overwrite abort"
+  (it "aborts when user declines overwrite prompt"
+    (with-sync-test-env
+      (cl-letf (((symbol-function 'org-canvas--preflight-check) (lambda () nil))
+                ((symbol-function 'executable-find) (lambda (_) t))
+                ((symbol-function 'yes-or-no-p) (lambda (_) nil))
+                ((symbol-function 'org-canvas--status-count-entries)
+                 (lambda (_file _id-prop) (list :synced 5 :pending 0 :legacy 0 :unsaved 0))))
+        (expect (org-canvas-pull-all) :to-throw 'user-error)))))
 
 ;;; org-canvas-test.el ends here
