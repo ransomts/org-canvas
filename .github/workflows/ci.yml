@@ -36,8 +36,12 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          mkdir -p coverage
-          eldev test -u "on,codecov,dontsend" -U coverage/coverage.json
+          if [ "${{ matrix.emacs-version }}" = "30.1" ]; then
+            mkdir -p coverage
+            eldev test -u "on,codecov,dontsend" -U coverage/coverage.json
+          else
+            eldev test
+          fi
         env:
           ELDEV_JUNIT: 1
           JUNIT_REPORT_FILE: test-results.xml
