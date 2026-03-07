@@ -408,5 +408,26 @@ OVERRIDES is an alist of keys to override."
      (auto_leader . nil))
    overrides))
 
+(defun test-org-canvas-transient-has-command-p (prefix-sym command)
+  "Return non-nil if PREFIX-SYM's transient layout contains COMMAND.
+Handles both Emacs 29 (transient 0.4) and Emacs 30 (transient 0.7+) layout formats."
+  (let ((layout (get prefix-sym 'transient--layout))
+        (found nil))
+    (let ((columns (cond
+                    ((listp layout) layout)
+                    ((vectorp layout) (aref layout 2)))))
+      (dolist (col columns)
+        (when (vectorp col)
+          (let* ((has-level (numberp (aref col 0)))
+                 (suffixes (aref col (if has-level 3 2))))
+            (dolist (suffix suffixes)
+              (when (listp suffix)
+                (let ((plist (if (numberp (car suffix))
+                                (nth 2 suffix)
+                              (cdr suffix))))
+                  (when (eq (plist-get plist :command) command)
+                    (setq found t)))))))))
+    found))
+
 (provide 'test-helper)
 ;;; test-helper.el ends here
