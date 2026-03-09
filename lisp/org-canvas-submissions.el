@@ -55,6 +55,41 @@ Either `summary' (table) or `detail' (per-student headings)."
                  (const :tag "Detail headings" detail))
   :group 'org-canvas)
 
+;;;; Buffer-Local State
+
+(defvar-local org-canvas-submissions--assignment-name nil
+  "Name of the assignment shown in this buffer.")
+
+(defvar-local org-canvas-submissions--assignment-id nil
+  "Canvas ID of the assignment shown in this buffer.")
+
+(defvar-local org-canvas-submissions--data nil
+  "Cached submission data for toggle/refresh.")
+
+(defvar-local org-canvas-submissions--current-view nil
+  "Current view: `summary' or `detail'.")
+
+(defvar-local org-canvas-submissions--original-scores nil
+  "Alist of (user-id . score-string) captured at render time.")
+
+;;;; Minor Mode
+
+(defvar org-canvas-submissions-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "g") #'org-canvas-submissions-refresh)
+    (define-key map (kbd "v") #'org-canvas-submissions-toggle-view)
+    (define-key map (kbd "d") #'org-canvas-submissions-download-attachments)
+    (define-key map (kbd "c") #'org-canvas-submissions-add-comment)
+    (define-key map (kbd "S") #'org-canvas-submissions-push-grades)
+    map)
+  "Keymap for `org-canvas-submissions-mode'.")
+
+(define-minor-mode org-canvas-submissions-mode
+  "Minor mode for viewing Canvas submissions.
+\\{org-canvas-submissions-mode-map}"
+  :lighter " Submissions"
+  :keymap org-canvas-submissions-mode-map)
+
 ;;;; Data Fetching
 
 (defun org-canvas--submissions-fetch-assignments ()
@@ -351,7 +386,7 @@ Must be on or inside a student heading in detail view."
     (org-canvas-api-request 'PUT url
       :data `((comment . ((text_comment . ,text)))))))
 
-(defun org-canvas--submissions-append-comment-to-buffer (user-name text)
+(defun org-canvas--submissions-append-comment-to-buffer (_user-name text)
   "Append posted comment TEXT to the Comments section for USER-NAME.
 Searches from point for the ** Comments sub-heading under the current heading."
   (let ((inhibit-read-only t))
@@ -474,7 +509,6 @@ VIEW is `summary' or `detail'."
   (let* ((dir (expand-file-name org-canvas-submissions-directory))
          (filename (format "%s.org"
                            (org-canvas--submissions-sanitize-filename assignment-name)))
-         (filepath (expand-file-name filename dir))
          (buf (get-buffer-create (format "*submissions: %s*" assignment-name))))
     (make-directory dir t)
     (with-current-buffer buf
@@ -495,38 +529,6 @@ VIEW is `summary' or `detail'."
         (org-canvas-submissions-mode 1)))
     (switch-to-buffer buf)))
 
-;;;; Minor Mode
-
-(defvar-local org-canvas-submissions--assignment-name nil
-  "Name of the assignment shown in this buffer.")
-
-(defvar-local org-canvas-submissions--assignment-id nil
-  "Canvas ID of the assignment shown in this buffer.")
-
-(defvar-local org-canvas-submissions--data nil
-  "Cached submission data for toggle/refresh.")
-
-(defvar-local org-canvas-submissions--current-view nil
-  "Current view: `summary' or `detail'.")
-
-(defvar-local org-canvas-submissions--original-scores nil
-  "Alist of (user-id . score-string) captured at render time for change detection.")
-
-(defvar org-canvas-submissions-mode-map
-  (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "g") #'org-canvas-submissions-refresh)
-    (define-key map (kbd "v") #'org-canvas-submissions-toggle-view)
-    (define-key map (kbd "d") #'org-canvas-submissions-download-attachments)
-    (define-key map (kbd "c") #'org-canvas-submissions-add-comment)
-    (define-key map (kbd "S") #'org-canvas-submissions-push-grades)
-    map)
-  "Keymap for `org-canvas-submissions-mode'.")
-
-(define-minor-mode org-canvas-submissions-mode
-  "Minor mode for viewing Canvas submissions.
-\\{org-canvas-submissions-mode-map}"
-  :lighter " Submissions"
-  :keymap org-canvas-submissions-mode-map)
 
 ;;;; Grade Writing
 

@@ -524,7 +524,7 @@ Return the matching item alist, or nil if not found."
 
 ;;;; 4. Stage: Finalization
 
-(defun org-canvas--module-sync-children (data response)
+(defun org-canvas--module-sync-children (_data response)
   "Sync module items for the module described by DATA and RESPONSE."
   (let ((module-id (alist-get 'id response))
         (modules-file-dir (file-name-directory

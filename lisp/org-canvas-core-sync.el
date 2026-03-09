@@ -45,7 +45,7 @@ Bound by `org-canvas-sync' to aggregate success/skip/fail totals.")
 E.g., \"PUBLISHED\" → :published-raw, \"POST_AT\" → :post-at-raw."
   (intern (format ":%s-raw" (downcase (replace-regexp-in-string "_" "-" prop-name)))))
 
-(defun org-canvas--parse-gen-transform-form (prop-name data-key type default values)
+(defun org-canvas--parse-gen-transform-form (prop-name _data-key type default values)
   "Generate the transform expression for a single property.
 PROP-NAME is the Org property name.  DATA-KEY is the output plist key.
 TYPE is one of: string, boolean, timestamp, number, enum.
@@ -74,26 +74,28 @@ DEFAULT is the default value for booleans.  VALUES is the enum list."
 FEATURE is an unquoted symbol like \\='announcement.
 
 ARGS is a plist with the following keys:
-  :properties - List of (ORG-PROP DATA-KEY &rest OPTS) property specs.
-                Each spec defines one Org property to read and transform.
-                OPTS is a plist: :type (string|boolean|timestamp|number|enum),
-                :default (for booleans/enums), :values (for enums).
-  :body - Output plist key for exported HTML body (nil = no body export).
+  :properties - List of (ORG-PROP DATA-KEY &rest OPTS) specs.
+    Each spec defines one Org property to read and transform.
+    OPTS plist: :type (string|boolean|timestamp|number|enum),
+    :default (for booleans/enums), :values (for enums).
+  :body - Output plist key for exported HTML body (nil = none).
   :title-key - Output plist key for the title (default :title).
-  :id-key - Output plist key for the canvas ID (default :canvas-id).
-  :id-property - Org property name for canvas ID (default \"CANVAS_ID\").
-  :entity-name - Display name for error messages (default: capitalized FEATURE).
-  :after-read - (lambda (raw pom) raw) — post-read hook for link resolution.
-  :after-transform - (lambda (data) data) — post-transform hook for computed fields.
+  :id-key - Output plist key for canvas ID (default :canvas-id).
+  :id-property - Org property for canvas ID (default CANVAS_ID).
+  :entity-name - Display name for errors (default: FEATURE).
+  :after-read - Post-read hook: (lambda (raw pom) raw).
+  :after-transform - Post-transform hook: (lambda (data) data).
 
 Example:
   (org-canvas-define-parse announcement
     :body :message
     :properties
-    ((\"PUBLISHED\"      :published                :type boolean  :default t)
-     (\"POST_AT\"        :delayed_post_at          :type timestamp)
-     (\"ALLOW_COMMENTS\" :allow_discussion_comments :type boolean)
-     (\"SPECIFIC_SECTIONS\" :specific_sections      :type string)))"
+    ((\"PUBLISHED\"      :published      :type boolean :default t)
+     (\"POST_AT\"        :delayed_post_at :type timestamp)
+     (\"ALLOW_COMMENTS\" :allow_discussion_comments
+                        :type boolean)
+     (\"SPECIFIC_SECTIONS\" :specific_sections
+                           :type string)))"
   (declare (indent 1))
   (let* ((feature-name (symbol-name feature))
          (read-fn (intern (format "org-canvas--%s-read-props" feature-name)))

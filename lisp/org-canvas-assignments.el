@@ -38,6 +38,10 @@
 (require 'ox-html)
 (require 'elog)
 
+;;;; Forward Declarations
+
+(defvar org-canvas-assignment-groups-file)
+
 ;;;; Configuration
 
 (defcustom org-canvas-assignments-file (org-canvas--path "assignments.org")

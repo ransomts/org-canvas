@@ -577,7 +577,7 @@ HAS-OUTCOMES controls whether a 4th outcome column is emitted."
               (insert (format "| > %s | %s | | |\n" rdesc rpts))
             (insert (format "| > %s | %s | |\n" rdesc rpts))))))))
 
-(defun org-canvas--rubric-pull-item (item pos)
+(defun org-canvas--rubric-pull-item (item _pos)
   "Set per-item properties for a pulled rubric.
 ITEM is the API response alist, POS is the heading position."
   (let ((criteria (alist-get 'data item)))

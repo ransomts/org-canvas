@@ -751,7 +751,7 @@ QUIZ-CANVAS-ID is the Canvas ID of the quiz."
     ('timestamp (org-canvas--pull-set-timestamp-property pos prop-name val))
     ('string-nonnull (when val (org-canvas-org-set-property pos prop-name val)))))
 
-(defun org-canvas--quiz-pull-set-properties (pos quiz file)
+(defun org-canvas--quiz-pull-set-properties (pos quiz _file)
   "Set all properties on heading at POS from QUIZ API response.
 FILE is the quizzes.org path, used for group link resolution."
   (org-canvas-org-save-sync-state pos (alist-get 'id quiz))

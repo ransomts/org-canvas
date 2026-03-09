@@ -137,7 +137,7 @@ Logs warnings for invalid roles.  Returns RAW unchanged."
 
 ;;;; Pull
 
-(defun org-canvas--page-pull-item (item pos)
+(defun org-canvas--page-pull-item (item _pos)
   "Set per-item properties for a pulled page.
 ITEM is the API response alist, POS is the heading position.
 Fetches the full page detail to get body content."

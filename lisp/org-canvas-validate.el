@@ -120,7 +120,7 @@ Returns nil (valid) or an issue plist."
    ((not (org-canvas--resolve-link-property value id-property source-file))
     (org-canvas--validate-make-issue 'warning loc property unresolved-msg))))
 
-(defun org-canvas--validate-check-link (value property target-file-var id-property loc)
+(defun org-canvas--validate-check-link (value property _target-file-var id-property loc)
   "Check that VALUE is a valid Org file link and resolves.
 PROPERTY is the property name for error messages.
 TARGET-FILE-VAR is the symbol of the target file variable.

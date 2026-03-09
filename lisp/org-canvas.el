@@ -185,7 +185,7 @@ LABEL is used for logging (e.g., \"Pages\")."
 ;; Delete in REVERSE dependency order:
 ;;   Tier 2:  Modules (reference all content types)
 ;;   Tier 1:  Assignments, Quizzes (may reference Tier 0)
-;;   Tier 0:  Everything else (no dependencies, safe to delete last)
+;;   Tier 0:  Everything else (no deps, safe to delete last)
 (defconst org-canvas--delete-tiers
   '(((org-canvas-delete-all-modules "Modules"))
     ((org-canvas-delete-all-assignments "Assignments")
@@ -201,6 +201,23 @@ LABEL is used for logging (e.g., \"Pages\")."
      (org-canvas-delete-all-outcomes "Outcomes")
      (org-canvas-delete-all-calendar-events "Calendar Events")))
   "Delete tiers in reverse dependency order.  Each tier is a list of (FN LABEL) pairs.")
+
+(defconst org-canvas--status-content-types
+  '(("Assignments"       org-canvas-assignments-file       "CANVAS_ID")
+    ("Pages"             org-canvas-pages-file             "CANVAS_URL")
+    ("Quizzes"           org-canvas-quizzes-file           "CANVAS_ID")
+    ("Modules"           org-canvas-modules-file           "CANVAS_ID")
+    ("Files"             org-canvas-files-file             "CANVAS_ID")
+    ("Outcomes"          org-canvas-outcomes-file          "CANVAS_ID")
+    ("Rubrics"           org-canvas-rubrics-file           "CANVAS_ID")
+    ("Discussions"       org-canvas-discussions-file       "CANVAS_ID")
+    ("Announcements"     org-canvas-announcements-file     "CANVAS_ID")
+    ("Assignment Groups" org-canvas-assignment-groups-file "CANVAS_ID")
+    ("Sections"          org-canvas-sections-file          "CANVAS_ID")
+    ("New Quizzes"       org-canvas-new-quizzes-file       "CANVAS_ASSIGNMENT_ID")
+    ("Group Categories"  org-canvas-group-categories-file  "CANVAS_ID")
+    ("Calendar Events"   org-canvas-calendar-events-file   "CANVAS_ID"))
+  "Content types for status reporting: (label file-var id-property).")
 
 ;;;###autoload
 (defun org-canvas-delete-all ()
@@ -236,23 +253,6 @@ Deletion order is reverse of sync order to respect dependencies."
     (message "Global Delete Complete. See *canvas-log*.")))
 
 ;;;; Status Overview
-
-(defconst org-canvas--status-content-types
-  '(("Assignments"       org-canvas-assignments-file       "CANVAS_ID")
-    ("Pages"             org-canvas-pages-file             "CANVAS_URL")
-    ("Quizzes"           org-canvas-quizzes-file           "CANVAS_ID")
-    ("Modules"           org-canvas-modules-file           "CANVAS_ID")
-    ("Files"             org-canvas-files-file             "CANVAS_ID")
-    ("Outcomes"          org-canvas-outcomes-file          "CANVAS_ID")
-    ("Rubrics"           org-canvas-rubrics-file           "CANVAS_ID")
-    ("Discussions"       org-canvas-discussions-file       "CANVAS_ID")
-    ("Announcements"     org-canvas-announcements-file     "CANVAS_ID")
-    ("Assignment Groups" org-canvas-assignment-groups-file "CANVAS_ID")
-    ("Sections"          org-canvas-sections-file          "CANVAS_ID")
-    ("New Quizzes"       org-canvas-new-quizzes-file       "CANVAS_ASSIGNMENT_ID")
-    ("Group Categories"  org-canvas-group-categories-file  "CANVAS_ID")
-    ("Calendar Events"   org-canvas-calendar-events-file   "CANVAS_ID"))
-  "Content types for status reporting: (label file-var id-property).")
 
 (defun org-canvas--status-count-entries (file id-prop)
   "Count synced and pending entries in FILE using ID-PROP.
