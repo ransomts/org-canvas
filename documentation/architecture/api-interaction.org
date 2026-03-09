@@ -1,0 +1,444 @@
+#+TITLE: API Interaction Layer
+#+AUTHOR: org-canvas
+#+STARTUP: showall
+
+This document describes how org-canvas communicates with the Canvas LMS
+REST API: request lifecycle, error recovery, rate limiting, pagination,
+file uploads, conflict detection, and credential management.
+
+* Request Lifecycle
+
+Every API call flows through a single entry point:
+=org-canvas-api-request= in =lisp/org-canvas-core-api.el=.
+
+#+begin_example
+  Caller (push-to-api, pull, delete, etc.)
+    │
+    ▼
+  org-canvas-api-request (method, url, params, data, timeout)
+    ├─ Validate credentials (org-canvas--ensure-credentials)
+    ├─ JSON-encode data payload
+    ├─ Build headers (Authorization: Bearer + Content-Type)
+    ├─ Log request (method, URL, headers with masked token)
+    ├─ Convert method symbol (uppercase → lowercase for plz)
+    └─ Execute with retry loop (org-canvas--api-execute-with-retry)
+         ├─ Call plz synchronously with :as #'json-read
+         ├─ On success: log response, return parsed JSON
+         └─ On plz-error: dispatch to error handler
+              ├─ 429 or 403+rate → sleep, retry (up to max)
+              ├─ 401 → "Token expired" error
+              ├─ 403 (non-rate) → "Insufficient scope" error
+              └─ Other → signal error with response body
+#+end_example
+
+** Endpoint Construction
+
+=org-canvas-api-course-endpoint= builds course-scoped URLs:
+
+#+begin_src elisp
+(org-canvas-api-course-endpoint "assignments/%s" assignment-id)
+;; → "https://canvas.example.com/api/v1/courses/12345/assignments/456"
+#+end_src
+
+It concatenates =org-canvas-base-url= + =/api/v1/courses/= +
+=org-canvas-course-id= + =/= + the suffix (with optional format args).
+
+Some endpoints are not course-scoped (calendar events, group
+categories). These modules provide custom URL functions via
+=:post-url-fn= / =:put-url-fn= / =:list-url-fn= / =:delete-url-fn=.
+
+** Query String Building
+
+=org-canvas--api-build-query-string= converts an alist to URL-encoded
+query parameters using =url-build-query-string=. Returns empty string
+for nil input.
+
+** Method Symbol Convention
+
+The codebase uses uppercase symbols (='POST=, ='PUT=, ='GET=,
+='DELETE=) by convention. The =plz= library requires lowercase (='post=,
+='put=). Conversion happens in =org-canvas-api-request=:
+
+#+begin_src elisp
+(intern (downcase (symbol-name method)))  ;; 'POST → 'post
+#+end_src
+
+This is important because passing uppercase symbols or keywords to plz
+causes 400 Bad Request errors.
+
+* Rate Limiting and Retries
+
+Canvas enforces rate limits and responds with either HTTP 429 or
+(non-standardly) HTTP 403 with "rate" in the body.
+
+** Retry Loop
+
+=org-canvas--api-execute-with-retry= wraps the plz call:
+
+1. Execute request
+2. On rate-limit response:
+   - Log warning with countdown
+   - Sleep =org-canvas-rate-limit-wait= seconds (default: 10)
+   - Increment retry counter
+   - If retries < =org-canvas-rate-limit-retries= (default: 3): loop
+   - If retries exhausted: signal error
+3. On success: return parsed JSON
+
+** Rate-Limit Detection
+
+=org-canvas--api-handle-plz-error= checks:
+- HTTP 429 → retryable
+- HTTP 403 with "rate" in response body → retryable
+- HTTP 401 → terminal error ("Token expired or revoked")
+- HTTP 403 (non-rate) → terminal error ("Insufficient token scope")
+- All other errors → terminal, re-signal
+
+** Configuration
+
+| Variable                          | Default | Purpose                          |
+|-----------------------------------+---------+----------------------------------|
+| =org-canvas-rate-limit-retries=   |       3 | Max retry attempts               |
+| =org-canvas-rate-limit-wait=      |      10 | Seconds between retries          |
+| =org-canvas-request-timeout=      |      15 | Per-request timeout (seconds)    |
+
+* Pagination
+
+=org-canvas-api-request-all-pages= fetches all items from paginated
+endpoints:
+
+1. Adds =per_page=100= and =page=1= to query params
+2. Fetches page, appends results
+3. If response has fewer than 100 items: done
+4. Otherwise: increment page, loop
+5. Displays progress message: "Fetching page N (M items so far)..."
+
+Returns a flat list of all items across all pages. Used by delete-all
+functions and pull functions that import Canvas items.
+
+* Error Recovery in Push Operations
+
+The generic push function =org-canvas--push-to-api= (in
+=lisp/org-canvas-core-sync.el=) handles three error scenarios.
+
+** Timeout Recovery
+
+When a request times out, the item may have been created on Canvas
+despite the timeout. The recovery pattern:
+
+#+begin_example
+  Try API call
+    On timeout:
+      IF find-fn provided:
+        Search Canvas for item by title (via org-canvas--search-item)
+        IF found: return item (success — Canvas created it)
+        ELSE: re-signal timeout error
+      ELSE: re-signal timeout error
+#+end_example
+
+The =find-fn= parameter is a module-specific search function (e.g.,
+search assignments by title). Without it, timeout is unrecoverable.
+
+=org-canvas--timeout-error-p= detects timeouts with a case-insensitive
+regex matching "Timeout" or "timed out" in both the error message and
+error-thrown fields (different callers place the indicator differently).
+
+** 404-on-PUT Recovery (Stale ID)
+
+If a PUT returns 404, the CANVAS_ID stored locally may be stale (item
+was deleted on Canvas). Recovery:
+
+#+begin_example
+  Try PUT
+    On 404 (and method is PUT):
+      Log warning: "Retrying as POST (stale ID)"
+      Try POST to create fresh item
+        On timeout in POST: timeout recovery (if find-fn)
+        On other error: re-signal
+      Return POST response
+#+end_example
+
+=org-canvas--404-on-put-p= checks both the HTTP status and method.
+
+** Item Search
+
+=org-canvas--search-item= is the generic search function used by
+timeout recovery and other lookup operations:
+
+#+begin_src elisp
+(org-canvas--search-item "assignments" title :match-field 'name)
+#+end_src
+
+It GETs from the endpoint with =search_term= parameter, then loops
+results to find an exact match on the specified field. Returns the
+matching item alist or nil. Catches and logs search failures gracefully.
+
+* Conflict Detection
+
+When =org-canvas-detect-conflicts= is non-nil (the default), PUT
+operations check whether the remote item was modified since the last
+sync.
+
+** Detection
+
+=org-canvas--conflict-check= compares timestamps:
+
+1. Read local =LAST_SYNCED= property → convert to Emacs time
+2. If no =LAST_SYNCED=: return nil (legacy item, allow push)
+3. GET remote item from Canvas
+4. If remote =updated_at= > local =LAST_SYNCED=: conflict
+5. Return =(cons 'conflict REMOTE-RESPONSE)= or nil
+
+** Resolution
+
+=org-canvas--resolve-conflict= shows an interactive diff buffer:
+
+- Header with title and timestamps (local vs remote)
+- Unified diff of body content (red for local, green for remote)
+- Action menu:
+
+| Key | Action                              |
+|-----+-------------------------------------|
+| p   | Push this item (overwrite remote)    |
+| P   | Push ALL remaining conflicts         |
+| l   | Pull this item (accept remote)       |
+| L   | Pull ALL remaining conflicts         |
+| s   | Skip this item                       |
+| S   | Skip ALL remaining conflicts         |
+
+The batch decisions (P/L/S) set =org-canvas--conflict-apply-all= so
+subsequent conflicts in the same sync run are resolved automatically.
+
+** Pull During Conflict
+
+When the user chooses "pull", =org-canvas--conflict-pull-local= calls
+the module's =pull-item-fn= to overwrite the local heading with remote
+data. It then updates =LAST_SYNCED=, =CANVAS_UPDATED_AT=, and deletes
+=PAYLOAD_HASH= (stale after pulling).
+
+The sync pipeline tracks pulled items separately with a =:pulled=
+counter.
+
+** Integration with Push
+
+=org-canvas--push-check-and-resolve-conflict= orchestrates the full
+flow:
+
+1. Call =conflict-check= to detect
+2. If no conflict: return ='push=
+3. If conflict: call =resolve-conflict= for user decision
+4. Return ='push=, ='pulled=, or ='skip=
+
+The push function checks this return value and either proceeds,
+returns ='pulled=, or returns ='conflict= (for skip).
+
+* Dry-Run Mode
+
+When =org-canvas--dry-run= is non-nil, =push-to-api= logs the
+operation but makes no API call:
+
+#+begin_src elisp
+(when org-canvas--dry-run
+  (elog-info org-canvas--logger "[DRY-RUN] Would %s '%s' to %s" method title url)
+  (cl-return-from org-canvas--push-to-api '((id . "dry-run"))))
+#+end_src
+
+The sync pipeline counts these as =:dry-run= instead of =:success=.
+Invoked via =M-x org-canvas-sync-dry-run=.
+
+* File Upload (3-Step Process)
+
+Canvas requires a 3-step file upload, handled by functions in
+=lisp/org-canvas-core-api.el=.
+
+** Step 1: Notify
+
+POST to =/api/v1/courses/:id/files= with filename, size, and
+content_type. Canvas returns an =upload_url= and =upload_params= (form
+fields to include in the multipart upload).
+
+** Step 2: Upload
+
+=org-canvas--upload-build-multipart= constructs the multipart/form-data
+body:
+
+1. Iterate =upload_params= from Step 1, writing each as a form field
+2. Override Canvas null values:
+   - =filename: null= → actual filename
+   - =content_type: "unknown/unknown"= → guessed MIME type
+3. Encode form parts as unibyte (=raw-text=) to prevent multibyte
+   re-encoding of bytes 0x80-0xFF
+4. Append binary file content (read with =insert-file-contents-literally=
+   in a unibyte buffer)
+
+The upload uses =url-retrieve-synchronously= (not plz) with the
+separate =org-canvas-upload-timeout= (default: 120 seconds).
+
+=org-canvas--upload-parse-step2-response= extracts the response:
+- If JSON with =id= key: upload completed directly
+- If =Location= header present: needs Step 3 confirmation
+- Otherwise: error
+
+** Step 3: Confirm
+
+=org-canvas--upload-confirm= follows the Location header if needed:
+- GET the location URL → returns final file object with =id= key
+- Prepends =org-canvas-base-url= if location is a relative path
+
+** MIME Type Detection
+
+=org-canvas--guess-content-type= maps file extensions to MIME types via
+the =org-canvas--mime-type-alist= constant (80+ entries). Falls back to
+="application/octet-stream"= for unknown extensions.
+
+** Unibyte String Handling
+
+This is the most subtle part of the upload code. Emacs has two string
+types: multibyte and unibyte. Binary file content must stay unibyte
+throughout:
+
+- =concat= of multibyte + unibyte produces multibyte (re-encodes
+  0x80-0xFF bytes)
+- =url-retrieve-synchronously= rejects multibyte =url-request-data=
+- Fix: =encode-coding-string= with =raw-text= on ASCII form parts
+  before concatenating with binary content
+
+* Rubric Association
+
+=org-canvas--associate-rubric= links a rubric to an assignment or
+discussion after both are synced:
+
+#+begin_src elisp
+(org-canvas--associate-rubric assignment-id rubric-id "Assignment")
+;; POST /api/v1/courses/:id/rubric_associations
+;; Body: { rubric_association: { rubric_id: ..., association_type: ... } }
+#+end_src
+
+This is called as a =:post-fn= callback during finalize. Errors are
+caught and logged as warnings (non-fatal — the assignment still syncs).
+
+* Credentials
+
+** Storage
+
+=org-canvas-credentials.el= is a separate, gitignored file:
+
+#+begin_src elisp
+(setq org-canvas-api-token "...")
+(setq org-canvas-course-id "12345")
+(setq org-canvas-base-url "https://canvas.example.com")
+(setq org-canvas-directory "/path/to/course")
+#+end_src
+
+** Loading
+
+In =org-canvas-core-config.el=:
+
+#+begin_src elisp
+(require 'org-canvas-credentials nil t)
+#+end_src
+
+The =nil t= arguments mean: don't signal error if file is missing. This
+allows the package to load without credentials (functions will error on
+first API call with a helpful message).
+
+** Validation
+
+=org-canvas--ensure-credentials= is called at the start of every API
+request. It checks that both =org-canvas-api-token= and
+=org-canvas-course-id= are non-nil and non-empty, signaling an error
+with "Run M-x org-canvas-init" if not.
+
+** Preflight Check
+
+=org-canvas--preflight-check= (in =lisp/org-canvas-core-org.el=)
+validates connectivity before a sync session:
+
+1. Call =org-canvas--ensure-credentials=
+2. GET the course endpoint (=/api/v1/courses/:id=)
+3. Log the course name from the response
+
+Called by =org-canvas-sync= at the start. If this fails, no items are
+synced.
+
+* Request Logging
+
+** What Gets Logged
+
+Every request logs: method, URL, query params, timeout, and headers
+(with the API token masked to =****...last4=).
+
+When =org-canvas-log-request-bodies= is non-nil, also logs:
+- Full JSON payload (pretty-printed)
+- Reconstructed curl command (copy-pasteable for debugging)
+
+** curl Command Generation
+
+=org-canvas--build-curl-command= generates shell-executable curl
+commands with =$CANVAS_TOKEN= placeholder:
+
+#+begin_example
+curl "https://canvas.example.com/api/v1/courses/123/assignments" \
+  -X POST \
+  -H "Authorization: Bearer $CANVAS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"assignment":{"name":"HW1","points_possible":100}}'
+#+end_example
+
+This is invaluable for isolating whether issues are in the Elisp HTTP
+library or the API call itself.
+
+** Log Clearing
+
+=org-canvas-clear-log= clears the =*canvas-log*= buffer and log file.
+Each individual sync function calls it at the start.
+
+During master sync (=org-canvas-sync=), =org-canvas--inhibit-log-clear=
+is bound to =t= so sub-phase sync functions don't clear each other's
+logs. The result is a single continuous log for the entire sync session.
+
+* Delete Operations
+
+** Delete All
+
+=org-canvas--delete-all-items= orchestrates bulk deletion:
+
+1. Fetch all items from Canvas via =org-canvas-api-request-all-pages=
+2. Filter with optional =skip-fn= (e.g., skip front page)
+3. Delete each item via =org-canvas--delete-items-queued=
+4. Clean local Org properties (CANVAS_ID, LAST_SYNCED, etc.)
+5. Log summary (N succeeded, M failed)
+
+Each item is deleted independently — failures on one item don't stop
+the others. Progress messages show =[N/M]= counts.
+
+** Delete at Point
+
+=org-canvas--delete-item-at-point= deletes a single item:
+
+1. Read CANVAS_ID from heading (error if absent)
+2. Prompt user for confirmation
+3. DELETE from Canvas
+4. Clean local sync properties
+5. Optional =post-delete-fn= callback
+
+** Delete Macros
+
+=org-canvas-define-delete-all= and =org-canvas-define-delete-at-point=
+generate module-specific delete functions declaratively, similar to how
+=org-canvas-define-sync= generates sync functions.
+
+* Configuration Reference
+
+| Variable                      | Default  | Purpose                             |
+|-------------------------------+----------+-------------------------------------|
+| =org-canvas-base-url=           | (varies) | Canvas instance URL                 |
+| =org-canvas-api-token=          | =""=       | Bearer token for authentication     |
+| =org-canvas-course-id=          | =""=       | Numeric course ID                   |
+| =org-canvas-request-timeout=    | 15       | Seconds per API request             |
+| =org-canvas-upload-timeout=     | 120      | Seconds for file uploads            |
+| =org-canvas-rate-limit-retries= | 3        | Max retries on rate limit           |
+| =org-canvas-rate-limit-wait=    | 10       | Seconds between retries             |
+| =org-canvas-log-request-bodies= | nil      | Log full payloads and curl commands |
+| =org-canvas-detect-conflicts=   | t        | Check for remote changes before PUT |
+| =org-canvas-log-destination=    | ='both=    | Log to buffer, file, or both        |
+| =org-canvas-log-level=          | ='debug=   | Minimum log level                   |

@@ -1,0 +1,332 @@
+#+TITLE: Pull System
+#+AUTHOR: org-canvas
+#+STARTUP: showall
+
+This document describes how org-canvas imports content from Canvas into
+Org files: the pull macro, core helpers, module-specific pull functions,
+conflict-pull integration, link resolution, and overwrite protection.
+
+* Overview
+
+Pulling is the Canvas-to-Org direction. It fetches items from the Canvas
+API and creates or updates Org headings with the corresponding
+properties and body content.
+
+There are three contexts where pulling occurs:
+
+1. *Full pull* — =org-canvas-pull-{feature}= fetches all items for a
+   module and upserts them into the Org file
+2. *Pull-all* — =org-canvas-pull-all= orchestrates full pulls across
+   all modules in dependency order
+3. *Conflict pull* — During a push, if a conflict is detected and the
+   user chooses "pull", the single item is overwritten with the remote
+   version
+
+* Pull Macro (org-canvas-define-pull)
+
+Located in =lisp/org-canvas-core-org.el=. Generates an interactive
+=org-canvas-pull-{feature}= function.
+
+** Parameters
+
+| Parameter      | Required | Default        | Purpose                           |
+|----------------+----------+----------------+-----------------------------------|
+| =:file=        | yes      |                | Symbol for file path defcustom    |
+| =:endpoint=    | yes      |                | API endpoint suffix               |
+| =:item-fn=     | yes      |                | Function =(item pos)= per item    |
+| =:params=      | no       | nil            | Extra GET query params alist      |
+| =:skip-fn=     | no       | nil            | Predicate =(item)= to skip        |
+| =:id-field=    | no       | ='id=          | Alist key for Canvas ID           |
+| =:title-field= | no       | ='title=       | Alist key for item title          |
+| =:id-property= | no       | ="CANVAS_ID"=  | Org property name for Canvas ID   |
+
+** Generated Pipeline
+
+The generated function executes five steps:
+
+1. *Initialize* — clear log, display buffer, validate credentials via
+   =org-canvas--preflight-check=
+2. *Fetch* — call =org-canvas-api-request-all-pages= to get all remote
+   items
+3. *Confirm overwrite* — if the file exists and has content, prompt
+   the user
+4. *Create file* — if the file doesn't exist, create an empty one
+5. *Upsert items* — for each item (unless =:skip-fn= returns non-nil):
+   - Call =org-canvas--pull-process-item= to find or create the heading
+   - Call =:item-fn= to set module-specific properties and body
+   - Save the buffer
+
+** Example
+
+#+begin_src elisp
+(org-canvas-define-pull announcements
+  :file org-canvas-announcements-file
+  :endpoint "discussion_topics"
+  :params '(("only_announcements" . "true"))
+  :item-fn #'org-canvas--announcement-pull-item)
+;; Generates: org-canvas-pull-announcements
+#+end_src
+
+* Pull-Item Macro (org-canvas-define-pull-item)
+
+Located in =lisp/org-canvas-core-org.el=. Generates an internal
+=org-canvas--{feature}-pull-item= function that sets Org properties
+from an API response.
+
+** Parameters
+
+| Parameter     | Required | Purpose                                 |
+|---------------+----------+-----------------------------------------|
+| =:body-field= | no      | API alist key for body HTML             |
+| =:after-pull= | no      | Function =(item pos)= for custom logic  |
+| =:properties= | yes     | List of =(API-FIELD ORG-PROPERTY :type TYPE)= |
+
+** Property Types
+
+| Type       | Behavior                                    |
+|------------+---------------------------------------------|
+| =string=   | Pass-through (default)                      |
+| =boolean=  | Sets "true"/"false" from truthy/falsy value |
+| =timestamp= | Converts ISO8601 to Org timestamp          |
+| =number=   | Converts to number string                   |
+| =non-null= | Sets only if value is non-nil and not =:json-false= |
+
+** Example
+
+#+begin_src elisp
+(org-canvas-define-pull-item announcement
+  :body-field message
+  :properties
+  ((delayed_post_at "DELAYED_POST_AT" :type timestamp)))
+;; Generates: org-canvas--announcement-pull-item (item pos)
+#+end_src
+
+* Core Pull Helpers
+
+All located in =lisp/org-canvas-core-org.el=.
+
+** org-canvas--pull-upsert-heading
+
+=(file canvas-id &optional title id-property)=
+
+Finds or creates a level-1 heading in FILE matched by CANVAS-ID:
+
+- Searches existing headings by =id-property= (default "CANVAS_ID")
+- If found: returns existing heading's point
+- If not found: creates new heading at end of buffer with TITLE
+- Opens file via =find-file-noselect=
+
+** org-canvas--pull-process-item
+
+=(item file pull-config)=
+
+Orchestrates a single item's upsert:
+
+1. Calls =pull-upsert-heading= to find or create the heading
+2. Updates heading title via =org-edit-headline= (if title present)
+3. Saves CANVAS_ID via =org-canvas-org-save-sync-state=
+4. Calls the module's =:item-fn= to set properties and body
+
+The =pull-config= plist carries =:id-field=, =:title-field=,
+=:id-property=, and =:item-fn=.
+
+** org-canvas--pull-insert-body
+
+=(body-html)=
+
+Replaces the current heading's body with Org-converted HTML:
+
+1. Finds body region (after metadata, before end of subtree)
+2. Deletes existing body
+3. Converts HTML via =org-canvas--html-to-org= (pandoc)
+4. Inserts converted text
+5. No-op if =body-html= is nil or empty
+
+** org-canvas--pull-set-timestamp-property
+
+=(pos property iso8601)=
+
+Converts an ISO8601 string to an Org timestamp and sets it as a
+property. No-op if the ISO8601 value is nil.
+
+** org-canvas--html-to-org
+
+=(html)=
+
+Converts HTML to Org format via pandoc. Falls back to raw HTML with a
+warning prefix if pandoc is not installed or conversion fails.
+
+** org-canvas--html-to-org-inline
+
+=(html)=
+
+Delegates to =html-to-org=, then collapses newlines to spaces and
+trims. For contexts where multi-line output would break formatting
+(table cells, list items, heading titles).
+
+* Pull-All Orchestration
+
+=org-canvas-pull-all= in =lisp/org-canvas.el= coordinates pulling
+across all modules.
+
+** Pull Tiers
+
+| Tier | Modules                                                    |
+|------+------------------------------------------------------------|
+|    0 | Settings                                                   |
+|    1 | Sections, assignment groups, group categories, outcomes,   |
+|      | rubrics, pages, files, discussions, announcements, calendar |
+|    2 | Assignments, quizzes, new quizzes                          |
+|    3 | Modules                                                    |
+
+Tiers ensure dependencies are pulled first. Assignments (tier 2) may
+reference rubrics and assignment groups (tier 1). Modules (tier 3)
+reference everything.
+
+** Overwrite Protection
+
+Before pulling, =pull-all= checks for existing content:
+
+1. Counts headings with CANVAS_ID across all files
+2. First prompt: "Pull will overwrite N existing local headings.
+   Continue?"
+3. Second prompt: "This is a destructive operation. Continue?"
+4. If declined: suggests using individual =org-canvas-pull-{feature}=
+   commands instead
+
+** Safe Pull Wrapper
+
+=org-canvas--safe-pull= wraps each module's pull function. If the pull
+fails, the error is logged and the counter incremented, but pulling
+continues with the next module. A final summary reports successes and
+failures.
+
+* Conflict Pull
+
+During a push (PUT), if conflict detection finds the remote item was
+modified since the last sync, the user can choose to "pull" — accepting
+the remote version.
+
+** org-canvas--conflict-pull-local
+
+=(data remote-response pull-item-fn)=
+
+This function differs from a normal pull in that it overwrites a
+*single local heading* rather than iterating all items:
+
+1. Extracts title from remote response (checks both =title= and =name=
+   fields)
+2. Goes to heading position from =:pom= in data
+3. Updates heading title via =org-edit-headline=
+4. Calls the module's =pull-item-fn= with the remote response
+5. Updates =LAST_SYNCED= to current time
+6. Updates =CANVAS_UPDATED_AT= from remote =updated_at=
+7. *Deletes* =PAYLOAD_HASH= (stale after pulling)
+8. Saves buffer
+
+Returns ='pulled= to signal the sync pipeline to count this as a
+pulled item rather than a push or skip.
+
+** Wiring into the Sync Macro
+
+The =:pull-item-fn= parameter on =org-canvas-define-sync= is bound to
+=org-canvas--current-pull-item-fn= during the sync run. When
+=push-check-and-resolve-conflict= detects a conflict and the user
+chooses pull, it accesses this dynamic variable to call the right
+module's pull function.
+
+Modules with =:pull-item-fn=: announcements, pages, discussions,
+assignments, assignment-groups, rubrics, group-categories, calendar
+events.
+
+Modules without (too complex for automatic conflict pull): outcomes,
+files, quizzes, new-quizzes, modules.
+
+* Module-Specific Pull Implementations
+
+** Macro-Based Pull (Simple Modules)
+
+Announcements, pages, discussions, assignment-groups, group-categories,
+and calendar events use =org-canvas-define-pull= and
+=org-canvas-define-pull-item=. These modules have flat item structures
+that map directly to Org properties.
+
+** Custom Pull: Quizzes
+
+Not macro-based because quizzes contain nested questions. The pull:
+
+1. Fetches all quizzes via GET =/quizzes=
+2. For each quiz: upserts heading, sets quiz properties
+3. Fetches questions via GET =/quizzes/:id/questions=
+4. For each question: creates L2 sub-heading with question type,
+   points, body text, and answer checklist items
+
+** Custom Pull: New Quizzes
+
+Similar to quizzes but uses a different API base (=/api/quiz/v1/=
+instead of =/api/v1/=). Items are fetched per-quiz and inserted as L2
+sub-headings.
+
+** Custom Pull: Modules
+
+Modules have parent-child structure (module → items). The pull:
+
+1. Fetches modules with =include[]=items= parameter
+2. For each module: upserts heading, saves CANVAS_ID
+3. For each item: creates L2 sub-heading
+4. Resolves cross-file links (see below)
+
+** Custom Pull: Files
+
+Files are pulled with their folder structure. Each file becomes a
+heading, with folder paths represented as heading hierarchy.
+
+** Pull-Only: Sections
+
+Sections are never pushed — they're pulled from Canvas and used locally
+for override management. The pull:
+
+1. Fetches sections via GET =/sections=
+2. Matches by CANVAS_ID (allows local heading renames)
+3. Warns about stale local headings (CANVAS_ID not on Canvas)
+
+* Link Resolution During Pull
+
+When pulling modules, items reference other content by =content_id= and
+=content_type=. The module pull resolves these to Org file links:
+
+1. Map =content_type= ("Page", "Assignment", etc.) to the
+   corresponding file variable
+2. Search that file for a heading with matching =CANVAS_ID=
+3. If found: create an Org link =[[file:pages.org::*Title][Title]]=
+4. If not found: log a warning and leave the title as plain text
+
+This resolution depends on tier ordering — pages and assignments (tier
+1-2) must be pulled before modules (tier 3).
+
+* Sync State After Pull
+
+Every pulled heading receives:
+
+| Property             | Value                        | Purpose                 |
+|----------------------+------------------------------+-------------------------|
+| =CANVAS_ID=          | From API response            | Match in future syncs   |
+| =LAST_SYNCED=        | Current time                 | Conflict baseline       |
+| =CANVAS_UPDATED_AT=  | Remote =updated_at=          | Transparency            |
+| Module-specific props | From API response           | Feature data            |
+| Body                 | HTML converted to Org        | Content                 |
+
+=PAYLOAD_HASH= is not set during pull (it's set during push). After
+pulling, the next sync will compute a fresh hash.
+
+* Full Pull vs Conflict Pull
+
+| Aspect           | Full Pull                         | Conflict Pull                    |
+|------------------+-----------------------------------+----------------------------------|
+| Trigger          | =org-canvas-pull-{feature}=       | User chooses "pull" during push  |
+| Scope            | All items in module               | Single item                      |
+| Direction        | Canvas → Org (import)             | Canvas → Org (conflict resolve)  |
+| Confirmation     | Overwrite prompt before starting  | Per-item choice in diff buffer   |
+| PAYLOAD_HASH     | Not set                           | Deleted (stale after pull)       |
+| Failure handling | Continues with next item          | Returns ='pulled= to pipeline   |
+| File creation    | Creates file if missing           | File must exist (item exists)    |

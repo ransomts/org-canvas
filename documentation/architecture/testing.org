@@ -1,0 +1,447 @@
+#+TITLE: Testing Architecture
+#+AUTHOR: org-canvas
+#+STARTUP: showall
+
+This document describes the testing infrastructure: mock system, test
+helpers, generators, CI pipeline, coverage strategy, and patterns for
+writing tests.
+
+* Overview
+
+- Framework: Buttercup (RSpec-style BDD)
+- Coverage: undercover plugin (99.99%, 6732/6733 lines)
+- CI: GitHub Actions matrix (Emacs 29.3, 29.4, 30.1)
+- Local gate: pre-push hook (lint + complexity + both Emacs versions)
+- Reports: JUnit XML (Codecov test analytics), Codecov JSON (coverage)
+
+* Test Helper (test/test-helper.el)
+
+All shared test infrastructure lives in =test-helper.el=. It provides
+configuration variables, mock systems, macros, test generators,
+assertion helpers, and mock data builders.
+
+** Test Configuration Variables
+
+#+begin_src elisp
+(defvar test-org-canvas-emacs-30-p (>= emacs-major-version 30))
+(defvar test-org-canvas-base-url "https://test.canvas.example.com")
+(defvar test-org-canvas-api-token "test-token-12345")
+(defvar test-org-canvas-course-id "99999")
+(defvar test-org-canvas-request-timeout 5)
+#+end_src
+
+=test-org-canvas-emacs-30-p= is used to skip tests that depend on
+org-mode behaviors that differ between Emacs 29 and 30.
+
+* API Mock System
+
+** How It Works
+
+The mock system replaces =org-canvas-api-request= with a recording
+function that captures calls and returns canned responses.
+
+- =test-org-canvas-api-calls= — list of =(method url data)= tuples
+- =test-org-canvas-api-responses= — alist of =(url-pattern . response)=
+  for lookup
+- =test-org-canvas-mock-api-request= — records the call, looks up a
+  matching response by =string-match-p=, returns the match or a default
+  =((id . 12345) (name . "Mock Response"))=
+
+** Assertion Functions
+
+| Function                            | Returns                          |
+|-------------------------------------+----------------------------------|
+| =test-org-canvas-api-called-p=      | Non-nil if method+URL matched    |
+| =test-org-canvas-api-call-count=    | Number of recorded calls         |
+| =test-org-canvas-last-api-call=     | Most recent =(method url data)=  |
+| =expect-api-called=                 | Shorthand for called-p + expect  |
+
+** Example
+
+#+begin_src elisp
+(with-mock-api
+  (org-canvas-api-request 'POST "/api/v1/courses/99/pages" :data '((title . "Test")))
+  (expect (test-org-canvas-api-called-p 'POST "pages") :to-be-truthy)
+  (expect (test-org-canvas-api-call-count) :to-equal 1))
+#+end_src
+
+* Core Test Macros
+
+** with-org-canvas-test-config
+
+Binds all Canvas configuration variables (base URL, token, course ID,
+timeout) for the duration of the body.
+
+** with-mock-api
+
+Resets the call log and response table, replaces
+=org-canvas-api-request= with the mock, and executes the body.
+
+** with-temp-org-buffer
+
+Creates a real temporary file (not just a temp buffer), writes the
+content, opens it with =find-file-noselect=, and executes the body.
+Cleans up (kills buffer, deletes file) on exit.
+
+Why file-backed: Org-mode functions (=org-back-to-heading=,
+=org-end-of-subtree=, =org-get-heading=) behave differently in
+file-backed buffers than =with-temp-buffer=. Some don't recognize
+heading structure at all in non-file buffers, especially on Emacs 29.
+
+#+begin_src elisp
+(with-temp-org-buffer
+ "* Heading
+:PROPERTIES:
+:CANVAS_ID: 123
+:END:
+"
+ (org-back-to-heading)
+ (should (equal (org-entry-get (point) "CANVAS_ID") "123")))
+#+end_src
+
+** with-sync-test-env
+
+Suppresses side effects during sync testing by replacing
+=org-canvas-clear-log= and =display-buffer= with no-ops.
+
+** with-html-to-org-identity
+
+Replaces =org-canvas--html-to-org= with identity. Used in pull tests
+where HTML conversion is not the focus.
+
+** with-nonexistent-canvas-files
+
+Binds all 14 =org-canvas-*-file= variables to nonexistent paths. Used
+in integration tests that check graceful handling of missing files.
+
+Important: must bind individual file variables (not just
+=org-canvas-directory=) because =defcustom= defaults are evaluated at
+load time.
+
+* Test Generators
+
+Generators reduce boilerplate by creating standard tests from a spec.
+
+** test-org-canvas-define-common-parse-tests
+
+Call inside a =describe= block. Generates 4 tests:
+
+1. "includes pom in data" — verifies =:pom= is present
+2. "extracts canvas-id when present" — verifies ID extraction
+3. "returns nil canvas-id for new items" — verifies nil when absent
+4. "errors on empty title" — verifies error on blank heading
+
+Options: =:id-property=, =:id-key=, =:extra-props=, =:body=.
+
+#+begin_src elisp
+(describe "org-canvas--page-parse-entry"
+  (test-org-canvas-define-common-parse-tests
+   #'org-canvas--page-parse-entry
+   :id-property "CANVAS_URL"
+   :id-key :canvas-url))
+#+end_src
+
+** test-org-canvas-define-common-transform-tests
+
+Generates type-specific tests from a =:tests= spec list. Each spec
+declares a raw key, output key, and type (boolean, timestamp, string).
+Automatically generates appropriate assertions per type.
+
+** test-org-canvas-define-common-push-tests
+
+Generates 2 tests: "uses POST for new items" and "uses PUT for
+existing items". Options: =:endpoint=, =:id-key=.
+
+** with-pull-property-test
+
+Macro for single-property pull assertions:
+
+#+begin_src elisp
+(with-pull-property-test
+ #'org-canvas--page-pull-item
+ '((title . "Page") (body . "<p>Hello</p>"))
+ "PUBLISHED" :to-equal "true")
+#+end_src
+
+Creates a temp buffer with a heading, calls the pull function, and
+asserts the property value.
+
+* Mock Data Builders
+
+10 builder functions generate realistic Canvas API response alists with
+sensible defaults. Each accepts an optional overrides alist:
+
+| Builder                             | Module          |
+|-------------------------------------+-----------------|
+| =test-org-canvas-make-page=         | Pages           |
+| =test-org-canvas-make-assignment=   | Assignments     |
+| =test-org-canvas-make-discussion=   | Discussions     |
+| =test-org-canvas-make-announcement= | Announcements   |
+| =test-org-canvas-make-module=       | Modules         |
+| =test-org-canvas-make-rubric=       | Rubrics         |
+| =test-org-canvas-make-quiz=         | Quizzes         |
+| =test-org-canvas-make-calendar-event= | Calendar      |
+| =test-org-canvas-make-outcome=      | Outcomes        |
+| =test-org-canvas-make-group-category= | Group Cats    |
+| =test-org-canvas-make-submission=   | Submissions     |
+
+#+begin_src elisp
+(let ((resp (test-org-canvas-make-assignment
+             '((name . "Custom") (points_possible . 50)))))
+  ;; resp has all default fields except name and points
+  )
+#+end_src
+
+* Standard Feature Test Structure
+
+Every feature module test follows this layout:
+
+#+begin_example
+  describe "transform-props"     ;; Pure function tests (no buffer)
+  describe "parse-entry"         ;; Buffer-based property extraction
+    → common parse tests via generator
+    → module-specific property tests
+  describe "build-payload"       ;; Data → API format
+  describe "push-to-api"         ;; POST/PUT with error recovery
+    → common push tests via generator
+  describe "finalize"            ;; Save CANVAS_ID and sync state
+  describe "sync-{feature}s"    ;; Full pipeline integration
+  describe "pull-item"           ;; Canvas → Org property setting
+    → with-pull-property-test for each property
+  describe "delete-at-point"     ;; Single item deletion
+  describe "delete-all"          ;; Bulk deletion
+#+end_example
+
+* Advanced Mock Patterns
+
+** Direct plz Mocking
+
+For testing =org-canvas-api-request= internals (how it calls plz),
+mock =plz= directly:
+
+#+begin_src elisp
+(cl-letf (((symbol-function 'plz)
+           (lambda (_method _url &rest args)
+             (setq captured-body (plist-get args :body))
+             '((id . 1)))))
+  (org-canvas-api-request 'POST url :data '((title . "Test")))
+  (expect captured-body :to-match "title"))
+#+end_src
+
+** plz-error Construction
+
+#+begin_src elisp
+(cl-letf (((symbol-function 'plz)
+           (lambda (_method _url &rest _args)
+             (signal 'plz-error
+                     (make-plz-error
+                      :response (make-plz-response
+                                 :status 429
+                                 :body "Rate limited"))))))
+  ...)
+#+end_src
+
+Note: =signal= takes the struct directly (not wrapped in =list=).
+
+** Interactive Prompt Mocking
+
+#+begin_src elisp
+;; Mock y-or-n-p
+(cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+  (org-canvas-delete-assignment-at-point))
+
+;; Mock completing-read
+(cl-letf (((symbol-function 'completing-read)
+           (lambda (_prompt _choices &rest _args) "selected")))
+  (call-interactively #'org-canvas-init))
+#+end_src
+
+** Sequential API Responses
+
+When a function makes multiple API calls with different expected
+responses:
+
+#+begin_src elisp
+(let ((call-count 0))
+  (cl-letf (((symbol-function 'org-canvas-api-request)
+             (lambda (method url &rest _args)
+               (cl-incf call-count)
+               (cond
+                ((string-match "quizzes$" url) '((id . 200)))
+                ((string-match "questions$" url) '((id . 300)))
+                (t '((id . 999)))))))
+    (org-canvas--sync-quiz-questions ...)
+    (expect call-count :to-equal 2)))
+#+end_src
+
+* Emacs 29 vs 30 Compatibility
+
+** Skip Pattern
+
+#+begin_src elisp
+(it "test requiring newer org-mode"
+  (unless test-org-canvas-emacs-30-p
+    (signal 'buttercup-pending "Requires Emacs 30+ org-mode"))
+  ;; test body
+  )
+#+end_src
+
+** Skipped Tests (6 total)
+
+- Module item SubHeader parsing (=org-back-to-heading= differences)
+- Module link type detection from filename
+- Quiz numerical answer parsing (exact and range)
+
+** The :type Keyword Bug (Emacs 29)
+
+Buttercup's =expect= macro expands to =oclosure-lambda= which shadows
+the =:type= keyword on Emacs 29. Fix: pre-bind:
+
+#+begin_src elisp
+;; WRONG on Emacs 29 (silently returns nil):
+(expect (plist-get result :type) :to-equal "Foo")
+
+;; CORRECT:
+(let* ((result-type (plist-get result :type)))
+  (expect result-type :to-equal "Foo"))
+#+end_src
+
+Only =:type= is affected; other keywords work fine.
+
+** Transient Layout Format
+
+- Emacs 29 (transient 0.4): Layout is =(list of columns)=
+- Emacs 30 (transient 0.7+): Layout is =[nil nil (list of columns)]=
+
+=test-org-canvas-transient-has-command-p= handles both formats.
+
+* CI Pipeline
+
+** GitHub Actions Matrix
+
+#+begin_example
+  Test job:
+    Matrix: Emacs 29.3, 29.4, 30.1
+    ├─ Emacs 29.x: eldev test (no coverage, fast)
+    └─ Emacs 30.1: eldev test -u "on,codecov,dontsend" (with coverage)
+
+  Coverage upload (30.1 only):
+    codecov/codecov-action@v5 → coverage/coverage.json
+
+  Test results upload (30.1 only):
+    codecov/codecov-action@v5 → test-results.xml (report_type: test_results)
+    Condition: !cancelled() (uploads even if tests failed)
+
+  Lint job: eldev lint (30.1 only)
+
+  Complexity job: eldev complexity (30.1 only)
+#+end_example
+
+** JUnit XML Output
+
+Enabled by environment variable =ELDEV_JUNIT=1=. Configured in the
+Eldev file via =with-eval-after-load 'buttercup= (must load after
+buttercup is installed). Output path controlled by
+=JUNIT_REPORT_FILE=.
+
+* Pre-Push Hook
+
+The =.githooks/pre-push= hook runs four gates:
+
+| Gate | Command                                       | Threshold  |
+|------+-----------------------------------------------+------------|
+|    1 | =eldev lint=                                  | 0 warnings |
+|    2 | =eldev complexity=                            | 0 above 15 |
+|    3 | =eldev test= on Emacs 29 (via nix-shell)      | 0 failures |
+|    4 | =eldev test= with coverage on Emacs 30 (nix)   | >= 99%     |
+
+Gate 3 uses =nix-shell= with a pinned nixpkgs archive for Emacs 29.
+Gate 4 uses a separate pinned archive for Emacs 30. Coverage is parsed
+from the Codecov JSON output.
+
+* Eldev Test Configuration
+
+Key settings in the =Eldev= file:
+
+#+begin_src elisp
+;; Framework
+(setf eldev-test-framework 'buttercup)
+(eldev-add-extra-dependencies 'test 'buttercup)
+(eldev-add-extra-dependencies 'test 'buttercup-junit)
+
+;; Coverage
+(eldev-use-plugin 'undercover)
+(setf eldev-undercover-fileset '("lisp/org-canvas.el"
+                                  "lisp/org-canvas-core.el"
+                                  ;; ... all 23 source files
+                                  ))
+
+;; Test discovery
+(setf eldev-test-fileset '("./test/*.el"))
+(push "test" eldev-project-source-dirs)
+
+;; JUnit reporter (activated by ELDEV_JUNIT env var)
+(when (getenv "ELDEV_JUNIT")
+  (with-eval-after-load 'buttercup
+    (require 'buttercup-junit)
+    (setq buttercup-reporter #'buttercup-junit-reporter)
+    (setq buttercup-junit-result-file
+          (or (getenv "JUNIT_REPORT_FILE") "test-results.xml"))))
+#+end_src
+
+* Coverage Strategy
+
+** Instrumented Files
+
+All 23 source files in =lisp/= are instrumented. Test files, vendor
+directory, and scripts are excluded.
+
+** Running Coverage Locally
+
+#+begin_src bash
+# Text report (console summary)
+eldev test -u "on,text,dontsend"
+
+# Codecov JSON (for CI upload)
+eldev test -u "on,codecov,dontsend" -U coverage/coverage.json
+#+end_src
+
+** Known Quirks
+
+- Some =elog-debug= calls with inline =if= expressions may not register
+  as covered even when executed
+- Lines in version-dependent code paths (Emacs 29 only) may not be
+  covered when running on Emacs 30
+
+* Running Tests
+
+#+begin_src bash
+eldev test                    # All tests
+eldev test "pattern"          # Tests matching pattern (no -p flag)
+eldev lint                    # Check for warnings
+eldev complexity              # Cognitive complexity metrics
+./.githooks/pre-push          # Full pre-push gate (both Emacs versions)
+#+end_src
+
+Emacs 29 locally via Nix:
+
+#+begin_src bash
+nix-shell -I nixpkgs=https://github.com/NixOS/nixpkgs/archive/nixos-24.05.tar.gz \
+  -p emacs29-nox --run "eldev test 'pattern'"
+#+end_src
+
+* Common Pitfalls
+
+- *Stale bytecode*: Run =eldev clean all= if tests fail mysteriously
+  after changing macros or requires.
+- *Killed buffer in tests*: Use =with-temp-org-buffer= (file-backed),
+  not =with-temp-buffer=.
+- *Date-dependent tests*: Use future dates to avoid triggering
+  past-date warnings.
+- *Payload hash tests*: Set =ALLOW_COMMENTS: true= on announcements to
+  avoid time-dependent =lock_at= changing the hash.
+- *Skip-message tests*: Use a module with standard =CANVAS_ID= (not
+  pages which uses =CANVAS_URL=).
+- *Argument order*: Custom pull functions must match
+  =(pull-fn item pos)=. Always read the defun signature.
+- *cl-return-from*: Functions using it must be =cl-defun=, not =defun=.

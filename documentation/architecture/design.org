@@ -1,0 +1,530 @@
+#+TITLE: Architecture and Design Decisions
+#+AUTHOR: org-canvas
+#+STARTUP: showall
+
+This document explains the architectural design of org-canvas and the
+reasoning behind key decisions. It covers module structure, the sync
+pipeline, data formats, conflict handling, validation, testing, and the
+lessons that shaped the current design.
+
+* Core Principle: Org Files as Source of Truth
+
+The fundamental design decision is that Org Mode files are the canonical
+representation of course content. Canvas is the deployment target, not
+the editing environment.
+
+This means:
+
+- *Push* (Org → Canvas) is the primary operation
+- *Pull* (Canvas → Org) is available for initial import and conflict
+  resolution, but is secondary
+- Sync state is stored as Org properties on each heading, keeping
+  everything in one place
+- Users edit Org files with full Emacs tooling, then sync to publish
+
+The alternative — treating Canvas as the source and syncing
+bidirectionally — would require far more complex merge logic and would
+lose the benefits of Org Mode's outliner, export system, and version
+control integration.
+
+* Module Structure
+
+** Layered Architecture
+
+#+begin_example
+  org-canvas.el (orchestration — requires everything, controls sync order)
+    │
+    ├── 15 feature modules (announcements, pages, assignments, ...)
+    │     │
+    │     └── org-canvas-core (meta-require)
+    │           ├── org-canvas-core-sync   (pipeline, conflict, delete)
+    │           ├── org-canvas-core-org    (Org property helpers, HTML)
+    │           ├── org-canvas-core-api    (HTTP, rate limiting, upload)
+    │           └── org-canvas-core-config (defcustoms, logging, constants)
+    │
+    ├── org-canvas-validate (offline validation engine)
+    ├── org-canvas-transient (UI command palette)
+    ├── org-canvas-setup (init wizard)
+    └── org-canvas-submissions (grading — read-only pull + grade push)
+#+end_example
+
+** Feature Module Independence
+
+Feature modules must NOT depend on each other. Every feature module
+requires only =org-canvas-core=.
+
+Why this rule exists:
+
+1. *Prevents circular dependencies.* If assignments imported rubrics and
+   rubrics imported assignments (for association), the byte compiler
+   would fail.
+
+2. *Enables modular sync.* A user who doesn't use quizzes never loads
+   quiz code. A missing =quizzes.org= file is silently skipped.
+
+3. *Simplifies testing.* Each feature's tests only need to mock core
+   functions, not other features.
+
+4. *Reduces cognitive load.* A developer working on announcements only
+   needs to understand core + announcements, not the entire codebase.
+
+Cross-module references (e.g., an assignment linking to a rubric) are
+handled at sync orchestration time through generic link resolution in
+core, not through direct module imports.
+
+** Why a Meta-Require (org-canvas-core.el)?
+
+Rather than having each feature module require all four core files
+individually, =org-canvas-core.el= requires them all and provides a
+single =(require 'org-canvas-core)= entry point. This:
+
+- Guarantees consistent load order (config before api before org before
+  sync)
+- Makes feature modules simpler (one require line)
+- Centralizes any future core reorganization
+
+* The 4-Stage Pipeline
+
+Every feature module follows a consistent 4-stage pattern: Parse, Build
+Payload, Execute, Finalize.
+
+** Why Four Stages?
+
+The stages correspond to natural boundaries in the sync process, and
+each stage is independently testable:
+
+| Stage    | Input             | Output          | Testable without     |
+|----------+-------------------+-----------------+----------------------|
+| Parse    | Org buffer        | Plist           | API, network         |
+| Build    | Plist             | JSON-ready data | Org buffer, API      |
+| Execute  | Payload + URL     | API response    | Org buffer (mocked)  |
+| Finalize | Response + buffer | Saved state     | API (response given) |
+
+Separating parse from build means you can test data transformation
+logic (type coercion, boolean handling, timestamp formatting) as pure
+functions without touching Org buffers. Separating execute from
+finalize means you can verify state saving with a canned response.
+
+** The Sync Macro (org-canvas-define-sync)
+
+For modules with standard API patterns, the macro generates the
+complete pipeline:
+
+#+begin_src elisp
+(org-canvas-define-sync announcements
+  :file org-canvas-announcements-file
+  :parse #'org-canvas--announcement-parse-entry
+  :build #'org-canvas--announcement-build-payload
+  :endpoint "discussion_topics"
+  :pull-item-fn #'org-canvas--announcement-pull-item)
+#+end_src
+
+This generates =org-canvas-sync-announcements= and
+=org-canvas-sync-announcement-at-point= with:
+
+- Entry collection and iteration
+- Progress messages
+- Error handling (continue on failure)
+- Conflict detection
+- Payload hash skip optimization
+- Logging with stage markers
+- Counter tracking (success/skip/fail/pulled/dry-run)
+
+Without the macro, each module would need ~80 lines of boilerplate
+orchestration code.
+
+** When Modules Diverge from the Macro
+
+Some modules have non-standard API patterns that prevent using the
+macro's auto-generated push or finalize:
+
+| Module           | Reason for custom logic                           |
+|------------------+---------------------------------------------------|
+| files            | 3-step upload process                             |
+| quizzes          | Nested question sub-items, separate API endpoint  |
+| new-quizzes      | Nested items, =/api/quiz/v1/= (different API base)  |
+| modules          | Parent-child items, ordering, link resolution     |
+| outcomes         | Hierarchical groups, global (non-course) endpoint |
+| group-categories | Split POST/PUT URLs (global vs course-scoped)     |
+| calendar         | Global endpoint, not course-scoped                |
+| sections         | Pull-only (no push)                               |
+| overrides        | Reconcile-based (diff existing vs desired)        |
+
+These modules still follow the 4-stage pattern conceptually, but
+implement some stages manually rather than using macro-generated code.
+
+* The Declarative Parse Macro
+
+** The Problem It Solves
+
+Before =org-canvas-define-parse=, each module manually wrote three
+near-identical functions: read properties from Org, transform types,
+combine into parse-entry. This was error-prone — modules would
+inconsistently handle booleans, forget to parse timestamps, or skip
+nil checks.
+
+** The Solution
+
+A declarative spec defines what properties to read and how to coerce
+them:
+
+#+begin_src elisp
+(org-canvas-define-parse announcement
+  :body :message
+  :properties
+  (("PUBLISHED"      :published                :type boolean :default t)
+   ("POST_AT"        :delayed_post_at          :type timestamp)
+   ("ALLOW_COMMENTS" :allow_discussion_comments :type boolean)
+   ("SPECIFIC_SECTIONS" :specific_sections      :type string)))
+#+end_src
+
+This generates three functions:
+
+- =org-canvas--announcement-read-props= — raw =org-entry-get= calls
+- =org-canvas--announcement-transform-props= — pure typed conversion
+- =org-canvas--announcement-parse-entry= — full pipeline
+
+** Why Separate Read from Transform?
+
+The read function touches the Org buffer; the transform function is
+pure. This separation means transform logic (boolean coercion, timestamp
+parsing, enum validation) can be tested without creating Org buffers.
+
+** Supported Types
+
+| Type      | Input            | Output                    |
+|-----------+------------------+---------------------------|
+| string    | Any string       | Pass-through              |
+| boolean   | "true" / "false" | =t= / =:json-false=           |
+| timestamp | Org timestamp    | ISO8601 string            |
+| number    | Numeric string   | Number                    |
+| enum      | String           | Validated against =:values= |
+
+The =:default= option provides a fallback when the property is absent.
+
+** Post-Processing Hooks
+
+For modules that need non-standard transformation, =:after-read= and
+=:after-transform= hooks run custom code after the generated functions:
+
+#+begin_src elisp
+(org-canvas-define-parse page
+  ...
+  :after-read (lambda (raw pom)
+                (org-canvas--page-validate-editing-roles raw)
+                raw))
+#+end_src
+
+* Payload Format: Hash-Tables vs Alists
+
+** The Decision
+
+- *Hash-tables* for nested payloads (assignments, rubrics, modules,
+  files). Canvas often nests sub-objects like
+  ={"assignment":{"points_possible":100}}=, which maps naturally to
+  nested hash-tables.
+
+- *Alists* for flat payloads (announcements, discussions, pages,
+  outcomes). Simple key-value pairs where alist syntax is more readable.
+
+Both serialize identically via =json-encode=, so the choice is about
+code clarity, not functionality.
+
+** Boolean Handling
+
+Canvas JSON requires explicit =false= (not =null=). In Elisp:
+
+- =t= → JSON =true=
+- =:json-false= → JSON =false=
+- =nil= → JSON =null= (which Canvas interprets differently from =false=)
+
+All boolean properties use =:json-false= for false values. The
+=org-canvas-define-parse= macro handles this automatically for
+=:type boolean= properties.
+
+* Sync State Properties
+
+Every synced heading carries these Org properties:
+
+| Property          | Set by      | Purpose                                 |
+|-------------------+-------------+-----------------------------------------|
+| =CANVAS_ID=         | Finalize    | POST/PUT decision (absent = new item)   |
+| =LAST_SYNCED=       | Finalize    | Conflict detection baseline             |
+| =CANVAS_UPDATED_AT= | Finalize    | Visible remote timestamp (transparency) |
+| =PAYLOAD_HASH=      | Sync runner | Skip optimization (unchanged = skip)    |
+
+** Why PAYLOAD_HASH?
+
+Without payload hashing, every sync would PUT all items, even unchanged
+ones. This wastes API quota and hits rate limits on large courses.
+
+With hashing: parse entry → build payload → MD5 hash → compare to
+stored hash → skip if identical. In stable courses, ~90% of items are
+skipped.
+
+Trade-off: the hash changes if Org properties change in any way, even
+semantically equivalent reformatting. Users can force-sync individual
+items with sync-at-point.
+
+** Why CANVAS_UPDATED_AT?
+
+This is stored purely for transparency. Users can inspect their Org
+file and see when Canvas last reported the item was updated, which
+helps debug conflict detection behavior.
+
+* Conflict Detection Design
+
+** The Problem
+
+User edits an assignment in Org. Meanwhile, someone updates it on
+Canvas. When the user syncs, they would silently overwrite the Canvas
+changes.
+
+** The Approach
+
+Before each PUT, fetch the remote item and compare its =updated_at=
+timestamp against the local =LAST_SYNCED=. If remote is newer, prompt
+the user.
+
+** Why Not Automatic Merge?
+
+Automatic three-way merge would require:
+- Storing the "common ancestor" version (tripling storage)
+- A merge algorithm for HTML content (error-prone)
+- Handling merge conflicts programmatically
+
+The interactive approach is simpler, more transparent, and lets the
+user make informed decisions. The diff buffer shows exactly what
+changed on each side.
+
+** Why Allow Disabling?
+
+Sometimes conflict detection produces false positives:
+- Canvas updates =updated_at= for system reasons (scheduler, etc.)
+- Coordinated multi-instructor workflows where conflicts are expected
+
+Setting =org-canvas-detect-conflicts= to nil bypasses the check.
+
+** Batch Decisions
+
+When syncing 50 items and 10 have conflicts, answering each
+individually is tedious. Capital-letter choices (P/L/S) apply to all
+remaining conflicts in the current sync session, stored in
+=org-canvas--conflict-apply-all=. The variable is reset at the start
+of each sync.
+
+* Validation Engine
+
+** Why Offline Validation?
+
+Running =M-x org-canvas-validate= checks all Org files for errors
+without making any API calls. This catches common mistakes before
+wasting time and API quota:
+
+- Type errors: =POINTS: abc= instead of =100=
+- Invalid enums: =SUBMISSION: homework= instead of =online_upload=
+- Date ordering: =UNLOCK_AT= after =DUE_AT=
+- Broken links: =GROUP: [[file:assignment-groups.org::*Labs]]= pointing
+  to nonexistent heading
+- Missing IDs: rubric outcome links to heading without =CANVAS_ID=
+
+** Compilation-Mode Output
+
+Validation output uses standard =file:line: severity: message= format,
+which integrates with Emacs =compilation-mode=. Users can jump between
+errors with =M-g n= / =M-g p= and visit source with =RET=.
+
+** Why Not Validate During Sync?
+
+1. Users can batch-fix all errors before any API calls
+2. No wasted API quota on malformed requests
+3. Validation sees all files at once (cross-file checks)
+4. Faster feedback loop (no network round-trips)
+
+* Sync Orchestration
+
+** Tier-Based Ordering
+
+The master sync (=org-canvas-sync=) runs modules in dependency order:
+
+| Tier | Modules                                                  | Reason                      |
+|------+----------------------------------------------------------+-----------------------------|
+|   -1 | Settings                                                 | Must be first               |
+|    0 | Outcomes, rubrics, assignment groups, pages, files, etc. | No dependencies             |
+|    1 | Quizzes, new quizzes, assignments                        | Reference tier 0            |
+|  1.5 | Assignment groups (re-sync)                              | Drop rules need assignments |
+| 1.75 | Overrides                                                | Need sections + assignments |
+|    2 | Modules                                                  | Reference everything        |
+
+** Why Re-Sync Assignment Groups?
+
+Canvas rejects drop rules (e.g., =drop_lowest: 2=) when creating a new
+assignment group that has no assignments yet. The solution:
+
+1. *Tier 0*: Create assignment groups WITHOUT drop rules
+2. *Tier 1*: Sync assignments (places them in their groups)
+3. *Tier 1.5*: Re-sync assignment groups WITH drop rules
+
+The build-payload function checks whether it's a create or update and
+includes rules only on update.
+
+** Safe Sync Wrapper
+
+=org-canvas--safe-sync= wraps each feature's sync call. If the
+feature's Org file doesn't exist, it logs a skip message instead of
+erroring. This means users only need to create Org files for the
+features they use.
+
+** Log Preservation
+
+Each individual sync function clears the log at the start. During
+master sync, =org-canvas--inhibit-log-clear= is bound to =t= so
+sub-phases preserve each other's logs, producing one continuous log for
+the entire session.
+
+* Credential Management
+
+** Why a Separate File?
+
+=org-canvas-credentials.el= is gitignored and contains only variable
+assignments. This design:
+
+1. Makes accidental token commits nearly impossible
+2. Allows easy credential rotation (replace one file)
+3. Supports per-machine/per-user credentials
+4. Keeps the package loadable without credentials
+
+** Graceful Loading
+
+=(require 'org-canvas-credentials nil t)= loads the file if it exists
+and silently continues if it doesn't. Functions that need credentials
+call =org-canvas--ensure-credentials= which provides an actionable
+error message pointing to =org-canvas-init=.
+
+* Testing Strategy
+
+** 2370 Tests at 99.99% Coverage
+
+The test suite covers:
+- All 4 pipeline stages for every feature module
+- Error recovery paths (timeout, 404, rate limit)
+- Conflict detection and resolution
+- Pull functions (Canvas → Org)
+- Delete operations
+- Validation rules
+- Cross-file link resolution
+
+** Why Buttercup over ERT?
+
+Buttercup provides RSpec-style BDD syntax with =describe= / =it=
+blocks, better failure messages, and JUnit XML output (required for
+Codecov test analytics). ERT is built-in but has more verbose syntax
+and weaker reporting.
+
+** Mocking at the API Layer
+
+Tests mock =org-canvas-api-request= (via =with-mock-api=), not the
+underlying HTTP library. This means:
+
+- Tests are fast (no network I/O)
+- Tests can assert on what API calls were made
+- Tests don't depend on plz internals
+- The entire HTTP retry/rate-limit layer is tested separately
+
+** File-Backed Test Buffers
+
+=with-temp-org-buffer= creates real temporary files rather than using
+=with-temp-buffer=. This matters because Org-mode functions
+(=org-back-to-heading=, =org-end-of-subtree=, =org-get-heading=)
+behave differently in file-backed vs non-file buffers, especially
+across Emacs 29 and 30.
+
+** Emacs Version Matrix
+
+CI tests on both Emacs 29.3 and 30.1. Six tests are skipped on Emacs
+29.x due to org-mode behavioral differences. Skip conditions use:
+
+#+begin_src elisp
+(unless test-org-canvas-emacs-30-p
+  (signal 'buttercup-pending "Requires Emacs 30+ org-mode"))
+#+end_src
+
+* HTTP Library Choice: plz over request.el
+
+The =request.el= library with =:sync t= has a known race condition
+where synchronous requests can freeze indefinitely, even when the
+underlying curl process completes. The =plz= library handles
+synchronous requests reliably.
+
+Key plz detail: methods must be lowercase symbols (='post=, not
+='POST=). The codebase uses uppercase by convention and converts at the
+API boundary.
+
+* Image Resolution
+
+When Org content references local images (=[[file:images/diagram.png]]=),
+the HTML export produces =<img src="images/diagram.png">=, which won't
+work on Canvas.
+
+The image resolution system:
+1. Detects image links during HTML export
+2. Uploads images to a Canvas folder (=org-canvas-images=)
+3. Caches the mapping (local path → Canvas URL)
+4. Replaces local paths with Canvas URLs in the exported HTML
+
+The cache is lazy-initialized: the first image lookup fetches the
+Canvas folder contents (one API call), and subsequent lookups hit the
+cache. If a course has no images, no extra API call is made.
+
+* Complexity Management
+
+The codebase targets 0 functions above cognitive complexity 15
+(measured by =eldev complexity=). Common extraction patterns:
+
+- *Single-item helpers*: Extract the body of =dolist= into a named
+  function (e.g., =file-sync-single-entry=, =settings-sync-single-tab=)
+- *Data-driven loops*: Replace repetitive =when= blocks with a
+  field-spec constant and =dolist= + =pcase=
+- *Shared predicates*: =timeout-error-p=, =404-on-put-p= instead of
+  inline string matching
+- *Conflict extraction*: The entire conflict detection block is in
+  =push-check-and-resolve-conflict=, returning a simple symbol
+
+* Key Lessons
+
+** Collect Markers Before Iterating with Buffer Modifications
+
+When iterating Org headings and modifying the buffer (saving
+properties), =outline-next-heading= in a while loop causes infinite
+loops because buffer modifications shift point positions. The fix:
+collect stable markers first, then iterate over them.
+
+** save-excursion Discards Return Values
+
+When a helper function finds a position inside =save-excursion= and
+returns it, the caller must capture that return value. After
+=save-excursion= completes, point is restored — calling =(point)=
+gives the old position, not the found one.
+
+** Canvas Upload API Returns Null Values
+
+Canvas Step 1 returns ={"filename": null, "content_type":
+"unknown/unknown"}= in =upload_params=. The multipart builder must
+override these with actual values, or files upload with
+=display_name: "nil"=.
+
+** Unibyte String Discipline for File Uploads
+
+Emacs =concat= of multibyte + unibyte strings produces multibyte,
+re-encoding bytes 0x80-0xFF. All form parts must be encoded as
+=raw-text= before concatenating with binary file content to keep the
+entire body unibyte.
+
+** Org-mode Version Differences
+
+Org-mode ships with Emacs and has its own version. Functions like
+=org-back-to-heading=, =org-end-of-subtree=, and =org-get-heading=
+may behave differently between Emacs 29 (org 9.6) and Emacs 30
+(org 9.7). The =org-get-heading= function with =nil nil t t= strips
+link syntax on Emacs 30 but preserves it on Emacs 29 — always use
+=org-complex-heading-regexp= group 4 for reliable link parsing.

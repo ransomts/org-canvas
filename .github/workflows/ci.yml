@@ -28,6 +28,9 @@ jobs:
       - name: Setup Eldev
         uses: emacs-eldev/setup-eldev@v1
 
+      - name: Install pandoc
+        run: sudo apt-get install -y pandoc
+
       - name: Cache Eldev dependencies
         uses: actions/cache@v4
         with:

@@ -1,0 +1,538 @@
+#+TITLE: Module Developer Guide
+#+AUTHOR: org-canvas
+#+STARTUP: showall
+
+This guide walks through every step of adding a new feature module to
+org-canvas. It uses announcements (the simplest module) as the primary
+reference and notes where more complex modules diverge.
+
+* Prerequisites
+
+Read these documents first:
+
+- =documentation/architecture/design.org= — overall architecture
+- =documentation/architecture/api-interaction.org= — how API calls work
+- =documentation/architecture/pull-system.org= — how pulling works
+
+Familiarize yourself with the Canvas API endpoint you're implementing
+by consulting =documentation/architecture/canvas-openapi3.yaml= or the
+Canvas API documentation.
+
+* Step 1: Create the Module File
+
+Create =lisp/org-canvas-{feature}.el= with this skeleton:
+
+#+begin_src elisp
+;;; org-canvas-{feature}.el --- {Feature} sync for org-canvas  -*- lexical-binding: t; -*-
+
+;;; Commentary:
+;; Synchronizes {feature} content between Org Mode and Canvas LMS.
+
+;;; Code:
+
+(require 'org-canvas-core)
+
+;;;; Configuration
+
+(defcustom org-canvas-{feature}s-file (org-canvas--path "{features}.org")
+  "Path to the {features}.org file."
+  :type 'file
+  :group 'org-canvas)
+
+;;;; Stage 1: Parse
+
+;; Parse macro or custom parse functions here
+
+;;;; Stage 2: Build Payload
+
+;; Build function here
+
+;;;; Sync
+
+;; org-canvas-define-sync and delete macros here
+
+;;;; Pull
+
+;; Pull macros here
+
+(provide 'org-canvas-{feature})
+;;; org-canvas-{feature}.el ends here
+#+end_src
+
+Key rules:
+- Require only =org-canvas-core= (never other feature modules)
+- Add =ox-html= require if you export subtree body to HTML
+- Use =org-canvas--path= for the file defcustom default
+
+* Step 2: Define the Parse Stage
+
+** Option A: Declarative (Recommended)
+
+Use =org-canvas-define-parse= when all properties are simple types
+(string, boolean, number, timestamp, enum) and no file link resolution
+is needed.
+
+#+begin_src elisp
+(org-canvas-define-parse {feature}
+  :body :message                      ;; export subtree HTML into this key
+  :properties
+  (("PUBLISHED"      :published       :type boolean :default t)
+   ("POST_AT"        :delayed_post_at :type timestamp)
+   ("POINTS"         :points          :type number)
+   ("TYPE"           :feature_type    :type enum :values org-canvas--valid-types)
+   ("NOTES"          :notes           :type string)))
+#+end_src
+
+This generates three functions:
+- =org-canvas--{feature}-read-props= — raw =org-entry-get= calls
+- =org-canvas--{feature}-transform-props= — pure typed conversion
+- =org-canvas--{feature}-parse-entry= — full pipeline
+
+Supported types:
+
+| Type      | Input              | Output                      |
+|-----------+--------------------+-----------------------------|
+| string    | Any string         | Pass-through                |
+| boolean   | "true"/"false"     | =t= / =:json-false=        |
+| timestamp | Org timestamp      | ISO8601 string              |
+| number    | Numeric string     | Number                      |
+| enum      | String             | Validated against =:values= |
+
+Optional hooks for non-standard modules:
+- =:after-read= — =(lambda (raw pom) ...)= runs after property reading
+- =:after-transform= — =(lambda (data) ...)= runs after type conversion
+
+Reference: =lisp/org-canvas-announcements.el= (lines 46-52).
+
+** Option B: Custom Parse
+
+Use custom parse when you need file link resolution, complex validation,
+or non-standard property access.
+
+Write three functions manually:
+
+#+begin_src elisp
+(defun org-canvas--{feature}-read-props (pom)
+  "Read raw property strings from heading at POM."
+  (list :title-raw (org-get-heading t t t t)
+        :canvas-id (org-entry-get pom "CANVAS_ID")
+        :link-raw (org-canvas--resolve-link-or-raw
+                   pom "LINK_PROP" "CANVAS_ID"
+                   org-canvas-other-file)))
+
+(defun org-canvas--{feature}-transform-props (raw)
+  "Transform raw strings to typed data (pure, no buffer access)."
+  (list :title (org-canvas--strip-statistics-cookie (plist-get raw :title-raw))
+        :canvas-id (plist-get raw :canvas-id)
+        :link-id (when-let ((v (plist-get raw :link-raw)))
+                   (string-to-number v))))
+
+(defun org-canvas--{feature}-parse-entry ()
+  "Extract data from Org heading at point."
+  (org-back-to-heading t)
+  (let* ((pom (point))
+         (raw (org-canvas--{feature}-read-props pom))
+         (data (org-canvas--{feature}-transform-props raw)))
+    (org-canvas--require-title (plist-get data :title) pom "Feature")
+    (let ((body (org-canvas--export-subtree-body-to-html)))
+      (plist-put data :body body)
+      (plist-put data :pom pom)
+      data)))
+#+end_src
+
+Reference: =lisp/org-canvas-discussions.el= (custom with link
+resolution).
+
+* Step 3: Build the Payload
+
+Convert the parsed plist into a Canvas API-compatible format.
+
+** Alist (for flat payloads)
+
+#+begin_src elisp
+(defun org-canvas--{feature}-build-payload (data)
+  "Convert DATA plist into Canvas API alist."
+  (let ((base `((title . ,(plist-get data :title))
+                (message . ,(plist-get data :body))
+                (published . ,(org-canvas--to-json-boolean
+                               (plist-get data :published))))))
+    ;; Add optional fields
+    (when (plist-get data :delayed_post_at)
+      (push `(delayed_post_at . ,(plist-get data :delayed_post_at)) base))
+    base))
+#+end_src
+
+Use alists for: announcements, discussions, outcomes.
+
+** Hash-table (for nested payloads)
+
+#+begin_src elisp
+(defun org-canvas--{feature}-build-payload (data)
+  "Convert DATA plist into Canvas API hash-table."
+  (let ((inner (make-hash-table :test 'equal))
+        (outer (make-hash-table :test 'equal)))
+    (puthash "title" (plist-get data :title) inner)
+    (puthash "body" (plist-get data :body) inner)
+    (puthash "published" (org-canvas--to-json-boolean
+                          (plist-get data :published)) inner)
+    (puthash "wiki_page" inner outer)
+    outer))
+#+end_src
+
+Use hash-tables for: assignments, pages, rubrics, modules, files.
+
+Both formats serialize identically via =json-encode=.
+
+Boolean handling: use =t= for JSON true, =:json-false= for JSON false
+(not =nil=, which becomes JSON null).
+
+* Step 4: Define the Sync Function
+
+** Using the Macro (Standard)
+
+#+begin_src elisp
+(org-canvas-define-sync {feature}s
+  :file org-canvas-{feature}s-file
+  :parse #'org-canvas--{feature}-parse-entry
+  :build #'org-canvas--{feature}-build-payload
+  :endpoint "api_endpoint"
+  :pull-item-fn #'org-canvas--{feature}-pull-item)
+#+end_src
+
+This generates:
+- =org-canvas-sync-{feature}s= — sync all items
+- =org-canvas-sync-{feature}-at-point= — sync item at cursor
+
+When =:endpoint= is provided without =:push= or =:finalize=, the macro
+auto-generates push and finalize functions using
+=org-canvas--push-to-api= and =org-canvas--finalize-item=.
+
+** Additional Macro Options
+
+| Option          | Default        | Purpose                                |
+|-----------------+----------------+----------------------------------------|
+| =:id-key=       | =:canvas-id=  | Plist key for Canvas ID in data        |
+| =:id-field=     | ='id=          | Alist key for ID in API response       |
+| =:id-property=  | ="CANVAS_ID"=  | Org property name                      |
+| =:find-fn=      | nil            | Search function for timeout recovery   |
+| =:post-fn=      | nil            | Callback after finalize                |
+| =:title-key=    | =:title=       | Plist key for display name             |
+| =:no-at-point=  | nil            | Suppress sync-at-point generation      |
+
+** Pages Example (Non-Standard ID)
+
+#+begin_src elisp
+(org-canvas-define-sync pages
+  :file org-canvas-pages-file
+  :parse #'org-canvas--page-parse-entry
+  :build #'org-canvas--page-build-payload
+  :endpoint "pages"
+  :id-key :canvas-url
+  :id-field 'url
+  :id-property "CANVAS_URL"
+  :find-fn (lambda (title) (org-canvas--search-item "pages" title))
+  :pull-item-fn #'org-canvas--page-pull-item)
+#+end_src
+
+* Step 5: Define Delete Functions
+
+** Delete All
+
+#+begin_src elisp
+(org-canvas-define-delete-all {feature}s
+  :endpoint "api_endpoint"
+  :file org-canvas-{feature}s-file)
+#+end_src
+
+Generates =org-canvas-delete-all-{feature}s= which:
+1. Prompts for confirmation
+2. Fetches all items from Canvas
+3. Deletes each one
+4. Cleans local CANVAS_ID/LAST_SYNCED properties
+
+Optional parameters: =:id-field=, =:title-field=, =:id-property=,
+=:skip-fn=, =:list-url-fn=, =:delete-url-fn=, =:delete-data=,
+=:list-params=.
+
+** Delete at Point
+
+#+begin_src elisp
+(org-canvas-define-delete-at-point {feature}
+  :endpoint "api_endpoint/%s")
+#+end_src
+
+Generates =org-canvas-delete-{feature}-at-point= which:
+1. Reads CANVAS_ID from heading
+2. Prompts for confirmation
+3. Sends DELETE request
+4. Cleans local sync properties
+
+Optional parameters: =:id-property=, =:delete-url-fn=, =:delete-data=,
+=:post-delete-fn=.
+
+* Step 6: Define Pull Functions
+
+** Pull Item
+
+#+begin_src elisp
+(org-canvas-define-pull-item {feature}
+  :body-field message
+  :properties
+  ((published       "PUBLISHED"       :type boolean)
+   (delayed_post_at "DELAYED_POST_AT" :type timestamp)
+   (points          "POINTS"          :type number)))
+#+end_src
+
+Generates =org-canvas--{feature}-pull-item= which sets Org properties
+from an API response alist.
+
+** Pull All
+
+#+begin_src elisp
+(org-canvas-define-pull {feature}s
+  :file org-canvas-{feature}s-file
+  :endpoint "api_endpoint"
+  :item-fn #'org-canvas--{feature}-pull-item)
+#+end_src
+
+Generates =org-canvas-pull-{feature}s= which fetches all items and
+upserts them into the Org file.
+
+Optional: =:params=, =:skip-fn=, =:id-field=, =:title-field=,
+=:id-property=.
+
+* Step 7: Register in org-canvas.el
+
+** Require the Module
+
+Add to the require block:
+
+#+begin_src elisp
+(require 'org-canvas-{feature})
+#+end_src
+
+** Add to Sync Tiers
+
+Add to =org-canvas--sync-tiers=:
+
+#+begin_src elisp
+(defconst org-canvas--sync-tiers
+  '(;; Tier -1: Settings
+    ((org-canvas-sync-settings "Settings"))
+    ;; Tier 0: No dependencies
+    ((org-canvas-sync-outcomes "Outcomes")
+     ...
+     (org-canvas-sync-{feature}s "{Feature}s"))
+    ;; Tier 1: Depends on tier 0
+    ...))
+#+end_src
+
+Tier placement:
+- *Tier 0*: No dependencies on other content types
+- *Tier 1*: References tier 0 items (e.g., assignments reference
+  rubrics)
+- *Tier 2*: References everything (modules)
+
+** Add to Delete Tiers
+
+Add to =org-canvas--delete-tiers= in reverse order (delete dependents
+before dependencies).
+
+** Add to Pull Tiers
+
+Add to =org-canvas--pull-tiers= in the appropriate tier.
+
+** Add to Status Content Types
+
+Add to =org-canvas--status-content-types=:
+
+#+begin_src elisp
+("{Feature}s" org-canvas-{feature}s-file "CANVAS_ID")
+#+end_src
+
+* Step 8: Register in Transient Menu
+
+In =lisp/org-canvas-transient.el=, add entries to:
+
+- Sync-at-point prefix: =org-canvas-dispatch-sync-at-point=
+- Pull single prefix: =org-canvas-dispatch-pull-single=
+- Delete-at-point prefix: =org-canvas-dispatch-delete-at-point=
+
+Each entry needs a unique key binding and a label.
+
+* Step 9: Add Validation Rules
+
+In =lisp/org-canvas-validate.el=, add to =org-canvas--validate-specs=:
+
+#+begin_src elisp
+(:label "{Feature}s"
+ :file org-canvas-{feature}s-file
+ :query "LEVEL=1"
+ :properties
+ ((:name "PUBLISHED" :type boolean)
+  (:name "POINTS" :type number)
+  (:name "TYPE" :type enum :values ,org-canvas--valid-types)
+  (:name "DUE_AT" :type timestamp)
+  (:name "GROUP" :type link
+   :target-file org-canvas-assignment-groups-file
+   :id-property "CANVAS_ID"))
+ :date-order (("UNLOCK_AT" "DUE_AT" "LOCK_AT")))
+#+end_src
+
+Property types for validation: =boolean=, =number=, =enum=,
+=csv-enum=, =timestamp=, =link=. Date-order checks warn when dates
+are out of sequence.
+
+* Step 10: Add to Eldev Coverage
+
+In the =Eldev= file, add your module to =eldev-undercover-fileset=:
+
+#+begin_src elisp
+(setf eldev-undercover-fileset '(;; existing files...
+                                  "lisp/org-canvas-{feature}.el"
+                                  ;; ...
+                                  ))
+#+end_src
+
+* Step 11: Write Tests
+
+Create =test/org-canvas-{feature}-test.el=:
+
+#+begin_src elisp
+;;; org-canvas-{feature}-test.el  -*- lexical-binding: t; -*-
+
+(require 'buttercup)
+(require 'test-helper)
+(require 'org-canvas-{feature})
+
+;;;; Transform (pure, no buffer)
+
+(describe "org-canvas--{feature}-transform-props"
+  ;; Use test-org-canvas-define-common-transform-tests if macro-based
+  (it "handles default values"
+    ...))
+
+;;;; Parse
+
+(describe "org-canvas--{feature}-parse-entry"
+  (test-org-canvas-define-common-parse-tests
+   #'org-canvas--{feature}-parse-entry)
+
+  (it "parses PUBLISHED property"
+    (with-temp-org-buffer
+     "* Item\n:PROPERTIES:\n:PUBLISHED: true\n:END:\n\nBody.\n"
+     (org-back-to-heading)
+     (let ((data (org-canvas--{feature}-parse-entry)))
+       (expect (plist-get data :published) :to-be t)))))
+
+;;;; Build Payload
+
+(describe "org-canvas--{feature}-build-payload"
+  (it "includes title in payload"
+    (let ((payload (org-canvas--{feature}-build-payload
+                   '(:title "Test" :body "<p>Hi</p>"))))
+      (expect (alist-get 'title payload) :to-equal "Test"))))
+
+;;;; Sync Pipeline
+
+(describe "org-canvas-sync-{feature}s"
+  (it "syncs items to Canvas"
+    (with-sync-test-env
+      (with-org-canvas-test-config
+        (with-mock-api
+          (with-temp-org-buffer
+           "* Item\n:PROPERTIES:\n:END:\n\nBody.\n"
+           (let ((org-canvas-{feature}s-file (buffer-file-name)))
+             (org-canvas-sync-{feature}s)
+             (expect (test-org-canvas-api-called-p 'POST "endpoint")
+                     :to-be-truthy))))))))
+
+;;;; Pull
+
+(describe "org-canvas--{feature}-pull-item"
+  (with-pull-property-test
+   #'org-canvas--{feature}-pull-item
+   '((title . "Pulled") (published . t))
+   "PUBLISHED" :to-equal "true"))
+
+;;;; Delete
+
+(describe "org-canvas-delete-{feature}-at-point"
+  (it "sends DELETE to API"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-temp-org-buffer
+         "* Item\n:PROPERTIES:\n:CANVAS_ID: 42\n:END:\n"
+         (org-back-to-heading)
+         (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+           (org-canvas-delete-{feature}-at-point)
+           (expect (test-org-canvas-api-called-p 'DELETE "endpoint")
+                   :to-be-truthy)))))))
+
+;;; org-canvas-{feature}-test.el ends here
+#+end_src
+
+* Step 12: Add Orchestration Mocks
+
+In =test/org-canvas-test.el=, add mocks for your sync and delete
+functions in the master sync and delete-all tests:
+
+#+begin_src elisp
+((symbol-function 'org-canvas-sync-{feature}s)
+ (lambda () (push '{feature}s call-order)))
+((symbol-function 'org-canvas-delete-all-{feature}s)
+ (lambda () (push '{feature}s call-order)))
+#+end_src
+
+* Step 13: Add Enum Constants (If Needed)
+
+If your module has enum properties, add the valid values to
+=lisp/org-canvas-core-config.el=:
+
+#+begin_src elisp
+(defconst org-canvas--valid-{feature}-types
+  '("type1" "type2" "type3")
+  "Valid values for {FEATURE}_TYPE property.")
+#+end_src
+
+* File Checklist
+
+When adding =org-canvas-{feature}=:
+
+| File                                   | Change                               |
+|----------------------------------------+--------------------------------------|
+| =lisp/org-canvas-{feature}.el=        | New module file                      |
+| =lisp/org-canvas.el=                  | Require, sync/delete/pull tiers, status |
+| =lisp/org-canvas-transient.el=        | Menu entries                         |
+| =lisp/org-canvas-validate.el=         | Validation spec                      |
+| =lisp/org-canvas-core-config.el=      | Enum constants (if needed)           |
+| =Eldev=                               | Coverage fileset                     |
+| =test/org-canvas-{feature}-test.el=   | Unit tests                           |
+| =test/org-canvas-test.el=             | Orchestration mocks                  |
+
+* Naming Conventions
+
+| Pattern                                 | Example                              |
+|-----------------------------------------+--------------------------------------|
+| Private function                        | =org-canvas--{feature}-parse-entry=  |
+| Public function                         | =org-canvas-sync-{feature}s=        |
+| Sync all                                | =org-canvas-sync-{feature}s=        |
+| Sync at point                           | =org-canvas-sync-{feature}-at-point= |
+| Pull all                                | =org-canvas-pull-{feature}s=        |
+| Delete all                              | =org-canvas-delete-all-{feature}s=  |
+| Delete at point                         | =org-canvas-delete-{feature}-at-point= |
+| File variable                           | =org-canvas-{feature}s-file=        |
+
+* Reference Modules by Complexity
+
+| Complexity | Module          | Lines | Notes                              |
+|------------+-----------------+-------+------------------------------------|
+| Simple     | announcements   |   116 | All macros, flat alist             |
+| Medium     | pages           |   162 | Macro + custom build, hash-table   |
+| Medium     | discussions     |   254 | Custom parse (links), post-fn      |
+| Complex    | quizzes         |  1027 | Nested questions, custom pipeline  |
+| Complex    | modules         |   800 | Parent-child items, link resolution |
+| Complex    | files           |   589 | 3-step upload, folder management   |
+
+Start by reading =lisp/org-canvas-announcements.el= in full — it's the
+minimal reference implementation.
