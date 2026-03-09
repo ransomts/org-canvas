@@ -968,10 +968,7 @@ QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
         (slug (alist-get 'interaction_type_slug item))
         (points (alist-get 'points_possible item))
         (item-id (alist-get 'id item)))
-    ;; Strip HTML tags from title if present
-    (when (string-match "<[^>]+>" title)
-      (setq title (replace-regexp-in-string "<[^>]+>" "" title)))
-    (setq title (string-trim title))
+    (setq title (org-canvas--html-to-org-inline title))
     (when (string-empty-p title)
       (setq title "Question"))
     (let ((subtree-end (save-excursion (org-end-of-subtree t) (point))))

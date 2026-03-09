@@ -558,9 +558,13 @@ or empty string when OUTCOME-ID is nil."
 (defun org-canvas--rubric-pull-insert-criterion (c has-outcomes)
   "Insert a single criterion C into the current buffer.
 HAS-OUTCOMES controls whether a 4th outcome column is emitted."
-  (let ((desc (replace-regexp-in-string "|" "/" (or (alist-get 'description c) "")))
+  (let ((desc (replace-regexp-in-string
+               "|" "/"
+               (org-canvas--html-to-org-inline (or (alist-get 'description c) ""))))
         (pts (or (alist-get 'points c) 0))
-        (long-desc (replace-regexp-in-string "|" "/" (or (alist-get 'long_description c) "")))
+        (long-desc (replace-regexp-in-string
+                    "|" "/"
+                    (org-canvas--html-to-org-inline (or (alist-get 'long_description c) ""))))
         (ratings (alist-get 'ratings c))
         (outcome-id (alist-get 'learning_outcome_id c)))
     (if has-outcomes
@@ -571,7 +575,9 @@ HAS-OUTCOMES controls whether a 4th outcome column is emitted."
     ;; Insert custom rating rows if present
     (when (org-canvas--rubric-has-custom-ratings ratings)
       (dolist (r (org-canvas--rubric-sort-ratings ratings))
-        (let ((rdesc (replace-regexp-in-string "|" "/" (or (alist-get 'description r) "")))
+        (let ((rdesc (replace-regexp-in-string
+                      "|" "/"
+                      (org-canvas--html-to-org-inline (or (alist-get 'description r) ""))))
               (rpts (or (alist-get 'points r) 0)))
           (if has-outcomes
               (insert (format "| > %s | %s | | |\n" rdesc rpts))

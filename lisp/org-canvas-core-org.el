@@ -756,6 +756,18 @@ if pandoc is not available."
             (string-trim (buffer-string))
           (concat "# WARNING: pandoc conversion failed\n" html))))))
 
+(defun org-canvas--html-to-org-inline (html)
+  "Convert HTML to Org and collapse to a single line.
+Delegates to `org-canvas--html-to-org', then replaces newlines with spaces
+and trims whitespace.  Suitable for table cells, list items, and heading
+titles where multi-line output would break formatting.
+Returns empty string for nil or empty HTML."
+  (if (or (null html) (string-empty-p html))
+      ""
+    (string-trim
+     (replace-regexp-in-string "[\n\r]+" " "
+                               (org-canvas--html-to-org html)))))
+
 (defun org-canvas--pull-insert-body (body-html)
   "Replace current heading's body with Org-converted BODY-HTML.
 Point must be at a heading.  Does nothing if BODY-HTML is nil or empty."

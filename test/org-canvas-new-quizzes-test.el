@@ -2058,20 +2058,22 @@ Consider the following expression.
        (expect content :to-match "choice")
        (expect content :to-match "POINTS:.*5"))))
 
-  (it "strips HTML tags from title"
-    (with-temp-org-buffer
-     "* Quiz
+  (it "converts HTML title via html-to-org-inline"
+    (cl-letf (((symbol-function 'org-canvas--html-to-org-inline)
+               (lambda (html) (if (string-empty-p html) "" "Converted Title"))))
+      (with-temp-org-buffer
+       "* Quiz
 :PROPERTIES:
 :END:
 "
-     (org-back-to-heading)
-     (org-canvas--new-quiz-pull-insert-item
-      '((id . "item-1")
-        (item_body . "<p>What is <b>bold</b>?</p>")
-        (interaction_type_slug . "choice")
-        (points_possible . 1)))
-     (let ((content (buffer-string)))
-       (expect content :to-match "What is bold\\?"))))
+       (org-back-to-heading)
+       (org-canvas--new-quiz-pull-insert-item
+        '((id . "item-1")
+          (item_body . "<p>What is <b>bold</b>?</p>")
+          (interaction_type_slug . "choice")
+          (points_possible . 1)))
+       (let ((content (buffer-string)))
+         (expect content :to-match "Converted Title")))))
 
   (it "uses default title when body is empty"
     (with-temp-org-buffer

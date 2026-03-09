@@ -1170,6 +1170,35 @@ Page content.
         (expect result :to-match "WARNING.*pandoc conversion failed")
         (expect result :to-match "<p>Test</p>")))))
 
+(describe "org-canvas--html-to-org-inline"
+  (it "collapses multi-line pandoc output to single line"
+    (cl-letf (((symbol-function 'executable-find) (lambda (_) "pandoc"))
+              ((symbol-function 'call-process-region)
+               (lambda (_start _end _program &optional _delete buffer &rest _args)
+                 (when buffer
+                   (erase-buffer)
+                   (insert "Line one\nLine two\nLine three"))
+                 0)))
+      (expect (org-canvas--html-to-org-inline "<p>Line one</p><p>Line two</p>")
+              :to-equal "Line one Line two Line three")))
+
+  (it "returns empty string for nil input"
+    (expect (org-canvas--html-to-org-inline nil) :to-equal ""))
+
+  (it "returns empty string for empty input"
+    (expect (org-canvas--html-to-org-inline "") :to-equal ""))
+
+  (it "trims surrounding whitespace"
+    (cl-letf (((symbol-function 'executable-find) (lambda (_) "pandoc"))
+              ((symbol-function 'call-process-region)
+               (lambda (_start _end _program &optional _delete buffer &rest _args)
+                 (when buffer
+                   (erase-buffer)
+                   (insert "  trimmed  "))
+                 0)))
+      (expect (org-canvas--html-to-org-inline "<p> trimmed </p>")
+              :to-equal "trimmed"))))
+
 ;;;; Section Name → ID Resolution
 
 (describe "org-canvas--resolve-section-names-to-ids"

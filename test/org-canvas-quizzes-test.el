@@ -2089,7 +2089,20 @@ Content.
      (goto-char (point-max))
      (org-canvas--quiz-insert-answers
       [((html . "HTML Answer") (weight . 100))])
-     (expect (buffer-string) :to-match "HTML Answer"))))
+     (expect (buffer-string) :to-match "HTML Answer")))
+
+  (it "converts HTML answer text via html-to-org-inline"
+    (cl-letf (((symbol-function 'org-canvas--html-to-org-inline)
+               (lambda (html) (concat "CONV:" html))))
+      (with-temp-org-buffer
+       "* Quiz
+:PROPERTIES:
+:END:
+"
+       (goto-char (point-max))
+       (org-canvas--quiz-insert-answers
+        [((text . "<em>Italic</em>") (weight . 100))])
+       (expect (buffer-string) :to-match "CONV:<em>Italic</em>")))))
 
 (describe "org-canvas--quiz-pull-insert-question"
   (it "creates L2 heading with properties"

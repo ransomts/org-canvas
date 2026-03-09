@@ -275,7 +275,7 @@ SUBMISSIONS is the list of submission alists."
       (insert (format ":SUBMITTED_AT: %s\n" submitted-at)))
     (insert ":END:\n")
     (when (and body (stringp body) (not (string-empty-p body)))
-      (insert (format "\n%s\n" body)))
+      (insert "\n" (org-canvas--html-to-org body) "\n"))
     (org-canvas--submissions-render-attachments attachments)
     (org-canvas--submissions-render-comments comments)
     (org-canvas--submissions-render-rubric rubric)
@@ -304,7 +304,7 @@ SUBMISSIONS is the list of submission alists."
           (insert (format "- *%s* %s :: %s\n"
                           (or author "Unknown")
                           (or (org-canvas--iso8601-to-org-timestamp created) "")
-                          (or text ""))))))))
+                          (org-canvas--html-to-org-inline (or text "")))))))))
 
 (defun org-canvas--submissions-render-rubric (rubric)
   "Render RUBRIC assessment as a sub-heading with table."

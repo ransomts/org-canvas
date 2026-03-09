@@ -1278,6 +1278,30 @@ Keep this body
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
 
+(describe "org-canvas--rubric-pull-insert-criterion HTML conversion"
+  (it "converts HTML descriptions via html-to-org-inline"
+    (cl-letf (((symbol-function 'org-canvas--html-to-org-inline)
+               (lambda (html) (concat "C:" html))))
+      (with-temp-buffer
+        (let ((c '((description . "<b>Bold</b>") (points . 5)
+                   (long_description . "<em>Italic</em>") (ratings . []))))
+          (org-canvas--rubric-pull-insert-criterion c nil)
+          (expect (buffer-string) :to-match "C:<b>Bold</b>")
+          (expect (buffer-string) :to-match "C:<em>Italic</em>")))))
+
+  (it "converts HTML rating descriptions via html-to-org-inline"
+    (cl-letf (((symbol-function 'org-canvas--html-to-org-inline)
+               (lambda (html) (concat "R:" html)))
+              ((symbol-function 'org-canvas--rubric-has-custom-ratings)
+               (lambda (_) t))
+              ((symbol-function 'org-canvas--rubric-sort-ratings)
+               (lambda (r) (append r nil))))
+      (with-temp-buffer
+        (let ((c '((description . "D") (points . 5) (long_description . "")
+                   (ratings . [((description . "<i>Good</i>") (points . 5))]))))
+          (org-canvas--rubric-pull-insert-criterion c nil)
+          (expect (buffer-string) :to-match "R:<i>Good</i>"))))))
+
 (describe "org-canvas--rubric-outcome-title with string outcome-id"
   (it "handles string outcome-id"
     (let* ((temp-dir (make-temp-file "outcome-title-str" t))

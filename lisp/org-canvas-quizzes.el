@@ -777,7 +777,8 @@ FILE is the quizzes.org path, used for group link resolution."
 Each answer's weight determines checked ([X]) vs unchecked ([ ])."
   (when answers
     (dolist (a (append answers nil))
-      (let ((text (or (alist-get 'text a) (alist-get 'html a) ""))
+      (let ((text (org-canvas--html-to-org-inline
+                   (or (alist-get 'text a) (alist-get 'html a) "")))
             (weight (alist-get 'weight a)))
         (insert (format "- [%s] %s\n"
                         (if (and weight (> weight 0)) "X" " ")

@@ -275,6 +275,16 @@
         (org-canvas--submissions-render-detail "HW" "1" subs)
         (expect (buffer-string) :to-match "My answer is 42."))))
 
+  (it "converts HTML body via html-to-org"
+    (cl-letf (((symbol-function 'org-canvas--html-to-org)
+               (lambda (html) (concat "CONVERTED:" html))))
+      (let ((subs (list (test-org-canvas-make-submission
+                         '((body . "<p>Essay</p>"))))))
+        (with-temp-buffer
+          (org-mode)
+          (org-canvas--submissions-render-detail "HW" "1" subs)
+          (expect (buffer-string) :to-match "CONVERTED:<p>Essay</p>")))))
+
   (it "sorts students alphabetically"
     (let ((subs (list
                  (test-org-canvas-make-submission
@@ -340,7 +350,17 @@
   (it "skips when empty"
     (with-temp-buffer
       (org-canvas--submissions-render-comments [])
-      (expect (buffer-string) :to-equal ""))))
+      (expect (buffer-string) :to-equal "")))
+
+  (it "converts HTML comment text via html-to-org-inline"
+    (cl-letf (((symbol-function 'org-canvas--html-to-org-inline)
+               (lambda (html) (concat "INLINE:" html))))
+      (with-temp-buffer
+        (org-canvas--submissions-render-comments
+         [((author_name . "Prof")
+           (comment . "<b>Good</b>")
+           (created_at . "2026-03-01T00:00:00Z"))])
+        (expect (buffer-string) :to-match "INLINE:<b>Good</b>")))))
 
 (describe "org-canvas--submissions-render-rubric"
   (it "renders rubric as org table"
