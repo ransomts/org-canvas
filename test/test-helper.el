@@ -408,26 +408,31 @@ OVERRIDES is an alist of keys to override."
      (auto_leader . nil))
    overrides))
 
+(defun test-org-canvas-transient--suffix-command (suffix)
+  "Extract the :command from a transient SUFFIX entry, or nil."
+  (when (listp suffix)
+    (let ((plist (if (numberp (car suffix))
+                     (nth 2 suffix)
+                   (cdr suffix))))
+      (plist-get plist :command))))
+
+(defun test-org-canvas-transient--column-has-command-p (col command)
+  "Return non-nil if transient column vector COL contains COMMAND."
+  (when (vectorp col)
+    (let* ((has-level (numberp (aref col 0)))
+           (suffixes (aref col (if has-level 3 2))))
+      (cl-some (lambda (s) (eq (test-org-canvas-transient--suffix-command s) command))
+               suffixes))))
+
 (defun test-org-canvas-transient-has-command-p (prefix-sym command)
   "Return non-nil if PREFIX-SYM's transient layout contains COMMAND.
 Handles both Emacs 29 (transient 0.4) and Emacs 30 (transient 0.7+) layout formats."
-  (let ((layout (get prefix-sym 'transient--layout))
-        (found nil))
-    (let ((columns (cond
-                    ((listp layout) layout)
-                    ((vectorp layout) (aref layout 2)))))
-      (dolist (col columns)
-        (when (vectorp col)
-          (let* ((has-level (numberp (aref col 0)))
-                 (suffixes (aref col (if has-level 3 2))))
-            (dolist (suffix suffixes)
-              (when (listp suffix)
-                (let ((plist (if (numberp (car suffix))
-                                (nth 2 suffix)
-                              (cdr suffix))))
-                  (when (eq (plist-get plist :command) command)
-                    (setq found t)))))))))
-    found))
+  (let* ((layout (get prefix-sym 'transient--layout))
+         (columns (cond
+                   ((listp layout) layout)
+                   ((vectorp layout) (aref layout 2)))))
+    (cl-some (lambda (col) (test-org-canvas-transient--column-has-command-p col command))
+             columns)))
 
 (provide 'test-helper)
 ;;; test-helper.el ends here

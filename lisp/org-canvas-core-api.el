@@ -329,6 +329,52 @@ Returns a unibyte string."
                          'raw-text)))
       (concat body-prefix file-content body-suffix))))
 
+(defun org-canvas--upload-parse-step2-response (buf)
+  "Parse the step 2 upload response from BUF.
+Returns an alist with either an \\='id key (direct completion) or
+a \\='location key (needs step 3 confirmation).  Kills BUF when done."
+  (unwind-protect
+      (with-current-buffer buf
+        (goto-char (point-min))
+        (let (location-header json-response)
+          (save-excursion
+            (when (re-search-forward "^[Ll]ocation: \\(.*\\)\r?$" nil t)
+              (setq location-header (string-trim (match-string 1)))))
+          (when (re-search-forward "\r?\n\r?\n" nil t)
+            (setq json-response
+                  (condition-case nil
+                      (json-read-from-string
+                       (buffer-substring-no-properties (point) (point-max)))
+                    (error nil))))
+          (cond
+           ((and json-response (alist-get 'id json-response))
+            json-response)
+           (location-header
+            `((location . ,location-header)))
+           (json-response json-response)
+           (t (error "Upload failed: no JSON or Location header")))))
+    (when (buffer-live-p buf)
+      (kill-buffer buf))))
+
+(defun org-canvas--upload-confirm (step2-response)
+  "Confirm a Canvas upload given STEP2-RESPONSE from step 2.
+If STEP2-RESPONSE already contains an \\='id, returns it directly.
+Otherwise follows the \\='location header for step 3 confirmation."
+  (elog-info org-canvas--logger "[Upload Step 3] Confirming upload...")
+  (if (alist-get 'id step2-response)
+      (progn
+        (elog-info org-canvas--logger "[Upload] Complete: file ID %s"
+                   (alist-get 'id step2-response))
+        step2-response)
+    (let* ((location (alist-get 'location step2-response))
+           (full-url (if (string-prefix-p "http" location)
+                         location
+                       (concat org-canvas-base-url location)))
+           (response (org-canvas-api-request 'GET full-url)))
+      (elog-info org-canvas--logger "[Upload] Complete: file ID %s"
+                 (alist-get 'id response))
+      response)))
+
 (defun org-canvas--upload-file (local-path &optional notify-url display-name)
   "Upload LOCAL-PATH to Canvas via the 3-step upload API.
 NOTIFY-URL is the step 1 endpoint (defaults to course files).
@@ -362,44 +408,8 @@ Returns the Canvas file object alist (with \\='id key)."
                (url-request-data full-body)
                (step2-buf (url-retrieve-synchronously
                            upload-url nil nil org-canvas-upload-timeout))
-               (step2-response
-                (unwind-protect
-                    (with-current-buffer step2-buf
-                      (goto-char (point-min))
-                      (let (location-header json-response)
-                        (save-excursion
-                          (when (re-search-forward "^[Ll]ocation: \\(.*\\)\r?$" nil t)
-                            (setq location-header (string-trim (match-string 1)))))
-                        (when (re-search-forward "\r?\n\r?\n" nil t)
-                          (setq json-response
-                                (condition-case nil
-                                    (json-read-from-string
-                                     (buffer-substring-no-properties (point) (point-max)))
-                                  (error nil))))
-                        (cond
-                         ((and json-response (alist-get 'id json-response))
-                          json-response)
-                         (location-header
-                          `((location . ,location-header)))
-                         (json-response json-response)
-                         (t (error "Upload failed: no JSON or Location header")))))
-                  (when (buffer-live-p step2-buf)
-                    (kill-buffer step2-buf)))))
-          ;; Step 3: Confirm upload
-          (elog-info org-canvas--logger "[Upload Step 3] Confirming upload...")
-          (if (alist-get 'id step2-response)
-              (progn
-                (elog-info org-canvas--logger "[Upload] Complete: file ID %s"
-                           (alist-get 'id step2-response))
-                step2-response)
-            (let* ((location (alist-get 'location step2-response))
-                   (full-url (if (string-prefix-p "http" location)
-                                 location
-                               (concat org-canvas-base-url location)))
-                   (response (org-canvas-api-request 'GET full-url)))
-              (elog-info org-canvas--logger "[Upload] Complete: file ID %s"
-                         (alist-get 'id response))
-              response)))))))
+               (step2-response (org-canvas--upload-parse-step2-response step2-buf)))
+          (org-canvas--upload-confirm step2-response))))))
 
 (provide 'org-canvas-core-api)
 ;;; org-canvas-core-api.el ends here
