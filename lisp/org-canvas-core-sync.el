@@ -283,9 +283,10 @@ Prompts user to continue if stale headings are found."
       (message "WARNING: %d heading(s) will create duplicates on Canvas: %s"
                (length stale-titles)
                (mapconcat (lambda (s) (format "'%s'" s)) (nreverse stale-titles) ", "))
-      (unless (y-or-n-p
-               (format "%d heading(s) have LAST_SYNCED but no CANVAS_ID — sync will create duplicates.  Continue? "
-                       (length stale-titles)))
+      (unless (or noninteractive
+                  (y-or-n-p
+                   (format "%d heading(s) have LAST_SYNCED but no CANVAS_ID — sync will create duplicates.  Continue? "
+                           (length stale-titles))))
         (user-error "Aborted — restore CANVAS_ID properties or delete LAST_SYNCED to fix")))))
 
 (defun org-canvas--sync-finalize-push (response data payload-hash ctx)

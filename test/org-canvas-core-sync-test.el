@@ -3023,7 +3023,8 @@ Content here.
      (spy-on 'message)
      (spy-on 'elog-warning)
      (spy-on 'y-or-n-p :and-return-value t)
-     (let ((markers (org-map-entries (lambda () (point-marker)) nil 'file)))
+     (let ((noninteractive nil)
+           (markers (org-map-entries (lambda () (point-marker)) nil 'file)))
        (org-canvas--sync-warn-stale-headings markers (buffer-file-name))
        (expect 'message :to-have-been-called)
        (expect 'y-or-n-p :to-have-been-called))))
@@ -3037,7 +3038,8 @@ Content here.
 "
      (spy-on 'message)
      (spy-on 'y-or-n-p :and-return-value nil)
-     (let ((markers (org-map-entries (lambda () (point-marker)) nil 'file)))
+     (let ((noninteractive nil)
+           (markers (org-map-entries (lambda () (point-marker)) nil 'file)))
        (expect (org-canvas--sync-warn-stale-headings markers (buffer-file-name))
                :to-throw 'user-error))))
 
@@ -3079,7 +3081,8 @@ Content here.
      (spy-on 'message)
      (spy-on 'elog-warning)
      (spy-on 'y-or-n-p :and-return-value t)
-     (let ((markers (org-map-entries (lambda () (point-marker)) nil 'file)))
+     (let ((noninteractive nil)
+           (markers (org-map-entries (lambda () (point-marker)) nil 'file)))
        (org-canvas--sync-warn-stale-headings markers (buffer-file-name))
        ;; One consolidated message + one prompt
        (expect 'message :to-have-been-called-times 1)

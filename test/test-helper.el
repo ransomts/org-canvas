@@ -12,6 +12,12 @@
 (require 'cl-lib)
 (require 'org-canvas-core)
 
+;; Suppress "Non-existent agenda file" prompt in batch mode.
+;; Org checks agenda files when opening .org buffers; temp files deleted
+;; during test cleanup trigger an interactive prompt that hangs batch runs.
+(when noninteractive
+  (defun org-check-agenda-file (_file) nil))
+
 ;;;; Test Configuration
 
 (defvar test-org-canvas-emacs-30-p (>= emacs-major-version 30)
@@ -92,7 +98,8 @@ Note: only METHOD, URL, and :data are recorded; :params and :timeout are dropped
 Ensures proper org-mode initialization for consistent behavior
 across Emacs versions."
   (declare (indent 1))
-  `(let ((temp-file (make-temp-file "org-test-" nil ".org")))
+  `(let ((temp-file (make-temp-file "org-test-" nil ".org"))
+         (org-agenda-files nil))
      (unwind-protect
          (progn
            (with-temp-file temp-file

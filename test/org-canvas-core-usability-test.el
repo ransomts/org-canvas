@@ -446,7 +446,8 @@
                        (or initial
                            (cond
                             ((string-match-p "^Canvas base" prompt) "https://test.canvas.example.com")
-                            ((string-match-p "^Course ID" prompt) "12345")))))
+                            ((string-match-p "^Course ID" prompt) "12345")
+                            (t "")))))
                     ((symbol-function 'read-passwd)
                      (lambda (&rest _) "token123"))
                     ((symbol-function 'org-canvas-api-request)
@@ -481,7 +482,8 @@
                        (or initial
                            (cond
                             ((string-match-p "^Canvas base" prompt) "https://test.canvas.example.com")
-                            ((string-match-p "^Course ID" prompt) "12345")))))
+                            ((string-match-p "^Course ID" prompt) "12345")
+                            (t "")))))
                     ((symbol-function 'read-passwd)
                      (lambda (&rest _) "token123"))
                     ((symbol-function 'org-canvas-api-request)
@@ -505,7 +507,8 @@
                        (or initial
                            (cond
                             ((string-match-p "^Canvas base" prompt) "https://test.canvas.example.com")
-                            ((string-match-p "^Course ID" prompt) "12345")))))
+                            ((string-match-p "^Course ID" prompt) "12345")
+                            (t "")))))
                     ((symbol-function 'read-passwd)
                      (lambda (&rest _) "token123"))
                     ((symbol-function 'org-canvas-api-request)
@@ -583,7 +586,8 @@
                      (lambda (prompt &rest _)
                        (cond
                         ((string-match-p "^Canvas base" prompt) "https://canvas.example.com")
-                        ((string-match-p "^Course ID" prompt) "12345"))))
+                        ((string-match-p "^Course ID" prompt) "12345")
+                        (t ""))))
                     ((symbol-function 'read-passwd)
                      (lambda (&rest _) "valid-token"))
                     ((symbol-function 'org-canvas-api-request)
@@ -627,7 +631,8 @@
                      (lambda (prompt &rest _)
                        (cond
                         ((string-match-p "^Canvas base" prompt) "https://canvas.example.com")
-                        ((string-match-p "^Course ID" prompt) "12345"))))
+                        ((string-match-p "^Course ID" prompt) "12345")
+                        ((string-match-p "Register" prompt) ""))))
                     ((symbol-function 'read-passwd)
                      (lambda (&rest _) "valid-token"))
                     ((symbol-function 'org-canvas-api-request)
@@ -657,7 +662,8 @@
                        (lambda (prompt &rest _)
                          (cond
                           ((string-match-p "^Canvas base" prompt) "https://canvas.example.com")
-                          ((string-match-p "^Course ID" prompt) "12345"))))
+                          ((string-match-p "^Course ID" prompt) "12345")
+                          ((string-match-p "Register" prompt) ""))))
                       ((symbol-function 'read-passwd)
                        (lambda (&rest _) "valid-token"))
                       ((symbol-function 'org-canvas-api-request)
