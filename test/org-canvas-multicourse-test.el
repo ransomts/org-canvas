@@ -141,6 +141,52 @@
 
 ;;;; Feature Module Registration
 
+;;;; org-canvas-init course registration
+
+(describe "org-canvas-init course registration"
+  (it "registers course when user provides a name"
+    (let* ((temp-dir (make-temp-file "init-register-" t))
+           (org-canvas-courses nil)
+           (org-canvas--active-course-name nil))
+      (unwind-protect
+          (cl-letf (((symbol-function 'read-directory-name)
+                     (lambda (&rest _) temp-dir))
+                    ((symbol-function 'read-string)
+                     (lambda (prompt &rest _)
+                       (cond
+                        ((string-match-p "^Canvas base" prompt) "https://canvas.example.com")
+                        ((string-match-p "^Course ID" prompt) "12345")
+                        ((string-match-p "Register" prompt) "My Course")
+                        (t ""))))
+                    ((symbol-function 'read-passwd)
+                     (lambda (&rest _) "valid-token"))
+                    ((symbol-function 'org-canvas-api-request)
+                     (lambda (&rest _) '((name . "Test Course"))))
+                    ((symbol-function 'y-or-n-p) (lambda (_) nil))
+                    ((symbol-function 'customize-save-variable)
+                     (lambda (_sym val) (setq org-canvas-courses val))))
+            (org-canvas-init)
+            (expect org-canvas--active-course-name :to-equal "My Course")
+            (expect (assoc "My Course" org-canvas-courses) :to-be-truthy))
+        (delete-directory temp-dir t)))))
+
+;;;; org-canvas-status active course display
+
+(describe "org-canvas-status active course name"
+  (it "shows active course name in status buffer"
+    (let ((org-canvas--active-course-name "Math 101")
+          (org-canvas-course-id "99999")
+          (org-canvas-base-url "https://test.example.com"))
+      (cl-letf (((symbol-function 'display-buffer) (lambda (_) nil))
+                ((symbol-function 'org-canvas--status-report-file)
+                 (lambda (&rest _) nil)))
+        (org-canvas-status)
+        (with-current-buffer "*canvas-status*"
+          (expect (buffer-string) :to-match "Active course: Math 101")
+          (kill-buffer))))))
+
+;;;; Feature Module Registration
+
 (describe "feature module file var registration"
   (it "registers all 15 feature file vars at load time"
     ;; After requiring all modules (which happens via org-canvas),
