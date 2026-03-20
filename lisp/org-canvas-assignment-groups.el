@@ -48,6 +48,11 @@
   "Path to the assignment-groups.org file."
   :type 'file
   :group 'org-canvas)
+(org-canvas-register-file-var 'org-canvas-assignment-groups-file "assignment-groups.org")
+(org-canvas-register-feature
+ :name "Assignment Groups" :endpoint "assignment_groups"
+ :file-var 'org-canvas-assignment-groups-file
+ :id-field 'id :id-property "CANVAS_ID" :title-field 'name)
 
 ;;;; 1. Stage: Extraction
 
@@ -167,7 +172,7 @@ ITEM is the API response alist, POS is the heading position."
   :file org-canvas-assignment-groups-file
   :endpoint "assignment_groups"
   :title-field 'name
-  :item-fn #'org-canvas--assignment-group-pull-item)
+  :pull-item-fn #'org-canvas--assignment-group-pull-item)
 
 (provide 'org-canvas-assignment-groups)
 ;;; org-canvas-assignment-groups.el ends here

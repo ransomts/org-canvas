@@ -35,6 +35,11 @@
   "Path to the group-categories.org file."
   :type 'file
   :group 'org-canvas)
+(org-canvas-register-file-var 'org-canvas-group-categories-file "group-categories.org")
+(org-canvas-register-feature
+ :name "Group Categories" :endpoint "group_categories"
+ :file-var 'org-canvas-group-categories-file
+ :id-field 'id :id-property "CANVAS_ID" :title-field 'name)
 
 ;;;; 1. Stage: Extraction
 
@@ -113,7 +118,7 @@ PUT is global."
   :file org-canvas-group-categories-file
   :endpoint "group_categories"
   :title-field 'name
-  :item-fn #'org-canvas--group-category-pull-item)
+  :pull-item-fn #'org-canvas--group-category-pull-item)
 
 (provide 'org-canvas-group-categories)
 ;;; org-canvas-group-categories.el ends here

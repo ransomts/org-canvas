@@ -51,6 +51,11 @@
   "Path to the rubrics.org file."
   :type 'file
   :group 'org-canvas)
+(org-canvas-register-file-var 'org-canvas-rubrics-file "rubrics.org")
+(org-canvas-register-feature
+ :name "Rubrics" :endpoint "rubrics"
+ :file-var 'org-canvas-rubrics-file
+ :id-field 'id :id-property "CANVAS_ID" :title-field 'title)
 
 ;;;; 1. Stage: Extraction
 
@@ -608,7 +613,7 @@ ITEM is the API response alist, POS is the heading position."
 (org-canvas-define-pull rubrics
   :file org-canvas-rubrics-file
   :endpoint "rubrics"
-  :item-fn #'org-canvas--rubric-pull-item)
+  :pull-item-fn #'org-canvas--rubric-pull-item)
 
 (org-canvas-define-delete-at-point rubric
   :endpoint "rubrics/%s")

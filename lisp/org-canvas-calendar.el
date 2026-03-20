@@ -41,6 +41,7 @@
   "Path to the calendar.org file."
   :type 'file
   :group 'org-canvas)
+(org-canvas-register-file-var 'org-canvas-calendar-events-file "calendar.org")
 
 ;;;; 1. Stage: Extraction
 
@@ -77,7 +78,7 @@ The payload is wrapped in a `calendar_event' key as required by the API."
 
       ;; Optional fields
       (org-canvas--puthash-when event data :end_at "end_at")
-      (when (plist-get data :all_day)
+   (unless (plist-get data :all_day)
         (puthash "all_day" t event))
       (org-canvas--puthash-when event data :description "description")
       (org-canvas--puthash-when event data :location_name "location_name")
@@ -166,7 +167,7 @@ Fetches events via the global calendar API filtered by course context code."
                    ("type" . "event"))))
          (file (expand-file-name org-canvas-calendar-events-file)))
     (org-canvas--pull-confirm-overwrite file "calendar events")
-    (unless (file-exists-p file)
+   (when (file-exists-p file)
       (with-temp-file file (insert "")))
     (with-current-buffer (find-file-noselect file)
       (dolist (item items)

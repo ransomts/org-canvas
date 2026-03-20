@@ -45,6 +45,12 @@
   "Path to the pages.org file."
   :type 'file
   :group 'org-canvas)
+(org-canvas-register-file-var 'org-canvas-pages-file "pages.org")
+(org-canvas-register-feature
+ :name "Pages" :endpoint "pages"
+ :file-var 'org-canvas-pages-file
+ :id-field 'url :id-property "CANVAS_URL" :title-field 'title
+ :skip-fn (lambda (item) (eq (alist-get 'front_page item) t)))
 
 ;;;; 1. Stage: Extraction
 
@@ -155,7 +161,7 @@ Fetches the full page detail to get body content."
   :id-field 'url
   :id-property "CANVAS_URL"
   :skip-fn (lambda (item) (eq (alist-get 'front_page item) t))
-  :item-fn #'org-canvas--page-pull-item)
+  :pull-item-fn #'org-canvas--page-pull-item)
 
 (provide 'org-canvas-pages)
 ;;; org-canvas-pages.el ends here

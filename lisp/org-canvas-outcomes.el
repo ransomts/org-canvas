@@ -51,6 +51,11 @@
   "Path to the outcomes.org file."
   :type 'file
   :group 'org-canvas)
+(org-canvas-register-file-var 'org-canvas-outcomes-file "outcomes.org")
+(org-canvas-register-feature
+ :name "Outcomes" :endpoint "outcome_groups"
+ :file-var 'org-canvas-outcomes-file
+ :id-field 'id :id-property "CANVAS_ID" :title-field 'title)
 
 ;;;; Helper Functions
 

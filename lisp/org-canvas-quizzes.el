@@ -65,6 +65,11 @@
   "Path to the quizzes.org file."
   :type 'file
   :group 'org-canvas)
+(org-canvas-register-file-var 'org-canvas-quizzes-file "quizzes.org")
+(org-canvas-register-feature
+ :name "Quizzes" :endpoint "quizzes"
+ :file-var 'org-canvas-quizzes-file
+ :id-field 'id :id-property "CANVAS_ID" :title-field 'title)
 
 ;;;; Helper Functions
 

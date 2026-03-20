@@ -46,6 +46,12 @@
   "Path to the discussions.org file."
   :type 'file
   :group 'org-canvas)
+(org-canvas-register-file-var 'org-canvas-discussions-file "discussions.org")
+(org-canvas-register-feature
+ :name "Discussions" :endpoint "discussion_topics"
+ :file-var 'org-canvas-discussions-file
+ :id-field 'id :id-property "CANVAS_ID" :title-field 'title
+ :skip-fn (lambda (item) (eq (alist-get 'is_announcement item) t)))
 
 ;;;; 1. Stage: Extraction
 
@@ -248,7 +254,7 @@ DATA is the parsed discussion plist, RESPONSE is the Canvas API response."
   :file org-canvas-discussions-file
   :endpoint "discussion_topics"
   :skip-fn (lambda (item) (eq (alist-get 'is_announcement item) t))
-  :item-fn #'org-canvas--discussion-pull-item)
+  :pull-item-fn #'org-canvas--discussion-pull-item)
 
 (provide 'org-canvas-discussions)
 ;;; org-canvas-discussions.el ends here

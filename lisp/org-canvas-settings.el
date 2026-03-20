@@ -44,6 +44,7 @@
   "Path to the settings.org file."
   :type 'file
   :group 'org-canvas)
+(org-canvas-register-file-var 'org-canvas-settings-file "settings.org")
 
 ;;;; 1. Parse
 

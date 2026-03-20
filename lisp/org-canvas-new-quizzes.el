@@ -53,6 +53,7 @@
   "Path to the new-quizzes.org file."
   :type 'file
   :group 'org-canvas)
+(org-canvas-register-file-var 'org-canvas-new-quizzes-file "new-quizzes.org")
 
 (defvar org-canvas--new-quiz-debug-types nil
   "When non-nil, only sync item types in this list during debugging.

@@ -82,6 +82,7 @@
    ("G" "Push grades" org-canvas-submissions-push-grades)]
   ["Tools"
    ("i" "Init (setup wizard)" org-canvas-init)
+   ("c" "Switch course" org-canvas-activate-course)
    ("t" "Test connection" org-canvas-test-connection)
    ("v" "Validate files" org-canvas-validate)
    ("S" "Status overview" org-canvas-status)]

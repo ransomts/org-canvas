@@ -108,7 +108,36 @@ and writes org-canvas-credentials.el."
     (setq org-canvas-base-url url)
     (setq org-canvas-api-token token)
     (setq org-canvas-course-id course-id)
+    (org-canvas--recompute-file-paths)
+    ;; Offer to register in course registry
+    (let ((course-name (read-string "Register as course (empty to skip): ")))
+        (unless (string-empty-p course-name)
+          (customize-save-variable
+           'org-canvas-courses
+           (cons (cons course-name dir)
+                 (assoc-delete-all course-name org-canvas-courses)))
+          (setq org-canvas--active-course-name course-name)))
     (message "org-canvas initialized!  Use M-x org-canvas-status to see sync state.")))
+
+;;;###autoload
+(defun org-canvas-activate-course (name)
+  "Activate the course named NAME from `org-canvas-courses'."
+  (interactive
+   (list (completing-read "Course: "
+                          (mapcar #'car org-canvas-courses) nil t)))
+  (let ((dir (cdr (assoc name org-canvas-courses))))
+    (unless dir (user-error "Course '%s' not found in org-canvas-courses" name))
+    (unless (file-directory-p dir)
+      (user-error "Course directory does not exist: %s" dir))
+    (let ((cred-file (expand-file-name "org-canvas-credentials.el" dir)))
+      (unless (file-exists-p cred-file)
+        (user-error "No org-canvas-credentials.el in %s" dir))
+      (load cred-file nil t)
+      (org-canvas--recompute-file-paths)
+      (org-canvas-clear-log)
+      (setq org-canvas--active-course-name name)
+      (message "Activated course: %s (ID: %s at %s)"
+               name org-canvas-course-id org-canvas-base-url))))
 
 (provide 'org-canvas-setup)
 ;;; org-canvas-setup.el ends here

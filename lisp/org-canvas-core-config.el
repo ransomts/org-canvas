@@ -84,6 +84,45 @@ is newer, warn and skip the item.  Set to nil or use
 ;; Attempt to load credentials from a separate file if present
 (require 'org-canvas-credentials nil t)
 
+;;;; 1b. Multi-Course Support
+
+(defcustom org-canvas-courses nil
+  "Alist of registered courses: ((NAME . DIRECTORY) ...).
+Each DIRECTORY must contain an org-canvas-credentials.el file."
+  :type '(alist :key-type string :value-type directory)
+  :group 'org-canvas)
+
+(defvar org-canvas--active-course-name nil
+  "Name of the currently active course, or nil for single-course mode.")
+
+(defvar org-canvas--file-var-registry nil
+  "Alist of (VARIABLE-SYMBOL . FILENAME) for feature file paths.
+Populated at module load time.  Used by `org-canvas--recompute-file-paths'.")
+
+(defun org-canvas-register-file-var (var-symbol filename)
+  "Register VAR-SYMBOL as a feature file-path variable with default FILENAME."
+  (unless (assq var-symbol org-canvas--file-var-registry)
+    (push (cons var-symbol filename) org-canvas--file-var-registry)))
+
+(defvar org-canvas--feature-registry nil
+  "List of feature plists for orphan detection.
+Populated at module load time by `org-canvas-register-feature'.")
+
+(defun org-canvas-register-feature (&rest plist)
+  "Register a feature for orphan detection.
+PLIST has keys :name :endpoint :file-var :id-field :id-property
+:title-field and optionally :list-params :skip-fn."
+  (let ((name (plist-get plist :name)))
+    (unless (cl-find name org-canvas--feature-registry
+                     :key (lambda (f) (plist-get f :name))
+                     :test #'string=)
+      (push plist org-canvas--feature-registry))))
+
+(defun org-canvas--recompute-file-paths ()
+  "Recompute all file-path variables from `org-canvas-directory'."
+  (dolist (entry org-canvas--file-var-registry)
+    (set (car entry) (org-canvas--path (cdr entry)))))
+
 ;;; --- Path Utilities ---
 
 (defun org-canvas--path (filename)

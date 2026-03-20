@@ -253,99 +253,9 @@ Returns a list of (success-count . fail-count)."
     ("modules.org" "modules" "CANVAS_ID"))
   "Map from org filename to (endpoint id-property) for Canvas URL resolution.")
 
-(defconst org-canvas--orphan-feature-registry
-  '((:name "Assignments"
-     :endpoint "assignments"
-     :file-var org-canvas-assignments-file
-     :id-field id
-     :id-property "CANVAS_ID"
-     :title-field name
-     :list-params nil
-     :skip-fn nil)
-    (:name "Pages"
-     :endpoint "pages"
-     :file-var org-canvas-pages-file
-     :id-field url
-     :id-property "CANVAS_URL"
-     :title-field title
-     :list-params nil
-     :skip-fn (lambda (item) (eq (alist-get 'front_page item) t)))
-    (:name "Quizzes"
-     :endpoint "quizzes"
-     :file-var org-canvas-quizzes-file
-     :id-field id
-     :id-property "CANVAS_ID"
-     :title-field title
-     :list-params nil
-     :skip-fn nil)
-    (:name "Discussions"
-     :endpoint "discussion_topics"
-     :file-var org-canvas-discussions-file
-     :id-field id
-     :id-property "CANVAS_ID"
-     :title-field title
-     :list-params nil
-     :skip-fn (lambda (item) (eq (alist-get 'is_announcement item) t)))
-    (:name "Announcements"
-     :endpoint "discussion_topics"
-     :file-var org-canvas-announcements-file
-     :id-field id
-     :id-property "CANVAS_ID"
-     :title-field title
-     :list-params (("only_announcements" . "true"))
-     :skip-fn nil)
-    (:name "Files"
-     :endpoint "files"
-     :file-var org-canvas-files-file
-     :id-field id
-     :id-property "CANVAS_ID"
-     :title-field display_name
-     :list-params nil
-     :skip-fn nil)
-    (:name "Rubrics"
-     :endpoint "rubrics"
-     :file-var org-canvas-rubrics-file
-     :id-field id
-     :id-property "CANVAS_ID"
-     :title-field title
-     :list-params nil
-     :skip-fn nil)
-    (:name "Assignment Groups"
-     :endpoint "assignment_groups"
-     :file-var org-canvas-assignment-groups-file
-     :id-field id
-     :id-property "CANVAS_ID"
-     :title-field name
-     :list-params nil
-     :skip-fn nil)
-    (:name "Outcomes"
-     :endpoint "outcome_groups"
-     :file-var org-canvas-outcomes-file
-     :id-field id
-     :id-property "CANVAS_ID"
-     :title-field title
-     :list-params nil
-     :skip-fn nil)
-    (:name "Modules"
-     :endpoint "modules"
-     :file-var org-canvas-modules-file
-     :id-field id
-     :id-property "CANVAS_ID"
-     :title-field name
-     :list-params nil
-     :skip-fn nil)
-    (:name "Group Categories"
-     :endpoint "group_categories"
-     :file-var org-canvas-group-categories-file
-     :id-field id
-     :id-property "CANVAS_ID"
-     :title-field name
-     :list-params nil
-     :skip-fn nil))
-  "Registry of pushable features for orphan detection.
-Each entry is a plist describing how to fetch remote items and match them
-against local Org headings.  Sections and overrides are excluded
-\(sections are pull-only, overrides are per-assignment\).")
+;; Feature registry for orphan detection is populated dynamically
+;; by `org-canvas-register-feature' calls in each feature module.
+;; See `org-canvas--feature-registry' in org-canvas-core-config.el.
 
 (defun org-canvas--strip-statistics-cookie (title)
   "Remove Org statistics cookies like [1/3] or [33%] from TITLE.
@@ -912,11 +822,11 @@ Signals `user-error' with FEATURE-NAME if aborted."
 
 (defun org-canvas--pull-process-item (item file pull-config)
   "Process a single pulled ITEM into FILE.
-PULL-CONFIG is a plist with :id-field :title-field :id-property :item-fn."
+PULL-CONFIG is a plist with :id-field :title-field :id-property :pull-item-fn."
   (let* ((id-field (plist-get pull-config :id-field))
          (title-field (plist-get pull-config :title-field))
          (id-property (plist-get pull-config :id-property))
-         (item-fn (plist-get pull-config :item-fn))
+         (item-fn (plist-get pull-config :pull-item-fn))
          (id (alist-get id-field item))
          (title (alist-get title-field item))
          (pos (org-canvas--pull-upsert-heading file id title id-property)))
@@ -933,7 +843,7 @@ ARGS is a plist with the following keys:
   :file        - Symbol for file path defcustom (required)
   :endpoint    - API endpoint suffix string (required)
   :params      - Extra GET params alist (optional)
-  :item-fn     - Function (item pos) for per-item property setting (required)
+  :pull-item-fn - Function (item pos) for per-item property setting (required)
   :skip-fn     - Predicate (item) to skip item when non-nil (optional)
   :id-field    - Alist key for item ID (default: \\='id)
   :title-field - Alist key for item title (default: \\='title)
@@ -951,14 +861,14 @@ Example:
     :file org-canvas-announcements-file
     :endpoint \"discussion_topics\"
     :params \\='((\"only_announcements\" . \"true\"))
-    :item-fn #\\='org-canvas--announcement-pull-item)"
+    :pull-item-fn #\\='org-canvas--announcement-pull-item)"
   (declare (indent 1))
   (let* ((feature-name (symbol-name feature))
          (pull-fn-name (intern (format "org-canvas-pull-%s" feature-name)))
          (file-expr (plist-get args :file))
          (endpoint-expr (plist-get args :endpoint))
          (params-expr (plist-get args :params))
-         (item-fn (plist-get args :item-fn))
+         (item-fn (plist-get args :pull-item-fn))
          (skip-fn (plist-get args :skip-fn))
          (id-field (or (plist-get args :id-field) ''id))
          (title-field (or (plist-get args :title-field) ''title))
@@ -966,7 +876,7 @@ Example:
          (op-label (upcase (replace-regexp-in-string "-" " " feature-name))))
     (unless file-expr (error "org-canvas-define-pull: :file is required"))
     (unless endpoint-expr (error "org-canvas-define-pull: :endpoint is required"))
-    (unless item-fn (error "org-canvas-define-pull: :item-fn is required"))
+    (unless item-fn (error "org-canvas-define-pull: :pull-item-fn is required"))
     `(progn
        ;;;###autoload
        (defun ,pull-fn-name ()
@@ -988,7 +898,7 @@ Example:
                           (org-canvas--pull-process-item
                            item file
                            (list :id-field ,id-field :title-field ,title-field
-                                 :id-property ,id-property :item-fn ,item-fn))
+                                 :id-property ,id-property :pull-item-fn ,item-fn))
                           (cl-incf count))))
                   (if skip-fn
                       `(unless (funcall ,skip-fn item)

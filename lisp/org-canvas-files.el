@@ -59,6 +59,11 @@
   "Path to the files.org file."
   :type 'file
   :group 'org-canvas)
+(org-canvas-register-file-var 'org-canvas-files-file "files.org")
+(org-canvas-register-feature
+ :name "Files" :endpoint "files"
+ :file-var 'org-canvas-files-file
+ :id-field 'id :id-property "CANVAS_ID" :title-field 'display_name)
 
 (defcustom org-canvas-max-file-size-mb 500
   "Maximum file size in MB.  Files larger than this are skipped with a warning."

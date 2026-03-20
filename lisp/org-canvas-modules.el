@@ -53,6 +53,11 @@
   "Path to the modules.org file."
   :type 'file
   :group 'org-canvas)
+(org-canvas-register-file-var 'org-canvas-modules-file "modules.org")
+(org-canvas-register-feature
+ :name "Modules" :endpoint "modules"
+ :file-var 'org-canvas-modules-file
+ :id-field 'id :id-property "CANVAS_ID" :title-field 'name)
 
 ;;;; Helper Functions
 

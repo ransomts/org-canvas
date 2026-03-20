@@ -1752,16 +1752,16 @@ Keep this too
   (it "signals error when :file is missing"
     (expect (macroexpand '(org-canvas-define-pull test-feature
                             :endpoint "test"
-                            :item-fn #'ignore))
+                            :pull-item-fn #'ignore))
             :to-throw 'error))
 
   (it "signals error when :endpoint is missing"
     (expect (macroexpand '(org-canvas-define-pull test-feature
                             :file test-file
-                            :item-fn #'ignore))
+                            :pull-item-fn #'ignore))
             :to-throw 'error))
 
-  (it "signals error when :item-fn is missing"
+  (it "signals error when :pull-item-fn is missing"
     (expect (macroexpand '(org-canvas-define-pull test-feature
                             :file test-file
                             :endpoint "test"))
@@ -1771,7 +1771,7 @@ Keep this too
     (let ((expansion (macroexpand '(org-canvas-define-pull test-widgets
                                     :file test-file
                                     :endpoint "widgets"
-                                    :item-fn #'ignore))))
+                                    :pull-item-fn #'ignore))))
       (expect expansion :to-be-truthy)
       ;; Check that the expansion contains a defun with the right name
       (expect (format "%S" expansion) :to-match "org-canvas-pull-test-widgets")))
@@ -2136,7 +2136,7 @@ Keep this too
                  item org-file
                  (list :id-field 'id :title-field 'title
                        :id-property "CANVAS_ID"
-                       :item-fn (lambda (_item _pos) (setq item-fn-called t))))
+                       :pull-item-fn (lambda (_item _pos) (setq item-fn-called t))))
                 (goto-char (point-min))
                 (re-search-forward "^\\* " nil t)
                 (org-back-to-heading)
@@ -2160,7 +2160,7 @@ Keep this too
                  item org-file
                  (list :id-field 'id :title-field 'title
                        :id-property "CANVAS_ID"
-                       :item-fn (lambda (_item _pos) nil)))
+                       :pull-item-fn (lambda (_item _pos) nil)))
                 (goto-char (point-min))
                 (re-search-forward "^\\* " nil t)
                 (expect (org-get-heading t t t t) :to-equal "New Title"))))

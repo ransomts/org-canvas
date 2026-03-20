@@ -40,6 +40,12 @@
   "Path to the announcements.org file."
   :type 'file
   :group 'org-canvas)
+(org-canvas-register-file-var 'org-canvas-announcements-file "announcements.org")
+(org-canvas-register-feature
+ :name "Announcements" :endpoint "discussion_topics"
+ :file-var 'org-canvas-announcements-file
+ :id-field 'id :id-property "CANVAS_ID" :title-field 'title
+ :list-params '(("only_announcements" . "true")))
 
 ;;;; 1. Stage: Extraction
 
@@ -110,7 +116,7 @@
   :file org-canvas-announcements-file
   :endpoint "discussion_topics"
   :params '(("only_announcements" . "true"))
-  :item-fn #'org-canvas--announcement-pull-item)
+  :pull-item-fn #'org-canvas--announcement-pull-item)
 
 (provide 'org-canvas-announcements)
 ;;; org-canvas-announcements.el ends here

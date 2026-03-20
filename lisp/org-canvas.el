@@ -200,7 +200,8 @@ LABEL is used for logging (e.g., \"Pages\")."
      (org-canvas-delete-all-rubrics "Rubrics")
      (org-canvas-delete-all-outcomes "Outcomes")
      (org-canvas-delete-all-calendar-events "Calendar Events")))
-  "Delete tiers in reverse dependency order.  Each tier is a list of (FN LABEL) pairs.")
+  "Delete tiers in reverse dependency order.
+Each tier is a list of (FN LABEL) pairs.")
 
 (defconst org-canvas--status-content-types
   '(("Assignments"       org-canvas-assignments-file       "CANVAS_ID")
@@ -311,6 +312,8 @@ ID-PROP is the property used to identify synced items."
         (erase-buffer)
         (insert "org-canvas Sync Status\n")
         (insert (format "Course: %s | %s\n" org-canvas-course-id org-canvas-base-url))
+        (when org-canvas--active-course-name
+          (insert (format "Active course: %s\n" org-canvas--active-course-name)))
         (insert (make-string 60 ?=))
         (insert "\n")
         (dolist (entry org-canvas--status-content-types)
@@ -464,7 +467,7 @@ filters out items before the orphan check."
 
 (cl-defun org-canvas--find-orphans-for-feature (feature)
   "Find orphaned Canvas items for FEATURE.
-FEATURE is a plist from `org-canvas--orphan-feature-registry'.
+FEATURE is a plist from `org-canvas--feature-registry'.
 Returns a list of orphaned items (alists from the Canvas API),
 or nil if no orphans found."
   (let* ((name (plist-get feature :name))
@@ -561,7 +564,7 @@ Org heading locally (e.g., because the heading was deleted from the Org file)."
   (let ((all-orphans nil)
         (total-orphans 0))
     ;; Scan each feature
-    (dolist (feature org-canvas--orphan-feature-registry)
+    (dolist (feature org-canvas--feature-registry)
       (let ((name (plist-get feature :name)))
         (message "Scanning %s..." name)
         (elog-info org-canvas--logger "[Orphan] Scanning %s..." name)

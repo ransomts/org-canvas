@@ -48,6 +48,11 @@
   "Path to the assignments.org file."
   :type 'file
   :group 'org-canvas)
+(org-canvas-register-file-var 'org-canvas-assignments-file "assignments.org")
+(org-canvas-register-feature
+ :name "Assignments" :endpoint "assignments"
+ :file-var 'org-canvas-assignments-file
+ :id-field 'id :id-property "CANVAS_ID" :title-field 'name)
 
 ;;;; Helper Functions
 
@@ -433,7 +438,7 @@ ITEM is the API response alist, POS is the heading position."
   :file org-canvas-assignments-file
   :endpoint "assignments"
   :title-field 'name
-  :item-fn #'org-canvas--assignment-pull-item)
+  :pull-item-fn #'org-canvas--assignment-pull-item)
 
 (provide 'org-canvas-assignments)
 ;;; org-canvas-assignments.el ends here

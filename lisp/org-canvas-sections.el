@@ -60,6 +60,7 @@
   "Path to the sections.org file."
   :type 'file
   :group 'org-canvas)
+(org-canvas-register-file-var 'org-canvas-sections-file "sections.org")
 
 ;;;; Pull Sections from Canvas
 
