@@ -512,7 +512,7 @@ for the display name in logs."
     (let* ((entries (org-canvas--sync-collect-entries sync-file query feature-name))
            (targets (plist-get entries :targets))
            (all-ids-before (plist-get entries :all-ids-before))
-           (counters (list :success 0 :skip 0 :fail 0 :pulled 0 :dry-run 0))
+           (counters (list :success 0 :skip 0 :fail 0 :pulled 0 :dry-run 0 :conflict 0))
            (synced-ids (list nil))
            (ctx (list :parse-fn parse-fn
                       :build-fn build-fn

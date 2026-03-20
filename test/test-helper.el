@@ -40,7 +40,8 @@ heading structure recognition in programmatic buffers.")
   "Alist of (url-pattern . response) for mock responses.")
 
 (defun test-org-canvas-mock-api-request (_method _url &rest _args)
-  "Mock API request function that records calls and returns mock responses."
+  "Mock API request function that records calls and returns mock responses.
+Note: only METHOD, URL, and :data are recorded; :params and :timeout are dropped."
   (let ((call (list _method _url (plist-get _args :data))))
     (push call test-org-canvas-api-calls)
     ;; Find matching response

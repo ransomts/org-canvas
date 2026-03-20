@@ -175,7 +175,6 @@ HEADERS, JSON-PAYLOAD, and ACTUAL-TIMEOUT configure the request."
                  (elog-debug org-canvas--logger
                    "[API] Retry %d/%d" (1+ retry-count) org-canvas-rate-limit-retries)
                  (setq retry-count (1+ retry-count)))
-             (setq done t)
              (org-canvas--api-retries-exhausted retry-count err))))))
     result))
 
