@@ -7,6 +7,8 @@
 #   3. All tests passing on both Emacs 29 and Emacs 30 (via nix-shell)
 #   4. Code coverage >= 99% (measured on the Emacs 30 run)
 #
+# Gates 1+2 run in parallel, then gates 3+4 run in parallel.
+#
 # Emacs versions are pinned to specific nixpkgs archives so results are
 # reproducible regardless of the developer's system Emacs.
 #
@@ -17,27 +19,50 @@ set -euo pipefail
 COVERAGE_TARGET=99
 COMPLEXITY_BUDGET=2  # pre-existing: org-canvas-define-sync, org-canvas-define-push-at-point
 
-# Gate 1: Lint must be clean (fast — runs before slower nix-shell tests).
-echo "Running linter..."
-if ! eldev lint 2>&1; then
+# --- Phase 1: Lint + Complexity (parallel) ---
+
+LINT_LOG=$(mktemp /tmp/org-canvas-lint-XXXXXX.log)
+COMPLEXITY_LOG=$(mktemp /tmp/org-canvas-complexity-XXXXXX.log)
+
+(eldev lint 2>&1 > "$LINT_LOG"; echo $? > "${LINT_LOG}.rc") &
+lint_pid=$!
+
+(eldev complexity 2>&1 > "$COMPLEXITY_LOG"; echo $? > "${COMPLEXITY_LOG}.rc") &
+complexity_pid=$!
+
+wait "$lint_pid" "$complexity_pid" || true
+
+# Check lint
+lint_rc=$(cat "${LINT_LOG}.rc" 2>/dev/null || echo "1")
+if [ "$lint_rc" -ne 0 ]; then
+  echo "Running linter..."
+  cat "$LINT_LOG"
   echo "BLOCKED: eldev lint reported warnings."
+  rm -f "$LINT_LOG" "${LINT_LOG}.rc" "$COMPLEXITY_LOG" "${COMPLEXITY_LOG}.rc"
   exit 1
 fi
+echo "Running linter..."
+cat "$LINT_LOG"
 echo ""
 
-# Gate 2: No new functions above cognitive complexity threshold (>15).
-# Budget allows the 2 pre-existing macro violations; any increase is blocked.
-echo "Checking cognitive complexity..."
-complexity_output=$(eldev complexity 2>&1) || true
+# Check complexity
+complexity_output=$(cat "$COMPLEXITY_LOG")
 violations=$(echo "$complexity_output" | grep -oP '\d+(?= above cognitive threshold)' || echo "0")
 
 if [ "$violations" -gt "$COMPLEXITY_BUDGET" ]; then
+  echo "Checking cognitive complexity..."
   echo "$complexity_output" | grep -i "very.high"
   echo "BLOCKED: $violations function(s) above threshold (budget: $COMPLEXITY_BUDGET)."
+  rm -f "$LINT_LOG" "${LINT_LOG}.rc" "$COMPLEXITY_LOG" "${COMPLEXITY_LOG}.rc"
   exit 1
 fi
+echo "Checking cognitive complexity..."
 echo "Complexity OK ($violations/$COMPLEXITY_BUDGET budget used)."
 echo ""
+
+rm -f "$LINT_LOG" "${LINT_LOG}.rc" "$COMPLEXITY_LOG" "${COMPLEXITY_LOG}.rc"
+
+# --- Phase 2: Emacs 29 + Emacs 30 tests (parallel) ---
 
 # Pin each Emacs version to a specific nixpkgs snapshot
 declare -A NIX_ARCHIVES=(
@@ -50,61 +75,76 @@ declare -A NIX_PACKAGES=(
   [30]="emacs30-nox"
 )
 
-# Test both versions sequentially: Emacs 29 first (faster, no coverage),
-# then Emacs 30 with undercover coverage reporting enabled.
-for version in 29 30; do
-  archive="${NIX_ARCHIVES[$version]}"
-  package="${NIX_PACKAGES[$version]}"
+EMACS29_LOG=$(mktemp /tmp/org-canvas-emacs29-XXXXXX.log)
+EMACS30_LOG=$(mktemp /tmp/org-canvas-emacs30-XXXXXX.log)
+COVERAGE_JSON=$(mktemp /tmp/org-canvas-coverage-XXXXXX.json)
 
-  echo "========================================"
-  echo " Emacs $version ($package)"
-  echo "========================================"
-
-  COVERAGE_JSON=$(mktemp /tmp/org-canvas-coverage-XXXXXX.json)
-
-  # Only enable coverage instrumentation on Emacs 30 (primary target).
-  # Emacs 29 runs plain tests — catches version-specific regressions without
-  # the overhead of undercover instrumentation.
-  # Use codecov JSON format (text reporter has overflow-error on Emacs 30.1).
-  if [ "$version" -eq 30 ]; then
-    cmd="emacs --version | head -1 && eldev test -u \"on,codecov,dontsend\" -U \"$COVERAGE_JSON\""
-  else
-    cmd="emacs --version | head -1 && eldev test"
-  fi
-
-  # Run tests inside a nix-shell with the pinned Emacs version.
-  # Capture all output so we can parse failures and coverage.
-  output=$(nix-shell \
-    -I "nixpkgs=$archive" \
-    -p "$package" \
+# Emacs 29: plain tests (no coverage overhead)
+(
+  nix-shell \
+    -I "nixpkgs=${NIX_ARCHIVES[29]}" \
+    -p "${NIX_PACKAGES[29]}" \
     --keep PATH \
-    --run "$cmd" 2>&1)
+    --run "emacs --version | head -1 && eldev test" 2>&1 > "$EMACS29_LOG"
+  echo $? > "${EMACS29_LOG}.rc"
+) &
+emacs29_pid=$!
 
-  echo "$output"
-  echo ""
+# Emacs 30: tests with coverage
+(
+  nix-shell \
+    -I "nixpkgs=${NIX_ARCHIVES[30]}" \
+    -p "${NIX_PACKAGES[30]}" \
+    --keep PATH \
+    --run "emacs --version | head -1 && eldev test -u \"on,codecov,dontsend\" -U \"$COVERAGE_JSON\"" 2>&1 > "$EMACS30_LOG"
+  echo $? > "${EMACS30_LOG}.rc"
+) &
+emacs30_pid=$!
 
-  # Gate 3: Block push if any test specs failed on this Emacs version.
-  if echo "$output" | grep -qE '[0-9]+ failed'; then
-    failed=$(echo "$output" | grep -oP '\d+ failed' | grep -oP '^\d+')
-    if [ "$failed" -gt 0 ]; then
-      echo "BLOCKED: $failed test(s) failed on Emacs $version."
-      echo "$output" | grep -E 'FAILED|failed' | tail -20
-      rm -f "$COVERAGE_JSON"
-      exit 1
-    fi
+wait "$emacs29_pid" "$emacs30_pid" || true
+
+# --- Validate Emacs 29 ---
+echo "========================================"
+echo " Emacs 29 (${NIX_PACKAGES[29]})"
+echo "========================================"
+cat "$EMACS29_LOG"
+echo ""
+
+if echo "$(cat "$EMACS29_LOG")" | grep -qE '[0-9]+ failed'; then
+  failed=$(grep -oP '\d+ failed' "$EMACS29_LOG" | grep -oP '^\d+')
+  if [ "$failed" -gt 0 ]; then
+    echo "BLOCKED: $failed test(s) failed on Emacs 29."
+    grep -E 'FAILED|failed' "$EMACS29_LOG" | tail -20
+    rm -f "$EMACS29_LOG" "${EMACS29_LOG}.rc" "$EMACS30_LOG" "${EMACS30_LOG}.rc" "$COVERAGE_JSON"
+    exit 1
   fi
+fi
 
-  # Gate 4: Enforce minimum code coverage (Emacs 30 only).
-  # Parse coverage from codecov JSON: sum line hits across all source files.
-  if [ "$version" -eq 30 ]; then
-    if [ ! -s "$COVERAGE_JSON" ]; then
-      echo "BLOCKED: Coverage JSON was not generated."
-      rm -f "$COVERAGE_JSON"
-      exit 1
-    fi
+# --- Validate Emacs 30 ---
+echo "========================================"
+echo " Emacs 30 (${NIX_PACKAGES[30]})"
+echo "========================================"
+cat "$EMACS30_LOG"
+echo ""
 
-    # Extract coverage arrays, count non-null entries (relevant) and non-zero entries (covered)
-    eval "$(python3 -c "
+if echo "$(cat "$EMACS30_LOG")" | grep -qE '[0-9]+ failed'; then
+  failed=$(grep -oP '\d+ failed' "$EMACS30_LOG" | grep -oP '^\d+')
+  if [ "$failed" -gt 0 ]; then
+    echo "BLOCKED: $failed test(s) failed on Emacs 30."
+    grep -E 'FAILED|failed' "$EMACS30_LOG" | tail -20
+    rm -f "$EMACS29_LOG" "${EMACS29_LOG}.rc" "$EMACS30_LOG" "${EMACS30_LOG}.rc" "$COVERAGE_JSON"
+    exit 1
+  fi
+fi
+
+# --- Gate 4: Coverage (Emacs 30 only) ---
+if [ ! -s "$COVERAGE_JSON" ]; then
+  echo "BLOCKED: Coverage JSON was not generated."
+  rm -f "$EMACS29_LOG" "${EMACS29_LOG}.rc" "$EMACS30_LOG" "${EMACS30_LOG}.rc" "$COVERAGE_JSON"
+  exit 1
+fi
+
+eval "$(python3 -c "
 import json, sys
 with open('$COVERAGE_JSON') as f:
     data = json.load(f)
@@ -119,23 +159,21 @@ print(f'total_relevant={relevant}')
 print(f'total_covered={covered}')
 ")"
 
-    rm -f "$COVERAGE_JSON"
+rm -f "$EMACS29_LOG" "${EMACS29_LOG}.rc" "$EMACS30_LOG" "${EMACS30_LOG}.rc" "$COVERAGE_JSON"
 
-    if [ "$total_relevant" -eq 0 ]; then
-      echo "BLOCKED: Could not parse coverage report."
-      exit 1
-    fi
+if [ "$total_relevant" -eq 0 ]; then
+  echo "BLOCKED: Could not parse coverage report."
+  exit 1
+fi
 
-    # Round to nearest integer (add half-divisor before dividing)
-    coverage=$(( (total_covered * 100 + total_relevant / 2) / total_relevant ))
+# Round to nearest integer (add half-divisor before dividing)
+coverage=$(( (total_covered * 100 + total_relevant / 2) / total_relevant ))
 
-    echo "Coverage: ${coverage}% (${total_covered}/${total_relevant} lines)"
+echo "Coverage: ${coverage}% (${total_covered}/${total_relevant} lines)"
 
-    if [ "$coverage" -lt "$COVERAGE_TARGET" ]; then
-      echo "BLOCKED: Coverage ${coverage}% is below target ${COVERAGE_TARGET}%."
-      exit 1
-    fi
-  fi
-done
+if [ "$coverage" -lt "$COVERAGE_TARGET" ]; then
+  echo "BLOCKED: Coverage ${coverage}% is below target ${COVERAGE_TARGET}%."
+  exit 1
+fi
 
 echo "All checks passed (${coverage}% >= ${COVERAGE_TARGET}%)."
