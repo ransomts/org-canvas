@@ -11,8 +11,12 @@
 (require 'org-canvas-core)
 
 (describe "Property Registry"
+  :var (saved-registry)
   (before-each
+    (setq saved-registry org-canvas--property-registry)
     (setq org-canvas--property-registry (make-hash-table :test 'equal)))
+  (after-each
+    (setq org-canvas--property-registry saved-registry))
 
   (describe "org-canvas-register-properties"
     (it "stores a spec in the registry"

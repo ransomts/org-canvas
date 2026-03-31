@@ -9,8 +9,7 @@
 
 (require 'buttercup)
 (require 'test-helper)
-(require 'org-canvas-settings)
-(require 'org-canvas-validate)
+(require 'org-canvas)
 
 ;;;; Type Validator Tests
 
@@ -506,7 +505,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Assignments" org-canvas--validate-specs
+                    (plist-get (cl-find "Assignments" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -523,7 +522,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Assignments" org-canvas--validate-specs
+                    (plist-get (cl-find "Assignments" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -541,7 +540,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Discussions" org-canvas--validate-specs
+                    (plist-get (cl-find "Discussions" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -558,7 +557,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Discussions" org-canvas--validate-specs
+                    (plist-get (cl-find "Discussions" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -578,7 +577,7 @@ EXCEPT is a list of filenames to skip."
      (search-forward "** Test Outcome")
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Outcomes" org-canvas--validate-specs
+                    (plist-get (cl-find "Outcomes" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -599,7 +598,7 @@ EXCEPT is a list of filenames to skip."
      (search-forward "** Test Outcome")
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Outcomes" org-canvas--validate-specs
+                    (plist-get (cl-find "Outcomes" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -618,7 +617,7 @@ EXCEPT is a list of filenames to skip."
      (search-forward "** Item 1")
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Module Items" org-canvas--validate-specs
+                    (plist-get (cl-find "Module Items" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -637,7 +636,7 @@ EXCEPT is a list of filenames to skip."
      (search-forward "** Item 1")
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Module Items" org-canvas--validate-specs
+                    (plist-get (cl-find "Module Items" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -656,7 +655,7 @@ EXCEPT is a list of filenames to skip."
      (search-forward "** Question 1")
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Quiz Questions" org-canvas--validate-specs
+                    (plist-get (cl-find "Quiz Questions" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -676,7 +675,7 @@ EXCEPT is a list of filenames to skip."
      (search-forward "** Question 1")
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Quiz Questions" org-canvas--validate-specs
+                    (plist-get (cl-find "Quiz Questions" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -696,7 +695,7 @@ EXCEPT is a list of filenames to skip."
      (search-forward "** Group 1")
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Quiz Questions" org-canvas--validate-specs
+                    (plist-get (cl-find "Quiz Questions" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -715,7 +714,7 @@ EXCEPT is a list of filenames to skip."
      (search-forward "** Group 1")
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Quiz Questions" org-canvas--validate-specs
+                    (plist-get (cl-find "Quiz Questions" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -735,7 +734,7 @@ EXCEPT is a list of filenames to skip."
      (search-forward "** Group 1")
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Quiz Questions" org-canvas--validate-specs
+                    (plist-get (cl-find "Quiz Questions" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -753,7 +752,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Pages" org-canvas--validate-specs
+                    (plist-get (cl-find "Pages" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -770,7 +769,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Pages" org-canvas--validate-specs
+                    (plist-get (cl-find "Pages" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -787,7 +786,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Quizzes" org-canvas--validate-specs
+                    (plist-get (cl-find "Quizzes" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -802,7 +801,7 @@ EXCEPT is a list of filenames to skip."
     (with-validate-test-dir dir
       (with-temp-file (expand-file-name "pages.org" dir)
         (insert "* Page 1\n:PROPERTIES:\n:PUBLISHED: invalid\n:END:\n"))
-      (let ((spec (cl-find "Pages" org-canvas--validate-specs
+      (let ((spec (cl-find "Pages" (org-canvas--validate-specs)
                            :key (lambda (s) (plist-get s :label))
                            :test #'string=)))
         (let ((issues (org-canvas--validate-spec spec)))
@@ -813,14 +812,14 @@ EXCEPT is a list of filenames to skip."
     (with-validate-test-dir dir
       (with-temp-file (expand-file-name "pages.org" dir)
         (insert "* Page 1\n:PROPERTIES:\n:PUBLISHED: true\n:FRONT_PAGE: false\n:END:\n"))
-      (let ((spec (cl-find "Pages" org-canvas--validate-specs
+      (let ((spec (cl-find "Pages" (org-canvas--validate-specs)
                            :key (lambda (s) (plist-get s :label))
                            :test #'string=)))
         (expect (org-canvas--validate-spec spec) :to-equal nil))))
 
   (it "returns empty list when file does not exist"
     (with-validate-test-dir dir
-      (let ((spec (cl-find "Pages" org-canvas--validate-specs
+      (let ((spec (cl-find "Pages" (org-canvas--validate-specs)
                            :key (lambda (s) (plist-get s :label))
                            :test #'string=)))
         (expect (org-canvas--validate-spec spec) :to-equal nil)))))
@@ -964,7 +963,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Assignments" org-canvas--validate-specs
+                    (plist-get (cl-find "Assignments" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -981,7 +980,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Assignments" org-canvas--validate-specs
+                    (plist-get (cl-find "Assignments" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -998,7 +997,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Assignments" org-canvas--validate-specs
+                    (plist-get (cl-find "Assignments" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1015,7 +1014,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Assignments" org-canvas--validate-specs
+                    (plist-get (cl-find "Assignments" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1032,7 +1031,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Assignments" org-canvas--validate-specs
+                    (plist-get (cl-find "Assignments" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1049,7 +1048,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Assignments" org-canvas--validate-specs
+                    (plist-get (cl-find "Assignments" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1066,7 +1065,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Assignments" org-canvas--validate-specs
+                    (plist-get (cl-find "Assignments" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1089,7 +1088,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Assignments" org-canvas--validate-specs
+                    (plist-get (cl-find "Assignments" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1106,7 +1105,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Assignments" org-canvas--validate-specs
+                    (plist-get (cl-find "Assignments" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1123,7 +1122,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Assignments" org-canvas--validate-specs
+                    (plist-get (cl-find "Assignments" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1141,7 +1140,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Assignments" org-canvas--validate-specs
+                    (plist-get (cl-find "Assignments" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1158,7 +1157,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Pages" org-canvas--validate-specs
+                    (plist-get (cl-find "Pages" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1175,7 +1174,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Pages" org-canvas--validate-specs
+                    (plist-get (cl-find "Pages" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1192,7 +1191,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Quizzes" org-canvas--validate-specs
+                    (plist-get (cl-find "Quizzes" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1209,7 +1208,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Quizzes" org-canvas--validate-specs
+                    (plist-get (cl-find "Quizzes" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1226,7 +1225,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Quizzes" org-canvas--validate-specs
+                    (plist-get (cl-find "Quizzes" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1245,7 +1244,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Quizzes" org-canvas--validate-specs
+                    (plist-get (cl-find "Quizzes" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1264,7 +1263,7 @@ EXCEPT is a list of filenames to skip."
      (search-forward "** Item 1")
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Module Items" org-canvas--validate-specs
+                    (plist-get (cl-find "Module Items" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1283,7 +1282,7 @@ EXCEPT is a list of filenames to skip."
      (search-forward "** Item 1")
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Module Items" org-canvas--validate-specs
+                    (plist-get (cl-find "Module Items" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1300,7 +1299,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Discussions" org-canvas--validate-specs
+                    (plist-get (cl-find "Discussions" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1317,7 +1316,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Discussions" org-canvas--validate-specs
+                    (plist-get (cl-find "Discussions" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1334,7 +1333,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Discussions" org-canvas--validate-specs
+                    (plist-get (cl-find "Discussions" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1351,7 +1350,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Discussions" org-canvas--validate-specs
+                    (plist-get (cl-find "Discussions" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1371,7 +1370,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Discussions" org-canvas--validate-specs
+                    (plist-get (cl-find "Discussions" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1388,7 +1387,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Assignment Groups" org-canvas--validate-specs
+                    (plist-get (cl-find "Assignment Groups" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1405,7 +1404,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Assignment Groups" org-canvas--validate-specs
+                    (plist-get (cl-find "Assignment Groups" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1424,7 +1423,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Settings" org-canvas--validate-specs
+                    (plist-get (cl-find "Settings" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1441,7 +1440,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Settings" org-canvas--validate-specs
+                    (plist-get (cl-find "Settings" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1458,7 +1457,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Settings" org-canvas--validate-specs
+                    (plist-get (cl-find "Settings" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1475,7 +1474,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Settings" org-canvas--validate-specs
+                    (plist-get (cl-find "Settings" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1492,7 +1491,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Settings" org-canvas--validate-specs
+                    (plist-get (cl-find "Settings" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1509,7 +1508,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Settings" org-canvas--validate-specs
+                    (plist-get (cl-find "Settings" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1526,7 +1525,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Settings" org-canvas--validate-specs
+                    (plist-get (cl-find "Settings" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1543,7 +1542,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Settings" org-canvas--validate-specs
+                    (plist-get (cl-find "Settings" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1560,7 +1559,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Settings" org-canvas--validate-specs
+                    (plist-get (cl-find "Settings" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1577,7 +1576,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Settings" org-canvas--validate-specs
+                    (plist-get (cl-find "Settings" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1594,7 +1593,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Settings" org-canvas--validate-specs
+                    (plist-get (cl-find "Settings" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1611,7 +1610,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Settings" org-canvas--validate-specs
+                    (plist-get (cl-find "Settings" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1644,7 +1643,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Settings" org-canvas--validate-specs
+                    (plist-get (cl-find "Settings" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1662,7 +1661,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Settings" org-canvas--validate-specs
+                    (plist-get (cl-find "Settings" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1677,7 +1676,7 @@ EXCEPT is a list of filenames to skip."
       (with-temp-file (expand-file-name "settings.org" dir)
         (insert "* My Course\n:PROPERTIES:\n:APPLY_WEIGHTS: invalid\n:DEFAULT_VIEW: bad\n:END:\n"))
       (test-validate-create-empty-files dir '("settings.org"))
-      (let ((spec (cl-find "Settings" org-canvas--validate-specs
+      (let ((spec (cl-find "Settings" (org-canvas--validate-specs)
                            :key (lambda (s) (plist-get s :label))
                            :test #'string=)))
         (let ((issues (org-canvas--validate-spec spec)))
@@ -1690,7 +1689,7 @@ EXCEPT is a list of filenames to skip."
       (with-temp-file (expand-file-name "settings.org" dir)
         (insert "* My Course\n:PROPERTIES:\n:APPLY_WEIGHTS: true\n:DEFAULT_VIEW: modules\n:LICENSE: private\n:END:\n"))
       (test-validate-create-empty-files dir '("settings.org"))
-      (let ((spec (cl-find "Settings" org-canvas--validate-specs
+      (let ((spec (cl-find "Settings" (org-canvas--validate-specs)
                            :key (lambda (s) (plist-get s :label))
                            :test #'string=)))
         (expect (org-canvas--validate-spec spec) :to-equal nil))))
@@ -1708,7 +1707,7 @@ EXCEPT is a list of filenames to skip."
 
 ;;;; Validation Tests for New Properties
 
-(describe "org-canvas--validate-specs includes new properties"
+(describe "(org-canvas--validate-specs) includes new properties"
   (it "validates MUTED as boolean in assignments"
     (let ((loc (list :file "/f" :line 1 :heading "H")))
       (expect (org-canvas--validate-check-boolean "true" "MUTED" loc) :to-be nil)
@@ -1764,7 +1763,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Assignments" org-canvas--validate-specs
+                    (plist-get (cl-find "Assignments" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1781,7 +1780,7 @@ EXCEPT is a list of filenames to skip."
 "
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "Assignments" org-canvas--validate-specs
+                    (plist-get (cl-find "Assignments" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1815,7 +1814,7 @@ EXCEPT is a list of filenames to skip."
      (search-forward "** Question")
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "New Quiz Items" org-canvas--validate-specs
+                    (plist-get (cl-find "New Quiz Items" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -1835,7 +1834,7 @@ EXCEPT is a list of filenames to skip."
      (search-forward "** Question")
      (org-back-to-heading t)
      (let ((issues (org-canvas--validate-entry-properties
-                    (plist-get (cl-find "New Quiz Items" org-canvas--validate-specs
+                    (plist-get (cl-find "New Quiz Items" (org-canvas--validate-specs)
                                         :key (lambda (s) (plist-get s :label))
                                         :test #'string=)
                                :properties)
@@ -2233,7 +2232,7 @@ EXCEPT is a list of filenames to skip."
   (it "includes RUBRIC_LINK in discussions spec"
     (let ((disc-spec (cl-find-if
                       (lambda (s) (equal (plist-get s :label) "Discussions"))
-                      org-canvas--validate-specs)))
+                      (org-canvas--validate-specs))))
       (expect disc-spec :to-be-truthy)
       (let ((rubric-prop (cl-find-if
                           (lambda (p) (equal (plist-get p :name) "RUBRIC_LINK"))
@@ -2246,7 +2245,7 @@ EXCEPT is a list of filenames to skip."
   (it "includes GROUP in new quizzes spec"
     (let ((nq-spec (cl-find-if
                     (lambda (s) (equal (plist-get s :label) "New Quizzes"))
-                    org-canvas--validate-specs)))
+                    (org-canvas--validate-specs))))
       (expect nq-spec :to-be-truthy)
       (let ((group-prop (cl-find-if
                          (lambda (p) (equal (plist-get p :name) "GROUP"))
@@ -2370,7 +2369,7 @@ EXCEPT is a list of filenames to skip."
   (it "includes RUBRIC_LINK in new quizzes spec"
     (let ((nq-spec (cl-find-if
                     (lambda (s) (equal (plist-get s :label) "New Quizzes"))
-                    org-canvas--validate-specs)))
+                    (org-canvas--validate-specs))))
       (expect nq-spec :to-be-truthy)
       (let* ((rubric-prop (cl-find-if
                            (lambda (p) (equal (plist-get p :name) "RUBRIC_LINK"))
