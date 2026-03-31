@@ -128,6 +128,34 @@ Type dispatch: `boolean` (with optional `:default`), `timestamp`, `number`, `enu
   :post-fn #'associate-rubric)  ; optional callback
 ```
 
+**Centralized Property Registry:**
+```elisp
+(org-canvas-register-properties "announcements"
+  :label "Announcements"
+  :file-var 'org-canvas-announcements-file
+  :query "LEVEL=1"
+  :properties
+  `((:org-prop "PUBLISHED" :data-key :published :type boolean :default t
+     :api-key "published" :boolean-json t)
+    (:org-prop "POST_AT" :data-key :delayed_post_at :type timestamp
+     :api-key "delayed_post_at")))
+```
+All 19 validation targets self-register their property definitions at load time. The validation engine (`org-canvas-validate`) queries this registry at runtime instead of maintaining a separate spec constant. Property specs declare: Org property name, output plist key, type, API field name, and validation constraints (enum values, link targets, date ordering).
+
+**Modules registering properties:** All feature modules register via `org-canvas-register-properties`. Modules with multiple heading levels register multiple entries (e.g., quizzes registers "quizzes" for LEVEL=1 and "quiz-questions" for LEVEL=2).
+
+**Declarative Payload Builder:**
+```elisp
+(org-canvas-define-payload group-category
+  :registry-key "group-categories"
+  :format alist
+  :title-key :title
+  :title-api-key name)
+```
+Generates `org-canvas--{feature}-build-payload` from registry property specs. Properties with `:api-key` are included in the payload; `:boolean-json t` properties are converted via `org-canvas--to-json-boolean`. Supports alist and hash-table formats, wrapper keys, static fields, and escape hatches (`:post-build-fn`, `:extra-required-fn`).
+
+**Modules using `org-canvas-define-payload`:** group-categories, calendar, pages, announcements
+
 **Modules using shared infrastructure:** announcements, pages, discussions, assignments, assignment-groups, rubrics
 
 **Modules with custom push logic (use `org-canvas-define-sync` but have custom push functions due to non-standard API endpoints):** group-categories (split POST/PUT URLs), calendar (global endpoint, not course-scoped)
@@ -223,7 +251,7 @@ The `elog` package is fetched from GitHub via `eldev-use-vc-repository` (not ven
 ### Running Tests
 
 ```bash
-eldev test              # Run all 2361 tests
+eldev test              # Run all 2413 tests
 eldev test "core"       # Run tests matching pattern
 ```
 
@@ -277,7 +305,7 @@ test/
 
 ### Test Coverage Summary
 
-**2361 tests total** covering core utilities, all feature modules, and validation (9 tests skip on Emacs 29.x due to org-mode differences). Coverage is 99.99% (6732/6733 lines).
+**2413 tests total** covering core utilities, all feature modules, and validation (9 tests skip on Emacs 29.x due to org-mode differences). Coverage is 99.99% (6732/6733 lines).
 
 | Module            | Tests |
 |-------------------|-------|
@@ -305,6 +333,7 @@ test/
 | **core-usability**| 38    |
 | assignment-groups | 36    |
 | snapshot          | 15    |
+| property-registry | 28    |
 | transient         | 12    |
 | fuzz              | 9     |
 
