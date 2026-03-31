@@ -35,6 +35,137 @@ can access it without changing per-module push function signatures.")
   "When non-nil, a plist accumulating counts across sync modules.
 Bound by `org-canvas-sync' to aggregate success/skip/fail totals.")
 
+;;;; 5a. Declarative Payload Builder
+;;
+;; Runtime helpers and macro for generating build-payload functions
+;; from property registry specs.
+
+(defun org-canvas--payload-build-alist (data registry-key title-api-key
+                                        &optional body-key body-api-key
+                                        static-fields)
+  "Build an alist payload from DATA using property specs in REGISTRY-KEY.
+TITLE-API-KEY is the alist key symbol for the title field.
+BODY-KEY/BODY-API-KEY add body content when both non-nil.
+STATIC-FIELDS is an alist of fixed key-value pairs."
+  (let* ((spec (gethash registry-key org-canvas--property-registry))
+         (properties (plist-get spec :properties))
+         (title-data-key (or (plist-get spec :title-key) :title))
+         (base (list (cons title-api-key (plist-get data title-data-key)))))
+    ;; Add body if specified
+    (when (and body-key body-api-key)
+      (push (cons body-api-key (plist-get data body-key)) base))
+    ;; Add static fields
+    (dolist (field static-fields)
+      (push field base))
+    ;; Add properties from registry
+    (dolist (prop properties)
+      (let* ((api-key (plist-get prop :api-key))
+             (data-key (plist-get prop :data-key))
+             (boolean-json (plist-get prop :boolean-json))
+             (required (plist-get prop :required))
+             (value (plist-get data data-key)))
+        (when (and api-key (or value required boolean-json))
+          (let ((final-value (if boolean-json
+                                 (org-canvas--to-json-boolean value)
+                               value)))
+            (push (cons (intern api-key) final-value) base)))))
+    (nreverse base)))
+
+(defun org-canvas--payload-build-hash-table (data registry-key title-api-key
+                                             &optional body-key body-api-key
+                                             wrapper-key extra-required-fn)
+  "Build a hash-table payload from DATA using property specs in REGISTRY-KEY.
+TITLE-API-KEY is the hash key string for the title field.
+BODY-KEY/BODY-API-KEY add body content when both non-nil.
+WRAPPER-KEY wraps inner hash in an outer hash.
+EXTRA-REQUIRED-FN is (lambda (data inner-hash)) for extra required fields."
+  (let* ((spec (gethash registry-key org-canvas--property-registry))
+         (properties (plist-get spec :properties))
+         (title-data-key (or (plist-get spec :title-key) :title))
+         (inner (make-hash-table :test 'equal)))
+    ;; Add title
+    (puthash title-api-key (plist-get data title-data-key) inner)
+    ;; Add body if specified
+    (when (and body-key body-api-key)
+      (puthash body-api-key (plist-get data body-key) inner))
+    ;; Add properties from registry
+    (dolist (prop properties)
+      (let* ((api-key (plist-get prop :api-key))
+             (data-key (plist-get prop :data-key))
+             (boolean-json (plist-get prop :boolean-json))
+             (required (plist-get prop :required))
+             (value (plist-get data data-key)))
+        (when (and api-key (or value required boolean-json))
+          (puthash api-key
+                   (if boolean-json
+                       (org-canvas--to-json-boolean value)
+                     value)
+                   inner))))
+    ;; Call extra-required-fn if provided
+    (when extra-required-fn
+      (funcall extra-required-fn data inner))
+    ;; Wrap if wrapper-key provided
+    (if wrapper-key
+        (let ((outer (make-hash-table :test 'equal)))
+          (puthash wrapper-key inner outer)
+          outer)
+      inner)))
+
+(defmacro org-canvas-define-payload (feature &rest args)
+  "Generate `org-canvas--FEATURE-build-payload' from property registry.
+FEATURE is an unquoted symbol.  ARGS is a plist:
+  :registry-key STRING - key in `org-canvas--property-registry'
+  :format (alist | hash-table) - output format
+  :title-api-key - API key for title (symbol for alist, string for hash-table)
+  :body-key KEYWORD - plist key for body in data (optional)
+  :body-api-key - API key for body (optional)
+  :wrapper-key STRING - wrap hash-table in outer hash (hash-table only)
+  :static-fields ALIST - fixed fields (alist only)
+  :post-build-fn FUNCTION - (lambda (data payload) payload) escape hatch
+  :extra-required-fn FUNCTION - (lambda (data inner-hash)) for hash-table"
+  (declare (indent 1))
+  (let* ((feature-name (symbol-name feature))
+         (fn-name (intern (format "org-canvas--%s-build-payload" feature-name)))
+         (format-type (plist-get args :format))
+         (registry-key (plist-get args :registry-key))
+         (title-api-key (plist-get args :title-api-key))
+         (body-key (plist-get args :body-key))
+         (body-api-key (plist-get args :body-api-key))
+         (wrapper-key (plist-get args :wrapper-key))
+         (static-fields (plist-get args :static-fields))
+         (post-build-fn (plist-get args :post-build-fn))
+         (extra-required-fn (plist-get args :extra-required-fn)))
+    (unless (memq format-type '(alist hash-table))
+      (error "Org-canvas-define-payload %s: :format must be alist or hash-table"
+             feature-name))
+    (unless registry-key
+      (error "Org-canvas-define-payload %s: :registry-key is required"
+             feature-name))
+    (unless title-api-key
+      (error "Org-canvas-define-payload %s: :title-api-key is required"
+             feature-name))
+    (let ((builder-call
+           (if (eq format-type 'alist)
+               `(org-canvas--payload-build-alist
+                 data ,registry-key ',title-api-key
+                 ,body-key ',body-api-key
+                 ',static-fields)
+             `(org-canvas--payload-build-hash-table
+               data ,registry-key ,title-api-key
+               ,body-key ,body-api-key
+               ,wrapper-key ,extra-required-fn))))
+      `(defun ,fn-name (data)
+         ,(format "Convert extracted DATA plist into a Canvas API payload for %s." feature-name)
+         (let ((title (plist-get data ,(or (plist-get args :title-key) :title))))
+           (elog-info org-canvas--logger
+                      "[Stage 2: Transform] Building payload for '%%s'" title)
+           (let ((payload ,builder-call))
+             ,@(when post-build-fn
+                 `((setq payload (funcall ,post-build-fn data payload))))
+             (elog-info org-canvas--logger
+                        "[Stage 2: Transform] Payload complete")
+             payload))))))
+
 ;;;; 5b. Declarative Parse Macro
 ;;
 ;; Generates read-props, transform-props, and parse-entry from a
