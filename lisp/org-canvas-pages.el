@@ -59,13 +59,13 @@
   `((:org-prop "PUBLISHED" :data-key :published :type boolean :default t
      :api-key "published" :boolean-json t)
     (:org-prop "FRONT_PAGE" :data-key :front_page :type boolean
-     :api-key "front_page" :boolean-json t)
+     :api-key "front_page")
     (:org-prop "EDITING_ROLES" :data-key :editing_roles :type csv-enum
      :values ,org-canvas--valid-editing-roles :api-key "editing_roles")
     (:org-prop "TODO_DATE" :data-key :student_todo_at :type timestamp
      :api-key "student_todo_at")
     (:org-prop "NOTIFY_OF_UPDATE" :data-key :notify_of_update :type boolean
-     :api-key "notify_of_update" :boolean-json t)))
+     :api-key "notify_of_update")))
 
 ;;;; 1. Stage: Extraction
 
@@ -101,35 +101,22 @@ Logs warnings for invalid roles.  Returns RAW unchanged."
 
 ;;;; 2. Stage: Transformation
 
-(defun org-canvas--page-build-payload (data)
-  "Convert DATA to Canvas payload using Hash Tables."
-  (let ((title (plist-get data :title)))
-    (when (string-empty-p title)
-      (elog-error org-canvas--logger "[Stage 2: Transform] Empty title!")
-      (error "Page title cannot be empty during payload build"))
+(defun org-canvas--page-pre-build-check (data _payload)
+  "Validate page DATA before building payload.  Return PAYLOAD unchanged."
+  (when (string-empty-p (plist-get data :title))
+    (elog-error org-canvas--logger "[Stage 2: Transform] Empty title!")
+    (error "Page title cannot be empty during payload build"))
+  _payload)
 
-    (elog-info org-canvas--logger "[Stage 2: Transform] Building payload for '%s'" title)
-
-    (let ((inner-page (make-hash-table :test 'equal))
-          (outer-wrapper (make-hash-table :test 'equal)))
-
-      (puthash "title" title inner-page)
-      (puthash "body" (plist-get data :body) inner-page)
-      (puthash "published" (org-canvas--to-json-boolean (plist-get data :published)) inner-page)
-
-      (when (plist-get data :front_page)
-        (puthash "front_page" t inner-page)
-        (elog-debug org-canvas--logger "[Stage 2: Transform] Setting as front page"))
-
-      (org-canvas--puthash-when inner-page data :editing_roles "editing_roles")
-      (org-canvas--puthash-when inner-page data :student_todo_at "student_todo_at")
-      (when (plist-get data :notify_of_update)
-        (puthash "notify_of_update" t inner-page))
-
-      (puthash "wiki_page" inner-page outer-wrapper)
-
-      (elog-debug org-canvas--logger "[Stage 2: Transform] Payload complete")
-      outer-wrapper)))
+(org-canvas-define-payload page
+  :registry-key "pages"
+  :format hash-table
+  :wrapper-key "wiki_page"
+  :title-key :title
+  :title-api-key "title"
+  :body-key :body
+  :body-api-key "body"
+  :post-build-fn #'org-canvas--page-pre-build-check)
 
 ;;;; Main Sync Functions
 

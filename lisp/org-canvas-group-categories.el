@@ -68,20 +68,11 @@
 
 ;;;; 2. Stage: Transformation
 
-(defun org-canvas--group-category-build-payload (data)
-  "Convert the extracted DATA plist into a Canvas API-compatible alist."
-  (let ((title (plist-get data :title)))
-    (elog-info org-canvas--logger "[Stage 2: Transform] Building payload for '%s'" title)
-
-    (let ((base `((name . ,title))))
-      (setq base (org-canvas--push-non-nil-fields data
-                   '((:self_signup . self_signup)
-                     (:group_limit . group_limit)
-                     (:auto_leader . auto_leader)
-                     (:create_group_count . create_group_count))
-                   base))
-      (elog-debug org-canvas--logger "[Stage 2: Transform] Payload complete")
-      base)))
+(org-canvas-define-payload group-category
+  :registry-key "group-categories"
+  :format alist
+  :title-key :title
+  :title-api-key name)
 
 ;;;; 3. Stage: Execution
 

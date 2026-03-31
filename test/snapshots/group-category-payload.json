@@ -1,7 +1,7 @@
 {
-  "create_group_count": 8,
-  "auto_leader": "first",
-  "group_limit": 4,
+  "name": "Lab Groups",
   "self_signup": "enabled",
-  "name": "Lab Groups"
+  "group_limit": 4,
+  "auto_leader": "first",
+  "create_group_count": 8
 }

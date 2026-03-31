@@ -69,32 +69,30 @@
 
 ;;;; 2. Stage: Transformation
 
-(defun org-canvas--announcement-build-payload (data)
-  "Convert the extracted DATA plist into a Canvas API-compatible alist."
-  (let ((title (plist-get data :title)))
-    (elog-info org-canvas--logger "[Stage 2: Transform] Building payload for '%s'" title)
+(defun org-canvas--announcement-post-build (data payload)
+  "Apply announcement-specific payload transformations.
+DATA is the parsed plist, PAYLOAD is the alist so far."
+  ;; Lock comments when ALLOW_COMMENTS is false/nil
+  (unless (plist-get data :allow_discussion_comments)
+    (push `(lock_at . ,(org-canvas-current-iso8601-timestamp)) payload))
+  ;; Resolve section names to Canvas section IDs
+  (when (plist-get data :specific_sections)
+    (let ((resolved (org-canvas--resolve-section-names-to-ids
+                     (plist-get data :specific_sections))))
+      (when resolved
+        (push `(specific_sections . ,resolved) payload))))
+  payload)
 
-    (let ((base `((title . ,title)
-                  (message . ,(plist-get data :message))
-                  (published . ,(org-canvas--to-json-boolean (plist-get data :published)))
-                  (is_announcement . t)
-                  (discussion_type . "side_comment"))))
-
-      (when (plist-get data :delayed_post_at)
-        (elog-debug org-canvas--logger "[Stage 2: Transform] Adding delayed_post_at: %s" (plist-get data :delayed_post_at))
-        (push `(delayed_post_at . ,(plist-get data :delayed_post_at)) base))
-
-      (unless (plist-get data :allow_discussion_comments)
-        (push `(lock_at . ,(org-canvas-current-iso8601-timestamp)) base))
-
-      (when (plist-get data :specific_sections)
-        (let ((resolved (org-canvas--resolve-section-names-to-ids
-                         (plist-get data :specific_sections))))
-          (when resolved
-            (push `(specific_sections . ,resolved) base))))
-
-      (elog-debug org-canvas--logger "[Stage 2: Transform] Payload complete")
-      base)))
+(org-canvas-define-payload announcement
+  :registry-key "announcements"
+  :format alist
+  :title-key :title
+  :title-api-key title
+  :body-key :message
+  :body-api-key message
+  :static-fields ((is_announcement . t)
+                  (discussion_type . "side_comment"))
+  :post-build-fn #'org-canvas--announcement-post-build)
 
 ;;;; Main Sync Function
 

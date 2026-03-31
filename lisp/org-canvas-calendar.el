@@ -52,7 +52,11 @@
     (:org-prop "END_AT" :data-key :end_at :type timestamp
      :api-key "end_at")
     (:org-prop "ALL_DAY" :data-key :all_day :type boolean
-     :api-key "all_day" :boolean-json t)))
+     :api-key "all_day")
+    (:org-prop "LOCATION_NAME" :data-key :location_name :type string
+     :api-key "location_name")
+    (:org-prop "LOCATION_ADDRESS" :data-key :location_address :type string
+     :api-key "location_address")))
 
 ;;;; 1. Stage: Extraction
 
@@ -74,30 +78,19 @@
 
 ;;;; 2. Stage: Transformation
 
-(defun org-canvas--calendar-event-build-payload (data)
-  "Convert the extracted DATA plist into a Canvas API-compatible hash-table.
-The payload is wrapped in a `calendar_event' key as required by the API."
-  (let ((title (plist-get data :title)))
-    (elog-info org-canvas--logger "[Stage 2: Transform] Building payload for '%s'" title)
+(defun org-canvas--calendar-event-extra-required (_data inner)
+  "Add context_code to calendar event INNER hash."
+  (puthash "context_code" (format "course_%s" org-canvas-course-id) inner))
 
-    (let ((event (make-hash-table :test 'equal))
-          (payload (make-hash-table :test 'equal)))
-      ;; Required fields
-      (puthash "context_code" (format "course_%s" org-canvas-course-id) event)
-      (puthash "title" title event)
-      (puthash "start_at" (plist-get data :start_at) event)
-
-      ;; Optional fields
-      (org-canvas--puthash-when event data :end_at "end_at")
-      (when (plist-get data :all_day)
-        (puthash "all_day" t event))
-      (org-canvas--puthash-when event data :description "description")
-      (org-canvas--puthash-when event data :location_name "location_name")
-      (org-canvas--puthash-when event data :location_address "location_address")
-
-      (puthash "calendar_event" event payload)
-      (elog-debug org-canvas--logger "[Stage 2: Transform] Payload complete")
-      payload)))
+(org-canvas-define-payload calendar-event
+  :registry-key "calendar-events"
+  :format hash-table
+  :wrapper-key "calendar_event"
+  :title-key :title
+  :title-api-key "title"
+  :body-key :description
+  :body-api-key "description"
+  :extra-required-fn #'org-canvas--calendar-event-extra-required)
 
 ;;;; 3. Stage: Execution
 
