@@ -58,6 +58,27 @@
  :name "Modules" :endpoint "modules"
  :file-var 'org-canvas-modules-file
  :id-field 'id :id-property "CANVAS_ID" :title-field 'name)
+(org-canvas-register-properties "modules"
+  :label "Modules"
+  :file-var 'org-canvas-modules-file
+  :query "LEVEL=1"
+  :properties
+  '((:org-prop "PUBLISHED" :data-key :published :type boolean)
+    (:org-prop "UNLOCK_AT" :data-key :unlock_at :type timestamp)
+    (:org-prop "REQUIRE_SEQUENTIAL_PROGRESSION" :data-key :require_sequential_progression :type boolean)
+    (:org-prop "PUBLISH_FINAL_GRADE" :data-key :publish_final_grade :type boolean)))
+(org-canvas-register-properties "module-items"
+  :label "Module Items"
+  :file-var 'org-canvas-modules-file
+  :query "LEVEL=2"
+  :properties
+  `((:org-prop "INDENT" :data-key :indent :type number)
+    (:org-prop "COMPLETION_REQUIREMENT" :data-key :completion_requirement :type enum
+     :values ,org-canvas--valid-completion-requirements)
+    (:org-prop "MIN_SCORE" :data-key :min_score :type number)
+    (:org-prop "NEW_TAB" :data-key :new_tab :type boolean)
+    (:org-prop "PUBLISHED" :data-key :published :type boolean))
+  :structural-fn #'org-canvas--validate-module-item-link)
 
 ;;;; Helper Functions
 

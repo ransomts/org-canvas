@@ -56,6 +56,13 @@
  :name "Rubrics" :endpoint "rubrics"
  :file-var 'org-canvas-rubrics-file
  :id-field 'id :id-property "CANVAS_ID" :title-field 'title)
+(org-canvas-register-properties "rubrics"
+  :label "Rubrics"
+  :file-var 'org-canvas-rubrics-file
+  :query "LEVEL=1"
+  :properties
+  '((:org-prop "FREE_FORM_CRITERION_COMMENTS" :data-key :free-form :type boolean))
+  :structural-fn #'org-canvas--validate-rubric-structure)
 
 ;;;; 1. Stage: Extraction
 

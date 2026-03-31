@@ -46,6 +46,16 @@
  :file-var 'org-canvas-announcements-file
  :id-field 'id :id-property "CANVAS_ID" :title-field 'title
  :list-params '(("only_announcements" . "true")))
+(org-canvas-register-properties "announcements"
+  :label "Announcements"
+  :file-var 'org-canvas-announcements-file
+  :query "LEVEL=1"
+  :properties
+  '((:org-prop "PUBLISHED" :data-key :published :type boolean :default t
+     :api-key "published" :boolean-json t)
+    (:org-prop "POST_AT" :data-key :delayed_post_at :type timestamp
+     :api-key "delayed_post_at")
+    (:org-prop "ALLOW_COMMENTS" :data-key :allow_discussion_comments :type boolean)))
 
 ;;;; 1. Stage: Extraction
 

@@ -53,6 +53,43 @@
  :name "Assignments" :endpoint "assignments"
  :file-var 'org-canvas-assignments-file
  :id-field 'id :id-property "CANVAS_ID" :title-field 'name)
+(org-canvas-register-properties "assignments"
+  :label "Assignments"
+  :file-var 'org-canvas-assignments-file
+  :query "LEVEL=1"
+  :properties
+  `((:org-prop "POINTS" :data-key :points_possible :type number)
+    (:org-prop "GRADING_TYPE" :data-key :grading_type :type enum
+     :values ,org-canvas--valid-grading-types)
+    (:org-prop "PUBLISHED" :data-key :published :type boolean)
+    (:org-prop "SUBMISSION" :data-key :submission_types :type csv-enum
+     :values ,org-canvas--valid-submission-types)
+    (:org-prop "MAX_ATTEMPTS" :data-key :allowed_attempts :type number)
+    (:org-prop "DUE_AT" :data-key :due_at :type timestamp)
+    (:org-prop "UNLOCK_AT" :data-key :unlock_at :type timestamp)
+    (:org-prop "LOCK_AT" :data-key :lock_at :type timestamp)
+    (:org-prop "PEER_REVIEWS" :data-key :peer_reviews :type boolean)
+    (:org-prop "PEER_REVIEW_COUNT" :data-key :peer_review_count :type number)
+    (:org-prop "PEER_REVIEW_DUE_AT" :data-key :peer_reviews_due_at :type timestamp)
+    (:org-prop "GROUP" :data-key :assignment_group_id :type link
+     :target-file org-canvas-assignment-groups-file :link-id-property "CANVAS_ID")
+    (:org-prop "RUBRIC_LINK" :data-key :rubric_id :type link
+     :target-file org-canvas-rubrics-file :link-id-property "CANVAS_ID")
+    (:org-prop "OMIT_FROM_GRADES" :data-key :omit_from_final_grade :type boolean)
+    (:org-prop "ANONYMOUS_GRADING" :data-key :anonymous_grading :type boolean)
+    (:org-prop "NOTIFY_OF_UPDATE" :data-key :notify_of_update :type boolean)
+    (:org-prop "AUTOMATIC_PEER_REVIEWS" :data-key :automatic_peer_reviews :type boolean)
+    (:org-prop "GRADE_INDIVIDUALLY" :data-key :grade_group_students_individually :type boolean)
+    (:org-prop "ONLY_VISIBLE_TO_OVERRIDES" :data-key :only_visible_to_overrides :type boolean)
+    (:org-prop "MODERATED_GRADING" :data-key :moderated_grading :type boolean)
+    (:org-prop "GRADER_COUNT" :data-key :grader_count :type number)
+    (:org-prop "MUTED" :data-key :muted :type boolean)
+    (:org-prop "TURNITIN_ENABLED" :data-key :turnitin_enabled :type boolean)
+    (:org-prop "GRADING_STANDARD_ID" :data-key :grading_standard_id :type number)
+    (:org-prop "GROUP_CATEGORY_ID" :data-key :group_category_id :type number)
+    (:org-prop "POSITION" :data-key :position :type number))
+  :date-order '(("UNLOCK_AT" "DUE_AT" "LOCK_AT"))
+  :structural-fn #'org-canvas--validate-assignment-structure)
 
 ;;;; Helper Functions
 

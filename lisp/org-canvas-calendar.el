@@ -42,6 +42,17 @@
   :type 'file
   :group 'org-canvas)
 (org-canvas-register-file-var 'org-canvas-calendar-events-file "calendar.org")
+(org-canvas-register-properties "calendar-events"
+  :label "Calendar Events"
+  :file-var 'org-canvas-calendar-events-file
+  :query "LEVEL=1"
+  :properties
+  '((:org-prop "START_AT" :data-key :start_at :type timestamp
+     :api-key "start_at" :required t)
+    (:org-prop "END_AT" :data-key :end_at :type timestamp
+     :api-key "end_at")
+    (:org-prop "ALL_DAY" :data-key :all_day :type boolean
+     :api-key "all_day" :boolean-json t)))
 
 ;;;; 1. Stage: Extraction
 

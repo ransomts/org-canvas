@@ -61,6 +61,12 @@
   :type 'file
   :group 'org-canvas)
 (org-canvas-register-file-var 'org-canvas-sections-file "sections.org")
+(org-canvas-register-properties "sections"
+  :label "Sections"
+  :file-var 'org-canvas-sections-file
+  :query "LEVEL=1"
+  :properties nil
+  :structural-fn #'org-canvas--validate-section-structure)
 
 ;;;; Pull Sections from Canvas
 

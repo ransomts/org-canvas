@@ -51,6 +51,21 @@
  :file-var 'org-canvas-pages-file
  :id-field 'url :id-property "CANVAS_URL" :title-field 'title
  :skip-fn (lambda (item) (eq (alist-get 'front_page item) t)))
+(org-canvas-register-properties "pages"
+  :label "Pages"
+  :file-var 'org-canvas-pages-file
+  :query "LEVEL=1"
+  :properties
+  `((:org-prop "PUBLISHED" :data-key :published :type boolean :default t
+     :api-key "published" :boolean-json t)
+    (:org-prop "FRONT_PAGE" :data-key :front_page :type boolean
+     :api-key "front_page" :boolean-json t)
+    (:org-prop "EDITING_ROLES" :data-key :editing_roles :type csv-enum
+     :values ,org-canvas--valid-editing-roles :api-key "editing_roles")
+    (:org-prop "TODO_DATE" :data-key :student_todo_at :type timestamp
+     :api-key "student_todo_at")
+    (:org-prop "NOTIFY_OF_UPDATE" :data-key :notify_of_update :type boolean
+     :api-key "notify_of_update" :boolean-json t)))
 
 ;;;; 1. Stage: Extraction
 

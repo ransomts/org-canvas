@@ -161,7 +161,7 @@ and :structural-fn, matching the format of `org-canvas--validate-specs'."
   (let (specs)
     (maphash
      (lambda (feature-name plist)
-       (push (list :label feature-name
+       (push (list :label (or (plist-get plist :label) feature-name)
                    :file (plist-get plist :file-var)
                    :query (plist-get plist :query)
                    :properties (mapcar #'org-canvas--property-to-validate-prop

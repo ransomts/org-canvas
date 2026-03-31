@@ -64,6 +64,17 @@
  :name "Files" :endpoint "files"
  :file-var 'org-canvas-files-file
  :id-field 'id :id-property "CANVAS_ID" :title-field 'display_name)
+(org-canvas-register-properties "files"
+  :label "Files"
+  :file-var 'org-canvas-files-file
+  :query "LEVEL>0"
+  :properties
+  `((:org-prop "PUBLISHED" :data-key :published :type boolean)
+    (:org-prop "UNLOCK_AT" :data-key :unlock_at :type timestamp)
+    (:org-prop "LOCK_AT" :data-key :lock_at :type timestamp)
+    (:org-prop "USE_JUSTIFICATION" :data-key :use_justification :type enum
+     :values ,org-canvas--valid-use-justifications))
+  :structural-fn #'org-canvas--validate-file-structure)
 
 (defcustom org-canvas-max-file-size-mb 500
   "Maximum file size in MB.  Files larger than this are skipped with a warning."

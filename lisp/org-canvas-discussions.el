@@ -52,6 +52,31 @@
  :file-var 'org-canvas-discussions-file
  :id-field 'id :id-property "CANVAS_ID" :title-field 'title
  :skip-fn (lambda (item) (eq (alist-get 'is_announcement item) t)))
+(org-canvas-register-properties "discussions"
+  :label "Discussions"
+  :file-var 'org-canvas-discussions-file
+  :query "LEVEL=1"
+  :properties
+  `((:org-prop "PUBLISHED" :data-key :published :type boolean)
+    (:org-prop "DISCUSSION_TYPE" :data-key :discussion_type :type enum
+     :values ,org-canvas--valid-discussion-types)
+    (:org-prop "GRADING_TYPE" :data-key :grading_type :type enum
+     :values ,org-canvas--valid-grading-types)
+    (:org-prop "POINTS" :data-key :points_possible :type number)
+    (:org-prop "POST_FIRST" :data-key :require_initial_post :type boolean)
+    (:org-prop "PINNED" :data-key :pinned :type boolean)
+    (:org-prop "AVAILABLE_FROM" :data-key :delayed_post_at :type timestamp)
+    (:org-prop "DUE_AT" :data-key :due_at :type timestamp)
+    (:org-prop "LOCK_AT" :data-key :lock_at :type timestamp)
+    (:org-prop "ALLOW_RATING" :data-key :allow_rating :type boolean)
+    (:org-prop "ONLY_GRADERS_CAN_RATE" :data-key :only_graders_can_rate :type boolean)
+    (:org-prop "SORT_BY_RATING" :data-key :sort_by_rating :type boolean)
+    (:org-prop "GROUP_CATEGORY" :data-key :group_category_id :type number)
+    (:org-prop "GROUP" :data-key :assignment_group_id :type link
+     :target-file org-canvas-assignment-groups-file :link-id-property "CANVAS_ID")
+    (:org-prop "RUBRIC_LINK" :data-key :rubric_id :type link
+     :target-file org-canvas-rubrics-file :link-id-property "CANVAS_ID"))
+  :date-order '(("AVAILABLE_FROM" "DUE_AT" "LOCK_AT")))
 
 ;;;; 1. Stage: Extraction
 

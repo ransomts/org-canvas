@@ -40,6 +40,19 @@
  :name "Group Categories" :endpoint "group_categories"
  :file-var 'org-canvas-group-categories-file
  :id-field 'id :id-property "CANVAS_ID" :title-field 'name)
+(org-canvas-register-properties "group-categories"
+  :label "Group Categories"
+  :file-var 'org-canvas-group-categories-file
+  :query "LEVEL=1"
+  :properties
+  `((:org-prop "SELF_SIGNUP" :data-key :self_signup :type enum
+     :values ,org-canvas--valid-self-signup-values :api-key "self_signup")
+    (:org-prop "GROUP_LIMIT" :data-key :group_limit :type number
+     :api-key "group_limit")
+    (:org-prop "AUTO_LEADER" :data-key :auto_leader :type enum
+     :values ,org-canvas--valid-auto-leader-values :api-key "auto_leader")
+    (:org-prop "CREATE_GROUP_COUNT" :data-key :create_group_count :type number
+     :api-key "create_group_count")))
 
 ;;;; 1. Stage: Extraction
 

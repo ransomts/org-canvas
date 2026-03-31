@@ -56,6 +56,20 @@
  :name "Outcomes" :endpoint "outcome_groups"
  :file-var 'org-canvas-outcomes-file
  :id-field 'id :id-property "CANVAS_ID" :title-field 'title)
+(org-canvas-register-properties "outcome-groups"
+  :label "Outcome Groups"
+  :file-var 'org-canvas-outcomes-file
+  :query "LEVEL=1"
+  :properties nil)
+(org-canvas-register-properties "outcomes"
+  :label "Outcomes"
+  :file-var 'org-canvas-outcomes-file
+  :query "LEVEL=2"
+  :properties
+  `((:org-prop "CALCULATION_METHOD" :data-key :calculation_method :type enum
+     :values ,org-canvas--valid-calculation-methods)
+    (:org-prop "CALCULATION_INT" :data-key :calculation_int :type number)
+    (:org-prop "MASTERY_POINTS" :data-key :mastery_points :type number)))
 
 ;;;; Helper Functions
 

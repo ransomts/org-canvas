@@ -53,6 +53,16 @@
  :name "Assignment Groups" :endpoint "assignment_groups"
  :file-var 'org-canvas-assignment-groups-file
  :id-field 'id :id-property "CANVAS_ID" :title-field 'name)
+(org-canvas-register-properties "assignment-groups"
+  :label "Assignment Groups"
+  :file-var 'org-canvas-assignment-groups-file
+  :query "LEVEL=1"
+  :properties
+  '((:org-prop "WEIGHT" :data-key :group_weight :type number)
+    (:org-prop "DROP_LOWEST" :data-key :drop_lowest :type number)
+    (:org-prop "DROP_HIGHEST" :data-key :drop_highest :type number)
+    (:org-prop "POSITION" :data-key :position :type number))
+  :structural-fn #'org-canvas--validate-drop-rules)
 
 ;;;; 1. Stage: Extraction
 
