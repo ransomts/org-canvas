@@ -123,6 +123,55 @@ PLIST has keys :name :endpoint :file-var :id-field :id-property
   (dolist (entry org-canvas--file-var-registry)
     (set (car entry) (org-canvas--path (cdr entry)))))
 
+;;;; 1c. Property Registry
+
+(defvar org-canvas--property-registry (make-hash-table :test 'equal)
+  "Hash-table keyed by feature name (string), values are property spec plists.
+Each plist has keys :file-var, :query, :properties, and optionally
+:date-order and :structural-fn.  Populated at module load time by
+`org-canvas-register-properties'.")
+
+(defun org-canvas-register-properties (feature-name &rest plist)
+  "Register property specs for FEATURE-NAME.
+PLIST has keys :file-var, :query, :properties, and optionally
+:date-order and :structural-fn.  Does nothing if FEATURE-NAME
+is already registered (idempotent)."
+  (unless (gethash feature-name org-canvas--property-registry)
+    (puthash feature-name plist org-canvas--property-registry)))
+
+(defun org-canvas--property-to-validate-prop (prop)
+  "Convert a registry property spec PROP to validate.el format.
+Registry keys: :org-prop :data-key :type :values :target-file
+:link-id-property.  Validate keys: :name :type :values
+:target-file :id-property."
+  (let ((result (list :name (plist-get prop :org-prop)
+                      :type (plist-get prop :type))))
+    (when (plist-get prop :values)
+      (setq result (plist-put result :values (plist-get prop :values))))
+    (when (plist-get prop :target-file)
+      (setq result (plist-put result :target-file (plist-get prop :target-file))))
+    (when (plist-get prop :link-id-property)
+      (setq result (plist-put result :id-property (plist-get prop :link-id-property))))
+    result))
+
+(defun org-canvas--get-validate-specs-from-registry ()
+  "Build a list of validation specs from the property registry.
+Each spec has :label, :file, :query, :properties, :date-order,
+and :structural-fn, matching the format of `org-canvas--validate-specs'."
+  (let (specs)
+    (maphash
+     (lambda (feature-name plist)
+       (push (list :label feature-name
+                   :file (plist-get plist :file-var)
+                   :query (plist-get plist :query)
+                   :properties (mapcar #'org-canvas--property-to-validate-prop
+                                       (plist-get plist :properties))
+                   :date-order (plist-get plist :date-order)
+                   :structural-fn (plist-get plist :structural-fn))
+             specs))
+     org-canvas--property-registry)
+    (nreverse specs)))
+
 ;;; --- Path Utilities ---
 
 (defun org-canvas--path (filename)
