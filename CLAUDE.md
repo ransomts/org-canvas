@@ -309,18 +309,18 @@ test/
 
 | Module            | Tests |
 |-------------------|-------|
-| quizzes           | 227   |
+| quizzes           | 228   |
 | **core-sync**     | 202   |
 | modules           | 174   |
 | new-quizzes       | 169   |
 | files             | 167   |
 | **validate**      | 164   |
-| **core-org**      | 132   |
+| **core-org**      | 136   |
 | assignments       | 120   |
 | outcomes          | 113   |
-| submissions       | 105   |
+| submissions       | 107   |
 | settings          | 96    |
-| rubrics           | 92    |
+| rubrics           | 94    |
 | **core-api**      | 64    |
 | discussions       | 57    |
 | orchestration     | 55    |
@@ -332,8 +332,9 @@ test/
 | announcements     | 41    |
 | **core-usability**| 38    |
 | assignment-groups | 36    |
-| snapshot          | 15    |
 | property-registry | 28    |
+| snapshot          | 15    |
+| multicourse       | 15    |
 | transient         | 12    |
 | fuzz              | 9     |
 
@@ -561,12 +562,12 @@ Some tests depend on org-mode internals that differ between versions. Use skip c
   )
 ```
 
-**Current skipped tests (6 total):**
-- `org-canvas--module-item-parse-entry` tests for SubHeader parsing
-- `org-canvas--module-resolve-link` type detection from filename
-- `org-canvas--quiz-parse-numerical-answer` exact and range parsing
+**Current skipped tests (9 total):**
+- `test/org-canvas-modules-test.el` — 4 (SubHeader parsing, link type detection)
+- `test/org-canvas-new-quizzes-test.el` — 3 (nested item parsing)
+- `test/org-canvas-quizzes-test.el` — 2 (numerical answer exact/range parsing)
 
-These involve `org-back-to-heading` and `org-end-of-subtree` which don't recognize heading structure consistently in Emacs 29.x's org-mode when using `search-forward` positioning.
+These involve `org-back-to-heading` and `org-end-of-subtree` which don't recognize heading structure consistently in Emacs 29.x's org-mode when using `search-forward` positioning. Grep for `buttercup-pending` to enumerate.
 
 ### JUnit XML Test Output with buttercup-junit
 
