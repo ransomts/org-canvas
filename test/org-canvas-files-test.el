@@ -2382,4 +2382,46 @@
         (let ((map (org-canvas--file-pull-fetch-folders)))
           (expect (hash-table-count map) :to-equal 0))))))
 
+(describe "org-canvas--file-pull-mode"
+  (it "returns 'fresh for an empty buffer"
+    (with-temp-org-buffer ""
+      (expect (org-canvas--file-pull-mode) :to-equal 'fresh)))
+
+  (it "returns 'fresh for a buffer with only #+TITLE: header"
+    (with-temp-org-buffer "#+TITLE: Files\n# comment line\n"
+      (expect (org-canvas--file-pull-mode) :to-equal 'fresh)))
+
+  (it "returns 'flat when every heading has CANVAS_ID and a file link"
+    (with-temp-org-buffer
+        "* [[file:content/a.pdf][a.pdf]]
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+* [[file:content/b.pdf][b.pdf]]
+:PROPERTIES:
+:CANVAS_ID: 2
+:END:
+"
+      (expect (org-canvas--file-pull-mode) :to-equal 'flat)))
+
+  (it "returns 'hierarchical when a folder-only heading is present"
+    (with-temp-org-buffer
+        "* Labs
+** [[file:content/Labs/a.pdf][a.pdf]]
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+      (expect (org-canvas--file-pull-mode) :to-equal 'hierarchical)))
+
+  (it "returns 'hierarchical when one heading lacks both CANVAS_ID and a link"
+    (with-temp-org-buffer
+        "* Some folder name
+* [[file:content/a.pdf][a.pdf]]
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+      (expect (org-canvas--file-pull-mode) :to-equal 'hierarchical))))
+
 ;;; org-canvas-files-test.el ends here

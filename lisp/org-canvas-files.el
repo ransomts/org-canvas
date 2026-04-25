@@ -920,6 +920,36 @@ path relative to the Canvas root (string; `\"\"' for the root)."
                    map))))
     map))
 
+(defun org-canvas--file-pull-mode ()
+  "Return the pull mode for the current `files.org' buffer.
+
+Returns one of three symbols:
+- `fresh' if no entry has a CANVAS_ID property and no folder-only
+  heading is present (initial pull, file empty or header-only).
+- `flat' if at least one CANVAS_ID exists and every heading either
+  has a CANVAS_ID or contains a file link (legacy layout from before
+  folder hierarchy support).
+- `hierarchical' if any heading lacks both a CANVAS_ID and a file link
+  (a folder heading from a previous fresh-tree pull).  The dispatcher
+  uses this to refuse re-pull on a nested layout."
+  (let ((has-cid nil)
+        (folder-only nil))
+    (org-with-wide-buffer
+     (goto-char (point-min))
+     (org-map-entries
+      (lambda ()
+        (let* ((heading (org-canvas--strip-statistics-cookie
+                         (org-get-heading t t t t)))
+               (link-path (org-canvas--file-extract-link-path heading))
+               (cid (org-entry-get (point) "CANVAS_ID")))
+          (when cid (setq has-cid t))
+          (unless (or cid link-path)
+            (setq folder-only t))))
+      t 'file))
+    (cond (folder-only 'hierarchical)
+          (has-cid 'flat)
+          (t 'fresh))))
+
 (defun org-canvas--file-pull-set-properties (pos item)
   "Set content-type, size, and usage-rights properties at POS from ITEM."
   (let ((content-type (alist-get 'content-type item))
