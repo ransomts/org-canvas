@@ -331,7 +331,8 @@ ID via `string-to-number'.  Pass-through keys: :canvas-id,
          (payload (org-canvas--outcome-build-payload data)))
 
     (unless parent-group-id
-      (error "Outcome '%s' has no parent group.  Sync the group first" title))
+      (org-canvas--signal 'org-canvas-validation-error
+        "Outcome '%s' has no parent group.  Sync the group first" title))
 
     (if id
         ;; Update existing outcome
@@ -382,7 +383,8 @@ ID via `string-to-number'.  Pass-through keys: :canvas-id,
   "Validate outcomes file and fetch root outcome group.
 Returns the root group ID, or signals an error."
   (unless (and org-canvas-outcomes-file (file-exists-p org-canvas-outcomes-file))
-    (error "Outcomes file not found: %s" org-canvas-outcomes-file))
+    (org-canvas--signal 'org-canvas-config-error
+      "Outcomes file not found: %s" org-canvas-outcomes-file))
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (org-canvas--log-info org-canvas--logger "========================================")
   (org-canvas--log-info org-canvas--logger ">>> STARTING OUTCOME SYNC")
@@ -392,7 +394,8 @@ Returns the root group ID, or signals an error."
   (org-canvas--log-info org-canvas--logger "[Pre-flight] Fetching root outcome group...")
   (let ((root-group-id (org-canvas--outcome-get-root-group-id)))
     (unless root-group-id
-      (error "Could not get root outcome group for course"))
+      (org-canvas--signal 'org-canvas-api-error
+        "Could not get root outcome group for course"))
     (org-canvas--log-info org-canvas--logger "[Pre-flight] Root group ID: %s" root-group-id)
     root-group-id))
 

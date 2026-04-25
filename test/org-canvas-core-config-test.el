@@ -251,6 +251,51 @@
               (expect (buffer-string) :to-match "\\[TRACE\\] tracing value")))
         (when (get-buffer buffer-name) (kill-buffer buffer-name))))))
 
+;;;; 6a. Error Symbols
+
+(describe "org-canvas error symbols"
+  (it "registers org-canvas-error as an error condition"
+    (expect (get 'org-canvas-error 'error-conditions)
+            :to-equal '(org-canvas-error error)))
+
+  (it "registers org-canvas-api-error as a child of org-canvas-error"
+    (expect (memq 'org-canvas-error
+                  (get 'org-canvas-api-error 'error-conditions))
+            :to-be-truthy))
+
+  (it "registers org-canvas-timeout-error as a child of org-canvas-api-error"
+    (let ((conds (get 'org-canvas-timeout-error 'error-conditions)))
+      (expect (memq 'org-canvas-api-error conds) :to-be-truthy)
+      (expect (memq 'org-canvas-error conds) :to-be-truthy)))
+
+  (it "exposes credentials, conflict, validation, and config children"
+    (dolist (sym '(org-canvas-credentials-error
+                   org-canvas-conflict-error
+                   org-canvas-validation-error
+                   org-canvas-config-error))
+      (expect (memq 'org-canvas-error
+                    (get sym 'error-conditions))
+              :to-be-truthy))))
+
+(describe "org-canvas--signal"
+  (it "raises the requested error type"
+    (expect (org-canvas--signal 'org-canvas-config-error "missing %s" "file.org")
+            :to-throw 'org-canvas-config-error))
+
+  (it "is catchable via the parent symbol"
+    (let ((caught nil))
+      (condition-case _
+          (org-canvas--signal 'org-canvas-api-error "boom")
+        (org-canvas-error (setq caught 'parent)))
+      (expect caught :to-equal 'parent)))
+
+  (it "formats the message with format-spec arguments"
+    (condition-case err
+        (org-canvas--signal 'org-canvas-validation-error
+          "title %s is empty (entry %d)" "Page" 4)
+      (org-canvas-validation-error
+       (expect (cadr err) :to-equal "title Page is empty (entry 4)")))))
+
 ;;;; 7. Diagnostics
 
 (describe "org-canvas-get-course-name (mocked)"

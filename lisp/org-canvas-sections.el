@@ -141,8 +141,9 @@ Must be called in the sections file buffer."
 Returns the expanded sections file path."
   (let ((sections-file (expand-file-name org-canvas-sections-file)))
     (unless (file-directory-p (file-name-directory sections-file))
-      (error "Sections file directory does not exist: %s"
-             (file-name-directory sections-file)))
+      (org-canvas--signal 'org-canvas-config-error
+        "Sections file directory does not exist: %s"
+        (file-name-directory sections-file)))
     (org-canvas--pull-confirm-overwrite sections-file "sections")
     (org-canvas--log-info org-canvas--logger "========================================")
     (org-canvas--log-info org-canvas--logger ">>> PULLING SECTIONS FROM CANVAS")
@@ -353,7 +354,8 @@ Returns the expanded assignments file path."
                                org-canvas-assignments-file
                              (org-canvas--path "assignments.org")))))
     (unless (file-exists-p assignments-file)
-      (error "Assignments file not found: %s" assignments-file))
+      (org-canvas--signal 'org-canvas-config-error
+        "Assignments file not found: %s" assignments-file))
     (org-canvas--log-info org-canvas--logger "========================================")
     (org-canvas--log-info org-canvas--logger ">>> STARTING OVERRIDE SYNC")
     (org-canvas--log-info org-canvas--logger "File: %s" assignments-file)

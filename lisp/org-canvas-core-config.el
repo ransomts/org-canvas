@@ -17,6 +17,34 @@
   "Interface for Canvas LMS."
   :group 'external)
 
+;;;; 1a. Error Symbols
+;;
+;; Custom error hierarchy.  All org-canvas-raised errors descend from
+;; `org-canvas-error', so callers can `condition-case' on the parent to
+;; catch any package-originated error, or on a specific child to handle
+;; a single failure mode.
+
+(define-error 'org-canvas-error "org-canvas error")
+(define-error 'org-canvas-api-error
+  "Canvas API request failed" 'org-canvas-error)
+(define-error 'org-canvas-credentials-error
+  "Canvas credentials missing or invalid" 'org-canvas-error)
+(define-error 'org-canvas-conflict-error
+  "Sync conflict between local and remote state" 'org-canvas-error)
+(define-error 'org-canvas-timeout-error
+  "Canvas API request timed out" 'org-canvas-api-error)
+(define-error 'org-canvas-validation-error
+  "Local data failed validation" 'org-canvas-error)
+(define-error 'org-canvas-config-error
+  "Org-canvas configuration or required file is missing" 'org-canvas-error)
+
+(defmacro org-canvas--signal (type format-string &rest args)
+  "Signal a TYPE error whose message comes from FORMAT-STRING and ARGS.
+TYPE must be a symbol previously registered with `define-error', such
+as `org-canvas-config-error' or `org-canvas-api-error'."
+  (declare (indent 1))
+  `(signal ,type (list (format ,format-string ,@args))))
+
 (defcustom org-canvas-directory ""
   "The root directory for the Canvas course files.
 All feature files (pages.org, assignments.org, etc.)

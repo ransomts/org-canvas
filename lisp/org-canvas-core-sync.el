@@ -43,7 +43,8 @@ Opens the log buffer and logs a sync header."
              (not org-canvas--inhibit-log-clear))
     (user-error "A sync is already in progress.  Please wait for it to finish"))
   (unless (and sync-file (file-exists-p sync-file))
-    (error "%s file not found: %s" feature-upper sync-file))
+    (org-canvas--signal 'org-canvas-config-error
+      "%s file not found: %s" feature-upper sync-file))
   (let ((buf (find-file-noselect sync-file)))
     (when (buffer-modified-p buf)
       (if (y-or-n-p (format "%s has unsaved changes.  Save before syncing? "
@@ -756,7 +757,8 @@ Save the Canvas ID and LAST_SYNCED timestamp to the Org entry."
             (funcall post-fn data response))
           (org-canvas--log-info org-canvas--logger "[Finalize] Complete for '%s'" title))
       (org-canvas--log-error org-canvas--logger "[Finalize] No ID in response for '%s'!" title)
-      (error "No %s in API response for '%s'" id-field title))))
+      (org-canvas--signal 'org-canvas-api-error
+        "No %s in API response for '%s'" id-field title))))
 
 ;;;; 9. Push-at-Point Infrastructure
 

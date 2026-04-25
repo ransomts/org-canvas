@@ -55,9 +55,11 @@ placeholder for the API token (requires double quotes for expansion)."
 (defun org-canvas--ensure-credentials ()
   "Signal error if API token or course ID are not configured."
   (when (or (null org-canvas-api-token) (string-empty-p org-canvas-api-token))
-    (error "API token not configured.  Set org-canvas-api-token in org-canvas-credentials.el\nRun M-x org-canvas-init for guided setup"))
+    (org-canvas--signal 'org-canvas-credentials-error
+      "API token not configured.  Set org-canvas-api-token in org-canvas-credentials.el\nRun M-x org-canvas-init for guided setup"))
   (when (or (null org-canvas-course-id) (string-empty-p org-canvas-course-id))
-    (error "Course ID not configured.  Set org-canvas-course-id in org-canvas-credentials.el\nRun M-x org-canvas-init for guided setup")))
+    (org-canvas--signal 'org-canvas-credentials-error
+      "Course ID not configured.  Set org-canvas-course-id in org-canvas-credentials.el\nRun M-x org-canvas-init for guided setup")))
 
 (defun org-canvas--api-handle-plz-error (err full-url)
   "Handle a plz-error ERR from a request to FULL-URL.
@@ -88,13 +90,13 @@ or signal an error for terminal failures."
 
      ;; Authentication failure (401)
      ((and status (= status 401))
-      (signal 'error
+      (signal 'org-canvas-credentials-error
         (list "Authentication failed (HTTP 401). Your API token may have expired.\nGenerate a new one at Canvas > Account > Settings > Approved Integrations."
               body plz-err)))
 
      ;; Forbidden (403, non-rate-limit)
      ((and status (= status 403))
-      (signal 'error
+      (signal 'org-canvas-credentials-error
         (list "Permission denied (HTTP 403). Your token may lack the required scope for this operation."
               body plz-err)))
 
@@ -102,7 +104,7 @@ or signal an error for terminal failures."
      (t
       (org-canvas--log-error org-canvas--logger "%s\n  URL: %s\n  Body: %S"
         err-msg full-url body)
-      (signal 'error (list err-msg body plz-err))))))
+      (signal 'org-canvas-api-error (list err-msg body plz-err))))))
 
 (defun org-canvas--api-build-query-string (params)
   "Build a URL query string from PARAMS alist.
@@ -121,8 +123,9 @@ ERR is the last plz-error condition."
          (response (and (plz-error-p plz-err)
                         (plz-error-response plz-err)))
          (body (and response (plz-response-body response))))
-    (signal 'error (list (format "Rate limited after %d retries" retry-count)
-                         body plz-err))))
+    (signal 'org-canvas-api-error
+            (list (format "Rate limited after %d retries" retry-count)
+                  body plz-err))))
 
 (defun org-canvas--api-log-request (request)
   "Log debug info for an API REQUEST plist.
@@ -352,7 +355,8 @@ a \\='location key (needs step 3 confirmation).  Kills BUF when done."
            (location-header
             `((location . ,location-header)))
            (json-response json-response)
-           (t (error "Upload failed: no JSON or Location header")))))
+           (t (org-canvas--signal 'org-canvas-api-error
+                "Upload failed: no JSON or Location header")))))
     (when (buffer-live-p buf)
       (kill-buffer buf))))
 
@@ -397,7 +401,8 @@ Returns the Canvas file object alist (with \\='id key)."
              (boundary (format "----FormBoundary%s"
                                (md5 (format "%s%s" (current-time) (random))))))
         (unless upload-url
-          (error "Canvas API returned no upload_url in step 1 response: %S" upload-info))
+          (org-canvas--signal 'org-canvas-api-error
+            "Canvas API returned no upload_url in step 1 response: %S" upload-info))
         (org-canvas--log-info org-canvas--logger "[Upload Step 2] Sending file to %s..." upload-url)
         ;; Step 2: Upload the file
         (let* ((full-body (org-canvas--upload-build-multipart

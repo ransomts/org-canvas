@@ -94,8 +94,9 @@ Returns VALUE if valid, DEFAULT if nil, or DEFAULT with a warning if invalid."
 POM is the point-or-marker (printed as integer in the message).
 ENTITY-NAME is a human-readable label like \"Announcement\"."
   (when (or (null title) (string-empty-p title))
-    (error "%s title cannot be empty at point %d"
-           entity-name (if (markerp pom) (marker-position pom) pom))))
+    (org-canvas--signal 'org-canvas-validation-error
+      "%s title cannot be empty at point %d"
+      entity-name (if (markerp pom) (marker-position pom) pom))))
 
 (defun org-canvas--push-non-nil-fields (data fields base)
   "Push non-nil fields from DATA plist into BASE alist.
@@ -958,8 +959,9 @@ Signals error with actionable message on failure."
         (org-canvas--log-info org-canvas--logger "[Preflight] Connected to: %s"
           (alist-get 'name course)))
     (error
-     (error "Connection failed: %s\nCheck your API token, course ID, and network connection"
-            (error-message-string err)))))
+     (org-canvas--signal 'org-canvas-api-error
+       "Connection failed: %s\nCheck your API token, course ID, and network connection"
+       (error-message-string err)))))
 
 (provide 'org-canvas-core-org)
 ;;; org-canvas-core-org.el ends here

@@ -66,8 +66,9 @@
   :after-transform
   (lambda (data)
     (unless (plist-get data :start_at)
-      (error "Calendar event '%s' requires START_AT property"
-             (plist-get data :title)))
+      (org-canvas--signal 'org-canvas-validation-error
+        "Calendar event '%s' requires START_AT property"
+        (plist-get data :title)))
     data)
   :properties
   (("START_AT"         :start_at         :type timestamp)

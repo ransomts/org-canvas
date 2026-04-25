@@ -251,14 +251,15 @@ Returns the folder API object for the subfolder."
 DISPLAY-NAME is used for error messages.  Signals an error on failure."
   (unless (file-exists-p abs-path)
     (org-canvas--log-error org-canvas--logger "[Stage 1: Parse] File not found: %s" abs-path)
-    (error "File not found: %s" abs-path))
+    (org-canvas--signal 'org-canvas-config-error "File not found: %s" abs-path))
   (let ((size-mb (/ (file-attribute-size (file-attributes abs-path)) org-canvas--bytes-per-mb)))
     (when (> size-mb org-canvas-max-file-size-mb)
       (org-canvas--log-warning org-canvas--logger
         "[Stage 1: Parse] Skipping '%s': %.1f MB exceeds limit of %d MB"
         display-name size-mb org-canvas-max-file-size-mb)
-      (error "File '%s' (%.1f MB) exceeds max size of %d MB"
-             display-name size-mb org-canvas-max-file-size-mb))))
+      (org-canvas--signal 'org-canvas-validation-error
+        "File '%s' (%.1f MB) exceeds max size of %d MB"
+        display-name size-mb org-canvas-max-file-size-mb))))
 
 (defun org-canvas--file-extract-heading-link ()
   "Extract link path and display name from the heading at point.
@@ -448,8 +449,9 @@ Returns either a file object alist, a location alist, or signals an error."
       (org-canvas--log-debug org-canvas--logger "[Stage 3: Upload Step 2] Got JSON response")
       json-response)
      (t
-      (error "Upload failed: no JSON response or Location header.  Status: %s, Body: %s"
-             status-line (or response-body "empty"))))))
+      (org-canvas--signal 'org-canvas-api-error
+        "Upload failed: no JSON response or Location header.  Status: %s, Body: %s"
+        status-line (or response-body "empty"))))))
 
 (defun org-canvas--file-upload-step2-send (upload-info local-path)
   "Step 2: Upload the actual file content.
@@ -463,7 +465,8 @@ with `location' key."
          (boundary (format "----FormBoundary%s" (md5 (format "%s%s" (current-time) (random))))))
 
     (unless upload-url
-      (error "Canvas API returned no upload_url in step 1 response: %S" upload-info))
+      (org-canvas--signal 'org-canvas-api-error
+        "Canvas API returned no upload_url in step 1 response: %S" upload-info))
 
     ;; Log upload_params from Canvas (these must be sent exactly as-is)
     (org-canvas--log-debug org-canvas--logger "[Stage 3: Upload Step 2] upload_url: %s" upload-url)
@@ -538,7 +541,8 @@ Per Canvas docs, this GET request must be authenticated."
                 "[Stage 3: Upload Step 3] No ID in confirmation response: %S"
                 response))
             response)
-        (error "No file ID or location in upload response")))))
+        (org-canvas--signal 'org-canvas-api-error
+          "No file ID or location in upload response")))))
 
 (defun org-canvas--file-push-to-api (data)
   "Execute the full 3-step upload process for DATA."
@@ -676,7 +680,8 @@ Creates folders as needed and populates the folder cache."
         (error
          (org-canvas--log-error org-canvas--logger "[Pre-flight] Failed to create folder '%s': %s"
            path (error-message-string err))
-         (error "Cannot create required folder '%s': %s" path (error-message-string err)))))
+         (org-canvas--signal 'org-canvas-api-error
+           "Cannot create required folder '%s': %s" path (error-message-string err)))))
     ;; Brief delay to let Canvas process newly created folders
     (org-canvas--log-debug org-canvas--logger "[Pre-flight] Waiting for Canvas to process folders...")
     (sleep-for org-canvas--folder-creation-delay)
@@ -717,7 +722,8 @@ Returns :success, :skip (folder heading), or :fail."
 
   (let ((files-file (expand-file-name org-canvas-files-file)))
     (unless (and files-file (file-exists-p files-file))
-      (error "Files manifest not found: %s" files-file))
+      (org-canvas--signal 'org-canvas-config-error
+        "Files manifest not found: %s" files-file))
 
     (display-buffer (get-buffer-create org-canvas--log-buffer-name))
     (org-canvas--log-info org-canvas--logger "========================================")

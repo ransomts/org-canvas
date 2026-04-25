@@ -109,7 +109,8 @@ Pure function — no buffer access."
     (unless (plist-get data :criteria)
       (org-canvas--log-error org-canvas--logger "[Stage 1: Parse] No table found for rubric '%s'"
                   (plist-get data :title))
-      (error "No table found for rubric '%s'" (plist-get data :title)))
+      (org-canvas--signal 'org-canvas-validation-error
+        "No table found for rubric '%s'" (plist-get data :title)))
 
     (let ((row-count (length (cl-remove-if (lambda (r) (eq r 'hline))
                                            (plist-get data :criteria)))))

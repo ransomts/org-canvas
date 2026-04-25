@@ -105,7 +105,8 @@ Logs warnings for invalid roles.  Returns RAW unchanged."
   "Validate page DATA before building payload.  Return PAYLOAD unchanged."
   (when (string-empty-p (plist-get data :title))
     (org-canvas--log-error org-canvas--logger "[Stage 2: Transform] Empty title!")
-    (error "Page title cannot be empty during payload build"))
+    (org-canvas--signal 'org-canvas-validation-error
+      "Page title cannot be empty during payload build"))
   _payload)
 
 (org-canvas-define-payload page

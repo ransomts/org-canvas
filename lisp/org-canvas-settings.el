@@ -503,7 +503,8 @@ and pushes them to Canvas via PUT /courses/:id."
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (let ((settings-file (expand-file-name org-canvas-settings-file)))
     (unless (file-exists-p settings-file)
-      (error "Settings file not found: %s" settings-file))
+      (org-canvas--signal 'org-canvas-config-error
+        "Settings file not found: %s" settings-file))
     (org-canvas--log-info org-canvas--logger "========================================")
     (org-canvas--log-info org-canvas--logger ">>> STARTING SETTINGS SYNC")
     (org-canvas--log-info org-canvas--logger "File: %s" settings-file)
@@ -512,7 +513,8 @@ and pushes them to Canvas via PUT /courses/:id."
       (save-excursion
         (goto-char (point-min))
         (unless (re-search-forward "^\\*+ " nil t)
-          (error "No heading found in settings file"))
+          (org-canvas--signal 'org-canvas-validation-error
+            "No heading found in settings file"))
         (org-back-to-heading t)
         (condition-case err
             (let* ((data (org-canvas--settings-parse-entry))
