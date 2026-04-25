@@ -89,7 +89,12 @@ When called interactively, or when SHOW is non-nil, also display the
 version via `message'.  The version is read from this file's
 \"Version:\" header at runtime so a single source of truth in the
 package header survives byte-compilation."
-  (interactive (list t))
+  ;; Note: `(interactive "p")' rather than `(interactive (list t))'.
+  ;; A sexp argument to `interactive' makes edebug bail on the defun, which
+  ;; in turn blocks undercover from instrumenting the body.  The string
+  ;; form passes the prefix arg (always 1 when called with no prefix), which
+  ;; is truthy and triggers the same `message' branch.
+  (interactive "p")
   (let* ((file (or (locate-library "org-canvas")
                    (error "Cannot locate org-canvas source file")))
          (source (replace-regexp-in-string "\\.elc\\'" ".el" file))
