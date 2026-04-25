@@ -1921,9 +1921,12 @@
                     (goto-char (point-min))
                     (search-forward "[[file:")
                     (goto-char (match-beginning 0))
-                    (let ((link (org-element-link-parser)))
-                      (expect (org-element-property :type link)
-                              :to-equal "file"))
+                    ;; Pre-bind `:type' outside `expect': buttercup's
+                    ;; `expect' oclosure shadows the `:type' keyword on
+                    ;; Emacs 29.x, silently returning nil.
+                    (let* ((link (org-element-link-parser))
+                           (link-type (org-element-property :type link)))
+                      (expect link-type :to-equal "file"))
                     (expect (buffer-string) :to-match "CANVAS_ID.*7"))))))
         (let ((buf (find-buffer-visiting files-file)))
           (when buf (kill-buffer buf)))

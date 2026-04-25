@@ -2074,9 +2074,12 @@
                   (goto-char (point-min))
                   (search-forward "[[file:")
                   (goto-char (match-beginning 0))
-                  (let ((parsed (org-element-link-parser)))
-                    (expect (org-element-property :type parsed)
-                            :to-equal "file")
+                  ;; Pre-bind `:type' outside `expect': buttercup's
+                  ;; `expect' oclosure shadows the `:type' keyword on
+                  ;; Emacs 29.x, silently returning nil.
+                  (let* ((parsed (org-element-link-parser))
+                         (parsed-type (org-element-property :type parsed)))
+                    (expect parsed-type :to-equal "file")
                     (expect (org-element-property :search-option parsed)
                             :to-equal "*[[file:content/foo.pdf][foo.pdf]]"))))))
         (delete-directory tmpdir t)))))

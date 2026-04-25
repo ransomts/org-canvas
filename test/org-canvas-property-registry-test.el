@@ -62,27 +62,33 @@
 
   (describe "org-canvas--property-to-validate-prop"
     (it "converts a basic property spec"
-      (let ((result (org-canvas--property-to-validate-prop
-                     '(:org-prop "PUBLISHED" :data-key :published :type boolean))))
+      ;; Pre-bind `:type' outside `expect': the buttercup `expect' macro
+      ;; expands to an `oclosure-lambda' whose `type' slot shadows the
+      ;; `:type' keyword on Emacs 29.x, silently returning nil.
+      (let* ((result (org-canvas--property-to-validate-prop
+                      '(:org-prop "PUBLISHED" :data-key :published :type boolean)))
+             (result-type (plist-get result :type)))
         (expect (plist-get result :name) :to-equal "PUBLISHED")
-        (expect (plist-get result :type) :to-equal 'boolean)))
+        (expect result-type :to-equal 'boolean)))
 
     (it "converts an enum property with :values"
-      (let ((result (org-canvas--property-to-validate-prop
-                     '(:org-prop "GRADING_TYPE" :data-key :grading_type
-                       :type enum :values ("points" "percent")))))
+      (let* ((result (org-canvas--property-to-validate-prop
+                      '(:org-prop "GRADING_TYPE" :data-key :grading_type
+                        :type enum :values ("points" "percent"))))
+             (result-type (plist-get result :type)))
         (expect (plist-get result :name) :to-equal "GRADING_TYPE")
-        (expect (plist-get result :type) :to-equal 'enum)
+        (expect result-type :to-equal 'enum)
         (expect (plist-get result :values) :to-equal '("points" "percent"))))
 
     (it "converts a link property correctly"
-      (let ((result (org-canvas--property-to-validate-prop
-                     '(:org-prop "GROUP" :data-key :group
-                       :type link
-                       :target-file org-canvas-assignment-groups-file
-                       :link-id-property "CANVAS_ID"))))
+      (let* ((result (org-canvas--property-to-validate-prop
+                      '(:org-prop "GROUP" :data-key :group
+                        :type link
+                        :target-file org-canvas-assignment-groups-file
+                        :link-id-property "CANVAS_ID")))
+             (result-type (plist-get result :type)))
         (expect (plist-get result :name) :to-equal "GROUP")
-        (expect (plist-get result :type) :to-equal 'link)
+        (expect result-type :to-equal 'link)
         (expect (plist-get result :target-file) :to-equal 'org-canvas-assignment-groups-file)
         (expect (plist-get result :id-property) :to-equal "CANVAS_ID"))))
 
@@ -100,9 +106,10 @@
         (expect (plist-get spec :file) :to-equal 'org-canvas-pages-file)
         (expect (plist-get spec :query) :to-equal "LEVEL=1")
         (let* ((props (plist-get spec :properties))
-               (prop (car props)))
+               (prop (car props))
+               (prop-type (plist-get prop :type)))
           (expect (plist-get prop :name) :to-equal "PUBLISHED")
-          (expect (plist-get prop :type) :to-equal 'boolean))))
+          (expect prop-type :to-equal 'boolean))))
 
     (it "includes :date-order in output"
       (org-canvas-register-properties "assignments"
