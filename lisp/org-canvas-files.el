@@ -892,6 +892,19 @@ SIZE is used for logging; may be nil."
          "[Download] Failed for %s: %s"
          display-name (error-message-string err))))))
 
+(defun org-canvas--file-pull-folder-relative-path (full-name)
+  "Return FULL-NAME with the Canvas \"course files\" prefix stripped.
+Canvas folder full_names start with \"course files\" by convention.
+Return \"\" for the root folder, the suffix when the prefix matches,
+or FULL-NAME unchanged otherwise (so unrecognized layouts don't
+silently lose path components)."
+  (cond
+   ((null full-name) "")
+   ((string= full-name "course files") "")
+   ((string-prefix-p "course files/" full-name)
+    (substring full-name (length "course files/")))
+   (t full-name)))
+
 (defun org-canvas--file-pull-set-properties (pos item)
   "Set content-type, size, and usage-rights properties at POS from ITEM."
   (let ((content-type (alist-get 'content-type item))

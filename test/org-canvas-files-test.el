@@ -2334,4 +2334,21 @@
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
 
+(describe "org-canvas--file-pull-folder-relative-path"
+  (it "returns empty string for the Canvas root folder"
+    (expect (org-canvas--file-pull-folder-relative-path "course files")
+            :to-equal ""))
+  (it "strips the prefix from a one-deep folder"
+    (expect (org-canvas--file-pull-folder-relative-path "course files/Labs")
+            :to-equal "Labs"))
+  (it "strips the prefix from a deeply nested folder"
+    (expect (org-canvas--file-pull-folder-relative-path "course files/Labs/Week 1")
+            :to-equal "Labs/Week 1"))
+  (it "leaves an unrecognized prefix unchanged"
+    (expect (org-canvas--file-pull-folder-relative-path "other root/x")
+            :to-equal "other root/x"))
+  (it "returns empty string for nil"
+    (expect (org-canvas--file-pull-folder-relative-path nil)
+            :to-equal "")))
+
 ;;; org-canvas-files-test.el ends here
