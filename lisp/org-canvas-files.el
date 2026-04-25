@@ -1004,9 +1004,8 @@ Downloads to CONTENT-DIR/REL-PATH/DISPLAY_NAME."
   "Insert folder headings to descend from CURRENT-PARTS to NEW-PARTS.
 Both are lists of path components.  Headings are emitted only for
 the suffix of NEW-PARTS that's not already shared with CURRENT-PARTS."
-  (let ((common (org-canvas--file-pull-common-prefix-len current-parts new-parts))
-        (i 0))
-    (setq i common)
+  (let* ((common (org-canvas--file-pull-common-prefix-len current-parts new-parts))
+         (i common))
     (while (< i (length new-parts))
       (insert (make-string (1+ i) ?*) " " (nth i new-parts) "\n")
       (setq i (1+ i)))))
