@@ -345,7 +345,10 @@ Skips items with EXTERNAL_URL property or plain-text SubHeaders."
                        (org-back-to-heading t)
                        (looking-at org-complex-heading-regexp)
                        (match-string-no-properties 4))))
-    (when (and raw-heading (string-match "\\[\\[file:\\([^]]+\\)::\\*\\(.+?\\)\\]" raw-heading))
+    (when (and raw-heading
+               (string-match
+                "\\[\\[file:\\([^]]+\\)::\\*\\(\\(?:\\\\.\\|[^]]\\)+?\\)\\]\\["
+                raw-heading))
       (let* ((file-path (match-string 1 raw-heading))
              (source-dir (file-name-directory (plist-get loc :file)))
              (abs-path (expand-file-name file-path source-dir)))

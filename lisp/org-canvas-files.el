@@ -931,8 +931,9 @@ Downloads file contents to the content/ directory."
                (display-name (alist-get 'display_name item))
                (download-url (alist-get 'url item))
                (local-path (expand-file-name display-name content-dir))
-               (heading-text (format "[[file:content/%s][%s]]"
-                                     display-name display-name))
+               (heading-text (org-link-make-string
+                              (format "file:content/%s" display-name)
+                              display-name))
                (pos (org-canvas--pull-upsert-heading file id heading-text)))
           (message "Files [%d/%d] Pulling '%s'..." count total display-name)
           (goto-char pos)

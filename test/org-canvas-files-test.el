@@ -1900,6 +1900,35 @@
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t))))
 
+  (it "escapes brackets in display_name to produce a parseable Org heading"
+    (let* ((temp-dir (make-temp-file "pull-files-test" t))
+           (files-file (expand-file-name "files.org" temp-dir))
+           (bracketed "IML [Molnar] 2ed.pdf"))
+      (unwind-protect
+          (let ((org-canvas-files-file files-file))
+            (with-org-canvas-test-config
+              (with-sync-test-env
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (lambda (_method _url &optional _params)
+                             `(((id . 7) (display_name . ,bracketed)
+                                (url . "https://example.com/x.pdf")
+                                (content-type . "application/pdf")
+                                (size . 100)))))
+                          ((symbol-function 'url-copy-file)
+                           (lambda (_url _path &rest _args) nil)))
+                  (org-canvas-pull-files)
+                  (with-current-buffer (find-file-noselect files-file)
+                    (goto-char (point-min))
+                    (search-forward "[[file:")
+                    (goto-char (match-beginning 0))
+                    (let ((link (org-element-link-parser)))
+                      (expect (org-element-property :type link)
+                              :to-equal "file"))
+                    (expect (buffer-string) :to-match "CANVAS_ID.*7"))))))
+        (let ((buf (find-buffer-visiting files-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
   (it "creates content directory"
     (let* ((temp-dir (make-temp-file "pull-files-test" t))
            (files-file (expand-file-name "files.org" temp-dir)))

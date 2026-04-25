@@ -682,8 +682,13 @@ Returns a link string or just the title if resolution fails."
                      (setq heading-name (org-get-heading t t t t))))
                  "LEVEL=1" 'file)))
             (if heading-name
-                (format "[[file:%s::*%s][%s]]"
-                        org-file heading-name (or title heading-name))
+                ;; `heading-name' may already contain escape sequences like `\[';
+                ;; unescape so `org-link-make-string' doesn't double-escape them.
+                (let ((unescaped (replace-regexp-in-string
+                                  "\\\\\\([][]\\)" "\\1" heading-name)))
+                  (org-link-make-string
+                   (format "file:%s::*%s" org-file unescaped)
+                   (or title unescaped)))
               (or title "Untitled"))))))))
 
 (defun org-canvas--module-pull-insert-subheader (item-title item-id item-published)
@@ -692,7 +697,7 @@ Returns a link string or just the title if resolution fails."
   (org-back-to-heading t)
   (org-canvas-org-set-property (point) "CANVAS_ID" (format "%s" item-id))
   (org-canvas--pull-set-boolean-property (point) "PUBLISHED" item-published)
-  (goto-char (save-excursion (org-end-of-subtree t) (point))))
+  (goto-char (save-excursion (org-end-of-subtree t t) (point))))
 
 (defun org-canvas--module-pull-insert-external-url (item item-id item-published)
   "Insert an ExternalUrl heading from ITEM with ITEM-ID and ITEM-PUBLISHED."
@@ -710,7 +715,7 @@ Returns a link string or just the title if resolution fails."
     (when indent
       (org-canvas-org-set-property (point) "INDENT" (format "%s" indent)))
     (org-canvas--pull-set-boolean-property (point) "PUBLISHED" item-published)
-    (goto-char (save-excursion (org-end-of-subtree t) (point)))))
+    (goto-char (save-excursion (org-end-of-subtree t t) (point)))))
 
 (defun org-canvas--module-pull-insert-content-item (item item-id item-published)
   "Insert a content-linked heading from ITEM with ITEM-ID and ITEM-PUBLISHED."
@@ -726,7 +731,7 @@ Returns a link string or just the title if resolution fails."
       (when indent
         (org-canvas-org-set-property (point) "INDENT" (format "%s" indent)))
       (org-canvas--pull-set-boolean-property (point) "PUBLISHED" item-published)
-      (goto-char (save-excursion (org-end-of-subtree t) (point))))))
+      (goto-char (save-excursion (org-end-of-subtree t t) (point))))))
 
 (defun org-canvas--module-pull-insert-items (items)
   "Insert level-2 headings for module ITEMS at point.

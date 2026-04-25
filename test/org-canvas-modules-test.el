@@ -2031,7 +2031,55 @@
                      [((type . "Assignment") (title . "HW1")
                        (id . 201) (content_id . 42) (indent . 2))])))
          (expect count :to-equal 1)
-         (expect (buffer-string) :to-match "\\*\\* HW1"))))))
+         (expect (buffer-string) :to-match "\\*\\* HW1")))))
+
+  (it "inserts multiple items on separate lines without concatenation"
+    (with-temp-org-buffer
+     "* Module
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (goto-char (save-excursion (org-end-of-subtree t) (point)))
+     (let ((count (org-canvas--module-pull-insert-items
+                   [((type . "SubHeader") (title . "First")
+                     (id . 101) (content_id . nil) (indent . nil))
+                    ((type . "SubHeader") (title . "Second")
+                     (id . 102) (content_id . nil) (indent . nil))
+                    ((type . "SubHeader") (title . "Third")
+                     (id . 103) (content_id . nil) (indent . nil))])))
+       (expect count :to-equal 3)
+       ;; Each heading must start at column 0; no ":END:** " concatenation.
+       (expect (buffer-string) :not :to-match ":END:\\*\\*")
+       (expect (length (split-string (buffer-string) "^\\*\\* " t))
+               :to-equal 4)))))
+
+(describe "org-canvas--module-resolve-item-link with bracketed heading"
+  (it "produces a parseable link when target heading contains link syntax"
+    (let* ((tmpdir (make-temp-file "resolve-link" t))
+           (files-path (expand-file-name "files.org" tmpdir)))
+      (unwind-protect
+          (progn
+            (with-temp-file files-path
+              (insert "* [[file:content/foo.pdf][foo.pdf]]\n"
+                      ":PROPERTIES:\n:CANVAS_ID: 42\n:END:\n"))
+            (cl-letf (((symbol-function 'org-canvas--path)
+                       (lambda (f) (if (equal f "files.org") files-path f))))
+              (let* ((link (org-canvas--module-resolve-item-link
+                            "File" 42 "foo.pdf")))
+                (with-temp-buffer
+                  (org-mode)
+                  (insert (format "* parent\n** %s\n" link))
+                  (goto-char (point-min))
+                  (search-forward "[[file:")
+                  (goto-char (match-beginning 0))
+                  (let ((parsed (org-element-link-parser)))
+                    (expect (org-element-property :type parsed)
+                            :to-equal "file")
+                    (expect (org-element-property :search-option parsed)
+                            :to-equal "*[[file:content/foo.pdf][foo.pdf]]"))))))
+        (delete-directory tmpdir t)))))
 
 (describe "org-canvas-pull-modules"
   (it "creates module headings with items"
