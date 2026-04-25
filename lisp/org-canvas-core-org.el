@@ -122,6 +122,16 @@ When BOOLEAN-P is non-nil, convert \"true\"/\"false\" to t/:json-false."
   (dolist (prop org-canvas--sync-property-names)
     (org-entry-delete pom prop)))
 
+(defun org-canvas--save-buffer ()
+  "Save the current buffer and log the file path written.
+Use in place of `save-buffer' so the sync log records each modified
+Org file.  When the current buffer has no associated file (e.g., a
+scratch buffer used for HTML export) the save still happens but no
+log line is emitted."
+  (save-buffer)
+  (when buffer-file-name
+    (org-canvas--log-info org-canvas--logger "[Saved] %s" buffer-file-name)))
+
 (defun org-canvas--clean-local-sync-properties (file &optional id-property)
   "Remove sync properties from all headings with IDs in FILE.
 ID-PROPERTY defaults to \"CANVAS_ID\"."
@@ -135,8 +145,7 @@ ID-PROPERTY defaults to \"CANVAS_ID\"."
                        (org-entry-get (point) id-prop))
            (org-canvas-clear-sync-properties (point)))
          (format "%s={.}" id-prop) 'file)
-        (save-buffer)
-        (org-canvas--log-info org-canvas--logger "Saved %s" file)))))
+        (org-canvas--save-buffer)))))
 
 (defun org-canvas-org-set-property (pom property value)
   "Set Org PROPERTY to VALUE at POM (point or marker).
@@ -906,7 +915,7 @@ Example:
                       `(unless (funcall ,skip-fn item)
                          ,body)
                     body)))
-             (save-buffer))
+             (org-canvas--save-buffer))
            (org-canvas--log-info org-canvas--logger
              ,(format "%s pull complete: %%d items"
                       (capitalize feature-name)) count)

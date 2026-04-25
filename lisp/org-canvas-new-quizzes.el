@@ -380,7 +380,7 @@ QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
           (assignment-id (alist-get 'assignment_id response)))
       (when rubric-id
         (org-canvas--associate-rubric assignment-id rubric-id "Assignment")))
-    (save-buffer)
+    (org-canvas--save-buffer)
     (message "New Quiz '%s' synced." (plist-get data :title))))
 
 ;;;; Delete Functions
@@ -477,7 +477,7 @@ QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
           (org-canvas--new-quiz-pull-set-properties pos quiz)
           (org-canvas--new-quiz-pull-items assignment-id)
           (cl-incf count)))
-      (save-buffer))
+      (org-canvas--save-buffer))
     (org-canvas--log-info org-canvas--logger "New Quizzes pull complete: %d quizzes" count)
     (message "New Quizzes pull complete: %d quizzes." count)))
 

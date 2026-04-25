@@ -215,6 +215,32 @@
        (org-canvas-org-set-property marker "TEST_PROP" "marker-value")
        (expect (org-entry-get (point) "TEST_PROP") :to-equal "marker-value")))))
 
+(describe "org-canvas--save-buffer"
+  (it "saves the buffer and logs the file path"
+    (let* ((tmp-file (make-temp-file "org-canvas-save-" nil ".org"))
+           (logged nil))
+      (unwind-protect
+          (cl-letf (((symbol-function 'org-canvas--log-info)
+                     (lambda (_logger fmt &rest args)
+                       (setq logged (apply #'format fmt args)))))
+            (with-current-buffer (find-file-noselect tmp-file)
+              (insert "* heading\n")
+              (org-canvas--save-buffer)
+              (kill-buffer))
+            (expect logged :to-equal (format "[Saved] %s" tmp-file)))
+        (delete-file tmp-file))))
+
+  (it "skips the log when the buffer has no associated file"
+    (let ((logged nil))
+      (cl-letf (((symbol-function 'save-buffer) (lambda (&rest _) nil))
+                ((symbol-function 'org-canvas--log-info)
+                 (lambda (_logger fmt &rest args)
+                   (setq logged (apply #'format fmt args)))))
+        (with-temp-buffer
+          (insert "scratch")
+          (org-canvas--save-buffer))
+        (expect logged :to-be nil)))))
+
 (describe "org-canvas-org-save-sync-state"
   (it "saves CANVAS_ID and LAST_SYNCED"
     (with-temp-org-buffer

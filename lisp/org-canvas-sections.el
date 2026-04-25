@@ -182,7 +182,7 @@ local headings whose CANVAS_ID no longer exists on Canvas."
               (setq created (1+ created)))))
 
         (org-canvas--pull-sections-warn-stale remote-ids)
-        (save-buffer))
+        (org-canvas--save-buffer))
 
       (org-canvas--log-info org-canvas--logger "========================================")
       (org-canvas--log-info org-canvas--logger ">>> SECTION PULL COMPLETE")

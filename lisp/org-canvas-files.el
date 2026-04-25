@@ -771,8 +771,7 @@ Returns :success, :skip (folder heading), or :fail."
 
       ;; Save the org file after all modifications
       (with-current-buffer (find-file-noselect files-file)
-        (save-buffer)
-        (org-canvas--log-info org-canvas--logger "Saved %s" files-file))
+        (org-canvas--save-buffer))
 
       (org-canvas--log-info org-canvas--logger "========================================")
       (org-canvas--log-info org-canvas--logger ">>> FILE SYNC COMPLETE")
@@ -947,7 +946,7 @@ Downloads file contents to the content/ directory."
           (org-canvas--file-pull-set-properties pos item)
           (org-canvas--file-pull-download
            display-name download-url local-path (alist-get 'size item))))
-      (save-buffer))
+      (org-canvas--save-buffer))
     (org-canvas--log-info org-canvas--logger "Files pull complete: %d files" count)
     (message "Files pull complete: %d files." count)))
 

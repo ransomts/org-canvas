@@ -527,7 +527,7 @@ and pushes them to Canvas via PUT /courses/:id."
               (org-canvas--settings-push-late-policy late-policy-payload)
               (org-canvas--settings-sync-tabs navigation)
               (org-canvas--settings-finalize data response)
-              (save-buffer)
+              (org-canvas--save-buffer)
               (org-canvas--log-info org-canvas--logger "========================================")
               (org-canvas--log-info org-canvas--logger ">>> SETTINGS SYNC COMPLETE")
               (org-canvas--log-info org-canvas--logger "========================================")
@@ -701,7 +701,7 @@ and heading if they don't exist."
                           (error nil))))
           (when nav-text
             (org-canvas--settings-insert-navigation-heading nav-text)))
-        (save-buffer)))
+        (org-canvas--save-buffer)))
     (org-canvas--log-info org-canvas--logger "========================================")
     (org-canvas--log-info org-canvas--logger ">>> SETTINGS PULL COMPLETE")
     (org-canvas--log-info org-canvas--logger "Course: %s" name)

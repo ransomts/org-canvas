@@ -187,7 +187,7 @@ Updates title, LAST_SYNCED, and deletes stale PAYLOAD_HASH."
         (when updated-at
           (org-entry-put pos "CANVAS_UPDATED_AT" updated-at)))
       (org-entry-delete pos "PAYLOAD_HASH")
-      (save-buffer))))
+      (org-canvas--save-buffer))))
 
 (provide 'org-canvas-core-conflict)
 ;;; org-canvas-core-conflict.el ends here

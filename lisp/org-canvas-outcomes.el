@@ -546,7 +546,7 @@ Point must be at the parent group heading."
           (org-canvas-org-save-sync-state pos gid)
           (cl-incf outcome-count
                    (org-canvas--outcome-pull-process-group gid))))
-      (save-buffer))
+      (org-canvas--save-buffer))
     (org-canvas--log-info org-canvas--logger
       "Outcomes pull complete: %d groups, %d outcomes" group-count outcome-count)
     (message "Outcomes pull complete: %d groups, %d outcomes."

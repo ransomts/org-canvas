@@ -784,7 +784,7 @@ Returns the count of items inserted."
             (when items
               (setq item-count (+ item-count
                                   (org-canvas--module-pull-insert-items items)))))))
-      (save-buffer))
+      (org-canvas--save-buffer))
     (org-canvas--log-info org-canvas--logger
       "Modules pull complete: %d modules, %d items" mod-count item-count)
     (message "Modules pull complete: %d modules, %d items."
