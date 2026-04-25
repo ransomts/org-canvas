@@ -179,7 +179,27 @@
                 ((symbol-function 'org-canvas-delete-all-modules)
                  (lambda () (setq delete-called t))))
         (expect (org-canvas-delete-all) :to-throw 'user-error)
-        (expect delete-called :to-be nil)))))
+        (expect delete-called :to-be nil))))
+
+  (it "counts synced items in existing manifest files before confirming"
+    (let* ((tmp-dir (make-temp-file "org-canvas-delete-" t))
+           (assignments-file (expand-file-name "assignments.org" tmp-dir))
+           (count-arg-file nil))
+      (unwind-protect
+          (progn
+            (with-temp-file assignments-file
+              (insert "* A\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n"))
+            (let ((org-canvas-assignments-file assignments-file))
+              (cl-letf (((symbol-function 'yes-or-no-p) (lambda (_) nil))
+                        ((symbol-function 'org-canvas--status-count-entries)
+                         (lambda (file _id-prop)
+                           (setq count-arg-file file)
+                           (list :synced 7 :pending 0 :legacy 0 :unsaved 0))))
+                (with-sync-test-env
+                  (expect (org-canvas-delete-all) :to-throw 'user-error))))
+            (expect count-arg-file
+                    :to-equal (expand-file-name assignments-file)))
+        (delete-directory tmp-dir t)))))
 
 ;;;; org-canvas--safe-sync
 

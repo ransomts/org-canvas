@@ -248,7 +248,7 @@ LABEL is used for logging (e.g., \"Pages\")."
     (let ((tier-num 1))
       (dolist (tier (nthcdr 2 org-canvas--sync-tiers))
         (org-canvas--log-info org-canvas--logger "--- Tier %s: %s ---"
-          (pcase tier-num (1 "1") (2 "1.5") (3 "1.75") (4 "2") (_ (number-to-string tier-num)))
+          (pcase tier-num (1 "1") (2 "1.5") (3 "1.75") (4 "2"))
           (org-canvas--tier-description tier))
         (message "Syncing: %s..." (org-canvas--tier-description tier))
         (org-canvas--run-tier tier #'org-canvas--safe-sync)

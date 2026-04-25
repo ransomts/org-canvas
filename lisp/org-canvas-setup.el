@@ -120,14 +120,25 @@ and writes org-canvas-credentials.el."
           (setq org-canvas--active-course-name course-name)))
     (message "org-canvas initialized!  Use M-x org-canvas-status to see sync state.")))
 
+(defun org-canvas--read-course-name ()
+  "Prompt for a course name from `org-canvas-courses'."
+  (completing-read "Course: "
+                   (mapcar #'car org-canvas-courses) nil t))
+
 ;;;###autoload
-(defun org-canvas-activate-course (name)
-  "Activate the course named NAME from `org-canvas-courses'."
-  (interactive
-   (list (completing-read "Course: "
-                          (mapcar #'car org-canvas-courses) nil t)))
+(defun org-canvas-activate-course (&optional name)
+  "Activate the course named NAME from `org-canvas-courses'.
+If NAME is nil and called interactively, prompt with completion."
+  ;; Bare `(interactive)' rather than `(interactive (list ...))'.
+  ;; A sexp argument to `interactive' confuses edebug enough that
+  ;; undercover stops counting hits inside `unless'/`when' bodies in
+  ;; the function — see CLAUDE.md for the bisection.
+  (interactive)
+  (unless name
+    (setq name (org-canvas--read-course-name)))
   (let ((dir (cdr (assoc name org-canvas-courses))))
-    (unless dir (user-error "Course '%s' not found in org-canvas-courses" name))
+    (unless dir
+      (user-error "Course '%s' not found in org-canvas-courses" name))
     (unless (file-directory-p dir)
       (user-error "Course directory does not exist: %s" dir))
     (let ((cred-file (expand-file-name "org-canvas-credentials.el" dir)))

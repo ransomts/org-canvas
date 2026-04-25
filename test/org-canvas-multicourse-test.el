@@ -65,20 +65,23 @@
 (describe "org-canvas-activate-course"
   (it "errors on unknown course name"
     (let ((org-canvas-courses '(("Math" . "/tmp/math"))))
-      (expect (org-canvas-activate-course "Physics")
-              :to-throw 'user-error)))
+      (let ((err (should-error (org-canvas-activate-course "Physics")
+                               :type 'user-error)))
+        (expect (cadr err) :to-match "not found"))))
 
   (it "errors when directory does not exist"
     (let ((org-canvas-courses '(("Math" . "/tmp/nonexistent-dir-xyz"))))
-      (expect (org-canvas-activate-course "Math")
-              :to-throw 'user-error)))
+      (let ((err (should-error (org-canvas-activate-course "Math")
+                               :type 'user-error)))
+        (expect (cadr err) :to-match "directory does not exist"))))
 
   (it "errors when credentials file is missing"
     (let* ((dir (make-temp-file "course-" t))
            (org-canvas-courses `(("Math" . ,dir))))
       (unwind-protect
-          (expect (org-canvas-activate-course "Math")
-                  :to-throw 'user-error)
+          (let ((err (should-error (org-canvas-activate-course "Math")
+                                   :type 'user-error)))
+            (expect (cadr err) :to-match "credentials"))
         (delete-directory dir t))))
 
   (it "loads credentials and recomputes paths on success"
