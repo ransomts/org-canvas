@@ -13,6 +13,7 @@
 (defvar test-var-b nil)
 (defvar test-var-c nil)
 (defvar test-mc-var nil)
+(defvar test-watcher-var nil)
 
 ;;;; File Variable Registry
 
@@ -59,6 +60,46 @@
       (setq org-canvas-directory "/tmp/course-b")
       (org-canvas--recompute-file-paths)
       (expect test-var-c :to-equal "/tmp/course-b/assignments.org"))))
+
+;;;; Directory Watcher
+
+(describe "org-canvas--directory-watcher"
+  (it "recomputes file vars when called with `set' operation"
+    (let ((org-canvas--file-var-registry
+           '((test-watcher-var . "pages.org")))
+          (test-watcher-var nil))
+      (org-canvas--directory-watcher 'org-canvas-directory
+                                     "/tmp/from-watcher" 'set nil)
+      (expect test-watcher-var :to-equal "/tmp/from-watcher/pages.org")))
+
+  (it "ignores `let' operations to avoid leaking test rebindings"
+    (let ((org-canvas--file-var-registry
+           '((test-watcher-var . "pages.org")))
+          (test-watcher-var "/old/value"))
+      (org-canvas--directory-watcher 'org-canvas-directory
+                                     "/tmp/from-let" 'let nil)
+      (expect test-watcher-var :to-equal "/old/value")))
+
+  (it "ignores nil and empty new values"
+    (let ((org-canvas--file-var-registry
+           '((test-watcher-var . "pages.org")))
+          (test-watcher-var "/keep/me"))
+      (org-canvas--directory-watcher 'org-canvas-directory nil 'set nil)
+      (expect test-watcher-var :to-equal "/keep/me")
+      (org-canvas--directory-watcher 'org-canvas-directory "" 'set nil)
+      (expect test-watcher-var :to-equal "/keep/me")))
+
+  (it "fires automatically on setq of org-canvas-directory"
+    (let ((org-canvas--file-var-registry
+           '((test-watcher-var . "modules.org")))
+          (saved-dir org-canvas-directory)
+          (test-watcher-var nil))
+      (unwind-protect
+          (progn
+            (setq org-canvas-directory "/tmp/setq-test/")
+            (expect test-watcher-var
+                    :to-equal "/tmp/setq-test/modules.org"))
+        (setq org-canvas-directory saved-dir)))))
 
 ;;;; Course Activation
 

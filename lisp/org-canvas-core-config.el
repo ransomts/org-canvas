@@ -152,6 +152,30 @@ PLIST has keys :name :endpoint :file-var :id-field :id-property
   (dolist (entry org-canvas--file-var-registry)
     (set (car entry) (org-canvas--path (cdr entry)))))
 
+(defun org-canvas--directory-watcher (_symbol newval operation _where)
+  "Auto-recompute file paths when `org-canvas-directory' is reassigned.
+NEWVAL is the incoming value being assigned; OPERATION is the kind of
+change (`set', `let', `unlet', `makunbound', `defvaralias').  Reacts
+only to `set' so dynamic rebinding via `let' doesn't leak permanent
+changes into the registered file vars during tests.
+
+Without this watcher, defcustom forms like
+\(defcustom org-canvas-modules-file (org-canvas--path \"modules.org\") ...)
+bake their value at package-load time.  If a credentials file sets
+`org-canvas-directory' afterwards via `setq', the file vars stay
+pinned to whatever fallback `org-canvas--path' picked at load time
+\(typically `org-directory')."
+  (when (and (eq operation 'set)
+             (stringp newval)
+             (not (string-empty-p newval)))
+    ;; Bind dynamically so `org-canvas--recompute-file-paths' (which
+    ;; reads `org-canvas-directory' transitively via `org-canvas--path')
+    ;; sees the incoming value — the watcher fires before the assignment.
+    (let ((org-canvas-directory newval))
+      (org-canvas--recompute-file-paths))))
+
+(add-variable-watcher 'org-canvas-directory #'org-canvas--directory-watcher)
+
 ;;;; 1c. Property Registry
 
 (defvar org-canvas--property-registry (make-hash-table :test 'equal)
