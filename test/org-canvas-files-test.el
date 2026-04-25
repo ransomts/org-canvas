@@ -2441,4 +2441,47 @@
 "
       (expect (org-canvas--file-pull-mode) :to-equal 'hierarchical))))
 
+(describe "org-canvas--file-pull-emit-fresh-tree"
+  (it "emits one top-level heading per file when all files are at root"
+    (let* ((temp-dir (make-temp-file "emit-tree-test" t))
+           (files-file (expand-file-name "files.org" temp-dir))
+           (content-dir (expand-file-name "content" temp-dir))
+           (folder-map (make-hash-table :test 'eql))
+           (downloads nil))
+      (unwind-protect
+          (let ((org-canvas-files-file files-file))
+            (with-temp-file files-file (insert "#+TITLE: Files\n"))
+            (puthash 100 "" folder-map)
+            (cl-letf (((symbol-function 'url-copy-file)
+                       (lambda (_url path &rest _args)
+                         (push path downloads))))
+              (with-current-buffer (find-file-noselect files-file)
+                (org-canvas--file-pull-emit-fresh-tree
+                 folder-map
+                 '(((id . 1) (display_name . "syllabus.pdf")
+                    (folder_id . 100) (url . "https://example.com/syllabus.pdf")
+                    (content-type . "application/pdf") (size . 2048))
+                   ((id . 2) (display_name . "schedule.pdf")
+                    (folder_id . 100) (url . "https://example.com/schedule.pdf")
+                    (content-type . "application/pdf") (size . 1024)))
+                 content-dir)
+                (save-buffer))
+              (with-temp-buffer
+                (insert-file-contents files-file)
+                (let ((body (buffer-string)))
+                  (expect body :to-match "^\\* \\[\\[file:content/schedule\\.pdf\\]\\[schedule\\.pdf\\]\\]$")
+                  (expect body :to-match "^\\* \\[\\[file:content/syllabus\\.pdf\\]\\[syllabus\\.pdf\\]\\]$")
+                  (expect body :to-match ":CANVAS_ID: 1")
+                  (expect body :to-match ":CANVAS_ID: 2")
+                  (expect body :to-match ":CONTENT_TYPE: +application/pdf")
+                  (expect body :to-match ":SIZE: +2048")))
+              (expect (length downloads) :to-equal 2)
+              (expect (cl-some (lambda (p)
+                                 (string-suffix-p "content/syllabus.pdf" p))
+                               downloads)
+                      :to-be-truthy)))
+        (let ((buf (find-buffer-visiting files-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
 ;;; org-canvas-files-test.el ends here

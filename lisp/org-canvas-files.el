@@ -951,6 +951,73 @@ Returns one of three symbols:
           (has-cid 'flat)
           (t 'fresh))))
 
+(defun org-canvas--file-pull-group-by-folder (folder-map remote-items)
+  "Group REMOTE-ITEMS by their folder-relative path.
+FOLDER-MAP is the hash from `org-canvas--file-pull-fetch-folders'.
+Returns an alist ((REL-PATH . ITEMS) ...).  Items whose `folder_id'
+is missing from FOLDER-MAP fall under \"\" (root)."
+  (let ((groups nil))
+    (dolist (item remote-items)
+      (let* ((folder-id (alist-get 'folder_id item))
+             (rel-path (or (and folder-id (gethash folder-id folder-map)) ""))
+             (cell (assoc rel-path groups)))
+        (if cell
+            (setcdr cell (cons item (cdr cell)))
+          (push (cons rel-path (list item)) groups))))
+    groups))
+
+(defun org-canvas--file-pull-emit-file-heading
+    (item depth rel-path content-dir total counter)
+  "Emit a heading + properties for ITEM at DEPTH under REL-PATH.
+COUNTER is a cons cell whose car is the running file count (mutated).
+TOTAL is the count of all files for the progress message.
+Downloads to CONTENT-DIR/REL-PATH/DISPLAY_NAME."
+  (let* ((id (alist-get 'id item))
+         (display-name (alist-get 'display_name item))
+         (download-url (alist-get 'url item))
+         (local-rel (if (string-empty-p rel-path)
+                        display-name
+                      (concat rel-path "/" display-name)))
+         (link-target (concat "content/" local-rel))
+         (heading-text (org-link-make-string
+                        (concat "file:" link-target)
+                        display-name))
+         (local-path (expand-file-name local-rel content-dir)))
+    (insert (make-string depth ?*) " " heading-text "\n")
+    (let ((pos (save-excursion (forward-line -1) (point))))
+      (org-canvas-org-save-sync-state pos id)
+      (org-canvas--file-pull-set-properties pos item))
+    (setcar counter (1+ (car counter)))
+    (message "Files [%d/%d] Pulling '%s'..." (car counter) total display-name)
+    (org-canvas--file-pull-download
+     display-name download-url local-path (alist-get 'size item))))
+
+(defun org-canvas--file-pull-emit-fresh-tree (folder-map remote-items content-dir)
+  "Emit a folder-aware heading tree for REMOTE-ITEMS into the current buffer.
+FOLDER-MAP maps folder id to relative path; empty path is root.
+CONTENT-DIR is the local directory under which files are downloaded.
+
+Files at root become level-1 headings.  Files in a folder get
+ancestor folder headings emitted once each before the file headings.
+Properties are written via `org-canvas-org-save-sync-state' and
+`org-canvas--file-pull-set-properties' for symmetry with flat mode."
+  (goto-char (point-max))
+  (unless (bolp) (insert "\n"))
+  (let* ((groups (org-canvas--file-pull-group-by-folder folder-map remote-items))
+         (sorted-paths (sort (mapcar #'car groups) #'string<))
+         (total (length remote-items))
+         (counter (list 0)))
+    (dolist (rel-path sorted-paths)
+      (let* ((items (sort (cdr (assoc rel-path groups))
+                          (lambda (a b)
+                            (string< (alist-get 'display_name a)
+                                     (alist-get 'display_name b)))))
+             (file-depth 1))
+        (dolist (item items)
+          (org-canvas--file-pull-emit-file-heading
+           item file-depth rel-path content-dir total counter))))
+    (car counter)))
+
 (defun org-canvas--file-pull-set-properties (pos item)
   "Set content-type, size, and usage-rights properties at POS from ITEM."
   (let ((content-type (alist-get 'content-type item))
