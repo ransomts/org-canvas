@@ -379,28 +379,33 @@ For question groups, returns PICK_COUNT * QUESTION_POINTS."
        (points (string-to-number points))
        (t 0)))))
 
+(defun org-canvas--validate-quiz-sum-question-points ()
+  "Sum POINTS across level-2 subheadings of the current quiz subtree.
+Return nil when there are no question subheadings."
+  (let ((end (save-excursion (org-end-of-subtree t) (point)))
+        (markers nil))
+    (save-excursion
+      (while (re-search-forward "^\\*\\* " end t)
+        (push (point-marker) markers)))
+    (when markers
+      (let* ((ordered (nreverse markers))
+             (sum (cl-loop for m in ordered
+                           sum (org-canvas--validate-quiz-question-points
+                                (marker-position m)))))
+        (dolist (m ordered) (set-marker m nil))
+        sum))))
+
 (defun org-canvas--validate-quiz-point-total (loc)
   "Check that quiz POINTS matches sum of question points.
 LOC is a (:file :line :heading) plist."
-  (let ((declared-points (org-entry-get (point) "POINTS"))
-        (end (save-excursion (org-end-of-subtree t) (point)))
-        (markers nil))
-    (when declared-points
-      (save-excursion
-        (while (re-search-forward "^\\*\\* " end t)
-          (push (point-marker) markers)))
-      (when markers
-        (let* ((ordered (nreverse markers))
-               (sum (cl-loop for m in ordered
-                             sum (org-canvas--validate-quiz-question-points
-                                  (marker-position m))))
-               (declared (string-to-number declared-points)))
-          (dolist (m ordered) (set-marker m nil))
-          (unless (= declared sum)
-            (list (org-canvas--validate-make-issue
-                   'warning loc "POINTS"
-                   (format "Quiz POINTS is %s but question total is %s"
-                           declared-points (number-to-string sum))))))))))
+  (when-let* ((declared-points (org-entry-get (point) "POINTS"))
+              (sum (org-canvas--validate-quiz-sum-question-points))
+              (declared (string-to-number declared-points)))
+    (unless (= declared sum)
+      (list (org-canvas--validate-make-issue
+             'warning loc "POINTS"
+             (format "Quiz POINTS is %s but question total is %s"
+                     declared-points (number-to-string sum)))))))
 
 (defun org-canvas--count-assignments-in-group (group-name assignments-file)
   "Count assignments in GROUP-NAME by scanning ASSIGNMENTS-FILE."
