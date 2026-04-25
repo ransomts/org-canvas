@@ -1873,6 +1873,23 @@
                      (lambda (_url _path &rest _args) (setq downloaded t))))
             (org-canvas--file-pull-download "nourl.pdf" nil local-path 100)
             (expect downloaded :to-be nil))
+        (delete-directory temp-dir t))))
+
+  (it "creates the parent directory tree before downloading"
+    (let* ((temp-dir (make-temp-file "file-pull-test" t))
+           (nested-path (expand-file-name "Labs/Week 1/lab.pdf" temp-dir))
+           (downloaded nil))
+      (unwind-protect
+          (cl-letf (((symbol-function 'url-copy-file)
+                     (lambda (_url path &rest _args)
+                       (setq downloaded path)
+                       (with-temp-file path (insert "x")))))
+            (org-canvas--file-pull-download
+             "lab.pdf" "https://example.com/lab.pdf" nested-path 1)
+            (expect downloaded :to-equal nested-path)
+            (expect (file-directory-p
+                     (expand-file-name "Labs/Week 1" temp-dir))
+                    :to-be-truthy))
         (delete-directory temp-dir t)))))
 
 (describe "org-canvas-pull-files"

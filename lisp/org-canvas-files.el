@@ -884,6 +884,7 @@ SIZE is used for logging; may be nil."
   (when (and download-url (not (file-exists-p local-path)))
     (condition-case err
         (progn
+          (make-directory (file-name-directory local-path) t)
           (org-canvas--log-info org-canvas--logger
             "[Download] %s (%s bytes)" display-name (or size "?"))
           (url-copy-file download-url local-path t))
