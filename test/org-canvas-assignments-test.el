@@ -1,4 +1,5 @@
 ;;; org-canvas-assignments-test.el --- Buttercup tests for assignments  -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Code:
 

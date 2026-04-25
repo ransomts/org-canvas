@@ -1,4 +1,5 @@
 ;;; org-canvas-property-registry-test.el --- Tests for property registry  -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 

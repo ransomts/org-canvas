@@ -1,4 +1,5 @@
 ;;; org-canvas-multicourse-test.el --- Tests for multi-course support  -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Code:
 

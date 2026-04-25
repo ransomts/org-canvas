@@ -1,4 +1,5 @@
 ;;; org-canvas-core-conflict.el --- Interactive conflict resolution UI -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 

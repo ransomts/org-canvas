@@ -1,4 +1,5 @@
 ;;; org-canvas-snapshot-test.el --- Snapshot tests for payload functions -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 

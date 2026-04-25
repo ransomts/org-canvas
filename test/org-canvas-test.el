@@ -1,4 +1,5 @@
 ;;; org-canvas-test.el --- Buttercup tests for org-canvas orchestration  -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 ;; Tests for the top-level org-canvas-sync and org-canvas-delete-all functions.

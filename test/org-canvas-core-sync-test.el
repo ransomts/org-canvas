@@ -1,4 +1,5 @@
 ;;; org-canvas-core-sync-test.el --- Buttercup tests for org-canvas-core sync pipeline helpers  -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Code:
 

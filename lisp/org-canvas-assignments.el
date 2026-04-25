@@ -1,4 +1,5 @@
 ;;; org-canvas-assignments.el --- Pipeline-based Assignment Sync -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 

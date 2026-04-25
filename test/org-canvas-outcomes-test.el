@@ -1,4 +1,5 @@
 ;;; org-canvas-outcomes-test.el --- Buttercup tests for outcomes  -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Code:
 

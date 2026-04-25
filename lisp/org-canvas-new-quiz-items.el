@@ -1,4 +1,5 @@
 ;;; org-canvas-new-quiz-items.el --- New Quizzes item/question pipeline -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 

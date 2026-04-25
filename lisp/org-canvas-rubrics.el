@@ -1,4 +1,5 @@
 ;;; org-canvas-rubrics.el --- Rubric Sync Pipeline for Canvas LMS -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 

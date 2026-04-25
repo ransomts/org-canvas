@@ -1,4 +1,5 @@
 ;;; org-canvas-core-sync.el --- Sync pipeline, conflict, push/delete infrastructure -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 

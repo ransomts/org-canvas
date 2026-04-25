@@ -1,4 +1,5 @@
 ;;; org-canvas-core-api-test.el --- Buttercup tests for org-canvas-core API layer  -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Code:
 

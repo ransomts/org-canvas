@@ -1,4 +1,5 @@
 ;;; org-canvas-assignment-groups.el --- Pipeline-based Assignment Group Sync -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 

@@ -1,4 +1,5 @@
 ;;; org-canvas-settings.el --- Course settings sync -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 

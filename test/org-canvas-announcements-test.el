@@ -1,4 +1,5 @@
 ;;; org-canvas-announcements-test.el --- Buttercup tests for announcements  -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Code:
 

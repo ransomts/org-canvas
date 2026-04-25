@@ -1,4 +1,5 @@
 ;;; org-canvas-sections.el --- Pull sections from Canvas & sync overrides -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 

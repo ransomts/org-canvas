@@ -1,4 +1,5 @@
 ;;; org-canvas-discussions-test.el --- Buttercup tests for discussions  -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Code:
 

@@ -1,4 +1,5 @@
 ;;; org-canvas-core-config-test.el --- Buttercup tests for org-canvas-core path, logging, and configuration  -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Code:
 

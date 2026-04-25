@@ -1,4 +1,5 @@
 ;;; org-canvas-core-log.el --- In-tree logger for org-canvas -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 

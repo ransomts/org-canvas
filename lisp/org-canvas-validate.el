@@ -1,4 +1,5 @@
 ;;; org-canvas-validate.el --- Validation engine for org-canvas  -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 

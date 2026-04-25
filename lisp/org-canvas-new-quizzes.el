@@ -1,4 +1,5 @@
 ;;; org-canvas-new-quizzes.el --- New Quizzes Sync Pipeline for Canvas LMS -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 

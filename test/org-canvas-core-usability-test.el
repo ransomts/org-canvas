@@ -1,4 +1,5 @@
 ;;; org-canvas-core-usability-test.el --- Buttercup tests for org-canvas-core usability features  -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Code:
 

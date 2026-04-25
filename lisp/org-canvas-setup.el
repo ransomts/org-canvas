@@ -1,4 +1,5 @@
 ;;; org-canvas-setup.el --- Setup wizard for new courses -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 

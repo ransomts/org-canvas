@@ -1,4 +1,5 @@
 ;;; org-canvas-rubrics-test.el --- Buttercup tests for rubrics  -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Code:
 

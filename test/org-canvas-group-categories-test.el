@@ -1,4 +1,5 @@
 ;;; org-canvas-group-categories-test.el --- Buttercup tests for group categories  -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Code:
 

@@ -1,4 +1,5 @@
 ;;; org-canvas-core-delete.el --- Delete infrastructure and macros -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 

@@ -1,4 +1,5 @@
 ;;; org-canvas-calendar-test.el --- Buttercup tests for calendar events  -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Code:
 

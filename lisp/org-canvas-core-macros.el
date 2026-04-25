@@ -1,4 +1,5 @@
 ;;; org-canvas-core-macros.el --- Declarative payload and parse DSL -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 

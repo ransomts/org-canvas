@@ -1,4 +1,5 @@
 ;;; test-helper.el --- Test helper for org-canvas tests  -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 ;; Common fixtures, macros, and utilities for org-canvas Buttercup tests.

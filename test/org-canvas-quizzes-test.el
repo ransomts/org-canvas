@@ -1,4 +1,5 @@
 ;;; org-canvas-quizzes-test.el --- Buttercup tests for quizzes  -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Code:
 

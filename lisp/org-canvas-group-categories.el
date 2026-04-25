@@ -1,4 +1,5 @@
 ;;; org-canvas-group-categories.el --- Pipeline-based Group Category Sync -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 

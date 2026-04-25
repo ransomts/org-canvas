@@ -1,4 +1,5 @@
 ;;; org-canvas-settings-test.el --- Tests for org-canvas-settings  -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Code:
 

@@ -1,4 +1,5 @@
 ;;; org-canvas-files-test.el --- Buttercup tests for org-canvas-files  -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 ;; Comprehensive Buttercup tests for org-canvas-files.el

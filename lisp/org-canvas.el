@@ -1,4 +1,5 @@
 ;;; org-canvas.el --- Sync Org Mode files with Canvas LMS  -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;; Author: Tim Ransom
 ;; Version: 0.1.0

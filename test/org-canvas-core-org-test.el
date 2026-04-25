@@ -1,4 +1,5 @@
 ;;; org-canvas-core-org-test.el --- Buttercup tests for org-canvas-core Org interaction utilities  -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Code:
 

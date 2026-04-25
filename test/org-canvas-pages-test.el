@@ -1,4 +1,5 @@
 ;;; org-canvas-pages-test.el --- Buttercup tests for pages  -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Code:
 

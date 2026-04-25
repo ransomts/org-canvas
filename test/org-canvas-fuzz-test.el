@@ -1,4 +1,5 @@
 ;;; org-canvas-fuzz-test.el --- Property-based fuzz tests -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 

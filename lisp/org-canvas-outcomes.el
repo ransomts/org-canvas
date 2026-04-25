@@ -1,4 +1,5 @@
 ;;; org-canvas-outcomes.el --- Pipeline-based Outcome Sync -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 

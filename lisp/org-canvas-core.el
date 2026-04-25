@@ -1,4 +1,5 @@
 ;;; org-canvas-core.el --- Core utilities for org-canvas -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 

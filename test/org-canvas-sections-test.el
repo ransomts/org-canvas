@@ -1,4 +1,5 @@
 ;;; org-canvas-sections-test.el --- Buttercup tests for sections  -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Code:
 

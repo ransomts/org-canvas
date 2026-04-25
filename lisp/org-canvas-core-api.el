@@ -1,4 +1,5 @@
 ;;; org-canvas-core-api.el --- Canvas API communication layer -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 

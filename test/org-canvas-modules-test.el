@@ -1,4 +1,5 @@
 ;;; org-canvas-modules-test.el --- Buttercup tests for modules  -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Code:
 
