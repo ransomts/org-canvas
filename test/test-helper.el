@@ -18,6 +18,18 @@
 (when noninteractive
   (defun org-check-agenda-file (_file) nil))
 
+;; Redirect logging away from the user's real `org-canvas-directory'
+;; (typically pinned by `org-canvas-credentials.el') to a per-process
+;; temp directory.  Without this, tests write to a shared real log
+;; file and create `.#org-canvas.log' locks; the pre-push hook runs
+;; Emacs 29 and Emacs 30 test jobs in parallel, so the locks collide
+;; and one job aborts.  We rebind the directory itself rather than
+;; `org-canvas-log-destination' because a test asserts that the
+;; defcustom default remains `both'.
+(setq org-canvas-directory
+      (file-name-as-directory
+       (make-temp-file "org-canvas-test-" t)))
+
 ;;;; Test Configuration
 
 (defvar test-org-canvas-emacs-30-p (>= emacs-major-version 30)
