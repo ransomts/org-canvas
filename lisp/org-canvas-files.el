@@ -1090,12 +1090,27 @@ Preserves existing CANVAS_ID matches in place; new files are appended."
 ;;;###autoload
 (defun org-canvas-pull-files ()
   "Pull file metadata from Canvas into files.org.
-Downloads file contents to the content/ directory."
+Downloads file contents to the content/ directory.
+
+On a fresh pull (no CANVAS_IDs in files.org and no folder-only
+headings), reconstructs the Canvas folder hierarchy as nested Org
+headings and downloads under content/<rel-path>/.
+
+On a re-pull of an existing flat files.org, updates entries in place
+without restructuring.  Refuses to re-pull a hierarchical files.org
+with `user-error' (delete files.org and re-run to refresh)."
   (interactive)
   (org-canvas--start-operation "PULLING FILES")
   (let* ((file (expand-file-name org-canvas-files-file))
          (content-dir (expand-file-name
                        "content" (file-name-directory file)))
+         (folder-map (condition-case err
+                         (org-canvas--file-pull-fetch-folders)
+                       (error
+                        (org-canvas--log-warning org-canvas--logger
+                          "[Files] Folder fetch failed (%s); falling back to flat layout."
+                          (error-message-string err))
+                        (make-hash-table :test 'eql))))
          (endpoint (org-canvas-api-course-endpoint "files"))
          (remote (org-canvas-api-request-all-pages 'GET endpoint)))
     (unless (file-exists-p file)
@@ -1103,10 +1118,28 @@ Downloads file contents to the content/ directory."
     (unless (file-directory-p content-dir)
       (make-directory content-dir t))
     (with-current-buffer (find-file-noselect file)
-      (let ((count (org-canvas--file-pull-emit-flat file remote content-dir)))
-        (org-canvas--save-buffer)
-        (org-canvas--log-info org-canvas--logger "Files pull complete: %d files" count)
-        (message "Files pull complete: %d files." count)))))
+      (let ((mode (org-canvas--file-pull-mode)))
+        (pcase mode
+          ('hierarchical
+           (user-error
+            "Hierarchical files.org detected; re-pull is not yet supported on a nested layout.  Delete files.org and re-run org-canvas-pull-files"))
+          ('fresh
+           (let ((emitted
+                  (org-canvas--file-pull-emit-fresh-tree
+                   folder-map remote content-dir)))
+             (org-canvas--save-buffer)
+             (org-canvas--log-info org-canvas--logger
+               "Files pull complete (fresh tree): %d files" emitted)
+             (message "Files pull complete: %d files." emitted)))
+          ('flat
+           (org-canvas--log-info org-canvas--logger
+             "[Files] Existing flat files.org detected; running flat upsert. Delete files.org and re-pull to rebuild folder hierarchy.")
+           (let ((emitted
+                  (org-canvas--file-pull-emit-flat file remote content-dir)))
+             (org-canvas--save-buffer)
+             (org-canvas--log-info org-canvas--logger
+               "Files pull complete (flat): %d files" emitted)
+             (message "Files pull complete: %d files." emitted))))))))
 
 (provide 'org-canvas-files)
 ;;; org-canvas-files.el ends here

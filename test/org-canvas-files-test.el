@@ -1893,7 +1893,15 @@
         (delete-directory temp-dir t)))))
 
 (describe "org-canvas-pull-files"
-  (it "creates headings with file links and properties"
+  (defun test-files--mock-pages (folders files)
+    "Return a lambda that dispatches on URL to FOLDERS or FILES."
+    (lambda (_method url &optional _params)
+      (cond
+       ((string-match-p "/folders" url) folders)
+       ((string-match-p "/files" url) files)
+       (t '()))))
+
+  (it "creates flat headings on a fresh empty files.org with all-root files"
     (let* ((temp-dir (make-temp-file "pull-files-test" t))
            (files-file (expand-file-name "files.org" temp-dir)))
       (unwind-protect
@@ -1901,19 +1909,164 @@
             (with-org-canvas-test-config
               (with-sync-test-env
                 (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                           (lambda (_method _url &optional _params)
-                             '(((id . 1) (display_name . "syllabus.pdf")
-                                (url . "https://example.com/syllabus.pdf")
-                                (content-type . "application/pdf")
-                                (size . 2048)))))
+                           (test-files--mock-pages
+                            '(((id . 100) (full_name . "course files")))
+                            '(((id . 1) (display_name . "syllabus.pdf")
+                               (folder_id . 100)
+                               (url . "https://example.com/syllabus.pdf")
+                               (content-type . "application/pdf")
+                               (size . 2048)))))
                           ((symbol-function 'url-copy-file)
                            (lambda (_url _path &rest _args) nil)))
                   (org-canvas-pull-files)
                   (with-current-buffer (find-file-noselect files-file)
                     (expect (buffer-string) :to-match "syllabus.pdf")
-                    (expect (buffer-string) :to-match "CANVAS_ID.*1")
-                    (expect (buffer-string) :to-match "CONTENT_TYPE.*application/pdf")
-                    (expect (buffer-string) :to-match "SIZE.*2048"))))))
+                    (expect (buffer-string) :to-match "CANVAS_ID: +1")
+                    (expect (buffer-string) :to-match "CONTENT_TYPE: +application/pdf")
+                    (expect (buffer-string) :to-match "SIZE: +2048"))))))
+        (let ((buf (find-buffer-visiting files-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "creates files.org when it does not exist"
+    (let* ((temp-dir (make-temp-file "pull-files-test" t))
+           (files-file (expand-file-name "files.org" temp-dir)))
+      (unwind-protect
+          (let ((org-canvas-files-file files-file))
+            (with-org-canvas-test-config
+              (with-sync-test-env
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (test-files--mock-pages '() '()))
+                          ((symbol-function 'url-copy-file)
+                           (lambda (_url _path &rest _args) nil)))
+                  (org-canvas-pull-files)
+                  (expect (file-exists-p files-file) :to-be-truthy)))))
+        (let ((buf (find-buffer-visiting files-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "creates content directory"
+    (let* ((temp-dir (make-temp-file "pull-files-test" t))
+           (files-file (expand-file-name "files.org" temp-dir)))
+      (unwind-protect
+          (let ((org-canvas-files-file files-file))
+            (with-org-canvas-test-config
+              (with-sync-test-env
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (test-files--mock-pages '() '()))
+                          ((symbol-function 'url-copy-file)
+                           (lambda (_url _path &rest _args) nil)))
+                  (org-canvas-pull-files)
+                  (expect (file-directory-p
+                           (expand-file-name "content" temp-dir))
+                          :to-be-truthy)))))
+        (let ((buf (find-buffer-visiting files-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "fresh pull builds folder hierarchy from non-root files"
+    (let* ((temp-dir (make-temp-file "pull-files-test" t))
+           (files-file (expand-file-name "files.org" temp-dir)))
+      (unwind-protect
+          (let ((org-canvas-files-file files-file))
+            (with-org-canvas-test-config
+              (with-sync-test-env
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (test-files--mock-pages
+                            '(((id . 100) (full_name . "course files"))
+                              ((id . 200) (full_name . "course files/Labs")))
+                            '(((id . 1) (display_name . "lab1.pdf")
+                               (folder_id . 200)
+                               (url . "https://example.com/lab1.pdf")
+                               (content-type . "application/pdf")
+                               (size . 100)))))
+                          ((symbol-function 'url-copy-file)
+                           (lambda (_url _path &rest _args) nil)))
+                  (org-canvas-pull-files)
+                  (with-current-buffer (find-file-noselect files-file)
+                    (let ((body (buffer-string)))
+                      (expect body :to-match "^\\* Labs$")
+                      (expect body :to-match "^\\*\\* \\[\\[file:content/Labs/lab1\\.pdf\\]\\[lab1\\.pdf\\]\\]$")))))))
+        (let ((buf (find-buffer-visiting files-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "re-pull on an existing flat files.org keeps flat structure"
+    (let* ((temp-dir (make-temp-file "pull-files-test" t))
+           (files-file (expand-file-name "files.org" temp-dir)))
+      (unwind-protect
+          (let ((org-canvas-files-file files-file))
+            (with-temp-file files-file
+              (insert "#+TITLE: Files\n* [[file:content/syllabus.pdf][syllabus.pdf]]\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"))
+            (with-org-canvas-test-config
+              (with-sync-test-env
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (test-files--mock-pages
+                            '(((id . 100) (full_name . "course files"))
+                              ((id . 200) (full_name . "course files/Labs")))
+                            '(((id . 1) (display_name . "syllabus.pdf")
+                               (folder_id . 200)
+                               (url . "https://example.com/syllabus.pdf")
+                               (content-type . "application/pdf")
+                               (size . 100)))))
+                          ((symbol-function 'url-copy-file)
+                           (lambda (_url _path &rest _args) nil)))
+                  (org-canvas-pull-files)
+                  (with-current-buffer (find-file-noselect files-file)
+                    (let ((body (buffer-string)))
+                      ;; flat layout preserved — no folder heading inserted
+                      (expect body :not :to-match "^\\* Labs$")
+                      ;; existing heading still found and updated
+                      (expect body :to-match "syllabus.pdf")
+                      (expect body :to-match "CANVAS_ID: +1")))))))
+        (let ((buf (find-buffer-visiting files-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "re-pull on a hierarchical files.org refuses with user-error"
+    (let* ((temp-dir (make-temp-file "pull-files-test" t))
+           (files-file (expand-file-name "files.org" temp-dir)))
+      (unwind-protect
+          (let ((org-canvas-files-file files-file))
+            (with-temp-file files-file
+              (insert "#+TITLE: Files\n* Labs\n** [[file:content/Labs/a.pdf][a.pdf]]\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"))
+            (with-org-canvas-test-config
+              (with-sync-test-env
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (test-files--mock-pages '() '()))
+                          ((symbol-function 'url-copy-file)
+                           (lambda (_url _path &rest _args) nil)))
+                  (expect (org-canvas-pull-files) :to-throw 'user-error)))))
+        (let ((buf (find-buffer-visiting files-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "falls back to flat emission when folder fetch fails"
+    (let* ((temp-dir (make-temp-file "pull-files-test" t))
+           (files-file (expand-file-name "files.org" temp-dir)))
+      (unwind-protect
+          (let ((org-canvas-files-file files-file))
+            (with-org-canvas-test-config
+              (with-sync-test-env
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (lambda (_method url &optional _params)
+                             (cond
+                              ((string-match-p "/folders" url)
+                               (signal 'plz-error '("simulated folder fetch failure")))
+                              ((string-match-p "/files" url)
+                               '(((id . 1) (display_name . "fallback.pdf")
+                                  (folder_id . 100)
+                                  (url . "https://example.com/fallback.pdf")
+                                  (content-type . "application/pdf")
+                                  (size . 100)))))))
+                          ((symbol-function 'url-copy-file)
+                           (lambda (_url _path &rest _args) nil)))
+                  ;; Should not throw — falls back to empty folder map → flat emission.
+                  (org-canvas-pull-files)
+                  (with-current-buffer (find-file-noselect files-file)
+                    (let ((body (buffer-string)))
+                      ;; File is emitted at root since folder map is empty.
+                      (expect body :to-match "^\\* \\[\\[file:content/fallback\\.pdf\\]\\[fallback\\.pdf\\]\\]$")))))))
         (let ((buf (find-buffer-visiting files-file)))
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t))))
@@ -1927,11 +2080,13 @@
             (with-org-canvas-test-config
               (with-sync-test-env
                 (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                           (lambda (_method _url &optional _params)
-                             `(((id . 7) (display_name . ,bracketed)
-                                (url . "https://example.com/x.pdf")
-                                (content-type . "application/pdf")
-                                (size . 100)))))
+                           (test-files--mock-pages
+                            '(((id . 100) (full_name . "course files")))
+                            `(((id . 7) (display_name . ,bracketed)
+                               (folder_id . 100)
+                               (url . "https://example.com/x.pdf")
+                               (content-type . "application/pdf")
+                               (size . 100)))))
                           ((symbol-function 'url-copy-file)
                            (lambda (_url _path &rest _args) nil)))
                   (org-canvas-pull-files)
@@ -1939,49 +2094,10 @@
                     (goto-char (point-min))
                     (search-forward "[[file:")
                     (goto-char (match-beginning 0))
-                    ;; Pre-bind `:type' outside `expect': buttercup's
-                    ;; `expect' oclosure shadows the `:type' keyword on
-                    ;; Emacs 29.x, silently returning nil.
                     (let* ((link (org-element-link-parser))
                            (link-type (org-element-property :type link)))
                       (expect link-type :to-equal "file"))
-                    (expect (buffer-string) :to-match "CANVAS_ID.*7"))))))
-        (let ((buf (find-buffer-visiting files-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t))))
-
-  (it "creates content directory"
-    (let* ((temp-dir (make-temp-file "pull-files-test" t))
-           (files-file (expand-file-name "files.org" temp-dir)))
-      (unwind-protect
-          (let ((org-canvas-files-file files-file))
-            (with-org-canvas-test-config
-              (with-sync-test-env
-                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                           (lambda (_method _url &optional _params) '()))
-                          ((symbol-function 'url-copy-file)
-                           (lambda (_url _path &rest _args) nil)))
-                  (org-canvas-pull-files)
-                  (expect (file-directory-p
-                           (expand-file-name "content" temp-dir))
-                          :to-be-truthy)))))
-        (let ((buf (find-buffer-visiting files-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t))))
-
-  (it "creates files.org when it does not exist"
-    (let* ((temp-dir (make-temp-file "pull-files-test" t))
-           (files-file (expand-file-name "files.org" temp-dir)))
-      (unwind-protect
-          (let ((org-canvas-files-file files-file))
-            (with-org-canvas-test-config
-              (with-sync-test-env
-                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                           (lambda (_method _url &optional _params) '()))
-                          ((symbol-function 'url-copy-file)
-                           (lambda (_url _path &rest _args) nil)))
-                  (org-canvas-pull-files)
-                  (expect (file-exists-p files-file) :to-be-truthy)))))
+                    (expect (buffer-string) :to-match "CANVAS_ID: +7"))))))
         (let ((buf (find-buffer-visiting files-file)))
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
