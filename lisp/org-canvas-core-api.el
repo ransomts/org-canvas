@@ -70,13 +70,13 @@ or signal an error for terminal failures."
          (err-msg (if status
                       (format "API Request Failed (HTTP %s)" status)
                     (format "API Request Failed: %S" plz-err))))
-    (elog-debug org-canvas--logger "[API] <<< RESPONSE: %s" (or status "error"))
+    (org-canvas--log-debug org-canvas--logger "[API] <<< RESPONSE: %s" (or status "error"))
     (cond
      ;; Rate limited (429 or 403 with rate limit indication)
      ((and status (or (= status 429)
                       (and (= status 403)
                            body (string-match-p "rate" (format "%s" body)))))
-      (elog-warning org-canvas--logger
+      (org-canvas--log-warning org-canvas--logger
         "[API] Rate limited (HTTP %d). Waiting %ds..."
         status org-canvas-rate-limit-wait)
       (dotimes (i org-canvas-rate-limit-wait)
@@ -99,7 +99,7 @@ or signal an error for terminal failures."
 
      ;; Generic error
      (t
-      (elog-error org-canvas--logger "%s\n  URL: %s\n  Body: %S"
+      (org-canvas--log-error org-canvas--logger "%s\n  URL: %s\n  Body: %S"
         err-msg full-url body)
       (signal 'error (list err-msg body plz-err))))))
 
@@ -132,23 +132,23 @@ REQUEST has keys :method :url :params :body :timeout :headers."
         (json-payload (plist-get request :body))
         (timeout (plist-get request :timeout))
         (headers (plist-get request :headers)))
-    (elog-debug org-canvas--logger "[API] >>> REQUEST: %s %s" method full-url)
-    (elog-debug org-canvas--logger "[API] Timeout: %ds | Headers: %S"
+    (org-canvas--log-debug org-canvas--logger "[API] >>> REQUEST: %s %s" method full-url)
+    (org-canvas--log-debug org-canvas--logger "[API] Timeout: %ds | Headers: %S"
       timeout (org-canvas--mask-token headers))
     (when params
-      (elog-debug org-canvas--logger "[API] Params: %S" params))
+      (org-canvas--log-debug org-canvas--logger "[API] Params: %S" params))
     (when (and json-payload org-canvas-log-request-bodies)
-      (elog-debug org-canvas--logger "[API] Body:\n%s"
+      (org-canvas--log-debug org-canvas--logger "[API] Body:\n%s"
         (org-canvas--pretty-json json-payload)))
-    (elog-debug org-canvas--logger "[API] curl:\n%s"
+    (org-canvas--log-debug org-canvas--logger "[API] curl:\n%s"
       (org-canvas--build-curl-command method full-url
                                       (when org-canvas-log-request-bodies json-payload)))))
 
 (defun org-canvas--api-log-response (result)
   "Log debug info for an API response RESULT."
-  (elog-debug org-canvas--logger "[API] <<< RESPONSE: success")
+  (org-canvas--log-debug org-canvas--logger "[API] <<< RESPONSE: success")
   (when (and result org-canvas-log-request-bodies)
-    (elog-debug org-canvas--logger "[API] Response Body:\n%s"
+    (org-canvas--log-debug org-canvas--logger "[API] Response Body:\n%s"
       (org-canvas--pretty-json result))))
 
 (defun org-canvas--api-execute-with-retry (plz-method full-url headers json-payload actual-timeout)
@@ -172,7 +172,7 @@ HEADERS, JSON-PAYLOAD, and ACTUAL-TIMEOUT configure the request."
          (when (eq (org-canvas--api-handle-plz-error err full-url) :retry)
            (if (< retry-count org-canvas-rate-limit-retries)
                (progn
-                 (elog-debug org-canvas--logger
+                 (org-canvas--log-debug org-canvas--logger
                    "[API] Retry %d/%d" (1+ retry-count) org-canvas-rate-limit-retries)
                  (setq retry-count (1+ retry-count)))
              (org-canvas--api-retries-exhausted retry-count err))))))
@@ -231,7 +231,7 @@ Returns a flat list of all items across all pages."
 (defun org-canvas--associate-rubric (item-id rubric-id association-type)
   "Associate RUBRIC-ID with ITEM-ID on Canvas.
 ASSOCIATION-TYPE is \"Assignment\" or \"Discussion\"."
-  (elog-info org-canvas--logger "[Rubric] Associating rubric %s with %s %s"
+  (org-canvas--log-info org-canvas--logger "[Rubric] Associating rubric %s with %s %s"
              rubric-id (downcase association-type) item-id)
   (let* ((endpoint (org-canvas-api-course-endpoint "rubric_associations"))
          (payload (make-hash-table :test 'equal))
@@ -244,9 +244,9 @@ ASSOCIATION-TYPE is \"Assignment\" or \"Discussion\"."
     (condition-case err
         (progn
           (org-canvas-api-request 'POST endpoint :data payload)
-          (elog-info org-canvas--logger "[Rubric] Association created"))
+          (org-canvas--log-info org-canvas--logger "[Rubric] Association created"))
       (error
-       (elog-warning org-canvas--logger "[Rubric] Association failed: %s" (error-message-string err))
+       (org-canvas--log-warning org-canvas--logger "[Rubric] Association failed: %s" (error-message-string err))
        (message "WARNING: Rubric association failed for %s: %s" item-id (error-message-string err))))))
 
 ;;;; 3c. File Upload Infrastructure
@@ -359,10 +359,10 @@ a \\='location key (needs step 3 confirmation).  Kills BUF when done."
   "Confirm a Canvas upload given STEP2-RESPONSE from step 2.
 If STEP2-RESPONSE already contains an \\='id, returns it directly.
 Otherwise follows the \\='location header for step 3 confirmation."
-  (elog-info org-canvas--logger "[Upload Step 3] Confirming upload...")
+  (org-canvas--log-info org-canvas--logger "[Upload Step 3] Confirming upload...")
   (if (alist-get 'id step2-response)
       (progn
-        (elog-info org-canvas--logger "[Upload] Complete: file ID %s"
+        (org-canvas--log-info org-canvas--logger "[Upload] Complete: file ID %s"
                    (alist-get 'id step2-response))
         step2-response)
     (let* ((location (alist-get 'location step2-response))
@@ -370,7 +370,7 @@ Otherwise follows the \\='location header for step 3 confirmation."
                          location
                        (concat org-canvas-base-url location)))
            (response (org-canvas-api-request 'GET full-url)))
-      (elog-info org-canvas--logger "[Upload] Complete: file ID %s"
+      (org-canvas--log-info org-canvas--logger "[Upload] Complete: file ID %s"
                  (alist-get 'id response))
       response)))
 
@@ -388,7 +388,7 @@ Returns the Canvas file object alist (with \\='id key)."
          (payload `((name . ,filename)
                     (size . ,size)
                     (content_type . ,content-type))))
-    (elog-info org-canvas--logger "[Upload Step 1] Notifying Canvas for '%s'..." filename)
+    (org-canvas--log-info org-canvas--logger "[Upload Step 1] Notifying Canvas for '%s'..." filename)
     ;; Step 1: Notify Canvas
     (let ((upload-info (org-canvas-api-request 'POST url :data payload)))
       (let* ((upload-url (alist-get 'upload_url upload-info))
@@ -397,7 +397,7 @@ Returns the Canvas file object alist (with \\='id key)."
                                (md5 (format "%s%s" (current-time) (random))))))
         (unless upload-url
           (error "Canvas API returned no upload_url in step 1 response: %S" upload-info))
-        (elog-info org-canvas--logger "[Upload Step 2] Sending file to %s..." upload-url)
+        (org-canvas--log-info org-canvas--logger "[Upload Step 2] Sending file to %s..." upload-url)
         ;; Step 2: Upload the file
         (let* ((full-body (org-canvas--upload-build-multipart
                            upload-params local-path boundary))

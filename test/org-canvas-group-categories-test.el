@@ -86,9 +86,9 @@
 :END:
 "
      (org-back-to-heading)
-     (spy-on 'elog-warning)
+     (spy-on 'org-canvas--log-warning)
      (let ((data (org-canvas--group-category-parse-entry)))
-       (expect 'elog-warning :to-have-been-called))))
+       (expect 'org-canvas--log-warning :to-have-been-called))))
 
   (it "parses GROUP_LIMIT as number"
     (with-temp-org-buffer
@@ -394,7 +394,7 @@
                            (lambda (method _url &rest _args)
                              (when (eq method 'DELETE)
                                (signal 'error '("Connection refused")))))
-                          ((symbol-function 'elog-error)
+                          ((symbol-function 'org-canvas--log-error)
                            (lambda (_logger fmt &rest _args)
                              (when (string-match-p "Delete failed" fmt)
                                (setq warning-logged t)))))

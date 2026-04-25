@@ -27,7 +27,6 @@
 ;;; Code:
 
 (require 'org-canvas-core)
-(require 'elog)
 
 ;;;; Configuration
 

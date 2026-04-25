@@ -695,7 +695,7 @@ Keep this body
 (describe "org-canvas--rubric-log-detail"
   (it "logs assessment info when present"
     (with-org-canvas-test-config
-      (spy-on 'elog-warning)
+      (spy-on 'org-canvas--log-warning)
       (cl-letf (((symbol-function 'org-canvas-api-request)
                  (lambda (_method _url &rest _args)
                    '((id . 1)
@@ -707,26 +707,26 @@ Keep this body
                                       (artifact_type . "Submission")
                                       (artifact_id . 10) (score . 85))])))))
         (org-canvas--rubric-log-detail 1)
-        (expect 'elog-warning :to-have-been-called))))
+        (expect 'org-canvas--log-warning :to-have-been-called))))
 
   (it "logs when no assessments"
     (with-org-canvas-test-config
-      (spy-on 'elog-warning)
+      (spy-on 'org-canvas--log-warning)
       (cl-letf (((symbol-function 'org-canvas-api-request)
                  (lambda (_method _url &rest _args)
                    '((id . 1) (context_type . "Course") (context_id . 99)
                      (reusable . nil) (read_only . nil) (assessments . nil)))))
         (org-canvas--rubric-log-detail 1)
-        (expect 'elog-warning :to-have-been-called))))
+        (expect 'org-canvas--log-warning :to-have-been-called))))
 
   (it "handles API error"
     (with-org-canvas-test-config
-      (spy-on 'elog-warning)
+      (spy-on 'org-canvas--log-warning)
       (cl-letf (((symbol-function 'org-canvas-api-request)
                  (lambda (_method _url &rest _args)
                    (signal 'error '("404 Not Found")))))
         (org-canvas--rubric-log-detail 1)
-        (expect 'elog-warning :to-have-been-called)))))
+        (expect 'org-canvas--log-warning :to-have-been-called)))))
 
 (describe "org-canvas--rubric-find-linked-assignments"
   (it "returns empty list when no assignments match"
@@ -740,25 +740,25 @@ Keep this body
 (describe "org-canvas--rubric-log-linked-assignments"
   (it "logs warning when no assignments reference the rubric"
     (with-org-canvas-test-config
-      (spy-on 'elog-warning)
+      (spy-on 'org-canvas--log-warning)
       (cl-letf (((symbol-function 'org-canvas-api-request)
                  (lambda (_method _url &rest _args)
                    ;; Return assignments that don't match rubric-id 123
                    [((id . 1) (name . "HW1") (rubric_id . 999))
                     ((id . 2) (name . "HW2") (rubric_id . 888))])))
         (org-canvas--rubric-log-linked-assignments "123")
-        (expect 'elog-warning :to-have-been-called-with
+        (expect 'org-canvas--log-warning :to-have-been-called-with
                 org-canvas--logger
                 "  [Assignments] No assignments reference this rubric"))))
 
   (it "handles API error gracefully"
     (with-org-canvas-test-config
-      (spy-on 'elog-warning)
+      (spy-on 'org-canvas--log-warning)
       (cl-letf (((symbol-function 'org-canvas-api-request)
                  (lambda (_method _url &rest _args)
                    (signal 'error '("Server error")))))
         (org-canvas--rubric-log-linked-assignments "123")
-        (expect 'elog-warning :to-have-been-called)))))
+        (expect 'org-canvas--log-warning :to-have-been-called)))))
 
 (describe "org-canvas-delete-all-rubrics confirmation"
   (it "aborts when user declines"

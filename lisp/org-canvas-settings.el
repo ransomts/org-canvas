@@ -35,7 +35,6 @@
 
 (require 'org-canvas-core)
 (require 'ox-html)
-(require 'elog)
 (require 'cl-lib)
 
 ;;;; Configuration
@@ -289,19 +288,19 @@ Always uses PUT since the course already exists."
   (let ((title (plist-get data :title)))
     ;; Dry-run check
     (when org-canvas--dry-run
-      (elog-info org-canvas--logger
+      (org-canvas--log-info org-canvas--logger
         "[DRY-RUN] Would update course settings for '%s'" title)
       (cl-return-from org-canvas--settings-push '((id . "dry-run"))))
     (let ((endpoint (org-canvas-api-course-endpoint "")))
-      (elog-info org-canvas--logger
+      (org-canvas--log-info org-canvas--logger
         "[Execute] PUT course settings for '%s' to %s" title endpoint)
       (condition-case err
           (let ((response (org-canvas-api-request 'PUT endpoint :data payload)))
-            (elog-info org-canvas--logger
+            (org-canvas--log-info org-canvas--logger
               "[Execute] Course settings update successful")
             response)
         (error
-         (elog-error org-canvas--logger
+         (org-canvas--log-error org-canvas--logger
            "[Execute] Course settings update failed: %s"
            (error-message-string err))
          (signal (car err) (cdr err)))))))
@@ -312,19 +311,19 @@ Tries PATCH first; if Canvas returns an error (no existing policy),
 falls back to POST."
   (when late-policy-payload
     (let ((endpoint (org-canvas-api-course-endpoint "late_policy")))
-      (elog-info org-canvas--logger "[Execute] Syncing late policy...")
+      (org-canvas--log-info org-canvas--logger "[Execute] Syncing late policy...")
       (condition-case _err
           (progn
             (org-canvas-api-request 'PATCH endpoint :data late-policy-payload)
-            (elog-info org-canvas--logger "[Execute] Late policy updated via PATCH"))
+            (org-canvas--log-info org-canvas--logger "[Execute] Late policy updated via PATCH"))
         (error
-         (elog-debug org-canvas--logger "[Execute] PATCH failed, trying POST...")
+         (org-canvas--log-debug org-canvas--logger "[Execute] PATCH failed, trying POST...")
          (condition-case err2
              (progn
                (org-canvas-api-request 'POST endpoint :data late-policy-payload)
-               (elog-info org-canvas--logger "[Execute] Late policy created via POST"))
+               (org-canvas--log-info org-canvas--logger "[Execute] Late policy created via POST"))
            (error
-            (elog-error org-canvas--logger "[Execute] Late policy sync failed: %s"
+            (org-canvas--log-error org-canvas--logger "[Execute] Late policy sync failed: %s"
               (error-message-string err2)))))))))
 
 ;;;; 4. Finalize
@@ -336,7 +335,7 @@ DATA is the parsed settings plist."
     (org-canvas-org-set-property
      pom "LAST_SYNCED"
      (format-time-string "[%Y-%m-%d %a %H:%M]"))
-    (elog-info org-canvas--logger
+    (org-canvas--log-info org-canvas--logger
       "[Finalize] Saved LAST_SYNCED for course settings")))
 
 ;;;; Navigation Tabs
@@ -380,7 +379,7 @@ Returns t if the tab was updated, nil otherwise."
     ;; Guard: skip immutable tabs
     (when (member label-down org-canvas--settings-immutable-tabs)
       (when hidden
-        (elog-warning org-canvas--logger
+        (org-canvas--log-warning org-canvas--logger
           "[Tabs] Cannot hide '%s' — Canvas does not allow it" label))
       (cl-return-from org-canvas--settings-sync-single-tab nil))
     ;; Find matching tab by label
@@ -389,7 +388,7 @@ Returns t if the tab was updated, nil otherwise."
                   (string= (downcase (alist-get 'label t-item)) label-down))
                 current-tabs)))
       (unless tab
-        (elog-warning org-canvas--logger "[Tabs] Tab '%s' not found on Canvas" label)
+        (org-canvas--log-warning org-canvas--logger "[Tabs] Tab '%s' not found on Canvas" label)
         (cl-return-from org-canvas--settings-sync-single-tab nil))
       (let* ((tab-id (alist-get 'id tab))
              (cur-hidden (eq (alist-get 'hidden tab) t))
@@ -404,12 +403,12 @@ Returns t if the tab was updated, nil otherwise."
             (condition-case err
                 (progn
                   (org-canvas-api-request 'PUT tab-url :data payload)
-                  (elog-info org-canvas--logger
+                  (org-canvas--log-info org-canvas--logger
                     "[Tabs] Updated '%s': hidden=%s position=%d"
                     label (if hidden "yes" "no") position)
                   t)
               (error
-               (elog-warning org-canvas--logger
+               (org-canvas--log-warning org-canvas--logger
                  "[Tabs] Failed to update '%s': %s"
                  label (error-message-string err))
                nil))))))))
@@ -422,9 +421,9 @@ Fetches current tabs, diffs against desired state, and PUTs changes."
     (cl-return-from org-canvas--settings-sync-tabs nil))
 
   (when org-canvas--dry-run
-    (elog-info org-canvas--logger "[DRY-RUN] Would sync %d navigation tabs" (length navigation))
+    (org-canvas--log-info org-canvas--logger "[DRY-RUN] Would sync %d navigation tabs" (length navigation))
     (dolist (tab navigation)
-      (elog-info org-canvas--logger "[DRY-RUN]   %s: position=%d hidden=%s"
+      (org-canvas--log-info org-canvas--logger "[DRY-RUN]   %s: position=%d hidden=%s"
                  (plist-get tab :label) (plist-get tab :position)
                  (if (plist-get tab :hidden) "yes" "no")))
     (cl-return-from org-canvas--settings-sync-tabs nil))
@@ -435,7 +434,7 @@ Fetches current tabs, diffs against desired state, and PUTs changes."
     (dolist (desired navigation)
       (when (org-canvas--settings-sync-single-tab desired current-tabs)
         (setq changes (1+ changes))))
-    (elog-info org-canvas--logger "[Tabs] %d tab(s) updated" changes)))
+    (org-canvas--log-info org-canvas--logger "[Tabs] %d tab(s) updated" changes)))
 
 (defun org-canvas--settings-pull-tabs ()
   "Pull navigation tabs from Canvas and write as ** Navigation sub-heading.
@@ -472,22 +471,22 @@ Otherwise returns DATA unchanged."
     (if (and image-path (not org-canvas--dry-run))
         (if (file-exists-p image-path)
             (progn
-              (elog-info org-canvas--logger "[Image] Uploading course image: %s"
+              (org-canvas--log-info org-canvas--logger "[Image] Uploading course image: %s"
                          (file-name-nondirectory image-path))
               (condition-case err
                   (let* ((file-obj (org-canvas--upload-file image-path))
                          (file-id (alist-get 'id file-obj)))
-                    (elog-info org-canvas--logger "[Image] Upload complete, file ID: %s" file-id)
+                    (org-canvas--log-info org-canvas--logger "[Image] Upload complete, file ID: %s" file-id)
                     (plist-put data :course-image-id file-id))
                 (error
-                 (elog-warning org-canvas--logger "[Image] Upload failed: %s"
+                 (org-canvas--log-warning org-canvas--logger "[Image] Upload failed: %s"
                                (error-message-string err))
                  data)))
           (progn
-            (elog-warning org-canvas--logger "[Image] File not found: %s" image-path)
+            (org-canvas--log-warning org-canvas--logger "[Image] File not found: %s" image-path)
             data))
       (when (and image-path org-canvas--dry-run)
-        (elog-info org-canvas--logger "[DRY-RUN] Would upload course image: %s"
+        (org-canvas--log-info org-canvas--logger "[DRY-RUN] Would upload course image: %s"
                    (file-name-nondirectory image-path)))
       data)))
 
@@ -504,10 +503,10 @@ and pushes them to Canvas via PUT /courses/:id."
   (let ((settings-file (expand-file-name org-canvas-settings-file)))
     (unless (file-exists-p settings-file)
       (error "Settings file not found: %s" settings-file))
-    (elog-info org-canvas--logger "========================================")
-    (elog-info org-canvas--logger ">>> STARTING SETTINGS SYNC")
-    (elog-info org-canvas--logger "File: %s" settings-file)
-    (elog-info org-canvas--logger "========================================")
+    (org-canvas--log-info org-canvas--logger "========================================")
+    (org-canvas--log-info org-canvas--logger ">>> STARTING SETTINGS SYNC")
+    (org-canvas--log-info org-canvas--logger "File: %s" settings-file)
+    (org-canvas--log-info org-canvas--logger "========================================")
     (with-current-buffer (find-file-noselect settings-file)
       (save-excursion
         (goto-char (point-min))
@@ -526,12 +525,12 @@ and pushes them to Canvas via PUT /courses/:id."
               (org-canvas--settings-sync-tabs navigation)
               (org-canvas--settings-finalize data response)
               (save-buffer)
-              (elog-info org-canvas--logger "========================================")
-              (elog-info org-canvas--logger ">>> SETTINGS SYNC COMPLETE")
-              (elog-info org-canvas--logger "========================================")
+              (org-canvas--log-info org-canvas--logger "========================================")
+              (org-canvas--log-info org-canvas--logger ">>> SETTINGS SYNC COMPLETE")
+              (org-canvas--log-info org-canvas--logger "========================================")
               (message "Settings sync complete."))
           (error
-           (elog-error org-canvas--logger "[FAILED] Settings sync: %s"
+           (org-canvas--log-error org-canvas--logger "[FAILED] Settings sync: %s"
              (error-message-string err))
            (message "Settings sync FAILED: %s" (error-message-string err))))))))
 
@@ -700,10 +699,10 @@ and heading if they don't exist."
           (when nav-text
             (org-canvas--settings-insert-navigation-heading nav-text)))
         (save-buffer)))
-    (elog-info org-canvas--logger "========================================")
-    (elog-info org-canvas--logger ">>> SETTINGS PULL COMPLETE")
-    (elog-info org-canvas--logger "Course: %s" name)
-    (elog-info org-canvas--logger "========================================")
+    (org-canvas--log-info org-canvas--logger "========================================")
+    (org-canvas--log-info org-canvas--logger ">>> SETTINGS PULL COMPLETE")
+    (org-canvas--log-info org-canvas--logger "Course: %s" name)
+    (org-canvas--log-info org-canvas--logger "========================================")
     (message "Settings pull complete: %s" name)))
 
 (provide 'org-canvas-settings)

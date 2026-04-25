@@ -417,7 +417,7 @@
           (progn
             (with-temp-file temp-file
               (insert "* Heading\n"))
-            (cl-letf (((symbol-function 'elog-error)
+            (cl-letf (((symbol-function 'org-canvas--log-error)
                        (lambda (&rest _args) (setq error-logged t) nil)))
               (org-canvas--for-each-entry temp-file "LEVEL=1"
                 (lambda () (error "Test error")))
@@ -698,7 +698,8 @@
   (it "succeeds with source blocks without requiring a kernel"
     (with-org-canvas-test-config
       (let* ((dir (make-temp-file "export-babel-" t))
-             (test-file (expand-file-name "test.org" dir)))
+             (test-file (expand-file-name "test.org" dir))
+             (org-html-htmlize-output-type nil))
         (unwind-protect
             (progn
               (with-temp-file test-file
@@ -723,7 +724,8 @@ x = 42
 #+end_src
 "
      (goto-char (point-min))
-     (let ((html (org-canvas--export-subtree-body-to-html)))
+     (let* ((org-html-htmlize-output-type nil)
+            (html (org-canvas--export-subtree-body-to-html)))
        (expect html :to-be-truthy)
        (expect html :to-match "42"))))
 
@@ -782,14 +784,14 @@ x = 42
     (expect (org-canvas--safe-string-to-number "-5" "TEST") :to-equal -5))
 
   (it "returns 0 for non-numeric strings and warns"
-    (spy-on 'elog-warning)
+    (spy-on 'org-canvas--log-warning)
     (expect (org-canvas--safe-string-to-number "ten" "POINTS") :to-equal 0)
-    (expect 'elog-warning :to-have-been-called))
+    (expect 'org-canvas--log-warning :to-have-been-called))
 
   (it "returns partial number for mixed strings and warns"
-    (spy-on 'elog-warning)
+    (spy-on 'org-canvas--log-warning)
     (expect (org-canvas--safe-string-to-number "42abc" "POINTS") :to-equal 42)
-    (expect 'elog-warning :to-have-been-called)))
+    (expect 'org-canvas--log-warning :to-have-been-called)))
 
 ;;;; Answer Weight Constants
 
@@ -882,16 +884,16 @@ x = 42
 
 (describe "org-canvas--resolve-link-property warnings"
   (it "warns when file not found"
-    (spy-on 'elog-warning)
+    (spy-on 'org-canvas--log-warning)
     (let ((result (org-canvas--resolve-link-property
                    "[[file:/nonexistent-xyz/groups.org::*Homework][Homework]]"
                    "CANVAS_ID"
                    "/tmp/fake-source.org")))
       (expect result :to-be nil)
-      (expect 'elog-warning :to-have-been-called)))
+      (expect 'org-canvas--log-warning :to-have-been-called)))
 
   (it "warns when heading not found in file"
-    (spy-on 'elog-warning)
+    (spy-on 'org-canvas--log-warning)
     (let* ((dir (make-temp-file "link-test-" t))
            (target-file (expand-file-name "groups.org" dir)))
       (unwind-protect
@@ -903,11 +905,11 @@ x = 42
                            "CANVAS_ID"
                            (expand-file-name "source.org" dir))))
               (expect result :to-be nil)
-              (expect 'elog-warning :to-have-been-called)))
+              (expect 'org-canvas--log-warning :to-have-been-called)))
         (delete-directory dir t))))
 
   (it "warns when property not set on target heading"
-    (spy-on 'elog-warning)
+    (spy-on 'org-canvas--log-warning)
     (let* ((dir (make-temp-file "link-test-" t))
            (target-file (expand-file-name "groups.org" dir)))
       (unwind-protect
@@ -919,14 +921,14 @@ x = 42
                            "CANVAS_ID"
                            (expand-file-name "source.org" dir))))
               (expect result :to-be nil)
-              (expect 'elog-warning :to-have-been-called)))
+              (expect 'org-canvas--log-warning :to-have-been-called)))
         (delete-directory dir t)))))
 
 ;;;; Body Link Resolution Warnings
 
 (describe "org-canvas--resolve-body-links warnings"
   (it "warns on unresolved body links"
-    (spy-on 'elog-warning)
+    (spy-on 'org-canvas--log-warning)
     (with-org-canvas-test-config
       (let* ((dir (make-temp-file "resolve-test-" t))
              (pages-file (expand-file-name "pages.org" dir)))
@@ -941,11 +943,11 @@ x = 42
                 (expect (buffer-string) :to-match "Missing Page")
                 (expect (buffer-string) :not :to-match "\\[\\[file:")
                 ;; Warning should have been logged
-                (expect 'elog-warning :to-have-been-called)))
+                (expect 'org-canvas--log-warning :to-have-been-called)))
           (delete-directory dir t)))))
 
   (it "does not warn on resolved body links"
-    (spy-on 'elog-warning)
+    (spy-on 'org-canvas--log-warning)
     (with-org-canvas-test-config
       (let* ((dir (make-temp-file "resolve-test-" t))
              (pages-file (expand-file-name "pages.org" dir)))
@@ -957,7 +959,7 @@ x = 42
                 (insert "See [[file:pages.org::*Lecture 01][Lecture 01]].")
                 (org-canvas--resolve-body-links dir)
                 (expect (buffer-string) :to-match "lecture-01")
-                (expect 'elog-warning :not :to-have-been-called)))
+                (expect 'org-canvas--log-warning :not :to-have-been-called)))
           (delete-directory dir t))))))
 
 ;;;; Body Link Regex (widened character class)
@@ -986,35 +988,35 @@ x = 42
 
 (describe "org-canvas--validate-date-ordering"
   (it "warns when unlock_at is after due_at"
-    (spy-on 'elog-warning)
+    (spy-on 'org-canvas--log-warning)
     (org-canvas--validate-date-ordering
      '(:title "Test" :unlock_at "2025-02-20T00:00:00Z" :due_at "2025-02-15T00:00:00Z"))
-    (expect 'elog-warning :to-have-been-called))
+    (expect 'org-canvas--log-warning :to-have-been-called))
 
   (it "warns when due_at is after lock_at"
-    (spy-on 'elog-warning)
+    (spy-on 'org-canvas--log-warning)
     (org-canvas--validate-date-ordering
      '(:title "Test" :due_at "2025-02-20T00:00:00Z" :lock_at "2025-02-15T00:00:00Z"))
-    (expect 'elog-warning :to-have-been-called))
+    (expect 'org-canvas--log-warning :to-have-been-called))
 
   (it "does not warn for valid ordering"
-    (spy-on 'elog-warning)
+    (spy-on 'org-canvas--log-warning)
     (org-canvas--validate-date-ordering
      '(:title "Test" :unlock_at "2027-02-10T00:00:00Z"
        :due_at "2027-02-15T00:00:00Z" :lock_at "2027-02-20T00:00:00Z"))
-    (expect 'elog-warning :not :to-have-been-called))
+    (expect 'org-canvas--log-warning :not :to-have-been-called))
 
   (it "does not warn when dates are nil"
-    (spy-on 'elog-warning)
+    (spy-on 'org-canvas--log-warning)
     (org-canvas--validate-date-ordering
      '(:title "Test" :unlock_at nil :due_at nil :lock_at nil))
-    (expect 'elog-warning :not :to-have-been-called))
+    (expect 'org-canvas--log-warning :not :to-have-been-called))
 
   (it "handles partial dates (only due_at set)"
-    (spy-on 'elog-warning)
+    (spy-on 'org-canvas--log-warning)
     (org-canvas--validate-date-ordering
      '(:title "Test" :due_at "2027-02-15T00:00:00Z"))
-    (expect 'elog-warning :not :to-have-been-called)))
+    (expect 'org-canvas--log-warning :not :to-have-been-called)))
 
 ;;;; Title Stripping in Parse Functions
 
@@ -1146,7 +1148,7 @@ Page content.
 
 (describe "duplicate CANVAS_ID detection in sync macro"
   (it "warns about duplicate CANVAS_IDs"
-    (spy-on 'elog-warning)
+    (spy-on 'org-canvas--log-warning)
     ;; Simulate the duplicate detection logic directly
     (let ((all-ids-before '("123" "456" "123"))
           (id-counts (make-hash-table :test 'equal)))
@@ -1154,11 +1156,11 @@ Page content.
         (puthash id (1+ (gethash id id-counts 0)) id-counts))
       (maphash (lambda (id count)
                  (when (> count 1)
-                   (elog-warning org-canvas--logger
+                   (org-canvas--log-warning org-canvas--logger
                      "[Duplicate] CANVAS_ID %s appears %d times"
                      id count)))
                id-counts)
-      (expect 'elog-warning :to-have-been-called))))
+      (expect 'org-canvas--log-warning :to-have-been-called))))
 
 (describe "org-canvas--html-to-org pandoc failure"
   (it "returns warning with raw HTML when pandoc exits non-zero"
@@ -1351,11 +1353,11 @@ Page content.
 
   (it "warns on missing local file"
     (let ((org-canvas--image-cache (make-hash-table :test 'equal)))
-      (spy-on 'elog-warning)
+      (spy-on 'org-canvas--log-warning)
       (with-temp-buffer
         (insert "* H\n[[file:missing.png]]\n")
         (org-canvas--resolve-image-links "/tmp/nonexistent/")
-        (expect 'elog-warning :to-have-been-called))))
+        (expect 'org-canvas--log-warning :to-have-been-called))))
 
   (it "uploads image on cache miss when file exists"
     (let ((org-canvas--image-cache (make-hash-table :test 'equal))
@@ -1561,8 +1563,8 @@ Page content.
             (let ((img-file (expand-file-name "test.png" temp-dir)))
               (with-temp-file img-file (insert "fake-png"))
               (spy-on 'message)
-              (spy-on 'elog-warning)
-              (spy-on 'elog-info)
+              (spy-on 'org-canvas--log-warning)
+              (spy-on 'org-canvas--log-info)
               (let ((org-canvas--image-cache (make-hash-table :test 'equal)))
                 (cl-letf (((symbol-function 'org-canvas--image-ensure-folder)
                            (lambda () 1))
@@ -1578,7 +1580,7 @@ Page content.
   (it "shows warning when image file not found"
     (with-org-canvas-test-config
       (spy-on 'message)
-      (spy-on 'elog-warning)
+      (spy-on 'org-canvas--log-warning)
       (let ((org-canvas--image-cache (make-hash-table :test 'equal)))
         (org-canvas--resolve-single-image
          (list :start 0 :end 10 :path "nonexistent.png" :display nil)

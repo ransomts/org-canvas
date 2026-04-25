@@ -139,12 +139,12 @@ FEATURE is an unquoted symbol.  ARGS is a plist:
       `(defun ,fn-name (data)
          ,(format "Convert extracted DATA plist into a Canvas API payload for %s." feature-name)
          (let ((title (plist-get data ,(or (plist-get args :title-key) :title))))
-           (elog-info org-canvas--logger
+           (org-canvas--log-info org-canvas--logger
                       "[Stage 2: Transform] Building payload for '%%s'" title)
            (let ((payload ,builder-call))
              ,@(when post-build-fn
                  `((setq payload (funcall ,post-build-fn data payload))))
-             (elog-info org-canvas--logger
+             (org-canvas--log-info org-canvas--logger
                         "[Stage 2: Transform] Payload complete")
              payload))))))
 
@@ -276,22 +276,22 @@ Example:
        (defun ,parse-fn ()
          ,(format "Extract %s data from the Org heading at point." feature-name)
          (org-back-to-heading t)
-         (elog-debug org-canvas--logger
+         (org-canvas--log-debug org-canvas--logger
                      "[Stage 1: Parse] Starting extraction at point %%d" (point))
          (let* ((pom (point))
                 (raw (,read-fn pom))
                 (data (,transform-fn raw)))
            (org-canvas--require-title (plist-get data ,title-key) pom ,entity-name)
-           (elog-info org-canvas--logger
+           (org-canvas--log-info org-canvas--logger
                       "[Stage 1: Parse] Processing %s: '%%s' (ID: %%s)"
                       ,entity-name
                       (plist-get data ,title-key)
                       (or (plist-get data ,id-key) "NEW"))
            ,@(when body-key
-               `((elog-debug org-canvas--logger
+               `((org-canvas--log-debug org-canvas--logger
                              "[Stage 1: Export] Exporting subtree to HTML...")
                  (let ((content (org-canvas--export-subtree-body-to-html)))
-                   (elog-info org-canvas--logger
+                   (org-canvas--log-info org-canvas--logger
                               "[Stage 1: Parse] Body size: %%d chars"
                               (length content))
                    (plist-put data ,body-key content))))

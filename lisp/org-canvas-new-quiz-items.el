@@ -243,7 +243,7 @@ Reads raw properties and transforms them."
                       (org-export-string-as question-text 'html t)))
          (interaction-data (org-canvas--new-quiz-item-build-interaction-data q-type)))
 
-    (elog-debug org-canvas--logger "[New Quiz Item Parse] '%s' type=%s" title q-type)
+    (org-canvas--log-debug org-canvas--logger "[New Quiz Item Parse] '%s' type=%s" title q-type)
 
     (plist-put data :text-html text-html)
     (plist-put data :interaction-data interaction-data)
@@ -520,21 +520,21 @@ into the nested format required by the New Quizzes Items API:
                       "quizzes/%s/items" quiz-id)))
          (wrapped (org-canvas--new-quiz-item-wrap-payload payload)))
 
-    (elog-info org-canvas--logger "[New Quiz Item API] %s '%s'" method title)
+    (org-canvas--log-info org-canvas--logger "[New Quiz Item API] %s '%s'" method title)
 
     (condition-case err
         (let ((response (org-canvas-api-request method endpoint :data wrapped)))
-          (elog-info org-canvas--logger "[New Quiz Item API] %s successful for '%s'"
+          (org-canvas--log-info org-canvas--logger "[New Quiz Item API] %s successful for '%s'"
             method title)
           response)
       (error
-       (elog-error org-canvas--logger "[New Quiz Item API] Failed: %s"
+       (org-canvas--log-error org-canvas--logger "[New Quiz Item API] Failed: %s"
          (error-message-string err))
        (cond
         ;; 404 on PATCH -> retry as POST (stale CANVAS_ITEM_ID)
         ((and (eq method 'PATCH)
               (org-canvas--404-error-p err))
-         (elog-warning org-canvas--logger
+         (org-canvas--log-warning org-canvas--logger
            "[Recovery] Item not found (404). Retrying as POST...")
          (condition-case post-err
              (let ((response (org-canvas-api-request
@@ -542,7 +542,7 @@ into the nested format required by the New Quizzes Items API:
                               (org-canvas--new-quiz-api-endpoint
                                "quizzes/%s/items" quiz-id)
                               :data wrapped)))
-               (elog-info org-canvas--logger "[Recovery] POST successful")
+               (org-canvas--log-info org-canvas--logger "[Recovery] POST successful")
                response)
            (error
             (signal (car post-err) (cdr post-err)))))
@@ -558,9 +558,9 @@ into the nested format required by the New Quizzes Items API:
     (if id
         (progn
           (org-canvas-org-save-sync-state pom id "CANVAS_ITEM_ID")
-          (elog-info org-canvas--logger
+          (org-canvas--log-info org-canvas--logger
             "[Finalize] Saved CANVAS_ITEM_ID=%s for '%s'" id title))
-      (elog-warning org-canvas--logger
+      (org-canvas--log-warning org-canvas--logger
         "[Finalize] No id in response for item '%s'" title))))
 
 (defun org-canvas--new-quiz-slug-to-type (slug)

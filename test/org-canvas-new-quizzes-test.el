@@ -279,7 +279,7 @@ What would happen?
       (expect (plist-get result :allowed_attempts) :to-equal 3)))
 
   (it "validates scoring policy with fallback"
-    (spy-on 'elog-warning)
+    (spy-on 'org-canvas--log-warning)
     (let ((result (org-canvas--new-quiz-transform-props
                    '(:title-raw "Quiz"
                      :canvas-id nil :time-limit-raw nil
@@ -340,7 +340,7 @@ What would happen?
       (expect (plist-get result :title) :to-equal "Question")))
 
   (it "validates type with fallback to choice"
-    (spy-on 'elog-warning)
+    (spy-on 'org-canvas--log-warning)
     (let* ((result (org-canvas--new-quiz-item-transform-props
                     '(:title-raw "Q" :canvas-id nil
                       :quiz-assignment-id "42" :type-raw "invalid_type"
@@ -459,7 +459,7 @@ Quiz description.
 :END:
 "
      (org-back-to-heading)
-     (spy-on 'elog-warning)
+     (spy-on 'org-canvas--log-warning)
      (let ((data (org-canvas--new-quiz-parse-entry)))
        (expect (plist-get data :scoring_policy) :to-equal "keep_highest"))))
 
@@ -785,7 +785,7 @@ Consider the following expression.
 "
      (search-forward "Question")
      (org-back-to-heading)
-     (spy-on 'elog-warning)
+     (spy-on 'org-canvas--log-warning)
      (let* ((data (org-canvas--new-quiz-item-parse-entry "42"))
             (result-type (plist-get data :type)))
        ;; Should fall back to default "choice"
@@ -1550,9 +1550,9 @@ Consider the following expression.
             (data (list :title "No ID Item" :pom pom))
             (response '((status . "ok"))))
        ;; Should not throw, but warn
-       (spy-on 'elog-warning)
+       (spy-on 'org-canvas--log-warning)
        (org-canvas--new-quiz-item-finalize data response)
-       (expect 'elog-warning :to-have-been-called)))))
+       (expect 'org-canvas--log-warning :to-have-been-called)))))
 
 ;;;; Sync Item Loop
 

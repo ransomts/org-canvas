@@ -40,7 +40,6 @@
 
 ;;; Code:
 (require 'org-canvas-core)
-(require 'elog)
 
 ;;;; Configuration
 
@@ -105,26 +104,26 @@ because Canvas rejects drop rules when no assignments exist yet."
         (rules (plist-get data :rules))
         (is-update (plist-get data :canvas-id)))
 
-    (elog-info org-canvas--logger "[Stage 2: Transform] Building payload for '%s'" name)
-    (elog-info org-canvas--logger "[Stage 2: Transform]   Weight: %s" weight)
+    (org-canvas--log-info org-canvas--logger "[Stage 2: Transform] Building payload for '%s'" name)
+    (org-canvas--log-info org-canvas--logger "[Stage 2: Transform]   Weight: %s" weight)
 
     ;; Only include rules on update - Canvas rejects drop rules on new groups with no assignments
     (let* ((pos (plist-get data :position))
            (payload (if (and rules is-update)
                         (progn
-                          (elog-info org-canvas--logger "[Stage 2: Transform]   Rules: %S (included for update)" rules)
+                          (org-canvas--log-info org-canvas--logger "[Stage 2: Transform]   Rules: %S (included for update)" rules)
                           `((name . ,name)
                             (group_weight . ,weight)
                             (rules . ,rules)))
                       (progn
                         (when rules
-                          (elog-info org-canvas--logger "[Stage 2: Transform]   Rules: %S (skipped for new group)" rules))
+                          (org-canvas--log-info org-canvas--logger "[Stage 2: Transform]   Rules: %S (skipped for new group)" rules))
                         `((name . ,name)
                           (group_weight . ,weight))))))
       (when pos
         (push `(position . ,pos) payload))
 
-      (elog-debug org-canvas--logger "[Stage 2: Transform] Payload: %S" payload)
+      (org-canvas--log-debug org-canvas--logger "[Stage 2: Transform] Payload: %S" payload)
       payload)))
 
 ;;;; Main Sync Function

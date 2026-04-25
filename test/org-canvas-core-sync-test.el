@@ -1245,12 +1245,12 @@ Content two.
       (unwind-protect
           (progn
             (with-temp-file temp-file (insert "* Item\n"))
-            (spy-on 'elog-info)
+            (spy-on 'org-canvas--log-info)
             (org-canvas--sync-log-summary "test" temp-file
              '(:success 5 :skip 2 :fail 1 :conflict 3 :pulled 1))
             (let ((found-conflicts nil)
                   (found-pulled nil))
-              (dolist (call (spy-calls-all-args 'elog-info))
+              (dolist (call (spy-calls-all-args 'org-canvas--log-info))
                 (when (and (>= (length call) 2)
                            (stringp (nth 1 call))
                            (string-match-p "Conflicts" (nth 1 call)))
@@ -1270,11 +1270,11 @@ Content two.
       (unwind-protect
           (progn
             (with-temp-file temp-file (insert "* Item\n"))
-            (spy-on 'elog-info)
+            (spy-on 'org-canvas--log-info)
             (org-canvas--sync-log-summary "test" temp-file
              '(:success 5 :skip 2 :fail 1 :conflict 0 :pulled 0))
             (let ((found nil))
-              (dolist (call (spy-calls-all-args 'elog-info))
+              (dolist (call (spy-calls-all-args 'org-canvas--log-info))
                 (when (and (>= (length call) 2)
                            (stringp (nth 1 call))
                            (string-match-p "Conflicts" (nth 1 call)))
@@ -1847,11 +1847,11 @@ Keep this too
 :CANVAS_ID: DUP-1
 :END:
 "))
-            (spy-on 'elog-warning)
+            (spy-on 'org-canvas--log-warning)
             (with-org-canvas-test-config
               (org-canvas--sync-collect-entries test-file "LEVEL=1" "test")
               (let ((dup-warned nil))
-                (dolist (call (spy-calls-all-args 'elog-warning))
+                (dolist (call (spy-calls-all-args 'org-canvas--log-warning))
                   (when (and (>= (length call) 2)
                              (stringp (nth 1 call))
                              (string-match-p "Duplicate" (nth 1 call)))
@@ -1905,10 +1905,10 @@ Keep this too
 
 (describe "org-canvas--sync-warn-orphans"
   (it "warns about IDs not in synced set"
-    (spy-on 'elog-warning)
+    (spy-on 'org-canvas--log-warning)
     (org-canvas--sync-warn-orphans '("111" "222" "333") '("111" "333") "test")
     (let ((orphan-warned nil))
-      (dolist (call (spy-calls-all-args 'elog-warning))
+      (dolist (call (spy-calls-all-args 'org-canvas--log-warning))
         (when (and (>= (length call) 3)
                    (stringp (nth 1 call))
                    (string-match-p "Orphan" (nth 1 call)))
@@ -1916,10 +1916,10 @@ Keep this too
       (expect orphan-warned :to-be-truthy)))
 
   (it "does not warn when all IDs synced"
-    (spy-on 'elog-warning)
+    (spy-on 'org-canvas--log-warning)
     (org-canvas--sync-warn-orphans '("111" "222") '("111" "222") "test")
     (let ((orphan-warned nil))
-      (dolist (call (spy-calls-all-args 'elog-warning))
+      (dolist (call (spy-calls-all-args 'org-canvas--log-warning))
         (when (and (>= (length call) 2)
                    (stringp (nth 1 call))
                    (string-match-p "Orphan" (nth 1 call)))
@@ -2737,7 +2737,7 @@ Body.
               (insert "* Item A\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n\n")
               (insert "* Item B\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n"))
             (spy-on 'message)
-            (spy-on 'elog-warning)
+            (spy-on 'org-canvas--log-warning)
             (org-canvas--sync-collect-entries temp-file "LEVEL=1" "test")
             (expect 'message :to-have-been-called)
             (let ((found nil))
@@ -2771,11 +2771,11 @@ Body.
                        :total-count 1
                        :counters counters
                        :synced-ids (list nil))))
-       (spy-on 'elog-error)
+       (spy-on 'org-canvas--log-error)
        (org-canvas--sync-process-entry marker ctx)
        (expect (plist-get counters :fail) :to-equal 1)
        (let ((found nil))
-         (dolist (call (spy-calls-all-args 'elog-error))
+         (dolist (call (spy-calls-all-args 'org-canvas--log-error))
            (when (>= (length call) 3)
              (let ((formatted (apply #'format (cdr call))))
                (when (and (string-match-p "ASSIGNMENTS" formatted)
@@ -2801,10 +2801,10 @@ Body.
                        :total-count 1
                        :counters counters
                        :synced-ids (list nil))))
-       (spy-on 'elog-error)
+       (spy-on 'org-canvas--log-error)
        (org-canvas--sync-process-entry marker ctx)
        (let ((found nil))
-         (dolist (call (spy-calls-all-args 'elog-error))
+         (dolist (call (spy-calls-all-args 'org-canvas--log-error))
            (when (and (>= (length call) 3)
                       (stringp (nth 1 call)))
              (let ((formatted (apply #'format (cdr call))))
@@ -2824,7 +2824,7 @@ Body.
 Content here.
 "
      (org-back-to-heading)
-     (spy-on 'elog-info)
+     (spy-on 'org-canvas--log-info)
      (cl-letf (((symbol-function 'display-buffer) (lambda (_) nil))
                ((symbol-function 'save-buffer) (lambda () nil)))
        (org-canvas--push-at-point-runtime
@@ -2838,7 +2838,7 @@ Content here.
            (found-stage-2 nil)
            (found-stage-3 nil)
            (found-stage-4 nil))
-       (dolist (call (spy-calls-all-args 'elog-info))
+       (dolist (call (spy-calls-all-args 'org-canvas--log-info))
          (when (>= (length call) 2)
            (let ((fmt (nth 1 call)))
              (when (stringp fmt)
@@ -2868,7 +2868,7 @@ Content here.
        ;; Set the stored hash to match
        (org-entry-put (point) "PAYLOAD_HASH" hash)
        (save-buffer)
-       (spy-on 'elog-info)
+       (spy-on 'org-canvas--log-info)
        (cl-letf (((symbol-function 'display-buffer) (lambda (_) nil)))
          (org-canvas--push-at-point-runtime
           "pages"
@@ -2879,7 +2879,7 @@ Content here.
           :title nil))
        (let ((found-skip nil)
              (found-stage-3 nil))
-         (dolist (call (spy-calls-all-args 'elog-info))
+         (dolist (call (spy-calls-all-args 'org-canvas--log-info))
            (when (>= (length call) 2)
              (let ((fmt (nth 1 call)))
                (when (stringp fmt)
@@ -2906,10 +2906,10 @@ Content here.
 :END:
 "
      (let ((markers (org-map-entries (lambda () (point-marker)) "LEVEL=1" 'file)))
-       (spy-on 'elog-warning)
+       (spy-on 'org-canvas--log-warning)
        (org-canvas--sync-warn-duplicate-titles markers (buffer-file-name))
        (let ((found nil))
-         (dolist (call (spy-calls-all-args 'elog-warning))
+         (dolist (call (spy-calls-all-args 'org-canvas--log-warning))
            (when (and (>= (length call) 3)
                       (stringp (nth 1 call))
                       (string-match-p "Duplicate Title" (nth 1 call)))
@@ -2929,9 +2929,9 @@ Content here.
 :END:
 "
      (let ((markers (org-map-entries (lambda () (point-marker)) "LEVEL=1" 'file)))
-       (spy-on 'elog-warning)
+       (spy-on 'org-canvas--log-warning)
        (org-canvas--sync-warn-duplicate-titles markers (buffer-file-name))
-       (expect 'elog-warning :not :to-have-been-called)))))
+       (expect 'org-canvas--log-warning :not :to-have-been-called)))))
 
 ;;;; Dry-run counter
 
@@ -2962,12 +2962,12 @@ Content here.
       (unwind-protect
           (progn
             (with-temp-file temp-file (insert "* Item\n"))
-            (spy-on 'elog-info)
+            (spy-on 'org-canvas--log-info)
             (spy-on 'message)
             (org-canvas--sync-log-summary "test" temp-file
              '(:success 0 :skip 2 :fail 0 :dry-run 3))
             (let ((found nil))
-              (dolist (call (spy-calls-all-args 'elog-info))
+              (dolist (call (spy-calls-all-args 'org-canvas--log-info))
                 (when (and (>= (length call) 2)
                            (stringp (nth 1 call))
                            (string-match-p "Would sync" (nth 1 call)))
@@ -2989,7 +2989,7 @@ Content here.
       (unwind-protect
           (progn
             (with-temp-file temp-file (insert "* Item\n"))
-            (spy-on 'elog-info)
+            (spy-on 'org-canvas--log-info)
             (spy-on 'message)
             (org-canvas--sync-log-summary "test" temp-file
              '(:success 0 :skip 1 :fail 0 :dry-run 5))
@@ -3001,7 +3001,7 @@ Content here.
 
 (describe "org-canvas--resolve-conflict unexpected choice"
   (it "returns skip for unexpected choice symbol"
-    (spy-on 'elog-warning)
+    (spy-on 'org-canvas--log-warning)
     (let ((org-canvas--conflict-apply-all nil)
           (org-canvas--current-pull-item-fn nil))
       (cl-letf (((symbol-function 'org-canvas--conflict-format-diff)
@@ -3010,7 +3010,7 @@ Content here.
                  (lambda (_has-pull) 'unexpected-value)))
         (let ((result (org-canvas--resolve-conflict '(:title "Test") '((title . "Test")))))
           (expect result :to-equal 'skip)
-          (expect 'elog-warning :to-have-been-called))))))
+          (expect 'org-canvas--log-warning :to-have-been-called))))))
 
 (describe "org-canvas--sync-warn-stale-headings"
   (it "warns and prompts when heading has LAST_SYNCED but no CANVAS_ID"
@@ -3021,7 +3021,7 @@ Content here.
 :END:
 "
      (spy-on 'message)
-     (spy-on 'elog-warning)
+     (spy-on 'org-canvas--log-warning)
      (spy-on 'y-or-n-p :and-return-value t)
      (let ((noninteractive nil)
            (markers (org-map-entries (lambda () (point-marker)) nil 'file)))
@@ -3052,7 +3052,7 @@ Content here.
 :END:
 "
      (spy-on 'message)
-     (spy-on 'elog-warning)
+     (spy-on 'org-canvas--log-warning)
      (let ((markers (org-map-entries (lambda () (point-marker)) nil 'file)))
        (org-canvas--sync-warn-stale-headings markers (buffer-file-name))
        (expect 'message :not :to-have-been-called))))
@@ -3062,7 +3062,7 @@ Content here.
      "* New Item
 "
      (spy-on 'message)
-     (spy-on 'elog-warning)
+     (spy-on 'org-canvas--log-warning)
      (let ((markers (org-map-entries (lambda () (point-marker)) nil 'file)))
        (org-canvas--sync-warn-stale-headings markers (buffer-file-name))
        (expect 'message :not :to-have-been-called))))
@@ -3079,7 +3079,7 @@ Content here.
 :END:
 "
      (spy-on 'message)
-     (spy-on 'elog-warning)
+     (spy-on 'org-canvas--log-warning)
      (spy-on 'y-or-n-p :and-return-value t)
      (let ((noninteractive nil)
            (markers (org-map-entries (lambda () (point-marker)) nil 'file)))
@@ -3088,7 +3088,7 @@ Content here.
        (expect 'message :to-have-been-called-times 1)
        (expect 'y-or-n-p :to-have-been-called-times 1)
        ;; Both titles logged individually
-       (expect 'elog-warning :to-have-been-called-times 2)))))
+       (expect 'org-canvas--log-warning :to-have-been-called-times 2)))))
 
 (provide 'org-canvas-core-sync-test)
 ;;; org-canvas-core-sync-test.el ends here

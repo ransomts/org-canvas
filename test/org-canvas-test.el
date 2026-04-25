@@ -184,19 +184,19 @@
 
 (describe "org-canvas--safe-sync"
   (it "skips gracefully when file not found"
-    (spy-on 'elog-info)
+    (spy-on 'org-canvas--log-info)
     (org-canvas--safe-sync
      (lambda () (error "PAGES file not found: /tmp/nonexistent.org"))
      "Pages")
-    (expect 'elog-info :to-have-been-called))
+    (expect 'org-canvas--log-info :to-have-been-called))
 
   (it "suggests pull command and init when file not found"
-    (spy-on 'elog-info)
+    (spy-on 'org-canvas--log-info)
     (org-canvas--safe-sync
      (lambda () (error "PAGES file not found: /tmp/nonexistent.org"))
      "Pages")
     (let ((found nil))
-      (dolist (call (spy-calls-all-args 'elog-info))
+      (dolist (call (spy-calls-all-args 'org-canvas--log-info))
         (when (and (>= (length call) 3)
                    (stringp (nth 1 call))
                    (string-match-p "org-canvas-pull" (nth 1 call)))
@@ -204,11 +204,11 @@
       (expect found :to-be-truthy)))
 
   (it "logs error for non-file-related failures"
-    (spy-on 'elog-error)
+    (spy-on 'org-canvas--log-error)
     (org-canvas--safe-sync
      (lambda () (error "API Request Failed (HTTP 500)"))
      "Pages")
-    (expect 'elog-error :to-have-been-called))
+    (expect 'org-canvas--log-error :to-have-been-called))
 
   (it "does not throw on any error"
     (expect (org-canvas--safe-sync
@@ -823,14 +823,14 @@
 (describe "org-canvas--orphan-delete-all"
   (it "logs error when delete fails"
     (with-org-canvas-test-config
-      (spy-on 'elog-warning)
+      (spy-on 'org-canvas--log-warning)
       (cl-letf (((symbol-function 'org-canvas-api-request)
                  (lambda (_method _url &rest _args)
                    (signal 'error '("DELETE failed")))))
         (let ((feature (list :name "pages" :endpoint "pages" :id-field 'id))
               (orphans '(((id . 1) (title . "Orphan Page")))))
           (org-canvas--orphan-delete-all (list (cons feature orphans)))
-          (expect 'elog-warning :to-have-been-called))))))
+          (expect 'org-canvas--log-warning :to-have-been-called))))))
 
 (describe "org-canvas--status-count-entries"
   (it "counts pending entries (no CANVAS_ID)"

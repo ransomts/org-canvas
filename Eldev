@@ -3,12 +3,8 @@
 (setf eldev-project-source-dirs '("lisp"))
 (setf eldev-project-main-file "org-canvas.el")
 
-(eldev-use-vc-repository 'elog :github "Kinneyzhang/elog" :commit "357781d50a05e90a31dc93d38bb3ba0949500602")
-
 (eldev-use-package-archive 'gnu-elpa)
 (eldev-use-package-archive 'melpa)
-
-(eldev-add-extra-dependencies 'runtime '(elog))
 
 (eldev-use-plugin 'autoloads)
 
@@ -16,6 +12,7 @@
 (eldev-use-plugin 'undercover)
 (setf eldev-undercover-fileset '("lisp/org-canvas.el"
                                   "lisp/org-canvas-core.el"
+                                  "lisp/org-canvas-core-log.el"
                                   "lisp/org-canvas-core-config.el"
                                   "lisp/org-canvas-core-api.el"
                                   "lisp/org-canvas-core-org.el"

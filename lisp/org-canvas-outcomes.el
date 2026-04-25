@@ -42,7 +42,6 @@
 ;;; Code:
 
 (require 'org-canvas-core)
-(require 'elog)
 (require 'cl-lib)
 
 ;;;; Configuration
@@ -135,7 +134,7 @@ Strips statistics cookies from :title-raw to produce :title."
 (defun org-canvas--outcome-group-parse-entry ()
   "Extract outcome group data from a level-1 Org heading at point."
   (org-back-to-heading t)
-  (elog-debug org-canvas--logger "[Stage 1: Parse] Parsing outcome group at point %d" (point))
+  (org-canvas--log-debug org-canvas--logger "[Stage 1: Parse] Parsing outcome group at point %d" (point))
 
   (let* ((pom (point))
          (raw (org-canvas--outcome-group-read-props))
@@ -144,7 +143,7 @@ Strips statistics cookies from :title-raw to produce :title."
 
     (org-canvas--require-title title pom "Outcome group")
 
-    (elog-info org-canvas--logger "[Stage 1: Parse] Outcome Group: '%s' (ID: %s)"
+    (org-canvas--log-info org-canvas--logger "[Stage 1: Parse] Outcome Group: '%s' (ID: %s)"
       title (or (plist-get data :canvas-id) "NEW"))
 
     (list :title title
@@ -191,7 +190,7 @@ ID via `string-to-number'.  Pass-through keys: :canvas-id,
 (defun org-canvas--outcome-parse-entry ()
   "Extract outcome data from a level-2 Org heading at point."
   (org-back-to-heading t)
-  (elog-debug org-canvas--logger "[Stage 1: Parse] Parsing outcome at point %d" (point))
+  (org-canvas--log-debug org-canvas--logger "[Stage 1: Parse] Parsing outcome at point %d" (point))
 
   (let* ((pom (point))
          (raw (org-canvas--outcome-read-props))
@@ -200,11 +199,11 @@ ID via `string-to-number'.  Pass-through keys: :canvas-id,
 
     (org-canvas--require-title title pom "Outcome")
 
-    (elog-info org-canvas--logger "[Stage 1: Parse] Outcome: '%s' (ID: %s)"
+    (org-canvas--log-info org-canvas--logger "[Stage 1: Parse] Outcome: '%s' (ID: %s)"
       title (or (plist-get data :canvas-id) "NEW"))
-    (elog-debug org-canvas--logger "[Stage 1: Parse] Calculation: %s, Mastery: %s pts"
+    (org-canvas--log-debug org-canvas--logger "[Stage 1: Parse] Calculation: %s, Mastery: %s pts"
       (plist-get data :calculation_method) (or (plist-get data :mastery_points) "auto"))
-    (elog-debug org-canvas--logger "[Stage 1: Parse] Found %d ratings"
+    (org-canvas--log-debug org-canvas--logger "[Stage 1: Parse] Found %d ratings"
       (length (plist-get data :ratings)))
 
     (list :title title
@@ -222,13 +221,13 @@ ID via `string-to-number'.  Pass-through keys: :canvas-id,
 (defun org-canvas--outcome-group-build-payload (data)
   "Convert outcome group DATA to Canvas payload."
   (let ((title (plist-get data :title)))
-    (elog-info org-canvas--logger "[Stage 2: Transform] Building payload for group '%s'" title)
+    (org-canvas--log-info org-canvas--logger "[Stage 2: Transform] Building payload for group '%s'" title)
     `((title . ,title))))
 
 (defun org-canvas--outcome-build-payload (data)
   "Convert outcome DATA to Canvas payload."
   (let ((title (plist-get data :title)))
-    (elog-info org-canvas--logger "[Stage 2: Transform] Building payload for outcome '%s'" title)
+    (org-canvas--log-info org-canvas--logger "[Stage 2: Transform] Building payload for outcome '%s'" title)
 
     (let ((payload `((title . ,title)
                      (description . ,(or (plist-get data :description) ""))
@@ -246,18 +245,18 @@ ID via `string-to-number'.  Pass-through keys: :canvas-id,
 
       ;; Add ratings if present
       (when (plist-get data :ratings)
-        (elog-debug org-canvas--logger "[Stage 2: Transform] Adding %d ratings"
+        (org-canvas--log-debug org-canvas--logger "[Stage 2: Transform] Adding %d ratings"
           (length (plist-get data :ratings)))
         (push `(ratings . ,(plist-get data :ratings)) payload))
 
-      (elog-debug org-canvas--logger "[Stage 2: Transform] Payload complete")
+      (org-canvas--log-debug org-canvas--logger "[Stage 2: Transform] Payload complete")
       payload)))
 
 ;;;; 3. Stage: Execution
 
 (defun org-canvas--outcome-group-search-by-title (title parent-id)
   "Search for an outcome group with TITLE under PARENT-ID."
-  (elog-debug org-canvas--logger "[Stage 3: Search] Looking for group '%s'" title)
+  (org-canvas--log-debug org-canvas--logger "[Stage 3: Search] Looking for group '%s'" title)
   (condition-case err
       (let* ((endpoint (org-canvas-api-course-endpoint "outcome_groups/%s/subgroups" parent-id))
              (results (append (org-canvas-api-request 'GET endpoint) nil)))
@@ -265,7 +264,7 @@ ID via `string-to-number'.  Pass-through keys: :canvas-id,
                  when (string-equal (alist-get 'title item) title)
                  return item))
     (error
-     (elog-warning org-canvas--logger "[Stage 3: Search] Failed: %s" (error-message-string err))
+     (org-canvas--log-warning org-canvas--logger "[Stage 3: Search] Failed: %s" (error-message-string err))
      nil)))
 
 (defun org-canvas--outcome-group-push-to-api (data root-group-id)
@@ -277,14 +276,14 @@ ID via `string-to-number'.  Pass-through keys: :canvas-id,
     (if id
         ;; Update existing group
         (let ((endpoint (org-canvas-api-course-endpoint "outcome_groups/%s" id)))
-          (elog-info org-canvas--logger "[Stage 3: Execute] PUT Group '%s'" title)
+          (org-canvas--log-info org-canvas--logger "[Stage 3: Execute] PUT Group '%s'" title)
           (condition-case err
               (org-canvas-api-request 'PUT endpoint :data payload)
             (error
              ;; 404 -> Create new
              (if (org-canvas--404-error-p err)
                  (progn
-                   (elog-warning org-canvas--logger "[Stage 3: Recovery] Group not found, creating...")
+                   (org-canvas--log-warning org-canvas--logger "[Stage 3: Recovery] Group not found, creating...")
                    (org-canvas--outcome-group-create data root-group-id))
                (signal (car err) (cdr err))))))
       ;; Create new group
@@ -296,21 +295,21 @@ ID via `string-to-number'.  Pass-through keys: :canvas-id,
          (payload (org-canvas--outcome-group-build-payload data))
          (endpoint (org-canvas-api-course-endpoint "outcome_groups/%s/subgroups" parent-id)))
 
-    (elog-info org-canvas--logger "[Stage 3: Execute] POST Group '%s' under %s" title parent-id)
+    (org-canvas--log-info org-canvas--logger "[Stage 3: Execute] POST Group '%s' under %s" title parent-id)
 
     (condition-case err
         (let ((response (org-canvas-api-request 'POST endpoint :data payload)))
-          (elog-info org-canvas--logger "[Stage 3: Execute] Group created successfully")
+          (org-canvas--log-info org-canvas--logger "[Stage 3: Execute] Group created successfully")
           response)
       (error
-       (elog-error org-canvas--logger "[Stage 3: Execute] Failed: %s" (error-message-string err))
+       (org-canvas--log-error org-canvas--logger "[Stage 3: Execute] Failed: %s" (error-message-string err))
        ;; Try to find if it was created despite error
        (or (org-canvas--outcome-group-search-by-title title parent-id)
            (signal (car err) (cdr err)))))))
 
 (defun org-canvas--outcome-search-by-title (title group-id)
   "Search for an outcome with TITLE in GROUP-ID."
-  (elog-debug org-canvas--logger "[Stage 3: Search] Looking for outcome '%s' in group %s" title group-id)
+  (org-canvas--log-debug org-canvas--logger "[Stage 3: Search] Looking for outcome '%s' in group %s" title group-id)
   (condition-case err
       (let* ((endpoint (org-canvas-api-course-endpoint "outcome_groups/%s/outcomes" group-id))
              (params '(("outcome_style" . "full")))
@@ -320,7 +319,7 @@ ID via `string-to-number'.  Pass-through keys: :canvas-id,
                  when (and outcome (string-equal (alist-get 'title outcome) title))
                  return outcome))
     (error
-     (elog-warning org-canvas--logger "[Stage 3: Search] Failed: %s" (error-message-string err))
+     (org-canvas--log-warning org-canvas--logger "[Stage 3: Search] Failed: %s" (error-message-string err))
      nil)))
 
 (defun org-canvas--outcome-push-to-api (data)
@@ -336,13 +335,13 @@ ID via `string-to-number'.  Pass-through keys: :canvas-id,
     (if id
         ;; Update existing outcome
         (let ((endpoint (format "%s/api/v1/outcomes/%s" org-canvas-base-url id)))
-          (elog-info org-canvas--logger "[Stage 3: Execute] PUT Outcome '%s'" title)
+          (org-canvas--log-info org-canvas--logger "[Stage 3: Execute] PUT Outcome '%s'" title)
           (condition-case err
               (org-canvas-api-request 'PUT endpoint :data payload)
             (error
              (if (org-canvas--404-error-p err)
                  (progn
-                   (elog-warning org-canvas--logger "[Stage 3: Recovery] Outcome not found, creating...")
+                   (org-canvas--log-warning org-canvas--logger "[Stage 3: Recovery] Outcome not found, creating...")
                    (org-canvas--outcome-create data parent-group-id))
                (signal (car err) (cdr err))))))
       ;; Create new outcome
@@ -354,15 +353,15 @@ ID via `string-to-number'.  Pass-through keys: :canvas-id,
          (payload (org-canvas--outcome-build-payload data))
          (endpoint (org-canvas-api-course-endpoint "outcome_groups/%s/outcomes" group-id)))
 
-    (elog-info org-canvas--logger "[Stage 3: Execute] POST Outcome '%s' to group %s" title group-id)
+    (org-canvas--log-info org-canvas--logger "[Stage 3: Execute] POST Outcome '%s' to group %s" title group-id)
 
     (condition-case err
         (let ((response (org-canvas-api-request 'POST endpoint :data payload)))
-          (elog-info org-canvas--logger "[Stage 3: Execute] Outcome created successfully")
+          (org-canvas--log-info org-canvas--logger "[Stage 3: Execute] Outcome created successfully")
           ;; Response contains outcome_link, extract the outcome
           (or (alist-get 'outcome response) response))
       (error
-       (elog-error org-canvas--logger "[Stage 3: Execute] Failed: %s" (error-message-string err))
+       (org-canvas--log-error org-canvas--logger "[Stage 3: Execute] Failed: %s" (error-message-string err))
        (or (org-canvas--outcome-search-by-title title group-id)
            (signal (car err) (cdr err)))))))
 
@@ -384,16 +383,16 @@ Returns the root group ID, or signals an error."
   (unless (and org-canvas-outcomes-file (file-exists-p org-canvas-outcomes-file))
     (error "Outcomes file not found: %s" org-canvas-outcomes-file))
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
-  (elog-info org-canvas--logger "========================================")
-  (elog-info org-canvas--logger ">>> STARTING OUTCOME SYNC")
-  (elog-info org-canvas--logger "File: %s" org-canvas-outcomes-file)
-  (elog-info org-canvas--logger "Course: %s | URL: %s" org-canvas-course-id org-canvas-base-url)
-  (elog-info org-canvas--logger "========================================")
-  (elog-info org-canvas--logger "[Pre-flight] Fetching root outcome group...")
+  (org-canvas--log-info org-canvas--logger "========================================")
+  (org-canvas--log-info org-canvas--logger ">>> STARTING OUTCOME SYNC")
+  (org-canvas--log-info org-canvas--logger "File: %s" org-canvas-outcomes-file)
+  (org-canvas--log-info org-canvas--logger "Course: %s | URL: %s" org-canvas-course-id org-canvas-base-url)
+  (org-canvas--log-info org-canvas--logger "========================================")
+  (org-canvas--log-info org-canvas--logger "[Pre-flight] Fetching root outcome group...")
   (let ((root-group-id (org-canvas--outcome-get-root-group-id)))
     (unless root-group-id
       (error "Could not get root outcome group for course"))
-    (elog-info org-canvas--logger "[Pre-flight] Root group ID: %s" root-group-id)
+    (org-canvas--log-info org-canvas--logger "[Pre-flight] Root group ID: %s" root-group-id)
     root-group-id))
 
 ;;;###autoload
@@ -434,16 +433,16 @@ Warning: This will remove all learning outcomes from the course."
 
   (org-canvas-clear-log)
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
-  (elog-warning org-canvas--logger "========================================")
-  (elog-warning org-canvas--logger ">>> STARTING MASS DELETION OF OUTCOMES")
-  (elog-warning org-canvas--logger "========================================")
+  (org-canvas--log-warning org-canvas--logger "========================================")
+  (org-canvas--log-warning org-canvas--logger ">>> STARTING MASS DELETION OF OUTCOMES")
+  (org-canvas--log-warning org-canvas--logger "========================================")
 
   ;; Get root group
   (let* ((root-group-id (org-canvas--outcome-get-root-group-id))
          (endpoint (org-canvas-api-course-endpoint "outcome_groups/%s/subgroups" root-group-id))
          (subgroups (append (org-canvas-api-request 'GET endpoint) nil))
          (result (progn
-                   (elog-info org-canvas--logger "Found %d outcome groups (excluding root)" (length subgroups))
+                   (org-canvas--log-info org-canvas--logger "Found %d outcome groups (excluding root)" (length subgroups))
                    (org-canvas--delete-items-queued
                     subgroups
                     (lambda (item-id)
@@ -454,9 +453,9 @@ Warning: This will remove all learning outcomes from the course."
     ;; Cleanup local properties
     (org-canvas--clean-local-sync-properties org-canvas-outcomes-file)
 
-    (elog-info org-canvas--logger "========================================")
-    (elog-info org-canvas--logger ">>> MASS DELETION COMPLETE: %d groups removed" deleted-groups)
-    (elog-info org-canvas--logger "========================================")
+    (org-canvas--log-info org-canvas--logger "========================================")
+    (org-canvas--log-info org-canvas--logger ">>> MASS DELETION COMPLETE: %d groups removed" deleted-groups)
+    (org-canvas--log-info org-canvas--logger "========================================")
     (message "Outcome deletion complete. %d groups removed." deleted-groups)))
 
 ;;;; Pull
@@ -544,7 +543,7 @@ Point must be at the parent group heading."
           (cl-incf outcome-count
                    (org-canvas--outcome-pull-process-group gid))))
       (save-buffer))
-    (elog-info org-canvas--logger
+    (org-canvas--log-info org-canvas--logger
       "Outcomes pull complete: %d groups, %d outcomes" group-count outcome-count)
     (message "Outcomes pull complete: %d groups, %d outcomes."
              group-count outcome-count)))

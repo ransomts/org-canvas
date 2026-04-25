@@ -139,8 +139,8 @@
     :var (test-data)
 
     (before-each
-      (spy-on 'elog-info)
-      (spy-on 'elog-debug)
+      (spy-on 'org-canvas--log-info)
+      (spy-on 'org-canvas--log-debug)
       (org-canvas-register-properties "test-payload"
         :label "Test"
         :file-var 'org-canvas-test-file

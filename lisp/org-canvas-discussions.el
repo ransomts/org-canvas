@@ -38,7 +38,6 @@
 
 (require 'org-canvas-core)
 (require 'ox-html)
-(require 'elog)
 
 ;;;; Configuration
 
@@ -153,7 +152,7 @@ Pure function — no buffer access."
 (defun org-canvas--discussion-parse-entry ()
   "Extract discussion data from the Org heading at point."
   (org-back-to-heading t)
-  (elog-debug org-canvas--logger "[Stage 1: Parse] Starting extraction at point %d" (point))
+  (org-canvas--log-debug org-canvas--logger "[Stage 1: Parse] Starting extraction at point %d" (point))
 
   (let* ((pom (point))
          (raw (org-canvas--discussion-read-props pom))
@@ -161,9 +160,9 @@ Pure function — no buffer access."
 
     (org-canvas--require-title (plist-get data :title) pom "Discussion")
 
-    (elog-info org-canvas--logger "[Stage 1: Parse] Processing Discussion: '%s' (ID: %s)"
+    (org-canvas--log-info org-canvas--logger "[Stage 1: Parse] Processing Discussion: '%s' (ID: %s)"
               (plist-get data :title) (or (plist-get data :canvas-id) "NEW"))
-    (elog-debug org-canvas--logger "[Stage 1: Parse] Properties: type=%s, graded=%s, points=%s, post-first=%s, pinned=%s"
+    (org-canvas--log-debug org-canvas--logger "[Stage 1: Parse] Properties: type=%s, graded=%s, points=%s, post-first=%s, pinned=%s"
       (plist-get data :discussion_type)
       (if (plist-get data :grading_type) "yes" "no")
       (or (plist-get data :points_possible) "N/A")
@@ -171,9 +170,9 @@ Pure function — no buffer access."
       (plist-get data :pinned))
 
     ;; Extract Body content (resolves cross-file links to Canvas URLs)
-    (elog-debug org-canvas--logger "[Stage 1: Export] Exporting subtree to HTML...")
+    (org-canvas--log-debug org-canvas--logger "[Stage 1: Export] Exporting subtree to HTML...")
     (let ((content (org-canvas--export-subtree-body-to-html)))
-      (elog-info org-canvas--logger "[Stage 1: Parse] Body size: %d chars" (length content))
+      (org-canvas--log-info org-canvas--logger "[Stage 1: Parse] Body size: %d chars" (length content))
 
       (plist-put data :message content)
       (plist-put data :pom pom)
@@ -198,7 +197,7 @@ Returns an alist for the `assignment' key."
 (defun org-canvas--discussion-build-payload (data)
   "Convert DATA to Canvas payload."
   (let ((title (plist-get data :title)))
-    (elog-info org-canvas--logger "[Stage 2: Transform] Building payload for '%s'" title)
+    (org-canvas--log-info org-canvas--logger "[Stage 2: Transform] Building payload for '%s'" title)
 
     (let ((base `((title . ,title)
                   (message . ,(plist-get data :message))
@@ -225,12 +224,12 @@ Returns an alist for the `assignment' key."
             (push `(specific_sections . ,resolved) base))))
 
       (when (plist-get data :points_possible)
-        (elog-debug org-canvas--logger "[Stage 2: Transform] Adding graded assignment: %s pts"
+        (org-canvas--log-debug org-canvas--logger "[Stage 2: Transform] Adding graded assignment: %s pts"
           (plist-get data :points_possible))
         (push `(assignment . ,(org-canvas--discussion-build-graded-assignment data)) base)
         (org-canvas--validate-date-ordering data))
 
-      (elog-debug org-canvas--logger "[Stage 2: Transform] Payload complete")
+      (org-canvas--log-debug org-canvas--logger "[Stage 2: Transform] Payload complete")
       base)))
 
 ;;;; Post-Finalize: Rubric Association

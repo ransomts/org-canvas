@@ -156,7 +156,7 @@ Returns \\='push, \\='pull, or \\='skip."
       ('pull-all (setq org-canvas--conflict-apply-all 'pull) 'pull)
       ('skip-all (setq org-canvas--conflict-apply-all 'skip) 'skip)
       (_ (progn
-           (elog-warning org-canvas--logger
+           (org-canvas--log-warning org-canvas--logger
              "[Conflict] Unexpected choice %S, defaulting to skip" choice)
            'skip)))))
 

@@ -57,7 +57,6 @@
 (require 'org-canvas-core)
 (require 'ox-html)
 (require 'cl-lib)
-(require 'elog)
 
 ;;;; Configuration
 
@@ -313,7 +312,7 @@ Returns a plist of raw string values."
 (defun org-canvas--quiz-parse-entry ()
   "Extract quiz data from the Org heading at point."
   (org-back-to-heading t)
-  (elog-debug org-canvas--logger "[Quiz Parse] Starting at point %d" (point))
+  (org-canvas--log-debug org-canvas--logger "[Quiz Parse] Starting at point %d" (point))
 
   (let* ((pom (point-marker))
 	 (raw (org-canvas--quiz-read-props pom))
@@ -323,10 +322,10 @@ Returns a plist of raw string values."
 
     (org-canvas--require-title title pom "Quiz")
 
-    (elog-info org-canvas--logger "[Quiz Parse] Quiz: '%s' (ID: %s)"
+    (org-canvas--log-info org-canvas--logger "[Quiz Parse] Quiz: '%s' (ID: %s)"
       title (or (plist-get data :canvas-id) "NEW"))
     (when (plist-get data :assignment_group_id)
-      (elog-debug org-canvas--logger "[Quiz Parse] Assignment Group ID: %s"
+      (org-canvas--log-debug org-canvas--logger "[Quiz Parse] Assignment Group ID: %s"
 	(plist-get data :assignment_group_id)))
 
     (plist-put data :description
@@ -416,7 +415,7 @@ Returns a plist of raw string values."
         (actual-group (alist-get 'assignment_group_id response)))
     (when (and expected-group actual-group
                (not (equal expected-group actual-group)))
-      (elog-warning org-canvas--logger
+      (org-canvas--log-warning org-canvas--logger
         "[Verify] '%s': assignment_group_id mismatch! Expected %s, got %s"
         (plist-get data :title) expected-group actual-group))))
 
@@ -482,7 +481,7 @@ QUIZ-CANVAS-ID is the Canvas ID of the parent quiz."
                       (org-export-string-as (plist-get data :text) 'html t)))
          (answers (org-canvas--question-build-answers q-type)))
 
-    (elog-debug org-canvas--logger "[Question Parse] '%s' type=%s"
+    (org-canvas--log-debug org-canvas--logger "[Question Parse] '%s' type=%s"
       (plist-get data :name) q-type)
 
     (plist-put data :pom pom)
@@ -582,12 +581,12 @@ When CORRECT-ONLY is non-nil, only include correct answers."
 		       (org-canvas-api-course-endpoint "quizzes/%s/questions/%s" quiz-id q-id)
 		     (org-canvas-api-course-endpoint "quizzes/%s/questions" quiz-id))))
 
-    (elog-info org-canvas--logger "[Question API] %s '%s'" method name)
+    (org-canvas--log-info org-canvas--logger "[Question API] %s '%s'" method name)
 
     (condition-case err
 	(org-canvas-api-request method endpoint :data payload)
       (error
-       (elog-error org-canvas--logger "[Question API] Failed: %s" (error-message-string err))
+       (org-canvas--log-error org-canvas--logger "[Question API] Failed: %s" (error-message-string err))
        (signal (car err) (cdr err))))))
 
 (defun org-canvas--question-finalize (data response)
@@ -610,7 +609,7 @@ QUIZ-CANVAS-ID is the Canvas ID of the parent quiz."
 	 (bank-id (when bank-id-str
 		    (org-canvas--safe-string-to-number bank-id-str "QUESTION_BANK_ID"))))
 
-    (elog-debug org-canvas--logger "[Group Parse] '%s' pick=%s pts=%s bank=%s"
+    (org-canvas--log-debug org-canvas--logger "[Group Parse] '%s' pick=%s pts=%s bank=%s"
       name pick-count question-points (or bank-id "none"))
 
     (list :name name
@@ -646,7 +645,7 @@ Unwraps the `quiz_groups' response wrapper."
 		       (org-canvas-api-course-endpoint "quizzes/%s/groups/%s" quiz-id g-id)
 		     (org-canvas-api-course-endpoint "quizzes/%s/groups" quiz-id))))
 
-    (elog-info org-canvas--logger "[Group API] %s '%s'" method name)
+    (org-canvas--log-info org-canvas--logger "[Group API] %s '%s'" method name)
 
     (condition-case err
 	(let ((response (org-canvas-api-request method endpoint :data payload)))
@@ -656,7 +655,7 @@ Unwraps the `quiz_groups' response wrapper."
 		(aref groups 0)
 	      response)))
       (error
-       (elog-error org-canvas--logger "[Group API] Failed: %s" (error-message-string err))
+       (org-canvas--log-error org-canvas--logger "[Group API] Failed: %s" (error-message-string err))
        (signal (car err) (cdr err))))))
 
 (defun org-canvas--question-group-finalize (data response)
@@ -693,14 +692,14 @@ Returns a cons (SUCCESS . FAIL) count."
 		(org-canvas--question-group-finalize data response)
 		(setq group-success (1+ group-success)))
 	    (error
-	     (elog-error org-canvas--logger "[Group] Failed: %s"
+	     (org-canvas--log-error org-canvas--logger "[Group] Failed: %s"
 	       (error-message-string err)))))))
 
     ;; Release markers to avoid memory leaks
     (dolist (m group-markers) (set-marker m nil))
 
     (when (> (length group-markers) 0)
-      (elog-info org-canvas--logger "[Groups] %d/%d synced"
+      (org-canvas--log-info org-canvas--logger "[Groups] %d/%d synced"
 	group-success (length group-markers)))
     (cons group-success (- (length group-markers) group-success))))
 
@@ -735,13 +734,13 @@ QUIZ-CANVAS-ID is the Canvas ID of the quiz."
 		(org-canvas--question-finalize data response)
 		(setq question-success (1+ question-success)))
 	    (error
-	     (elog-error org-canvas--logger "[Question] Failed: %s"
+	     (org-canvas--log-error org-canvas--logger "[Question] Failed: %s"
 	       (error-message-string err)))))))
 
     ;; Release markers to avoid memory leaks
     (dolist (m question-markers) (set-marker m nil))
 
-    (elog-info org-canvas--logger "[Questions] %d/%d synced"
+    (org-canvas--log-info org-canvas--logger "[Questions] %d/%d synced"
       question-success (length question-markers))
     (cons question-success (- (length question-markers) question-success))))
 
@@ -886,7 +885,7 @@ Point must be at the parent quiz heading."
           (org-canvas--quiz-pull-insert-questions id)
           (cl-incf count)))
       (save-buffer))
-    (elog-info org-canvas--logger "Quizzes pull complete: %d quizzes" count)
+    (org-canvas--log-info org-canvas--logger "Quizzes pull complete: %d quizzes" count)
     (message "Quizzes pull complete: %d quizzes." count)))
 
 (provide 'org-canvas-quizzes)

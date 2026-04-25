@@ -2,13 +2,13 @@
 
 ;;; Commentary:
 
-;; Configuration defcustoms, path utilities, and the elog logging layer.
+;; Configuration defcustoms, path utilities, and the logging layer.
 ;; This is the lowest layer in the org-canvas-core dependency chain.
 
 ;;; Code:
 
 (require 'json)
-(require 'elog)
+(require 'org-canvas-core-log)
 
 ;;;; 1. Configuration Layer
 
@@ -185,7 +185,7 @@ if `org-canvas-directory` is not set, and warns about the fallback."
                  (if (boundp 'org-directory) org-directory user-emacs-directory))))
     (unless dir-set
       (when (boundp 'org-canvas--logger)
-        (elog-warning org-canvas--logger
+        (org-canvas--log-warning org-canvas--logger
           "[Config] org-canvas-directory not set, falling back to %s" base)))
     (expand-file-name filename base)))
 
@@ -217,7 +217,7 @@ When nil, defaults to \"org-canvas.log\" in `org-canvas-directory'."
   :group 'org-canvas)
 
 (defun org-canvas--log-handlers (destination)
-  "Return the elog handler list for DESTINATION symbol.
+  "Return the logger handler list for DESTINATION symbol.
 DESTINATION should be one of: buffer, file, both."
   (pcase destination
     ('buffer '(buffer))
@@ -231,12 +231,13 @@ DESTINATION should be one of: buffer, file, both."
       (org-canvas--path "org-canvas.log")))
 
 (defvar org-canvas--logger
-  (elog-logger :name "org-canvas"
-	       :handlers (org-canvas--log-handlers org-canvas-log-destination)
-	       :buffer org-canvas--log-buffer-name
-	       :file (when (memq org-canvas-log-destination '(file both))
-		       (org-canvas--log-file-path))
-	       :level 'debug)
+  (org-canvas--logger-make
+   :name "org-canvas"
+   :handlers (org-canvas--log-handlers org-canvas-log-destination)
+   :buffer org-canvas--log-buffer-name
+   :file (when (memq org-canvas-log-destination '(file both))
+           (org-canvas--log-file-path))
+   :level 'debug)
   "Logger for Org Canvas operations.")
 
 (defcustom org-canvas-log-level 'debug
@@ -249,7 +250,7 @@ Available levels (from most to least verbose):
 - error: Errors only
 
 Note: Setting this to `trace' or `debug' also requires updating the
-elog logger level.  Use `org-canvas-set-log-level' for convenience."
+underlying logger level.  Use `org-canvas-set-log-level' for convenience."
   :type '(choice (const :tag "Trace (full API details)" trace)
 		 (const :tag "Debug" debug)
 		 (const :tag "Info" info)
@@ -265,7 +266,7 @@ elog logger level.  Use `org-canvas-set-log-level' for convenience."
   "Log a trace message with FORMAT-STRING and ARGS.
 Trace messages show full API request/response details."
   (when (org-canvas--trace-enabled-p)
-    (apply #'elog-debug org-canvas--logger
+    (apply #'org-canvas--log-debug org-canvas--logger
 	   (concat "[TRACE] " format-string) args)))
 
 (defun org-canvas--mask-token (headers)
@@ -316,16 +317,17 @@ yet be set."
       ;; org-canvas-directory may still be "" (its default), causing the log
       ;; to land in the working directory instead of the course directory.
       (setq org-canvas--logger
-            (elog-set-file org-canvas--logger (org-canvas--log-file-path))))))
+            (org-canvas--logger-set-file org-canvas--logger
+                                         (org-canvas--log-file-path))))))
 
 (defun org-canvas--start-operation (operation-name)
   "Clear log, display log buffer, and log OPERATION-NAME banner.
 Respects `org-canvas--inhibit-log-clear'."
   (org-canvas-clear-log)
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
-  (elog-info org-canvas--logger "========================================")
-  (elog-info org-canvas--logger ">>> %s" operation-name)
-  (elog-info org-canvas--logger "========================================"))
+  (org-canvas--log-info org-canvas--logger "========================================")
+  (org-canvas--log-info org-canvas--logger ">>> %s" operation-name)
+  (org-canvas--log-info org-canvas--logger "========================================"))
 
 (defun org-canvas-set-log-level (level)
   "Set the logging level to LEVEL interactively.
@@ -337,10 +339,9 @@ LEVEL should be one of: trace, debug, info, warning, error."
   (setq org-canvas-log-level level)
   ;; Map 'trace to 'debug for the underlying logger, as we handle trace
   ;; filtering manually in `org-canvas--trace`.
-  (let ((elog-target-level (if (eq level 'trace) 'debug level)))
-    ;; Use elog-set-level which safely handles the plist update
+  (let ((target-level (if (eq level 'trace) 'debug level)))
     (setq org-canvas--logger
-	  (elog-set-level org-canvas--logger elog-target-level)))
+	  (org-canvas--logger-set-level org-canvas--logger target-level)))
   (message "org-canvas log level set to: %s" level))
 
 (defun org-canvas-set-log-destination (destination)
@@ -352,11 +353,12 @@ DESTINATION should be one of: buffer, file, both."
 				  nil t))))
   (setq org-canvas-log-destination destination)
   (setq org-canvas--logger
-	(elog-set-handlers org-canvas--logger
-			   (org-canvas--log-handlers destination)))
+	(org-canvas--logger-set-handlers org-canvas--logger
+                                         (org-canvas--log-handlers destination)))
   (when (memq destination '(file both))
     (setq org-canvas--logger
-	  (elog-set-file org-canvas--logger (org-canvas--log-file-path))))
+	  (org-canvas--logger-set-file org-canvas--logger
+                                       (org-canvas--log-file-path))))
   (message "org-canvas log destination set to: %s" destination))
 
 ;;;; 3. Shared Enum Constants

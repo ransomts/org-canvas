@@ -283,7 +283,7 @@
         (cl-letf (((symbol-function 'org-canvas-api-request)
                    (lambda (_method _url &rest _args)
                      (signal 'error '("Connection refused"))))
-                  ((symbol-function 'elog-error)
+                  ((symbol-function 'org-canvas--log-error)
                    (lambda (&rest _args)
                      (setq error-logged t)
                      nil)))
@@ -337,7 +337,7 @@
         (let ((org-canvas-log-request-bodies t))
           (cl-letf (((symbol-function 'plz)
                      (lambda (&rest _args) '((id . 1))))
-                    ((symbol-function 'elog-debug)
+                    ((symbol-function 'org-canvas--log-debug)
                      (lambda (_logger fmt &rest args)
                        (push (apply #'format fmt args) logged-messages))))
             (org-canvas-api-request 'POST "https://example.com/api"
@@ -351,7 +351,7 @@
         (let ((org-canvas-log-request-bodies t))
           (cl-letf (((symbol-function 'plz)
                      (lambda (&rest _args) '((id . 1) (name . "Test"))))
-                    ((symbol-function 'elog-debug)
+                    ((symbol-function 'org-canvas--log-debug)
                      (lambda (_logger fmt &rest args)
                        (push (apply #'format fmt args) logged-messages))))
             (org-canvas-api-request 'GET "https://example.com/api")
@@ -644,7 +644,7 @@
   (it "shows warning in echo area on failure"
     (with-org-canvas-test-config
       (spy-on 'message)
-      (spy-on 'elog-warning)
+      (spy-on 'org-canvas--log-warning)
       (cl-letf (((symbol-function 'org-canvas-api-request)
                  (lambda (&rest _) (error "Network error"))))
         (org-canvas--associate-rubric "42" "99" "Assignment")

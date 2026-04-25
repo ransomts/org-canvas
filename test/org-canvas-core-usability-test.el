@@ -75,27 +75,27 @@
 
 (describe "org-canvas--validate-date-ordering with past dates"
   (it "warns when DUE_AT is in the past"
-    (spy-on 'elog-warning)
+    (spy-on 'org-canvas--log-warning)
     (org-canvas--validate-date-ordering
      '(:title "Test" :due_at "2020-01-01T00:00:00Z"))
     ;; At least one warning for past date
-    (expect 'elog-warning :to-have-been-called))
+    (expect 'org-canvas--log-warning :to-have-been-called))
 
   (it "does not warn about future dates"
-    (spy-on 'elog-warning)
+    (spy-on 'org-canvas--log-warning)
     (org-canvas--validate-date-ordering
      '(:title "Test" :due_at "2099-01-01T00:00:00Z"))
-    (expect 'elog-warning :not :to-have-been-called))
+    (expect 'org-canvas--log-warning :not :to-have-been-called))
 
   (it "warns about all past dates in order"
-    (spy-on 'elog-warning)
+    (spy-on 'org-canvas--log-warning)
     (org-canvas--validate-date-ordering
      '(:title "Test"
        :unlock_at "2020-01-01T00:00:00Z"
        :due_at "2020-02-01T00:00:00Z"
        :lock_at "2020-03-01T00:00:00Z"))
     ;; 3 past-date warnings (one per date)
-    (expect 'elog-warning :to-have-been-called-times 3)))
+    (expect 'org-canvas--log-warning :to-have-been-called-times 3)))
 
 ;;; Concurrent Sync Guard
 
@@ -269,7 +269,7 @@
             ;; Create file with a CANVAS_URL that won't be synced (LEVEL=2)
             (with-temp-file temp-file
               (insert "* Test Page\n:PROPERTIES:\n:CANVAS_URL: orphan-123\n:PUBLISHED: true\n:END:\n\nBody.\n"))
-            (spy-on 'elog-warning :and-call-through)
+            (spy-on 'org-canvas--log-warning :and-call-through)
             (with-org-canvas-test-config
               (with-mock-api
                 (cl-letf (((symbol-function 'display-buffer) (lambda (_) nil)))
@@ -277,7 +277,7 @@
             ;; The orphan warning should be for the *first* sync (which generates a new URL)
             ;; but for testing, we check the message format
             (let ((orphan-msg-found nil))
-              (dolist (call (spy-calls-all 'elog-warning))
+              (dolist (call (spy-calls-all 'org-canvas--log-warning))
                 (when (and (>= (length (spy-context-args call)) 3)
                            (stringp (nth 1 (spy-context-args call)))
                            (string-match-p "clean up" (nth 1 (spy-context-args call))))
@@ -379,7 +379,7 @@
        ;; Set the stored hash to match
        (org-entry-put (point) "PAYLOAD_HASH" hash)
        (save-buffer)
-       (spy-on 'elog-info)
+       (spy-on 'org-canvas--log-info)
        (org-canvas--sync-process-entry
         marker
         (list :parse-fn (lambda () (list :title "My Page" :canvas-id "123"))
@@ -391,7 +391,7 @@
        (expect (plist-get counters :skip) :to-equal 1)
        ;; Verify the skip message contains the actual title
        (let ((found nil))
-         (dolist (call (spy-calls-all-args 'elog-info))
+         (dolist (call (spy-calls-all-args 'org-canvas--log-info))
            (when (and (>= (length call) 3)
                       (stringp (nth 1 call))
                       (string-match-p "Skip" (nth 1 call)))
@@ -415,7 +415,7 @@
             (hash (md5 (json-encode payload))))
        (org-entry-put (point) "PAYLOAD_HASH" hash)
        (save-buffer)
-       (spy-on 'elog-info)
+       (spy-on 'org-canvas--log-info)
        (org-canvas--sync-process-entry
         marker
         (list :parse-fn (lambda () (list :name "My Group" :canvas-id "456"))
@@ -428,7 +428,7 @@
        (expect (plist-get counters :skip) :to-equal 1)
        ;; Verify the skip message contains the group name, not nil
        (let ((found nil))
-         (dolist (call (spy-calls-all-args 'elog-info))
+         (dolist (call (spy-calls-all-args 'org-canvas--log-info))
            (when (and (>= (length call) 3)
                       (stringp (nth 1 call))
                       (string-match-p "Skip" (nth 1 call)))

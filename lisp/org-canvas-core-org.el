@@ -42,7 +42,7 @@ Otherwise, returns t only if property is \"true\"."
   (let ((value (org-entry-get pom property)))
     (when (and value (not (member (downcase value) '("true" "false"))))
       (when (boundp 'org-canvas--logger)
-        (elog-warning org-canvas--logger
+        (org-canvas--log-warning org-canvas--logger
           "[Validate] Property %s has value '%s' — expected 'true' or 'false'. Using %s"
           property value (if default-true "true" "false")))
       (message "Warning: %s '%s' is not true/false, using %s"
@@ -69,7 +69,7 @@ Returns the result of `string-to-number'."
   (when (and val
              (not (string-match-p "\\`-?[0-9]*\\.?[0-9]+\\'" val))
              (boundp 'org-canvas--logger))
-    (elog-warning org-canvas--logger
+    (org-canvas--log-warning org-canvas--logger
       "[Parse] Property %s has non-numeric value \"%s\", treating as %s"
       property val (string-to-number val)))
   (string-to-number val))
@@ -81,7 +81,7 @@ Returns VALUE if valid, DEFAULT if nil, or DEFAULT with a warning if invalid."
    ((null value) default)
    ((member value allowed) value)
    (t (when (boundp 'org-canvas--logger)
-        (elog-warning org-canvas--logger
+        (org-canvas--log-warning org-canvas--logger
           "[Validate] %s: '%s' is not valid (expected: %s). Using '%s'"
           property-name value (string-join allowed ", ") (or default (car allowed))))
       (message "Warning: %s '%s' is not valid, using '%s'"
@@ -125,16 +125,16 @@ When BOOLEAN-P is non-nil, convert \"true\"/\"false\" to t/:json-false."
 ID-PROPERTY defaults to \"CANVAS_ID\"."
   (let ((id-prop (or id-property "CANVAS_ID")))
     (when (and file (file-exists-p file))
-      (elog-info org-canvas--logger "Cleaning local properties...")
+      (org-canvas--log-info org-canvas--logger "Cleaning local properties...")
       (with-current-buffer (find-file-noselect file)
         (org-map-entries
          (lambda ()
-           (elog-debug org-canvas--logger "Removing properties for: %s"
+           (org-canvas--log-debug org-canvas--logger "Removing properties for: %s"
                        (org-entry-get (point) id-prop))
            (org-canvas-clear-sync-properties (point)))
          (format "%s={.}" id-prop) 'file)
         (save-buffer)
-        (elog-info org-canvas--logger "Saved %s" file)))))
+        (org-canvas--log-info org-canvas--logger "Saved %s" file)))))
 
 (defun org-canvas-org-set-property (pom property value)
   "Set Org PROPERTY to VALUE at POM (point or marker).
@@ -188,17 +188,17 @@ Compares ISO8601 strings lexicographically (works for UTC timestamps)."
         (lock (plist-get data :lock_at))
         (title (or (plist-get data :title) "unknown")))
     (when (and unlock due (string> unlock due))
-      (elog-warning org-canvas--logger
+      (org-canvas--log-warning org-canvas--logger
         "[Dates] '%s': UNLOCK_AT (%s) is after DUE_AT (%s)" title unlock due))
     (when (and due lock (string> due lock))
-      (elog-warning org-canvas--logger
+      (org-canvas--log-warning org-canvas--logger
         "[Dates] '%s': DUE_AT (%s) is after LOCK_AT (%s)" title due lock))
     ;; Warn about past dates
     (let ((now (org-canvas-current-iso8601-timestamp)))
       (dolist (pair `((:due_at . "DUE_AT") (:lock_at . "LOCK_AT") (:unlock_at . "UNLOCK_AT")))
         (let ((date (plist-get data (car pair))))
           (when (and date (string< date now))
-            (elog-warning org-canvas--logger
+            (org-canvas--log-warning org-canvas--logger
               "[Dates] '%s': %s (%s) is in the past" title (cdr pair) date)))))))
 
 (defun org-canvas--for-each-entry (file query callback)
@@ -220,7 +220,7 @@ Returns a list of (success-count . fail-count)."
 		(setq success-count (1+ success-count)))
 	    (error
 	     (setq fail-count (1+ fail-count))
-	     (elog-error org-canvas--logger "[FAILED] At point %d: %s"
+	     (org-canvas--log-error org-canvas--logger "[FAILED] At point %d: %s"
 	       (marker-position marker) (error-message-string err)))))))
     (dolist (m targets) (set-marker m nil))
     (cons success-count fail-count)))
@@ -286,20 +286,20 @@ SOURCE-FILE is the file containing the link, used to resolve relative paths."
                            heading)))
       (cond
        ((not (file-exists-p abs-file))
-        (elog-warning org-canvas--logger
+        (org-canvas--log-warning org-canvas--logger
           "[Links] File not found: %s (from link %s)" abs-file link-string)
         nil)
        (t
         (let ((heading-point (org-canvas--find-heading-in-file abs-file clean-heading)))
           (if (not heading-point)
               (progn
-                (elog-warning org-canvas--logger
+                (org-canvas--log-warning org-canvas--logger
                   "[Links] Heading '%s' not found in %s" clean-heading abs-file)
                 nil)
             (with-current-buffer (find-file-noselect abs-file)
               (let ((value (org-entry-get heading-point id-property)))
                 (unless value
-                  (elog-warning org-canvas--logger
+                  (org-canvas--log-warning org-canvas--logger
                     "[Links] Property %s not set on '%s' in %s"
                     id-property clean-heading abs-file))
                 value)))))))))
@@ -338,12 +338,12 @@ Returns the ID string, or nil if unresolvable."
    ((and sections-file (file-exists-p sections-file))
     (let ((canvas-id (org-canvas--find-section-id-by-name name sections-file)))
       (unless canvas-id
-        (elog-warning org-canvas--logger
+        (org-canvas--log-warning org-canvas--logger
           "[Sections] Could not resolve section name '%s' to CANVAS_ID" name)
         (message "Warning: Section '%s' not found in sections.org" name))
       canvas-id))
    (t
-    (elog-warning org-canvas--logger
+    (org-canvas--log-warning org-canvas--logger
       "[Sections] Cannot resolve section name '%s' (sections file not available)" name)
     (message "Warning: Cannot resolve section '%s' (no sections file)" name)
     nil)))
@@ -431,7 +431,7 @@ If resolution fails, replaces with plain display text."
       (goto-char link-start)
       (if canvas-url
           (insert (format "[[%s][%s]]" canvas-url display))
-        (elog-warning org-canvas--logger
+        (org-canvas--log-warning org-canvas--logger
           "[Links] Unresolved: [[file:%s::*%s][%s]] → plain text"
           file heading display)
         (insert display)))))
@@ -490,7 +490,7 @@ Session-scoped; cleared at end of master sync.")
                 (url (alist-get 'url file)))
             (when (and name url)
               (puthash name url org-canvas--image-cache))))
-        (elog-debug org-canvas--logger
+        (org-canvas--log-debug org-canvas--logger
           "[Images] Cache initialized: %d files in %s/"
           (hash-table-count org-canvas--image-cache)
           org-canvas-image-folder)))))
@@ -503,7 +503,7 @@ Fetches the image folder contents and builds a filename->URL map."
     (condition-case nil
         (org-canvas--image-cache-load-folder)
       (error
-       (elog-debug org-canvas--logger
+       (org-canvas--log-debug org-canvas--logger
          "[Images] Folder '%s' not found, will create on first upload"
          org-canvas-image-folder)))))
 
@@ -517,7 +517,7 @@ Returns the folder ID."
         (alist-get 'id folder))
     (error
      ;; Create the folder
-     (elog-info org-canvas--logger "[Images] Creating folder: %s" org-canvas-image-folder)
+     (org-canvas--log-info org-canvas--logger "[Images] Creating folder: %s" org-canvas-image-folder)
      (let ((response (org-canvas-api-request
                       'POST (org-canvas-api-course-endpoint "folders")
                       :data `((name . ,org-canvas-image-folder)
@@ -543,12 +543,12 @@ Checks cache first, then uploads if file exists."
          (cached-url (gethash filename org-canvas--image-cache)))
     (cond
      (cached-url
-      (elog-debug org-canvas--logger "[Images] Cache hit: %s" filename)
+      (org-canvas--log-debug org-canvas--logger "[Images] Cache hit: %s" filename)
       (org-canvas--image-replace-link rep cached-url))
      ((file-exists-p abs-path)
       (condition-case err
           (progn
-            (elog-info org-canvas--logger
+            (org-canvas--log-info org-canvas--logger
               "[Images] Uploading %s (%d/%d)..." filename count total)
             (unless (car folder-id-ref)
               (setcar folder-id-ref (org-canvas--image-ensure-folder)))
@@ -563,13 +563,13 @@ Checks cache first, then uploads if file exists."
               (org-canvas--image-replace-link rep preview-url)
               t))
         (error
-         (elog-warning org-canvas--logger
+         (org-canvas--log-warning org-canvas--logger
            "[Images] Failed to upload %s: %s"
            filename (error-message-string err))
          (message "WARNING: Image upload failed: %s" filename)
          nil)))
      (t
-      (elog-warning org-canvas--logger
+      (org-canvas--log-warning org-canvas--logger
         "[Images] File not found: %s" abs-path)
       (message "WARNING: Image not found: %s" abs-path)
       nil))))
@@ -606,7 +606,7 @@ Images are uploaded to the `org-canvas-image-folder' on Canvas."
                    rep source-dir folder-id-ref count total)
             (setq failed (1+ failed))))
         (when (> failed 0)
-          (elog-warning org-canvas--logger
+          (org-canvas--log-warning org-canvas--logger
             "[Images] %d of %d images failed to process" failed total)
           (message "WARNING: %d of %d images failed. See *canvas-log*."
                    failed total))))))
@@ -905,7 +905,7 @@ Example:
                          ,body)
                     body)))
              (save-buffer))
-           (elog-info org-canvas--logger
+           (org-canvas--log-info org-canvas--logger
              ,(format "%s pull complete: %%d items"
                       (capitalize feature-name)) count)
            (message ,(format "%s pull complete: %%d items."
@@ -925,16 +925,16 @@ Returns the course name as a string.  Signals an error if the request fails."
   "Interactive command to test the Canvas API connection."
   (interactive)
   (org-canvas-clear-log)
-  (elog-info org-canvas--logger "Testing connection to %s (Course ID: %s)..."
+  (org-canvas--log-info org-canvas--logger "Testing connection to %s (Course ID: %s)..."
     org-canvas-base-url org-canvas-course-id)
 
   (condition-case err
       (let ((name (org-canvas-get-course-name)))
-	(elog-info org-canvas--logger "Success! Connected to course: %s" name)
+	(org-canvas--log-info org-canvas--logger "Success! Connected to course: %s" name)
 	(message "Success! Connected to course: %s" name))
     (error
      (let ((msg (error-message-string err)))
-       (elog-error org-canvas--logger "Connection Failed: %s" msg)
+       (org-canvas--log-error org-canvas--logger "Connection Failed: %s" msg)
        (cond
         ((string-match-p "401" msg)
          (message "Connection failed: authentication error (HTTP 401). Regenerate your API token."))
@@ -954,7 +954,7 @@ Signals error with actionable message on failure."
   (condition-case err
       (let ((course (org-canvas-api-request 'GET
                       (org-canvas-api-course-endpoint ""))))
-        (elog-info org-canvas--logger "[Preflight] Connected to: %s"
+        (org-canvas--log-info org-canvas--logger "[Preflight] Connected to: %s"
           (alist-get 'name course)))
     (error
      (error "Connection failed: %s\nCheck your API token, course ID, and network connection"

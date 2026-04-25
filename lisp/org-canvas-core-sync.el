@@ -50,12 +50,12 @@ Opens the log buffer and logs a sync header."
           (with-current-buffer buf (save-buffer))
         (user-error "Aborted: unsaved changes in %s" sync-file))))
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
-  (elog-info org-canvas--logger "========================================")
-  (elog-info org-canvas--logger ">>> STARTING %s SYNC" feature-upper)
-  (elog-info org-canvas--logger "File: %s" sync-file)
-  (elog-info org-canvas--logger "Course: %s | URL: %s"
+  (org-canvas--log-info org-canvas--logger "========================================")
+  (org-canvas--log-info org-canvas--logger ">>> STARTING %s SYNC" feature-upper)
+  (org-canvas--log-info org-canvas--logger "File: %s" sync-file)
+  (org-canvas--log-info org-canvas--logger "Course: %s | URL: %s"
     org-canvas-course-id org-canvas-base-url)
-  (elog-info org-canvas--logger "========================================"))
+  (org-canvas--log-info org-canvas--logger "========================================"))
 
 (defun org-canvas--sync-collect-entries (sync-file query feature-name)
   "Collect entry markers and existing CANVAS_IDs from SYNC-FILE.
@@ -69,7 +69,7 @@ Returns a plist (:targets MARKERS :all-ids-before IDS)."
             (org-map-entries
              (lambda () (org-entry-get (point) "CANVAS_ID"))
              "CANVAS_ID={.}" 'file)))
-    (elog-info org-canvas--logger "Found %d %s to sync"
+    (org-canvas--log-info org-canvas--logger "Found %d %s to sync"
       (length targets) feature-name)
     ;; Warn about duplicate CANVAS_IDs
     (let ((id-counts (make-hash-table :test 'equal)))
@@ -77,7 +77,7 @@ Returns a plist (:targets MARKERS :all-ids-before IDS)."
         (puthash id (1+ (gethash id id-counts 0)) id-counts))
       (maphash (lambda (id count)
                  (when (> count 1)
-                   (elog-warning org-canvas--logger
+                   (org-canvas--log-warning org-canvas--logger
                      "[Duplicate] CANVAS_ID %s appears %d times in %s"
                      id count sync-file)
                    (message "WARNING: CANVAS_ID %s appears %d times in %s"
@@ -99,7 +99,7 @@ Returns a plist (:targets MARKERS :all-ids-before IDS)."
               (puthash title (1+ (gethash title title-counts 0)) title-counts))))))
     (maphash (lambda (title count)
                (when (> count 1)
-                 (elog-warning org-canvas--logger
+                 (org-canvas--log-warning org-canvas--logger
                    "[Duplicate Title] '%s' appears %d times in %s — timeout recovery may match wrong item"
                    title count sync-file)))
              title-counts)))
@@ -119,7 +119,7 @@ Prompts user to continue if stale headings are found."
                        (not (or (org-entry-get (point) "CANVAS_ID")
                                 (org-entry-get (point) "CANVAS_URL"))))
               (push title stale-titles)
-              (elog-warning org-canvas--logger
+              (org-canvas--log-warning org-canvas--logger
                 "[Stale] '%s' was previously synced but has no CANVAS_ID" title))))))
     (when stale-titles
       (message "WARNING: %d heading(s) will create duplicates on Canvas: %s"
@@ -182,11 +182,11 @@ CTX is the sync context plist (see `org-canvas--sync-process-entry')."
     (cond
      ((and stored-hash (string= payload-hash stored-hash) canvas-id)
       (plist-put counters :skip (1+ (plist-get counters :skip)))
-      (elog-info org-canvas--logger "[Skip] '%s' unchanged" title)
+      (org-canvas--log-info org-canvas--logger "[Skip] '%s' unchanged" title)
       (message "%s [%d/%d] Skipping '%s' (unchanged)"
         cap-feature progress total-count title))
      (org-canvas--dry-run
-      (elog-info org-canvas--logger "[DRY-RUN] Would %s '%s'"
+      (org-canvas--log-info org-canvas--logger "[DRY-RUN] Would %s '%s'"
         (if canvas-id "UPDATE" "CREATE") title)
       (message "%s [DRY-RUN] Would %s '%s'"
         cap-feature (if canvas-id "update" "create") title)
@@ -223,7 +223,7 @@ CTX is a plist with keys:
         (feature-name (plist-get ctx :feature-name))
         (total-count (plist-get ctx :total-count))
         (counters (plist-get ctx :counters)))
-    (elog-info org-canvas--logger "----------------------------------------")
+    (org-canvas--log-info org-canvas--logger "----------------------------------------")
     (with-current-buffer (marker-buffer marker)
       (save-excursion
         (goto-char (marker-position marker))
@@ -237,7 +237,7 @@ CTX is a plist with keys:
              (plist-put counters :failed-titles
                         (cons heading-title
                               (or (plist-get counters :failed-titles) nil)))
-             (elog-error org-canvas--logger "[FAILED] %s '%s': %s"
+             (org-canvas--log-error org-canvas--logger "[FAILED] %s '%s': %s"
                feature-upper heading-title (error-message-string err))
              (message "%s [%d/%d] FAILED '%s': %s"
                (capitalize feature-name)
@@ -250,7 +250,7 @@ CTX is a plist with keys:
 FEATURE-NAME is used in the log message."
   (dolist (old-id all-ids-before)
     (unless (member old-id synced-ids)
-      (elog-warning org-canvas--logger
+      (org-canvas--log-warning org-canvas--logger
         "[Orphan] CANVAS_ID %s in file was not synced — may be orphaned on Canvas.\n  To clean up: delete the heading's CANVAS_ID property, or use M-x org-canvas-delete-%s-at-point"
         old-id feature-name))))
 
@@ -268,22 +268,22 @@ FEATURE-NAME is the module name.  COUNTERS is a plist with
         (extra-counts 0))
     (with-current-buffer (find-file-noselect sync-file)
       (save-buffer)
-      (elog-info org-canvas--logger "Saved %s" sync-file))
-    (elog-info org-canvas--logger "========================================")
-    (elog-info org-canvas--logger ">>> %s SYNC COMPLETE" feature-upper)
+      (org-canvas--log-info org-canvas--logger "Saved %s" sync-file))
+    (org-canvas--log-info org-canvas--logger "========================================")
+    (org-canvas--log-info org-canvas--logger ">>> %s SYNC COMPLETE" feature-upper)
     (cond
      ((> dry-run-count 0)
-      (elog-info org-canvas--logger "Would sync: %d | Skipped: %d"
+      (org-canvas--log-info org-canvas--logger "Would sync: %d | Skipped: %d"
         dry-run-count skip-count)
       (message "%s dry-run: %d would sync, %d skipped."
                (capitalize feature-name) dry-run-count skip-count))
      (t
       (setq extra-counts (+ conflict-count pulled-count))
       (if (> extra-counts 0)
-          (elog-info org-canvas--logger
+          (org-canvas--log-info org-canvas--logger
             "Success: %d | Skipped: %d | Failed: %d | Conflicts: %d | Pulled: %d"
             success-count skip-count fail-count conflict-count pulled-count)
-        (elog-info org-canvas--logger "Success: %d | Skipped: %d | Failed: %d"
+        (org-canvas--log-info org-canvas--logger "Success: %d | Skipped: %d | Failed: %d"
           success-count skip-count fail-count))
       (if (> extra-counts 0)
           (message "%s sync: %d success, %d skipped, %d failed, %d conflicts, %d pulled."
@@ -293,10 +293,10 @@ FEATURE-NAME is the module name.  COUNTERS is a plist with
                  (capitalize feature-name) success-count skip-count fail-count))
       (let ((failed-titles (plist-get counters :failed-titles)))
         (when failed-titles
-          (elog-warning org-canvas--logger "Failed items: %s"
+          (org-canvas--log-warning org-canvas--logger "Failed items: %s"
             (mapconcat (lambda (title) (format "'%s'" title))
                        (nreverse failed-titles) ", "))))))
-    (elog-info org-canvas--logger "========================================")
+    (org-canvas--log-info org-canvas--logger "========================================")
     ;; Accumulate into global counters when running inside org-canvas-sync
     (when org-canvas--sync-global-counters
       (plist-put org-canvas--sync-global-counters :success
@@ -505,7 +505,7 @@ when no LAST_SYNCED exists (legacy item, first sync)."
                (remote-time (org-canvas--parse-iso8601-time updated-at)))
           (if (and remote-time (time-less-p local-time remote-time))
               (progn
-                (elog-warning org-canvas--logger
+                (org-canvas--log-warning org-canvas--logger
                   "[Conflict] Remote item updated at %s, local LAST_SYNCED is %s"
                   updated-at (org-entry-get pom "LAST_SYNCED"))
                 (cons 'conflict response))
@@ -560,35 +560,35 @@ Keyword arguments:
 
 Return the matching item alist, or nil if not found."
   (let ((match-field (or match-field 'title)))
-    (elog-info org-canvas--logger "[Search] Looking for item with %s='%s'..." match-field title)
+    (org-canvas--log-info org-canvas--logger "[Search] Looking for item with %s='%s'..." match-field title)
     (condition-case err
         (let* ((full-endpoint (org-canvas-api-course-endpoint endpoint))
                (search-params (append (or params `(("search_term" . ,title))) nil))
                (results (append (org-canvas-api-request 'GET full-endpoint :params search-params) nil))
                (count (length results)))
-          (elog-debug org-canvas--logger "[Search] Found %d results" count)
+          (org-canvas--log-debug org-canvas--logger "[Search] Found %d results" count)
           (let ((found (cl-loop for item in results
                                 when (string-equal (alist-get match-field item) title)
                                 return item)))
             (if found
-                (elog-info org-canvas--logger "[Search] Found exact match: ID=%s"
+                (org-canvas--log-info org-canvas--logger "[Search] Found exact match: ID=%s"
                   (or (alist-get 'id found) (alist-get 'url found)))
-              (elog-debug org-canvas--logger "[Search] No exact match found"))
+              (org-canvas--log-debug org-canvas--logger "[Search] No exact match found"))
             found))
       (error
-       (elog-warning org-canvas--logger "[Search] Failed: %s" (error-message-string err))
+       (org-canvas--log-warning org-canvas--logger "[Search] Failed: %s" (error-message-string err))
        nil))))
 
 (defun org-canvas--handle-timeout-recovery (find-fn title err)
   "Search for item by TITLE after a timeout using FIND-FN.
 Re-signal ERR if item not found."
-  (elog-warning org-canvas--logger "[Timeout] Checking if item was created...")
+  (org-canvas--log-warning org-canvas--logger "[Timeout] Checking if item was created...")
   (let ((found (funcall find-fn title)))
     (if found
         (progn
-          (elog-info org-canvas--logger "[Recovery] Found item after timeout!")
+          (org-canvas--log-info org-canvas--logger "[Recovery] Found item after timeout!")
           found)
-      (elog-error org-canvas--logger "[Recovery] Item not found after timeout")
+      (org-canvas--log-error org-canvas--logger "[Recovery] Item not found after timeout")
       (signal (car err) (cdr err)))))
 
 (defun org-canvas--handle-404-retry (endpoint payload find-fn title _err &optional post-url)
@@ -597,11 +597,11 @@ ENDPOINT is the base endpoint, PAYLOAD the data to send.
 FIND-FN and TITLE are used for timeout recovery on the retry.
 ERR is the original error for re-signaling.
 POST-URL, when non-nil, overrides the default course-scoped POST URL."
-  (elog-warning org-canvas--logger "[Recovery] Item not found (404). Retrying as POST...")
+  (org-canvas--log-warning org-canvas--logger "[Recovery] Item not found (404). Retrying as POST...")
   (let ((new-endpoint (or post-url (org-canvas-api-course-endpoint endpoint))))
     (condition-case post-err
         (let ((response (org-canvas-api-request 'POST new-endpoint :data payload)))
-          (elog-info org-canvas--logger "[Recovery] POST successful")
+          (org-canvas--log-info org-canvas--logger "[Recovery] POST successful")
           response)
       (error
        (if (and find-fn (org-canvas--timeout-error-p post-err))
@@ -619,21 +619,21 @@ TITLE is for logging.  Returns `push', `skip', or `pulled'."
              (resolution (org-canvas--resolve-conflict data remote-response)))
         (pcase resolution
           ('skip
-           (elog-warning org-canvas--logger
+           (org-canvas--log-warning org-canvas--logger
              "[Conflict] Skipping '%s' — remote item was modified since last sync" title)
            'skip)
           ('pull
            (if effective-pull-fn
                (progn
                  (org-canvas--conflict-pull-local data remote-response effective-pull-fn)
-                 (elog-info org-canvas--logger
+                 (org-canvas--log-info org-canvas--logger
                    "[Conflict] Pulled remote version of '%s'" title)
                  'pulled)
-             (elog-warning org-canvas--logger
+             (org-canvas--log-warning org-canvas--logger
                "[Conflict] No pull function available, skipping '%s'" title)
              'skip))
           ('push
-           (elog-info org-canvas--logger
+           (org-canvas--log-info org-canvas--logger
              "[Conflict] Force-pushing '%s' (user chose overwrite)" title)
            'push))))))
 
@@ -678,7 +678,7 @@ Returns the API response alist."
 
     ;; Dry-run: skip API call and return a mock response
     (when org-canvas--dry-run
-      (elog-info org-canvas--logger "[DRY-RUN] Would %s '%s' to %s" method title full-endpoint)
+      (org-canvas--log-info org-canvas--logger "[DRY-RUN] Would %s '%s' to %s" method title full-endpoint)
       (cl-return-from org-canvas--push-to-api '((id . "dry-run"))))
 
     ;; Conflict detection: for PUT only, check if remote was modified
@@ -691,14 +691,14 @@ Returns the API response alist."
           (cl-return-from org-canvas--push-to-api
             (if (eq decision 'pulled) 'pulled 'conflict)))))
 
-    (elog-info org-canvas--logger "[Execute] %s '%s' to %s" method title full-endpoint)
+    (org-canvas--log-info org-canvas--logger "[Execute] %s '%s' to %s" method title full-endpoint)
 
     (condition-case err
         (let ((response (org-canvas-api-request method full-endpoint :data payload)))
-          (elog-info org-canvas--logger "[Execute] %s successful for '%s'" method title)
+          (org-canvas--log-info org-canvas--logger "[Execute] %s successful for '%s'" method title)
           response)
       (error
-       (elog-error org-canvas--logger "[Execute] Failed: %s" (error-message-string err))
+       (org-canvas--log-error org-canvas--logger "[Execute] Failed: %s" (error-message-string err))
 
        (cond
         ;; CASE 1: Timeout -> Check if item exists via find-fn
@@ -740,11 +740,11 @@ Save the Canvas ID and LAST_SYNCED timestamp to the Org entry."
     (unless pom
       (error "Finalize-item: missing :pom in data for '%s'" title))
 
-    (elog-debug org-canvas--logger "[Finalize] Processing response for '%s'" title)
+    (org-canvas--log-debug org-canvas--logger "[Finalize] Processing response for '%s'" title)
 
     (if id
         (progn
-          (elog-info org-canvas--logger "[Finalize] Saving %s=%s for '%s'" id-property id title)
+          (org-canvas--log-info org-canvas--logger "[Finalize] Saving %s=%s for '%s'" id-property id title)
           (org-canvas-org-save-sync-state pom id id-property)
           ;; Save CANVAS_UPDATED_AT for conflict detection
           (let ((updated-at (alist-get 'updated_at response)))
@@ -753,8 +753,8 @@ Save the Canvas ID and LAST_SYNCED timestamp to the Org entry."
                                            (format "%s" updated-at))))
           (when post-fn
             (funcall post-fn data response))
-          (elog-info org-canvas--logger "[Finalize] Complete for '%s'" title))
-      (elog-error org-canvas--logger "[Finalize] No ID in response for '%s'!" title)
+          (org-canvas--log-info org-canvas--logger "[Finalize] Complete for '%s'" title))
+      (org-canvas--log-error org-canvas--logger "[Finalize] No ID in response for '%s'!" title)
       (error "No %s in API response for '%s'" id-field title))))
 
 ;;;; 9. Push-at-Point Infrastructure
@@ -769,7 +769,7 @@ TITLE-KEY is the plist key for the display name.
 PULL-ITEM-FN, when non-nil, enables the pull option during conflict resolution."
   (org-back-to-heading t)
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
-  (elog-info org-canvas--logger ">>> SYNC-AT-POINT: %s" feature-name)
+  (org-canvas--log-info org-canvas--logger ">>> SYNC-AT-POINT: %s" feature-name)
   (let* ((org-canvas--current-pull-item-fn pull-item-fn)
          (data (funcall parse-fn))
          (title (plist-get data title-key))
@@ -778,21 +778,21 @@ PULL-ITEM-FN, when non-nil, enables the pull option during conflict resolution."
          (stored-hash (org-entry-get (point) "PAYLOAD_HASH"))
          (canvas-id (or (plist-get data :canvas-id)
                         (plist-get data :canvas-url))))
-    (elog-info org-canvas--logger "[Stage 2: Build] '%s'" title)
+    (org-canvas--log-info org-canvas--logger "[Stage 2: Build] '%s'" title)
     (if (and stored-hash
              (string= payload-hash stored-hash)
              canvas-id)
         (progn
-          (elog-info org-canvas--logger "[Skip] '%s' unchanged" title)
+          (org-canvas--log-info org-canvas--logger "[Skip] '%s' unchanged" title)
           (message "%s '%s' unchanged — skipped." (capitalize feature-name) title))
-      (elog-info org-canvas--logger "[Stage 3: Push] '%s' (%s)"
+      (org-canvas--log-info org-canvas--logger "[Stage 3: Push] '%s' (%s)"
         title (if canvas-id "UPDATE" "CREATE"))
       (let ((response (funcall push-fn data payload)))
-        (elog-info org-canvas--logger "[Stage 4: Finalize] '%s'" title)
+        (org-canvas--log-info org-canvas--logger "[Stage 4: Finalize] '%s'" title)
         (funcall finalize-fn data response)
         (org-entry-put (point) "PAYLOAD_HASH" payload-hash)
         (save-buffer)
-        (elog-info org-canvas--logger "[Sync] '%s' synced successfully" title)
+        (org-canvas--log-info org-canvas--logger "[Sync] '%s' synced successfully" title)
         (message "%s '%s' synced." (capitalize feature-name) title)))))
 
 

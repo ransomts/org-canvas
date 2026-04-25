@@ -46,7 +46,6 @@
 (require 'org-canvas-new-quiz-items)
 (require 'ox-html)
 (require 'cl-lib)
-(require 'elog)
 
 ;;;; Configuration
 
@@ -162,7 +161,7 @@ No buffer access — only string/number/boolean conversions."
   "Extract New Quiz data from the Org heading at point.
 Reads raw properties, transforms them, and exports description to HTML."
   (org-back-to-heading t)
-  (elog-debug org-canvas--logger "[New Quiz Parse] Starting at point %d" (point))
+  (org-canvas--log-debug org-canvas--logger "[New Quiz Parse] Starting at point %d" (point))
 
   (let* ((raw (org-canvas--new-quiz-read-props))
          (data (org-canvas--new-quiz-transform-props raw))
@@ -173,7 +172,7 @@ Reads raw properties, transforms them, and exports description to HTML."
 
     (org-canvas--require-title title pom "New Quiz")
 
-    (elog-info org-canvas--logger "[New Quiz Parse] Quiz: '%s' (ID: %s)"
+    (org-canvas--log-info org-canvas--logger "[New Quiz Parse] Quiz: '%s' (ID: %s)"
       title (or canvas-id "NEW"))
 
     ;; Replace :body-text with HTML :description in final result
@@ -233,33 +232,33 @@ Returns response with assignment_id."
                     ht)))
 
     (when org-canvas--dry-run
-      (elog-info org-canvas--logger "[DRY-RUN] Would %s New Quiz '%s' to %s"
+      (org-canvas--log-info org-canvas--logger "[DRY-RUN] Would %s New Quiz '%s' to %s"
         method title endpoint)
       (cl-return-from org-canvas--new-quiz-push-to-api
         '((assignment_id . "dry-run"))))
 
-    (elog-info org-canvas--logger "[New Quiz API] %s '%s'" method title)
+    (org-canvas--log-info org-canvas--logger "[New Quiz API] %s '%s'" method title)
 
     (condition-case err
         (let ((response (org-canvas-api-request method endpoint :data wrapped)))
-          (elog-info org-canvas--logger "[New Quiz API] %s successful for '%s'"
+          (org-canvas--log-info org-canvas--logger "[New Quiz API] %s successful for '%s'"
             method title)
           response)
       (error
-       (elog-error org-canvas--logger "[New Quiz API] Failed: %s"
+       (org-canvas--log-error org-canvas--logger "[New Quiz API] Failed: %s"
          (error-message-string err))
        (cond
         ;; 404 on PATCH -> retry as POST (stale ID)
         ((and (eq method 'PATCH)
               (org-canvas--404-error-p err))
-         (elog-warning org-canvas--logger
+         (org-canvas--log-warning org-canvas--logger
            "[Recovery] Item not found (404). Retrying as POST...")
          (condition-case post-err
              (let ((response (org-canvas-api-request
                               'POST
                               (org-canvas--new-quiz-api-endpoint "quizzes")
                               :data wrapped)))
-               (elog-info org-canvas--logger "[Recovery] POST successful")
+               (org-canvas--log-info org-canvas--logger "[Recovery] POST successful")
                response)
            (error
             (signal (car post-err) (cdr post-err)))))
@@ -325,7 +324,7 @@ QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
                 (if (and org-canvas--new-quiz-debug-types
                          (not (member q-type org-canvas--new-quiz-debug-types)))
                     (progn
-                      (elog-info org-canvas--logger
+                      (org-canvas--log-info org-canvas--logger
                         "[DEBUG SKIP] Skipping type '%s' for '%s'"
                         q-type (plist-get data :title))
                       (setq item-skipped (1+ item-skipped)))
@@ -334,16 +333,16 @@ QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
                     (org-canvas--new-quiz-item-finalize data response)
                     (setq item-success (1+ item-success)))))
             (error
-             (elog-error org-canvas--logger "[New Quiz Item] Failed: %s"
+             (org-canvas--log-error org-canvas--logger "[New Quiz Item] Failed: %s"
                (error-message-string err)))))))
 
     ;; Release markers to avoid memory leaks
     (dolist (m item-markers) (set-marker m nil))
 
     (when (> item-skipped 0)
-      (elog-info org-canvas--logger "[New Quiz Items] %d skipped (debug filter)"
+      (org-canvas--log-info org-canvas--logger "[New Quiz Items] %d skipped (debug filter)"
         item-skipped))
-    (elog-info org-canvas--logger "[New Quiz Items] %d/%d synced"
+    (org-canvas--log-info org-canvas--logger "[New Quiz Items] %d/%d synced"
       item-success (- (length item-markers) item-skipped))
     (cons item-success (- (length item-markers) item-success item-skipped))))
 
@@ -394,13 +393,13 @@ QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
       (user-error "Aborted")))
   (org-canvas-clear-log)
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
-  (elog-warning org-canvas--logger "========================================")
-  (elog-warning org-canvas--logger ">>> STARTING MASS DELETION OF NEW-QUIZZES")
-  (elog-warning org-canvas--logger "========================================")
+  (org-canvas--log-warning org-canvas--logger "========================================")
+  (org-canvas--log-warning org-canvas--logger ">>> STARTING MASS DELETION OF NEW-QUIZZES")
+  (org-canvas--log-warning org-canvas--logger "========================================")
   (let* ((endpoint (org-canvas--new-quiz-api-endpoint "quizzes"))
          (remote-items (org-canvas-api-request-all-pages 'GET endpoint))
          (deleted 0))
-    (elog-info org-canvas--logger "Found %d new-quizzes on Canvas"
+    (org-canvas--log-info org-canvas--logger "Found %d new-quizzes on Canvas"
       (length remote-items))
     (dolist (item remote-items)
       (let* ((id (or (alist-get 'assignment_id item)
@@ -410,10 +409,10 @@ QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
         (condition-case err
             (progn
               (org-canvas-api-request 'DELETE del-url)
-              (elog-info org-canvas--logger "[Deleted] '%s' (ID: %s)" title id)
+              (org-canvas--log-info org-canvas--logger "[Deleted] '%s' (ID: %s)" title id)
               (setq deleted (1+ deleted)))
           (error
-           (elog-warning org-canvas--logger "[Delete Failed] '%s': %s"
+           (org-canvas--log-warning org-canvas--logger "[Delete Failed] '%s': %s"
              title (error-message-string err))))))
     ;; Clean local properties
     (org-canvas--clean-local-sync-properties
@@ -478,7 +477,7 @@ QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
           (org-canvas--new-quiz-pull-items assignment-id)
           (cl-incf count)))
       (save-buffer))
-    (elog-info org-canvas--logger "New Quizzes pull complete: %d quizzes" count)
+    (org-canvas--log-info org-canvas--logger "New Quizzes pull complete: %d quizzes" count)
     (message "New Quizzes pull complete: %d quizzes." count)))
 
 (provide 'org-canvas-new-quizzes)

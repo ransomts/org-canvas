@@ -32,7 +32,6 @@
 
 (require 'org-canvas-core)
 (require 'ox-html)
-(require 'elog)
 (require 'cl-lib)
 
 ;;;; Configuration
@@ -177,16 +176,16 @@ Fetches events via the global calendar API filtered by course context code."
       (dolist (item items)
         (let ((id (alist-get 'id item))
               (title (or (alist-get 'title item) "(untitled)")))
-          (elog-info org-canvas--logger "[Pull] Importing calendar event: %s" title)
+          (org-canvas--log-info org-canvas--logger "[Pull] Importing calendar event: %s" title)
           (let ((pos (org-canvas--pull-upsert-heading file id title "CANVAS_ID")))
             (when pos
               (goto-char pos)
               (org-canvas-org-save-sync-state pos id "CANVAS_ID")
               (org-canvas--calendar-event-pull-item item pos)))))
       (save-buffer))
-    (elog-info org-canvas--logger "========================================")
-    (elog-info org-canvas--logger ">>> CALENDAR EVENTS PULL COMPLETE (%d events)" (length items))
-    (elog-info org-canvas--logger "========================================")
+    (org-canvas--log-info org-canvas--logger "========================================")
+    (org-canvas--log-info org-canvas--logger ">>> CALENDAR EVENTS PULL COMPLETE (%d events)" (length items))
+    (org-canvas--log-info org-canvas--logger "========================================")
     (message "Calendar events pull complete: %d events" (length items))))
 
 (provide 'org-canvas-calendar)

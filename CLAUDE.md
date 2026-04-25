@@ -196,9 +196,10 @@ Use `org-canvas-org-save-sync-state` to standardize saving.
 - Delete single: `org-canvas-delete-{feature}-at-point`
 
 ### Logging
-- Use `elog` library with `org-canvas--logger`
+- Use the in-tree logger in `lisp/org-canvas-core-log.el` via `org-canvas--logger`
+- Public API: `org-canvas--log-{trace,debug,info,warning,error}` and `org-canvas--logger-{set-level,set-file,set-handlers}`
 - Stage markers: `[Stage N: StageName]` prefix
-- Levels: debug, info, warning, error
+- Levels: trace, debug, info, warning, error, fatal (priority order; threshold gates emission)
 
 ### JSON/API
 - Modules with nested payloads (assignments, pages, modules, rubrics, files) use hash-tables: `(let ((payload (make-hash-table))) (puthash 'key val payload))`
@@ -242,9 +243,9 @@ Use `org-canvas-org-save-sync-state` to standardize saving.
 
 ## Dependencies
 
-External: `plz`, `elog`, `transient` (0.4+), `org` (9.6+), `ox-html`
+External: `plz`, `transient` (0.4+), `org` (9.6+), `ox-html`
 
-The `elog` package is fetched from GitHub via `eldev-use-vc-repository` (not vendored).
+Logging is handled by the in-tree `lisp/org-canvas-core-log.el` module (no external dependency).
 
 ## Testing
 
@@ -388,8 +389,6 @@ This allows `eldev lint` to find the `Package-Requires` header while keeping the
 ```elisp
 (setf eldev-project-source-dirs '("lisp"))
 (setf eldev-project-main-file "org-canvas.el")
-(eldev-use-vc-repository 'elog :github "Kinneyzhang/elog")
-(eldev-add-extra-dependencies 'runtime '(elog))
 (push "test" eldev-project-source-dirs)  ; For test discovery
 (setf eldev-lint-ignored-fileset '("vendor/" "test/"))
 ```

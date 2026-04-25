@@ -1069,31 +1069,31 @@ Content.
 
 (describe "org-canvas--assignment-post-finalize"
   (it "warns when assignment_group_id mismatches"
-    (spy-on 'elog-warning)
+    (spy-on 'org-canvas--log-warning)
     (spy-on 'org-canvas--assignment-associate-rubric)
     (let ((data (list :title "Lab 1" :assignment_group_id 200 :rubric-id nil))
           (response '((id . 1001) (assignment_group_id . 999))))
       (org-canvas--assignment-post-finalize data response)
-      (expect 'elog-warning :to-have-been-called)))
+      (expect 'org-canvas--log-warning :to-have-been-called)))
 
   (it "does not warn when assignment_group_id matches"
-    (spy-on 'elog-warning)
+    (spy-on 'org-canvas--log-warning)
     (spy-on 'org-canvas--assignment-associate-rubric)
     (let ((data (list :title "Lab 1" :assignment_group_id 200 :rubric-id nil))
           (response '((id . 1001) (assignment_group_id . 200))))
       (org-canvas--assignment-post-finalize data response)
-      (expect 'elog-warning :not :to-have-been-called)))
+      (expect 'org-canvas--log-warning :not :to-have-been-called)))
 
   (it "does not warn when no expected group"
-    (spy-on 'elog-warning)
+    (spy-on 'org-canvas--log-warning)
     (spy-on 'org-canvas--assignment-associate-rubric)
     (let ((data (list :title "Lab 1" :assignment_group_id nil :rubric-id nil))
           (response '((id . 1001) (assignment_group_id . 999))))
       (org-canvas--assignment-post-finalize data response)
-      (expect 'elog-warning :not :to-have-been-called)))
+      (expect 'org-canvas--log-warning :not :to-have-been-called)))
 
   (it "still associates rubric after verification"
-    (spy-on 'elog-warning)
+    (spy-on 'org-canvas--log-warning)
     (spy-on 'org-canvas--assignment-associate-rubric)
     (let ((data (list :title "Lab 1" :assignment_group_id 200 :rubric-id "55"))
           (response '((id . 1001) (assignment_group_id . 200))))

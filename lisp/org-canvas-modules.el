@@ -44,7 +44,6 @@
 ;;; Code:
 
 (require 'org-canvas-core)
-(require 'elog)
 (require 'cl-lib)
 
 ;;;; Configuration
@@ -104,7 +103,7 @@ where sibling dirs aren't nested).  Returns absolute path, or nil."
     (if (file-exists-p abs-file) abs-file
       (let ((fallback (expand-file-name (file-name-nondirectory file) modules-file-dir)))
         (when (file-exists-p fallback)
-          (elog-warning org-canvas--logger
+          (org-canvas--log-warning org-canvas--logger
                         "[Module Item] Path not found: %s, using fallback: %s"
                         abs-file fallback))
         (if (file-exists-p fallback) fallback nil)))))
@@ -171,12 +170,12 @@ Returns a plist (:type TYPE :content-id ID :page-url URL :title TITLE) or nil."
            (item-type (org-canvas--module-item-type-from-file file))
            (abs-file (org-canvas--module-resolve-file-path file modules-file-dir)))
 
-      (elog-debug org-canvas--logger "[Module Item] Resolving: file=%s heading=%s type=%s"
+      (org-canvas--log-debug org-canvas--logger "[Module Item] Resolving: file=%s heading=%s type=%s"
         file (or heading "N/A") item-type)
 
       (cond
        ((not abs-file)
-        (elog-warning org-canvas--logger "[Module Item] File not found: %s"
+        (org-canvas--log-warning org-canvas--logger "[Module Item] File not found: %s"
           (expand-file-name file modules-file-dir))
         nil)
        (t
@@ -184,13 +183,13 @@ Returns a plist (:type TYPE :content-id ID :page-url URL :title TITLE) or nil."
           (if found
               (let ((canvas-id (plist-get found :canvas-id))
                     (page-url (plist-get found :canvas-url)))
-                (elog-debug org-canvas--logger "[Module Item] Resolved: type=%s id=%s url=%s"
+                (org-canvas--log-debug org-canvas--logger "[Module Item] Resolved: type=%s id=%s url=%s"
                   item-type (or canvas-id "N/A") (or page-url "N/A"))
                 (list :type item-type
                       :content-id (when canvas-id (string-to-number canvas-id))
                       :page-url page-url
                       :title title))
-            (elog-warning org-canvas--logger "[Module Item] No CANVAS_ID found for: %s" heading)
+            (org-canvas--log-warning org-canvas--logger "[Module Item] No CANVAS_ID found for: %s" heading)
             nil)))))))
 
 (defun org-canvas--module-parse-prerequisite-ids (prereq-string)
@@ -232,7 +231,7 @@ Pure function — no buffer access."
 (defun org-canvas--module-parse-entry ()
   "Extract module data from the Org heading at point (level 1)."
   (org-back-to-heading t)
-  (elog-debug org-canvas--logger "[Stage 1: Parse] Starting module extraction at point %d" (point))
+  (org-canvas--log-debug org-canvas--logger "[Stage 1: Parse] Starting module extraction at point %d" (point))
 
   (let* ((pom (point))
          (raw (org-canvas--module-read-props pom))
@@ -240,9 +239,9 @@ Pure function — no buffer access."
 
     (org-canvas--require-title (plist-get data :title) pom "Module")
 
-    (elog-info org-canvas--logger "[Stage 1: Parse] Processing Module: '%s' (ID: %s)"
+    (org-canvas--log-info org-canvas--logger "[Stage 1: Parse] Processing Module: '%s' (ID: %s)"
       (plist-get data :title) (or (plist-get data :canvas-id) "NEW"))
-    (elog-debug org-canvas--logger "[Stage 1: Parse] Position: %s, Unlock: %s, Sequential: %s"
+    (org-canvas--log-debug org-canvas--logger "[Stage 1: Parse] Position: %s, Unlock: %s, Sequential: %s"
       (or (plist-get data :position) "none")
       (or (plist-get data :unlock-at) "none")
       (plist-get data :require-sequential-progress))
@@ -351,10 +350,10 @@ PUBLISHED, and POM are passed through to the returned plist."
                          :published published
                          :pom pom))))
     (if link-file
-        (elog-warning org-canvas--logger
+        (org-canvas--log-warning org-canvas--logger
           "[Stage 1: Parse] Unresolved link: '%s' (type: %s)"
           (or link-title raw-heading) link-type)
-      (elog-info org-canvas--logger
+      (org-canvas--log-info org-canvas--logger
         "[Stage 1: Parse] Processing SubHeader: '%s'" raw-heading))
     result))
 
@@ -362,7 +361,7 @@ PUBLISHED, and POM are passed through to the returned plist."
   "Extract module item data from the Org heading at point (level 2).
 MODULES-FILE-DIR is used to resolve relative file links."
   (org-back-to-heading t)
-  (elog-debug org-canvas--logger "[Stage 1: Parse] Starting item extraction at point %d" (point))
+  (org-canvas--log-debug org-canvas--logger "[Stage 1: Parse] Starting item extraction at point %d" (point))
 
   (let* ((pom (point))
          (raw (org-canvas--module-item-read-props pom modules-file-dir))
@@ -375,9 +374,9 @@ MODULES-FILE-DIR is used to resolve relative file links."
             (title (plist-get data :title))
             (canvas-id (plist-get data :canvas-id)))
         (if (string= item-type "ExternalUrl")
-            (elog-info org-canvas--logger "[Stage 1: Parse] Processing ExternalUrl: '%s' (ID: %s)"
+            (org-canvas--log-info org-canvas--logger "[Stage 1: Parse] Processing ExternalUrl: '%s' (ID: %s)"
               title (or canvas-id "NEW"))
-          (elog-info org-canvas--logger "[Stage 1: Parse] Processing Item: '%s' -> %s (ID: %s)"
+          (org-canvas--log-info org-canvas--logger "[Stage 1: Parse] Processing Item: '%s' -> %s (ID: %s)"
             title item-type (or canvas-id "NEW"))))
       (plist-put data :pom pom)
       data)
@@ -397,7 +396,7 @@ MODULES-FILE-DIR is used to resolve relative file links."
 (defun org-canvas--module-build-payload (data)
   "Convert module DATA to Canvas payload."
   (let ((title (plist-get data :title)))
-    (elog-info org-canvas--logger "[Stage 2: Transform] Building module payload for '%s'" title)
+    (org-canvas--log-info org-canvas--logger "[Stage 2: Transform] Building module payload for '%s'" title)
 
     (let ((module (make-hash-table :test 'equal)))
       (puthash "name" title module)
@@ -407,11 +406,11 @@ MODULES-FILE-DIR is used to resolve relative file links."
         (puthash "position" (plist-get data :position) module))
 
       (when (plist-get data :unlock-at)
-        (elog-debug org-canvas--logger "[Stage 2: Transform] Unlock at: %s" (plist-get data :unlock-at))
+        (org-canvas--log-debug org-canvas--logger "[Stage 2: Transform] Unlock at: %s" (plist-get data :unlock-at))
         (puthash "unlock_at" (plist-get data :unlock-at) module))
 
       (when (plist-get data :prerequisite-module-ids)
-        (elog-debug org-canvas--logger "[Stage 2: Transform] Prerequisites: %s"
+        (org-canvas--log-debug org-canvas--logger "[Stage 2: Transform] Prerequisites: %s"
           (plist-get data :prerequisite-module-ids))
         (puthash "prerequisite_module_ids" (plist-get data :prerequisite-module-ids) module))
 
@@ -421,7 +420,7 @@ MODULES-FILE-DIR is used to resolve relative file links."
       (when (plist-get data :publish-final-grade)
         (puthash "publish_final_grade" t module))
 
-      (elog-debug org-canvas--logger "[Stage 2: Transform] Module payload complete")
+      (org-canvas--log-debug org-canvas--logger "[Stage 2: Transform] Module payload complete")
 
       ;; Wrap in "module" key as required by Canvas API
       (let ((payload (make-hash-table :test 'equal)))
@@ -434,7 +433,7 @@ MODULES-FILE-DIR is used to resolve relative file links."
   "Convert module item DATA to Canvas payload at POSITION."
   (let ((item-type (plist-get data :type))
         (title (plist-get data :title)))
-    (elog-info org-canvas--logger "[Stage 2: Transform] Building item payload for '%s' (type: %s)"
+    (org-canvas--log-info org-canvas--logger "[Stage 2: Transform] Building item payload for '%s' (type: %s)"
       title item-type)
 
     (let ((item (make-hash-table :test 'equal)))
@@ -469,7 +468,7 @@ MODULES-FILE-DIR is used to resolve relative file links."
         (when (plist-get data :min-score)
           (puthash "completion_requirement[min_score]" (plist-get data :min-score) item)))
 
-      (elog-debug org-canvas--logger "[Stage 2: Transform] Item payload complete")
+      (org-canvas--log-debug org-canvas--logger "[Stage 2: Transform] Item payload complete")
 
       ;; Wrap in "module_item" key
       (let ((payload (make-hash-table :test 'equal)))
@@ -480,21 +479,21 @@ MODULES-FILE-DIR is used to resolve relative file links."
 
 (defun org-canvas--module-search-by-name (name)
   "Search for a module with NAME on Canvas.  Return nil on error."
-  (elog-info org-canvas--logger "[Stage 3: Search] Looking for module '%s'..." name)
+  (org-canvas--log-info org-canvas--logger "[Stage 3: Search] Looking for module '%s'..." name)
   (condition-case err
       (let* ((endpoint (org-canvas-api-course-endpoint "modules"))
              (params `(("search_term" . ,name)))
              (results (append (org-canvas-api-request 'GET endpoint :params params) nil))
              (count (length results)))
-        (elog-debug org-canvas--logger "[Stage 3: Search] Found %d results" count)
+        (org-canvas--log-debug org-canvas--logger "[Stage 3: Search] Found %d results" count)
         (let ((found (cl-find-if (lambda (m) (string-equal (alist-get 'name m) name)) results)))
           (if found
-              (elog-info org-canvas--logger "[Stage 3: Search] Found exact match: ID=%s"
+              (org-canvas--log-info org-canvas--logger "[Stage 3: Search] Found exact match: ID=%s"
                 (alist-get 'id found))
-            (elog-debug org-canvas--logger "[Stage 3: Search] No exact match found"))
+            (org-canvas--log-debug org-canvas--logger "[Stage 3: Search] No exact match found"))
           found))
     (error
-     (elog-warning org-canvas--logger "[Stage 3: Search] Failed: %s" (error-message-string err))
+     (org-canvas--log-warning org-canvas--logger "[Stage 3: Search] Failed: %s" (error-message-string err))
      nil)))
 
 (defun org-canvas--module-push-to-api (data payload)
@@ -526,15 +525,15 @@ Return the matching item alist, or nil if not found."
          (base-endpoint (format "modules/%s/items" module-id))
          (find-fn (lambda (ttl) (org-canvas--module-find-item-by-title module-id ttl))))
 
-    (elog-info org-canvas--logger "[Stage 3: Execute] %s Item '%s' to module %s"
+    (org-canvas--log-info org-canvas--logger "[Stage 3: Execute] %s Item '%s' to module %s"
       method title module-id)
 
     (condition-case err
         (let ((response (org-canvas-api-request method endpoint :data payload)))
-          (elog-info org-canvas--logger "[Stage 3: Execute] %s successful for item '%s'" method title)
+          (org-canvas--log-info org-canvas--logger "[Stage 3: Execute] %s successful for item '%s'" method title)
           response)
       (error
-       (elog-error org-canvas--logger "[Stage 3: Execute] Item failed: %s" (error-message-string err))
+       (org-canvas--log-error org-canvas--logger "[Stage 3: Execute] Item failed: %s" (error-message-string err))
 
        (cond
         ;; CASE 1: Timeout -> Search for item in module
@@ -556,7 +555,7 @@ Return the matching item alist, or nil if not found."
         (modules-file-dir (file-name-directory
                            (expand-file-name org-canvas-modules-file))))
     (when module-id
-      (elog-info org-canvas--logger "[Module Items] Syncing items for module %s..." module-id)
+      (org-canvas--log-info org-canvas--logger "[Module Items] Syncing items for module %s..." module-id)
       (org-canvas--module-sync-items module-id (point) modules-file-dir))))
 
 (defun org-canvas--module-finalize (data response)
@@ -585,7 +584,7 @@ Returns (success-count . fail-count)."
         (success-count 0)
         (fail-count 0)
         (position 1))
-    (elog-info org-canvas--logger "[Module Items] Found %d items to sync" (length item-markers))
+    (org-canvas--log-info org-canvas--logger "[Module Items] Found %d items to sync" (length item-markers))
 
     (dolist (marker item-markers)
       (with-current-buffer (marker-buffer marker)
@@ -600,7 +599,7 @@ Returns (success-count . fail-count)."
                          (not (plist-get data :content-id))
                          (not (plist-get data :page-url)))
                     (progn
-                      (elog-warning org-canvas--logger "[Module Item] Skipping '%s': no linked content synced"
+                      (org-canvas--log-warning org-canvas--logger "[Module Item] Skipping '%s': no linked content synced"
                         (plist-get data :title))
                       (setq fail-count (1+ fail-count)))
                   (let* ((payload (org-canvas--module-item-build-payload data position))
@@ -610,7 +609,7 @@ Returns (success-count . fail-count)."
                     (setq position (1+ position)))))
             (error
              (setq fail-count (1+ fail-count))
-             (elog-error org-canvas--logger "[FAILED] Item at point %d: %s"
+             (org-canvas--log-error org-canvas--logger "[FAILED] Item at point %d: %s"
                (marker-position marker) (error-message-string err)))))))
 
     ;; Release markers to avoid memory leaks
@@ -785,7 +784,7 @@ Returns the count of items inserted."
               (setq item-count (+ item-count
                                   (org-canvas--module-pull-insert-items items)))))))
       (save-buffer))
-    (elog-info org-canvas--logger
+    (org-canvas--log-info org-canvas--logger
       "Modules pull complete: %d modules, %d items" mod-count item-count)
     (message "Modules pull complete: %d modules, %d items."
              mod-count item-count)))

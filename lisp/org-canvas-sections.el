@@ -51,7 +51,6 @@
 ;;; Code:
 
 (require 'org-canvas-core)
-(require 'elog)
 (require 'cl-lib)
 
 ;;;; Configuration
@@ -109,7 +108,7 @@ Returns the symbol `created' or `updated'."
         (progn
           (goto-char (marker-position marker))
           (org-canvas--section-set-properties (point) id start-at end-at restrict)
-          (elog-info org-canvas--logger
+          (org-canvas--log-info org-canvas--logger
                      "[Pull] Updated existing section '%s' (ID: %s)"
                      (org-get-heading t t t t) id)
           'updated)
@@ -118,7 +117,7 @@ Returns the symbol `created' or `updated'."
       (insert (format "* %s\n" name))
       (org-back-to-heading t)
       (org-canvas--section-set-properties (point) id start-at end-at restrict)
-      (elog-info org-canvas--logger
+      (org-canvas--log-info org-canvas--logger
                  "[Pull] Created new section '%s' (ID: %s)" name id)
       'created)))
 
@@ -129,7 +128,7 @@ Must be called in the sections file buffer."
    (lambda ()
      (let ((local-id (org-entry-get (point) "CANVAS_ID")))
        (when (and local-id (not (member local-id remote-ids)))
-         (elog-warning org-canvas--logger
+         (org-canvas--log-warning org-canvas--logger
                        "[Pull] Stale section '%s' (ID: %s) — no longer on Canvas"
                        (org-get-heading t t t t) local-id)
          (message "Warning: Stale section '%s' (ID: %s) not found on Canvas"
@@ -144,10 +143,10 @@ Returns the expanded sections file path."
       (error "Sections file directory does not exist: %s"
              (file-name-directory sections-file)))
     (org-canvas--pull-confirm-overwrite sections-file "sections")
-    (elog-info org-canvas--logger "========================================")
-    (elog-info org-canvas--logger ">>> PULLING SECTIONS FROM CANVAS")
-    (elog-info org-canvas--logger "File: %s" sections-file)
-    (elog-info org-canvas--logger "========================================")
+    (org-canvas--log-info org-canvas--logger "========================================")
+    (org-canvas--log-info org-canvas--logger ">>> PULLING SECTIONS FROM CANVAS")
+    (org-canvas--log-info org-canvas--logger "File: %s" sections-file)
+    (org-canvas--log-info org-canvas--logger "========================================")
     sections-file))
 
 ;;;###autoload
@@ -169,7 +168,7 @@ local headings whose CANVAS_ID no longer exists on Canvas."
            (remote-ids nil)
            (created 0) (updated 0))
 
-      (elog-info org-canvas--logger "[Pull] Fetched %d sections from Canvas"
+      (org-canvas--log-info org-canvas--logger "[Pull] Fetched %d sections from Canvas"
                  (length remote-sections))
 
       (with-current-buffer (find-file-noselect sections-file)
@@ -183,11 +182,11 @@ local headings whose CANVAS_ID no longer exists on Canvas."
         (org-canvas--pull-sections-warn-stale remote-ids)
         (save-buffer))
 
-      (elog-info org-canvas--logger "========================================")
-      (elog-info org-canvas--logger ">>> SECTION PULL COMPLETE")
-      (elog-info org-canvas--logger "Created: %d | Updated: %d | Total remote: %d"
+      (org-canvas--log-info org-canvas--logger "========================================")
+      (org-canvas--log-info org-canvas--logger ">>> SECTION PULL COMPLETE")
+      (org-canvas--log-info org-canvas--logger "Created: %d | Updated: %d | Total remote: %d"
                  created updated (length remote-sections))
-      (elog-info org-canvas--logger "========================================")
+      (org-canvas--log-info org-canvas--logger "========================================")
       (message "Section pull: %d created, %d updated." created updated)))
 
 ;;;; ================================================================
@@ -251,7 +250,7 @@ Returns a list of plists: (:section-id ID :due-at TS :unlock-at TS :lock-at TS).
                         :lock-at (org-canvas--override-parse-timestamp-cell lock-cell))
                   overrides))
           (unless section-id
-            (elog-warning org-canvas--logger
+            (org-canvas--log-warning org-canvas--logger
                           "[Override] Could not resolve section ID from: %s" section-cell)))))
     (nreverse overrides)))
 
@@ -281,14 +280,14 @@ ENDPOINT is the overrides API URL.  Returns the number deleted."
         (unless (memq item-section-id seen-section-ids)
           (condition-case err
               (progn
-                (elog-debug org-canvas--logger
+                (org-canvas--log-debug org-canvas--logger
                             "[Override] Deleting override %s (section %s no longer in table)"
                             item-id item-section-id)
                 (org-canvas-api-request 'DELETE
                   (format "%s/%s" endpoint item-id))
                 (setq deleted (1+ deleted)))
             (error
-             (elog-error org-canvas--logger
+             (org-canvas--log-error org-canvas--logger
                          "[Override] Delete failed for override %s: %s"
                          item-id (error-message-string err)))))))
     deleted))
@@ -324,19 +323,19 @@ Returns a list (CREATED UPDATED DELETED) as integer counts."
             (if existing-override
                 ;; Update existing override
                 (let ((override-id (alist-get 'id existing-override)))
-                  (elog-debug org-canvas--logger
+                  (org-canvas--log-debug org-canvas--logger
                               "[Override] Updating override %s for section %s"
                               override-id section-id)
                   (org-canvas-api-request 'PUT
                     (format "%s/%s" endpoint override-id) :data payload)
                   (setq updated (1+ updated)))
               ;; Create new override
-              (elog-debug org-canvas--logger
+              (org-canvas--log-debug org-canvas--logger
                           "[Override] Creating override for section %s" section-id)
               (org-canvas-api-request 'POST endpoint :data payload)
               (setq created (1+ created)))
           (error
-           (elog-error org-canvas--logger
+           (org-canvas--log-error org-canvas--logger
                        "[Override] Failed for section %s: %s"
                        section-id (error-message-string err))))))
 
@@ -354,10 +353,10 @@ Returns the expanded assignments file path."
                              (org-canvas--path "assignments.org")))))
     (unless (file-exists-p assignments-file)
       (error "Assignments file not found: %s" assignments-file))
-    (elog-info org-canvas--logger "========================================")
-    (elog-info org-canvas--logger ">>> STARTING OVERRIDE SYNC")
-    (elog-info org-canvas--logger "File: %s" assignments-file)
-    (elog-info org-canvas--logger "========================================")
+    (org-canvas--log-info org-canvas--logger "========================================")
+    (org-canvas--log-info org-canvas--logger ">>> STARTING OVERRIDE SYNC")
+    (org-canvas--log-info org-canvas--logger "File: %s" assignments-file)
+    (org-canvas--log-info org-canvas--logger "========================================")
     assignments-file))
 
 ;;;###autoload
@@ -382,7 +381,7 @@ reconciles them with Canvas assignment overrides."
                    (end (save-excursion (org-end-of-subtree t) (point)))
                    (table (org-canvas--override-find-table end)))
               (when (and canvas-id table)
-                (elog-info org-canvas--logger
+                (org-canvas--log-info org-canvas--logger
                            "[Override] Processing overrides for '%s' (ID: %s)"
                            title canvas-id)
                 (let* ((overrides (org-canvas--override-parse-table table source-dir))
@@ -393,11 +392,11 @@ reconciles them with Canvas assignment overrides."
                   (setq assignments-processed (1+ assignments-processed))))))
           (dolist (m markers) (set-marker m nil))))
 
-      (elog-info org-canvas--logger "========================================")
-      (elog-info org-canvas--logger ">>> OVERRIDE SYNC COMPLETE")
-      (elog-info org-canvas--logger "Assignments: %d | Created: %d | Updated: %d | Deleted: %d"
+      (org-canvas--log-info org-canvas--logger "========================================")
+      (org-canvas--log-info org-canvas--logger ">>> OVERRIDE SYNC COMPLETE")
+      (org-canvas--log-info org-canvas--logger "Assignments: %d | Created: %d | Updated: %d | Deleted: %d"
                  assignments-processed total-created total-updated total-deleted)
-      (elog-info org-canvas--logger "========================================")
+      (org-canvas--log-info org-canvas--logger "========================================")
       (message "Override sync: %d assignments, %d created, %d updated, %d deleted."
                assignments-processed total-created total-updated total-deleted)))
 

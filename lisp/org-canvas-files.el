@@ -48,7 +48,6 @@
 ;;; Code:
 
 (require 'org-canvas-core)
-(require 'elog)
 (require 'cl-lib)
 (require 'url-util)
 (require 'json)
@@ -145,13 +144,13 @@ Uses ancestor headings that don't have file links to build the path."
   "Get the root folder for the course (cached per sync session)."
   (if org-canvas--file-root-folder-cache
       (progn
-        (elog-debug org-canvas--logger "[Files] Using cached root folder ID: %s"
+        (org-canvas--log-debug org-canvas--logger "[Files] Using cached root folder ID: %s"
           (alist-get 'id org-canvas--file-root-folder-cache))
         org-canvas--file-root-folder-cache)
-    (elog-debug org-canvas--logger "[Files] Getting root folder...")
+    (org-canvas--log-debug org-canvas--logger "[Files] Getting root folder...")
     (let* ((endpoint (org-canvas-api-course-endpoint "folders/root"))
            (response (org-canvas-api-request 'GET endpoint)))
-      (elog-debug org-canvas--logger "[Files] Root folder ID: %s" (alist-get 'id response))
+      (org-canvas--log-debug org-canvas--logger "[Files] Root folder ID: %s" (alist-get 'id response))
       (setq org-canvas--file-root-folder-cache response)
       response)))
 
@@ -177,7 +176,7 @@ Return the folder object."
 
 (defun org-canvas--file-create-folder (folder-path parent-folder-id)
   "Create a folder at FOLDER-PATH under PARENT-FOLDER-ID."
-  (elog-info org-canvas--logger "[Files] Creating folder: %s" folder-path)
+  (org-canvas--log-info org-canvas--logger "[Files] Creating folder: %s" folder-path)
   (let* ((endpoint (org-canvas-api-course-endpoint "folders"))
          (payload (make-hash-table :test 'equal)))
     (puthash "name" (file-name-nondirectory folder-path) payload)
@@ -185,11 +184,11 @@ Return the folder object."
     (puthash "parent_folder_id" parent-folder-id payload)
     (condition-case err
         (let ((response (org-canvas-api-request 'POST endpoint :data payload)))
-          (elog-info org-canvas--logger "[Files] Created folder ID: %s" (alist-get 'id response))
+          (org-canvas--log-info org-canvas--logger "[Files] Created folder ID: %s" (alist-get 'id response))
           response)
       (error
        ;; If it already exists, try to get it
-       (elog-debug org-canvas--logger "[Files] Folder creation failed (may exist): %s" (error-message-string err))
+       (org-canvas--log-debug org-canvas--logger "[Files] Folder creation failed (may exist): %s" (error-message-string err))
        (org-canvas--file-resolve-folder-by-path folder-path)))))
 
 (defun org-canvas--file-resolve-or-cache-folder (current-path part current-folder)
@@ -199,12 +198,12 @@ Returns the resolved folder object."
                      (gethash current-path org-canvas--file-folder-cache))))
     (if cached
         (progn
-          (elog-debug org-canvas--logger "[Files] Using cached folder for: %s" current-path)
+          (org-canvas--log-debug org-canvas--logger "[Files] Using cached folder for: %s" current-path)
           cached)
       (let ((folder (org-canvas--file-ensure-subfolder current-folder part)))
         (when org-canvas--file-folder-cache
           (puthash current-path folder org-canvas--file-folder-cache)
-          (elog-debug org-canvas--logger "[Files] Cached folder: %s -> ID %s"
+          (org-canvas--log-debug org-canvas--logger "[Files] Cached folder: %s -> ID %s"
             current-path (alist-get 'id folder)))
         folder))))
 
@@ -215,7 +214,7 @@ Uses session cache to avoid redundant API calls."
                      (gethash folder-path org-canvas--file-folder-cache))))
     (if cached
         (progn
-          (elog-debug org-canvas--logger "[Files] Using cached folder for path: %s" folder-path)
+          (org-canvas--log-debug org-canvas--logger "[Files] Using cached folder for path: %s" folder-path)
           cached)
       (let* ((parts (split-string folder-path "/" t))
              (current-folder (org-canvas--file-get-root-folder))
@@ -250,11 +249,11 @@ Returns the folder API object for the subfolder."
   "Validate that ABS-PATH exists and is within the size limit.
 DISPLAY-NAME is used for error messages.  Signals an error on failure."
   (unless (file-exists-p abs-path)
-    (elog-error org-canvas--logger "[Stage 1: Parse] File not found: %s" abs-path)
+    (org-canvas--log-error org-canvas--logger "[Stage 1: Parse] File not found: %s" abs-path)
     (error "File not found: %s" abs-path))
   (let ((size-mb (/ (file-attribute-size (file-attributes abs-path)) org-canvas--bytes-per-mb)))
     (when (> size-mb org-canvas-max-file-size-mb)
-      (elog-warning org-canvas--logger
+      (org-canvas--log-warning org-canvas--logger
         "[Stage 1: Parse] Skipping '%s': %.1f MB exceeds limit of %d MB"
         display-name size-mb org-canvas-max-file-size-mb)
       (error "File '%s' (%.1f MB) exceeds max size of %d MB"
@@ -282,11 +281,11 @@ Returns a plist with raw values, or nil for folder-only headings."
          (link-path (plist-get heading-info :link-path))
          (display-name (plist-get heading-info :display-name))
          (raw-heading (plist-get heading-info :raw-heading)))
-    (elog-debug org-canvas--logger "[Stage 1: Parse] Heading text: %s" raw-heading)
-    (elog-debug org-canvas--logger "[Stage 1: Parse] Link path: %s" (or link-path "NONE"))
+    (org-canvas--log-debug org-canvas--logger "[Stage 1: Parse] Heading text: %s" raw-heading)
+    (org-canvas--log-debug org-canvas--logger "[Stage 1: Parse] Link path: %s" (or link-path "NONE"))
     (if (not link-path)
         (progn
-          (elog-debug org-canvas--logger "[Stage 1: Parse] Skipping folder heading: %s" raw-heading)
+          (org-canvas--log-debug org-canvas--logger "[Stage 1: Parse] Skipping folder heading: %s" raw-heading)
           nil)
       (let* ((files-dir (file-name-directory org-canvas-files-file))
              (folder-path (org-canvas--file-get-folder-path pom files-dir))
@@ -320,7 +319,7 @@ Pure function — no buffer access."
   "Extract file data from the Org heading at point.
 Returns nil for folder-only headings (no file link)."
   (org-back-to-heading t)
-  (elog-debug org-canvas--logger "[Stage 1: Parse] Starting extraction at point %d" (point))
+  (org-canvas--log-debug org-canvas--logger "[Stage 1: Parse] Starting extraction at point %d" (point))
 
   (let* ((pom (point))
          (raw (org-canvas--file-read-props pom)))
@@ -329,13 +328,13 @@ Returns nil for folder-only headings (no file link)."
     (when raw
       (let ((data (org-canvas--file-transform-props raw)))
 
-        (elog-info org-canvas--logger "[Stage 1: Parse] Processing File: '%s' (ID: %s)"
+        (org-canvas--log-info org-canvas--logger "[Stage 1: Parse] Processing File: '%s' (ID: %s)"
           (plist-get data :display-name) (or (plist-get data :canvas-id) "NEW"))
-        (elog-debug org-canvas--logger "[Stage 1: Parse] Local path: %s" (plist-get data :local-path))
+        (org-canvas--log-debug org-canvas--logger "[Stage 1: Parse] Local path: %s" (plist-get data :local-path))
         (let ((folder-display (if (string-empty-p (plist-get data :folder-path))
                                   "root"
                                 (plist-get data :folder-path))))
-          (elog-debug org-canvas--logger "[Stage 1: Parse] Canvas folder: %s" folder-display))
+          (org-canvas--log-debug org-canvas--logger "[Stage 1: Parse] Canvas folder: %s" folder-display))
 
         (org-canvas--file-validate-local (plist-get data :local-path) (plist-get data :display-name))
 
@@ -352,8 +351,8 @@ Returns nil for folder-only headings (no file link)."
          (content-type (org-canvas--file-guess-content-type local-path))
          (payload (make-hash-table :test 'equal)))
 
-    (elog-info org-canvas--logger "[Stage 2: Prepare] Building upload for '%s'" display-name)
-    (elog-debug org-canvas--logger "[Stage 2: Prepare] Size: %d bytes, Type: %s" file-size content-type)
+    (org-canvas--log-info org-canvas--logger "[Stage 2: Prepare] Building upload for '%s'" display-name)
+    (org-canvas--log-debug org-canvas--logger "[Stage 2: Prepare] Size: %d bytes, Type: %s" file-size content-type)
 
     (puthash "name" display-name payload)
     (puthash "size" file-size payload)
@@ -384,10 +383,10 @@ Canvas needs time to process newly created folders.")
 FOLDER-ID is the target folder.
 PAYLOAD contains file metadata.
 Returns the upload parameters."
-  (elog-info org-canvas--logger "[Stage 3: Upload Step 1] Notifying Canvas...")
+  (org-canvas--log-info org-canvas--logger "[Stage 3: Upload Step 1] Notifying Canvas...")
   (let* ((endpoint (format "%s/api/v1/folders/%s/files" org-canvas-base-url folder-id))
          (response (org-canvas-api-request 'POST endpoint :data payload)))
-    (elog-debug org-canvas--logger "[Stage 3: Upload Step 1] Got upload URL: %s"
+    (org-canvas--log-debug org-canvas--logger "[Stage 3: Upload Step 1] Got upload URL: %s"
       (alist-get 'upload_url response))
     response))
 
@@ -425,27 +424,27 @@ Returns either a file object alist, a location alist, or signals an error."
          (json-response (plist-get parts :json))
          (response-body (plist-get parts :body)))
     (when status-line
-      (elog-debug org-canvas--logger "[Stage 3: Upload Step 2] HTTP status: %s" status-line))
+      (org-canvas--log-debug org-canvas--logger "[Stage 3: Upload Step 2] HTTP status: %s" status-line))
     ;; Buffer cleanup is handled by caller's unwind-protect
     ;; Log HTTP errors with diagnostic details
     (when (and status-line (>= (string-to-number status-line) 400))
-      (elog-error org-canvas--logger
+      (org-canvas--log-error org-canvas--logger
         "[Stage 3: Upload Step 2] HTTP %s uploading '%s' to %s"
         status-line (file-name-nondirectory local-path) upload-url)
       (when response-body
-        (elog-error org-canvas--logger
+        (org-canvas--log-error org-canvas--logger
           "[Stage 3: Upload Step 2] Response: %s"
           (truncate-string-to-width response-body 500))))
     ;; Determine what to return
     (cond
      ((and json-response (alist-get 'id json-response))
-      (elog-debug org-canvas--logger "[Stage 3: Upload Step 2] Got file object directly")
+      (org-canvas--log-debug org-canvas--logger "[Stage 3: Upload Step 2] Got file object directly")
       json-response)
      (location-header
-      (elog-debug org-canvas--logger "[Stage 3: Upload Step 2] Got redirect to: %s" location-header)
+      (org-canvas--log-debug org-canvas--logger "[Stage 3: Upload Step 2] Got redirect to: %s" location-header)
       `((location . ,location-header)))
      (json-response
-      (elog-debug org-canvas--logger "[Stage 3: Upload Step 2] Got JSON response")
+      (org-canvas--log-debug org-canvas--logger "[Stage 3: Upload Step 2] Got JSON response")
       json-response)
      (t
       (error "Upload failed: no JSON response or Location header.  Status: %s, Body: %s"
@@ -457,7 +456,7 @@ UPLOAD-INFO contains the upload URL and parameters from step 1.
 LOCAL-PATH is the path to the local file.
 Return either a file object (if upload returns JSON) or an alist
 with `location' key."
-  (elog-info org-canvas--logger "[Stage 3: Upload Step 2] Uploading file content...")
+  (org-canvas--log-info org-canvas--logger "[Stage 3: Upload Step 2] Uploading file content...")
   (let* ((upload-url (alist-get 'upload_url upload-info))
          (upload-params (alist-get 'upload_params upload-info))
          (boundary (format "----FormBoundary%s" (md5 (format "%s%s" (current-time) (random))))))
@@ -466,8 +465,8 @@ with `location' key."
       (error "Canvas API returned no upload_url in step 1 response: %S" upload-info))
 
     ;; Log upload_params from Canvas (these must be sent exactly as-is)
-    (elog-debug org-canvas--logger "[Stage 3: Upload Step 2] upload_url: %s" upload-url)
-    (elog-debug org-canvas--logger "[Stage 3: Upload Step 2] upload_params from Canvas: %S" upload-params)
+    (org-canvas--log-debug org-canvas--logger "[Stage 3: Upload Step 2] upload_url: %s" upload-url)
+    (org-canvas--log-debug org-canvas--logger "[Stage 3: Upload Step 2] upload_params from Canvas: %S" upload-params)
 
     ;; Build multipart form data
     (let* ((full-body (org-canvas--file-build-multipart-body upload-params local-path boundary))
@@ -478,7 +477,7 @@ with `location' key."
            (buf (url-retrieve-synchronously
                  upload-url nil nil org-canvas-upload-timeout)))
 
-      (elog-debug org-canvas--logger "[Stage 3: Upload Step 2] Sending to %s" upload-url)
+      (org-canvas--log-debug org-canvas--logger "[Stage 3: Upload Step 2] Sending to %s" upload-url)
 
       (unwind-protect
           (with-current-buffer buf
@@ -496,7 +495,7 @@ Returns the API response or signals the last error."
           (progn
             (when (> attempt 1)
               (let ((delay (expt 2 (1- attempt))))
-                (elog-warning org-canvas--logger
+                (org-canvas--log-warning org-canvas--logger
                   "[Stage 3: Upload Step 3] Retry %d/%d after %ds..."
                   attempt max-retries delay)
                 (message "File upload: retry %d/%d after %ds..." attempt max-retries delay)
@@ -504,12 +503,12 @@ Returns the API response or signals the last error."
             (setq response (org-canvas-api-request 'GET url)))
         (error
          (setq last-err err)
-         (elog-warning org-canvas--logger
+         (org-canvas--log-warning org-canvas--logger
            "[Stage 3: Upload Step 3] Attempt %d/%d failed: %s"
            attempt max-retries (error-message-string err)))))
     (if response
         response
-      (elog-error org-canvas--logger
+      (org-canvas--log-error org-canvas--logger
         "[Stage 3: Upload Step 3] All %d confirmation attempts failed. File may exist on Canvas without local tracking."
         max-retries)
       (signal (car last-err) (cdr last-err)))))
@@ -518,10 +517,10 @@ Returns the API response or signals the last error."
   "Step 3: Confirm the upload and get the file object.
 STEP2-RESPONSE is the response from step 2.
 Per Canvas docs, this GET request must be authenticated."
-  (elog-info org-canvas--logger "[Stage 3: Upload Step 3] Confirming upload...")
+  (org-canvas--log-info org-canvas--logger "[Stage 3: Upload Step 3] Confirming upload...")
   (if (alist-get 'id step2-response)
       (progn
-        (elog-debug org-canvas--logger "[Stage 3: Upload Step 3] File object returned directly")
+        (org-canvas--log-debug org-canvas--logger "[Stage 3: Upload Step 3] File object returned directly")
         step2-response)
     (let ((location (alist-get 'location step2-response)))
       (if location
@@ -530,11 +529,11 @@ Per Canvas docs, this GET request must be authenticated."
                              (concat org-canvas-base-url location)))
                  (response (org-canvas--file-confirm-with-retry
                             full-url org-canvas--file-upload-confirm-retries)))
-            (elog-debug org-canvas--logger
+            (org-canvas--log-debug org-canvas--logger
               "[Stage 3: Upload Step 3] Confirmed, file ID: %s"
               (alist-get 'id response))
             (unless (alist-get 'id response)
-              (elog-warning org-canvas--logger
+              (org-canvas--log-warning org-canvas--logger
                 "[Stage 3: Upload Step 3] No ID in confirmation response: %S"
                 response))
             response)
@@ -547,16 +546,16 @@ Per Canvas docs, this GET request must be authenticated."
          (local-path (plist-get data :local-path))
          (folder-path (plist-get data :folder-path)))
 
-    (elog-info org-canvas--logger "[Stage 3: Execute] Uploading '%s'" display-name)
+    (org-canvas--log-info org-canvas--logger "[Stage 3: Execute] Uploading '%s'" display-name)
 
     ;; If we already have a canvas ID, we're updating - delete old and re-upload
     ;; (Canvas doesn't support direct file content updates)
     (when canvas-id
-      (elog-debug org-canvas--logger "[Stage 3: Execute] Replacing existing file ID: %s" canvas-id)
+      (org-canvas--log-debug org-canvas--logger "[Stage 3: Execute] Replacing existing file ID: %s" canvas-id)
       (condition-case err
           (org-canvas-api-request 'DELETE (format "%s/api/v1/files/%s" org-canvas-base-url canvas-id))
         (error
-         (elog-warning org-canvas--logger "[Stage 3: Execute] Could not delete old file: %s" (error-message-string err)))))
+         (org-canvas--log-warning org-canvas--logger "[Stage 3: Execute] Could not delete old file: %s" (error-message-string err)))))
 
     ;; Get or create the target folder
     (let* ((root-folder (org-canvas--file-get-root-folder))
@@ -565,7 +564,7 @@ Per Canvas docs, this GET request must be authenticated."
                             (org-canvas--file-resolve-folder-by-path folder-path)))
            (folder-id (alist-get 'id target-folder)))
 
-      (elog-debug org-canvas--logger "[Stage 3: Execute] Target folder ID: %s" folder-id)
+      (org-canvas--log-debug org-canvas--logger "[Stage 3: Execute] Target folder ID: %s" folder-id)
 
       ;; Build upload payload
       (let ((payload (org-canvas--file-build-upload-request data folder-id)))
@@ -579,10 +578,10 @@ Per Canvas docs, this GET request must be authenticated."
                    (step2-response (org-canvas--file-upload-step2-send step1-response local-path))
                    (_ (message "Files: '%s' step 3/3 (confirming)..." display-name))
                    (final-response (org-canvas--file-upload-step3-confirm step2-response)))
-              (elog-info org-canvas--logger "[Stage 3: Execute] Upload complete for '%s'" display-name)
+              (org-canvas--log-info org-canvas--logger "[Stage 3: Execute] Upload complete for '%s'" display-name)
               final-response)
           (error
-           (elog-error org-canvas--logger
+           (org-canvas--log-error org-canvas--logger
              "[Stage 3: Execute] Upload failed for '%s' (path: %s, folder: %s): %s"
              display-name local-path
              (if (string-empty-p folder-path) "root" folder-path)
@@ -591,18 +590,18 @@ Per Canvas docs, this GET request must be authenticated."
 
 (defun org-canvas--file-search-by-name (display-name folder-path)
   "Search for a file with DISPLAY-NAME in FOLDER-PATH on Canvas."
-  (elog-info org-canvas--logger "[Stage 3: Search] Looking for '%s' in '%s'..."
+  (org-canvas--log-info org-canvas--logger "[Stage 3: Search] Looking for '%s' in '%s'..."
     display-name (if (string-empty-p folder-path) "root" folder-path))
   (condition-case err
       (let* ((endpoint (org-canvas-api-course-endpoint "files"))
              (params `(("search_term" . ,display-name)))
              (results (append (org-canvas-api-request 'GET endpoint :params params) nil)))
-        (elog-debug org-canvas--logger "[Stage 3: Search] Found %d results" (length results))
+        (org-canvas--log-debug org-canvas--logger "[Stage 3: Search] Found %d results" (length results))
         (cl-find-if (lambda (f)
                       (string= (alist-get 'display_name f) display-name))
                     results))
     (error
-     (elog-warning org-canvas--logger "[Stage 3: Search] Search failed: %s" (error-message-string err))
+     (org-canvas--log-warning org-canvas--logger "[Stage 3: Search] Search failed: %s" (error-message-string err))
      nil)))
 
 ;;;; 4. Stage: Finalization
@@ -625,12 +624,12 @@ USE_JUSTIFICATION is set."
       (org-canvas--puthash-when rights data :usage-license "license")
       (org-canvas--puthash-when rights data :copyright "legal_copyright")
       (puthash "usage_rights" rights payload)
-      (elog-info org-canvas--logger
+      (org-canvas--log-info org-canvas--logger
         "[Usage Rights] Setting usage rights for file %s: %s" file-id justification)
       (condition-case err
           (org-canvas-api-request 'PUT endpoint :data payload)
         (error
-         (elog-warning org-canvas--logger
+         (org-canvas--log-warning org-canvas--logger
            "[Usage Rights] Failed for file %s: %s"
            file-id (error-message-string err)))))))
 
@@ -667,20 +666,20 @@ Returns a list of folder paths that need to exist for file uploads."
   "Ensure all FOLDER-PATHS exist on Canvas before uploading files.
 Creates folders as needed and populates the folder cache."
   (when folder-paths
-    (elog-info org-canvas--logger "[Pre-flight] Ensuring %d folder path(s) exist..."
+    (org-canvas--log-info org-canvas--logger "[Pre-flight] Ensuring %d folder path(s) exist..."
       (length folder-paths))
     (dolist (path folder-paths)
-      (elog-info org-canvas--logger "[Pre-flight] Creating/verifying folder: %s" path)
+      (org-canvas--log-info org-canvas--logger "[Pre-flight] Creating/verifying folder: %s" path)
       (condition-case err
           (org-canvas--file-resolve-folder-by-path path)
         (error
-         (elog-error org-canvas--logger "[Pre-flight] Failed to create folder '%s': %s"
+         (org-canvas--log-error org-canvas--logger "[Pre-flight] Failed to create folder '%s': %s"
            path (error-message-string err))
          (error "Cannot create required folder '%s': %s" path (error-message-string err)))))
     ;; Brief delay to let Canvas process newly created folders
-    (elog-debug org-canvas--logger "[Pre-flight] Waiting for Canvas to process folders...")
+    (org-canvas--log-debug org-canvas--logger "[Pre-flight] Waiting for Canvas to process folders...")
     (sleep-for org-canvas--folder-creation-delay)
-    (elog-info org-canvas--logger "[Pre-flight] All folders ready")))
+    (org-canvas--log-info org-canvas--logger "[Pre-flight] All folders ready")))
 
 ;;;; Main Sync Functions
 
@@ -694,7 +693,7 @@ Returns :success, :skip (folder heading), or :fail."
           (let ((data (org-canvas--file-parse-entry)))
             (if (not data)
                 :skip
-              (elog-info org-canvas--logger "----------------------------------------")
+              (org-canvas--log-info org-canvas--logger "----------------------------------------")
               (let ((response (org-canvas--file-push-to-api data)))
                 (org-canvas--file-finalize data response)
                 (let ((fid (alist-get 'id response)))
@@ -702,7 +701,7 @@ Returns :success, :skip (folder heading), or :fail."
                     (org-canvas--file-set-usage-rights fid data))))
               :success))
         (error
-         (elog-error org-canvas--logger "[FAILED] At point %d: %s"
+         (org-canvas--log-error org-canvas--logger "[FAILED] At point %d: %s"
            (marker-position marker) (error-message-string err))
          :fail)))))
 
@@ -720,19 +719,19 @@ Returns :success, :skip (folder heading), or :fail."
       (error "Files manifest not found: %s" files-file))
 
     (display-buffer (get-buffer-create org-canvas--log-buffer-name))
-    (elog-info org-canvas--logger "========================================")
-    (elog-info org-canvas--logger ">>> STARTING FILE SYNC")
-    (elog-info org-canvas--logger "File: %s" files-file)
-    (elog-info org-canvas--logger "Course: %s | URL: %s" org-canvas-course-id org-canvas-base-url)
-    (elog-info org-canvas--logger "========================================")
+    (org-canvas--log-info org-canvas--logger "========================================")
+    (org-canvas--log-info org-canvas--logger ">>> STARTING FILE SYNC")
+    (org-canvas--log-info org-canvas--logger "File: %s" files-file)
+    (org-canvas--log-info org-canvas--logger "Course: %s | URL: %s" org-canvas-course-id org-canvas-base-url)
+    (org-canvas--log-info org-canvas--logger "========================================")
 
-    (elog-info org-canvas--logger "[Pre-flight] Verifying course access...")
+    (org-canvas--log-info org-canvas--logger "[Pre-flight] Verifying course access...")
     (condition-case err
         (progn
           (org-canvas-api-request 'GET (org-canvas-api-course-endpoint ""))
-          (elog-info org-canvas--logger "[Pre-flight] Course accessible"))
+          (org-canvas--log-info org-canvas--logger "[Pre-flight] Course accessible"))
       (error
-       (elog-warning org-canvas--logger "[Pre-flight] Warning: %s" (error-message-string err))))
+       (org-canvas--log-warning org-canvas--logger "[Pre-flight] Warning: %s" (error-message-string err))))
 
     ;; Pre-create all necessary folders before uploading any files
     (let ((folder-paths (org-canvas--file-collect-folder-paths files-file)))
@@ -746,7 +745,7 @@ Returns :success, :skip (folder heading), or :fail."
       (with-current-buffer (find-file-noselect files-file)
         (setq targets (org-map-entries (lambda () (point-marker)) t 'file)))
 
-      (elog-info org-canvas--logger "Found %d entries to process" (length targets))
+      (org-canvas--log-info org-canvas--logger "Found %d entries to process" (length targets))
 
       (dolist (marker targets)
         (let ((result (org-canvas--file-sync-single-entry marker)))
@@ -766,13 +765,13 @@ Returns :success, :skip (folder heading), or :fail."
       ;; Save the org file after all modifications
       (with-current-buffer (find-file-noselect files-file)
         (save-buffer)
-        (elog-info org-canvas--logger "Saved %s" files-file))
+        (org-canvas--log-info org-canvas--logger "Saved %s" files-file))
 
-      (elog-info org-canvas--logger "========================================")
-      (elog-info org-canvas--logger ">>> FILE SYNC COMPLETE")
-      (elog-info org-canvas--logger "Success: %d | Failed: %d | Skipped (folders): %d"
+      (org-canvas--log-info org-canvas--logger "========================================")
+      (org-canvas--log-info org-canvas--logger ">>> FILE SYNC COMPLETE")
+      (org-canvas--log-info org-canvas--logger "Success: %d | Failed: %d | Skipped (folders): %d"
         success-count fail-count skip-count)
-      (elog-info org-canvas--logger "========================================")
+      (org-canvas--log-info org-canvas--logger "========================================")
       (message "File Sync: %d success, %d failed, %d folders skipped."
                success-count fail-count skip-count))))
 
@@ -796,19 +795,19 @@ Returns :success, :skip (folder heading), or :fail."
   "Delete all folders in the course (except root).  Return count deleted."
   (let ((folders (org-canvas--file-get-all-folders))
         (deleted-count 0))
-    (elog-info org-canvas--logger "Found %d folders to delete (excluding root)" (length folders))
+    (org-canvas--log-info org-canvas--logger "Found %d folders to delete (excluding root)" (length folders))
     (dolist (folder folders)
       (let* ((id (alist-get 'id folder))
              (name (alist-get 'full_name folder)))
-        (elog-info org-canvas--logger "Deleting folder: '%s' (ID: %s)" name id)
+        (org-canvas--log-info org-canvas--logger "Deleting folder: '%s' (ID: %s)" name id)
         (condition-case err
             (progn
               (org-canvas-api-request 'DELETE (format "%s/api/v1/folders/%s" org-canvas-base-url id)
                                       :params '(("force" . "true")))
               (setq deleted-count (1+ deleted-count))
-              (elog-info org-canvas--logger "  -> Deleted successfully"))
+              (org-canvas--log-info org-canvas--logger "  -> Deleted successfully"))
           (error
-           (elog-error org-canvas--logger "  -> Delete failed: %s" (error-message-string err))))))
+           (org-canvas--log-error org-canvas--logger "  -> Delete failed: %s" (error-message-string err))))))
     deleted-count))
 
 ;;;###autoload
@@ -824,9 +823,9 @@ Returns :success, :skip (folder heading), or :fail."
     (setq org-canvas--file-root-folder-cache nil)
     (setq org-canvas--file-folder-cache (make-hash-table :test 'equal))
     (display-buffer (get-buffer-create org-canvas--log-buffer-name))
-    (elog-warning org-canvas--logger "========================================")
-    (elog-warning org-canvas--logger ">>> STARTING MASS DELETION OF FILES AND FOLDERS")
-    (elog-warning org-canvas--logger "========================================")
+    (org-canvas--log-warning org-canvas--logger "========================================")
+    (org-canvas--log-warning org-canvas--logger ">>> STARTING MASS DELETION OF FILES AND FOLDERS")
+    (org-canvas--log-warning org-canvas--logger "========================================")
 
     (let* ((endpoint (org-canvas-api-course-endpoint "files"))
            (params org-canvas--api-max-per-page)
@@ -835,34 +834,34 @@ Returns :success, :skip (folder heading), or :fail."
            (deleted-file-count 0)
            (deleted-folder-count 0))
 
-      (elog-info org-canvas--logger "Found %d files on Canvas" (length remote-items))
+      (org-canvas--log-info org-canvas--logger "Found %d files on Canvas" (length remote-items))
 
       ;; Delete all files first
       (dolist (item remote-items)
         (let* ((id (alist-get 'id item))
                (name (alist-get 'display_name item)))
-          (elog-info org-canvas--logger "Deleting file: '%s' (ID: %s)" name id)
+          (org-canvas--log-info org-canvas--logger "Deleting file: '%s' (ID: %s)" name id)
           (condition-case err
               (progn
                 (org-canvas-api-request 'DELETE (format "%s/api/v1/files/%s" org-canvas-base-url id))
                 (push (number-to-string id) deleted-ids)
                 (setq deleted-file-count (1+ deleted-file-count))
-                (elog-info org-canvas--logger "  -> Deleted successfully"))
+                (org-canvas--log-info org-canvas--logger "  -> Deleted successfully"))
             (error
-             (elog-error org-canvas--logger "  -> Delete failed: %s" (error-message-string err))))))
+             (org-canvas--log-error org-canvas--logger "  -> Delete failed: %s" (error-message-string err))))))
 
       ;; Delete all folders (after files are gone)
-      (elog-info org-canvas--logger "----------------------------------------")
-      (elog-info org-canvas--logger "Now deleting folders...")
+      (org-canvas--log-info org-canvas--logger "----------------------------------------")
+      (org-canvas--log-info org-canvas--logger "Now deleting folders...")
       (setq deleted-folder-count (org-canvas--file-delete-all-folders))
 
       ;; Clean local properties
       (org-canvas--clean-local-sync-properties files-file)
 
-      (elog-info org-canvas--logger "========================================")
-      (elog-info org-canvas--logger ">>> MASS DELETION COMPLETE: %d files, %d folders removed"
+      (org-canvas--log-info org-canvas--logger "========================================")
+      (org-canvas--log-info org-canvas--logger ">>> MASS DELETION COMPLETE: %d files, %d folders removed"
         deleted-file-count deleted-folder-count)
-      (elog-info org-canvas--logger "========================================")
+      (org-canvas--log-info org-canvas--logger "========================================")
       (message "Deletion complete. %d files, %d folders removed."
                deleted-file-count deleted-folder-count))))
 
@@ -879,11 +878,11 @@ SIZE is used for logging; may be nil."
   (when (and download-url (not (file-exists-p local-path)))
     (condition-case err
         (progn
-          (elog-info org-canvas--logger
+          (org-canvas--log-info org-canvas--logger
             "[Download] %s (%s bytes)" display-name (or size "?"))
           (url-copy-file download-url local-path t))
       (error
-       (elog-warning org-canvas--logger
+       (org-canvas--log-warning org-canvas--logger
          "[Download] Failed for %s: %s"
          display-name (error-message-string err))))))
 
@@ -942,7 +941,7 @@ Downloads file contents to the content/ directory."
           (org-canvas--file-pull-download
            display-name download-url local-path (alist-get 'size item))))
       (save-buffer))
-    (elog-info org-canvas--logger "Files pull complete: %d files" count)
+    (org-canvas--log-info org-canvas--logger "Files pull complete: %d files" count)
     (message "Files pull complete: %d files." count)))
 
 (provide 'org-canvas-files)

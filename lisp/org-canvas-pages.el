@@ -37,7 +37,6 @@
 
 (require 'org-canvas-core)
 (require 'ox-html)
-(require 'elog)
 
 ;;;; Configuration
 
@@ -77,7 +76,7 @@ Logs warnings for invalid roles.  Returns RAW unchanged."
       (dolist (role roles)
         (unless (member role org-canvas--valid-editing-roles)
           (when (boundp 'org-canvas--logger)
-            (elog-warning org-canvas--logger
+            (org-canvas--log-warning org-canvas--logger
               "[Validate] EDITING_ROLES: '%s' is not valid (expected: teachers, students, members, public)"
               role))
           (message "Warning: EDITING_ROLES '%s' is not valid" role)))))
@@ -104,7 +103,7 @@ Logs warnings for invalid roles.  Returns RAW unchanged."
 (defun org-canvas--page-pre-build-check (data _payload)
   "Validate page DATA before building payload.  Return PAYLOAD unchanged."
   (when (string-empty-p (plist-get data :title))
-    (elog-error org-canvas--logger "[Stage 2: Transform] Empty title!")
+    (org-canvas--log-error org-canvas--logger "[Stage 2: Transform] Empty title!")
     (error "Page title cannot be empty during payload build"))
   _payload)
 

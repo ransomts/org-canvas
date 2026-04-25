@@ -25,7 +25,7 @@
 TITLE-FIELD is the alist key for item display names."
   (dolist (item items)
     (when (funcall skip-fn item)
-      (elog-info org-canvas--logger "Skipping: '%s'"
+      (org-canvas--log-info org-canvas--logger "Skipping: '%s'"
         (alist-get title-field item)))))
 
 (defun org-canvas--delete-items-queued (items endpoint-fn id-field
@@ -53,7 +53,7 @@ Returns (DELETED-COUNT . DELETED-IDS)."
           (cl-incf del-idx)
           (let ((item-id (alist-get id-field item))
                 (item-title (alist-get title-field item)))
-            (elog-info org-canvas--logger "Deleting: '%s' (ID: %s)" item-title item-id)
+            (org-canvas--log-info org-canvas--logger "Deleting: '%s' (ID: %s)" item-title item-id)
             (message "Deleting [%d/%d] '%s'..." del-idx del-total item-title)
             (condition-case err
                 (progn
@@ -63,15 +63,15 @@ Returns (DELETED-COUNT . DELETED-IDS)."
                     (org-canvas-api-request 'DELETE (funcall endpoint-fn item-id)))
                   (push (org-canvas--normalize-id item-id) deleted-ids)
                   (setq deleted-count (1+ deleted-count))
-                  (elog-info org-canvas--logger "  -> Deleted '%s' successfully" item-title))
+                  (org-canvas--log-info org-canvas--logger "  -> Deleted '%s' successfully" item-title))
               (error
                (setq failed-count (1+ failed-count))
-               (elog-error org-canvas--logger "  -> Delete failed for '%s': %s"
+               (org-canvas--log-error org-canvas--logger "  -> Delete failed for '%s': %s"
                  item-title (error-message-string err))
                (message "WARNING: Delete failed for '%s': %s"
                         item-title (error-message-string err))))))
         (when (> failed-count 0)
-          (elog-warning org-canvas--logger
+          (org-canvas--log-warning org-canvas--logger
             "Delete summary: %d succeeded, %d failed out of %d"
             deleted-count failed-count (length to-delete))
           (message "WARNING: %d of %d deletions failed. See *canvas-log*."
@@ -115,7 +115,7 @@ Returns the count of successfully deleted items."
                           (org-canvas-api-course-endpoint endpoint)))
          (remote-items (org-canvas-api-request-all-pages 'GET full-endpoint list-params)))
 
-    (elog-info org-canvas--logger "Found %d %s on Canvas" (length remote-items) feature-name)
+    (org-canvas--log-info org-canvas--logger "Found %d %s on Canvas" (length remote-items) feature-name)
 
     (let* ((del-fn (or delete-url-fn
                        (lambda (item-id)
@@ -128,9 +128,9 @@ Returns the count of successfully deleted items."
       ;; Cleanup local properties
       (org-canvas--clean-local-sync-properties file id-property)
 
-      (elog-info org-canvas--logger "========================================")
-      (elog-info org-canvas--logger ">>> MASS DELETION COMPLETE: %d removed" deleted-count)
-      (elog-info org-canvas--logger "========================================")
+      (org-canvas--log-info org-canvas--logger "========================================")
+      (org-canvas--log-info org-canvas--logger ">>> MASS DELETION COMPLETE: %d removed" deleted-count)
+      (org-canvas--log-info org-canvas--logger "========================================")
 
       deleted-count)))
 
@@ -165,7 +165,7 @@ Return non-nil if deletion succeeded."
     (when (y-or-n-p (format "Delete '%s' from Canvas? " title))
       (org-canvas-clear-log)
       (display-buffer (get-buffer-create org-canvas--log-buffer-name))
-      (elog-info org-canvas--logger "Deleting %s '%s' (ID: %s)..."
+      (org-canvas--log-info org-canvas--logger "Deleting %s '%s' (ID: %s)..."
                  feature-name title canvas-id)
 
       (condition-case err
@@ -177,16 +177,16 @@ Return non-nil if deletion succeeded."
                 (org-canvas-api-request 'DELETE url
                                         :data delete-data)
               (org-canvas-api-request 'DELETE url))
-            (elog-info org-canvas--logger
+            (org-canvas--log-info org-canvas--logger
                        "Successfully deleted from Canvas")
             (when post-delete-fn
               (funcall post-delete-fn pom))
             (org-canvas-clear-sync-properties pom)
-            (elog-info org-canvas--logger "Cleaned local properties")
+            (org-canvas--log-info org-canvas--logger "Cleaned local properties")
             (message "%s '%s' deleted." (capitalize feature-name) title)
             t)
         (error
-         (elog-error org-canvas--logger "Failed to delete: %s"
+         (org-canvas--log-error org-canvas--logger "Failed to delete: %s"
                      (error-message-string err))
          (message "Failed to delete %s. Check logs." feature-name)
          nil)))))
@@ -204,9 +204,9 @@ DELETE-URL-FN, and DELETE-DATA are passed through to
   (org-canvas-clear-log)
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (let ((feature-upper (upcase feature-name)))
-    (elog-warning org-canvas--logger "========================================")
-    (elog-warning org-canvas--logger ">>> STARTING MASS DELETION OF %s" feature-upper)
-    (elog-warning org-canvas--logger "========================================"))
+    (org-canvas--log-warning org-canvas--logger "========================================")
+    (org-canvas--log-warning org-canvas--logger ">>> STARTING MASS DELETION OF %s" feature-upper)
+    (org-canvas--log-warning org-canvas--logger "========================================"))
   (let ((deleted-count (org-canvas--delete-all-items feature-name
                           :endpoint endpoint :file file
                           :id-field id-field :title-field title-field

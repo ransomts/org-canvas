@@ -36,7 +36,6 @@
 
 (require 'org-canvas-core)
 (require 'ox-html)
-(require 'elog)
 
 ;;;; Forward Declarations
 
@@ -113,7 +112,7 @@ Accepts: online_upload, online_url, online_text_entry, media_recording,
         (dolist (t-val types)
           (unless (member t-val org-canvas--valid-submission-types)
             (when (boundp 'org-canvas--logger)
-              (elog-warning org-canvas--logger
+              (org-canvas--log-warning org-canvas--logger
                 "[Validate] SUBMISSION: '%s' is not valid (expected: %s)"
                 t-val (string-join org-canvas--valid-submission-types ", ")))
             (message "Warning: SUBMISSION '%s' is not valid" t-val)))
@@ -225,7 +224,7 @@ Pure function — no buffer access."
 (defun org-canvas--assignment-parse-entry ()
   "Extract assignment data from the Org heading at point."
   (org-back-to-heading t)
-  (elog-debug org-canvas--logger "[Stage 1: Parse] Starting extraction at point %d" (point))
+  (org-canvas--log-debug org-canvas--logger "[Stage 1: Parse] Starting extraction at point %d" (point))
 
   (let* ((pom (point))
          (raw (org-canvas--assignment-read-props pom))
@@ -233,23 +232,23 @@ Pure function — no buffer access."
 
     (org-canvas--require-title (plist-get data :title) pom "Assignment")
 
-    (elog-info org-canvas--logger "[Stage 1: Parse] Processing Assignment: '%s' (ID: %s)"
+    (org-canvas--log-info org-canvas--logger "[Stage 1: Parse] Processing Assignment: '%s' (ID: %s)"
               (plist-get data :title) (or (plist-get data :canvas-id) "NEW"))
-    (elog-debug org-canvas--logger "[Stage 1: Parse] Points: %s, Due: %s, Submission: %s"
+    (org-canvas--log-debug org-canvas--logger "[Stage 1: Parse] Points: %s, Due: %s, Submission: %s"
                 (or (plist-get data :points_possible) "0")
                 (or (plist-get data :due_at) "none")
                 (plist-get data :submission_types))
     (when (plist-get data :assignment_group_id)
-      (elog-debug org-canvas--logger "[Stage 1: Parse] Assignment Group ID: %s"
+      (org-canvas--log-debug org-canvas--logger "[Stage 1: Parse] Assignment Group ID: %s"
                   (plist-get data :assignment_group_id)))
     (when (plist-get data :rubric-id)
-      (elog-debug org-canvas--logger "[Stage 1: Parse] Rubric ID: %s"
+      (org-canvas--log-debug org-canvas--logger "[Stage 1: Parse] Rubric ID: %s"
                   (plist-get data :rubric-id)))
 
     ;; Extract description (resolves cross-file links to Canvas URLs)
-    (elog-debug org-canvas--logger "[Stage 1: Export] Exporting subtree to HTML...")
+    (org-canvas--log-debug org-canvas--logger "[Stage 1: Export] Exporting subtree to HTML...")
     (let ((description (org-canvas--export-subtree-body-to-html)))
-      (elog-info org-canvas--logger "[Stage 1: Parse] Description size: %d chars" (length description))
+      (org-canvas--log-info org-canvas--logger "[Stage 1: Parse] Description size: %d chars" (length description))
 
       (plist-put data :description description)
       (plist-put data :pom pom)
@@ -260,7 +259,7 @@ Pure function — no buffer access."
 (defun org-canvas--assignment-add-peer-reviews (data assignment)
   "Add peer review fields from DATA to ASSIGNMENT hash-table when enabled."
   (when (plist-get data :peer_reviews)
-    (elog-debug org-canvas--logger "[Stage 2: Transform] Peer reviews enabled")
+    (org-canvas--log-debug org-canvas--logger "[Stage 2: Transform] Peer reviews enabled")
     (puthash "peer_reviews" t assignment)
     ;; Default automatic_peer_reviews to t when PEER_REVIEWS is set,
     ;; but allow explicit override via AUTOMATIC_PEER_REVIEWS property
@@ -301,7 +300,7 @@ Pure function — no buffer access."
   "Convert DATA to Canvas assignment payload."
   (org-canvas--validate-date-ordering data)
   (let ((title (plist-get data :title)))
-    (elog-info org-canvas--logger "[Stage 2: Transform] Building payload for '%s'" title)
+    (org-canvas--log-info org-canvas--logger "[Stage 2: Transform] Building payload for '%s'" title)
 
     (let ((assignment (make-hash-table :test 'equal)))
       ;; Required fields
@@ -316,7 +315,7 @@ Pure function — no buffer access."
 
       ;; Dates
       (when (plist-get data :due_at)
-        (elog-debug org-canvas--logger "[Stage 2: Transform] Due at: %s" (plist-get data :due_at))
+        (org-canvas--log-debug org-canvas--logger "[Stage 2: Transform] Due at: %s" (plist-get data :due_at))
         (puthash "due_at" (plist-get data :due_at) assignment))
       (org-canvas--puthash-when assignment data :unlock_at "unlock_at")
       (org-canvas--puthash-when assignment data :lock_at "lock_at")
@@ -327,7 +326,7 @@ Pure function — no buffer access."
 
       ;; Assignment group
       (when (plist-get data :assignment_group_id)
-        (elog-debug org-canvas--logger "[Stage 2: Transform] Assignment group: %d"
+        (org-canvas--log-debug org-canvas--logger "[Stage 2: Transform] Assignment group: %d"
                     (plist-get data :assignment_group_id))
         (puthash "assignment_group_id" (plist-get data :assignment_group_id) assignment))
 
@@ -337,7 +336,7 @@ Pure function — no buffer access."
       ;; Additional properties
       (org-canvas--assignment-add-optional-fields data assignment)
 
-      (elog-debug org-canvas--logger "[Stage 2: Transform] Payload complete")
+      (org-canvas--log-debug org-canvas--logger "[Stage 2: Transform] Payload complete")
 
       ;; Wrap in "assignment" key as required by Canvas API
       (let ((payload (make-hash-table :test 'equal)))
@@ -358,7 +357,7 @@ DATA is the parsed assignment plist, RESPONSE is the Canvas API response."
         (actual-group (alist-get 'assignment_group_id response)))
     (when (and expected-group actual-group
                (not (equal expected-group actual-group)))
-      (elog-warning org-canvas--logger
+      (org-canvas--log-warning org-canvas--logger
         "[Verify] '%s': assignment_group_id mismatch! Expected %s, got %s"
         (plist-get data :title) expected-group actual-group)))
   ;; Associate rubric

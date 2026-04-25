@@ -125,7 +125,7 @@
       (unwind-protect
           (progn
             (org-canvas-clear-log)
-            (let ((logger-file (plist-get org-canvas--logger :file)))
+            (let ((logger-file (org-canvas--logger-file org-canvas--logger)))
               (expect logger-file :to-equal
                       (expand-file-name "org-canvas.log" temp-dir))))
         (delete-directory temp-dir t)))))
@@ -189,32 +189,32 @@
   (it "sets destination to file and updates logger handlers"
     (let ((org-canvas-log-destination 'buffer)
           (org-canvas-log-file "/tmp/test.log")
-          (org-canvas--logger (elog-logger :name "test" :handlers '(buffer))))
+          (org-canvas--logger (org-canvas--logger-make :name "test" :handlers '(buffer))))
       (org-canvas-set-log-destination 'file)
       (expect org-canvas-log-destination :to-equal 'file)
-      (expect (plist-get org-canvas--logger :handlers) :to-equal '(file))
-      (expect (plist-get org-canvas--logger :file) :to-equal "/tmp/test.log")))
+      (expect (org-canvas--logger-handlers org-canvas--logger) :to-equal '(file))
+      (expect (org-canvas--logger-file org-canvas--logger) :to-equal "/tmp/test.log")))
 
   (it "sets destination to both and updates logger"
     (let ((org-canvas-log-destination 'buffer)
           (org-canvas-log-file "/tmp/test.log")
-          (org-canvas--logger (elog-logger :name "test" :handlers '(buffer))))
+          (org-canvas--logger (org-canvas--logger-make :name "test" :handlers '(buffer))))
       (org-canvas-set-log-destination 'both)
       (expect org-canvas-log-destination :to-equal 'both)
-      (expect (plist-get org-canvas--logger :handlers) :to-equal '(buffer file))))
+      (expect (org-canvas--logger-handlers org-canvas--logger) :to-equal '(buffer file))))
 
   (it "sets destination to buffer without setting file"
     (let ((org-canvas-log-destination 'file)
-          (org-canvas--logger (elog-logger :name "test" :handlers '(file)
+          (org-canvas--logger (org-canvas--logger-make :name "test" :handlers '(file)
                                           :file "/tmp/test.log")))
       (org-canvas-set-log-destination 'buffer)
       (expect org-canvas-log-destination :to-equal 'buffer)
-      (expect (plist-get org-canvas--logger :handlers) :to-equal '(buffer))))
+      (expect (org-canvas--logger-handlers org-canvas--logger) :to-equal '(buffer))))
 
   (it "works interactively with completing-read"
     (let ((org-canvas-log-destination 'buffer)
           (org-canvas-log-file "/tmp/test.log")
-          (org-canvas--logger (elog-logger :name "test" :handlers '(buffer))))
+          (org-canvas--logger (org-canvas--logger-make :name "test" :handlers '(buffer))))
       (spy-on 'completing-read :and-return-value "file")
       (call-interactively 'org-canvas-set-log-destination)
       (expect org-canvas-log-destination :to-equal 'file))))
@@ -273,10 +273,10 @@
 ;;;; 20. Trace Logging
 
 (describe "org-canvas--trace"
-  (it "calls elog-debug when trace enabled"
+  (it "calls org-canvas--log-debug when trace enabled"
     (let ((org-canvas-log-level 'trace)
           (debug-called nil))
-      (cl-letf (((symbol-function 'elog-debug)
+      (cl-letf (((symbol-function 'org-canvas--log-debug)
                  (lambda (&rest _args) (setq debug-called t) nil)))
         (org-canvas--trace "Test %s" "value")
         (expect debug-called :to-be t)))))
@@ -284,7 +284,7 @@
 ;;;; 25. org-canvas-set-log-level interactive
 
 (describe "org-canvas-set-log-level interactive"
-  (it "maps trace to debug for elog logger"
+  (it "maps trace to debug for the underlying logger"
     (org-canvas-set-log-level 'trace)
     (expect org-canvas-log-level :to-equal 'trace))
 
@@ -325,43 +325,43 @@
           (setq org-directory orig-org-dir))))))
 
 (describe "org-canvas-set-log-level coverage"
-  (it "maps trace to debug for elog and calls message"
-    (let ((elog-level-called nil)
+  (it "maps trace to debug and calls message"
+    (let ((log-level-called nil)
           (message-called nil))
-      (cl-letf (((symbol-function 'elog-set-level)
+      (cl-letf (((symbol-function 'org-canvas--logger-set-level)
                  (lambda (logger level)
-                   (setq elog-level-called level)
+                   (setq log-level-called level)
                    logger))
                 ((symbol-function 'message)
                  (lambda (&rest _args)
                    (setq message-called t))))
         (org-canvas-set-log-level 'trace)
         (expect org-canvas-log-level :to-equal 'trace)
-        (expect elog-level-called :to-equal 'debug)
+        (expect log-level-called :to-equal 'debug)
         (expect message-called :to-be t))))
 
-  (it "passes non-trace levels directly to elog"
-    (let ((elog-level-called nil))
-      (cl-letf (((symbol-function 'elog-set-level)
+  (it "passes non-trace levels directly to the logger"
+    (let ((log-level-called nil))
+      (cl-letf (((symbol-function 'org-canvas--logger-set-level)
                  (lambda (logger level)
-                   (setq elog-level-called level)
+                   (setq log-level-called level)
                    logger))
                 ((symbol-function 'message) #'ignore))
         (org-canvas-set-log-level 'warning)
-        (expect elog-level-called :to-equal 'warning))))
+        (expect log-level-called :to-equal 'warning))))
 
   (it "works when called interactively"
-    (let ((elog-level-called nil))
+    (let ((log-level-called nil))
       (cl-letf (((symbol-function 'completing-read)
                  (lambda (&rest _) "error"))
-                ((symbol-function 'elog-set-level)
+                ((symbol-function 'org-canvas--logger-set-level)
                  (lambda (logger level)
-                   (setq elog-level-called level)
+                   (setq log-level-called level)
                    logger))
                 ((symbol-function 'message) #'ignore))
         (call-interactively 'org-canvas-set-log-level)
         (expect org-canvas-log-level :to-equal 'error)
-        (expect elog-level-called :to-equal 'error)))))
+        (expect log-level-called :to-equal 'error)))))
 
 (provide 'org-canvas-core-config-test)
 ;;; org-canvas-core-config-test.el ends here

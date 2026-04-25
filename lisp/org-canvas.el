@@ -2,7 +2,7 @@
 
 ;; Author: Tim Ransom
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "28.1") (plz "0.9") (elog "2.0") (org "9.6") (transient "0.4"))
+;; Package-Requires: ((emacs "28.1") (plz "0.9") (org "9.6") (transient "0.4"))
 
 ;; Keywords: comm, tools
 ;; URL: https://github.com/ransomts/org-canvas
@@ -85,10 +85,10 @@ LABEL is used for logging (e.g., \"Pages\")."
     (error
      (let ((msg (error-message-string err)))
        (if (string-match-p "file not found\\|no such file" (downcase msg))
-           (elog-info org-canvas--logger
+           (org-canvas--log-info org-canvas--logger
              "[Skip] %s: %s\n  To import from Canvas: M-x org-canvas-pull-%s\n  To create skeleton files: M-x org-canvas-init"
              label msg (downcase (replace-regexp-in-string " " "-" label)))
-         (elog-error org-canvas--logger "[FAILED] %s: %s" label msg))))))
+         (org-canvas--log-error org-canvas--logger "[FAILED] %s: %s" label msg))))))
 
 (defun org-canvas--tier-description (tier)
   "Return a comma-separated string of labels in TIER."
@@ -137,35 +137,35 @@ LABEL is used for logging (e.g., \"Pages\")."
   (let ((org-canvas--inhibit-log-clear t)
         (org-canvas--sync-in-progress t)
         (org-canvas--sync-global-counters (list :success 0 :skip 0 :fail 0 :dry-run 0)))
-    (elog-info org-canvas--logger "========================================")
+    (org-canvas--log-info org-canvas--logger "========================================")
     (if org-canvas--dry-run
-        (elog-info org-canvas--logger ">>> DRY RUN — no changes will be made")
-      (elog-info org-canvas--logger ">>> STARTING GLOBAL SYNC"))
-    (elog-info org-canvas--logger "Course: %s | URL: %s" org-canvas-course-id org-canvas-base-url)
-    (elog-info org-canvas--logger "========================================")
+        (org-canvas--log-info org-canvas--logger ">>> DRY RUN — no changes will be made")
+      (org-canvas--log-info org-canvas--logger ">>> STARTING GLOBAL SYNC"))
+    (org-canvas--log-info org-canvas--logger "Course: %s | URL: %s" org-canvas-course-id org-canvas-base-url)
+    (org-canvas--log-info org-canvas--logger "========================================")
     (org-canvas--preflight-check)
     ;; Tiers -1 and 0
-    (elog-info org-canvas--logger "--- Tier -1: Settings ---")
+    (org-canvas--log-info org-canvas--logger "--- Tier -1: Settings ---")
     (message "Syncing: Settings...")
     (org-canvas--run-tier (nth 0 org-canvas--sync-tiers) #'org-canvas--safe-sync)
-    (elog-info org-canvas--logger "--- Tier 0: %s ---"
+    (org-canvas--log-info org-canvas--logger "--- Tier 0: %s ---"
       (org-canvas--tier-description (nth 1 org-canvas--sync-tiers)))
     (message "Syncing: %s..." (org-canvas--tier-description (nth 1 org-canvas--sync-tiers)))
     (org-canvas--run-tier (nth 1 org-canvas--sync-tiers) #'org-canvas--safe-sync)
-    (elog-info org-canvas--logger
+    (org-canvas--log-info org-canvas--logger
       "[Note] Same-tier cross-references (e.g., page→page) may require a second sync to fully resolve")
     ;; Tiers 1 through 2
     (let ((tier-num 1))
       (dolist (tier (nthcdr 2 org-canvas--sync-tiers))
-        (elog-info org-canvas--logger "--- Tier %s: %s ---"
+        (org-canvas--log-info org-canvas--logger "--- Tier %s: %s ---"
           (pcase tier-num (1 "1") (2 "1.5") (3 "1.75") (4 "2") (_ (number-to-string tier-num)))
           (org-canvas--tier-description tier))
         (message "Syncing: %s..." (org-canvas--tier-description tier))
         (org-canvas--run-tier tier #'org-canvas--safe-sync)
         (setq tier-num (1+ tier-num))))
-    (elog-info org-canvas--logger "========================================")
-    (elog-info org-canvas--logger ">>> GLOBAL SYNC COMPLETE")
-    (elog-info org-canvas--logger "========================================")
+    (org-canvas--log-info org-canvas--logger "========================================")
+    (org-canvas--log-info org-canvas--logger ">>> GLOBAL SYNC COMPLETE")
+    (org-canvas--log-info org-canvas--logger "========================================")
     ;; Clear session-scoped caches
     (setq org-canvas--image-cache nil)
     (if (> (plist-get org-canvas--sync-global-counters :dry-run) 0)
@@ -244,13 +244,13 @@ Deletion order is reverse of sync order to respect dependencies."
   (org-canvas-clear-log)
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (let ((org-canvas--inhibit-log-clear t))
-    (elog-info org-canvas--logger "Starting Global Delete...")
+    (org-canvas--log-info org-canvas--logger "Starting Global Delete...")
     (dolist (tier org-canvas--delete-tiers)
       (org-canvas--run-tier
        tier (lambda (fn label)
-              (elog-info org-canvas--logger "[Delete] %s..." label)
+              (org-canvas--log-info org-canvas--logger "[Delete] %s..." label)
               (funcall fn))))
-    (elog-info org-canvas--logger "Global Delete Complete.")
+    (org-canvas--log-info org-canvas--logger "Global Delete Complete.")
     (message "Global Delete Complete. See *canvas-log*.")))
 
 ;;;; Status Overview
@@ -361,7 +361,7 @@ LABEL is used for logging."
           (plist-put org-canvas--pull-counters :success
                      (1+ (plist-get org-canvas--pull-counters :success)))))
     (error
-     (elog-warning org-canvas--logger "[Pull] %s failed: %s"
+     (org-canvas--log-warning org-canvas--logger "[Pull] %s failed: %s"
        label (error-message-string err))
      (when org-canvas--pull-counters
        (plist-put org-canvas--pull-counters :fail
@@ -418,18 +418,18 @@ Canvas courses who want to adopt org-canvas."
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (let ((org-canvas--inhibit-log-clear t)
         (org-canvas--pull-counters (list :success 0 :fail 0)))
-    (elog-info org-canvas--logger "========================================")
-    (elog-info org-canvas--logger ">>> STARTING FULL COURSE PULL")
-    (elog-info org-canvas--logger "Course: %s | URL: %s"
+    (org-canvas--log-info org-canvas--logger "========================================")
+    (org-canvas--log-info org-canvas--logger ">>> STARTING FULL COURSE PULL")
+    (org-canvas--log-info org-canvas--logger "Course: %s | URL: %s"
       org-canvas-course-id org-canvas-base-url)
-    (elog-info org-canvas--logger "========================================")
+    (org-canvas--log-info org-canvas--logger "========================================")
     (org-canvas--preflight-check)
     (dolist (tier org-canvas--pull-tiers)
       (message "Pulling: %s..." (org-canvas--tier-description tier))
       (org-canvas--run-tier tier #'org-canvas--safe-pull))
-    (elog-info org-canvas--logger "========================================")
-    (elog-info org-canvas--logger ">>> FULL COURSE PULL COMPLETE")
-    (elog-info org-canvas--logger "========================================")
+    (org-canvas--log-info org-canvas--logger "========================================")
+    (org-canvas--log-info org-canvas--logger ">>> FULL COURSE PULL COMPLETE")
+    (org-canvas--log-info org-canvas--logger "========================================")
     (message "Pull complete: %d pulled, %d failed. See *canvas-log* for details."
              (plist-get org-canvas--pull-counters :success)
              (plist-get org-canvas--pull-counters :fail))))
@@ -479,7 +479,7 @@ or nil if no orphans found."
          (skip-fn (plist-get feature :skip-fn))
          (file (and (boundp file-var) (symbol-value file-var))))
     (unless file
-      (elog-info org-canvas--logger "[Orphan] %s: file var not set, skipping" name)
+      (org-canvas--log-info org-canvas--logger "[Orphan] %s: file var not set, skipping" name)
       (cl-return-from org-canvas--find-orphans-for-feature nil))
     (let ((local-ids (org-canvas--collect-local-ids file id-property)))
       (condition-case err
@@ -488,7 +488,7 @@ or nil if no orphans found."
                                 'GET url list-params)))
             (org-canvas--filter-orphans remote-items local-ids id-field skip-fn))
         (error
-         (elog-warning org-canvas--logger
+         (org-canvas--log-warning org-canvas--logger
            "[Orphan] %s: failed to fetch remote items: %s"
            name (error-message-string err))
          nil)))))
@@ -540,10 +540,10 @@ ALL-ORPHANS is a list of (FEATURE . ITEMS) pairs."
           (condition-case err
               (progn
                 (org-canvas-api-request 'DELETE url)
-                (elog-info org-canvas--logger
+                (org-canvas--log-info org-canvas--logger
                   "[Orphan] Deleted %s #%s" name id))
             (error
-             (elog-warning org-canvas--logger
+             (org-canvas--log-warning org-canvas--logger
                "[Orphan] Failed to delete %s #%s: %s"
                name id (error-message-string err)))))))))
 
@@ -558,27 +558,27 @@ Org heading locally (e.g., because the heading was deleted from the Org file)."
   (interactive)
   (org-canvas-clear-log)
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
-  (elog-info org-canvas--logger "========================================")
-  (elog-info org-canvas--logger ">>> SCANNING FOR ORPHANED ITEMS")
-  (elog-info org-canvas--logger "========================================")
+  (org-canvas--log-info org-canvas--logger "========================================")
+  (org-canvas--log-info org-canvas--logger ">>> SCANNING FOR ORPHANED ITEMS")
+  (org-canvas--log-info org-canvas--logger "========================================")
   (let ((all-orphans nil)
         (total-orphans 0))
     ;; Scan each feature
     (dolist (feature org-canvas--feature-registry)
       (let ((name (plist-get feature :name)))
         (message "Scanning %s..." name)
-        (elog-info org-canvas--logger "[Orphan] Scanning %s..." name)
+        (org-canvas--log-info org-canvas--logger "[Orphan] Scanning %s..." name)
         (let ((orphans (org-canvas--find-orphans-for-feature feature)))
           (when orphans
             (push (cons feature orphans) all-orphans)
             (setq total-orphans (+ total-orphans (length orphans)))
-            (elog-info org-canvas--logger
+            (org-canvas--log-info org-canvas--logger
               "[Orphan] %s: found %d orphan(s)" name (length orphans))))))
     (setq all-orphans (nreverse all-orphans))
     ;; Display results
     (if (= total-orphans 0)
         (progn
-          (elog-info org-canvas--logger "[Orphan] No orphans found.")
+          (org-canvas--log-info org-canvas--logger "[Orphan] No orphans found.")
           (message "No orphaned items found."))
       (let ((buf (org-canvas--orphan-format-buffer all-orphans)))
         (display-buffer buf)

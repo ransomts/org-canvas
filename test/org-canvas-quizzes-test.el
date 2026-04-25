@@ -1901,10 +1901,10 @@ Content.
             (logged-messages nil))
        (cl-letf (((symbol-function 'org-canvas-org-save-sync-state)
                   (lambda (&rest _) nil))
-                 ((symbol-function 'elog-info)
+                 ((symbol-function 'org-canvas--log-info)
                   (lambda (_logger fmt &rest args)
                     (push (apply #'format fmt args) logged-messages)))
-                 ((symbol-function 'elog-debug)
+                 ((symbol-function 'org-canvas--log-debug)
                   (lambda (_logger fmt &rest args)
                     (push (apply #'format fmt args) logged-messages))))
          (org-canvas--question-finalize data response)
@@ -1917,25 +1917,25 @@ Content.
 
 (describe "org-canvas--quiz-verify-response"
   (it "warns when assignment_group_id mismatches"
-    (spy-on 'elog-warning)
+    (spy-on 'org-canvas--log-warning)
     (let ((data (list :title "Midterm" :assignment_group_id 200))
           (response '((id . 555) (assignment_group_id . 999))))
       (org-canvas--quiz-verify-response data response)
-      (expect 'elog-warning :to-have-been-called)))
+      (expect 'org-canvas--log-warning :to-have-been-called)))
 
   (it "does not warn when assignment_group_id matches"
-    (spy-on 'elog-warning)
+    (spy-on 'org-canvas--log-warning)
     (let ((data (list :title "Midterm" :assignment_group_id 200))
           (response '((id . 555) (assignment_group_id . 200))))
       (org-canvas--quiz-verify-response data response)
-      (expect 'elog-warning :not :to-have-been-called)))
+      (expect 'org-canvas--log-warning :not :to-have-been-called)))
 
   (it "does not warn when no expected group"
-    (spy-on 'elog-warning)
+    (spy-on 'org-canvas--log-warning)
     (let ((data (list :title "Midterm" :assignment_group_id nil))
           (response '((id . 555) (assignment_group_id . 200))))
       (org-canvas--quiz-verify-response data response)
-      (expect 'elog-warning :not :to-have-been-called))))
+      (expect 'org-canvas--log-warning :not :to-have-been-called))))
 
 ;;;; Pull Function Tests
 

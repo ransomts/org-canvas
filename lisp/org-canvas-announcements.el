@@ -32,7 +32,6 @@
 ;;; Code:
 (require 'org-canvas-core)
 (require 'ox-html)
-(require 'elog)
 
 ;;;; Configuration
 

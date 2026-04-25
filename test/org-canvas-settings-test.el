@@ -928,14 +928,14 @@ Syllabus text.
 
   (it "warns when trying to hide Home tab"
     (with-org-canvas-test-config
-      (spy-on 'elog-warning)
+      (spy-on 'org-canvas--log-warning)
       (cl-letf (((symbol-function 'org-canvas-api-request)
                  (lambda (method _url &rest _args)
                    (when (eq method 'GET)
                      '(((id . "home") (label . "Home") (hidden . :json-false) (position . 1)))))))
         (org-canvas--settings-sync-tabs
          '((:label "Home" :hidden t :position 1)))
-        (expect 'elog-warning :to-have-been-called))))
+        (expect 'org-canvas--log-warning :to-have-been-called))))
 
   (it "logs tab changes in dry-run mode"
     (with-org-canvas-test-config
@@ -1042,11 +1042,11 @@ Syllabus text.
           (delete-file temp-file)))))
 
   (it "warns when file not found"
-    (spy-on 'elog-warning)
+    (spy-on 'org-canvas--log-warning)
     (let ((data '(:course-image-path "/tmp/nonexistent-img-test.png")))
       (let ((result (org-canvas--settings-resolve-course-image data)))
         (expect (plist-get result :course-image-id) :to-be nil)
-        (expect 'elog-warning :to-have-been-called))))
+        (expect 'org-canvas--log-warning :to-have-been-called))))
 
   (it "skips upload in dry-run mode"
     (let ((org-canvas--dry-run t)
@@ -1101,14 +1101,14 @@ Syllabus text.
 (describe "org-canvas--settings-sync-tabs (edge cases)"
   (it "warns when tab label not found on Canvas"
     (with-org-canvas-test-config
-      (spy-on 'elog-warning)
+      (spy-on 'org-canvas--log-warning)
       (cl-letf (((symbol-function 'org-canvas-api-request)
                  (lambda (method _url &rest _args)
                    (when (eq method 'GET)
                      '(((id . "home") (label . "Home") (hidden . :json-false) (position . 1)))))))
         (org-canvas--settings-sync-tabs
          '((:label "Nonexistent Tab" :hidden nil :position 2)))
-        (expect 'elog-warning :to-have-been-called))))
+        (expect 'org-canvas--log-warning :to-have-been-called))))
 
   (it "updates tab position without hidden change"
     (with-org-canvas-test-config
@@ -1129,7 +1129,7 @@ Syllabus text.
 
   (it "handles PUT error gracefully"
     (with-org-canvas-test-config
-      (spy-on 'elog-warning)
+      (spy-on 'org-canvas--log-warning)
       (cl-letf (((symbol-function 'org-canvas-api-request)
                  (lambda (method _url &rest _args)
                    (cond
@@ -1139,7 +1139,7 @@ Syllabus text.
                      (signal 'error '("500 Internal Server Error")))))))
         (org-canvas--settings-sync-tabs
          '((:label "Modules" :hidden t :position 1)))
-        (expect 'elog-warning :to-have-been-called)))))
+        (expect 'org-canvas--log-warning :to-have-been-called)))))
 
 (describe "org-canvas--settings-pull-tabs (edge cases)"
   (it "sorts tabs by position"
@@ -1225,7 +1225,7 @@ Syllabus text.
                        (signal 'error '("400 Bad Request")))
                       ((eq method 'POST)
                        (signal 'error '("403 Forbidden"))))))
-                  ((symbol-function 'elog-error)
+                  ((symbol-function 'org-canvas--log-error)
                    (lambda (_logger fmt &rest args)
                      (when (string-match "Late policy sync failed" fmt)
                        (setq error-logged (apply #'format fmt args))))))
@@ -1290,7 +1290,7 @@ Some text.
           (cl-letf (((symbol-function 'org-canvas--upload-file)
                      (lambda (_path &optional _url _name)
                        (signal 'error '("Network timeout"))))
-                    ((symbol-function 'elog-warning)
+                    ((symbol-function 'org-canvas--log-warning)
                      (lambda (_logger fmt &rest args)
                        (when (string-match "Upload failed" fmt)
                          (setq warning-logged (apply #'format fmt args))))))
