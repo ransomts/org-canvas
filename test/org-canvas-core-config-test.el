@@ -219,6 +219,37 @@
       (call-interactively 'org-canvas-set-log-destination)
       (expect org-canvas-log-destination :to-equal 'file))))
 
+(describe "org-canvas--log-write-buffer"
+  (it "inserts a leading newline when the buffer doesn't end at bol"
+    (let* ((buffer-name "*org-canvas-log-test-no-bol*")
+           (logger (org-canvas--logger-make :name "test"
+                                            :handlers '(buffer)
+                                            :buffer buffer-name)))
+      (unwind-protect
+          (progn
+            (with-current-buffer (get-buffer-create buffer-name)
+              (erase-buffer)
+              (insert "preexisting"))
+            (org-canvas--log-dispatch logger 'info "hello %s" '("world"))
+            (with-current-buffer buffer-name
+              (expect (buffer-string)
+                      :to-match "\\`preexisting\n\\[.*\\] \\[test\\] \\[INFO\\] hello world\n\\'")))
+        (when (get-buffer buffer-name) (kill-buffer buffer-name))))))
+
+(describe "org-canvas--log-trace"
+  (it "dispatches when the logger level is trace"
+    (let* ((buffer-name "*org-canvas-log-test-trace*")
+           (logger (org-canvas--logger-make :name "test"
+                                            :level 'trace
+                                            :handlers '(buffer)
+                                            :buffer buffer-name)))
+      (unwind-protect
+          (progn
+            (org-canvas--log-trace logger "tracing %s" "value")
+            (with-current-buffer buffer-name
+              (expect (buffer-string) :to-match "\\[TRACE\\] tracing value")))
+        (when (get-buffer buffer-name) (kill-buffer buffer-name))))))
+
 ;;;; 7. Diagnostics
 
 (describe "org-canvas-get-course-name (mocked)"
