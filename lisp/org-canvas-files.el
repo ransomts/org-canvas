@@ -1062,6 +1062,31 @@ and `org-canvas--file-pull-set-properties' for parity with flat mode."
         (when legal-copyright
           (org-canvas-org-set-property pos "COPYRIGHT" legal-copyright))))))
 
+(defun org-canvas--file-pull-emit-flat (file remote content-dir)
+  "Upsert REMOTE files as flat top-level headings in FILE.
+FILE is the path to files.org, REMOTE is the list of file alists from
+the Canvas API, CONTENT-DIR is the local download directory.
+Preserves existing CANVAS_ID matches in place; new files are appended."
+  (let ((total (length remote))
+        (count 0))
+    (dolist (item remote)
+      (cl-incf count)
+      (let* ((id (alist-get 'id item))
+             (display-name (alist-get 'display_name item))
+             (download-url (alist-get 'url item))
+             (local-path (expand-file-name display-name content-dir))
+             (heading-text (org-link-make-string
+                            (format "file:content/%s" display-name)
+                            display-name))
+             (pos (org-canvas--pull-upsert-heading file id heading-text)))
+        (message "Files [%d/%d] Pulling '%s'..." count total display-name)
+        (goto-char pos)
+        (org-canvas-org-save-sync-state pos id)
+        (org-canvas--file-pull-set-properties pos item)
+        (org-canvas--file-pull-download
+         display-name download-url local-path (alist-get 'size item))))
+    count))
+
 ;;;###autoload
 (defun org-canvas-pull-files ()
   "Pull file metadata from Canvas into files.org.
@@ -1072,33 +1097,16 @@ Downloads file contents to the content/ directory."
          (content-dir (expand-file-name
                        "content" (file-name-directory file)))
          (endpoint (org-canvas-api-course-endpoint "files"))
-         (remote (org-canvas-api-request-all-pages 'GET endpoint))
-         (total (length remote))
-         (count 0))
+         (remote (org-canvas-api-request-all-pages 'GET endpoint)))
     (unless (file-exists-p file)
       (with-temp-file file (insert "")))
     (unless (file-directory-p content-dir)
       (make-directory content-dir t))
     (with-current-buffer (find-file-noselect file)
-      (dolist (item remote)
-        (cl-incf count)
-        (let* ((id (alist-get 'id item))
-               (display-name (alist-get 'display_name item))
-               (download-url (alist-get 'url item))
-               (local-path (expand-file-name display-name content-dir))
-               (heading-text (org-link-make-string
-                              (format "file:content/%s" display-name)
-                              display-name))
-               (pos (org-canvas--pull-upsert-heading file id heading-text)))
-          (message "Files [%d/%d] Pulling '%s'..." count total display-name)
-          (goto-char pos)
-          (org-canvas-org-save-sync-state pos id)
-          (org-canvas--file-pull-set-properties pos item)
-          (org-canvas--file-pull-download
-           display-name download-url local-path (alist-get 'size item))))
-      (org-canvas--save-buffer))
-    (org-canvas--log-info org-canvas--logger "Files pull complete: %d files" count)
-    (message "Files pull complete: %d files." count)))
+      (let ((count (org-canvas--file-pull-emit-flat file remote content-dir)))
+        (org-canvas--save-buffer)
+        (org-canvas--log-info org-canvas--logger "Files pull complete: %d files" count)
+        (message "Files pull complete: %d files." count)))))
 
 (provide 'org-canvas-files)
 ;;; org-canvas-files.el ends here
