@@ -2591,6 +2591,33 @@
                   (expect body :to-match "^\\*\\* Week 2$")))))
         (let ((buf (find-buffer-visiting files-file)))
           (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "places a file with unknown folder_id at the root"
+    (let* ((temp-dir (make-temp-file "emit-tree-test" t))
+           (files-file (expand-file-name "files.org" temp-dir))
+           (content-dir (expand-file-name "content" temp-dir))
+           (folder-map (make-hash-table :test 'eql)))
+      (unwind-protect
+          (let ((org-canvas-files-file files-file))
+            (with-temp-file files-file (insert "#+TITLE: Files\n"))
+            (puthash 100 "" folder-map)
+            ;; Note: folder_id 999 is NOT in folder-map.
+            (cl-letf (((symbol-function 'url-copy-file)
+                       (lambda (_url _path &rest _args) nil)))
+              (with-current-buffer (find-file-noselect files-file)
+                (org-canvas--file-pull-emit-fresh-tree
+                 folder-map
+                 '(((id . 1) (display_name . "orphan.pdf") (folder_id . 999)
+                    (url . "https://example.com/orphan.pdf")))
+                 content-dir)
+                (save-buffer))
+              (with-temp-buffer
+                (insert-file-contents files-file)
+                (let ((body (buffer-string)))
+                  (expect body :to-match "^\\* \\[\\[file:content/orphan\\.pdf\\]\\[orphan\\.pdf\\]\\]$")))))
+        (let ((buf (find-buffer-visiting files-file)))
+          (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
 
 ;;; org-canvas-files-test.el ends here
