@@ -36,13 +36,13 @@ wait "$lint_pid" "$complexity_pid" || true
 lint_rc=$(cat "${LINT_LOG}.rc" 2>/dev/null || echo "1")
 if [ "$lint_rc" -ne 0 ]; then
   echo "Running linter..."
-  cat "$LINT_LOG"
+  cat "$LINT_LOG" || true
   echo "BLOCKED: eldev lint reported warnings."
   rm -f "$LINT_LOG" "${LINT_LOG}.rc" "$COMPLEXITY_LOG" "${COMPLEXITY_LOG}.rc"
   exit 1
 fi
 echo "Running linter..."
-cat "$LINT_LOG"
+cat "$LINT_LOG" || true
 echo ""
 
 # Check complexity
@@ -107,7 +107,7 @@ wait "$emacs29_pid" "$emacs30_pid" || true
 echo "========================================"
 echo " Emacs 29 (${NIX_PACKAGES[29]})"
 echo "========================================"
-cat "$EMACS29_LOG"
+cat "$EMACS29_LOG" || true
 echo ""
 
 if echo "$(cat "$EMACS29_LOG")" | grep -qE '[0-9]+ failed'; then
@@ -124,7 +124,7 @@ fi
 echo "========================================"
 echo " Emacs 30 (${NIX_PACKAGES[30]})"
 echo "========================================"
-cat "$EMACS30_LOG"
+cat "$EMACS30_LOG" || true
 echo ""
 
 if echo "$(cat "$EMACS30_LOG")" | grep -qE '[0-9]+ failed'; then
