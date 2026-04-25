@@ -1281,4 +1281,95 @@
                  (lambda (_file _id-prop) (list :synced 5 :pending 0 :legacy 0 :unsaved 0))))
         (expect (org-canvas-pull-all) :to-throw 'user-error)))))
 
+;;;; org-canvas-version
+
+(describe "org-canvas-version"
+  (it "returns the version declared in the package header"
+    (let ((version (org-canvas-version)))
+      (expect version :to-be-truthy)
+      (expect version :to-match "\\`[0-9]+\\.[0-9]+\\.[0-9]+\\'")))
+
+  (it "returns the same string as the source-file Version header"
+    (let* ((file (replace-regexp-in-string
+                  "\\.elc\\'" ".el" (locate-library "org-canvas")))
+           (header-version (with-temp-buffer
+                             (insert-file-contents file)
+                             (lm-version))))
+      (expect (org-canvas-version) :to-equal header-version)))
+
+  (it "messages the version when SHOW is non-nil"
+    (spy-on 'message)
+    (let ((result (org-canvas-version t)))
+      (expect 'message :to-have-been-called-with "org-canvas %s" result)))
+
+  (it "does not message when SHOW is nil"
+    (spy-on 'message)
+    (org-canvas-version)
+    (expect 'message :not :to-have-been-called))
+
+  (it "errors when the package source cannot be located"
+    (cl-letf (((symbol-function 'locate-library) (lambda (_) nil)))
+      (expect (org-canvas-version) :to-throw 'error))))
+
+;;;; org-canvas-submit-bug-report
+
+(describe "org-canvas-submit-bug-report"
+  (after-each
+    (when (get-buffer "*org-canvas-bug-report*")
+      (kill-buffer "*org-canvas-bug-report*")))
+
+  (it "creates the bug report buffer"
+    (cl-letf (((symbol-function 'pop-to-buffer) #'identity))
+      (org-canvas-submit-bug-report)
+      (expect (get-buffer "*org-canvas-bug-report*") :to-be-truthy)))
+
+  (it "includes version, Emacs version, and system info"
+    (cl-letf (((symbol-function 'pop-to-buffer) #'identity))
+      (org-canvas-submit-bug-report)
+      (with-current-buffer "*org-canvas-bug-report*"
+        (let ((content (buffer-string)))
+          (expect content :to-match
+                  (format "org-canvas version : %s"
+                          (regexp-quote (org-canvas-version))))
+          (expect content :to-match
+                  (format "Emacs version      : %s"
+                          (regexp-quote emacs-version)))
+          (expect content :to-match "System type")))))
+
+  (it "redacts the API token when set"
+    (let ((org-canvas-api-token "super-secret-token"))
+      (cl-letf (((symbol-function 'pop-to-buffer) #'identity))
+        (org-canvas-submit-bug-report)
+        (with-current-buffer "*org-canvas-bug-report*"
+          (let ((content (buffer-string)))
+            (expect content :to-match "org-canvas-api-token: \\[redacted\\]")
+            (expect content :not :to-match "super-secret-token"))))))
+
+  (it "labels the API token as unset when empty"
+    (let ((org-canvas-api-token ""))
+      (cl-letf (((symbol-function 'pop-to-buffer) #'identity))
+        (org-canvas-submit-bug-report)
+        (with-current-buffer "*org-canvas-bug-report*"
+          (expect (buffer-string) :to-match
+                  "org-canvas-api-token: \\[unset\\]")))))
+
+  (it "lists the documented configuration variables"
+    (cl-letf (((symbol-function 'pop-to-buffer) #'identity))
+      (org-canvas-submit-bug-report)
+      (with-current-buffer "*org-canvas-bug-report*"
+        (let ((content (buffer-string)))
+          (dolist (sym org-canvas--bug-report-settings)
+            (expect content :to-match (regexp-quote (symbol-name sym))))))))
+
+  (it "lists loaded org-canvas modules"
+    (cl-letf (((symbol-function 'pop-to-buffer) #'identity))
+      (org-canvas-submit-bug-report)
+      (with-current-buffer "*org-canvas-bug-report*"
+        (expect (buffer-string) :to-match "org-canvas-core")))))
+
+(describe "org-canvas--bug-report-settings"
+  (it "does not contain org-canvas-api-token"
+    (expect (memq 'org-canvas-api-token org-canvas--bug-report-settings)
+            :to-be nil)))
+
 ;;; org-canvas-test.el ends here

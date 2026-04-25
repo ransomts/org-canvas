@@ -1,7 +1,9 @@
 ;;; org-canvas.el --- Sync Org Mode files with Canvas LMS  -*- lexical-binding: t; -*-
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 
-;; Author: Tim Ransom
+;; Author: Tim Ransom <ransomtim8078@gmail.com>
+;; Maintainer: Tim Ransom <ransomtim8078@gmail.com>
+;; Created: 2026-02-08
 ;; Version: 0.1.0
 ;; Package-Requires: ((emacs "28.1") (plz "0.9") (org "9.6") (transient "0.4"))
 
@@ -50,6 +52,8 @@
 
 ;;; Code:
 
+(require 'lisp-mnt)
+
 ;; Import Core (Utilities & Globals)
 (require 'org-canvas-core)
 
@@ -77,6 +81,86 @@
 
 ;; Note: Feature-specific file paths (e.g., `org-canvas-rubrics-file`) are now
 ;; defined in their respective modules.
+
+;;;###autoload
+(defun org-canvas-version (&optional show)
+  "Return the org-canvas version string.
+When called interactively, or when SHOW is non-nil, also display the
+version via `message'.  The version is read from this file's
+\"Version:\" header at runtime so a single source of truth in the
+package header survives byte-compilation."
+  (interactive (list t))
+  (let* ((file (or (locate-library "org-canvas")
+                   (error "Cannot locate org-canvas source file")))
+         (source (replace-regexp-in-string "\\.elc\\'" ".el" file))
+         (version (with-temp-buffer
+                    (insert-file-contents source)
+                    (or (lm-version) "unknown"))))
+    (when show
+      (message "org-canvas %s" version))
+    version))
+
+(defconst org-canvas--bug-report-settings
+  '(org-canvas-base-url
+    org-canvas-course-id
+    org-canvas-directory
+    org-canvas-request-timeout
+    org-canvas-upload-timeout
+    org-canvas-rate-limit-retries
+    org-canvas-rate-limit-wait
+    org-canvas-detect-conflicts
+    org-canvas-log-level
+    org-canvas-log-destination
+    org-canvas-log-file
+    org-canvas-log-request-bodies)
+  "Settings that `org-canvas-submit-bug-report' includes verbatim.
+`org-canvas-api-token' is redacted separately; secrets must never be
+added to this list.")
+
+(defun org-canvas--bug-report-format-setting (sym)
+  "Return a single-line \"  NAME: VALUE\" string for SYM."
+  (format "  %s: %S" sym (and (boundp sym) (symbol-value sym))))
+
+;;;###autoload
+(defun org-canvas-submit-bug-report ()
+  "Open a buffer prepopulated with diagnostic info for a bug report.
+The buffer contains the org-canvas version, the host Emacs version,
+relevant configuration, and the list of currently loaded org-canvas
+modules.  `org-canvas-api-token' is redacted.  Edit the description
+above the marker, then file an issue at the project URL."
+  (interactive)
+  (let ((buf (get-buffer-create "*org-canvas-bug-report*"))
+        (modules (sort (mapcar #'symbol-name
+                               (seq-filter
+                                (lambda (f)
+                                  (string-prefix-p "org-canvas" (symbol-name f)))
+                                features))
+                       #'string<)))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert "Describe the bug above this line, then file at:\n"
+                "  https://github.com/ransomts/org-canvas/issues\n\n"
+                "------------------- system info (do not edit) -------------------\n"
+                (format "org-canvas version : %s\n" (org-canvas-version))
+                (format "Emacs version      : %s\n" emacs-version)
+                (format "System type        : %s\n" system-type)
+                (format "System config      : %s\n" system-configuration)
+                "\nConfiguration:\n")
+        (dolist (sym org-canvas--bug-report-settings)
+          (insert (org-canvas--bug-report-format-setting sym) "\n"))
+        (insert (format "  org-canvas-api-token: %s\n"
+                        (if (and (boundp 'org-canvas-api-token)
+                                 (stringp org-canvas-api-token)
+                                 (not (string-empty-p org-canvas-api-token)))
+                            "[redacted]"
+                          "[unset]")))
+        (insert "\nLoaded modules:\n")
+        (dolist (m modules)
+          (insert "  " m "\n")))
+      (text-mode)
+      (goto-char (point-min)))
+    (pop-to-buffer buf)))
 
 (defun org-canvas--safe-sync (sync-fn label)
   "Call SYNC-FN, catching file-not-found errors gracefully.
