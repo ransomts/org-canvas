@@ -963,5 +963,20 @@ Downloads file contents to the content/ directory."
     (org-canvas--log-info org-canvas--logger "Files pull complete: %d files" count)
     (message "Files pull complete: %d files." count)))
 
+(defun org-canvas--file-pull-fetch-folders ()
+  "Fetch all course folders from Canvas.
+Return a hash table mapping folder id (number, `eql' test) to its
+path relative to the Canvas root (string; `\"\"' for the root)."
+  (let ((map (make-hash-table :test 'eql))
+        (endpoint (org-canvas-api-course-endpoint "folders")))
+    (dolist (folder (org-canvas-api-request-all-pages 'GET endpoint))
+      (let ((id (alist-get 'id folder)))
+        (when id
+          (puthash id
+                   (org-canvas--file-pull-folder-relative-path
+                    (alist-get 'full_name folder))
+                   map))))
+    map))
+
 (provide 'org-canvas-files)
 ;;; org-canvas-files.el ends here

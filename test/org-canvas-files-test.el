@@ -2351,4 +2351,35 @@
     (expect (org-canvas--file-pull-folder-relative-path nil)
             :to-equal "")))
 
+(describe "org-canvas--file-pull-fetch-folders"
+  (it "builds id-to-relative-path hash from folders API response"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (_method _url &optional _params)
+                   '(((id . 100) (full_name . "course files"))
+                     ((id . 101) (full_name . "course files/Labs"))
+                     ((id . 102) (full_name . "course files/Labs/Week 1"))))))
+        (let ((map (org-canvas--file-pull-fetch-folders)))
+          (expect (gethash 100 map) :to-equal "")
+          (expect (gethash 101 map) :to-equal "Labs")
+          (expect (gethash 102 map) :to-equal "Labs/Week 1")
+          (expect (hash-table-count map) :to-equal 3)))))
+
+  (it "skips folders that have no id"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (_method _url &optional _params)
+                   '(((full_name . "no id"))
+                     ((id . 5) (full_name . "course files/Ok"))))))
+        (let ((map (org-canvas--file-pull-fetch-folders)))
+          (expect (gethash 5 map) :to-equal "Ok")
+          (expect (hash-table-count map) :to-equal 1)))))
+
+  (it "returns an empty hash when API returns no folders"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (_method _url &optional _params) '())))
+        (let ((map (org-canvas--file-pull-fetch-folders)))
+          (expect (hash-table-count map) :to-equal 0))))))
+
 ;;; org-canvas-files-test.el ends here
