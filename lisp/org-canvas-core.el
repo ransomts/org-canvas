@@ -12,7 +12,10 @@
 ;;   org-canvas-core-config - User customizations, logging
 ;;   org-canvas-core-api    - HTTP communication with Canvas REST API
 ;;   org-canvas-core-org    - Org interaction, link resolution, pull helpers
-;;   org-canvas-core-sync   - Sync pipeline, conflict, push/delete infrastructure
+;;   org-canvas-core-macros   - Declarative payload/parse DSL (code generation)
+;;   org-canvas-core-conflict - Interactive conflict resolution UI
+;;   org-canvas-core-delete   - Delete-all / delete-at-point macros + runtime
+;;   org-canvas-core-sync     - Sync pipeline and push-to-API infrastructure
 ;;
 ;; DEPENDENCY RULES
 ;; ================
@@ -37,6 +40,9 @@
 (require 'org-canvas-core-config)
 (require 'org-canvas-core-api)
 (require 'org-canvas-core-org)
+(require 'org-canvas-core-macros)
+(require 'org-canvas-core-conflict)
+(require 'org-canvas-core-delete)
 (require 'org-canvas-core-sync)
 
 (provide 'org-canvas-core)
