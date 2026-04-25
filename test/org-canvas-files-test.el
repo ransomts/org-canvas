@@ -2482,6 +2482,115 @@
                       :to-be-truthy)))
         (let ((buf (find-buffer-visiting files-file)))
           (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "emits a folder heading once for multiple files in the same folder"
+    (let* ((temp-dir (make-temp-file "emit-tree-test" t))
+           (files-file (expand-file-name "files.org" temp-dir))
+           (content-dir (expand-file-name "content" temp-dir))
+           (folder-map (make-hash-table :test 'eql)))
+      (unwind-protect
+          (let ((org-canvas-files-file files-file))
+            (with-temp-file files-file (insert "#+TITLE: Files\n"))
+            (puthash 100 "" folder-map)
+            (puthash 200 "Labs" folder-map)
+            (cl-letf (((symbol-function 'url-copy-file)
+                       (lambda (_url _path &rest _args) nil)))
+              (with-current-buffer (find-file-noselect files-file)
+                (org-canvas--file-pull-emit-fresh-tree
+                 folder-map
+                 '(((id . 1) (display_name . "lab1.pdf") (folder_id . 200)
+                    (url . "https://example.com/lab1.pdf"))
+                   ((id . 2) (display_name . "lab2.pdf") (folder_id . 200)
+                    (url . "https://example.com/lab2.pdf")))
+                 content-dir)
+                (save-buffer))
+              (with-temp-buffer
+                (insert-file-contents files-file)
+                (let ((body (buffer-string)))
+                  (expect body :to-match "^\\* Labs$")
+                  ;; Exactly one "* Labs" heading
+                  (expect (with-temp-buffer
+                            (insert body)
+                            (goto-char (point-min))
+                            (let ((n 0))
+                              (while (re-search-forward "^\\* Labs$" nil t)
+                                (cl-incf n))
+                              n))
+                          :to-equal 1)
+                  (expect body :to-match "^\\*\\* \\[\\[file:content/Labs/lab1\\.pdf\\]\\[lab1\\.pdf\\]\\]$")
+                  (expect body :to-match "^\\*\\* \\[\\[file:content/Labs/lab2\\.pdf\\]\\[lab2\\.pdf\\]\\]$")))))
+        (let ((buf (find-buffer-visiting files-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "emits ancestor folder headings for a deeply nested folder"
+    (let* ((temp-dir (make-temp-file "emit-tree-test" t))
+           (files-file (expand-file-name "files.org" temp-dir))
+           (content-dir (expand-file-name "content" temp-dir))
+           (folder-map (make-hash-table :test 'eql)))
+      (unwind-protect
+          (let ((org-canvas-files-file files-file))
+            (with-temp-file files-file (insert "#+TITLE: Files\n"))
+            (puthash 100 "" folder-map)
+            (puthash 300 "Labs/Week 1" folder-map)
+            (cl-letf (((symbol-function 'url-copy-file)
+                       (lambda (_url _path &rest _args) nil)))
+              (with-current-buffer (find-file-noselect files-file)
+                (org-canvas--file-pull-emit-fresh-tree
+                 folder-map
+                 '(((id . 1) (display_name . "intro.pdf") (folder_id . 300)
+                    (url . "https://example.com/intro.pdf")))
+                 content-dir)
+                (save-buffer))
+              (with-temp-buffer
+                (insert-file-contents files-file)
+                (let ((body (buffer-string)))
+                  (expect body :to-match "^\\* Labs$")
+                  (expect body :to-match "^\\*\\* Week 1$")
+                  (expect body :to-match
+                          "^\\*\\*\\* \\[\\[file:content/Labs/Week 1/intro\\.pdf\\]\\[intro\\.pdf\\]\\]$")))))
+        (let ((buf (find-buffer-visiting files-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "does not duplicate shared ancestor headings between sibling subfolders"
+    (let* ((temp-dir (make-temp-file "emit-tree-test" t))
+           (files-file (expand-file-name "files.org" temp-dir))
+           (content-dir (expand-file-name "content" temp-dir))
+           (folder-map (make-hash-table :test 'eql)))
+      (unwind-protect
+          (let ((org-canvas-files-file files-file))
+            (with-temp-file files-file (insert "#+TITLE: Files\n"))
+            (puthash 100 "" folder-map)
+            (puthash 301 "Labs/Week 1" folder-map)
+            (puthash 302 "Labs/Week 2" folder-map)
+            (cl-letf (((symbol-function 'url-copy-file)
+                       (lambda (_url _path &rest _args) nil)))
+              (with-current-buffer (find-file-noselect files-file)
+                (org-canvas--file-pull-emit-fresh-tree
+                 folder-map
+                 '(((id . 1) (display_name . "w1.pdf") (folder_id . 301)
+                    (url . "https://example.com/w1.pdf"))
+                   ((id . 2) (display_name . "w2.pdf") (folder_id . 302)
+                    (url . "https://example.com/w2.pdf")))
+                 content-dir)
+                (save-buffer))
+              (with-temp-buffer
+                (insert-file-contents files-file)
+                (let ((body (buffer-string)))
+                  (expect (with-temp-buffer
+                            (insert body)
+                            (goto-char (point-min))
+                            (let ((n 0))
+                              (while (re-search-forward "^\\* Labs$" nil t)
+                                (cl-incf n))
+                              n))
+                          :to-equal 1)
+                  (expect body :to-match "^\\*\\* Week 1$")
+                  (expect body :to-match "^\\*\\* Week 2$")))))
+        (let ((buf (find-buffer-visiting files-file)))
+          (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
 
 ;;; org-canvas-files-test.el ends here

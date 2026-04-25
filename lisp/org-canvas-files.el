@@ -992,27 +992,52 @@ Downloads to CONTENT-DIR/REL-PATH/DISPLAY_NAME."
     (org-canvas--file-pull-download
      display-name download-url local-path (alist-get 'size item))))
 
+(defun org-canvas--file-pull-common-prefix-len (a b)
+  "Return the count of leading elements shared between lists A and B."
+  (let ((i 0))
+    (while (and (nth i a) (nth i b)
+                (string= (nth i a) (nth i b)))
+      (setq i (1+ i)))
+    i))
+
+(defun org-canvas--file-pull-emit-folder-ancestors (current-parts new-parts)
+  "Insert folder headings to descend from CURRENT-PARTS to NEW-PARTS.
+Both are lists of path components.  Headings are emitted only for
+the suffix of NEW-PARTS that's not already shared with CURRENT-PARTS."
+  (let ((common (org-canvas--file-pull-common-prefix-len current-parts new-parts))
+        (i 0))
+    (setq i common)
+    (while (< i (length new-parts))
+      (insert (make-string (1+ i) ?*) " " (nth i new-parts) "\n")
+      (setq i (1+ i)))))
+
 (defun org-canvas--file-pull-emit-fresh-tree (folder-map remote-items content-dir)
   "Emit a folder-aware heading tree for REMOTE-ITEMS into the current buffer.
 FOLDER-MAP maps folder id to relative path; empty path is root.
 CONTENT-DIR is the local directory under which files are downloaded.
 
-Files at root become level-1 headings.  Files in a folder get
-ancestor folder headings emitted once each before the file headings.
-Properties are written via `org-canvas-org-save-sync-state' and
-`org-canvas--file-pull-set-properties' for symmetry with flat mode."
+Sorts folder paths lexically and files within each folder by
+`display_name'.  Emits each ancestor folder heading exactly once.
+Files at the root land at level 1; files at depth N land at
+level N+1.  Properties are written via `org-canvas-org-save-sync-state'
+and `org-canvas--file-pull-set-properties' for parity with flat mode."
   (goto-char (point-max))
   (unless (bolp) (insert "\n"))
   (let* ((groups (org-canvas--file-pull-group-by-folder folder-map remote-items))
          (sorted-paths (sort (mapcar #'car groups) #'string<))
          (total (length remote-items))
-         (counter (list 0)))
+         (counter (list 0))
+         (current-parts nil))
     (dolist (rel-path sorted-paths)
-      (let* ((items (sort (cdr (assoc rel-path groups))
+      (let* ((parts (if (string-empty-p rel-path) nil
+                      (split-string rel-path "/" t)))
+             (file-depth (1+ (length parts)))
+             (items (sort (cdr (assoc rel-path groups))
                           (lambda (a b)
                             (string< (alist-get 'display_name a)
-                                     (alist-get 'display_name b)))))
-             (file-depth 1))
+                                     (alist-get 'display_name b))))))
+        (org-canvas--file-pull-emit-folder-ancestors current-parts parts)
+        (setq current-parts parts)
         (dolist (item items)
           (org-canvas--file-pull-emit-file-heading
            item file-depth rel-path content-dir total counter))))
