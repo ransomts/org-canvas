@@ -38,6 +38,9 @@
 (require 'ox-html)
 (require 'cl-lib)
 
+(declare-function org-canvas--file-pull-download "org-canvas-files"
+                  (display-name download-url local-path size))
+
 ;;;; Configuration
 
 (defcustom org-canvas-settings-file (org-canvas--path "settings.org")
@@ -460,6 +463,12 @@ Returns the formatted Org text, or nil if no tabs."
 
 ;;;; Course Image
 
+(defun org-canvas--settings-course-image-basename (url)
+  "Return the file basename from URL, dropping query string and fragment."
+  (when url
+    (let ((path (car (split-string url "[?#]"))))
+      (file-name-nondirectory path))))
+
 (defun org-canvas--settings-resolve-course-image (data)
   "Upload local course image if needed and add :course-image-id to DATA.
 If :course-image-path is set and file exists, uploads it to Canvas
@@ -625,10 +634,18 @@ LATE-POLICY is the late policy API response (may be nil)."
       (when gs-id
         (org-canvas-org-set-property pom "GRADING_STANDARD_ID" (format "%s" gs-id))))
     (org-canvas--settings-pull-late-policy-properties pom late-policy)
-    ;; Course image
+    ;; Course image: download into content/course_image/ and store relpath link
     (let ((image-url (org-canvas--alist-get-non-null 'image_download_url response)))
       (when image-url
-        (org-canvas-org-set-property pom "COURSE_IMAGE" image-url)))
+        (let* ((basename (org-canvas--settings-course-image-basename image-url))
+               (rel-path (concat "content/course_image/" basename))
+               (abs-path (expand-file-name rel-path org-canvas-directory)))
+          (org-canvas--file-pull-download
+           basename image-url abs-path
+           (org-canvas--alist-get-non-null 'image_size response))
+          (org-canvas-org-set-property
+           pom "COURSE_IMAGE"
+           (format "[[file:%s][%s]]" rel-path basename)))))
     (when syllabus-body
       (org-canvas--settings-replace-syllabus-body syllabus-body))))
 

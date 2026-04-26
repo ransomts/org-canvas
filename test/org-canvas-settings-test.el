@@ -1065,11 +1065,12 @@ Syllabus text.
       (expect (plist-get result :course-image-url) :to-equal "https://example.com/x.png"))))
 
 (describe "org-canvas-pull-settings (course image)"
-  (it "sets COURSE_IMAGE from API response"
+  (it "downloads image and stores [[file:...]] link in COURSE_IMAGE"
     (let* ((temp-dir (make-temp-file "pull-settings" t))
            (settings-file (expand-file-name "settings.org" temp-dir)))
       (unwind-protect
-          (let ((org-canvas-settings-file settings-file))
+          (let ((org-canvas-settings-file settings-file)
+                (org-canvas-directory temp-dir))
             (with-org-canvas-test-config
               (cl-letf (((symbol-function 'org-canvas-api-request)
                          (lambda (_method _url &rest _args)
@@ -1080,7 +1081,11 @@ Syllabus text.
                              (hide_final_grades . :json-false)
                              (public_syllabus . :json-false)
                              (is_public . :json-false)
-                             (image_download_url . "https://canvas.example.com/files/123/preview"))))
+                             (image_download_url . "https://canvas.example.com/files/123/preview.jpg?token=xyz"))))
+                        ((symbol-function 'org-canvas--file-pull-download)
+                         (lambda (_dn _url path _sz)
+                           (make-directory (file-name-directory path) t)
+                           (with-temp-file path (insert "image bytes"))))
                         ((symbol-function 'org-canvas-clear-log) (lambda () nil))
                         ((symbol-function 'display-buffer) (lambda (_) nil)))
                 (org-canvas-pull-settings)
@@ -1091,11 +1096,90 @@ Syllabus text.
                    content
                    (re-search-forward "^\\*+ " nil t)
                    (org-back-to-heading)
-                   (expect (org-entry-get (point) "COURSE_IMAGE")
-                           :to-equal "https://canvas.example.com/files/123/preview"))))))
+                   (let ((stored (org-entry-get (point) "COURSE_IMAGE")))
+                     (expect stored :to-match "\\[\\[file:content/course_image/preview\\.jpg\\]")
+                     (expect stored :not :to-match "token=xyz")
+                     (expect stored :not :to-match "https://")))))))
         (let ((buf (find-buffer-visiting settings-file)))
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
+
+(describe "org-canvas--settings-course-image-basename"
+  (it "drops query string from URL"
+    (expect (org-canvas--settings-course-image-basename
+             "https://inst-fs.example/files/img.jpg?token=ABC&download=1")
+            :to-equal "img.jpg"))
+  (it "drops fragment from URL"
+    (expect (org-canvas--settings-course-image-basename
+             "https://example.com/path/banner.png#frag")
+            :to-equal "banner.png"))
+  (it "returns nil when URL is nil"
+    (expect (org-canvas--settings-course-image-basename nil) :to-be nil))
+  (it "handles plain URL without query"
+    (expect (org-canvas--settings-course-image-basename
+             "https://example.com/img.gif")
+            :to-equal "img.gif")))
+
+(describe "course image download"
+  (it "downloads image_download_url into content/course_image/ and stores relpath link"
+    (let* ((dir (make-temp-file "settings-test-" t))
+           (downloaded-paths nil))
+      (unwind-protect
+          (cl-letf (((symbol-function 'org-canvas--file-pull-download)
+                     (lambda (_display-name _url path _size)
+                       (push path downloaded-paths)
+                       (make-directory (file-name-directory path) t)
+                       (with-temp-file path (insert "image bytes")))))
+            (let ((org-canvas-directory dir))
+              (with-temp-org-buffer
+               "* Settings\n"
+               (org-back-to-heading)
+               (org-canvas--settings-pull-set-properties
+                (point)
+                '((id . 1) (name . "Test")
+                  (image_download_url . "https://inst-fs.example/files/img.jpg?token=ABC&download=1&exp=999"))
+                nil nil)
+               (let ((stored (org-entry-get (point) "COURSE_IMAGE")))
+                 (expect stored :to-match "\\[\\[file:content/course_image/img\\.jpg\\]")
+                 (expect downloaded-paths :to-have-same-items-as
+                         (list (expand-file-name "content/course_image/img.jpg" dir)))))))
+        (delete-directory dir t))))
+
+  (it "stores the local relpath form, not the signed URL"
+    (let* ((dir (make-temp-file "settings-test-" t)))
+      (unwind-protect
+          (cl-letf (((symbol-function 'org-canvas--file-pull-download)
+                     (lambda (_dn _url path _sz)
+                       (make-directory (file-name-directory path) t)
+                       (with-temp-file path (insert "x")))))
+            (let ((org-canvas-directory dir))
+              (with-temp-org-buffer
+               "* Settings\n"
+               (org-back-to-heading)
+               (org-canvas--settings-pull-set-properties
+                (point)
+                '((image_download_url . "https://x.example/files/img.jpg?token=secret"))
+                nil nil)
+               (let ((stored (org-entry-get (point) "COURSE_IMAGE")))
+                 (expect stored :not :to-match "token=secret")
+                 (expect stored :not :to-match "https://")))))
+        (delete-directory dir t))))
+
+  (it "skips download when image_download_url is absent"
+    (let* ((dir (make-temp-file "settings-test-" t))
+           (call-count 0))
+      (unwind-protect
+          (cl-letf (((symbol-function 'org-canvas--file-pull-download)
+                     (lambda (&rest _) (cl-incf call-count))))
+            (let ((org-canvas-directory dir))
+              (with-temp-org-buffer
+               "* Settings\n"
+               (org-back-to-heading)
+               (org-canvas--settings-pull-set-properties
+                (point) '((id . 1)) nil nil)
+               (expect (org-entry-get (point) "COURSE_IMAGE") :to-be nil)
+               (expect call-count :to-equal 0))))
+        (delete-directory dir t)))))
 
 ;;;; Additional Navigation Tab Tests
 
