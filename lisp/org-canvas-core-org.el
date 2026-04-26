@@ -1014,21 +1014,44 @@ Returns a point in the buffer visiting FILE."
             (org-back-to-heading t)
             (point)))))))
 
+(defvar org-canvas--pull-tz-cache nil
+  "Resolved course timezone for the current pull session.
+String IANA TZ name (e.g., \"America/New_York\") or nil.
+nil means UTC will be used (back-compat with pre-Task-15 behavior).
+Set by `org-canvas--pull-resolve-tz' at the start of a pull.")
+
+(defun org-canvas--pull-resolve-tz ()
+  "Resolve the course TZ from settings.org and cache it.
+Sets `org-canvas--pull-tz-cache' to the IANA TZ string or nil."
+  (setq org-canvas--pull-tz-cache
+        (let ((settings-file (and (boundp 'org-canvas-settings-file)
+                                  org-canvas-settings-file)))
+          (when (and settings-file (file-exists-p settings-file))
+            (with-current-buffer (find-file-noselect settings-file)
+              (save-excursion
+                (goto-char (point-min))
+                (when (re-search-forward "^[ \t]*:TIME_ZONE:[ \t]+\\(.+\\)$" nil t)
+                  (string-trim (match-string-no-properties 1)))))))))
+
 (defun org-canvas--iso8601-to-org-timestamp (iso8601)
   "Convert ISO8601 timestamp to Org active timestamp.
+Localizes to `org-canvas--pull-tz-cache' (course TZ) when set, else UTC.
 Returns a string like \"<2026-01-15 Thu 10:00>\" or nil."
   (when (and iso8601 (stringp iso8601) (not (equal iso8601 ""))
              (not (eq iso8601 :null)))
-    (let ((time (date-to-time iso8601)))
-      (format-time-string "<%Y-%m-%d %a %H:%M>" time t))))
+    (let ((time (date-to-time iso8601))
+          (zone (or org-canvas--pull-tz-cache t)))
+      (format-time-string "<%Y-%m-%d %a %H:%M>" time zone))))
 
 (defun org-canvas--iso8601-to-org-inactive-timestamp (iso8601)
   "Convert ISO8601 timestamp to Org inactive timestamp.
+Localizes to `org-canvas--pull-tz-cache' (course TZ) when set, else UTC.
 Returns a string like \"[2026-01-15 Thu 10:00]\" or nil."
   (when (and iso8601 (stringp iso8601) (not (equal iso8601 ""))
              (not (eq iso8601 :null)))
-    (let ((time (date-to-time iso8601)))
-      (format-time-string "[%Y-%m-%d %a %H:%M]" time t))))
+    (let ((time (date-to-time iso8601))
+          (zone (or org-canvas--pull-tz-cache t)))
+      (format-time-string "[%Y-%m-%d %a %H:%M]" time zone))))
 
 ;;;; 4f. Declarative Pull-Item Macro
 

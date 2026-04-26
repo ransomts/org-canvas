@@ -2222,5 +2222,60 @@ Page content.
                     (org-canvas--pull-summary-print))))
       (expect output :not :to-match "log line"))))
 
+(describe "TZ-aware pull timestamp"
+  (it "converts UTC ISO-8601 to America/New_York Org active timestamp"
+    (let ((org-canvas--pull-tz-cache "America/New_York"))
+      (expect (org-canvas--iso8601-to-org-timestamp "2026-04-04T03:59:00Z")
+              :to-equal "<2026-04-03 Fri 23:59>")))
+
+  (it "converts UTC ISO-8601 to America/New_York Org inactive timestamp"
+    (let ((org-canvas--pull-tz-cache "America/New_York"))
+      (expect (org-canvas--iso8601-to-org-inactive-timestamp "2026-04-04T03:59:00Z")
+              :to-equal "[2026-04-03 Fri 23:59]")))
+
+  (it "uses UTC when cache is unset (back-compat)"
+    (let ((org-canvas--pull-tz-cache nil))
+      (expect (org-canvas--iso8601-to-org-timestamp "2026-04-04T03:59:00Z")
+              :to-equal "<2026-04-04 Sat 03:59>")))
+
+  (it "returns nil for nil input"
+    (expect (org-canvas--iso8601-to-org-timestamp nil) :to-be nil))
+
+  (it "returns nil for empty string"
+    (expect (org-canvas--iso8601-to-org-timestamp "") :to-be nil)))
+
+(describe "course TZ resolver"
+  (it "reads :TIME_ZONE: from settings.org and caches it"
+    (let* ((dir (make-temp-file "tz-test-" t))
+           (settings-file (expand-file-name "settings.org" dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file settings-file
+              (insert "* Settings\n:PROPERTIES:\n:TIME_ZONE: America/New_York\n:END:\n"))
+            (let ((org-canvas-directory dir)
+                  (org-canvas-settings-file settings-file)
+                  (org-canvas--pull-tz-cache nil))
+              (org-canvas--pull-resolve-tz)
+              (expect org-canvas--pull-tz-cache :to-equal "America/New_York")))
+        (delete-directory dir t))))
+
+  (it "leaves cache nil when settings.org is missing"
+    (let ((org-canvas-settings-file "/nonexistent/settings.org")
+          (org-canvas--pull-tz-cache "stale"))
+      (org-canvas--pull-resolve-tz)
+      (expect org-canvas--pull-tz-cache :to-be nil)))
+
+  (it "leaves cache nil when settings.org has no :TIME_ZONE: prop"
+    (let* ((dir (make-temp-file "tz-test-" t))
+           (settings-file (expand-file-name "settings.org" dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file settings-file (insert "* Settings\n"))
+            (let ((org-canvas-settings-file settings-file)
+                  (org-canvas--pull-tz-cache "stale"))
+              (org-canvas--pull-resolve-tz)
+              (expect org-canvas--pull-tz-cache :to-be nil)))
+        (delete-directory dir t)))))
+
 (provide 'org-canvas-core-org-test)
 ;;; org-canvas-core-org-test.el ends here

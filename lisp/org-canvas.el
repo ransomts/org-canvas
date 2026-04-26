@@ -522,6 +522,11 @@ Canvas courses who want to adopt org-canvas."
             org-canvas-course-id org-canvas-base-url)
           (org-canvas--log-info org-canvas--logger "========================================")
           (org-canvas--preflight-check)
+          ;; Resolve course TZ from any pre-existing settings.org so
+          ;; timestamps emitted by tier-0 pulls (before settings is
+          ;; refreshed) localize correctly.  `org-canvas-pull-settings'
+          ;; calls this again after writing the new file.
+          (org-canvas--pull-resolve-tz)
           (dolist (tier org-canvas--pull-tiers)
             (message "Pulling: %s..." (org-canvas--tier-description tier))
             (org-canvas--run-tier tier #'org-canvas--safe-pull))

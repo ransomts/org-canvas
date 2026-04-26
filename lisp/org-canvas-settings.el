@@ -717,7 +717,11 @@ and heading if they don't exist."
             (org-canvas--settings-insert-navigation-heading nav-text)))
         (org-canvas--pull-write-file-header)
         (org-canvas--save-buffer))
-      (org-canvas--pull-kill-fresh-buffer settings-file was-fresh))
+      (org-canvas--pull-kill-fresh-buffer settings-file was-fresh)
+      ;; Refresh the course TZ cache now that settings.org reflects
+      ;; the just-pulled :TIME_ZONE: so subsequent pulls localize
+      ;; their timestamps correctly.
+      (org-canvas--pull-resolve-tz))
     (org-canvas--log-info org-canvas--logger "========================================")
     (org-canvas--log-info org-canvas--logger ">>> SETTINGS PULL COMPLETE")
     (org-canvas--log-info org-canvas--logger "Course: %s" name)
