@@ -41,6 +41,9 @@
 ;;;; Forward Declarations
 
 (defvar org-canvas-assignment-groups-file)
+(defvar org-canvas-sections-file)
+(declare-function org-canvas--override-fetch "org-canvas-sections" (assignment-id))
+(declare-function org-canvas--override-emit-table "org-canvas-sections" (overrides))
 
 ;;;; Configuration
 
@@ -469,7 +472,14 @@ ITEM is the API response alist, POS is the heading position."
     (let ((group-link (org-canvas--assignment-resolve-group-link group-id)))
       (when group-link
         (org-canvas-org-set-property pos "GROUP" group-link))))
-  (org-canvas--pull-insert-body (alist-get 'description item)))
+  (org-canvas--pull-insert-body (alist-get 'description item))
+  (let ((overrides (org-canvas--override-fetch (alist-get 'id item))))
+    (when overrides
+      (save-excursion
+        (goto-char pos)
+        (org-back-to-heading t)
+        (org-end-of-meta-data t)
+        (org-canvas--override-emit-table overrides)))))
 
 (org-canvas-define-pull assignments
   :file org-canvas-assignments-file

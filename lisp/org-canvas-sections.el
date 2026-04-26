@@ -222,6 +222,81 @@ Returns the CANVAS_ID string, or nil if the link cannot be resolved."
                    (format "^\\*+ +%s" (regexp-quote heading)) nil t)
               (org-entry-get (point) "CANVAS_ID"))))))))
 
+(defun org-canvas--section-link-by-id (section-id)
+  "Return an Org file link to the section heading with CANVAS_ID = SECTION-ID.
+Returns the section's heading wrapped in a
+\"[[file:sections.org::*Name][Name]]\" form, or the SECTION-ID coerced
+to a string if the section can't be resolved.
+
+This is the inverse of `org-canvas--override-resolve-section-id': that
+function turns a link into an ID; this one turns an ID into a link."
+  (let ((sections-file (and (boundp 'org-canvas-sections-file)
+                            org-canvas-sections-file))
+        (target (if (numberp section-id)
+                    (number-to-string section-id)
+                  (format "%s" section-id))))
+    (or (and sections-file
+             (file-exists-p sections-file)
+             (with-current-buffer (find-file-noselect sections-file)
+               (save-excursion
+                 (goto-char (point-min))
+                 (let (found name)
+                   (while (and (not found)
+                               (re-search-forward
+                                "^[ \t]*:CANVAS_ID:[ \t]+\\(.+\\)$" nil t))
+                     (when (string= (string-trim
+                                     (match-string-no-properties 1))
+                                    target)
+                       (save-excursion
+                         (org-back-to-heading t)
+                         (setq name (org-get-heading t t t t))
+                         (setq found t))))
+                   (when found
+                     (format "[[file:%s::*%s][%s]]"
+                             (file-name-nondirectory sections-file)
+                             name name))))))
+        target)))
+
+(defun org-canvas--override-format-cell (iso8601)
+  "Format ISO8601 as an Org timestamp string, or empty string if nil."
+  (or (and iso8601 (org-canvas--iso8601-to-org-timestamp iso8601)) ""))
+
+(defun org-canvas--override-fetch (assignment-id)
+  "GET overrides for ASSIGNMENT-ID; return a list of override alists or nil.
+Records to the pull-summary on error and returns nil."
+  (let ((url (org-canvas-api-course-endpoint
+              "assignments/%s/overrides" assignment-id)))
+    (condition-case err
+        (let ((response (org-canvas-api-request-all-pages 'GET url)))
+          (and response (append response nil)))
+      (org-canvas-api-error
+       (org-canvas--pull-summary-record
+        :file (and (boundp 'org-canvas-assignments-file)
+                   (file-name-nondirectory org-canvas-assignments-file))
+        :item (format "assignment %s overrides" assignment-id)
+        :error (error-message-string err))
+       nil))))
+
+(defun org-canvas--override-emit-table (overrides)
+  "Emit a `#+NAME: overrides' table for OVERRIDES (list of API alists).
+Inserts at point.  Does nothing when OVERRIDES is nil or empty.
+Section column resolves to a [[file:sections.org::*Name][Name]] link via
+`org-canvas--section-link-by-id'.  Date columns are formatted via the
+course timezone (see `org-canvas--iso8601-to-org-timestamp')."
+  (when (and overrides (> (length overrides) 0))
+    (insert "#+NAME: overrides\n")
+    (insert "| Section | Due At | Unlock At | Lock At |\n")
+    (insert "|---------+--------+-----------+---------|\n")
+    (dolist (ov overrides)
+      (let ((sec-link (org-canvas--section-link-by-id
+                       (alist-get 'course_section_id ov)))
+            (due    (org-canvas--override-format-cell (alist-get 'due_at ov)))
+            (unlock (org-canvas--override-format-cell (alist-get 'unlock_at ov)))
+            (lock   (org-canvas--override-format-cell (alist-get 'lock_at ov))))
+        (insert (format "| %s | %s | %s | %s |\n"
+                        sec-link due unlock lock))))
+    (insert "\n")))
+
 (defun org-canvas--override-parse-timestamp-cell (cell)
   "Parse a table CELL containing an Org timestamp.
 Returns an ISO8601 string or nil for empty/whitespace cells."

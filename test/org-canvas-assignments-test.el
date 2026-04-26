@@ -1398,4 +1398,101 @@ Content.
         (description . ""))
       "TURNITIN_ENABLED" :to-equal "true")))
 
+;;;; Section override pull (Task 16)
+
+(describe "org-canvas--section-link-by-id"
+  (it "returns a file link to the section heading by CANVAS_ID"
+    (let ((sections-temp (make-temp-file "sections-link-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file sections-temp
+              (insert "#+TITLE: Sections\n* S2601-CPSC-6300-001-15179\n:PROPERTIES:\n:CANVAS_ID: 296338\n:END:\n"))
+            (let ((org-canvas-sections-file sections-temp))
+              (let ((link (org-canvas--section-link-by-id 296338)))
+                (expect link :to-match
+                        "\\[\\[file:.*::\\*S2601-CPSC-6300-001-15179\\]\\[S2601-CPSC-6300-001-15179\\]\\]"))))
+        (let ((buf (find-buffer-visiting sections-temp)))
+          (when buf (kill-buffer buf)))
+        (delete-file sections-temp))))
+
+  (it "returns the raw id when sections file is missing"
+    (let ((org-canvas-sections-file "/tmp/nonexistent-sections-xyzzy.org"))
+      (expect (org-canvas--section-link-by-id 296338) :to-equal "296338")))
+
+  (it "returns the raw id when no matching CANVAS_ID is found"
+    (let ((sections-temp (make-temp-file "sections-link-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file sections-temp
+              (insert "#+TITLE: Sections\n* Other\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"))
+            (let ((org-canvas-sections-file sections-temp))
+              (expect (org-canvas--section-link-by-id 296338) :to-equal "296338")))
+        (let ((buf (find-buffer-visiting sections-temp)))
+          (when buf (kill-buffer buf)))
+        (delete-file sections-temp)))))
+
+(describe "assignment override pull"
+  (it "emits #+NAME: overrides table when assignment has overrides"
+    (let* ((temp-dir (make-temp-file "assign-ov-test" t))
+           (test-file (expand-file-name "assignments.org" temp-dir))
+           (sections-file (expand-file-name "sections.org" temp-dir)))
+      (unwind-protect
+          (let ((org-canvas-assignments-file test-file)
+                (org-canvas-sections-file sections-file)
+                (org-canvas-assignment-groups-file "/tmp/nonexistent-ag.org"))
+            (with-temp-file sections-file
+              (insert "#+TITLE: Sections\n* S2601-CPSC-6300-001-15179\n:PROPERTIES:\n:CANVAS_ID: 296338\n:END:\n"))
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                         (lambda (_method url &optional _params)
+                           (cond
+                            ((string-match-p "/overrides" url)
+                             '(((id . 5001)
+                                (course_section_id . 296338)
+                                (due_at . "2026-02-22T23:59:00Z"))))
+                            (t
+                             '(((id . 678) (name . "Lab 1")
+                                (due_at . "2026-02-15T23:59:00Z")
+                                (assignment_group_id . 100)))))))
+                        ((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                        ((symbol-function 'display-buffer) (lambda (_) nil)))
+                (org-canvas-pull-assignments)
+                (let ((s (with-temp-buffer
+                           (insert-file-contents test-file)
+                           (buffer-string))))
+                  (expect s :to-match "^#\\+NAME: overrides$")
+                  (expect s :to-match "S2601-CPSC-6300-001-15179")
+                  (expect s :to-match "<2026-02-22")))))
+        (let ((buf (find-buffer-visiting test-file)))
+          (when buf (kill-buffer buf)))
+        (let ((buf (find-buffer-visiting sections-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "emits no override table when assignment has no overrides"
+    (let* ((temp-dir (make-temp-file "assign-noov-test" t))
+           (test-file (expand-file-name "assignments.org" temp-dir)))
+      (unwind-protect
+          (let ((org-canvas-assignments-file test-file)
+                (org-canvas-assignment-groups-file "/tmp/nonexistent-ag.org"))
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                         (lambda (_method url &optional _params)
+                           (cond
+                            ((string-match-p "/overrides" url) '())
+                            (t
+                             '(((id . 700) (name . "Solo")
+                                (due_at . "2026-02-15T23:59:00Z")
+                                (assignment_group_id . 100)))))))
+                        ((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                        ((symbol-function 'display-buffer) (lambda (_) nil)))
+                (org-canvas-pull-assignments)
+                (let ((s (with-temp-buffer
+                           (insert-file-contents test-file)
+                           (buffer-string))))
+                  (expect s :not :to-match "^#\\+NAME: overrides$")))))
+        (let ((buf (find-buffer-visiting test-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
 ;;; org-canvas-assignments-test.el ends here
