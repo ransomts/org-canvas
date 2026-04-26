@@ -166,10 +166,41 @@ Ensures the correct buffer is used if POM is a marker."
   "Ensure ID is a string.  Convert numbers; pass strings through."
   (if (numberp id) (number-to-string id) id))
 
+(defun org-canvas--registry-find-property (org-prop)
+  "Scan `org-canvas--property-registry' for a spec with :org-prop = ORG-PROP.
+Return the property spec plist, or nil.  First match wins (properties
+registered under multiple feature keys are expected to share defaults)."
+  (catch 'found
+    (maphash
+     (lambda (_feature feature-plist)
+       (dolist (spec (plist-get feature-plist :properties))
+         (when (string= (plist-get spec :org-prop) org-prop)
+           (throw 'found spec))))
+     org-canvas--property-registry)
+    nil))
+
 (defun org-canvas--pull-set-boolean-property (pom property value)
-  "Set boolean PROPERTY at POM.  Convert t to \"true\", else to \"false\"."
-  (org-canvas-org-set-property
-   pom property (if (eq value t) "true" "false")))
+  "Set boolean PROPERTY at POM.
+Convert t to \"true\", :json-false/nil to \"false\".  When the registry
+declares PROPERTY as `:type boolean' and the resolved value matches the
+registered (or implicit nil) default, emission is suppressed unless
+`org-canvas-emit-defaults' is non-nil."
+  (let* ((spec (org-canvas--registry-find-property property))
+         (boolean-spec (and spec (eq (plist-get spec :type) 'boolean)))
+         (default (plist-get spec :default))
+         (normalized (cond ((eq value t) t)
+                           ((eq value :json-false) nil)
+                           ((null value) nil)
+                           ((stringp value)
+                            (cond ((string= value "true") t)
+                                  ((string= value "false") nil)
+                                  (t value)))
+                           (t value))))
+    (when (or org-canvas-emit-defaults
+              (not boolean-spec)
+              (not (eq (and normalized t) (and default t))))
+      (org-canvas-org-set-property
+       pom property (if normalized "true" "false")))))
 
 (defun org-canvas--alist-get-non-null (key alist)
   "Get KEY from ALIST, returning nil for null or :null values."

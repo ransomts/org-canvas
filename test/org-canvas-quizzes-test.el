@@ -2796,7 +2796,7 @@ Content.
        (expect (org-entry-get (point) "SHOW_CORRECT_ANSWERS_LAST_ATTEMPT")
                :to-equal "true"))))
 
-  (it "sets SHOW_CORRECT_ANSWERS_LAST_ATTEMPT false"
+  (it "omits SHOW_CORRECT_ANSWERS_LAST_ATTEMPT when false (matches default)"
     (with-temp-org-buffer
      "* Quiz
 :PROPERTIES:
@@ -2806,7 +2806,7 @@ Content.
      (let ((quiz '((id . 42) (show_correct_answers_last_attempt . :json-false))))
        (org-canvas--quiz-pull-set-properties (point) quiz "/tmp/quizzes.org")
        (expect (org-entry-get (point) "SHOW_CORRECT_ANSWERS_LAST_ATTEMPT")
-               :to-equal "false"))))
+               :to-be nil))))
 
   (it "sets ONE_TIME_RESULTS true"
     (with-temp-org-buffer
@@ -2820,7 +2820,7 @@ Content.
        (expect (org-entry-get (point) "ONE_TIME_RESULTS")
                :to-equal "true"))))
 
-  (it "sets ONE_TIME_RESULTS false"
+  (it "omits ONE_TIME_RESULTS when false (matches default)"
     (with-temp-org-buffer
      "* Quiz
 :PROPERTIES:
@@ -2830,7 +2830,7 @@ Content.
      (let ((quiz '((id . 42) (one_time_results . :json-false))))
        (org-canvas--quiz-pull-set-properties (point) quiz "/tmp/quizzes.org")
        (expect (org-entry-get (point) "ONE_TIME_RESULTS")
-               :to-equal "false"))))
+               :to-be nil))))
 
   (it "sets ONLY_VISIBLE_TO_OVERRIDES true"
     (with-temp-org-buffer
@@ -2844,7 +2844,7 @@ Content.
        (expect (org-entry-get (point) "ONLY_VISIBLE_TO_OVERRIDES")
                :to-equal "true"))))
 
-  (it "sets ONLY_VISIBLE_TO_OVERRIDES false"
+  (it "omits ONLY_VISIBLE_TO_OVERRIDES when false (matches default)"
     (with-temp-org-buffer
      "* Quiz
 :PROPERTIES:
@@ -2854,7 +2854,7 @@ Content.
      (let ((quiz '((id . 42) (only_visible_to_overrides . :json-false))))
        (org-canvas--quiz-pull-set-properties (point) quiz "/tmp/quizzes.org")
        (expect (org-entry-get (point) "ONLY_VISIBLE_TO_OVERRIDES")
-               :to-equal "false")))))
+               :to-be nil)))))
 
 ;;;; Question Group Tests
 

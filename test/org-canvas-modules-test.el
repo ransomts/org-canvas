@@ -2260,19 +2260,20 @@
        (org-back-to-heading)
        (expect (org-entry-get (point) "PUBLISHED") :to-equal "false"))))
 
-  (it "sets PUBLISHED true on linked items"
-    (with-temp-org-buffer
-     "* Module
+  (it "sets PUBLISHED true on linked items (when org-canvas-emit-defaults)"
+    (let ((org-canvas-emit-defaults t))
+      (with-temp-org-buffer
+       "* Module
 "
-     (goto-char (point-max))
-     (let ((items [((type . "ExternalUrl") (title . "Link")
-                    (id . 2) (external_url . "https://x.com")
-                    (published . t))]))
-       (org-canvas--module-pull-insert-items items)
-       (goto-char (point-min))
-       (re-search-forward "Link")
-       (org-back-to-heading)
-       (expect (org-entry-get (point) "PUBLISHED") :to-equal "true")))))
+       (goto-char (point-max))
+       (let ((items [((type . "ExternalUrl") (title . "Link")
+                      (id . 2) (external_url . "https://x.com")
+                      (published . t))]))
+         (org-canvas--module-pull-insert-items items)
+         (goto-char (point-min))
+         (re-search-forward "Link")
+         (org-back-to-heading)
+         (expect (org-entry-get (point) "PUBLISHED") :to-equal "true"))))))
 
 ;;;; Cross-file module link resolution integration
 

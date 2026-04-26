@@ -2093,25 +2093,27 @@ Keep this too
      (org-canvas--pull-set-boolean-property (point) "ALLOW_RATING" t)
      (expect (org-entry-get (point) "ALLOW_RATING") :to-equal "true")))
 
-  (it "sets false when value is nil"
-    (with-temp-org-buffer
-     "* Item
+  (it "sets false when value is nil and org-canvas-emit-defaults is t"
+    (let ((org-canvas-emit-defaults t))
+      (with-temp-org-buffer
+       "* Item
 :PROPERTIES:
 :END:
 "
-     (org-back-to-heading)
-     (org-canvas--pull-set-boolean-property (point) "ALLOW_RATING" nil)
-     (expect (org-entry-get (point) "ALLOW_RATING") :to-equal "false")))
+       (org-back-to-heading)
+       (org-canvas--pull-set-boolean-property (point) "ALLOW_RATING" nil)
+       (expect (org-entry-get (point) "ALLOW_RATING") :to-equal "false"))))
 
-  (it "sets false when value is :json-false"
-    (with-temp-org-buffer
-     "* Item
+  (it "sets false when value is :json-false and org-canvas-emit-defaults is t"
+    (let ((org-canvas-emit-defaults t))
+      (with-temp-org-buffer
+       "* Item
 :PROPERTIES:
 :END:
 "
-     (org-back-to-heading)
-     (org-canvas--pull-set-boolean-property (point) "PINNED" :json-false)
-     (expect (org-entry-get (point) "PINNED") :to-equal "false"))))
+       (org-back-to-heading)
+       (org-canvas--pull-set-boolean-property (point) "PINNED" :json-false)
+       (expect (org-entry-get (point) "PINNED") :to-equal "false")))))
 
 (describe "org-canvas--pull-set-timestamp-property"
   (it "sets Org timestamp from ISO8601"

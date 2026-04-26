@@ -306,5 +306,58 @@
                                 :registry-key "x"))
                 :to-throw 'error)))))
 
+(require 'org-canvas-assignments)
+(require 'org-canvas-announcements)
+
+(describe "default suppression"
+  (it "omits a boolean property when its value equals registry default"
+    (let ((org-canvas-emit-defaults nil))
+      (with-temp-org-buffer
+       "* Heading\n"
+       (org-canvas--pull-set-boolean-property
+        (point) "PEER_REVIEWS" :json-false)
+       (expect (org-entry-get (point) "PEER_REVIEWS") :to-be nil))))
+
+  (it "emits when value differs from registry default"
+    (let ((org-canvas-emit-defaults nil))
+      (with-temp-org-buffer
+       "* Heading\n"
+       (org-canvas--pull-set-boolean-property
+        (point) "PEER_REVIEWS" t)
+       (expect (org-entry-get (point) "PEER_REVIEWS") :to-equal "true"))))
+
+  (it "emits everything when org-canvas-emit-defaults is non-nil"
+    (let ((org-canvas-emit-defaults t))
+      (with-temp-org-buffer
+       "* Heading\n"
+       (org-canvas--pull-set-boolean-property
+        (point) "PEER_REVIEWS" :json-false)
+       (expect (org-entry-get (point) "PEER_REVIEWS") :to-equal "false"))))
+
+  (it "emits when property is not in the registry (no spec found)"
+    (let ((org-canvas-emit-defaults nil))
+      (with-temp-org-buffer
+       "* Heading\n"
+       (org-canvas--pull-set-boolean-property
+        (point) "MADE_UP_PROP" :json-false)
+       (expect (org-entry-get (point) "MADE_UP_PROP") :to-equal "false"))))
+
+  (it "omits when value matches explicit :default t (PUBLISHED on announcements)"
+    (let ((org-canvas-emit-defaults nil))
+      (with-temp-org-buffer
+       "* Heading\n"
+       (org-canvas--pull-set-boolean-property
+        (point) "PUBLISHED" t)
+       ;; PUBLISHED has :default t in announcements registration, so t is suppressed
+       (expect (org-entry-get (point) "PUBLISHED") :to-be nil))))
+
+  (it "emits when value differs from explicit :default t"
+    (let ((org-canvas-emit-defaults nil))
+      (with-temp-org-buffer
+       "* Heading\n"
+       (org-canvas--pull-set-boolean-property
+        (point) "PUBLISHED" :json-false)
+       (expect (org-entry-get (point) "PUBLISHED") :to-equal "false")))))
+
 (provide 'org-canvas-property-registry-test)
 ;;; org-canvas-property-registry-test.el ends here

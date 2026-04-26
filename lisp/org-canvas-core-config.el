@@ -140,6 +140,13 @@ Separate from `org-canvas-request-timeout' which governs plz API calls."
   :type 'integer
   :group 'org-canvas)
 
+(defcustom org-canvas-emit-defaults nil
+  "When non-nil, emit Org properties whose values match the registry default.
+Default behavior (nil) suppresses these to keep drawers terse.  Set to
+t when debugging to see the full property set."
+  :type 'boolean
+  :group 'org-canvas)
+
 (defcustom org-canvas-transient-retry-delays '(5 10 20)
   "Sleep durations (seconds) between retries of transient API errors.
 List length determines the maximum number of retries.  Transient errors
