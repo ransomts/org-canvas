@@ -1325,11 +1325,20 @@ Page content.
       (expect (hash-table-count cache) :to-equal 0))))
 
 (describe "org-canvas--rewrite-canvas-file-urls"
+  ;; These tests focus on cache-hit behavior.  The cache-miss path now
+  ;; triggers an on-demand API fetch (Task 6), so we stub the API to
+  ;; signal an error — that exercises the pass-through-on-failure branch
+  ;; without making real network calls.
   (let (cache)
     (before-each
       (setq cache (make-hash-table :test 'equal))
       (puthash "29257665" "content/Uploaded Media/img.png" cache)
-      (puthash "28960058" "content/readings/ethics.pdf" cache))
+      (puthash "28960058" "content/readings/ethics.pdf" cache)
+      (org-canvas--pull-summary-reset)
+      (spy-on 'org-canvas-api-request
+              :and-call-fake
+              (lambda (&rest _)
+                (signal 'org-canvas-api-error '("Forbidden" nil nil)))))
 
     (it "rewrites a bare URL link with no description to file link with filename"
       (expect (org-canvas--rewrite-canvas-file-urls
@@ -1395,6 +1404,104 @@ Page content.
             (input "[[https://x.instructure.com/courses/1/files/29257665/preview?verifier=a]]"))
         (expect (org-canvas--rewrite-canvas-file-urls input empty)
                 :to-equal input)))))
+
+(describe "fetch unknown file on rewrite"
+  (before-each
+    (setq org-canvas--rewrite-folder-cache nil)
+    (org-canvas--pull-summary-reset))
+
+  (it "fetches metadata, downloads, registers, and rewrites"
+    (let ((cache (make-hash-table :test 'equal))
+          (api-calls 0)
+          (downloads 0)
+          (org-canvas-directory (make-temp-file "test-rewrite-" t))
+          (org-canvas-files-file nil))
+      (unwind-protect
+          (progn
+            (setq org-canvas-files-file
+                  (expand-file-name "files.org" org-canvas-directory))
+            (with-temp-file org-canvas-files-file
+              (insert "#+TITLE: Files\n"))
+            (cl-letf (((symbol-function 'org-canvas-api-request)
+                       (lambda (_method url &rest _args)
+                         (cl-incf api-calls)
+                         (cond
+                          ((string-match-p "/api/v1/files/30061566\\'" url)
+                           '((id . 30061566)
+                             (display_name . "screenshot.png")
+                             (folder_id . 999)
+                             (url . "https://x.com/files/30061566/download?verifier=Z")
+                             (content-type . "image/png")
+                             (size . 12345)))
+                          ((string-match-p "/api/v1/folders/999\\'" url)
+                           '((id . 999)
+                             (full_name . "course files/Uploaded Media"))))))
+                      ((symbol-function 'org-canvas--file-pull-download)
+                       (lambda (_dn _url path _size)
+                         (cl-incf downloads)
+                         (make-directory (file-name-directory path) t)
+                         (with-temp-file path (insert "fake bytes")))))
+              (let* ((input "see [[https://x.com/courses/281704/files/30061566/preview?verifier=A]]")
+                     (rewritten (org-canvas--rewrite-canvas-file-urls input cache)))
+                (expect rewritten :to-match
+                        "\\[\\[file:content/Uploaded Media/screenshot\\.png\\]\\[screenshot\\.png\\]\\]")
+                (expect downloads :to-equal 1)
+                (expect (gethash "30061566" cache)
+                        :to-equal "content/Uploaded Media/screenshot.png"))))
+        (delete-directory org-canvas-directory t))))
+
+  (it "returns nil and records to summary when metadata GET fails"
+    (let ((cache (make-hash-table :test 'equal))
+          (org-canvas-directory (make-temp-file "test-rewrite-fail-" t))
+          (org-canvas-files-file nil))
+      (unwind-protect
+          (progn
+            (setq org-canvas-files-file
+                  (expand-file-name "files.org" org-canvas-directory))
+            (with-temp-file org-canvas-files-file (insert ""))
+            (org-canvas--pull-summary-reset)
+            (cl-letf (((symbol-function 'org-canvas-api-request)
+                       (lambda (&rest _)
+                         (signal 'org-canvas-api-error '("Forbidden" nil nil)))))
+              (let* ((input "x [[https://x.com/courses/281704/files/99999999?verifier=Z]] y")
+                     (rewritten (org-canvas--rewrite-canvas-file-urls input cache)))
+                ;; URL passes through unchanged
+                (expect rewritten :to-equal input)
+                ;; Failure recorded
+                (expect (org-canvas--pull-summary-empty-p) :to-be nil))))
+        (delete-directory org-canvas-directory t))))
+
+  (it "caches resolved IDs for the rest of the session"
+    (let ((cache (make-hash-table :test 'equal))
+          (api-calls 0)
+          (org-canvas-directory (make-temp-file "test-rewrite-cache-" t))
+          (org-canvas-files-file nil))
+      (unwind-protect
+          (progn
+            (setq org-canvas-files-file
+                  (expand-file-name "files.org" org-canvas-directory))
+            (with-temp-file org-canvas-files-file (insert ""))
+            (cl-letf (((symbol-function 'org-canvas-api-request)
+                       (lambda (_method url &rest _args)
+                         (cl-incf api-calls)
+                         (cond
+                          ((string-match-p "/api/v1/files/30061566\\'" url)
+                           '((id . 30061566)
+                             (display_name . "screenshot.png")
+                             (folder_id . 999)
+                             (url . "https://x.com/files/30061566/download?verifier=Z")))
+                          ((string-match-p "/api/v1/folders/999\\'" url)
+                           '((full_name . "course files/Uploaded Media"))))))
+                      ((symbol-function 'org-canvas--file-pull-download)
+                       (lambda (_dn _url path _size)
+                         (make-directory (file-name-directory path) t)
+                         (with-temp-file path (insert "x")))))
+              (let ((url1 "[[https://x.com/courses/281704/files/30061566/preview?verifier=A]]")
+                    (url2 "[[https://x.com/courses/281704/files/30061566?verifier=B]]"))
+                (org-canvas--rewrite-canvas-file-urls (concat url1 "\n" url2) cache)
+                ;; Two URLs, but only one metadata fetch + one folder fetch
+                (expect api-calls :to-equal 2))))
+        (delete-directory org-canvas-directory t)))))
 
 ;;;; Pull-side buffer lifecycle helpers
 

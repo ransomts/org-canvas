@@ -14,6 +14,12 @@
 (require 'org-canvas-core-config)
 (require 'org-canvas-core-api)
 
+;; Forward declaration: defined in `org-canvas-files', loaded by the time
+;; the rewriter runs during a pull.  Declared here to keep `core-org' free
+;; of a feature-module dependency while still satisfying byte-compile.
+(declare-function org-canvas--file-pull-download "org-canvas-files"
+                  (display-name download-url local-path size))
+
 ;;;; 4. Org Interaction Layer
 
 (defun org-canvas-org-get-property (pom property)
@@ -731,20 +737,168 @@ link are skipped.  Returns an empty hash if FILES-FILE does not exist."
                 (puthash id path cache))))))))
     cache))
 
+(defvar org-canvas--rewrite-folder-cache nil
+  "Hash mapping Canvas folder ID (number) to a folder-relative path string.
+Populated lazily by `org-canvas--rewrite-fetch-unknown-file' so a
+batch of body rewrites in the same pull session reuses a single
+GET per folder.  Reset to nil between sessions.")
+
+(defun org-canvas--strip-course-files-prefix (full-name)
+  "Strip the Canvas \"course files\" prefix from FULL-NAME.
+Returns the empty string for nil or the bare \"course files\" root,
+the suffix when the prefix matches, or FULL-NAME unchanged otherwise.
+Mirrors `org-canvas--file-pull-folder-relative-path' so this module
+does not depend on `org-canvas-files'."
+  (cond
+   ((null full-name) "")
+   ((string= full-name "course files") "")
+   ((string-prefix-p "course files/" full-name)
+    (substring full-name (length "course files/")))
+   (t full-name)))
+
+(defun org-canvas--rewrite-fetch-folder-relpath (folder-id)
+  "Return the folder-relative path for Canvas FOLDER-ID, fetching if needed.
+Uses (and populates) `org-canvas--rewrite-folder-cache'.  Returns
+the empty string when FOLDER-ID is nil or for the course root.
+Returns nil on API failure so callers can decide whether to fall
+back to a placeholder folder."
+  (cond
+   ((null folder-id) "")
+   ((and org-canvas--rewrite-folder-cache
+         (gethash folder-id org-canvas--rewrite-folder-cache)))
+   (t
+    (unless org-canvas--rewrite-folder-cache
+      (setq org-canvas--rewrite-folder-cache (make-hash-table :test 'eql)))
+    (condition-case err
+        (let* ((url (format "%s/api/v1/folders/%s"
+                            org-canvas-base-url folder-id))
+               (folder (org-canvas-api-request 'GET url))
+               (full-name (alist-get 'full_name folder))
+               (rel (org-canvas--strip-course-files-prefix full-name)))
+          (puthash folder-id rel org-canvas--rewrite-folder-cache)
+          rel)
+      (org-canvas-api-error
+       (org-canvas--log-warning org-canvas--logger
+         "[Rewrite] folder %s lookup failed: %s"
+         folder-id (error-message-string err))
+       nil)))))
+
+(defun org-canvas--files-org-append-fetched-entry
+    (rel-path display-name canvas-id content-type size)
+  "Append a heading for a fetched file to `org-canvas-files-file'.
+REL-PATH is the path under content/ (e.g. \"Uploaded Media/img.png\");
+DISPLAY-NAME is the file's display name; CANVAS-ID is the Canvas file
+ID (string or number); CONTENT-TYPE and SIZE may be nil.
+
+Finds (or creates) a top-level `* <folder>' heading whose name matches
+the parent folder of REL-PATH (or `* Uploaded Media' for files at the
+content/ root) and appends a child file-link heading beneath it.
+Saves the buffer.  Creates the file if it does not yet exist."
+  (let* ((files-file (and (boundp 'org-canvas-files-file)
+                          org-canvas-files-file))
+         (parent (let ((dir (file-name-directory rel-path)))
+                   (if dir
+                       (directory-file-name dir)
+                     "Uploaded Media")))
+         (id-str (if (numberp canvas-id) (number-to-string canvas-id)
+                   (format "%s" canvas-id))))
+    (unless files-file
+      (error "Variable `org-canvas-files-file' not set"))
+    (unless (file-exists-p files-file)
+      (with-temp-file files-file (insert "")))
+    (with-current-buffer (find-file-noselect files-file)
+      (org-with-wide-buffer
+       (goto-char (point-min))
+       (let ((parent-re (format "^\\* +%s\\s-*$" (regexp-quote parent))))
+         (unless (re-search-forward parent-re nil t)
+           (goto-char (point-max))
+           (unless (bolp) (insert "\n"))
+           (insert "* " parent "\n")))
+       ;; Point is on (or just past) the parent heading; descend to its end.
+       (org-back-to-heading t)
+       (org-end-of-subtree t t)
+       (unless (bolp) (insert "\n"))
+       (insert (format "** [[file:content/%s][%s]]\n" rel-path display-name))
+       (let ((pos (save-excursion (forward-line -1) (point))))
+         (org-canvas-org-save-sync-state pos id-str)
+         (when content-type
+           (org-canvas-org-set-property pos "CONTENT_TYPE" content-type))
+         (when size
+           (org-canvas-org-set-property pos "SIZE" (format "%s" size)))))
+      (save-buffer))))
+
+(defun org-canvas--rewrite-fetch-unknown-file (id cache)
+  "Fetch Canvas file ID, download it, register it, and return the relpath.
+On any API failure (401/403/404/timeout) record to the pull summary
+and return nil so the rewriter passes the URL through unchanged.
+
+On success: GET /api/v1/files/:id, derive the folder-relative path
+via /api/v1/folders/:fid (cached in `org-canvas--rewrite-folder-cache'),
+download to <org-canvas-directory>/content/<folder>/<display_name>
+via `org-canvas--file-pull-download', append a heading to
+`org-canvas-files-file' via `org-canvas--files-org-append-fetched-entry',
+and `puthash' the resolved relpath into CACHE so subsequent calls in
+the same session hit the cache.
+
+Returns the relpath (e.g. \"content/Uploaded Media/screenshot.png\")
+on success, or nil on failure."
+  (condition-case err
+      (let* ((url (format "%s/api/v1/files/%s" org-canvas-base-url id))
+             (item (org-canvas-api-request 'GET url))
+             (display-name (alist-get 'display_name item))
+             (folder-id (alist-get 'folder_id item))
+             (download-url (alist-get 'url item))
+             (content-type (alist-get 'content-type item))
+             (size (alist-get 'size item))
+             (folder-rel (or (org-canvas--rewrite-fetch-folder-relpath folder-id)
+                             "Uploaded Media"))
+             (local-rel (if (string-empty-p folder-rel)
+                            display-name
+                          (concat folder-rel "/" display-name)))
+             (rel-path (concat "content/" local-rel))
+             (local-path (expand-file-name rel-path org-canvas-directory)))
+        (org-canvas--file-pull-download
+         display-name download-url local-path size)
+        (org-canvas--files-org-append-fetched-entry
+         local-rel display-name id content-type size)
+        (puthash id rel-path cache)
+        rel-path)
+    (org-canvas-api-error
+     (org-canvas--log-warning org-canvas--logger
+       "[Rewrite] file %s fetch failed: %s"
+       id (error-message-string err))
+     (org-canvas--pull-summary-record
+      :file (and (boundp 'org-canvas-files-file)
+                 org-canvas-files-file
+                 (file-name-nondirectory org-canvas-files-file))
+      :item id
+      :error (error-message-string err)
+      :log-line (org-canvas--pull-summary-current-log-line))
+     nil)))
+
 (defun org-canvas--rewrite-canvas-file-urls (text cache)
   "Rewrite Org-bracketed Canvas file URLs in TEXT using CACHE.
 A link `[[https://.../files/ID...]]' (optionally with a `][DESC]' tail)
 is replaced by `[[file:RELPATH][DESC-or-FILENAME]]' when ID is a key in
-CACHE; URLs whose ID is not in CACHE pass through unchanged.
+CACHE.  When ID is missing from CACHE, attempts to fetch its metadata
+from Canvas, download the file, register it in `org-canvas-files-file',
+and rewrite the link; if the fetch fails the URL passes through
+unchanged (the failure is recorded in the pull summary).
 Returns TEXT unchanged when nil or empty."
   (if (or (null text) (string-empty-p text))
       text
     (replace-regexp-in-string
      org-canvas--canvas-file-url-re
      (lambda (match)
+       ;; Capture the substring matches eagerly: the unknown-file fetch
+       ;; below performs buffer operations that can clobber match data,
+       ;; even though `replace-regexp-in-string' nominally guards it.
        (let* ((id (match-string 2 match))
               (desc (match-string 3 match))
-              (relpath (gethash id cache)))
+              (relpath (or (gethash id cache)
+                           (save-match-data
+                             (org-canvas--rewrite-fetch-unknown-file
+                              id cache)))))
          (if relpath
              (format "[[file:%s][%s]]"
                      relpath
