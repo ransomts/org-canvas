@@ -681,4 +681,96 @@ Content.
            (wiki-page (gethash "wiki_page" payload)))
       (expect (gethash "notify_of_update" wiki-page) :to-be nil))))
 
+(describe "org-canvas--page-pull-item detail timeout"
+  (it "records the failure in the pull summary with the slug"
+    (org-canvas--pull-summary-reset)
+    (with-temp-org-buffer
+     "* Connecting to the Palmetto Jupyter Image
+:PROPERTIES:
+:CANVAS_URL: connecting-to-the-palmetto-jupyter-image
+:END:
+"
+     (org-back-to-heading)
+     (cl-letf (((symbol-function 'org-canvas-api-request)
+                (lambda (&rest _)
+                  (signal 'org-canvas-timeout-error
+                          (list "Operation timeout")))))
+       (org-canvas--page-pull-item
+        '((url . "connecting-to-the-palmetto-jupyter-image")
+          (page_id . 12345)
+          (title . "Connecting to the Palmetto Jupyter Image"))
+        (point))
+       (let ((records (org-canvas--pull-summary-records)))
+         (expect (length records) :to-equal 1)
+         (expect (plist-get (car records) :file)
+                 :to-equal "pages.org")
+         (expect (plist-get (car records) :item)
+                 :to-equal "connecting-to-the-palmetto-jupyter-image")
+         (expect (plist-get (car records) :error)
+                 :to-match "timeout")))))
+
+  (it "preserves the heading's CANVAS_URL even when detail fetch fails"
+    (org-canvas--pull-summary-reset)
+    (with-temp-org-buffer
+     "* Connecting to the Palmetto Jupyter Image
+:PROPERTIES:
+:CANVAS_URL: connecting-to-the-palmetto-jupyter-image
+:END:
+"
+     (org-back-to-heading)
+     (cl-letf (((symbol-function 'org-canvas-api-request)
+                (lambda (&rest _)
+                  (signal 'org-canvas-timeout-error
+                          (list "Operation timeout")))))
+       (org-canvas--page-pull-item
+        '((url . "connecting-to-the-palmetto-jupyter-image")
+          (page_id . 12345)
+          (title . "Connecting to the Palmetto Jupyter Image"))
+        (point))
+       ;; The slug must remain — the timeout must NOT erase or overwrite
+       ;; CANVAS_URL with anything else (the original schema bug).
+       (expect (org-entry-get (point) "CANVAS_URL")
+               :to-equal "connecting-to-the-palmetto-jupyter-image")
+       ;; And no spurious CANVAS_ID is written either.
+       (expect (org-entry-get (point) "CANVAS_ID") :to-be nil))))
+
+  (it "does not insert a body when detail fetch fails"
+    (org-canvas--pull-summary-reset)
+    (with-temp-org-buffer
+     "* Page
+:PROPERTIES:
+:CANVAS_URL: page-slug
+:END:
+"
+     (org-back-to-heading)
+     (cl-letf (((symbol-function 'org-canvas-api-request)
+                (lambda (&rest _)
+                  (signal 'org-canvas-timeout-error
+                          (list "Operation timeout"))))
+               ((symbol-function 'org-canvas--pull-insert-body)
+                (lambda (&rest _) (error "should not be called"))))
+       ;; Should not raise (the symbol-function above would).
+       (org-canvas--page-pull-item
+        '((url . "page-slug") (title . "Page")) (point)))))
+
+  (it "still inserts the body on a successful fetch"
+    (org-canvas--pull-summary-reset)
+    (with-temp-org-buffer
+     "* Page
+:PROPERTIES:
+:CANVAS_URL: page-slug
+:END:
+"
+     (org-back-to-heading)
+     (let ((insert-calls nil))
+       (cl-letf (((symbol-function 'org-canvas-api-request)
+                  (lambda (&rest _)
+                    '((body . "<p>Hello</p>"))))
+                 ((symbol-function 'org-canvas--pull-insert-body)
+                  (lambda (body) (push body insert-calls))))
+         (org-canvas--page-pull-item
+          '((url . "page-slug") (title . "Page")) (point))
+         (expect (org-canvas--pull-summary-empty-p) :to-be t)
+         (expect insert-calls :to-equal '("<p>Hello</p>")))))))
+
 ;;; org-canvas-pages-test.el ends here

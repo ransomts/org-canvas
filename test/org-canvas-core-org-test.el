@@ -1958,5 +1958,74 @@ Page content.
         (expect 'message :to-have-been-called-with "Images [%d/%d] Processing..." 1 2)
         (expect 'message :to-have-been-called-with "Images [%d/%d] Processing..." 2 2)))))
 
+(describe "pull summary accumulator"
+  (it "starts empty after reset"
+    (org-canvas--pull-summary-reset)
+    (expect (org-canvas--pull-summary-empty-p) :to-be t))
+
+  (it "records errors with file, message, and log line"
+    (org-canvas--pull-summary-reset)
+    (org-canvas--pull-summary-record
+     :file "pages.org"
+     :item "connecting-to-the-palmetto-jupyter-image"
+     :error "Operation timeout"
+     :log-line 154)
+    (expect (org-canvas--pull-summary-empty-p) :to-be nil)
+    (let ((records (org-canvas--pull-summary-records)))
+      (expect (length records) :to-equal 1)
+      (expect (plist-get (car records) :file) :to-equal "pages.org")
+      (expect (plist-get (car records) :item)
+              :to-equal "connecting-to-the-palmetto-jupyter-image")
+      (expect (plist-get (car records) :error) :to-equal "Operation timeout")
+      (expect (plist-get (car records) :log-line) :to-equal 154)))
+
+  (it "preserves insertion order across multiple records"
+    (org-canvas--pull-summary-reset)
+    (org-canvas--pull-summary-record :file "a.org" :item "first" :error "e1")
+    (org-canvas--pull-summary-record :file "b.org" :item "second" :error "e2")
+    (let ((records (org-canvas--pull-summary-records)))
+      (expect (length records) :to-equal 2)
+      (expect (plist-get (nth 0 records) :item) :to-equal "first")
+      (expect (plist-get (nth 1 records) :item) :to-equal "second")))
+
+  (it "prints nothing when empty"
+    (org-canvas--pull-summary-reset)
+    (let ((output (with-output-to-string
+                    (org-canvas--pull-summary-print))))
+      (expect output :to-equal "")))
+
+  (it "prints a summary block when non-empty"
+    (org-canvas--pull-summary-reset)
+    (org-canvas--pull-summary-record
+     :file "pages.org" :item "x" :error "Operation timeout" :log-line 154)
+    (let ((output (with-output-to-string
+                    (org-canvas--pull-summary-print))))
+      (expect output :to-match "Pull complete with 1 non-fatal error")
+      (expect output :to-match "pages.org")
+      (expect output :to-match "Operation timeout")
+      (expect output :to-match "log line 154")))
+
+  (it "pluralizes errors correctly with multiple records"
+    (org-canvas--pull-summary-reset)
+    (org-canvas--pull-summary-record :file "a.org" :error "e1")
+    (org-canvas--pull-summary-record :file "b.org" :error "e2")
+    (let ((output (with-output-to-string
+                    (org-canvas--pull-summary-print))))
+      (expect output :to-match "2 non-fatal errors")))
+
+  (it "omits the item suffix when item is nil"
+    (org-canvas--pull-summary-reset)
+    (org-canvas--pull-summary-record :file "settings.org" :error "boom")
+    (let ((output (with-output-to-string
+                    (org-canvas--pull-summary-print))))
+      (expect output :not :to-match "\\[")))
+
+  (it "omits the log line suffix when log-line is nil"
+    (org-canvas--pull-summary-reset)
+    (org-canvas--pull-summary-record :file "settings.org" :error "boom")
+    (let ((output (with-output-to-string
+                    (org-canvas--pull-summary-print))))
+      (expect output :not :to-match "log line"))))
+
 (provide 'org-canvas-core-org-test)
 ;;; org-canvas-core-org-test.el ends here

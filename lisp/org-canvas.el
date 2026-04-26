@@ -509,23 +509,32 @@ Canvas courses who want to adopt org-canvas."
         (user-error "Aborted"))))
   (org-canvas-clear-log)
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
+  (org-canvas--pull-summary-reset)
   (let ((org-canvas--inhibit-log-clear t)
         (org-canvas--pull-counters (list :success 0 :fail 0)))
-    (org-canvas--log-info org-canvas--logger "========================================")
-    (org-canvas--log-info org-canvas--logger ">>> STARTING FULL COURSE PULL")
-    (org-canvas--log-info org-canvas--logger "Course: %s | URL: %s"
-      org-canvas-course-id org-canvas-base-url)
-    (org-canvas--log-info org-canvas--logger "========================================")
-    (org-canvas--preflight-check)
-    (dolist (tier org-canvas--pull-tiers)
-      (message "Pulling: %s..." (org-canvas--tier-description tier))
-      (org-canvas--run-tier tier #'org-canvas--safe-pull))
-    (org-canvas--log-info org-canvas--logger "========================================")
-    (org-canvas--log-info org-canvas--logger ">>> FULL COURSE PULL COMPLETE")
-    (org-canvas--log-info org-canvas--logger "========================================")
-    (message "Pull complete: %d pulled, %d failed. See *canvas-log* for details."
-             (plist-get org-canvas--pull-counters :success)
-             (plist-get org-canvas--pull-counters :fail))))
+    (unwind-protect
+        (progn
+          (org-canvas--log-info org-canvas--logger "========================================")
+          (org-canvas--log-info org-canvas--logger ">>> STARTING FULL COURSE PULL")
+          (org-canvas--log-info org-canvas--logger "Course: %s | URL: %s"
+            org-canvas-course-id org-canvas-base-url)
+          (org-canvas--log-info org-canvas--logger "========================================")
+          (org-canvas--preflight-check)
+          (dolist (tier org-canvas--pull-tiers)
+            (message "Pulling: %s..." (org-canvas--tier-description tier))
+            (org-canvas--run-tier tier #'org-canvas--safe-pull))
+          (org-canvas--log-info org-canvas--logger "========================================")
+          (org-canvas--log-info org-canvas--logger ">>> FULL COURSE PULL COMPLETE")
+          (org-canvas--log-info org-canvas--logger "========================================")
+          (message "Pull complete: %d pulled, %d failed. See *canvas-log* for details."
+                   (plist-get org-canvas--pull-counters :success)
+                   (plist-get org-canvas--pull-counters :fail)))
+      (unless (org-canvas--pull-summary-empty-p)
+        (with-output-to-temp-buffer "*org-canvas-pull-summary*"
+          (org-canvas--pull-summary-print))
+        (message
+         "Pull complete with %d non-fatal error(s) - see *org-canvas-pull-summary*."
+         (length (org-canvas--pull-summary-records)))))))
 
 ;;;; Orphan Cleanup
 

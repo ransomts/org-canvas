@@ -149,14 +149,28 @@ Logs warnings for invalid roles.  Returns RAW unchanged."
 (defun org-canvas--page-pull-item (item _pos)
   "Set per-item properties for a pulled page.
 ITEM is the API response alist, POS is the heading position.
-Fetches the full page detail to get body content."
+Fetches the full page detail to get body content.  When the detail
+fetch fails (after retries are exhausted) the error is recorded in
+`org-canvas--pull-summary' and the body is left empty.  The heading's
+:CANVAS_URL: property has already been set by `pull-process-item' from
+the list response, so a detail-fetch failure cannot corrupt the schema."
   (let* ((url (alist-get 'url item))
          (detail-url (org-canvas-api-course-endpoint "pages/%s" url))
-         (detail (condition-case nil
+         (detail (condition-case err
                      (org-canvas-api-request 'GET detail-url)
-                   (error nil)))
+                   (org-canvas-api-error
+                    (org-canvas--log-warning org-canvas--logger
+                      "[Pull] page detail fetch failed for %s: %s"
+                      url (error-message-string err))
+                    (org-canvas--pull-summary-record
+                     :file (file-name-nondirectory org-canvas-pages-file)
+                     :item url
+                     :error (error-message-string err)
+                     :log-line (org-canvas--pull-summary-current-log-line))
+                    nil)))
          (body (when detail (alist-get 'body detail))))
-    (org-canvas--pull-insert-body body)))
+    (when detail
+      (org-canvas--pull-insert-body body))))
 
 (org-canvas-define-pull pages
   :file org-canvas-pages-file

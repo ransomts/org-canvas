@@ -1061,6 +1061,74 @@ Returns the course name as a string.  Signals an error if the request fails."
         (t
          (message "Connection failed: %s" msg)))))))
 
+;;;; Pull Summary Accumulator
+;;
+;; Per-pull non-fatal error tracking.  Pull functions that catch a
+;; per-item failure (e.g. the page-detail fetch timing out) record the
+;; failure here so `org-canvas-pull-all' can print a single end-of-pull
+;; summary buffer without losing the error to the log file.
+
+(defvar org-canvas--pull-summary nil
+  "Accumulator for non-fatal errors during a pull.
+Each element is a plist with :file, :item, :error, :log-line.
+Newest records are pushed onto the head; use
+`org-canvas--pull-summary-records' to read them in insertion order.")
+
+(defun org-canvas--pull-summary-reset ()
+  "Clear the pull summary accumulator."
+  (setq org-canvas--pull-summary nil))
+
+(defun org-canvas--pull-summary-empty-p ()
+  "Return non-nil when no errors have been recorded this pull."
+  (null org-canvas--pull-summary))
+
+(defun org-canvas--pull-summary-records ()
+  "Return the list of recorded summary entries in insertion order."
+  (reverse org-canvas--pull-summary))
+
+(cl-defun org-canvas--pull-summary-record (&key file item error log-line)
+  "Record a non-fatal pull failure.
+FILE is the .org file (basename) the failure was scoped to.
+ITEM is an optional identifier for the failing item (slug, id, title).
+ERROR is a human-readable error message.
+LOG-LINE is an optional pointer into the log buffer/file."
+  (push (list :file file :item item :error error :log-line log-line)
+        org-canvas--pull-summary))
+
+(defun org-canvas--pull-summary-format-record (rec)
+  "Format a single summary REC plist as a one-line string."
+  (format "  %s%s: %s%s\n"
+          (or (plist-get rec :file) "(unknown)")
+          (if (plist-get rec :item)
+              (format " [%s]" (plist-get rec :item))
+            "")
+          (plist-get rec :error)
+          (if (plist-get rec :log-line)
+              (format " (log line %d)" (plist-get rec :log-line))
+            "")))
+
+(defun org-canvas--pull-summary-current-log-line ()
+  "Return the current line number in the canvas log buffer, or nil.
+Useful for capturing a pointer into the running log when recording a
+non-fatal pull error."
+  (let ((buf (and (boundp 'org-canvas--log-buffer-name)
+                  (get-buffer org-canvas--log-buffer-name))))
+    (when buf
+      (with-current-buffer buf
+        (line-number-at-pos (point-max))))))
+
+(defun org-canvas--pull-summary-print ()
+  "Print the pull summary to standard output.
+Emits nothing when the accumulator is empty so callers can wrap this
+unconditionally in `with-output-to-temp-buffer'."
+  (let ((records (org-canvas--pull-summary-records)))
+    (when records
+      (princ (format "Pull complete with %d non-fatal error%s:\n"
+                     (length records)
+                     (if (= (length records) 1) "" "s")))
+      (dolist (rec records)
+        (princ (org-canvas--pull-summary-format-record rec))))))
+
 (defun org-canvas--preflight-check ()
   "Validate credentials and connection before syncing.
 Signals error with actionable message on failure."
