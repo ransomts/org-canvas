@@ -18,7 +18,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Emacs
         uses: jcs090218/setup-emacs@a5b1cbb1af335d2e7bef99c0aa6e02cdad229182
@@ -32,7 +32,7 @@ jobs:
         run: sudo apt-get install -y pandoc
 
       - name: Cache Eldev dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .eldev
           key: eldev-${{ matrix.emacs-version }}-${{ hashFiles('Eldev') }}
@@ -74,7 +74,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Emacs
         uses: jcs090218/setup-emacs@a5b1cbb1af335d2e7bef99c0aa6e02cdad229182
@@ -85,7 +85,7 @@ jobs:
         uses: emacs-eldev/setup-eldev@v1
 
       - name: Cache Eldev dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .eldev
           key: eldev-30.1-${{ hashFiles('Eldev') }}
@@ -99,7 +99,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Emacs
         uses: jcs090218/setup-emacs@a5b1cbb1af335d2e7bef99c0aa6e02cdad229182
@@ -110,7 +110,7 @@ jobs:
         uses: emacs-eldev/setup-eldev@v1
 
       - name: Cache Eldev dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .eldev
           key: eldev-30.1-${{ hashFiles('Eldev') }}
