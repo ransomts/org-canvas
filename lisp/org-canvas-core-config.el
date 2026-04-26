@@ -78,7 +78,12 @@ naive `setq' from inside the watcher would be overwritten by the
 caller's pending assignment.  `run-at-time' with a 0 delay defers our
 re-assignment until after the original `setq' finishes.  The
 `org-canvas--base-url-normalizing' guard prevents infinite recursion
-when our deferred `setq' fires the watcher again."
+when our deferred `setq' fires the watcher again.
+
+A `defcustom :set' slot was considered and rejected: `:set' only fires
+for `customize-set-variable', not plain `setq'.  `org-canvas-credentials.el'
+uses plain `setq', so `:set' would silently miss that path.  A variable
+watcher fires for both."
   (when (and (eq operation 'set)
              (stringp newval)
              (not org-canvas--base-url-normalizing)

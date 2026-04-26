@@ -487,9 +487,12 @@
     (let ((original org-canvas-base-url))
       (unwind-protect
           (progn
+            (setq org-canvas-base-url "https://example.invalid")
+            (accept-process-output nil 0 50)
             (org-canvas--base-url-watcher 'org-canvas-base-url
                                           nil 'set nil)
-            (expect t :to-be t))
+            (accept-process-output nil 0 50)
+            (expect org-canvas-base-url :to-equal "https://example.invalid"))
         (setq org-canvas-base-url original)
         (sit-for 0))))
 
