@@ -213,7 +213,31 @@
      (org-back-to-heading)
      (let ((marker (point-marker)))
        (org-canvas-org-set-property marker "TEST_PROP" "marker-value")
-       (expect (org-entry-get (point) "TEST_PROP") :to-equal "marker-value")))))
+       (expect (org-entry-get (point) "TEST_PROP") :to-equal "marker-value"))))
+
+  (it "emits :LICENSE: with single space (no padding)"
+    ;; org-mode's org-property-format defaults to "%-10s %s", which pads
+    ;; property names shorter than 10 chars and produces e.g.
+    ;;   :LICENSE:  private        ;; two spaces
+    ;;   :END_AT:   <2026-01-01>   ;; three spaces
+    ;; org-canvas-org-set-property binds org-property-format to "%s %s"
+    ;; so the emitted text always has a single space separator.
+    (with-temp-org-buffer
+     "* Heading
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (org-canvas-org-set-property (point) "LICENSE" "private")
+     (org-canvas-org-set-property (point) "END_AT" "<2026-12-01 Tue>")
+     (org-canvas-org-set-property (point) "PUBLIC_SYLLABUS" "false")
+     (let ((text (buffer-string)))
+       (expect text :to-match "^:LICENSE: private$")
+       (expect text :to-match "^:END_AT: <2026-12-01 Tue>$")
+       (expect text :to-match "^:PUBLIC_SYLLABUS: false$")
+       ;; Negative checks: no double space after colon.
+       (expect (string-match-p ":LICENSE:  " text) :to-be nil)
+       (expect (string-match-p ":END_AT:  " text) :to-be nil)))))
 
 (describe "org-canvas--save-buffer"
   (it "saves the buffer and logs the file path"

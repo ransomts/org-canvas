@@ -155,12 +155,18 @@ ID-PROPERTY defaults to \"CANVAS_ID\"."
 
 (defun org-canvas-org-set-property (pom property value)
   "Set Org PROPERTY to VALUE at POM (point or marker).
-Ensures the correct buffer is used if POM is a marker."
+Ensures the correct buffer is used if POM is a marker.
+
+Binds `org-property-format' to \"%s %s\" so property names shorter than
+10 characters are not padded with extra spaces (e.g. `:LICENSE:  private'
+with two spaces).  We always emit a single space between the property
+name and value for consistent diffs and easier scripting."
   (let ((buf (if (markerp pom) (marker-buffer pom) (current-buffer))))
     (with-current-buffer buf
       (save-excursion
 	(goto-char pom)
-	(org-entry-put (point) property value)))))
+        (let ((org-property-format "%s %s"))
+	  (org-entry-put (point) property value))))))
 
 (defun org-canvas--normalize-id (id)
   "Ensure ID is a string.  Convert numbers; pass strings through."

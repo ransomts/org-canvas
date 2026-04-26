@@ -149,7 +149,7 @@ PAYLOAD-HASH is saved to the heading.  CTX is the sync context plist."
                      (plist-get (plist-get ctx :counters) :fail)
                      1)))
     (funcall finalize-fn data response)
-    (org-entry-put (point) "PAYLOAD_HASH" payload-hash)
+    (org-canvas-org-set-property (point) "PAYLOAD_HASH" payload-hash)
     (org-canvas--save-buffer)
     (plist-put counters :success (1+ (plist-get counters :success)))
     (message "%s [%d/%d] Synced '%s'"
@@ -800,7 +800,7 @@ PULL-ITEM-FN, when non-nil, enables the pull option during conflict resolution."
       (let ((response (funcall push-fn data payload)))
         (org-canvas--log-info org-canvas--logger "[Stage 4: Finalize] '%s'" title)
         (funcall finalize-fn data response)
-        (org-entry-put (point) "PAYLOAD_HASH" payload-hash)
+        (org-canvas-org-set-property (point) "PAYLOAD_HASH" payload-hash)
         (org-canvas--save-buffer)
         (org-canvas--log-info org-canvas--logger "[Sync] '%s' synced successfully" title)
         (message "%s '%s' synced." (capitalize feature-name) title)))))
