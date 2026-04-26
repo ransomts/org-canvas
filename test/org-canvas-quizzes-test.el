@@ -3354,4 +3354,153 @@ This is inline.
      (let ((data (org-canvas--quiz-parse-entry)))
        (expect (plist-get data :description) :to-match "This is inline")))))
 
+(describe "quiz-question emission across multiple quizzes (regression #5)"
+  (it "emits questions under every quiz that has them"
+    (let ((temp (make-temp-file "quiz-multi-" nil ".org"))
+          (quiz-data '(((id . 622701) (title . "Midterm")
+                        (description . "<p>Test instructions.</p>"))
+                       ((id . 622666) (title . "Quiz 2")
+                        (description . "<p>q2 desc</p>"))
+                       ((id . 622649) (title . "Quiz 3")
+                        (description . "<p>q3 desc</p>"))))
+          (questions-by-quiz '((622701 . (((id . 1) (question_name . "M1")
+                                           (question_text . "Q?")
+                                           (question_type . "multiple_choice_question")
+                                           (points_possible . 1.0) (answers . []))
+                                          ((id . 2) (question_name . "M2")
+                                           (question_text . "Q?")
+                                           (question_type . "multiple_choice_question")
+                                           (points_possible . 1.0) (answers . []))))
+                               (622666 . (((id . 3) (question_name . "Q2_1")
+                                           (question_text . "?")
+                                           (question_type . "multiple_choice_question")
+                                           (points_possible . 1.0) (answers . []))
+                                          ((id . 4) (question_name . "Q2_2")
+                                           (question_text . "?")
+                                           (question_type . "multiple_choice_question")
+                                           (points_possible . 1.0) (answers . []))))
+                               (622649 . (((id . 5) (question_name . "Q3_1")
+                                           (question_text . "?")
+                                           (question_type . "multiple_choice_question")
+                                           (points_possible . 1.0) (answers . []))
+                                          ((id . 6) (question_name . "Q3_2")
+                                           (question_text . "?")
+                                           (question_type . "multiple_choice_question")
+                                           (points_possible . 1.0) (answers . [])))))))
+      (unwind-protect
+          (progn
+            (with-temp-file temp (insert ""))
+            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                       (lambda (_method url &rest _)
+                         (cond
+                          ((string-match-p "quizzes\\'" url) quiz-data)
+                          ((string-match "/quizzes/\\([0-9]+\\)/questions" url)
+                           (let ((qid (string-to-number (match-string 1 url))))
+                             (alist-get qid questions-by-quiz)))))))
+              (let ((org-canvas-quizzes-file temp))
+                (with-org-canvas-test-config
+                  (with-sync-test-env
+                    (org-canvas-pull-quizzes)))))
+            (with-temp-buffer
+              (insert-file-contents temp)
+              (goto-char (point-min))
+              (let ((q-count 0))
+                (while (re-search-forward
+                        "^\\*\\* \\(M[12]\\|Q2_[12]\\|Q3_[12]\\)$" nil t)
+                  (cl-incf q-count))
+                (expect q-count :to-equal 6))
+              ;; Each top-level quiz heading should be present
+              (goto-char (point-min))
+              (expect (re-search-forward "^\\* Midterm$" nil t) :to-be-truthy)
+              (goto-char (point-min))
+              (expect (re-search-forward "^\\* Quiz 2$" nil t) :to-be-truthy)
+              (goto-char (point-min))
+              (expect (re-search-forward "^\\* Quiz 3$" nil t) :to-be-truthy)))
+        (let ((buf (find-buffer-visiting temp)))
+          (when buf (kill-buffer buf)))
+        (delete-file temp))))
+
+  (it "re-emits questions on re-pull into existing file with prior content"
+    ;; Simulates the real-world scenario: file already has quiz subtrees
+    ;; with existing ** Question subheadings from a previous pull.
+    ;; All quizzes that have questions on the API side must re-emit.
+    (let ((temp (make-temp-file "quiz-repull-" nil ".org"))
+          (initial "* Quiz A
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+old body A
+** Question
+:PROPERTIES:
+:QUESTION_TYPE: short_answer_question
+:END:
+old Q text
+- [ ] old answer
+* Quiz B
+:PROPERTIES:
+:CANVAS_ID: 200
+:END:
+old body B
+** Question
+:PROPERTIES:
+:QUESTION_TYPE: short_answer_question
+:END:
+old Q text B
+- [ ] old answer B
+")
+          (quiz-data '(((id . 100) (title . "Quiz A")
+                        (description . "<p>new A.</p>"))
+                       ((id . 200) (title . "Quiz B")
+                        (description . "<p>new B.</p>"))))
+          (questions-by-quiz '((100 . (((id . 1) (question_name . "A1")
+                                        (question_text . "?")
+                                        (question_type . "multiple_choice_question")
+                                        (points_possible . 1.0) (answers . []))))
+                               (200 . (((id . 2) (question_name . "B1")
+                                        (question_text . "?")
+                                        (question_type . "multiple_choice_question")
+                                        (points_possible . 1.0) (answers . [])))))))
+      (unwind-protect
+          (progn
+            (with-temp-file temp (insert initial))
+            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                       (lambda (_method url &rest _)
+                         (cond
+                          ((string-match-p "quizzes\\'" url) quiz-data)
+                          ((string-match "/quizzes/\\([0-9]+\\)/questions" url)
+                           (let ((qid (string-to-number (match-string 1 url))))
+                             (alist-get qid questions-by-quiz)))))))
+              (let ((org-canvas-quizzes-file temp))
+                (with-org-canvas-test-config
+                  (with-sync-test-env
+                    (org-canvas-pull-quizzes)))))
+            (with-temp-buffer
+              (insert-file-contents temp)
+              (let ((s (buffer-string)))
+                ;; Both quizzes' new questions must be present
+                (expect s :to-match "^\\*\\* A1$")
+                (expect s :to-match "^\\*\\* B1$")
+                ;; Critically: re-pull must not corrupt the next quiz heading.
+                ;; Pre-fix, `pull-insert-body' on the empty `** Description'
+                ;; under Quiz A would eat the `* ' of `* Quiz B', producing
+                ;; output like `** Description*' fused with the next heading
+                ;; and a stray `Quiz B' line lacking its `*'.
+                (expect s :not :to-match "\\*\\* Description\\*")
+                (expect s :not :to-match "^Quiz B$")
+                ;; `pull-upsert-heading' should find existing quizzes by
+                ;; CANVAS_ID, not duplicate them.
+                (let ((quiz-a-count 0)
+                      (quiz-b-count 0))
+                  (goto-char (point-min))
+                  (while (re-search-forward "^\\* Quiz A$" nil t)
+                    (cl-incf quiz-a-count))
+                  (goto-char (point-min))
+                  (while (re-search-forward "^\\* Quiz B$" nil t)
+                    (cl-incf quiz-b-count))
+                  (expect quiz-a-count :to-equal 1)
+                  (expect quiz-b-count :to-equal 1)))))
+        (let ((buf (find-buffer-visiting temp)))
+          (when buf (kill-buffer buf)))
+        (delete-file temp)))))
+
 ;;; org-canvas-quizzes-test.el ends here

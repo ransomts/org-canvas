@@ -967,8 +967,13 @@ Point must be at a heading.  Does nothing if BODY-HTML is nil or empty.
 Canvas file URLs in the converted body are rewritten to local
 `[[file:...]]' links via `org-canvas--rewrite-canvas-file-urls'."
   (when (and body-html (not (string-empty-p body-html)))
-    (let* ((body-start (save-excursion (org-end-of-meta-data t) (point)))
+    (let* ((raw-body-start (save-excursion (org-end-of-meta-data t) (point)))
            (body-end (save-excursion (org-end-of-subtree t) (point)))
+           ;; `org-end-of-meta-data' may skip past blank lines and overshoot
+           ;; the subtree end when a heading has no body and is immediately
+           ;; followed by another heading.  Clamp so delete-region never
+           ;; corrupts the next sibling heading.
+           (body-start (min raw-body-start body-end))
            (org-text (org-canvas--html-to-org body-html))
            (cache (or org-canvas--file-id-cache
                       (setq org-canvas--file-id-cache
