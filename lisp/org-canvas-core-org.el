@@ -983,6 +983,29 @@ Returns TEXT unchanged when nil or empty."
            match)))
      text t t)))
 
+(defun org-canvas--html-to-org-with-rewrite (html)
+  "Convert HTML to Org text and rewrite Canvas file URLs to local links.
+Uses (and lazily populates) `org-canvas--file-id-cache' to resolve
+Canvas file IDs against `org-canvas-files-file'.  Returns the rewritten
+Org text, or the empty string when HTML is nil or empty."
+  (if (or (null html) (string-empty-p html))
+      ""
+    (let* ((org-text (org-canvas--html-to-org html))
+           (cache (or org-canvas--file-id-cache
+                      (setq org-canvas--file-id-cache
+                            (org-canvas--build-file-id-cache
+                             (bound-and-true-p org-canvas-files-file))))))
+      (org-canvas--rewrite-canvas-file-urls org-text cache))))
+
+(defun org-canvas--html-to-org-inline-with-rewrite (html)
+  "Convert HTML to a single-line Org string with Canvas file URLs rewritten.
+Returns the empty string for nil or empty HTML."
+  (if (or (null html) (string-empty-p html))
+      ""
+    (string-trim
+     (replace-regexp-in-string "[\n\r]+" " "
+                               (org-canvas--html-to-org-with-rewrite html)))))
+
 (defun org-canvas--pull-insert-body (body-html)
   "Replace current heading's body with Org-converted BODY-HTML.
 Point must be at a heading.  Does nothing if BODY-HTML is nil or empty.
@@ -996,12 +1019,7 @@ Canvas file URLs in the converted body are rewritten to local
            ;; followed by another heading.  Clamp so delete-region never
            ;; corrupts the next sibling heading.
            (body-start (min raw-body-start body-end))
-           (org-text (org-canvas--html-to-org body-html))
-           (cache (or org-canvas--file-id-cache
-                      (setq org-canvas--file-id-cache
-                            (org-canvas--build-file-id-cache
-                             (bound-and-true-p org-canvas-files-file)))))
-           (rewritten (org-canvas--rewrite-canvas-file-urls org-text cache)))
+           (rewritten (org-canvas--html-to-org-with-rewrite body-html)))
       (delete-region body-start body-end)
       (goto-char body-start)
       (insert "\n" rewritten "\n"))))

@@ -2054,7 +2054,25 @@ Content.
      (let ((before (buffer-string)))
        (goto-char (point-max))
        (org-canvas--quiz-insert-question-body "")
-       (expect (buffer-string) :to-equal before)))))
+       (expect (buffer-string) :to-equal before))))
+
+  (it "rewrites Canvas file URLs in question text"
+    (let ((org-canvas--file-id-cache (make-hash-table :test 'equal)))
+      (puthash "29754648" "content/Uploaded Media/01-ada.jpg"
+               org-canvas--file-id-cache)
+      (with-temp-org-buffer
+       "* Quiz
+:PROPERTIES:
+:END:
+"
+       (goto-char (point-max))
+       (with-html-to-org-identity
+         (org-canvas--quiz-insert-question-body
+          "Look at [[https://clemson.instructure.com/courses/281704/files/29754648/preview?verifier=ABC]] and tell me about it.")
+         (expect (buffer-string) :to-match
+                 "\\[\\[file:content/Uploaded Media/01-ada\\.jpg\\]")
+         (expect (buffer-string) :not :to-match
+                 "instructure\\.com/courses/281704/files/29754648"))))))
 
 (describe "org-canvas--quiz-insert-answers"
   (it "inserts checked and unchecked answers"
@@ -2092,8 +2110,8 @@ Content.
       [((html . "HTML Answer") (weight . 100))])
      (expect (buffer-string) :to-match "HTML Answer")))
 
-  (it "converts HTML answer text via html-to-org-inline"
-    (cl-letf (((symbol-function 'org-canvas--html-to-org-inline)
+  (it "converts HTML answer text via html-to-org-inline-with-rewrite"
+    (cl-letf (((symbol-function 'org-canvas--html-to-org-inline-with-rewrite)
                (lambda (html) (concat "CONV:" html))))
       (with-temp-org-buffer
        "* Quiz
@@ -2103,7 +2121,24 @@ Content.
        (goto-char (point-max))
        (org-canvas--quiz-insert-answers
         [((text . "<em>Italic</em>") (weight . 100))])
-       (expect (buffer-string) :to-match "CONV:<em>Italic</em>")))))
+       (expect (buffer-string) :to-match "CONV:<em>Italic</em>"))))
+
+  (it "rewrites Canvas file URLs in answer text"
+    (let ((org-canvas--file-id-cache (make-hash-table :test 'equal)))
+      (puthash "29754648" "content/Uploaded Media/01-ada.jpg"
+               org-canvas--file-id-cache)
+      (with-temp-org-buffer
+       "* Quiz
+:PROPERTIES:
+:END:
+"
+       (goto-char (point-max))
+       (with-html-to-org-identity
+         (org-canvas--quiz-insert-answers
+          [((text . "[[https://clemson.instructure.com/courses/281704/files/29754648/preview?verifier=ABC]]")
+            (weight . 100))])
+         (expect (buffer-string) :to-match
+                 "\\[\\[file:content/Uploaded Media/01-ada\\.jpg\\]"))))))
 
 (describe "org-canvas--quiz-pull-insert-question"
   (it "creates L2 heading with properties"

@@ -1502,6 +1502,39 @@ Page content.
         (expect (org-canvas--rewrite-canvas-file-urls input empty)
                 :to-equal input)))))
 
+(describe "org-canvas--html-to-org-with-rewrite"
+  (it "returns empty string for nil"
+    (expect (org-canvas--html-to-org-with-rewrite nil) :to-equal ""))
+
+  (it "returns empty string for empty input"
+    (expect (org-canvas--html-to-org-with-rewrite "") :to-equal ""))
+
+  (it "rewrites a Canvas file URL using the cache"
+    (let ((org-canvas--file-id-cache (make-hash-table :test 'equal)))
+      (puthash "30061566" "content/Uploaded Media/screenshot.png"
+               org-canvas--file-id-cache)
+      (with-html-to-org-identity
+        (let ((result (org-canvas--html-to-org-with-rewrite
+                       "[[https://x.com/courses/1/files/30061566/preview]]")))
+          (expect result :to-match
+                  "\\[\\[file:content/Uploaded Media/screenshot\\.png\\]"))))))
+
+(describe "org-canvas--html-to-org-inline-with-rewrite"
+  (it "returns empty string for nil"
+    (expect (org-canvas--html-to-org-inline-with-rewrite nil) :to-equal ""))
+
+  (it "returns empty string for empty input"
+    (expect (org-canvas--html-to-org-inline-with-rewrite "") :to-equal ""))
+
+  (it "collapses newlines and rewrites file URLs"
+    (let ((org-canvas--file-id-cache (make-hash-table :test 'equal)))
+      (puthash "42" "content/foo.png" org-canvas--file-id-cache)
+      (with-html-to-org-identity
+        (let ((result (org-canvas--html-to-org-inline-with-rewrite
+                       "see\n[[https://x.com/courses/1/files/42/preview]]")))
+          (expect result :not :to-match "\n")
+          (expect result :to-match "\\[\\[file:content/foo\\.png\\]"))))))
+
 (describe "fetch unknown file on rewrite"
   (before-each
     (setq org-canvas--rewrite-folder-cache nil)

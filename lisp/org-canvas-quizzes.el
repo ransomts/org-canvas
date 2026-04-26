@@ -845,16 +845,19 @@ FILE is the quizzes.org path, used for group link resolution."
           (org-canvas-org-set-property pos "GROUP" group-link))))))
 
 (defun org-canvas--quiz-insert-question-body (q-text)
-  "Insert question body text Q-TEXT (HTML) at point as Org markup."
+  "Insert question body text Q-TEXT (HTML) at point as Org markup.
+Canvas file URLs embedded in the question (e.g. inline images) are
+rewritten to local `[[file:...]]' links via the shared file-id cache."
   (when (and q-text (not (string-empty-p q-text)))
-    (insert "\n" (org-canvas--html-to-org q-text) "\n")))
+    (insert "\n" (org-canvas--html-to-org-with-rewrite q-text) "\n")))
 
 (defun org-canvas--quiz-insert-answers (answers)
   "Insert ANSWERS list at point as Org checklist items.
-Each answer's weight determines checked ([X]) vs unchecked ([ ])."
+Each answer's weight determines checked ([X]) vs unchecked ([ ]).
+Canvas file URLs in answer text/html are rewritten to local file links."
   (when answers
     (dolist (a (append answers nil))
-      (let ((text (org-canvas--html-to-org-inline
+      (let ((text (org-canvas--html-to-org-inline-with-rewrite
                    (or (alist-get 'text a) (alist-get 'html a) "")))
             (weight (alist-get 'weight a)))
         (insert (format "- [%s] %s\n"
