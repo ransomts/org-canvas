@@ -2134,9 +2134,13 @@
             (with-temp-file files-path
               (insert "* [[file:content/foo.pdf][foo.pdf]]\n"
                       ":PROPERTIES:\n:CANVAS_ID: 42\n:END:\n"))
-            (let ((resolved (org-canvas--module-resolve-link
-                             "[[file:content/foo.pdf][foo.pdf]]" tmpdir)))
-              (expect (plist-get resolved :type) :to-equal "File")
+            ;; Pre-bind `:type' outside `expect': buttercup's `expect'
+            ;; oclosure shadows the `:type' keyword on Emacs 29.x,
+            ;; silently returning nil.
+            (let* ((resolved (org-canvas--module-resolve-link
+                              "[[file:content/foo.pdf][foo.pdf]]" tmpdir))
+                   (resolved-type (plist-get resolved :type)))
+              (expect resolved-type :to-equal "File")
               (expect (plist-get resolved :content-id) :to-equal 42)
               (expect (plist-get resolved :title) :to-equal "foo.pdf")))
         (delete-directory tmpdir t))))
@@ -2154,8 +2158,9 @@
               (insert "* [[file:content/foo.pdf][foo.pdf]]\n"
                       ":PROPERTIES:\n:CANVAS_ID: 42\n:END:\n"))
             (let* ((legacy "[[file:files.org::*\\[\\[file:content/foo.pdf\\]\\[foo.pdf\\]\\]][foo.pdf]]")
-                   (resolved (org-canvas--module-resolve-link legacy tmpdir)))
-              (expect (plist-get resolved :type) :to-equal "File")
+                   (resolved (org-canvas--module-resolve-link legacy tmpdir))
+                   (resolved-type (plist-get resolved :type)))
+              (expect resolved-type :to-equal "File")
               (expect (plist-get resolved :content-id) :to-equal 42)))
         (delete-directory tmpdir t)))))
 
