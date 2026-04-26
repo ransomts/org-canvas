@@ -1341,6 +1341,156 @@ Page content.
         (org-canvas--html-to-org "<div id=\"content\"><p>x</p></div>")
         (expect captured :not :to-match " id=")))))
 
+(describe "org-canvas--html-to-org-post-process"
+  (it "returns nil unchanged"
+    (expect (org-canvas--html-to-org-post-process nil) :to-be nil))
+
+  (it "decodes a non-breaking space to a regular space"
+    (let* ((nbsp (string ? ))
+           (input (concat "Foo" nbsp "Bar")))
+      (expect (org-canvas--html-to-org-post-process input)
+              :to-equal "Foo Bar")))
+
+  (it "collapses a line containing only NBSP into an empty line"
+    ;; Mirrors `<p>&nbsp;</p>' spacers in Canvas's WYSIWYG output:
+    ;; the NBSP becomes a regular space, then the whitespace-only
+    ;; line is flattened.
+    (let* ((nbsp (string ? ))
+           (input (concat "before\n" nbsp "\nafter")))
+      (expect (org-canvas--html-to-org-post-process input)
+              :to-equal "before\n\nafter")))
+
+  (it "collapses a line containing only spaces and tabs into an empty line"
+    (expect (org-canvas--html-to-org-post-process "before\n  \t  \nafter")
+            :to-equal "before\n\nafter"))
+
+  (it "inserts a space before <YYYY-MM-DD when preceded by non-whitespace"
+    (expect (org-canvas--html-to-org-post-process "Due:<2026-04-22>")
+            :to-equal "Due: <2026-04-22>"))
+
+  (it "leaves a properly-spaced timestamp alone"
+    (expect (org-canvas--html-to-org-post-process "Due: <2026-04-22>")
+            :to-equal "Due: <2026-04-22>"))
+
+  (it "does not insert a space at the start of a line"
+    ;; A timestamp at line start has no preceding non-whitespace char to
+    ;; key off of, so the post-pass leaves it alone.
+    (expect (org-canvas--html-to-org-post-process "<2026-04-22>")
+            :to-equal "<2026-04-22>"))
+
+  (it "does not insert a space before `<YYYY-MM-DD' inside link display text"
+    ;; Org link openers `[[' should not be treated as a label that
+    ;; needs a space before a date — the `[' is in the exclusion set
+    ;; for the timestamp-spacing regex.  Use a context where the link
+    ;; resolves (heading has CUSTOM_ID `tag') so the TOC-repair pass
+    ;; doesn't drop the link wrapper.
+    (let* ((input (concat "* heading\n"
+                          ":PROPERTIES:\n"
+                          ":CUSTOM_ID: tag\n"
+                          ":END:\n"
+                          "\n"
+                          "see [[#tag][<2026-04-22>]]"))
+           (out (org-canvas--html-to-org-post-process input)))
+      (expect out :to-match "\\[\\[#tag\\]\\[<2026-04-22>\\]\\]")
+      (expect out :not :to-match "< 2026")))
+
+  (it "does not insert a space before a non-date `<' (e.g., `<em>')"
+    (expect (org-canvas--html-to-org-post-process "say <em>x</em>")
+            :to-equal "say <em>x</em>")))
+
+(describe "org-canvas--normalize-toc-target"
+  (it "lowercases and trims"
+    (expect (org-canvas--normalize-toc-target "  Overview  ")
+            :to-equal "overview"))
+
+  (it "strips a leading numeric prefix `N. '"
+    (expect (org-canvas--normalize-toc-target "1. Overview")
+            :to-equal "overview"))
+
+  (it "strips a leading numeric prefix `N) '"
+    (expect (org-canvas--normalize-toc-target "2) Methods")
+            :to-equal "methods"))
+
+  (it "leaves text without a numeric prefix alone"
+    (expect (org-canvas--normalize-toc-target "Conclusion")
+            :to-equal "conclusion"))
+
+  (it "returns empty for nil"
+    (expect (org-canvas--normalize-toc-target nil) :to-equal "")))
+
+(describe "org-canvas--repair-toc-and-prune-customids"
+  (it "is a no-op for nil and empty input"
+    (expect (org-canvas--repair-toc-and-prune-customids nil) :to-be nil)
+    (expect (org-canvas--repair-toc-and-prune-customids "") :to-equal ""))
+
+  (it "rewrites a dangling TOC link to the matching heading's CUSTOM_ID"
+    (let* ((input (concat "[[#orga904f23][1. Overview]]\n"
+                          "\n"
+                          "* 1. Overview\n"
+                          ":PROPERTIES:\n"
+                          ":CUSTOM_ID: overview\n"
+                          ":END:\n"))
+           (out (org-canvas--repair-toc-and-prune-customids input)))
+      (expect out :to-match "\\[\\[#overview\\]\\[1\\. Overview\\]\\]")
+      (expect out :not :to-match "orga904f23")))
+
+  (it "matches by display text after stripping numeric prefix"
+    ;; Heading has no numeric prefix; TOC link does.  Normalization
+    ;; strips the prefix from the link text so the lookup succeeds.
+    (let* ((input (concat "[[#orgaaa][1. Methods]]\n"
+                          "\n"
+                          "* Methods\n"
+                          ":PROPERTIES:\n"
+                          ":CUSTOM_ID: methods\n"
+                          ":END:\n"))
+           (out (org-canvas--repair-toc-and-prune-customids input)))
+      (expect out :to-match "\\[\\[#methods\\]\\[1\\. Methods\\]\\]")))
+
+  (it "drops the link wrapper when no heading matches"
+    (let* ((input "see [[#orphan][Mystery Section]]\n")
+           (out (org-canvas--repair-toc-and-prune-customids input)))
+      (expect out :to-match "Mystery Section")
+      (expect out :not :to-match "\\[\\[")
+      (expect out :not :to-match "orphan")))
+
+  (it "preserves a link whose target is already a known CUSTOM_ID"
+    (let* ((input (concat "see [[#methods][Methods]]\n"
+                          "\n"
+                          "* Methods\n"
+                          ":PROPERTIES:\n"
+                          ":CUSTOM_ID: methods\n"
+                          ":END:\n"))
+           (out (org-canvas--repair-toc-and-prune-customids input)))
+      (expect out :to-match "\\[\\[#methods\\]\\[Methods\\]\\]")))
+
+  (it "prunes a CUSTOM_ID that no remaining link references"
+    (let* ((input (concat "[[#kept][Kept]]\n"
+                          "\n"
+                          "* Kept\n"
+                          ":PROPERTIES:\n"
+                          ":CUSTOM_ID: kept\n"
+                          ":END:\n"
+                          "\n"
+                          "* Orphan\n"
+                          ":PROPERTIES:\n"
+                          ":CUSTOM_ID: orphan\n"
+                          ":END:\n"))
+           (out (org-canvas--repair-toc-and-prune-customids input)))
+      (expect out :to-match ":CUSTOM_ID: kept")
+      (expect out :not :to-match ":CUSTOM_ID: orphan")
+      ;; The Orphan heading's now-empty PROPERTIES drawer is collapsed.
+      (expect out :not :to-match "^\\* Orphan\n:PROPERTIES:")))
+
+  (it "leaves headings with no CUSTOM_ID drawer alone"
+    (let* ((input "* Plain\n\nbody\n")
+           (out (org-canvas--repair-toc-and-prune-customids input)))
+      (expect out :to-equal input)))
+
+  (it "is a no-op for body without headings or anchor links"
+    (let ((input "Just a paragraph.\n\nAnother paragraph."))
+      (expect (org-canvas--repair-toc-and-prune-customids input)
+              :to-equal input))))
+
 ;;;; File-URL → Local-Link Rewriting (pull-side inverse of image resolver)
 
 (describe "org-canvas--build-file-id-cache"

@@ -750,10 +750,176 @@ bodies.  Stripping ids before conversion suppresses the artifact."
     (replace-regexp-in-string
      " id=\\(\"[^\"]*\"\\|'[^']*'\\)" "" html)))
 
+(defconst org-canvas--customid-line-re
+  "^[ \t]*:CUSTOM_ID:[ \t]+\\(.+?\\)[ \t]*$"
+  "Match a `:CUSTOM_ID:' property drawer entry.  G1 = id value.")
+
+(defconst org-canvas--anchor-link-re
+  "\\[\\[#\\([^]\n]+\\)\\]\\[\\([^]\n]+\\)\\]\\]"
+  "Match an Org link to a CUSTOM_ID anchor.  G1 = id, G2 = display text.")
+
+(defun org-canvas--normalize-toc-target (s)
+  "Return a fuzzy-match key for TOC display text S.
+Lowercases, trims, and strips a leading `N.' or `N) ' numeric prefix
+so a heading titled \"Overview\" matches a TOC link reading
+\"1. Overview\".  Returns the empty string for nil."
+  (if (or (null s) (string-empty-p s))
+      ""
+    (let ((s (downcase (string-trim s))))
+      (replace-regexp-in-string "\\`[0-9]+[.)][ \t]*" "" s))))
+
+(defun org-canvas--collect-customids (text)
+  "Return an alist of (NORMALIZED-HEADING . CUSTOM-ID) for TEXT.
+Walks Org headings in TEXT and pairs each one with its CUSTOM_ID
+property drawer entry (if any).  Headings without a CUSTOM_ID are
+not in the result."
+  (let ((result nil))
+    (with-temp-buffer
+      (insert text)
+      (goto-char (point-min))
+      (while (re-search-forward "^\\*+ +\\(.+\\)$" nil t)
+        (let ((heading (match-string-no-properties 1))
+              (heading-end (match-end 0))
+              (custom-id nil))
+          (save-excursion
+            (goto-char heading-end)
+            (forward-line)
+            ;; A pandoc-generated PROPERTIES drawer sits right after the
+            ;; heading line.  Bound the search to the next ~10 lines AND
+            ;; refuse to cross another heading.
+            (let* ((bound-pos (save-excursion (forward-line 10) (point)))
+                   (next-heading (save-excursion
+                                   (and (re-search-forward "^\\*+ "
+                                                           bound-pos t)
+                                        (match-beginning 0))))
+                   (bound (or next-heading bound-pos)))
+              (when (re-search-forward
+                     org-canvas--customid-line-re bound t)
+                (setq custom-id
+                      (string-trim (match-string-no-properties 1))))))
+          (when custom-id
+            (push (cons (org-canvas--normalize-toc-target heading)
+                        custom-id)
+                  result)))))
+    (nreverse result)))
+
+(defun org-canvas--rewrite-toc-links (text customid-by-heading)
+  "Rewrite dangling `[[#X][Y]]' anchor links in TEXT.
+CUSTOMID-BY-HEADING is the alist returned by
+`org-canvas--collect-customids'.
+
+For each link:
+- If X is a known CUSTOM_ID (a value in CUSTOMID-BY-HEADING), the
+  link already resolves and is kept unchanged.
+- Else the link's display text Y is normalized and looked up
+  against the heading map.  If a heading matches, the link target
+  is rewritten to that heading's CUSTOM_ID.
+- Else the link wrapper is dropped and only Y survives — better a
+  plain phrase than a dangling anchor."
+  (let ((known-ids (mapcar #'cdr customid-by-heading)))
+    (replace-regexp-in-string
+     org-canvas--anchor-link-re
+     (lambda (match)
+       (save-match-data
+         (string-match org-canvas--anchor-link-re match)
+         (let ((id (match-string 1 match))
+               (display (match-string 2 match)))
+           (cond
+            ((member id known-ids) match)
+            ((let ((target
+                    (cdr (assoc (org-canvas--normalize-toc-target display)
+                                customid-by-heading))))
+               (and target (format "[[#%s][%s]]" target display))))
+            (t display)))))
+     text t t)))
+
+(defun org-canvas--collect-referenced-customids (text)
+  "Return de-duplicated CUSTOM_IDs referenced by `[[#X][Y]]' links in TEXT."
+  (let ((ids nil))
+    (with-temp-buffer
+      (insert text)
+      (goto-char (point-min))
+      (while (re-search-forward org-canvas--anchor-link-re nil t)
+        (push (match-string-no-properties 1) ids)))
+    (delete-dups ids)))
+
+(defun org-canvas--prune-unreferenced-customids (text referenced-ids)
+  "Strip `:CUSTOM_ID:' drawer lines from TEXT not in REFERENCED-IDS.
+Collapses now-empty `:PROPERTIES:'/`:END:' blocks.  Returns the
+processed text."
+  (with-temp-buffer
+    (insert text)
+    (goto-char (point-min))
+    (while (re-search-forward org-canvas--customid-line-re nil t)
+      (let ((id (string-trim (match-string-no-properties 1))))
+        (unless (member id referenced-ids)
+          (delete-region (line-beginning-position)
+                         (min (point-max) (1+ (line-end-position)))))))
+    (goto-char (point-min))
+    (while (re-search-forward
+            "^[ \t]*:PROPERTIES:[ \t]*\n[ \t]*:END:[ \t]*\n?"
+            nil t)
+      (replace-match ""))
+    (buffer-string)))
+
+(defun org-canvas--repair-toc-and-prune-customids (text)
+  "Repair dangling TOC links and prune orphan CUSTOM_IDs in TEXT.
+
+Pandoc's HTML→Org conversion produces two correlated artifacts when
+a Canvas page contains a table of contents:
+
+1. Anchor links like `[[#orga904f23][1. Overview]]' that target the
+   *original* HTML `id' attributes (which we strip before pandoc),
+   so every TOC link points at a non-existent anchor.
+2. A `:CUSTOM_ID:' drawer entry on every heading, pandoc-derived
+   from the heading text — most are inert, since nothing in the
+   converted body links to them.
+
+This pass first re-targets dangling TOC links to the matching
+heading (by display text), then drops any CUSTOM_ID that no
+remaining link references.  Returns TEXT unchanged when nil or
+empty."
+  (if (or (null text) (string-empty-p text))
+      text
+    (let* ((map (org-canvas--collect-customids text))
+           (rewritten (org-canvas--rewrite-toc-links text map))
+           (used (org-canvas--collect-referenced-customids rewritten)))
+      (org-canvas--prune-unreferenced-customids rewritten used))))
+
+(defun org-canvas--html-to-org-post-process (text)
+  "Clean up pandoc's Org output before insertion.
+
+- Decode U+00A0 (non-breaking space, from `&nbsp;') to a regular
+  space.  Without this, lines that originated as `<p>&nbsp;</p>'
+  spacers in Canvas's WYSIWYG output stay as literal NBSP-only
+  lines that look blank but aren't (`cat -A' shows `M-BM-').
+- Collapse lines containing only whitespace into empty lines so
+  spacer paragraphs don't survive as decorated blanks.
+- Insert a space before an Org timestamp `<YYYY-MM-DD' when the
+  preceding character is non-whitespace and not `<' or `[' —
+  pandoc occasionally emits `Due:<2026-04-22>' with no separator
+  when the source HTML had a narrow space or NBSP between label
+  and date.
+- Repair dangling TOC links and prune orphan `:CUSTOM_ID:' drawer
+  entries (see `org-canvas--repair-toc-and-prune-customids').
+
+Returns TEXT unchanged when nil."
+  (when text
+    (let* ((s (replace-regexp-in-string " " " " text))
+           (s (replace-regexp-in-string "^[ \t]+$" "" s))
+           (s (replace-regexp-in-string
+               "\\([^][ \t<\n]\\)\\(<[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}\\)"
+               "\\1 \\2"
+               s))
+           (s (org-canvas--repair-toc-and-prune-customids s)))
+      s)))
+
 (defun org-canvas--html-to-org (html)
   "Convert HTML string to Org format using pandoc.
 Returns the Org-mode text, or the raw HTML prefixed with a warning
-if pandoc is not available."
+if pandoc is not available.  Output passes through
+`org-canvas--html-to-org-post-process' to clean up NBSP characters,
+whitespace-only lines, and missing spacing before inline timestamps."
   (if (not (executable-find "pandoc"))
       (concat "# WARNING: pandoc not found, raw HTML below\n" html)
     (with-temp-buffer
@@ -763,7 +929,8 @@ if pandoc is not available."
                         t t nil
                         "-f" "html" "-t" "org" "--wrap=none")))
         (if (= exit-code 0)
-            (string-trim (buffer-string))
+            (org-canvas--html-to-org-post-process
+             (string-trim (buffer-string)))
           (concat "# WARNING: pandoc conversion failed\n" html))))))
 
 (defun org-canvas--html-to-org-inline (html)
