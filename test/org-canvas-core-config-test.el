@@ -440,5 +440,72 @@
         (expect org-canvas-log-level :to-equal 'error)
         (expect log-level-called :to-equal 'error)))))
 
+(describe "org-canvas-base-url normalization"
+  (it "strips trailing slash when assigned via setq"
+    (let ((original org-canvas-base-url))
+      (unwind-protect
+          (progn
+            (setq org-canvas-base-url "https://example.invalid/")
+            (accept-process-output nil 0 50)
+            (expect org-canvas-base-url :to-equal "https://example.invalid"))
+        (setq org-canvas-base-url original)
+        (sit-for 0))))
+
+  (it "strips multiple trailing slashes"
+    (let ((original org-canvas-base-url))
+      (unwind-protect
+          (progn
+            (setq org-canvas-base-url "https://example.invalid///")
+            (accept-process-output nil 0 50)
+            (expect org-canvas-base-url :to-equal "https://example.invalid"))
+        (setq org-canvas-base-url original)
+        (sit-for 0))))
+
+  (it "leaves an already-clean base-url alone"
+    (let ((original org-canvas-base-url))
+      (unwind-protect
+          (progn
+            (setq org-canvas-base-url "https://example.invalid")
+            (accept-process-output nil 0 50)
+            (expect org-canvas-base-url :to-equal "https://example.invalid"))
+        (setq org-canvas-base-url original)
+        (sit-for 0))))
+
+  (it "does not loop infinitely when the watcher itself sets the var"
+    (let ((original org-canvas-base-url))
+      (unwind-protect
+          (progn
+            (setq org-canvas-base-url "https://example.invalid/")
+            (accept-process-output nil 0 50)
+            (setq org-canvas-base-url "https://example.invalid")
+            (accept-process-output nil 0 50)
+            (expect org-canvas-base-url :to-equal "https://example.invalid"))
+        (setq org-canvas-base-url original)
+        (sit-for 0))))
+
+  (it "ignores non-string values without erroring"
+    (let ((original org-canvas-base-url))
+      (unwind-protect
+          (progn
+            (org-canvas--base-url-watcher 'org-canvas-base-url
+                                          nil 'set nil)
+            (expect t :to-be t))
+        (setq org-canvas-base-url original)
+        (sit-for 0))))
+
+  (it "ignores `let' operations"
+    (let ((original org-canvas-base-url))
+      (unwind-protect
+          (progn
+            (setq org-canvas-base-url "https://example.invalid")
+            (accept-process-output nil 0 50)
+            (org-canvas--base-url-watcher 'org-canvas-base-url
+                                          "https://other.invalid/"
+                                          'let nil)
+            (accept-process-output nil 0 50)
+            (expect org-canvas-base-url :to-equal "https://example.invalid"))
+        (setq org-canvas-base-url original)
+        (sit-for 0)))))
+
 (provide 'org-canvas-core-config-test)
 ;;; org-canvas-core-config-test.el ends here

@@ -57,6 +57,41 @@ will be resolved relative to this path."
   :type 'string
   :group 'org-canvas)
 
+(defvar org-canvas--base-url-normalizing nil
+  "Non-nil while `org-canvas--base-url-watcher' is re-assigning the var.
+Prevents the watcher from recursing on its own normalized assignment.")
+
+(defun org-canvas--base-url-watcher (_symbol newval operation _where)
+  "Strip trailing slashes from `org-canvas-base-url' when set.
+NEWVAL is the incoming value; OPERATION is the kind of change
+\(`set', `let', `unlet', `makunbound', `defvaralias').  Reacts only
+to `set' so dynamic rebinding via `let' doesn't trigger normalization.
+
+Many call sites concatenate the base URL directly with paths starting
+with `/' (e.g. (format \"%s/api/v1/foo\" org-canvas-base-url)).  Without
+this watcher, a user-supplied trailing slash produces URLs like
+https://host//api/v1/...  Normalizing once at assignment time keeps every
+inline call site clean.
+
+Variable watchers fire BEFORE the actual assignment completes, so a
+naive `setq' from inside the watcher would be overwritten by the
+caller's pending assignment.  `run-at-time' with a 0 delay defers our
+re-assignment until after the original `setq' finishes.  The
+`org-canvas--base-url-normalizing' guard prevents infinite recursion
+when our deferred `setq' fires the watcher again."
+  (when (and (eq operation 'set)
+             (stringp newval)
+             (not org-canvas--base-url-normalizing)
+             (string-match-p "/+\\'" newval))
+    (let ((normalized (replace-regexp-in-string "/+\\'" "" newval)))
+      (run-at-time
+       0 nil
+       (lambda ()
+         (let ((org-canvas--base-url-normalizing t))
+           (setq-default org-canvas-base-url normalized)))))))
+
+(add-variable-watcher 'org-canvas-base-url #'org-canvas--base-url-watcher)
+
 (defcustom org-canvas-api-token ""
   "The API token for Canvas.
 It is recommended to set this in org-canvas-credentials.el instead of here."
