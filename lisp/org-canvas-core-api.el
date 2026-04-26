@@ -64,9 +64,26 @@ placeholder for the API token (requires double quotes for expansion)."
     (org-canvas--signal 'org-canvas-credentials-error
       "Course ID not configured.  Set org-canvas-course-id in org-canvas-credentials.el\nRun M-x org-canvas-init for guided setup")))
 
+(defconst org-canvas--api-transient-curl-errors '(7 28 56)
+  "Curl error codes treated as transient (connect, timeout, recv).")
+
+(defconst org-canvas--api-transient-http-statuses '(502 503 504)
+  "HTTP status codes treated as transient (gateway/service errors).")
+
+(defun org-canvas--api-transient-error-p (plz-err)
+  "Return non-nil when PLZ-ERR represents a transient failure."
+  (let* ((curl-err (and (plz-error-p plz-err) (plz-error-curl-error plz-err)))
+         (response (and (plz-error-p plz-err) (plz-error-response plz-err)))
+         (status (and response (plz-response-status response))))
+    (or (and curl-err
+             (memq (car curl-err) org-canvas--api-transient-curl-errors))
+        (and status
+             (memq status org-canvas--api-transient-http-statuses)))))
+
 (defun org-canvas--api-handle-plz-error (err full-url)
   "Handle a plz-error ERR from a request to FULL-URL.
-Return `:retry' if the request should be retried (after sleeping),
+Return `:retry' for rate-limited (sleep already done),
+`:retry-transient' for transient errors (caller must sleep),
 or signal an error for terminal failures."
   (let* ((plz-err (cdr err))
          (response (and (plz-error-p plz-err)
@@ -102,6 +119,10 @@ or signal an error for terminal failures."
       (signal 'org-canvas-credentials-error
         (list "Permission denied (HTTP 403). Your token may lack the required scope for this operation."
               body plz-err)))
+
+     ;; Transient (curl timeout / 5xx); caller will sleep based on retry index
+     ((org-canvas--api-transient-error-p plz-err)
+      :retry-transient)
 
      ;; Generic error
      (t
@@ -158,10 +179,47 @@ REQUEST has keys :method :url :params :body :timeout :headers."
     (org-canvas--log-debug org-canvas--logger "[API] Response Body:\n%s"
       (org-canvas--pretty-json result))))
 
+(defun org-canvas--api-handle-rate-retry (err rate-retry-count)
+  "Advance the rate-limit retry counter or signal exhaustion.
+ERR is the original plz-error condition.  RATE-RETRY-COUNT is the
+current count (pre-increment).  Returns the new count, or signals
+`org-canvas-api-error' once `org-canvas-rate-limit-retries' is reached."
+  (if (< rate-retry-count org-canvas-rate-limit-retries)
+      (progn
+        (org-canvas--log-debug org-canvas--logger
+          "[API] Rate retry %d/%d"
+          (1+ rate-retry-count) org-canvas-rate-limit-retries)
+        (1+ rate-retry-count))
+    (org-canvas--api-retries-exhausted rate-retry-count err)))
+
+(defun org-canvas--api-handle-transient-retry (err transient-retry-index)
+  "Sleep and advance the transient retry index, or signal exhaustion.
+ERR is the original plz-error condition.  TRANSIENT-RETRY-INDEX is the
+0-based position into `org-canvas-transient-retry-delays' for the
+upcoming retry.  Returns the new index, or signals `org-canvas-api-error'
+once the delay list is exhausted."
+  (let ((delay (nth transient-retry-index org-canvas-transient-retry-delays)))
+    (if delay
+        (progn
+          (org-canvas--log-warning org-canvas--logger
+            "[API] Transient error, retrying in %ds (%d/%d)"
+            delay (1+ transient-retry-index)
+            (length org-canvas-transient-retry-delays))
+          (sleep-for delay)
+          (1+ transient-retry-index))
+      (let* ((plz-err (cdr err))
+             (response (and (plz-error-p plz-err) (plz-error-response plz-err)))
+             (body (and response (plz-response-body response))))
+        (signal 'org-canvas-api-error
+                (list (format "Transient error after %d retries"
+                              (length org-canvas-transient-retry-delays))
+                      body plz-err))))))
+
 (defun org-canvas--api-execute-with-retry (plz-method full-url headers json-payload actual-timeout)
-  "Execute PLZ-METHOD request to FULL-URL with retry on rate-limit.
+  "Execute PLZ-METHOD request to FULL-URL with retry on rate-limit or transient.
 HEADERS, JSON-PAYLOAD, and ACTUAL-TIMEOUT configure the request."
-  (let ((retry-count 0)
+  (let ((rate-retry-count 0)
+        (transient-retry-index 0)
         (done nil)
         result)
     (while (not done)
@@ -176,13 +234,13 @@ HEADERS, JSON-PAYLOAD, and ACTUAL-TIMEOUT configure the request."
             (org-canvas--api-log-response result)
             (setq done t))
         (plz-error
-         (when (eq (org-canvas--api-handle-plz-error err full-url) :retry)
-           (if (< retry-count org-canvas-rate-limit-retries)
-               (progn
-                 (org-canvas--log-debug org-canvas--logger
-                   "[API] Retry %d/%d" (1+ retry-count) org-canvas-rate-limit-retries)
-                 (setq retry-count (1+ retry-count)))
-             (org-canvas--api-retries-exhausted retry-count err))))))
+         (pcase (org-canvas--api-handle-plz-error err full-url)
+           (:retry
+            (setq rate-retry-count
+                  (org-canvas--api-handle-rate-retry err rate-retry-count)))
+           (:retry-transient
+            (setq transient-retry-index
+                  (org-canvas--api-handle-transient-retry err transient-retry-index)))))))
     result))
 
 (cl-defun org-canvas-api-request (method url &key params data timeout)

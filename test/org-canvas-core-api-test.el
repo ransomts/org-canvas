@@ -669,6 +669,54 @@
         (expect (nth 1 messages) :to-match "Retrying in 2s")
         (expect (nth 2 messages) :to-match "Retrying in 1s")))))
 
+(describe "transient retry"
+  (it "retries plz curl-28 timeouts up to retry-delays length"
+    (let* ((calls 0)
+           (org-canvas-transient-retry-delays '(0 0))
+           (org-canvas-api-token "test-token")
+           (org-canvas-base-url "https://example.invalid"))
+      (cl-letf (((symbol-function 'plz)
+                 (lambda (&rest _args)
+                   (cl-incf calls)
+                   (if (< calls 3)
+                       (signal 'plz-error
+                               (make-plz-error :curl-error '(28 . "Operation timeout.")))
+                     '((id . 42)))))
+                ((symbol-function 'sleep-for) (lambda (_) nil)))
+        (let ((result (org-canvas-api-request 'GET "https://example.invalid/api/v1/x")))
+          (expect calls :to-equal 3)
+          (expect (alist-get 'id result) :to-equal 42)))))
+
+  (it "retries HTTP 503 then succeeds"
+    (let* ((calls 0)
+           (org-canvas-transient-retry-delays '(0))
+           (org-canvas-api-token "test-token")
+           (org-canvas-base-url "https://example.invalid"))
+      (cl-letf (((symbol-function 'plz)
+                 (lambda (&rest _args)
+                   (cl-incf calls)
+                   (if (= calls 1)
+                       (signal 'plz-error
+                               (make-plz-error
+                                :response (make-plz-response :status 503 :body "")))
+                     '((id . 7)))))
+                ((symbol-function 'sleep-for) (lambda (_) nil)))
+        (let ((result (org-canvas-api-request 'GET "https://example.invalid/api/v1/x")))
+          (expect calls :to-equal 2)
+          (expect (alist-get 'id result) :to-equal 7)))))
+
+  (it "raises after exhausting retry-delays"
+    (let* ((org-canvas-transient-retry-delays '(0))
+           (org-canvas-api-token "test-token")
+           (org-canvas-base-url "https://example.invalid"))
+      (cl-letf (((symbol-function 'plz)
+                 (lambda (&rest _args)
+                   (signal 'plz-error
+                           (make-plz-error :curl-error '(28 . "Operation timeout.")))))
+                ((symbol-function 'sleep-for) (lambda (_) nil)))
+        (expect (org-canvas-api-request 'GET "https://example.invalid/api/v1/x")
+                :to-throw 'org-canvas-api-error)))))
+
 (describe "org-canvas--associate-rubric failure message"
   (it "shows warning in echo area on failure"
     (with-org-canvas-test-config

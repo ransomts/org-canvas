@@ -140,6 +140,14 @@ Separate from `org-canvas-request-timeout' which governs plz API calls."
   :type 'integer
   :group 'org-canvas)
 
+(defcustom org-canvas-transient-retry-delays '(5 10 20)
+  "Sleep durations (seconds) between retries of transient API errors.
+List length determines the maximum number of retries.  Transient errors
+include curl timeouts (errors 28, 56, 7) and HTTP 502/503/504.  Rate
+limit retries (HTTP 429) use `org-canvas-rate-limit-wait' separately."
+  :type '(repeat integer)
+  :group 'org-canvas)
+
 
 (defcustom org-canvas-detect-conflicts t
   "When non-nil, check for remote changes before overwriting.
