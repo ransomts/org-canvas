@@ -156,7 +156,7 @@ FEATURE is an unquoted symbol.  ARGS is a plist:
 
 (defun org-canvas--parse-gen-raw-key (prop-name)
   "Generate a raw plist key from Org PROP-NAME string.
-E.g., \"PUBLISHED\" → :published-raw, \"POST_AT\" → :post-at-raw."
+E.g., \"PUBLISHED\" → :published-raw, \"DELAYED_POST_AT\" → :delayed-post-at-raw."
   (intern (format ":%s-raw" (downcase (replace-regexp-in-string "_" "-" prop-name)))))
 
 (defun org-canvas--parse-gen-transform-form (prop-name _data-key type default values)
@@ -205,7 +205,7 @@ Example:
     :body :message
     :properties
     ((\"PUBLISHED\"      :published      :type boolean :default t)
-     (\"POST_AT\"        :delayed_post_at :type timestamp)
+     (\"DELAYED_POST_AT\" :delayed_post_at :type timestamp)
      (\"ALLOW_COMMENTS\" :allow_discussion_comments
                         :type boolean)
      (\"SPECIFIC_SECTIONS\" :specific_sections

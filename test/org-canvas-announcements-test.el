@@ -13,49 +13,57 @@
   (it "strips statistics cookie from title"
     (let ((result (org-canvas--announcement-transform-props
                    '(:title-raw "My Announcement [1/3]" :canvas-id nil
-                     :published-raw nil :post-at-raw nil
+                     :published-raw nil :posted-at-raw nil
+                     :delayed-post-at-raw nil :author-raw nil
                      :allow-comments-raw nil :specific-sections-raw nil))))
       (expect (plist-get result :title) :to-equal "My Announcement")))
 
   (it "defaults published to true when nil"
     (let ((result (org-canvas--announcement-transform-props
                    '(:title-raw "Test" :canvas-id nil
-                     :published-raw nil :post-at-raw nil
+                     :published-raw nil :posted-at-raw nil
+                     :delayed-post-at-raw nil :author-raw nil
                      :allow-comments-raw nil :specific-sections-raw nil))))
       (expect (plist-get result :published) :to-be t)))
 
   (it "interprets published=false"
     (let ((result (org-canvas--announcement-transform-props
                    '(:title-raw "Test" :canvas-id nil
-                     :published-raw "false" :post-at-raw nil
+                     :published-raw "false" :posted-at-raw nil
+                     :delayed-post-at-raw nil :author-raw nil
                      :allow-comments-raw nil :specific-sections-raw nil))))
       (expect (plist-get result :published) :to-be nil)))
 
-  (it "parses POST_AT to ISO8601"
+  (it "parses DELAYED_POST_AT to ISO8601"
     (let ((result (org-canvas--announcement-transform-props
                    '(:title-raw "Test" :canvas-id nil
-                     :published-raw nil :post-at-raw "<2024-06-15 Sat 10:00>"
+                     :published-raw nil :posted-at-raw nil
+                     :delayed-post-at-raw "<2024-06-15 Sat 10:00>"
+                     :author-raw nil
                      :allow-comments-raw nil :specific-sections-raw nil))))
       (expect (plist-get result :delayed_post_at) :to-match "2024-06-15T")))
 
-  (it "returns nil for absent POST_AT"
+  (it "returns nil for absent DELAYED_POST_AT"
     (let ((result (org-canvas--announcement-transform-props
                    '(:title-raw "Test" :canvas-id nil
-                     :published-raw nil :post-at-raw nil
+                     :published-raw nil :posted-at-raw nil
+                     :delayed-post-at-raw nil :author-raw nil
                      :allow-comments-raw nil :specific-sections-raw nil))))
       (expect (plist-get result :delayed_post_at) :to-be nil)))
 
   (it "interprets ALLOW_COMMENTS boolean"
     (let ((result (org-canvas--announcement-transform-props
                    '(:title-raw "Test" :canvas-id nil
-                     :published-raw nil :post-at-raw nil
+                     :published-raw nil :posted-at-raw nil
+                     :delayed-post-at-raw nil :author-raw nil
                      :allow-comments-raw "true" :specific-sections-raw nil))))
       (expect (plist-get result :allow_discussion_comments) :to-be t)))
 
   (it "passes through canvas-id and specific-sections"
     (let ((result (org-canvas--announcement-transform-props
                    '(:title-raw "Test" :canvas-id "42"
-                     :published-raw nil :post-at-raw nil
+                     :published-raw nil :posted-at-raw nil
+                     :delayed-post-at-raw nil :author-raw nil
                      :allow-comments-raw nil :specific-sections-raw "sec1,sec2"))))
       (expect (plist-get result :canvas-id) :to-equal "42")
       (expect (plist-get result :specific_sections) :to-equal "sec1,sec2"))))
@@ -103,18 +111,18 @@ Draft content.
      (let ((data (org-canvas--announcement-parse-entry)))
        (expect (plist-get data :published) :to-be nil))))
 
-  (it "parses POST_AT timestamp"
+  (it "parses DELAYED_POST_AT timestamp"
     (with-temp-org-buffer
      "* Scheduled Announcement
 :PROPERTIES:
-:POST_AT: <2024-06-15 Sat 10:00>
+:DELAYED_POST_AT: <2024-06-15 Sat 10:00>
 :END:
 
 Scheduled content.
 "
      (org-back-to-heading)
      (let ((data (org-canvas--announcement-parse-entry)))
-       ;; POST_AT should be parsed into delayed_post_at as ISO8601
+       ;; DELAYED_POST_AT should be parsed into delayed_post_at as ISO8601
        (expect (plist-get data :delayed_post_at) :to-be-truthy)
        (expect (plist-get data :delayed_post_at) :to-match "T.*Z$"))))
 
@@ -472,5 +480,65 @@ Content for everyone.
          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil)))
            (org-canvas-delete-announcement-at-point)
            (expect (org-entry-get (point) "CANVAS_ID") :to-equal "42")))))))
+
+;;;; Pull Metadata (POSTED_AT, AUTHOR, DELAYED_POST_AT)
+
+(describe "announcement pull metadata"
+  (it "emits :POSTED_AT: when posted_at is present"
+    (let ((temp (make-temp-file "ann-test-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp (insert ""))
+            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                       (lambda (&rest _)
+                         '(((id . 100) (title . "Hello")
+                            (message . "<p>x</p>")
+                            (posted_at . "2026-04-01T15:00:00Z")
+                            (delayed_post_at . :null)
+                            (user . ((display_name . "Tim Ransom"))))))))
+              (let ((org-canvas-announcements-file temp))
+                (org-canvas-pull-announcements)))
+            (with-temp-buffer
+              (insert-file-contents temp)
+              (let ((s (buffer-string)))
+                (expect s :to-match ":POSTED_AT:")
+                (expect s :to-match ":AUTHOR:[ \t]+Tim Ransom"))))
+        (delete-file temp))))
+
+  (it "emits :DELAYED_POST_AT: only when delayed_post_at is non-null"
+    (let ((temp (make-temp-file "ann-test-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp (insert ""))
+            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                       (lambda (&rest _)
+                         '(((id . 200) (title . "Scheduled")
+                            (message . "<p>x</p>")
+                            (delayed_post_at . "2026-05-01T08:00:00Z")
+                            (posted_at . :null)
+                            (user . ((display_name . "Tim Ransom"))))))))
+              (let ((org-canvas-announcements-file temp))
+                (org-canvas-pull-announcements)))
+            (with-temp-buffer
+              (insert-file-contents temp)
+              (expect (buffer-string) :to-match ":DELAYED_POST_AT:")))
+        (delete-file temp))))
+
+  (it "omits :AUTHOR: when the user field is absent"
+    (let ((temp (make-temp-file "ann-test-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp (insert ""))
+            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                       (lambda (&rest _)
+                         '(((id . 300) (title . "Anon")
+                            (message . "<p>x</p>")
+                            (posted_at . "2026-04-01T15:00:00Z"))))))
+              (let ((org-canvas-announcements-file temp))
+                (org-canvas-pull-announcements)))
+            (with-temp-buffer
+              (insert-file-contents temp)
+              (expect (buffer-string) :not :to-match ":AUTHOR:")))
+        (delete-file temp)))))
 
 ;;; org-canvas-announcements-test.el ends here

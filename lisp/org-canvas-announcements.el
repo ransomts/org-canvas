@@ -13,10 +13,12 @@
 ;;
 ;; PROPERTIES
 ;; ==========
-;; POST_AT        - Scheduled post time (Org timestamp)
-;;                  If set to a future time, announcement is delayed
-;; ALLOW_COMMENTS - Allow student replies ("true"/"false")
-;; PUBLISHED      - Visibility (defaults to true)
+;; DELAYED_POST_AT - Scheduled post time (Org timestamp)
+;;                   If set to a future time, announcement is delayed
+;; POSTED_AT       - Read-only: when announcement was actually posted
+;; AUTHOR          - Read-only: display name of the announcement author
+;; ALLOW_COMMENTS  - Allow student replies ("true"/"false")
+;; PUBLISHED       - Visibility (defaults to true)
 ;;
 ;; API NOTES
 ;; =========
@@ -25,8 +27,8 @@
 ;;
 ;; DELAYED POSTING
 ;; ===============
-;; Use POST_AT with a future timestamp to schedule an announcement:
-;;   :POST_AT: <2025-02-15 Sat 09:00>
+;; Use DELAYED_POST_AT with a future timestamp to schedule an announcement:
+;;   :DELAYED_POST_AT: <2025-02-15 Sat 09:00>
 ;;
 ;; The announcement will be hidden until the scheduled time.
 
@@ -53,8 +55,10 @@
   :properties
   '((:org-prop "PUBLISHED" :data-key :published :type boolean :default t
      :api-key "published" :boolean-json t)
-    (:org-prop "POST_AT" :data-key :delayed_post_at :type timestamp
+    (:org-prop "POSTED_AT" :data-key :posted_at :type timestamp)
+    (:org-prop "DELAYED_POST_AT" :data-key :delayed_post_at :type timestamp
      :api-key "delayed_post_at")
+    (:org-prop "AUTHOR" :data-key :author :type string)
     (:org-prop "ALLOW_COMMENTS" :data-key :allow_discussion_comments :type boolean)))
 
 ;;;; 1. Stage: Extraction
@@ -63,7 +67,9 @@
   :body :message
   :properties
   (("PUBLISHED"        :published                 :type boolean :default t)
-   ("POST_AT"          :delayed_post_at           :type timestamp)
+   ("POSTED_AT"        :posted_at                 :type timestamp)
+   ("DELAYED_POST_AT"  :delayed_post_at           :type timestamp)
+   ("AUTHOR"           :author                    :type string)
    ("ALLOW_COMMENTS"   :allow_discussion_comments :type boolean)
    ("SPECIFIC_SECTIONS" :specific_sections        :type string)))
 
@@ -115,10 +121,24 @@ DATA is the parsed plist, PAYLOAD is the alist so far."
 
 ;;;; Pull
 
+(defun org-canvas--announcement-pull-set-author (item pos)
+  "Set AUTHOR property at POS from ITEM's user.display_name when present.
+The Canvas API returns `user' as a nested alist; this helper extracts
+`display_name' and writes it as :AUTHOR:.  Skipped when user is nil or
+missing display_name."
+  (let* ((user (alist-get 'user item))
+         (display-name (and user (listp user)
+                            (alist-get 'display_name user))))
+    (when (and display-name (not (eq display-name :null))
+               (stringp display-name) (not (string-empty-p display-name)))
+      (org-canvas-org-set-property pos "AUTHOR" display-name))))
+
 (org-canvas-define-pull-item announcement
   :body-field message
   :properties
-  ((delayed_post_at "DELAYED_POST_AT" :type timestamp)))
+  ((posted_at "POSTED_AT" :type timestamp)
+   (delayed_post_at "DELAYED_POST_AT" :type timestamp))
+  :after-pull #'org-canvas--announcement-pull-set-author)
 
 (org-canvas-define-pull announcements
   :file org-canvas-announcements-file

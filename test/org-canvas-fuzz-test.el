@@ -159,7 +159,7 @@ Returns t if no error, or the error object."
             (dotimes (_ fuzz--iteration-count)
               (let* ((title (fuzz--random-heading-title))
                      (props `(("PUBLISHED" . ,(fuzz--random-boolean-string))
-                              ("POST_AT" . ,(fuzz--random-timestamp-string))
+                              ("DELAYED_POST_AT" . ,(fuzz--random-timestamp-string))
                               ("ALLOW_COMMENTS" . ,(fuzz--random-boolean-string))
                               ("SPECIFIC_SECTIONS" . ,(nth (random 3) '(nil "Section A" "A,B")))))
                      (body (fuzz--random-body))
