@@ -674,6 +674,7 @@
     (let* ((calls 0)
            (org-canvas-transient-retry-delays '(0 0))
            (org-canvas-api-token "test-token")
+           (org-canvas-course-id "281704")
            (org-canvas-base-url "https://example.invalid"))
       (cl-letf (((symbol-function 'plz)
                  (lambda (&rest _args)
@@ -691,6 +692,7 @@
     (let* ((calls 0)
            (org-canvas-transient-retry-delays '(0))
            (org-canvas-api-token "test-token")
+           (org-canvas-course-id "281704")
            (org-canvas-base-url "https://example.invalid"))
       (cl-letf (((symbol-function 'plz)
                  (lambda (&rest _args)
@@ -708,6 +710,7 @@
   (it "raises after exhausting retry-delays"
     (let* ((org-canvas-transient-retry-delays '(0))
            (org-canvas-api-token "test-token")
+           (org-canvas-course-id "281704")
            (org-canvas-base-url "https://example.invalid"))
       (cl-letf (((symbol-function 'plz)
                  (lambda (&rest _args)
