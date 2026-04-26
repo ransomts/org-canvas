@@ -146,15 +146,18 @@ Logs warnings for invalid roles.  Returns RAW unchanged."
 
 ;;;; Pull
 
-(defun org-canvas--page-pull-item (item _pos)
+(defun org-canvas--page-pull-item (item pos)
   "Set per-item properties for a pulled page.
 ITEM is the API response alist, POS is the heading position.
 Fetches the full page detail to get body content.  When the detail
 fetch fails (after retries are exhausted) the error is recorded in
 `org-canvas--pull-summary' and the body is left empty.  The heading's
 :CANVAS_URL: property has already been set by `pull-process-item' from
-the list response, so a detail-fetch failure cannot corrupt the schema."
+the list response.  Also sets `:CANVAS_ID:' from the numeric page_id
+for schema consistency with other content types — CANVAS_URL remains
+the primary identifier used for push/sync, but pages now expose both."
   (let* ((url (alist-get 'url item))
+         (page-id (alist-get 'page_id item))
          (detail-url (org-canvas-api-course-endpoint "pages/%s" url))
          (detail (condition-case err
                      (org-canvas-api-request 'GET detail-url)
@@ -169,6 +172,8 @@ the list response, so a detail-fetch failure cannot corrupt the schema."
                      :log-line (org-canvas--pull-summary-current-log-line))
                     nil)))
          (body (when detail (alist-get 'body detail))))
+    (when page-id
+      (org-canvas-org-set-property pos "CANVAS_ID" (format "%s" page-id)))
     (when detail
       (org-canvas--pull-insert-body body))))
 

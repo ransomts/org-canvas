@@ -730,7 +730,25 @@ Content.
        ;; CANVAS_URL with anything else (the original schema bug).
        (expect (org-entry-get (point) "CANVAS_URL")
                :to-equal "connecting-to-the-palmetto-jupyter-image")
-       ;; And no spurious CANVAS_ID is written either.
+       ;; CANVAS_ID is set from the list response's page_id, which is
+       ;; available even when the detail fetch fails.
+       (expect (org-entry-get (point) "CANVAS_ID") :to-equal "12345"))))
+
+  (it "does not set CANVAS_ID when page_id is absent from the list response"
+    (org-canvas--pull-summary-reset)
+    (with-temp-org-buffer
+     "* Page
+:PROPERTIES:
+:CANVAS_URL: page-slug
+:END:
+"
+     (org-back-to-heading)
+     (cl-letf (((symbol-function 'org-canvas-api-request)
+                (lambda (&rest _)
+                  (signal 'org-canvas-timeout-error
+                          (list "Operation timeout")))))
+       (org-canvas--page-pull-item
+        '((url . "page-slug") (title . "Page")) (point))
        (expect (org-entry-get (point) "CANVAS_ID") :to-be nil))))
 
   (it "does not insert a body when detail fetch fails"
@@ -770,6 +788,24 @@ Content.
          (org-canvas--page-pull-item
           '((url . "page-slug") (title . "Page")) (point))
          (expect (org-canvas--pull-summary-empty-p) :to-be t)
-         (expect insert-calls :to-equal '("<p>Hello</p>")))))))
+         (expect insert-calls :to-equal '("<p>Hello</p>"))))))
+
+  (it "sets both :CANVAS_URL: and :CANVAS_ID: on a successful pull"
+    (org-canvas--pull-summary-reset)
+    (with-temp-org-buffer
+     "* Page
+:PROPERTIES:
+:CANVAS_URL: page-slug
+:END:
+"
+     (org-back-to-heading)
+     (cl-letf (((symbol-function 'org-canvas-api-request)
+                (lambda (&rest _) '((body . ""))))
+               ((symbol-function 'org-canvas--pull-insert-body)
+                (lambda (&rest _) nil)))
+       (org-canvas--page-pull-item
+        '((url . "page-slug") (page_id . 99) (title . "Page")) (point))
+       (expect (org-entry-get (point) "CANVAS_URL") :to-equal "page-slug")
+       (expect (org-entry-get (point) "CANVAS_ID") :to-equal "99")))))
 
 ;;; org-canvas-pages-test.el ends here
