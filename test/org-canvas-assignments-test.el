@@ -1495,4 +1495,78 @@ Content.
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
 
+(describe "org-canvas--override-emit-table"
+  (it "renders \"All Sections\" when course_section_id is nil"
+    (with-temp-buffer
+      (let ((org-canvas-sections-file "/tmp/nonexistent-sections-xyzzy.org"))
+        (org-canvas--override-emit-table
+         '(((id . 1) (course_section_id . nil)
+            (due_at . "2026-03-28T23:59:00Z")))
+         "2026-02-15T23:59:00Z" nil nil))
+      (expect (buffer-string) :to-match "All Sections")
+      (expect (buffer-string) :not :to-match "| nil ")))
+
+  (it "drops rows whose every populated date matches the parent"
+    (with-temp-buffer
+      (let ((org-canvas-sections-file "/tmp/nonexistent-sections-xyzzy.org"))
+        (org-canvas--override-emit-table
+         '(((id . 1) (course_section_id . 1)
+            (due_at . "2026-02-15T23:59:00Z")))
+         "2026-02-15T23:59:00Z" nil nil))
+      ;; The override matches parent due_at and has no unlock/lock — nothing to show.
+      (expect (buffer-string) :to-equal "")))
+
+  (it "drops columns where every kept row's cell is empty"
+    (with-temp-buffer
+      (let ((org-canvas-sections-file "/tmp/nonexistent-sections-xyzzy.org"))
+        (org-canvas--override-emit-table
+         '(((id . 1) (course_section_id . 1)
+            (due_at . "2026-03-28T23:59:00Z")))
+         "2026-02-15T23:59:00Z" nil nil))
+      (let ((s (buffer-string)))
+        (expect s :to-match "Due At")
+        (expect s :not :to-match "Unlock At")
+        (expect s :not :to-match "Lock At"))))
+
+  (it "keeps columns that have data in any kept row"
+    (with-temp-buffer
+      (let ((org-canvas-sections-file "/tmp/nonexistent-sections-xyzzy.org"))
+        (org-canvas--override-emit-table
+         '(((id . 1) (course_section_id . 1)
+            (due_at . "2026-03-28T23:59:00Z")
+            (unlock_at . "2026-03-20T00:00:00Z")))
+         "2026-02-15T23:59:00Z" nil nil))
+      (let ((s (buffer-string)))
+        (expect s :to-match "Due At")
+        (expect s :to-match "Unlock At")
+        ;; "Lock At" appears as a substring of "Unlock At" — anchor to a
+        ;; pipe so we only match it when it's a real column header.
+        (expect s :not :to-match "| Lock At "))))
+
+  (it "skips the entire table when every override is redundant"
+    (with-temp-buffer
+      (let ((org-canvas-sections-file "/tmp/nonexistent-sections-xyzzy.org"))
+        (org-canvas--override-emit-table
+         '(((id . 1) (course_section_id . nil)
+            (due_at . "2026-02-15T23:59:00Z"))
+           ((id . 2) (course_section_id . 99)
+            (due_at . "2026-02-15T23:59:00Z")))
+         "2026-02-15T23:59:00Z" nil nil))
+      (expect (buffer-string) :to-equal "")))
+
+  (it "still emits the table when overrides differ on at least one field"
+    (with-temp-buffer
+      (let ((org-canvas-sections-file "/tmp/nonexistent-sections-xyzzy.org"))
+        (org-canvas--override-emit-table
+         '(((id . 1) (course_section_id . 1)
+            (due_at . "2026-02-15T23:59:00Z"))   ; redundant
+           ((id . 2) (course_section_id . 2)
+            (due_at . "2026-03-28T23:59:00Z")))  ; differs
+         "2026-02-15T23:59:00Z" nil nil))
+      (let ((s (buffer-string)))
+        (expect s :to-match "^#\\+NAME: overrides$")
+        ;; Only the differing row appears.
+        (expect s :to-match "<2026-03-28")
+        (expect s :not :to-match "<2026-02-15")))))
+
 ;;; org-canvas-assignments-test.el ends here

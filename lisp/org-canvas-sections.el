@@ -225,37 +225,42 @@ Returns the CANVAS_ID string, or nil if the link cannot be resolved."
 (defun org-canvas--section-link-by-id (section-id)
   "Return an Org file link to the section heading with CANVAS_ID = SECTION-ID.
 Returns the section's heading wrapped in a
-\"[[file:sections.org::*Name][Name]]\" form, or the SECTION-ID coerced
-to a string if the section can't be resolved.
+\"[[file:sections.org::*Name][Name]]\" form when found, the literal
+\"All Sections\" when SECTION-ID is nil (Canvas overrides without a
+`course_section_id' apply to anyone the assignment is published for),
+or SECTION-ID coerced to a string if the section can't be resolved.
 
 This is the inverse of `org-canvas--override-resolve-section-id': that
 function turns a link into an ID; this one turns an ID into a link."
-  (let ((sections-file (and (boundp 'org-canvas-sections-file)
-                            org-canvas-sections-file))
-        (target (if (numberp section-id)
-                    (number-to-string section-id)
-                  (format "%s" section-id))))
-    (or (and sections-file
-             (file-exists-p sections-file)
-             (with-current-buffer (find-file-noselect sections-file)
-               (save-excursion
-                 (goto-char (point-min))
-                 (let (found name)
-                   (while (and (not found)
-                               (re-search-forward
-                                "^[ \t]*:CANVAS_ID:[ \t]+\\(.+\\)$" nil t))
-                     (when (string= (string-trim
-                                     (match-string-no-properties 1))
-                                    target)
-                       (save-excursion
-                         (org-back-to-heading t)
-                         (setq name (org-get-heading t t t t))
-                         (setq found t))))
-                   (when found
-                     (format "[[file:%s::*%s][%s]]"
-                             (file-name-nondirectory sections-file)
-                             name name))))))
-        target)))
+  (cond
+   ((null section-id) "All Sections")
+   (t
+    (let ((sections-file (and (boundp 'org-canvas-sections-file)
+                              org-canvas-sections-file))
+          (target (if (numberp section-id)
+                      (number-to-string section-id)
+                    (format "%s" section-id))))
+      (or (and sections-file
+               (file-exists-p sections-file)
+               (with-current-buffer (find-file-noselect sections-file)
+                 (save-excursion
+                   (goto-char (point-min))
+                   (let (found name)
+                     (while (and (not found)
+                                 (re-search-forward
+                                  "^[ \t]*:CANVAS_ID:[ \t]+\\(.+\\)$" nil t))
+                       (when (string= (string-trim
+                                       (match-string-no-properties 1))
+                                      target)
+                         (save-excursion
+                           (org-back-to-heading t)
+                           (setq name (org-get-heading t t t t))
+                           (setq found t))))
+                     (when found
+                       (format "[[file:%s::*%s][%s]]"
+                               (file-name-nondirectory sections-file)
+                               name name))))))
+          target)))))
 
 (defun org-canvas--override-format-cell (iso8601)
   "Format ISO8601 as an Org timestamp string, or empty string if nil."
@@ -282,25 +287,70 @@ which CI's coverage-instrumented runner handles poorly."
         :error (error-message-string err))
        nil))))
 
-(defun org-canvas--override-emit-table (overrides)
+(defun org-canvas--override-row-redundant-p (ov parent-due parent-unlock parent-lock)
+  "Return non-nil when override OV conveys no date difference from parent.
+PARENT-DUE/PARENT-UNLOCK/PARENT-LOCK are the parent assignment's
+ISO8601 strings (or nil).  An override row is redundant when every
+date it carries is either absent or identical to the parent's
+corresponding date — emitting it would clutter the file with rows
+that say nothing."
+  (let ((due    (alist-get 'due_at    ov))
+        (unlock (alist-get 'unlock_at ov))
+        (lock   (alist-get 'lock_at   ov)))
+    (and (or (null due)    (equal due    parent-due))
+         (or (null unlock) (equal unlock parent-unlock))
+         (or (null lock)   (equal lock   parent-lock)))))
+
+(defun org-canvas--override-build-row (ov)
+  "Build a 4-cell display row for override OV.
+Returns a list (SECTION-LINK DUE UNLOCK LOCK) of strings."
+  (list (org-canvas--section-link-by-id (alist-get 'course_section_id ov))
+        (org-canvas--override-format-cell (alist-get 'due_at    ov))
+        (org-canvas--override-format-cell (alist-get 'unlock_at ov))
+        (org-canvas--override-format-cell (alist-get 'lock_at   ov))))
+
+(defun org-canvas--override-emit-table
+    (overrides &optional parent-due parent-unlock parent-lock)
   "Emit a `#+NAME: overrides' table for OVERRIDES (list of API alists).
-Inserts at point.  Does nothing when OVERRIDES is nil or empty.
-Section column resolves to a [[file:sections.org::*Name][Name]] link via
-`org-canvas--section-link-by-id'.  Date columns are formatted via the
-course timezone (see `org-canvas--iso8601-to-org-timestamp')."
+Inserts at point.  Does nothing when OVERRIDES is nil/empty or when
+every override is redundant against the parent dates.
+
+PARENT-DUE, PARENT-UNLOCK, PARENT-LOCK are the parent assignment's
+ISO8601 strings (or nil); rows whose every populated date matches the
+parent are dropped (see `org-canvas--override-row-redundant-p').
+Columns whose every cell is empty are dropped from the emitted table.
+Section column renders as \"All Sections\" when `course_section_id'
+is nil, otherwise as a `[[file:sections.org::*Name][Name]]' link."
   (when (and overrides (> (length overrides) 0))
-    (insert "#+NAME: overrides\n")
-    (insert "| Section | Due At | Unlock At | Lock At |\n")
-    (insert "|---------+--------+-----------+---------|\n")
-    (dolist (ov overrides)
-      (let ((sec-link (org-canvas--section-link-by-id
-                       (alist-get 'course_section_id ov)))
-            (due    (org-canvas--override-format-cell (alist-get 'due_at ov)))
-            (unlock (org-canvas--override-format-cell (alist-get 'unlock_at ov)))
-            (lock   (org-canvas--override-format-cell (alist-get 'lock_at ov))))
-        (insert (format "| %s | %s | %s | %s |\n"
-                        sec-link due unlock lock))))
-    (insert "\n")))
+    (let* ((kept-overrides
+            (cl-remove-if (lambda (ov)
+                            (org-canvas--override-row-redundant-p
+                             ov parent-due parent-unlock parent-lock))
+                          overrides))
+           (rows (mapcar #'org-canvas--override-build-row kept-overrides))
+           (keep-due    (cl-some (lambda (r) (not (string-empty-p (nth 1 r)))) rows))
+           (keep-unlock (cl-some (lambda (r) (not (string-empty-p (nth 2 r)))) rows))
+           (keep-lock   (cl-some (lambda (r) (not (string-empty-p (nth 3 r)))) rows)))
+      (when rows
+        (let ((headers (cons "Section"
+                             (delq nil (list (and keep-due    "Due At")
+                                             (and keep-unlock "Unlock At")
+                                             (and keep-lock   "Lock At")))))
+              (seps (cons "---------"
+                          (delq nil (list (and keep-due    "--------")
+                                          (and keep-unlock "-----------")
+                                          (and keep-lock   "---------"))))))
+          (insert "#+NAME: overrides\n")
+          (insert (concat "| " (mapconcat #'identity headers " | ") " |\n"))
+          (insert (concat "|" (mapconcat #'identity seps "+") "|\n"))
+          (dolist (r rows)
+            (let ((cells (cons (nth 0 r)
+                               (delq nil
+                                     (list (and keep-due    (nth 1 r))
+                                           (and keep-unlock (nth 2 r))
+                                           (and keep-lock   (nth 3 r)))))))
+              (insert (concat "| " (mapconcat #'identity cells " | ") " |\n"))))
+          (insert "\n"))))))
 
 (defun org-canvas--override-parse-timestamp-cell (cell)
   "Parse a table CELL containing an Org timestamp.

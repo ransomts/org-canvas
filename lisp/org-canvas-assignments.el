@@ -43,7 +43,8 @@
 (defvar org-canvas-assignment-groups-file)
 (defvar org-canvas-sections-file)
 (declare-function org-canvas--override-fetch "org-canvas-sections" (assignment-id))
-(declare-function org-canvas--override-emit-table "org-canvas-sections" (overrides))
+(declare-function org-canvas--override-emit-table "org-canvas-sections"
+                  (overrides &optional parent-due parent-unlock parent-lock))
 
 ;;;; Configuration
 
@@ -479,7 +480,11 @@ ITEM is the API response alist, POS is the heading position."
         (goto-char pos)
         (org-back-to-heading t)
         (org-end-of-meta-data t)
-        (org-canvas--override-emit-table overrides)))))
+        (org-canvas--override-emit-table
+         overrides
+         (alist-get 'due_at item)
+         (alist-get 'unlock_at item)
+         (alist-get 'lock_at item))))))
 
 (org-canvas-define-pull assignments
   :file org-canvas-assignments-file
