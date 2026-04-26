@@ -2798,4 +2798,48 @@
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
 
+(describe "file duplicate detection"
+  (it "logs a warning for files sharing (size, content-type)"
+    (let* ((files '(((id . 1) (display_name . "foo.pdf")
+                     (size . 100) (content-type . "application/pdf"))
+                    ((id . 2) (display_name . "foo-1.pdf")
+                     (size . 100) (content-type . "application/pdf"))
+                    ((id . 3) (display_name . "bar.pdf")
+                     (size . 200) (content-type . "application/pdf"))))
+           (warnings nil))
+      (cl-letf (((symbol-function 'org-canvas--log-warning)
+                 (lambda (_logger fmt &rest args)
+                   (push (apply #'format fmt args) warnings))))
+        (org-canvas--file-detect-duplicates files)
+        (expect (and (cl-some (lambda (w) (string-match-p "duplicate" w))
+                              warnings)
+                     t)
+                :to-be t))))
+
+  (it "does not warn when all files have distinct (size, content-type)"
+    (let* ((files '(((id . 1) (display_name . "a.pdf") (size . 100)
+                     (content-type . "application/pdf"))
+                    ((id . 2) (display_name . "b.pdf") (size . 200)
+                     (content-type . "application/pdf"))))
+           (warnings nil))
+      (cl-letf (((symbol-function 'org-canvas--log-warning)
+                 (lambda (_logger fmt &rest args)
+                   (push (apply #'format fmt args) warnings))))
+        (org-canvas--file-detect-duplicates files)
+        (expect warnings :to-be nil))))
+
+  (it "lists the duplicate group's display names in the warning"
+    (let* ((files '(((id . 1) (display_name . "Position.pdf") (size . 2644805)
+                     (content-type . "application/pdf"))
+                    ((id . 2) (display_name . "Position-1.pdf") (size . 2644805)
+                     (content-type . "application/pdf"))))
+           (warnings nil))
+      (cl-letf (((symbol-function 'org-canvas--log-warning)
+                 (lambda (_logger fmt &rest args)
+                   (push (apply #'format fmt args) warnings))))
+        (org-canvas--file-detect-duplicates files)
+        (let ((joined (mapconcat #'identity warnings " ")))
+          (expect joined :to-match "Position\\.pdf")
+          (expect joined :to-match "Position-1\\.pdf"))))))
+
 ;;; org-canvas-files-test.el ends here

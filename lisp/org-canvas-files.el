@@ -1085,6 +1085,29 @@ Preserves existing CANVAS_ID matches in place; new files are appended."
          display-name download-url local-path (alist-get 'size item))))
     count))
 
+(defun org-canvas--file-detect-duplicates (items)
+  "Warn for any group of items in ITEMS sharing size and content-type.
+ITEMS is a list (or vector) of file API alists.  Two or more files
+sharing the same `(size, content-type)` are flagged as possible
+duplicates.  This is a heuristic: identical size and content-type does
+not guarantee identical bytes, but it surfaces likely candidates such
+as the near-duplicate PDFs Canvas accumulates in \"Uploaded Media\"
+from RCE auto-uploads."
+  (let ((groups (make-hash-table :test 'equal)))
+    (dolist (item (append items nil))
+      (let ((key (list (alist-get 'size item)
+                       (alist-get 'content-type item))))
+        (push item (gethash key groups))))
+    (maphash
+     (lambda (key entries)
+       (when (> (length entries) 1)
+         (org-canvas--log-warning org-canvas--logger
+           "[Files] Possible duplicate group (size=%s type=%s): %s"
+           (or (car key) "?") (or (cadr key) "?")
+           (mapconcat (lambda (e) (alist-get 'display_name e))
+                      entries ", "))))
+     groups)))
+
 ;;;###autoload
 (defun org-canvas-pull-files ()
   "Pull file metadata from Canvas into files.org.
@@ -1112,6 +1135,7 @@ with `user-error' (delete files.org and re-run to refresh)."
          (endpoint (org-canvas-api-course-endpoint "files"))
          (remote (org-canvas-api-request-all-pages 'GET endpoint))
          (was-fresh (org-canvas--pull-was-fresh-p file)))
+    (org-canvas--file-detect-duplicates remote)
     (org-canvas--pull-confirm-unsaved file "files")
     (unless (file-exists-p file)
       (with-temp-file file (insert "")))
