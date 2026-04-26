@@ -2247,13 +2247,19 @@ Page content.
       (expect output :not :to-match "log line"))))
 
 (describe "TZ-aware pull timestamp"
-  (it "converts UTC ISO-8601 to America/New_York Org active timestamp"
-    (let ((org-canvas--pull-tz-cache "America/New_York"))
+  ;; POSIX TZ string (`EST5EDT,M3.2.0,M11.1.0') is used instead of the
+  ;; IANA name `America/New_York' so the test passes on systems whose
+  ;; Emacs build can't resolve IANA names against tzdata (e.g., the
+  ;; minimal CI runner). Production `org-canvas--pull-tz-cache' takes
+  ;; whatever string Canvas returned (typically IANA), and IANA name
+  ;; resolution works on all common end-user systems.
+  (it "converts UTC ISO-8601 to course-local Org active timestamp"
+    (let ((org-canvas--pull-tz-cache "EST5EDT,M3.2.0,M11.1.0"))
       (expect (org-canvas--iso8601-to-org-timestamp "2026-04-04T03:59:00Z")
               :to-equal "<2026-04-03 Fri 23:59>")))
 
-  (it "converts UTC ISO-8601 to America/New_York Org inactive timestamp"
-    (let ((org-canvas--pull-tz-cache "America/New_York"))
+  (it "converts UTC ISO-8601 to course-local Org inactive timestamp"
+    (let ((org-canvas--pull-tz-cache "EST5EDT,M3.2.0,M11.1.0"))
       (expect (org-canvas--iso8601-to-org-inactive-timestamp "2026-04-04T03:59:00Z")
               :to-equal "[2026-04-03 Fri 23:59]")))
 
