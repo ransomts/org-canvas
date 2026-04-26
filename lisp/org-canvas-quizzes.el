@@ -915,18 +915,19 @@ parent quiz heading after insertion."
 
 (defun org-canvas--quiz-pull-emit-body (quiz-pos description questions)
   "Emit DESCRIPTION and QUESTIONS under the quiz at QUIZ-POS.
-If QUESTIONS is non-empty, wrap DESCRIPTION in a `** Description'
-subheading; otherwise emit DESCRIPTION inline."
+DESCRIPTION (when non-empty) is always wrapped in a `** Description'
+subheading regardless of whether QUESTIONS follow.  This keeps the
+schema consistent across quizzes — every quiz with text gets a
+predictable Description subtree, so downstream tooling and
+human readers don't have to guess whether to find prose under the
+parent quiz or under a dedicated subheading."
   (goto-char quiz-pos)
-  (cond
-   (questions
+  (when (and description (not (string-empty-p description)))
     (org-canvas--quiz-pull-insert-description-wrapped description)
-    (goto-char quiz-pos)
+    (goto-char quiz-pos))
+  (when questions
     (dolist (q questions)
-      (org-canvas--quiz-pull-insert-question q)))
-   (t
-    (when description
-      (org-canvas--pull-insert-body description)))))
+      (org-canvas--quiz-pull-insert-question q))))
 
 ;;;###autoload
 (defun org-canvas-pull-quizzes ()

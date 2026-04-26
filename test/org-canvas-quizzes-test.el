@@ -3254,7 +3254,7 @@ Write an essay.
 
 ;;;; ** Description Wrapper Tests (Task 10)
 
-(describe "quiz description boundary"
+(describe "quiz description wrapping"
   (it "wraps body in ** Description when at least one question follows"
     (let ((temp (make-temp-file "quiz-test-" nil ".org")))
       (unwind-protect
@@ -3285,7 +3285,11 @@ Write an essay.
           (when buf (kill-buffer buf)))
         (delete-file temp))))
 
-  (it "emits body inline when no questions follow"
+  (it "still wraps body in ** Description when no questions follow"
+    ;; Consistency: every quiz with a description gets the same shape,
+    ;; so authors and downstream tooling can find prose at a predictable
+    ;; location.  Prior behavior was inconsistent (wrap only when
+    ;; questions were present).  improvements.md item #5.
     (let ((temp (make-temp-file "quiz-test-" nil ".org")))
       (unwind-protect
           (progn
@@ -3306,8 +3310,33 @@ Write an essay.
               (insert-file-contents temp)
               (let ((s (buffer-string)))
                 (expect s :to-match "^\\* Easy")
-                (expect s :not :to-match "^\\*\\* Description$")
+                (expect s :to-match "^\\*\\* Description$")
                 (expect s :to-match "Just go"))))
+        (let ((buf (find-buffer-visiting temp)))
+          (when buf (kill-buffer buf)))
+        (delete-file temp))))
+
+  (it "emits no ** Description heading for a quiz with no description"
+    (let ((temp (make-temp-file "quiz-test-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp (insert ""))
+            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                       (lambda (_method url &rest _)
+                         (cond
+                          ((string-match-p "quizzes\\'" url)
+                           '(((id . 102) (title . "Bare") (description . ""))))
+                          ((string-match-p "questions" url)
+                           '())))))
+              (let ((org-canvas-quizzes-file temp))
+                (with-org-canvas-test-config
+                  (with-sync-test-env
+                    (org-canvas-pull-quizzes)))))
+            (with-temp-buffer
+              (insert-file-contents temp)
+              (let ((s (buffer-string)))
+                (expect s :to-match "^\\* Bare")
+                (expect s :not :to-match "^\\*\\* Description$"))))
         (let ((buf (find-buffer-visiting temp)))
           (when buf (kill-buffer buf)))
         (delete-file temp)))))
