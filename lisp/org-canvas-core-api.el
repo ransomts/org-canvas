@@ -26,11 +26,14 @@
 
 (defun org-canvas-api-course-endpoint (suffix &rest args)
   "Construct a course-specific endpoint URL.
-SUFFIX is the path after /courses/:id/.  ARGS are format arguments."
-  (format "%s/api/v1/courses/%s/%s"
-	  org-canvas-base-url
-	  org-canvas-course-id
-	  (apply #'format suffix args)))
+SUFFIX is the path after /courses/:id/.  ARGS are format arguments.
+A trailing slash on `org-canvas-base-url' is trimmed so the joined
+URL never contains a double slash."
+  (let ((base (replace-regexp-in-string "/+\\'" "" org-canvas-base-url)))
+    (format "%s/api/v1/courses/%s/%s"
+	    base
+	    org-canvas-course-id
+	    (apply #'format suffix args))))
 
 (defun org-canvas--build-curl-command (method full-url json-payload)
   "Build a curl command string for debugging.

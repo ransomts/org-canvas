@@ -28,7 +28,19 @@
   (it "handles empty suffix"
     (with-org-canvas-test-config
       (expect (org-canvas-api-course-endpoint "")
-              :to-equal "https://test.canvas.example.com/api/v1/courses/99999/"))))
+              :to-equal "https://test.canvas.example.com/api/v1/courses/99999/")))
+
+  (it "strips trailing slash from base-url before joining"
+    (let ((org-canvas-base-url "https://clemson.instructure.com/")
+          (org-canvas-course-id "281704"))
+      (expect (org-canvas-api-course-endpoint "pages")
+              :to-equal "https://clemson.instructure.com/api/v1/courses/281704/pages")))
+
+  (it "leaves base-url alone when there is no trailing slash"
+    (let ((org-canvas-base-url "https://clemson.instructure.com")
+          (org-canvas-course-id "281704"))
+      (expect (org-canvas-api-course-endpoint "pages")
+              :to-equal "https://clemson.instructure.com/api/v1/courses/281704/pages"))))
 
 (describe "org-canvas--build-curl-command"
   (it "builds GET request without -X flag"
