@@ -1369,6 +1369,21 @@ Page content.
                cache)
               :to-equal "[[file:content/Uploaded Media/img.png][img.png]]"))
 
+    (it "rewrites bare ?verifier=&wrap=1 form without /preview and without description"
+      ;; Regression: lock in that `files/NNNN?verifier=…&wrap=1' (no `/preview',
+      ;; no `][desc]') is matched and rewritten just like the /preview form.
+      (expect (org-canvas--rewrite-canvas-file-urls
+               "[[https://x.instructure.com/courses/1/files/29257665?verifier=ABC&wrap=1]]"
+               cache)
+              :to-equal "[[file:content/Uploaded Media/img.png][img.png]]"))
+
+    (it "leaves a bare ?verifier= URL unchanged when its ID is not in cache"
+      ;; Regression: cache miss must pass through verbatim, not partially mangle
+      ;; the URL (Task 6 will add an on-demand fetch for unknown IDs).
+      (let ((input "[[https://x.instructure.com/courses/1/files/99999999?verifier=Z&wrap=1]]"))
+        (expect (org-canvas--rewrite-canvas-file-urls input cache)
+                :to-equal input)))
+
     (it "returns nil unchanged"
       (expect (org-canvas--rewrite-canvas-file-urls nil cache) :to-be nil))
 
