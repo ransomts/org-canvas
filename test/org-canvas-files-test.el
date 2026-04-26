@@ -1945,6 +1945,27 @@
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t))))
 
+  (it "invalidates org-canvas--file-id-cache after rewriting files.org"
+    (let* ((temp-dir (make-temp-file "pull-files-test" t))
+           (files-file (expand-file-name "files.org" temp-dir)))
+      (unwind-protect
+          (let ((org-canvas-files-file files-file)
+                (org-canvas--file-id-cache
+                 (let ((h (make-hash-table :test 'equal)))
+                   (puthash "stale" "stale/path.pdf" h)
+                   h)))
+            (with-org-canvas-test-config
+              (with-sync-test-env
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (test-files--mock-pages '() '()))
+                          ((symbol-function 'url-copy-file)
+                           (lambda (_url _path &rest _args) nil)))
+                  (org-canvas-pull-files)
+                  (expect org-canvas--file-id-cache :to-be nil)))))
+        (let ((buf (find-buffer-visiting files-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
   (it "creates content directory"
     (let* ((temp-dir (make-temp-file "pull-files-test" t))
            (files-file (expand-file-name "files.org" temp-dir)))

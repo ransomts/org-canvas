@@ -462,12 +462,12 @@ LABEL is used for logging."
 (defconst org-canvas--pull-tiers
   '(((org-canvas-pull-settings "Settings"))
     ((org-canvas-pull-sections "Sections")
+     (org-canvas-pull-files "Files")
      (org-canvas-pull-assignment-groups "Assignment Groups")
      (org-canvas-pull-group-categories "Group Categories")
      (org-canvas-pull-outcomes "Outcomes")
      (org-canvas-pull-rubrics "Rubrics")
      (org-canvas-pull-pages "Pages")
-     (org-canvas-pull-files "Files")
      (org-canvas-pull-discussions "Discussions")
      (org-canvas-pull-announcements "Announcements")
      (org-canvas-pull-calendar-events "Calendar Events"))
@@ -475,7 +475,10 @@ LABEL is used for logging."
      (org-canvas-pull-quizzes "Quizzes")
      (org-canvas-pull-new-quizzes "New Quizzes"))
     ((org-canvas-pull-modules "Modules")))
-  "Pull tiers in dependency order.  Each tier is a list of (FN LABEL) pairs.")
+  "Pull tiers in dependency order.  Each tier is a list of (FN LABEL) pairs.
+Within tier 2, `pull-files' runs early so its CANVAS_ID -> path map is
+available when later modules (pages, assignments, etc.) rewrite Canvas
+file URLs in their HTML bodies via `org-canvas--pull-insert-body'.")
 
 ;;;###autoload
 (defun org-canvas-pull-all ()

@@ -661,6 +661,15 @@ are resolved to Canvas URLs when the target has a CANVAS_ID."
 
 ;;;; 4e. Pull Helpers (Canvas -> Org)
 
+(defun org-canvas--html-strip-ids (html)
+  "Remove all `id=\"...\"' attributes from HTML.
+Pandoc renders HTML id attributes as Org radio targets (\"<<foo>>\"),
+which leak structural anchors from Canvas's page templates into pulled
+bodies.  Stripping ids before conversion suppresses the artifact."
+  (when html
+    (replace-regexp-in-string
+     " id=\\(\"[^\"]*\"\\|'[^']*'\\)" "" html)))
+
 (defun org-canvas--html-to-org (html)
   "Convert HTML string to Org format using pandoc.
 Returns the Org-mode text, or the raw HTML prefixed with a warning
@@ -668,7 +677,7 @@ if pandoc is not available."
   (if (not (executable-find "pandoc"))
       (concat "# WARNING: pandoc not found, raw HTML below\n" html)
     (with-temp-buffer
-      (insert html)
+      (insert (org-canvas--html-strip-ids html))
       (let ((exit-code (call-process-region
                         (point-min) (point-max) "pandoc"
                         t t nil
@@ -689,15 +698,80 @@ Returns empty string for nil or empty HTML."
      (replace-regexp-in-string "[\n\r]+" " "
                                (org-canvas--html-to-org html)))))
 
+(defvar org-canvas--file-id-cache nil
+  "Hash mapping CANVAS_ID strings to relative file paths from `files.org'.
+Lazily populated by `org-canvas--pull-insert-body'.  Reset to nil to
+force a rebuild after `org-canvas-pull-files' rewrites the file list.")
+
+(defconst org-canvas--canvas-file-url-re
+  "\\[\\[\\(https?://[^]\n]+/files/\\([0-9]+\\)[^]\n]*\\)\\(?:\\]\\[\\([^]\n]*\\)\\)?\\]\\]"
+  "Match an Org link wrapping a Canvas file URL.
+Group 1 = full URL, group 2 = file ID, group 3 = optional description.")
+
+(defun org-canvas--heading-file-link-path ()
+  "If the current heading is a [[file:PATH][...]] link, return PATH; else nil."
+  (save-excursion
+    (org-back-to-heading t)
+    (when (looking-at org-complex-heading-regexp)
+      (let ((title (match-string-no-properties 4)))
+        (when (and title
+                   (string-match "\\`\\[\\[file:\\([^]]+\\)\\]" title))
+          (match-string 1 title))))))
+
+(defun org-canvas--build-file-id-cache (files-file)
+  "Walk FILES-FILE and return a hash of CANVAS_ID -> relative path.
+Headings without a CANVAS_ID property or without a `[[file:...]]' title
+link are skipped.  Returns an empty hash if FILES-FILE does not exist."
+  (let ((cache (make-hash-table :test 'equal)))
+    (when (and files-file (file-exists-p files-file))
+      (with-current-buffer (find-file-noselect files-file)
+        (org-with-wide-buffer
+         (org-map-entries
+          (lambda ()
+            (let ((id (org-entry-get (point) "CANVAS_ID"))
+                  (path (org-canvas--heading-file-link-path)))
+              (when (and id path)
+                (puthash id path cache))))))))
+    cache))
+
+(defun org-canvas--rewrite-canvas-file-urls (text cache)
+  "Rewrite Org-bracketed Canvas file URLs in TEXT using CACHE.
+A link `[[https://.../files/ID...]]' (optionally with a `][DESC]' tail)
+is replaced by `[[file:RELPATH][DESC-or-FILENAME]]' when ID is a key in
+CACHE; URLs whose ID is not in CACHE pass through unchanged.
+Returns TEXT unchanged when nil or empty."
+  (if (or (null text) (string-empty-p text))
+      text
+    (replace-regexp-in-string
+     org-canvas--canvas-file-url-re
+     (lambda (match)
+       (let* ((id (match-string 2 match))
+              (desc (match-string 3 match))
+              (relpath (gethash id cache)))
+         (if relpath
+             (format "[[file:%s][%s]]"
+                     relpath
+                     (or desc (file-name-nondirectory relpath)))
+           match)))
+     text t t)))
+
 (defun org-canvas--pull-insert-body (body-html)
   "Replace current heading's body with Org-converted BODY-HTML.
-Point must be at a heading.  Does nothing if BODY-HTML is nil or empty."
+Point must be at a heading.  Does nothing if BODY-HTML is nil or empty.
+Canvas file URLs in the converted body are rewritten to local
+`[[file:...]]' links via `org-canvas--rewrite-canvas-file-urls'."
   (when (and body-html (not (string-empty-p body-html)))
-    (let ((body-start (save-excursion (org-end-of-meta-data t) (point)))
-          (body-end (save-excursion (org-end-of-subtree t) (point))))
+    (let* ((body-start (save-excursion (org-end-of-meta-data t) (point)))
+           (body-end (save-excursion (org-end-of-subtree t) (point)))
+           (org-text (org-canvas--html-to-org body-html))
+           (cache (or org-canvas--file-id-cache
+                      (setq org-canvas--file-id-cache
+                            (org-canvas--build-file-id-cache
+                             (bound-and-true-p org-canvas-files-file)))))
+           (rewritten (org-canvas--rewrite-canvas-file-urls org-text cache)))
       (delete-region body-start body-end)
       (goto-char body-start)
-      (insert "\n" (org-canvas--html-to-org body-html) "\n"))))
+      (insert "\n" rewritten "\n"))))
 
 (defun org-canvas--pull-set-timestamp-property (pos property iso8601)
   "Set PROPERTY at POS from ISO8601 string, converting to Org timestamp.
@@ -831,6 +905,35 @@ Signals `user-error' with FEATURE-NAME if aborted."
                            (file-name-nondirectory file)))))
     (user-error "%s pull aborted" (capitalize feature-name))))
 
+(defun org-canvas--pull-confirm-unsaved (file feature-name)
+  "If a buffer visits FILE with unsaved change, save it or abort.
+Prompt the user; on `yes' save the buffer, on `no' signal a user-error
+mentioning FEATURE-NAME."
+  (let ((buf (find-buffer-visiting file)))
+    (when (and buf (buffer-modified-p buf))
+      (if (y-or-n-p (format "%s has unsaved changes.  Save before pulling? "
+                            (file-name-nondirectory file)))
+          (with-current-buffer buf (org-canvas--save-buffer))
+        (user-error "%s pull aborted: unsaved changes in %s"
+                    (capitalize feature-name)
+                    (file-name-nondirectory file))))))
+
+(defun org-canvas--pull-was-fresh-p (file)
+  "Return non-nil if FILE neither exists on disk nor has a visiting buffer.
+Captured before a pull so `org-canvas--pull-kill-fresh-buffer' knows
+whether the buffer the pull will create is one the user opened."
+  (and (not (file-exists-p file))
+       (not (find-buffer-visiting file))))
+
+(defun org-canvas--pull-kill-fresh-buffer (file was-fresh)
+  "Kill the buffer visiting FILE iff WAS-FRESH and the buffer is unmodified.
+Used at the end of a pull to avoid leaving freshly-created files open
+in buffer lists."
+  (when was-fresh
+    (let ((buf (find-buffer-visiting file)))
+      (when (and buf (not (buffer-modified-p buf)))
+        (kill-buffer buf)))))
+
 (defun org-canvas--pull-process-item (item file pull-config)
   "Process a single pulled ITEM into FILE.
 PULL-CONFIG is a plist with :id-field :title-field :id-property :pull-item-fn."
@@ -898,8 +1001,10 @@ Example:
                 (endpoint (org-canvas-api-course-endpoint ,endpoint-expr))
                 (remote (org-canvas-api-request-all-pages
                          'GET endpoint ,params-expr))
-                (count 0))
+                (count 0)
+                (was-fresh (org-canvas--pull-was-fresh-p file)))
            (org-canvas--pull-confirm-overwrite file ,feature-name)
+           (org-canvas--pull-confirm-unsaved file ,feature-name)
            (unless (file-exists-p file)
              (with-temp-file file (insert "")))
            (with-current-buffer (find-file-noselect file)
@@ -916,6 +1021,7 @@ Example:
                          ,body)
                     body)))
              (org-canvas--save-buffer))
+           (org-canvas--pull-kill-fresh-buffer file was-fresh)
            (org-canvas--log-info org-canvas--logger
              ,(format "%s pull complete: %%d items"
                       (capitalize feature-name)) count)

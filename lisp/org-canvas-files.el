@@ -1112,7 +1112,9 @@ with `user-error' (delete files.org and re-run to refresh)."
                           (error-message-string err))
                         (make-hash-table :test 'eql))))
          (endpoint (org-canvas-api-course-endpoint "files"))
-         (remote (org-canvas-api-request-all-pages 'GET endpoint)))
+         (remote (org-canvas-api-request-all-pages 'GET endpoint))
+         (was-fresh (org-canvas--pull-was-fresh-p file)))
+    (org-canvas--pull-confirm-unsaved file "files")
     (unless (file-exists-p file)
       (with-temp-file file (insert "")))
     (unless (file-directory-p content-dir)
@@ -1139,7 +1141,9 @@ with `user-error' (delete files.org and re-run to refresh)."
              (org-canvas--save-buffer)
              (org-canvas--log-info org-canvas--logger
                "Files pull complete (flat): %d files" emitted)
-             (message "Files pull complete: %d files." emitted))))))))
+             (message "Files pull complete: %d files." emitted))))))
+    (org-canvas--pull-kill-fresh-buffer file was-fresh)
+    (setq org-canvas--file-id-cache nil)))
 
 (provide 'org-canvas-files)
 ;;; org-canvas-files.el ends here

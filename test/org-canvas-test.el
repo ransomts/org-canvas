@@ -632,6 +632,13 @@
         (let ((assign-pos (cl-position 'assignments call-order))
               (modules-pos (cl-position 'modules call-order)))
           (expect assign-pos :to-be-less-than modules-pos))
+        ;; Files before any body-rewriting module so the file-id cache
+        ;; is warm when those modules call `--pull-insert-body'.
+        (let ((files-pos (cl-position 'files call-order)))
+          (dolist (consumer '(pages discussions announcements
+                              assignments quizzes))
+            (expect files-pos :to-be-less-than
+                    (cl-position consumer call-order))))
         ;; All 15 functions called
         (expect (length call-order) :to-equal 15)))))
 

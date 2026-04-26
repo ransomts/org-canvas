@@ -871,7 +871,9 @@ Point must be at the parent quiz heading."
   (let* ((file (expand-file-name org-canvas-quizzes-file))
          (endpoint (org-canvas-api-course-endpoint "quizzes"))
          (remote (org-canvas-api-request-all-pages 'GET endpoint))
-         (count 0))
+         (count 0)
+         (was-fresh (org-canvas--pull-was-fresh-p file)))
+    (org-canvas--pull-confirm-unsaved file "quizzes")
     (unless (file-exists-p file)
       (with-temp-file file (insert "")))
     (with-current-buffer (find-file-noselect file)
@@ -886,6 +888,7 @@ Point must be at the parent quiz heading."
           (org-canvas--quiz-pull-insert-questions id)
           (cl-incf count)))
       (org-canvas--save-buffer))
+    (org-canvas--pull-kill-fresh-buffer file was-fresh)
     (org-canvas--log-info org-canvas--logger "Quizzes pull complete: %d quizzes" count)
     (message "Quizzes pull complete: %d quizzes." count)))
 

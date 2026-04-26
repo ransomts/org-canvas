@@ -1199,6 +1199,336 @@ Page content.
         (expect result :to-match "WARNING.*pandoc conversion failed")
         (expect result :to-match "<p>Test</p>")))))
 
+(describe "org-canvas--html-strip-ids"
+  (it "removes a single id attribute"
+    (expect (org-canvas--html-strip-ids "<div id=\"content\">Hi</div>")
+            :to-equal "<div>Hi</div>"))
+
+  (it "removes multiple id attributes"
+    (expect (org-canvas--html-strip-ids
+             "<div id=\"a\"><span id=\"b\">x</span></div>")
+            :to-equal "<div><span>x</span></div>"))
+
+  (it "leaves other attributes intact"
+    (expect (org-canvas--html-strip-ids
+             "<a href=\"x\" id=\"foo\" class=\"bar\">link</a>")
+            :to-equal "<a href=\"x\" class=\"bar\">link</a>"))
+
+  (it "is a no-op when there are no id attributes"
+    (expect (org-canvas--html-strip-ids "<p>plain</p>")
+            :to-equal "<p>plain</p>"))
+
+  (it "handles empty string"
+    (expect (org-canvas--html-strip-ids "") :to-equal ""))
+
+  (it "handles nil"
+    (expect (org-canvas--html-strip-ids nil) :to-be nil))
+
+  (it "handles single-quoted id values"
+    (expect (org-canvas--html-strip-ids "<div id='content'>Hi</div>")
+            :to-equal "<div>Hi</div>"))
+
+  (it "handles ids containing dashes and digits"
+    (expect (org-canvas--html-strip-ids
+             "<div id=\"masthead-container-1\">x</div>")
+            :to-equal "<div>x</div>")))
+
+(describe "org-canvas--html-to-org strips id attributes before pandoc"
+  (it "passes id-stripped HTML to pandoc"
+    (let (captured)
+      (cl-letf (((symbol-function 'executable-find) (lambda (_) "pandoc"))
+                ((symbol-function 'call-process-region)
+                 (lambda (start end _program &optional _delete _buffer &rest _args)
+                   (setq captured (buffer-substring-no-properties start end))
+                   0)))
+        (org-canvas--html-to-org "<div id=\"content\"><p>x</p></div>")
+        (expect captured :not :to-match " id=")))))
+
+;;;; File-URL → Local-Link Rewriting (pull-side inverse of image resolver)
+
+(describe "org-canvas--build-file-id-cache"
+  (it "returns an empty hash for an empty files.org"
+    (let ((temp-file (make-temp-file "files-" nil ".org")))
+      (unwind-protect
+          (let ((cache (org-canvas--build-file-id-cache temp-file)))
+            (expect (hash-table-count cache) :to-equal 0))
+        (delete-file temp-file))))
+
+  (it "collects top-level file headings"
+    (let ((temp-file (make-temp-file "files-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file
+              (insert "* [[file:content/foo.pdf][foo.pdf]]
+:PROPERTIES:
+:CANVAS_ID: 1001
+:END:
+* [[file:content/bar.png][bar.png]]
+:PROPERTIES:
+:CANVAS_ID: 1002
+:END:
+"))
+            (let ((cache (org-canvas--build-file-id-cache temp-file)))
+              (expect (gethash "1001" cache) :to-equal "content/foo.pdf")
+              (expect (gethash "1002" cache) :to-equal "content/bar.png")
+              (expect (hash-table-count cache) :to-equal 2)))
+        (delete-file temp-file))))
+
+  (it "collects nested file headings under folder headings"
+    (let ((temp-file (make-temp-file "files-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file
+              (insert "* Uploaded Media
+** [[file:content/Uploaded Media/img.png][img.png]]
+:PROPERTIES:
+:CANVAS_ID: 2001
+:END:
+"))
+            (let ((cache (org-canvas--build-file-id-cache temp-file)))
+              (expect (gethash "2001" cache)
+                      :to-equal "content/Uploaded Media/img.png")
+              (expect (hash-table-count cache) :to-equal 1)))
+        (delete-file temp-file))))
+
+  (it "skips folder headings (no file: link, no CANVAS_ID)"
+    (let ((temp-file (make-temp-file "files-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file
+              (insert "* Uploaded Media
+** [[file:content/Uploaded Media/img.png][img.png]]
+:PROPERTIES:
+:CANVAS_ID: 3001
+:END:
+"))
+            (let ((cache (org-canvas--build-file-id-cache temp-file)))
+              (expect (hash-table-count cache) :to-equal 1)))
+        (delete-file temp-file))))
+
+  (it "skips entries missing CANVAS_ID"
+    (let ((temp-file (make-temp-file "files-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file
+              (insert "* [[file:content/foo.pdf][foo.pdf]]
+:PROPERTIES:
+:LAST_SYNCED: [2026-01-01 Thu 00:00]
+:END:
+"))
+            (let ((cache (org-canvas--build-file-id-cache temp-file)))
+              (expect (hash-table-count cache) :to-equal 0)))
+        (delete-file temp-file))))
+
+  (it "returns an empty hash for a nonexistent file"
+    (let ((cache (org-canvas--build-file-id-cache "/nonexistent/files.org")))
+      (expect (hash-table-count cache) :to-equal 0))))
+
+(describe "org-canvas--rewrite-canvas-file-urls"
+  (let (cache)
+    (before-each
+      (setq cache (make-hash-table :test 'equal))
+      (puthash "29257665" "content/Uploaded Media/img.png" cache)
+      (puthash "28960058" "content/readings/ethics.pdf" cache))
+
+    (it "rewrites a bare URL link with no description to file link with filename"
+      (expect (org-canvas--rewrite-canvas-file-urls
+               "[[https://x.instructure.com/courses/1/files/29257665/preview?verifier=abc]]"
+               cache)
+              :to-equal "[[file:content/Uploaded Media/img.png][img.png]]"))
+
+    (it "preserves the description when present"
+      (expect (org-canvas--rewrite-canvas-file-urls
+               "[[https://x.instructure.com/courses/1/files/28960058?verifier=abc&wrap=1][What is data ethics.pdf]]"
+               cache)
+              :to-equal "[[file:content/readings/ethics.pdf][What is data ethics.pdf]]"))
+
+    (it "leaves URLs alone whose IDs are not in the cache"
+      (let ((input "[[https://x.instructure.com/courses/1/files/9999999/preview?verifier=z]]"))
+        (expect (org-canvas--rewrite-canvas-file-urls input cache)
+                :to-equal input)))
+
+    (it "rewrites multiple URLs in the same string"
+      (let ((result (org-canvas--rewrite-canvas-file-urls
+                     "before [[https://x.instructure.com/courses/1/files/29257665/preview?verifier=a]] middle [[https://x.instructure.com/courses/1/files/28960058?verifier=b][label]] after"
+                     cache)))
+        (expect result :to-match "\\[\\[file:content/Uploaded Media/img.png\\]\\[img.png\\]\\]")
+        (expect result :to-match "\\[\\[file:content/readings/ethics.pdf\\]\\[label\\]\\]")
+        (expect result :to-match "before ")
+        (expect result :to-match " middle ")
+        (expect result :to-match " after")))
+
+    (it "leaves non-Canvas URLs alone"
+      (let ((input "[[https://example.com/page][example]]"))
+        (expect (org-canvas--rewrite-canvas-file-urls input cache)
+                :to-equal input)))
+
+    (it "handles bare URL with no /preview suffix"
+      (expect (org-canvas--rewrite-canvas-file-urls
+               "[[https://x.instructure.com/courses/1/files/29257665]]"
+               cache)
+              :to-equal "[[file:content/Uploaded Media/img.png][img.png]]"))
+
+    (it "returns nil unchanged"
+      (expect (org-canvas--rewrite-canvas-file-urls nil cache) :to-be nil))
+
+    (it "returns empty string unchanged"
+      (expect (org-canvas--rewrite-canvas-file-urls "" cache) :to-equal ""))
+
+    (it "is a no-op when cache is empty"
+      (let ((empty (make-hash-table :test 'equal))
+            (input "[[https://x.instructure.com/courses/1/files/29257665/preview?verifier=a]]"))
+        (expect (org-canvas--rewrite-canvas-file-urls input empty)
+                :to-equal input)))))
+
+;;;; Pull-side buffer lifecycle helpers
+
+(describe "org-canvas--pull-was-fresh-p"
+  (it "returns t when file does not exist and no buffer visits it"
+    (let ((temp (make-temp-file "fresh-" nil ".org")))
+      (delete-file temp)
+      (unwind-protect
+          (expect (org-canvas--pull-was-fresh-p temp) :to-be-truthy)
+        (when (file-exists-p temp) (delete-file temp)))))
+
+  (it "returns nil when the file already exists on disk"
+    (let ((temp (make-temp-file "exists-" nil ".org")))
+      (unwind-protect
+          (expect (org-canvas--pull-was-fresh-p temp) :to-be nil)
+        (delete-file temp))))
+
+  (it "returns nil when a buffer already visits the file"
+    (let* ((temp (make-temp-file "visited-" nil ".org"))
+           (buf (find-file-noselect temp)))
+      (unwind-protect
+          (expect (org-canvas--pull-was-fresh-p temp) :to-be nil)
+        (when (buffer-live-p buf) (kill-buffer buf))
+        (delete-file temp)))))
+
+(describe "org-canvas--pull-kill-fresh-buffer"
+  (it "kills the buffer when WAS-FRESH and buffer is unmodified"
+    (let* ((temp (make-temp-file "kill-" nil ".org"))
+           (buf (find-file-noselect temp)))
+      (unwind-protect
+          (progn
+            (org-canvas--pull-kill-fresh-buffer temp t)
+            (expect (find-buffer-visiting temp) :to-be nil))
+        (when (buffer-live-p buf) (kill-buffer buf))
+        (when (file-exists-p temp) (delete-file temp)))))
+
+  (it "leaves the buffer alone when WAS-FRESH is nil"
+    (let* ((temp (make-temp-file "keep-" nil ".org"))
+           (buf (find-file-noselect temp)))
+      (unwind-protect
+          (progn
+            (org-canvas--pull-kill-fresh-buffer temp nil)
+            (expect (buffer-live-p buf) :to-be-truthy))
+        (when (buffer-live-p buf) (kill-buffer buf))
+        (delete-file temp))))
+
+  (it "does not kill a modified buffer even when WAS-FRESH"
+    (let* ((temp (make-temp-file "dirty-" nil ".org"))
+           (buf (find-file-noselect temp)))
+      (unwind-protect
+          (progn
+            (with-current-buffer buf
+              (insert "edit") (set-buffer-modified-p t))
+            (org-canvas--pull-kill-fresh-buffer temp t)
+            (expect (buffer-live-p buf) :to-be-truthy))
+        (when (buffer-live-p buf)
+          (with-current-buffer buf (set-buffer-modified-p nil))
+          (kill-buffer buf))
+        (delete-file temp))))
+
+  (it "is a no-op when no buffer visits the file"
+    (let ((temp (make-temp-file "nobuf-" nil ".org")))
+      (unwind-protect
+          (progn
+            (org-canvas--pull-kill-fresh-buffer temp t)
+            (expect (find-buffer-visiting temp) :to-be nil))
+        (delete-file temp)))))
+
+(describe "org-canvas--pull-confirm-unsaved"
+  (it "is a no-op when no buffer visits the file"
+    (let ((temp (make-temp-file "noopen-" nil ".org")))
+      (unwind-protect
+          (expect (org-canvas--pull-confirm-unsaved temp "feature")
+                  :not :to-throw)
+        (delete-file temp))))
+
+  (it "is a no-op when the visiting buffer is unmodified"
+    (let* ((temp (make-temp-file "clean-" nil ".org"))
+           (buf (find-file-noselect temp)))
+      (unwind-protect
+          (expect (org-canvas--pull-confirm-unsaved temp "feature")
+                  :not :to-throw)
+        (when (buffer-live-p buf) (kill-buffer buf))
+        (delete-file temp))))
+
+  (it "saves the buffer when the user answers yes"
+    (let* ((temp (make-temp-file "yes-" nil ".org"))
+           (buf (find-file-noselect temp))
+           (saved nil))
+      (unwind-protect
+          (progn
+            (with-current-buffer buf
+              (insert "edits") (set-buffer-modified-p t))
+            (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t))
+                      ((symbol-function 'org-canvas--save-buffer)
+                       (lambda () (setq saved t) (set-buffer-modified-p nil))))
+              (org-canvas--pull-confirm-unsaved temp "feature"))
+            (expect saved :to-be-truthy))
+        (when (buffer-live-p buf)
+          (with-current-buffer buf (set-buffer-modified-p nil))
+          (kill-buffer buf))
+        (delete-file temp))))
+
+  (it "signals user-error when the user answers no"
+    (let* ((temp (make-temp-file "no-" nil ".org"))
+           (buf (find-file-noselect temp)))
+      (unwind-protect
+          (progn
+            (with-current-buffer buf
+              (insert "edits") (set-buffer-modified-p t))
+            (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil)))
+              (expect (org-canvas--pull-confirm-unsaved temp "feature")
+                      :to-throw 'user-error)))
+        (when (buffer-live-p buf)
+          (with-current-buffer buf (set-buffer-modified-p nil))
+          (kill-buffer buf))
+        (delete-file temp)))))
+
+(describe "org-canvas--pull-insert-body file-URL rewriting"
+  (it "rewrites Canvas file URLs in the converted org body"
+    (let ((temp-files (make-temp-file "files-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-files
+              (insert "* [[file:content/foo.pdf][foo.pdf]]
+:PROPERTIES:
+:CANVAS_ID: 7777
+:END:
+"))
+            (let ((org-canvas-files-file temp-files)
+                  (org-canvas--file-id-cache nil))
+              (cl-letf (((symbol-function 'executable-find) (lambda (_) "pandoc"))
+                        ((symbol-function 'call-process-region)
+                         (lambda (_start _end _program &optional _delete buffer &rest _args)
+                           (when buffer
+                             (erase-buffer)
+                             (insert "[[https://x.instructure.com/courses/1/files/7777/preview?verifier=z]]"))
+                           0)))
+                (with-temp-buffer
+                  (org-mode)
+                  (insert "* Heading\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n")
+                  (goto-char (point-min))
+                  (org-back-to-heading)
+                  (org-canvas--pull-insert-body "<p>anything</p>")
+                  (let ((body (buffer-substring-no-properties (point-min) (point-max))))
+                    (expect body :to-match "\\[\\[file:content/foo.pdf\\]\\[foo.pdf\\]\\]")
+                    (expect body :not :to-match "instructure.com"))))))
+        (delete-file temp-files)))))
+
 (describe "org-canvas--html-to-org-inline"
   (it "collapses multi-line pandoc output to single line"
     (cl-letf (((symbol-function 'executable-find) (lambda (_) "pandoc"))

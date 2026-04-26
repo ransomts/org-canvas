@@ -462,7 +462,9 @@ QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
   (let* ((file (expand-file-name org-canvas-new-quizzes-file))
          (endpoint (org-canvas--new-quiz-api-endpoint "quizzes"))
          (remote (org-canvas-api-request-all-pages 'GET endpoint))
-         (count 0))
+         (count 0)
+         (was-fresh (org-canvas--pull-was-fresh-p file)))
+    (org-canvas--pull-confirm-unsaved file "new quizzes")
     (unless (file-exists-p file)
       (with-temp-file file (insert "")))
     (with-current-buffer (find-file-noselect file)
@@ -478,6 +480,7 @@ QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
           (org-canvas--new-quiz-pull-items assignment-id)
           (cl-incf count)))
       (org-canvas--save-buffer))
+    (org-canvas--pull-kill-fresh-buffer file was-fresh)
     (org-canvas--log-info org-canvas--logger "New Quizzes pull complete: %d quizzes" count)
     (message "New Quizzes pull complete: %d quizzes." count)))
 

@@ -531,7 +531,9 @@ Point must be at the parent group heading."
          (groups-endpoint (org-canvas-api-course-endpoint "outcome_groups"))
          (remote-groups (org-canvas-api-request-all-pages 'GET groups-endpoint))
          (total-groups (length remote-groups))
-         (group-count 0) (outcome-count 0))
+         (group-count 0) (outcome-count 0)
+         (was-fresh (org-canvas--pull-was-fresh-p file)))
+    (org-canvas--pull-confirm-unsaved file "outcomes")
     (unless (file-exists-p file)
       (with-temp-file file (insert "")))
     (with-current-buffer (find-file-noselect file)
@@ -547,6 +549,7 @@ Point must be at the parent group heading."
           (cl-incf outcome-count
                    (org-canvas--outcome-pull-process-group gid))))
       (org-canvas--save-buffer))
+    (org-canvas--pull-kill-fresh-buffer file was-fresh)
     (org-canvas--log-info org-canvas--logger
       "Outcomes pull complete: %d groups, %d outcomes" group-count outcome-count)
     (message "Outcomes pull complete: %d groups, %d outcomes."

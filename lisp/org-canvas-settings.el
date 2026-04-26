@@ -673,13 +673,15 @@ and heading if they don't exist."
                               ("include[]" . "course_image"))))
          (name (alist-get 'name response))
          (syllabus-body (org-canvas--alist-get-non-null 'syllabus_body response))
-         (settings-file (expand-file-name org-canvas-settings-file)))
+         (settings-file (expand-file-name org-canvas-settings-file))
+         (was-fresh (org-canvas--pull-was-fresh-p settings-file)))
     ;; Fetch late policy (separate endpoint)
     (let ((late-policy (condition-case nil
                            (org-canvas-api-request
                             'GET (org-canvas-api-course-endpoint "late_policy"))
                          (error nil))))
       (org-canvas--pull-confirm-overwrite settings-file "settings")
+      (org-canvas--pull-confirm-unsaved settings-file "settings")
       ;; Open or create the settings file
       (unless (file-exists-p settings-file)
         (with-temp-file settings-file
@@ -701,7 +703,8 @@ and heading if they don't exist."
                           (error nil))))
           (when nav-text
             (org-canvas--settings-insert-navigation-heading nav-text)))
-        (org-canvas--save-buffer)))
+        (org-canvas--save-buffer))
+      (org-canvas--pull-kill-fresh-buffer settings-file was-fresh))
     (org-canvas--log-info org-canvas--logger "========================================")
     (org-canvas--log-info org-canvas--logger ">>> SETTINGS PULL COMPLETE")
     (org-canvas--log-info org-canvas--logger "Course: %s" name)

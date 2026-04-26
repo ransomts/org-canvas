@@ -168,8 +168,10 @@ local headings whose CANVAS_ID no longer exists on Canvas."
                                      :params org-canvas--api-max-per-page)
                                     nil))
            (remote-ids nil)
-           (created 0) (updated 0))
+           (created 0) (updated 0)
+           (was-fresh (org-canvas--pull-was-fresh-p sections-file)))
 
+      (org-canvas--pull-confirm-unsaved sections-file "sections")
       (org-canvas--log-info org-canvas--logger "[Pull] Fetched %d sections from Canvas"
                  (length remote-sections))
 
@@ -186,6 +188,7 @@ local headings whose CANVAS_ID no longer exists on Canvas."
         (org-canvas--pull-sections-warn-stale remote-ids)
         (org-canvas--save-buffer))
 
+      (org-canvas--pull-kill-fresh-buffer sections-file was-fresh)
       (org-canvas--log-info org-canvas--logger "========================================")
       (org-canvas--log-info org-canvas--logger ">>> SECTION PULL COMPLETE")
       (org-canvas--log-info org-canvas--logger "Created: %d | Updated: %d | Total remote: %d"

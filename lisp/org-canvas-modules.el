@@ -881,7 +881,9 @@ Returns the count of items inserted."
          (endpoint (org-canvas-api-course-endpoint "modules"))
          (remote (org-canvas-api-request-all-pages
                   'GET endpoint '(("include[]" . "items"))))
-         (mod-count 0) (item-count 0))
+         (mod-count 0) (item-count 0)
+         (was-fresh (org-canvas--pull-was-fresh-p file)))
+    (org-canvas--pull-confirm-unsaved file "modules")
     (unless (file-exists-p file)
       (with-temp-file file (insert "")))
     (with-current-buffer (find-file-noselect file)
@@ -904,6 +906,7 @@ Returns the count of items inserted."
               (setq item-count (+ item-count
                                   (org-canvas--module-pull-insert-items items)))))))
       (org-canvas--save-buffer))
+    (org-canvas--pull-kill-fresh-buffer file was-fresh)
     (org-canvas--log-info org-canvas--logger
       "Modules pull complete: %d modules, %d items" mod-count item-count)
     (message "Modules pull complete: %d modules, %d items."
