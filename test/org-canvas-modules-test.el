@@ -2055,6 +2055,69 @@
        (expect (length (split-string (buffer-string) "^\\*\\* " t))
                :to-equal 4)))))
 
+(describe "module :INDENT: suppression"
+  (it "omits :INDENT: when value is 0 on linked content item"
+    (with-temp-org-buffer
+     ""
+     (goto-char (point-max))
+     (cl-letf (((symbol-function 'org-canvas--module-resolve-item-link)
+                (lambda (_type _cid title) (or title "Untitled"))))
+       (org-canvas--module-pull-insert-content-item
+        '((id . 1) (type . "Page") (title . "x")
+          (content_id . 99) (indent . 0))
+        1 nil))
+     (expect (buffer-string) :not :to-match ":INDENT:")))
+
+  (it "emits :INDENT: when value is nonzero on linked content item"
+    (with-temp-org-buffer
+     ""
+     (goto-char (point-max))
+     (cl-letf (((symbol-function 'org-canvas--module-resolve-item-link)
+                (lambda (_type _cid title) (or title "Untitled"))))
+       (org-canvas--module-pull-insert-content-item
+        '((id . 1) (type . "Page") (title . "x")
+          (content_id . 99) (indent . 2))
+        1 nil))
+     (expect (buffer-string) :to-match ":INDENT: +2")))
+
+  (it "omits :INDENT: when value is 0 on ExternalUrl"
+    (with-temp-org-buffer
+     ""
+     (goto-char (point-max))
+     (org-canvas--module-pull-insert-external-url
+      '((title . "Link") (external_url . "https://example.com")
+        (new_tab . nil) (indent . 0))
+      1 nil)
+     (expect (buffer-string) :not :to-match ":INDENT:")))
+
+  (it "emits :INDENT: when value is nonzero on ExternalUrl"
+    (with-temp-org-buffer
+     ""
+     (goto-char (point-max))
+     (org-canvas--module-pull-insert-external-url
+      '((title . "Link") (external_url . "https://example.com")
+        (new_tab . nil) (indent . 3))
+      1 nil)
+     (expect (buffer-string) :to-match ":INDENT: +3")))
+
+  (it "omits :INDENT: on SubHeader when 0"
+    (with-temp-org-buffer
+     ""
+     (goto-char (point-max))
+     (org-canvas--module-pull-insert-items
+      [((type . "SubHeader") (title . "Hdr")
+        (id . 1) (indent . 0))])
+     (expect (buffer-string) :not :to-match ":INDENT:")))
+
+  (it "emits :INDENT: on SubHeader when nonzero"
+    (with-temp-org-buffer
+     ""
+     (goto-char (point-max))
+     (org-canvas--module-pull-insert-items
+      [((type . "SubHeader") (title . "Hdr")
+        (id . 1) (indent . 1))])
+     (expect (buffer-string) :to-match ":INDENT: +1"))))
+
 (describe "org-canvas--module-resolve-item-link for File items"
   (it "links directly to the file path, not via files.org indirection"
     ;; Regression: previously this produced a brittle link of the form

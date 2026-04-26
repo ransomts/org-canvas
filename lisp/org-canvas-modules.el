@@ -821,12 +821,15 @@ Returns a link string or just the title if resolution fails."
    (t
     (org-canvas--module-resolve-org-item-link item-type content-id title))))
 
-(defun org-canvas--module-pull-insert-subheader (item-title item-id item-published)
-  "Insert a SubHeader heading with ITEM-TITLE, ITEM-ID, and ITEM-PUBLISHED."
+(defun org-canvas--module-pull-insert-subheader (item-title item-id item-published &optional indent)
+  "Insert a SubHeader heading with ITEM-TITLE, ITEM-ID, and ITEM-PUBLISHED.
+Optional INDENT is emitted as :INDENT: only when nonzero."
   (insert (format "** %s\n" (or item-title "Section")))
   (org-back-to-heading t)
   (org-canvas-org-set-property (point) "CANVAS_ID" (format "%s" item-id))
   (org-canvas-org-set-property (point) "ITEM_TYPE" "SubHeader")
+  (when (and indent (numberp indent) (> indent 0))
+    (org-canvas-org-set-property (point) "INDENT" (format "%s" indent)))
   (org-canvas--pull-set-boolean-property (point) "PUBLISHED" item-published)
   (goto-char (save-excursion (org-end-of-subtree t t) (point))))
 
@@ -844,7 +847,7 @@ Returns a link string or just the title if resolution fails."
       (org-canvas-org-set-property (point) "EXTERNAL_URL" ext-url))
     (when new-tab
       (org-canvas-org-set-property (point) "NEW_TAB" "true"))
-    (when indent
+    (when (and indent (numberp indent) (> indent 0))
       (org-canvas-org-set-property (point) "INDENT" (format "%s" indent)))
     (org-canvas--pull-set-boolean-property (point) "PUBLISHED" item-published)
     (goto-char (save-excursion (org-end-of-subtree t t) (point)))))
@@ -862,7 +865,7 @@ Returns a link string or just the title if resolution fails."
       (org-canvas-org-set-property (point) "CANVAS_ID" (format "%s" item-id))
       (when item-type
         (org-canvas-org-set-property (point) "ITEM_TYPE" item-type))
-      (when indent
+      (when (and indent (numberp indent) (> indent 0))
         (org-canvas-org-set-property (point) "INDENT" (format "%s" indent)))
       (org-canvas--pull-set-boolean-property (point) "PUBLISHED" item-published)
       (goto-char (save-excursion (org-end-of-subtree t t) (point))))))
@@ -879,7 +882,8 @@ Returns the count of items inserted."
         (cond
          ((equal item-type "SubHeader")
           (org-canvas--module-pull-insert-subheader
-           (alist-get 'title item) item-id item-published))
+           (alist-get 'title item) item-id item-published
+           (alist-get 'indent item)))
          ((equal item-type "ExternalUrl")
           (org-canvas--module-pull-insert-external-url item item-id item-published))
          (t
