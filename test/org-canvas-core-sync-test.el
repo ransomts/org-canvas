@@ -3193,7 +3193,51 @@ Content here.
                    ((id . 2) (position . 5) (title . "has-pos")))))
       (let ((sorted (org-canvas--pull-sort-items items)))
         (expect (mapcar (lambda (x) (alist-get 'title x)) sorted)
-                :to-equal '("has-pos" "no-pos"))))))
+                :to-equal '("has-pos" "no-pos")))))
+
+  (it "uses tertiary key (string) between secondary and position"
+    ;; Two items in the same assignment_group_id, different due_at.
+    ;; With tertiary-key 'due_at, the earlier-due item sorts first
+    ;; even when Canvas returns them in reverse position order.
+    (let ((items '(((id . 1) (name . "Late") (position . 1)
+                    (assignment_group_id . 100)
+                    (due_at . "2026-03-27T23:59:00Z"))
+                   ((id . 2) (name . "NN")   (position . 2)
+                    (assignment_group_id . 100)
+                    (due_at . "2026-03-06T23:59:00Z"))
+                   ((id . 3) (name . "Early") (position . 3)
+                    (assignment_group_id . 100)
+                    (due_at . "2026-02-06T23:59:00Z")))))
+      (let ((sorted (org-canvas--pull-sort-items
+                     items 'assignment_group_id 'due_at)))
+        (expect (mapcar (lambda (x) (alist-get 'name x)) sorted)
+                :to-equal '("Early" "NN" "Late")))))
+
+  (it "items missing tertiary key sort after those with one"
+    (let ((items '(((id . 1) (name . "B") (position . 1)
+                    (assignment_group_id . 100))
+                   ((id . 2) (name . "A") (position . 2)
+                    (assignment_group_id . 100)
+                    (due_at . "2026-02-06T23:59:00Z")))))
+      (let ((sorted (org-canvas--pull-sort-items
+                     items 'assignment_group_id 'due_at)))
+        (expect (mapcar (lambda (x) (alist-get 'name x)) sorted)
+                :to-equal '("A" "B")))))
+
+  (it "tertiary tier still respects secondary grouping"
+    ;; Group A items (due 2026-04-01, 2026-03-01) and Group B items
+    ;; (due 2026-02-01) — all of group A's items must precede group B's
+    ;; even though group B has the earliest due date.
+    (let ((items '(((id . 1) (name . "A-late") (assignment_group_id . 100)
+                    (due_at . "2026-04-01T23:59:00Z"))
+                   ((id . 2) (name . "B-early") (assignment_group_id . 200)
+                    (due_at . "2026-02-01T23:59:00Z"))
+                   ((id . 3) (name . "A-early") (assignment_group_id . 100)
+                    (due_at . "2026-03-01T23:59:00Z")))))
+      (let ((sorted (org-canvas--pull-sort-items
+                     items 'assignment_group_id 'due_at)))
+        (expect (mapcar (lambda (x) (alist-get 'name x)) sorted)
+                :to-equal '("A-early" "A-late" "B-early"))))))
 
 (provide 'org-canvas-core-sync-test)
 ;;; org-canvas-core-sync-test.el ends here

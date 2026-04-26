@@ -52,6 +52,21 @@
   "Path to the assignments.org file."
   :type 'file
   :group 'org-canvas)
+
+(defcustom org-canvas-assignment-sort 'position
+  "Sort order for assignments within their assignment group during pull.
+
+- `position' (default): preserve Canvas's UI ordering.  This matches
+  the order shown in the Canvas web UI but does not necessarily
+  reflect chronology.
+- `due-at': sort by due date ascending within each assignment group.
+  Assignments without a due date sort after those that have one.
+
+The chosen mode is consulted at pull time, so changing this defcustom
+takes effect on the next `org-canvas-pull-assignments' invocation."
+  :type '(choice (const :tag "Canvas position (UI order)" position)
+                 (const :tag "Due date ascending" due-at))
+  :group 'org-canvas)
 (org-canvas-register-file-var 'org-canvas-assignments-file "assignments.org")
 (org-canvas-register-feature
  :name "Assignments" :endpoint "assignments"
@@ -491,6 +506,7 @@ ITEM is the API response alist, POS is the heading position."
   :endpoint "assignments"
   :title-field 'name
   :secondary-sort-key 'assignment_group_id
+  :tertiary-sort-key (when (eq org-canvas-assignment-sort 'due-at) 'due_at)
   :pull-item-fn #'org-canvas--assignment-pull-item)
 
 (provide 'org-canvas-assignments)
