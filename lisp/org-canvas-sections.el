@@ -263,13 +263,18 @@ function turns a link into an ID; this one turns an ID into a link."
 
 (defun org-canvas--override-fetch (assignment-id)
   "GET overrides for ASSIGNMENT-ID; return a list of override alists or nil.
-Records to the pull-summary on error and returns nil."
+Records to the pull-summary on error and returns nil.  Catches the
+parent `org-canvas-error' so credentials/config/api errors all degrade
+gracefully — without this, calling `org-canvas--assignment-pull-item'
+in a test environment without credentials propagates an uncaught
+`org-canvas-credentials-error' from `org-canvas--ensure-credentials',
+which CI's coverage-instrumented runner handles poorly."
   (let ((url (org-canvas-api-course-endpoint
               "assignments/%s/overrides" assignment-id)))
     (condition-case err
         (let ((response (org-canvas-api-request-all-pages 'GET url)))
           (and response (append response nil)))
-      (org-canvas-api-error
+      (org-canvas-error
        (org-canvas--pull-summary-record
         :file (and (boundp 'org-canvas-assignments-file)
                    (file-name-nondirectory org-canvas-assignments-file))
