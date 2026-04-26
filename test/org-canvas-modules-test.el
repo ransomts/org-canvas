@@ -2372,4 +2372,117 @@
                  (lambda (_method _url &rest _args) (vector))))
         (expect (org-canvas--module-find-item-by-title "999" "Missing") :to-be nil)))))
 
+(describe "module item ITEM_TYPE"
+  (it "emits :ITEM_TYPE: SubHeader for SubHeader items"
+    (with-temp-org-buffer
+     "* Module
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (goto-char (save-excursion (org-end-of-subtree t) (point)))
+     (org-canvas--module-pull-insert-subheader "Week 1" 101 nil)
+     (expect (buffer-string) :to-match ":ITEM_TYPE: SubHeader")))
+
+  (it "emits :ITEM_TYPE: Page for Page items"
+    (with-temp-org-buffer
+     "* Module
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (goto-char (save-excursion (org-end-of-subtree t) (point)))
+     (cl-letf (((symbol-function 'org-canvas--module-resolve-item-link)
+                (lambda (_type _cid title) (or title "Untitled"))))
+       (org-canvas--module-pull-insert-content-item
+        '((id . 2) (type . "Page") (title . "Reading 1")
+          (page_url . "reading-1") (position . 1) (indent . 0))
+        2 t))
+     (expect (buffer-string) :to-match ":ITEM_TYPE: Page")))
+
+  (it "emits :ITEM_TYPE: Assignment for Assignment items"
+    (with-temp-org-buffer
+     "* Module
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (goto-char (save-excursion (org-end-of-subtree t) (point)))
+     (cl-letf (((symbol-function 'org-canvas--module-resolve-item-link)
+                (lambda (_type _cid title) (or title "Untitled"))))
+       (org-canvas--module-pull-insert-content-item
+        '((id . 3) (type . "Assignment") (title . "HW 1")
+          (content_id . 999) (position . 1) (indent . 0))
+        3 t))
+     (expect (buffer-string) :to-match ":ITEM_TYPE: Assignment")))
+
+  (it "emits :ITEM_TYPE: ExternalUrl for ExternalUrl items"
+    (with-temp-org-buffer
+     "* Module
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (goto-char (save-excursion (org-end-of-subtree t) (point)))
+     (org-canvas--module-pull-insert-external-url
+      '((id . 4) (type . "ExternalUrl") (title . "Read this")
+        (external_url . "https://example.com") (position . 1) (indent . 0))
+      4 t)
+     (expect (buffer-string) :to-match ":ITEM_TYPE: ExternalUrl"))))
+
+(describe "module item ITEM_TYPE on push parse"
+  (it "uses :ITEM_TYPE: when present (no link inference)"
+    (with-temp-org-buffer
+     "* My Module
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** Just a section header
+:PROPERTIES:
+:ITEM_TYPE: SubHeader
+:END:
+"
+     (goto-char (point-min))
+     (re-search-forward "^\\*\\* ")
+     (org-back-to-heading t)
+     (let* ((raw (org-canvas--module-item-read-props (point) "."))
+            (transformed (org-canvas--module-item-transform-props raw))
+            (data (or transformed
+                      (org-canvas--module-classify-unlinked-heading
+                       (plist-get raw :heading-with-links)
+                       (org-canvas--strip-statistics-cookie
+                        (plist-get raw :title-raw))
+                       (plist-get raw :canvas-id)
+                       0 t (point))))
+            (data-type (plist-get data :type)))
+       (expect data-type :to-equal "SubHeader"))))
+
+  (it "falls back to inference when :ITEM_TYPE: is absent"
+    (with-temp-org-buffer
+     "* My Module
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** Plain text heading
+"
+     (goto-char (point-min))
+     (re-search-forward "^\\*\\* ")
+     (org-back-to-heading t)
+     (let* ((raw (org-canvas--module-item-read-props (point) "."))
+            (transformed (org-canvas--module-item-transform-props raw))
+            (data (or transformed
+                      (org-canvas--module-classify-unlinked-heading
+                       (plist-get raw :heading-with-links)
+                       (org-canvas--strip-statistics-cookie
+                        (plist-get raw :title-raw))
+                       (plist-get raw :canvas-id)
+                       0 t (point))))
+            (data-type (plist-get data :type)))
+       ;; classify-unlinked-heading should still produce SubHeader here
+       (expect data-type :to-equal "SubHeader")))))
+
 ;;; org-canvas-modules-test.el ends here

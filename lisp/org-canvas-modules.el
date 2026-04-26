@@ -338,6 +338,7 @@ MODULES-FILE-DIR is used to resolve relative file links."
     (list :title-raw raw-heading
           :heading-with-links heading-with-links
           :canvas-id (org-entry-get pom "CANVAS_ID")
+          :item-type-raw (org-entry-get pom "ITEM_TYPE")
           :indent-raw (org-entry-get pom "INDENT")
           :completion-requirement (org-entry-get pom "COMPLETION_REQUIREMENT")
           :min-score-raw (org-entry-get pom "MIN_SCORE")
@@ -348,7 +349,10 @@ MODULES-FILE-DIR is used to resolve relative file links."
 
 (defun org-canvas--module-item-transform-props (raw)
   "Transform raw property strings RAW into typed module item data.
-Pure function — no buffer access."
+Pure function — no buffer access.
+When :item-type-raw is present, it overrides link-based inference for the
+:type field, but link-info is still used to extract :content-id/:page-url
+when available."
   (let* ((title (org-canvas--strip-statistics-cookie (plist-get raw :title-raw)))
          (indent (org-canvas--interpret-number (plist-get raw :indent-raw) 0))
          (min-score (org-canvas--interpret-number (plist-get raw :min-score-raw)))
@@ -356,8 +360,16 @@ Pure function — no buffer access."
          (published (org-canvas--interpret-boolean (plist-get raw :published-raw) t))
          (external-url (plist-get raw :external-url))
          (link-info (plist-get raw :link-info))
+         (explicit-type (plist-get raw :item-type-raw))
          (completion-req (plist-get raw :completion-requirement)))
     (cond
+     ;; Explicit SubHeader: emit a SubHeader plist regardless of link state.
+     ((and explicit-type (string= explicit-type "SubHeader"))
+      (list :type "SubHeader"
+            :title title
+            :canvas-id (plist-get raw :canvas-id)
+            :indent indent
+            :published published))
      ;; External URL item
      (external-url
       (list :type "ExternalUrl"
@@ -369,9 +381,9 @@ Pure function — no buffer access."
             :published published
             :completion-requirement completion-req
             :min-score (when (and min-score (> min-score 0)) min-score)))
-     ;; Regular linked item
+     ;; Regular linked item — explicit type (when present) overrides inference
      (link-info
-      (list :type (plist-get link-info :type)
+      (list :type (or explicit-type (plist-get link-info :type))
             :title (plist-get link-info :title)
             :content-id (plist-get link-info :content-id)
             :page-url (plist-get link-info :page-url)
@@ -814,6 +826,7 @@ Returns a link string or just the title if resolution fails."
   (insert (format "** %s\n" (or item-title "Section")))
   (org-back-to-heading t)
   (org-canvas-org-set-property (point) "CANVAS_ID" (format "%s" item-id))
+  (org-canvas-org-set-property (point) "ITEM_TYPE" "SubHeader")
   (org-canvas--pull-set-boolean-property (point) "PUBLISHED" item-published)
   (goto-char (save-excursion (org-end-of-subtree t t) (point))))
 
@@ -826,6 +839,7 @@ Returns a link string or just the title if resolution fails."
     (insert (format "** %s\n" (or item-title "External Link")))
     (org-back-to-heading t)
     (org-canvas-org-set-property (point) "CANVAS_ID" (format "%s" item-id))
+    (org-canvas-org-set-property (point) "ITEM_TYPE" "ExternalUrl")
     (when ext-url
       (org-canvas-org-set-property (point) "EXTERNAL_URL" ext-url))
     (when new-tab
@@ -846,6 +860,8 @@ Returns a link string or just the title if resolution fails."
       (insert (format "** %s\n" link))
       (org-back-to-heading t)
       (org-canvas-org-set-property (point) "CANVAS_ID" (format "%s" item-id))
+      (when item-type
+        (org-canvas-org-set-property (point) "ITEM_TYPE" item-type))
       (when indent
         (org-canvas-org-set-property (point) "INDENT" (format "%s" indent)))
       (org-canvas--pull-set-boolean-property (point) "PUBLISHED" item-published)
