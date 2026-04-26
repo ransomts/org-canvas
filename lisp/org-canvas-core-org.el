@@ -233,6 +233,22 @@ after the existing #+TITLE line, or at the top of the buffer."
         (goto-char (point-min))
         (insert "#+LAST_SYNCED: " timestamp "\n"))))))
 
+(defun org-canvas--pull-emit-empty-file (path label)
+  "Write an empty-file self-documenting header to PATH for LABEL.
+Overwrites any existing content.  Used when a successful pull
+returned zero items so the resulting Org file is not silently blank."
+  (with-temp-file path
+    (insert (format "#+TITLE: %s\n" label))
+    (insert (format "#+LAST_SYNCED: %s\n"
+                    (format-time-string "[%Y-%m-%d %a %H:%M]")))
+    (insert "# Canvas returned 0 items at this sync.\n")))
+
+(defun org-canvas--pull-label-for (feature-name)
+  "Look up the human-readable label for FEATURE-NAME in the property registry.
+Falls back to a capitalized feature name when no entry is registered."
+  (or (plist-get (gethash feature-name org-canvas--property-registry) :label)
+      (capitalize (replace-regexp-in-string "-" " " feature-name))))
+
 (defun org-canvas--pull-read-file-header ()
   "Return the #+LAST_SYNCED timestamp from the current buffer, or nil."
   (save-excursion
@@ -1308,23 +1324,26 @@ Example:
                 (was-fresh (org-canvas--pull-was-fresh-p file)))
            (org-canvas--pull-confirm-overwrite file ,feature-name)
            (org-canvas--pull-confirm-unsaved file ,feature-name)
-           (unless (file-exists-p file)
-             (with-temp-file file (insert "")))
-           (with-current-buffer (find-file-noselect file)
-             (dolist (item (org-canvas--pull-sort-items remote ,secondary-sort-key))
-               ,(let ((body
-                       `(progn
-                          (org-canvas--pull-process-item
-                           item file
-                           (list :id-field ,id-field :title-field ,title-field
-                                 :id-property ,id-property :pull-item-fn ,item-fn))
-                          (cl-incf count))))
-                  (if skip-fn
-                      `(unless (funcall ,skip-fn item)
-                         ,body)
-                    body)))
-             (org-canvas--pull-write-file-header)
-             (org-canvas--save-buffer))
+           (if (zerop (length remote))
+               (org-canvas--pull-emit-empty-file
+                file (org-canvas--pull-label-for ,feature-name))
+             (unless (file-exists-p file)
+               (with-temp-file file (insert "")))
+             (with-current-buffer (find-file-noselect file)
+               (dolist (item (org-canvas--pull-sort-items remote ,secondary-sort-key))
+                 ,(let ((body
+                         `(progn
+                            (org-canvas--pull-process-item
+                             item file
+                             (list :id-field ,id-field :title-field ,title-field
+                                   :id-property ,id-property :pull-item-fn ,item-fn))
+                            (cl-incf count))))
+                    (if skip-fn
+                        `(unless (funcall ,skip-fn item)
+                           ,body)
+                      body)))
+               (org-canvas--pull-write-file-header)
+               (org-canvas--save-buffer)))
            (org-canvas--pull-kill-fresh-buffer file was-fresh)
            (org-canvas--log-info org-canvas--logger
              ,(format "%s pull complete: %%d items"

@@ -668,6 +668,32 @@ Weekly office hours.
                   (expect (buffer-string) :to-match "CANVAS_ID")))))
         (let ((buf (find-buffer-visiting cal-file)))
           (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "writes self-doc header when no calendar events exist"
+    (let* ((temp-dir (make-temp-file "cal-pull-empty" t))
+           (cal-file (expand-file-name "calendar.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file cal-file (insert "stale content\n* Old event\n"))
+            (let ((org-canvas-calendar-events-file cal-file)
+                  (org-agenda-files nil))
+              (with-org-canvas-test-config
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (lambda (_method _url &optional _params) '()))
+                          ((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                          ((symbol-function 'display-buffer) (lambda (_) nil))
+                          ((symbol-function 'org-canvas--pull-confirm-overwrite)
+                           (lambda (&rest _) nil)))
+                  (org-canvas-pull-calendar-events)
+                  (with-temp-buffer
+                    (insert-file-contents cal-file)
+                    (let ((s (buffer-string)))
+                      (expect s :not :to-match "stale content")
+                      (expect s :to-match "^#\\+TITLE: Calendar Events$")
+                      (expect s :to-match "^# Canvas returned 0 items")))))))
+        (let ((buf (find-buffer-visiting cal-file)))
+          (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
 
 ;;; org-canvas-calendar-test.el ends here

@@ -2277,5 +2277,31 @@ Page content.
               (expect org-canvas--pull-tz-cache :to-be nil)))
         (delete-directory dir t)))))
 
+(describe "empty file pull header"
+  (it "writes #+TITLE, #+LAST_SYNCED, and 0-items comment"
+    (let ((temp (make-temp-file "empty-test-" nil ".org")))
+      (unwind-protect
+          (progn
+            (org-canvas--pull-emit-empty-file temp "Discussions")
+            (with-temp-buffer
+              (insert-file-contents temp)
+              (let ((s (buffer-string)))
+                (expect s :to-match "^#\\+TITLE: Discussions$")
+                (expect s :to-match "^#\\+LAST_SYNCED: \\[")
+                (expect s :to-match "^# Canvas returned 0 items at this sync\\.$"))))
+        (delete-file temp))))
+
+  (it "overwrites existing content"
+    (let ((temp (make-temp-file "empty-test-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp (insert "stale content here\n* Old heading\n"))
+            (org-canvas--pull-emit-empty-file temp "Calendar")
+            (with-temp-buffer
+              (insert-file-contents temp)
+              (expect (buffer-string) :not :to-match "stale content")
+              (expect (buffer-string) :to-match "Canvas returned 0 items")))
+        (delete-file temp)))))
+
 (provide 'org-canvas-core-org-test)
 ;;; org-canvas-core-org-test.el ends here

@@ -1558,4 +1558,27 @@ Description B.
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
 
+(describe "org-canvas-pull-outcomes empty file"
+  (it "writes self-doc header when no outcome groups exist"
+    (let* ((temp-dir (make-temp-file "pull-outcomes-empty" t))
+           (outcomes-file (expand-file-name "outcomes.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file outcomes-file (insert "stale content\n* Old\n"))
+            (let ((org-canvas-outcomes-file outcomes-file))
+              (with-org-canvas-test-config
+                (with-sync-test-env
+                  (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                             (lambda (_method _url &optional _params) '())))
+                    (org-canvas-pull-outcomes)
+                    (with-temp-buffer
+                      (insert-file-contents outcomes-file)
+                      (let ((s (buffer-string)))
+                        (expect s :not :to-match "stale content")
+                        (expect s :to-match "^#\\+TITLE: Outcomes$")
+                        (expect s :to-match "^# Canvas returned 0 items"))))))))
+        (let ((buf (find-buffer-visiting outcomes-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
 ;;; org-canvas-outcomes-test.el ends here
