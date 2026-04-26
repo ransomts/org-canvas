@@ -3252,4 +3252,106 @@ Write an essay.
                   (expect final-message :to-match "Quizzes sync")))))
         (delete-directory temp-dir t)))))
 
+;;;; ** Description Wrapper Tests (Task 10)
+
+(describe "quiz description boundary"
+  (it "wraps body in ** Description when at least one question follows"
+    (let ((temp (make-temp-file "quiz-test-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp (insert ""))
+            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                       (lambda (_method url &rest _)
+                         (cond
+                          ((string-match-p "quizzes\\'" url)
+                           '(((id . 100) (title . "Midterm")
+                              (description . "<p>Read carefully.</p>"))))
+                          ((string-match-p "questions" url)
+                           '(((id . 1) (question_name . "Q1") (question_text . "What?")
+                              (question_type . "multiple_choice_question")
+                              (points_possible . 1.0) (answers . []))))))))
+              (let ((org-canvas-quizzes-file temp))
+                (with-org-canvas-test-config
+                  (with-sync-test-env
+                    (org-canvas-pull-quizzes)))))
+            (with-temp-buffer
+              (insert-file-contents temp)
+              (let ((s (buffer-string)))
+                (expect s :to-match "^\\* Midterm")
+                (expect s :to-match "^\\*\\* Description$")
+                (expect s :to-match "Read carefully")
+                (expect s :to-match "^\\*\\* Q1"))))
+        (let ((buf (find-buffer-visiting temp)))
+          (when buf (kill-buffer buf)))
+        (delete-file temp))))
+
+  (it "emits body inline when no questions follow"
+    (let ((temp (make-temp-file "quiz-test-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp (insert ""))
+            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                       (lambda (_method url &rest _)
+                         (cond
+                          ((string-match-p "quizzes\\'" url)
+                           '(((id . 101) (title . "Easy")
+                              (description . "<p>Just go.</p>"))))
+                          ((string-match-p "questions" url)
+                           '())))))
+              (let ((org-canvas-quizzes-file temp))
+                (with-org-canvas-test-config
+                  (with-sync-test-env
+                    (org-canvas-pull-quizzes)))))
+            (with-temp-buffer
+              (insert-file-contents temp)
+              (let ((s (buffer-string)))
+                (expect s :to-match "^\\* Easy")
+                (expect s :not :to-match "^\\*\\* Description$")
+                (expect s :to-match "Just go"))))
+        (let ((buf (find-buffer-visiting temp)))
+          (when buf (kill-buffer buf)))
+        (delete-file temp)))))
+
+(describe "quiz parse handles both description shapes"
+  :var ((original-export nil))
+
+  (before-each
+    (setq original-export (symbol-function 'org-export-string-as))
+    (fset 'org-export-string-as (lambda (s _type _body-only) (format "<p>%s</p>" s))))
+
+  (after-each
+    (fset 'org-export-string-as original-export))
+
+  (it "reads body from ** Description when present"
+    (with-temp-org-buffer
+     "* Some quiz
+:PROPERTIES:
+:CANVAS_ID: 200
+:END:
+** Description
+This is the description.
+** Q1
+:PROPERTIES:
+:QUESTION_TYPE: multiple_choice_question
+:END:
+What is 2+2?
+"
+     (re-search-forward "^\\* Some quiz")
+     (org-back-to-heading t)
+     (let ((data (org-canvas--quiz-parse-entry)))
+       (expect (plist-get data :description) :to-match "This is the description"))))
+
+  (it "reads body inline when no ** Description heading"
+    (with-temp-org-buffer
+     "* Some quiz
+:PROPERTIES:
+:CANVAS_ID: 201
+:END:
+This is inline.
+"
+     (re-search-forward "^\\* Some quiz")
+     (org-back-to-heading t)
+     (let ((data (org-canvas--quiz-parse-entry)))
+       (expect (plist-get data :description) :to-match "This is inline")))))
+
 ;;; org-canvas-quizzes-test.el ends here

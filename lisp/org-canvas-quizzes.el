@@ -114,22 +114,45 @@
 
 ;;;; Helper Functions
 
-(defun org-canvas--quiz-parse-body-text ()
-  "Get the body text of current heading, excluding subheadings.
-Returns the text between the current heading and the first subheading."
+(defun org-canvas--quiz-parse-description-subheading ()
+  "Return the body of a `** Description' subheading under the quiz at point.
+Point must be at the parent quiz heading.  Returns nil if no
+`** Description' subheading exists."
   (save-excursion
     (org-back-to-heading t)
-    (let ((start (save-excursion
-		   (org-end-of-meta-data t)
-		   (point)))
-	  (end (save-excursion
-		 (outline-next-heading)
-		 (point))))
-      ;; Check if there's a subheading before end of subtree
-      (let ((subtree-end (save-excursion (org-end-of-subtree t) (point))))
-	(when (> end subtree-end)
-	  (setq end subtree-end)))
-      (string-trim (buffer-substring-no-properties start end)))))
+    (let ((subtree-end (save-excursion (org-end-of-subtree t t) (point))))
+      (when (re-search-forward "^\\*\\* Description[ \t]*$" subtree-end t)
+        (let* ((desc-heading-pos (match-beginning 0))
+               (desc-body-start (save-excursion
+                                  (goto-char desc-heading-pos)
+                                  (org-end-of-meta-data t)
+                                  (point)))
+               (desc-body-end (save-excursion
+                                (goto-char desc-heading-pos)
+                                (org-end-of-subtree t t)
+                                (point))))
+          (string-trim
+           (buffer-substring-no-properties desc-body-start desc-body-end)))))))
+
+(defun org-canvas--quiz-parse-body-text ()
+  "Get the body text of current heading, excluding subheadings.
+If a `** Description' subheading is present, return its body.
+Otherwise return the inline text between the current heading and
+the first subheading."
+  (or (org-canvas--quiz-parse-description-subheading)
+      (save-excursion
+        (org-back-to-heading t)
+        (let ((start (save-excursion
+		       (org-end-of-meta-data t)
+		       (point)))
+	      (end (save-excursion
+		     (outline-next-heading)
+		     (point))))
+          ;; Check if there's a subheading before end of subtree
+          (let ((subtree-end (save-excursion (org-end-of-subtree t) (point))))
+	    (when (> end subtree-end)
+	      (setq end subtree-end)))
+          (string-trim (buffer-substring-no-properties start end))))))
 
 (defun org-canvas--quiz-parse-question-text ()
   "Get the question prompt text, excluding answer lists.
@@ -706,6 +729,13 @@ Returns a cons (SUCCESS . FAIL) count."
 
 ;;;; Main Sync Function
 
+(defun org-canvas--quiz-description-heading-p ()
+  "Return non-nil if the level-2 heading at point is a `** Description' wrapper."
+  (save-excursion
+    (org-back-to-heading t)
+    (let ((heading (org-get-heading t t t t)))
+      (and heading (string= (string-trim heading) "Description")))))
+
 (defun org-canvas--sync-quiz-questions (quiz-marker quiz-canvas-id)
   "Sync all questions under the quiz at QUIZ-MARKER.
 QUIZ-CANVAS-ID is the Canvas ID of the quiz."
@@ -719,7 +749,8 @@ QUIZ-CANVAS-ID is the Canvas ID of the quiz."
 	  (while (and (outline-next-heading)
 		      (< (point) subtree-end))
 	    (when (and (= (org-outline-level) 2)
-		       (not (equal (org-entry-get (point) "TYPE") "group")))
+		       (not (equal (org-entry-get (point) "TYPE") "group"))
+		       (not (org-canvas--quiz-description-heading-p)))
 	      (push (point-marker) question-markers)))))
       (setq question-markers (nreverse question-markers)))
 
@@ -852,16 +883,50 @@ Point must be at the parent quiz heading."
         (org-canvas--quiz-insert-question-body q-text)
         (org-canvas--quiz-insert-answers answers)))))
 
+(defun org-canvas--quiz-pull-fetch-questions (quiz-id)
+  "Fetch question list for QUIZ-ID, returning a list of alists.
+Returns nil on API error."
+  (condition-case nil
+      (let ((q-url (org-canvas-api-course-endpoint
+                    "quizzes/%s/questions" quiz-id)))
+        (org-canvas-api-request-all-pages 'GET q-url))
+    (error nil)))
+
 (defun org-canvas--quiz-pull-insert-questions (quiz-id)
   "Fetch and insert questions for QUIZ-ID as L2 headings.
 Point must be at the parent quiz heading."
-  (condition-case nil
-      (let* ((q-url (org-canvas-api-course-endpoint
-                     "quizzes/%s/questions" quiz-id))
-             (questions (org-canvas-api-request-all-pages 'GET q-url)))
-        (dolist (q questions)
-          (org-canvas--quiz-pull-insert-question q)))
-    (error nil)))
+  (let ((questions (org-canvas--quiz-pull-fetch-questions quiz-id)))
+    (dolist (q questions)
+      (org-canvas--quiz-pull-insert-question q))))
+
+(defun org-canvas--quiz-pull-insert-description-wrapped (description)
+  "Insert DESCRIPTION HTML inside a `** Description' subheading.
+Point must be at the parent quiz heading.  Leaves point at the
+parent quiz heading after insertion."
+  (let ((quiz-pos (point))
+        (subtree-end (save-excursion (org-end-of-subtree t) (point))))
+    (goto-char subtree-end)
+    (unless (bolp) (insert "\n"))
+    (insert "** Description\n")
+    (org-back-to-heading t)
+    (when description
+      (org-canvas--pull-insert-body description))
+    (goto-char quiz-pos)))
+
+(defun org-canvas--quiz-pull-emit-body (quiz-pos description questions)
+  "Emit DESCRIPTION and QUESTIONS under the quiz at QUIZ-POS.
+If QUESTIONS is non-empty, wrap DESCRIPTION in a `** Description'
+subheading; otherwise emit DESCRIPTION inline."
+  (goto-char quiz-pos)
+  (cond
+   (questions
+    (org-canvas--quiz-pull-insert-description-wrapped description)
+    (goto-char quiz-pos)
+    (dolist (q questions)
+      (org-canvas--quiz-pull-insert-question q)))
+   (t
+    (when description
+      (org-canvas--pull-insert-body description)))))
 
 ;;;###autoload
 (defun org-canvas-pull-quizzes ()
@@ -880,12 +945,13 @@ Point must be at the parent quiz heading."
       (dolist (quiz remote)
         (let* ((id (alist-get 'id quiz))
                (title (alist-get 'title quiz))
+               (description (alist-get 'description quiz))
+               (questions (org-canvas--quiz-pull-fetch-questions id))
                (pos (org-canvas--pull-upsert-heading file id title)))
           (goto-char pos)
           (when title (org-edit-headline title))
           (org-canvas--quiz-pull-set-properties pos quiz file)
-          (org-canvas--pull-insert-body (alist-get 'description quiz))
-          (org-canvas--quiz-pull-insert-questions id)
+          (org-canvas--quiz-pull-emit-body pos description questions)
           (cl-incf count)))
       (org-canvas--pull-write-file-header)
       (org-canvas--save-buffer))
