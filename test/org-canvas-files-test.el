@@ -2842,4 +2842,21 @@
           (expect joined :to-match "Position\\.pdf")
           (expect joined :to-match "Position-1\\.pdf"))))))
 
+(describe "file headline sanitization"
+  (it "escapes brackets in display names used as link descriptions"
+    (expect (org-canvas--file-sanitize-headline-desc "[bracketed].pdf")
+            :to-equal "\\[bracketed\\].pdf"))
+
+  (it "leaves filenames without brackets unchanged"
+    (expect (org-canvas--file-sanitize-headline-desc "normal.pdf")
+            :to-equal "normal.pdf"))
+
+  (it "preserves parens and underscores"
+    (expect (org-canvas--file-sanitize-headline-desc "image(elongated).JPG")
+            :to-equal "image(elongated).JPG"))
+
+  (it "escapes both [ and ] in the same name"
+    (expect (org-canvas--file-sanitize-headline-desc "x[1][2].png")
+            :to-equal "x\\[1\\]\\[2\\].png")))
+
 ;;; org-canvas-files-test.el ends here

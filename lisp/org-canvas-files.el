@@ -118,6 +118,16 @@ For plain headings, returns the heading text."
       (match-string 1 heading-text)
     heading-text))
 
+(defun org-canvas--file-sanitize-headline-desc (display-name)
+  "Escape Org link-breaking chars in DISPLAY-NAME for safe link description use.
+Only escapes `[' and `]' — the only chars that break Org link
+description parsing.  Other special chars (parens, underscores,
+slashes, spaces) are valid inside link descriptions."
+  (replace-regexp-in-string
+   "\\[\\|\\]"
+   (lambda (m) (concat "\\\\" m))
+   display-name))
+
 (defun org-canvas--file-get-folder-path (_pom _files-file-dir)
   "Build the Canvas folder path for the entry at point.
 Uses ancestor headings that don't have file links to build the path."
@@ -979,7 +989,8 @@ Downloads to CONTENT-DIR/REL-PATH/DISPLAY_NAME."
          (link-target (concat "content/" local-rel))
          (heading-text (org-link-make-string
                         (concat "file:" link-target)
-                        display-name))
+                        (org-canvas--file-sanitize-headline-desc
+                         display-name)))
          (local-path (expand-file-name local-rel content-dir)))
     (insert (make-string depth ?*) " " heading-text "\n")
     (let ((pos (save-excursion (forward-line -1) (point))))
@@ -1075,7 +1086,8 @@ Preserves existing CANVAS_ID matches in place; new files are appended."
              (local-path (expand-file-name display-name content-dir))
              (heading-text (org-link-make-string
                             (format "file:content/%s" display-name)
-                            display-name))
+                            (org-canvas--file-sanitize-headline-desc
+                             display-name)))
              (pos (org-canvas--pull-upsert-heading file id heading-text)))
         (message "Files [%d/%d] Pulling '%s'..." count total display-name)
         (goto-char pos)
