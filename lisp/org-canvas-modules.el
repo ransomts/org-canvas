@@ -159,6 +159,63 @@ Returns a plist (:canvas-id ID :canvas-url URL) or nil."
     (when ids
       (list :canvas-id (car ids) :canvas-url (cdr ids)))))
 
+(defun org-canvas--module-extract-heading-link-path (heading)
+  "Return the file-link target embedded in HEADING text, or nil.
+Matches `[[file:PATH][...]]' or bare `[[file:PATH]]' anywhere in
+HEADING.  Used to look up file-typed module items in files.org."
+  (when (and heading
+             (or (string-match "\\[\\[file:\\([^]]+\\)\\]\\[" heading)
+                 (string-match "\\[\\[file:\\([^]]+\\)\\]\\]" heading)))
+    (match-string 1 heading)))
+
+(defun org-canvas--module-find-file-canvas-id-by-path (files-org rel-path)
+  "Find a heading in FILES-ORG whose link target is REL-PATH.
+Returns its CANVAS_ID (string) or nil."
+  (let (result)
+    (with-current-buffer (find-file-noselect files-org)
+      (save-excursion
+        (goto-char (point-min))
+        (org-map-entries
+         (lambda ()
+           (when (and (not result)
+                      (looking-at org-complex-heading-regexp))
+             (let* ((heading (match-string-no-properties 4))
+                    (path (org-canvas--module-extract-heading-link-path heading)))
+               (when (equal path rel-path)
+                 (setq result (org-entry-get (point) "CANVAS_ID"))))))
+         t 'file)))
+    result))
+
+(defun org-canvas--module-resolve-content-link (rel-path title modules-file-dir)
+  "Resolve a direct-file module-item link to a File-type result.
+REL-PATH is the path from the module item link, relative to
+MODULES-FILE-DIR.  TITLE is the link description.  Looks the path up
+in files.org by matching it against file-heading link targets."
+  (let ((files-org (expand-file-name "files.org" modules-file-dir)))
+    (cond
+     ((not (file-exists-p files-org))
+      (org-canvas--log-warning org-canvas--logger
+        "[Module Item] files.org not found while resolving direct file link: %s"
+        rel-path)
+      nil)
+     (t
+      (let ((canvas-id (org-canvas--module-find-file-canvas-id-by-path
+                        files-org rel-path)))
+        (cond
+         (canvas-id
+          (org-canvas--log-debug org-canvas--logger
+            "[Module Item] Resolved direct file link: path=%s id=%s"
+            rel-path canvas-id)
+          (list :type "File"
+                :content-id (string-to-number canvas-id)
+                :page-url nil
+                :title title))
+         (t
+          (org-canvas--log-warning org-canvas--logger
+            "[Module Item] No CANVAS_ID found for direct file link: %s"
+            rel-path)
+          nil)))))))
+
 (defun org-canvas--module-resolve-link (link-string modules-file-dir)
   "Resolve LINK-STRING to get the linked item's Canvas ID and type.
 MODULES-FILE-DIR is the directory containing modules.org.
@@ -167,31 +224,40 @@ Returns a plist (:type TYPE :content-id ID :page-url URL :title TITLE) or nil."
              (string-match "\\[\\[file:\\([^]:]+\\)\\(?:::\\*\\(.+\\)\\)?\\]\\[\\([^]]+\\)\\]\\]" link-string))
     (let* ((file (match-string 1 link-string))
            (heading (match-string 2 link-string))
-           (title (match-string 3 link-string))
-           (item-type (org-canvas--module-item-type-from-file file))
-           (abs-file (org-canvas--module-resolve-file-path file modules-file-dir)))
-
-      (org-canvas--log-debug org-canvas--logger "[Module Item] Resolving: file=%s heading=%s type=%s"
-        file (or heading "N/A") item-type)
-
+           (title (match-string 3 link-string)))
       (cond
-       ((not abs-file)
-        (org-canvas--log-warning org-canvas--logger "[Module Item] File not found: %s"
-          (expand-file-name file modules-file-dir))
-        nil)
+       ;; Direct file link (e.g. [[file:content/foo.pdf][foo.pdf]]).
+       ;; A module item that links straight at a file path is a
+       ;; File-type item; resolve it via files.org by matching path.
+       ((not (string-match-p "\\.org\\'" file))
+        (org-canvas--module-resolve-content-link file title modules-file-dir))
+       ;; Otherwise this points to one of the per-type .org files.
        (t
-        (let ((found (org-canvas--module-lookup-ids-in-file abs-file heading title)))
-          (if found
-              (let ((canvas-id (plist-get found :canvas-id))
-                    (page-url (plist-get found :canvas-url)))
-                (org-canvas--log-debug org-canvas--logger "[Module Item] Resolved: type=%s id=%s url=%s"
-                  item-type (or canvas-id "N/A") (or page-url "N/A"))
-                (list :type item-type
-                      :content-id (when canvas-id (string-to-number canvas-id))
-                      :page-url page-url
-                      :title title))
-            (org-canvas--log-warning org-canvas--logger "[Module Item] No CANVAS_ID found for: %s" heading)
-            nil)))))))
+        (let ((item-type (org-canvas--module-item-type-from-file file))
+              (abs-file (org-canvas--module-resolve-file-path file modules-file-dir)))
+          (org-canvas--log-debug org-canvas--logger "[Module Item] Resolving: file=%s heading=%s type=%s"
+            file (or heading "N/A") item-type)
+          (cond
+           ((not abs-file)
+            (org-canvas--log-warning org-canvas--logger "[Module Item] File not found: %s"
+              (expand-file-name file modules-file-dir))
+            nil)
+           (t
+            (let ((found (org-canvas--module-lookup-ids-in-file abs-file heading title)))
+              (cond
+               (found
+                (let ((canvas-id (plist-get found :canvas-id))
+                      (page-url (plist-get found :canvas-url)))
+                  (org-canvas--log-debug org-canvas--logger "[Module Item] Resolved: type=%s id=%s url=%s"
+                    item-type (or canvas-id "N/A") (or page-url "N/A"))
+                  (list :type item-type
+                        :content-id (when canvas-id (string-to-number canvas-id))
+                        :page-url page-url
+                        :title title)))
+               (t
+                (org-canvas--log-warning org-canvas--logger
+                  "[Module Item] No CANVAS_ID found for: %s" heading)
+                nil)))))))))))
 
 (defun org-canvas--module-parse-prerequisite-ids (prereq-string)
   "Parse PREREQ-STRING into a list of module IDs.
@@ -656,12 +722,50 @@ Returns (success-count . fail-count)."
     ("File" . "files.org"))
   "Map Canvas module item types to their corresponding Org files.")
 
-(defun org-canvas--module-resolve-item-link (item-type content-id title)
-  "Resolve a module item to an Org cross-file link.
-ITEM-TYPE is a Canvas type string (\"Page\", \"Assignment\", etc.).
-CONTENT-ID is the Canvas ID of the target item.
-TITLE is the item title for display.
-Returns a link string or just the title if resolution fails."
+(defun org-canvas--module-resolve-file-item-link (content-id title)
+  "Resolve a File-typed module item to a direct file link.
+Looks up CONTENT-ID in files.org (any heading depth, since files
+may live under nested folder headings) and returns a link of the
+form `[[file:PATH][TITLE]]', where PATH is the relative path stored
+in the matching heading's link target.  Falls back to TITLE if
+files.org or the heading is not found.
+
+This bypasses the indirection through files.org so that clicking
+the module item opens the file directly, and avoids the brittle
+`*[[file:...][...]]' search target that arises when the files.org
+heading is itself a link."
+  (let ((files-org (expand-file-name (org-canvas--path "files.org"))))
+    (cond
+     ((not (file-exists-p files-org))
+      (or title "Untitled"))
+     (t
+      (let ((target (format "%s" content-id))
+            rel-path heading-name)
+        (with-current-buffer (find-file-noselect files-org)
+          (save-excursion
+            (goto-char (point-min))
+            (org-map-entries
+             (lambda ()
+               (when (and (not rel-path)
+                          (equal (org-entry-get (point) "CANVAS_ID") target)
+                          (looking-at org-complex-heading-regexp))
+                 (let ((heading (match-string-no-properties 4)))
+                   (setq heading-name heading)
+                   (setq rel-path
+                         (org-canvas--module-extract-heading-link-path heading)))))
+             t 'file)))
+        (cond
+         (rel-path
+          (org-link-make-string
+           (format "file:%s" rel-path)
+           (or title heading-name (file-name-nondirectory rel-path))))
+         (t (or title "Untitled"))))))))
+
+(defun org-canvas--module-resolve-org-item-link (item-type content-id title)
+  "Resolve a non-File module item to a `[[file:TYPE-FILE.org::*HEADING]]' link.
+ITEM-TYPE is one of `Page', `Assignment', `Quiz', or `Discussion'.
+CONTENT-ID is the Canvas ID (or page URL for Pages).  TITLE is the
+display title."
   (let* ((org-file (alist-get item-type org-canvas--module-type-to-file-map
                               nil nil #'equal))
          (id-prop (if (equal item-type "Page") "CANVAS_URL" "CANVAS_ID")))
@@ -690,6 +794,21 @@ Returns a link string or just the title if resolution fails."
                    (format "file:%s::*%s" org-file unescaped)
                    (or title unescaped)))
               (or title "Untitled"))))))))
+
+(defun org-canvas--module-resolve-item-link (item-type content-id title)
+  "Resolve a module item to an Org cross-file link.
+ITEM-TYPE is a Canvas type string (\"Page\", \"Assignment\", etc.).
+CONTENT-ID is the Canvas ID of the target item.
+TITLE is the item title for display.
+Returns a link string or just the title if resolution fails."
+  (cond
+   ;; File items resolve via files.org by CANVAS_ID, then emit a link
+   ;; that points directly at the file's own path (the same form used
+   ;; by file headings inside files.org).
+   ((equal item-type "File")
+    (org-canvas--module-resolve-file-item-link content-id title))
+   (t
+    (org-canvas--module-resolve-org-item-link item-type content-id title))))
 
 (defun org-canvas--module-pull-insert-subheader (item-title item-id item-published)
   "Insert a SubHeader heading with ITEM-TITLE, ITEM-ID, and ITEM-PUBLISHED."

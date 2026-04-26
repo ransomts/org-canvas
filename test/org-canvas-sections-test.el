@@ -191,6 +191,41 @@
                           :to-equal nil)))))
         (delete-directory temp-dir t))))
 
+  (it "creates sections file when it does not exist on disk"
+    ;; Regression: a fresh pull where sections.org is missing AND its path
+    ;; is in `org-agenda-files' used to fail with `(user-error "Abort")'
+    ;; from `org-check-agenda-file'.  The pull must pre-create the file
+    ;; before `find-file-noselect' so org-mode never sees a non-existent
+    ;; agenda file.
+    (let ((temp-dir (make-temp-file "sections-pull" t)))
+      (unwind-protect
+          (let* ((org-file (expand-file-name "sections.org" temp-dir))
+                 (org-canvas-sections-file org-file)
+                 (org-agenda-files (list org-file)))
+            ;; NOTE: do not pre-create the file.
+            (expect (file-exists-p org-file) :to-be nil)
+            (with-sync-test-env
+              (cl-letf (((symbol-function 'org-canvas-api-request)
+                         (lambda (_method _url &rest _args)
+                           [((id . 100) (name . "Section A")
+                             (start_at . nil) (end_at . nil)
+                             (restrict_enrollments_to_section_dates . :json-false))]))
+                        ;; Fail loudly if org tries to validate the agenda
+                        ;; file before the pull pre-creates it.
+                        ((symbol-function 'org-check-agenda-file)
+                         (lambda (file)
+                           (unless (file-exists-p file)
+                             (error "org-check-agenda-file fired on missing file: %s"
+                                    file)))))
+                (org-canvas-pull-sections)
+                (expect (file-exists-p org-file) :to-be-truthy)
+                (with-current-buffer (find-file-noselect org-file)
+                  (goto-char (point-min))
+                  (org-back-to-heading)
+                  (expect (org-entry-get (point) "CANVAS_ID")
+                          :to-equal "100")))))
+        (delete-directory temp-dir t))))
+
   (it "aborts when user declines overwrite of existing file"
     (let ((temp-dir (make-temp-file "sections-pull" t)))
       (unwind-protect

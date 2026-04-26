@@ -2056,8 +2056,14 @@
        (expect (length (split-string (buffer-string) "^\\*\\* " t))
                :to-equal 4)))))
 
-(describe "org-canvas--module-resolve-item-link with bracketed heading"
-  (it "produces a parseable link when target heading contains link syntax"
+(describe "org-canvas--module-resolve-item-link for File items"
+  (it "links directly to the file path, not via files.org indirection"
+    ;; Regression: previously this produced a brittle link of the form
+    ;; `[[file:files.org::*[[file:content/foo.pdf][foo.pdf]]][foo.pdf]]'
+    ;; — the search target embedded the entire raw heading because file
+    ;; headings in files.org are themselves links.  Now we look up the
+    ;; CANVAS_ID in files.org and emit the file's own path directly so
+    ;; the link is both readable and click-navigable.
     (let* ((tmpdir (make-temp-file "resolve-link" t))
            (files-path (expand-file-name "files.org" tmpdir)))
       (unwind-protect
@@ -2069,6 +2075,7 @@
                        (lambda (f) (if (equal f "files.org") files-path f))))
               (let* ((link (org-canvas--module-resolve-item-link
                             "File" 42 "foo.pdf")))
+                (expect link :to-equal "[[file:content/foo.pdf][foo.pdf]]")
                 (with-temp-buffer
                   (org-mode)
                   (insert (format "* parent\n** %s\n" link))
@@ -2081,8 +2088,75 @@
                   (let* ((parsed (org-element-link-parser))
                          (parsed-type (org-element-property :type parsed)))
                     (expect parsed-type :to-equal "file")
+                    (expect (org-element-property :path parsed)
+                            :to-equal "content/foo.pdf")
+                    ;; No `::*search-option' on the new clean form.
                     (expect (org-element-property :search-option parsed)
-                            :to-equal "*[[file:content/foo.pdf][foo.pdf]]"))))))
+                            :to-be nil))))))
+        (delete-directory tmpdir t))))
+
+  (it "resolves files nested under folder headings in files.org"
+    ;; Files can live arbitrarily deep under folder headings, so the
+    ;; lookup must scan all entries (not just LEVEL=1).
+    (let* ((tmpdir (make-temp-file "resolve-link" t))
+           (files-path (expand-file-name "files.org" tmpdir)))
+      (unwind-protect
+          (progn
+            (with-temp-file files-path
+              (insert "* readings\n"
+                      "** books\n"
+                      "*** [[file:content/readings/books/x.pdf][x.pdf]]\n"
+                      ":PROPERTIES:\n:CANVAS_ID: 77\n:END:\n"))
+            (cl-letf (((symbol-function 'org-canvas--path)
+                       (lambda (f) (if (equal f "files.org") files-path f))))
+              (expect (org-canvas--module-resolve-item-link "File" 77 "x.pdf")
+                      :to-equal "[[file:content/readings/books/x.pdf][x.pdf]]")))
+        (delete-directory tmpdir t))))
+
+  (it "falls back to title when CANVAS_ID is not found in files.org"
+    (let* ((tmpdir (make-temp-file "resolve-link" t))
+           (files-path (expand-file-name "files.org" tmpdir)))
+      (unwind-protect
+          (progn
+            (with-temp-file files-path (insert ""))
+            (cl-letf (((symbol-function 'org-canvas--path)
+                       (lambda (f) (if (equal f "files.org") files-path f))))
+              (expect (org-canvas--module-resolve-item-link "File" 999 "missing.pdf")
+                      :to-equal "missing.pdf")))
+        (delete-directory tmpdir t)))))
+
+(describe "org-canvas--module-resolve-link for direct file links"
+  (it "treats a non-.org link target as a File-typed module item"
+    (let* ((tmpdir (make-temp-file "resolve-direct" t))
+           (files-path (expand-file-name "files.org" tmpdir)))
+      (unwind-protect
+          (progn
+            (with-temp-file files-path
+              (insert "* [[file:content/foo.pdf][foo.pdf]]\n"
+                      ":PROPERTIES:\n:CANVAS_ID: 42\n:END:\n"))
+            (let ((resolved (org-canvas--module-resolve-link
+                             "[[file:content/foo.pdf][foo.pdf]]" tmpdir)))
+              (expect (plist-get resolved :type) :to-equal "File")
+              (expect (plist-get resolved :content-id) :to-equal 42)
+              (expect (plist-get resolved :title) :to-equal "foo.pdf")))
+        (delete-directory tmpdir t))))
+
+  (it "still resolves the legacy gnarly form pointing through files.org"
+    ;; Backward compat: existing modules.org files have File items as
+    ;; `[[file:files.org::*[[file:content/...][...]]][...]]'.  The push
+    ;; side must continue to resolve those until the next pull rewrites
+    ;; them into the new direct form.
+    (let* ((tmpdir (make-temp-file "resolve-legacy" t))
+           (files-path (expand-file-name "files.org" tmpdir)))
+      (unwind-protect
+          (progn
+            (with-temp-file files-path
+              (insert "* [[file:content/foo.pdf][foo.pdf]]\n"
+                      ":PROPERTIES:\n:CANVAS_ID: 42\n:END:\n"))
+            (let* ((legacy "[[file:files.org::*\\[\\[file:content/foo.pdf\\]\\[foo.pdf\\]\\]][foo.pdf]]")
+                   (resolved (org-canvas--module-resolve-link legacy tmpdir)))
+              (expect (plist-get resolved :type) :to-equal "File")
+              (expect (plist-get resolved :content-id) :to-equal 42)))
         (delete-directory tmpdir t)))))
 
 (describe "org-canvas-pull-modules"
