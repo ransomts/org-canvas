@@ -450,7 +450,7 @@ QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
       (let* ((url (org-canvas--new-quiz-api-endpoint
                    "quizzes/%s/items" quiz-assignment-id))
              (items (org-canvas-api-request-all-pages 'GET url)))
-        (dolist (item items)
+        (dolist (item (org-canvas--pull-sort-items items))
           (org-canvas--new-quiz-pull-insert-item item)))
     (error nil)))
 
@@ -468,7 +468,7 @@ QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
     (unless (file-exists-p file)
       (with-temp-file file (insert "")))
     (with-current-buffer (find-file-noselect file)
-      (dolist (quiz remote)
+      (dolist (quiz (org-canvas--pull-sort-items remote))
         (let* ((assignment-id (or (alist-get 'assignment_id quiz)
                                   (alist-get 'id quiz)))
                (title (alist-get 'title quiz))

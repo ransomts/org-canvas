@@ -537,7 +537,7 @@ Point must be at the parent group heading."
     (unless (file-exists-p file)
       (with-temp-file file (insert "")))
     (with-current-buffer (find-file-noselect file)
-      (dolist (group remote-groups)
+      (dolist (group (org-canvas--pull-sort-items remote-groups))
         (cl-incf group-count)
         (let* ((gid (alist-get 'id group))
                (gtitle (or (alist-get 'title group) "Untitled Group"))

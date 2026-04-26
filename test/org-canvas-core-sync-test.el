@@ -3124,5 +3124,76 @@ Content here.
        ;; Both titles logged individually
        (expect 'org-canvas--log-warning :to-have-been-called-times 2)))))
 
+;;;; Pull Sort Helper
+
+(describe "org-canvas--pull-sort-items"
+  (it "sorts items by position ascending"
+    (let ((items '(((id . 3) (position . 30) (title . "C"))
+                   ((id . 1) (position . 10) (title . "A"))
+                   ((id . 2) (position . 20) (title . "B")))))
+      (let ((sorted (org-canvas--pull-sort-items items)))
+        (expect (mapcar (lambda (x) (alist-get 'title x)) sorted)
+                :to-equal '("A" "B" "C")))))
+
+  (it "uses secondary key when positions tie or are absent"
+    (let ((items '(((id . 1) (position . 1) (assignment_group_id . 200) (title . "B"))
+                   ((id . 2) (position . 1) (assignment_group_id . 100) (title . "A")))))
+      (let ((sorted (org-canvas--pull-sort-items items 'assignment_group_id)))
+        (expect (mapcar (lambda (x) (alist-get 'title x)) sorted)
+                :to-equal '("A" "B")))))
+
+  (it "groups by secondary key first, then sorts by position within group"
+    (let ((items '(((id . 1) (name . "B-2") (position . 2) (assignment_group_id . 100))
+                   ((id . 2) (name . "A-3") (position . 3) (assignment_group_id . 50))
+                   ((id . 3) (name . "B-1") (position . 1) (assignment_group_id . 100))
+                   ((id . 4) (name . "A-1") (position . 1) (assignment_group_id . 50)))))
+      (let ((sorted (org-canvas--pull-sort-items items 'assignment_group_id)))
+        (expect (mapcar (lambda (x) (alist-get 'name x)) sorted)
+                :to-equal '("A-1" "A-3" "B-1" "B-2")))))
+
+  (it "falls back to name when position is missing"
+    (let ((items '(((id . 1) (name . "Beta"))
+                   ((id . 2) (name . "Alpha")))))
+      (let ((sorted (org-canvas--pull-sort-items items)))
+        (expect (mapcar (lambda (x) (alist-get 'name x)) sorted)
+                :to-equal '("Alpha" "Beta")))))
+
+  (it "falls back to title when position and name are missing"
+    (let ((items '(((id . 1) (title . "Zebra"))
+                   ((id . 2) (title . "Apple")))))
+      (let ((sorted (org-canvas--pull-sort-items items)))
+        (expect (mapcar (lambda (x) (alist-get 'title x)) sorted)
+                :to-equal '("Apple" "Zebra")))))
+
+  (it "falls back to id when position and name are absent"
+    (let ((items '(((id . 5)) ((id . 3)) ((id . 1)))))
+      (let ((sorted (org-canvas--pull-sort-items items)))
+        (expect (mapcar (lambda (x) (alist-get 'id x)) sorted)
+                :to-equal '(1 3 5)))))
+
+  (it "is stable: items with same key preserve input order"
+    (let ((items '(((id . 1) (position . 1) (title . "first"))
+                   ((id . 2) (position . 1) (title . "second"))
+                   ((id . 3) (position . 1) (title . "third")))))
+      (let ((sorted (org-canvas--pull-sort-items items)))
+        (expect (mapcar (lambda (x) (alist-get 'title x)) sorted)
+                :to-equal '("first" "second" "third")))))
+
+  (it "handles empty list"
+    (expect (org-canvas--pull-sort-items '()) :to-equal nil))
+
+  (it "handles single-item list"
+    (let ((items '(((id . 1) (position . 5) (title . "Only")))))
+      (expect (org-canvas--pull-sort-items items) :to-equal items)))
+
+  (it "treats missing position as greater than any present position"
+    ;; An item without `position' should sort after items with a position,
+    ;; so the explicit ordering wins over the missing-data fallback.
+    (let ((items '(((id . 1) (title . "no-pos"))
+                   ((id . 2) (position . 5) (title . "has-pos")))))
+      (let ((sorted (org-canvas--pull-sort-items items)))
+        (expect (mapcar (lambda (x) (alist-get 'title x)) sorted)
+                :to-equal '("has-pos" "no-pos"))))))
+
 (provide 'org-canvas-core-sync-test)
 ;;; org-canvas-core-sync-test.el ends here

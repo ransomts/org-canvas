@@ -875,7 +875,7 @@ Optional INDENT is emitted as :INDENT: only when nonzero."
 Returns the count of items inserted."
   (let ((count 0))
     (insert "\n")
-    (dolist (item (append items nil))
+    (dolist (item (org-canvas--pull-sort-items (append items nil)))
       (let ((item-type (alist-get 'type item))
             (item-id (alist-get 'id item))
             (item-published (alist-get 'published item)))
@@ -906,7 +906,7 @@ Returns the count of items inserted."
     (unless (file-exists-p file)
       (with-temp-file file (insert "")))
     (with-current-buffer (find-file-noselect file)
-      (dolist (mod remote)
+      (dolist (mod (org-canvas--pull-sort-items remote))
         (let* ((mid (alist-get 'id mod))
                (mname (alist-get 'name mod))
                (items (alist-get 'items mod))

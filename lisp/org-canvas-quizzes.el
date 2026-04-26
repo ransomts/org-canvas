@@ -942,7 +942,7 @@ subheading; otherwise emit DESCRIPTION inline."
     (unless (file-exists-p file)
       (with-temp-file file (insert "")))
     (with-current-buffer (find-file-noselect file)
-      (dolist (quiz remote)
+      (dolist (quiz (org-canvas--pull-sort-items remote))
         (let* ((id (alist-get 'id quiz))
                (title (alist-get 'title quiz))
                (description (alist-get 'description quiz))

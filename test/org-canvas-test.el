@@ -766,6 +766,39 @@
                    (expect (org-entry-get (point) "POINTS") :to-equal "50"))))))
         (let ((buf (find-buffer-visiting test-file)))
           (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "emits assignments grouped by assignment_group_id, then by position"
+    (let* ((temp-dir (make-temp-file "pull-assign-sort-test" t))
+           (test-file (expand-file-name "assignments.org" temp-dir)))
+      (unwind-protect
+          (let ((org-canvas-assignments-file test-file)
+                (org-canvas-assignment-groups-file "/tmp/nonexistent-ag.org"))
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                         (lambda (_method _url &optional _params)
+                           ;; Out-of-order: should sort to A-1, A-3, B-1, B-2.
+                           '(((id . 1) (name . "B-2") (position . 2)
+                              (assignment_group_id . 100))
+                             ((id . 2) (name . "A-3") (position . 3)
+                              (assignment_group_id . 50))
+                             ((id . 3) (name . "B-1") (position . 1)
+                              (assignment_group_id . 100))
+                             ((id . 4) (name . "A-1") (position . 1)
+                              (assignment_group_id . 50)))))
+                        ((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                        ((symbol-function 'display-buffer) (lambda (_) nil)))
+                (org-canvas-pull-assignments)
+                (with-temp-buffer
+                  (insert-file-contents test-file)
+                  (goto-char (point-min))
+                  (let (titles)
+                    (while (re-search-forward "^\\* +\\(.+\\)$" nil t)
+                      (push (match-string-no-properties 1) titles))
+                    (expect (nreverse titles)
+                            :to-equal '("A-1" "A-3" "B-1" "B-2")))))))
+        (let ((buf (find-buffer-visiting test-file)))
+          (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
 
 (describe "org-canvas-pull-discussions"

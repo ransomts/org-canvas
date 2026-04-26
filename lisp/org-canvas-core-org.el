@@ -1140,6 +1140,72 @@ in buffer lists."
       (when (and buf (not (buffer-modified-p buf)))
         (kill-buffer buf)))))
 
+(defun org-canvas--pull-sort-cmp-numeric (a b)
+  "Compare numeric keys A and B from items.
+Return `lt'/`gt'/`eq' for ordering, or `none' when either is nil.
+A nil key sorts AFTER any present key (so partial data falls to the end)."
+  (cond
+   ((and (null a) (null b)) 'eq)
+   ((null a) 'gt)
+   ((null b) 'lt)
+   ((= a b) 'eq)
+   ((< a b) 'lt)
+   (t 'gt)))
+
+(defun org-canvas--pull-sort-cmp-string (a b)
+  "Compare string keys A and B from items.
+Return `lt'/`gt'/`eq' for ordering.  A nil key sorts AFTER any present key."
+  (cond
+   ((and (null a) (null b)) 'eq)
+   ((null a) 'gt)
+   ((null b) 'lt)
+   ((string= a b) 'eq)
+   ((string< a b) 'lt)
+   (t 'gt)))
+
+(defun org-canvas--pull-sort-less-p (a b secondary-key)
+  "Return non-nil if item A should sort before item B.
+Tier order: SECONDARY-KEY (numeric, optional), `position', `name'/`title', `id'.
+Each tier short-circuits on a definite ordering; ties fall through.
+Used by `org-canvas--pull-sort-items'."
+  (let* ((ax (cdr a)) (bx (cdr b))
+         (ai (car a)) (bi (car b))
+         (sec (when secondary-key
+                (org-canvas--pull-sort-cmp-numeric
+                 (alist-get secondary-key ax)
+                 (alist-get secondary-key bx))))
+         (pos (org-canvas--pull-sort-cmp-numeric
+               (alist-get 'position ax)
+               (alist-get 'position bx)))
+         (nm (org-canvas--pull-sort-cmp-string
+              (or (alist-get 'name ax) (alist-get 'title ax))
+              (or (alist-get 'name bx) (alist-get 'title bx))))
+         (id (org-canvas--pull-sort-cmp-numeric
+              (alist-get 'id ax)
+              (alist-get 'id bx))))
+    (cond
+     ((and sec (not (eq sec 'eq))) (eq sec 'lt))
+     ((not (eq pos 'eq)) (eq pos 'lt))
+     ((not (eq nm 'eq)) (eq nm 'lt))
+     ((not (eq id 'eq)) (eq id 'lt))
+     (t (< ai bi)))))
+
+(defun org-canvas--pull-sort-items (items &optional secondary-key)
+  "Return ITEMS sorted by position (then SECONDARY-KEY if provided), name, id.
+ITEMS is a list of alists from a Canvas API response.  Stable sort:
+items with equal sort keys preserve input order.
+
+Items missing the relevant key sort after items that have it.  When
+SECONDARY-KEY is non-nil, that key (compared as a number) is the
+PRIMARY tier — used by assignments to group by `assignment_group_id'."
+  (let ((indexed (cl-loop for it in items
+                          for i from 0
+                          collect (cons i it))))
+    (mapcar #'cdr
+            (sort indexed
+                  (lambda (a b)
+                    (org-canvas--pull-sort-less-p a b secondary-key))))))
+
 (defun org-canvas--pull-process-item (item file pull-config)
   "Process a single pulled ITEM into FILE.
 PULL-CONFIG is a plist with :id-field :title-field :id-property :pull-item-fn."
@@ -1168,6 +1234,8 @@ ARGS is a plist with the following keys:
   :id-field    - Alist key for item ID (default: \\='id)
   :title-field - Alist key for item title (default: \\='title)
   :id-property - Org property name for Canvas ID (default: \"CANVAS_ID\")
+  :secondary-sort-key - Alist key used as primary tier in pull-sort
+                        (e.g., \\='assignment_group_id for assignments).
 
 Generates an interactive function `org-canvas-pull-FEATURE' that:
   1. Clears the log and displays the log buffer
@@ -1193,6 +1261,7 @@ Example:
          (id-field (or (plist-get args :id-field) ''id))
          (title-field (or (plist-get args :title-field) ''title))
          (id-property (or (plist-get args :id-property) "CANVAS_ID"))
+         (secondary-sort-key (plist-get args :secondary-sort-key))
          (op-label (upcase (replace-regexp-in-string "-" " " feature-name))))
     (unless file-expr (error "org-canvas-define-pull: :file is required"))
     (unless endpoint-expr (error "org-canvas-define-pull: :endpoint is required"))
@@ -1214,7 +1283,7 @@ Example:
            (unless (file-exists-p file)
              (with-temp-file file (insert "")))
            (with-current-buffer (find-file-noselect file)
-             (dolist (item remote)
+             (dolist (item (org-canvas--pull-sort-items remote ,secondary-sort-key))
                ,(let ((body
                        `(progn
                           (org-canvas--pull-process-item

@@ -475,6 +475,7 @@ ITEM is the API response alist, POS is the heading position."
   :file org-canvas-assignments-file
   :endpoint "assignments"
   :title-field 'name
+  :secondary-sort-key 'assignment_group_id
   :pull-item-fn #'org-canvas--assignment-pull-item)
 
 (provide 'org-canvas-assignments)
