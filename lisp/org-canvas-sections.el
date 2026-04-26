@@ -163,10 +163,7 @@ local headings whose CANVAS_ID no longer exists on Canvas."
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (let* ((sections-file (org-canvas--pull-sections-preflight))
          (endpoint (org-canvas-api-course-endpoint "sections"))
-           (remote-sections (append (org-canvas-api-request
-                                     'GET endpoint
-                                     :params org-canvas--api-max-per-page)
-                                    nil))
+           (remote-sections (org-canvas-api-request-all-pages 'GET endpoint))
            (remote-ids nil)
            (created 0) (updated 0)
            (was-fresh (org-canvas--pull-was-fresh-p sections-file)))
@@ -311,7 +308,7 @@ Returns a list (CREATED UPDATED DELETED) as integer counts."
   (let* ((endpoint (org-canvas-api-course-endpoint
                     "assignments/%s/overrides" assignment-id))
          (existing (condition-case nil
-                       (append (org-canvas-api-request 'GET endpoint) nil)
+                       (org-canvas-api-request-all-pages 'GET endpoint)
                      (error nil)))
          (created 0) (updated 0) (deleted 0)
          (seen-section-ids nil))

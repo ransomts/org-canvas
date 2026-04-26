@@ -416,7 +416,43 @@ Just some text, no table.
     (with-org-canvas-test-config
       (cl-letf (((symbol-function 'org-canvas-api-request)
                  (lambda (_method _url &rest _args) [])))
-        (expect (org-canvas--rubric-dissociate-all) :to-equal 0)))))
+        (expect (org-canvas--rubric-dissociate-all) :to-equal 0))))
+
+  (it "dissociates rubrics from assignments across multiple pages"
+    (with-org-canvas-test-config
+      (let ((get-calls 0)
+            (delete-urls nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest _args)
+                     (cond
+                      ((eq method 'GET)
+                       (cl-incf get-calls)
+                       (pcase get-calls
+                         ;; Page 1: 100 items, half have rubric_settings.
+                         (1 (vconcat
+                             (cl-loop for i from 1 to 100
+                                      collect (if (zerop (mod i 2))
+                                                  `((id . ,i)
+                                                    (name . ,(format "Assn %d" i))
+                                                    (rubric_settings . ((id . ,(+ 500 i)))))
+                                                `((id . ,i)
+                                                  (name . ,(format "Assn %d" i)))))))
+                         ;; Page 2: 2 more items, one with rubric_settings.
+                         (2 (vector '((id . 101) (name . "Late Assn"))
+                                    '((id . 102) (name . "Final")
+                                      (rubric_settings . ((id . 999))))))
+                         (_ (vector))))
+                      ((eq method 'DELETE)
+                       (push url delete-urls)
+                       nil)))))
+          (let ((count (org-canvas--rubric-dissociate-all)))
+            ;; 50 from page 1 (even-indexed) plus 1 from page 2 = 51.
+            (expect count :to-equal 51)
+            (expect (length delete-urls) :to-equal 51)
+            ;; The page-2 rubric (assoc id 999) must be in the dissociated set.
+            (expect (cl-some (lambda (u) (string-match-p "999" u)) delete-urls)
+                    :to-be-truthy)
+            (expect get-calls :to-equal 2)))))))
 
 (describe "org-canvas--rubric-log-diagnostics (mocked)"
   (it "fetches rubric detail and assignments on failure"

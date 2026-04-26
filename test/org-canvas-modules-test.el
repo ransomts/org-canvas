@@ -2344,4 +2344,32 @@
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
 
+(describe "org-canvas--module-find-item-by-title pagination"
+  (it "finds an item that lives on page 2 of the module items list"
+    (with-org-canvas-test-config
+      (let ((calls 0))
+        ;; Mock api-request directly so the all-pages helper runs end-to-end.
+        ;; Page 1 returns 100 items (none matching "Target"); page 2 returns
+        ;; 2 items including "Target". A naive single-page caller would miss it.
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_method _url &rest _args)
+                     (cl-incf calls)
+                     (pcase calls
+                       (1 (vconcat
+                           (cl-loop for i from 1 to 100
+                                    collect `((id . ,i) (title . ,(format "Item %d" i))))))
+                       (2 (vector '((id . 101) (title . "Other"))
+                                  '((id . 102) (title . "Target"))))
+                       (_ (vector))))))
+          (let ((found (org-canvas--module-find-item-by-title "999" "Target")))
+            (expect found :not :to-be nil)
+            (expect (alist-get 'id found) :to-equal 102)
+            (expect calls :to-equal 2))))))
+
+  (it "returns nil when item is missing across all pages"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (_method _url &rest _args) (vector))))
+        (expect (org-canvas--module-find-item-by-title "999" "Missing") :to-be nil)))))
+
 ;;; org-canvas-modules-test.el ends here

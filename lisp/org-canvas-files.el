@@ -786,8 +786,7 @@ Returns :success, :skip (folder heading), or :fail."
 (defun org-canvas--file-get-all-folders ()
   "Get all folders in the course, sorted by depth (deepest first for deletion)."
   (let* ((endpoint (org-canvas-api-course-endpoint "folders"))
-         (params org-canvas--api-max-per-page)
-         (folders (append (org-canvas-api-request 'GET endpoint :params params) nil))
+         (folders (org-canvas-api-request-all-pages 'GET endpoint))
          (root-folder (org-canvas--file-get-root-folder))
          (root-id (alist-get 'id root-folder)))
     ;; Filter out root folder (can't delete it) and sort by full_name length descending
@@ -834,8 +833,7 @@ Returns :success, :skip (folder heading), or :fail."
     (org-canvas--log-warning org-canvas--logger "========================================")
 
     (let* ((endpoint (org-canvas-api-course-endpoint "files"))
-           (params org-canvas--api-max-per-page)
-           (remote-items (append (org-canvas-api-request 'GET endpoint :params params) nil))
+           (remote-items (org-canvas-api-request-all-pages 'GET endpoint))
            (deleted-ids nil)
            (deleted-file-count 0)
            (deleted-folder-count 0))

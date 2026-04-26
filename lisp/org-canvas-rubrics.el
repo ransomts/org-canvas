@@ -339,7 +339,7 @@ Canvas returns 500 when deleting a rubric still associated with
 an assignment, so this must run before rubric deletion."
   (org-canvas--log-info org-canvas--logger "Dissociating rubrics from assignments...")
   (let* ((endpoint (org-canvas-api-course-endpoint "assignments"))
-         (assignments (append (org-canvas-api-request 'GET endpoint :params org-canvas--api-max-per-page) nil))
+         (assignments (org-canvas-api-request-all-pages 'GET endpoint))
          (dissociated 0))
     (dolist (assignment assignments)
       (let ((rubric-settings (alist-get 'rubric_settings assignment)))
@@ -393,8 +393,7 @@ an assignment, so this must run before rubric deletion."
 (defun org-canvas--rubric-find-linked-assignments (rubric-id)
   "Return list of assignments that reference RUBRIC-ID."
   (let* ((endpoint (org-canvas-api-course-endpoint "assignments"))
-         (assignments (append (org-canvas-api-request 'GET endpoint
-                                :params org-canvas--api-max-per-page) nil))
+         (assignments (org-canvas-api-request-all-pages 'GET endpoint))
          (numeric-id (if (stringp rubric-id)
                          (string-to-number rubric-id)
                        rubric-id)))
@@ -488,7 +487,7 @@ On failure, fetches detailed rubric info for diagnostics."
 
   ;; Step 2: Fetch all rubrics and delete with diagnostics on failure
   (let* ((full-endpoint (org-canvas-api-course-endpoint "rubrics"))
-         (remote-items (append (org-canvas-api-request 'GET full-endpoint :params org-canvas--api-max-per-page) nil))
+         (remote-items (org-canvas-api-request-all-pages 'GET full-endpoint))
          (deleted-count 0)
          (deleted-ids nil))
 

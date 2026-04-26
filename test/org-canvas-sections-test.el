@@ -191,6 +191,47 @@
                           :to-equal nil)))))
         (delete-directory temp-dir t))))
 
+  (it "creates headings from sections that span multiple pages"
+    ;; Regression: the previous implementation hard-coded ?per_page=100&page=1,
+    ;; silently truncating courses with more than 100 sections.  Verify that a
+    ;; section appearing only on page 2 still ends up in sections.org.
+    (let ((temp-dir (make-temp-file "sections-pull" t)))
+      (unwind-protect
+          (let* ((org-file (expand-file-name "sections.org" temp-dir))
+                 (org-canvas-sections-file org-file)
+                 (calls 0))
+            (with-temp-file org-file (insert ""))
+            (with-sync-test-env
+              (cl-letf (((symbol-function 'org-canvas-api-request)
+                         (lambda (_method _url &rest _args)
+                           (cl-incf calls)
+                           (pcase calls
+                             (1 (vconcat
+                                 (cl-loop for i from 1 to 100
+                                          collect `((id . ,i)
+                                                    (name . ,(format "Sec %d" i))
+                                                    (start_at . nil) (end_at . nil)
+                                                    (restrict_enrollments_to_section_dates
+                                                     . :json-false)))))
+                             (2 (vector '((id . 999)
+                                          (name . "Page-2 Only Section")
+                                          (start_at . nil) (end_at . nil)
+                                          (restrict_enrollments_to_section_dates
+                                           . :json-false))))
+                             (_ (vector))))))
+                (org-canvas-pull-sections)
+                (expect calls :to-equal 2)
+                (with-current-buffer (find-file-noselect org-file)
+                  (goto-char (point-min))
+                  (let ((found nil))
+                    (org-map-entries
+                     (lambda ()
+                       (when (string= (org-entry-get (point) "CANVAS_ID") "999")
+                         (setq found (org-get-heading t t t t))))
+                     "LEVEL=1" 'file)
+                    (expect found :to-equal "Page-2 Only Section"))))))
+        (delete-directory temp-dir t))))
+
   (it "creates sections file when it does not exist on disk"
     ;; Regression: a fresh pull where sections.org is missing AND its path
     ;; is in `org-agenda-files' used to fail with `(user-error "Abort")'

@@ -245,9 +245,6 @@ Returns a list of (success-count . fail-count)."
 (defconst org-canvas--bytes-per-mb 1048576.0
   "Number of bytes in one megabyte (for file size calculations).")
 
-(defconst org-canvas--api-max-per-page '(("per_page" . "100"))
-  "Default pagination params for Canvas API list requests.")
-
 (defconst org-canvas--answer-weight-correct 100
   "Canvas answer weight for correct answers.")
 

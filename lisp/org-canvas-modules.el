@@ -575,8 +575,7 @@ MODULES-FILE-DIR is used to resolve relative file links."
   "Search for an item named TITLE in module MODULE-ID.
 Return the matching item alist, or nil if not found."
   (let* ((items-endpoint (org-canvas-api-course-endpoint "modules/%s/items" module-id))
-         (items (append (org-canvas-api-request 'GET items-endpoint
-                          :params org-canvas--api-max-per-page) nil)))
+         (items (org-canvas-api-request-all-pages 'GET items-endpoint)))
     (cl-find-if (lambda (item)
                   (string-equal (alist-get 'title item) title))
                 items)))

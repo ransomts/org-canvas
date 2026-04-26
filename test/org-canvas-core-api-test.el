@@ -437,7 +437,23 @@
                                             '(("only_announcements" . "true")))
           (expect (assoc "only_announcements" received-params) :to-be-truthy)
           (expect (assoc "per_page" received-params) :to-be-truthy)
-          (expect (assoc "page" received-params) :to-be-truthy))))))
+          (expect (assoc "page" received-params) :to-be-truthy)))))
+
+  (it "fetches all pages until a short page is returned"
+    (with-org-canvas-test-config
+      (let* ((page-1 (vconcat (cl-loop for i from 1 to 100 collect `((id . ,i)))))
+             (page-2 (vector '((id . 101)) '((id . 102))))
+             (calls 0))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_method _url &rest _args)
+                     (cl-incf calls)
+                     (pcase calls
+                       (1 page-1)
+                       (2 page-2)
+                       (_ (vector))))))
+          (let ((result (org-canvas-api-request-all-pages 'GET "https://example.invalid/api/v1/items")))
+            (expect (length result) :to-equal 102)
+            (expect calls :to-equal 2)))))))
 
 ;;;; 36. Credential validation in org-canvas-api-request
 

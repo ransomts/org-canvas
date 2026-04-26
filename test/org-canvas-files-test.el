@@ -1450,6 +1450,48 @@
                   (org-canvas-delete-all-files)
                   ;; Both should be attempted
                   (expect delete-attempts :to-equal 2)))))
+        (delete-directory temp-dir t))))
+
+  (it "deletes files that span multiple pages"
+    ;; Regression: the previous implementation hard-coded ?per_page=100&page=1,
+    ;; missing files beyond the first 100.
+    (let ((temp-dir (make-temp-file "files-test" t)))
+      (unwind-protect
+          (let* ((org-file (expand-file-name "files.org" temp-dir))
+                 (deleted-ids nil)
+                 (get-calls 0))
+            (with-temp-file org-file (insert ""))
+            (let ((org-canvas-files-file org-file)
+                  (org-canvas-base-url "https://test.canvas.example.com")
+                  (org-canvas-api-token "test-token")
+                  (org-canvas-course-id "99999"))
+              (with-sync-test-env
+                (cl-letf (((symbol-function 'y-or-n-p) (lambda (_prompt) t))
+                          ((symbol-function 'org-canvas-api-request)
+                           (lambda (method url &rest _args)
+                             (cond
+                              ((and (eq method 'GET) (string-match "/files$" url))
+                               (cl-incf get-calls)
+                               (pcase get-calls
+                                 (1 (vconcat
+                                     (cl-loop for i from 1 to 100
+                                              collect `((id . ,i)
+                                                        (display_name
+                                                         . ,(format "f%d.pdf" i))))))
+                                 (2 (vector '((id . 555) (display_name . "page2-only.pdf"))))
+                                 (_ (vector))))
+                              ((eq method 'DELETE)
+                               (when (string-match "/files/\\([0-9]+\\)" url)
+                                 (push (string-to-number (match-string 1 url))
+                                       deleted-ids))
+                               nil)
+                              (t nil))))
+                          ((symbol-function 'org-canvas--file-delete-all-folders)
+                           (lambda () 0)))
+                  (org-canvas-delete-all-files)
+                  (expect get-calls :to-equal 2)
+                  (expect (length deleted-ids) :to-equal 101)
+                  (expect (memq 555 deleted-ids) :to-be-truthy)))))
         (delete-directory temp-dir t)))))
 
 ;;;; Upload Step 2 Edge Cases

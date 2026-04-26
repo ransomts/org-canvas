@@ -444,7 +444,7 @@ Warning: This will remove all learning outcomes from the course."
   ;; Get root group
   (let* ((root-group-id (org-canvas--outcome-get-root-group-id))
          (endpoint (org-canvas-api-course-endpoint "outcome_groups/%s/subgroups" root-group-id))
-         (subgroups (append (org-canvas-api-request 'GET endpoint) nil))
+         (subgroups (org-canvas-api-request-all-pages 'GET endpoint))
          (result (progn
                    (org-canvas--log-info org-canvas--logger "Found %d outcome groups (excluding root)" (length subgroups))
                    (org-canvas--delete-items-queued
