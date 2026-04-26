@@ -9,19 +9,26 @@
 ;; ==============
 ;; In rubrics.org:
 ;;   - Level 1 headings = Rubrics
-;;   - Org tables under headings = Criteria
+;;   - Level 2 headings = Criteria (one heading per criterion)
+;;   - Sub-tables under each criterion = Ratings for that criterion
 ;;
-;; TABLE FORMAT
-;; ============
-;; | Criterion Description | Points | Long Description (optional) | Outcome (optional)                                              |
-;; |-----------------------+--------+-----------------------------+-----------------------------------------------------------------|
-;; | Code Quality          |     10 | Well-formatted, readable    | [[file:outcomes.org::*Python Proficiency][Python Proficiency]] |
-;; | Correctness           |     15 | Passes all test cases       |                                                                 |
+;; CRITERION FORMAT
+;; ================
+;; ** Criterion Name :5pt:
+;;    :PROPERTIES:
+;;    :OUTCOME: [[file:outcomes.org::*Python Proficiency][Python Proficiency]]
+;;    :END:
+;;    Long description (optional body text before the ratings table).
+;;    | Rating     | Points | Description |
+;;    |------------+--------+-------------|
+;;    | Full Marks |    5.0 |             |
+;;    | Partial    |    3.0 |             |
+;;    | No Marks   |    0.0 |             |
 ;;
-;; Column 1: Short criterion name (shown in rubric)
-;; Column 2: Maximum points for this criterion
-;; Column 3: Optional longer description
-;; Column 4: Optional link to an outcome in outcomes.org (for mastery tracking)
+;; The trailing :Npt: tag holds the criterion's max points (fractional points
+;; encoded with `_` instead of `.`, e.g. :3_5pt: for 3.5 points -- Org tags
+;; cannot contain dots).  The :OUTCOME: property is optional and links to
+;; outcomes.org for mastery tracking.
 ;;
 ;; PROPERTIES
 ;; ==========
@@ -66,21 +73,117 @@
 
 ;;;; 1. Stage: Extraction
 
+(defun org-canvas--rubric-format-points (n)
+  "Format N as a number string, dropping .0 for whole numbers.
+Used to emit human-readable points in headings, tags, and tables."
+  (cond
+   ((null n) "0")
+   ((not (numberp n)) (format "%s" n))
+   ((= n (truncate n)) (format "%d" (truncate n)))
+   (t (number-to-string n))))
+
+(defun org-canvas--rubric-points-tag (points)
+  "Encode POINTS as an Org tag string (e.g. \"5pt\" or \"3_5pt\").
+Org tags cannot contain dots, so fractional points use `_' as a separator."
+  (let ((formatted (org-canvas--rubric-format-points points)))
+    (concat (replace-regexp-in-string "\\." "_" formatted) "pt")))
+
+(defun org-canvas--rubric-decode-points-tag (tag)
+  "Decode Org TAG of the form \"5pt\" or \"3_5pt\" back to a number.
+Returns nil if TAG does not match the expected pattern."
+  (when (and tag (string-match "\\`\\([0-9]+\\)\\(?:_\\([0-9]+\\)\\)?pt\\'" tag))
+    (let ((whole (match-string 1 tag))
+          (frac (match-string 2 tag)))
+      (if frac
+          (string-to-number (concat whole "." frac))
+        (string-to-number whole)))))
+
+(defun org-canvas--rubric-parse-rating-row ()
+  "Parse the table row at point as (rating-desc rating-points rating-long-desc).
+Returns nil for separator rows or empty rows."
+  (let ((line (buffer-substring-no-properties
+               (line-beginning-position) (line-end-position))))
+    (unless (string-match-p "\\`[ \t]*|[-+|]+\\(?:|.*\\)?\\'" line)
+      (let ((cells (mapcar #'string-trim
+                           (split-string line "|" t))))
+        (when (and (>= (length cells) 2)
+                   (not (string-empty-p (car cells))))
+          (list (car cells)
+                (string-to-number (or (nth 1 cells) "0"))
+                (or (nth 2 cells) "")))))))
+
+(defun org-canvas--rubric-parse-criterion-at-point ()
+  "Parse the level-2 criterion heading at point + its sub-table.
+Returns a plist (:description :points :long-description :outcome-link :ratings)
+where :ratings is a list of (description points long-description) tuples."
+  (org-back-to-heading t)
+  (let* ((heading (org-get-heading t t t t))
+         (tags (org-get-tags))
+         (points-tag (cl-find-if
+                      (lambda (tg)
+                        (string-match-p "\\`[0-9]+\\(?:_[0-9]+\\)?pt\\'" tg))
+                      tags))
+         (points (or (org-canvas--rubric-decode-points-tag points-tag) 0))
+         (outcome-prop (org-entry-get (point) "OUTCOME"))
+         (subtree-end (save-excursion (org-end-of-subtree t t) (point)))
+         (long-desc "")
+         (ratings nil))
+    ;; Body before the table (between meta-data and first table line) is the
+    ;; long description.
+    (save-excursion
+      (org-end-of-meta-data t)
+      (let ((body-start (point))
+            (table-start (save-excursion
+                           (when (re-search-forward "^[ \t]*|" subtree-end t)
+                             (line-beginning-position)))))
+        (when (and table-start (> table-start body-start))
+          (setq long-desc (string-trim
+                           (buffer-substring-no-properties body-start table-start))))))
+    ;; Walk the ratings sub-table.
+    (save-excursion
+      (org-end-of-meta-data t)
+      (when (re-search-forward "^[ \t]*|" subtree-end t)
+        (beginning-of-line)
+        ;; Skip header row (first non-separator).
+        (forward-line 1)
+        ;; Skip separator(s).
+        (while (and (< (point) subtree-end)
+                    (looking-at "^[ \t]*|[-+|]+[ \t]*$"))
+          (forward-line 1))
+        ;; Parse remaining rows until we leave the table or subtree.
+        (while (and (< (point) subtree-end)
+                    (looking-at "^[ \t]*|"))
+          (let ((row (org-canvas--rubric-parse-rating-row)))
+            (when row (push row ratings)))
+          (forward-line 1))))
+    (list :description heading
+          :points points
+          :long-description long-desc
+          :outcome-link outcome-prop
+          :ratings (nreverse ratings))))
+
+(defun org-canvas--rubric-collect-criteria (pom)
+  "Walk level-2 child headings under the rubric at POM.
+Returns a list of criterion plists (one per child heading)."
+  (let ((criteria nil)
+        (subtree-end (save-excursion
+                       (goto-char pom)
+                       (org-end-of-subtree t t)
+                       (point))))
+    (save-excursion
+      (goto-char pom)
+      (forward-line 1)
+      (while (re-search-forward "^\\*\\* " subtree-end t)
+        (push (org-canvas--rubric-parse-criterion-at-point) criteria)
+        (org-end-of-subtree t t)))
+    (nreverse criteria)))
+
 (defun org-canvas--rubric-read-props (pom)
-  "Read raw property strings and table data from the rubric heading at POM.
-Table extraction requires buffer access (org-table-to-lisp)."
-  (let ((table-data
-         (save-excursion
-           (save-restriction
-             (org-narrow-to-subtree)
-             (goto-char (point-min))
-             (when (re-search-forward org-table-line-regexp nil t)
-               (beginning-of-line)
-               (org-table-to-lisp))))))
-    (list :title-raw (org-get-heading t t t t)
-          :canvas-id (org-entry-get pom "CANVAS_ID")
-          :free-form-raw (org-entry-get pom "FREE_FORM_CRITERION_COMMENTS")
-          :criteria table-data)))
+  "Read raw property strings and child criterion headings from the rubric at POM."
+  (list :title-raw (org-get-heading t t t t)
+        :canvas-id (org-entry-get pom "CANVAS_ID")
+        :free-form-raw (org-entry-get pom "FREE_FORM_CRITERION_COMMENTS")
+        :criteria (org-canvas--rubric-collect-criteria pom)))
 
 (defun org-canvas--rubric-transform-props (raw)
   "Transform raw property strings RAW into typed rubric data.
@@ -91,7 +194,8 @@ Pure function — no buffer access."
         :criteria (plist-get raw :criteria)))
 
 (defun org-canvas--rubric-parse-entry ()
-  "Extract rubric data and the associated table from the Org heading at point."
+  "Extract rubric data from the Org heading at point.
+Walks level-2 child headings (one per criterion) and parses each."
   (org-back-to-heading t)
   (org-canvas--log-debug org-canvas--logger "[Stage 1: Parse] Starting extraction at point %d" (point))
 
@@ -107,63 +211,80 @@ Pure function — no buffer access."
                (plist-get data :free-form))
 
     (unless (plist-get data :criteria)
-      (org-canvas--log-error org-canvas--logger "[Stage 1: Parse] No table found for rubric '%s'"
+      (org-canvas--log-error org-canvas--logger "[Stage 1: Parse] No criteria found for rubric '%s'"
                   (plist-get data :title))
       (org-canvas--signal 'org-canvas-validation-error
-        "No table found for rubric '%s'" (plist-get data :title)))
+        "No criteria found for rubric '%s' (expected level-2 child headings)"
+        (plist-get data :title)))
 
-    (let ((row-count (length (cl-remove-if (lambda (r) (eq r 'hline))
-                                           (plist-get data :criteria)))))
-      (org-canvas--log-info org-canvas--logger "[Stage 1: Parse] Found %d criteria rows in table" row-count))
+    (org-canvas--log-info org-canvas--logger
+      "[Stage 1: Parse] Found %d criteria"
+      (length (plist-get data :criteria)))
 
     (plist-put data :pom pom)
     data))
 
 ;;;; 2. Stage: Transformation
 
-(defun org-canvas--rubric-rating-row-p (row)
-  "Return non-nil if ROW is a rating row (first cell start with \"> \")."
-  (and (listp row)
-       (stringp (nth 0 row))
-       (string-match-p "\\`> " (string-trim-left (nth 0 row)))))
+(defun org-canvas--rubric-build-ratings-from-plist (rating-list)
+  "Build a ratings hash-table from RATING-LIST.
+RATING-LIST is a list of (description points long-description) tuples.
+Returns the populated ratings hash-table."
+  (let ((ratings (make-hash-table :test 'equal))
+        (idx 0))
+    (dolist (r rating-list)
+      (let ((rh (make-hash-table :test 'equal))
+            (rdesc (nth 0 r))
+            (rpts (or (nth 1 r) 0))
+            (rlong (or (nth 2 r) "")))
+        (puthash "description" rdesc rh)
+        (puthash "points" rpts rh)
+        (unless (string-empty-p rlong)
+          (puthash "long_description" rlong rh))
+        (puthash (format "%d" idx) rh ratings)
+        (setq idx (1+ idx))))
+    ratings))
 
-(defun org-canvas--rubric-build-criterion (row counter &optional rating-rows outcome-id)
-  "Build a hash-table for a single criterion from table ROW at COUNTER.
-If RATING-ROWS is non-nil, build ratings from those rows instead of
-the default 2-level (Full Marks / No Marks).
-When OUTCOME-ID is non-nil, set learning_outcome_id on the criterion.
-Returns a plist (:id KEY :obj HASH :points NUM)."
-  (let* ((desc (nth 0 row))
-         (points (org-canvas--safe-string-to-number (or (nth 1 row) "0") "POINTS"))
-         (long-desc (or (nth 2 row) ""))
+(defun org-canvas--rubric-build-default-ratings (points)
+  "Build a default two-level ratings hash-table.
+The two levels are \"Full Marks\" (worth POINTS) and \"No Marks\" (worth 0)."
+  (let ((ratings (make-hash-table :test 'equal))
+        (r1 (make-hash-table :test 'equal))
+        (r2 (make-hash-table :test 'equal)))
+    (puthash "description" "Full Marks" r1)
+    (puthash "points" points r1)
+    (puthash "description" "No Marks" r2)
+    (puthash "points" 0 r2)
+    (puthash "0" r1 ratings)
+    (puthash "1" r2 ratings)
+    ratings))
+
+(defun org-canvas--rubric-build-criterion (criterion counter)
+  "Build a hash-table for CRITERION (a plist) at COUNTER.
+CRITERION is a plist with :description :points :long-description
+:outcome-link :ratings.  Returns a plist (:id KEY :obj HASH :points NUM)."
+  (let* ((desc (plist-get criterion :description))
+         (points (or (plist-get criterion :points) 0))
+         (long-desc (or (plist-get criterion :long-description) ""))
+         (outcome-link (plist-get criterion :outcome-link))
+         (rating-list (plist-get criterion :ratings))
+         (outcome-id (when (and outcome-link
+                                (stringp outcome-link)
+                                (not (string-empty-p (string-trim outcome-link)))
+                                (string-match-p "\\[\\[file:" outcome-link))
+                       (org-canvas--resolve-link-property
+                        outcome-link "CANVAS_ID" org-canvas-rubrics-file)))
          (crit-obj (make-hash-table :test 'equal))
-         (ratings (make-hash-table :test 'equal)))
-    (org-canvas--log-debug org-canvas--logger "[Stage 2: Transform] Criterion %d: '%s' (%d pts)" counter desc points)
+         (ratings (if rating-list
+                      (org-canvas--rubric-build-ratings-from-plist rating-list)
+                    (org-canvas--rubric-build-default-ratings points))))
+    (org-canvas--log-debug org-canvas--logger
+      "[Stage 2: Transform] Criterion %d: '%s' (%s pts)" counter desc points)
     (puthash "description" desc crit-obj)
     (puthash "points" points crit-obj)
     (puthash "long_description" long-desc crit-obj)
     (when outcome-id
       (puthash "learning_outcome_id" outcome-id crit-obj))
-    (if rating-rows
-        ;; Custom multi-level ratings from > rows
-        (let ((idx 0))
-          (dolist (rrow rating-rows)
-            (let ((r (make-hash-table :test 'equal))
-                  (rdesc (replace-regexp-in-string "\\`>[ \t]*" "" (string-trim-left (nth 0 rrow))))
-                  (rpts (org-canvas--safe-string-to-number (or (nth 1 rrow) "0") "RATING_POINTS")))
-              (puthash "description" rdesc r)
-              (puthash "points" rpts r)
-              (puthash (format "%d" idx) r ratings)
-              (setq idx (1+ idx)))))
-      ;; Default 2-level ratings
-      (let ((r1 (make-hash-table :test 'equal))
-            (r2 (make-hash-table :test 'equal)))
-        (puthash "description" "Full Marks" r1)
-        (puthash "points" points r1)
-        (puthash "description" "No Marks" r2)
-        (puthash "points" 0 r2)
-        (puthash "0" r1 ratings)
-        (puthash "1" r2 ratings)))
     (puthash "ratings" ratings crit-obj)
     (list :id (format "%d" counter) :obj crit-obj :points points)))
 
@@ -174,56 +295,19 @@ Returns a plist (:id KEY :obj HASH :points NUM)."
     (puthash "association_id" org-canvas-course-id ra)
     ra))
 
-(defun org-canvas--rubric-flush-pending-criterion (criterion ratings counter criteria-hash
-                                                  &optional outcome-id)
-  "Flush CRITERION with RATINGS at COUNTER into CRITERIA-HASH.
-OUTCOME-ID, when non-nil, is passed through to the criterion builder.
-Returns the points for this criterion."
-  (let ((crit (org-canvas--rubric-build-criterion
-               criterion counter (nreverse ratings) outcome-id)))
-    (puthash (plist-get crit :id) (plist-get crit :obj) criteria-hash)
-    (plist-get crit :points)))
-
-(defun org-canvas--rubric-resolve-outcome-id (row)
-  "Resolve outcome CANVAS_ID from the 4th column of criterion ROW.
-Returns the outcome ID string, or nil."
-  (let ((outcome-cell (nth 3 row)))
-    (when (and outcome-cell
-               (not (string-empty-p (string-trim outcome-cell)))
-               (string-match "\\[\\[file:" outcome-cell))
-      (org-canvas--resolve-link-property
-       outcome-cell "CANVAS_ID" org-canvas-rubrics-file))))
-
-(defun org-canvas--rubric-build-criteria (criteria-rows criteria-hash)
-  "Process CRITERIA-ROWS into CRITERIA-HASH, grouping ratings with criteria.
+(defun org-canvas--rubric-build-criteria (criteria-plists criteria-hash)
+  "Process CRITERIA-PLISTS into CRITERIA-HASH.
+Each plist describes one criterion (see `org-canvas--rubric-build-criterion').
 Returns total points across all criteria."
-  (let ((pending-criterion nil)
-        (pending-ratings nil)
-        (pending-outcome-id nil)
-        (counter 0)
+  (let ((counter 0)
         (total-points 0))
-    (dolist (row criteria-rows)
-      (unless (eq row 'hline)
-        (if (org-canvas--rubric-rating-row-p row)
-            (push row pending-ratings)
-          (when pending-criterion
-            (setq total-points
-                  (+ total-points
-                     (org-canvas--rubric-flush-pending-criterion
-                      pending-criterion pending-ratings counter criteria-hash
-                      pending-outcome-id)))
-            (setq counter (1+ counter)))
-          (setq pending-criterion row)
-          (setq pending-ratings nil)
-          (setq pending-outcome-id (org-canvas--rubric-resolve-outcome-id row)))))
-    (when pending-criterion
-      (setq total-points
-            (+ total-points
-               (org-canvas--rubric-flush-pending-criterion
-                pending-criterion pending-ratings counter criteria-hash
-                pending-outcome-id)))
-      (setq counter (1+ counter)))
-    (org-canvas--log-info org-canvas--logger "[Stage 2: Transform] Built %d criteria, total points: %d"
+    (dolist (cp criteria-plists)
+      (let ((crit (org-canvas--rubric-build-criterion cp counter)))
+        (puthash (plist-get crit :id) (plist-get crit :obj) criteria-hash)
+        (setq total-points (+ total-points (or (plist-get crit :points) 0)))
+        (setq counter (1+ counter))))
+    (org-canvas--log-info org-canvas--logger
+      "[Stage 2: Transform] Built %d criteria, total points: %s"
       counter total-points)
     total-points))
 
@@ -512,18 +596,6 @@ On failure, fetches detailed rubric info for diagnostics."
 
 ;;;; Pull
 
-(defun org-canvas--rubric-has-custom-ratings (ratings)
-  "Return non-nil if RATINGS list has custom levels (not default 2-level).
-Custom means more than 2 ratings, or names other than Full Marks/No Marks."
-  (when ratings
-    (let ((rlist (append ratings nil)))
-      (or (> (length rlist) 2)
-          (not (and (= (length rlist) 2)
-                    (member (alist-get 'description (nth 0 rlist))
-                            '("Full Marks" "No Marks"))
-                    (member (alist-get 'description (nth 1 rlist))
-                            '("Full Marks" "No Marks"))))))))
-
 (defun org-canvas--rubric-sort-ratings (ratings)
   "Sort RATINGS list by points descending."
   (sort (copy-sequence (append ratings nil))
@@ -551,71 +623,73 @@ Returns the heading title string, or nil if not found."
              "LEVEL=2" 'file)
             nil))))))
 
-(defun org-canvas--rubric-pull-has-outcomes (criteria)
-  "Return non-nil if any criterion in CRITERIA has a learning_outcome_id."
-  (cl-some (lambda (c) (alist-get 'learning_outcome_id c))
-           (append criteria nil)))
-
-(defun org-canvas--rubric-pull-outcome-col (outcome-id)
-  "Build the outcome column text for a pulled criterion.
+(defun org-canvas--rubric-pull-outcome-link (outcome-id)
+  "Build the OUTCOME property link string for a pulled criterion.
 Returns an Org file link when OUTCOME-ID resolves, the raw ID as fallback,
-or empty string when OUTCOME-ID is nil."
-  (if outcome-id
-      (let ((title (org-canvas--rubric-outcome-title outcome-id)))
-        (if title
-            (format "[[file:outcomes.org::*%s][%s]]" title title)
-          (format "%s" outcome-id)))
-    ""))
+or nil when OUTCOME-ID is nil."
+  (when outcome-id
+    (let ((title (org-canvas--rubric-outcome-title outcome-id)))
+      (if title
+          (format "[[file:outcomes.org::*%s][%s]]" title title)
+        (format "%s" outcome-id)))))
 
-(defun org-canvas--rubric-pull-insert-criterion (c has-outcomes)
-  "Insert a single criterion C into the current buffer.
-HAS-OUTCOMES controls whether a 4th outcome column is emitted."
-  (let ((desc (replace-regexp-in-string
-               "|" "/"
-               (org-canvas--html-to-org-inline (or (alist-get 'description c) ""))))
-        (pts (or (alist-get 'points c) 0))
-        (long-desc (replace-regexp-in-string
-                    "|" "/"
-                    (org-canvas--html-to-org-inline (or (alist-get 'long_description c) ""))))
-        (ratings (alist-get 'ratings c))
-        (outcome-id (alist-get 'learning_outcome_id c)))
-    (if has-outcomes
-        (insert (format "| %s | %s | %s | %s |\n"
-                        desc pts long-desc
-                        (org-canvas--rubric-pull-outcome-col outcome-id)))
-      (insert (format "| %s | %s | %s |\n" desc pts long-desc)))
-    ;; Insert custom rating rows if present
-    (when (org-canvas--rubric-has-custom-ratings ratings)
-      (dolist (r (org-canvas--rubric-sort-ratings ratings))
-        (let ((rdesc (replace-regexp-in-string
-                      "|" "/"
-                      (org-canvas--html-to-org-inline (or (alist-get 'description r) ""))))
-              (rpts (or (alist-get 'points r) 0)))
-          (if has-outcomes
-              (insert (format "| > %s | %s | | |\n" rdesc rpts))
-            (insert (format "| > %s | %s | |\n" rdesc rpts))))))))
+(defun org-canvas--rubric-pull-emit-rating-rows (ratings)
+  "Insert sorted RATINGS as table rows under the current criterion."
+  (dolist (r (org-canvas--rubric-sort-ratings ratings))
+    (let ((rdesc (replace-regexp-in-string
+                  "|" "/"
+                  (org-canvas--html-to-org-inline
+                   (or (alist-get 'description r) ""))))
+          (rpts (or (alist-get 'points r) 0))
+          (rlong (replace-regexp-in-string
+                  "|" "/"
+                  (org-canvas--html-to-org-inline
+                   (or (alist-get 'long_description r) "")))))
+      (insert (format "| %s | %s | %s |\n"
+                      rdesc
+                      (org-canvas--rubric-format-points rpts)
+                      rlong)))))
+
+(defun org-canvas--rubric-pull-emit-criterion (c)
+  "Emit a single criterion C as a level-2 heading with sub-table.
+C is the API alist for one criterion."
+  (let* ((desc (replace-regexp-in-string
+                "|" "/"
+                (org-canvas--html-to-org-inline
+                 (or (alist-get 'description c) ""))))
+         (pts (or (alist-get 'points c) 0))
+         (long-desc (string-trim
+                     (org-canvas--html-to-org-inline
+                      (or (alist-get 'long_description c) ""))))
+         (ratings (alist-get 'ratings c))
+         (outcome-id (alist-get 'learning_outcome_id c))
+         (outcome-link (org-canvas--rubric-pull-outcome-link outcome-id)))
+    (insert (format "** %s :%s:\n" desc (org-canvas--rubric-points-tag pts)))
+    (when outcome-link
+      (insert ":PROPERTIES:\n")
+      (insert (format ":OUTCOME: %s\n" outcome-link))
+      (insert ":END:\n"))
+    (unless (string-empty-p long-desc)
+      (insert long-desc "\n"))
+    (insert "| Rating | Points | Description |\n")
+    (insert "|--------+--------+-------------|\n")
+    (when ratings
+      (org-canvas--rubric-pull-emit-rating-rows ratings))
+    (insert "\n")))
 
 (defun org-canvas--rubric-pull-item (item _pos)
-  "Set per-item properties for a pulled rubric.
-ITEM is the API response alist, POS is the heading position."
+  "Set per-item content for a pulled rubric.
+ITEM is the API response alist, POS is the heading position.
+Replaces the rubric body with one level-2 heading per criterion."
   (let ((criteria (alist-get 'data item)))
     (when criteria
-      (let ((body-start (save-excursion
-                          (org-end-of-meta-data t) (point)))
-            (body-end (save-excursion
-                        (org-end-of-subtree t) (point)))
-            (has-outcomes (org-canvas--rubric-pull-has-outcomes criteria)))
+      (let ((body-start (save-excursion (org-end-of-meta-data t) (point)))
+            (body-end (save-excursion (org-end-of-subtree t) (point))))
         (delete-region body-start body-end)
         (goto-char body-start)
-        (if has-outcomes
-            (progn
-              (insert "\n| Criterion | Points | Description | Outcome |\n")
-              (insert "|---|---|---|---|\n"))
-          (insert "\n| Criterion | Points | Description |\n")
-          (insert "|---|---|---|\n"))
+        (insert "\n")
         (dolist (c (append criteria nil))
-          (org-canvas--rubric-pull-insert-criterion c has-outcomes))
-        (insert "\n")))))
+          (org-canvas--rubric-pull-emit-criterion c))))))
 
 (org-canvas-define-pull rubrics
   :file org-canvas-rubrics-file

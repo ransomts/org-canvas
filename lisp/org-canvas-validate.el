@@ -201,7 +201,8 @@ Returns an issue or nil."
 (defun org-canvas--validate-rubric-outcome-links (table-data file loc)
   "Validate outcome links in 4th column of rubric TABLE-DATA.
 FILE is the rubrics file path.  LOC is a (:file :line :heading) plist.
-Returns a list of issues."
+Returns a list of issues.
+Retained for backward compatibility with any caller passing legacy table data."
   (let ((issues nil))
     (dolist (row table-data)
       (unless (or (eq row 'hline)
@@ -211,25 +212,48 @@ Returns a list of issues."
           (when issue (push issue issues)))))
     (nreverse issues)))
 
+(defun org-canvas--validate-rubric-criterion-outcome (file loc)
+  "Validate the :OUTCOME: property on the criterion at point.
+FILE is the rubrics file; LOC is a (:file :line :heading) plist describing
+the parent rubric.  Returns a list of issues (typically zero or one)."
+  (let* ((outcome (org-entry-get (point) "OUTCOME"))
+         (issues nil))
+    (when (and outcome
+               (not (string-empty-p (string-trim outcome)))
+               (string-match-p "\\[\\[file:" outcome))
+      (let ((row (list "" "" "" outcome)))
+        (let ((issue (org-canvas--validate-single-outcome-link row file loc)))
+          (when issue (push issue issues)))))
+    (nreverse issues)))
+
 (defun org-canvas--validate-rubric-structure (loc)
-  "Check that the rubric heading at point has an org-table.
-Also validates outcome links in the optional 4th column.
+  "Check that the rubric heading at point has level-2 criterion children.
+Also validates :OUTCOME: properties on each criterion heading.
 LOC is a (:file :line :heading) plist."
-  (let ((end (save-excursion (org-end-of-subtree t) (point)))
-        (issues nil))
+  (let* ((rubric-pom (point))
+         (end (save-excursion (org-end-of-subtree t) (point)))
+         (issues nil)
+         (file (plist-get loc :file))
+         (criterion-count 0))
     (save-excursion
-      (if (not (re-search-forward "^|" end t))
-          (push (org-canvas--validate-make-issue
-                 'error loc nil
-                 "Rubric has no criteria table (expected an org-table under heading)")
-                issues)
-        ;; Table exists — validate outcome links in 4th column
-        (beginning-of-line)
-        (let ((table-data (org-table-to-lisp)))
-          (when table-data
-            (let ((outcome-issues (org-canvas--validate-rubric-outcome-links
-                                   table-data (plist-get loc :file) loc)))
-              (setq issues (nconc issues outcome-issues)))))))
+      (goto-char rubric-pom)
+      (when (< (point) end)
+        (forward-line 1))
+      (while (and (< (point) end)
+                  (re-search-forward "^\\*\\* " end t))
+        (setq criterion-count (1+ criterion-count))
+        (save-excursion
+          (org-back-to-heading t)
+          (let ((outcome-issues
+                 (org-canvas--validate-rubric-criterion-outcome file loc)))
+            (setq issues (nconc issues outcome-issues))))
+        (let ((subtree-end (save-excursion (org-end-of-subtree t t) (point))))
+          (goto-char (min subtree-end end)))))
+    (when (zerop criterion-count)
+      (push (org-canvas--validate-make-issue
+             'error loc nil
+             "Rubric has no criteria (expected level-2 child headings)")
+            issues))
     issues))
 
 (defun org-canvas--validate-file-structure (loc)

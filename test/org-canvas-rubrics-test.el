@@ -7,30 +7,67 @@
 (require 'test-helper)
 (require 'org-canvas-rubrics)
 
+;;;; Helpers
+
+(defun test-rubric--criterion (description points &rest rest)
+  "Build a criterion plist from DESCRIPTION, POINTS, and REST plist keys.
+REST may include :long-description, :outcome-link, :ratings."
+  (let ((plist (list :description description :points points
+                     :long-description (or (plist-get rest :long-description) "")
+                     :outcome-link (plist-get rest :outcome-link)
+                     :ratings (plist-get rest :ratings))))
+    plist))
+
 ;;;; Transform (pure, no buffer)
 
 (describe "org-canvas--rubric-transform-props"
   (it "strips statistics cookie from title"
     (let ((result (org-canvas--rubric-transform-props
                    '(:title-raw "Rubric [1/2]" :canvas-id nil
-                     :free-form-raw nil :criteria ((("A") ("B")))))))
+                     :free-form-raw nil :criteria nil))))
       (expect (plist-get result :title) :to-equal "Rubric")))
 
   (it "interprets free-form boolean"
     (let ((result (org-canvas--rubric-transform-props
                    '(:title-raw "Test" :canvas-id nil
-                     :free-form-raw "true" :criteria ((("A")))))))
+                     :free-form-raw "true" :criteria nil))))
       (expect (plist-get result :free-form) :to-be t)))
 
-  (it "passes through criteria table data"
-    (let* ((table '(("Criterion" "Excellent" "Good") hline ("Analysis" "5" "3")))
+  (it "passes through criteria plist data"
+    (let* ((criteria (list (list :description "Analysis" :points 5)))
            (result (org-canvas--rubric-transform-props
                     (list :title-raw "Test" :canvas-id "42"
-                          :free-form-raw nil :criteria table))))
-      (expect (plist-get result :criteria) :to-equal table)
+                          :free-form-raw nil :criteria criteria))))
+      (expect (plist-get result :criteria) :to-equal criteria)
       (expect (plist-get result :canvas-id) :to-equal "42"))))
 
-;;;; Stage 1: Parse Entry
+;;;; Points-tag encoding
+
+(describe "org-canvas--rubric-points-tag"
+  (it "encodes integer points as Npt"
+    (expect (org-canvas--rubric-points-tag 5) :to-equal "5pt")
+    (expect (org-canvas--rubric-points-tag 10) :to-equal "10pt"))
+
+  (it "encodes whole-valued floats without decimal"
+    (expect (org-canvas--rubric-points-tag 5.0) :to-equal "5pt"))
+
+  (it "encodes fractional points using underscore"
+    (expect (org-canvas--rubric-points-tag 3.5) :to-equal "3_5pt")))
+
+(describe "org-canvas--rubric-decode-points-tag"
+  (it "decodes integer tag"
+    (expect (org-canvas--rubric-decode-points-tag "5pt") :to-equal 5))
+
+  (it "decodes underscore-fractional tag"
+    (expect (org-canvas--rubric-decode-points-tag "3_5pt") :to-equal 3.5))
+
+  (it "returns nil for non-pt tags"
+    (expect (org-canvas--rubric-decode-points-tag "regular") :to-be nil))
+
+  (it "returns nil for nil tag"
+    (expect (org-canvas--rubric-decode-points-tag nil) :to-be nil)))
+
+;;;; Stage 1: Parse Entry (new format)
 
 (describe "org-canvas--rubric-parse-entry"
   (it "extracts rubric title from heading"
@@ -38,10 +75,11 @@
      "* Essay Rubric
 :PROPERTIES:
 :END:
-
-| Criterion | Points | Description |
-|-----------+--------+-------------|
-| Thesis    |     20 | Clear thesis |
+** Thesis :20pt:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Full Marks | 20 | |
+| No Marks | 0 | |
 "
      (org-back-to-heading)
      (let ((data (org-canvas--rubric-parse-entry)))
@@ -49,10 +87,11 @@
 
   (it "errors on empty title"
     (with-temp-org-buffer
-     (concat "* " "\n:PROPERTIES:\n:END:\n\n"
-             "| Criterion | Points | Description |\n"
-             "|-----------+--------+-------------|\n"
-             "| Thesis    |     20 | Clear thesis |\n")
+     (concat "* " "\n:PROPERTIES:\n:END:\n"
+             "** Thesis :20pt:\n"
+             "| Rating | Points | Description |\n"
+             "|--------+--------+-------------|\n"
+             "| Full Marks | 20 | |\n")
      (org-back-to-heading)
      (expect (org-canvas--rubric-parse-entry) :to-throw 'error)))
 
@@ -62,10 +101,10 @@
 :PROPERTIES:
 :CANVAS_ID: 33333
 :END:
-
-| Criterion | Points |
-|-----------+--------|
-| Quality   |     10 |
+** Quality :10pt:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Full Marks | 10 | |
 "
      (org-back-to-heading)
      (let ((data (org-canvas--rubric-parse-entry)))
@@ -76,10 +115,10 @@
      "* New Rubric
 :PROPERTIES:
 :END:
-
-| Criterion | Points |
-|-----------+--------|
-| Quality   |     10 |
+** Quality :10pt:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Full Marks | 10 | |
 "
      (org-back-to-heading)
      (let ((data (org-canvas--rubric-parse-entry)))
@@ -91,38 +130,48 @@
 :PROPERTIES:
 :FREE_FORM_CRITERION_COMMENTS: true
 :END:
-
-| Criterion | Points |
-|-----------+--------|
-| Item      |      5 |
+** Item :5pt:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Full Marks | 5 | |
 "
      (org-back-to-heading)
      (let ((data (org-canvas--rubric-parse-entry)))
        (expect (plist-get data :free-form) :to-be t))))
 
-  (it "extracts criteria from table"
+  (it "extracts criterion description and points from heading"
     (with-temp-org-buffer
      "* Rubric
 :PROPERTIES:
 :END:
-
-| Criterion   | Points | Long Description |
-|-------------+--------+------------------|
-| Clarity     |     25 | Writing clarity  |
-| Originality |     25 | Original ideas   |
+** Clarity :25pt:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Full Marks | 25 | |
+| No Marks | 0 | |
+** Originality :15pt:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Full Marks | 15 | |
 "
      (org-back-to-heading)
-     (let ((data (org-canvas--rubric-parse-entry)))
-       (expect (plist-get data :criteria) :to-be-truthy)
-       (expect (length (plist-get data :criteria)) :to-be-greater-than 0))))
+     (let* ((data (org-canvas--rubric-parse-entry))
+            (criteria (plist-get data :criteria)))
+       (expect (length criteria) :to-equal 2)
+       (let ((c0 (nth 0 criteria))
+             (c1 (nth 1 criteria)))
+         (expect (plist-get c0 :description) :to-equal "Clarity")
+         (expect (plist-get c0 :points) :to-equal 25)
+         (expect (plist-get c1 :description) :to-equal "Originality")
+         (expect (plist-get c1 :points) :to-equal 15)))))
 
-  (it "errors when no table found"
+  (it "errors when no criteria found"
     (with-temp-org-buffer
-     "* Rubric Without Table
+     "* Rubric Without Criteria
 :PROPERTIES:
 :END:
 
-Just some text, no table.
+Just some text, no level-2 children.
 "
      (org-back-to-heading)
      (expect (org-canvas--rubric-parse-entry) :to-throw 'error)))
@@ -132,82 +181,139 @@ Just some text, no table.
      "* Test
 :PROPERTIES:
 :END:
-
-| Criterion | Points |
-|-----------+--------|
-| Item      |     10 |
+** Item :10pt:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Full Marks | 10 | |
 "
      (org-back-to-heading)
      (let ((data (org-canvas--rubric-parse-entry)))
-       (expect (plist-get data :pom) :to-be-truthy)))))
+       (expect (plist-get data :pom) :to-be-truthy))))
+
+  (it "extracts ratings from criterion sub-table"
+    (with-temp-org-buffer
+     "* Rubric
+:PROPERTIES:
+:END:
+** Code Quality :10pt:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Excellent | 10 | |
+| Good | 7 | |
+| Poor | 0 | |
+"
+     (org-back-to-heading)
+     (let* ((data (org-canvas--rubric-parse-entry))
+            (criteria (plist-get data :criteria))
+            (c0 (nth 0 criteria))
+            (ratings (plist-get c0 :ratings)))
+       (expect (length ratings) :to-equal 3)
+       (expect (nth 0 (nth 0 ratings)) :to-equal "Excellent")
+       (expect (nth 1 (nth 0 ratings)) :to-equal 10)
+       (expect (nth 0 (nth 2 ratings)) :to-equal "Poor"))))
+
+  (it "extracts long description from body before sub-table"
+    (with-temp-org-buffer
+     "* Rubric
+:PROPERTIES:
+:END:
+** Quality :10pt:
+This is a longer description of the criterion.
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Full Marks | 10 | |
+"
+     (org-back-to-heading)
+     (let* ((data (org-canvas--rubric-parse-entry))
+            (criteria (plist-get data :criteria))
+            (c0 (nth 0 criteria)))
+       (expect (plist-get c0 :long-description)
+               :to-match "longer description"))))
+
+  (it "extracts OUTCOME property as :outcome-link"
+    (with-temp-org-buffer
+     "* Rubric
+:PROPERTIES:
+:END:
+** Quality :10pt:
+:PROPERTIES:
+:OUTCOME: [[file:outcomes.org::*Python][Python]]
+:END:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Full Marks | 10 | |
+"
+     (org-back-to-heading)
+     (let* ((data (org-canvas--rubric-parse-entry))
+            (criteria (plist-get data :criteria))
+            (c0 (nth 0 criteria)))
+       (expect (plist-get c0 :outcome-link)
+               :to-match "Python")))))
 
 ;;;; Stage 2: Build Payload
 
 (describe "org-canvas--rubric-build-payload"
   (it "wraps in rubric key"
-    (let* ((data '(:title "Test" :free-form nil
-                   :criteria (("Criterion" "10" "Description"))))
+    (let* ((data (list :title "Test" :free-form nil
+                       :criteria (list (test-rubric--criterion "Crit" 10))))
            (payload (org-canvas--rubric-build-payload data)))
       (expect (gethash "rubric" payload) :to-be-truthy)))
 
   (it "includes title in payload"
-    (let* ((data '(:title "Grading Rubric" :free-form nil
-                   :criteria (("Item" "5" ""))))
+    (let* ((data (list :title "Grading Rubric" :free-form nil
+                       :criteria (list (test-rubric--criterion "Item" 5))))
            (payload (org-canvas--rubric-build-payload data))
            (rubric (gethash "rubric" payload)))
       (expect (gethash "title" rubric) :to-equal "Grading Rubric")))
 
   (it "sets free_form_criterion_comments"
-    (let* ((data '(:title "Test" :free-form t
-                   :criteria (("Item" "5" ""))))
+    (let* ((data (list :title "Test" :free-form t
+                       :criteria (list (test-rubric--criterion "Item" 5))))
            (payload (org-canvas--rubric-build-payload data))
            (rubric (gethash "rubric" payload)))
       (expect (gethash "free_form_criterion_comments" rubric) :to-be t)))
 
   (it "builds criteria hash"
-    (let* ((data '(:title "Test" :free-form nil
-                   :criteria (("Clarity" "20" "Clear writing")
-                              ("Structure" "15" "Good organization"))))
+    (let* ((data (list :title "Test" :free-form nil
+                       :criteria (list (test-rubric--criterion "Clarity" 20)
+                                       (test-rubric--criterion "Structure" 15))))
            (payload (org-canvas--rubric-build-payload data))
            (rubric (gethash "rubric" payload))
            (criteria (gethash "criteria" rubric)))
       (expect criteria :to-be-truthy)
-      ;; Should have two criteria (keys "0" and "1")
       (expect (gethash "0" criteria) :to-be-truthy)
       (expect (gethash "1" criteria) :to-be-truthy)))
 
   (it "includes rubric_association"
     (with-org-canvas-test-config
-      (let* ((data '(:title "Test" :free-form nil
-                     :criteria (("Item" "5" ""))))
+      (let* ((data (list :title "Test" :free-form nil
+                         :criteria (list (test-rubric--criterion "Item" 5))))
              (payload (org-canvas--rubric-build-payload data)))
         (expect (gethash "rubric_association" payload) :to-be-truthy))))
 
   (it "sets free_form_criterion_comments to :json-false when nil"
-    (let* ((data '(:title "Test" :free-form nil
-                   :criteria (("Item" "5" ""))))
+    (let* ((data (list :title "Test" :free-form nil
+                       :criteria (list (test-rubric--criterion "Item" 5))))
            (payload (org-canvas--rubric-build-payload data))
            (rubric (gethash "rubric" payload)))
       (expect (gethash "free_form_criterion_comments" rubric) :to-equal :json-false)))
 
-  (it "skips hlines in criteria table"
-    (let* ((data '(:title "Test" :free-form nil
-                   :criteria (("Header" "Points" "Description")
-                              hline
-                              ("Criterion1" "10" "Desc1")
-                              ("Criterion2" "20" "Desc2"))))
+  (it "preserves criterion order"
+    (let* ((data (list :title "Test" :free-form nil
+                       :criteria (list (test-rubric--criterion "First" 10)
+                                       (test-rubric--criterion "Second" 20)
+                                       (test-rubric--criterion "Third" 30))))
            (payload (org-canvas--rubric-build-payload data))
            (rubric (gethash "rubric" payload))
            (criteria (gethash "criteria" rubric)))
-      ;; Should have 3 criteria (header + 2 rows, hline skipped)
-      (expect (gethash "0" criteria) :to-be-truthy)
-      (expect (gethash "1" criteria) :to-be-truthy)
-      (expect (gethash "2" criteria) :to-be-truthy)
+      (expect (gethash "description" (gethash "0" criteria)) :to-equal "First")
+      (expect (gethash "description" (gethash "1" criteria)) :to-equal "Second")
+      (expect (gethash "description" (gethash "2" criteria)) :to-equal "Third")
       (expect (gethash "3" criteria) :to-be nil)))
 
-  (it "includes ratings with Full Marks and No Marks"
-    (let* ((data '(:title "Test" :free-form nil
-                   :criteria (("Quality" "25" "Description"))))
+  (it "builds default Full Marks/No Marks ratings when no ratings list"
+    (let* ((data (list :title "Test" :free-form nil
+                       :criteria (list (test-rubric--criterion "Quality" 25))))
            (payload (org-canvas--rubric-build-payload data))
            (rubric (gethash "rubric" payload))
            (criteria (gethash "criteria" rubric))
@@ -247,7 +353,6 @@ Just some text, no table.
         (let ((data '(:title "Duplicate Rubric"))
               (payload (make-hash-table)))
           (org-canvas--rubric-push-to-api data payload)
-          ;; Should have called DELETE first, then POST
           (expect-api-called 'DELETE "rubrics/555")
           (expect-api-called 'POST "rubrics")))))
 
@@ -258,13 +363,10 @@ Just some text, no table.
                    (lambda (method url &rest _args)
                      (setq call-count (1+ call-count))
                      (cond
-                      ;; First call: search for existing (none found)
                       ((and (eq method 'GET) (= call-count 1))
                        [])
-                      ;; Second call: POST that times out
                       ((eq method 'POST)
                        (signal 'error '("Timeout waiting for response")))
-                      ;; Third call: recovery search finds the rubric
                       ((and (eq method 'GET) (>= call-count 3))
                        [((id . 999) (title . "Timeout Rubric"))])
                       (t nil)))))
@@ -280,10 +382,8 @@ Just some text, no table.
                    (lambda (method _url &rest _args)
                      (setq call-count (1+ call-count))
                      (cond
-                      ;; First call: search for existing (none found)
                       ((and (eq method 'GET) (= call-count 1))
                        [])
-                      ;; Second call: POST that fails with non-timeout error
                       ((eq method 'POST)
                        (signal 'error '("Bad Request: Invalid rubric")))
                       (t nil)))))
@@ -300,14 +400,11 @@ Just some text, no table.
                    (lambda (method url &rest _args)
                      (setq call-count (1+ call-count))
                      (cond
-                      ;; First call: search finds existing rubric
                       ((and (eq method 'GET) (= call-count 1))
                        [((id . 111) (title . "In Use Rubric"))])
-                      ;; Second call: DELETE fails (rubric in use)
                       ((eq method 'DELETE)
                        (setq delete-called t)
                        (signal 'error '("Rubric is in use and cannot be deleted")))
-                      ;; Third call: POST succeeds anyway
                       ((eq method 'POST)
                        '((id . 222) (title . "In Use Rubric")))
                       (t nil)))))
@@ -324,13 +421,10 @@ Just some text, no table.
                    (lambda (method _url &rest _args)
                      (setq call-count (1+ call-count))
                      (cond
-                      ;; First call: search for existing (none found)
                       ((and (eq method 'GET) (= call-count 1))
                        [])
-                      ;; Second call: POST that times out
                       ((eq method 'POST)
                        (signal 'error '("Timeout waiting for response")))
-                      ;; Third call: recovery search finds nothing
                       ((and (eq method 'GET) (>= call-count 3))
                        nil)
                       (t nil)))))
@@ -428,7 +522,6 @@ Just some text, no table.
                       ((eq method 'GET)
                        (cl-incf get-calls)
                        (pcase get-calls
-                         ;; Page 1: 100 items, half have rubric_settings.
                          (1 (vconcat
                              (cl-loop for i from 1 to 100
                                       collect (if (zerop (mod i 2))
@@ -437,7 +530,6 @@ Just some text, no table.
                                                     (rubric_settings . ((id . ,(+ 500 i)))))
                                                 `((id . ,i)
                                                   (name . ,(format "Assn %d" i)))))))
-                         ;; Page 2: 2 more items, one with rubric_settings.
                          (2 (vector '((id . 101) (name . "Late Assn"))
                                     '((id . 102) (name . "Final")
                                       (rubric_settings . ((id . 999))))))
@@ -446,10 +538,8 @@ Just some text, no table.
                        (push url delete-urls)
                        nil)))))
           (let ((count (org-canvas--rubric-dissociate-all)))
-            ;; 50 from page 1 (even-indexed) plus 1 from page 2 = 51.
             (expect count :to-equal 51)
             (expect (length delete-urls) :to-equal 51)
-            ;; The page-2 rubric (assoc id 999) must be in the dissociated set.
             (expect (cl-some (lambda (u) (string-match-p "999" u)) delete-urls)
                     :to-be-truthy)
             (expect get-calls :to-equal 2)))))))
@@ -463,7 +553,6 @@ Just some text, no table.
                      (when (eq method 'GET)
                        (push url get-urls))
                      (cond
-                      ;; Individual rubric detail
                       ((string-match "rubrics/555" url)
                        '((id . 555) (title . "Stuck Rubric")
                          (context_type . "Course") (context_id . 99999)
@@ -471,14 +560,12 @@ Just some text, no table.
                          (assessments . [((id . 1) (assessment_type . "grading")
                                           (artifact_type . "Submission")
                                           (artifact_id . 42) (score . 85))])))
-                      ;; Assignments list
                       ((string-match "assignments" url)
                        [((id . 10) (name . "HW1") (rubric_id . 555)
                          (rubric_settings . ((id . 801))))])
                       (t nil)))))
           (org-canvas--rubric-log-diagnostics
            555 '((id . 555) (title . "Stuck Rubric") (points_possible . 100)))
-          ;; Should have fetched rubric detail and assignments
           (expect (cl-some (lambda (u) (string-match "rubrics/555" u)) get-urls)
                   :to-be-truthy)
           (expect (cl-some (lambda (u) (string-match "assignments" u)) get-urls)
@@ -489,7 +576,6 @@ Just some text, no table.
       (cl-letf (((symbol-function 'org-canvas-api-request)
                  (lambda (_method _url &rest _args)
                    (signal 'error '("Network error")))))
-        ;; Should not throw - errors are caught and logged
         (org-canvas--rubric-log-diagnostics 999 '((id . 999) (title . "Bad")))))))
 
 (describe "org-canvas-delete-all-rubrics (mocked)"
@@ -504,10 +590,10 @@ Just some text, no table.
 :PROPERTIES:
 :CANVAS_ID: 111
 :END:
-
-| Criterion | Points |
-|-----------+--------|
-| Item      |     10 |
+** Item :10pt:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Full Marks | 10 | |
 "))
             (let ((org-canvas-rubrics-file org-file)
                   (org-canvas-base-url "https://test.canvas.example.com")
@@ -543,11 +629,9 @@ Just some text, no table.
                     ((symbol-function 'org-canvas-api-request)
                      (lambda (method url &rest _args)
                        (cond
-                        ;; List all rubrics
                         ((and (eq method 'GET) (string-match-p "rubrics$" url))
                          [((id . 200) (title . "OK Rubric"))
                           ((id . 201) (title . "Bad Rubric"))])
-                        ;; Verify GET for rubric 201 succeeds = still exists
                         ((and (eq method 'GET) (string-match "rubrics/201" url))
                          '((id . 201) (title . "Bad Rubric")))
                         ((and (eq method 'DELETE) (string-match "200" url))
@@ -556,7 +640,6 @@ Just some text, no table.
                          (signal 'error '("500 Internal Server Error")))))))
             (let ((org-canvas-rubrics-file "/nonexistent"))
               (org-canvas-delete-all-rubrics)
-              ;; Diagnostics should be called only for the failed rubric
               (expect (length diagnostics-called) :to-equal 1)
               (expect (car diagnostics-called) :to-equal 201)))))))
 
@@ -573,18 +656,14 @@ Just some text, no table.
                     ((symbol-function 'org-canvas-api-request)
                      (lambda (method url &rest _args)
                        (cond
-                        ;; List all rubrics
                         ((and (eq method 'GET) (string-match-p "rubrics$" url))
                          [((id . 300) (title . "Ghost Rubric"))])
-                        ;; Verify GET returns 404 = rubric was deleted
                         ((and (eq method 'GET) (string-match "rubrics/300" url))
                          (signal 'error '("HTTP error 404")))
-                        ;; DELETE returns 500
                         ((and (eq method 'DELETE) (string-match "300" url))
                          (signal 'error '("500 Internal Server Error")))))))
             (let ((org-canvas-rubrics-file "/nonexistent"))
               (org-canvas-delete-all-rubrics)
-              ;; Diagnostics should NOT be called - rubric was confirmed deleted
               (expect diagnostics-called :to-be nil))))))))
 
 ;;;; Stage 4: Finalize
@@ -595,10 +674,10 @@ Just some text, no table.
      "* Test Rubric
 :PROPERTIES:
 :END:
-
-| Criterion | Points |
-|-----------+--------|
-| Item      |     10 |
+** Item :10pt:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Full Marks | 10 | |
 "
      (org-back-to-heading)
      (let ((data (list :title "Test Rubric" :pom (point-marker)))
@@ -611,10 +690,10 @@ Just some text, no table.
      "* Test
 :PROPERTIES:
 :END:
-
-| Criterion | Points |
-|-----------+--------|
-| Item      |      5 |
+** Item :5pt:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Full Marks | 5 | |
 "
      (org-back-to-heading)
      (let ((data (list :title "Test" :pom (point-marker)))
@@ -627,10 +706,10 @@ Just some text, no table.
      "* Test
 :PROPERTIES:
 :END:
-
-| Criterion | Points |
-|-----------+--------|
-| Item      |      5 |
+** Item :5pt:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Full Marks | 5 | |
 "
      (org-back-to-heading)
      (let ((data (list :title "Test" :pom (point-marker)))
@@ -643,10 +722,10 @@ Just some text, no table.
      "* No ID Rubric
 :PROPERTIES:
 :END:
-
-| Criterion | Points |
-|-----------+--------|
-| Item      |      5 |
+** Item :5pt:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Full Marks | 5 | |
 "
      (org-back-to-heading)
      (let ((data (list :title "No ID Rubric" :pom (point-marker)))
@@ -654,27 +733,74 @@ Just some text, no table.
        (org-canvas--rubric-finalize data response)
        (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)))))
 
-;;;; Pull Function Tests
+;;;; Pull Function Tests (new format)
 
 (describe "org-canvas--rubric-pull-item"
-  (it "replaces body with criteria table"
+  (it "emits a child heading per criterion with sub-table"
     (with-temp-org-buffer
      "* My Rubric
 :PROPERTIES:
 :CANVAS_ID: 1
 :END:
-Old body text
 "
      (org-back-to-heading)
      (let ((item '((id . 1) (title . "My Rubric")
                    (data . [((description . "Quality")
                              (points . 10)
-                             (long_description . "Well written"))]))))
+                             (long_description . "Well written")
+                             (ratings . [((description . "Full Marks") (points . 10))
+                                         ((description . "No Marks") (points . 0))]))]))))
        (org-canvas--rubric-pull-item item (point))
-       (expect (buffer-string) :to-match "| Quality | 10 | Well written |")
-       (expect (buffer-string) :not :to-match "Old body text"))))
+       (let ((output (buffer-string)))
+         (expect output :to-match "^\\*\\* Quality[ \t]+:10pt:$")
+         (expect output :to-match "Well written")
+         (expect output :to-match "| Rating | Points | Description |")
+         (expect output :to-match "Full Marks")
+         (expect output :to-match "No Marks")))))
 
-  (it "escapes pipe characters in criteria"
+  (it "always emits sub-table even for default Full/No Marks ratings"
+    (with-temp-org-buffer
+     "* My Rubric
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (let ((item '((id . 1) (title . "My Rubric")
+                   (data . [((description . "Quality")
+                             (points . 10)
+                             (long_description . "")
+                             (ratings . [((description . "Full Marks") (points . 10))
+                                         ((description . "No Marks") (points . 0))]))]))))
+       (org-canvas--rubric-pull-item item (point))
+       (let ((output (buffer-string)))
+         (expect output :to-match "| Rating | Points | Description |")
+         (expect output :to-match "Full Marks")
+         (expect output :to-match "No Marks")))))
+
+  (it "emits OUTCOME property when criterion has learning_outcome_id"
+    (cl-letf (((symbol-function 'org-canvas--rubric-outcome-title)
+               (lambda (_id) "Communication")))
+      (with-temp-org-buffer
+       "* Outcomey Rubric
+:PROPERTIES:
+:CANVAS_ID: 200
+:END:
+"
+       (org-back-to-heading)
+       (let ((item '((id . 200) (title . "Outcomey Rubric")
+                     (data . [((description . "Articulates clearly")
+                               (points . 4)
+                               (long_description . "")
+                               (learning_outcome_id . 999)
+                               (ratings . [((description . "Full Marks") (points . 4))
+                                           ((description . "No Marks") (points . 0))]))]))))
+         (org-canvas--rubric-pull-item item (point))
+         (let ((output (buffer-string)))
+           (expect output :to-match
+                   ":OUTCOME:[ ]+\\[\\[file:outcomes\\.org::\\*Communication"))))))
+
+  (it "escapes pipe characters in criterion descriptions"
     (with-temp-org-buffer
      "* My Rubric
 :PROPERTIES:
@@ -685,10 +811,10 @@ Old body text
      (let ((item '((id . 1) (title . "My Rubric")
                    (data . [((description . "Good|Bad")
                              (points . 5)
-                             (long_description . "Either|Or"))]))))
+                             (long_description . "")
+                             (ratings . [((description . "Full Marks") (points . 5))]))]))))
        (org-canvas--rubric-pull-item item (point))
-       (expect (buffer-string) :to-match "Good/Bad")
-       (expect (buffer-string) :to-match "Either/Or"))))
+       (expect (buffer-string) :to-match "Good/Bad"))))
 
   (it "does nothing for nil criteria"
     (with-temp-org-buffer
@@ -701,7 +827,31 @@ Keep this body
      (org-back-to-heading)
      (let ((item '((id . 1) (title . "My Rubric"))))
        (org-canvas--rubric-pull-item item (point))
-       (expect (buffer-string) :to-match "Keep this body")))))
+       (expect (buffer-string) :to-match "Keep this body"))))
+
+  (it "sorts rating rows by points descending"
+    (with-temp-org-buffer
+     "* My Rubric
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (let ((item '((id . 1) (title . "My Rubric")
+                   (data . [((description . "Quality")
+                             (points . 10)
+                             (long_description . "")
+                             (ratings . [((description . "Poor") (points . 0))
+                                         ((description . "Excellent") (points . 10))
+                                         ((description . "Good") (points . 7))]))]))))
+       (org-canvas--rubric-pull-item item (point))
+       (let* ((content (buffer-string))
+              (exc-pos (string-match "Excellent" content))
+              (good-pos (string-match "Good" content))
+              (poor-pos (string-match "Poor" content)))
+         (expect exc-pos :to-be-truthy)
+         (expect (< exc-pos good-pos) :to-be t)
+         (expect (< good-pos poor-pos) :to-be t))))))
 
 (describe "org-canvas-pull-rubrics"
   (it "pulls rubrics from Canvas"
@@ -716,7 +866,9 @@ Keep this body
                              '(((id . 1) (title . "Essay Rubric")
                                 (data . [((description . "Thesis")
                                           (points . 20)
-                                          (long_description . ""))])))))
+                                          (long_description . "")
+                                          (ratings . [((description . "Full Marks") (points . 20))
+                                                      ((description . "No Marks") (points . 0))]))])))))
                           ((symbol-function 'y-or-n-p) (lambda (_) t)))
                   (org-canvas-pull-rubrics)
                   (with-current-buffer (find-file-noselect rubrics-file)
@@ -779,7 +931,6 @@ Keep this body
       (spy-on 'org-canvas--log-warning)
       (cl-letf (((symbol-function 'org-canvas-api-request)
                  (lambda (_method _url &rest _args)
-                   ;; Return assignments that don't match rubric-id 123
                    [((id . 1) (name . "HW1") (rubric_id . 999))
                     ((id . 2) (name . "HW2") (rubric_id . 888))])))
         (org-canvas--rubric-log-linked-assignments "123")
@@ -801,23 +952,12 @@ Keep this body
     (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil)))
       (expect (org-canvas-delete-all-rubrics) :to-throw 'user-error))))
 
-;;;; Multi-Level Ratings Tests
+;;;; Custom-rating Builds (new format: ratings come from criterion plist)
 
-(describe "org-canvas--rubric-rating-row-p"
-  (it "returns non-nil for > prefixed rows"
-    (expect (org-canvas--rubric-rating-row-p '("> Excellent" "10" ""))
-            :to-be-truthy))
-
-  (it "returns nil for normal criterion rows"
-    (expect (org-canvas--rubric-rating-row-p '("Quality" "10" ""))
-            :to-be nil))
-
-  (it "returns nil for hline"
-    (expect (org-canvas--rubric-rating-row-p 'hline) :to-be nil)))
-
-(describe "org-canvas--rubric-build-criterion with rating-rows"
-  (it "builds default 2-level ratings when no rating-rows"
-    (let ((crit (org-canvas--rubric-build-criterion '("Quality" "10" "Desc") 0)))
+(describe "org-canvas--rubric-build-criterion with rating list"
+  (it "builds default 2-level ratings when ratings list is nil"
+    (let ((crit (org-canvas--rubric-build-criterion
+                 (test-rubric--criterion "Quality" 10) 0)))
       (let* ((obj (plist-get crit :obj))
              (ratings (gethash "ratings" obj)))
         (expect (gethash "0" ratings) :to-be-truthy)
@@ -826,40 +966,27 @@ Keep this body
         (expect (gethash "description" (gethash "0" ratings)) :to-equal "Full Marks")
         (expect (gethash "description" (gethash "1" ratings)) :to-equal "No Marks"))))
 
-  (it "builds custom ratings from rating-rows"
-    (let ((crit (org-canvas--rubric-build-criterion
-                 '("Quality" "10" "Desc") 0
-                 '(("> Excellent" "10" "") ("> Good" "7" "") ("> Poor" "0" "")))))
-      (let* ((obj (plist-get crit :obj))
-             (ratings (gethash "ratings" obj)))
-        (expect (gethash "0" ratings) :to-be-truthy)
-        (expect (gethash "1" ratings) :to-be-truthy)
-        (expect (gethash "2" ratings) :to-be-truthy)
-        (expect (gethash "description" (gethash "0" ratings)) :to-equal "Excellent")
-        (expect (gethash "points" (gethash "0" ratings)) :to-equal 10)
-        (expect (gethash "description" (gethash "1" ratings)) :to-equal "Good")
-        (expect (gethash "points" (gethash "1" ratings)) :to-equal 7)
-        (expect (gethash "description" (gethash "2" ratings)) :to-equal "Poor")
-        (expect (gethash "points" (gethash "2" ratings)) :to-equal 0))))
-
-  (it "strips > prefix from rating descriptions"
-    (let ((crit (org-canvas--rubric-build-criterion
-                 '("Quality" "10" "") 0
-                 '(("> Full" "10" "")))))
-      (let* ((obj (plist-get crit :obj))
-             (ratings (gethash "ratings" obj)))
-        (expect (gethash "description" (gethash "0" ratings)) :to-equal "Full"))))
-
-  (it "uses nil rating-rows as default 2-level"
-    (let ((crit (org-canvas--rubric-build-criterion '("Quality" "10" "") 0 nil)))
-      (let* ((obj (plist-get crit :obj))
-             (ratings (gethash "ratings" obj)))
-        (expect (gethash "description" (gethash "0" ratings)) :to-equal "Full Marks")))))
+  (it "builds custom ratings from criterion :ratings"
+    (let* ((cp (list :description "Quality" :points 10 :long-description ""
+                     :outcome-link nil
+                     :ratings '(("Excellent" 10 "") ("Good" 7 "") ("Poor" 0 ""))))
+           (crit (org-canvas--rubric-build-criterion cp 0))
+           (obj (plist-get crit :obj))
+           (ratings (gethash "ratings" obj)))
+      (expect (gethash "0" ratings) :to-be-truthy)
+      (expect (gethash "1" ratings) :to-be-truthy)
+      (expect (gethash "2" ratings) :to-be-truthy)
+      (expect (gethash "description" (gethash "0" ratings)) :to-equal "Excellent")
+      (expect (gethash "points" (gethash "0" ratings)) :to-equal 10)
+      (expect (gethash "description" (gethash "1" ratings)) :to-equal "Good")
+      (expect (gethash "points" (gethash "1" ratings)) :to-equal 7)
+      (expect (gethash "description" (gethash "2" ratings)) :to-equal "Poor")
+      (expect (gethash "points" (gethash "2" ratings)) :to-equal 0))))
 
 (describe "org-canvas--rubric-build-payload with multi-level ratings"
-  (it "builds criteria with default ratings when no > rows"
-    (let* ((data '(:title "Test" :free-form nil
-                   :criteria (("Quality" "10" "Desc"))))
+  (it "builds criteria with default ratings when no ratings list"
+    (let* ((data (list :title "Test" :free-form nil
+                       :criteria (list (test-rubric--criterion "Quality" 10))))
            (payload (org-canvas--rubric-build-payload data))
            (rubric (gethash "rubric" payload))
            (criteria (gethash "criteria" rubric))
@@ -867,16 +994,14 @@ Keep this body
            (ratings (gethash "ratings" crit0)))
       (expect (gethash "description" (gethash "0" ratings)) :to-equal "Full Marks")))
 
-  (it "builds criteria with custom ratings from > rows"
-    (let* ((data '(:title "Test" :free-form nil
-                   :criteria (("Quality" "10" "Desc")
-                              ("> Excellent" "10" "")
-                              ("> Good" "7" "")
-                              ("> Poor" "0" ""))))
+  (it "builds criteria with custom ratings from plist :ratings"
+    (let* ((cp (list :description "Quality" :points 10 :long-description ""
+                     :outcome-link nil
+                     :ratings '(("Excellent" 10 "") ("Good" 7 "") ("Poor" 0 ""))))
+           (data (list :title "Test" :free-form nil :criteria (list cp)))
            (payload (org-canvas--rubric-build-payload data))
            (rubric (gethash "rubric" payload))
            (criteria (gethash "criteria" rubric)))
-      ;; Should have 1 criterion (not 4)
       (expect (gethash "0" criteria) :to-be-truthy)
       (expect (gethash "1" criteria) :to-be nil)
       (let ((ratings (gethash "ratings" (gethash "0" criteria))))
@@ -885,77 +1010,46 @@ Keep this body
         (expect (gethash "2" ratings) :to-be-truthy)
         (expect (gethash "description" (gethash "0" ratings)) :to-equal "Excellent"))))
 
-  (it "mixes criteria with and without custom ratings"
-    (let* ((data '(:title "Test" :free-form nil
-                   :criteria (("Code Quality" "10" "")
-                              ("> Excellent" "10" "")
-                              ("> Good" "7" "")
-                              ("Correctness" "15" ""))))
-           (payload (org-canvas--rubric-build-payload data))
-           (rubric (gethash "rubric" payload))
-           (criteria (gethash "criteria" rubric)))
-      ;; Should have 2 criteria
-      (expect (gethash "0" criteria) :to-be-truthy)
-      (expect (gethash "1" criteria) :to-be-truthy)
-      (expect (gethash "2" criteria) :to-be nil)
-      ;; First criterion should have custom ratings
-      (let ((ratings0 (gethash "ratings" (gethash "0" criteria))))
-        (expect (gethash "description" (gethash "0" ratings0)) :to-equal "Excellent"))
-      ;; Second criterion should have default ratings
-      (let ((ratings1 (gethash "ratings" (gethash "1" criteria))))
-        (expect (gethash "description" (gethash "0" ratings1)) :to-equal "Full Marks"))))
-
-  (it "handles hlines mixed with rating rows"
-    (let* ((data '(:title "Test" :free-form nil
-                   :criteria (("Header" "Points" "Desc")
-                              hline
-                              ("Quality" "10" "Desc")
-                              ("> Great" "10" "")
-                              ("> OK" "5" ""))))
-           (payload (org-canvas--rubric-build-payload data))
-           (rubric (gethash "rubric" payload))
-           (criteria (gethash "criteria" rubric)))
-      ;; Header + Quality = 2 criteria (hline skipped)
-      (expect (gethash "0" criteria) :to-be-truthy)
-      (expect (gethash "1" criteria) :to-be-truthy)
-      (expect (gethash "2" criteria) :to-be nil)))
-
-  (it "calculates total points correctly with rating rows"
-    (let* ((data '(:title "Test" :free-form nil
-                   :criteria (("Quality" "10" "")
-                              ("> Excellent" "10" "")
-                              ("> Poor" "0" "")
-                              ("Format" "5" ""))))
-           (payload (org-canvas--rubric-build-payload data))
-           (rubric (gethash "rubric" payload))
-           (criteria (gethash "criteria" rubric))
-           (c0 (gethash "0" criteria))
-           (c1 (gethash "1" criteria)))
-      (expect (gethash "points" c0) :to-equal 10)
-      (expect (gethash "points" c1) :to-equal 5))))
-
-(describe "org-canvas--rubric-has-custom-ratings"
-  (it "returns nil for default 2-level ratings"
-    (expect (org-canvas--rubric-has-custom-ratings
-             '(((description . "Full Marks") (points . 10))
-               ((description . "No Marks") (points . 0))))
-            :to-be nil))
-
-  (it "returns non-nil for 3+ level ratings"
-    (expect (org-canvas--rubric-has-custom-ratings
-             '(((description . "Excellent") (points . 10))
-               ((description . "Good") (points . 7))
-               ((description . "Poor") (points . 0))))
-            :to-be-truthy))
-
-  (it "returns non-nil for custom 2-level names"
-    (expect (org-canvas--rubric-has-custom-ratings
-             '(((description . "Pass") (points . 10))
-               ((description . "Fail") (points . 0))))
-            :to-be-truthy))
-
-  (it "returns nil for nil ratings"
-    (expect (org-canvas--rubric-has-custom-ratings nil) :to-be nil)))
+  (it "round-trips parsed criteria through build-payload"
+    (with-temp-org-buffer
+     "* Test Rubric
+:PROPERTIES:
+:END:
+** Code Quality :10pt:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Excellent | 10 | |
+| Good | 7 | |
+| Fair | 3 | |
+| Poor | 0 | |
+** Correctness :15pt:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Full Marks | 15 | |
+| No Marks | 0 | |
+"
+     (org-back-to-heading)
+     (let* ((data (org-canvas--rubric-parse-entry))
+            (payload (org-canvas--rubric-build-payload data))
+            (rubric (gethash "rubric" payload))
+            (criteria (gethash "criteria" rubric)))
+       (let* ((code-quality nil)
+              (correctness nil))
+         (maphash (lambda (_k v)
+                    (cond
+                     ((string= (gethash "description" v) "Code Quality")
+                      (setq code-quality v))
+                     ((string= (gethash "description" v) "Correctness")
+                      (setq correctness v))))
+                  criteria)
+         (expect code-quality :to-be-truthy)
+         (let ((ratings (gethash "ratings" code-quality)))
+           (expect (gethash "0" ratings) :to-be-truthy)
+           (expect (gethash "3" ratings) :to-be-truthy)
+           (expect (gethash "description" (gethash "0" ratings)) :to-equal "Excellent"))
+         (expect correctness :to-be-truthy)
+         (let ((ratings (gethash "ratings" correctness)))
+           (expect (gethash "description" (gethash "0" ratings)) :to-equal "Full Marks")))))))
 
 (describe "org-canvas--rubric-sort-ratings"
   (it "sorts ratings by points descending"
@@ -967,155 +1061,56 @@ Keep this body
       (expect (alist-get 'description (nth 1 sorted)) :to-equal "Good")
       (expect (alist-get 'description (nth 2 sorted)) :to-equal "Poor"))))
 
-(describe "org-canvas--rubric-pull-item with multi-level ratings"
-  (it "inserts > rows for custom ratings"
-    (with-temp-org-buffer
-     "* My Rubric
-:PROPERTIES:
-:CANVAS_ID: 1
-:END:
-"
-     (org-back-to-heading)
-     (let ((item '((id . 1) (title . "My Rubric")
-                   (data . [((description . "Quality")
-                             (points . 10)
-                             (long_description . "")
-                             (ratings . [((description . "Excellent") (points . 10))
-                                         ((description . "Good") (points . 7))
-                                         ((description . "Poor") (points . 0))]))]))))
-       (org-canvas--rubric-pull-item item (point))
-       (expect (buffer-string) :to-match "| Quality | 10 |")
-       (expect (buffer-string) :to-match "| > Excellent | 10 |")
-       (expect (buffer-string) :to-match "| > Good | 7 |")
-       (expect (buffer-string) :to-match "| > Poor | 0 |"))))
+;;;; Outcome Links
 
-  (it "does not insert > rows for default 2-level ratings"
-    (with-temp-org-buffer
-     "* My Rubric
-:PROPERTIES:
-:CANVAS_ID: 1
-:END:
-"
-     (org-back-to-heading)
-     (let ((item '((id . 1) (title . "My Rubric")
-                   (data . [((description . "Quality")
-                             (points . 10)
-                             (long_description . "")
-                             (ratings . [((description . "Full Marks") (points . 10))
-                                         ((description . "No Marks") (points . 0))]))]))))
-       (org-canvas--rubric-pull-item item (point))
-       (expect (buffer-string) :to-match "| Quality | 10 |")
-       (expect (buffer-string) :not :to-match "> "))))
-
-  (it "sorts rating rows by points descending"
-    (with-temp-org-buffer
-     "* My Rubric
-:PROPERTIES:
-:CANVAS_ID: 1
-:END:
-"
-     (org-back-to-heading)
-     (let ((item '((id . 1) (title . "My Rubric")
-                   (data . [((description . "Quality")
-                             (points . 10)
-                             (long_description . "")
-                             (ratings . [((description . "Poor") (points . 0))
-                                         ((description . "Excellent") (points . 10))
-                                         ((description . "Good") (points . 7))]))]))))
-       (org-canvas--rubric-pull-item item (point))
-       ;; Verify order: Excellent (10) before Good (7) before Poor (0)
-       (let ((content (buffer-string)))
-         (expect (string-match "> Excellent" content) :to-be-truthy)
-         (let ((exc-pos (string-match "> Excellent" content))
-               (good-pos (string-match "> Good" content))
-               (poor-pos (string-match "> Poor" content)))
-           (expect (< exc-pos good-pos) :to-be t)
-           (expect (< good-pos poor-pos) :to-be t))))))
-
-  (it "round-trips multi-level ratings through pull and build"
-    ;; Parse the pulled format and verify the build produces correct structure
-    (with-temp-org-buffer
-     "* Test Rubric
-:PROPERTIES:
-:END:
-
-| Criterion | Points | Description |
-|---|---|---|
-| Code Quality | 10 | Well-written |
-| > Excellent | 10 | |
-| > Good | 7 | |
-| > Fair | 3 | |
-| > Poor | 0 | |
-| Correctness | 15 | Correct output |
-"
-     (org-back-to-heading)
-     (let ((data (org-canvas--rubric-parse-entry)))
-       (let* ((payload (org-canvas--rubric-build-payload data))
-              (rubric (gethash "rubric" payload))
-              (criteria (gethash "criteria" rubric)))
-         ;; Should have 3 criteria: header, Code Quality, Correctness
-         ;; (Header row is criterion 0, Code Quality is 1, Correctness is 2)
-         (let* ((code-quality nil)
-                (correctness nil))
-           ;; Find the Code Quality criterion by checking descriptions
-           (maphash (lambda (_k v)
-                      (cond
-                       ((string= (gethash "description" v) "Code Quality")
-                        (setq code-quality v))
-                       ((string= (gethash "description" v) "Correctness")
-                        (setq correctness v))))
-                    criteria)
-           ;; Code Quality should have 4 custom ratings
-           (expect code-quality :to-be-truthy)
-           (let ((ratings (gethash "ratings" code-quality)))
-             (expect (gethash "0" ratings) :to-be-truthy)
-             (expect (gethash "3" ratings) :to-be-truthy)
-             (expect (gethash "description" (gethash "0" ratings)) :to-equal "Excellent"))
-           ;; Correctness should have default 2-level ratings
-           (expect correctness :to-be-truthy)
-           (let ((ratings (gethash "ratings" correctness)))
-             (expect (gethash "description" (gethash "0" ratings)) :to-equal "Full Marks"))))))))
-
-;;;; Outcome Links in 4th Column
-
-(describe "org-canvas--rubric-build-criterion with outcome-id"
-  (it "adds learning_outcome_id when outcome-id is provided"
-    (let ((crit (org-canvas--rubric-build-criterion
-                 '("Quality" "10" "Desc") 0 nil "51479")))
-      (let ((obj (plist-get crit :obj)))
-        (expect (gethash "learning_outcome_id" obj) :to-equal "51479"))))
-
-  (it "omits learning_outcome_id when outcome-id is nil"
-    (let ((crit (org-canvas--rubric-build-criterion
-                 '("Quality" "10" "Desc") 0 nil nil)))
-      (let ((obj (plist-get crit :obj)))
-        (expect (gethash "learning_outcome_id" obj) :to-be nil))))
-
-  (it "includes learning_outcome_id with custom ratings"
-    (let ((crit (org-canvas--rubric-build-criterion
-                 '("Quality" "10" "Desc") 0
-                 '(("> Good" "10" "") ("> Poor" "0" ""))
-                 "99999")))
-      (let ((obj (plist-get crit :obj)))
-        (expect (gethash "learning_outcome_id" obj) :to-equal "99999")
-        (expect (gethash "ratings" obj) :to-be-truthy)))))
-
-(describe "org-canvas--rubric-build-payload with outcome links"
-  (it "resolves 4th column outcome link to learning_outcome_id"
-    (let* ((temp-dir (make-temp-file "rubric-outcome-test" t))
+(describe "org-canvas--rubric-build-criterion with outcome-link"
+  (it "resolves outcome-link to learning_outcome_id"
+    (let* ((temp-dir (make-temp-file "rubric-outcome-build" t))
            (outcomes-file (expand-file-name "outcomes.org" temp-dir))
            (rubrics-file (expand-file-name "rubrics.org" temp-dir)))
       (unwind-protect
           (progn
             (with-temp-file outcomes-file
-              (insert "* Programming Skills\n** Python Proficiency\n:PROPERTIES:\n:CANVAS_ID: 51479\n:END:\n"))
+              (insert "* Skills\n** Python\n:PROPERTIES:\n:CANVAS_ID: 51479\n:END:\n"))
+            (let ((org-canvas-rubrics-file rubrics-file)
+                  (org-canvas-outcomes-file outcomes-file))
+              (let* ((link (format "[[file:%s::*Python][Python]]" outcomes-file))
+                     (cp (list :description "Quality" :points 10
+                               :long-description "" :outcome-link link
+                               :ratings nil))
+                     (crit (org-canvas--rubric-build-criterion cp 0))
+                     (obj (plist-get crit :obj)))
+                (expect (gethash "learning_outcome_id" obj) :to-equal "51479"))))
+        (let ((buf (find-buffer-visiting outcomes-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "omits learning_outcome_id when outcome-link is nil"
+    (let ((crit (org-canvas--rubric-build-criterion
+                 (test-rubric--criterion "Quality" 10) 0)))
+      (let ((obj (plist-get crit :obj)))
+        (expect (gethash "learning_outcome_id" obj) :to-be nil)))))
+
+(describe "org-canvas--rubric-build-payload with outcome links"
+  (it "resolves :outcome-link to learning_outcome_id"
+    (let* ((temp-dir (make-temp-file "rubric-outcome-payload" t))
+           (outcomes-file (expand-file-name "outcomes.org" temp-dir))
+           (rubrics-file (expand-file-name "rubrics.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file outcomes-file
+              (insert "* Programming\n** Python Proficiency\n:PROPERTIES:\n:CANVAS_ID: 51479\n:END:\n"))
             (let ((org-canvas-rubrics-file rubrics-file)
                   (org-canvas-outcomes-file outcomes-file)
                   (org-canvas-course-id "99999"))
               (let* ((link (format "[[file:%s::*Python Proficiency][Python Proficiency]]" outcomes-file))
                      (data (list :title "Test" :free-form nil
-                                 :criteria (list (list "Code Quality" "10" "Clean" link)
-                                                 (list "Correctness" "10" "Correct" ""))))
+                                 :criteria (list (list :description "Code Quality"
+                                                       :points 10
+                                                       :long-description ""
+                                                       :outcome-link link
+                                                       :ratings nil)
+                                                 (test-rubric--criterion "Correctness" 10))))
                      (payload (org-canvas--rubric-build-payload data))
                      (rubric (gethash "rubric" payload))
                      (criteria (gethash "criteria" rubric))
@@ -1127,59 +1122,22 @@ Keep this body
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t))))
 
-  (it "handles 3-column tables without errors (backward compat)"
-    (let* ((data '(:title "Test" :free-form nil
-                   :criteria (("Quality" "10" "Desc")
-                              ("Format" "5" "Clean"))))
+  (it "handles criteria without outcome-link without errors"
+    (let* ((data (list :title "Test" :free-form nil
+                       :criteria (list (test-rubric--criterion "Quality" 10)
+                                       (test-rubric--criterion "Format" 5))))
            (payload (org-canvas--rubric-build-payload data))
            (rubric (gethash "rubric" payload))
            (criteria (gethash "criteria" rubric))
            (c0 (gethash "0" criteria))
            (c1 (gethash "1" criteria)))
       (expect (gethash "learning_outcome_id" c0) :to-be nil)
-      (expect (gethash "learning_outcome_id" c1) :to-be nil)))
+      (expect (gethash "learning_outcome_id" c1) :to-be nil))))
 
-  (it "ignores 4th column on rating rows"
-    (let* ((data '(:title "Test" :free-form nil
-                   :criteria (("Quality" "10" "Desc" "some-link")
-                              ("> Good" "10" "" "ignored")
-                              ("> Poor" "0" "" "also-ignored"))))
-           (payload (org-canvas--rubric-build-payload data))
-           (rubric (gethash "rubric" payload))
-           (criteria (gethash "criteria" rubric)))
-      ;; Should have 1 criterion (rating rows are grouped, not separate criteria)
-      (expect (gethash "0" criteria) :to-be-truthy)
-      (expect (gethash "1" criteria) :to-be nil)))
-
-  (it "handles mixed criteria with and without outcome links"
-    (let* ((temp-dir (make-temp-file "rubric-outcome-mix" t))
-           (outcomes-file (expand-file-name "outcomes.org" temp-dir))
-           (rubrics-file (expand-file-name "rubrics.org" temp-dir)))
-      (unwind-protect
-          (progn
-            (with-temp-file outcomes-file
-              (insert "* Skills\n** Python\n:PROPERTIES:\n:CANVAS_ID: 111\n:END:\n** Data\n:PROPERTIES:\n:CANVAS_ID: 222\n:END:\n"))
-            (let ((org-canvas-rubrics-file rubrics-file)
-                  (org-canvas-outcomes-file outcomes-file)
-                  (org-canvas-course-id "99999"))
-              (let* ((link1 (format "[[file:%s::*Python][Python]]" outcomes-file))
-                     (link2 (format "[[file:%s::*Data][Data]]" outcomes-file))
-                     (data (list :title "Test" :free-form nil
-                                 :criteria (list (list "Quality" "10" "" link1)
-                                                 (list "Middle" "5" "" "")
-                                                 (list "End" "10" "" link2))))
-                     (payload (org-canvas--rubric-build-payload data))
-                     (rubric (gethash "rubric" payload))
-                     (criteria (gethash "criteria" rubric)))
-                (expect (gethash "learning_outcome_id" (gethash "0" criteria)) :to-equal "111")
-                (expect (gethash "learning_outcome_id" (gethash "1" criteria)) :to-be nil)
-                (expect (gethash "learning_outcome_id" (gethash "2" criteria)) :to-equal "222"))))
-        (let ((buf (find-buffer-visiting outcomes-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t)))))
+;;;; Pull-side outcome handling
 
 (describe "org-canvas--rubric-pull-item with outcome links"
-  (it "includes 4th column with outcome link when learning_outcome_id present"
+  (it "emits OUTCOME property for criteria with learning_outcome_id"
     (let* ((temp-dir (make-temp-file "rubric-pull-outcome" t))
            (outcomes-file (expand-file-name "outcomes.org" temp-dir)))
       (unwind-protect
@@ -1198,23 +1156,25 @@ Keep this body
                              (data . [((description . "Code Quality")
                                        (points . 10)
                                        (long_description . "")
-                                       (learning_outcome_id . 51479))
+                                       (learning_outcome_id . 51479)
+                                       (ratings . [((description . "Full Marks") (points . 10))
+                                                   ((description . "No Marks") (points . 0))]))
                                       ((description . "Correctness")
                                        (points . 10)
-                                       (long_description . ""))]))))
+                                       (long_description . "")
+                                       (ratings . [((description . "Full Marks") (points . 10))
+                                                   ((description . "No Marks") (points . 0))]))]))))
                  (org-canvas--rubric-pull-item item (point))
                  (let ((content (buffer-string)))
-                   ;; Should have 4-column header
-                   (expect content :to-match "| Criterion | Points | Description | Outcome |")
-                   ;; Code Quality should have outcome link
+                   (expect content :to-match ":OUTCOME:")
                    (expect content :to-match "Python Proficiency")
-                   ;; Correctness should have empty outcome column
-                   (expect content :to-match "| Correctness | 10 |  |  |"))))))
+                   (expect content :to-match "^\\*\\* Code Quality[ \t]+:10pt:$")
+                   (expect content :to-match "^\\*\\* Correctness[ \t]+:10pt:$"))))))
         (let ((buf (find-buffer-visiting outcomes-file)))
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t))))
 
-  (it "uses 3-column format when no criteria have outcomes"
+  (it "omits :OUTCOME: property when no learning_outcome_id"
     (with-temp-org-buffer
      "* My Rubric
 :PROPERTIES:
@@ -1225,13 +1185,14 @@ Keep this body
      (let ((item '((id . 1) (title . "My Rubric")
                    (data . [((description . "Quality")
                              (points . 10)
-                             (long_description . "Well written"))]))))
+                             (long_description . "Well written")
+                             (ratings . [((description . "Full Marks") (points . 10))
+                                         ((description . "No Marks") (points . 0))]))]))))
        (org-canvas--rubric-pull-item item (point))
        (let ((content (buffer-string)))
-         (expect content :to-match "| Criterion | Points | Description |")
-         (expect content :not :to-match "Outcome")))))
+         (expect content :not :to-match ":OUTCOME:")))))
 
-  (it "falls back to outcome ID when title not found in outcomes.org"
+  (it "falls back to outcome ID string when title not found"
     (let* ((temp-dir (make-temp-file "rubric-pull-nolookup" t))
            (outcomes-file (expand-file-name "outcomes.org" temp-dir)))
       (unwind-protect
@@ -1250,9 +1211,9 @@ Keep this body
                              (data . [((description . "Quality")
                                        (points . 10)
                                        (long_description . "")
-                                       (learning_outcome_id . 12345))]))))
+                                       (learning_outcome_id . 12345)
+                                       (ratings . [((description . "Full Marks") (points . 10))]))]))))
                  (org-canvas--rubric-pull-item item (point))
-                 ;; Should fall back to just the numeric ID
                  (expect (buffer-string) :to-match "12345")))))
         (let ((buf (find-buffer-visiting outcomes-file)))
           (when buf (kill-buffer buf)))
@@ -1287,58 +1248,8 @@ Keep this body
 
   (it "returns nil when outcomes file does not exist"
     (let ((org-canvas-outcomes-file "/nonexistent/outcomes.org"))
-      (expect (org-canvas--rubric-outcome-title 42) :to-be nil))))
+      (expect (org-canvas--rubric-outcome-title 42) :to-be nil)))
 
-(describe "org-canvas--rubric-pull-insert-criterion with outcomes and custom ratings"
-  (it "inserts 4-column rating rows when has-outcomes is t"
-    (let* ((temp-dir (make-temp-file "rubric-pull-rating-outcome" t))
-           (outcomes-file (expand-file-name "outcomes.org" temp-dir)))
-      (unwind-protect
-          (progn
-            (with-temp-file outcomes-file
-              (insert "* Group\n** Py\n:PROPERTIES:\n:CANVAS_ID: 77\n:END:\n"))
-            (let ((org-canvas-outcomes-file outcomes-file))
-              (with-temp-buffer
-                (let ((c '((description . "Quality") (points . 10) (long_description . "")
-                           (learning_outcome_id . 77)
-                           (ratings . [((description . "Great") (points . 10))
-                                       ((description . "OK") (points . 5))
-                                       ((description . "Bad") (points . 0))]))))
-                  (org-canvas--rubric-pull-insert-criterion c t)
-                  (let ((content (buffer-string)))
-                    ;; Rating rows should have 4 columns (extra empty col)
-                    (expect content :to-match "| > Great | 10 | | |")
-                    (expect content :to-match "| > OK | 5 | | |")
-                    (expect content :to-match "| > Bad | 0 | | |"))))))
-        (let ((buf (find-buffer-visiting outcomes-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t)))))
-
-(describe "org-canvas--rubric-pull-insert-criterion HTML conversion"
-  (it "converts HTML descriptions via html-to-org-inline"
-    (cl-letf (((symbol-function 'org-canvas--html-to-org-inline)
-               (lambda (html) (concat "C:" html))))
-      (with-temp-buffer
-        (let ((c '((description . "<b>Bold</b>") (points . 5)
-                   (long_description . "<em>Italic</em>") (ratings . []))))
-          (org-canvas--rubric-pull-insert-criterion c nil)
-          (expect (buffer-string) :to-match "C:<b>Bold</b>")
-          (expect (buffer-string) :to-match "C:<em>Italic</em>")))))
-
-  (it "converts HTML rating descriptions via html-to-org-inline"
-    (cl-letf (((symbol-function 'org-canvas--html-to-org-inline)
-               (lambda (html) (concat "R:" html)))
-              ((symbol-function 'org-canvas--rubric-has-custom-ratings)
-               (lambda (_) t))
-              ((symbol-function 'org-canvas--rubric-sort-ratings)
-               (lambda (r) (append r nil))))
-      (with-temp-buffer
-        (let ((c '((description . "D") (points . 5) (long_description . "")
-                   (ratings . [((description . "<i>Good</i>") (points . 5))]))))
-          (org-canvas--rubric-pull-insert-criterion c nil)
-          (expect (buffer-string) :to-match "R:<i>Good</i>"))))))
-
-(describe "org-canvas--rubric-outcome-title with string outcome-id"
   (it "handles string outcome-id"
     (let* ((temp-dir (make-temp-file "outcome-title-str" t))
            (outcomes-file (expand-file-name "outcomes.org" temp-dir)))
@@ -1352,16 +1263,28 @@ Keep this body
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
 
-(describe "org-canvas--rubric-pull-has-outcomes"
-  (it "returns non-nil when any criterion has learning_outcome_id"
-    (expect (org-canvas--rubric-pull-has-outcomes
-             [((learning_outcome_id . 42)) ((description . "Foo"))])
-            :to-be-truthy))
+(describe "org-canvas--rubric-pull-emit-criterion HTML conversion"
+  (it "converts HTML descriptions via html-to-org-inline"
+    (cl-letf (((symbol-function 'org-canvas--html-to-org-inline)
+               (lambda (html) (concat "C:" html))))
+      (with-temp-buffer
+        (let ((c '((description . "<b>Bold</b>") (points . 5)
+                   (long_description . "<em>Italic</em>")
+                   (ratings . [])))) ; no ratings list
+          (org-canvas--rubric-pull-emit-criterion c)
+          (expect (buffer-string) :to-match "C:<b>Bold</b>")
+          (expect (buffer-string) :to-match "C:<em>Italic</em>")))))
 
-  (it "returns nil when no criteria have learning_outcome_id"
-    (expect (org-canvas--rubric-pull-has-outcomes
-             [((description . "Foo")) ((description . "Bar"))])
-            :to-be nil)))
+  (it "converts HTML rating descriptions via html-to-org-inline"
+    (cl-letf (((symbol-function 'org-canvas--html-to-org-inline)
+               (lambda (html) (concat "R:" html)))
+              ((symbol-function 'org-canvas--rubric-sort-ratings)
+               (lambda (r) (append r nil))))
+      (with-temp-buffer
+        (let ((c '((description . "D") (points . 5) (long_description . "")
+                   (ratings . [((description . "<i>Good</i>") (points . 5))]))))
+          (org-canvas--rubric-pull-emit-criterion c)
+          (expect (buffer-string) :to-match "R:<i>Good</i>"))))))
 
 ;;;; Delete at Point
 

@@ -182,15 +182,12 @@ If UPDATE_SNAPSHOTS is set, write the snapshot instead of comparing."
   (list :title "Essay Rubric"
         :free-form nil
         :criteria (list (list :description "Thesis"
-                              :long_description "Clear thesis statement"
+                              :long-description "Clear thesis statement"
                               :points 25
-                              :outcome-id nil
-                              :ratings (list (list :description "Excellent"
-                                                   :points 25)
-                                             (list :description "Good"
-                                                   :points 20)
-                                             (list :description "Poor"
-                                                   :points 5))))))
+                              :outcome-link nil
+                              :ratings '(("Excellent" 25 "")
+                                         ("Good" 20 "")
+                                         ("Poor" 5 ""))))))
 
 (defun test-snapshot--calendar-data ()
   "Build test data for calendar event payload."

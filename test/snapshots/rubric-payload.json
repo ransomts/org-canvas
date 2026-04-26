@@ -2,17 +2,21 @@
   "rubric": {
     "criteria": {
       "0": {
-        "description": "description",
-        "long_description": "long_description",
-        "points": 0,
+        "description": "Thesis",
+        "long_description": "Clear thesis statement",
+        "points": 25,
         "ratings": {
           "0": {
-            "description": "Full Marks",
-            "points": 0
+            "description": "Excellent",
+            "points": 25
           },
           "1": {
-            "description": "No Marks",
-            "points": 0
+            "description": "Good",
+            "points": 20
+          },
+          "2": {
+            "description": "Poor",
+            "points": 5
           }
         }
       }
