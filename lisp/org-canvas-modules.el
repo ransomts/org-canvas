@@ -904,6 +904,7 @@ Returns the count of items inserted."
             (when items
               (setq item-count (+ item-count
                                   (org-canvas--module-pull-insert-items items)))))))
+      (org-canvas--pull-write-file-header)
       (org-canvas--save-buffer))
     (org-canvas--pull-kill-fresh-buffer file was-fresh)
     (org-canvas--log-info org-canvas--logger

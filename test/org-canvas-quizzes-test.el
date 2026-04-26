@@ -1332,7 +1332,7 @@ Description.
            (response '((error . "something went wrong"))))
        (expect (org-canvas--quiz-finalize data response) :to-throw 'error))))
 
-  (it "saves LAST_SYNCED timestamp"
+  (it "does not write per-entry LAST_SYNCED (file-level header instead)"
     (with-temp-org-buffer
      "* Quiz
 :PROPERTIES:
@@ -1344,7 +1344,7 @@ Description.
      (let ((data (list :title "Quiz" :pom (point-marker)))
            (response '((id . 99999))))
        (org-canvas--quiz-finalize data response)
-       (expect (org-entry-get (point) "LAST_SYNCED") :to-match "^\\[20[0-9][0-9]-")))))
+       (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil)))))
 
 (describe "org-canvas--question-finalize"
   (it "signals error when no ID in response"
@@ -1362,7 +1362,7 @@ Description.
            (response '((error . "failed"))))
        (expect (org-canvas--question-finalize data response) :to-throw 'error))))
 
-  (it "saves LAST_SYNCED timestamp"
+  (it "does not write per-entry LAST_SYNCED (file-level header instead)"
     (with-temp-org-buffer
      "* Quiz
 ** Question
@@ -1376,7 +1376,7 @@ Description.
      (let ((data (list :name "Question" :pom (point-marker)))
            (response '((id . 88888))))
        (org-canvas--question-finalize data response)
-       (expect (org-entry-get (point) "LAST_SYNCED") :to-match "^\\[20[0-9][0-9]-")))))
+       (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil)))))
 
 ;;;; Sync Quiz Questions Tests
 
@@ -3017,7 +3017,7 @@ Content.
        (org-canvas--question-group-finalize data response)
        (expect (org-entry-get (point) "CANVAS_ID") :to-equal "77"))))
 
-  (it "saves LAST_SYNCED timestamp"
+  (it "does not write per-entry LAST_SYNCED (file-level header instead)"
     (with-temp-org-buffer
      "* Quiz
 ** Group
@@ -3030,7 +3030,7 @@ Content.
      (let ((data (list :name "Group" :pom (point-marker)))
            (response '((id . 77))))
        (org-canvas--question-group-finalize data response)
-       (expect (org-entry-get (point) "LAST_SYNCED") :to-match "^\\[20[0-9][0-9]-")))))
+       (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil)))))
 
 (describe "org-canvas--sync-quiz-groups (mocked)"
   (it "collects only TYPE=group headings"

@@ -345,7 +345,7 @@ Welcome to the course.
 ;;;; Finalize
 
 (describe "org-canvas--settings-finalize"
-  (it "saves LAST_SYNCED"
+  (it "does not write per-entry LAST_SYNCED (file-level header instead)"
     (with-temp-org-buffer
      "* Course
 :PROPERTIES:
@@ -354,7 +354,7 @@ Welcome to the course.
      (org-back-to-heading)
      (let ((data (list :pom (point-marker))))
        (org-canvas--settings-finalize data nil)
-       (expect-synced-timestamp (point))))))
+       (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil)))))
 
 ;;;; Sync Integration
 

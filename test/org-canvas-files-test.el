@@ -764,7 +764,7 @@
        (org-canvas--file-finalize data response)
        (expect (org-entry-get (point) "CANVAS_ID") :to-equal "55555"))))
 
-  (it "saves LAST_SYNCED timestamp"
+  (it "does not write per-entry LAST_SYNCED (file-level header instead)"
     (with-temp-org-buffer
      "* [[file:doc.pdf][Document]]
 :PROPERTIES:
@@ -774,8 +774,7 @@
      (let ((data (list :display-name "Document" :pom (point-marker)))
            (response '((id . 66666))))
        (org-canvas--file-finalize data response)
-       (expect (org-entry-get (point) "LAST_SYNCED")
-               :to-match "^\\[20[0-9][0-9]-"))))
+       (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil))))
 
   (it "signals error when response lacks id"
     (with-temp-org-buffer

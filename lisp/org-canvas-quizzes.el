@@ -887,6 +887,7 @@ Point must be at the parent quiz heading."
           (org-canvas--pull-insert-body (alist-get 'description quiz))
           (org-canvas--quiz-pull-insert-questions id)
           (cl-incf count)))
+      (org-canvas--pull-write-file-header)
       (org-canvas--save-buffer))
     (org-canvas--pull-kill-fresh-buffer file was-fresh)
     (org-canvas--log-info org-canvas--logger "Quizzes pull complete: %d quizzes" count)

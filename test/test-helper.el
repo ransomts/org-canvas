@@ -294,8 +294,11 @@ calls PULL-FN, and asserts (expect (org-entry-get (point) PROPERTY) MATCHER VALU
   (expect (test-org-canvas-api-called-p method endpoint) :to-be-truthy))
 
 (defun expect-synced-timestamp (pom)
-  "Assert that LAST_SYNCED at POM is a valid recent timestamp."
-  (expect (org-entry-get pom "LAST_SYNCED") :to-match "^\\[20[0-9][0-9]-"))
+  "Assert that no per-entry LAST_SYNCED is written at POM.
+After the file-level #+LAST_SYNCED header migration, finalize/pull
+no longer writes a per-entry LAST_SYNCED — this helper enforces that
+by asserting the property is absent."
+  (expect (org-entry-get pom "LAST_SYNCED") :to-be nil))
 
 ;;;; Mock Data Builders
 

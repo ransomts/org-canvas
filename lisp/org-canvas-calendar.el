@@ -186,6 +186,7 @@ Fetches events via the global calendar API filtered by course context code."
               (goto-char pos)
               (org-canvas-org-save-sync-state pos id "CANVAS_ID")
               (org-canvas--calendar-event-pull-item item pos)))))
+      (org-canvas--pull-write-file-header)
       (org-canvas--save-buffer))
     (org-canvas--pull-kill-fresh-buffer file was-fresh)
     (org-canvas--log-info org-canvas--logger "========================================")

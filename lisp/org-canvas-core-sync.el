@@ -484,9 +484,15 @@ Returns nil if ISO8601 is nil or :null."
     (date-to-time iso8601)))
 
 (defun org-canvas--parse-last-synced (pom)
-  "Parse the LAST_SYNCED Org timestamp at POM to an Emacs time value.
-Returns nil if no LAST_SYNCED property exists."
-  (let ((ts (org-entry-get pom "LAST_SYNCED")))
+  "Parse the file-level #+LAST_SYNCED header to an Emacs time value.
+POM is a marker or position in the buffer to query.  Returns nil
+if no #+LAST_SYNCED header exists in that buffer."
+  (let* ((buf (cond ((markerp pom) (marker-buffer pom))
+                    ((and (numberp pom) (buffer-live-p (current-buffer)))
+                     (current-buffer))))
+         (ts (when buf
+               (with-current-buffer buf
+                 (org-canvas--pull-read-file-header)))))
     (when ts
       (encode-time (org-parse-time-string ts)))))
 
@@ -505,10 +511,12 @@ when no LAST_SYNCED exists (legacy item, first sync)."
                (updated-at (alist-get 'updated_at response))
                (remote-time (org-canvas--parse-iso8601-time updated-at)))
           (if (and remote-time (time-less-p local-time remote-time))
-              (progn
+              (let ((local-ts (when (markerp pom)
+                                (with-current-buffer (marker-buffer pom)
+                                  (org-canvas--pull-read-file-header)))))
                 (org-canvas--log-warning org-canvas--logger
-                  "[Conflict] Remote item updated at %s, local LAST_SYNCED is %s"
-                  updated-at (org-entry-get pom "LAST_SYNCED"))
+                  "[Conflict] Remote item updated at %s, local #+LAST_SYNCED is %s"
+                  updated-at local-ts)
                 (cons 'conflict response))
             nil))
       (error nil))))

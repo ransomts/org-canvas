@@ -273,7 +273,7 @@ Content.
          :id-field 'url :id-property "CANVAS_URL")
        (expect (org-entry-get (point) "CANVAS_URL") :to-equal "test-page-url"))))
 
-  (it "saves LAST_SYNCED timestamp"
+  (it "does not write per-entry LAST_SYNCED (file-level header instead)"
     (with-temp-org-buffer
      "* Test
 :PROPERTIES:
@@ -284,8 +284,7 @@ Content.
            (response '((url . "test"))))
        (org-canvas--finalize-item data response
          :id-field 'url :id-property "CANVAS_URL")
-       (expect (org-entry-get (point) "LAST_SYNCED")
-               :to-match "^\\[20[0-9][0-9]-")))))
+       (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil)))))
 
 ;;;; Additional Parse Tests
 

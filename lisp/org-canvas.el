@@ -347,21 +347,23 @@ Deletion order is reverse of sync order to respect dependencies."
 
 (defun org-canvas--status-count-entries (file id-prop)
   "Count synced and pending entries in FILE using ID-PROP.
-Returns a plist (:synced N :pending N :legacy N :last-synced TS-OR-NIL)."
+Returns a plist (:synced N :pending N :legacy N :last-synced TS-OR-NIL).
+LAST-SYNCED reads the file-level #+LAST_SYNCED header.  LEGACY counts
+entries with a Canvas ID but missing a file header (i.e., the file has
+no #+LAST_SYNCED, indicating it has not been re-pulled since the
+schema cutover)."
   (let ((synced 0) (pending 0) (legacy 0) (last-synced nil))
     (with-current-buffer (find-file-noselect file)
+      (setq last-synced (org-canvas--pull-read-file-header))
       (save-excursion
         (goto-char (point-min))
         (org-map-entries
          (lambda ()
-           (let ((id (org-entry-get (point) id-prop))
-                 (ts (org-entry-get (point) "LAST_SYNCED")))
+           (let ((id (org-entry-get (point) id-prop)))
              (if id
                  (progn
                    (setq synced (1+ synced))
-                   (unless ts (setq legacy (1+ legacy)))
-                   (when (and ts (or (not last-synced) (string> ts last-synced)))
-                     (setq last-synced ts)))
+                   (unless last-synced (setq legacy (1+ legacy))))
                (setq pending (1+ pending)))))
          "LEVEL=1" 'file)))
     (list :synced synced :pending pending :legacy legacy :last-synced last-synced)))

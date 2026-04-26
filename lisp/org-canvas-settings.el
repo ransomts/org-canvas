@@ -329,15 +329,13 @@ falls back to POST."
 
 ;;;; 4. Finalize
 
-(defun org-canvas--settings-finalize (data _response)
-  "Save LAST_SYNCED timestamp for course settings.
-DATA is the parsed settings plist."
-  (let ((pom (plist-get data :pom)))
-    (org-canvas-org-set-property
-     pom "LAST_SYNCED"
-     (format-time-string "[%Y-%m-%d %a %H:%M]"))
-    (org-canvas--log-info org-canvas--logger
-      "[Finalize] Saved LAST_SYNCED for course settings")))
+(defun org-canvas--settings-finalize (_data _response)
+  "Finalize the settings push.
+Per-entry LAST_SYNCED is no longer written; the file-level header
+is updated only by `org-canvas-pull-settings' (pulls populate the
+canonical `LAST_SYNCED' for conflict detection)."
+  (org-canvas--log-info org-canvas--logger
+    "[Finalize] Settings push complete"))
 
 ;;;; Navigation Tabs
 
@@ -631,9 +629,6 @@ LATE-POLICY is the late policy API response (may be nil)."
     (let ((image-url (org-canvas--alist-get-non-null 'image_download_url response)))
       (when image-url
         (org-canvas-org-set-property pom "COURSE_IMAGE" image-url)))
-    (org-canvas-org-set-property
-     pom "LAST_SYNCED"
-     (format-time-string "[%Y-%m-%d %a %H:%M]"))
     (when syllabus-body
       (org-canvas--settings-replace-syllabus-body syllabus-body))))
 
@@ -703,6 +698,7 @@ and heading if they don't exist."
                           (error nil))))
           (when nav-text
             (org-canvas--settings-insert-navigation-heading nav-text)))
+        (org-canvas--pull-write-file-header)
         (org-canvas--save-buffer))
       (org-canvas--pull-kill-fresh-buffer settings-file was-fresh))
     (org-canvas--log-info org-canvas--logger "========================================")

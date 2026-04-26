@@ -74,13 +74,17 @@
                           :to-have-same-items-as '(t t))
                   ;; First section
                   (goto-char (point-min))
+                  (re-search-forward "^\\* " nil t)
                   (org-back-to-heading)
                   (expect (org-get-heading t t t t) :to-equal "Section A")
                   (expect (org-entry-get (point) "CANVAS_ID") :to-equal "100")
                   (expect (org-entry-get (point) "START_AT") :to-match "^<2026-01-15")
                   (expect (org-entry-get (point) "END_AT") :to-match "^<2026-05-15")
                   (expect (org-entry-get (point) "RESTRICT_TO_DATES") :to-equal "true")
-                  (expect (org-entry-get (point) "LAST_SYNCED") :to-be-truthy)))))
+                  ;; Per-entry LAST_SYNCED no longer written; the file-level
+                  ;; #+LAST_SYNCED header is written instead
+                  (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil)
+                  (expect (org-canvas--pull-read-file-header) :to-be-truthy)))))
         (delete-directory temp-dir t))))
 
   (it "updates properties on existing headings without changing heading name"
@@ -106,6 +110,7 @@
                 (org-canvas-pull-sections)
                 (with-current-buffer (find-file-noselect org-file)
                   (goto-char (point-min))
+                  (re-search-forward "^\\* " nil t)
                   (org-back-to-heading)
                   ;; Heading name should be preserved
                   (expect (org-get-heading t t t t)
@@ -114,7 +119,10 @@
                   (expect (org-entry-get (point) "RESTRICT_TO_DATES") :to-equal "true")
                   (expect (org-entry-get (point) "START_AT") :to-match "^<2026-01-15")
                   (expect (org-entry-get (point) "END_AT") :to-match "^<2026-05-15")
-                  (expect (org-entry-get (point) "LAST_SYNCED") :to-be-truthy)))))
+                  ;; File-level #+LAST_SYNCED header is written instead of
+                  ;; per-entry property
+                  (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil)
+                  (expect (org-canvas--pull-read-file-header) :to-be-truthy)))))
         (delete-directory temp-dir t))))
 
   (it "creates new headings for sections not yet in file"
@@ -262,6 +270,7 @@
                 (expect (file-exists-p org-file) :to-be-truthy)
                 (with-current-buffer (find-file-noselect org-file)
                   (goto-char (point-min))
+                  (re-search-forward "^\\* " nil t)
                   (org-back-to-heading)
                   (expect (org-entry-get (point) "CANVAS_ID")
                           :to-equal "100")))))
@@ -302,6 +311,7 @@
                 (org-canvas-pull-sections)
                 (with-current-buffer (find-file-noselect org-file)
                   (goto-char (point-min))
+                  (re-search-forward "^\\* " nil t)
                   (org-back-to-heading)
                   (expect (org-entry-get (point) "RESTRICT_TO_DATES")
                           :to-equal "false")))))
@@ -322,6 +332,7 @@
                 (org-canvas-pull-sections)
                 (with-current-buffer (find-file-noselect org-file)
                   (goto-char (point-min))
+                  (re-search-forward "^\\* " nil t)
                   (org-back-to-heading)
                   (expect (org-entry-get (point) "START_AT") :to-be nil)
                   (expect (org-entry-get (point) "END_AT") :to-be nil)))))

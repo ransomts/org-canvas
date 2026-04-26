@@ -377,7 +377,7 @@ Content.
          :post-fn #'org-canvas--assignment-post-finalize)
        (expect (org-entry-get (point) "CANVAS_ID") :to-equal "44444"))))
 
-  (it "saves LAST_SYNCED timestamp"
+  (it "does not write per-entry LAST_SYNCED (file-level header instead)"
     (with-temp-org-buffer
      "* Test
 :PROPERTIES:
@@ -388,8 +388,7 @@ Content.
            (response '((id . 33333))))
        (org-canvas--finalize-item data response
          :post-fn #'org-canvas--assignment-post-finalize)
-       (expect (org-entry-get (point) "LAST_SYNCED")
-               :to-match "^\\[20[0-9][0-9]-"))))
+       (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil))))
 
   (it "signals error when no ID in response"
     (with-temp-org-buffer

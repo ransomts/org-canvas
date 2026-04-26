@@ -177,13 +177,37 @@ Ensures the correct buffer is used if POM is a marker."
     (if (or (null v) (eq v :null)) nil v)))
 
 (defun org-canvas-org-save-sync-state (pom id &optional id-prop)
-  "Standardize saving ID and LAST_SYNCED to the heading at POM.
-ID-PROP defaults to `CANVAS_ID'."
+  "Standardize saving the Canvas ID to the heading at POM.
+ID-PROP defaults to `CANVAS_ID'.  File-level LAST_SYNCED is written
+separately by `org-canvas--pull-write-file-header'."
   (let ((prop (or id-prop "CANVAS_ID"))
-	(id-str (org-canvas--normalize-id id))
-	(timestamp (format-time-string "[%Y-%m-%d %a %H:%M]")))
-    (org-canvas-org-set-property pom prop id-str)
-    (org-canvas-org-set-property pom "LAST_SYNCED" timestamp)))
+	(id-str (org-canvas--normalize-id id)))
+    (org-canvas-org-set-property pom prop id-str)))
+
+(defun org-canvas--pull-write-file-header ()
+  "Write or replace the #+LAST_SYNCED header in the current buffer.
+Idempotent: replaces an existing header in place; otherwise inserts
+after the existing #+TITLE line, or at the top of the buffer."
+  (let ((timestamp (format-time-string "[%Y-%m-%d %a %H:%M]")))
+    (save-excursion
+      (goto-char (point-min))
+      (cond
+       ((re-search-forward "^#\\+LAST_SYNCED:.*$" nil t)
+        (replace-match (format "#+LAST_SYNCED: %s" timestamp) t t))
+       ((progn (goto-char (point-min))
+               (re-search-forward "^#\\+TITLE:.*$" nil t))
+        (end-of-line)
+        (insert "\n#+LAST_SYNCED: " timestamp))
+       (t
+        (goto-char (point-min))
+        (insert "#+LAST_SYNCED: " timestamp "\n"))))))
+
+(defun org-canvas--pull-read-file-header ()
+  "Return the #+LAST_SYNCED timestamp from the current buffer, or nil."
+  (save-excursion
+    (goto-char (point-min))
+    (when (re-search-forward "^#\\+LAST_SYNCED: \\(.+\\)$" nil t)
+      (match-string-no-properties 1))))
 
 (defun org-canvas-org-parse-timestamp (ts-string)
   "Transform an Org timestamp TS-STRING into a Canvas ISO8601 string."
@@ -1171,6 +1195,7 @@ Example:
                       `(unless (funcall ,skip-fn item)
                          ,body)
                     body)))
+             (org-canvas--pull-write-file-header)
              (org-canvas--save-buffer))
            (org-canvas--pull-kill-fresh-buffer file was-fresh)
            (org-canvas--log-info org-canvas--logger

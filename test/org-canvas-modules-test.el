@@ -840,7 +840,7 @@
        (org-canvas--module-finalize data response)
        (expect (org-entry-get (point) "CANVAS_ID") :to-equal "88888"))))
 
-  (it "saves LAST_SYNCED timestamp"
+  (it "does not write per-entry LAST_SYNCED (file-level header instead)"
     (with-temp-org-buffer
      "* Test
 :PROPERTIES:
@@ -850,8 +850,7 @@
      (let ((data (list :title "Test" :pom (point-marker)))
            (response '((id . 77777))))
        (org-canvas--module-finalize data response)
-       (expect (org-entry-get (point) "LAST_SYNCED")
-               :to-match "^\\[20[0-9][0-9]-"))))
+       (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil))))
 
   (it "signals error when no ID in response"
     (with-temp-org-buffer

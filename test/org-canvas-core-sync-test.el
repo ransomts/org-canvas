@@ -1049,62 +1049,65 @@ Content two.
     (expect (org-canvas--parse-iso8601-time 12345) :to-be nil)))
 
 (describe "org-canvas--parse-last-synced"
-  (it "parses LAST_SYNCED from an Org heading"
+  (it "parses #+LAST_SYNCED file header into a time value"
     (with-temp-org-buffer
-     "* Item
+     "#+LAST_SYNCED: [2026-01-15 Thu 10:00]
+* Item
 :PROPERTIES:
-:LAST_SYNCED: [2026-01-15 Thu 10:00]
 :END:
 "
+     (re-search-forward "^\\* ")
      (org-back-to-heading)
-     (let ((result (org-canvas--parse-last-synced (point))))
+     (let ((result (org-canvas--parse-last-synced (point-marker))))
        (expect result :to-be-truthy))))
 
-  (it "returns nil when no LAST_SYNCED"
+  (it "returns nil when no #+LAST_SYNCED header"
     (with-temp-org-buffer
      "* Item
 :PROPERTIES:
 :END:
 "
      (org-back-to-heading)
-     (expect (org-canvas--parse-last-synced (point)) :to-be nil))))
+     (expect (org-canvas--parse-last-synced (point-marker)) :to-be nil))))
 
 (describe "org-canvas--conflict-check"
   (it "returns conflict cons when remote is newer"
     (with-org-canvas-test-config
       (with-temp-org-buffer
-       "* Item
+       "#+LAST_SYNCED: [2026-01-01 Thu 10:00]
+* Item
 :PROPERTIES:
 :CANVAS_ID: 123
-:LAST_SYNCED: [2026-01-01 Thu 10:00]
 :END:
 "
+       (re-search-forward "^\\* ")
        (org-back-to-heading)
-       ;; Remote updated_at is much newer than LAST_SYNCED
+       ;; Remote updated_at is much newer than the file-level LAST_SYNCED
        (cl-letf (((symbol-function 'org-canvas-api-request)
                   (lambda (_method _url &rest _args)
                     '((id . 123) (updated_at . "2026-02-01T10:00:00Z")))))
-         (let ((result (org-canvas--conflict-check "items" "123" (point))))
+         (let ((result (org-canvas--conflict-check "items" "123" (point-marker))))
            (expect (car result) :to-equal 'conflict)
            (expect (alist-get 'id (cdr result)) :to-equal 123))))))
 
   (it "returns nil when local is newer"
     (with-org-canvas-test-config
       (with-temp-org-buffer
-       "* Item
+       "#+LAST_SYNCED: [2026-02-01 Thu 10:00]
+* Item
 :PROPERTIES:
 :CANVAS_ID: 123
-:LAST_SYNCED: [2026-02-01 Thu 10:00]
 :END:
 "
+       (re-search-forward "^\\* ")
        (org-back-to-heading)
        (cl-letf (((symbol-function 'org-canvas-api-request)
                   (lambda (_method _url &rest _args)
                     '((id . 123) (updated_at . "2026-01-01T10:00:00Z")))))
-         (expect (org-canvas--conflict-check "items" "123" (point))
+         (expect (org-canvas--conflict-check "items" "123" (point-marker))
                  :to-be nil)))))
 
-  (it "returns nil when no LAST_SYNCED exists"
+  (it "returns nil when no #+LAST_SYNCED header exists"
     (with-org-canvas-test-config
       (with-temp-org-buffer
        "* Item
@@ -1113,35 +1116,37 @@ Content two.
 :END:
 "
        (org-back-to-heading)
-       (expect (org-canvas--conflict-check "items" "123" (point))
+       (expect (org-canvas--conflict-check "items" "123" (point-marker))
                :to-be nil))))
 
   (it "returns nil on GET failure"
     (with-org-canvas-test-config
       (with-temp-org-buffer
-       "* Item
+       "#+LAST_SYNCED: [2026-01-01 Thu 10:00]
+* Item
 :PROPERTIES:
 :CANVAS_ID: 123
-:LAST_SYNCED: [2026-01-01 Thu 10:00]
 :END:
 "
+       (re-search-forward "^\\* ")
        (org-back-to-heading)
        (cl-letf (((symbol-function 'org-canvas-api-request)
                   (lambda (_method _url &rest _args)
                     (signal 'error '("HTTP 500")))))
-         (expect (org-canvas--conflict-check "items" "123" (point))
+         (expect (org-canvas--conflict-check "items" "123" (point-marker))
                  :to-be nil))))))
 
 (describe "org-canvas--push-to-api conflict detection"
   (it "returns conflict when user chooses skip"
     (with-org-canvas-test-config
       (with-temp-org-buffer
-       "* Conflict Item
+       "#+LAST_SYNCED: [2026-01-01 Thu 10:00]
+* Conflict Item
 :PROPERTIES:
 :CANVAS_ID: 456
-:LAST_SYNCED: [2026-01-01 Thu 10:00]
 :END:
 "
+       (re-search-forward "^\\* ")
        (org-back-to-heading)
        (let ((org-canvas-detect-conflicts t))
          (cl-letf (((symbol-function 'org-canvas-api-request)
@@ -1431,15 +1436,16 @@ Content two.
         (expect (get-buffer org-canvas--conflict-buffer-name) :to-be nil)))))
 
 (describe "org-canvas--conflict-pull-local"
-  (it "calls pull-item-fn and updates metadata"
+  (it "calls pull-item-fn and refreshes file-level LAST_SYNCED header"
     (with-temp-org-buffer
-     "* Old Title
+     "#+LAST_SYNCED: [2026-01-01 Thu 10:00]
+* Old Title
 :PROPERTIES:
 :CANVAS_ID: 100
-:LAST_SYNCED: [2026-01-01 Thu 10:00]
 :PAYLOAD_HASH: abc123
 :END:
 "
+     (re-search-forward "^\\* ")
      (org-back-to-heading)
      (let* ((pom (point-marker))
             (data (list :title "Old Title" :pom pom))
@@ -1452,11 +1458,13 @@ Content two.
        (expect pull-called :to-be-truthy)
        ;; PAYLOAD_HASH should be deleted
        (expect (org-entry-get pom "PAYLOAD_HASH") :to-be nil)
-       ;; CANVAS_UPDATED_AT should be set
+       ;; CANVAS_UPDATED_AT should be set on the heading
        (expect (org-entry-get pom "CANVAS_UPDATED_AT")
                :to-equal "2026-02-01T12:00:00Z")
-       ;; LAST_SYNCED should be updated (not the old value)
-       (let ((new-synced (org-entry-get pom "LAST_SYNCED")))
+       ;; Per-entry LAST_SYNCED should not be written
+       (expect (org-entry-get pom "LAST_SYNCED") :to-be nil)
+       ;; File-level header should have been refreshed
+       (let ((new-synced (org-canvas--pull-read-file-header)))
          (expect new-synced :to-be-truthy)
          (expect new-synced :not :to-equal "[2026-01-01 Thu 10:00]")))))
 
@@ -1468,12 +1476,18 @@ Content two.
 :END:
 "
      (org-back-to-heading)
-     (let* ((pom (point-marker))
+     (let* ((pom (let ((m (point-marker)))
+                   (set-marker-insertion-type m t)
+                   m))
             (data (list :title "Original Name" :pom pom))
             (remote '((title . "Updated Name")
                       (updated_at . "2026-02-01T12:00:00Z"))))
        (org-canvas--conflict-pull-local data remote
          (lambda (_item _pos) nil))
+       ;; pull-write-file-header may have inserted text at the top —
+       ;; navigate by structure rather than by stale position
+       (goto-char (point-min))
+       (re-search-forward "^\\* " nil t)
        (org-back-to-heading)
        (expect (org-get-heading t t t t) :to-equal "Updated Name"))))
 
@@ -1494,24 +1508,29 @@ Content two.
        (org-canvas--conflict-pull-local data remote
          (lambda (_item _pos) (setq pull-called t)))
        (expect pull-called :to-be-truthy)
-       (goto-char pom)
+       ;; Re-locate the heading because pull-write-file-header may have
+       ;; shifted positions when inserting the file-level header
+       (goto-char (point-min))
+       (re-search-forward "^\\* " nil t)
        (org-back-to-heading)
        (expect (org-get-heading t t t t) :to-equal "Renamed via Integer")
-       (expect (org-entry-get pom "PAYLOAD_HASH") :to-be nil)
-       (expect (org-entry-get pom "CANVAS_UPDATED_AT")
+       (expect (org-entry-get (point) "PAYLOAD_HASH") :to-be nil)
+       (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
                :to-equal "2026-03-01T09:00:00Z")
-       (expect (org-entry-get pom "LAST_SYNCED") :to-be-truthy)))))
+       ;; File-level header gets refreshed
+       (expect (org-canvas--pull-read-file-header) :to-be-truthy)))))
 
 (describe "org-canvas--push-to-api conflict resolution"
   (it "proceeds with PUT when user chooses push"
     (with-org-canvas-test-config
       (with-temp-org-buffer
-       "* Push Item
+       "#+LAST_SYNCED: [2026-01-01 Thu 10:00]
+* Push Item
 :PROPERTIES:
 :CANVAS_ID: 789
-:LAST_SYNCED: [2026-01-01 Thu 10:00]
 :END:
 "
+       (re-search-forward "^\\* ")
        (org-back-to-heading)
        (let ((org-canvas-detect-conflicts t)
              (put-called nil))
@@ -1531,12 +1550,13 @@ Content two.
   (it "returns pulled when user chooses pull"
     (with-org-canvas-test-config
       (with-temp-org-buffer
-       "* Pull Item
+       "#+LAST_SYNCED: [2026-01-01 Thu 10:00]
+* Pull Item
 :PROPERTIES:
 :CANVAS_ID: 111
-:LAST_SYNCED: [2026-01-01 Thu 10:00]
 :END:
 "
+       (re-search-forward "^\\* ")
        (org-back-to-heading)
        (let ((org-canvas-detect-conflicts t)
              (org-canvas--current-pull-item-fn (lambda (_item _pos) nil)))
@@ -1555,12 +1575,13 @@ Content two.
   (it "falls back to conflict when pull chosen but no pull-fn"
     (with-org-canvas-test-config
       (with-temp-org-buffer
-       "* No Pull
+       "#+LAST_SYNCED: [2026-01-01 Thu 10:00]
+* No Pull
 :PROPERTIES:
 :CANVAS_ID: 222
-:LAST_SYNCED: [2026-01-01 Thu 10:00]
 :END:
 "
+       (re-search-forward "^\\* ")
        (org-back-to-heading)
        (let ((org-canvas-detect-conflicts t)
              (org-canvas--current-pull-item-fn nil))
@@ -2142,7 +2163,8 @@ Keep this too
                 (re-search-forward "^\\* " nil t)
                 (org-back-to-heading)
                 (expect (org-entry-get (point) "CANVAS_ID") :to-equal "42")
-                (expect (org-entry-get (point) "LAST_SYNCED") :to-be-truthy))
+                ;; Per-entry LAST_SYNCED is no longer written
+                (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil))
               (expect item-fn-called :to-be t)))
         (let ((buf (find-buffer-visiting org-file)))
           (when buf (kill-buffer buf)))
@@ -2261,17 +2283,18 @@ Keep this too
 ;;;; conflict-format-diff with LAST_SYNCED and name-based remote
 
 (describe "org-canvas--conflict-format-diff"
-  (it "reads LAST_SYNCED from pom and uses name field for title"
+  (it "reads LAST_SYNCED from file-level header and uses name field for title"
     (with-org-canvas-test-config
       (with-temp-org-buffer
-       "* My Item
+       "#+LAST_SYNCED: [2026-01-15 Thu 14:30]
+* My Item
 :PROPERTIES:
 :CANVAS_ID: 123
-:LAST_SYNCED: [2026-01-15 Thu 14:30]
 :END:
 
 Local body content.
 "
+       (re-search-forward "^\\* ")
        (org-back-to-heading)
        (let ((org-canvas--current-pull-item-fn nil)
              (data (list :title "My Item"
@@ -2315,18 +2338,22 @@ Old body.
         data remote
         (lambda (_response _pos)
           (setq pull-called t)))
-       ;; Heading should be renamed
-       (goto-char (marker-position pom))
+       ;; Re-navigate by structure: pull-write-file-header may have
+       ;; inserted text at the top, shifting positions
+       (goto-char (point-min))
+       (re-search-forward "^\\* " nil t)
        (org-back-to-heading)
        (expect (org-get-heading t t t t) :to-equal "New Remote Title")
        ;; pull-item-fn should have been called
        (expect pull-called :to-be-truthy)
-       ;; Sync metadata should be updated
-       (expect (org-entry-get (marker-position pom) "LAST_SYNCED") :to-match "^\\[20")
-       (expect (org-entry-get (marker-position pom) "CANVAS_UPDATED_AT")
+       ;; Per-entry LAST_SYNCED should not be written
+       (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil)
+       ;; File-level header should have been written
+       (expect (org-canvas--pull-read-file-header) :to-match "^\\[20")
+       (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
                :to-equal "2026-02-10T08:00:00Z")
        ;; PAYLOAD_HASH should be deleted
-       (expect (org-entry-get (marker-position pom) "PAYLOAD_HASH") :to-be nil)))))
+       (expect (org-entry-get (point) "PAYLOAD_HASH") :to-be nil)))))
 
 ;;;; demo-conflict via mocked prompt
 
@@ -2602,7 +2629,8 @@ Body.
                      'push-all)))
           ;; First push: conflict detected, user prompted, chooses "Push All"
           (with-temp-org-buffer
-           "* Item 1\n:PROPERTIES:\n:CANVAS_ID: 1\n:LAST_SYNCED: [2026-01-01 Thu 10:00]\n:END:\n"
+           "#+LAST_SYNCED: [2026-01-01 Thu 10:00]\n* Item 1\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+           (re-search-forward "^\\* ")
            (org-back-to-heading)
            (let ((data1 (list :title "Item 1" :canvas-id "1" :pom (point-marker)))
                  (payload1 '((title . "Item 1"))))
@@ -2613,7 +2641,8 @@ Body.
              (expect put-count :to-equal 1)))
           ;; Second push: conflict detected, but apply-all is already 'push
           (with-temp-org-buffer
-           "* Item 2\n:PROPERTIES:\n:CANVAS_ID: 2\n:LAST_SYNCED: [2026-01-01 Thu 10:00]\n:END:\n"
+           "#+LAST_SYNCED: [2026-01-01 Thu 10:00]\n* Item 2\n:PROPERTIES:\n:CANVAS_ID: 2\n:END:\n"
+           (re-search-forward "^\\* ")
            (org-back-to-heading)
            (let ((data2 (list :title "Item 2" :canvas-id "2" :pom (point-marker)))
                  (payload2 '((title . "Item 2"))))
@@ -2643,7 +2672,8 @@ Body.
           ;; First push: conflict, user chooses "Skip All"
           ;; push-to-api returns 'conflict for both skip and skip-all
           (with-temp-org-buffer
-           "* Item A\n:PROPERTIES:\n:CANVAS_ID: 10\n:LAST_SYNCED: [2026-01-01 Thu 10:00]\n:END:\n"
+           "#+LAST_SYNCED: [2026-01-01 Thu 10:00]\n* Item A\n:PROPERTIES:\n:CANVAS_ID: 10\n:END:\n"
+           (re-search-forward "^\\* ")
            (org-back-to-heading)
            (let ((data (list :title "Item A" :canvas-id "10" :pom (point-marker)))
                  (payload '((title . "Item A"))))
@@ -2651,7 +2681,8 @@ Body.
                (expect result :to-equal 'conflict))))
           ;; Second push: auto-skipped without prompt
           (with-temp-org-buffer
-           "* Item B\n:PROPERTIES:\n:CANVAS_ID: 20\n:LAST_SYNCED: [2026-01-01 Thu 10:00]\n:END:\n"
+           "#+LAST_SYNCED: [2026-01-01 Thu 10:00]\n* Item B\n:PROPERTIES:\n:CANVAS_ID: 20\n:END:\n"
+           (re-search-forward "^\\* ")
            (org-back-to-heading)
            (let ((data (list :title "Item B" :canvas-id "20" :pom (point-marker)))
                  (payload '((title . "Item B"))))

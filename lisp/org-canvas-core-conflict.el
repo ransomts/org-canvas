@@ -66,8 +66,10 @@ then prompts for an action.  No API calls are made."
   "Create a diff buffer comparing local DATA with REMOTE-RESPONSE.
 Returns the buffer.  The caller should kill it after resolution."
   (let* ((title (plist-get data :title))
-         (last-synced (when (plist-get data :pom)
-                        (org-entry-get (plist-get data :pom) "LAST_SYNCED")))
+         (pom (plist-get data :pom))
+         (last-synced (when (and pom (markerp pom))
+                        (with-current-buffer (marker-buffer pom)
+                          (org-canvas--pull-read-file-header))))
          (remote-updated (alist-get 'updated_at remote-response))
          (remote-title (or (alist-get 'title remote-response)
                            (alist-get 'name remote-response)))
@@ -165,7 +167,8 @@ Returns \\='push, \\='pull, or \\='skip."
   "Overwrite local heading with REMOTE-RESPONSE data.
 DATA is the parsed entry plist.  PULL-ITEM-FN is the module-specific
 function that sets properties and body from a remote item.
-Updates title, LAST_SYNCED, and deletes stale PAYLOAD_HASH."
+Updates title, refreshes the file-level #+LAST_SYNCED header, and
+deletes stale PAYLOAD_HASH."
   (let ((pom (plist-get data :pom))
         (remote-title (or (alist-get 'title remote-response)
                           (alist-get 'name remote-response))))
@@ -180,13 +183,11 @@ Updates title, LAST_SYNCED, and deletes stale PAYLOAD_HASH."
     ;; Call module-specific pull-item to update properties/body
     (let ((pos (if (markerp pom) (marker-position pom) pom)))
       (funcall pull-item-fn remote-response pos)
-      ;; Update sync metadata
-      (org-entry-put pos "LAST_SYNCED"
-                     (format-time-string "[%Y-%m-%d %a %H:%M]"))
       (let ((updated-at (alist-get 'updated_at remote-response)))
         (when updated-at
           (org-entry-put pos "CANVAS_UPDATED_AT" updated-at)))
       (org-entry-delete pos "PAYLOAD_HASH")
+      (org-canvas--pull-write-file-header)
       (org-canvas--save-buffer))))
 
 (provide 'org-canvas-core-conflict)

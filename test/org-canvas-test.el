@@ -290,10 +290,10 @@
       (unwind-protect
           (progn
             (with-temp-file temp-file
-              (insert "* Synced Item
+              (insert "#+LAST_SYNCED: [2026-01-01 Thu 10:00]
+* Synced Item
 :PROPERTIES:
 :CANVAS_ID: 123
-:LAST_SYNCED: [2026-01-01 Thu]
 :END:
 
 * Pending Item
@@ -867,10 +867,10 @@
       (unwind-protect
           (progn
             (with-temp-file test-file
-              (insert "* Synced Item
+              (insert "#+LAST_SYNCED: [2026-01-15 Thu 10:00]
+* Synced Item
 :PROPERTIES:
 :CANVAS_ID: 123
-:LAST_SYNCED: [2026-01-15 Thu]
 :END:
 * Pending Item
 :PROPERTIES:
@@ -884,23 +884,22 @@
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t))))
 
-  (it "tracks newest LAST_SYNCED across multiple synced entries"
+  (it "reads file-level LAST_SYNCED header"
     (let* ((temp-dir (make-temp-file "status-test" t))
            (test-file (expand-file-name "test.org" temp-dir)))
       (unwind-protect
           (progn
             (with-temp-file test-file
-              (insert "* Old Item
+              (insert "#+LAST_SYNCED: [2026-03-01 Sun 09:00]
+* Item One
 :PROPERTIES:
 :CANVAS_ID: 100
-:LAST_SYNCED: [2025-06-01 Sun]
 :END:
-* Newer Item
+* Item Two
 :PROPERTIES:
 :CANVAS_ID: 200
-:LAST_SYNCED: [2026-03-01 Sun]
 :END:
-* No Timestamp Item
+* Item Three
 :PROPERTIES:
 :CANVAS_ID: 300
 :END:
@@ -1017,18 +1016,17 @@
 ;;;; org-canvas--status-count-entries legacy items
 
 (describe "org-canvas--status-count-entries legacy items"
-  (it "counts items with CANVAS_ID but no LAST_SYNCED as legacy"
+  (it "counts CANVAS_ID-tagged items as legacy when file has no #+LAST_SYNCED header"
     (let ((temp-file (make-temp-file "status-legacy" nil ".org")))
       (unwind-protect
           (progn
             (with-temp-file temp-file
-              (insert "* Properly Synced
+              (insert "* Synced One
 :PROPERTIES:
 :CANVAS_ID: 100
-:LAST_SYNCED: [2026-01-01 Thu]
 :END:
 
-* Legacy Item
+* Synced Two
 :PROPERTIES:
 :CANVAS_ID: 200
 :END:
@@ -1040,20 +1038,22 @@
             (let ((counts (org-canvas--status-count-entries temp-file "CANVAS_ID")))
               (expect (plist-get counts :synced) :to-equal 2)
               (expect (plist-get counts :pending) :to-equal 1)
-              (expect (plist-get counts :legacy) :to-equal 1)))
+              ;; Both synced items are legacy because the file has no
+              ;; #+LAST_SYNCED header (re-pull required)
+              (expect (plist-get counts :legacy) :to-equal 2)))
         (let ((buf (find-buffer-visiting temp-file)))
           (when buf (kill-buffer buf)))
         (delete-file temp-file))))
 
-  (it "returns zero legacy when all synced items have LAST_SYNCED"
+  (it "returns zero legacy when file has #+LAST_SYNCED header"
     (let ((temp-file (make-temp-file "status-no-legacy" nil ".org")))
       (unwind-protect
           (progn
             (with-temp-file temp-file
-              (insert "* Item
+              (insert "#+LAST_SYNCED: [2026-01-01 Thu 10:00]
+* Item
 :PROPERTIES:
 :CANVAS_ID: 100
-:LAST_SYNCED: [2026-01-01 Thu]
 :END:
 "))
             (let ((counts (org-canvas--status-count-entries temp-file "CANVAS_ID")))

@@ -91,10 +91,7 @@ RESTRICT is the restrict_enrollments_to_section_dates value."
   (org-canvas-org-set-property pom "CANVAS_ID" id)
   (org-canvas--pull-set-timestamp-property pom "START_AT" start-at)
   (org-canvas--pull-set-timestamp-property pom "END_AT" end-at)
-  (org-canvas--pull-set-boolean-property pom "RESTRICT_TO_DATES" restrict)
-  (org-canvas-org-set-property
-   pom "LAST_SYNCED"
-   (format-time-string "[%Y-%m-%d %a %H:%M]")))
+  (org-canvas--pull-set-boolean-property pom "RESTRICT_TO_DATES" restrict))
 
 (defun org-canvas--pull-sections-upsert (section)
   "Update or create a heading for SECTION in the current buffer.
@@ -183,6 +180,7 @@ local headings whose CANVAS_ID no longer exists on Canvas."
               (setq created (1+ created)))))
 
         (org-canvas--pull-sections-warn-stale remote-ids)
+        (org-canvas--pull-write-file-header)
         (org-canvas--save-buffer))
 
       (org-canvas--pull-kill-fresh-buffer sections-file was-fresh)

@@ -242,7 +242,7 @@
         (expect logged :to-be nil)))))
 
 (describe "org-canvas-org-save-sync-state"
-  (it "saves CANVAS_ID and LAST_SYNCED"
+  (it "saves CANVAS_ID but not per-entry LAST_SYNCED"
     (with-temp-org-buffer
      "* Heading
 :PROPERTIES:
@@ -251,8 +251,7 @@
      (org-back-to-heading)
      (org-canvas-org-save-sync-state (point) 12345)
      (expect (org-entry-get (point) "CANVAS_ID") :to-equal "12345")
-     (expect (org-entry-get (point) "LAST_SYNCED") :to-match
-             "^\\[20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]")))
+     (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil)))
 
   (it "converts numeric ID to string"
     (with-temp-org-buffer
@@ -284,6 +283,80 @@
      (org-canvas-org-save-sync-state (point) 55555 "QUESTION_ID")
      (expect (org-entry-get (point) "QUESTION_ID") :to-equal "55555")
      (expect (org-entry-get (point) "CANVAS_ID") :to-be nil))))
+
+(describe "file-level LAST_SYNCED"
+  (it "writes #+LAST_SYNCED to the buffer header"
+    (let ((temp (make-temp-file "org-test-" nil ".org")))
+      (with-temp-file temp (insert "#+TITLE: Pages\n* Page 1\n"))
+      (unwind-protect
+          (with-current-buffer (find-file-noselect temp)
+            (org-canvas--pull-write-file-header)
+            (save-buffer)
+            (with-temp-buffer
+              (insert-file-contents temp)
+              (expect (buffer-string) :to-match
+                      "^#\\+LAST_SYNCED: \\[[0-9-]+ \\w+ [0-9:]+\\]"))
+            (kill-buffer))
+        (delete-file temp))))
+
+  (it "replaces an existing header instead of duplicating"
+    (let ((temp (make-temp-file "org-test-" nil ".org")))
+      (with-temp-file temp
+        (insert "#+TITLE: Pages\n#+LAST_SYNCED: [2025-01-01 Wed 00:00]\n* x\n"))
+      (unwind-protect
+          (with-current-buffer (find-file-noselect temp)
+            (org-canvas--pull-write-file-header)
+            (save-buffer)
+            (with-temp-buffer
+              (insert-file-contents temp)
+              (let ((count 0))
+                (goto-char (point-min))
+                (while (re-search-forward "^#\\+LAST_SYNCED:" nil t)
+                  (cl-incf count))
+                (expect count :to-equal 1)))
+            (kill-buffer))
+        (delete-file temp))))
+
+  (it "inserts header at top when no #+TITLE present"
+    (let ((temp (make-temp-file "org-test-" nil ".org")))
+      (with-temp-file temp (insert "* Heading\n"))
+      (unwind-protect
+          (with-current-buffer (find-file-noselect temp)
+            (org-canvas--pull-write-file-header)
+            (save-buffer)
+            (with-temp-buffer
+              (insert-file-contents temp)
+              (goto-char (point-min))
+              (expect (buffer-substring (point-min) (line-end-position))
+                      :to-match "^#\\+LAST_SYNCED:"))
+            (kill-buffer))
+        (delete-file temp))))
+
+  (it "inserts header into a brand-new empty buffer"
+    (let ((temp (make-temp-file "org-test-" nil ".org")))
+      (with-temp-file temp (insert ""))
+      (unwind-protect
+          (with-current-buffer (find-file-noselect temp)
+            (org-canvas--pull-write-file-header)
+            (save-buffer)
+            (with-temp-buffer
+              (insert-file-contents temp)
+              (expect (buffer-string) :to-match
+                      "^#\\+LAST_SYNCED: \\[[0-9-]+ \\w+ [0-9:]+\\]"))
+            (kill-buffer))
+        (delete-file temp)))))
+
+(describe "org-canvas--pull-read-file-header"
+  (it "reads #+LAST_SYNCED from the current buffer"
+    (with-temp-buffer
+      (insert "#+TITLE: Pages\n#+LAST_SYNCED: [2026-04-26 Sun 12:00]\n* x\n")
+      (expect (org-canvas--pull-read-file-header)
+              :to-equal "[2026-04-26 Sun 12:00]")))
+
+  (it "returns nil when no #+LAST_SYNCED"
+    (with-temp-buffer
+      (insert "#+TITLE: Pages\n* x\n")
+      (expect (org-canvas--pull-read-file-header) :to-be nil))))
 
 (describe "org-canvas-clear-sync-properties"
   (it "removes CANVAS_ID, CANVAS_URL, and LAST_SYNCED"

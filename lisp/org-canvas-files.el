@@ -1127,6 +1127,7 @@ with `user-error' (delete files.org and re-run to refresh)."
            (let ((emitted
                   (org-canvas--file-pull-emit-fresh-tree
                    folder-map remote content-dir)))
+             (org-canvas--pull-write-file-header)
              (org-canvas--save-buffer)
              (org-canvas--log-info org-canvas--logger
                "Files pull complete (fresh tree): %d files" emitted)
@@ -1136,6 +1137,7 @@ with `user-error' (delete files.org and re-run to refresh)."
              "[Files] Existing flat files.org detected; running flat upsert. Delete files.org and re-pull to rebuild folder hierarchy.")
            (let ((emitted
                   (org-canvas--file-pull-emit-flat file remote content-dir)))
+             (org-canvas--pull-write-file-header)
              (org-canvas--save-buffer)
              (org-canvas--log-info org-canvas--logger
                "Files pull complete (flat): %d files" emitted)

@@ -548,6 +548,7 @@ Point must be at the parent group heading."
           (org-canvas-org-save-sync-state pos gid)
           (cl-incf outcome-count
                    (org-canvas--outcome-pull-process-group gid))))
+      (org-canvas--pull-write-file-header)
       (org-canvas--save-buffer))
     (org-canvas--pull-kill-fresh-buffer file was-fresh)
     (org-canvas--log-info org-canvas--logger
