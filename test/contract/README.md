@@ -33,3 +33,12 @@ outcomes (hierarchical multi-endpoint create), new-quizzes (different API,
 Justified deviations live in `org-canvas-contract--exceptions` in the test —
 each entry documents a field a module emits that the documented operation
 omits but Canvas honors (currently only `module[published]`).
+
+## Pull-side contract
+
+The fixture also captures the documented *response* object fields (typed) for
+modules whose pull-item is a clean property-setter (`MODULE_READ_SCHEMAS` in
+the generator; currently assignments and assignment-groups). The
+"Canvas response (pull) contract" tests feed a pull-item the full documented
+response shape and assert it tolerates every field and reads the ones it
+depends on — the read-path analog of the request-body contract.

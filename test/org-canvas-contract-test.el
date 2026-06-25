@@ -201,5 +201,47 @@ stage-1/2 functions."
      #'org-canvas--discussion-parse-entry
      #'org-canvas--discussion-build-payload)))
 
+;;;; Pull-side contract
+;;
+;; The request-body contract above checks what we SEND.  This checks the READ
+;; path: a module's pull-item must tolerate the full documented Canvas response
+;; object (every field in the component schema) without error, and read the
+;; fields it depends on.  Dummy values are typed from the spec so structured
+;; fields (arrays/objects) don't trip the pull code.
+
+(defun org-canvas-contract--dummy (type)
+  "Return a type-appropriate dummy value for a documented response field TYPE."
+  (cond ((member type '("integer" "number")) 1)
+        ((equal type "boolean") t)
+        ((equal type "string") "x")
+        (t nil)))                       ; array / object / unknown
+
+(defun org-canvas-contract--response (module)
+  "Build a response alist with every documented response field for MODULE."
+  (let* ((entry (alist-get module org-canvas-contract--data nil nil #'string=))
+         (fields (alist-get "response_fields" entry nil nil #'string=)))
+    (mapcar (lambda (kv)
+              (cons (intern (car kv)) (org-canvas-contract--dummy (cdr kv))))
+            fields)))
+
+(describe "Canvas response (pull) contract"
+  (it "assignment pull-item tolerates the full documented response"
+    (let ((response (org-canvas-contract--response "assignments")))
+      (expect response :to-be-truthy)
+      (with-temp-org-buffer "* A\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+        (org-back-to-heading)
+        ;; Must not error on the full documented shape, and must read the
+        ;; documented `points_possible' field into POINTS.
+        (org-canvas--assignment-pull-item response (point))
+        (expect (org-entry-get (point) "POINTS") :to-be-truthy))))
+
+  (it "assignment-group pull-item tolerates the full documented response"
+    (let ((response (org-canvas-contract--response "assignment-groups")))
+      (expect response :to-be-truthy)
+      (with-temp-org-buffer "* G\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+        (org-back-to-heading)
+        (org-canvas--assignment-group-pull-item response (point))
+        (expect (org-entry-get (point) "WEIGHT") :to-be-truthy)))))
+
 (provide 'org-canvas-contract-test)
 ;;; org-canvas-contract-test.el ends here
