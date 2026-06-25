@@ -57,15 +57,20 @@
   :query "LEVEL=1"
   :properties
   `((:org-prop "PUBLISHED" :data-key :published :type boolean :default t
-     :api-key "published" :boolean-json t)
+     :api-key "published" :boolean-json t
+     :doc "Whether item is visible (default: true)")
     (:org-prop "FRONT_PAGE" :data-key :front_page :type boolean
-     :api-key "front_page")
+     :api-key "front_page"
+     :doc "Set as course front page")
     (:org-prop "EDITING_ROLES" :data-key :editing_roles :type csv-enum
-     :values ,org-canvas--valid-editing-roles :api-key "editing_roles")
+     :values ,org-canvas--valid-editing-roles :api-key "editing_roles"
+     :doc "Who can edit (teachers, students)")
     (:org-prop "TODO_DATE" :data-key :student_todo_at :type timestamp
-     :api-key "student_todo_at")
+     :api-key "student_todo_at"
+     :doc "Add to student to-do list on date")
     (:org-prop "NOTIFY_OF_UPDATE" :data-key :notify_of_update :type boolean
-     :api-key "notify_of_update")))
+     :api-key "notify_of_update"
+     :doc "Notify students of changes (write-only)")))
 
 ;;;; 1. Stage: Extraction
 

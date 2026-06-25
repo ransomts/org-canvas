@@ -386,6 +386,59 @@ Returns t if no error, or the error object."
                          (error err))))
           (expect result :to-be t))))))
 
+;;;; Property Invariants
+;;
+;; Beyond liveness ("doesn't crash"), assert correctness properties that must
+;; hold for ALL random inputs.  Uses the announcement pipeline as a
+;; representative; a `t' default boolean, required static fields, and a pure
+;; parse make its invariants checkable.
+
+(defun fuzz--parse-announcement (content)
+  "Parse CONTENT through the announcement pipeline and return the data plist."
+  (with-temp-org-buffer content
+    (org-back-to-heading)
+    (org-canvas--announcement-parse-entry)))
+
+(describe "Fuzz invariants (correctness, not just liveness)"
+  (before-each
+    (spy-on 'org-export-string-as :and-call-fake
+            (lambda (s &rest _) (format "<p>%s</p>" s))))
+
+  (it "PUBLISHED parses to nil iff the value is exactly \"false\""
+    (dotimes (_ fuzz--iteration-count)
+      (let* ((pub (fuzz--random-boolean-string))
+             (title (concat "T" (number-to-string (random 100000))))
+             (content (fuzz--make-heading title `(("PUBLISHED" . ,pub))
+                                          (fuzz--random-body)))
+             (data (fuzz--parse-announcement content)))
+        ;; default-true semantics: nil only when the literal string is "false".
+        (expect (and (plist-get data :published) t)
+                :to-equal (not (equal pub "false"))))))
+
+  (it "the built payload always carries the required fields"
+    (dotimes (_ fuzz--iteration-count)
+      (let* ((title (concat "T" (number-to-string (random 100000))))
+             (content (fuzz--make-heading
+                       title `(("PUBLISHED" . ,(fuzz--random-boolean-string)))
+                       (fuzz--random-body)))
+             (payload (org-canvas--announcement-build-payload
+                       (fuzz--parse-announcement content))))
+        (expect (assq 'title payload) :to-be-truthy)
+        (expect (assq 'is_announcement payload) :to-be-truthy)
+        (expect (alist-get 'title payload) :to-equal title))))
+
+  (it "parsing the same input twice is deterministic"
+    (dotimes (_ fuzz--iteration-count)
+      (let* ((title (concat "T" (number-to-string (random 100000))))
+             (content (fuzz--make-heading
+                       title `(("PUBLISHED" . ,(fuzz--random-boolean-string)))
+                       (fuzz--random-body)))
+             (d1 (fuzz--parse-announcement content))
+             (d2 (fuzz--parse-announcement content)))
+        (expect (plist-get d1 :title) :to-equal (plist-get d2 :title))
+        (expect (plist-get d1 :published) :to-equal (plist-get d2 :published))
+        (expect (plist-get d1 :message) :to-equal (plist-get d2 :message))))))
+
 (provide 'org-canvas-fuzz-test)
 
 ;;; org-canvas-fuzz-test.el ends here

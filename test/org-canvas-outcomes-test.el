@@ -1144,6 +1144,52 @@ Students will write clearly.
                       (expect (org-entry-get (point) "CANVAS_ID") :to-equal "2000")))))))
         (when (file-exists-p temp-file) (delete-file temp-file)))))
 
+  (it "posts an outcome create body reflecting the org input"
+    (let ((temp-dir (make-temp-file "outcomes-test" t)))
+      (unwind-protect
+          (let ((org-file (expand-file-name "outcomes.org" temp-dir)))
+            (with-temp-file org-file
+              (insert "* Communication Skills
+:PROPERTIES:
+:END:
+** Written Communication
+:PROPERTIES:
+:CALCULATION_METHOD: decaying_average
+:CALCULATION_INT: 65
+:MASTERY_POINTS: 3
+:END:
+
+Students will write clearly.
+
+- [4] Exceeds
+- [3] Meets
+"))
+            (let ((org-canvas-outcomes-file org-file)
+                  (org-canvas-base-url "https://test.canvas.example.com")
+                  (org-canvas-api-token "test-token")
+                  (org-canvas-course-id "99999"))
+              (with-sync-test-env
+                (with-mock-api
+                  (setq test-org-canvas-api-responses
+                        '(("root_outcome_group" . ((id . 1000)))))
+                  (org-canvas-sync-outcomes)
+                  (let ((body (test-org-canvas-api-call-data
+                               'POST "outcome_groups/.*/outcomes")))
+                    ;; The outcome CREATE body is an alist built from the org input;
+                    ;; assert property -> API-key mapping is correct.
+                    (expect (listp body) :to-be t)
+                    (expect (alist-get 'title body)
+                            :to-equal "Written Communication")
+                    (expect (alist-get 'description body)
+                            :to-match "write clearly")
+                    (expect (alist-get 'calculation_method body)
+                            :to-equal "decaying_average")
+                    (expect (alist-get 'calculation_int body) :to-equal 65)
+                    (expect (alist-get 'mastery_points body) :to-equal 3)
+                    (expect (length (alist-get 'ratings body))
+                            :to-equal 2))))))
+        (delete-directory temp-dir t))))
+
   (it "errors when file not found"
     (let ((org-canvas-outcomes-file "/nonexistent/outcomes.org"))
       (with-sync-test-env

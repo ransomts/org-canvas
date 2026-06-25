@@ -746,5 +746,59 @@
                         :to-throw 'error))
             (delete-file temp-file)))))))
 
+;;;; Fault-injection matrix
+
+(defun org-canvas-fault--status-err (status &optional body)
+  "Build a condition-case value for a plz-error with HTTP STATUS and BODY."
+  (cons 'plz-error
+        (make-plz-error :response (make-plz-response :status status
+                                                     :body (or body "")))))
+
+(defun org-canvas-fault--curl-err (code)
+  "Build a condition-case value for a plz curl error CODE."
+  (cons 'plz-error (make-plz-error :curl-error (cons code "curl error"))))
+
+(describe "org-canvas--api-handle-plz-error fault matrix"
+  ;; Each Canvas failure mode must map to its documented outcome: retry
+  ;; (rate-limit), retry-transient (5xx / curl), or a signaled error.
+  (it "429 rate limit -> :retry"
+    (let ((org-canvas-rate-limit-wait 0))
+      (expect (org-canvas--api-handle-plz-error
+               (org-canvas-fault--status-err 429 "rate limited") "u")
+              :to-equal :retry)))
+
+  (it "403 with a rate-limit body -> :retry"
+    (let ((org-canvas-rate-limit-wait 0))
+      (expect (org-canvas--api-handle-plz-error
+               (org-canvas-fault--status-err 403 "rate limit exceeded") "u")
+              :to-equal :retry)))
+
+  (it "401 -> credentials error (expired token)"
+    (expect (org-canvas--api-handle-plz-error
+             (org-canvas-fault--status-err 401 "unauthorized") "u")
+            :to-throw 'org-canvas-credentials-error))
+
+  (it "403 (non-rate-limit) -> credentials error (scope)"
+    (expect (org-canvas--api-handle-plz-error
+             (org-canvas-fault--status-err 403 "forbidden") "u")
+            :to-throw 'org-canvas-credentials-error))
+
+  (it "502/503/504 -> :retry-transient"
+    (dolist (status '(502 503 504))
+      (expect (org-canvas--api-handle-plz-error
+               (org-canvas-fault--status-err status "gateway") "u")
+              :to-equal :retry-transient)))
+
+  (it "500 -> generic api error"
+    (expect (org-canvas--api-handle-plz-error
+             (org-canvas-fault--status-err 500 "server error") "u")
+            :to-throw 'org-canvas-api-error))
+
+  (it "curl connect/timeout/recv errors -> :retry-transient"
+    (dolist (code '(7 28 56))
+      (expect (org-canvas--api-handle-plz-error
+               (org-canvas-fault--curl-err code) "u")
+              :to-equal :retry-transient))))
+
 (provide 'org-canvas-core-api-test)
 ;;; org-canvas-core-api-test.el ends here

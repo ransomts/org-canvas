@@ -1711,6 +1711,56 @@ Consider the following expression.
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t))))
 
+  (it "sends a create payload whose wrapped body reflects the org input"
+    (let ((temp-dir (make-temp-file "nq-body-test" t)))
+      (unwind-protect
+          (let ((org-file (expand-file-name "new-quizzes.org" temp-dir)))
+            (with-temp-file org-file
+              (insert "* Cellular Respiration Quiz
+:PROPERTIES:
+:TIME_LIMIT: 45
+:SHUFFLE_ANSWERS: true
+:ALLOWED_ATTEMPTS: 2
+:SCORING_POLICY: keep_latest
+:END:
+
+** Q1
+:PROPERTIES:
+:TYPE: choice
+:END:
+
+- [X] Yes
+- [ ] No
+"))
+            (let ((org-canvas-new-quizzes-file org-file)
+                  (org-canvas-base-url "https://test.canvas.example.com")
+                  (org-canvas-api-token "test-token")
+                  (org-canvas-course-id "99999"))
+              (with-sync-test-env
+                (with-mock-api
+                  ;; Quiz-create POST must return assignment_id so the
+                  ;; pipeline can finalize and proceed to items.
+                  (setq test-org-canvas-api-responses
+                        '(("/quizzes" . ((assignment_id . 555) (id . "item-1")))))
+                  (org-canvas-sync-new-quizzes)
+                  ;; "/quizzes$" matches only the create call, not the
+                  ;; ".../quizzes/555/items" item call.
+                  (let* ((body (test-org-canvas-api-call-data 'POST "/quizzes$"))
+                         (quiz (and (hash-table-p body) (gethash "quiz" body))))
+                    (expect (hash-table-p body) :to-be t)
+                    (expect (hash-table-p quiz) :to-be t)
+                    (expect (gethash "title" quiz)
+                            :to-equal "Cellular Respiration Quiz")
+                    (expect (gethash "time_limit" quiz) :to-equal 45)
+                    (expect (gethash "shuffle_answers" quiz) :to-be t)
+                    (expect (gethash "allowed_attempts" quiz) :to-equal 2)
+                    (expect (gethash "scoring_policy" quiz)
+                            :to-equal "keep_latest"))))))
+        (let ((buf (find-buffer-visiting
+                    (expand-file-name "new-quizzes.org" temp-dir))))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
   (it "errors when file not found"
     (let ((org-canvas-new-quizzes-file "/tmp/nonexistent/new-quizzes.org"))
       (with-sync-test-env
@@ -2609,5 +2659,19 @@ Body text
             '(:canvas-id "55" :rubric-id nil)
             '((other_field . "x")))
            (expect synced-quiz-id :to-equal "55")))))))
+
+(describe "org-canvas--new-quiz-pull-items error handling"
+  (it "warns (items omitted) when the item fetch fails"
+    (with-org-canvas-test-config
+      (spy-on 'org-canvas--log-warning)
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (&rest _) (signal 'error '("HTTP 500")))))
+        (org-canvas--new-quiz-pull-items "55")
+        (let ((warned nil))
+          (dolist (call (spy-calls-all-args 'org-canvas--log-warning))
+            (when (and (>= (length call) 2) (stringp (nth 1 call))
+                       (string-match-p "items omitted from pull" (nth 1 call)))
+              (setq warned t)))
+          (expect warned :to-be t))))))
 
 ;;; org-canvas-new-quizzes-test.el ends here

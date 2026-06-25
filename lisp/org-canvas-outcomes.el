@@ -68,8 +68,10 @@
   :properties
   `((:org-prop "CALCULATION_METHOD" :data-key :calculation_method :type enum
      :values ,org-canvas--valid-calculation-methods)
-    (:org-prop "CALCULATION_INT" :data-key :calculation_int :type number)
-    (:org-prop "MASTERY_POINTS" :data-key :mastery_points :type number)))
+    (:org-prop "CALCULATION_INT" :data-key :calculation_int :type number
+     :doc "Variable for calculation method")
+    (:org-prop "MASTERY_POINTS" :data-key :mastery_points :type number
+     :doc "Points threshold for mastery")))
 
 ;;;; Helper Functions
 

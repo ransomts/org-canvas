@@ -1,0 +1,502 @@
+{
+  "announcements": {
+    "fields": {
+      "allow_rating": {
+        "type": "boolean"
+      },
+      "assignment": {},
+      "attachment": {
+        "type": "string"
+      },
+      "delayed_post_at": {
+        "type": "string"
+      },
+      "discussion_type": {
+        "enum": [
+          "side_comment",
+          "threaded"
+        ],
+        "type": "string"
+      },
+      "group_category_id": {
+        "type": "integer"
+      },
+      "is_announcement": {
+        "type": "boolean"
+      },
+      "lock_at": {
+        "type": "string"
+      },
+      "message": {
+        "type": "string"
+      },
+      "only_graders_can_rate": {
+        "type": "boolean"
+      },
+      "pinned": {
+        "type": "boolean"
+      },
+      "podcast_enabled": {
+        "type": "boolean"
+      },
+      "podcast_has_student_posts": {
+        "type": "boolean"
+      },
+      "position_after": {
+        "type": "string"
+      },
+      "published": {
+        "type": "boolean"
+      },
+      "require_initial_post": {
+        "type": "boolean"
+      },
+      "sort_by_rating": {
+        "type": "boolean"
+      },
+      "specific_sections": {
+        "type": "string"
+      },
+      "title": {
+        "type": "string"
+      }
+    },
+    "operationId": "create_new_discussion_topic_courses",
+    "required": [],
+    "wrapper": null
+  },
+  "assignment-groups": {
+    "fields": {
+      "group_weight": {
+        "type": "number"
+      },
+      "integration_data": {
+        "type": "object"
+      },
+      "name": {
+        "type": "string"
+      },
+      "position": {
+        "type": "integer"
+      },
+      "rules": {
+        "type": "string"
+      },
+      "sis_source_id": {
+        "type": "string"
+      }
+    },
+    "operationId": "create_assignment_group",
+    "required": [],
+    "wrapper": null
+  },
+  "assignments": {
+    "fields": {
+      "allowed_extensions": {
+        "type": "array"
+      },
+      "assignment_group_id": {
+        "type": "integer"
+      },
+      "assignment_overrides": {
+        "type": "array"
+      },
+      "automatic_peer_reviews": {
+        "type": "boolean"
+      },
+      "description": {
+        "type": "string"
+      },
+      "due_at": {
+        "type": "string"
+      },
+      "external_tool_tag_attributes": {
+        "type": "string"
+      },
+      "grade_group_students_individually": {
+        "type": "integer"
+      },
+      "grading_standard_id": {
+        "type": "integer"
+      },
+      "grading_type": {
+        "enum": [
+          "pass_fail",
+          "percent",
+          "letter_grade",
+          "gpa_scale",
+          "points"
+        ],
+        "type": "string"
+      },
+      "group_category_id": {
+        "type": "integer"
+      },
+      "integration_data": {
+        "type": "string"
+      },
+      "integration_id": {
+        "type": "string"
+      },
+      "lock_at": {
+        "type": "string"
+      },
+      "moderated_grading": {
+        "type": "boolean"
+      },
+      "muted": {
+        "type": "boolean"
+      },
+      "name": {
+        "type": "string"
+      },
+      "notify_of_update": {
+        "type": "boolean"
+      },
+      "omit_from_final_grade": {
+        "type": "boolean"
+      },
+      "only_visible_to_overrides": {
+        "type": "boolean"
+      },
+      "peer_reviews": {
+        "type": "boolean"
+      },
+      "points_possible": {
+        "type": "number"
+      },
+      "position": {
+        "type": "integer"
+      },
+      "published": {
+        "type": "boolean"
+      },
+      "quiz_lti": {
+        "type": "boolean"
+      },
+      "submission_types": {
+        "type": "array"
+      },
+      "turnitin_enabled": {
+        "type": "boolean"
+      },
+      "turnitin_settings": {
+        "type": "string"
+      },
+      "unlock_at": {
+        "type": "string"
+      },
+      "vericite_enabled": {
+        "type": "boolean"
+      }
+    },
+    "operationId": "create_assignment",
+    "required": [
+      "name"
+    ],
+    "wrapper": "assignment"
+  },
+  "calendar": {
+    "fields": {
+      "all_day": {
+        "type": "boolean"
+      },
+      "child_event_data": {
+        "type": "string"
+      },
+      "context_code": {
+        "type": "string"
+      },
+      "description": {
+        "type": "string"
+      },
+      "duplicate": {
+        "enum": [
+          "daily",
+          "weekly",
+          "monthly"
+        ],
+        "type": "boolean"
+      },
+      "end_at": {
+        "type": "string"
+      },
+      "location_address": {
+        "type": "string"
+      },
+      "location_name": {
+        "type": "string"
+      },
+      "start_at": {
+        "type": "string"
+      },
+      "time_zone_edited": {
+        "type": "string"
+      },
+      "title": {
+        "type": "string"
+      }
+    },
+    "operationId": "create_calendar_event",
+    "required": [
+      "context_code"
+    ],
+    "wrapper": "calendar_event"
+  },
+  "discussions": {
+    "fields": {
+      "allow_rating": {
+        "type": "boolean"
+      },
+      "assignment": {},
+      "attachment": {
+        "type": "string"
+      },
+      "delayed_post_at": {
+        "type": "string"
+      },
+      "discussion_type": {
+        "enum": [
+          "side_comment",
+          "threaded"
+        ],
+        "type": "string"
+      },
+      "group_category_id": {
+        "type": "integer"
+      },
+      "is_announcement": {
+        "type": "boolean"
+      },
+      "lock_at": {
+        "type": "string"
+      },
+      "message": {
+        "type": "string"
+      },
+      "only_graders_can_rate": {
+        "type": "boolean"
+      },
+      "pinned": {
+        "type": "boolean"
+      },
+      "podcast_enabled": {
+        "type": "boolean"
+      },
+      "podcast_has_student_posts": {
+        "type": "boolean"
+      },
+      "position_after": {
+        "type": "string"
+      },
+      "published": {
+        "type": "boolean"
+      },
+      "require_initial_post": {
+        "type": "boolean"
+      },
+      "sort_by_rating": {
+        "type": "boolean"
+      },
+      "specific_sections": {
+        "type": "string"
+      },
+      "title": {
+        "type": "string"
+      }
+    },
+    "operationId": "create_new_discussion_topic_courses",
+    "required": [],
+    "wrapper": null
+  },
+  "group-categories": {
+    "fields": {
+      "auto_leader": {
+        "enum": [
+          "first",
+          "random"
+        ],
+        "type": "string"
+      },
+      "create_group_count": {
+        "type": "integer"
+      },
+      "group_limit": {
+        "type": "integer"
+      },
+      "name": {
+        "type": "string"
+      },
+      "self_signup": {
+        "enum": [
+          "enabled",
+          "restricted"
+        ],
+        "type": "string"
+      },
+      "sis_group_category_id": {
+        "type": "string"
+      },
+      "split_group_count": {
+        "type": "string"
+      }
+    },
+    "operationId": "create_group_category_courses",
+    "required": [
+      "name"
+    ],
+    "wrapper": null
+  },
+  "modules": {
+    "fields": {
+      "name": {
+        "type": "string"
+      },
+      "position": {
+        "type": "integer"
+      },
+      "prerequisite_module_ids": {
+        "type": "array"
+      },
+      "publish_final_grade": {
+        "type": "boolean"
+      },
+      "require_sequential_progress": {
+        "type": "boolean"
+      },
+      "unlock_at": {
+        "type": "string"
+      }
+    },
+    "operationId": "create_module",
+    "required": [
+      "name"
+    ],
+    "wrapper": "module"
+  },
+  "pages": {
+    "fields": {
+      "body": {
+        "type": "string"
+      },
+      "editing_roles": {
+        "enum": [
+          "teachers",
+          "students",
+          "members",
+          "public"
+        ],
+        "type": "string"
+      },
+      "front_page": {
+        "type": "boolean"
+      },
+      "notify_of_update": {
+        "type": "boolean"
+      },
+      "published": {
+        "type": "boolean"
+      },
+      "title": {
+        "type": "string"
+      }
+    },
+    "operationId": "create_page_courses",
+    "required": [
+      "title"
+    ],
+    "wrapper": "wiki_page"
+  },
+  "quizzes": {
+    "fields": {
+      "access_code": {
+        "type": "string"
+      },
+      "allowed_attempts": {
+        "type": "integer"
+      },
+      "assignment_group_id": {
+        "type": "integer"
+      },
+      "cant_go_back": {
+        "type": "boolean"
+      },
+      "description": {
+        "type": "string"
+      },
+      "due_at": {
+        "type": "string"
+      },
+      "hide_correct_answers_at": {
+        "type": "string"
+      },
+      "hide_results": {
+        "enum": [
+          "always",
+          "until_after_last_attempt"
+        ],
+        "type": "string"
+      },
+      "ip_filter": {
+        "type": "string"
+      },
+      "lock_at": {
+        "type": "string"
+      },
+      "one_question_at_a_time": {
+        "type": "boolean"
+      },
+      "one_time_results": {
+        "type": "boolean"
+      },
+      "only_visible_to_overrides": {
+        "type": "boolean"
+      },
+      "published": {
+        "type": "boolean"
+      },
+      "quiz_type": {
+        "enum": [
+          "practice_quiz",
+          "assignment",
+          "graded_survey",
+          "survey"
+        ],
+        "type": "string"
+      },
+      "scoring_policy": {
+        "enum": [
+          "keep_highest",
+          "keep_latest"
+        ],
+        "type": "string"
+      },
+      "show_correct_answers": {
+        "type": "boolean"
+      },
+      "show_correct_answers_at": {
+        "type": "string"
+      },
+      "show_correct_answers_last_attempt": {
+        "type": "boolean"
+      },
+      "shuffle_answers": {
+        "type": "boolean"
+      },
+      "time_limit": {
+        "type": "integer"
+      },
+      "title": {
+        "type": "string"
+      },
+      "unlock_at": {
+        "type": "string"
+      }
+    },
+    "operationId": "create_quiz",
+    "required": [
+      "title"
+    ],
+    "wrapper": "quiz"
+  }
+}

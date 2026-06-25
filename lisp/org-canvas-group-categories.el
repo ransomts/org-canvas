@@ -46,13 +46,17 @@
   :query "LEVEL=1"
   :properties
   `((:org-prop "SELF_SIGNUP" :data-key :self_signup :type enum
-     :values ,org-canvas--valid-self-signup-values :api-key "self_signup")
+     :values ,org-canvas--valid-self-signup-values :api-key "self_signup"
+     :doc "Allow students to self-enroll in groups")
     (:org-prop "GROUP_LIMIT" :data-key :group_limit :type number
-     :api-key "group_limit")
+     :api-key "group_limit"
+     :doc "Max members per group (requires SELF_SIGNUP)")
     (:org-prop "AUTO_LEADER" :data-key :auto_leader :type enum
-     :values ,org-canvas--valid-auto-leader-values :api-key "auto_leader")
+     :values ,org-canvas--valid-auto-leader-values :api-key "auto_leader"
+     :doc "How to assign group leaders")
     (:org-prop "CREATE_GROUP_COUNT" :data-key :create_group_count :type number
-     :api-key "create_group_count")))
+     :api-key "create_group_count"
+     :doc "Number of groups to create automatically")))
 
 ;;;; 1. Stage: Extraction
 

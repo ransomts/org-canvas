@@ -53,34 +53,59 @@
   :file-var 'org-canvas-settings-file
   :query "LEVEL=1"
   :properties
-  `((:org-prop "APPLY_WEIGHTS" :data-key :apply_weights :type boolean)
-    (:org-prop "HIDE_FINAL_GRADES" :data-key :hide_final_grades :type boolean)
-    (:org-prop "PUBLIC_SYLLABUS" :data-key :public_syllabus :type boolean)
-    (:org-prop "IS_PUBLIC" :data-key :is_public :type boolean)
+  `((:org-prop "APPLY_WEIGHTS" :data-key :apply_weights :type boolean
+     :doc "Weight assignment groups")
+    (:org-prop "HIDE_FINAL_GRADES" :data-key :hide_final_grades :type boolean
+     :doc "Hide grades from students")
+    (:org-prop "PUBLIC_SYLLABUS" :data-key :public_syllabus :type boolean
+     :doc "Make syllabus publicly visible")
+    (:org-prop "IS_PUBLIC" :data-key :is_public :type boolean
+     :doc "Make course publicly visible")
     (:org-prop "DEFAULT_VIEW" :data-key :default_view :type enum
-     :values ,org-canvas--valid-views)
+     :values ,org-canvas--valid-views
+     :doc "Course homepage view")
     (:org-prop "LICENSE" :data-key :license :type enum
-     :values ,org-canvas--valid-licenses)
-    (:org-prop "START_AT" :data-key :start_at :type timestamp)
-    (:org-prop "END_AT" :data-key :end_at :type timestamp)
-    (:org-prop "ALLOW_STUDENT_DISCUSSION_TOPICS" :data-key :allow_student_discussion_topics :type boolean)
-    (:org-prop "ALLOW_STUDENT_DISCUSSION_EDITING" :data-key :allow_student_discussion_editing :type boolean)
-    (:org-prop "ALLOW_STUDENT_FORUM_ATTACHMENTS" :data-key :allow_student_forum_attachments :type boolean)
-    (:org-prop "LOCK_ALL_ANNOUNCEMENTS" :data-key :lock_all_announcements :type boolean)
-    (:org-prop "RESTRICT_STUDENT_FUTURE_VIEW" :data-key :restrict_student_future_view :type boolean)
-    (:org-prop "RESTRICT_STUDENT_PAST_VIEW" :data-key :restrict_student_past_view :type boolean)
-    (:org-prop "SHOW_ANNOUNCEMENTS_ON_HOME_PAGE" :data-key :show_announcements_on_home_page :type boolean)
-    (:org-prop "HOME_PAGE_ANNOUNCEMENT_LIMIT" :data-key :home_page_announcement_limit :type number)
-    (:org-prop "HIDE_DISTRIBUTION_GRAPHS" :data-key :hide_distribution_graphs :type boolean)
-    (:org-prop "GRADING_STANDARD_ID" :data-key :grading_standard_id :type number)
-    (:org-prop "LATE_SUBMISSION_DEDUCTION" :data-key :late_submission_deduction :type number)
-    (:org-prop "LATE_SUBMISSION_DEDUCTION_ENABLED" :data-key :late_submission_deduction_enabled :type boolean)
+     :values ,org-canvas--valid-licenses
+     :doc "Content license")
+    (:org-prop "START_AT" :data-key :start_at :type timestamp
+     :doc "Course start date")
+    (:org-prop "END_AT" :data-key :end_at :type timestamp
+     :doc "Course end date")
+    (:org-prop "ALLOW_STUDENT_DISCUSSION_TOPICS" :data-key :allow_student_discussion_topics :type boolean
+     :doc "Students can create discussions")
+    (:org-prop "ALLOW_STUDENT_DISCUSSION_EDITING" :data-key :allow_student_discussion_editing :type boolean
+     :doc "Students can edit discussions")
+    (:org-prop "ALLOW_STUDENT_FORUM_ATTACHMENTS" :data-key :allow_student_forum_attachments :type boolean
+     :doc "Students can attach files")
+    (:org-prop "LOCK_ALL_ANNOUNCEMENTS" :data-key :lock_all_announcements :type boolean
+     :doc "Lock all announcements")
+    (:org-prop "RESTRICT_STUDENT_FUTURE_VIEW" :data-key :restrict_student_future_view :type boolean
+     :doc "Hide future content from students")
+    (:org-prop "RESTRICT_STUDENT_PAST_VIEW" :data-key :restrict_student_past_view :type boolean
+     :doc "Hide past content from students")
+    (:org-prop "SHOW_ANNOUNCEMENTS_ON_HOME_PAGE" :data-key :show_announcements_on_home_page :type boolean
+     :doc "Show announcements on homepage")
+    (:org-prop "HOME_PAGE_ANNOUNCEMENT_LIMIT" :data-key :home_page_announcement_limit :type number
+     :doc "Number of announcements shown")
+    (:org-prop "HIDE_DISTRIBUTION_GRAPHS" :data-key :hide_distribution_graphs :type boolean
+     :doc "Hide grade distribution graphs")
+    (:org-prop "GRADING_STANDARD_ID" :data-key :grading_standard_id :type number
+     :doc "Canvas grading standard ID")
+    (:org-prop "LATE_SUBMISSION_DEDUCTION" :data-key :late_submission_deduction :type number
+     :doc "Points deducted per interval")
+    (:org-prop "LATE_SUBMISSION_DEDUCTION_ENABLED" :data-key :late_submission_deduction_enabled :type boolean
+     :doc "Enable late submission penalty")
     (:org-prop "LATE_SUBMISSION_INTERVAL" :data-key :late_submission_interval :type enum
-     :values ,org-canvas--valid-late-intervals)
-    (:org-prop "LATE_SUBMISSION_MINIMUM_PERCENT" :data-key :late_submission_minimum_percent :type number)
-    (:org-prop "LATE_SUBMISSION_MINIMUM_PERCENT_ENABLED" :data-key :late_submission_minimum_percent_enabled :type boolean)
-    (:org-prop "MISSING_SUBMISSION_DEDUCTION" :data-key :missing_submission_deduction :type number)
-    (:org-prop "MISSING_SUBMISSION_DEDUCTION_ENABLED" :data-key :missing_submission_deduction_enabled :type boolean)))
+     :values ,org-canvas--valid-late-intervals
+     :doc "Deduction frequency")
+    (:org-prop "LATE_SUBMISSION_MINIMUM_PERCENT" :data-key :late_submission_minimum_percent :type number
+     :doc "Minimum score for late work")
+    (:org-prop "LATE_SUBMISSION_MINIMUM_PERCENT_ENABLED" :data-key :late_submission_minimum_percent_enabled :type boolean
+     :doc "Enable minimum percent floor")
+    (:org-prop "MISSING_SUBMISSION_DEDUCTION" :data-key :missing_submission_deduction :type number
+     :doc "Deduction for missing work")
+    (:org-prop "MISSING_SUBMISSION_DEDUCTION_ENABLED" :data-key :missing_submission_deduction_enabled :type boolean
+     :doc "Enable missing work penalty")))
 
 ;;;; 1. Parse
 

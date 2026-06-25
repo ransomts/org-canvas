@@ -77,27 +77,43 @@
   :properties
   `((:org-prop "QUIZ_TYPE" :data-key :quiz_type :type enum
      :values ,org-canvas--valid-quiz-types)
-    (:org-prop "PUBLISHED" :data-key :published :type boolean)
-    (:org-prop "SHUFFLE_ANSWERS" :data-key :shuffle_answers :type boolean)
-    (:org-prop "TIME_LIMIT" :data-key :time_limit :type number)
-    (:org-prop "ALLOWED_ATTEMPTS" :data-key :allowed_attempts :type number)
-    (:org-prop "DUE_AT" :data-key :due_at :type timestamp)
-    (:org-prop "UNLOCK_AT" :data-key :unlock_at :type timestamp)
-    (:org-prop "LOCK_AT" :data-key :lock_at :type timestamp)
-    (:org-prop "SHOW_CORRECT_ANSWERS" :data-key :show_correct_answers :type boolean)
-    (:org-prop "SHOW_CORRECT_ANSWERS_AT" :data-key :show_correct_answers_at :type timestamp)
-    (:org-prop "HIDE_CORRECT_ANSWERS_AT" :data-key :hide_correct_answers_at :type timestamp)
+    (:org-prop "PUBLISHED" :data-key :published :type boolean
+     :doc "Whether item is visible (default: true)")
+    (:org-prop "SHUFFLE_ANSWERS" :data-key :shuffle_answers :type boolean
+     :doc "Randomize answer order")
+    (:org-prop "TIME_LIMIT" :data-key :time_limit :type number
+     :doc "Time limit in minutes")
+    (:org-prop "ALLOWED_ATTEMPTS" :data-key :allowed_attempts :type number
+     :doc "Max attempts (-1 = unlimited)")
+    (:org-prop "DUE_AT" :data-key :due_at :type timestamp
+     :doc "Due date")
+    (:org-prop "UNLOCK_AT" :data-key :unlock_at :type timestamp
+     :doc "When the quiz becomes available")
+    (:org-prop "LOCK_AT" :data-key :lock_at :type timestamp
+     :doc "When the quiz closes")
+    (:org-prop "SHOW_CORRECT_ANSWERS" :data-key :show_correct_answers :type boolean
+     :doc "Show correct answers after submission (default: true)")
+    (:org-prop "SHOW_CORRECT_ANSWERS_AT" :data-key :show_correct_answers_at :type timestamp
+     :doc "When to start showing correct answers")
+    (:org-prop "HIDE_CORRECT_ANSWERS_AT" :data-key :hide_correct_answers_at :type timestamp
+     :doc "When to stop showing correct answers")
     (:org-prop "HIDE_RESULTS" :data-key :hide_results :type enum
      :values ,org-canvas--valid-hide-results)
     (:org-prop "SCORING_POLICY" :data-key :scoring_policy :type enum
      :values ,org-canvas--valid-scoring-policies)
-    (:org-prop "ONE_QUESTION_AT_A_TIME" :data-key :one_question_at_a_time :type boolean)
-    (:org-prop "CANT_GO_BACK" :data-key :cant_go_back :type boolean)
-    (:org-prop "SHOW_CORRECT_ANSWERS_LAST_ATTEMPT" :data-key :show_correct_answers_last_attempt :type boolean)
-    (:org-prop "ONE_TIME_RESULTS" :data-key :one_time_results :type boolean)
-    (:org-prop "ONLY_VISIBLE_TO_OVERRIDES" :data-key :only_visible_to_overrides :type boolean)
+    (:org-prop "ONE_QUESTION_AT_A_TIME" :data-key :one_question_at_a_time :type boolean
+     :doc "Show one question per page")
+    (:org-prop "CANT_GO_BACK" :data-key :cant_go_back :type boolean
+     :doc "Prevent backtracking (requires =ONE_QUESTION_AT_A_TIME=)")
+    (:org-prop "SHOW_CORRECT_ANSWERS_LAST_ATTEMPT" :data-key :show_correct_answers_last_attempt :type boolean
+     :doc "Only show correct answers on last attempt")
+    (:org-prop "ONE_TIME_RESULTS" :data-key :one_time_results :type boolean
+     :doc "Students can only view results once")
+    (:org-prop "ONLY_VISIBLE_TO_OVERRIDES" :data-key :only_visible_to_overrides :type boolean
+     :doc "Only visible to students with overrides")
     (:org-prop "GROUP" :data-key :assignment_group_id :type link
-     :target-file org-canvas-assignment-groups-file :link-id-property "CANVAS_ID"))
+     :target-file org-canvas-assignment-groups-file :link-id-property "CANVAS_ID"
+     :doc "Link to assignment-groups.org heading"))
   :date-order '(("UNLOCK_AT" "DUE_AT" "LOCK_AT"))
   :structural-fn #'org-canvas--validate-quiz-point-total)
 (org-canvas-register-properties "quiz-questions"
@@ -106,11 +122,16 @@
   :query "LEVEL=2"
   :properties
   `((:org-prop "TYPE" :data-key :type :type enum
-     :values ,org-canvas--valid-question-types)
-    (:org-prop "POINTS" :data-key :points :type number)
-    (:org-prop "PICK_COUNT" :data-key :pick_count :type number)
-    (:org-prop "QUESTION_POINTS" :data-key :question_points :type number)
-    (:org-prop "QUESTION_BANK_ID" :data-key :question_bank_id :type number)))
+     :values ,org-canvas--valid-question-types
+     :doc "Question type (see below)")
+    (:org-prop "POINTS" :data-key :points :type number
+     :doc "Points for this question")
+    (:org-prop "PICK_COUNT" :data-key :pick_count :type number
+     :doc "Number of questions to randomly select (default 1)")
+    (:org-prop "QUESTION_POINTS" :data-key :question_points :type number
+     :doc "Points per selected question (default 1)")
+    (:org-prop "QUESTION_BANK_ID" :data-key :question_bank_id :type number
+     :doc "Canvas assessment question bank ID (optional)")))
 
 ;;;; Helper Functions
 
@@ -889,11 +910,15 @@ Point must be at the parent quiz heading."
 (defun org-canvas--quiz-pull-fetch-questions (quiz-id)
   "Fetch question list for QUIZ-ID, returning a list of alists.
 Returns nil on API error."
-  (condition-case nil
+  (condition-case err
       (let ((q-url (org-canvas-api-course-endpoint
                     "quizzes/%s/questions" quiz-id)))
         (org-canvas-api-request-all-pages 'GET q-url))
-    (error nil)))
+    (error
+     (org-canvas--log-warning org-canvas--logger
+       "[Quizzes] Failed to fetch questions for quiz %s (%s); questions omitted from pull"
+       quiz-id (error-message-string err))
+     nil)))
 
 (defun org-canvas--quiz-pull-insert-questions (quiz-id)
   "Fetch and insert questions for QUIZ-ID as L2 headings.

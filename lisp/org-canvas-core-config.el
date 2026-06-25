@@ -469,6 +469,23 @@ DESTINATION should be one of: buffer, file, both."
                                        (org-canvas--log-file-path))))
   (message "org-canvas log destination set to: %s" destination))
 
+;;;; 2b. Internal Sync-State Property Names
+;;
+;; Org property names written/read by the sync pipeline itself (as opposed
+;; to the user-facing content properties).  These are referenced from
+;; several core submodules; defining them once prevents a typo in any one
+;; site from silently breaking hash or conflict detection without any
+;; compile-time error.  (CANVAS_ID/CANVAS_URL are part of the documented
+;; public file format and are deliberately left as string literals.)
+
+(defconst org-canvas--prop-payload-hash "PAYLOAD_HASH"
+  "Org property storing the hash of the last-synced payload (change detection).")
+
+(defconst org-canvas--prop-last-synced "LAST_SYNCED"
+  "Legacy per-entry sync-timestamp property name.
+Superseded by the file-level \"#+LAST_SYNCED:\" header; still read for
+backward compatibility.")
+
 ;;;; 3. Shared Enum Constants
 ;;
 ;; Canonical definitions for enum values used by both feature modules

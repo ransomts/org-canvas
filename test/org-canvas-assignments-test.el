@@ -341,7 +341,30 @@ Content.
           (org-canvas--push-to-api data payload
             :endpoint "assignments"
             :find-fn (lambda (name) (org-canvas--search-item "assignments" name :match-field 'name)))
-          (expect-api-called 'PUT "assignments/789"))))))
+          (expect-api-called 'PUT "assignments/789")))))
+
+  (it "sends a payload whose body reflects the org input"
+    (let ((temp-dir (make-temp-file "assignments-test" t)))
+      (unwind-protect
+          (let ((org-file (expand-file-name "assignments.org" temp-dir)))
+            (with-temp-file org-file
+              (insert "* Essay\n:PROPERTIES:\n:POINTS: 50\n:GRADING_TYPE: points\n:PUBLISHED: true\n:SUBMISSION: online_upload\n:END:\n\nWrite an essay.\n"))
+            (let ((org-canvas-assignments-file org-file)
+                  (org-canvas-base-url "https://test.canvas.example.com")
+                  (org-canvas-api-token "test-token")
+                  (org-canvas-course-id "99999"))
+              (with-sync-test-env
+                (with-mock-api
+                  (org-canvas-sync-assignments)
+                  (let* ((body (test-org-canvas-api-call-data 'POST "assignments"))
+                         (assignment (gethash "assignment" body)))
+                    (expect (gethash "name" assignment) :to-equal "Essay")
+                    (expect (gethash "points_possible" assignment) :to-equal 50)
+                    (expect (gethash "grading_type" assignment) :to-equal "points")
+                    (expect (gethash "published" assignment) :to-be t)
+                    (expect (gethash "submission_types" assignment)
+                            :to-equal '("online_upload")))))))
+        (delete-directory temp-dir t)))))
 
 (describe "assignment search (mocked)"
   (it "searches assignments endpoint"

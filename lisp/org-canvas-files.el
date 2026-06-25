@@ -69,9 +69,12 @@
   :file-var 'org-canvas-files-file
   :query "LEVEL>0"
   :properties
-  `((:org-prop "PUBLISHED" :data-key :published :type boolean)
-    (:org-prop "UNLOCK_AT" :data-key :unlock_at :type timestamp)
-    (:org-prop "LOCK_AT" :data-key :lock_at :type timestamp)
+  `((:org-prop "PUBLISHED" :data-key :published :type boolean
+     :doc "Whether item is visible (default: true)")
+    (:org-prop "UNLOCK_AT" :data-key :unlock_at :type timestamp
+     :doc "Date to make file available")
+    (:org-prop "LOCK_AT" :data-key :lock_at :type timestamp
+     :doc "Date to hide file")
     (:org-prop "USE_JUSTIFICATION" :data-key :use_justification :type enum
      :values ,org-canvas--valid-use-justifications))
   :structural-fn #'org-canvas--validate-file-structure)
@@ -417,9 +420,13 @@ Returns a plist (:status STRING :location URL :json DATA :body STRING)."
         (setq location-header (string-trim (match-string 1)))))
     (when (re-search-forward "\r?\n\r?\n" nil t)
       (setq response-body (buffer-substring-no-properties (point) (point-max)))
-      (setq json-response (condition-case nil
+      (setq json-response (condition-case err
                               (json-read-from-string response-body)
-                            (error nil))))
+                            (error
+                             (org-canvas--log-debug org-canvas--logger
+                               "[Files] Upload response body was not valid JSON (%s)"
+                               (error-message-string err))
+                             nil))))
     (list :status status-line :location location-header
           :json json-response :body response-body)))
 

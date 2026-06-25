@@ -933,7 +933,50 @@ EXCEPT is a list of filenames to skip."
                   (expect (plist-get issue :message) :to-match "MB")))
               (kill-buffer)))
         (delete-file temp-file)
+        (delete-file org-file))))
+
+  (it "does not warn when file size equals the limit (boundary)"
+    ;; Guards `(> size-mb max)': a >= would flag a file exactly at the limit.
+    ;; An empty file is 0.0 MB; with the limit at 0, `>' is nil but `>=' is t.
+    (let* ((org-canvas-max-file-size-mb 0)
+           (temp-file (make-temp-file "size-test" nil ".txt"))  ;; empty: 0 bytes
+           (org-file (make-temp-file "org-test-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file org-file
+              (insert (format "* [[file:%s][Test File]]\n:PROPERTIES:\n:END:\n" temp-file)))
+            (with-current-buffer (find-file-noselect org-file)
+              (goto-char (point-min))
+              (org-back-to-heading)
+              (let ((issues (org-canvas--validate-file-structure
+                             (list :file org-file :line 1 :heading "Test File")))
+                    (has-size-warning nil))
+                (dolist (i issues)
+                  (when (string-match-p "MB" (plist-get i :message))
+                    (setq has-size-warning t)))
+                (expect has-size-warning :to-be nil))
+              (kill-buffer)))
+        (delete-file temp-file)
         (delete-file org-file)))))
+
+(describe "org-canvas--validate-quiz-question-points"
+  (it "returns 0 for a group question missing PICK_COUNT (no crash)"
+    ;; Guards the `(and (equal qtype \"group\") pick-count question-points)'
+    ;; condition: an `or' would enter the group branch and call
+    ;; string-to-number on a nil PICK_COUNT, crashing on malformed input.
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:END:
+** Group Q
+:PROPERTIES:
+:TYPE: group
+:END:
+"
+     (goto-char (point-min))
+     (re-search-forward "^\\*\\* Group Q")
+     (org-back-to-heading)
+     (expect (org-canvas--validate-quiz-question-points (point)) :to-equal 0))))
 
 (describe "org-canvas--validate-entry-at-marker structural-fn"
   (it "appends structural issues"
@@ -2119,6 +2162,30 @@ EXCEPT is a list of filenames to skip."
      (let ((loc (list :file (buffer-file-name) :line 1 :heading "Quiz")))
        (expect (org-canvas--validate-quiz-point-total loc) :to-be nil)))))
 
+(describe "org-canvas--count-assignments-in-group"
+  (it "returns 0 (no crash) when the assignments file is nil"
+    ;; Guards the `(and assignments-file (file-exists-p assignments-file))'
+    ;; predicate: an `or' would call file-exists-p on nil and crash.
+    (expect (org-canvas--count-assignments-in-group "Homework" nil)
+            :to-equal 0))
+
+  (it "counts assignments whose GROUP matches the group name"
+    (let ((temp-dir (make-temp-file "count-test-" t)))
+      (unwind-protect
+          (let ((assign-file (expand-file-name "assignments.org" temp-dir)))
+            (with-temp-file assign-file
+              (insert "* A1\n:PROPERTIES:\n:GROUP: [[file:x::*Homework][Homework]]\n:END:\n"
+                      "* A2\n:PROPERTIES:\n:GROUP: [[file:x::*Homework][Homework]]\n:END:\n"
+                      "* A3\n:PROPERTIES:\n:GROUP: [[file:x::*Exams][Exams]]\n:END:\n"))
+            (expect (org-canvas--count-assignments-in-group "Homework" assign-file)
+                    :to-equal 2))
+        (delete-directory temp-dir t))))
+
+  (it "returns 0 when the file does not exist"
+    (expect (org-canvas--count-assignments-in-group
+             "Homework" "/nonexistent/assignments.org")
+            :to-equal 0)))
+
 (describe "org-canvas--validate-drop-rules"
   (it "returns nil when no drop rules"
     (with-temp-org-buffer
@@ -2130,6 +2197,27 @@ EXCEPT is a list of filenames to skip."
      (org-back-to-heading)
      (let ((loc (list :file (buffer-file-name) :line 1 :heading "Homework")))
        (expect (org-canvas--validate-drop-rules loc) :to-be nil))))
+
+  (it "returns nil when a drop rule is present but zero"
+    ;; Guards the `(> total-drops 0)' boundary: a >= would warn even when no
+    ;; assignments are actually dropped (DROP_LOWEST: 0).  Uses an explicit 0
+    ;; so the `(or drop-lowest drop-highest)' guard is passed and the boundary
+    ;; line is actually reached.
+    (let ((temp-dir (make-temp-file "drop-zero-" t)))
+      (unwind-protect
+          (let ((assign-file (expand-file-name "assignments.org" temp-dir)))
+            (with-temp-file assign-file (insert ""))
+            (with-temp-org-buffer
+             "* Homework
+:PROPERTIES:
+:DROP_LOWEST: 0
+:END:
+"
+             (org-back-to-heading)
+             (let ((org-canvas-assignments-file assign-file)
+                   (loc (list :file (buffer-file-name) :line 1 :heading "Homework")))
+               (expect (org-canvas--validate-drop-rules loc) :to-be nil))))
+        (delete-directory temp-dir t))))
 
   (it "returns warning when drops exceed assignment count"
     (let* ((temp-dir (make-temp-file "drop-test-" t))

@@ -13,6 +13,29 @@
 (require 'org-canvas-rubrics)
 (require 'org-canvas-files)
 
+;;;; 8. Mock API recording helpers
+
+(describe "with-mock-api request recording"
+  (it "records :params and :timeout, not just :data"
+    (with-mock-api
+      (org-canvas-api-request 'GET "https://x/api/v1/courses/1/items"
+                              :data '((a . 1))
+                              :params '(("per_page" . "100"))
+                              :timeout 42)
+      (let ((call (test-org-canvas-find-api-call 'GET "items")))
+        (expect (nth 2 call) :to-equal '((a . 1)))
+        (expect (test-org-canvas-call-arg call :params)
+                :to-equal '(("per_page" . "100")))
+        (expect (test-org-canvas-call-arg call :timeout) :to-equal 42))))
+
+  (it "exposes payload via test-org-canvas-api-call-data"
+    (with-mock-api
+      (org-canvas-api-request 'POST "https://x/api/v1/courses/1/pages"
+                              :data '((title . "T")))
+      (expect (test-org-canvas-api-call-data 'POST "pages")
+              :to-equal '((title . "T")))
+      (expect (test-org-canvas-api-call-data 'POST "no-such") :to-be nil))))
+
 ;;;; 9. Search Item Helper
 
 (describe "org-canvas--search-item (mocked)"
@@ -712,6 +735,34 @@ Content two.
                     (expect (org-entry-get (point) "CANVAS_URL") :to-equal "test-url"))))))
         (delete-directory temp-dir t))))
 
+  (it "reports the number of successfully synced items"
+    ;; Guards the `:success' counter increment: a broken increment would
+    ;; mis-report the user-facing \"N success\" summary.
+    (let ((temp-dir (make-temp-file "sync-test" t)))
+      (unwind-protect
+          (let ((org-file (expand-file-name "pages.org" temp-dir)))
+            (with-temp-file org-file
+              (insert "* Page One\n:PROPERTIES:\n:END:\n\nc1.\n\n"
+                      "* Page Two\n:PROPERTIES:\n:END:\n\nc2.\n"))
+            (let ((org-canvas-pages-file org-file)
+                  (org-canvas-base-url "https://test.example.com")
+                  (org-canvas-api-token "test-token")
+                  (org-canvas-course-id "99999"))
+              (with-sync-test-env
+                (cl-letf (((symbol-function 'org-canvas-api-request)
+                           (lambda (_m _u &rest _a) '((url . "u")))))
+                  (spy-on 'message :and-call-through)
+                  (org-canvas-sync-pages)
+                  (let ((reported nil))
+                    (dolist (call (spy-calls-all-args 'message))
+                      (let ((s (and (car call) (stringp (car call))
+                                    (ignore-errors (apply #'format call)))))
+                        ;; Leading space so a mutated "-2 success" can't match.
+                        (when (and s (string-match-p " 2 success" s))
+                          (setq reported t))))
+                    (expect reported :to-be t))))))
+        (delete-directory temp-dir t))))
+
   (it "continues after one entry fails"
     (let ((temp-dir (make-temp-file "sync-test" t)))
       (unwind-protect
@@ -744,7 +795,42 @@ Content two.
                                  '((url . "page-two-url")))))))
                   (org-canvas-sync-pages)
                   ;; Both should have been attempted
-                  (expect call-count :to-equal 2)))))
+                  (expect call-count :to-equal 2)
+                  ;; Failure isolation: page one's failure must not prevent
+                  ;; page two from succeeding and being finalized.
+                  (with-current-buffer (find-file-noselect org-file)
+                    (goto-char (point-min))
+                    (expect (org-entry-get (point) "CANVAS_URL") :to-be nil)
+                    (re-search-forward "^\\* Page Two")
+                    (org-back-to-heading)
+                    (expect (org-entry-get (point) "CANVAS_URL")
+                            :to-equal "page-two-url"))))))
+        (delete-directory temp-dir t))))
+
+  (it "sends a payload with the expected structure (not just any call)"
+    (let ((temp-dir (make-temp-file "sync-test" t)))
+      (unwind-protect
+          (let ((org-file (expand-file-name "pages.org" temp-dir)))
+            (with-temp-file org-file
+              (insert "* Welcome
+:PROPERTIES:
+:END:
+
+Hello world.
+"))
+            (let ((org-canvas-pages-file org-file)
+                  (org-canvas-base-url "https://test.example.com")
+                  (org-canvas-api-token "test-token")
+                  (org-canvas-course-id "99999"))
+              (with-sync-test-env
+                (with-mock-api
+                  (org-canvas-sync-pages)
+                  (let* ((payload (test-org-canvas-api-call-data 'POST "pages"))
+                         (page (gethash "wiki_page" payload)))
+                    ;; Validate the actual body shape, so a renamed/dropped
+                    ;; field is caught — not merely that a POST happened.
+                    (expect (hash-table-p page) :to-be-truthy)
+                    (expect (gethash "title" page) :to-equal "Welcome"))))))
         (delete-directory temp-dir t))))
 
   (it "errors when file not found"
@@ -1001,6 +1087,44 @@ Content two.
      (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil)
      (expect (org-entry-get (point) "PAYLOAD_HASH") :to-be nil))))
 
+;;;; Metamorphic relations
+
+(describe "metamorphic relations"
+  (it "re-syncing unchanged content is a no-op (push idempotence)"
+    ;; sync ∘ sync = sync: the second run must skip via PAYLOAD_HASH and make
+    ;; no API write.  Runs the REAL pipeline twice (the existing payload-hash
+    ;; test only simulates the save).
+    (let ((temp-dir (make-temp-file "idem-" t)))
+      (unwind-protect
+          (let ((org-file (expand-file-name "pages.org" temp-dir)))
+            (with-temp-file org-file
+              (insert "* Welcome\n:PROPERTIES:\n:END:\n\nHello.\n"))
+            (let ((org-canvas-pages-file org-file)
+                  (org-canvas-base-url "https://test.example.com")
+                  (org-canvas-api-token "test-token")
+                  (org-canvas-course-id "99999"))
+              (with-sync-test-env
+                (with-mock-api
+                  (setq test-org-canvas-api-responses
+                        '(("pages" . ((url . "welcome") (page_id . 5)))))
+                  (org-canvas-sync-pages)             ; creates the page
+                  (expect (test-org-canvas-api-called-p 'POST "pages")
+                          :to-be-truthy)
+                  (setq test-org-canvas-api-calls nil) ; observe only run 2
+                  (org-canvas-sync-pages)             ; identical content
+                  (expect (test-org-canvas-api-called-p 'POST "pages") :to-be nil)
+                  (expect (test-org-canvas-api-called-p 'PUT "pages") :to-be nil)))))
+        (delete-directory temp-dir t))))
+
+  (it "heading parse is invariant to extra spaces after the stars"
+    ;; `* Welcome' and `*  Welcome' must parse to the same title.
+    (let ((d1 (with-temp-org-buffer "* Welcome\n:PROPERTIES:\n:END:\n"
+                (org-back-to-heading) (org-canvas--page-parse-entry)))
+          (d2 (with-temp-org-buffer "*  Welcome\n:PROPERTIES:\n:END:\n"
+                (org-back-to-heading) (org-canvas--page-parse-entry))))
+      (expect (plist-get d1 :title) :to-equal "Welcome")
+      (expect (plist-get d1 :title) :to-equal (plist-get d2 :title)))))
+
 ;;;; Push-at-Point Macro
 
 (describe "org-canvas-define-sync at-point generation"
@@ -1134,7 +1258,30 @@ Content two.
                   (lambda (_method _url &rest _args)
                     (signal 'error '("HTTP 500")))))
          (expect (org-canvas--conflict-check "items" "123" (point-marker))
-                 :to-be nil))))))
+                 :to-be nil)))))
+
+  (it "warns (does not silently swallow) on GET failure"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer
+       "#+LAST_SYNCED: [2026-01-01 Thu 10:00]
+* Item
+:PROPERTIES:
+:CANVAS_ID: 123
+:END:
+"
+       (re-search-forward "^\\* ")
+       (org-back-to-heading)
+       (spy-on 'org-canvas--log-warning)
+       (cl-letf (((symbol-function 'org-canvas-api-request)
+                  (lambda (_method _url &rest _args)
+                    (signal 'error '("HTTP 500")))))
+         (org-canvas--conflict-check "items" "123" (point-marker))
+         (let ((warned nil))
+           (dolist (call (spy-calls-all-args 'org-canvas--log-warning))
+             (when (string-match-p "Remote check.*failed"
+                                   (apply #'format (cdr call)))
+               (setq warned t)))
+           (expect warned :to-be t)))))))
 
 (describe "org-canvas--push-to-api conflict detection"
   (it "returns conflict when user chooses skip"
@@ -1171,14 +1318,29 @@ Content two.
           (org-canvas--push-to-api data payload :endpoint "items")
           (expect-api-called 'POST "items$")))))
 
-  (it "skips conflict check when detect-conflicts is nil"
+  (it "skips conflict check (no GET) when detect-conflicts is nil"
+    ;; LAST_SYNCED + pom are present, so if the conflict gate were wrongly
+    ;; open the check would fire a GET.  detect-conflicts is nil, so it must
+    ;; not.  Guards the `(and org-canvas-detect-conflicts (eq method 'PUT)
+    ;; ...)' gate against an `or' that would conflict-check on every PUT.
     (with-org-canvas-test-config
-      (with-mock-api
-        (let ((org-canvas-detect-conflicts nil)
-              (data '(:title "Force Push" :canvas-id "789"))
-              (payload '((title . "Force Push"))))
-          (org-canvas--push-to-api data payload :endpoint "items")
-          (expect-api-called 'PUT "items/789")))))
+      (with-temp-org-buffer
+       "#+LAST_SYNCED: [2026-01-01 Thu 10:00]
+* Item
+:PROPERTIES:
+:CANVAS_ID: 789
+:END:
+"
+       (re-search-forward "^\\* ")
+       (org-back-to-heading)
+       (with-mock-api
+         (let ((org-canvas-detect-conflicts nil)
+               (data (list :title "Force Push" :canvas-id "789"
+                           :pom (point-marker)))
+               (payload '((title . "Force Push"))))
+           (org-canvas--push-to-api data payload :endpoint "items")
+           (expect-api-called 'PUT "items/789")
+           (expect (test-org-canvas-api-called-p 'GET "items") :to-be nil))))))
 
   (it "skips conflict check in dry-run mode"
     (with-org-canvas-test-config
@@ -1192,6 +1354,37 @@ Content two.
                 (payload '((title . "Dry Run"))))
             (org-canvas--push-to-api data payload :endpoint "items")
             (expect api-called :to-be nil)))))))
+
+(describe "org-canvas--singularize"
+  (it "uses the irregular-plural override when present"
+    ;; Guards `(or (cdr (assoc ...)) (if ...))': an `and' there would fall
+    ;; through to the naive trailing-s strip and mis-singularize.
+    (expect (org-canvas--singularize "quizzes") :to-equal "quiz")
+    (expect (org-canvas--singularize "new-quizzes") :to-equal "new-quiz")
+    (expect (org-canvas--singularize "group-categories") :to-equal "group-category"))
+
+  (it "strips a trailing s for regular plurals"
+    (expect (org-canvas--singularize "pages") :to-equal "page")
+    (expect (org-canvas--singularize "assignments") :to-equal "assignment")))
+
+(describe "org-canvas--404-on-put-p"
+  (it "is non-nil only for a 404 on PUT/PATCH"
+    (expect (org-canvas--404-on-put-p '(error "HTTP 404 Not Found") 'PUT)
+            :to-be-truthy)
+    (expect (org-canvas--404-on-put-p '(error "HTTP 404 Not Found") 'PATCH)
+            :to-be-truthy))
+
+  (it "is nil for a 404 on a non-PUT method"
+    ;; Guards the `(and (memq method ...) (404-error-p err))': an `or' would
+    ;; wrongly retry a 404 on GET/POST as a POST.
+    (expect (org-canvas--404-on-put-p '(error "HTTP 404 Not Found") 'GET)
+            :to-be nil)
+    (expect (org-canvas--404-on-put-p '(error "HTTP 404 Not Found") 'POST)
+            :to-be nil))
+
+  (it "is nil for a non-404 error on PUT"
+    (expect (org-canvas--404-on-put-p '(error "HTTP 500 Server Error") 'PUT)
+            :to-be nil)))
 
 (describe "org-canvas--finalize-item saves CANVAS_UPDATED_AT"
   (it "stores updated_at from response"
@@ -1879,6 +2072,37 @@ Keep this too
                              (string-match-p "Duplicate" (nth 1 call)))
                     (setq dup-warned t)))
                 (expect dup-warned :to-be-truthy))))
+        (let ((buf (find-buffer-visiting test-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "does not warn when all CANVAS_IDs are unique"
+    ;; Guards the `(> count 1)' boundary: a >= would warn for every id
+    ;; (each appears once), producing false duplicate warnings.
+    (let* ((temp-dir (make-temp-file "dup-test" t))
+           (test-file (expand-file-name "test.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file test-file
+              (insert "* Item One
+:PROPERTIES:
+:CANVAS_ID: UNIQ-1
+:END:
+* Item Two
+:PROPERTIES:
+:CANVAS_ID: UNIQ-2
+:END:
+"))
+            (spy-on 'org-canvas--log-warning)
+            (with-org-canvas-test-config
+              (org-canvas--sync-collect-entries test-file "LEVEL=1" "test")
+              (let ((dup-warned nil))
+                (dolist (call (spy-calls-all-args 'org-canvas--log-warning))
+                  (when (and (>= (length call) 2)
+                             (stringp (nth 1 call))
+                             (string-match-p "Duplicate\\] CANVAS_ID" (nth 1 call)))
+                    (setq dup-warned t)))
+                (expect dup-warned :to-be nil))))
         (let ((buf (find-buffer-visiting test-file)))
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))

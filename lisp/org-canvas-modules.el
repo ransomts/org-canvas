@@ -64,20 +64,27 @@
   :query "LEVEL=1"
   :properties
   '((:org-prop "PUBLISHED" :data-key :published :type boolean)
-    (:org-prop "UNLOCK_AT" :data-key :unlock_at :type timestamp)
-    (:org-prop "REQUIRE_SEQUENTIAL_PROGRESSION" :data-key :require_sequential_progression :type boolean)
+    (:org-prop "UNLOCK_AT" :data-key :unlock_at :type timestamp
+     :doc "Date to unlock the module")
+    (:org-prop "REQUIRE_SEQUENTIAL_PROGRESSION" :data-key :require_sequential_progression :type boolean
+     :doc "Force items to be completed in order")
     (:org-prop "PUBLISH_FINAL_GRADE" :data-key :publish_final_grade :type boolean)))
 (org-canvas-register-properties "module-items"
   :label "Module Items"
   :file-var 'org-canvas-modules-file
   :query "LEVEL=2"
   :properties
-  `((:org-prop "INDENT" :data-key :indent :type number)
+  `((:org-prop "INDENT" :data-key :indent :type number
+     :doc "Indentation level (0-5)")
     (:org-prop "COMPLETION_REQUIREMENT" :data-key :completion_requirement :type enum
-     :values ,org-canvas--valid-completion-requirements)
-    (:org-prop "MIN_SCORE" :data-key :min_score :type number)
-    (:org-prop "NEW_TAB" :data-key :new_tab :type boolean)
-    (:org-prop "PUBLISHED" :data-key :published :type boolean))
+     :values ,org-canvas--valid-completion-requirements
+     :doc "must_view, must_submit, must_contribute, min_score")
+    (:org-prop "MIN_SCORE" :data-key :min_score :type number
+     :doc "Required score for min_score completion")
+    (:org-prop "NEW_TAB" :data-key :new_tab :type boolean
+     :doc "Open external URL in new tab")
+    (:org-prop "PUBLISHED" :data-key :published :type boolean
+     :doc "Whether the item is published (default: true)"))
   :structural-fn #'org-canvas--validate-module-item-link)
 
 ;;;; Helper Functions

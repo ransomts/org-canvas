@@ -431,7 +431,54 @@ This is a longer description of the criterion.
           (let ((data '(:title "Lost Rubric"))
                 (payload (make-hash-table)))
             (expect (org-canvas--rubric-push-to-api data payload)
-                    :to-throw 'error)))))))
+                    :to-throw 'error))))))
+
+  (it "sends a CREATE body reflecting the org rubric title and criteria"
+    (let ((temp-dir (make-temp-file "rubrics-test" t)))
+      (unwind-protect
+          (let ((org-file (expand-file-name "rubrics.org" temp-dir)))
+            (with-temp-file org-file
+              (insert "* Essay Rubric
+:PROPERTIES:
+:END:
+** Thesis :20pt:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Full Marks | 20 | |
+| No Marks | 0 | |
+** Clarity :10pt:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Full Marks | 10 | |
+| No Marks | 0 | |
+"))
+            (let ((org-canvas-rubrics-file org-file)
+                  (org-canvas-base-url "https://test.canvas.example.com")
+                  (org-canvas-api-token "test-token")
+                  (org-canvas-course-id "99999"))
+              (with-sync-test-env
+                (with-mock-api
+                  (org-canvas-sync-rubrics)
+                  (let* ((body (test-org-canvas-api-call-data 'POST "rubrics"))
+                         (rubric (gethash "rubric" body)))
+                    ;; Top-level payload is wrapped under "rubric"
+                    (expect rubric :to-be-truthy)
+                    (expect (gethash "title" rubric) :to-equal "Essay Rubric")
+                    (let ((criteria-hash (gethash "criteria" rubric)))
+                      (expect (hash-table-count criteria-hash) :to-equal 2)
+                      (expect (gethash "description" (gethash "0" criteria-hash))
+                              :to-equal "Thesis")
+                      (expect (gethash "points" (gethash "0" criteria-hash))
+                              :to-equal 20)
+                      (expect (gethash "description" (gethash "1" criteria-hash))
+                              :to-equal "Clarity")
+                      (expect (gethash "points" (gethash "1" criteria-hash))
+                              :to-equal 10))
+                    ;; rubric_association carries the course id
+                    (expect (gethash "association_id"
+                                     (gethash "rubric_association" body))
+                            :to-equal "99999"))))))
+        (delete-directory temp-dir t)))))
 
 (describe "rubric search (mocked)"
   (it "searches rubrics endpoint"
@@ -953,6 +1000,16 @@ Keep this body
       (expect (org-canvas-delete-all-rubrics) :to-throw 'user-error))))
 
 ;;;; Custom-rating Builds (new format: ratings come from criterion plist)
+
+(describe "org-canvas--rubric-build-criteria point total"
+  (it "returns the sum of all criterion points"
+    ;; Guards the `(or (plist-get crit :points) 0)' accumulator: an `and'
+    ;; there would make every criterion contribute 0 and the total wrong.
+    (let* ((hash (make-hash-table :test 'equal))
+           (criteria (list (test-rubric--criterion "Thesis" 20)
+                           (test-rubric--criterion "Clarity" 10)))
+           (total (org-canvas--rubric-build-criteria criteria hash)))
+      (expect total :to-equal 30))))
 
 (describe "org-canvas--rubric-build-criterion with rating list"
   (it "builds default 2-level ratings when ratings list is nil"

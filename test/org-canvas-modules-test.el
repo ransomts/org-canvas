@@ -1352,6 +1352,37 @@
                       (expect (org-entry-get (point) "CANVAS_ID") :to-equal "500")))))))
         (delete-directory temp-dir t))))
 
+  (it "sends a module-create body reflecting the org input"
+    (let ((temp-dir (make-temp-file "modules-test" t)))
+      (unwind-protect
+          (let ((org-file (expand-file-name "modules.org" temp-dir)))
+            (with-temp-file org-file
+              (insert "* Week 1
+:PROPERTIES:
+:PUBLISHED: true
+:POSITION: 3
+:END:
+"))
+            (let ((org-canvas-modules-file org-file)
+                  (org-canvas-base-url "https://test.canvas.example.com")
+                  (org-canvas-api-token "test-token")
+                  (org-canvas-course-id "99999"))
+              (with-sync-test-env
+                (with-mock-api
+                  (org-canvas-sync-modules)
+                  ;; The module-create POST goes to a URL ending in
+                  ;; "modules"; item POSTs go to ".../modules/<id>/items".
+                  (let* ((body (test-org-canvas-api-call-data 'POST "modules$"))
+                         (module (and (hash-table-p body)
+                                      (gethash "module" body))))
+                    (expect (hash-table-p body) :to-be-truthy)
+                    (expect (hash-table-p module) :to-be-truthy)
+                    ;; Real property->API-key mapping: name, published, position.
+                    (expect (gethash "name" module) :to-equal "Week 1")
+                    (expect (gethash "published" module) :to-be t)
+                    (expect (gethash "position" module) :to-equal 3))))))
+        (delete-directory temp-dir t))))
+
   (it "errors when file not found"
     (let ((org-canvas-modules-file "/nonexistent/modules.org"))
       (with-sync-test-env

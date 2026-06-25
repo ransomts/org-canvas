@@ -406,10 +406,14 @@ a \\='location key (needs step 3 confirmation).  Kills BUF when done."
               (setq location-header (string-trim (match-string 1)))))
           (when (re-search-forward "\r?\n\r?\n" nil t)
             (setq json-response
-                  (condition-case nil
+                  (condition-case err
                       (json-read-from-string
                        (buffer-substring-no-properties (point) (point-max)))
-                    (error nil))))
+                    (error
+                     (org-canvas--log-debug org-canvas--logger
+                       "[Upload] Step 2 response body was not valid JSON (%s); falling back to Location header"
+                       (error-message-string err))
+                     nil))))
           (cond
            ((and json-response (alist-get 'id json-response))
             json-response)

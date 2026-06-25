@@ -186,7 +186,7 @@ deletes stale PAYLOAD_HASH."
       (let ((updated-at (alist-get 'updated_at remote-response)))
         (when updated-at
           (org-canvas-org-set-property pos "CANVAS_UPDATED_AT" updated-at)))
-      (org-entry-delete pos "PAYLOAD_HASH")
+      (org-entry-delete pos org-canvas--prop-payload-hash)
       (org-canvas--pull-write-file-header)
       (org-canvas--save-buffer))))
 

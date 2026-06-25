@@ -60,26 +60,35 @@
   :file-var 'org-canvas-new-quizzes-file
   :query "LEVEL=1"
   :properties
-  `((:org-prop "TIME_LIMIT" :data-key :time_limit :type number)
-    (:org-prop "SHUFFLE_ANSWERS" :data-key :shuffle_answers :type boolean)
-    (:org-prop "ONE_AT_A_TIME" :data-key :one_at_a_time :type boolean)
-    (:org-prop "ALLOWED_ATTEMPTS" :data-key :allowed_attempts :type number)
+  `((:org-prop "TIME_LIMIT" :data-key :time_limit :type number
+     :doc "Time limit in minutes")
+    (:org-prop "SHUFFLE_ANSWERS" :data-key :shuffle_answers :type boolean
+     :doc "Randomize answer order")
+    (:org-prop "ONE_AT_A_TIME" :data-key :one_at_a_time :type boolean
+     :doc "Show one question per page")
+    (:org-prop "ALLOWED_ATTEMPTS" :data-key :allowed_attempts :type number
+     :doc "Max attempts")
     (:org-prop "SCORING_POLICY" :data-key :scoring_policy :type enum
      :values ,org-canvas--valid-new-quiz-scoring-policies)
     (:org-prop "GROUP" :data-key :assignment_group_id :type link
-     :target-file org-canvas-assignment-groups-file :link-id-property "CANVAS_ID")
+     :target-file org-canvas-assignment-groups-file :link-id-property "CANVAS_ID"
+     :doc "Link to assignment group in assignment-groups.org")
     (:org-prop "RUBRIC_LINK" :data-key :rubric_id :type link
-     :target-file org-canvas-rubrics-file :link-id-property "CANVAS_ID")))
+     :target-file org-canvas-rubrics-file :link-id-property "CANVAS_ID"
+     :doc "Link to rubric in rubrics.org (uses backing assignment)")))
 (org-canvas-register-properties "new-quiz-items"
   :label "New Quiz Items"
   :file-var 'org-canvas-new-quizzes-file
   :query "LEVEL=2"
   :properties
-  `((:org-prop "POINTS" :data-key :points :type number)
+  `((:org-prop "POINTS" :data-key :points :type number
+     :doc "Points for this question")
     (:org-prop "TYPE" :data-key :type :type enum
-     :values ,org-canvas--valid-new-quiz-types)
+     :values ,org-canvas--valid-new-quiz-types
+     :doc "Question type (see below)")
     (:org-prop "OUTCOME" :data-key :outcome :type link
-     :target-file org-canvas-outcomes-file :link-id-property "CANVAS_ID")))
+     :target-file org-canvas-outcomes-file :link-id-property "CANVAS_ID"
+     :doc "Link to outcome in outcomes.org (local-only)")))
 
 (defvar org-canvas--new-quiz-debug-types nil
   "When non-nil, only sync item types in this list during debugging.
@@ -446,13 +455,17 @@ QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
 
 (defun org-canvas--new-quiz-pull-items (quiz-assignment-id)
   "Fetch and insert items for QUIZ-ASSIGNMENT-ID as L2 headings."
-  (condition-case nil
+  (condition-case err
       (let* ((url (org-canvas--new-quiz-api-endpoint
                    "quizzes/%s/items" quiz-assignment-id))
              (items (org-canvas-api-request-all-pages 'GET url)))
         (dolist (item (org-canvas--pull-sort-items items))
           (org-canvas--new-quiz-pull-insert-item item)))
-    (error nil)))
+    (error
+     (org-canvas--log-warning org-canvas--logger
+       "[New Quizzes] Failed to fetch items for quiz %s (%s); items omitted from pull"
+       quiz-assignment-id (error-message-string err))
+     nil)))
 
 ;;;###autoload
 (defun org-canvas-pull-new-quizzes ()
