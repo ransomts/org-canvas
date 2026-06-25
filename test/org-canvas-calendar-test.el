@@ -203,6 +203,16 @@ This is the event description.
            (event (gethash "calendar_event" payload)))
       (expect (gethash "start_at" event) :to-equal "2026-09-01T14:00:00Z")))
 
+  (it "always emits start_at even when unset (required field)"
+    ;; START_AT is marked :required t in the registry, so the key must be
+    ;; present in the payload even with no value — unlike optional fields
+    ;; (cf. \"omits end_at when nil\").  Guards the :required flag itself.
+    (let* ((org-canvas-course-id "99999")
+           (data '(:title "Event"))     ; no :start_at
+           (payload (org-canvas--calendar-event-build-payload data))
+           (event (gethash "calendar_event" payload)))
+      (expect (eq 'absent (gethash "start_at" event 'absent)) :to-be nil)))
+
   (it "includes end_at when set"
     (let* ((org-canvas-course-id "99999")
            (data '(:title "Event" :start_at "2026-09-01T14:00:00Z"
