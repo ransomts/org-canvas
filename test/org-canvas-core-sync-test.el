@@ -735,6 +735,34 @@ Content two.
                     (expect (org-entry-get (point) "CANVAS_URL") :to-equal "test-url"))))))
         (delete-directory temp-dir t))))
 
+  (it "reports the number of successfully synced items"
+    ;; Guards the `:success' counter increment: a broken increment would
+    ;; mis-report the user-facing \"N success\" summary.
+    (let ((temp-dir (make-temp-file "sync-test" t)))
+      (unwind-protect
+          (let ((org-file (expand-file-name "pages.org" temp-dir)))
+            (with-temp-file org-file
+              (insert "* Page One\n:PROPERTIES:\n:END:\n\nc1.\n\n"
+                      "* Page Two\n:PROPERTIES:\n:END:\n\nc2.\n"))
+            (let ((org-canvas-pages-file org-file)
+                  (org-canvas-base-url "https://test.example.com")
+                  (org-canvas-api-token "test-token")
+                  (org-canvas-course-id "99999"))
+              (with-sync-test-env
+                (cl-letf (((symbol-function 'org-canvas-api-request)
+                           (lambda (_m _u &rest _a) '((url . "u")))))
+                  (spy-on 'message :and-call-through)
+                  (org-canvas-sync-pages)
+                  (let ((reported nil))
+                    (dolist (call (spy-calls-all-args 'message))
+                      (let ((s (and (car call) (stringp (car call))
+                                    (ignore-errors (apply #'format call)))))
+                        ;; Leading space so a mutated "-2 success" can't match.
+                        (when (and s (string-match-p " 2 success" s))
+                          (setq reported t))))
+                    (expect reported :to-be t))))))
+        (delete-directory temp-dir t))))
+
   (it "continues after one entry fails"
     (let ((temp-dir (make-temp-file "sync-test" t)))
       (unwind-protect
@@ -1252,14 +1280,29 @@ Hello world.
           (org-canvas--push-to-api data payload :endpoint "items")
           (expect-api-called 'POST "items$")))))
 
-  (it "skips conflict check when detect-conflicts is nil"
+  (it "skips conflict check (no GET) when detect-conflicts is nil"
+    ;; LAST_SYNCED + pom are present, so if the conflict gate were wrongly
+    ;; open the check would fire a GET.  detect-conflicts is nil, so it must
+    ;; not.  Guards the `(and org-canvas-detect-conflicts (eq method 'PUT)
+    ;; ...)' gate against an `or' that would conflict-check on every PUT.
     (with-org-canvas-test-config
-      (with-mock-api
-        (let ((org-canvas-detect-conflicts nil)
-              (data '(:title "Force Push" :canvas-id "789"))
-              (payload '((title . "Force Push"))))
-          (org-canvas--push-to-api data payload :endpoint "items")
-          (expect-api-called 'PUT "items/789")))))
+      (with-temp-org-buffer
+       "#+LAST_SYNCED: [2026-01-01 Thu 10:00]
+* Item
+:PROPERTIES:
+:CANVAS_ID: 789
+:END:
+"
+       (re-search-forward "^\\* ")
+       (org-back-to-heading)
+       (with-mock-api
+         (let ((org-canvas-detect-conflicts nil)
+               (data (list :title "Force Push" :canvas-id "789"
+                           :pom (point-marker)))
+               (payload '((title . "Force Push"))))
+           (org-canvas--push-to-api data payload :endpoint "items")
+           (expect-api-called 'PUT "items/789")
+           (expect (test-org-canvas-api-called-p 'GET "items") :to-be nil))))))
 
   (it "skips conflict check in dry-run mode"
     (with-org-canvas-test-config
@@ -1273,6 +1316,37 @@ Hello world.
                 (payload '((title . "Dry Run"))))
             (org-canvas--push-to-api data payload :endpoint "items")
             (expect api-called :to-be nil)))))))
+
+(describe "org-canvas--singularize"
+  (it "uses the irregular-plural override when present"
+    ;; Guards `(or (cdr (assoc ...)) (if ...))': an `and' there would fall
+    ;; through to the naive trailing-s strip and mis-singularize.
+    (expect (org-canvas--singularize "quizzes") :to-equal "quiz")
+    (expect (org-canvas--singularize "new-quizzes") :to-equal "new-quiz")
+    (expect (org-canvas--singularize "group-categories") :to-equal "group-category"))
+
+  (it "strips a trailing s for regular plurals"
+    (expect (org-canvas--singularize "pages") :to-equal "page")
+    (expect (org-canvas--singularize "assignments") :to-equal "assignment")))
+
+(describe "org-canvas--404-on-put-p"
+  (it "is non-nil only for a 404 on PUT/PATCH"
+    (expect (org-canvas--404-on-put-p '(error "HTTP 404 Not Found") 'PUT)
+            :to-be-truthy)
+    (expect (org-canvas--404-on-put-p '(error "HTTP 404 Not Found") 'PATCH)
+            :to-be-truthy))
+
+  (it "is nil for a 404 on a non-PUT method"
+    ;; Guards the `(and (memq method ...) (404-error-p err))': an `or' would
+    ;; wrongly retry a 404 on GET/POST as a POST.
+    (expect (org-canvas--404-on-put-p '(error "HTTP 404 Not Found") 'GET)
+            :to-be nil)
+    (expect (org-canvas--404-on-put-p '(error "HTTP 404 Not Found") 'POST)
+            :to-be nil))
+
+  (it "is nil for a non-404 error on PUT"
+    (expect (org-canvas--404-on-put-p '(error "HTTP 500 Server Error") 'PUT)
+            :to-be nil)))
 
 (describe "org-canvas--finalize-item saves CANVAS_UPDATED_AT"
   (it "stores updated_at from response"
