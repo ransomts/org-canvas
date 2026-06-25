@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    - cron: '0 6 * * 1'   # Mondays 06:00 UTC — weekly mutation ratchet
+  workflow_dispatch: {}
 
 jobs:
   test:
@@ -155,3 +158,51 @@ jobs:
             echo "BLOCKED: $violations function(s) above threshold (budget: 2)."
             exit 1
           fi
+
+  mutation:
+    # Assertion-depth ratchet: a sampled mutation run with a score floor, so
+    # the suite can't silently fill up with passthrough tests over time.
+    # Scheduled weekly (and manually dispatchable); never blocks PRs.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Emacs
+        uses: jcs090218/setup-emacs@a5b1cbb1af335d2e7bef99c0aa6e02cdad229182
+        with:
+          version: '30.1'
+
+      - name: Setup Eldev
+        uses: emacs-eldev/setup-eldev@v1.5
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Cache Eldev dependencies
+        uses: actions/cache@v5
+        with:
+          path: .eldev
+          key: eldev-30.1-${{ hashFiles('Eldev') }}
+
+      - name: Sampled mutation run with score floor
+        # --jobs 2 suits the 2-4 core GitHub runner (each eldev test spawns
+        # ~2 processes). Floor of 40% allows for equivalent mutants in the
+        # sample while catching a real depth regression.
+        run: |
+          python3 test/mutation/mutate.py \
+            --files lisp/org-canvas-validate.el lisp/org-canvas-core-sync.el \
+            --max 50 --jobs 2 --timeout 120 --min-score 40 \
+            --json mutation-result.json
+
+      - name: Upload mutation results
+        uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: mutation-result
+          path: mutation-result.json

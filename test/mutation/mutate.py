@@ -277,6 +277,10 @@ def main():
     ap.add_argument("--seed", type=int, default=1, help="sampling seed (default 1)")
     ap.add_argument("--sites-file", help="(worker) JSON list of sites to run")
     ap.add_argument("--json", dest="json_out", help="write results JSON to this path")
+    ap.add_argument("--min-score", type=float, default=None,
+                    help="exit non-zero if mutation score (%% killed) is below "
+                         "this floor; for CI ratcheting (default: fail on any "
+                         "survivor)")
     args = ap.parse_args()
 
     start = time.time()
@@ -323,6 +327,14 @@ def main():
     if args.json_out:
         with open(args.json_out, "w") as fh:
             json.dump(result, fh)
+    if args.min_score is not None:
+        scored = result["killed"] + result["survived"]
+        score = (result["killed"] / scored * 100) if scored else 100.0
+        if score < args.min_score:
+            print(f"\nMutation score {score:.1f}% is below floor "
+                  f"{args.min_score:.1f}% — assertion depth regressed.")
+            sys.exit(1)
+        sys.exit(0)
     sys.exit(1 if result["survivors"] else 0)
 
 

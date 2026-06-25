@@ -43,6 +43,14 @@ Token-boundary regexes (never match inside a longer symbol, string, comment,
 or `?x` char literal): `t`↔`nil`, `>`→`>=`, `<`→`<=`, `equal`→`eq`,
 `(1+`→`(1-`, `and`↔`or`.
 
+## CI ratchet
+
+The `mutation` job in `.github/workflows/ci.yml` runs a sampled mutation pass
+weekly (and on manual dispatch) over the validation engine and core-sync with
+`--min-score 40`, failing if the score drops below the floor. `--min-score N`
+exits non-zero when the score (% killed) is under N, so assertion depth can't
+silently regress as the suite grows. It never blocks PRs.
+
 ## Workflow
 
 1. Run on a file or subsystem.
