@@ -3602,4 +3602,18 @@ old Q text B
           (when buf (kill-buffer buf)))
         (delete-file temp)))))
 
+(describe "org-canvas--quiz-pull-fetch-questions error handling"
+  (it "warns and returns nil (questions omitted) when the fetch fails"
+    (with-org-canvas-test-config
+      (spy-on 'org-canvas--log-warning)
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (&rest _) (signal 'error '("HTTP 500")))))
+        (expect (org-canvas--quiz-pull-fetch-questions "42") :to-be nil)
+        (let ((warned nil))
+          (dolist (call (spy-calls-all-args 'org-canvas--log-warning))
+            (when (and (>= (length call) 2) (stringp (nth 1 call))
+                       (string-match-p "questions omitted from pull" (nth 1 call)))
+              (setq warned t)))
+          (expect warned :to-be t))))))
+
 ;;; org-canvas-quizzes-test.el ends here

@@ -2660,4 +2660,18 @@ Body text
             '((other_field . "x")))
            (expect synced-quiz-id :to-equal "55")))))))
 
+(describe "org-canvas--new-quiz-pull-items error handling"
+  (it "warns (items omitted) when the item fetch fails"
+    (with-org-canvas-test-config
+      (spy-on 'org-canvas--log-warning)
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (&rest _) (signal 'error '("HTTP 500")))))
+        (org-canvas--new-quiz-pull-items "55")
+        (let ((warned nil))
+          (dolist (call (spy-calls-all-args 'org-canvas--log-warning))
+            (when (and (>= (length call) 2) (stringp (nth 1 call))
+                       (string-match-p "items omitted from pull" (nth 1 call)))
+              (setq warned t)))
+          (expect warned :to-be t))))))
+
 ;;; org-canvas-new-quizzes-test.el ends here

@@ -1087,6 +1087,44 @@ Hello world.
      (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil)
      (expect (org-entry-get (point) "PAYLOAD_HASH") :to-be nil))))
 
+;;;; Metamorphic relations
+
+(describe "metamorphic relations"
+  (it "re-syncing unchanged content is a no-op (push idempotence)"
+    ;; sync ∘ sync = sync: the second run must skip via PAYLOAD_HASH and make
+    ;; no API write.  Runs the REAL pipeline twice (the existing payload-hash
+    ;; test only simulates the save).
+    (let ((temp-dir (make-temp-file "idem-" t)))
+      (unwind-protect
+          (let ((org-file (expand-file-name "pages.org" temp-dir)))
+            (with-temp-file org-file
+              (insert "* Welcome\n:PROPERTIES:\n:END:\n\nHello.\n"))
+            (let ((org-canvas-pages-file org-file)
+                  (org-canvas-base-url "https://test.example.com")
+                  (org-canvas-api-token "test-token")
+                  (org-canvas-course-id "99999"))
+              (with-sync-test-env
+                (with-mock-api
+                  (setq test-org-canvas-api-responses
+                        '(("pages" . ((url . "welcome") (page_id . 5)))))
+                  (org-canvas-sync-pages)             ; creates the page
+                  (expect (test-org-canvas-api-called-p 'POST "pages")
+                          :to-be-truthy)
+                  (setq test-org-canvas-api-calls nil) ; observe only run 2
+                  (org-canvas-sync-pages)             ; identical content
+                  (expect (test-org-canvas-api-called-p 'POST "pages") :to-be nil)
+                  (expect (test-org-canvas-api-called-p 'PUT "pages") :to-be nil)))))
+        (delete-directory temp-dir t))))
+
+  (it "heading parse is invariant to extra spaces after the stars"
+    ;; `* Welcome' and `*  Welcome' must parse to the same title.
+    (let ((d1 (with-temp-org-buffer "* Welcome\n:PROPERTIES:\n:END:\n"
+                (org-back-to-heading) (org-canvas--page-parse-entry)))
+          (d2 (with-temp-org-buffer "*  Welcome\n:PROPERTIES:\n:END:\n"
+                (org-back-to-heading) (org-canvas--page-parse-entry))))
+      (expect (plist-get d1 :title) :to-equal "Welcome")
+      (expect (plist-get d1 :title) :to-equal (plist-get d2 :title)))))
+
 ;;;; Push-at-Point Macro
 
 (describe "org-canvas-define-sync at-point generation"

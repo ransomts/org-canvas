@@ -830,4 +830,20 @@ Just a description, no override table.
           (expect (org-canvas--override-sync-preflight) :to-throw 'error)
         (setq org-canvas-assignments-file old-val)))))
 
+(describe "org-canvas--override-sync-for-assignment error handling"
+  (it "warns (treats remote as empty) when the override fetch fails"
+    (with-org-canvas-test-config
+      (spy-on 'org-canvas--log-warning)
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (&rest _) (signal 'error '("HTTP 500")))))
+        ;; Empty local overrides: after the failed fetch there is nothing to
+        ;; create/delete, so the only observable effect is the warning.
+        (org-canvas--override-sync-for-assignment "7" nil)
+        (let ((warned nil))
+          (dolist (call (spy-calls-all-args 'org-canvas--log-warning))
+            (when (and (>= (length call) 2) (stringp (nth 1 call))
+                       (string-match-p "treating remote as empty" (nth 1 call)))
+              (setq warned t)))
+          (expect warned :to-be t))))))
+
 ;;; org-canvas-sections-test.el ends here
