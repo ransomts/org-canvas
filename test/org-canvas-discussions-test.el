@@ -479,7 +479,26 @@ Content.
         (let ((data '(:title "Existing" :canvas-id "456"))
               (payload '((title . "Existing"))))
           (org-canvas--push-to-api data payload :endpoint "discussion_topics")
-          (expect-api-called 'PUT "discussion_topics/456"))))))
+          (expect-api-called 'PUT "discussion_topics/456")))))
+
+  (it "sends a payload whose body reflects the org input"
+    (let ((temp-dir (make-temp-file "discussions-test" t)))
+      (unwind-protect
+          (let ((org-file (expand-file-name "discussions.org" temp-dir)))
+            (with-temp-file org-file
+              (insert "* Topic\n:PROPERTIES:\n:DISCUSSION_TYPE: threaded\n:POST_FIRST: true\n:END:\n\nDiscuss this.\n"))
+            (let ((org-canvas-discussions-file org-file)
+                  (org-canvas-base-url "https://test.canvas.example.com")
+                  (org-canvas-api-token "test-token")
+                  (org-canvas-course-id "99999"))
+              (with-sync-test-env
+                (with-mock-api
+                  (org-canvas-sync-discussions)
+                  (let ((body (test-org-canvas-api-call-data 'POST "discussion_topics")))
+                    (expect (alist-get 'title body) :to-equal "Topic")
+                    (expect (alist-get 'discussion_type body) :to-equal "threaded")
+                    (expect (alist-get 'require_initial_post body) :to-be t))))))
+        (delete-directory temp-dir t)))))
 
 ;;;; Stage 4: Finalize
 

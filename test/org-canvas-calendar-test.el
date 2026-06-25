@@ -391,6 +391,36 @@ Weekly office hours.
                     (goto-char (point-min))
                     (org-back-to-heading)
                     (expect (org-entry-get (point) "CANVAS_ID") :to-equal "42"))))))
+        (delete-directory temp-dir t))))
+
+  (it "sends a POST body whose calendar_event reflects the org input"
+    (let ((temp-dir (make-temp-file "cal-test" t)))
+      (unwind-protect
+          (let ((org-file (expand-file-name "calendar.org" temp-dir)))
+            (with-temp-file org-file
+              (insert "* Office Hours
+:PROPERTIES:
+:START_AT: <2026-09-01 Tue 10:00>
+:END:
+
+Drop by.
+"))
+            (let ((org-canvas-calendar-events-file org-file)
+                  (org-canvas-base-url "https://test.canvas.example.com")
+                  (org-canvas-api-token "test-token")
+                  (org-canvas-course-id "99999"))
+              (with-sync-test-env
+                (with-mock-api
+                  (org-canvas-sync-calendar-events)
+                  (let* ((body (test-org-canvas-api-call-data 'POST "calendar_events"))
+                         (ev (and (hash-table-p body) (gethash "calendar_event" body))))
+                    (expect (hash-table-p body) :to-be-truthy)
+                    (expect (hash-table-p ev) :to-be-truthy)
+                    (expect (gethash "title" ev) :to-equal "Office Hours")
+                    (expect (gethash "context_code" ev) :to-equal "course_99999")
+                    ;; Assert the date only; the time is offset to UTC and is
+                    ;; therefore timezone-dependent across CI machines.
+                    (expect (gethash "start_at" ev) :to-match "2026-09-01T"))))))
         (delete-directory temp-dir t)))))
 
 ;;;; Delete All Tests

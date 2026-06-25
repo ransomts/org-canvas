@@ -215,7 +215,27 @@
               (payload '((name . "Existing"))))
           (org-canvas--push-to-api data payload
             :endpoint "assignment_groups" :title-key :name)
-          (expect-api-called 'PUT "assignment_groups/321"))))))
+          (expect-api-called 'PUT "assignment_groups/321")))))
+
+  (it "sends a POST body reflecting the org input (real pipeline)"
+    (let ((temp-dir (make-temp-file "ag-test" t)))
+      (unwind-protect
+          (let ((org-file (expand-file-name "assignment-groups.org" temp-dir)))
+            (with-temp-file org-file
+              (insert "* Config\n** Homework\n:PROPERTIES:\n:WEIGHT: 30\n:END:\n"))
+            (let ((org-canvas-assignment-groups-file org-file)
+                  (org-canvas-base-url "https://test.canvas.example.com")
+                  (org-canvas-api-token "test-token")
+                  (org-canvas-course-id "99999"))
+              (with-sync-test-env
+                (with-mock-api
+                  (org-canvas-sync-assignment-groups)
+                  (let ((body (test-org-canvas-api-call-data 'POST "assignment_groups")))
+                    (expect (alist-get 'name body) :to-equal "Homework")
+                    (expect (alist-get 'group_weight body) :to-equal 30)
+                    ;; Drop rules are excluded on POST (two-phase sync)
+                    (expect (alist-get 'rules body) :to-be nil))))))
+        (delete-directory temp-dir t)))))
 
 ;;;; Stage 4: Finalize
 

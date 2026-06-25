@@ -527,6 +527,27 @@ Page content.
                     (goto-char (point-min))
                     (org-back-to-heading)
                     (expect (org-entry-get (point) "CANVAS_URL") :to-equal "test-page-url"))))))
+        (delete-directory temp-dir t))))
+
+  (it "sends a wiki_page payload whose body reflects the org input"
+    (let ((temp-dir (make-temp-file "pages-test" t)))
+      (unwind-protect
+          (let ((org-file (expand-file-name "pages.org" temp-dir)))
+            (with-temp-file org-file
+              (insert "* Welcome\n:PROPERTIES:\n:PUBLISHED: false\n:END:\n\nHello class.\n"))
+            (let ((org-canvas-pages-file org-file)
+                  (org-canvas-base-url "https://test.canvas.example.com")
+                  (org-canvas-api-token "test-token")
+                  (org-canvas-course-id "99999"))
+              (with-sync-test-env
+                (with-mock-api
+                  (org-canvas-sync-pages)
+                  (let* ((body (test-org-canvas-api-call-data 'POST "pages"))
+                         (page (gethash "wiki_page" body)))
+                    (expect (hash-table-p page) :to-be-truthy)
+                    (expect (gethash "title" page) :to-equal "Welcome")
+                    (expect (gethash "published" page) :to-equal :json-false)
+                    (expect (gethash "body" page) :to-match "Hello class"))))))
         (delete-directory temp-dir t)))))
 
 ;;;; Delete All Pages

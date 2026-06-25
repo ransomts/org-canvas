@@ -283,6 +283,38 @@ Body content.
                     (goto-char (point-min))
                     (org-back-to-heading)
                     (expect (org-entry-get (point) "CANVAS_ID") :to-equal "12345"))))))
+        (delete-directory temp-dir t))))
+
+  (it "sends a payload whose body reflects the org input"
+    ;; End-to-end: real parse -> build -> push.  Asserts the actual request
+    ;; body that reaches the wire, not merely that a POST happened, so a
+    ;; broken property->API-key mapping or dropped static field is caught.
+    (let ((temp-dir (make-temp-file "announcements-test" t)))
+      (unwind-protect
+          (let ((org-file (expand-file-name "announcements.org" temp-dir)))
+            (with-temp-file org-file
+              (insert "* Welcome
+:PROPERTIES:
+:PUBLISHED: false
+:END:
+
+Hello class.
+"))
+            (let ((org-canvas-announcements-file org-file)
+                  (org-canvas-base-url "https://test.canvas.example.com")
+                  (org-canvas-api-token "test-token")
+                  (org-canvas-course-id "99999"))
+              (with-sync-test-env
+                (with-mock-api
+                  (org-canvas-sync-announcements)
+                  (let ((body (test-org-canvas-api-call-data
+                               'POST "discussion_topics")))
+                    (expect (alist-get 'title body) :to-equal "Welcome")
+                    (expect (alist-get 'is_announcement body) :to-be t)
+                    (expect (alist-get 'discussion_type body)
+                            :to-equal "side_comment")
+                    ;; PUBLISHED: false must map to the JSON-false sentinel.
+                    (expect (alist-get 'published body) :to-be :json-false))))))
         (delete-directory temp-dir t)))))
 
 ;;;; Delete All Announcements Tests

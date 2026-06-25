@@ -1594,6 +1594,41 @@ Quiz description.
                   (org-canvas-sync-quizzes)
                   ;; Question should use the existing quiz ID
                   (expect question-quiz-id :to-equal "555")))))
+        (delete-directory temp-dir t))))
+
+  (it "sends a quiz-create body that reflects the org input"
+    (let ((temp-dir (make-temp-file "quizzes-test" t)))
+      (unwind-protect
+          (let ((org-file (expand-file-name "quizzes.org" temp-dir)))
+            (with-temp-file org-file
+              (insert "* Quiz 1
+:PROPERTIES:
+:QUIZ_TYPE: practice_quiz
+:END:
+
+Intro text.
+"))
+            (let ((org-canvas-quizzes-file org-file)
+                  (org-canvas-base-url "https://test.canvas.example.com")
+                  (org-canvas-api-token "test-token")
+                  (org-canvas-course-id "99999"))
+              (with-sync-test-env
+                (with-mock-api
+                  (org-canvas-sync-quizzes)
+                  ;; The quiz-create POST goes to a URL ending in "quizzes"
+                  ;; (questions go to ".../questions"); match only the create.
+                  (let* ((body (test-org-canvas-api-call-data 'POST "quizzes$"))
+                         (quiz (alist-get 'quiz body)))
+                    ;; Payload is an alist wrapped under the `quiz' key.
+                    (expect quiz :to-be-truthy)
+                    (expect (alist-get 'title quiz) :to-equal "Quiz 1")
+                    (expect (alist-get 'quiz_type quiz) :to-equal "practice_quiz")
+                    ;; Boolean defaults are emitted as JSON booleans.
+                    (expect (alist-get 'published quiz) :to-be t)
+                    (expect (alist-get 'show_correct_answers quiz) :to-be t)
+                    ;; Body text exports to an HTML description.
+                    (expect (alist-get 'description quiz)
+                            :to-match "Intro text\\."))))))
         (delete-directory temp-dir t)))))
 
 ;;;; Delete All Quizzes

@@ -335,6 +335,32 @@
                     (goto-char (point-min))
                     (org-back-to-heading)
                     (expect (org-entry-get (point) "CANVAS_ID") :to-equal "42"))))))
+        (delete-directory temp-dir t))))
+
+  (it "sends a POST body reflecting the org input"
+    (let ((temp-dir (make-temp-file "gc-test" t)))
+      (unwind-protect
+          (let ((org-file (expand-file-name "group-categories.org" temp-dir)))
+            (with-temp-file org-file
+              (insert "* Project Teams
+:PROPERTIES:
+:SELF_SIGNUP: enabled
+:GROUP_LIMIT: 4
+:AUTO_LEADER: random
+:END:
+"))
+            (let ((org-canvas-group-categories-file org-file)
+                  (org-canvas-base-url "https://test.canvas.example.com")
+                  (org-canvas-api-token "test-token")
+                  (org-canvas-course-id "99999"))
+              (with-sync-test-env
+                (with-mock-api
+                  (org-canvas-sync-group-categories)
+                  (let ((body (test-org-canvas-api-call-data 'POST "group_categories")))
+                    (expect (alist-get 'name body) :to-equal "Project Teams")
+                    (expect (alist-get 'self_signup body) :to-equal "enabled")
+                    (expect (alist-get 'group_limit body) :to-equal 4)
+                    (expect (alist-get 'auto_leader body) :to-equal "random"))))))
         (delete-directory temp-dir t)))))
 
 ;;;; Delete All Tests
