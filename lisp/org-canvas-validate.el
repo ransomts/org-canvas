@@ -371,8 +371,13 @@ Skips items with EXTERNAL_URL property or plain-text SubHeaders."
                        (looking-at org-complex-heading-regexp)
                        (match-string-no-properties 4))))
     (when (and raw-heading
+               ;; Greedy `.+' for the heading group so a target heading that is
+               ;; itself a file link (nested brackets) is captured whole;
+               ;; backtracking lands on the last `][' boundary.  A `[^]]'-based
+               ;; group truncates at the first nested `]' (false "missing
+               ;; heading" on links to files.org headings).
                (string-match
-                "\\[\\[file:\\([^]]+\\)::\\*\\(\\(?:\\\\.\\|[^]]\\)+?\\)\\]\\["
+                "\\[\\[file:\\([^]]+\\)::\\*\\(.+\\)\\]\\["
                 raw-heading))
       (let* ((file-path (match-string 1 raw-heading))
              (source-dir (file-name-directory (plist-get loc :file)))
