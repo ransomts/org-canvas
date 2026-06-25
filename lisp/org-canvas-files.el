@@ -417,9 +417,13 @@ Returns a plist (:status STRING :location URL :json DATA :body STRING)."
         (setq location-header (string-trim (match-string 1)))))
     (when (re-search-forward "\r?\n\r?\n" nil t)
       (setq response-body (buffer-substring-no-properties (point) (point-max)))
-      (setq json-response (condition-case nil
+      (setq json-response (condition-case err
                               (json-read-from-string response-body)
-                            (error nil))))
+                            (error
+                             (org-canvas--log-debug org-canvas--logger
+                               "[Files] Upload response body was not valid JSON (%s)"
+                               (error-message-string err))
+                             nil))))
     (list :status status-line :location location-header
           :json json-response :body response-body)))
 

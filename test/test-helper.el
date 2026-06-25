@@ -53,20 +53,25 @@ heading structure recognition in programmatic buffers.")
 ;;;; API Mocking
 
 (defvar test-org-canvas-api-calls nil
-  "List of recorded API calls: ((method url data) ...).")
+  "List of recorded API calls: ((method url data args-plist) ...).
+The first three elements (method, url, :data) are preserved for backward
+compatibility; the fourth element is the full keyword-argument plist, so
+:params and :timeout can be asserted too.")
 
 (defvar test-org-canvas-api-responses nil
   "Alist of (url-pattern . response) for mock responses.")
 
-(defun test-org-canvas-mock-api-request (_method _url &rest _args)
+(defun test-org-canvas-mock-api-request (method url &rest args)
   "Mock API request function that records calls and returns mock responses.
-Note: only METHOD, URL, and :data are recorded; :params and :timeout are dropped."
-  (let ((call (list _method _url (plist-get _args :data))))
+METHOD, URL, and :data occupy the first three slots (backward compatible);
+the full ARGS plist is recorded as a fourth slot so :params and :timeout
+can be asserted via `test-org-canvas-call-arg'."
+  (let ((call (list method url (plist-get args :data) args)))
     (push call test-org-canvas-api-calls)
     ;; Find matching response
     (let ((response nil))
       (cl-loop for (pattern . resp) in test-org-canvas-api-responses
-               when (string-match-p pattern _url)
+               when (string-match-p pattern url)
                do (setq response resp)
                and return nil)
       (or response '((id . 12345) (name . "Mock Response"))))))
@@ -77,6 +82,22 @@ Note: only METHOD, URL, and :data are recorded; :params and :timeout are dropped
              (and (eq (car call) method)
                   (string-match-p url-pattern (cadr call))))
            test-org-canvas-api-calls))
+
+(defun test-org-canvas-find-api-call (method url-pattern)
+  "Return the most recent recorded call matching METHOD and URL-PATTERN, or nil."
+  (cl-find-if (lambda (call)
+                (and (eq (car call) method)
+                     (string-match-p url-pattern (cadr call))))
+              test-org-canvas-api-calls))
+
+(defun test-org-canvas-api-call-data (method url-pattern)
+  "Return the :data payload of the matching METHOD/URL-PATTERN call, or nil.
+Use to assert request body structure, not merely that a call happened."
+  (nth 2 (test-org-canvas-find-api-call method url-pattern)))
+
+(defun test-org-canvas-call-arg (call key)
+  "Return keyword KEY (e.g. :params, :timeout) from a recorded CALL."
+  (plist-get (nth 3 call) key))
 
 (defun test-org-canvas-api-call-count ()
   "Return the number of API calls made."

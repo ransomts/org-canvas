@@ -889,11 +889,15 @@ Point must be at the parent quiz heading."
 (defun org-canvas--quiz-pull-fetch-questions (quiz-id)
   "Fetch question list for QUIZ-ID, returning a list of alists.
 Returns nil on API error."
-  (condition-case nil
+  (condition-case err
       (let ((q-url (org-canvas-api-course-endpoint
                     "quizzes/%s/questions" quiz-id)))
         (org-canvas-api-request-all-pages 'GET q-url))
-    (error nil)))
+    (error
+     (org-canvas--log-warning org-canvas--logger
+       "[Quizzes] Failed to fetch questions for quiz %s (%s); questions omitted from pull"
+       quiz-id (error-message-string err))
+     nil)))
 
 (defun org-canvas--quiz-pull-insert-questions (quiz-id)
   "Fetch and insert questions for QUIZ-ID as L2 headings.

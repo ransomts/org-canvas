@@ -322,7 +322,8 @@ Returns a list of (success-count . fail-count)."
 ;;;; 4b. Shared Constants
 
 (defconst org-canvas--sync-property-names
-  '("CANVAS_ID" "CANVAS_URL" "LAST_SYNCED" "PAYLOAD_HASH")
+  `("CANVAS_ID" "CANVAS_URL"
+    ,org-canvas--prop-last-synced ,org-canvas--prop-payload-hash)
   "Properties managed by the sync pipeline.")
 
 (defconst org-canvas--bytes-per-mb 1048576.0

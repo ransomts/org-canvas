@@ -13,6 +13,29 @@
 (require 'org-canvas-rubrics)
 (require 'org-canvas-files)
 
+;;;; 8. Mock API recording helpers
+
+(describe "with-mock-api request recording"
+  (it "records :params and :timeout, not just :data"
+    (with-mock-api
+      (org-canvas-api-request 'GET "https://x/api/v1/courses/1/items"
+                              :data '((a . 1))
+                              :params '(("per_page" . "100"))
+                              :timeout 42)
+      (let ((call (test-org-canvas-find-api-call 'GET "items")))
+        (expect (nth 2 call) :to-equal '((a . 1)))
+        (expect (test-org-canvas-call-arg call :params)
+                :to-equal '(("per_page" . "100")))
+        (expect (test-org-canvas-call-arg call :timeout) :to-equal 42))))
+
+  (it "exposes payload via test-org-canvas-api-call-data"
+    (with-mock-api
+      (org-canvas-api-request 'POST "https://x/api/v1/courses/1/pages"
+                              :data '((title . "T")))
+      (expect (test-org-canvas-api-call-data 'POST "pages")
+              :to-equal '((title . "T")))
+      (expect (test-org-canvas-api-call-data 'POST "no-such") :to-be nil))))
+
 ;;;; 9. Search Item Helper
 
 (describe "org-canvas--search-item (mocked)"
@@ -744,7 +767,42 @@ Content two.
                                  '((url . "page-two-url")))))))
                   (org-canvas-sync-pages)
                   ;; Both should have been attempted
-                  (expect call-count :to-equal 2)))))
+                  (expect call-count :to-equal 2)
+                  ;; Failure isolation: page one's failure must not prevent
+                  ;; page two from succeeding and being finalized.
+                  (with-current-buffer (find-file-noselect org-file)
+                    (goto-char (point-min))
+                    (expect (org-entry-get (point) "CANVAS_URL") :to-be nil)
+                    (re-search-forward "^\\* Page Two")
+                    (org-back-to-heading)
+                    (expect (org-entry-get (point) "CANVAS_URL")
+                            :to-equal "page-two-url"))))))
+        (delete-directory temp-dir t))))
+
+  (it "sends a payload with the expected structure (not just any call)"
+    (let ((temp-dir (make-temp-file "sync-test" t)))
+      (unwind-protect
+          (let ((org-file (expand-file-name "pages.org" temp-dir)))
+            (with-temp-file org-file
+              (insert "* Welcome
+:PROPERTIES:
+:END:
+
+Hello world.
+"))
+            (let ((org-canvas-pages-file org-file)
+                  (org-canvas-base-url "https://test.example.com")
+                  (org-canvas-api-token "test-token")
+                  (org-canvas-course-id "99999"))
+              (with-sync-test-env
+                (with-mock-api
+                  (org-canvas-sync-pages)
+                  (let* ((payload (test-org-canvas-api-call-data 'POST "pages"))
+                         (page (gethash "wiki_page" payload)))
+                    ;; Validate the actual body shape, so a renamed/dropped
+                    ;; field is caught — not merely that a POST happened.
+                    (expect (hash-table-p page) :to-be-truthy)
+                    (expect (gethash "title" page) :to-equal "Welcome"))))))
         (delete-directory temp-dir t))))
 
   (it "errors when file not found"
@@ -1134,7 +1192,30 @@ Content two.
                   (lambda (_method _url &rest _args)
                     (signal 'error '("HTTP 500")))))
          (expect (org-canvas--conflict-check "items" "123" (point-marker))
-                 :to-be nil))))))
+                 :to-be nil)))))
+
+  (it "warns (does not silently swallow) on GET failure"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer
+       "#+LAST_SYNCED: [2026-01-01 Thu 10:00]
+* Item
+:PROPERTIES:
+:CANVAS_ID: 123
+:END:
+"
+       (re-search-forward "^\\* ")
+       (org-back-to-heading)
+       (spy-on 'org-canvas--log-warning)
+       (cl-letf (((symbol-function 'org-canvas-api-request)
+                  (lambda (_method _url &rest _args)
+                    (signal 'error '("HTTP 500")))))
+         (org-canvas--conflict-check "items" "123" (point-marker))
+         (let ((warned nil))
+           (dolist (call (spy-calls-all-args 'org-canvas--log-warning))
+             (when (string-match-p "Remote check.*failed"
+                                   (apply #'format (cdr call)))
+               (setq warned t)))
+           (expect warned :to-be t)))))))
 
 (describe "org-canvas--push-to-api conflict detection"
   (it "returns conflict when user chooses skip"

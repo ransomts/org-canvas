@@ -117,7 +117,7 @@ Prompts user to continue if stale headings are found."
         (save-excursion
           (goto-char (marker-position m))
           (let ((title (org-get-heading t t t t)))
-            (when (and (org-entry-get (point) "LAST_SYNCED")
+            (when (and (org-entry-get (point) org-canvas--prop-last-synced)
                        (not (or (org-entry-get (point) "CANVAS_ID")
                                 (org-entry-get (point) "CANVAS_URL"))))
               (push title stale-titles)
@@ -149,7 +149,7 @@ PAYLOAD-HASH is saved to the heading.  CTX is the sync context plist."
                      (plist-get (plist-get ctx :counters) :fail)
                      1)))
     (funcall finalize-fn data response)
-    (org-canvas-org-set-property (point) "PAYLOAD_HASH" payload-hash)
+    (org-canvas-org-set-property (point) org-canvas--prop-payload-hash payload-hash)
     (org-canvas--save-buffer)
     (plist-put counters :success (1+ (plist-get counters :success)))
     (message "%s [%d/%d] Synced '%s'"
@@ -170,7 +170,7 @@ CTX is the sync context plist (see `org-canvas--sync-process-entry')."
          (counters (plist-get ctx :counters))
          (synced-ids (plist-get ctx :synced-ids))
          (payload-hash (md5 (json-encode payload)))
-         (stored-hash (org-entry-get (point) "PAYLOAD_HASH"))
+         (stored-hash (org-entry-get (point) org-canvas--prop-payload-hash))
          (canvas-id (or (plist-get data :canvas-id)
                         (plist-get data :canvas-url)))
          (title (plist-get data (or (plist-get ctx :title-key) :title)))
@@ -504,7 +504,7 @@ when no LAST_SYNCED exists (legacy item, first sync)."
   (let ((local-time (org-canvas--parse-last-synced pom)))
     (unless local-time
       (cl-return-from org-canvas--conflict-check nil))
-    (condition-case _err
+    (condition-case err
         (let* ((full-url (org-canvas-api-course-endpoint
                           (format "%s/%%s" endpoint) id))
                (response (org-canvas-api-request 'GET full-url))
@@ -519,7 +519,13 @@ when no LAST_SYNCED exists (legacy item, first sync)."
                   updated-at local-ts)
                 (cons 'conflict response))
             nil))
-      (error nil))))
+      (error
+       ;; A failed remote check must not be silent: proceeding with the push
+       ;; could overwrite remote changes the user never saw.
+       (org-canvas--log-warning org-canvas--logger
+         "[Conflict] Remote check for %s/%s failed (%s); proceeding with push without conflict detection"
+         endpoint id (error-message-string err))
+       nil))))
 
 ;;;; 7. Push-to-API Infrastructure
 ;;
@@ -785,7 +791,7 @@ PULL-ITEM-FN, when non-nil, enables the pull option during conflict resolution."
          (title (plist-get data title-key))
          (payload (funcall build-fn data))
          (payload-hash (md5 (json-encode payload)))
-         (stored-hash (org-entry-get (point) "PAYLOAD_HASH"))
+         (stored-hash (org-entry-get (point) org-canvas--prop-payload-hash))
          (canvas-id (or (plist-get data :canvas-id)
                         (plist-get data :canvas-url))))
     (org-canvas--log-info org-canvas--logger "[Stage 2: Build] '%s'" title)
@@ -800,7 +806,7 @@ PULL-ITEM-FN, when non-nil, enables the pull option during conflict resolution."
       (let ((response (funcall push-fn data payload)))
         (org-canvas--log-info org-canvas--logger "[Stage 4: Finalize] '%s'" title)
         (funcall finalize-fn data response)
-        (org-canvas-org-set-property (point) "PAYLOAD_HASH" payload-hash)
+        (org-canvas-org-set-property (point) org-canvas--prop-payload-hash payload-hash)
         (org-canvas--save-buffer)
         (org-canvas--log-info org-canvas--logger "[Sync] '%s' synced successfully" title)
         (message "%s '%s' synced." (capitalize feature-name) title)))))

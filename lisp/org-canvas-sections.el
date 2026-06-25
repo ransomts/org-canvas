@@ -435,9 +435,16 @@ Fetches existing overrides from Canvas, then for each local override:
 Returns a list (CREATED UPDATED DELETED) as integer counts."
   (let* ((endpoint (org-canvas-api-course-endpoint
                     "assignments/%s/overrides" assignment-id))
-         (existing (condition-case nil
+         (existing (condition-case err
                        (org-canvas-api-request-all-pages 'GET endpoint)
-                     (error nil)))
+                     (error
+                      ;; Without the existing overrides, reconcile would treat
+                      ;; the remote as empty and re-create everything; warn so
+                      ;; the user knows the fetch failed.
+                      (org-canvas--log-warning org-canvas--logger
+                        "[Sections] Failed to fetch existing overrides for assignment %s (%s); treating remote as empty"
+                        assignment-id (error-message-string err))
+                      nil)))
          (created 0) (updated 0) (deleted 0)
          (seen-section-ids nil))
 

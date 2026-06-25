@@ -446,13 +446,17 @@ QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
 
 (defun org-canvas--new-quiz-pull-items (quiz-assignment-id)
   "Fetch and insert items for QUIZ-ASSIGNMENT-ID as L2 headings."
-  (condition-case nil
+  (condition-case err
       (let* ((url (org-canvas--new-quiz-api-endpoint
                    "quizzes/%s/items" quiz-assignment-id))
              (items (org-canvas-api-request-all-pages 'GET url)))
         (dolist (item (org-canvas--pull-sort-items items))
           (org-canvas--new-quiz-pull-insert-item item)))
-    (error nil)))
+    (error
+     (org-canvas--log-warning org-canvas--logger
+       "[New Quizzes] Failed to fetch items for quiz %s (%s); items omitted from pull"
+       quiz-assignment-id (error-message-string err))
+     nil)))
 
 ;;;###autoload
 (defun org-canvas-pull-new-quizzes ()
