@@ -63,12 +63,14 @@
   :file-var 'org-canvas-modules-file
   :query "LEVEL=1"
   :properties
-  '((:org-prop "PUBLISHED" :data-key :published :type boolean)
+  '((:org-prop "PUBLISHED" :data-key :published :type boolean
+     :doc "Whether the module is visible to students (default: true)")
     (:org-prop "UNLOCK_AT" :data-key :unlock_at :type timestamp
      :doc "Date to unlock the module")
     (:org-prop "REQUIRE_SEQUENTIAL_PROGRESSION" :data-key :require_sequential_progression :type boolean
      :doc "Force items to be completed in order")
-    (:org-prop "PUBLISH_FINAL_GRADE" :data-key :publish_final_grade :type boolean)))
+    (:org-prop "PUBLISH_FINAL_GRADE" :data-key :publish_final_grade :type boolean
+     :doc "Publish the final grade when this module is completed")))
 (org-canvas-register-properties "module-items"
   :label "Module Items"
   :file-var 'org-canvas-modules-file

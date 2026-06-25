@@ -80,7 +80,8 @@ takes effect on the next `org-canvas-pull-assignments' invocation."
   `((:org-prop "POINTS" :data-key :points_possible :type number
      :doc "Points possible")
     (:org-prop "GRADING_TYPE" :data-key :grading_type :type enum
-     :values ,org-canvas--valid-grading-types)
+     :values ,org-canvas--valid-grading-types
+     :doc "How the assignment is graded")
     (:org-prop "PUBLISHED" :data-key :published :type boolean
      :doc "Whether item is visible (default: true)")
     (:org-prop "SUBMISSION" :data-key :submission_types :type csv-enum

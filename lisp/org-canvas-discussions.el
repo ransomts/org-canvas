@@ -57,7 +57,8 @@
   :file-var 'org-canvas-discussions-file
   :query "LEVEL=1"
   :properties
-  `((:org-prop "PUBLISHED" :data-key :published :type boolean)
+  `((:org-prop "PUBLISHED" :data-key :published :type boolean
+     :doc "Whether the discussion is visible to students (default: true)")
     (:org-prop "DISCUSSION_TYPE" :data-key :discussion_type :type enum
      :values ,org-canvas--valid-discussion-types
      :doc "side_comment, threaded")
@@ -88,7 +89,8 @@
      :target-file org-canvas-assignment-groups-file :link-id-property "CANVAS_ID"
      :doc "Assignment group (for graded)")
     (:org-prop "RUBRIC_LINK" :data-key :rubric_id :type link
-     :target-file org-canvas-rubrics-file :link-id-property "CANVAS_ID"))
+     :target-file org-canvas-rubrics-file :link-id-property "CANVAS_ID"
+     :doc "Link to a rubric heading in rubrics.org"))
   :date-order '(("AVAILABLE_FROM" "DUE_AT" "LOCK_AT")))
 
 ;;;; 1. Stage: Extraction

@@ -2859,4 +2859,23 @@
     (expect (org-canvas--file-sanitize-headline-desc "x[1][2].png")
             :to-equal "x\\[1\\]\\[2\\].png")))
 
+(describe "org-canvas--file-safe-local-path (path-traversal guard)"
+  (it "keeps a normal file inside the content directory"
+    (expect (org-canvas--file-safe-local-path "report.pdf" "/course/content")
+            :to-equal "/course/content/report.pdf"))
+
+  (it "keeps a legitimate subfolder path inside the content directory"
+    (expect (org-canvas--file-safe-local-path "labs/lab01.py" "/course/content")
+            :to-equal "/course/content/labs/lab01.py"))
+
+  (it "neutralizes a ../ traversal to a basename inside the content directory"
+    (let ((result (org-canvas--file-safe-local-path
+                   "../../etc/evil" "/course/content")))
+      (expect result :to-equal "/course/content/evil")
+      (expect (string-prefix-p "/course/content/" result) :to-be-truthy)))
+
+  (it "neutralizes an absolute path to a basename inside the content directory"
+    (expect (org-canvas--file-safe-local-path "/etc/passwd" "/course/content")
+            :to-equal "/course/content/passwd")))
+
 ;;; org-canvas-files-test.el ends here

@@ -67,7 +67,8 @@
   :query "LEVEL=2"
   :properties
   `((:org-prop "CALCULATION_METHOD" :data-key :calculation_method :type enum
-     :values ,org-canvas--valid-calculation-methods)
+     :values ,org-canvas--valid-calculation-methods
+     :doc "How mastery is calculated from rating attempts")
     (:org-prop "CALCULATION_INT" :data-key :calculation_int :type number
      :doc "Variable for calculation method")
     (:org-prop "MASTERY_POINTS" :data-key :mastery_points :type number

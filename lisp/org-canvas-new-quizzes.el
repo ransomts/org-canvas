@@ -69,7 +69,8 @@
     (:org-prop "ALLOWED_ATTEMPTS" :data-key :allowed_attempts :type number
      :doc "Max attempts")
     (:org-prop "SCORING_POLICY" :data-key :scoring_policy :type enum
-     :values ,org-canvas--valid-new-quiz-scoring-policies)
+     :values ,org-canvas--valid-new-quiz-scoring-policies
+     :doc "Which attempt's score to keep across multiple attempts")
     (:org-prop "GROUP" :data-key :assignment_group_id :type link
      :target-file org-canvas-assignment-groups-file :link-id-property "CANVAS_ID"
      :doc "Link to assignment group in assignment-groups.org")

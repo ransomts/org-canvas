@@ -76,7 +76,8 @@
   :query "LEVEL=1"
   :properties
   `((:org-prop "QUIZ_TYPE" :data-key :quiz_type :type enum
-     :values ,org-canvas--valid-quiz-types)
+     :values ,org-canvas--valid-quiz-types
+     :doc "The kind of quiz")
     (:org-prop "PUBLISHED" :data-key :published :type boolean
      :doc "Whether item is visible (default: true)")
     (:org-prop "SHUFFLE_ANSWERS" :data-key :shuffle_answers :type boolean
@@ -98,9 +99,11 @@
     (:org-prop "HIDE_CORRECT_ANSWERS_AT" :data-key :hide_correct_answers_at :type timestamp
      :doc "When to stop showing correct answers")
     (:org-prop "HIDE_RESULTS" :data-key :hide_results :type enum
-     :values ,org-canvas--valid-hide-results)
+     :values ,org-canvas--valid-hide-results
+     :doc "When to hide quiz results from students")
     (:org-prop "SCORING_POLICY" :data-key :scoring_policy :type enum
-     :values ,org-canvas--valid-scoring-policies)
+     :values ,org-canvas--valid-scoring-policies
+     :doc "Which attempt's score to keep across multiple attempts")
     (:org-prop "ONE_QUESTION_AT_A_TIME" :data-key :one_question_at_a_time :type boolean
      :doc "Show one question per page")
     (:org-prop "CANT_GO_BACK" :data-key :cant_go_back :type boolean

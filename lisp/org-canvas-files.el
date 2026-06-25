@@ -76,7 +76,8 @@
     (:org-prop "LOCK_AT" :data-key :lock_at :type timestamp
      :doc "Date to hide file")
     (:org-prop "USE_JUSTIFICATION" :data-key :use_justification :type enum
-     :values ,org-canvas--valid-use-justifications))
+     :values ,org-canvas--valid-use-justifications
+     :doc "How to resolve a name collision on upload (rename vs overwrite)"))
   :structural-fn #'org-canvas--validate-file-structure)
 
 (defcustom org-canvas-max-file-size-mb 500
@@ -130,6 +131,24 @@ slashes, spaces) are valid inside link descriptions."
    "\\[\\|\\]"
    (lambda (m) (concat "\\\\" m))
    display-name))
+
+(defun org-canvas--file-safe-local-path (rel content-dir)
+  "Resolve REL under CONTENT-DIR, guarding against path traversal.
+Canvas-supplied names (`display_name', folder paths) are untrusted; a name
+like \"../../etc/x\" would otherwise let `expand-file-name' escape
+CONTENT-DIR.  If REL would resolve outside CONTENT-DIR, fall back to its bare
+file name inside CONTENT-DIR and warn."
+  (let* ((base (file-name-as-directory (expand-file-name content-dir)))
+         (path (expand-file-name rel content-dir))
+         (dir (file-name-as-directory (or (file-name-directory path) base))))
+    (if (string-prefix-p base dir)
+        path
+      (let ((safe (expand-file-name (file-name-nondirectory rel) content-dir)))
+        (when (boundp 'org-canvas--logger)
+          (org-canvas--log-warning org-canvas--logger
+            "[Files] Suspicious path '%s' from Canvas; writing to '%s' instead"
+            rel safe))
+        safe))))
 
 (defun org-canvas--file-get-folder-path (_pom _files-file-dir)
   "Build the Canvas folder path for the entry at point.
@@ -998,7 +1017,7 @@ Downloads to CONTENT-DIR/REL-PATH/DISPLAY_NAME."
                         (concat "file:" link-target)
                         (org-canvas--file-sanitize-headline-desc
                          display-name)))
-         (local-path (expand-file-name local-rel content-dir)))
+         (local-path (org-canvas--file-safe-local-path local-rel content-dir)))
     (insert (make-string depth ?*) " " heading-text "\n")
     (let ((pos (save-excursion (forward-line -1) (point))))
       (org-canvas-org-save-sync-state pos id)
@@ -1090,7 +1109,7 @@ Preserves existing CANVAS_ID matches in place; new files are appended."
       (let* ((id (alist-get 'id item))
              (display-name (alist-get 'display_name item))
              (download-url (alist-get 'url item))
-             (local-path (expand-file-name display-name content-dir))
+             (local-path (org-canvas--file-safe-local-path display-name content-dir))
              (heading-text (org-link-make-string
                             (format "file:content/%s" display-name)
                             (org-canvas--file-sanitize-headline-desc
