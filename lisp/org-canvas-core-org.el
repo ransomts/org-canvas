@@ -1180,13 +1180,23 @@ Point must be at a heading.  Does nothing if BODY-HTML is nil or empty.
 Canvas file URLs in the converted body are rewritten to local
 `[[file:...]]' links via `org-canvas--rewrite-canvas-file-urls'."
   (when (and body-html (not (string-empty-p body-html)))
-    (let* ((raw-body-start (save-excursion (org-end-of-meta-data t) (point)))
-           (body-end (save-excursion (org-end-of-subtree t) (point)))
-           ;; `org-end-of-meta-data' may skip past blank lines and overshoot
-           ;; the subtree end when a heading has no body and is immediately
-           ;; followed by another heading.  Clamp so delete-region never
-           ;; corrupts the next sibling heading.
-           (body-start (min raw-body-start body-end))
+    ;; Anchor the deletion at the end of the metadata's last non-blank line
+    ;; (the `:END:' of the drawer, or the heading line when there is no
+    ;; drawer).  `org-end-of-meta-data' lands in a different spot depending on
+    ;; whether a body already exists, which makes naive re-pull
+    ;; non-idempotent: each sync prepends a blank line and appends a newline,
+    ;; accumulating whitespace and churning the .org file.  Skipping back over
+    ;; whitespace yields the same anchor every time, so re-pulling identical
+    ;; content is a true no-op.
+    (let* ((meta-end (save-excursion (org-end-of-meta-data t) (point)))
+           ;; `to-end' (second t) extends past trailing blank lines so they
+           ;; are part of the replaced region; otherwise a trailing newline
+           ;; accumulates on every re-pull.
+           (body-end (save-excursion (org-end-of-subtree t t) (point)))
+           (body-start (save-excursion
+                         (goto-char (min meta-end body-end))
+                         (skip-chars-backward " \t\n")
+                         (point)))
            (rewritten (org-canvas--html-to-org-with-rewrite body-html)))
       (delete-region body-start body-end)
       (goto-char body-start)

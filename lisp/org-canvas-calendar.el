@@ -48,15 +48,20 @@
   :query "LEVEL=1"
   :properties
   '((:org-prop "START_AT" :data-key :start_at :type timestamp
-     :api-key "start_at" :required t)
+     :api-key "start_at" :required t
+     :doc "Event start time (required)")
     (:org-prop "END_AT" :data-key :end_at :type timestamp
-     :api-key "end_at")
+     :api-key "end_at"
+     :doc "Event end time")
     (:org-prop "ALL_DAY" :data-key :all_day :type boolean
-     :api-key "all_day")
+     :api-key "all_day"
+     :doc "All-day event (default: false)")
     (:org-prop "LOCATION_NAME" :data-key :location_name :type string
-     :api-key "location_name")
+     :api-key "location_name"
+     :doc "Location name")
     (:org-prop "LOCATION_ADDRESS" :data-key :location_address :type string
-     :api-key "location_address")))
+     :api-key "location_address"
+     :doc "Location address")))
 
 ;;;; 1. Stage: Extraction
 

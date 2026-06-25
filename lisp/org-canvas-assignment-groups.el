@@ -58,10 +58,14 @@
   :file-var 'org-canvas-assignment-groups-file
   :query "LEVEL=1"
   :properties
-  '((:org-prop "WEIGHT" :data-key :group_weight :type number)
-    (:org-prop "DROP_LOWEST" :data-key :drop_lowest :type number)
-    (:org-prop "DROP_HIGHEST" :data-key :drop_highest :type number)
-    (:org-prop "POSITION" :data-key :position :type number))
+  '((:org-prop "WEIGHT" :data-key :group_weight :type number
+     :doc "Group weight percentage (0-100)")
+    (:org-prop "DROP_LOWEST" :data-key :drop_lowest :type number
+     :doc "Number of lowest scores to drop")
+    (:org-prop "DROP_HIGHEST" :data-key :drop_highest :type number
+     :doc "Number of highest scores to drop")
+    (:org-prop "POSITION" :data-key :position :type number
+     :doc "Position in group ordering"))
   :structural-fn #'org-canvas--validate-drop-rules)
 
 ;;;; 1. Stage: Extraction

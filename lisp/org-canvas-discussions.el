@@ -59,21 +59,34 @@
   :properties
   `((:org-prop "PUBLISHED" :data-key :published :type boolean)
     (:org-prop "DISCUSSION_TYPE" :data-key :discussion_type :type enum
-     :values ,org-canvas--valid-discussion-types)
+     :values ,org-canvas--valid-discussion-types
+     :doc "side_comment, threaded")
     (:org-prop "GRADING_TYPE" :data-key :grading_type :type enum
-     :values ,org-canvas--valid-grading-types)
-    (:org-prop "POINTS" :data-key :points_possible :type number)
-    (:org-prop "POST_FIRST" :data-key :require_initial_post :type boolean)
-    (:org-prop "PINNED" :data-key :pinned :type boolean)
-    (:org-prop "AVAILABLE_FROM" :data-key :delayed_post_at :type timestamp)
-    (:org-prop "DUE_AT" :data-key :due_at :type timestamp)
-    (:org-prop "LOCK_AT" :data-key :lock_at :type timestamp)
-    (:org-prop "ALLOW_RATING" :data-key :allow_rating :type boolean)
-    (:org-prop "ONLY_GRADERS_CAN_RATE" :data-key :only_graders_can_rate :type boolean)
-    (:org-prop "SORT_BY_RATING" :data-key :sort_by_rating :type boolean)
-    (:org-prop "GROUP_CATEGORY" :data-key :group_category_id :type number)
+     :values ,org-canvas--valid-grading-types
+     :doc "points, percent (for graded)")
+    (:org-prop "POINTS" :data-key :points_possible :type number
+     :doc "Points possible (for graded)")
+    (:org-prop "POST_FIRST" :data-key :require_initial_post :type boolean
+     :doc "Require post before viewing others")
+    (:org-prop "PINNED" :data-key :pinned :type boolean
+     :doc "Pin to top of discussions list")
+    (:org-prop "AVAILABLE_FROM" :data-key :delayed_post_at :type timestamp
+     :doc "Hide discussion until this date")
+    (:org-prop "DUE_AT" :data-key :due_at :type timestamp
+     :doc "Due date (for graded)")
+    (:org-prop "LOCK_AT" :data-key :lock_at :type timestamp
+     :doc "Prevent replies after this date")
+    (:org-prop "ALLOW_RATING" :data-key :allow_rating :type boolean
+     :doc "Allow post rating")
+    (:org-prop "ONLY_GRADERS_CAN_RATE" :data-key :only_graders_can_rate :type boolean
+     :doc "Restrict rating to graders")
+    (:org-prop "SORT_BY_RATING" :data-key :sort_by_rating :type boolean
+     :doc "Sort posts by rating")
+    (:org-prop "GROUP_CATEGORY" :data-key :group_category_id :type number
+     :doc "Group set ID or link to group-categories.org")
     (:org-prop "GROUP" :data-key :assignment_group_id :type link
-     :target-file org-canvas-assignment-groups-file :link-id-property "CANVAS_ID")
+     :target-file org-canvas-assignment-groups-file :link-id-property "CANVAS_ID"
+     :doc "Assignment group (for graded)")
     (:org-prop "RUBRIC_LINK" :data-key :rubric_id :type link
      :target-file org-canvas-rubrics-file :link-id-property "CANVAS_ID"))
   :date-order '(("AVAILABLE_FROM" "DUE_AT" "LOCK_AT")))

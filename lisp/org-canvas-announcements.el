@@ -59,7 +59,8 @@
     (:org-prop "DELAYED_POST_AT" :data-key :delayed_post_at :type timestamp
      :api-key "delayed_post_at")
     (:org-prop "AUTHOR" :data-key :author :type string)
-    (:org-prop "ALLOW_COMMENTS" :data-key :allow_discussion_comments :type boolean)))
+    (:org-prop "ALLOW_COMMENTS" :data-key :allow_discussion_comments :type boolean
+     :doc "Allow student replies")))
 
 ;;;; 1. Stage: Extraction
 

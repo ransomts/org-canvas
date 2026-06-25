@@ -77,36 +77,61 @@ takes effect on the next `org-canvas-pull-assignments' invocation."
   :file-var 'org-canvas-assignments-file
   :query "LEVEL=1"
   :properties
-  `((:org-prop "POINTS" :data-key :points_possible :type number)
+  `((:org-prop "POINTS" :data-key :points_possible :type number
+     :doc "Points possible")
     (:org-prop "GRADING_TYPE" :data-key :grading_type :type enum
      :values ,org-canvas--valid-grading-types)
-    (:org-prop "PUBLISHED" :data-key :published :type boolean)
+    (:org-prop "PUBLISHED" :data-key :published :type boolean
+     :doc "Whether item is visible (default: true)")
     (:org-prop "SUBMISSION" :data-key :submission_types :type csv-enum
-     :values ,org-canvas--valid-submission-types)
-    (:org-prop "MAX_ATTEMPTS" :data-key :allowed_attempts :type number)
-    (:org-prop "DUE_AT" :data-key :due_at :type timestamp)
-    (:org-prop "UNLOCK_AT" :data-key :unlock_at :type timestamp)
-    (:org-prop "LOCK_AT" :data-key :lock_at :type timestamp)
-    (:org-prop "PEER_REVIEWS" :data-key :peer_reviews :type boolean)
-    (:org-prop "PEER_REVIEW_COUNT" :data-key :peer_review_count :type number)
-    (:org-prop "PEER_REVIEW_DUE_AT" :data-key :peer_reviews_due_at :type timestamp)
+     :values ,org-canvas--valid-submission-types
+     :doc "Submission type (see below)")
+    (:org-prop "MAX_ATTEMPTS" :data-key :allowed_attempts :type number
+     :doc "Max submission attempts (-1 = unlimited)")
+    (:org-prop "DUE_AT" :data-key :due_at :type timestamp
+     :doc "Due date")
+    (:org-prop "UNLOCK_AT" :data-key :unlock_at :type timestamp
+     :doc "Available from date")
+    (:org-prop "LOCK_AT" :data-key :lock_at :type timestamp
+     :doc "Available until date")
+    (:org-prop "PEER_REVIEWS" :data-key :peer_reviews :type boolean
+     :doc "Enable peer reviews")
+    (:org-prop "PEER_REVIEW_COUNT" :data-key :peer_review_count :type number
+     :doc "Reviews per student")
+    (:org-prop "PEER_REVIEW_DUE_AT" :data-key :peer_reviews_due_at :type timestamp
+     :doc "Peer review due date")
     (:org-prop "GROUP" :data-key :assignment_group_id :type link
-     :target-file org-canvas-assignment-groups-file :link-id-property "CANVAS_ID")
+     :target-file org-canvas-assignment-groups-file :link-id-property "CANVAS_ID"
+     :doc "Link to assignment-groups.org heading")
     (:org-prop "RUBRIC_LINK" :data-key :rubric_id :type link
-     :target-file org-canvas-rubrics-file :link-id-property "CANVAS_ID")
-    (:org-prop "OMIT_FROM_GRADES" :data-key :omit_from_final_grade :type boolean)
-    (:org-prop "ANONYMOUS_GRADING" :data-key :anonymous_grading :type boolean)
-    (:org-prop "NOTIFY_OF_UPDATE" :data-key :notify_of_update :type boolean)
-    (:org-prop "AUTOMATIC_PEER_REVIEWS" :data-key :automatic_peer_reviews :type boolean)
-    (:org-prop "GRADE_INDIVIDUALLY" :data-key :grade_group_students_individually :type boolean)
-    (:org-prop "ONLY_VISIBLE_TO_OVERRIDES" :data-key :only_visible_to_overrides :type boolean)
-    (:org-prop "MODERATED_GRADING" :data-key :moderated_grading :type boolean)
-    (:org-prop "GRADER_COUNT" :data-key :grader_count :type number)
-    (:org-prop "MUTED" :data-key :muted :type boolean)
-    (:org-prop "TURNITIN_ENABLED" :data-key :turnitin_enabled :type boolean)
-    (:org-prop "GRADING_STANDARD_ID" :data-key :grading_standard_id :type number)
-    (:org-prop "GROUP_CATEGORY_ID" :data-key :group_category_id :type number)
-    (:org-prop "POSITION" :data-key :position :type number))
+     :target-file org-canvas-rubrics-file :link-id-property "CANVAS_ID"
+     :doc "Link to rubrics.org heading")
+    (:org-prop "OMIT_FROM_GRADES" :data-key :omit_from_final_grade :type boolean
+     :doc "Exclude from grade calculations")
+    (:org-prop "ANONYMOUS_GRADING" :data-key :anonymous_grading :type boolean
+     :doc "Hide student names during grading")
+    (:org-prop "NOTIFY_OF_UPDATE" :data-key :notify_of_update :type boolean
+     :doc "Notify students of changes (write-only)")
+    (:org-prop "AUTOMATIC_PEER_REVIEWS" :data-key :automatic_peer_reviews :type boolean
+     :doc "Auto-assign peer reviews (default: true when PEER_REVIEWS set)")
+    (:org-prop "GRADE_INDIVIDUALLY" :data-key :grade_group_students_individually :type boolean
+     :doc "Grade group members individually")
+    (:org-prop "ONLY_VISIBLE_TO_OVERRIDES" :data-key :only_visible_to_overrides :type boolean
+     :doc "Only visible to students with overrides")
+    (:org-prop "MODERATED_GRADING" :data-key :moderated_grading :type boolean
+     :doc "Enable moderated grading")
+    (:org-prop "GRADER_COUNT" :data-key :grader_count :type number
+     :doc "Number of graders (required when MODERATED_GRADING is true)")
+    (:org-prop "MUTED" :data-key :muted :type boolean
+     :doc "Mute assignment (hide grades from students)")
+    (:org-prop "TURNITIN_ENABLED" :data-key :turnitin_enabled :type boolean
+     :doc "Enable Turnitin plagiarism detection")
+    (:org-prop "GRADING_STANDARD_ID" :data-key :grading_standard_id :type number
+     :doc "Canvas grading standard ID")
+    (:org-prop "GROUP_CATEGORY_ID" :data-key :group_category_id :type number
+     :doc "Group set ID or link to group-categories.org")
+    (:org-prop "POSITION" :data-key :position :type number
+     :doc "Position in assignment list"))
   :date-order '(("UNLOCK_AT" "DUE_AT" "LOCK_AT"))
   :structural-fn #'org-canvas--validate-assignment-structure)
 

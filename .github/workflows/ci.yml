@@ -68,6 +68,37 @@ jobs:
           fail_ci_if_error: false
           verbose: true
 
+  generated-artifacts:
+    # Guards single-source-of-truth: regenerate committed generated files and
+    # fail if they drift from their source. The Canvas contract fixture is
+    # derived from the OpenAPI spec; regenerating must be a no-op.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      - name: Regenerate Canvas contract fixture
+        run: python3 test/contract/extract-canvas-contract.py
+
+      - name: Fail if the fixture is out of date
+        run: |
+          if ! git diff --exit-code test/contract/canvas-contract.json; then
+            echo "::error::canvas-contract.json is stale. Re-run:"
+            echo "  python3 test/contract/extract-canvas-contract.py"
+            echo "and commit the result."
+            exit 1
+          fi
+
   lint:
     runs-on: ubuntu-latest
     timeout-minutes: 10
