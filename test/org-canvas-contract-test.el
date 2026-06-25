@@ -210,10 +210,13 @@ stage-1/2 functions."
 ;; fields (arrays/objects) don't trip the pull code.
 
 (defun org-canvas-contract--dummy (type)
-  "Return a type-appropriate dummy value for a documented response field TYPE."
+  "Return a type-appropriate dummy value for a documented response field TYPE.
+String fields use an ISO8601 timestamp so date-typed fields (which the spec
+types as plain strings, e.g. due_at) parse cleanly instead of tripping the
+timestamp parser into an interactive prompt."
   (cond ((member type '("integer" "number")) 1)
         ((equal type "boolean") t)
-        ((equal type "string") "x")
+        ((equal type "string") "2026-01-01T00:00:00Z")
         (t nil)))                       ; array / object / unknown
 
 (defun org-canvas-contract--response (module)

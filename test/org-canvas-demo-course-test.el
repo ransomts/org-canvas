@@ -47,11 +47,15 @@
          (org-canvas-settings-file (expand-file-name "settings.org" org-canvas-demo--dir)))
      (unwind-protect
          (progn ,@body)
-       ;; Don't leave demo files open in buffers for later tests.
-       (dolist (buf (buffer-list))
-         (let ((bf (buffer-file-name buf)))
-           (when (and bf (string-prefix-p org-canvas-demo--dir bf))
-             (kill-buffer buf)))))))
+       ;; Don't leave demo files open for later tests.  Suppress kill queries
+       ;; and clear the modified flag so a noninteractive run can never block
+       ;; on a "kill modified buffer?" prompt.
+       (let ((kill-buffer-query-functions nil))
+         (dolist (buf (buffer-list))
+           (let ((bf (buffer-file-name buf)))
+             (when (and bf (string-prefix-p org-canvas-demo--dir bf))
+               (with-current-buffer buf (set-buffer-modified-p nil))
+               (kill-buffer buf))))))))
 
 (describe "demo-course dogfood"
   (it "exists and ships the documented content files"

@@ -2455,7 +2455,14 @@ Page content.
     (expect (org-canvas--iso8601-to-org-timestamp nil) :to-be nil))
 
   (it "returns nil for empty string"
-    (expect (org-canvas--iso8601-to-org-timestamp "") :to-be nil)))
+    (expect (org-canvas--iso8601-to-org-timestamp "") :to-be nil))
+
+  (it "returns nil (no error) for a malformed timestamp"
+    ;; A bad Canvas timestamp must degrade gracefully, never erroring (or in
+    ;; some org versions prompting) and hanging a pull.
+    (expect (org-canvas--iso8601-to-org-timestamp "not-a-date") :to-be nil)
+    (expect (org-canvas--iso8601-to-org-inactive-timestamp "not-a-date")
+            :to-be nil)))
 
 (describe "course TZ resolver"
   (it "reads :TIME_ZONE: from settings.org and caches it"
