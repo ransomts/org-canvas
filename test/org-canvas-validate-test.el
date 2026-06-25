@@ -2162,6 +2162,30 @@ EXCEPT is a list of filenames to skip."
      (let ((loc (list :file (buffer-file-name) :line 1 :heading "Quiz")))
        (expect (org-canvas--validate-quiz-point-total loc) :to-be nil)))))
 
+(describe "org-canvas--count-assignments-in-group"
+  (it "returns 0 (no crash) when the assignments file is nil"
+    ;; Guards the `(and assignments-file (file-exists-p assignments-file))'
+    ;; predicate: an `or' would call file-exists-p on nil and crash.
+    (expect (org-canvas--count-assignments-in-group "Homework" nil)
+            :to-equal 0))
+
+  (it "counts assignments whose GROUP matches the group name"
+    (let ((temp-dir (make-temp-file "count-test-" t)))
+      (unwind-protect
+          (let ((assign-file (expand-file-name "assignments.org" temp-dir)))
+            (with-temp-file assign-file
+              (insert "* A1\n:PROPERTIES:\n:GROUP: [[file:x::*Homework][Homework]]\n:END:\n"
+                      "* A2\n:PROPERTIES:\n:GROUP: [[file:x::*Homework][Homework]]\n:END:\n"
+                      "* A3\n:PROPERTIES:\n:GROUP: [[file:x::*Exams][Exams]]\n:END:\n"))
+            (expect (org-canvas--count-assignments-in-group "Homework" assign-file)
+                    :to-equal 2))
+        (delete-directory temp-dir t))))
+
+  (it "returns 0 when the file does not exist"
+    (expect (org-canvas--count-assignments-in-group
+             "Homework" "/nonexistent/assignments.org")
+            :to-equal 0)))
+
 (describe "org-canvas--validate-drop-rules"
   (it "returns nil when no drop rules"
     (with-temp-org-buffer
