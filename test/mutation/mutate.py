@@ -128,6 +128,14 @@ def parse_failed(output):
     return int(m.group(1)) if m else None
 
 
+def warm_cache(root):
+    """Byte-compile ROOT once so its .elc cache is fresh.  Worker copies
+    (made with mtime-preserving copytree) then inherit a warm cache and skip
+    the expensive full recompile on their first test run; each mutation only
+    recompiles the single file it touched."""
+    subprocess.run(["eldev", "compile"], cwd=root, capture_output=True)
+
+
 def run_suite(cwd, pattern, timeout):
     cmd = ["eldev", "test"]
     if pattern:
@@ -302,6 +310,9 @@ def main():
               f"{skipped} not run this pass. Use --max 0 to run all.")
     print(f"Test command: eldev test{(' ' + args.pattern) if args.pattern else ''}"
           f"  (timeout {args.timeout}s each)\n", flush=True)
+
+    print("Warming bytecode cache (eldev compile)...", flush=True)
+    warm_cache(ROOT)
 
     if args.jobs > 1:
         result = run_parallel(sites, args.jobs, args.timeout, args.pattern)

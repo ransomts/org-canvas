@@ -32,6 +32,11 @@ Each mutation runs the whole suite (~20s), so this is **on-demand** tooling,
 not a per-commit gate. Files are always restored, even on Ctrl-C. Exit status
 is non-zero if any mutant survived.
 
+Before running, the harness byte-compiles the repo once (`eldev compile`) so
+parallel worker copies inherit a warm `.elc` cache and skip the full recompile
+on their first test run — each mutation then only recompiles the one file it
+touched.
+
 ## Mutation operators
 
 Token-boundary regexes (never match inside a longer symbol, string, comment,
