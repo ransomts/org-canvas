@@ -1256,25 +1256,38 @@ Sets `org-canvas--pull-tz-cache' to the IANA TZ string or nil."
                 (when (re-search-forward "^[ \t]*:TIME_ZONE:[ \t]+\\(.+\\)$" nil t)
                   (string-trim (match-string-no-properties 1)))))))))
 
+(defun org-canvas--iso8601-date-p (value)
+  "Return non-nil when VALUE is a string beginning with an ISO8601 date.
+Used to reject malformed timestamps before parsing.  Canvas always sends
+\"YYYY-MM-DD...\" so a leading date is a safe, version-independent gate."
+  (and (stringp value)
+       (string-match-p "\\`[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}" value)))
+
 (defun org-canvas--iso8601-to-org-timestamp (iso8601)
   "Convert ISO8601 timestamp to Org active timestamp.
 Localizes to `org-canvas--pull-tz-cache' (course TZ) when set, else UTC.
 Returns a string like \"<2026-01-15 Thu 10:00>\" or nil."
-  (when (and iso8601 (stringp iso8601) (not (equal iso8601 ""))
-             (not (eq iso8601 :null)))
-    (let ((time (date-to-time iso8601))
-          (zone (or org-canvas--pull-tz-cache t)))
-      (format-time-string "<%Y-%m-%d %a %H:%M>" time zone))))
+  ;; Require an ISO date prefix before parsing: `date-to-time' is version-
+  ;; inconsistent on garbage (errors on some inputs, returns a bogus epoch
+  ;; date on others), so a malformed Canvas timestamp must be rejected
+  ;; deterministically rather than erroring/hanging or yielding a wrong date.
+  (when (org-canvas--iso8601-date-p iso8601)
+    (condition-case nil
+        (let ((time (date-to-time iso8601))
+              (zone (or org-canvas--pull-tz-cache t)))
+          (format-time-string "<%Y-%m-%d %a %H:%M>" time zone))
+      (error nil))))
 
 (defun org-canvas--iso8601-to-org-inactive-timestamp (iso8601)
   "Convert ISO8601 timestamp to Org inactive timestamp.
 Localizes to `org-canvas--pull-tz-cache' (course TZ) when set, else UTC.
 Returns a string like \"[2026-01-15 Thu 10:00]\" or nil."
-  (when (and iso8601 (stringp iso8601) (not (equal iso8601 ""))
-             (not (eq iso8601 :null)))
-    (let ((time (date-to-time iso8601))
-          (zone (or org-canvas--pull-tz-cache t)))
-      (format-time-string "[%Y-%m-%d %a %H:%M]" time zone))))
+  (when (org-canvas--iso8601-date-p iso8601)
+    (condition-case nil
+        (let ((time (date-to-time iso8601))
+              (zone (or org-canvas--pull-tz-cache t)))
+          (format-time-string "[%Y-%m-%d %a %H:%M]" time zone))
+      (error nil))))
 
 ;;;; 4f. Declarative Pull-Item Macro
 

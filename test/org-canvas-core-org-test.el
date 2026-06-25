@@ -2455,7 +2455,25 @@ Page content.
     (expect (org-canvas--iso8601-to-org-timestamp nil) :to-be nil))
 
   (it "returns nil for empty string"
-    (expect (org-canvas--iso8601-to-org-timestamp "") :to-be nil)))
+    (expect (org-canvas--iso8601-to-org-timestamp "") :to-be nil))
+
+  (it "returns nil (no error) for a malformed timestamp"
+    ;; A bad Canvas timestamp must degrade gracefully, never erroring (or in
+    ;; some org versions prompting) and hanging a pull.  Rejected by the
+    ;; ISO-date format guard before parsing.
+    (expect (org-canvas--iso8601-to-org-timestamp "not-a-date") :to-be nil)
+    (expect (org-canvas--iso8601-to-org-inactive-timestamp "not-a-date")
+            :to-be nil))
+
+  (it "returns nil when date-to-time signals on a date-prefixed string"
+    ;; date-to-time is version-inconsistent: it errors on some inputs in CI.
+    ;; The condition-case must swallow that and return nil rather than hang.
+    (cl-letf (((symbol-function 'date-to-time)
+               (lambda (_s) (error "Invalid date"))))
+      (expect (org-canvas--iso8601-to-org-timestamp "2026-01-01T00:00:00Z")
+              :to-be nil)
+      (expect (org-canvas--iso8601-to-org-inactive-timestamp "2026-01-01T00:00:00Z")
+              :to-be nil))))
 
 (describe "course TZ resolver"
   (it "reads :TIME_ZONE: from settings.org and caches it"

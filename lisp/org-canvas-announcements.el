@@ -54,11 +54,15 @@
   :query "LEVEL=1"
   :properties
   '((:org-prop "PUBLISHED" :data-key :published :type boolean :default t
-     :api-key "published" :boolean-json t)
-    (:org-prop "POSTED_AT" :data-key :posted_at :type timestamp)
+     :api-key "published" :boolean-json t
+     :doc "Whether the announcement is visible to students (default: true)")
+    (:org-prop "POSTED_AT" :data-key :posted_at :type timestamp
+     :doc "When the announcement was posted (read-only, set by Canvas)")
     (:org-prop "DELAYED_POST_AT" :data-key :delayed_post_at :type timestamp
-     :api-key "delayed_post_at")
-    (:org-prop "AUTHOR" :data-key :author :type string)
+     :api-key "delayed_post_at"
+     :doc "Schedule the announcement to publish at this time")
+    (:org-prop "AUTHOR" :data-key :author :type string
+     :doc "Announcement author display name (read-only)")
     (:org-prop "ALLOW_COMMENTS" :data-key :allow_discussion_comments :type boolean
      :doc "Allow student replies")))
 

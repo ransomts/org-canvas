@@ -2029,10 +2029,10 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 
 | Property | Type | Allowed values | Default | Description |
 |----------+------+----------------+---------+-------------|
-| =PUBLISHED= | boolean | true, false | true |  |
-| =POSTED_AT= | timestamp |  |  |  |
-| =DELAYED_POST_AT= | timestamp |  |  |  |
-| =AUTHOR= | string |  |  |  |
+| =PUBLISHED= | boolean | true, false | true | Whether the announcement is visible to students (default: true) |
+| =POSTED_AT= | timestamp |  |  | When the announcement was posted (read-only, set by Canvas) |
+| =DELAYED_POST_AT= | timestamp |  |  | Schedule the announcement to publish at this time |
+| =AUTHOR= | string |  |  | Announcement author display name (read-only) |
 | =ALLOW_COMMENTS= | boolean | true, false |  | Allow student replies |
 
 ** Assignment Groups
@@ -2049,7 +2049,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | Property | Type | Allowed values | Default | Description |
 |----------+------+----------------+---------+-------------|
 | =POINTS= | number |  |  | Points possible |
-| =GRADING_TYPE= | enum | points, percent, letter_grade, gpa_scale, pass_fail, not_graded |  |  |
+| =GRADING_TYPE= | enum | points, percent, letter_grade, gpa_scale, pass_fail, not_graded |  | How the assignment is graded |
 | =PUBLISHED= | boolean | true, false |  | Whether item is visible (default: true) |
 | =SUBMISSION= | csv-enum | online_upload, online_url, online_text_entry, media_recording, on_paper, external_tool, none |  | Submission type (see below) |
 | =MAX_ATTEMPTS= | number |  |  | Max submission attempts (-1 = unlimited) |
@@ -2089,7 +2089,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 
 | Property | Type | Allowed values | Default | Description |
 |----------+------+----------------+---------+-------------|
-| =PUBLISHED= | boolean | true, false |  |  |
+| =PUBLISHED= | boolean | true, false |  | Whether the discussion is visible to students (default: true) |
 | =DISCUSSION_TYPE= | enum | side_comment, threaded |  | side_comment, threaded |
 | =GRADING_TYPE= | enum | points, percent, letter_grade, gpa_scale, pass_fail, not_graded |  | points, percent (for graded) |
 | =POINTS= | number |  |  | Points possible (for graded) |
@@ -2103,7 +2103,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =SORT_BY_RATING= | boolean | true, false |  | Sort posts by rating |
 | =GROUP_CATEGORY= | number |  |  | Group set ID or link to group-categories.org |
 | =GROUP= | link | org link |  | Assignment group (for graded) |
-| =RUBRIC_LINK= | link | org link |  |  |
+| =RUBRIC_LINK= | link | org link |  | Link to a rubric heading in rubrics.org |
 
 ** Files
 
@@ -2112,7 +2112,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =PUBLISHED= | boolean | true, false |  | Whether item is visible (default: true) |
 | =UNLOCK_AT= | timestamp |  |  | Date to make file available |
 | =LOCK_AT= | timestamp |  |  | Date to hide file |
-| =USE_JUSTIFICATION= | enum | own_copyright, used_by_permission, fair_use, public_domain, creative_commons |  |  |
+| =USE_JUSTIFICATION= | enum | own_copyright, used_by_permission, fair_use, public_domain, creative_commons |  | How to resolve a name collision on upload (rename vs overwrite) |
 
 ** Group Categories
 
@@ -2137,10 +2137,10 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 
 | Property | Type | Allowed values | Default | Description |
 |----------+------+----------------+---------+-------------|
-| =PUBLISHED= | boolean | true, false |  |  |
+| =PUBLISHED= | boolean | true, false |  | Whether the module is visible to students (default: true) |
 | =UNLOCK_AT= | timestamp |  |  | Date to unlock the module |
 | =REQUIRE_SEQUENTIAL_PROGRESSION= | boolean | true, false |  | Force items to be completed in order |
-| =PUBLISH_FINAL_GRADE= | boolean | true, false |  |  |
+| =PUBLISH_FINAL_GRADE= | boolean | true, false |  | Publish the final grade when this module is completed |
 
 ** New Quiz Items
 
@@ -2158,7 +2158,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =SHUFFLE_ANSWERS= | boolean | true, false |  | Randomize answer order |
 | =ONE_AT_A_TIME= | boolean | true, false |  | Show one question per page |
 | =ALLOWED_ATTEMPTS= | number |  |  | Max attempts |
-| =SCORING_POLICY= | enum | keep_highest, keep_latest, keep_average |  |  |
+| =SCORING_POLICY= | enum | keep_highest, keep_latest, keep_average |  | Which attempt's score to keep across multiple attempts |
 | =GROUP= | link | org link |  | Link to assignment group in assignment-groups.org |
 | =RUBRIC_LINK= | link | org link |  | Link to rubric in rubrics.org (uses backing assignment) |
 
@@ -2166,7 +2166,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 
 | Property | Type | Allowed values | Default | Description |
 |----------+------+----------------+---------+-------------|
-| =CALCULATION_METHOD= | enum | highest, latest, decaying_average, n_mastery |  |  |
+| =CALCULATION_METHOD= | enum | highest, latest, decaying_average, n_mastery |  | How mastery is calculated from rating attempts |
 | =CALCULATION_INT= | number |  |  | Variable for calculation method |
 | =MASTERY_POINTS= | number |  |  | Points threshold for mastery |
 
@@ -2194,7 +2194,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 
 | Property | Type | Allowed values | Default | Description |
 |----------+------+----------------+---------+-------------|
-| =QUIZ_TYPE= | enum | assignment, practice_quiz, graded_survey, survey |  |  |
+| =QUIZ_TYPE= | enum | assignment, practice_quiz, graded_survey, survey |  | The kind of quiz |
 | =PUBLISHED= | boolean | true, false |  | Whether item is visible (default: true) |
 | =SHUFFLE_ANSWERS= | boolean | true, false |  | Randomize answer order |
 | =TIME_LIMIT= | number |  |  | Time limit in minutes |
@@ -2205,8 +2205,8 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =SHOW_CORRECT_ANSWERS= | boolean | true, false |  | Show correct answers after submission (default: true) |
 | =SHOW_CORRECT_ANSWERS_AT= | timestamp |  |  | When to start showing correct answers |
 | =HIDE_CORRECT_ANSWERS_AT= | timestamp |  |  | When to stop showing correct answers |
-| =HIDE_RESULTS= | enum | always, until_after_last_attempt |  |  |
-| =SCORING_POLICY= | enum | keep_highest, keep_latest |  |  |
+| =HIDE_RESULTS= | enum | always, until_after_last_attempt |  | When to hide quiz results from students |
+| =SCORING_POLICY= | enum | keep_highest, keep_latest |  | Which attempt's score to keep across multiple attempts |
 | =ONE_QUESTION_AT_A_TIME= | boolean | true, false |  | Show one question per page |
 | =CANT_GO_BACK= | boolean | true, false |  | Prevent backtracking (requires =ONE_QUESTION_AT_A_TIME=) |
 | =SHOW_CORRECT_ANSWERS_LAST_ATTEMPT= | boolean | true, false |  | Only show correct answers on last attempt |

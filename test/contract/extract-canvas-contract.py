@@ -44,6 +44,15 @@ MODULE_OPS = {
     "pages": "create_page_courses",
 }
 
+# Modules whose read (pull) response object is documented as a component
+# schema.  Used to contract-check that pull tolerates the full documented
+# response shape.  Only modules with a clean property-setter pull-item are
+# listed (others fetch detail or need buffer context to test in isolation).
+MODULE_READ_SCHEMAS = {
+    "assignments": "Assignment",
+    "assignment-groups": "AssignmentGroup",
+}
+
 BRACKET = re.compile(r"^([^\[]+)\[([^\]]+)\]")
 
 
@@ -99,6 +108,14 @@ def extract(op):
     }
 
 
+def extract_response_fields(spec, schema_name):
+    """Return {field: type} for a component response schema."""
+    schema = spec.get("components", {}).get("schemas", {}).get(schema_name, {})
+    props = schema.get("properties", {}) or {}
+    return {name: (p.get("type") if isinstance(p, dict) else None)
+            for name, p in props.items()}
+
+
 def main():
     spec = yaml.safe_load(open(SPEC))
     out = {}
@@ -108,6 +125,13 @@ def main():
             sys.exit(f"operationId not found: {opid} (module {module})")
         contract = extract(op)
         contract["operationId"] = opid
+        schema_name = MODULE_READ_SCHEMAS.get(module)
+        if schema_name:
+            fields = extract_response_fields(spec, schema_name)
+            if not fields:
+                sys.exit(f"response schema empty: {schema_name} (module {module})")
+            contract["response_schema"] = schema_name
+            contract["response_fields"] = fields
         out[module] = contract
 
     with open(OUT, "w") as fh:

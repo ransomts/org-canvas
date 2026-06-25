@@ -238,6 +238,7 @@ Use `org-canvas-org-save-sync-state` to standardize saving.
 - `lisp/org-canvas-core.el` - All shared utilities (read this first)
 - `readme.org` - Project overview and quick start
 - `documentation/manual.org` - Full manual with file formats, properties, and commands
+- `demo-course/` - Working example course (DS 101); 16 .org files covering all content types
 - `documentation/architecture/canvas-openapi3.yaml` - Canvas API spec
 - `test/contract/` - OpenAPI contract fixture + generator (payload conformance)
 - `test/mutation/` - Mutation-testing harness (assertion-depth measurement)
