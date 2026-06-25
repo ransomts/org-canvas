@@ -1962,6 +1962,37 @@ Keep this too
                 (expect dup-warned :to-be-truthy))))
         (let ((buf (find-buffer-visiting test-file)))
           (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "does not warn when all CANVAS_IDs are unique"
+    ;; Guards the `(> count 1)' boundary: a >= would warn for every id
+    ;; (each appears once), producing false duplicate warnings.
+    (let* ((temp-dir (make-temp-file "dup-test" t))
+           (test-file (expand-file-name "test.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file test-file
+              (insert "* Item One
+:PROPERTIES:
+:CANVAS_ID: UNIQ-1
+:END:
+* Item Two
+:PROPERTIES:
+:CANVAS_ID: UNIQ-2
+:END:
+"))
+            (spy-on 'org-canvas--log-warning)
+            (with-org-canvas-test-config
+              (org-canvas--sync-collect-entries test-file "LEVEL=1" "test")
+              (let ((dup-warned nil))
+                (dolist (call (spy-calls-all-args 'org-canvas--log-warning))
+                  (when (and (>= (length call) 2)
+                             (stringp (nth 1 call))
+                             (string-match-p "Duplicate\\] CANVAS_ID" (nth 1 call)))
+                    (setq dup-warned t)))
+                (expect dup-warned :to-be nil))))
+        (let ((buf (find-buffer-visiting test-file)))
+          (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
 
 (describe "org-canvas--sync-execute-pipeline dry-run"

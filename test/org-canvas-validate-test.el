@@ -2131,6 +2131,27 @@ EXCEPT is a list of filenames to skip."
      (let ((loc (list :file (buffer-file-name) :line 1 :heading "Homework")))
        (expect (org-canvas--validate-drop-rules loc) :to-be nil))))
 
+  (it "returns nil when a drop rule is present but zero"
+    ;; Guards the `(> total-drops 0)' boundary: a >= would warn even when no
+    ;; assignments are actually dropped (DROP_LOWEST: 0).  Uses an explicit 0
+    ;; so the `(or drop-lowest drop-highest)' guard is passed and the boundary
+    ;; line is actually reached.
+    (let ((temp-dir (make-temp-file "drop-zero-" t)))
+      (unwind-protect
+          (let ((assign-file (expand-file-name "assignments.org" temp-dir)))
+            (with-temp-file assign-file (insert ""))
+            (with-temp-org-buffer
+             "* Homework
+:PROPERTIES:
+:DROP_LOWEST: 0
+:END:
+"
+             (org-back-to-heading)
+             (let ((org-canvas-assignments-file assign-file)
+                   (loc (list :file (buffer-file-name) :line 1 :heading "Homework")))
+               (expect (org-canvas--validate-drop-rules loc) :to-be nil))))
+        (delete-directory temp-dir t))))
+
   (it "returns warning when drops exceed assignment count"
     (let* ((temp-dir (make-temp-file "drop-test-" t))
            (assign-file (expand-file-name "assignments.org" temp-dir))

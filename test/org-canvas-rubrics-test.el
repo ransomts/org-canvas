@@ -1001,6 +1001,16 @@ Keep this body
 
 ;;;; Custom-rating Builds (new format: ratings come from criterion plist)
 
+(describe "org-canvas--rubric-build-criteria point total"
+  (it "returns the sum of all criterion points"
+    ;; Guards the `(or (plist-get crit :points) 0)' accumulator: an `and'
+    ;; there would make every criterion contribute 0 and the total wrong.
+    (let* ((hash (make-hash-table :test 'equal))
+           (criteria (list (test-rubric--criterion "Thesis" 20)
+                           (test-rubric--criterion "Clarity" 10)))
+           (total (org-canvas--rubric-build-criteria criteria hash)))
+      (expect total :to-equal 30))))
+
 (describe "org-canvas--rubric-build-criterion with rating list"
   (it "builds default 2-level ratings when ratings list is nil"
     (let ((crit (org-canvas--rubric-build-criterion
