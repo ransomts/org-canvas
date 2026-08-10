@@ -64,12 +64,78 @@ placeholder for the API token (requires double quotes for expansion)."
     (org-canvas--signal 'org-canvas-credentials-error
       "Course ID not configured.  Set org-canvas-course-id in org-canvas-credentials.el\nRun M-x org-canvas-init for guided setup")))
 
-(defconst org-canvas--api-supported-methods '(GET HEAD POST PUT DELETE)
-  "HTTP methods the plz transport can actually send.
-plz has no PATCH support: an unrecognized method symbol falls through
-its curl-argument builder, so the request silently degrades to a
-bodyless GET before failing.  `org-canvas-api-request' rejects
-unsupported methods up front instead.")
+(defconst org-canvas--api-supported-methods '(GET HEAD POST PUT DELETE PATCH)
+  "HTTP methods `org-canvas-api-request' can send.
+plz itself has no PATCH support (an unrecognized method symbol falls
+through its curl-argument builder and the request silently degrades to
+a bodyless GET), so PATCH is sent through the direct curl fallback
+`org-canvas--api-curl-patch' instead.  Anything not in this list is
+rejected up front.")
+
+(defun org-canvas--api-curl-patch-config (full-url headers timeout body-p)
+  "Build a curl config string for a PATCH request to FULL-URL.
+HEADERS is an alist, TIMEOUT the max time in seconds.  When BODY-P is
+non-nil, ends with a data-binary directive that makes curl read the
+request body from the remainder of stdin (the same trick plz uses, so
+the Authorization header never appears on the command line)."
+  (concat
+   "request = \"PATCH\"\n"
+   (mapconcat (lambda (h) (format "header = \"%s: %s\"" (car h) (cdr h)))
+              headers "\n")
+   "\n"
+   (format "url = \"%s\"\n" full-url)
+   (format "max-time = %d\n" timeout)
+   "silent\n"
+   "show-error\n"
+   "write-out = \"\\n%{http_code}\"\n"
+   ;; Must be the last directive: curl reads the rest of stdin as the body
+   (when body-p "data-binary = \"@-\"\n")))
+
+(defun org-canvas--api-curl-patch-parse (exit-code output)
+  "Parse curl PATCH OUTPUT given EXIT-CODE, mimicking plz's contract.
+Returns the parsed JSON body on 2xx (nil when empty).  Signals
+`plz-error' with a curl-error struct on transport failure or with a
+response struct on HTTP error status, so the shared retry and error
+machinery treats the fallback exactly like a plz request."
+  (unless (eq exit-code 0)
+    (signal 'plz-error
+            (make-plz-error :curl-error
+                            (cons (if (numberp exit-code) exit-code 2)
+                                  (format "curl failed: %s" output)))))
+  ;; write-out appended "\n%{http_code}" — split it off the body
+  (unless (string-match "\\(?:\\`\\|\n\\)\\([0-9]\\{3\\}\\)[ \t\n]*\\'" output)
+    (signal 'plz-error
+            (make-plz-error :message (format "No HTTP status in curl output: %s"
+                                             output))))
+  (let* ((status (string-to-number (match-string 1 output)))
+         (body (string-trim (substring output 0 (match-beginning 0)))))
+    (if (and (>= status 200) (< status 300))
+        (unless (string-empty-p body)
+          (json-read-from-string body))
+      (signal 'plz-error
+              (make-plz-error :response (make-plz-response :status status
+                                                           :body body))))))
+
+(defun org-canvas--api-curl-patch (full-url headers json-payload timeout)
+  "Send a PATCH request to FULL-URL via curl directly.
+plz cannot send PATCH, so this fallback mirrors its behavior: HEADERS
+and the method go in a curl config read from stdin (keeping the token
+off the command line), JSON-PAYLOAD follows as the body, TIMEOUT caps
+the request.  Returns parsed JSON on success; signals `plz-error'
+structs on failure so shared error handling applies."
+  (let ((stdin-file (make-temp-file "org-canvas-patch-")))
+    (unwind-protect
+        (progn
+          (let ((coding-system-for-write 'utf-8))
+            (write-region (concat (org-canvas--api-curl-patch-config
+                                   full-url headers timeout json-payload)
+                                  json-payload)
+                          nil stdin-file nil 'silent))
+          (with-temp-buffer
+            (let ((exit-code (call-process plz-curl-program stdin-file t nil
+                                           "--config" "-")))
+              (org-canvas--api-curl-patch-parse exit-code (buffer-string)))))
+      (delete-file stdin-file))))
 
 (defconst org-canvas--api-transient-curl-errors '(7 28 56)
   "Curl error codes treated as transient (connect, timeout, recv).")
@@ -295,6 +361,19 @@ once the delay list is exhausted."
                                     (status (format "HTTP %s" status))
                                     (t "unknown error")))))))))
 
+(defun org-canvas--api-execute-request (plz-method full-url headers json-payload actual-timeout)
+  "Send one PLZ-METHOD request to FULL-URL and return the parsed JSON.
+Dispatches PATCH to the direct curl fallback (plz cannot send it);
+everything else goes through plz.  HEADERS, JSON-PAYLOAD, and
+ACTUAL-TIMEOUT configure the request."
+  (if (eq plz-method 'patch)
+      (org-canvas--api-curl-patch full-url headers json-payload actual-timeout)
+    (plz plz-method full-url
+      :headers headers
+      :body json-payload
+      :as #'json-read
+      :timeout actual-timeout)))
+
 (defun org-canvas--api-execute-with-retry (plz-method full-url headers json-payload actual-timeout)
   "Execute PLZ-METHOD request to FULL-URL with retry on rate-limit or transient.
 HEADERS, JSON-PAYLOAD, and ACTUAL-TIMEOUT configure the request."
@@ -306,11 +385,8 @@ HEADERS, JSON-PAYLOAD, and ACTUAL-TIMEOUT configure the request."
       (condition-case err
           (progn
             (setq result
-                  (plz plz-method full-url
-                    :headers headers
-                    :body json-payload
-                    :as #'json-read
-                    :timeout actual-timeout))
+                  (org-canvas--api-execute-request plz-method full-url headers
+                                                   json-payload actual-timeout))
             (org-canvas--api-log-response result)
             (setq done t))
         (plz-error
@@ -330,9 +406,10 @@ URL is the full endpoint.
 PARAMS is an alist of query parameters.
 DATA is an alist or hash-table to be sent as JSON body (for POST/PUT).
 TIMEOUT is the request timeout in seconds.
-METHOD must be one of `org-canvas--api-supported-methods'; the plz
-transport silently corrupts any other method (notably PATCH), so
-unsupported methods signal `org-canvas-api-error' immediately."
+METHOD must be one of `org-canvas--api-supported-methods'.  PATCH is
+sent via a direct curl fallback (plz cannot send it); anything not in
+the list signals `org-canvas-api-error' immediately, since plz
+silently corrupts unrecognized methods into bodyless GETs."
   (unless (memq method org-canvas--api-supported-methods)
     (org-canvas--signal 'org-canvas-api-error
       "Unsupported HTTP method %s: the plz transport can only send %s"
