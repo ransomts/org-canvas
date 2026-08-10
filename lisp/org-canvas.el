@@ -228,7 +228,8 @@ LABEL is used for logging (e.g., \"Pages\")."
         (org-canvas--sync-in-progress t)
         (org-canvas--sync-global-counters
          (list :success 0 :skip 0 :fail 0 :dry-run 0 :deferred 0))
-        (org-canvas--sync-global-feature-stats nil))
+        (org-canvas--sync-global-feature-stats nil)
+        (org-canvas--module-items-pending nil))
     (org-canvas--log-info org-canvas--logger "========================================")
     (if org-canvas--dry-run
         (org-canvas--log-info org-canvas--logger ">>> DRY RUN — no changes will be made")
@@ -255,6 +256,8 @@ LABEL is used for logging (e.g., \"Pages\")."
         (message "Syncing: %s..." (org-canvas--tier-description tier))
         (org-canvas--run-tier tier #'org-canvas--safe-sync)
         (setq tier-num (1+ tier-num))))
+    ;; Heal module items skipped earlier whose targets have IDs by now
+    (org-canvas--module-retry-pending-items)
     (org-canvas--log-info org-canvas--logger "========================================")
     (org-canvas--log-info org-canvas--logger ">>> GLOBAL SYNC COMPLETE")
     (org-canvas--sync-log-global-summary)

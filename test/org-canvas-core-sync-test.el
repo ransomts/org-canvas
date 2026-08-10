@@ -3590,6 +3590,39 @@ Content here.
                     :to-equal 2))
         (delete-file temp-file)))))
 
+(describe "org-canvas--sync-reclassify-skip-as-success"
+  (it "moves one skip to success in aggregates and the labeled entry"
+    (let ((org-canvas--sync-global-counters
+           (list :success 5 :skip 2 :fail 0 :dry-run 0 :deferred 0))
+          (org-canvas--sync-global-feature-stats
+           (list (list :label "Module Items" :success 3 :skip 2 :fail 0
+                       :deferred 0 :failed-titles nil
+                       :skipped-titles '("A (no linked content)" "B (no linked content)")))))
+      (org-canvas--sync-reclassify-skip-as-success "Module Items" "A")
+      (expect (plist-get org-canvas--sync-global-counters :success) :to-equal 6)
+      (expect (plist-get org-canvas--sync-global-counters :skip) :to-equal 1)
+      (let ((entry (car org-canvas--sync-global-feature-stats)))
+        (expect (plist-get entry :success) :to-equal 4)
+        (expect (plist-get entry :skip) :to-equal 1)
+        (expect (plist-get entry :skipped-titles)
+                :to-equal '("B (no linked content)")))))
+
+  (it "is a no-op when no global sync is active"
+    (let ((org-canvas--sync-global-counters nil)
+          (org-canvas--sync-global-feature-stats
+           (list (list :label "Module Items" :success 0 :skip 1 :fail 0
+                       :deferred 0 :failed-titles nil :skipped-titles '("A")))))
+      (org-canvas--sync-reclassify-skip-as-success "Module Items" "A")
+      (expect (plist-get (car org-canvas--sync-global-feature-stats) :skip)
+              :to-equal 1)))
+
+  (it "tolerates a label with no recorded entry"
+    (let ((org-canvas--sync-global-counters
+           (list :success 0 :skip 1 :fail 0 :dry-run 0 :deferred 0))
+          (org-canvas--sync-global-feature-stats nil))
+      (org-canvas--sync-reclassify-skip-as-success "Module Items" "A")
+      (expect (plist-get org-canvas--sync-global-counters :success) :to-equal 1))))
+
 (describe "org-canvas--sync-log-global-summary"
   (it "renders the per-type table and named failed/skipped items"
     (let ((org-canvas--sync-global-feature-stats
