@@ -2878,4 +2878,250 @@
     (expect (org-canvas--file-safe-local-path "/etc/passwd" "/course/content")
             :to-equal "/course/content/passwd")))
 
+;;;; Unchanged-File Skip and ID-Change Propagation (issue #22)
+
+(describe "org-canvas--file-content-hash"
+  (it "is stable for identical content and settings"
+    (let ((temp-file (make-temp-file "hash-test" nil ".pdf")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file (insert "PDF content"))
+            (let ((data (list :local-path temp-file :display-name "Test"
+                              :folder-path "" :published t)))
+              (expect (org-canvas--file-content-hash data)
+                      :to-equal (org-canvas--file-content-hash data))))
+        (delete-file temp-file))))
+
+  (it "changes when the file content changes"
+    (let ((temp-file (make-temp-file "hash-test" nil ".pdf")))
+      (unwind-protect
+          (let ((data (list :local-path temp-file :display-name "Test"
+                            :folder-path "" :published t)))
+            (with-temp-file temp-file (insert "version 1"))
+            (let ((h1 (org-canvas--file-content-hash data)))
+              (with-temp-file temp-file (insert "version 2"))
+              (expect (org-canvas--file-content-hash data)
+                      :not :to-equal h1)))
+        (delete-file temp-file))))
+
+  (it "changes when upload-relevant settings change"
+    (let ((temp-file (make-temp-file "hash-test" nil ".pdf")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file (insert "PDF content"))
+            (let ((h1 (org-canvas--file-content-hash
+                       (list :local-path temp-file :display-name "Test"
+                             :folder-path "" :published t)))
+                  (h2 (org-canvas--file-content-hash
+                       (list :local-path temp-file :display-name "Test"
+                             :folder-path "" :published nil))))
+              (expect h1 :not :to-equal h2)))
+        (delete-file temp-file)))))
+
+(describe "org-canvas--file-sync-single-entry unchanged skip"
+  (it "skips an unchanged file without touching the API"
+    (let* ((temp-dir (make-temp-file "files-test" t))
+           (pdf-file (expand-file-name "test.pdf" temp-dir))
+           (files-file (expand-file-name "files.org" temp-dir))
+           (push-called nil))
+      (unwind-protect
+          (progn
+            (with-temp-file pdf-file (insert "PDF content"))
+            (with-temp-file files-file
+              (insert "* [[file:test.pdf][Test PDF]]
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+"))
+            (let ((org-canvas-files-file files-file))
+              ;; First compute the hash the same way production will
+              (with-current-buffer (find-file-noselect files-file)
+                (goto-char (point-min))
+                (org-back-to-heading)
+                (let* ((data (org-canvas--file-parse-entry))
+                       (hash (org-canvas--file-content-hash data)))
+                  (org-canvas-org-set-property (point) org-canvas--prop-payload-hash hash)
+                  (let ((marker (point-marker)))
+                    (cl-letf (((symbol-function 'org-canvas--file-push-to-api)
+                               (lambda (_data) (setq push-called t) '((id . 100)))))
+                      (expect (org-canvas--file-sync-single-entry marker)
+                              :to-equal :skip)
+                      (expect push-called :to-be nil))))
+                (kill-buffer))))
+        (delete-directory temp-dir t))))
+
+  (it "uploads and stores the hash when the file has no stored hash"
+    (let* ((temp-dir (make-temp-file "files-test" t))
+           (pdf-file (expand-file-name "test.pdf" temp-dir))
+           (files-file (expand-file-name "files.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file pdf-file (insert "PDF content"))
+            (with-temp-file files-file
+              (insert "* [[file:test.pdf][Test PDF]]
+:PROPERTIES:
+:END:
+"))
+            (let ((org-canvas-files-file files-file)
+                  (org-canvas--file-changed-ids nil))
+              (with-current-buffer (find-file-noselect files-file)
+                (goto-char (point-min))
+                (org-back-to-heading)
+                (let ((marker (point-marker)))
+                  (cl-letf (((symbol-function 'org-canvas--file-push-to-api)
+                             (lambda (_data) '((id . 200))))
+                            ((symbol-function 'org-canvas--file-finalize)
+                             (lambda (_data _resp) nil)))
+                    (expect (org-canvas--file-sync-single-entry marker)
+                            :to-equal :success))
+                  (expect (org-entry-get (marker-position marker)
+                                         org-canvas--prop-payload-hash)
+                          :not :to-be nil)
+                  ;; New file (no previous id): no changed-id recorded
+                  (expect org-canvas--file-changed-ids :to-be nil))
+                (kill-buffer))))
+        (delete-directory temp-dir t))))
+
+  (it "records the display name when the Canvas file ID changes"
+    (let* ((temp-dir (make-temp-file "files-test" t))
+           (pdf-file (expand-file-name "test.pdf" temp-dir))
+           (files-file (expand-file-name "files.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file pdf-file (insert "PDF content"))
+            (with-temp-file files-file
+              (insert "* [[file:test.pdf][Test PDF]]
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+"))
+            (let ((org-canvas-files-file files-file)
+                  (org-canvas--file-changed-ids nil))
+              (with-current-buffer (find-file-noselect files-file)
+                (goto-char (point-min))
+                (org-back-to-heading)
+                (let ((marker (point-marker)))
+                  (cl-letf (((symbol-function 'org-canvas--file-push-to-api)
+                             (lambda (_data) '((id . 200))))
+                            ((symbol-function 'org-canvas--file-finalize)
+                             (lambda (_data _resp) nil)))
+                    (expect (org-canvas--file-sync-single-entry marker)
+                            :to-equal :success))
+                  (expect org-canvas--file-changed-ids
+                          :to-equal '("Test PDF")))
+                (kill-buffer))))
+        (delete-directory temp-dir t))))
+
+  (it "does not record a change when the ID stays the same"
+    (let* ((temp-dir (make-temp-file "files-test" t))
+           (pdf-file (expand-file-name "test.pdf" temp-dir))
+           (files-file (expand-file-name "files.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file pdf-file (insert "PDF content"))
+            (with-temp-file files-file
+              (insert "* [[file:test.pdf][Test PDF]]
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+"))
+            (let ((org-canvas-files-file files-file)
+                  (org-canvas--file-changed-ids nil))
+              (with-current-buffer (find-file-noselect files-file)
+                (goto-char (point-min))
+                (org-back-to-heading)
+                (let ((marker (point-marker)))
+                  (cl-letf (((symbol-function 'org-canvas--file-push-to-api)
+                             (lambda (_data) '((id . 100))))
+                            ((symbol-function 'org-canvas--file-finalize)
+                             (lambda (_data _resp) nil)))
+                    (expect (org-canvas--file-sync-single-entry marker)
+                            :to-equal :success))
+                  (expect org-canvas--file-changed-ids :to-be nil))
+                (kill-buffer))))
+        (delete-directory temp-dir t)))))
+
+(describe "org-canvas-sync-files ID-change propagation"
+  (it "invalidates module hashes when an upload replaces a file ID"
+    (let ((temp-dir (make-temp-file "files-test" t)))
+      (unwind-protect
+          (let* ((org-file (expand-file-name "files.org" temp-dir))
+                 (pdf-file (expand-file-name "test.pdf" temp-dir))
+                 (modules-file (expand-file-name "modules.org" temp-dir)))
+            (with-temp-file pdf-file (insert "PDF content"))
+            (with-temp-file org-file
+              (insert "* [[file:test.pdf][Test PDF]]
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+"))
+            (with-temp-file modules-file
+              (insert "* Week 1
+:PROPERTIES:
+:CANVAS_ID: 1
+:PAYLOAD_HASH: aaa
+:END:
+"))
+            (let ((org-canvas-files-file org-file)
+                  (org-canvas-modules-file modules-file)
+                  (org-canvas-base-url "https://test.canvas.example.com")
+                  (org-canvas-api-token "test-token")
+                  (org-canvas-course-id "99999"))
+              (with-sync-test-env
+                (cl-letf (((symbol-function 'org-canvas-api-request)
+                           (lambda (method url &rest _args)
+                             (cond
+                              ((string-match "courses/99999$" url) '((id . 99999)))
+                              ((string-match "folders/root" url)
+                               '((id . 100) (name . "course files")))
+                              ((and (eq method 'POST) (string-match "folders/100/files" url))
+                               '((upload_url . "https://s3.example.com/upload")
+                                 (upload_params . ((key . "abc123")))))
+                              (t nil))))
+                          ((symbol-function 'org-canvas--file-upload-step2-send)
+                           (lambda (_info _path)
+                             '((id . 77777) (display_name . "test.pdf"))))
+                          ((symbol-function 'org-canvas--file-upload-step3-confirm)
+                           (lambda (resp) resp)))
+                  (org-canvas-sync-files)
+                  ;; The replaced ID forced the module hash to be cleared
+                  (with-current-buffer (find-file-noselect modules-file)
+                    (goto-char (point-min))
+                    (expect (buffer-string) :not :to-match "PAYLOAD_HASH")
+                    (kill-buffer))
+                  (expect org-canvas--file-changed-ids :to-be nil)))))
+        (delete-directory temp-dir t)))))
+
+(describe "org-canvas--file-invalidate-module-hashes"
+  (it "clears PAYLOAD_HASH on all module headings"
+    (let* ((temp-dir (make-temp-file "files-test" t))
+           (modules-file (expand-file-name "modules.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file modules-file
+              (insert "* Week 1
+:PROPERTIES:
+:CANVAS_ID: 1
+:PAYLOAD_HASH: aaa
+:END:
+** Item
+* Week 2
+:PROPERTIES:
+:CANVAS_ID: 2
+:PAYLOAD_HASH: bbb
+:END:
+"))
+            (let ((org-canvas-modules-file modules-file))
+              (org-canvas--file-invalidate-module-hashes '("syllabus.pdf")))
+            (with-current-buffer (find-file-noselect modules-file)
+              (goto-char (point-min))
+              (expect (buffer-string) :not :to-match "PAYLOAD_HASH")
+              (kill-buffer)))
+        (delete-directory temp-dir t))))
+
+  (it "is a no-op when the modules file does not exist"
+    (let ((org-canvas-modules-file "/nonexistent/modules.org"))
+      (expect (org-canvas--file-invalidate-module-hashes '("x.pdf"))
+              :to-be nil))))
+
 ;;; org-canvas-files-test.el ends here

@@ -725,9 +725,43 @@ Creates folders as needed and populates the folder cache."
 
 ;;;; Main Sync Functions
 
+(defvar org-canvas--file-changed-ids nil
+  "Display names of files whose CANVAS_ID changed during the current sync.
+Canvas cannot update file content in place: a re-upload replaces the
+file object under a NEW id, and Canvas deletes module items pointing
+at the old id.  Reset by `org-canvas-sync-files'; consumed by
+`org-canvas--file-invalidate-module-hashes' to force the affected
+modules to re-sync their items.")
+
+(defun org-canvas--file-content-hash (data)
+  "Return a hash of DATA's file bytes and upload-relevant settings.
+Changes whenever the local file content, display name, folder, or any
+property that affects the uploaded object changes — so unchanged files
+can be skipped instead of re-uploaded (a re-upload rotates the Canvas
+file ID and kills module items pointing at it)."
+  (let ((content-md5 (with-temp-buffer
+                       (set-buffer-multibyte nil)
+                       (insert-file-contents-literally
+                        (plist-get data :local-path))
+                       (md5 (current-buffer)))))
+    (md5 (format "%s|%s|%s|%s|%s|%s|%s|%s|%s"
+                 content-md5
+                 (plist-get data :display-name)
+                 (plist-get data :folder-path)
+                 (plist-get data :published)
+                 (plist-get data :unlock-at)
+                 (plist-get data :lock-at)
+                 (plist-get data :use-justification)
+                 (plist-get data :usage-license)
+                 (plist-get data :copyright)))))
+
 (defun org-canvas--file-sync-single-entry (marker)
   "Process a single file entry at MARKER.
-Returns :success, :skip (folder heading), or :fail."
+Returns :success, :skip (folder heading or unchanged file), or :fail.
+Unchanged files (same content hash as the last successful upload) are
+skipped to keep their Canvas file ID stable.  When an upload does
+replace a file's CANVAS_ID, the display name is recorded in
+`org-canvas--file-changed-ids'."
   (with-current-buffer (marker-buffer marker)
     (save-excursion
       (goto-char (marker-position marker))
@@ -735,17 +769,54 @@ Returns :success, :skip (folder heading), or :fail."
           (let ((data (org-canvas--file-parse-entry)))
             (if (not data)
                 :skip
-              (org-canvas--log-info org-canvas--logger "----------------------------------------")
-              (let ((response (org-canvas--file-push-to-api data)))
-                (org-canvas--file-finalize data response)
-                (let ((fid (alist-get 'id response)))
-                  (when (and fid (plist-get data :use-justification))
-                    (org-canvas--file-set-usage-rights fid data))))
-              :success))
+              (let ((file-hash (org-canvas--file-content-hash data))
+                    (stored-hash (org-entry-get (point) org-canvas--prop-payload-hash))
+                    (old-id (plist-get data :canvas-id)))
+                (if (and old-id stored-hash (string= file-hash stored-hash))
+                    (progn
+                      (org-canvas--log-info org-canvas--logger
+                        "[Skip] '%s' unchanged — keeping Canvas file ID %s"
+                        (plist-get data :display-name) old-id)
+                      :skip)
+                  (org-canvas--log-info org-canvas--logger "----------------------------------------")
+                  (let ((response (org-canvas--file-push-to-api data)))
+                    (org-canvas--file-finalize data response)
+                    (let ((fid (alist-get 'id response)))
+                      (when (and fid (plist-get data :use-justification))
+                        (org-canvas--file-set-usage-rights fid data))
+                      (when (and old-id fid
+                                 (not (string= (format "%s" fid) old-id)))
+                        (push (plist-get data :display-name)
+                              org-canvas--file-changed-ids))))
+                  (org-canvas-org-set-property (point) org-canvas--prop-payload-hash
+                                               file-hash)
+                  :success))))
         (error
          (org-canvas--log-error org-canvas--logger "[FAILED] At point %d: %s"
            (marker-position marker) (error-message-string err))
          :fail)))))
+
+(defun org-canvas--file-invalidate-module-hashes (changed-names)
+  "Force modules to re-sync after file IDs changed.
+Canvas deletes module items that pointed at a replaced file ID, and
+modules whose payload hash is unchanged would never re-push their
+items, leaving dead links invisibly.  Clears PAYLOAD_HASH on every
+module heading so the next modules sync (tier 2 of the same global
+sync run) re-pushes them and recreates the items.  CHANGED-NAMES
+lists the affected files for the log."
+  (let ((modules-file (and (boundp 'org-canvas-modules-file)
+                           org-canvas-modules-file
+                           (expand-file-name org-canvas-modules-file))))
+    (when (and modules-file (file-exists-p modules-file))
+      (org-canvas--log-warning org-canvas--logger
+        "[Files] %d file ID(s) changed (%s) — marking all modules for re-sync so their items relink"
+        (length changed-names)
+        (mapconcat (lambda (x) (format "'%s'" x)) changed-names ", "))
+      (with-current-buffer (find-file-noselect modules-file)
+        (org-map-entries
+         (lambda () (org-entry-delete (point) org-canvas--prop-payload-hash))
+         "LEVEL=1" 'file)
+        (org-canvas--save-buffer)))))
 
 ;;;###autoload
 (defun org-canvas-sync-files ()
@@ -755,6 +826,7 @@ Returns :success, :skip (folder heading), or :fail."
   ;; Clear session caches
   (setq org-canvas--file-root-folder-cache nil)
   (setq org-canvas--file-folder-cache (make-hash-table :test 'equal))
+  (setq org-canvas--file-changed-ids nil)
 
   (let ((files-file (expand-file-name org-canvas-files-file)))
     (unless (and files-file (file-exists-p files-file))
@@ -809,14 +881,19 @@ Returns :success, :skip (folder heading), or :fail."
       (with-current-buffer (find-file-noselect files-file)
         (org-canvas--save-buffer))
 
+      (when org-canvas--file-changed-ids
+        (org-canvas--file-invalidate-module-hashes
+         (nreverse org-canvas--file-changed-ids))
+        (setq org-canvas--file-changed-ids nil))
+
       (org-canvas--log-info org-canvas--logger "========================================")
       (org-canvas--log-info org-canvas--logger ">>> FILE SYNC COMPLETE")
-      (org-canvas--log-info org-canvas--logger "Success: %d | Failed: %d | Skipped (folders): %d"
+      (org-canvas--log-info org-canvas--logger "Success: %d | Failed: %d | Skipped (folders/unchanged): %d"
         success-count fail-count skip-count)
       (org-canvas--log-info org-canvas--logger "========================================")
       (org-canvas--sync-record-feature-stats "Files"
         (list :success success-count :skip skip-count :fail fail-count))
-      (message "File Sync: %d success, %d failed, %d folders skipped."
+      (message "File Sync: %d success, %d failed, %d skipped."
                success-count fail-count skip-count))))
 
 ;;;; Delete Functions
