@@ -70,7 +70,8 @@
      :doc "Add to student to-do list on date")
     (:org-prop "NOTIFY_OF_UPDATE" :data-key :notify_of_update :type boolean
      :api-key "notify_of_update"
-     :doc "Notify students of changes (write-only)")))
+     :doc "Notify students of changes (write-only)"))
+  :structural-fn #'org-canvas--validate-page-structure)
 
 ;;;; 1. Stage: Extraction
 

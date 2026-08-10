@@ -56,7 +56,10 @@
 (org-canvas-register-properties "assignment-groups"
   :label "Assignment Groups"
   :file-var 'org-canvas-assignment-groups-file
-  :query "LEVEL=1"
+  ;; Groups are level-2 headings with a WEIGHT property (same query the
+  ;; sync uses).  LEVEL=1 would validate only the container heading and
+  ;; never reach the groups (or their drop rules).
+  :query "LEVEL=2+WEIGHT={.}"
   :properties
   '((:org-prop "WEIGHT" :data-key :group_weight :type number
      :doc "Group weight percentage (0-100)")

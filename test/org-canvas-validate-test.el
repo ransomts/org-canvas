@@ -2566,5 +2566,105 @@ EXCEPT is a list of filenames to skip."
         (expect (buffer-string)
                 :to-match "1 error(s), 2 warning(s)")))))
 
+;;;; Front-Page/Published Rule (issue #5)
+
+(describe "org-canvas--validate-page-structure"
+  (it "errors on FRONT_PAGE: true with PUBLISHED: false"
+    (with-temp-org-buffer
+     "* Course Home
+:PROPERTIES:
+:PUBLISHED: false
+:FRONT_PAGE: true
+:END:
+"
+     (org-back-to-heading)
+     (let ((issues (org-canvas--validate-page-structure
+                    '(:file "pages.org" :line 1 :heading "Course Home"))))
+       (expect issues :not :to-be nil)
+       (expect (plist-get (car issues) :severity) :to-equal 'error)
+       (expect (plist-get (car issues) :message)
+               :to-match "unpublished front page"))))
+
+  (it "passes for a published front page"
+    (with-temp-org-buffer
+     "* Course Home
+:PROPERTIES:
+:PUBLISHED: true
+:FRONT_PAGE: true
+:END:
+"
+     (org-back-to-heading)
+     (expect (org-canvas--validate-page-structure
+              '(:file "pages.org" :line 1 :heading "Course Home"))
+             :to-be nil)))
+
+  (it "passes when PUBLISHED is absent (defaults to published)"
+    (with-temp-org-buffer
+     "* Course Home
+:PROPERTIES:
+:FRONT_PAGE: true
+:END:
+"
+     (org-back-to-heading)
+     (expect (org-canvas--validate-page-structure
+              '(:file "pages.org" :line 1 :heading "Course Home"))
+             :to-be nil)))
+
+  (it "passes for an unpublished non-front page"
+    (with-temp-org-buffer
+     "* Draft Page
+:PROPERTIES:
+:PUBLISHED: false
+:END:
+"
+     (org-back-to-heading)
+     (expect (org-canvas--validate-page-structure
+              '(:file "pages.org" :line 1 :heading "Draft Page"))
+             :to-be nil))))
+
+(describe "org-canvas-validate front-page rule integration"
+  (it "reports the unpublished front page through the full validate run"
+    (with-validate-test-dir dir
+      (with-temp-file (expand-file-name "pages.org" dir)
+        (insert "* Course Home
+:PROPERTIES:
+:PUBLISHED: false
+:FRONT_PAGE: true
+:END:
+"))
+      (test-validate-create-empty-files dir '("pages.org"))
+      (org-canvas-validate)
+      (with-current-buffer "*canvas-validate*"
+        (let ((content (buffer-string)))
+          (expect content :to-match "error:")
+          (expect content :to-match "unpublished front page"))))))
+
+;;;; Drop-Rules Rule at the Real Heading Level (issue #6)
+
+(describe "org-canvas-validate drop-rules integration"
+  (it "flags excess drop rules on level-2 groups through the full validate run"
+    (with-validate-test-dir dir
+      (with-temp-file (expand-file-name "assignment-groups.org" dir)
+        (insert "* Assignment Groups
+** Essays
+:PROPERTIES:
+:WEIGHT: 30.0
+:DROP_LOWEST: 2
+:END:
+"))
+      (with-temp-file (expand-file-name "assignments.org" dir)
+        (insert "* Placeholder Essay
+:PROPERTIES:
+:GROUP: [[file:assignment-groups.org::*Essays][Essays]]
+:END:
+"))
+      (test-validate-create-empty-files dir '("assignment-groups.org"
+                                              "assignments.org"))
+      (org-canvas-validate)
+      (with-current-buffer "*canvas-validate*"
+        (let ((content (buffer-string)))
+          (expect content :to-match "Drop rules")
+          (expect content :to-match "Essays"))))))
+
 (provide 'org-canvas-validate-test)
 ;;; org-canvas-validate-test.el ends here
