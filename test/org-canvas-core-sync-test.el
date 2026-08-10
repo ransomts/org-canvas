@@ -3463,5 +3463,77 @@ Content here.
         (expect (mapcar (lambda (x) (alist-get 'name x)) sorted)
                 :to-equal '("A-early" "A-late" "B-early"))))))
 
+(describe "org-canvas--sync-deferred-error-p"
+  (it "matches Canvas drop-rule rejections"
+    (expect (org-canvas--sync-deferred-error-p
+             '(org-canvas-api-error
+               "Drop rules cannot be higher than the number of assignments (HTTP 400)"))
+            :to-be-truthy))
+
+  (it "does not match other errors"
+    (expect (org-canvas--sync-deferred-error-p
+             '(org-canvas-api-error "API Request Failed (HTTP 404)"))
+            :to-be nil)
+    (expect (org-canvas--sync-deferred-error-p '(error "Parse failed"))
+            :to-be nil)))
+
+(describe "org-canvas--sync-process-entry deferred counter"
+  (it "counts deferred drop-rule rejections separately from failures"
+    (with-temp-org-buffer
+     "* Group A
+:PROPERTIES:
+:CANVAS_ID: 5
+:END:
+"
+     (org-back-to-heading)
+     (let* ((marker (point-marker))
+            (counters (list :success 0 :skip 0 :fail 0))
+            (ctx (list :parse-fn
+                       (lambda ()
+                         (error "Drop rules cannot be higher than the number of assignments (HTTP 400)"))
+                       :build-fn #'ignore
+                       :push-fn #'ignore
+                       :finalize-fn #'ignore
+                       :feature-name "assignment-groups"
+                       :feature-upper "ASSIGNMENT-GROUPS"
+                       :total-count 1
+                       :counters counters
+                       :synced-ids (list nil))))
+       (spy-on 'org-canvas--log-error)
+       (org-canvas--sync-process-entry marker ctx)
+       (expect (plist-get counters :deferred) :to-equal 1)
+       (expect (plist-get counters :fail) :to-equal 0)
+       (expect 'org-canvas--log-error :not :to-have-been-called)))))
+
+(describe "org-canvas--sync-log-summary deferred count"
+  (it "logs a Deferred line when counters include :deferred"
+    (let ((temp-file (make-temp-file "sync-summary-" nil ".org"))
+          (logged nil))
+      (unwind-protect
+          (cl-letf (((symbol-function 'org-canvas--log-info)
+                     (lambda (_logger fmt &rest args)
+                       (push (apply #'format fmt args) logged))))
+            (org-canvas--sync-log-summary "groups" temp-file
+                                          (list :success 1 :skip 0 :fail 0
+                                                :deferred 2))
+            (expect (cl-find-if (lambda (l) (string-match-p "Deferred: 2" l))
+                                logged)
+                    :to-be-truthy))
+        (delete-file temp-file))))
+
+  (it "omits the Deferred line when nothing was deferred"
+    (let ((temp-file (make-temp-file "sync-summary-" nil ".org"))
+          (logged nil))
+      (unwind-protect
+          (cl-letf (((symbol-function 'org-canvas--log-info)
+                     (lambda (_logger fmt &rest args)
+                       (push (apply #'format fmt args) logged))))
+            (org-canvas--sync-log-summary "groups" temp-file
+                                          (list :success 1 :skip 0 :fail 0))
+            (expect (cl-find-if (lambda (l) (string-match-p "Deferred:" l))
+                                logged)
+                    :to-be nil))
+        (delete-file temp-file)))))
+
 (provide 'org-canvas-core-sync-test)
 ;;; org-canvas-core-sync-test.el ends here

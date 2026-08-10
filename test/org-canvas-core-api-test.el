@@ -372,7 +372,7 @@
                     :to-be-truthy)))))))
 
 (describe "org-canvas-api-request plz-error handling"
-  (it "extracts HTTP status and body from plz-error with response"
+  (it "signals a concise message with the HTTP status (no body/struct in data)"
     (with-org-canvas-test-config
       (cl-letf (((symbol-function 'plz)
                  (lambda (&rest _args)
@@ -383,7 +383,21 @@
                                     :data '((bad . "data")))
           (error
            (expect (cadr err) :to-match "HTTP 422")
-           (expect (caddr err) :to-equal "Validation failed"))))))
+           (expect (cddr err) :to-be nil))))))
+
+  (it "surfaces the Canvas JSON error message in the signaled message"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'plz)
+                 (lambda (&rest _args)
+                   (let ((resp (make-plz-response
+                                :status 400
+                                :body "{\"errors\":{\"published\":[{\"attribute\":\"published\",\"type\":\"invalid\",\"message\":\"The front page cannot be unpublished\"}]}}")))
+                     (signal 'plz-error (make-plz-error :response resp))))))
+        (condition-case err
+            (org-canvas-api-request 'PUT "https://example.com/api")
+          (error
+           (expect (cadr err)
+                   :to-equal "The front page cannot be unpublished (HTTP 400)"))))))
 
   (it "handles plz-error without response"
     (with-org-canvas-test-config
@@ -836,6 +850,39 @@
                         (org-canvas-api-request 'PATCH "https://example.invalid/api/v1/x")
                       (org-canvas-api-error e))))
         (expect (error-message-string caught) :to-match "PATCH")))))
+
+(describe "org-canvas--api-error-message"
+  (it "extracts per-attribute error messages"
+    (expect (org-canvas--api-error-message
+             "{\"errors\":{\"published\":[{\"attribute\":\"published\",\"type\":\"invalid\",\"message\":\"The front page cannot be unpublished\"}]}}")
+            :to-equal "The front page cannot be unpublished"))
+
+  (it "extracts messages from arrays of message objects"
+    (expect (org-canvas--api-error-message
+             "{\"errors\":[{\"message\":\"only one late policy per course is allowed\"}]}")
+            :to-equal "only one late policy per course is allowed"))
+
+  (it "extracts bare-string error arrays"
+    (expect (org-canvas--api-error-message
+             "{\"errors\":[\"something went wrong\"]}")
+            :to-equal "something went wrong"))
+
+  (it "uses a top-level message field"
+    (expect (org-canvas--api-error-message "{\"message\":\"invalid request\"}")
+            :to-equal "invalid request"))
+
+  (it "joins distinct messages and dedupes repeats"
+    (expect (org-canvas--api-error-message
+             "{\"errors\":{\"name\":[{\"message\":\"too long\"},{\"message\":\"too long\"}],\"weight\":[{\"message\":\"not a number\"}]}}")
+            :to-equal "too long; not a number"))
+
+  (it "returns nil for non-JSON bodies"
+    (expect (org-canvas--api-error-message "Internal Server Error") :to-be nil)
+    (expect (org-canvas--api-error-message nil) :to-be nil)
+    (expect (org-canvas--api-error-message "{not valid json") :to-be nil))
+
+  (it "returns nil for JSON without any message"
+    (expect (org-canvas--api-error-message "{\"ok\":true}") :to-be nil)))
 
 (describe "org-canvas--scrub-plz-error"
   (it "masks set-cookie headers in the response"

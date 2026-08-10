@@ -2501,5 +2501,70 @@ EXCEPT is a list of filenames to skip."
                           :to-be-truthy)))))
         (delete-directory temp-dir t)))))
 
+;;;; Pending-First-Sync Collapse (issue #11)
+
+(describe "org-canvas--validate-resolve-file-link pending-sync tagging"
+  (it "marks unresolved link-target issues as pending-sync"
+    (let* ((dir (make-temp-file "vlink-" t))
+           (target (expand-file-name "t.org" dir))
+           (src (expand-file-name "s.org" dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file target (insert "* Target\n"))
+            (let ((issue (org-canvas--validate-resolve-file-link
+                          "[[file:t.org::*Target][Target]]" "CANVAS_ID" src
+                          '(:file "s.org" :line 1 :heading "H") "GROUP"
+                          "not a link" "GROUP: link target has no CANVAS_ID (sync target first)")))
+              (expect (plist-get issue :pending-sync) :to-be t)
+              (expect (plist-get issue :severity) :to-equal 'warning)))
+        (delete-directory dir t))))
+
+  (it "does not mark non-link errors as pending-sync"
+    (let ((issue (org-canvas--validate-resolve-file-link
+                  "plain text" "CANVAS_ID" "/tmp/s.org"
+                  '(:file "s.org" :line 1 :heading "H") "GROUP"
+                  "not a link" "unresolved")))
+      (expect (plist-get issue :pending-sync) :to-be nil)
+      (expect (plist-get issue :severity) :to-equal 'error))))
+
+(describe "org-canvas-validate pending-first-sync collapse"
+  (let ((fake-issues nil))
+    (before-each
+      (setq fake-issues
+            (list (org-canvas--validate-make-issue
+                   'warning '(:file "a.org" :line 1 :heading "H1") "GROUP"
+                   "GROUP: link target has no CANVAS_ID (sync target first)" t)
+                  (org-canvas--validate-make-issue
+                   'warning '(:file "a.org" :line 5 :heading "H2") "RUBRIC_LINK"
+                   "RUBRIC_LINK: link target has no CANVAS_ID (sync target first)" t)
+                  (org-canvas--validate-make-issue
+                   'error '(:file "a.org" :line 9 :heading "H3") "PUBLISHED"
+                   "PUBLISHED: 'yes' is not a valid boolean")))
+      (spy-on 'org-canvas--validate-run-all-specs
+              :and-return-value (list :issues fake-issues :checked 1 :skipped 0)))
+
+    (it "collapses pending-sync warnings into a single summary line"
+      (org-canvas-validate)
+      (with-current-buffer "*canvas-validate*"
+        (let ((content (buffer-string)))
+          (expect content :to-match "2 link(s) pending first sync")
+          (expect content :not :to-match "sync target first")
+          (expect content :to-match "not a valid boolean")
+          (expect content :to-match "(2 pending first sync)"))))
+
+    (it "lists pending warnings individually with a verbose argument"
+      (org-canvas-validate t)
+      (with-current-buffer "*canvas-validate*"
+        (let ((content (buffer-string)))
+          (expect content :to-match "GROUP: link target has no CANVAS_ID")
+          (expect content :to-match "RUBRIC_LINK: link target has no CANVAS_ID")
+          (expect content :not :to-match "pending first sync); C-u"))))
+
+    (it "still counts pending warnings in the totals"
+      (org-canvas-validate)
+      (with-current-buffer "*canvas-validate*"
+        (expect (buffer-string)
+                :to-match "1 error(s), 2 warning(s)")))))
+
 (provide 'org-canvas-validate-test)
 ;;; org-canvas-validate-test.el ends here

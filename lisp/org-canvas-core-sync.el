@@ -235,17 +235,27 @@ CTX is a plist with keys:
                      (payload (funcall build-fn data)))
                 (org-canvas--sync-execute-pipeline data payload ctx))
             (error
-             (plist-put counters :fail (1+ (plist-get counters :fail)))
-             (plist-put counters :failed-titles
-                        (cons heading-title
-                              (or (plist-get counters :failed-titles) nil)))
-             (org-canvas--log-error org-canvas--logger "[FAILED] %s '%s': %s"
-               feature-upper heading-title (error-message-string err))
-             (message "%s [%d/%d] FAILED '%s': %s"
-               (capitalize feature-name)
-               (+ (plist-get counters :success) (plist-get counters :skip)
-                  (plist-get counters :fail))
-               total-count heading-title (error-message-string err)))))))))
+             (if (org-canvas--sync-deferred-error-p err)
+                 (progn
+                   (plist-put counters :deferred
+                              (1+ (or (plist-get counters :deferred) 0)))
+                   (org-canvas--log-warning org-canvas--logger
+                     "[Deferred] %s '%s': %s — will apply on a future sync"
+                     feature-upper heading-title (error-message-string err))
+                   (message "%s '%s' deferred: %s"
+                     (capitalize feature-name) heading-title
+                     (error-message-string err)))
+               (plist-put counters :fail (1+ (plist-get counters :fail)))
+               (plist-put counters :failed-titles
+                          (cons heading-title
+                                (or (plist-get counters :failed-titles) nil)))
+               (org-canvas--log-error org-canvas--logger "[FAILED] %s '%s': %s"
+                 feature-upper heading-title (error-message-string err))
+               (message "%s [%d/%d] FAILED '%s': %s"
+                 (capitalize feature-name)
+                 (+ (plist-get counters :success) (plist-get counters :skip)
+                    (plist-get counters :fail))
+                 total-count heading-title (error-message-string err))))))))))
 
 (defun org-canvas--sync-warn-orphans (all-ids-before synced-ids feature-name)
   "Warn about CANVAS_IDs in ALL-IDS-BEFORE not present in SYNCED-IDS.
@@ -259,13 +269,15 @@ FEATURE-NAME is used in the log message."
 (defun org-canvas--sync-log-summary (feature-name sync-file counters)
   "Save SYNC-FILE and log completion summary.
 FEATURE-NAME is the module name.  COUNTERS is a plist with
-:success, :skip, :fail, and optionally :conflict, :pulled, and :dry-run counts."
+:success, :skip, :fail, and optionally :conflict, :pulled, :deferred,
+and :dry-run counts."
   (let ((feature-upper (upcase feature-name))
         (success-count (plist-get counters :success))
         (skip-count (plist-get counters :skip))
         (fail-count (plist-get counters :fail))
         (conflict-count (or (plist-get counters :conflict) 0))
         (pulled-count (or (plist-get counters :pulled) 0))
+        (deferred-count (or (plist-get counters :deferred) 0))
         (dry-run-count (or (plist-get counters :dry-run) 0))
         (extra-counts 0))
     (with-current-buffer (find-file-noselect sync-file)
@@ -292,6 +304,9 @@ FEATURE-NAME is the module name.  COUNTERS is a plist with
                    fail-count conflict-count pulled-count)
         (message "%s sync: %d success, %d skipped, %d failed."
                  (capitalize feature-name) success-count skip-count fail-count))
+      (when (> deferred-count 0)
+        (org-canvas--log-info org-canvas--logger
+          "Deferred: %d (will apply on a future sync)" deferred-count))
       (let ((failed-titles (plist-get counters :failed-titles)))
         (when failed-titles
           (org-canvas--log-warning org-canvas--logger "Failed items: %s"
@@ -557,6 +572,15 @@ indicator in different positions."
 ERR is a `condition-case' error value."
   (string-match-p "404" (error-message-string err)))
 
+(defun org-canvas--sync-deferred-error-p (err)
+  "Return non-nil when ERR is a Canvas rejection that self-resolves later.
+Currently matches drop rules exceeding the group's assignment count
+\(\"Drop rules cannot be higher than the number of assignments\"),
+which succeeds on a future sync once the group has enough assignments.
+ERR is a `condition-case' error value."
+  (string-match-p "drop rules cannot be higher"
+                  (downcase (error-message-string err))))
+
 (defun org-canvas--404-on-put-p (err method)
   "Return non-nil if ERR is a 404 and METHOD is PUT or PATCH.
 ERR is a `condition-case' error value."
@@ -713,7 +737,9 @@ Returns the API response alist."
           (org-canvas--log-info org-canvas--logger "[Execute] %s successful for '%s'" method title)
           response)
       (error
-       (org-canvas--log-error org-canvas--logger "[Execute] Failed: %s" (error-message-string err))
+       ;; Warning, not error: a recovery path may follow, and on terminal
+       ;; failure the sync pipeline's [FAILED] line is the single ERROR.
+       (org-canvas--log-warning org-canvas--logger "[Execute] Failed: %s" (error-message-string err))
 
        (cond
         ;; CASE 1: Timeout -> Check if item exists via find-fn
