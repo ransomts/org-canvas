@@ -663,6 +663,13 @@ Return the matching item alist, or nil if not found."
           (push (point-marker) item-markers))))
     (nreverse item-markers)))
 
+(defvar org-canvas--module-items-pending nil
+  "Module items skipped because their target lacked a CANVAS_ID.
+Each entry is a plist (:module-id ID :marker MARKER :title STRING
+:dir DIR).  Only populated during a global sync
+\(`org-canvas--sync-global-counters' non-nil); consumed and cleared by
+`org-canvas--module-retry-pending-items' at the end of the run.")
+
 (defun org-canvas--module-sync-items (module-id module-pom modules-file-dir)
   "Sync all items for MODULE-ID starting from MODULE-POM.
 MODULES-FILE-DIR is used for resolving links.
@@ -697,7 +704,14 @@ Returns (success-count skip-count fail-count)."
                       (setq skip-count (1+ skip-count))
                       (push (format "%s (no linked content synced)"
                                     (plist-get data :title))
-                            skipped-titles))
+                            skipped-titles)
+                      ;; Remember the item for the end-of-run retry pass
+                      (when org-canvas--sync-global-counters
+                        (push (list :module-id module-id
+                                    :marker (copy-marker marker)
+                                    :title (plist-get data :title)
+                                    :dir modules-file-dir)
+                              org-canvas--module-items-pending)))
                   (let* ((payload (org-canvas--module-item-build-payload data position))
                          (response (org-canvas--module-item-push-to-api module-id data payload)))
                     (org-canvas--module-finalize data response)
@@ -718,6 +732,79 @@ Returns (success-count skip-count fail-count)."
             :skipped-titles skipped-titles :failed-titles failed-titles))
 
     (list success-count skip-count fail-count)))
+
+(defun org-canvas--module-item-position (item-pom)
+  "Return the 1-based position of the item heading at ITEM-POM among siblings."
+  (save-excursion
+    (goto-char item-pom)
+    (org-back-to-heading t)
+    (let ((target (point))
+          (pos 1))
+      (when (and (org-up-heading-safe)
+                 (org-goto-first-child))
+        (while (and (< (point) target)
+                    (org-get-next-sibling))
+          (setq pos (1+ pos))))
+      pos)))
+
+(defun org-canvas--module-retry-single-pending (entry)
+  "Retry the pending module item described by ENTRY.
+Returns the item title when it synced, nil when it is still pending
+\(target still has no CANVAS_ID, or the push failed)."
+  (let ((marker (plist-get entry :marker))
+        (module-id (plist-get entry :module-id))
+        (dir (plist-get entry :dir))
+        (title (plist-get entry :title)))
+    (when (and (markerp marker) (marker-buffer marker))
+      (with-current-buffer (marker-buffer marker)
+        (save-excursion
+          (goto-char marker)
+          (condition-case err
+              (let ((data (org-canvas--module-item-parse-entry dir)))
+                (when (or (plist-get data :content-id)
+                          (plist-get data :page-url))
+                  (let* ((position (org-canvas--module-item-position (point)))
+                         (payload (org-canvas--module-item-build-payload data position))
+                         (response (org-canvas--module-item-push-to-api module-id data payload)))
+                    (org-canvas--module-finalize data response)
+                    (org-canvas--save-buffer)
+                    title)))
+            (error
+             (org-canvas--log-warning org-canvas--logger
+               "[Retry] Module item '%s' failed: %s"
+               title (error-message-string err))
+             nil)))))))
+
+(defun org-canvas--module-retry-pending-items ()
+  "Retry module items skipped because their target lacked a CANVAS_ID.
+Called at the end of `org-canvas-sync': items whose target gained an
+ID during the run are synced now (healing same-run ordering
+casualties) and reclassified from skip to success in the global
+summary; the rest produce a closing hint naming them.  Consumes and
+clears `org-canvas--module-items-pending'."
+  (when org-canvas--module-items-pending
+    (org-canvas--log-info org-canvas--logger
+      "--- Retry pass: %d module item(s) skipped earlier ---"
+      (length org-canvas--module-items-pending))
+    (let ((still-pending nil))
+      (dolist (entry (nreverse org-canvas--module-items-pending))
+        (let ((synced-title (org-canvas--module-retry-single-pending entry)))
+          (if synced-title
+              (progn
+                (org-canvas--log-info org-canvas--logger
+                  "[Retry] Synced module item '%s'" synced-title)
+                (org-canvas--sync-reclassify-skip-as-success
+                 "Module Items" synced-title))
+            (push (plist-get entry :title) still-pending)))
+        (let ((m (plist-get entry :marker)))
+          (when (markerp m) (set-marker m nil))))
+      (setq org-canvas--module-items-pending nil)
+      (when still-pending
+        (org-canvas--log-warning org-canvas--logger
+          "%d module item(s) still pending: %s — sync their targets, then re-run M-x org-canvas-sync-modules"
+          (length still-pending)
+          (mapconcat (lambda (x) (format "'%s'" x))
+                     (nreverse still-pending) ", "))))))
 
 (org-canvas-define-sync modules
   :file org-canvas-modules-file

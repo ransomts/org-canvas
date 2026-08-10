@@ -2609,4 +2609,173 @@
        ;; classify-unlinked-heading should still produce SubHeader here
        (expect data-type :to-equal "SubHeader")))))
 
+;;;; End-of-Run Retry Pass (issue #9)
+
+(describe "org-canvas--module-item-position"
+  (it "returns 1-based positions among siblings"
+    (with-temp-org-buffer
+     "* Module
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** First
+** Second
+** Third
+"
+     (goto-char (point-min))
+     (search-forward "** Second")
+     (expect (org-canvas--module-item-position (point)) :to-equal 2)
+     (goto-char (point-min))
+     (search-forward "** First")
+     (expect (org-canvas--module-item-position (point)) :to-equal 1)
+     (goto-char (point-min))
+     (search-forward "** Third")
+     (expect (org-canvas--module-item-position (point)) :to-equal 3))))
+
+(describe "org-canvas--module-retry-single-pending"
+  (it "syncs the item when its target now has a CANVAS_ID"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (cl-letf (((symbol-function 'org-canvas--module-resolve-link)
+                   (lambda (_link _dir)
+                     '(:type "Page" :title "Course Home"
+                       :content-id nil :page-url "course-home"))))
+          (with-temp-org-buffer
+           "* Module
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** [[file:pages.org::*Course Home][Course Home]]
+:PROPERTIES:
+:END:
+"
+           (goto-char (point-min))
+           (search-forward "** ")
+           (org-back-to-heading)
+           (let* ((entry (list :module-id 100
+                               :marker (point-marker)
+                               :title "Course Home"
+                               :dir default-directory)))
+             (expect (org-canvas--module-retry-single-pending entry)
+                     :to-equal "Course Home")))))))
+
+  (it "returns nil when the target still has no CANVAS_ID"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (cl-letf (((symbol-function 'org-canvas--module-resolve-link)
+                   (lambda (_link _dir)
+                     '(:type "Page" :title "Course Home"
+                       :content-id nil :page-url nil))))
+          (with-temp-org-buffer
+           "* Module
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** [[file:pages.org::*Course Home][Course Home]]
+:PROPERTIES:
+:END:
+"
+           (goto-char (point-min))
+           (search-forward "** ")
+           (org-back-to-heading)
+           (let ((entry (list :module-id 100
+                              :marker (point-marker)
+                              :title "Course Home"
+                              :dir default-directory)))
+             (expect (org-canvas--module-retry-single-pending entry)
+                     :to-be nil)))))))
+
+  (it "returns nil and warns when the push errors"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas--module-item-parse-entry)
+                 (lambda (_dir) (error "Parse boom")))
+                ((symbol-function 'org-canvas--log-warning) #'ignore))
+        (with-temp-org-buffer
+         "* Module
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** Item
+"
+         (goto-char (point-min))
+         (search-forward "** ")
+         (org-back-to-heading)
+         (let ((entry (list :module-id 100
+                            :marker (point-marker)
+                            :title "Item"
+                            :dir default-directory)))
+           (expect (org-canvas--module-retry-single-pending entry)
+                   :to-be nil))))))
+
+  (it "returns nil for a dead marker"
+    (expect (org-canvas--module-retry-single-pending
+             (list :module-id 100 :marker (make-marker)
+                   :title "Gone" :dir "/tmp/"))
+            :to-be nil)))
+
+(describe "org-canvas--module-retry-pending-items"
+  (it "does nothing when no items are pending"
+    (let ((org-canvas--module-items-pending nil)
+          (logged nil))
+      (cl-letf (((symbol-function 'org-canvas--log-info)
+                 (lambda (_l fmt &rest args)
+                   (push (apply #'format fmt args) logged))))
+        (org-canvas--module-retry-pending-items))
+      (expect logged :to-be nil)))
+
+  (it "reclassifies healed items and hints about the rest"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer
+       "* Module
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** Healed
+** Still Pending
+"
+       (goto-char (point-min))
+       (search-forward "** Healed")
+       (org-back-to-heading)
+       (let ((healed-marker (point-marker)))
+         (search-forward "** Still Pending")
+         (org-back-to-heading)
+         (let* ((pending-marker (point-marker))
+                (org-canvas--sync-global-counters
+                 (list :success 0 :skip 2 :fail 0 :dry-run 0 :deferred 0))
+                (org-canvas--sync-global-feature-stats
+                 (list (list :label "Module Items" :success 0 :skip 2 :fail 0
+                             :deferred 0 :failed-titles nil
+                             :skipped-titles
+                             '("Healed (no linked content synced)"
+                               "Still Pending (no linked content synced)"))))
+                (org-canvas--module-items-pending
+                 (list (list :module-id 100 :marker pending-marker
+                             :title "Still Pending" :dir default-directory)
+                       (list :module-id 100 :marker healed-marker
+                             :title "Healed" :dir default-directory)))
+                (warnings nil))
+           (cl-letf (((symbol-function 'org-canvas--module-retry-single-pending)
+                      (lambda (entry)
+                        (when (equal (plist-get entry :title) "Healed")
+                          "Healed")))
+                     ((symbol-function 'org-canvas--log-warning)
+                      (lambda (_l fmt &rest args)
+                        (push (apply #'format fmt args) warnings))))
+             (org-canvas--module-retry-pending-items))
+           (expect org-canvas--module-items-pending :to-be nil)
+           ;; Healed item moved from skip to success
+           (let ((entry (car org-canvas--sync-global-feature-stats)))
+             (expect (plist-get entry :success) :to-equal 1)
+             (expect (plist-get entry :skip) :to-equal 1)
+             (expect (plist-get entry :skipped-titles)
+                     :to-equal '("Still Pending (no linked content synced)")))
+           (expect (plist-get org-canvas--sync-global-counters :success)
+                   :to-equal 1)
+           ;; Remaining item produced the re-run hint
+           (expect (cl-find-if
+                    (lambda (w)
+                      (string-match-p "still pending: 'Still Pending'.*org-canvas-sync-modules" w))
+                    warnings)
+                   :to-be-truthy)))))))
+
 ;;; org-canvas-modules-test.el ends here
