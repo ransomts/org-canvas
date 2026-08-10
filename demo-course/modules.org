@@ -28,7 +28,7 @@
 :LAST_SYNCED: [2026-02-15 Sun 09:38]
 :END:
 
-** [[file:files.org::*[[file:content/syllabus.pdf][Syllabus.pdf]]][Syllabus.pdf]]
+** [[file:content/syllabus.pdf][Syllabus.pdf]]
 :PROPERTIES:
 :COMPLETION_REQUIREMENT: must_view
 :CANVAS_ID: 5440931
@@ -82,7 +82,7 @@
 :LAST_SYNCED: [2026-02-15 Sun 09:38]
 :END:
 
-** [[file:files.org::*[[file:content/labs/lab01-starter.py][lab01-starter.py]]][lab01-starter.py]]
+** [[file:content/labs/lab01-starter.py][lab01-starter.py]]
 :PROPERTIES:
 :PUBLISHED: false
 :CANVAS_ID: 5440937
