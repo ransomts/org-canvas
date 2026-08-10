@@ -814,6 +814,8 @@ Returns :success, :skip (folder heading), or :fail."
       (org-canvas--log-info org-canvas--logger "Success: %d | Failed: %d | Skipped (folders): %d"
         success-count fail-count skip-count)
       (org-canvas--log-info org-canvas--logger "========================================")
+      (org-canvas--sync-record-feature-stats "Files"
+        (list :success success-count :skip skip-count :fail fail-count))
       (message "File Sync: %d success, %d failed, %d folders skipped."
                success-count fail-count skip-count))))
 

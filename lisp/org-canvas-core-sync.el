@@ -24,6 +24,14 @@
 (defvar org-canvas--dry-run nil
   "When non-nil, sync shows what would happen without making API calls.")
 
+(defvar org-canvas--sync-global-feature-stats nil
+  "Per-feature stat entries accumulated during `org-canvas-sync'.
+Each entry is a plist (:label STRING :success N :skip N :fail N
+:deferred N :failed-titles LIST :skipped-titles LIST).  Only
+populated while `org-canvas--sync-global-counters' is non-nil
+\(i.e., inside a global sync); standalone sync commands leave it
+untouched.  Rendered by `org-canvas--sync-log-global-summary'.")
+
 (defvar org-canvas--sync-global-counters nil
   "When non-nil, a plist accumulating counts across sync modules.
 Bound by `org-canvas-sync' to aggregate success/skip/fail totals.")
@@ -311,19 +319,69 @@ and :dry-run counts."
         (when failed-titles
           (org-canvas--log-warning org-canvas--logger "Failed items: %s"
             (mapconcat (lambda (title) (format "'%s'" title))
-                       (nreverse failed-titles) ", "))))))
+                       (reverse failed-titles) ", "))))))
     (org-canvas--log-info org-canvas--logger "========================================")
-    ;; Accumulate into global counters when running inside org-canvas-sync
-    (when org-canvas--sync-global-counters
-      (plist-put org-canvas--sync-global-counters :success
-                 (+ (plist-get org-canvas--sync-global-counters :success) success-count))
-      (plist-put org-canvas--sync-global-counters :skip
-                 (+ (plist-get org-canvas--sync-global-counters :skip) skip-count))
-      (plist-put org-canvas--sync-global-counters :fail
-                 (+ (plist-get org-canvas--sync-global-counters :fail) fail-count))
-      (plist-put org-canvas--sync-global-counters :dry-run
-                 (+ (or (plist-get org-canvas--sync-global-counters :dry-run) 0)
-                    dry-run-count)))))
+    ;; Accumulate into the global summary when running inside org-canvas-sync
+    (org-canvas--sync-record-feature-stats (capitalize feature-name) counters)))
+
+(defun org-canvas--sync-record-feature-stats (label counters)
+  "Record LABEL's COUNTERS into the global sync summary.
+No-op unless a global sync is active (`org-canvas--sync-global-counters'
+non-nil).  Accumulates the aggregate counters and merges a per-feature
+entry (matched by LABEL) in `org-canvas--sync-global-feature-stats',
+including :failed-titles and :skipped-titles name lists."
+  (when org-canvas--sync-global-counters
+    (dolist (key '(:success :skip :fail :dry-run :deferred))
+      (plist-put org-canvas--sync-global-counters key
+                 (+ (or (plist-get org-canvas--sync-global-counters key) 0)
+                    (or (plist-get counters key) 0))))
+    (let ((entry (cl-find label org-canvas--sync-global-feature-stats
+                          :key (lambda (e) (plist-get e :label))
+                          :test #'equal)))
+      (if entry
+          (progn
+            (dolist (key '(:success :skip :fail :deferred))
+              (plist-put entry key (+ (plist-get entry key)
+                                      (or (plist-get counters key) 0))))
+            (plist-put entry :failed-titles
+                       (append (plist-get entry :failed-titles)
+                               (reverse (plist-get counters :failed-titles))))
+            (plist-put entry :skipped-titles
+                       (append (plist-get entry :skipped-titles)
+                               (reverse (plist-get counters :skipped-titles)))))
+        (push (list :label label
+                    :success (or (plist-get counters :success) 0)
+                    :skip (or (plist-get counters :skip) 0)
+                    :fail (or (plist-get counters :fail) 0)
+                    :deferred (or (plist-get counters :deferred) 0)
+                    :failed-titles (reverse (plist-get counters :failed-titles))
+                    :skipped-titles (reverse (plist-get counters :skipped-titles)))
+              org-canvas--sync-global-feature-stats)))))
+
+(defun org-canvas--sync-log-global-summary ()
+  "Log the aggregated per-type table and named failed/skipped items.
+Renders `org-canvas--sync-global-feature-stats' (in sync order) as an
+aligned table, followed by one warning line per feature naming failed
+items and noteworthy skipped items.  No-op when no stats were recorded."
+  (let ((stats (reverse org-canvas--sync-global-feature-stats)))
+    (when stats
+      (org-canvas--log-info org-canvas--logger "%-20s %8s %8s %7s %9s"
+        "Type" "Success" "Skipped" "Failed" "Deferred")
+      (dolist (s stats)
+        (org-canvas--log-info org-canvas--logger "%-20s %8d %8d %7d %9d"
+          (plist-get s :label) (plist-get s :success) (plist-get s :skip)
+          (plist-get s :fail) (plist-get s :deferred)))
+      (dolist (s stats)
+        (let ((failed (plist-get s :failed-titles))
+              (skipped (plist-get s :skipped-titles)))
+          (when failed
+            (org-canvas--log-warning org-canvas--logger "Failed %s: %s"
+              (plist-get s :label)
+              (mapconcat (lambda (x) (format "'%s'" x)) failed ", ")))
+          (when skipped
+            (org-canvas--log-warning org-canvas--logger "Skipped %s: %s"
+              (plist-get s :label)
+              (mapconcat (lambda (x) (format "'%s'" x)) skipped ", "))))))))
 
 ;; Plist key convention in parse-entry return values:
 ;; - kebab-case (:canvas-id, :pom, :local-path) for internal pipeline fields

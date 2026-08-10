@@ -3535,5 +3535,99 @@ Content here.
                     :to-be nil))
         (delete-file temp-file)))))
 
+(describe "org-canvas--sync-record-feature-stats"
+  (it "is a no-op when no global sync is active"
+    (let ((org-canvas--sync-global-counters nil)
+          (org-canvas--sync-global-feature-stats nil))
+      (org-canvas--sync-record-feature-stats "Pages" '(:success 3))
+      (expect org-canvas--sync-global-feature-stats :to-be nil)))
+
+  (it "accumulates aggregate counters including deferred"
+    (let ((org-canvas--sync-global-counters
+           (list :success 0 :skip 0 :fail 0 :dry-run 0 :deferred 0))
+          (org-canvas--sync-global-feature-stats nil))
+      (org-canvas--sync-record-feature-stats
+       "Groups" '(:success 2 :skip 1 :fail 1 :deferred 1))
+      (expect (plist-get org-canvas--sync-global-counters :success) :to-equal 2)
+      (expect (plist-get org-canvas--sync-global-counters :skip) :to-equal 1)
+      (expect (plist-get org-canvas--sync-global-counters :fail) :to-equal 1)
+      (expect (plist-get org-canvas--sync-global-counters :deferred) :to-equal 1)))
+
+  (it "merges repeated records for the same label"
+    (let ((org-canvas--sync-global-counters
+           (list :success 0 :skip 0 :fail 0 :dry-run 0 :deferred 0))
+          (org-canvas--sync-global-feature-stats nil))
+      (org-canvas--sync-record-feature-stats
+       "Module Items" '(:success 3 :skip 1 :skipped-titles ("A (no linked content)")))
+      (org-canvas--sync-record-feature-stats
+       "Module Items" '(:success 2 :fail 1 :failed-titles ("B")))
+      (expect (length org-canvas--sync-global-feature-stats) :to-equal 1)
+      (let ((entry (car org-canvas--sync-global-feature-stats)))
+        (expect (plist-get entry :success) :to-equal 5)
+        (expect (plist-get entry :skip) :to-equal 1)
+        (expect (plist-get entry :fail) :to-equal 1)
+        (expect (plist-get entry :skipped-titles)
+                :to-equal '("A (no linked content)"))
+        (expect (plist-get entry :failed-titles) :to-equal '("B"))))))
+
+(describe "org-canvas--sync-log-summary feature stats recording"
+  (it "records the feature's counters under its capitalized label"
+    (let ((temp-file (make-temp-file "sync-summary-" nil ".org"))
+          (org-canvas--sync-global-counters
+           (list :success 0 :skip 0 :fail 0 :dry-run 0 :deferred 0))
+          (org-canvas--sync-global-feature-stats nil))
+      (unwind-protect
+          (progn
+            (org-canvas--sync-log-summary "pages" temp-file
+                                          (list :success 2 :skip 1 :fail 1
+                                                :failed-titles '("Course Home")))
+            (let ((entry (car org-canvas--sync-global-feature-stats)))
+              (expect (plist-get entry :label) :to-equal "Pages")
+              (expect (plist-get entry :success) :to-equal 2)
+              (expect (plist-get entry :failed-titles)
+                      :to-equal '("Course Home")))
+            (expect (plist-get org-canvas--sync-global-counters :success)
+                    :to-equal 2))
+        (delete-file temp-file)))))
+
+(describe "org-canvas--sync-log-global-summary"
+  (it "renders the per-type table and named failed/skipped items"
+    (let ((org-canvas--sync-global-feature-stats
+           (list (list :label "Module Items" :success 15 :skip 1 :fail 0
+                       :deferred 0 :failed-titles nil
+                       :skipped-titles '("Course Home (no linked content synced)"))
+                 (list :label "Pages" :success 8 :skip 0 :fail 1 :deferred 0
+                       :failed-titles '("Course Home") :skipped-titles nil)))
+          (logged-info nil)
+          (logged-warn nil))
+      (cl-letf (((symbol-function 'org-canvas--log-info)
+                 (lambda (_logger fmt &rest args)
+                   (push (apply #'format fmt args) logged-info)))
+                ((symbol-function 'org-canvas--log-warning)
+                 (lambda (_logger fmt &rest args)
+                   (push (apply #'format fmt args) logged-warn))))
+        (org-canvas--sync-log-global-summary))
+      ;; Stats were pushed in reverse sync order; table renders Pages first
+      (let ((lines (nreverse logged-info)))
+        (expect (nth 0 lines) :to-match "Type.*Success.*Skipped.*Failed.*Deferred")
+        (expect (nth 1 lines) :to-match "Pages +8 +0 +1 +0")
+        (expect (nth 2 lines) :to-match "Module Items +15 +1 +0 +0"))
+      (expect (cl-find-if (lambda (l) (string-match-p "Failed Pages: 'Course Home'" l))
+                          logged-warn)
+              :to-be-truthy)
+      (expect (cl-find-if (lambda (l)
+                            (string-match-p "Skipped Module Items: 'Course Home (no linked content synced)'" l))
+                          logged-warn)
+              :to-be-truthy)))
+
+  (it "logs nothing when no stats were recorded"
+    (let ((org-canvas--sync-global-feature-stats nil)
+          (logged nil))
+      (cl-letf (((symbol-function 'org-canvas--log-info)
+                 (lambda (_logger fmt &rest args)
+                   (push (apply #'format fmt args) logged))))
+        (org-canvas--sync-log-global-summary))
+      (expect logged :to-be nil))))
+
 (provide 'org-canvas-core-sync-test)
 ;;; org-canvas-core-sync-test.el ends here
