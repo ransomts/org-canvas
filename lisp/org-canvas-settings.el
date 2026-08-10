@@ -334,26 +334,40 @@ Always uses PUT since the course already exists."
            (error-message-string err))
          (signal (car err) (cdr err)))))))
 
+(defun org-canvas--settings-create-late-policy (endpoint late-policy-payload)
+  "POST LATE-POLICY-PAYLOAD to ENDPOINT to create a new late policy."
+  (condition-case err
+      (progn
+        (org-canvas-api-request 'POST endpoint :data late-policy-payload)
+        (org-canvas--log-info org-canvas--logger "[Execute] Late policy created via POST"))
+    (error
+     (org-canvas--log-error org-canvas--logger "[Execute] Late policy sync failed: %s"
+       (error-message-string err)))))
+
 (defun org-canvas--settings-push-late-policy (late-policy-payload)
   "Push LATE-POLICY-PAYLOAD to Canvas late policy endpoint.
-Tries PATCH first; if Canvas returns an error (no existing policy),
-falls back to POST."
+Tries PUT first to update an existing policy; on a 404 (course has
+no late policy yet) falls back to POST to create one.
+
+Canvas documents the update as PATCH, but the plz HTTP client cannot
+send PATCH (it degrades to a bodyless GET), so updates never worked
+via PATCH.  Rails routes PUT to the same update action, so PUT is
+used instead."
   (when late-policy-payload
     (let ((endpoint (org-canvas-api-course-endpoint "late_policy")))
       (org-canvas--log-info org-canvas--logger "[Execute] Syncing late policy...")
-      (condition-case _err
+      (condition-case err
           (progn
-            (org-canvas-api-request 'PATCH endpoint :data late-policy-payload)
-            (org-canvas--log-info org-canvas--logger "[Execute] Late policy updated via PATCH"))
+            (org-canvas-api-request 'PUT endpoint :data late-policy-payload)
+            (org-canvas--log-info org-canvas--logger "[Execute] Late policy updated via PUT"))
         (error
-         (org-canvas--log-debug org-canvas--logger "[Execute] PATCH failed, trying POST...")
-         (condition-case err2
+         (if (org-canvas--404-error-p err)
              (progn
-               (org-canvas-api-request 'POST endpoint :data late-policy-payload)
-               (org-canvas--log-info org-canvas--logger "[Execute] Late policy created via POST"))
-           (error
-            (org-canvas--log-error org-canvas--logger "[Execute] Late policy sync failed: %s"
-              (error-message-string err2)))))))))
+               (org-canvas--log-debug org-canvas--logger
+                 "[Execute] No existing late policy (404), creating via POST...")
+               (org-canvas--settings-create-late-policy endpoint late-policy-payload))
+           (org-canvas--log-error org-canvas--logger "[Execute] Late policy sync failed: %s"
+             (error-message-string err))))))))
 
 ;;;; 4. Finalize
 

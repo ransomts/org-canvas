@@ -738,7 +738,7 @@ Welcome to the course.
       (expect (gethash "late_submission_interval" lp nil) :to-be nil))))
 
 (describe "org-canvas--settings-push-late-policy"
-  (it "calls PATCH on late_policy endpoint"
+  (it "calls PUT on late_policy endpoint"
     (with-org-canvas-test-config
       (with-mock-api
         (let ((payload (make-hash-table :test 'equal))
@@ -746,30 +746,52 @@ Welcome to the course.
           (puthash "late_submission_deduction" 10 lp)
           (puthash "late_policy" lp payload)
           (org-canvas--settings-push-late-policy payload)
-          (expect-api-called 'PATCH "late_policy")))))
+          (expect-api-called 'PUT "late_policy")
+          (expect (test-org-canvas-api-called-p 'POST "late_policy") :to-be nil)))))
 
   (it "does nothing when payload is nil"
     (with-org-canvas-test-config
       (with-mock-api
         (org-canvas--settings-push-late-policy nil)
-        (expect (test-org-canvas-api-called-p 'PATCH "late_policy") :to-be nil)
+        (expect (test-org-canvas-api-called-p 'PUT "late_policy") :to-be nil)
         (expect (test-org-canvas-api-called-p 'POST "late_policy") :to-be nil))))
 
-  (it "falls back to POST when PATCH fails"
+  (it "falls back to POST when PUT returns 404 (no policy yet)"
     (with-org-canvas-test-config
       (let ((call-count 0))
         (cl-letf (((symbol-function 'org-canvas-api-request)
                    (lambda (method _url &rest _args)
                      (setq call-count (1+ call-count))
-                     (if (eq method 'PATCH)
-                         (signal 'error '("400 Bad Request"))
+                     (if (eq method 'PUT)
+                         (signal 'error '("API Request Failed (HTTP 404)"))
                        '((id . 1))))))
           (let ((payload (make-hash-table :test 'equal))
                 (lp (make-hash-table :test 'equal)))
             (puthash "late_submission_deduction" 10 lp)
             (puthash "late_policy" lp payload)
             (org-canvas--settings-push-late-policy payload)
-            (expect call-count :to-equal 2)))))))
+            (expect call-count :to-equal 2))))))
+
+  (it "reports a non-404 PUT failure without attempting POST"
+    (with-org-canvas-test-config
+      (let ((post-called nil)
+            (error-logged nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method _url &rest _args)
+                     (if (eq method 'PUT)
+                         (signal 'error '("API Request Failed (HTTP 422)"))
+                       (setq post-called t))))
+                  ((symbol-function 'org-canvas--log-error)
+                   (lambda (_logger fmt &rest args)
+                     (when (string-match "Late policy sync failed" fmt)
+                       (setq error-logged (apply #'format fmt args))))))
+          (let ((payload (make-hash-table :test 'equal))
+                (lp (make-hash-table :test 'equal)))
+            (puthash "late_submission_deduction" 10 lp)
+            (puthash "late_policy" lp payload)
+            (org-canvas--settings-push-late-policy payload)
+            (expect post-called :to-be nil)
+            (expect error-logged :to-match "HTTP 422")))))))
 
 (describe "org-canvas-pull-settings (late policy + grading_standard_id)"
   (it "sets GRADING_STANDARD_ID and late policy properties on pull"
@@ -1299,15 +1321,15 @@ Syllabus text.
 
 ;;;; Coverage: late policy POST also fails (Lines 288-289)
 
-(describe "org-canvas--settings-push-late-policy (both PATCH and POST fail)"
-  (it "logs error when both PATCH and POST fail"
+(describe "org-canvas--settings-push-late-policy (both PUT and POST fail)"
+  (it "logs error when PUT 404s and POST fails"
     (with-org-canvas-test-config
       (let ((error-logged nil))
         (cl-letf (((symbol-function 'org-canvas-api-request)
                    (lambda (method _url &rest _args)
                      (cond
-                      ((eq method 'PATCH)
-                       (signal 'error '("400 Bad Request")))
+                      ((eq method 'PUT)
+                       (signal 'error '("404 Not Found")))
                       ((eq method 'POST)
                        (signal 'error '("403 Forbidden"))))))
                   ((symbol-function 'org-canvas--log-error)
