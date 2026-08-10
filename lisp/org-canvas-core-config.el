@@ -377,13 +377,32 @@ Trace messages show full API request/response details."
     (apply #'org-canvas--log-debug org-canvas--logger
 	   (concat "[TRACE] " format-string) args)))
 
+(defconst org-canvas--sensitive-header-names
+  '("authorization" "cookie" "set-cookie" "x-csrf-token")
+  "Header names (lowercase) whose values must never reach the log.
+Covers the auth token on requests and live session cookies
+\(canvas_session, _csrf_token, log_session_id) on responses.")
+
+(defun org-canvas--mask-headers (headers)
+  "Return a copy of HEADERS with sensitive values masked.
+HEADERS is an alist whose keys may be strings or symbols; keys are
+matched case-insensitively against `org-canvas--sensitive-header-names'."
+  (mapcar (lambda (h)
+            (if (member (downcase (format "%s" (car h)))
+                        org-canvas--sensitive-header-names)
+                (cons (car h) "***MASKED***")
+              h))
+          headers))
+
 (defun org-canvas--mask-token (headers)
-  "Return a copy of HEADERS with the Authorization token masked."
+  "Return a copy of HEADERS with the Authorization token masked.
+Delegates to `org-canvas--mask-headers', which also masks cookie
+headers."
   (mapcar (lambda (h)
 	    (if (string= (car h) "Authorization")
 		(cons "Authorization" "Bearer ***MASKED***")
 	      h))
-	  headers))
+	  (org-canvas--mask-headers headers)))
 
 (defun org-canvas--pretty-json (data)
   "Return a pretty-printed JSON string for DATA.
