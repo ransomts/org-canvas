@@ -718,7 +718,27 @@
                            (make-plz-error :curl-error '(28 . "Operation timeout.")))))
                 ((symbol-function 'sleep-for) (lambda (_) nil)))
         (expect (org-canvas-api-request 'GET "https://example.invalid/api/v1/x")
-                :to-throw 'org-canvas-api-error)))))
+                :to-throw 'org-canvas-api-error))))
+
+  (it "scrubs cookies from the error signaled after exhausting retries on 503"
+    (let* ((org-canvas-transient-retry-delays '(0))
+           (org-canvas-api-token "test-token")
+           (org-canvas-course-id "281704")
+           (org-canvas-base-url "https://example.invalid"))
+      (cl-letf (((symbol-function 'plz)
+                 (lambda (&rest _args)
+                   (signal 'plz-error
+                           (make-plz-error
+                            :response (make-plz-response
+                                       :status 503
+                                       :headers '((set-cookie . "canvas_session=SECRET"))
+                                       :body "unavailable")))))
+                ((symbol-function 'sleep-for) (lambda (_) nil)))
+        (let ((caught (condition-case e
+                          (org-canvas-api-request 'GET "https://example.invalid/api/v1/x")
+                        (org-canvas-api-error e))))
+          (expect (car caught) :to-be 'org-canvas-api-error)
+          (expect (format "%S" caught) :not :to-match "SECRET"))))))
 
 (describe "org-canvas--associate-rubric failure message"
   (it "shows warning in echo area on failure"
@@ -799,6 +819,55 @@
       (expect (org-canvas--api-handle-plz-error
                (org-canvas-fault--curl-err code) "u")
               :to-equal :retry-transient))))
+
+(describe "org-canvas--scrub-plz-error"
+  (it "masks set-cookie headers in the response"
+    (let* ((err (make-plz-error
+                 :response (make-plz-response
+                            :status 422
+                            :headers '((set-cookie . "canvas_session=SECRET; path=/")
+                                       (content-type . "application/json"))
+                            :body "{\"errors\":[]}")))
+           (clean (org-canvas--scrub-plz-error err))
+           (headers (plz-response-headers (plz-error-response clean))))
+      (expect (cdr (assq 'set-cookie headers)) :to-equal "***MASKED***")
+      (expect (cdr (assq 'content-type headers)) :to-equal "application/json")
+      (expect (plz-response-status (plz-error-response clean)) :to-equal 422)
+      (expect (plz-response-body (plz-error-response clean))
+              :to-equal "{\"errors\":[]}")))
+
+  (it "does not mutate the original error"
+    (let* ((err (make-plz-error
+                 :response (make-plz-response
+                            :status 500
+                            :headers '((set-cookie . "canvas_session=SECRET")))))
+           (_ (org-canvas--scrub-plz-error err)))
+      (expect (cdr (assq 'set-cookie
+                         (plz-response-headers (plz-error-response err))))
+              :to-equal "canvas_session=SECRET")))
+
+  (it "passes through a plz-error without a response"
+    (let ((err (make-plz-error :curl-error '(28 . "Operation timeout."))))
+      (expect (org-canvas--scrub-plz-error err) :to-be err)))
+
+  (it "passes through non-plz-error values"
+    (expect (org-canvas--scrub-plz-error nil) :to-be nil)
+    (expect (org-canvas--scrub-plz-error "boom") :to-equal "boom")))
+
+(describe "org-canvas--api-handle-plz-error cookie scrubbing"
+  (it "signals errors whose data carries no live cookie values"
+    (let* ((err (cons 'plz-error
+                      (make-plz-error
+                       :response (make-plz-response
+                                  :status 500
+                                  :headers '((set-cookie . "canvas_session=SECRET; path=/")
+                                             (set-cookie . "_csrf_token=ALSOSECRET"))
+                                  :body "server error"))))
+           (caught (condition-case e
+                       (org-canvas--api-handle-plz-error err "http://x")
+                     (org-canvas-api-error e))))
+      (expect (error-message-string caught) :not :to-match "SECRET")
+      (expect (format "%S" caught) :not :to-match "SECRET"))))
 
 (provide 'org-canvas-core-api-test)
 ;;; org-canvas-core-api-test.el ends here

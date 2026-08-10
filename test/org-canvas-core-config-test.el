@@ -510,5 +510,61 @@
         (setq org-canvas-base-url original)
         (sit-for 0)))))
 
+(describe "org-canvas--mask-headers"
+  (it "masks cookie-bearing headers regardless of key case or type"
+    (let ((masked (org-canvas--mask-headers
+                   '((set-cookie . "canvas_session=SECRET; path=/")
+                     ("Set-Cookie" . "_csrf_token=SECRET2")
+                     ("Cookie" . "canvas_session=SECRET3")
+                     ("Authorization" . "Bearer tok")
+                     (content-type . "application/json")))))
+      (expect (cdr (assq 'set-cookie masked)) :to-equal "***MASKED***")
+      (expect (cdr (assoc "Set-Cookie" masked)) :to-equal "***MASKED***")
+      (expect (cdr (assoc "Cookie" masked)) :to-equal "***MASKED***")
+      (expect (cdr (assoc "Authorization" masked)) :to-equal "***MASKED***")
+      (expect (cdr (assq 'content-type masked)) :to-equal "application/json")))
+
+  (it "handles an empty header list"
+    (expect (org-canvas--mask-headers nil) :to-equal nil)))
+
+(describe "org-canvas--log-redact"
+  (it "masks bearer tokens"
+    (expect (org-canvas--log-redact "Authorization: Bearer 1234~abcDEF")
+            :to-equal "Authorization: Bearer ***MASKED***"))
+
+  (it "masks session and csrf cookie values"
+    (expect (org-canvas--log-redact
+             "set-cookie: canvas_session=SECRET; path=/; _csrf_token=SECRET2;")
+            :to-equal
+            "set-cookie: canvas_session=***MASKED***; path=/; _csrf_token=***MASKED***;"))
+
+  (it "masks access_token query parameters"
+    (expect (org-canvas--log-redact "url?access_token=SECRET&page=2")
+            :to-equal "url?access_token=***MASKED***&page=2"))
+
+  (it "leaves ordinary messages untouched"
+    (let ((msg "[Stage 3: Execute] Pushed 'Week 1' (id 42)"))
+      (expect (org-canvas--log-redact msg) :to-equal msg)))
+
+  (it "is idempotent on already-masked values"
+    (let ((msg "canvas_session=***MASKED*** Bearer ***MASKED***"))
+      (expect (org-canvas--log-redact msg) :to-equal msg))))
+
+(describe "org-canvas--log-dispatch redaction"
+  (it "redacts secrets before they reach the log buffer"
+    (let* ((buffer-name "*org-canvas-log-test-redact*")
+           (logger (org-canvas--logger-make :name "test"
+                                            :handlers '(buffer)
+                                            :buffer buffer-name)))
+      (unwind-protect
+          (progn
+            (org-canvas--log-dispatch
+             logger 'debug "Headers: %S"
+             '(((set-cookie . "canvas_session=HIJACKME; secure"))))
+            (with-current-buffer buffer-name
+              (expect (buffer-string) :not :to-match "HIJACKME")
+              (expect (buffer-string) :to-match "canvas_session=\\*\\*\\*MASKED\\*\\*\\*")))
+        (when (get-buffer buffer-name) (kill-buffer buffer-name))))))
+
 (provide 'org-canvas-core-config-test)
 ;;; org-canvas-core-config-test.el ends here

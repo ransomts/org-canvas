@@ -81,10 +81,29 @@ Output shape: \"[TIMESTAMP] [NAME] [LEVEL] MESSAGE\"."
       (let ((coding-system-for-write 'utf-8))
         (write-region (concat formatted "\n") nil file 'append 'silent)))))
 
+(defconst org-canvas--log-redactions
+  '(("\\bBearer\\s-+[^\"'[:space:]]+" . "Bearer ***MASKED***")
+    ("\\([A-Za-z0-9_-]*\\(?:session\\|csrf\\|token\\)[A-Za-z0-9_-]*=\\)[^;&\"'[:space:]]+"
+     . "\\1***MASKED***"))
+  "Redaction rules applied to every log message before it is written.
+Each entry is (REGEXP . REPLACEMENT), matched case-insensitively.
+The first rule masks bearer tokens; the second masks credential-bearing
+cookie and query-string values (canvas_session, _csrf_token,
+log_session_id, access_token, ...) wherever they appear, including
+inside printed plz-error structs.")
+
+(defun org-canvas--log-redact (message)
+  "Return MESSAGE with secrets masked per `org-canvas--log-redactions'."
+  (let ((case-fold-search t))
+    (dolist (rule org-canvas--log-redactions message)
+      (setq message (replace-regexp-in-string (car rule) (cdr rule) message)))))
+
 (defun org-canvas--log-dispatch (logger level format-string args)
-  "Emit a log entry on LOGGER at LEVEL formatted from FORMAT-STRING and ARGS."
+  "Emit a log entry on LOGGER at LEVEL formatted from FORMAT-STRING and ARGS.
+The formatted message passes through `org-canvas--log-redact' so
+credentials (bearer tokens, session cookies) never reach the log."
   (when (and logger (org-canvas--log-enabled-p logger level))
-    (let* ((message (apply #'format format-string args))
+    (let* ((message (org-canvas--log-redact (apply #'format format-string args)))
            (formatted (org-canvas--log-format logger level message))
            (handlers (org-canvas--logger-handlers logger)))
       (when (memq 'buffer handlers)

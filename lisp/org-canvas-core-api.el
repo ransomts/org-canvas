@@ -80,12 +80,27 @@ placeholder for the API token (requires double quotes for expansion)."
         (and status
              (memq status org-canvas--api-transient-http-statuses)))))
 
+(defun org-canvas--scrub-plz-error (plz-err)
+  "Return a copy of PLZ-ERR with sensitive response headers masked.
+PLZ-ERR structs embed the full `plz-response', whose headers include
+live session cookies (set-cookie: canvas_session=...).  Scrubbing here
+keeps them out of signal data and any `%S'/`error-message-string'
+output.  Non-struct or response-less values pass through unchanged."
+  (if (and (plz-error-p plz-err) (plz-error-response plz-err))
+      (let ((clean (copy-plz-error plz-err))
+            (clean-resp (copy-plz-response (plz-error-response plz-err))))
+        (setf (plz-response-headers clean-resp)
+              (org-canvas--mask-headers (plz-response-headers clean-resp)))
+        (setf (plz-error-response clean) clean-resp)
+        clean)
+    plz-err))
+
 (defun org-canvas--api-handle-plz-error (err full-url)
   "Handle a plz-error ERR from a request to FULL-URL.
 Return `:retry' for rate-limited (sleep already done),
 `:retry-transient' for transient errors (caller must sleep),
 or signal an error for terminal failures."
-  (let* ((plz-err (cdr err))
+  (let* ((plz-err (org-canvas--scrub-plz-error (cdr err)))
          (response (and (plz-error-p plz-err)
                         (plz-error-response plz-err)))
          (status (and response (plz-response-status response)))
@@ -143,7 +158,7 @@ Returns a string like \"?key=value&...\" or \"\" if PARAMS is nil."
 (defun org-canvas--api-retries-exhausted (retry-count err)
   "Signal an error after RETRY-COUNT rate-limit retries.
 ERR is the last plz-error condition."
-  (let* ((plz-err (cdr err))
+  (let* ((plz-err (org-canvas--scrub-plz-error (cdr err)))
          (response (and (plz-error-p plz-err)
                         (plz-error-response plz-err)))
          (body (and response (plz-response-body response))))
@@ -207,7 +222,7 @@ once the delay list is exhausted."
             (length org-canvas-transient-retry-delays))
           (sleep-for delay)
           (1+ transient-retry-index))
-      (let* ((plz-err (cdr err))
+      (let* ((plz-err (org-canvas--scrub-plz-error (cdr err)))
              (response (and (plz-error-p plz-err) (plz-error-response plz-err)))
              (body (and response (plz-response-body response))))
         (signal 'org-canvas-api-error
