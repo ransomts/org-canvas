@@ -459,6 +459,20 @@ LOC is a (:file :line :heading) plist."
         count)
     0))
 
+(defun org-canvas--validate-page-structure (loc)
+  "Check page-level structural constraints at point.
+Canvas rejects FRONT_PAGE: true combined with PUBLISHED: false with
+HTTP 400 \"The front page cannot be unpublished\", which also cascades
+into skipped module items linking the page.  LOC is a
+\(:file :line :heading) plist."
+  (let ((front-page (org-entry-get (point) "FRONT_PAGE"))
+        (published (org-entry-get (point) "PUBLISHED")))
+    (when (and front-page (string= (downcase front-page) "true")
+               published (string= (downcase published) "false"))
+      (list (org-canvas--validate-make-issue
+             'error loc "FRONT_PAGE"
+             "FRONT_PAGE: true requires PUBLISHED: true — Canvas rejects an unpublished front page (a published page in an unpublished course is still invisible to students)")))))
+
 (defun org-canvas--validate-drop-rules (loc)
   "Check that drop rules don't exceed assignment count for this group.
 LOC is a (:file :line :heading) plist."
