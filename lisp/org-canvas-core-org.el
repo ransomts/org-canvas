@@ -729,6 +729,14 @@ are resolved to Canvas URLs when the target has a CANVAS_ID."
               (while (looking-at "^|")
                 (forward-line 1))
               (delete-region start (point))))
+          ;; Strip property drawers: the HTML exporter drops them anyway,
+          ;; and property links (GROUP:, RUBRIC_LINK:) must not reach the
+          ;; body link resolver, which cannot resolve them to Canvas URLs
+          ;; and would emit false "Unresolved" warnings
+          (goto-char (point-min))
+          (while (re-search-forward org-property-drawer-re nil t)
+            (delete-region (match-beginning 0)
+                           (min (1+ (match-end 0)) (point-max))))
           ;; Resolve cross-file links to Canvas URLs
           (org-canvas--resolve-body-links source-dir)
           ;; Resolve inline image links to Canvas URLs

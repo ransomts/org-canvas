@@ -819,6 +819,67 @@
                 (kill-buffer)))
           (delete-directory dir t)))))
 
+  (it "does not warn about links in property drawers (GROUP/RUBRIC_LINK)"
+    (with-org-canvas-test-config
+      (let* ((dir (make-temp-file "export-propdrawer-" t))
+             (test-file (expand-file-name "assignments.org" dir))
+             (warnings nil))
+        (unwind-protect
+            (progn
+              (with-temp-file test-file
+                (insert "* Global Challenge Essay
+:PROPERTIES:
+:GROUP: [[file:assignment-groups.org::*Essays][Essays]]
+:RUBRIC_LINK: [[file:rubrics.org::*Essay Rubric][Essay Rubric]]
+:END:
+
+Write the essay.
+
+** Details
+:PROPERTIES:
+:GROUP: [[file:assignment-groups.org::*Essays][Essays]]
+:END:
+
+More text.
+"))
+              (with-current-buffer (find-file-noselect test-file)
+                (goto-char (point-min))
+                (cl-letf (((symbol-function 'org-canvas--log-warning)
+                           (lambda (_logger fmt &rest args)
+                             (push (apply #'format fmt args) warnings))))
+                  (let ((html (org-canvas--export-subtree-body-to-html)))
+                    (expect html :to-match "Write the essay")
+                    (expect html :to-match "More text")
+                    (expect html :not :to-match "Essay Rubric")))
+                (kill-buffer))
+              (expect warnings :to-equal nil))
+          (delete-directory dir t)))))
+
+  (it "still warns about genuinely unresolvable body links"
+    (with-org-canvas-test-config
+      (let* ((dir (make-temp-file "export-unresolved-" t))
+             (pages-file (expand-file-name "pages.org" dir))
+             (test-file (expand-file-name "test.org" dir))
+             (warnings nil))
+        (unwind-protect
+            (progn
+              (with-temp-file pages-file
+                (insert "* Some Other Page\n"))
+              (with-temp-file test-file
+                (insert "* Assignment\n:PROPERTIES:\n:END:\n\nSee [[file:pages.org::*Missing Page][Missing Page]].\n"))
+              (with-current-buffer (find-file-noselect test-file)
+                (goto-char (point-min))
+                (cl-letf (((symbol-function 'org-canvas--log-warning)
+                           (lambda (_logger fmt &rest args)
+                             (push (apply #'format fmt args) warnings))))
+                  (let ((html (org-canvas--export-subtree-body-to-html)))
+                    (expect html :to-match "Missing Page")))
+                (kill-buffer))
+              (expect (cl-find-if (lambda (w) (string-match-p "Unresolved" w))
+                                  warnings)
+                      :to-be-truthy))
+          (delete-directory dir t)))))
+
   (it "succeeds with source blocks without requiring a kernel"
     (with-org-canvas-test-config
       (let* ((dir (make-temp-file "export-babel-" t))
