@@ -144,6 +144,10 @@ All 19 validation targets self-register their property definitions at load time.
 
 **Modules registering properties:** All feature modules register via `org-canvas-register-properties`. Modules with multiple heading levels register multiple entries (e.g., quizzes registers "quizzes" for LEVEL=1 and "quiz-questions" for LEVEL=2).
 
+**The registry `:query` must match the sync query's heading level.** Validation selects headings with it — assignment-groups use `"LEVEL=2+WEIGHT={.}"` because groups are level-2 headings under a container; a `LEVEL=1` query would validate only the container and silently skip every group (this bug hid the drop-rules check for months). Structural checks wire in via `:structural-fn` (e.g. `org-canvas--validate-drop-rules`, `org-canvas--validate-page-structure`).
+
+**Pending-first-sync collapse:** validation warnings for link targets that merely lack a CANVAS_ID carry a `:pending-sync` flag and collapse into one summary line in the report; `C-u M-x org-canvas-validate` lists them individually.
+
 **Declarative Payload Builder:**
 ```elisp
 (org-canvas-define-payload group-category
@@ -185,6 +189,12 @@ All items track Canvas state via `CANVAS_ID`:
 
 Use `org-canvas-org-save-sync-state` to standardize saving.
 
+### Global Sync Summary
+
+`org-canvas-sync` ends with a per-type table (Success/Skipped/Failed/Deferred) plus named failed/skipped items, rendered by `org-canvas--sync-log-global-summary`. Feature syncs record stats via `org-canvas--sync-record-feature-stats` — automatic in the macro pipeline (`org-canvas--sync-log-summary`), explicit in the custom syncs (settings, files, overrides). Recording is a no-op outside a global sync (gated on `org-canvas--sync-global-counters`).
+
+Module items skipped because their target lacked a CANVAS_ID are tracked in `org-canvas--module-items-pending` and retried after the final tier (`org-canvas--module-retry-pending-items`): healed items are reclassified skip→success in the summary; the rest produce a named "re-run org-canvas-sync-modules" hint.
+
 ## Code Conventions
 
 ### Naming
@@ -200,6 +210,8 @@ Use `org-canvas-org-save-sync-state` to standardize saving.
 - Public API: `org-canvas--log-{trace,debug,info,warning,error}` and `org-canvas--logger-{set-level,set-file,set-handlers}`
 - Stage markers: `[Stage N: StageName]` prefix
 - Levels: trace, debug, info, warning, error, fatal (priority order; threshold gates emission)
+- Secrets never reach logs: every line passes through `org-canvas--log-redact` (masks Bearer tokens and session/csrf/token cookie or query values), and plz-error structs get their response headers scrubbed via `org-canvas--scrub-plz-error` before entering signal data
+- `org-canvas--save-buffer` is a no-op on unmodified buffers — completion-time safety saves don't log duplicate `[Saved]` lines
 
 ### JSON/API
 - Modules with nested payloads (assignments, pages, modules, rubrics, files) use hash-tables: `(let ((payload (make-hash-table))) (puthash 'key val payload))`
@@ -210,12 +222,15 @@ Use `org-canvas-org-save-sync-state` to standardize saving.
 
 ### Error Handling
 - Wrap API calls in `condition-case`
+- API-layer signals carry a single concise message: Canvas 4xx JSON bodies are parsed into it via `org-canvas--api-error-message` (e.g. `"The front page cannot be unpublished (HTTP 400)"`); full URL/body detail logs at DEBUG. Each item failure produces exactly one `[ERROR]` line — the `[FAILED]` summary
+- plz supports only GET/HEAD/POST/PUT/DELETE; `org-canvas-api-request` rejects anything else up front (an unsupported method like PATCH silently degrades to a bodyless GET inside plz). Late-policy updates use PUT (Rails routes PUT and PATCH to the same update action); New Quizzes PATCH updates are broken pending issue #15
 - On timeout: search Canvas for item, retry if needed — use `org-canvas--timeout-error-p` to detect timeout errors (matches both `"Timeout"` and `"timed out"` case-insensitively)
 - On 404 for PUT: retry as POST
 - On 429 or rate-limit 403: retry with configurable delay (`org-canvas-rate-limit-retries`, `org-canvas-rate-limit-wait`)
 - On 401: actionable message about expired API token
 - On 403 (non-rate-limit): message about insufficient token scope
 - Continue processing other items if one fails
+- Deferrable rejections (drop rules exceeding the group's assignment count) count as `:deferred`, not failures — `org-canvas--sync-deferred-error-p` classifies them; they self-resolve on a later sync
 - Master sync wraps each feature in `org-canvas--safe-sync` so missing `.org` files are skipped
 - `org-canvas--preflight-check` validates credentials and connection before any sync begins
 
@@ -255,7 +270,7 @@ Logging is handled by the in-tree `lisp/org-canvas-core-log.el` module (no exter
 ### Running Tests
 
 ```bash
-eldev test              # Run all 2413 tests
+eldev test              # Run all ~2800 tests (about 30s)
 eldev test "core"       # Run tests matching pattern
 ```
 
@@ -280,10 +295,11 @@ Coverage reports are saved to `coverage/` (gitignored).
 
 ```
 test/
-├── test-helper.el                    # Common fixtures, mocks, macros
-├── org-canvas-core-test.el           # Core utilities (375 tests)
-├── org-canvas-test.el               # Orchestration/integration (38 tests)
-├── org-canvas-{feature}-test.el      # Tests for each feature module (14 modules)
+├── test-helper.el                       # Common fixtures, mocks, macros
+├── org-canvas-core-{area}-test.el       # Core, split: config, api, org, sync, usability
+├── org-canvas-test.el                   # Orchestration/integration
+├── org-canvas-{feature}-test.el         # One per feature module
+├── org-canvas-validate-test.el          # Offline validation engine
 ```
 
 ### Test Utilities
@@ -309,38 +325,9 @@ test/
 
 ### Test Coverage Summary
 
-**2413 tests total** covering core utilities, all feature modules, and validation (9 tests skip on Emacs 29.x due to org-mode differences). Coverage is 99.99% (6732/6733 lines).
+**~2800 tests total** (2791 as of 2026-08-10) covering core utilities, all feature modules, and validation (9 tests skip on Emacs 29.x due to org-mode differences). Line coverage is ~99.5% — the pre-push hook blocks below 99%. Run `eldev test` for the exact current count and `eldev test -u "on,codecov,dontsend" -U coverage/coverage.json` for per-file coverage.
 
-| Module            | Tests |
-|-------------------|-------|
-| quizzes           | 228   |
-| **core-sync**     | 202   |
-| modules           | 174   |
-| new-quizzes       | 169   |
-| files             | 167   |
-| **validate**      | 164   |
-| **core-org**      | 136   |
-| assignments       | 120   |
-| outcomes          | 113   |
-| submissions       | 107   |
-| settings          | 96    |
-| rubrics           | 94    |
-| **core-api**      | 64    |
-| discussions       | 57    |
-| orchestration     | 55    |
-| pages             | 55    |
-| calendar          | 52    |
-| **core-config**   | 51    |
-| sections          | 44    |
-| group-categories  | 43    |
-| announcements     | 41    |
-| **core-usability**| 38    |
-| assignment-groups | 36    |
-| property-registry | 28    |
-| snapshot          | 15    |
-| multicourse       | 15    |
-| transient         | 12    |
-| fuzz              | 9     |
+Largest suites: core-sync, core-org, quizzes, modules, files, new-quizzes, validate (one `org-canvas-{name}-test.el` per module; exact sizes drift, don't track them here).
 
 **Core tests cover:**
 - Path utilities (`org-canvas--path`)
@@ -426,6 +413,20 @@ The conversion from the codebase convention (`'GET`, `'POST`) to plz format:
 ```
 
 **Note**: The `request.el` library is NOT a dependency. Some files had leftover `(require 'request)` statements that were removed - these were dead code from the migration to `plz`.
+
+**plz has no PATCH support** (verified empirically against a local echo server): an unrecognized method symbol falls through plz's curl-argument builder, the request goes out as a **plain GET with no body**, and plz then crashes in its process sentinel. This is why late-policy updates use PUT and why New Quizzes updates (a PATCH-only API) never worked — see issue #15. `org-canvas-api-request` now rejects unsupported methods with a clear error (`org-canvas--api-supported-methods`).
+
+### Property Drawers Must Not Reach the Body Link Resolver
+
+`org-canvas--export-subtree-body-to-html` strips property drawers from its temp buffer before `org-canvas--resolve-body-links` runs. Drawer links (`GROUP:`, `RUBRIC_LINK:`) can't resolve to Canvas URLs (assignment groups and rubrics have no user-facing page) and would emit false "Unresolved" warnings; the HTML exporter drops drawers anyway, so output is unchanged.
+
+### Test Isolation: Don't Assert on the Shared Log Buffer
+
+Integration tests must not assert on `*org-canvas-log*` buffer contents — earlier tests mutate logger state (handlers, buffer names, leftover content), so such assertions pass in isolation but fail in the full run. Instead capture log lines by `cl-letf`-ing `org-canvas--log-info`/`org-canvas--log-warning` into a list and match on that.
+
+### gh CLI Quirk
+
+`gh issue view N` exits non-zero due to a GraphQL Projects-classic deprecation warning even on success — use `gh issue view N --json body --jq .body` instead.
 
 ### Canvas File Upload API Quirks
 
