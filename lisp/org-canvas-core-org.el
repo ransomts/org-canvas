@@ -129,14 +129,17 @@ When BOOLEAN-P is non-nil, convert \"true\"/\"false\" to t/:json-false."
     (org-entry-delete pom prop)))
 
 (defun org-canvas--save-buffer ()
-  "Save the current buffer and log the file path written.
+  "Save the current buffer when modified and log the file path written.
 Use in place of `save-buffer' so the sync log records each modified
-Org file.  When the current buffer has no associated file (e.g., a
-scratch buffer used for HTML export) the save still happens but no
-log line is emitted."
-  (save-buffer)
-  (when buffer-file-name
-    (org-canvas--log-info org-canvas--logger "[Saved] %s" buffer-file-name)))
+Org file.  No-op when the buffer has no unsaved changes: completion-time
+safety saves after per-item saves would otherwise log duplicate
+\[Saved] lines for writes that never happened.  When the current buffer
+has no associated file (e.g., a scratch buffer used for HTML export)
+the save still happens but no log line is emitted."
+  (when (buffer-modified-p)
+    (save-buffer)
+    (when buffer-file-name
+      (org-canvas--log-info org-canvas--logger "[Saved] %s" buffer-file-name))))
 
 (defun org-canvas--clean-local-sync-properties (file &optional id-property)
   "Remove sync properties from all headings with IDs in FILE.

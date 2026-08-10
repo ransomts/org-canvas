@@ -102,19 +102,68 @@ output.  Non-struct or response-less values pass through unchanged."
         clean)
     plz-err))
 
+(defun org-canvas--api-collect-error-messages (node)
+  "Collect message strings from a Canvas `errors' JSON subtree NODE.
+Handles the shapes Canvas uses: per-attribute maps of message objects
+\(objects with a `message' key), arrays of message objects, and arrays
+of bare strings.  Other string fields (attribute names, error types)
+are ignored."
+  (cond
+   ((stringp node) (list node))
+   ((vectorp node)
+    (cl-mapcan #'org-canvas--api-collect-error-messages (append node nil)))
+   ((and (consp node) (consp (car node)))
+    (cl-mapcan (lambda (pair)
+                 (cond
+                  ((eq (car pair) 'message)
+                   (and (stringp (cdr pair)) (list (cdr pair))))
+                  ((stringp (cdr pair)) nil)
+                  (t (org-canvas--api-collect-error-messages (cdr pair)))))
+               node))))
+
+(defun org-canvas--api-error-message (body)
+  "Extract Canvas's human-readable error message from BODY, or nil.
+BODY is the raw response body string.  Canvas 4xx bodies are JSON with
+an `errors' structure and/or a top-level `message'."
+  (when (and (stringp body)
+             (string-prefix-p "{" (string-trim-left body)))
+    (condition-case nil
+        (let* ((json-object-type 'alist)
+               (json-array-type 'vector)
+               (json-key-type 'symbol)
+               (json (json-read-from-string body))
+               (msgs (append
+                      (org-canvas--api-collect-error-messages
+                       (alist-get 'errors json))
+                      (let ((m (alist-get 'message json)))
+                        (and (stringp m) (list m))))))
+          (when msgs
+            (mapconcat #'identity (delete-dups msgs) "; ")))
+      (error nil))))
+
 (defun org-canvas--api-handle-plz-error (err full-url)
   "Handle a plz-error ERR from a request to FULL-URL.
 Return `:retry' for rate-limited (sleep already done),
 `:retry-transient' for transient errors (caller must sleep),
-or signal an error for terminal failures."
+or signal an error for terminal failures.
+
+Signaled errors carry a single concise, human-readable message
+\(Canvas's own error text when the body provides one); the full
+response detail is logged at DEBUG so `error-message-string' output
+in [FAILED] lines stays readable."
   (let* ((plz-err (org-canvas--scrub-plz-error (cdr err)))
          (response (and (plz-error-p plz-err)
                         (plz-error-response plz-err)))
          (status (and response (plz-response-status response)))
          (body (and response (plz-response-body response)))
-         (err-msg (if status
-                      (format "API Request Failed (HTTP %s)" status)
-                    (format "API Request Failed: %S" plz-err))))
+         (curl-err (and (plz-error-p plz-err) (plz-error-curl-error plz-err)))
+         (canvas-msg (org-canvas--api-error-message body))
+         (err-msg (cond
+                   ((and status canvas-msg)
+                    (format "%s (HTTP %s)" canvas-msg status))
+                   (status (format "API Request Failed (HTTP %s)" status))
+                   (curl-err (format "API Request Failed: %s" (cdr curl-err)))
+                   (t (format "API Request Failed: %S" plz-err)))))
     (org-canvas--log-debug org-canvas--logger "[API] <<< RESPONSE: %s" (or status "error"))
     (cond
      ;; Rate limited (429 or 403 with rate limit indication)
@@ -132,25 +181,25 @@ or signal an error for terminal failures."
 
      ;; Authentication failure (401)
      ((and status (= status 401))
+      (org-canvas--log-debug org-canvas--logger "[API] 401 body: %S" body)
       (signal 'org-canvas-credentials-error
-        (list "Authentication failed (HTTP 401). Your API token may have expired.\nGenerate a new one at Canvas > Account > Settings > Approved Integrations."
-              body plz-err)))
+        (list "Authentication failed (HTTP 401). Your API token may have expired.\nGenerate a new one at Canvas > Account > Settings > Approved Integrations.")))
 
      ;; Forbidden (403, non-rate-limit)
      ((and status (= status 403))
+      (org-canvas--log-debug org-canvas--logger "[API] 403 body: %S" body)
       (signal 'org-canvas-credentials-error
-        (list "Permission denied (HTTP 403). Your token may lack the required scope for this operation."
-              body plz-err)))
+        (list "Permission denied (HTTP 403). Your token may lack the required scope for this operation.")))
 
      ;; Transient (curl timeout / 5xx); caller will sleep based on retry index
      ((org-canvas--api-transient-error-p plz-err)
       :retry-transient)
 
-     ;; Generic error
+     ;; Generic error: concise message in the signal, full detail at DEBUG
      (t
-      (org-canvas--log-error org-canvas--logger "%s\n  URL: %s\n  Body: %S"
+      (org-canvas--log-debug org-canvas--logger "%s\n  URL: %s\n  Body: %S"
         err-msg full-url body)
-      (signal 'org-canvas-api-error (list err-msg body plz-err))))))
+      (signal 'org-canvas-api-error (list err-msg))))))
 
 (defun org-canvas--api-build-query-string (params)
   "Build a URL query string from PARAMS alist.
@@ -169,9 +218,10 @@ ERR is the last plz-error condition."
          (response (and (plz-error-p plz-err)
                         (plz-error-response plz-err)))
          (body (and response (plz-response-body response))))
+    (org-canvas--log-debug org-canvas--logger
+      "[API] Rate-limit retries exhausted. Body: %S" body)
     (signal 'org-canvas-api-error
-            (list (format "Rate limited after %d retries" retry-count)
-                  body plz-err))))
+            (list (format "Rate limited after %d retries" retry-count)))))
 
 (defun org-canvas--api-log-request (request)
   "Log debug info for an API REQUEST plist.
@@ -231,11 +281,19 @@ once the delay list is exhausted."
           (1+ transient-retry-index))
       (let* ((plz-err (org-canvas--scrub-plz-error (cdr err)))
              (response (and (plz-error-p plz-err) (plz-error-response plz-err)))
-             (body (and response (plz-response-body response))))
+             (status (and response (plz-response-status response)))
+             (body (and response (plz-response-body response)))
+             (curl-err (and (plz-error-p plz-err) (plz-error-curl-error plz-err))))
+        (org-canvas--log-debug org-canvas--logger
+          "[API] Transient retries exhausted. Body: %S" body)
+        ;; The curl detail (e.g. "Operation timeout.") must stay in the
+        ;; message: org-canvas--timeout-error-p keys off it for recovery.
         (signal 'org-canvas-api-error
-                (list (format "Transient error after %d retries"
-                              (length org-canvas-transient-retry-delays))
-                      body plz-err))))))
+                (list (format "Transient error after %d retries: %s"
+                              (length org-canvas-transient-retry-delays)
+                              (cond (curl-err (cdr curl-err))
+                                    (status (format "HTTP %s" status))
+                                    (t "unknown error")))))))))
 
 (defun org-canvas--api-execute-with-retry (plz-method full-url headers json-payload actual-timeout)
   "Execute PLZ-METHOD request to FULL-URL with retry on rate-limit or transient.

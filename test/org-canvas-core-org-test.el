@@ -263,7 +263,23 @@
         (with-temp-buffer
           (insert "scratch")
           (org-canvas--save-buffer))
-        (expect logged :to-be nil)))))
+        (expect logged :to-be nil))))
+
+  (it "is a no-op on an unmodified buffer (no duplicate [Saved] lines)"
+    (let ((tmp-file (make-temp-file "org-canvas-save-" nil ".org"))
+          (logged nil))
+      (unwind-protect
+          (cl-letf (((symbol-function 'org-canvas--log-info)
+                     (lambda (_logger fmt &rest args)
+                       (push (apply #'format fmt args) logged))))
+            (with-current-buffer (find-file-noselect tmp-file)
+              (insert "* heading\n")
+              (org-canvas--save-buffer)
+              ;; Completion-time safety save: buffer unmodified, no write
+              (org-canvas--save-buffer)
+              (kill-buffer))
+            (expect (length logged) :to-equal 1))
+        (delete-file tmp-file)))))
 
 (describe "org-canvas-org-save-sync-state"
   (it "saves CANVAS_ID but not per-entry LAST_SYNCED"

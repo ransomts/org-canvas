@@ -32,15 +32,19 @@
           (symbol-name (plist-get issue :severity))
           (plist-get issue :message)))
 
-(defun org-canvas--validate-make-issue (severity loc property message)
+(defun org-canvas--validate-make-issue (severity loc property message
+                                                 &optional pending-sync)
   "Create a validation issue plist.
 SEVERITY is `error' or `warning'.  LOC is a plist (:file F :line N :heading H).
-PROPERTY and MESSAGE describe the problem."
-  (list :severity severity
-        :file (plist-get loc :file)
-        :line (plist-get loc :line)
-        :heading (plist-get loc :heading)
-        :property property :message message))
+PROPERTY and MESSAGE describe the problem.  PENDING-SYNC marks the
+issue as expected pre-first-sync state (a link target that simply has
+no CANVAS_ID yet); the report collapses these into a summary line."
+  (append (list :severity severity
+                :file (plist-get loc :file)
+                :line (plist-get loc :line)
+                :heading (plist-get loc :heading)
+                :property property :message message)
+          (when pending-sync '(:pending-sync t))))
 
 ;;;; 2. Type-Specific Validators
 ;;
@@ -119,7 +123,7 @@ Returns nil (valid) or an issue plist."
     (org-canvas--validate-make-issue (or not-link-severity 'error)
                                      loc property not-link-msg))
    ((not (org-canvas--resolve-link-property value id-property source-file))
-    (org-canvas--validate-make-issue 'warning loc property unresolved-msg))))
+    (org-canvas--validate-make-issue 'warning loc property unresolved-msg t))))
 
 (defun org-canvas--validate-check-link (value property _target-file-var id-property loc)
   "Check that VALUE is a valid Org file link and resolves.
@@ -358,7 +362,8 @@ Returns a list of issues."
           (list (org-canvas--validate-make-issue
                  'warning loc nil
                  (format "Module item target '%s' has no CANVAS_ID (sync it first)"
-                         clean-heading)))))))))
+                         clean-heading)
+                 t))))))))
 
 (cl-defun org-canvas--validate-module-item-link (loc)
   "Check that module item link at point resolves to a synced heading.
@@ -493,7 +498,8 @@ FILE and HEADING identify the location.  Point must be at the first data row."
                 (unless resolved
                   (push (org-canvas--validate-make-issue
                          'warning row-loc nil
-                         (format "Override section link target has no CANVAS_ID (pull sections first)"))
+                         (format "Override section link target has no CANVAS_ID (pull sections first)")
+                         t)
                         issues)))))))
       (forward-line 1))
     (nreverse issues)))
@@ -627,16 +633,25 @@ Returns a plist (:issues ISSUES :checked N :skipped N)."
     "Validation passed: no issues found")))
 
 ;;;###autoload
-(defun org-canvas-validate ()
+(defun org-canvas-validate (&optional verbose)
   "Validate all course org files without contacting the Canvas API.
 Checks property types, enum values, date ordering, and structural
 requirements across all 12 content types.
 
 Results are displayed in a `*canvas-validate*' buffer with
-`compilation-mode' navigation (\\[next-error] / \\[previous-error])."
-  (interactive)
+`compilation-mode' navigation (\\[next-error] / \\[previous-error]).
+
+Warnings about link targets that merely lack a CANVAS_ID (expected
+state before the first sync) are collapsed into a single summary
+line.  With a prefix argument VERBOSE, list them individually."
+  (interactive "P")
   (let* ((result (org-canvas--validate-run-all-specs))
          (all-issues (plist-get result :issues))
+         (pending-issues (cl-remove-if-not
+                          (lambda (i) (plist-get i :pending-sync)) all-issues))
+         (listed-issues (cl-remove-if
+                         (lambda (i) (plist-get i :pending-sync)) all-issues))
+         (pending-count (length pending-issues))
          (files-checked (plist-get result :checked))
          (files-skipped (plist-get result :skipped))
          (buf (get-buffer-create "*canvas-validate*"))
@@ -649,15 +664,25 @@ Results are displayed in a `*canvas-validate*' buffer with
         (insert (make-string 60 ?=))
         (insert "\n\n")
         (if all-issues
-            (dolist (issue all-issues)
-              (insert (org-canvas--validate-format-issue issue))
-              (insert "\n"))
+            (progn
+              (dolist (issue listed-issues)
+                (insert (org-canvas--validate-format-issue issue))
+                (insert "\n"))
+              (when (> pending-count 0)
+                (if verbose
+                    (dolist (issue pending-issues)
+                      (insert (org-canvas--validate-format-issue issue))
+                      (insert "\n"))
+                  (insert (format "%d link(s) pending first sync (targets have no CANVAS_ID yet); C-u M-x org-canvas-validate lists them\n"
+                                  pending-count)))))
           (insert "No issues found.\n"))
         (insert "\n")
         (insert (make-string 60 ?=))
         (insert "\n")
         (insert (format "Validation complete: %d error(s), %d warning(s) across %d file(s)"
                         error-count warning-count files-checked))
+        (when (> pending-count 0)
+          (insert (format " (%d pending first sync)" pending-count)))
         (when (> files-skipped 0)
           (insert (format " (%d file(s) not found, skipped)" files-skipped)))
         (insert "\n"))
