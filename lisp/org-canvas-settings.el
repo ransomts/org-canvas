@@ -577,10 +577,13 @@ and pushes them to Canvas via PUT /courses/:id."
               (org-canvas--log-info org-canvas--logger "========================================")
               (org-canvas--log-info org-canvas--logger ">>> SETTINGS SYNC COMPLETE")
               (org-canvas--log-info org-canvas--logger "========================================")
+              (org-canvas--sync-record-feature-stats "Settings" '(:success 1))
               (message "Settings sync complete."))
           (error
            (org-canvas--log-error org-canvas--logger "[FAILED] Settings sync: %s"
              (error-message-string err))
+           (org-canvas--sync-record-feature-stats "Settings"
+                                                  '(:fail 1 :failed-titles ("Settings")))
            (message "Settings sync FAILED: %s" (error-message-string err))))))))
 
 (defun org-canvas--settings-replace-syllabus-body (syllabus-body)

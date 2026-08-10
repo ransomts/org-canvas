@@ -1034,8 +1034,7 @@
 "
          (org-back-to-heading)
          (let ((counts (org-canvas--module-sync-items 100 (point) default-directory)))
-           (expect (car counts) :to-equal 0)
-           (expect (cdr counts) :to-equal 0)))))))
+           (expect counts :to-equal '(0 0 0))))))))
 
 ;;;; Module Sync Items with Items
 
@@ -1055,7 +1054,7 @@
          (org-back-to-heading)
          (let ((marker (point-marker)))
            (let ((results (org-canvas--module-sync-items 100 (marker-position marker) default-directory)))
-             ;; SubHeaders can be synced - results is a cons (success . fail)
+             ;; SubHeaders can be synced - results is (success skip fail)
              (expect (numberp (car results)) :to-be t)))))))
 
   (it "skips items without content-id or page-url"
@@ -1081,8 +1080,38 @@
            (org-back-to-heading)
            (let ((marker (point-marker)))
              (let ((results (org-canvas--module-sync-items 100 (marker-position marker) default-directory)))
-               ;; Should fail (no content to link)
-               (expect (cdr results) :to-be-greater-than 0)))))))))
+               ;; Counted as a skip (not a failure): the target simply
+               ;; has no CANVAS_ID yet
+               (expect (nth 1 results) :to-be-greater-than 0)
+               (expect (nth 2 results) :to-equal 0))))))))
+
+  (it "records skipped item titles in the global sync stats"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas--module-resolve-link)
+                 (lambda (_link _dir)
+                   '(:type "Page" :title "Unsynced" :content-id nil :page-url nil))))
+        (with-temp-org-buffer
+         "* Module
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** [[file:unsynced.org::*Course Home][Course Home]]
+:PROPERTIES:
+:END:
+"
+         (org-back-to-heading)
+         (let ((org-canvas--sync-global-counters
+                (list :success 0 :skip 0 :fail 0 :dry-run 0 :deferred 0))
+               (org-canvas--sync-global-feature-stats nil)
+               (marker (point-marker)))
+           (org-canvas--module-sync-items 100 (marker-position marker) default-directory)
+           (let ((entry (car org-canvas--sync-global-feature-stats)))
+             (expect (plist-get entry :label) :to-equal "Module Items")
+             (expect (plist-get entry :skip) :to-equal 1)
+             (expect (car (plist-get entry :skipped-titles))
+                     :to-match "no linked content synced"))
+           (expect (plist-get org-canvas--sync-global-counters :skip)
+                   :to-equal 1)))))))
 
 ;;;; Delete All Modules Tests
 
@@ -1471,7 +1500,8 @@
          (cl-letf (((symbol-function 'org-canvas--module-item-parse-entry)
                     (lambda (_dir) (error "Parse error"))))
            (let ((counts (org-canvas--module-sync-items 100 (point) default-directory)))
-             (expect (cdr counts) :to-be-greater-than 0))))))))
+             ;; Parse errors are real failures (third element)
+             (expect (nth 2 counts) :to-be-greater-than 0))))))))
 
 ;;;; Delete All Modules Edge Cases
 
@@ -1633,9 +1663,9 @@
                   (org-back-to-heading)
                   (let ((result (org-canvas--module-sync-items
                                  "50" (point) (file-name-directory temp-modules))))
-                    ;; Both items should be processed
+                    ;; Both items should be processed successfully
                     (expect (car result) :to-be-truthy)
-                    (expect (+ (car result) (cdr result)) :to-be-truthy))
+                    (expect (apply #'+ result) :to-be-truthy))
                   (kill-buffer)))))
         (delete-file temp-pages)
         (delete-file temp-modules)))))

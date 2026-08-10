@@ -119,7 +119,53 @@
             (when (and (stringp (car call))
                        (string-match-p "Sync complete:.*synced.*skipped.*failed" (car call)))
               (setq found t)))
-          (expect found :to-be-truthy))))))
+          (expect found :to-be-truthy)))))
+
+  (it "renders the per-type table and deferred count when features record stats"
+    (with-sync-test-env
+      (spy-on 'message)
+      (let ((log-lines nil))
+      (cl-letf (((symbol-function 'org-canvas--log-info)
+                 (lambda (_logger fmt &rest args)
+                   (push (apply #'format fmt args) log-lines)))
+                ((symbol-function 'org-canvas--log-warning)
+                 (lambda (_logger fmt &rest args)
+                   (push (apply #'format fmt args) log-lines)))
+                ((symbol-function 'org-canvas--preflight-check) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-settings) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-outcomes) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-rubrics) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-assignment-groups) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-group-categories) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-sections) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-files) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-pages)
+                 (lambda ()
+                   (org-canvas--sync-record-feature-stats "Pages"
+                     '(:success 3 :fail 1 :deferred 1
+                       :failed-titles ("Course Home")))))
+                ((symbol-function 'org-canvas-sync-discussions) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-announcements) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-calendar-events) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-quizzes) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-new-quizzes) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-assignments) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-overrides) (lambda () nil))
+                ((symbol-function 'org-canvas-sync-modules) (lambda () nil)))
+        (org-canvas-sync)
+        ;; Final echo mentions the deferred count
+        (let ((found nil))
+          (dolist (call (spy-calls-all-args 'message))
+            (when (and (stringp (car call))
+                       (string-match-p "deferred"
+                                       (apply #'format (car call) (cdr call))))
+              (setq found t)))
+          (expect found :to-be-truthy))
+        ;; Log contains the per-type table and the named failure
+        (let ((content (mapconcat #'identity (nreverse log-lines) "\n")))
+          (expect content :to-match "Type.*Success.*Skipped.*Failed.*Deferred")
+          (expect content :to-match "Pages +3 +0 +1 +1")
+          (expect content :to-match "Failed Pages: 'Course Home'")))))))
 
 ;;;; org-canvas-delete-all orchestration
 

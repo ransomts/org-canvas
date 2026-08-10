@@ -666,10 +666,16 @@ Return the matching item alist, or nil if not found."
 (defun org-canvas--module-sync-items (module-id module-pom modules-file-dir)
   "Sync all items for MODULE-ID starting from MODULE-POM.
 MODULES-FILE-DIR is used for resolving links.
-Returns (success-count . fail-count)."
+Items whose linked content has no CANVAS_ID yet count as skips (not
+failures), with titles recorded.  Item outcomes roll into the global
+sync summary under \"Module Items\".
+Returns (success-count skip-count fail-count)."
   (let ((item-markers (org-canvas--module-collect-item-markers module-pom))
         (success-count 0)
+        (skip-count 0)
         (fail-count 0)
+        (skipped-titles nil)
+        (failed-titles nil)
         (position 1))
     (org-canvas--log-info org-canvas--logger "[Module Items] Found %d items to sync" (length item-markers))
 
@@ -688,7 +694,10 @@ Returns (success-count . fail-count)."
                     (progn
                       (org-canvas--log-warning org-canvas--logger "[Module Item] Skipping '%s': no linked content synced"
                         (plist-get data :title))
-                      (setq fail-count (1+ fail-count)))
+                      (setq skip-count (1+ skip-count))
+                      (push (format "%s (no linked content synced)"
+                                    (plist-get data :title))
+                            skipped-titles))
                   (let* ((payload (org-canvas--module-item-build-payload data position))
                          (response (org-canvas--module-item-push-to-api module-id data payload)))
                     (org-canvas--module-finalize data response)
@@ -696,13 +705,19 @@ Returns (success-count . fail-count)."
                     (setq position (1+ position)))))
             (error
              (setq fail-count (1+ fail-count))
+             (push (format "item at point %d" (marker-position marker))
+                   failed-titles)
              (org-canvas--log-error org-canvas--logger "[FAILED] Item at point %d: %s"
                (marker-position marker) (error-message-string err)))))))
 
     ;; Release markers to avoid memory leaks
     (dolist (m item-markers) (set-marker m nil))
 
-    (cons success-count fail-count)))
+    (org-canvas--sync-record-feature-stats "Module Items"
+      (list :success success-count :skip skip-count :fail fail-count
+            :skipped-titles skipped-titles :failed-titles failed-titles))
+
+    (list success-count skip-count fail-count)))
 
 (org-canvas-define-sync modules
   :file org-canvas-modules-file

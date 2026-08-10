@@ -537,6 +537,8 @@ reconciles them with Canvas assignment overrides."
       (org-canvas--log-info org-canvas--logger "Assignments: %d | Created: %d | Updated: %d | Deleted: %d"
                  assignments-processed total-created total-updated total-deleted)
       (org-canvas--log-info org-canvas--logger "========================================")
+      (org-canvas--sync-record-feature-stats "Overrides"
+        (list :success (+ total-created total-updated total-deleted)))
       (message "Override sync: %d assignments, %d created, %d updated, %d deleted."
                assignments-processed total-created total-updated total-deleted)))
 

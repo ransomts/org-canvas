@@ -226,7 +226,9 @@ LABEL is used for logging (e.g., \"Pages\")."
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (let ((org-canvas--inhibit-log-clear t)
         (org-canvas--sync-in-progress t)
-        (org-canvas--sync-global-counters (list :success 0 :skip 0 :fail 0 :dry-run 0)))
+        (org-canvas--sync-global-counters
+         (list :success 0 :skip 0 :fail 0 :dry-run 0 :deferred 0))
+        (org-canvas--sync-global-feature-stats nil))
     (org-canvas--log-info org-canvas--logger "========================================")
     (if org-canvas--dry-run
         (org-canvas--log-info org-canvas--logger ">>> DRY RUN — no changes will be made")
@@ -255,6 +257,7 @@ LABEL is used for logging (e.g., \"Pages\")."
         (setq tier-num (1+ tier-num))))
     (org-canvas--log-info org-canvas--logger "========================================")
     (org-canvas--log-info org-canvas--logger ">>> GLOBAL SYNC COMPLETE")
+    (org-canvas--sync-log-global-summary)
     (org-canvas--log-info org-canvas--logger "========================================")
     ;; Clear session-scoped caches
     (setq org-canvas--image-cache nil)
@@ -262,12 +265,19 @@ LABEL is used for logging (e.g., \"Pages\")."
         (message "Dry-run complete: %d would sync, %d skipped. See *canvas-log* for details."
                  (plist-get org-canvas--sync-global-counters :dry-run)
                  (plist-get org-canvas--sync-global-counters :skip))
-      (let ((fail-count (plist-get org-canvas--sync-global-counters :fail)))
-        (message "%sSync complete: %d synced, %d skipped, %d failed.%s"
+      (let ((fail-count (plist-get org-canvas--sync-global-counters :fail))
+            (deferred-count (or (plist-get org-canvas--sync-global-counters
+                                           :deferred)
+                                0)))
+        (message "%sSync complete: %d synced, %d skipped, %d failed.%s%s"
                  (if (> fail-count 0) "WARNING: " "")
                  (plist-get org-canvas--sync-global-counters :success)
                  (plist-get org-canvas--sync-global-counters :skip)
                  fail-count
+                 (if (> deferred-count 0)
+                     (format " %d deferred (will apply on a future sync)."
+                             deferred-count)
+                   "")
                  (if (> fail-count 0)
                      " Check *canvas-log* for error details."
                    ""))))))
