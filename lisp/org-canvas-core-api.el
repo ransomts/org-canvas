@@ -64,6 +64,13 @@ placeholder for the API token (requires double quotes for expansion)."
     (org-canvas--signal 'org-canvas-credentials-error
       "Course ID not configured.  Set org-canvas-course-id in org-canvas-credentials.el\nRun M-x org-canvas-init for guided setup")))
 
+(defconst org-canvas--api-supported-methods '(GET HEAD POST PUT DELETE)
+  "HTTP methods the plz transport can actually send.
+plz has no PATCH support: an unrecognized method symbol falls through
+its curl-argument builder, so the request silently degrades to a
+bodyless GET before failing.  `org-canvas-api-request' rejects
+unsupported methods up front instead.")
+
 (defconst org-canvas--api-transient-curl-errors '(7 28 56)
   "Curl error codes treated as transient (connect, timeout, recv).")
 
@@ -264,7 +271,14 @@ METHOD is \\='GET, \\='POST, \\='PUT, or \\='DELETE.
 URL is the full endpoint.
 PARAMS is an alist of query parameters.
 DATA is an alist or hash-table to be sent as JSON body (for POST/PUT).
-TIMEOUT is the request timeout in seconds."
+TIMEOUT is the request timeout in seconds.
+METHOD must be one of `org-canvas--api-supported-methods'; the plz
+transport silently corrupts any other method (notably PATCH), so
+unsupported methods signal `org-canvas-api-error' immediately."
+  (unless (memq method org-canvas--api-supported-methods)
+    (org-canvas--signal 'org-canvas-api-error
+      "Unsupported HTTP method %s: the plz transport can only send %s"
+      method org-canvas--api-supported-methods))
   (org-canvas--ensure-credentials)
   (let* ((full-url (concat url (org-canvas--api-build-query-string params)))
 	 (json-payload (when data

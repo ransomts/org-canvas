@@ -820,6 +820,23 @@
                (org-canvas-fault--curl-err code) "u")
               :to-equal :retry-transient))))
 
+(describe "org-canvas-api-request method guard"
+  (it "rejects PATCH with a clear error before any network activity"
+    (with-org-canvas-test-config
+      (let ((plz-called nil))
+        (cl-letf (((symbol-function 'plz)
+                   (lambda (&rest _args) (setq plz-called t))))
+          (expect (org-canvas-api-request 'PATCH "https://example.invalid/api/v1/x")
+                  :to-throw 'org-canvas-api-error)
+          (expect plz-called :to-be nil)))))
+
+  (it "names the offending method in the error message"
+    (with-org-canvas-test-config
+      (let ((caught (condition-case e
+                        (org-canvas-api-request 'PATCH "https://example.invalid/api/v1/x")
+                      (org-canvas-api-error e))))
+        (expect (error-message-string caught) :to-match "PATCH")))))
+
 (describe "org-canvas--scrub-plz-error"
   (it "masks set-cookie headers in the response"
     (let* ((err (make-plz-error
