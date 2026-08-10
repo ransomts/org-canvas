@@ -880,9 +880,33 @@ For most item types, org-canvas resolves links to find the Canvas ID:
 | Quiz        | quizzes.org           |
 | Page        | pages.org             |
 | Discussion  | discussions.org       |
-| File        | files.org             |
+| File        | files.org (or direct file path) |
 | SubHeader   | (no link - text only) |
 | ExternalUrl | (uses EXTERNAL_URL)   |
+
+*** File Item Links
+
+File-type module items should link *directly to the file on disk*
+(relative to =modules.org=):
+
+#+begin_src org
+,** [[file:content/syllabus.pdf][Syllabus.pdf]]
+#+end_src
+
+org-canvas resolves the path against the file-heading link targets in
+=files.org= to find the Canvas file ID.  This is also the form
+=org-canvas-pull-modules= writes.
+
+A legacy nested form that searches =files.org= for a heading which is
+itself a link also still resolves on push:
+
+#+begin_src org
+,** [[file:files.org::*[[file:content/syllabus.pdf][Syllabus.pdf]]][Syllabus.pdf]]
+#+end_src
+
+Avoid it in new courses — the link-in-link search target is brittle
+(bracket escaping, Org version differences) and pulls will rewrite the
+item to the direct form anyway.
 
 *** Example
 
