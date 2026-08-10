@@ -835,21 +835,102 @@
               :to-equal :retry-transient))))
 
 (describe "org-canvas-api-request method guard"
-  (it "rejects PATCH with a clear error before any network activity"
+  (it "rejects unsupported methods with a clear error before any network activity"
     (with-org-canvas-test-config
       (let ((plz-called nil))
         (cl-letf (((symbol-function 'plz)
                    (lambda (&rest _args) (setq plz-called t))))
-          (expect (org-canvas-api-request 'PATCH "https://example.invalid/api/v1/x")
+          (expect (org-canvas-api-request 'OPTIONS "https://example.invalid/api/v1/x")
                   :to-throw 'org-canvas-api-error)
           (expect plz-called :to-be nil)))))
 
   (it "names the offending method in the error message"
     (with-org-canvas-test-config
       (let ((caught (condition-case e
-                        (org-canvas-api-request 'PATCH "https://example.invalid/api/v1/x")
+                        (org-canvas-api-request 'OPTIONS "https://example.invalid/api/v1/x")
                       (org-canvas-api-error e))))
-        (expect (error-message-string caught) :to-match "PATCH")))))
+        (expect (error-message-string caught) :to-match "OPTIONS"))))
+
+  (it "dispatches PATCH to the curl fallback, not plz"
+    (with-org-canvas-test-config
+      (let ((plz-called nil)
+            (curl-args nil))
+        (cl-letf (((symbol-function 'plz)
+                   (lambda (&rest _args) (setq plz-called t)))
+                  ((symbol-function 'org-canvas--api-curl-patch)
+                   (lambda (url _headers payload _timeout)
+                     (setq curl-args (list url payload))
+                     '((id . 9)))))
+          (let ((result (org-canvas-api-request 'PATCH "https://example.invalid/api/v1/x"
+                                                :data '((title . "T")))))
+            (expect result :to-equal '((id . 9)))
+            (expect plz-called :to-be nil)
+            (expect (car curl-args) :to-equal "https://example.invalid/api/v1/x")
+            (expect (cadr curl-args) :to-equal "{\"title\":\"T\"}")))))))
+
+(describe "org-canvas--api-curl-patch-config"
+  (it "includes the method, headers, url, and trailing data-binary directive"
+    (let ((config (org-canvas--api-curl-patch-config
+                   "https://x.test/api" '(("Authorization" . "Bearer tok")
+                                          ("Content-Type" . "application/json"))
+                   30 "{\"a\":1}")))
+      (expect config :to-match "request = \"PATCH\"")
+      (expect config :to-match "header = \"Authorization: Bearer tok\"")
+      (expect config :to-match "url = \"https://x.test/api\"")
+      (expect config :to-match "max-time = 30")
+      ;; data-binary must be the final directive so curl reads the
+      ;; remaining stdin as the body
+      (expect config :to-match "data-binary = \"@-\"\n\\'")))
+
+  (it "omits data-binary when there is no body"
+    (expect (org-canvas--api-curl-patch-config "https://x.test/api" nil 30 nil)
+            :not :to-match "data-binary")))
+
+(describe "org-canvas--api-curl-patch-parse"
+  (it "returns parsed JSON on 2xx"
+    (expect (org-canvas--api-curl-patch-parse 0 "{\"id\": 555}\n200")
+            :to-equal '((id . 555))))
+
+  (it "returns nil for an empty 2xx body"
+    (expect (org-canvas--api-curl-patch-parse 0 "\n204") :to-be nil))
+
+  (it "signals plz-error with a response struct on HTTP error status"
+    (let ((err (condition-case e
+                   (org-canvas--api-curl-patch-parse
+                    0 "{\"errors\":[{\"message\":\"nope\"}]}\n400")
+                 (plz-error (cdr e)))))
+      (expect (plz-response-status (plz-error-response err)) :to-equal 400)
+      (expect (plz-response-body (plz-error-response err)) :to-match "nope")))
+
+  (it "signals plz-error with a curl-error on non-zero exit"
+    (let ((err (condition-case e
+                   (org-canvas--api-curl-patch-parse 7 "connection refused")
+                 (plz-error (cdr e)))))
+      (expect (car (plz-error-curl-error err)) :to-equal 7)))
+
+  (it "signals plz-error when output has no status code"
+    (expect (org-canvas--api-curl-patch-parse 0 "garbage with no status")
+            :to-throw 'plz-error)))
+
+(describe "org-canvas--api-curl-patch"
+  (it "writes config and body to stdin and parses curl output"
+    (let ((seen-stdin nil))
+      (cl-letf (((symbol-function 'call-process)
+                 (lambda (_program infile _dest _display &rest _args)
+                   (setq seen-stdin (with-temp-buffer
+                                      (insert-file-contents infile)
+                                      (buffer-string)))
+                   (insert "{\"id\": 42}\n200")
+                   0)))
+        (let ((result (org-canvas--api-curl-patch
+                       "https://x.test/api"
+                       '(("Authorization" . "Bearer tok"))
+                       "{\"quiz\":{\"title\":\"T\"}}" 30)))
+          (expect result :to-equal '((id . 42)))
+          (expect seen-stdin :to-match "request = \"PATCH\"")
+          (expect seen-stdin :to-match "Bearer tok")
+          ;; Body follows the config in the same stdin stream
+          (expect seen-stdin :to-match "data-binary = \"@-\"\n{\"quiz\":{\"title\":\"T\"}}\\'"))))))
 
 (describe "org-canvas--api-error-message"
   (it "extracts per-attribute error messages"
