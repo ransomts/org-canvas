@@ -241,7 +241,7 @@ Module items skipped because their target lacked a CANVAS_ID are tracked in `org
 - `org-canvas--current-pull-item-fn` defvar: dynamically bound per-sync so `push-to-api` can access it
 - `org-canvas--conflict-pull-local` overwrites local heading via the module's pull-item function
 - Push-to-api returns `'pulled` (not `'conflict`) when user chooses pull — tracked by `:pulled` counter in sync pipeline
-- Modules with `:pull-item-fn` in their `org-canvas-define-sync`: announcements, pages, discussions, assignments, assignment-groups, rubrics, group-categories, calendar-events
+- Modules with `:pull-item-fn` in their `org-canvas-define-sync`: announcements, pages, discussions, assignments, assignment-groups, rubrics, group-categories, calendar-events, modules (whose pull-item also replaces child item headings from the remote list, fetching them when the conflict-check GET response lacks an `items` key)
 
 ### Org Interaction
 - Always `org-back-to-heading t` before property access
