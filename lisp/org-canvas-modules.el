@@ -770,10 +770,26 @@ Returns (success-count skip-count fail-count)."
           (setq pos (1+ pos))))
       pos)))
 
+(defun org-canvas--module-refresh-payload-hash ()
+  "Recompute and save PAYLOAD_HASH for the module heading at point.
+Used after the retry pass heals a pending item: the hash stored when
+the module synced predates the item's link resolution, so without a
+refresh the next sync would re-push the whole module once for no
+reason."
+  (save-excursion
+    (org-back-to-heading t)
+    (let* ((data (org-canvas--module-parse-entry))
+           (payload (org-canvas--module-build-payload data))
+           (hash (org-canvas--sync-payload-hash
+                  payload data #'org-canvas--module-items-digest)))
+      (org-canvas-org-set-property (point) org-canvas--prop-payload-hash hash))))
+
 (defun org-canvas--module-retry-single-pending (entry)
   "Retry the pending module item described by ENTRY.
 Returns the item title when it synced, nil when it is still pending
-\(target still has no CANVAS_ID, or the push failed)."
+\(target still has no CANVAS_ID, or the push failed).  On success the
+parent module's PAYLOAD_HASH is refreshed so the healed state counts
+as already-synced on the next run."
   (let ((marker (plist-get entry :marker))
         (module-id (plist-get entry :module-id))
         (dir (plist-get entry :dir))
@@ -790,6 +806,10 @@ Returns the item title when it synced, nil when it is still pending
                          (payload (org-canvas--module-item-build-payload data position))
                          (response (org-canvas--module-item-push-to-api module-id data payload)))
                     (org-canvas--module-finalize data response)
+                    (save-excursion
+                      (goto-char marker)
+                      (when (org-up-heading-safe)
+                        (org-canvas--module-refresh-payload-hash)))
                     (org-canvas--save-buffer)
                     title)))
             (error

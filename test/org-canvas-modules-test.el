@@ -2659,6 +2659,46 @@
              (expect (org-canvas--module-retry-single-pending entry)
                      :to-equal "Course Home")))))))
 
+  (it "refreshes the module PAYLOAD_HASH after healing an item"
+    ;; The hash stored at module-sync time predates the item's link
+    ;; resolution; without a refresh the next sync re-pushes the whole
+    ;; module once for no reason.
+    (with-org-canvas-test-config
+      (with-mock-api
+        (cl-letf (((symbol-function 'org-canvas--module-resolve-link)
+                   (lambda (_link _dir)
+                     '(:type "Page" :title "Course Home"
+                       :content-id nil :page-url "course-home"))))
+          (with-temp-org-buffer
+           "* Module
+:PROPERTIES:
+:CANVAS_ID: 100
+:PAYLOAD_HASH: stale
+:END:
+** [[file:pages.org::*Course Home][Course Home]]
+:PROPERTIES:
+:END:
+"
+           (let ((org-canvas-modules-file (buffer-file-name)))
+             (goto-char (point-min))
+             (search-forward "** ")
+             (org-back-to-heading)
+             (let ((entry (list :module-id 100
+                                :marker (point-marker)
+                                :title "Course Home"
+                                :dir default-directory)))
+               (expect (org-canvas--module-retry-single-pending entry)
+                       :to-equal "Course Home"))
+             (goto-char (point-min))
+             (org-back-to-heading)
+             (let* ((saved (org-entry-get (point) "PAYLOAD_HASH"))
+                    (data (org-canvas--module-parse-entry))
+                    (expected (org-canvas--sync-payload-hash
+                               (org-canvas--module-build-payload data)
+                               data #'org-canvas--module-items-digest)))
+               (expect saved :not :to-equal "stale")
+               (expect saved :to-equal expected))))))))
+
   (it "returns nil when the target still has no CANVAS_ID"
     (with-org-canvas-test-config
       (with-mock-api

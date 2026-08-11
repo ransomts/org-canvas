@@ -730,8 +730,10 @@ Creates folders as needed and populates the folder cache."
 Canvas cannot update file content in place: a re-upload replaces the
 file object under a NEW id, and Canvas deletes module items pointing
 at the old id.  Reset by `org-canvas-sync-files'; consumed by
-`org-canvas--file-invalidate-module-hashes' to force the affected
-modules to re-sync their items.")
+`org-canvas--file-warn-changed-ids' for the log.  No hash invalidation
+is needed: each module's items digest (folded into its PAYLOAD_HASH)
+includes resolved content ids, so exactly the affected modules re-push
+their items on the next modules sync.")
 
 (defun org-canvas--file-content-hash (data)
   "Return a hash of DATA's file bytes and upload-relevant settings.
@@ -796,27 +798,18 @@ replace a file's CANVAS_ID, the display name is recorded in
            (marker-position marker) (error-message-string err))
          :fail)))))
 
-(defun org-canvas--file-invalidate-module-hashes (changed-names)
-  "Force modules to re-sync after file IDs changed.
-Canvas deletes module items that pointed at a replaced file ID, and
-modules whose payload hash is unchanged would never re-push their
-items, leaving dead links invisibly.  Clears PAYLOAD_HASH on every
-module heading so the next modules sync (tier 2 of the same global
-sync run) re-pushes them and recreates the items.  CHANGED-NAMES
-lists the affected files for the log."
-  (let ((modules-file (and (boundp 'org-canvas-modules-file)
-                           org-canvas-modules-file
-                           (expand-file-name org-canvas-modules-file))))
-    (when (and modules-file (file-exists-p modules-file))
-      (org-canvas--log-warning org-canvas--logger
-        "[Files] %d file ID(s) changed (%s) — marking all modules for re-sync so their items relink"
-        (length changed-names)
-        (mapconcat (lambda (x) (format "'%s'" x)) changed-names ", "))
-      (with-current-buffer (find-file-noselect modules-file)
-        (org-map-entries
-         (lambda () (org-entry-delete (point) org-canvas--prop-payload-hash))
-         "LEVEL=1" 'file)
-        (org-canvas--save-buffer)))))
+(defun org-canvas--file-warn-changed-ids (changed-names)
+  "Log that CHANGED-NAMES were re-uploaded under new Canvas file ids.
+Canvas deletes module items that pointed at a replaced file id.  No
+hash invalidation is performed: the module items digest (see
+`org-canvas--module-items-digest') includes resolved content ids, so
+the modules referencing these files come out dirty on the next
+modules sync (tier 2 of the same global run) and re-push their items;
+unaffected modules keep their skip."
+  (org-canvas--log-warning org-canvas--logger
+    "[Files] %d file ID(s) changed (%s) — modules referencing them will re-sync their items"
+    (length changed-names)
+    (mapconcat (lambda (x) (format "'%s'" x)) changed-names ", ")))
 
 ;;;###autoload
 (defun org-canvas-sync-files ()
@@ -882,7 +875,7 @@ lists the affected files for the log."
         (org-canvas--save-buffer))
 
       (when org-canvas--file-changed-ids
-        (org-canvas--file-invalidate-module-hashes
+        (org-canvas--file-warn-changed-ids
          (nreverse org-canvas--file-changed-ids))
         (setq org-canvas--file-changed-ids nil))
 
