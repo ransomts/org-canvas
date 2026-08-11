@@ -3042,7 +3042,11 @@
         (delete-directory temp-dir t)))))
 
 (describe "org-canvas-sync-files ID-change propagation"
-  (it "invalidates module hashes when an upload replaces a file ID"
+  (it "keeps module hashes intact; the items digest picks up the new ID"
+    ;; The old behavior cleared PAYLOAD_HASH on every module.  Now the
+    ;; hash survives and dirtying happens naturally: a module item
+    ;; linking the replaced file resolves to the NEW content id, so its
+    ;; items digest changes and only that module re-pushes.
     (let ((temp-dir (make-temp-file "files-test" t)))
       (unwind-protect
           (let* ((org-file (expand-file-name "files.org" temp-dir))
@@ -3061,6 +3065,7 @@
 :CANVAS_ID: 1
 :PAYLOAD_HASH: aaa
 :END:
+** [[file:test.pdf][Test PDF]]
 "))
             (let ((org-canvas-files-file org-file)
                   (org-canvas-modules-file modules-file)
@@ -3083,17 +3088,39 @@
                              '((id . 77777) (display_name . "test.pdf"))))
                           ((symbol-function 'org-canvas--file-upload-step3-confirm)
                            (lambda (resp) resp)))
-                  (org-canvas-sync-files)
-                  ;; The replaced ID forced the module hash to be cleared
-                  (with-current-buffer (find-file-noselect modules-file)
-                    (goto-char (point-min))
-                    (expect (buffer-string) :not :to-match "PAYLOAD_HASH")
-                    (kill-buffer))
-                  (expect org-canvas--file-changed-ids :to-be nil)))))
+                  (let ((digest-before
+                         (with-current-buffer (find-file-noselect modules-file)
+                           (save-excursion
+                             (goto-char (point-min))
+                             (org-back-to-heading)
+                             (org-canvas--module-items-digest
+                              (list :pom (point)))))))
+                    (org-canvas-sync-files)
+                    (with-current-buffer (find-file-noselect modules-file)
+                      (goto-char (point-min))
+                      (expect (buffer-string) :to-match ":PAYLOAD_HASH: aaa")
+                      (org-back-to-heading)
+                      (expect (org-canvas--module-items-digest
+                               (list :pom (point)))
+                              :not :to-equal digest-before)
+                      (kill-buffer))
+                    (expect org-canvas--file-changed-ids :to-be nil))))))
         (delete-directory temp-dir t)))))
 
-(describe "org-canvas--file-invalidate-module-hashes"
-  (it "clears PAYLOAD_HASH on all module headings"
+(describe "org-canvas--file-warn-changed-ids"
+  (it "warns with the changed file names"
+    (let ((warned nil))
+      (cl-letf (((symbol-function 'org-canvas--log-warning)
+                 (lambda (_logger fmt &rest args)
+                   (setq warned (apply #'format fmt args)))))
+        (org-canvas--file-warn-changed-ids '("syllabus.pdf" "notes.pdf")))
+      (expect warned :to-match "2 file ID(s) changed")
+      (expect warned :to-match "'syllabus.pdf', 'notes.pdf'")))
+
+  (it "does not clear module PAYLOAD_HASH (items digest handles dirtying)"
+    ;; The old blunt invalidation forced EVERY module to re-push; the
+    ;; items digest folded into each module's hash dirties exactly the
+    ;; affected ones, so file-id rotation must leave hashes alone.
     (let* ((temp-dir (make-temp-file "files-test" t))
            (modules-file (expand-file-name "modules.org" temp-dir)))
       (unwind-protect
@@ -3105,23 +3132,35 @@
 :PAYLOAD_HASH: aaa
 :END:
 ** Item
-* Week 2
-:PROPERTIES:
-:CANVAS_ID: 2
-:PAYLOAD_HASH: bbb
-:END:
 "))
             (let ((org-canvas-modules-file modules-file))
-              (org-canvas--file-invalidate-module-hashes '("syllabus.pdf")))
+              (org-canvas--file-warn-changed-ids '("syllabus.pdf")))
             (with-current-buffer (find-file-noselect modules-file)
-              (goto-char (point-min))
-              (expect (buffer-string) :not :to-match "PAYLOAD_HASH")
+              (expect (buffer-string) :to-match ":PAYLOAD_HASH: aaa")
               (kill-buffer)))
         (delete-directory temp-dir t))))
 
-  (it "is a no-op when the modules file does not exist"
-    (let ((org-canvas-modules-file "/nonexistent/modules.org"))
-      (expect (org-canvas--file-invalidate-module-hashes '("x.pdf"))
-              :to-be nil))))
+  (it "sync-files warns about changed ids and resets the list"
+    (let* ((temp-dir (make-temp-file "files-test" t))
+           (files-file (expand-file-name "files.org" temp-dir))
+           (warned nil))
+      (unwind-protect
+          (progn
+            (with-temp-file files-file (insert "* Folder\n"))
+            (let ((org-canvas-files-file files-file)
+                  (org-canvas--file-changed-ids nil))
+              (with-org-canvas-test-config
+                (with-mock-api
+                  (cl-letf (((symbol-function 'org-canvas--file-sync-single-entry)
+                             (lambda (_marker)
+                               (push "Test PDF" org-canvas--file-changed-ids)
+                               :success))
+                            ((symbol-function 'org-canvas--log-warning)
+                             (lambda (_l fmt &rest args)
+                               (setq warned (apply #'format fmt args)))))
+                    (org-canvas-sync-files))
+                  (expect warned :to-match "'Test PDF'")
+                  (expect org-canvas--file-changed-ids :to-be nil)))))
+        (delete-directory temp-dir t)))))
 
 ;;; org-canvas-files-test.el ends here
