@@ -216,15 +216,108 @@ DELETE-URL-FN, and DELETE-DATA are passed through to
                           :delete-url-fn delete-url-fn :delete-data delete-data)))
     (message "%s deletion complete. %d removed." (capitalize feature-name) deleted-count)))
 
+;;;; Orphan Pruning
+;;
+;; A heading deleted locally leaves its Canvas object alive — sync only
+;; warns about the orphan.  Pruning closes that gap: list the remote
+;; items, keep only those whose ID appears nowhere in the org file, and
+;; delete them after explicit confirmation.  Generated alongside each
+;; delete-all command, reusing the same endpoint/ID knobs.
+
+(defun org-canvas--prune-collect-local-ids (file id-property)
+  "Collect normalized ID-PROPERTY values from all headings in FILE.
+Returns a list of strings.  Signals a `user-error' when FILE does not
+exist: pruning treats the file as the source of truth, and a missing
+file would classify every remote item as an orphan."
+  (unless (and file (file-exists-p file))
+    (user-error "Cannot prune without %s — every remote item would count as orphaned" file))
+  (with-current-buffer (find-file-noselect file)
+    (delq nil
+          (org-map-entries
+           (lambda ()
+             (let ((id (org-entry-get (point) id-property)))
+               (when id (org-canvas--normalize-id id))))
+           t 'file))))
+
+(cl-defun org-canvas--prune-runtime (feature-name &key endpoint file
+                                                  id-field title-field
+                                                  id-property list-params
+                                                  skip-fn list-url-fn
+                                                  delete-url-fn delete-data)
+  "Delete Canvas FEATURE-NAME items whose ID is absent from FILE.
+ENDPOINT, ID-FIELD, TITLE-FIELD, ID-PROPERTY, LIST-PARAMS, SKIP-FN,
+LIST-URL-FN, DELETE-URL-FN, and DELETE-DATA mirror
+`org-canvas--delete-all-items'.  Lists the orphans and asks for
+confirmation before deleting; never touches items whose ID appears in
+FILE or that SKIP-FN rejects.  Returns the number of deleted items."
+  (let* ((id-field (or id-field 'id))
+         (title-field (or title-field 'title))
+         (id-property (or id-property "CANVAS_ID"))
+         (local-ids (org-canvas--prune-collect-local-ids
+                     (expand-file-name file) id-property))
+         (full-endpoint (if list-url-fn
+                            (funcall list-url-fn)
+                          (org-canvas-api-course-endpoint endpoint)))
+         (remote-items (append (org-canvas-api-request-all-pages
+                                'GET full-endpoint list-params)
+                               nil))
+         (orphans (cl-remove-if
+                   (lambda (item)
+                     (or (and skip-fn (funcall skip-fn item))
+                         (member (org-canvas--normalize-id
+                                  (alist-get id-field item))
+                                 local-ids)))
+                   remote-items)))
+    (org-canvas-clear-log)
+    (org-canvas--log-info org-canvas--logger
+      "[Prune] %s: %d on Canvas, %d in %s, %d orphaned"
+      feature-name (length remote-items) (length local-ids)
+      (file-name-nondirectory file) (length orphans))
+    (if (null orphans)
+        (progn
+          (message "No orphaned %s on Canvas." feature-name)
+          0)
+      (dolist (item orphans)
+        (org-canvas--log-warning org-canvas--logger
+          "[Prune] Orphaned: '%s' (ID: %s)"
+          (alist-get title-field item) (alist-get id-field item)))
+      (if (not (y-or-n-p
+                (format "Prune %d orphaned %s from Canvas (%s)? "
+                        (length orphans) feature-name
+                        (mapconcat (lambda (item)
+                                     (format "'%s'" (alist-get title-field item)))
+                                   orphans ", "))))
+          (progn (message "Prune aborted.") 0)
+        (display-buffer (get-buffer-create org-canvas--log-buffer-name))
+        (let* ((del-fn (or delete-url-fn
+                           (lambda (item-id)
+                             (org-canvas-api-course-endpoint
+                              (format "%s/%%s" endpoint) item-id))))
+               (result (org-canvas--delete-items-queued
+                        orphans del-fn id-field title-field nil delete-data))
+               (deleted-count (car result)))
+          (org-canvas--log-info org-canvas--logger
+            "[Prune] Complete: %d of %d orphaned %s removed"
+            deleted-count (length orphans) feature-name)
+          (message "Pruned %d orphaned %s from Canvas."
+                   deleted-count feature-name)
+          deleted-count)))))
+
 (defmacro org-canvas-define-delete-all (feature &rest args)
-  "Define a delete-all function for FEATURE.
+  "Define delete-all and prune functions for FEATURE.
 FEATURE is a symbol like \\='pages.  ARGS is a plist with keys:
   :endpoint, :file (required), :id-field, :title-field,
   :id-property, :list-params, :skip-fn, :list-url-fn,
-  :delete-url-fn, :delete-data."
+  :delete-url-fn, :delete-data.
+
+Generates `org-canvas-delete-all-FEATURE' and, from the same spec,
+`org-canvas-prune-FEATURE' — which deletes only the Canvas items whose
+ID appears nowhere in the org file (locally deleted headings), after
+explicit confirmation."
   (declare (indent 1))
   (let* ((feature-name (symbol-name feature))
          (fn-name (intern (format "org-canvas-delete-all-%s" feature-name)))
+         (prune-fn-name (intern (format "org-canvas-prune-%s" feature-name)))
          (endpoint (plist-get args :endpoint))
          (file-expr (plist-get args :file))
          (id-field (or (plist-get args :id-field) ''id))
@@ -246,6 +339,19 @@ FEATURE is a symbol like \\='pages.  ARGS is a plist with keys:
            (unless (y-or-n-p ,(format "Delete ALL %s in this course? " feature-name))
              (user-error "Aborted")))
          (org-canvas--delete-all-runtime ,feature-name
+           :endpoint ,endpoint :file ,file-expr
+           :id-field ,id-field :title-field ,title-field
+           :id-property ,id-property :list-params ,list-params
+           :skip-fn ,skip-fn :list-url-fn ,list-url-fn
+           :delete-url-fn ,delete-url-fn :delete-data ,delete-data))
+       ;;;###autoload
+       (defun ,prune-fn-name ()
+         ,(format "Delete Canvas %s whose ID is absent from the org file.
+Lists the orphaned items (headings deleted locally) and asks for
+confirmation before deleting.  Items still present in the file are
+never touched." feature-name)
+         (interactive)
+         (org-canvas--prune-runtime ,feature-name
            :endpoint ,endpoint :file ,file-expr
            :id-field ,id-field :title-field ,title-field
            :id-property ,id-property :list-params ,list-params

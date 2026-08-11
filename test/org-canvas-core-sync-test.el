@@ -987,6 +987,122 @@ Hello world.
                             :push #'identity))
             :to-throw 'error '("org-canvas-define-sync: :finalize or :endpoint is required"))))
 
+(describe "org-canvas--prune-collect-local-ids"
+  (it "collects ids from headings at all levels"
+    (let ((temp-file (make-temp-file "prune-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file
+              (insert "* A\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n** B\n:PROPERTIES:\n:CANVAS_ID: 2\n:END:\n* C\n"))
+            (expect (org-canvas--prune-collect-local-ids temp-file "CANVAS_ID")
+                    :to-equal '("1" "2")))
+        (let ((buf (find-buffer-visiting temp-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file temp-file))))
+
+  (it "signals user-error when the file is missing"
+    (expect (org-canvas--prune-collect-local-ids "/nonexistent/x.org" "CANVAS_ID")
+            :to-throw 'user-error)))
+
+(describe "org-canvas--prune-runtime (mocked)"
+  (it "deletes only remote items absent from the org file"
+    (with-org-canvas-test-config
+      (let ((temp-file (make-temp-file "prune-" nil ".org"))
+            (pruned-items nil))
+        (unwind-protect
+            (progn
+              (with-temp-file temp-file
+                (insert "* Kept\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"))
+              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                         (lambda (&rest _)
+                           '(((id . 1) (title . "Kept"))
+                             ((id . 2) (title . "Orphan A"))
+                             ((id . 3) (title . "Orphan B")))))
+                        ((symbol-function 'y-or-n-p) (lambda (_) t))
+                        ((symbol-function 'org-canvas--delete-items-queued)
+                         (lambda (items &rest _)
+                           (setq pruned-items items)
+                           (cons (length items) nil))))
+                (expect (org-canvas--prune-runtime "pages"
+                          :endpoint "pages" :file temp-file)
+                        :to-equal 2)
+                (expect (mapcar (lambda (i) (alist-get 'id i)) pruned-items)
+                        :to-equal '(2 3))))
+          (let ((buf (find-buffer-visiting temp-file)))
+            (when buf (kill-buffer buf)))
+          (delete-file temp-file)))))
+
+  (it "respects skip-fn (protected items are not orphans)"
+    (with-org-canvas-test-config
+      (let ((temp-file (make-temp-file "prune-" nil ".org"))
+        (pruned-items nil))
+        (unwind-protect
+            (progn
+              (with-temp-file temp-file (insert "* Empty\n"))
+              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                         (lambda (&rest _)
+                           '(((id . 1) (title . "Front") (front_page . t))
+                             ((id . 2) (title . "Orphan")))))
+                        ((symbol-function 'y-or-n-p) (lambda (_) t))
+                        ((symbol-function 'org-canvas--delete-items-queued)
+                         (lambda (items &rest _)
+                           (setq pruned-items items)
+                           (cons (length items) nil))))
+                (org-canvas--prune-runtime "pages"
+                  :endpoint "pages" :file temp-file
+                  :skip-fn (lambda (item) (eq (alist-get 'front_page item) t)))
+                (expect (length pruned-items) :to-equal 1)
+                (expect (alist-get 'id (car pruned-items)) :to-equal 2)))
+          (let ((buf (find-buffer-visiting temp-file)))
+            (when buf (kill-buffer buf)))
+          (delete-file temp-file)))))
+
+  (it "deletes nothing when the user declines"
+    (with-org-canvas-test-config
+      (let ((temp-file (make-temp-file "prune-" nil ".org"))
+            (delete-called nil))
+        (unwind-protect
+            (progn
+              (with-temp-file temp-file (insert "* Empty\n"))
+              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                         (lambda (&rest _) '(((id . 2) (title . "Orphan")))))
+                        ((symbol-function 'y-or-n-p) (lambda (_) nil))
+                        ((symbol-function 'org-canvas--delete-items-queued)
+                         (lambda (&rest _) (setq delete-called t) (cons 0 nil))))
+                (expect (org-canvas--prune-runtime "pages"
+                          :endpoint "pages" :file temp-file)
+                        :to-equal 0)
+                (expect delete-called :to-be nil)))
+          (let ((buf (find-buffer-visiting temp-file)))
+            (when buf (kill-buffer buf)))
+          (delete-file temp-file)))))
+
+  (it "does not prompt when there are no orphans"
+    (with-org-canvas-test-config
+      (let ((temp-file (make-temp-file "prune-" nil ".org")))
+        (unwind-protect
+            (progn
+              (with-temp-file temp-file
+                (insert "* Kept\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"))
+              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                         (lambda (&rest _) '(((id . 1) (title . "Kept")))))
+                        ((symbol-function 'y-or-n-p)
+                         (lambda (_) (error "Must not prompt"))))
+                (expect (org-canvas--prune-runtime "pages"
+                          :endpoint "pages" :file temp-file)
+                        :to-equal 0)))
+          (let ((buf (find-buffer-visiting temp-file)))
+            (when buf (kill-buffer buf)))
+          (delete-file temp-file)))))
+
+  (it "generates prune commands for every delete-all feature"
+    (expect (fboundp 'org-canvas-prune-pages) :to-be-truthy)
+    (expect (fboundp 'org-canvas-prune-assignments) :to-be-truthy)
+    (expect (fboundp 'org-canvas-prune-quizzes) :to-be-truthy)
+    (expect (fboundp 'org-canvas-prune-modules) :to-be-truthy)
+    (expect (fboundp 'org-canvas-prune-calendar-events) :to-be-truthy)
+    (expect (fboundp 'org-canvas-prune-group-categories) :to-be-truthy)))
+
 (describe "org-canvas-define-delete-all macro validation"
   (it "errors when :endpoint is missing"
     (expect (macroexpand '(org-canvas-define-delete-all test-bad
