@@ -70,7 +70,7 @@ The core module provides macros and helpers to eliminate boilerplate:
   :finalize #'org-canvas--announcement-finalize
   :pull-item-fn #'org-canvas--announcement-pull-item)
 ```
-Generates `org-canvas-sync-announcements` with logging, error handling, conflict resolution, and buffer saving. The optional `:pull-item-fn` enables the "pull" option during interactive conflict resolution.
+Generates `org-canvas-sync-announcements` with logging, error handling, conflict resolution, and buffer saving. The optional `:pull-item-fn` enables the "pull" option during interactive conflict resolution. The optional `:hash-extra` is a function of the parsed data whose string result is folded into the PAYLOAD_HASH — modules use it (`org-canvas--module-items-digest`) so child-item edits dirty the module even when its own attributes are unchanged; the digest deliberately excludes item CANVAS_IDs (assigned by finalize right after hashing) so a successful sync doesn't dirty the next run.
 
 **Declarative Parse Macro:**
 ```elisp

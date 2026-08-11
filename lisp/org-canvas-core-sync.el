@@ -168,6 +168,16 @@ PAYLOAD-HASH is saved to the heading.  CTX is the sync context plist."
         (when new-id
           (push new-id (car synced-ids)))))))
 
+(defun org-canvas--sync-payload-hash (payload data hash-extra-fn)
+  "Compute the change-detection hash for PAYLOAD.
+When HASH-EXTRA-FN is non-nil it is called with the parsed DATA and
+its string result is folded into the hash.  This lets a module include
+state that lives outside its own payload in change detection — e.g.
+modules fold in a digest of their child items so item-level edits
+dirty the module."
+  (md5 (concat (json-encode payload)
+               (when hash-extra-fn (funcall hash-extra-fn data)))))
+
 (defun org-canvas--sync-execute-pipeline (data payload ctx)
   "Execute the skip/dry-run/push pipeline for a single entry.
 DATA is the parsed entry, PAYLOAD is the built API payload.
@@ -177,7 +187,8 @@ CTX is the sync context plist (see `org-canvas--sync-process-entry')."
          (total-count (plist-get ctx :total-count))
          (counters (plist-get ctx :counters))
          (synced-ids (plist-get ctx :synced-ids))
-         (payload-hash (md5 (json-encode payload)))
+         (payload-hash (org-canvas--sync-payload-hash
+                        payload data (plist-get ctx :hash-extra-fn)))
          (stored-hash (org-entry-get (point) org-canvas--prop-payload-hash))
          (canvas-id (or (plist-get data :canvas-id)
                         (plist-get data :canvas-url)))
@@ -437,12 +448,15 @@ with optional ID-FIELD, ID-PROPERTY, TITLE-KEY, POST-FN."
 (defun org-canvas--sync-run-pipeline (feature-name sync-file query
                                                    parse-fn build-fn push-fn
                                                    finalize-fn
-                                                   &optional pull-item-fn title-key)
+                                                   &optional pull-item-fn title-key
+                                                   hash-extra-fn)
   "Run the full sync pipeline for FEATURE-NAME.
 SYNC-FILE is the expanded org file path.  QUERY is the org match query.
 PARSE-FN, BUILD-FN, PUSH-FN, FINALIZE-FN are the 4-stage pipeline functions.
 PULL-ITEM-FN enables interactive conflict pull.  TITLE-KEY is the plist key
-for the display name in logs."
+for the display name in logs.  HASH-EXTRA-FN, when non-nil, is called with
+the parsed data and its string result is folded into the payload hash
+\(see `org-canvas--sync-payload-hash')."
   (org-canvas-clear-log)
   (let ((org-canvas--conflict-apply-all nil)
         (org-canvas--current-pull-item-fn pull-item-fn)
@@ -462,7 +476,8 @@ for the display name in logs."
                       :total-count (length targets)
                       :counters counters
                       :synced-ids synced-ids
-                      :title-key title-key)))
+                      :title-key title-key
+                      :hash-extra-fn hash-extra-fn)))
       (dolist (marker targets)
         (org-canvas--sync-process-entry marker ctx))
       (dolist (m targets) (set-marker m nil))
@@ -505,6 +520,9 @@ ARGS is a plist with the following keys:
   :title-key - Plist key for display name in logs (default: :title)
   :pull-item-fn - Optional function to pull remote data into local heading
                   for interactive conflict resolution
+  :hash-extra - Optional function called with the parsed data; its string
+                result is folded into the payload hash so state outside the
+                payload (e.g. module items) participates in change detection
   :no-at-point - When non-nil, suppress generating the sync-at-point function
 
 When :endpoint is provided but :push is not, a push function is auto-generated
@@ -528,6 +546,7 @@ Example usage:
          (endpoint (plist-get args :endpoint))
          (title-key (plist-get args :title-key))
          (pull-item-fn (plist-get args :pull-item-fn))
+         (hash-extra-fn (plist-get args :hash-extra))
          (no-at-point (plist-get args :no-at-point))
          (push-fn (or (plist-get args :push)
                       (when endpoint
@@ -555,7 +574,7 @@ Example usage:
          (org-canvas--sync-run-pipeline
           ,feature-name (expand-file-name ,file-expr)
           ,query ,parse-fn ,build-fn ,push-fn ,finalize-fn
-          ,pull-item-fn ,title-key))
+          ,pull-item-fn ,title-key ,hash-extra-fn))
        ,@(unless no-at-point
            `(;;;###autoload
              (defun ,at-point-fn-name ()
@@ -564,7 +583,7 @@ Example usage:
                (org-canvas--push-at-point-runtime
                 ,singular
                 ,parse-fn ,build-fn ,push-fn ,finalize-fn
-                ,(or title-key :title) ,pull-item-fn)))))))
+                ,(or title-key :title) ,pull-item-fn ,hash-extra-fn)))))))
 
 ;;;; 6b. Conflict Detection
 ;;
@@ -883,12 +902,15 @@ Save the Canvas ID and LAST_SYNCED timestamp to the Org entry."
 
 (defun org-canvas--push-at-point-runtime (feature-name parse-fn build-fn
                                                        push-fn finalize-fn
-                                                       title-key pull-item-fn)
+                                                       title-key pull-item-fn
+                                                       &optional hash-extra-fn)
   "Runtime body for generated push-at-point functions.
 FEATURE-NAME is the module name string.  PARSE-FN, BUILD-FN,
 PUSH-FN, FINALIZE-FN are the 4-stage pipeline functions.
 TITLE-KEY is the plist key for the display name.
-PULL-ITEM-FN, when non-nil, enables the pull option during conflict resolution."
+PULL-ITEM-FN, when non-nil, enables the pull option during conflict resolution.
+HASH-EXTRA-FN, when non-nil, is folded into the payload hash
+\(see `org-canvas--sync-payload-hash')."
   (org-back-to-heading t)
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (org-canvas--log-info org-canvas--logger ">>> SYNC-AT-POINT: %s" feature-name)
@@ -896,7 +918,7 @@ PULL-ITEM-FN, when non-nil, enables the pull option during conflict resolution."
          (data (funcall parse-fn))
          (title (plist-get data title-key))
          (payload (funcall build-fn data))
-         (payload-hash (md5 (json-encode payload)))
+         (payload-hash (org-canvas--sync-payload-hash payload data hash-extra-fn))
          (stored-hash (org-entry-get (point) org-canvas--prop-payload-hash))
          (canvas-id (or (plist-get data :canvas-id)
                         (plist-get data :canvas-url))))

@@ -663,6 +663,29 @@ Return the matching item alist, or nil if not found."
           (push (point-marker) item-markers))))
     (nreverse item-markers)))
 
+(defun org-canvas--module-items-digest (data)
+  "Return a digest string of the child items of the module described by DATA.
+Folded into the module's payload hash (via the sync macro's
+`:hash-extra' option) so item-level edits — adding, renaming,
+re-linking, re-ordering, or changing properties of items — dirty the
+module and trigger a re-sync even when the module's own attributes are
+unchanged (issue #26).  Covers each item's raw properties and resolved
+link target, but not the item's own CANVAS_ID: IDs assigned during
+finalize must not dirty the hash for the next run."
+  (let ((modules-file-dir (file-name-directory
+                           (expand-file-name org-canvas-modules-file)))
+        (markers (org-canvas--module-collect-item-markers (plist-get data :pom)))
+        (parts nil))
+    (dolist (marker markers)
+      (with-current-buffer (marker-buffer marker)
+        (save-excursion
+          (goto-char (marker-position marker))
+          (let ((raw (org-canvas--module-item-read-props (point) modules-file-dir)))
+            (plist-put raw :canvas-id nil)
+            (push (format "%S" raw) parts))))
+      (set-marker marker nil))
+    (format "%S" (nreverse parts))))
+
 (defvar org-canvas--module-items-pending nil
   "Module items skipped because their target lacked a CANVAS_ID.
 Each entry is a plist (:module-id ID :marker MARKER :title STRING
@@ -811,7 +834,10 @@ clears `org-canvas--module-items-pending'."
   :parse #'org-canvas--module-parse-entry
   :build #'org-canvas--module-build-payload
   :push #'org-canvas--module-push-to-api
-  :finalize #'org-canvas--module-finalize)
+  :finalize #'org-canvas--module-finalize
+  ;; Module attributes alone miss item-level edits — fold an items
+  ;; digest into the payload hash so they dirty the module (issue #26).
+  :hash-extra #'org-canvas--module-items-digest)
 
 ;;;; Delete Functions
 
