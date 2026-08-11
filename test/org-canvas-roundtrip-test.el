@@ -22,7 +22,9 @@
 
 (defun org-canvas-roundtrip--pull-twice (initial pull-fn response)
   "Apply PULL-FN/RESPONSE to INITIAL's first heading twice.
-Returns a cons (FIRST . SECOND) of the buffer string after each pull."
+Returns a cons (FIRST . SECOND) of the buffer string after each pull.
+Paged list sub-fetches (e.g. assignment overrides) are mocked to nil
+so no pull-item reaches the network guard."
   (let ((tmp (make-temp-file "roundtrip-" nil ".org")))
     (unwind-protect
         (progn
@@ -30,6 +32,8 @@ Returns a cons (FIRST . SECOND) of the buffer string after each pull."
           (with-current-buffer (find-file-noselect tmp)
             (unwind-protect
                 (with-html-to-org-identity
+                  (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                             (lambda (&rest _) nil)))
                   (let ((org-canvas-course-id "99999")
                         (org-canvas-base-url "https://test.canvas.example.com")
                         (org-canvas-api-token "test-token")
@@ -44,7 +48,7 @@ Returns a cons (FIRST . SECOND) of the buffer string after each pull."
                     (org-back-to-heading)
                     (funcall pull-fn response (point))
                     (setq second (buffer-string))
-                    (cons first second)))
+                    (cons first second))))
               (kill-buffer))))
       (delete-file tmp))))
 

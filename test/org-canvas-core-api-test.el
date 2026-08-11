@@ -1014,5 +1014,33 @@
       (expect (error-message-string caught) :not :to-match "SECRET")
       (expect (format "%S" caught) :not :to-match "SECRET"))))
 
+;;;; Network guard (test-helper)
+
+(describe "network guard"
+  (it "refuses unmocked plz calls"
+    (expect (plz 'get "https://example.com/") :to-throw 'error))
+
+  (it "refuses unmocked url-retrieve-synchronously calls"
+    (expect (url-retrieve-synchronously "https://example.com/")
+            :to-throw 'error))
+
+  (it "refuses spawning the real curl binary"
+    (expect (call-process plz-curl-program nil nil nil "--version")
+            :to-throw 'error))
+
+  (it "does not name credentials in the refusal"
+    (let ((err (condition-case e (plz 'get "https://example.com/") (error e))))
+      (expect (format "%S" err) :not :to-match "Bearer")
+      (expect (format "%S" err) :to-match "Unmocked network call")))
+
+  (it "lets non-curl subprocesses through"
+    ;; `true' exits 0 — proves the call-process guard is curl-specific
+    (expect (call-process "true") :to-equal 0))
+
+  (it "is bypassed by cl-letf mocks like real tests use"
+    (cl-letf (((symbol-function 'plz)
+               (lambda (&rest _) "mocked")))
+      (expect (plz 'get "https://example.com/") :to-equal "mocked"))))
+
 (provide 'org-canvas-core-api-test)
 ;;; org-canvas-core-api-test.el ends here

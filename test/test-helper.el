@@ -31,6 +31,45 @@
       (file-name-as-directory
        (make-temp-file "org-canvas-test-" t)))
 
+;;;; Network Guard
+;;
+;; The test environment loads the user's real `org-canvas-credentials.el',
+;; so any code path that reaches a network primitive without a mock hits
+;; the LIVE Canvas API with real credentials (observed 2026-08-10: an
+;; unmocked fallback branch made a live call from a test).  Refuse at
+;; the bottom of the stack instead of hoping every test mocks high
+;; enough.  Tests that exercise the API internals mock these same
+;; symbols with `cl-letf', which replaces the whole function cell —
+;; advice included — so they are unaffected.
+
+(defun test-org-canvas--refuse-network (kind &rest detail)
+  "Signal an error refusing a real network call from a test.
+KIND names the blocked primitive; DETAIL is safe-to-print context
+\(never headers, which may carry credentials)."
+  (error "Unmocked network call during tests (%s): %S — mock org-canvas-api-request or the primitive with cl-letf"
+         kind detail))
+
+(advice-add 'plz :override
+            (lambda (method url &rest _)
+              (test-org-canvas--refuse-network 'plz method url))
+            '((name . test-org-canvas-network-guard)))
+
+(advice-add 'url-retrieve-synchronously :override
+            (lambda (url &rest _)
+              (test-org-canvas--refuse-network 'url-retrieve-synchronously url))
+            '((name . test-org-canvas-network-guard)))
+
+;; Only curl spawns aimed at the network (the PATCH fallback uses
+;; `plz-curl-program') are refused; other subprocesses (pandoc, git)
+;; pass through untouched.
+(advice-add 'call-process :around
+            (lambda (orig program &rest args)
+              (if (and (boundp 'plz-curl-program)
+                       (equal program plz-curl-program))
+                  (test-org-canvas--refuse-network 'curl program)
+                (apply orig program args)))
+            '((name . test-org-canvas-network-guard)))
+
 ;;;; Test Configuration
 
 (defvar test-org-canvas-emacs-30-p (>= emacs-major-version 30)
@@ -299,14 +338,18 @@ Call inside a `describe' block.  OPTS is a plist:
 (defmacro with-pull-property-test (pull-fn response property matcher value)
   "Test that PULL-FN with RESPONSE sets Org PROPERTY as expected.
 Creates a temp buffer with CANVAS_ID: 1, mocks html-to-org as identity,
-calls PULL-FN, and asserts (expect (org-entry-get (point) PROPERTY) MATCHER VALUE)."
+calls PULL-FN, and asserts (expect (org-entry-get (point) PROPERTY) MATCHER VALUE).
+Paged list fetches (e.g. the assignment overrides sub-fetch) are mocked
+to return nil so no pull-item can reach the network guard."
   (declare (indent 2))
   `(with-temp-org-buffer
     "* Test\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
     (org-back-to-heading)
     (with-html-to-org-identity
-      (funcall ,pull-fn ,response (point))
-      (expect (org-entry-get (point) ,property) ,matcher ,value))))
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (&rest _) nil)))
+        (funcall ,pull-fn ,response (point))
+        (expect (org-entry-get (point) ,property) ,matcher ,value)))))
 
 ;;;; Assertion Helpers
 

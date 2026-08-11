@@ -421,6 +421,10 @@ The conversion from the codebase convention (`'GET`, `'POST`) to plz format:
 
 `org-canvas--export-subtree-body-to-html` strips property drawers from its temp buffer before `org-canvas--resolve-body-links` runs. Drawer links (`GROUP:`, `RUBRIC_LINK:`) can't resolve to Canvas URLs (assignment groups and rubrics have no user-facing page) and would emit false "Unresolved" warnings; the HTML exporter drops drawers anyway, so output is unchanged.
 
+### Test Isolation: the Network Guard Blocks Unmocked HTTP
+
+test-helper.el advises the network primitives — `plz`, `url-retrieve-synchronously`, and `call-process` when spawning `plz-curl-program` — to signal "Unmocked network call during tests" instead of performing real I/O. The test environment loads the user's real `org-canvas-credentials.el`, so before the guard an unmocked code path (e.g. the assignment overrides sub-fetch) silently attempted live API calls with real credentials. Tests that exercise API internals are unaffected: `cl-letf` on those same symbols replaces the whole function cell, advice included. If a new test trips the guard, mock `org-canvas-api-request`/`org-canvas-api-request-all-pages` (or the primitive itself) — never weaken the guard.
+
 ### Test Isolation: Don't Assert on the Shared Log Buffer
 
 Integration tests must not assert on `*org-canvas-log*` buffer contents — earlier tests mutate logger state (handlers, buffer names, leftover content), so such assertions pass in isolation but fail in the full run. Instead capture log lines by `cl-letf`-ing `org-canvas--log-info`/`org-canvas--log-warning` into a list and match on that.

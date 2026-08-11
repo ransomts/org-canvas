@@ -1187,14 +1187,17 @@ Content.
 "
                (org-back-to-heading)
                (with-html-to-org-identity
-                 (org-canvas--assignment-pull-item
-                  '((id . 1) (name . "Assignment")
-                    (points_possible . 100)
-                    (submission_types . ["online_upload"])
-                    (peer_reviews . t)
-                    (assignment_group_id . 555)
-                    (description . "<p>Do this</p>"))
-                  (point))
+                 ;; overrides sub-fetch mocked: network guard must stay quiet
+                 (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                            (lambda (&rest _) nil)))
+                   (org-canvas--assignment-pull-item
+                    '((id . 1) (name . "Assignment")
+                      (points_possible . 100)
+                      (submission_types . ["online_upload"])
+                      (peer_reviews . t)
+                      (assignment_group_id . 555)
+                      (description . "<p>Do this</p>"))
+                    (point)))
                  (expect (org-entry-get (point) "PEER_REVIEWS") :to-equal "true")
                  (expect (org-entry-get (point) "GROUP") :to-match "Labs")))))
         (let ((buf (find-buffer-visiting groups-file)))
