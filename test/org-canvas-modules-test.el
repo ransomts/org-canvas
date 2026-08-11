@@ -2778,4 +2778,154 @@
                     warnings)
                    :to-be-truthy)))))))
 
+;;;; Items Digest — issue #26 (item edits must dirty the module hash)
+
+(describe "org-canvas--module-items-digest"
+  (it "is stable across repeated computation"
+    (with-temp-org-buffer
+     "* Week 1
+:PROPERTIES:
+:PUBLISHED: true
+:END:
+** Item One
+** Item Two
+"
+     (let ((org-canvas-modules-file (buffer-file-name)))
+       (org-back-to-heading)
+       (let ((data (list :pom (point))))
+         (expect (org-canvas--module-items-digest data)
+                 :to-equal (org-canvas--module-items-digest data))))))
+
+  (it "changes when an item is added"
+    (let ((d1 (with-temp-org-buffer
+               "* Week 1\n** Item One\n"
+               (let ((org-canvas-modules-file (buffer-file-name)))
+                 (org-back-to-heading)
+                 (org-canvas--module-items-digest (list :pom (point))))))
+          (d2 (with-temp-org-buffer
+               "* Week 1\n** Item One\n** Item Two\n"
+               (let ((org-canvas-modules-file (buffer-file-name)))
+                 (org-back-to-heading)
+                 (org-canvas--module-items-digest (list :pom (point)))))))
+      (expect d1 :not :to-equal d2)))
+
+  (it "changes when an item is renamed"
+    (let ((d1 (with-temp-org-buffer
+               "* Week 1\n** Old Title\n"
+               (let ((org-canvas-modules-file (buffer-file-name)))
+                 (org-back-to-heading)
+                 (org-canvas--module-items-digest (list :pom (point))))))
+          (d2 (with-temp-org-buffer
+               "* Week 1\n** New Title\n"
+               (let ((org-canvas-modules-file (buffer-file-name)))
+                 (org-back-to-heading)
+                 (org-canvas--module-items-digest (list :pom (point)))))))
+      (expect d1 :not :to-equal d2)))
+
+  (it "changes when an item property changes"
+    (let ((d1 (with-temp-org-buffer
+               "* Week 1\n** Item One\n:PROPERTIES:\n:INDENT: 0\n:END:\n"
+               (let ((org-canvas-modules-file (buffer-file-name)))
+                 (org-back-to-heading)
+                 (org-canvas--module-items-digest (list :pom (point))))))
+          (d2 (with-temp-org-buffer
+               "* Week 1\n** Item One\n:PROPERTIES:\n:INDENT: 1\n:END:\n"
+               (let ((org-canvas-modules-file (buffer-file-name)))
+                 (org-back-to-heading)
+                 (org-canvas--module-items-digest (list :pom (point)))))))
+      (expect d1 :not :to-equal d2)))
+
+  (it "does not change when an item gains a CANVAS_ID"
+    ;; IDs are assigned by finalize right after the hash is computed;
+    ;; if they entered the digest, every sync would dirty the module.
+    (with-temp-org-buffer
+     "* Week 1
+** Item One
+"
+     (let ((org-canvas-modules-file (buffer-file-name)))
+       (org-back-to-heading)
+       (let* ((data (list :pom (point)))
+              (before (org-canvas--module-items-digest data)))
+         (save-excursion
+           (search-forward "Item One")
+           (org-entry-put (point) "CANVAS_ID" "501"))
+         (expect (org-canvas--module-items-digest data) :to-equal before)))))
+
+  (it "changes when a linked target gains a CANVAS_ID"
+    ;; Interplay with #22: rotation of a target's id must dirty the
+    ;; module so the stale item gets repaired on the next sync.
+    (let ((pages-file (make-temp-file "pages" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file pages-file
+              (insert "* Test Page\n:PROPERTIES:\n:END:\n"))
+            (with-temp-org-buffer
+             (format "* Module\n** [[file:%s::*Test Page][Link Text]]\n"
+                     (file-name-nondirectory pages-file))
+             (let ((org-canvas-modules-file (buffer-file-name)))
+               (org-back-to-heading)
+               (let* ((data (list :pom (point)))
+                      (before (org-canvas--module-items-digest data)))
+                 (with-current-buffer (find-file-noselect pages-file)
+                   (goto-char (point-min))
+                   (org-back-to-heading)
+                   (org-entry-put (point) "CANVAS_ID" "4242")
+                   (save-buffer))
+                 (expect (org-canvas--module-items-digest data)
+                         :not :to-equal before)))))
+        (let ((buf (find-buffer-visiting pages-file)))
+          (when buf (kill-buffer buf)))
+        (delete-file pages-file)))))
+
+(describe "org-canvas-sync-modules payload-hash with items (mocked)"
+  (it "skips an unchanged module but re-syncs after an item is added"
+    (let ((temp-dir (make-temp-file "modules-test" t)))
+      (unwind-protect
+          (let* ((modules-file (expand-file-name "modules.org" temp-dir))
+                 (module-writes 0)
+                 (item-writes 0))
+            (with-temp-file modules-file
+              (insert "* Week 1
+:PROPERTIES:
+:PUBLISHED: true
+:END:
+** Section Header
+"))
+            (let ((org-canvas-modules-file modules-file))
+              (with-org-canvas-test-config
+                (with-sync-test-env
+                  (cl-letf (((symbol-function 'org-canvas-api-request)
+                             (lambda (method url &rest _args)
+                               (cond
+                                ((string-match "courses/99999/$" url)
+                                 '((id . 99999)))
+                                ((and (eq method 'POST) (string-match "modules$" url))
+                                 (setq module-writes (1+ module-writes))
+                                 '((id . 500) (name . "Week 1")))
+                                ((and (eq method 'PUT) (string-match "modules/500$" url))
+                                 (setq module-writes (1+ module-writes))
+                                 '((id . 500) (name . "Week 1")))
+                                ((and (memq method '(POST PUT))
+                                      (string-match "modules/500/items" url))
+                                 (setq item-writes (1+ item-writes))
+                                 '((id . 501) (title . "Item")))
+                                (t '((id . 1)))))))
+                    ;; Run 1: creates module + item, saves PAYLOAD_HASH
+                    (org-canvas-sync-modules)
+                    (expect module-writes :to-equal 1)
+                    ;; Run 2: nothing changed — module skipped
+                    (org-canvas-sync-modules)
+                    (expect module-writes :to-equal 1)
+                    ;; Add an item; run 3 must re-push the module and
+                    ;; sync both items (the core of issue #26)
+                    (with-current-buffer (find-file-noselect modules-file)
+                      (goto-char (point-max))
+                      (insert "** Another Header\n")
+                      (save-buffer))
+                    (setq item-writes 0)
+                    (org-canvas-sync-modules)
+                    (expect module-writes :to-equal 2)
+                    (expect item-writes :to-equal 2))))))
+        (delete-directory temp-dir t)))))
+
 ;;; org-canvas-modules-test.el ends here

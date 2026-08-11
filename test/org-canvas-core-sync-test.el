@@ -1087,6 +1087,25 @@ Hello world.
      (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil)
      (expect (org-entry-get (point) "PAYLOAD_HASH") :to-be nil))))
 
+;;;; Payload hash computation
+
+(describe "org-canvas--sync-payload-hash"
+  (it "matches plain md5 of the encoded payload when no hash-extra fn is given"
+    (let ((payload '((name . "X"))))
+      (expect (org-canvas--sync-payload-hash payload nil nil)
+              :to-equal (md5 (json-encode payload)))))
+
+  (it "folds the hash-extra result into the hash"
+    (let ((payload '((name . "X"))))
+      (expect (org-canvas--sync-payload-hash payload nil (lambda (_) "extra"))
+              :not :to-equal (md5 (json-encode payload)))))
+
+  (it "passes the parsed data to the hash-extra fn"
+    (let (seen)
+      (org-canvas--sync-payload-hash '((a . 1)) '(:pom 42)
+                                     (lambda (d) (setq seen d) ""))
+      (expect seen :to-equal '(:pom 42)))))
+
 ;;;; Metamorphic relations
 
 (describe "metamorphic relations"
