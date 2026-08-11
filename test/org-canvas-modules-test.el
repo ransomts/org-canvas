@@ -2968,4 +2968,79 @@
                     (expect item-writes :to-equal 2))))))
         (delete-directory temp-dir t)))))
 
+;;;; Conflict pull-item
+
+(describe "org-canvas--module-pull-item"
+  (it "sets module properties from the response"
+    (with-org-canvas-test-config
+      ;; An explicitly empty items list must NOT trigger a fetch
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (&rest _) (error "Must not hit the API"))))
+        (with-temp-org-buffer
+         "* Old Name\n:PROPERTIES:\n:CANVAS_ID: 500\n:END:\n"
+         (org-back-to-heading)
+         (org-canvas--module-pull-item
+          '((id . 500) (name . "Week 1") (position . 3)
+            (published . :json-false)
+            (require_sequential_progress . t)
+            (unlock_at . "2027-01-15T08:00:00Z")
+            (prerequisite_module_ids . (77 88))
+            (items . nil))
+          (point))
+         (expect (org-entry-get (point) "POSITION") :to-equal "3")
+         ;; published t is the registry default and gets suppressed;
+         ;; the non-default false must be written out
+         (expect (org-entry-get (point) "PUBLISHED") :to-equal "false")
+         (expect (org-entry-get (point) "REQUIRE_SEQUENTIAL_PROGRESSION")
+                 :to-equal "true")
+         (expect (org-entry-get (point) "UNLOCK_AT") :to-match "2027-01-15")
+         (expect (org-entry-get (point) "PREREQUISITE_MODULE_IDS")
+                 :to-equal "77,88")))))
+
+  (it "replaces child items with the included remote list"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (&rest _) (error "Must not hit the API"))))
+        (with-temp-org-buffer
+         "* Week 1\n:PROPERTIES:\n:CANVAS_ID: 500\n:END:\n** Stale Local Item\n"
+         (org-back-to-heading)
+         (org-canvas--module-pull-item
+          '((id . 500) (name . "Week 1")
+            (items . (((id . 501) (type . "SubHeader")
+                       (title . "Remote Header") (published . t)))))
+          (point))
+         (expect (buffer-string) :not :to-match "Stale Local Item")
+         (expect (buffer-string) :to-match "\\*\\* Remote Header")))))
+
+  (it "fetches items from the endpoint when the response lacks them"
+    ;; The conflict-check GET returns the module without items.
+    (with-org-canvas-test-config
+      (let ((fetched-url nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (_method url &rest _args)
+                     (setq fetched-url url)
+                     '(((id . 502) (type . "SubHeader")
+                        (title . "Fetched Header") (published . t))))))
+          (with-temp-org-buffer
+           "* Week 1\n:PROPERTIES:\n:CANVAS_ID: 500\n:END:\n** Old Item\n"
+           (org-back-to-heading)
+           (org-canvas--module-pull-item '((id . 500) (name . "Week 1")) (point))
+           (expect fetched-url :to-match "modules/500/items")
+           (expect (buffer-string) :not :to-match "Old Item")
+           (expect (buffer-string) :to-match "\\*\\* Fetched Header"))))))
+
+  (it "is registered as the pull-item-fn for the modules sync"
+    ;; The generated sync binds it dynamically; expanding the macro
+    ;; form is the cheapest wiring check.
+    (let ((expansion (macroexpand-1
+                      '(org-canvas-define-sync modules
+                         :file org-canvas-modules-file
+                         :parse #'org-canvas--module-parse-entry
+                         :build #'org-canvas--module-build-payload
+                         :push #'org-canvas--module-push-to-api
+                         :finalize #'org-canvas--module-finalize
+                         :pull-item-fn #'org-canvas--module-pull-item))))
+      (expect (format "%S" expansion)
+              :to-match "org-canvas--module-pull-item"))))
+
 ;;; org-canvas-modules-test.el ends here

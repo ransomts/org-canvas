@@ -857,7 +857,8 @@ clears `org-canvas--module-items-pending'."
   :finalize #'org-canvas--module-finalize
   ;; Module attributes alone miss item-level edits — fold an items
   ;; digest into the payload hash so they dirty the module (issue #26).
-  :hash-extra #'org-canvas--module-items-digest)
+  :hash-extra #'org-canvas--module-items-digest
+  :pull-item-fn #'org-canvas--module-pull-item)
 
 ;;;; Delete Functions
 
@@ -1047,6 +1048,55 @@ Returns the count of items inserted."
           (org-canvas--module-pull-insert-content-item item item-id item-published)))
         (cl-incf count)))
     count))
+
+(defun org-canvas--module-pull-item (item pos)
+  "Set properties and child items for a pulled module.
+ITEM is the module API response alist, POS is the heading position.
+Used as the `:pull-item-fn' during interactive conflict resolution:
+sets the module attributes, then replaces the child item headings with
+the remote item list.  The conflict-check GET returns the module
+without its items, so they are fetched from the items endpoint when
+ITEM lacks an `items' key."
+  (save-excursion
+    (goto-char pos)
+    (org-back-to-heading t)
+    (let ((pom (point)))
+      (let ((position (alist-get 'position item)))
+        (when position
+          (org-canvas-org-set-property pom "POSITION" (format "%s" position))))
+      (org-canvas--pull-set-timestamp-property pom "UNLOCK_AT"
+                                               (alist-get 'unlock_at item))
+      (org-canvas--pull-set-boolean-property pom "PUBLISHED"
+                                             (alist-get 'published item))
+      (org-canvas--pull-set-boolean-property
+       pom "REQUIRE_SEQUENTIAL_PROGRESSION"
+       (alist-get 'require_sequential_progress item))
+      (org-canvas--pull-set-boolean-property
+       pom "PUBLISH_FINAL_GRADE" (alist-get 'publish_final_grade item))
+      (let ((prereqs (append (alist-get 'prerequisite_module_ids item) nil)))
+        (when prereqs
+          (org-canvas-org-set-property
+           pom "PREREQUISITE_MODULE_IDS"
+           (mapconcat (lambda (id) (format "%s" id)) prereqs ","))))
+      ;; Replace child items with the remote list.  Distinguish a
+      ;; present-but-empty `items' key (module has no items) from an
+      ;; absent one (conflict-check GET omits items — fetch them).
+      (let* ((mid (alist-get 'id item))
+             (items-cell (assq 'items item))
+             (items (if items-cell
+                        (append (cdr items-cell) nil)
+                      (when mid
+                        (append (org-canvas-api-request-all-pages
+                                 'GET (org-canvas-api-course-endpoint
+                                       "modules/%s/items" mid))
+                                nil)))))
+        (goto-char pom)
+        (let ((body-start (save-excursion (org-end-of-meta-data t) (point)))
+              (body-end (save-excursion (org-end-of-subtree t) (point))))
+          (delete-region body-start body-end)
+          (goto-char body-start)
+          (when items
+            (org-canvas--module-pull-insert-items items)))))))
 
 ;;;###autoload
 (defun org-canvas-pull-modules ()
