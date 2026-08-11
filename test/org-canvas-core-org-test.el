@@ -2611,5 +2611,72 @@ Page content.
               (expect (buffer-string) :to-match "Canvas returned 0 items")))
         (delete-file temp)))))
 
+;;;; Children content digest (hash-extra material for nested modules)
+
+(describe "org-canvas--org-children-digest"
+  (it "returns \"none\" for a heading without children (sibling excluded)"
+    (with-temp-org-buffer
+     "* Quiz\nBody text.\n* Sibling\nOther content.\n"
+     (org-back-to-heading)
+     (expect (org-canvas--org-children-digest (point)) :to-equal "none")))
+
+  (it "is stable across repeated computation"
+    (with-temp-org-buffer
+     "* Quiz\n** Question 1\n:PROPERTIES:\n:POINTS: 2\n:END:\n- [X] A\n- [ ] B\n"
+     (org-back-to-heading)
+     (expect (org-canvas--org-children-digest (point))
+             :to-equal (org-canvas--org-children-digest (point)))))
+
+  (it "changes when a child body changes"
+    (let ((d1 (with-temp-org-buffer
+               "* Quiz\n** Q1\n- [X] A\n- [ ] B\n"
+               (org-back-to-heading)
+               (org-canvas--org-children-digest (point))))
+          (d2 (with-temp-org-buffer
+               "* Quiz\n** Q1\n- [X] A\n- [ ] C\n"
+               (org-back-to-heading)
+               (org-canvas--org-children-digest (point)))))
+      (expect d1 :not :to-equal d2)))
+
+  (it "changes when a child property changes"
+    (let ((d1 (with-temp-org-buffer
+               "* Quiz\n** Q1\n:PROPERTIES:\n:POINTS: 1\n:END:\n- [X] A\n"
+               (org-back-to-heading)
+               (org-canvas--org-children-digest (point))))
+          (d2 (with-temp-org-buffer
+               "* Quiz\n** Q1\n:PROPERTIES:\n:POINTS: 2\n:END:\n- [X] A\n"
+               (org-back-to-heading)
+               (org-canvas--org-children-digest (point)))))
+      (expect d1 :not :to-equal d2)))
+
+  (it "changes when a grandchild (nested heading) changes"
+    (let ((d1 (with-temp-org-buffer
+               "* Quiz\n** Group\n*** Q1\n- [X] A\n"
+               (org-back-to-heading)
+               (org-canvas--org-children-digest (point))))
+          (d2 (with-temp-org-buffer
+               "* Quiz\n** Group\n*** Q1\n- [X] B\n"
+               (org-back-to-heading)
+               (org-canvas--org-children-digest (point)))))
+      (expect d1 :not :to-equal d2)))
+
+  (it "ignores sync-state properties on children"
+    ;; Finalize writes these right after the parent hash is computed;
+    ;; including them would dirty the parent on every run.  The child
+    ;; needs a pre-existing drawer: creating one would add :PROPERTIES:
+    ;; and :END: delimiter lines, which legitimately change the digest.
+    (with-temp-org-buffer
+     "* Quiz\n** Q1\n:PROPERTIES:\n:POINTS: 1\n:END:\n- [X] A\n"
+     (org-back-to-heading)
+     (let ((before (org-canvas--org-children-digest (point))))
+       (save-excursion
+         (search-forward "** Q1")
+         (org-entry-put (point) "CANVAS_ID" "200")
+         (org-entry-put (point) "CANVAS_ITEM_ID" "300")
+         (org-entry-put (point) "LAST_SYNCED" "[2026-08-10 Mon 12:00]")
+         (org-entry-put (point) "CANVAS_UPDATED_AT" "2026-08-10T12:00:00Z"))
+       (expect (org-canvas--org-children-digest (point))
+               :to-equal before)))))
+
 (provide 'org-canvas-core-org-test)
 ;;; org-canvas-core-org-test.el ends here

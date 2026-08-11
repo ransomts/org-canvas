@@ -329,6 +329,37 @@ Returns a list of (success-count . fail-count)."
     ,org-canvas--prop-last-synced ,org-canvas--prop-payload-hash)
   "Properties managed by the sync pipeline.")
 
+(defconst org-canvas--children-digest-excluded-props
+  '("CANVAS_ID" "CANVAS_ITEM_ID" "CANVAS_URL" "LAST_SYNCED"
+    "CANVAS_UPDATED_AT" "PAYLOAD_HASH")
+  "Sync-state properties excluded from `org-canvas--org-children-digest'.
+Finalize writes these right after the parent's payload hash is
+computed, so including them would dirty the parent on every run.")
+
+(defun org-canvas--org-children-digest (pom)
+  "Digest the raw content of all child subtrees under the heading at POM.
+Covers child headings, their property drawers, and their bodies —
+everything below the parent's own body to the end of its subtree.
+Property lines named in `org-canvas--children-digest-excluded-props'
+are stripped first.  Returns \"none\" when the heading has no children.
+
+Intended as `:hash-extra' material for modules whose child headings
+sync inside finalize (quiz questions, new-quiz items): folding this
+into the parent's payload hash makes child-level edits trigger a
+re-sync instead of being skipped as unchanged."
+  (save-excursion
+    (goto-char pom)
+    (org-back-to-heading t)
+    (let* ((end (save-excursion (org-end-of-subtree t t) (point)))
+           (start (save-excursion (outline-next-heading) (point))))
+      (if (>= start end)
+          "none"
+        (md5 (replace-regexp-in-string
+              (format "^[ \t]*:%s:.*\n?"
+                      (regexp-opt org-canvas--children-digest-excluded-props t))
+              ""
+              (buffer-substring-no-properties start end)))))))
+
 (defconst org-canvas--bytes-per-mb 1048576.0
   "Number of bytes in one megabyte (for file size calculations).")
 

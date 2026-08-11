@@ -800,12 +800,22 @@ QUIZ-CANVAS-ID is the Canvas ID of the quiz."
       question-success (length question-markers))
     (cons question-success (- (length question-markers) question-success))))
 
+(defun org-canvas--quiz-questions-digest (data)
+  "Digest the question and question-group subtrees of the quiz in DATA.
+Folded into the quiz payload hash via `:hash-extra': questions sync
+inside finalize, which the unchanged-skip bypasses, so without this a
+question edit (text, answers, points, type) would never reach Canvas
+once the quiz's own attributes stopped changing — the same bug class
+as issue #26."
+  (org-canvas--org-children-digest (or (plist-get data :pom) (point))))
+
 (org-canvas-define-sync quizzes
   :file org-canvas-quizzes-file
   :parse #'org-canvas--quiz-parse-entry
   :build #'org-canvas--quiz-build-payload
   :push #'org-canvas--quiz-push-to-api
-  :finalize #'org-canvas--quiz-finalize)
+  :finalize #'org-canvas--quiz-finalize
+  :hash-extra #'org-canvas--quiz-questions-digest)
 
 ;;;; Delete Functions
 

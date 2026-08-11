@@ -359,12 +359,24 @@ QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
 
 ;;;; Main Sync Function
 
+(defun org-canvas--new-quiz-items-digest (data)
+  "Digest the item subtrees and rubric link of the new quiz in DATA.
+Folded into the quiz payload hash via `:hash-extra': items sync inside
+finalize, which the unchanged-skip bypasses, so without this an item
+edit would never reach Canvas once the quiz's own attributes stopped
+changing (same bug class as issue #26).  The rubric id is included
+because rubric association also happens in finalize and is not part
+of the quiz payload."
+  (concat (org-canvas--org-children-digest (or (plist-get data :pom) (point)))
+          (format "|rubric=%s" (plist-get data :rubric-id))))
+
 (org-canvas-define-sync new-quizzes
   :file org-canvas-new-quizzes-file
   :parse #'org-canvas--new-quiz-parse-entry
   :build #'org-canvas--new-quiz-build-payload
   :push #'org-canvas--new-quiz-push-to-api
   :finalize #'org-canvas--new-quiz-finalize
+  :hash-extra #'org-canvas--new-quiz-items-digest
   :no-at-point t)
 
 ;;;; Sync at Point

@@ -2674,4 +2674,43 @@ Body text
               (setq warned t)))
           (expect warned :to-be t))))))
 
+;;;; Items digest (hash-extra — issue #26 bug class)
+
+(describe "org-canvas--new-quiz-items-digest"
+  (it "changes when an item subtree changes"
+    (let ((d1 (with-temp-org-buffer
+               "* Quiz\n** Item 1\n:PROPERTIES:\n:TYPE: choice\n:END:\n- [X] A\n"
+               (org-back-to-heading)
+               (org-canvas--new-quiz-items-digest (list :pom (point)))))
+          (d2 (with-temp-org-buffer
+               "* Quiz\n** Item 1\n:PROPERTIES:\n:TYPE: choice\n:END:\n- [X] B\n"
+               (org-back-to-heading)
+               (org-canvas--new-quiz-items-digest (list :pom (point))))))
+      (expect d1 :not :to-equal d2)))
+
+  (it "changes when the rubric link changes"
+    ;; Rubric association happens in finalize and is not part of the
+    ;; quiz payload, so it must be folded into the digest.
+    (with-temp-org-buffer
+     "* Quiz\n** Item 1\n- [X] A\n"
+     (org-back-to-heading)
+     (let ((pom (point)))
+       (expect (org-canvas--new-quiz-items-digest
+                (list :pom pom :rubric-id "7"))
+               :not :to-equal
+               (org-canvas--new-quiz-items-digest
+                (list :pom pom :rubric-id "8"))))))
+
+  (it "does not change when an item gains a CANVAS_ITEM_ID"
+    (with-temp-org-buffer
+     "* Quiz\n** Item 1\n:PROPERTIES:\n:TYPE: choice\n:END:\n- [X] A\n"
+     (org-back-to-heading)
+     (let* ((data (list :pom (point)))
+            (before (org-canvas--new-quiz-items-digest data)))
+       (save-excursion
+         (search-forward "** Item 1")
+         (org-entry-put (point) "CANVAS_ITEM_ID" "300"))
+       (expect (org-canvas--new-quiz-items-digest data)
+               :to-equal before)))))
+
 ;;; org-canvas-new-quizzes-test.el ends here

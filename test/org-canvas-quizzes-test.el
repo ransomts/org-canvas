@@ -1522,6 +1522,64 @@ Quiz description.
                     (expect (org-entry-get (point) "CANVAS_ID") :to-equal "100"))))))
         (delete-directory temp-dir t))))
 
+  (it "skips an unchanged quiz but re-syncs after a question edit"
+    ;; Questions sync inside finalize, which the unchanged-skip
+    ;; bypasses — without the questions digest in the payload hash a
+    ;; question edit would never reach Canvas (issue #26 bug class).
+    (let ((temp-dir (make-temp-file "quiz-test" t)))
+      (unwind-protect
+          (let* ((org-file (expand-file-name "quizzes.org" temp-dir))
+                 (quiz-writes 0)
+                 (question-writes 0))
+            (with-temp-file org-file
+              (insert "* Test Quiz
+:PROPERTIES:
+:END:
+
+Quiz description.
+
+** Question 1
+:PROPERTIES:
+:END:
+
+- [X] Answer A
+- [ ] Answer B
+"))
+            (let ((org-canvas-quizzes-file org-file)
+                  (org-canvas-base-url "https://test.canvas.example.com")
+                  (org-canvas-api-token "test-token")
+                  (org-canvas-course-id "99999"))
+              (with-sync-test-env
+                (cl-letf (((symbol-function 'org-canvas-api-request)
+                           (lambda (method url &rest _args)
+                             (cond
+                              ((and (memq method '(POST PUT))
+                                    (string-match "quizzes\\(/100\\)?$" url))
+                               (setq quiz-writes (1+ quiz-writes))
+                               '((id . 100) (title . "Test Quiz")))
+                              ((and (memq method '(POST PUT))
+                                    (string-match "questions\\(/200\\)?$" url))
+                               (setq question-writes (1+ question-writes))
+                               '((id . 200)))
+                              (t nil)))))
+                  ;; Run 1: creates quiz + question, saves PAYLOAD_HASH
+                  (org-canvas-sync-quizzes)
+                  (expect quiz-writes :to-equal 1)
+                  ;; Run 2: nothing changed — quiz skipped entirely
+                  (org-canvas-sync-quizzes)
+                  (expect quiz-writes :to-equal 1)
+                  ;; Edit an answer; run 3 must re-push quiz + question
+                  (with-current-buffer (find-file-noselect org-file)
+                    (goto-char (point-min))
+                    (search-forward "- [ ] Answer B")
+                    (replace-match "- [ ] Answer C" t t)
+                    (save-buffer))
+                  (setq question-writes 0)
+                  (org-canvas-sync-quizzes)
+                  (expect quiz-writes :to-equal 2)
+                  (expect question-writes :to-equal 1)))))
+        (delete-directory temp-dir t))))
+
   (it "continues after quiz failure"
     (let ((temp-dir (make-temp-file "quiz-test" t)))
       (unwind-protect
