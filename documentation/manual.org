@@ -1663,6 +1663,27 @@ The following items are never treated as orphans:
 | =org-canvas-delete-all-calendar-events=      | Delete all calendar events   |
 | =org-canvas-delete-all-sections=             | Delete all sections          |
 
+** Prune Commands
+
+Deleting a heading from an org file does not delete the item on Canvas —
+sync only warns about the orphaned =CANVAS_ID=.  Prune commands close
+that gap: they list the Canvas items whose ID appears nowhere in the
+org file (i.e. headings you deleted locally), show you their names, and
+delete them only after you confirm.  Items still present in the file
+are never touched.
+
+| Command                                | Description                      |
+|----------------------------------------+----------------------------------|
+| =org-canvas-prune-assignments=           | Prune orphaned assignments       |
+| =org-canvas-prune-quizzes=               | Prune orphaned classic quizzes   |
+| =org-canvas-prune-pages=                 | Prune orphaned pages             |
+| =org-canvas-prune-modules=               | Prune orphaned modules           |
+| =org-canvas-prune-discussions=           | Prune orphaned discussions       |
+| =org-canvas-prune-announcements=         | Prune orphaned announcements     |
+| =org-canvas-prune-assignment-groups=     | Prune orphaned assignment groups |
+| =org-canvas-prune-group-categories=      | Prune orphaned group categories  |
+| =org-canvas-prune-calendar-events=       | Prune orphaned calendar events   |
+
 ** Sync at Point Commands
 
 These commands sync just the item at the current cursor position:
