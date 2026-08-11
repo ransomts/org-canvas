@@ -234,8 +234,11 @@ timestamp parser into an interactive prompt."
       (with-temp-org-buffer "* A\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
         (org-back-to-heading)
         ;; Must not error on the full documented shape, and must read the
-        ;; documented `points_possible' field into POINTS.
-        (org-canvas--assignment-pull-item response (point))
+        ;; documented `points_possible' field into POINTS.  The overrides
+        ;; sub-fetch is mocked so the network guard stays quiet.
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (&rest _) nil)))
+          (org-canvas--assignment-pull-item response (point)))
         (expect (org-entry-get (point) "POINTS") :to-be-truthy))))
 
   (it "assignment-group pull-item tolerates the full documented response"
