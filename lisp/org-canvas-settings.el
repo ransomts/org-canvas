@@ -335,31 +335,39 @@ Always uses PUT since the course already exists."
          (signal (car err) (cdr err)))))))
 
 (defun org-canvas--settings-create-late-policy (endpoint late-policy-payload)
-  "POST LATE-POLICY-PAYLOAD to ENDPOINT to create a new late policy."
+  "POST LATE-POLICY-PAYLOAD to ENDPOINT to create a new late policy.
+A 400 saying \"only one late policy\" means a policy exists but the
+PATCH update leg failed to reach it — a contradiction worth naming
+explicitly instead of a generic failure (issue #13)."
   (condition-case err
       (progn
         (org-canvas-api-request 'POST endpoint :data late-policy-payload)
         (org-canvas--log-info org-canvas--logger "[Execute] Late policy created via POST"))
     (error
-     (org-canvas--log-error org-canvas--logger "[Execute] Late policy sync failed: %s"
-       (error-message-string err)))))
+     (if (string-match-p "only one late policy" (error-message-string err))
+         (org-canvas--log-error org-canvas--logger
+           "[Execute] Late policy sync failed: a policy exists on Canvas but the PATCH update did not reach it (route or transport problem) — %s"
+           (error-message-string err))
+       (org-canvas--log-error org-canvas--logger "[Execute] Late policy sync failed: %s"
+         (error-message-string err))))))
 
 (defun org-canvas--settings-push-late-policy (late-policy-payload)
   "Push LATE-POLICY-PAYLOAD to Canvas late policy endpoint.
-Tries PUT first to update an existing policy; on a 404 (course has
+Tries PATCH first to update an existing policy; on a 404 (course has
 no late policy yet) falls back to POST to create one.
 
-Canvas documents the update as PATCH, but the plz HTTP client cannot
-send PATCH (it degrades to a bodyless GET), so updates never worked
-via PATCH.  Rails routes PUT to the same update action, so PUT is
-used instead."
+Canvas routes the late-policy update as PATCH only — PUT is not
+routed and 404s even when a policy exists, which made the POST
+fallback fire and 400 on every re-sync (issue #13).  PATCH is real
+now: it goes through the direct curl fallback
+`org-canvas--api-curl-patch' since plz cannot send it."
   (when late-policy-payload
     (let ((endpoint (org-canvas-api-course-endpoint "late_policy")))
       (org-canvas--log-info org-canvas--logger "[Execute] Syncing late policy...")
       (condition-case err
           (progn
-            (org-canvas-api-request 'PUT endpoint :data late-policy-payload)
-            (org-canvas--log-info org-canvas--logger "[Execute] Late policy updated via PUT"))
+            (org-canvas-api-request 'PATCH endpoint :data late-policy-payload)
+            (org-canvas--log-info org-canvas--logger "[Execute] Late policy updated via PATCH"))
         (error
          (if (org-canvas--404-error-p err)
              (progn
