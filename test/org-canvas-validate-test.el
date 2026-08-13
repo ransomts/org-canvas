@@ -2701,6 +2701,15 @@ EXCEPT is a list of filenames to skip."
         (expect (plist-get (car issues) :message) :to-match "sum to 120")
         (expect (plist-get (car issues) :message) :to-match "deflated"))))
 
+  (it "reports a fractional total without rounding it away"
+    ;; Whole sums print as "60", not "60.0"; a fractional one has to keep
+    ;; its decimals or the message would claim a total nobody wrote.
+    (with-validate-test-dir dir
+      (test-validate--weights-file dir "30.5" "30.0")
+      (let ((issues (org-canvas--validate-weight-sum
+                     (expand-file-name "assignment-groups.org" dir))))
+        (expect (plist-get (car issues) :message) :to-match "sum to 60\\.5"))))
+
   (it "passes when the weights total exactly 100"
     (with-validate-test-dir dir
       (test-validate--weights-file dir "50.0" "30.0" "20.0")
