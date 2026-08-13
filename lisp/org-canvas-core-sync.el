@@ -467,14 +467,20 @@ with optional ID-FIELD, ID-PROPERTY, TITLE-KEY, POST-FN."
                                                    parse-fn build-fn push-fn
                                                    finalize-fn
                                                    &optional pull-item-fn title-key
-                                                   hash-extra-fn)
+                                                   hash-extra-fn after-sync-fn)
   "Run the full sync pipeline for FEATURE-NAME.
 SYNC-FILE is the expanded org file path.  QUERY is the org match query.
 PARSE-FN, BUILD-FN, PUSH-FN, FINALIZE-FN are the 4-stage pipeline functions.
 PULL-ITEM-FN enables interactive conflict pull.  TITLE-KEY is the plist key
 for the display name in logs.  HASH-EXTRA-FN, when non-nil, is called with
 the parsed data and its string result is folded into the payload hash
-\(see `org-canvas--sync-payload-hash')."
+\(see `org-canvas--sync-payload-hash').
+
+AFTER-SYNC-FN, when non-nil, is called with no arguments once every entry
+has been processed, just before the summary.  It is the place for checks
+that need remote state and so cannot live in the offline validator — it
+must not signal, since a reconciliation problem should never fail a sync
+that otherwise succeeded."
   (org-canvas-clear-log)
   (let ((org-canvas--conflict-apply-all nil)
         (org-canvas--current-pull-item-fn pull-item-fn)
@@ -500,6 +506,8 @@ the parsed data and its string result is folded into the payload hash
         (org-canvas--sync-process-entry marker ctx))
       (dolist (m targets) (set-marker m nil))
       (org-canvas--sync-warn-orphans all-ids-before (car synced-ids) feature-name)
+      (when after-sync-fn
+        (funcall after-sync-fn))
       (org-canvas--sync-log-summary feature-name sync-file counters))))
 
 (defconst org-canvas--singular-overrides
@@ -541,6 +549,9 @@ ARGS is a plist with the following keys:
   :hash-extra - Optional function called with the parsed data; its string
                 result is folded into the payload hash so state outside the
                 payload (e.g. module items) participates in change detection
+  :after-sync - Optional function of no arguments run once after every entry
+                is processed, for reconciliation that needs remote state and
+                so cannot live in the offline validator.  Must not signal.
   :no-at-point - When non-nil, suppress generating the sync-at-point function
 
 When :endpoint is provided but :push is not, a push function is auto-generated
@@ -565,6 +576,7 @@ Example usage:
          (title-key (plist-get args :title-key))
          (pull-item-fn (plist-get args :pull-item-fn))
          (hash-extra-fn (plist-get args :hash-extra))
+         (after-sync-fn (plist-get args :after-sync))
          (no-at-point (plist-get args :no-at-point))
          (push-fn (or (plist-get args :push)
                       (when endpoint
@@ -592,7 +604,7 @@ Example usage:
          (org-canvas--sync-run-pipeline
           ,feature-name (expand-file-name ,file-expr)
           ,query ,parse-fn ,build-fn ,push-fn ,finalize-fn
-          ,pull-item-fn ,title-key ,hash-extra-fn))
+          ,pull-item-fn ,title-key ,hash-extra-fn ,after-sync-fn))
        ,@(unless no-at-point
            `(;;;###autoload
              (defun ,at-point-fn-name ()
