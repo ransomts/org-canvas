@@ -3492,9 +3492,13 @@ Returns (COUNTERS . FINAL-MESSAGE)."
     (expect (cdr (test-files--sync-with '(:success))) :not :to-match "would upload")))
 
 (describe "org-canvas--file-get-or-create-folder by_path result"
-  ;; `(and folders (> (length folders) 0))' survived both `and'->`or' and
-  ;; `>'->`>=': no test drove by_path returning an empty list, which is
-  ;; what Canvas gives for a path that does not exist yet.
+  ;; No test drove by_path returning an empty list, which is what Canvas
+  ;; gives for a path that does not exist yet.  Note the `and'->`or'
+  ;; mutant here is equivalent and stays alive by design: an empty vector
+  ;; is truthy in Elisp, so `or' takes the "use last folder" branch,
+  ;; `(elt [] -1)' signals, and the enclosing condition-case creates the
+  ;; folder anyway — the same observable outcome.  These specs are for
+  ;; the behavior, not for that mutant.
   (it "creates the folder when by_path returns an empty list"
     (with-org-canvas-test-config
       (let ((created nil))
@@ -3577,11 +3581,77 @@ Returns (COUNTERS . FINAL-MESSAGE)."
         (expect (alist-get 'location result)
                 :to-equal "https://canvas.example/api/v1/files/7"))))
 
+  (it "prefers the Location when a JSON body exists but has no id"
+    ;; The discriminating case for the first cond clause: with a JSON
+    ;; body present but no id, `and' must fall through to Location while
+    ;; `or' would wrongly return the idless body as the file object.
+    (with-temp-buffer
+      (insert "HTTP/1.1 201 Created\n"
+              "Location: https://canvas.example/api/v1/files/7\n"
+              "Content-Type: application/json\n\n"
+              "{\"upload_status\": \"pending\"}")
+      (goto-char (point-min))
+      (let ((result (org-canvas--file-parse-upload-response "/tmp/a.pdf" "https://u")))
+        (expect (alist-get 'location result)
+                :to-equal "https://canvas.example/api/v1/files/7")
+        (expect (alist-get 'upload_status result) :to-be nil))))
+
   (it "signals when there is neither an id nor a Location"
     (with-temp-buffer
       (insert "HTTP/1.1 500 Internal Server Error\n\nboom")
       (goto-char (point-min))
       (expect (org-canvas--file-parse-upload-response "/tmp/a.pdf" "https://u")
               :to-throw 'org-canvas-api-error))))
+
+(describe "org-canvas--file-pull-mode partial heading"
+  ;; `(unless (or cid link-path) ...)' marks a heading as a folder
+  ;; container only when BOTH are absent.  Existing tests covered
+  ;; neither-present and both-present, where `or' and `and' agree, so
+  ;; the mutation survived.  The discriminating case is a heading with
+  ;; exactly one of the two: under `and' it would be mistaken for a
+  ;; folder and the pull would reshape the whole file hierarchically.
+  (it "is fresh for a link that has not been synced yet"
+    (with-temp-org-buffer
+     "* [[file:a.pdf][a.pdf]]
+"
+     (expect (org-canvas--file-pull-mode) :to-equal 'fresh))))
+
+(describe "org-canvas-delete-all-files reported count"
+  ;; `(setq deleted-file-count (1+ deleted-file-count))' survived: the
+  ;; closing message was never read back, so the tally could be wrong.
+  (it "counts only the deletions that succeeded"
+    (with-org-canvas-test-config
+      (let ((said nil)
+            (dir (make-temp-file "delall-" t)))
+        (unwind-protect
+            (let ((files-file (expand-file-name "files.org" dir)))
+              (with-temp-file files-file (insert "* Files\n"))
+              (let ((org-canvas-files-file files-file))
+                (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t))
+                          ((symbol-function 'org-canvas-clear-log) #'ignore)
+                          ((symbol-function 'display-buffer) #'ignore)
+                          ((symbol-function 'org-canvas-api-request-all-pages)
+                           (lambda (&rest _)
+                             '(((id . 1) (display_name . "a.pdf"))
+                               ((id . 2) (display_name . "b.pdf"))
+                               ((id . 3) (display_name . "c.pdf")))))
+                          ((symbol-function 'org-canvas--file-delete-all-folders)
+                           (lambda () 0))
+                          ((symbol-function 'org-canvas--clean-local-sync-properties)
+                           #'ignore)
+                          ((symbol-function 'org-canvas-api-request)
+                           (lambda (_method url &rest _)
+                             ;; The middle delete fails.
+                             (when (string-match-p "files/2" url)
+                               (org-canvas--signal 'org-canvas-api-error "nope"))
+                             nil))
+                          ((symbol-function 'message)
+                           (lambda (fmt &rest args)
+                             (setq said (apply #'format fmt args)))))
+                  (org-canvas-delete-all-files))))
+          (delete-directory dir t))
+        ;; Full equality, not a substring match: "2 files" also matches
+        ;; "-2 files", so a negated counter would slip through a regex.
+        (expect said :to-equal "Deletion complete. 2 files, 0 folders removed.")))))
 
 ;;; org-canvas-files-test.el ends here

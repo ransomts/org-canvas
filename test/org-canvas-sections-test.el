@@ -996,6 +996,63 @@ Returns the final message string."
     (expect (test-sections--pull-message '())
             :to-equal "Section pull: 0 created, 0 updated.")))
 
+(describe "org-canvas-sync-overrides reported totals"
+  ;; `assignments-processed' is only visible in the closing message, so
+  ;; its `1+' survived.  The totals tell the user how much of their
+  ;; overrides table actually reached Canvas.
+  (it "counts each assignment that carried an overrides table"
+    (let ((dir (make-temp-file "ovr-" t))
+          (said nil))
+      (unwind-protect
+          (let ((assignments-file (expand-file-name "assignments.org" dir)))
+            (with-temp-file assignments-file
+              (insert "* First
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+
+#+NAME: overrides
+| Section | Due At |
+|---------+--------|
+| S1      | <2026-10-19 Mon 23:59> |
+
+* Second
+:PROPERTIES:
+:CANVAS_ID: 2
+:END:
+
+#+NAME: overrides
+| Section | Due At |
+|---------+--------|
+| S1      | <2026-10-20 Tue 23:59> |
+
+* No Table
+:PROPERTIES:
+:CANVAS_ID: 3
+:END:
+"))
+            (let ((org-canvas-assignments-file assignments-file))
+              (with-org-canvas-test-config
+                (with-sync-test-env
+                  (cl-letf (((symbol-function 'org-canvas--override-parse-table)
+                             (lambda (&rest _) '((:section-id "7"))))
+                            ((symbol-function 'org-canvas--override-sync-for-assignment)
+                             (lambda (&rest _) '(1 0 0)))
+                            ((symbol-function 'message)
+                             (lambda (fmt &rest args)
+                               (setq said (apply #'format fmt args)))))
+                    (org-canvas-sync-overrides))))))
+        (let ((buf (find-buffer-visiting (expand-file-name "assignments.org" dir))))
+          (when buf
+            (with-current-buffer buf (set-buffer-modified-p nil))
+            (kill-buffer buf)))
+        (delete-directory dir t))
+      ;; Two assignments have tables; the third must not be counted.
+      ;; Full equality, not a substring match: "2 assignments" also
+      ;; matches "-2 assignments", so a negated counter would slip past.
+      (expect said :to-equal
+              "Override sync: 2 assignments, 2 created, 0 updated, 0 deleted."))))
+
 (describe "org-canvas--override-row-redundant-p"
   ;; No test touched this predicate directly, so both `or's and both
   ;; `equal's in it survived.  It decides whether an override row is
