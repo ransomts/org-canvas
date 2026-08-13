@@ -519,6 +519,16 @@ with `location' key."
 
       (org-canvas--log-debug org-canvas--logger "[Stage 3: Upload Step 2] Sending to %s" upload-url)
 
+      ;; `url-retrieve-synchronously' returns nil when it hits its timeout.
+      ;; Without this check the nil falls through to `with-current-buffer'
+      ;; and surfaces as "Wrong type argument: stringp, nil", which says
+      ;; nothing about the timeout that actually caused it.  Canvas may well
+      ;; have finished storing the file, so the caller retries by name.
+      (unless buf
+        (org-canvas--signal 'org-canvas-api-error
+          "Upload of '%s' timed out after %ss (see `org-canvas-upload-timeout'); Canvas may have stored the file anyway"
+          (file-name-nondirectory local-path) org-canvas-upload-timeout))
+
       (unwind-protect
           (with-current-buffer buf
             (org-canvas--file-parse-upload-response local-path upload-url))
@@ -580,12 +590,21 @@ Per Canvas docs, this GET request must be authenticated."
         (org-canvas--signal 'org-canvas-api-error
           "No file ID or location in upload response")))))
 
-(defun org-canvas--file-push-to-api (data)
-  "Execute the full 3-step upload process for DATA."
+(cl-defun org-canvas--file-push-to-api (data)
+  "Execute the full 3-step upload process for DATA.
+Returns the dry-run sentinel `org-canvas--dry-run-response' without
+contacting Canvas when `org-canvas--dry-run' is non-nil.  The guard sits
+here rather than at the call site so a single check covers both the
+DELETE of the old file object and the 3-step upload."
   (let* ((canvas-id (plist-get data :canvas-id))
          (display-name (plist-get data :display-name))
          (local-path (plist-get data :local-path))
          (folder-path (plist-get data :folder-path)))
+
+    (when org-canvas--dry-run
+      (org-canvas--log-info org-canvas--logger "[DRY-RUN] Would %s '%s'"
+        (if canvas-id "REPLACE" "UPLOAD") display-name)
+      (cl-return-from org-canvas--file-push-to-api org-canvas--dry-run-response))
 
     (org-canvas--log-info org-canvas--logger "[Stage 3: Execute] Uploading '%s'" display-name)
 
@@ -627,10 +646,16 @@ Per Canvas docs, this GET request must be authenticated."
              display-name local-path
              (if (string-empty-p folder-path) "root" folder-path)
              (error-message-string err))
-           (signal (car err) (cdr err))))))))
+           ;; The old file object is already gone by now, so before giving
+           ;; up check whether Canvas stored the upload anyway.
+           (or (org-canvas--file-recover-upload-id data folder-id)
+               (signal (car err) (cdr err)))))))))
 
-(defun org-canvas--file-search-by-name (display-name folder-path)
-  "Search for a file with DISPLAY-NAME in FOLDER-PATH on Canvas."
+(defun org-canvas--file-search-by-name (display-name folder-path &optional folder-id)
+  "Search for a file with DISPLAY-NAME in FOLDER-PATH on Canvas.
+The Canvas search is course-wide, so when FOLDER-ID is given only files
+actually living in that folder are considered — otherwise a same-named
+file elsewhere in the course could be mistaken for this one."
   (org-canvas--log-info org-canvas--logger "[Stage 3: Search] Looking for '%s' in '%s'..."
     display-name (if (string-empty-p folder-path) "root" folder-path))
   (condition-case err
@@ -639,11 +664,45 @@ Per Canvas docs, this GET request must be authenticated."
              (results (append (org-canvas-api-request 'GET endpoint :params params) nil)))
         (org-canvas--log-debug org-canvas--logger "[Stage 3: Search] Found %d results" (length results))
         (cl-find-if (lambda (f)
-                      (string= (alist-get 'display_name f) display-name))
+                      (and (string= (alist-get 'display_name f) display-name)
+                           (or (null folder-id)
+                               (equal (alist-get 'folder_id f) folder-id))))
                     results))
     (error
      (org-canvas--log-warning org-canvas--logger "[Stage 3: Search] Search failed: %s" (error-message-string err))
      nil)))
+
+(defun org-canvas--file-recover-upload-id (data folder-id)
+  "Look up DATA's file on Canvas in FOLDER-ID after a failed upload.
+An upload that errors part-way — a timeout on a large file, or step 3
+exhausting its confirmation retries — can still have been stored by
+Canvas.  The old file object was already deleted at that point, so
+giving up would leave CANVAS_ID pointing at a dead id while a live file
+sits under a new one; the next sync would then upload a duplicate.
+
+Returns the recovered Canvas file object, or nil when nothing usable was
+found.  A match carrying the *old* id is rejected: that means the upload
+never landed (and the delete did not either), so the entry must stay
+dirty rather than be recorded as synced."
+  (let* ((display-name (plist-get data :display-name))
+         (old-id (plist-get data :canvas-id))
+         (found (org-canvas--file-search-by-name
+                 display-name (plist-get data :folder-path) folder-id)))
+    (cond
+     ((null found)
+      (org-canvas--log-debug org-canvas--logger
+        "[Stage 3: Recover] No Canvas file named '%s' after the failure" display-name)
+      nil)
+     ((and old-id (string= (format "%s" (alist-get 'id found)) old-id))
+      (org-canvas--log-debug org-canvas--logger
+        "[Stage 3: Recover] '%s' still carries the old ID %s — upload did not land"
+        display-name old-id)
+      nil)
+     (t
+      (org-canvas--log-warning org-canvas--logger
+        "[Stage 3: Recover] Upload of '%s' errored but the file exists on Canvas as ID %s — recording that ID"
+        display-name (alist-get 'id found))
+      found))))
 
 ;;;; 4. Stage: Finalization
 
@@ -757,42 +816,65 @@ file ID and kills module items pointing at it)."
                  (plist-get data :usage-license)
                  (plist-get data :copyright)))))
 
+(defun org-canvas--file-record-upload (data response file-hash old-id)
+  "Record a completed upload of DATA at point.
+RESPONSE is the Canvas file object, FILE-HASH the content hash to store
+so an unchanged file is skipped next time, and OLD-ID the CANVAS_ID the
+entry carried beforehand (nil on a first upload).  Saves the new id,
+applies usage rights, and notes an id change for
+`org-canvas--file-warn-changed-ids'."
+  (org-canvas--file-finalize data response)
+  (let ((fid (alist-get 'id response)))
+    (when (and fid (plist-get data :use-justification))
+      (org-canvas--file-set-usage-rights fid data))
+    (when (and old-id fid (not (string= (format "%s" fid) old-id)))
+      (push (plist-get data :display-name) org-canvas--file-changed-ids)))
+  (org-canvas-org-set-property (point) org-canvas--prop-payload-hash file-hash))
+
+(defun org-canvas--file-sync-parsed-entry (data)
+  "Upload the file described by DATA, with point on its heading.
+Returns :success, :skip (content unchanged since the last upload), or
+:dry-run.  During a dry run the push returns the sentinel and none of
+the bookkeeping in `org-canvas--file-record-upload' runs: no CANVAS_ID
+is written, no PAYLOAD_HASH is stored, and no usage rights are set — a
+preview must never leave an entry looking synced."
+  (let ((file-hash (org-canvas--file-content-hash data))
+        (stored-hash (org-entry-get (point) org-canvas--prop-payload-hash))
+        (old-id (plist-get data :canvas-id)))
+    (cond
+     ((and old-id stored-hash (string= file-hash stored-hash))
+      (org-canvas--log-info org-canvas--logger
+        "[Skip] '%s' unchanged — keeping Canvas file ID %s"
+        (plist-get data :display-name) old-id)
+      :skip)
+     (t
+      (org-canvas--log-info org-canvas--logger "----------------------------------------")
+      (let ((response (org-canvas--file-push-to-api data)))
+        (cond
+         ((org-canvas--dry-run-response-p response)
+          (message "Files [DRY-RUN] Would %s '%s'"
+                   (if old-id "replace" "upload")
+                   (plist-get data :display-name))
+          :dry-run)
+         (t
+          (org-canvas--file-record-upload data response file-hash old-id)
+          :success)))))))
+
 (defun org-canvas--file-sync-single-entry (marker)
   "Process a single file entry at MARKER.
-Returns :success, :skip (folder heading or unchanged file), or :fail.
-Unchanged files (same content hash as the last successful upload) are
-skipped to keep their Canvas file ID stable.  When an upload does
-replace a file's CANVAS_ID, the display name is recorded in
+Returns :success, :skip (folder heading or unchanged file), :dry-run, or
+:fail.  Unchanged files (same content hash as the last successful
+upload) are skipped to keep their Canvas file ID stable.  When an upload
+does replace a file's CANVAS_ID, the display name is recorded in
 `org-canvas--file-changed-ids'."
   (with-current-buffer (marker-buffer marker)
     (save-excursion
       (goto-char (marker-position marker))
       (condition-case err
           (let ((data (org-canvas--file-parse-entry)))
-            (if (not data)
-                :skip
-              (let ((file-hash (org-canvas--file-content-hash data))
-                    (stored-hash (org-entry-get (point) org-canvas--prop-payload-hash))
-                    (old-id (plist-get data :canvas-id)))
-                (if (and old-id stored-hash (string= file-hash stored-hash))
-                    (progn
-                      (org-canvas--log-info org-canvas--logger
-                        "[Skip] '%s' unchanged — keeping Canvas file ID %s"
-                        (plist-get data :display-name) old-id)
-                      :skip)
-                  (org-canvas--log-info org-canvas--logger "----------------------------------------")
-                  (let ((response (org-canvas--file-push-to-api data)))
-                    (org-canvas--file-finalize data response)
-                    (let ((fid (alist-get 'id response)))
-                      (when (and fid (plist-get data :use-justification))
-                        (org-canvas--file-set-usage-rights fid data))
-                      (when (and old-id fid
-                                 (not (string= (format "%s" fid) old-id)))
-                        (push (plist-get data :display-name)
-                              org-canvas--file-changed-ids))))
-                  (org-canvas-org-set-property (point) org-canvas--prop-payload-hash
-                                               file-hash)
-                  :success))))
+            (if data
+                (org-canvas--file-sync-parsed-entry data)
+              :skip))
         (error
          (org-canvas--log-error org-canvas--logger "[FAILED] At point %d: %s"
            (marker-position marker) (error-message-string err))
@@ -841,14 +923,20 @@ unaffected modules keep their skip."
       (error
        (org-canvas--log-warning org-canvas--logger "[Pre-flight] Warning: %s" (error-message-string err))))
 
-    ;; Pre-create all necessary folders before uploading any files
+    ;; Pre-create all necessary folders before uploading any files.
+    ;; Folder creation is a POST, so a dry run only reports the paths.
     (let ((folder-paths (org-canvas--file-collect-folder-paths files-file)))
-      (org-canvas--file-ensure-folders-exist folder-paths))
+      (if org-canvas--dry-run
+          (dolist (path folder-paths)
+            (org-canvas--log-info org-canvas--logger
+              "[DRY-RUN] Would ensure folder exists: %s" path))
+        (org-canvas--file-ensure-folders-exist folder-paths)))
 
     (let ((targets nil)
           (success-count 0)
           (fail-count 0)
-          (skip-count 0))
+          (skip-count 0)
+          (dry-run-count 0))
       ;; Gather all entries (at any level)
       (with-current-buffer (find-file-noselect files-file)
         (setq targets (org-map-entries (lambda () (point-marker)) t 'file)))
@@ -863,6 +951,7 @@ unaffected modules keep their skip."
                         (+ success-count skip-count fail-count)
                         (length targets)))
             (:skip (setq skip-count (1+ skip-count)))
+            (:dry-run (setq dry-run-count (1+ dry-run-count)))
             (:fail (setq fail-count (1+ fail-count))
                    (message "Files [%d/%d] FAILED"
                      (+ success-count skip-count fail-count)
@@ -881,13 +970,18 @@ unaffected modules keep their skip."
 
       (org-canvas--log-info org-canvas--logger "========================================")
       (org-canvas--log-info org-canvas--logger ">>> FILE SYNC COMPLETE")
-      (org-canvas--log-info org-canvas--logger "Success: %d | Failed: %d | Skipped (folders/unchanged): %d"
-        success-count fail-count skip-count)
+      (org-canvas--log-info org-canvas--logger
+        "Success: %d | Failed: %d | Skipped (folders/unchanged): %d | Dry-run: %d"
+        success-count fail-count skip-count dry-run-count)
       (org-canvas--log-info org-canvas--logger "========================================")
       (org-canvas--sync-record-feature-stats "Files"
-        (list :success success-count :skip skip-count :fail fail-count))
-      (message "File Sync: %d success, %d failed, %d skipped."
-               success-count fail-count skip-count))))
+        (list :success success-count :skip skip-count :fail fail-count
+              :dry-run dry-run-count))
+      (message "File Sync: %d success, %d failed, %d skipped%s."
+               success-count fail-count skip-count
+               (if (> dry-run-count 0)
+                   (format ", %d would upload" dry-run-count)
+                 "")))))
 
 ;;;; Delete Functions
 

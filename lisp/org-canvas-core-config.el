@@ -165,6 +165,26 @@ is newer, warn and skip the item.  Set to nil or use
   :type 'boolean
   :group 'org-canvas)
 
+(defcustom org-canvas-assume-yes nil
+  "When non-nil, answer yes to non-destructive confirmation prompts.
+Intended for unattended runs.  Prompts that guard mass deletion still
+ask; this only covers prompts such as \"file already exists, overwrite
+headings?\" that merely confirm the operation the user already asked
+for.  Prompts are also assumed yes under `noninteractive', because a
+batch Emacs has no one to answer them: `y-or-n-p' there reads from
+stdin, which silently consumes input meant for something else.
+See `org-canvas--confirm'."
+  :type 'boolean
+  :group 'org-canvas)
+
+(defun org-canvas--confirm (prompt)
+  "Ask PROMPT with `y-or-n-p' and return the answer.
+Returns t without prompting when `org-canvas-assume-yes' is non-nil or
+Emacs is running in batch mode (`noninteractive')."
+  (if (or org-canvas-assume-yes noninteractive)
+      t
+    (y-or-n-p prompt)))
+
 ;; Attempt to load credentials from a separate file if present
 (require 'org-canvas-credentials nil t)
 

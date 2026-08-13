@@ -351,7 +351,7 @@ explicitly instead of a generic failure (issue #13)."
        (org-canvas--log-error org-canvas--logger "[Execute] Late policy sync failed: %s"
          (error-message-string err))))))
 
-(defun org-canvas--settings-push-late-policy (late-policy-payload)
+(cl-defun org-canvas--settings-push-late-policy (late-policy-payload)
   "Push LATE-POLICY-PAYLOAD to Canvas late policy endpoint.
 Tries PATCH first to update an existing policy; on a 404 (course has
 no late policy yet) falls back to POST to create one.
@@ -360,9 +360,16 @@ Canvas routes the late-policy update as PATCH only — PUT is not
 routed and 404s even when a policy exists, which made the POST
 fallback fire and 400 on every re-sync (issue #13).  PATCH is real
 now: it goes through the direct curl fallback
-`org-canvas--api-curl-patch' since plz cannot send it."
+`org-canvas--api-curl-patch' since plz cannot send it.
+
+The dry-run check lives here rather than at the call site so it covers
+both the PATCH and the POST fallback."
   (when late-policy-payload
     (let ((endpoint (org-canvas-api-course-endpoint "late_policy")))
+      (when org-canvas--dry-run
+        (org-canvas--log-info org-canvas--logger
+          "[DRY-RUN] Would update the late policy")
+        (cl-return-from org-canvas--settings-push-late-policy nil))
       (org-canvas--log-info org-canvas--logger "[Execute] Syncing late policy...")
       (condition-case err
           (progn

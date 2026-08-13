@@ -1404,10 +1404,12 @@ ITEM is the API response alist, POS is the heading position."
 
 (defun org-canvas--pull-confirm-overwrite (file feature-name)
   "Prompt user to confirm overwrite if FILE already has content.
-Signals `user-error' with FEATURE-NAME if aborted."
+Signals `user-error' with FEATURE-NAME if aborted.  Uses
+`org-canvas--confirm', so a batch run proceeds instead of blocking on a
+prompt that fires for every pull whose file already exists."
   (when (and (file-exists-p file)
              (> (file-attribute-size (file-attributes file)) 0)
-             (not (y-or-n-p
+             (not (org-canvas--confirm
                    (format "%s already exists.  Pull will overwrite headings.  Continue? "
                            (file-name-nondirectory file)))))
     (user-error "%s pull aborted" (capitalize feature-name))))
@@ -1415,11 +1417,12 @@ Signals `user-error' with FEATURE-NAME if aborted."
 (defun org-canvas--pull-confirm-unsaved (file feature-name)
   "If a buffer visits FILE with unsaved change, save it or abort.
 Prompt the user; on `yes' save the buffer, on `no' signal a user-error
-mentioning FEATURE-NAME."
+mentioning FEATURE-NAME.  Batch runs save (see `org-canvas--confirm')."
   (let ((buf (find-buffer-visiting file)))
     (when (and buf (buffer-modified-p buf))
-      (if (y-or-n-p (format "%s has unsaved changes.  Save before pulling? "
-                            (file-name-nondirectory file)))
+      (if (org-canvas--confirm
+           (format "%s has unsaved changes.  Save before pulling? "
+                   (file-name-nondirectory file)))
           (with-current-buffer buf (org-canvas--save-buffer))
         (user-error "%s pull aborted: unsaved changes in %s"
                     (capitalize feature-name)

@@ -421,6 +421,14 @@ The conversion from the codebase convention (`'GET`, `'POST`) to plz format:
 
 `org-canvas--export-subtree-body-to-html` strips property drawers from its temp buffer before `org-canvas--resolve-body-links` runs. Drawer links (`GROUP:`, `RUBRIC_LINK:`) can't resolve to Canvas URLs (assignment groups and rubrics have no user-facing page) and would emit false "Unresolved" warnings; the HTML exporter drops drawers anyway, so output is unchanged.
 
+### Dry Run Is a Per-Module Obligation, Not a Shared Guarantee
+
+`org-canvas--dry-run` is checked by the shared machinery — `org-canvas--sync-execute-pipeline` (which skips push *and* finalize) and `org-canvas--push-to-api` — so every macro-based module is covered for free. **Modules with custom sync loops are not.** Issue #34: `org-canvas-sync-dry-run` issued `DELETE /api/v1/files/:id` against a live course and re-uploaded five files, because `org-canvas-sync-files` runs its own loop into `org-canvas--file-push-to-api`, which talks to `org-canvas-api-request` directly. Overrides (PUT/POST/DELETE reconcile) and the settings late-policy PATCH had the same hole.
+
+When adding or editing a module that does not go through `org-canvas-define-sync`, guard **every** write path yourself, and put the check at the point where one guard covers the whole sequence (`org-canvas--file-push-to-api` covers the DELETE *and* the 3-step upload; `org-canvas--settings-push-late-policy` covers the PATCH *and* its POST fallback). Return `org-canvas--dry-run-response` and have the caller recognize it with `org-canvas--dry-run-response-p`, so finalize, `PAYLOAD_HASH` writes, and other bookkeeping are skipped — a preview must never leave an entry looking synced. Side effects that are not requests need guarding too (folder pre-creation in files).
+
+`test/org-canvas-dry-run-test.el` enforces this for every sync entry point against a throwaway copy of `demo-course/`: zero non-GET requests, and the .org files byte-identical afterward. Add new sync commands to `org-canvas-dry-run--sync-commands` (a spec asserts each is `fboundp`, so a rename surfaces there).
+
 ### Test Isolation: the Network Guard Blocks Unmocked HTTP
 
 test-helper.el advises the network primitives — `plz`, `url-retrieve-synchronously`, and `call-process` when spawning `plz-curl-program` — to signal "Unmocked network call during tests" instead of performing real I/O. The test environment loads the user's real `org-canvas-credentials.el`, so before the guard an unmocked code path (e.g. the assignment overrides sub-fetch) silently attempted live API calls with real credentials. Tests that exercise API internals are unaffected: `cl-letf` on those same symbols replaces the whole function cell, advice included. If a new test trips the guard, mock `org-canvas-api-request`/`org-canvas-api-request-all-pages` (or the primitive itself) — never weaken the guard.

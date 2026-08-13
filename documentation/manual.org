@@ -1981,6 +1981,24 @@ Canvas throttles API requests. org-canvas automatically retries on 429 responses
 | =org-canvas-rate-limit-retries=   |       3 | Number of retries on 429/403   |
 | =org-canvas-rate-limit-wait=      |      10 | Seconds between retries        |
 
+** Dry Run
+
+=M-x org-canvas-sync-dry-run= previews a sync: it reads from Canvas to work out what would change, but issues no request that writes.  Every module honors this, including the ones with hand-written sync loops (files, overrides, settings) that do not go through the shared push helper.  A dry run also leaves your Org files untouched -- no =CANVAS_ID=, =LAST_SYNCED= or =PAYLOAD_HASH= is recorded -- so a preview never makes an item look synced.
+
+Note for files specifically: Canvas cannot update file content in place, so a real sync of a changed file deletes the old file object and uploads a new one under a new ID.  A dry run reports this as "Would REPLACE" and performs neither step.
+
+** Unattended and Batch Runs
+
+Under =emacs --batch= there is nobody to answer a prompt, and =y-or-n-p= reads from standard input -- so a prompt can silently consume input meant for something else and derail the rest of the run.  org-canvas therefore assumes yes for confirmation prompts when =noninteractive= is non-nil.
+
+Set =org-canvas-assume-yes= to =t= to get the same behavior in an interactive Emacs:
+
+| Variable                 | Default | Description                                      |
+|--------------------------+---------+--------------------------------------------------|
+| =org-canvas-assume-yes=    | =nil=     | Answer yes to non-destructive confirmations      |
+
+This covers prompts that merely confirm the operation you already asked for, such as "sections.org already exists, pull will overwrite headings" or "buffer has unsaved changes, save first".  Prompts guarding mass deletion (=org-canvas-delete-all-*=, =org-canvas-prune-*=) still ask.
+
 ** Preflight Check
 
 When running =org-canvas-sync=, a preflight check runs automatically before any content is synced. It validates:

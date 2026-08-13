@@ -3163,4 +3163,214 @@
                   (expect org-canvas--file-changed-ids :to-be nil)))))
         (delete-directory temp-dir t)))))
 
+;;;; Upload timeout recovery (issue #34)
+;;
+;; A 6 MB PDF took ~157s against a 120s `org-canvas-upload-timeout'.
+;; `url-retrieve-synchronously' returned nil, the nil reached
+;; `with-current-buffer', and the user saw "Wrong type argument: stringp,
+;; nil" -- while Canvas had in fact stored the file.  The DELETE of the old
+;; object had already run, so CANVAS_ID was left pointing at a dead id.
+
+(describe "org-canvas--file-upload-step2-send timeout"
+  (it "signals a timeout error naming the timeout variable"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'url-retrieve-synchronously)
+                 (lambda (&rest _) nil))
+                ((symbol-function 'org-canvas--file-build-multipart-body)
+                 (lambda (&rest _) "body")))
+        (let ((err (condition-case e
+                       (org-canvas--file-upload-step2-send
+                        '((upload_url . "https://upload.example.com")) "/tmp/big.pdf")
+                     (error e))))
+          (expect (car err) :to-equal 'org-canvas-api-error)
+          ;; The old failure mode: nil reaching `with-current-buffer'.
+          (expect (error-message-string err) :not :to-match "stringp")
+          (expect (error-message-string err) :to-match "timed out")
+          (expect (error-message-string err) :to-match "org-canvas-upload-timeout")))))
+
+  (it "is detected as a timeout by the shared predicate"
+    ;; So the message stays compatible with `org-canvas--timeout-error-p',
+    ;; which the rest of the package uses to trigger search-and-recover.
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'url-retrieve-synchronously)
+                 (lambda (&rest _) nil))
+                ((symbol-function 'org-canvas--file-build-multipart-body)
+                 (lambda (&rest _) "body")))
+        (let ((err (condition-case e
+                       (org-canvas--file-upload-step2-send
+                        '((upload_url . "https://upload.example.com")) "/tmp/big.pdf")
+                     (error e))))
+          (expect (org-canvas--timeout-error-p err) :to-be-truthy))))))
+
+(describe "org-canvas--file-search-by-name folder filtering"
+  (it "ignores a same-named file living in another folder"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (setq test-org-canvas-api-responses
+              '(("files" . [((id . 111) (display_name . "notes.pdf") (folder_id . 7))
+                            ((id . 222) (display_name . "notes.pdf") (folder_id . 9))])))
+        (let ((result (org-canvas--file-search-by-name "notes.pdf" "Labs" 9)))
+          (expect (alist-get 'id result) :to-equal 222)))))
+
+  (it "matches on name alone when no folder id is supplied"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (setq test-org-canvas-api-responses
+              '(("files" . [((id . 111) (display_name . "notes.pdf") (folder_id . 7))])))
+        (let ((result (org-canvas--file-search-by-name "notes.pdf" "")))
+          (expect (alist-get 'id result) :to-equal 111)))))
+
+  (it "returns nil when the only match is in a different folder"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (setq test-org-canvas-api-responses
+              '(("files" . [((id . 111) (display_name . "notes.pdf") (folder_id . 7))])))
+        (expect (org-canvas--file-search-by-name "notes.pdf" "Labs" 9) :to-be nil)))))
+
+(describe "org-canvas--file-recover-upload-id"
+  (it "returns the file Canvas stored despite the error"
+    (cl-letf (((symbol-function 'org-canvas--file-search-by-name)
+               (lambda (&rest _) '((id . 555) (display_name . "big.pdf")))))
+      (let ((result (org-canvas--file-recover-upload-id
+                     '(:display-name "big.pdf" :folder-path "" :canvas-id "123") 100)))
+        (expect (alist-get 'id result) :to-equal 555))))
+
+  (it "rejects a match still carrying the old id"
+    ;; Neither the delete nor the upload landed.  Recording this as success
+    ;; would store the new content hash against the old object and the
+    ;; changed file would never upload again.
+    (cl-letf (((symbol-function 'org-canvas--file-search-by-name)
+               (lambda (&rest _) '((id . 123) (display_name . "big.pdf")))))
+      (expect (org-canvas--file-recover-upload-id
+               '(:display-name "big.pdf" :folder-path "" :canvas-id "123") 100)
+              :to-be nil)))
+
+  (it "returns nil when nothing matches"
+    (cl-letf (((symbol-function 'org-canvas--file-search-by-name)
+               (lambda (&rest _) nil)))
+      (expect (org-canvas--file-recover-upload-id
+               '(:display-name "big.pdf" :folder-path "" :canvas-id "123") 100)
+              :to-be nil)))
+
+  (it "recovers a first upload that has no previous id"
+    (cl-letf (((symbol-function 'org-canvas--file-search-by-name)
+               (lambda (&rest _) '((id . 777) (display_name . "new.pdf")))))
+      (let ((result (org-canvas--file-recover-upload-id
+                     '(:display-name "new.pdf" :folder-path "") 100)))
+        (expect (alist-get 'id result) :to-equal 777)))))
+
+(describe "org-canvas--file-push-to-api upload recovery"
+  (before-each
+    (setq org-canvas--file-root-folder-cache nil)
+    (setq org-canvas--file-folder-cache (make-hash-table :test 'equal)))
+
+  (it "returns the recovered file object instead of signaling"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (method url &rest _args)
+                   (cond
+                    ((and (eq method 'GET) (string-match "folders/root" url))
+                     '((id . 100) (name . "course files")))
+                    ((eq method 'POST)
+                     '((upload_url . "https://upload.example.com")
+                       (upload_params . nil)))
+                    (t nil))))
+                ((symbol-function 'org-canvas--file-upload-step2-send)
+                 (lambda (&rest _)
+                   (org-canvas--signal 'org-canvas-api-error "Upload timed out")))
+                ((symbol-function 'org-canvas--file-search-by-name)
+                 (lambda (&rest _) '((id . 4242) (display_name . "Test.pdf")))))
+        (let ((temp-file (make-temp-file "test" nil ".pdf")))
+          (unwind-protect
+              (progn
+                (with-temp-file temp-file (insert "content"))
+                (let* ((data (list :canvas-id "123"
+                                   :display-name "Test.pdf"
+                                   :local-path temp-file
+                                   :folder-path ""))
+                       (response (org-canvas--file-push-to-api data)))
+                  ;; Finalize can now record the live id rather than leaving
+                  ;; the entry pointing at the deleted one.
+                  (expect (alist-get 'id response) :to-equal 4242)))
+            (delete-file temp-file))))))
+
+  (it "still signals when the file is nowhere on Canvas"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (method url &rest _args)
+                   (cond
+                    ((and (eq method 'GET) (string-match "folders/root" url))
+                     '((id . 100) (name . "course files")))
+                    ((eq method 'POST)
+                     '((upload_url . "https://upload.example.com")
+                       (upload_params . nil)))
+                    (t nil))))
+                ((symbol-function 'org-canvas--file-upload-step2-send)
+                 (lambda (&rest _)
+                   (org-canvas--signal 'org-canvas-api-error "Upload timed out")))
+                ((symbol-function 'org-canvas--file-search-by-name)
+                 (lambda (&rest _) nil)))
+        (let ((temp-file (make-temp-file "test" nil ".pdf")))
+          (unwind-protect
+              (progn
+                (with-temp-file temp-file (insert "content"))
+                (let ((data (list :canvas-id "123"
+                                  :display-name "Test.pdf"
+                                  :local-path temp-file
+                                  :folder-path "")))
+                  (expect (org-canvas--file-push-to-api data) :to-throw)))
+            (delete-file temp-file)))))))
+
+;;;; Dry run (issue #34)
+
+(describe "org-canvas--file-push-to-api dry run"
+  (it "returns the sentinel without contacting Canvas"
+    (with-org-canvas-test-config
+      (let ((calls nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest _args) (push (cons method url) calls) nil)))
+          (let* ((org-canvas--dry-run t)
+                 (response (org-canvas--file-push-to-api
+                            '(:canvas-id "123" :display-name "Test.pdf"
+                              :local-path "/nonexistent.pdf" :folder-path ""))))
+            (expect (org-canvas--dry-run-response-p response) :to-be-truthy)
+            ;; Notably no DELETE /api/v1/files/123.
+            (expect calls :to-equal nil))))))
+
+  (it "does not read the local file at all"
+    ;; The guard sits ahead of every step, so a preview works even for an
+    ;; entry whose local file is missing.
+    (with-org-canvas-test-config
+      (let ((org-canvas--dry-run t))
+        (expect (org-canvas--file-push-to-api
+                 '(:display-name "Gone.pdf" :local-path "/nonexistent.pdf"
+                   :folder-path ""))
+                :not :to-throw)))))
+
+(describe "org-canvas--file-sync-single-entry dry run"
+  (it "records neither CANVAS_ID nor PAYLOAD_HASH"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer
+       "* [[file:missing.pdf][Test.pdf]]
+:PROPERTIES:
+:CANVAS_ID: 123
+:END:
+"
+       (org-back-to-heading t)
+       (let ((marker (point-marker))
+             (org-canvas--file-changed-ids nil))
+         (cl-letf (((symbol-function 'org-canvas--file-parse-entry)
+                    (lambda () (list :canvas-id "123" :display-name "Test.pdf"
+                                     :local-path "/nonexistent.pdf" :folder-path "")))
+                   ((symbol-function 'org-canvas--file-content-hash)
+                    (lambda (_data) "hash-of-new-content")))
+           (let* ((org-canvas--dry-run t)
+                  (result (org-canvas--file-sync-single-entry marker)))
+             (expect result :to-equal :dry-run)
+             ;; Untouched: a preview must not mark the entry as synced.
+             (expect (org-entry-get (point) "CANVAS_ID") :to-equal "123")
+             (expect (org-entry-get (point) org-canvas--prop-payload-hash) :to-be nil)
+             (expect (org-entry-get (point) org-canvas--prop-last-synced) :to-be nil)
+             (expect org-canvas--file-changed-ids :to-be nil))))))))
+
 ;;; org-canvas-files-test.el ends here
