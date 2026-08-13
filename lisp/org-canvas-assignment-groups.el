@@ -136,6 +136,82 @@ because Canvas rejects drop rules when no assignments exist yet."
       (org-canvas--log-debug org-canvas--logger "[Stage 2: Transform] Payload: %S" payload)
       payload)))
 
+;;;; Unmanaged Group Reconciliation
+
+(defun org-canvas--assignment-group-local-ids ()
+  "Return the CANVAS_IDs recorded in `org-canvas-assignment-groups-file'."
+  (let ((file (expand-file-name org-canvas-assignment-groups-file)))
+    (when (file-exists-p file)
+      (with-current-buffer (find-file-noselect file)
+        (save-excursion
+          (goto-char (point-min))
+          (org-map-entries
+           (lambda () (org-entry-get (point) "CANVAS_ID"))
+           "CANVAS_ID={.}" 'file))))))
+
+(defun org-canvas--assignment-group-report-unmanaged (group)
+  "Log GROUP as present on Canvas but absent from the org file.
+Severity follows the consequence: a group holding assignments is an
+active problem, an empty one is a trap that has not sprung yet."
+  (let* ((name (alist-get 'name group))
+         (id (alist-get 'id group))
+         (count (length (append (alist-get 'assignments group) nil))))
+    (if (> count 0)
+        (org-canvas--log-error org-canvas--logger
+          "[Unmanaged] Canvas group '%s' (ID %s) holds %d assignment(s) but is not in %s — if the course applies group weights those assignments count toward nothing.  Add the group to the file, or move the assignments into a managed group."
+          name id count
+          (file-name-nondirectory (expand-file-name org-canvas-assignment-groups-file)))
+      (org-canvas--log-warning org-canvas--logger
+        "[Unmanaged] Canvas group '%s' (ID %s) is not in %s.  It is empty now, so nothing is mis-weighted yet — but an assignment created in the Canvas web UI can default into it."
+        name id
+        (file-name-nondirectory (expand-file-name org-canvas-assignment-groups-file))))
+    count))
+
+(defun org-canvas--assignment-group-reconcile-unmanaged ()
+  "Report Canvas assignment groups that `assignment-groups.org' does not manage.
+
+An assignment landing in an unmanaged group is silently worth nothing
+when weighted grading is on and the managed groups already sum to 100:
+Canvas raises no error, the assignment looks normally graded, and the
+weighting just omits it.  The usual instance is the stock `Assignments'
+group every new course ships with.
+
+This cannot live in `org-canvas-validate', which makes no API calls by
+design — knowing a group exists remotely requires asking Canvas.  Runs
+as the `:after-sync' hook of the group sync, costing one GET.
+
+Nothing is ever deleted: Canvas requires at least one group, removing
+one with assignments forces a move, and silently discarding something a
+user made in the web UI would be worse than the trap.  Returns the list
+of unmanaged groups.  Never signals — a failed check must not fail an
+otherwise good sync."
+  (condition-case err
+      (let* ((remote (org-canvas-api-request-all-pages
+                      'GET (org-canvas-api-course-endpoint "assignment_groups")
+                      '(("include[]" . "assignments"))))
+             (local-ids (org-canvas--assignment-group-local-ids))
+             (unmanaged
+              (seq-filter (lambda (group)
+                            (not (member (format "%s" (alist-get 'id group))
+                                         local-ids)))
+                          (append remote nil))))
+        (when unmanaged
+          (let ((with-assignments 0))
+            (dolist (group unmanaged)
+              (when (> (org-canvas--assignment-group-report-unmanaged group) 0)
+                (setq with-assignments (1+ with-assignments))))
+            (message "Assignment groups: %d unmanaged group(s) on Canvas%s"
+                     (length unmanaged)
+                     (if (> with-assignments 0)
+                         (format ", %d holding assignments" with-assignments)
+                       ""))))
+        unmanaged)
+    (error
+     (org-canvas--log-warning org-canvas--logger
+       "[Unmanaged] Could not check for unmanaged groups: %s"
+       (error-message-string err))
+     nil)))
+
 ;;;; Main Sync Function
 
 ;; Generate org-canvas-sync-assignment-groups using the pipeline macro
@@ -147,7 +223,8 @@ because Canvas rejects drop rules when no assignments exist yet."
   :build #'org-canvas--assignment-group-build-payload
   :endpoint "assignment_groups"
   :title-key :name
-  :pull-item-fn #'org-canvas--assignment-group-pull-item)
+  :pull-item-fn #'org-canvas--assignment-group-pull-item
+  :after-sync #'org-canvas--assignment-group-reconcile-unmanaged)
 
 ;; Generate org-canvas-delete-all-assignment-groups using the delete macro
 ;; Note: Canvas requires at least one assignment group, so the default

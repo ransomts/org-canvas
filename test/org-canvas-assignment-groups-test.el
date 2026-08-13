@@ -445,4 +445,177 @@
      (org-back-to-heading)
      (expect (org-canvas-delete-assignment-group-at-point) :to-throw 'user-error))))
 
+;;;; Unmanaged group reconciliation (issue #37)
+;;
+;; A Canvas group absent from assignment-groups.org is invisible to
+;; org-canvas.  With weighted grading on and the managed groups already
+;; summing to 100, an assignment landing in it is worth exactly nothing
+;; and nothing says so.  Detecting it needs remote state, so this runs as
+;; the sync's :after-sync hook rather than in the offline validator.
+
+(defmacro with-assignment-groups-file (content &rest body)
+  "Bind `org-canvas-assignment-groups-file' to a temp file with CONTENT."
+  (declare (indent 1))
+  `(let* ((temp-file (make-temp-file "ag-" nil ".org"))
+          (org-canvas-assignment-groups-file temp-file))
+     (unwind-protect
+         (progn
+           (with-temp-file temp-file (insert ,content))
+           ,@body)
+       (let ((buf (find-buffer-visiting temp-file)))
+         (when buf
+           (with-current-buffer buf (set-buffer-modified-p nil))
+           (kill-buffer buf)))
+       (delete-file temp-file))))
+
+(defun test-ag--remote (&rest groups)
+  "Return a stub `org-canvas-api-request-all-pages' yielding GROUPS."
+  (lambda (&rest _) groups))
+
+(describe "org-canvas--assignment-group-local-ids"
+  (it "collects the CANVAS_IDs recorded in the file"
+    (with-assignment-groups-file
+        "* Assignment Groups
+** Essays
+:PROPERTIES:
+:CANVAS_ID: 111
+:WEIGHT:   60.0
+:END:
+** Exams
+:PROPERTIES:
+:CANVAS_ID: 222
+:WEIGHT:   40.0
+:END:
+"
+      (expect (org-canvas--assignment-group-local-ids) :to-equal '("111" "222"))))
+
+  (it "returns nil for a file with no synced groups"
+    (with-assignment-groups-file "* Assignment Groups\n** Essays\n"
+      (expect (org-canvas--assignment-group-local-ids) :to-be nil))))
+
+(describe "org-canvas--assignment-group-reconcile-unmanaged"
+  (it "reports an unmanaged group holding assignments as an error"
+    ;; The live case: those assignments are silent zeros.
+    (with-org-canvas-test-config
+      (with-assignment-groups-file
+          "* Assignment Groups
+** Essays
+:PROPERTIES:
+:CANVAS_ID: 111
+:END:
+"
+        (let ((errors nil))
+          (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                     (test-ag--remote
+                      '((id . 111) (name . "Essays") (assignments . []))
+                      '((id . 677142) (name . "Assignments")
+                        (assignments . [((id . 1)) ((id . 2))]))))
+                    ((symbol-function 'org-canvas--log-error)
+                     (lambda (_l fmt &rest args) (push (apply #'format fmt args) errors)))
+                    ((symbol-function 'message) (lambda (&rest _) nil)))
+            (let ((unmanaged (org-canvas--assignment-group-reconcile-unmanaged)))
+              (expect (length unmanaged) :to-equal 1)
+              (expect (alist-get 'id (car unmanaged)) :to-equal 677142)
+              (expect (length errors) :to-equal 1)
+              (expect (car errors) :to-match "Assignments")
+              (expect (car errors) :to-match "2 assignment")))))))
+
+  (it "reports an empty unmanaged group as a warning, not an error"
+    ;; The trap is armed but has not sprung: nothing is mis-weighted yet.
+    (with-org-canvas-test-config
+      (with-assignment-groups-file
+          "* Assignment Groups
+** Essays
+:PROPERTIES:
+:CANVAS_ID: 111
+:END:
+"
+        (let ((errors nil) (warnings nil))
+          (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                     (test-ag--remote
+                      '((id . 111) (name . "Essays") (assignments . []))
+                      '((id . 677142) (name . "Assignments") (assignments . []))))
+                    ((symbol-function 'org-canvas--log-error)
+                     (lambda (_l fmt &rest args) (push (apply #'format fmt args) errors)))
+                    ((symbol-function 'org-canvas--log-warning)
+                     (lambda (_l fmt &rest args) (push (apply #'format fmt args) warnings)))
+                    ((symbol-function 'message) (lambda (&rest _) nil)))
+            (org-canvas--assignment-group-reconcile-unmanaged)
+            (expect errors :to-be nil)
+            (expect (length warnings) :to-equal 1)
+            (expect (car warnings) :to-match "empty now"))))))
+
+  (it "says nothing when every remote group is managed"
+    (with-org-canvas-test-config
+      (with-assignment-groups-file
+          "* Assignment Groups
+** Essays
+:PROPERTIES:
+:CANVAS_ID: 111
+:END:
+"
+        (let ((logged nil))
+          (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                     (test-ag--remote
+                      '((id . 111) (name . "Essays") (assignments . []))))
+                    ((symbol-function 'org-canvas--log-error)
+                     (lambda (_l fmt &rest args) (push (apply #'format fmt args) logged)))
+                    ((symbol-function 'org-canvas--log-warning)
+                     (lambda (_l fmt &rest args) (push (apply #'format fmt args) logged))))
+            (expect (org-canvas--assignment-group-reconcile-unmanaged) :to-be nil)
+            (expect logged :to-be nil))))))
+
+  (it "asks Canvas for assignments so it can grade the severity"
+    (with-org-canvas-test-config
+      (with-assignment-groups-file "* Assignment Groups\n"
+        (let ((params nil))
+          (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                     (lambda (_method _url &optional p) (setq params p) nil)))
+            (org-canvas--assignment-group-reconcile-unmanaged)
+            (expect params :to-equal '(("include[]" . "assignments"))))))))
+
+  (it "never deletes an unmanaged group"
+    ;; Explicitly requested in #37: Canvas requires at least one group,
+    ;; and silently removing something made in the web UI is worse than
+    ;; the trap it warns about.
+    (with-org-canvas-test-config
+      (with-assignment-groups-file "* Assignment Groups\n"
+        (let ((calls nil))
+          (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                     (test-ag--remote
+                      '((id . 677142) (name . "Assignments") (assignments . []))))
+                    ((symbol-function 'org-canvas-api-request)
+                     (lambda (method url &rest _) (push (cons method url) calls) nil))
+                    ((symbol-function 'message) (lambda (&rest _) nil)))
+            (org-canvas--assignment-group-reconcile-unmanaged)
+            (expect calls :to-equal nil))))))
+
+  (it "degrades to a warning when the fetch fails, without signaling"
+    ;; A reconciliation problem must not fail a sync that otherwise worked.
+    (with-org-canvas-test-config
+      (with-assignment-groups-file "* Assignment Groups\n"
+        (let ((warnings nil))
+          (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                     (lambda (&rest _)
+                       (org-canvas--signal 'org-canvas-api-error "network down")))
+                    ((symbol-function 'org-canvas--log-warning)
+                     (lambda (_l fmt &rest args) (push (apply #'format fmt args) warnings))))
+            (expect (org-canvas--assignment-group-reconcile-unmanaged) :not :to-throw)
+            (expect (car warnings) :to-match "Could not check"))))))
+
+  (it "treats a group as managed by CANVAS_ID, not by name"
+    ;; A local heading renamed by the user still manages its remote group.
+    (with-org-canvas-test-config
+      (with-assignment-groups-file
+          "* Assignment Groups
+** Renamed Locally
+:PROPERTIES:
+:CANVAS_ID: 111
+:END:
+"
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (test-ag--remote
+                    '((id . 111) (name . "Original Name") (assignments . [])))))
+          (expect (org-canvas--assignment-group-reconcile-unmanaged) :to-be nil))))))
+
 ;;; org-canvas-assignment-groups-test.el ends here

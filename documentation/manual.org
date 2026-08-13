@@ -1987,6 +1987,25 @@ Canvas throttles API requests. org-canvas automatically retries on 429 responses
 
 Note for files specifically: Canvas cannot update file content in place, so a real sync of a changed file deletes the old file object and uploads a new one under a new ID.  A dry run reports this as "Would REPLACE" and performs neither step.
 
+** Unmanaged Assignment Groups
+
+A Canvas assignment group that is not in =assignment-groups.org= is invisible to org-canvas.  That matters because of how weighted grading works: if the groups you manage already sum to 100, an assignment sitting in an unmanaged group counts toward *nothing*.  Canvas raises no error, the assignment looks normally graded to you and to students, and the weighting simply omits it.  Nothing is visibly wrong until final grades come out.
+
+The usual instance is the stock =Assignments= group that every new Canvas course ships with.  Assignments you sync from Org are never at risk, because sync always places them in a group from =assignment-groups.org=; the exposure is an assignment created through the Canvas web UI, which can default into the stock group.
+
+=org-canvas-sync-assignment-groups= therefore checks the remote group list after each sync and reports anything it does not manage:
+
+| Situation                             | Reported as | Why                                                    |
+|---------------------------------------+-------------+--------------------------------------------------------|
+| Unmanaged group holding assignments   | error       | Those assignments are live silent zeros                |
+| Unmanaged group that is empty         | warning     | Nothing is mis-weighted yet, but the trap is armed     |
+
+This check cannot live in =org-canvas-validate=, which makes no API calls by design -- knowing that a group exists remotely means asking Canvas.  It costs one extra GET per group sync.
+
+*Nothing is ever deleted.*  Canvas requires at least one assignment group, deleting one that holds assignments forces a move, and silently removing something you made in the web UI would be worse than the problem being reported.  To resolve the report, either add the group to =assignment-groups.org= (pull it with =org-canvas-pull-assignment-groups=) or move its assignments into a group you manage.
+
+The mirror-image mistake -- managed groups whose =WEIGHT= properties do not total 100 -- is caught offline by =org-canvas-validate=, which needs no network.
+
 ** Unattended and Batch Runs
 
 Under =emacs --batch= there is nobody to answer a prompt, and =y-or-n-p= reads from standard input -- so a prompt can silently consume input meant for something else and derail the rest of the run.  org-canvas therefore assumes yes for confirmation prompts when =noninteractive= is non-nil.

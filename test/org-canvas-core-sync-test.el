@@ -3799,5 +3799,51 @@ Content here.
         (org-canvas--sync-log-global-summary))
       (expect logged :to-be nil))))
 
+;;;; :after-sync hook (issue #37)
+
+(describe "org-canvas--sync-run-pipeline :after-sync"
+  (it "runs the hook after entries, before the summary"
+    ;; Ordering matters: the hook reports on state the sync just produced,
+    ;; and its output should read above the SYNC COMPLETE banner.
+    (let ((order nil))
+      (cl-letf (((symbol-function 'org-canvas-clear-log) #'ignore)
+                ((symbol-function 'org-canvas--sync-validate-file) #'ignore)
+                ((symbol-function 'org-canvas--sync-collect-entries)
+                 (lambda (&rest _) (list :targets nil :all-ids-before nil)))
+                ((symbol-function 'org-canvas--sync-warn-orphans) #'ignore)
+                ((symbol-function 'org-canvas--sync-log-summary)
+                 (lambda (&rest _) (push 'summary order))))
+        (org-canvas--sync-run-pipeline "test" "/tmp/test.org" "LEVEL=1"
+                                       #'ignore #'ignore #'ignore #'ignore
+                                       nil nil nil
+                                       (lambda () (push 'after-sync order)))
+        (expect (nreverse order) :to-equal '(after-sync summary)))))
+
+  (it "is optional"
+    (cl-letf (((symbol-function 'org-canvas-clear-log) #'ignore)
+              ((symbol-function 'org-canvas--sync-validate-file) #'ignore)
+              ((symbol-function 'org-canvas--sync-collect-entries)
+               (lambda (&rest _) (list :targets nil :all-ids-before nil)))
+              ((symbol-function 'org-canvas--sync-warn-orphans) #'ignore)
+              ((symbol-function 'org-canvas--sync-log-summary) #'ignore))
+      (expect (org-canvas--sync-run-pipeline "test" "/tmp/test.org" "LEVEL=1"
+                                             #'ignore #'ignore #'ignore #'ignore)
+              :not :to-throw)))
+
+  (it "is wired through org-canvas-define-sync for assignment groups"
+    ;; Guards the macro plumbing, not just the runtime argument: a
+    ;; :after-sync that never reaches the pipeline would fail silently.
+    (let ((hook-ran nil))
+      (cl-letf (((symbol-function 'org-canvas-clear-log) #'ignore)
+                ((symbol-function 'org-canvas--sync-validate-file) #'ignore)
+                ((symbol-function 'org-canvas--sync-collect-entries)
+                 (lambda (&rest _) (list :targets nil :all-ids-before nil)))
+                ((symbol-function 'org-canvas--sync-warn-orphans) #'ignore)
+                ((symbol-function 'org-canvas--sync-log-summary) #'ignore)
+                ((symbol-function 'org-canvas--assignment-group-reconcile-unmanaged)
+                 (lambda () (setq hook-ran t))))
+        (org-canvas-sync-assignment-groups)
+        (expect hook-ran :to-be t)))))
+
 (provide 'org-canvas-core-sync-test)
 ;;; org-canvas-core-sync-test.el ends here
