@@ -906,4 +906,115 @@ Just a description, no override table.
             (expect (seq-filter (lambda (c) (eq (car c) 'DELETE)) calls)
                     :not :to-equal nil)))))))
 
+;;;; Mutation hardening (issue #38)
+
+(describe "org-canvas--override-sync-for-assignment reported counts"
+  ;; The returned (CREATED UPDATED DELETED) triple was never asserted with
+  ;; more than one item of a kind, so flipping the `1+' counters survived.
+  (it "counts creates, updates and deletes independently"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (_method _url &optional _params)
+                   ;; Sections 1 and 2 exist remotely (so: updates);
+                   ;; 998 and 999 are gone from the table (so: deletes).
+                   '(((id . 11) (course_section_id . 1))
+                     ((id . 12) (course_section_id . 2))
+                     ((id . 98) (course_section_id . 998))
+                     ((id . 99) (course_section_id . 999)))))
+                ((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _) nil)))
+        (let ((counts (org-canvas--override-sync-for-assignment
+                       "42"
+                       '((:section-id "1" :due-at "2026-10-19T23:59:00Z")
+                         (:section-id "2" :due-at "2026-10-20T23:59:00Z")
+                         (:section-id "3" :due-at "2026-10-21T23:59:00Z")))))
+          ;; One create (section 3), two updates (1 and 2), two deletes.
+          (expect counts :to-equal '(1 2 2))))))
+
+  (it "counts nothing when the table is empty and the remote is too"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (&rest _) nil))
+                ((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _) nil)))
+        (expect (org-canvas--override-sync-for-assignment "42" nil)
+                :to-equal '(0 0 0)))))
+
+  (it "does not count a create whose request failed"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (&rest _) nil))
+                ((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _)
+                   (org-canvas--signal 'org-canvas-api-error "rejected"))))
+        (expect (org-canvas--override-sync-for-assignment
+                 "42" '((:section-id "1" :due-at "2026-10-19T23:59:00Z")))
+                :to-equal '(0 0 0))))))
+
+(describe "org-canvas-pull-sections reported counts"
+  ;; created/updated are only visible in the closing message, which no
+  ;; test read — so both `1+' counters survived being flipped.
+  (defun test-sections--pull-message (upsert-results)
+    "Pull with `org-canvas--pull-sections-upsert' returning UPSERT-RESULTS.
+Returns the final message string."
+    (let ((dir (make-temp-file "pull-" t))
+          (said nil)
+          (remaining upsert-results))
+      (unwind-protect
+          (let ((sections-file (expand-file-name "sections.org" dir)))
+            (with-temp-file sections-file (insert ""))
+            (let ((org-canvas-sections-file sections-file))
+              (with-org-canvas-test-config
+                (with-sync-test-env
+                  (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                             (lambda (&rest _)
+                               (let ((n 0))
+                                 (mapcar (lambda (_r)
+                                           (setq n (1+ n))
+                                           `((id . ,n) (name . ,(format "S%d" n))))
+                                         upsert-results))))
+                            ((symbol-function 'org-canvas--pull-sections-upsert)
+                             (lambda (_section) (pop remaining)))
+                            ((symbol-function 'org-canvas--pull-sections-warn-stale) #'ignore)
+                            ((symbol-function 'org-canvas--pull-write-file-header) #'ignore)
+                            ((symbol-function 'message)
+                             (lambda (fmt &rest args)
+                               (setq said (apply #'format fmt args)))))
+                    (org-canvas-pull-sections))))))
+        (let ((buf (find-buffer-visiting (expand-file-name "sections.org" dir))))
+          (when buf
+            (with-current-buffer buf (set-buffer-modified-p nil))
+            (kill-buffer buf)))
+        (delete-directory dir t))
+      said))
+
+  (it "counts created and updated sections separately"
+    (expect (test-sections--pull-message '(created updated updated))
+            :to-equal "Section pull: 1 created, 2 updated."))
+
+  (it "reports zeros for an empty remote"
+    (expect (test-sections--pull-message '())
+            :to-equal "Section pull: 0 created, 0 updated.")))
+
+(describe "org-canvas--override-emit-table empty input"
+  ;; `(> (length overrides) 0)' survived mutation to `>=': no test passed
+  ;; an empty list, so the guard was never exercised at its boundary.
+  (it "emits nothing for an empty override list"
+    (with-temp-buffer
+      (org-canvas--override-emit-table '() nil nil nil)
+      (expect (buffer-string) :to-equal "")))
+
+  (it "emits nothing for nil"
+    (with-temp-buffer
+      (org-canvas--override-emit-table nil nil nil nil)
+      (expect (buffer-string) :to-equal "")))
+
+  (it "emits a table for a single override"
+    (with-temp-buffer
+      (let ((org-canvas-sections-file "/tmp/nonexistent-sections-xyzzy.org"))
+        (org-canvas--override-emit-table
+         '(((id . 1) (course_section_id . 1) (due_at . "2026-03-28T23:59:00Z")))
+         nil nil nil))
+      (expect (buffer-string) :to-match "#\\+NAME: overrides"))))
+
 ;;; org-canvas-sections-test.el ends here

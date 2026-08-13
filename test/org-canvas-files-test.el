@@ -3373,4 +3373,122 @@
              (expect (org-entry-get (point) org-canvas--prop-last-synced) :to-be nil)
              (expect org-canvas--file-changed-ids :to-be nil))))))))
 
+;;;; Mutation hardening (issue #38)
+;;
+;; A full mutation pass scored these paths poorly despite ~99.5% line
+;; coverage: the lines ran, but nothing asserted on what they produced.
+;; The specs below pin the values, not merely the execution.
+
+(describe "org-canvas--file-validate-local size boundary"
+  ;; `>' vs `>=' survived mutation: no fixture sat exactly on the limit.
+  (defun test-files--sized-file (dir mb)
+    "Create a file in DIR of exactly MB megabytes and return its path."
+    (let ((path (expand-file-name (format "sized-%s.bin" mb) dir)))
+      (with-temp-file path
+        (set-buffer-multibyte nil)
+        (insert (make-string (round (* mb org-canvas--bytes-per-mb)) ?x)))
+      path))
+
+  (it "accepts a file exactly on the limit"
+    (let ((dir (make-temp-file "size-" t)))
+      (unwind-protect
+          (let* ((org-canvas-max-file-size-mb 1)
+                 (path (test-files--sized-file dir 1)))
+            (expect (org-canvas--file-validate-local path "exact.bin")
+                    :not :to-throw))
+        (delete-directory dir t))))
+
+  (it "rejects a file over the limit"
+    (let ((dir (make-temp-file "size-" t)))
+      (unwind-protect
+          (let* ((org-canvas-max-file-size-mb 1)
+                 (path (test-files--sized-file dir 2)))
+            (expect (org-canvas--file-validate-local path "big.bin")
+                    :to-throw 'org-canvas-validation-error))
+        (delete-directory dir t)))))
+
+(describe "org-canvas--file-confirm-with-retry attempt count"
+  ;; `<' vs `<=' survived: nothing pinned how many attempts actually run.
+  (it "makes exactly max-retries attempts before giving up"
+    (let ((attempts 0))
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _)
+                   (setq attempts (1+ attempts))
+                   (org-canvas--signal 'org-canvas-api-error "nope")))
+                ((symbol-function 'sleep-for) #'ignore)
+                ((symbol-function 'message) (lambda (&rest _) nil)))
+        (expect (org-canvas--file-confirm-with-retry "https://x.example/1" 3)
+                :to-throw)
+        (expect attempts :to-equal 3))))
+
+  (it "stops at the first success without burning the remaining retries"
+    (let ((attempts 0))
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _)
+                   (setq attempts (1+ attempts))
+                   (if (= attempts 2)
+                       '((id . 5))
+                     (org-canvas--signal 'org-canvas-api-error "nope"))))
+                ((symbol-function 'sleep-for) #'ignore)
+                ((symbol-function 'message) (lambda (&rest _) nil)))
+        (expect (alist-get 'id (org-canvas--file-confirm-with-retry
+                                "https://x.example/1" 5))
+                :to-equal 5)
+        (expect attempts :to-equal 2)))))
+
+(describe "org-canvas-sync-files reported counts"
+  ;; Every `1+' in the counter dispatch survived being flipped to `1-':
+  ;; tests asserted that a sync ran and which requests it made, never the
+  ;; tallies it reports.  The counts are what the user reads.
+  (defun test-files--sync-with (results)
+    "Run `org-canvas-sync-files' with one entry per element of RESULTS.
+Each element is what `org-canvas--file-sync-single-entry' should return.
+Returns (COUNTERS . FINAL-MESSAGE)."
+    (let ((dir (make-temp-file "counts-" t))
+          (recorded nil)
+          (final-message nil)
+          (remaining results))
+      (unwind-protect
+          (let ((org-file (expand-file-name "files.org" dir)))
+            (with-temp-file org-file
+              (dotimes (i (length results))
+                (insert (format "* Entry %d\n:PROPERTIES:\n:END:\n" i))))
+            (let ((org-canvas-files-file org-file))
+              (with-org-canvas-test-config
+                (with-sync-test-env
+                  (cl-letf (((symbol-function 'org-canvas-api-request)
+                             (lambda (&rest _) nil))
+                            ((symbol-function 'org-canvas--file-collect-folder-paths)
+                             (lambda (&rest _) nil))
+                            ((symbol-function 'org-canvas--file-sync-single-entry)
+                             (lambda (_marker) (pop remaining)))
+                            ((symbol-function 'org-canvas--sync-record-feature-stats)
+                             (lambda (_label counters) (setq recorded counters)))
+                            ((symbol-function 'message)
+                             (lambda (fmt &rest args)
+                               (setq final-message (apply #'format fmt args)))))
+                    (org-canvas-sync-files))))))
+        (delete-directory dir t))
+      (cons recorded final-message)))
+
+  (it "counts each outcome exactly once"
+    (let ((counters (car (test-files--sync-with
+                          '(:success :success :skip :fail :dry-run)))))
+      (expect (plist-get counters :success) :to-equal 2)
+      (expect (plist-get counters :skip) :to-equal 1)
+      (expect (plist-get counters :fail) :to-equal 1)
+      (expect (plist-get counters :dry-run) :to-equal 1)))
+
+  (it "reports zeros when nothing matched"
+    (let ((counters (car (test-files--sync-with '()))))
+      (expect (plist-get counters :success) :to-equal 0)
+      (expect (plist-get counters :skip) :to-equal 0)
+      (expect (plist-get counters :fail) :to-equal 0)
+      (expect (plist-get counters :dry-run) :to-equal 0)))
+
+  (it "mentions would-upload only when a dry run produced some"
+    ;; Guards the `(> dry-run-count 0)' branch that picks the wording.
+    (expect (cdr (test-files--sync-with '(:dry-run))) :to-match "1 would upload")
+    (expect (cdr (test-files--sync-with '(:success))) :not :to-match "would upload")))
+
 ;;; org-canvas-files-test.el ends here
