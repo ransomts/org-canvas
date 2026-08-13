@@ -69,7 +69,9 @@
      :doc "Number of highest scores to drop")
     (:org-prop "POSITION" :data-key :position :type number
      :doc "Position in group ordering"))
-  :structural-fn #'org-canvas--validate-drop-rules)
+  :structural-fn #'org-canvas--validate-drop-rules
+  ;; File-level: the weights only mean anything summed across every group.
+  :file-fn #'org-canvas--validate-weight-sum)
 
 ;;;; 1. Stage: Extraction
 

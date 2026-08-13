@@ -2666,5 +2666,91 @@ EXCEPT is a list of filenames to skip."
           (expect content :to-match "Drop rules")
           (expect content :to-match "Essays"))))))
 
+;;;; Assignment group weight sum (issue #37)
+;;
+;; Weights that do not total 100 are silently wrong in both directions:
+;; under 100 inflates every grade, over 100 deflates it, and Canvas
+;; reports nothing.  The rule is file-level, so it runs through the
+;; registry's :file-fn hook rather than :structural-fn.
+
+(defun test-validate--weights-file (dir &rest weights)
+  "Write assignment-groups.org in DIR with one group per entry in WEIGHTS."
+  (with-temp-file (expand-file-name "assignment-groups.org" dir)
+    (insert "* Assignment Groups\n")
+    (let ((n 0))
+      (dolist (w weights)
+        (setq n (1+ n))
+        (insert (format "** Group %d\n:PROPERTIES:\n:WEIGHT: %s\n:END:\n" n w))))))
+
+(describe "org-canvas--validate-weight-sum"
+  (it "warns and names the direction when weights fall short of 100"
+    (with-validate-test-dir dir
+      (test-validate--weights-file dir "30.0" "30.0")
+      (let ((issues (org-canvas--validate-weight-sum
+                     (expand-file-name "assignment-groups.org" dir))))
+        (expect (length issues) :to-equal 1)
+        (expect (plist-get (car issues) :severity) :to-equal 'warning)
+        (expect (plist-get (car issues) :message) :to-match "sum to 60")
+        (expect (plist-get (car issues) :message) :to-match "inflated"))))
+
+  (it "warns in the other direction when weights exceed 100"
+    (with-validate-test-dir dir
+      (test-validate--weights-file dir "60.0" "60.0")
+      (let ((issues (org-canvas--validate-weight-sum
+                     (expand-file-name "assignment-groups.org" dir))))
+        (expect (plist-get (car issues) :message) :to-match "sum to 120")
+        (expect (plist-get (car issues) :message) :to-match "deflated"))))
+
+  (it "passes when the weights total exactly 100"
+    (with-validate-test-dir dir
+      (test-validate--weights-file dir "50.0" "30.0" "20.0")
+      (expect (org-canvas--validate-weight-sum
+               (expand-file-name "assignment-groups.org" dir))
+              :to-be nil)))
+
+  (it "tolerates repeating decimals that Canvas itself accepts"
+    ;; 33.33 x2 + 33.34 is 100.00 exactly, but thirds generally are not;
+    ;; the tolerance exists so a legitimate split is not flagged.
+    (with-validate-test-dir dir
+      (test-validate--weights-file dir "33.33" "33.33" "33.34")
+      (expect (org-canvas--validate-weight-sum
+               (expand-file-name "assignment-groups.org" dir))
+              :to-be nil)))
+
+  (it "says nothing when no group carries a weight"
+    ;; An unweighted course is a normal configuration, not a mistake.
+    (with-validate-test-dir dir
+      (with-temp-file (expand-file-name "assignment-groups.org" dir)
+        (insert "* Assignment Groups\n** Essays\n** Exams\n"))
+      (expect (org-canvas--validate-weight-sum
+               (expand-file-name "assignment-groups.org" dir))
+              :to-be nil)))
+
+  (it "reports the line of the first weighted group"
+    (with-validate-test-dir dir
+      (test-validate--weights-file dir "30.0" "30.0")
+      (let ((issue (car (org-canvas--validate-weight-sum
+                         (expand-file-name "assignment-groups.org" dir)))))
+        ;; Line 2 is "** Group 1"; line 1 is the container heading.
+        (expect (plist-get issue :line) :to-equal 2)))))
+
+(describe "org-canvas-validate weight-sum integration"
+  (it "reports the shortfall through the full validate run"
+    (with-validate-test-dir dir
+      (test-validate--weights-file dir "30.0" "30.0")
+      (test-validate-create-empty-files dir '("assignment-groups.org"))
+      (org-canvas-validate)
+      (with-current-buffer "*canvas-validate*"
+        (let ((content (buffer-string)))
+          (expect content :to-match "sum to 60")))))
+
+  (it "stays quiet for a correctly weighted file"
+    (with-validate-test-dir dir
+      (test-validate--weights-file dir "70.0" "30.0")
+      (test-validate-create-empty-files dir '("assignment-groups.org"))
+      (org-canvas-validate)
+      (with-current-buffer "*canvas-validate*"
+        (expect (buffer-string) :not :to-match "sum to")))))
+
 (provide 'org-canvas-validate-test)
 ;;; org-canvas-validate-test.el ends here

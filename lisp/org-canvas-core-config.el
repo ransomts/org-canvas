@@ -262,8 +262,9 @@ Each plist has keys :file-var, :query, :properties, and optionally
 (defun org-canvas-register-properties (feature-name &rest plist)
   "Register property specs for FEATURE-NAME.
 PLIST has keys :file-var, :query, :properties, and optionally
-:date-order and :structural-fn.  Does nothing if FEATURE-NAME
-is already registered (idempotent)."
+:date-order, :structural-fn (run per matched heading), and :file-fn
+\(run once per file, for rules about the file as a whole).  Does
+nothing if FEATURE-NAME is already registered (idempotent)."
   (unless (gethash feature-name org-canvas--property-registry)
     (puthash feature-name plist org-canvas--property-registry)))
 
@@ -285,7 +286,8 @@ Registry keys: :org-prop :data-key :type :values :target-file
 (defun org-canvas--get-validate-specs-from-registry ()
   "Build a list of validation specs from the property registry.
 Each spec has :label, :file, :query, :properties, :date-order,
-and :structural-fn, matching the format of `org-canvas--validate-specs'."
+:structural-fn, and :file-fn, matching the format of
+`org-canvas--validate-specs'."
   (let (specs)
     (maphash
      (lambda (feature-name plist)
@@ -295,7 +297,8 @@ and :structural-fn, matching the format of `org-canvas--validate-specs'."
                    :properties (mapcar #'org-canvas--property-to-validate-prop
                                        (plist-get plist :properties))
                    :date-order (plist-get plist :date-order)
-                   :structural-fn (plist-get plist :structural-fn))
+                   :structural-fn (plist-get plist :structural-fn)
+                   :file-fn (plist-get plist :file-fn))
              specs))
      org-canvas--property-registry)
     (nreverse specs)))
