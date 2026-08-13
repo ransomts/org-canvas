@@ -494,6 +494,54 @@ LOC is a (:file :line :heading) plist."
                  (format "Drop rules (%d) >= assignment count (%d) for group '%s'"
                          total-drops assignment-count group-name))))))))
 
+(defconst org-canvas--validate-weight-sum-tolerance 0.01
+  "Slack allowed when checking that group weights sum to 100.
+Weights are read as floats, so an exact comparison would reject
+values like 33.33 + 33.33 + 33.34 that Canvas itself accepts.")
+
+(defun org-canvas--validate-weight-sum (file)
+  "Warn when the WEIGHT properties in FILE do not sum to 100.
+Only meaningful when the course applies group weights, but the check is
+offline by design (see issue #37): weights that sum to less than 100
+silently inflate every grade, and more than 100 deflates them, with no
+symptom until final grades come out.  Returns a list of issues.
+
+Groups with no WEIGHT are not counted; a file with no weighted groups
+at all produces no issue, since an unweighted course is a normal
+configuration rather than a mistake."
+  (let ((total 0)
+        (count 0)
+        (first-line nil))
+    ;; Read FILE rather than whatever buffer happens to be current: the
+    ;; hook is handed a path, so it should not depend on its caller
+    ;; having visited it.
+    (with-current-buffer (find-file-noselect file)
+      (save-excursion
+        (goto-char (point-min))
+        (org-map-entries
+         (lambda ()
+           (let ((weight (org-entry-get (point) "WEIGHT")))
+             (when weight
+               (unless first-line (setq first-line (line-number-at-pos)))
+               (setq count (1+ count))
+               (setq total (+ total (string-to-number weight))))))
+         "LEVEL=2+WEIGHT={.}" 'file)))
+    (when (and (> count 0)
+               (> (abs (- total 100)) org-canvas--validate-weight-sum-tolerance))
+      (list (org-canvas--validate-make-issue
+             'warning
+             (list :file file :line (or first-line 1) :heading "Assignment Groups")
+             "WEIGHT"
+             (format "Group weights sum to %s, not 100 — every grade is %s if the course applies group weights"
+                     (org-canvas--validate-format-weight total)
+                     (if (< total 100) "inflated" "deflated")))))))
+
+(defun org-canvas--validate-format-weight (weight)
+  "Format WEIGHT without a trailing .0 for whole numbers."
+  (if (= weight (floor weight))
+      (format "%d" (floor weight))
+    (format "%s" weight)))
+
 (defun org-canvas--validate-override-section-ids (file heading)
   "Check that override table section links have CANVAS_IDs.
 FILE and HEADING identify the location.  Point must be at the first data row."
@@ -572,12 +620,18 @@ FILE identifies the source file.  Returns a list of issues."
 
 (defun org-canvas--validate-spec (spec)
   "Run validation for a single SPEC.
-Returns a list of issues."
+Returns a list of issues.
+
+`:structural-fn' runs once per matched heading, with point on it.
+`:file-fn' runs once for the whole file and receives its path — for
+rules that only make sense across every entry at once, such as whether
+the assignment-group weights sum to 100."
   (let* ((file-var (plist-get spec :file))
          (query (plist-get spec :query))
          (props (plist-get spec :properties))
          (date-order (plist-get spec :date-order))
          (structural-fn (plist-get spec :structural-fn))
+         (file-fn (plist-get spec :file-fn))
          (file (and (boundp file-var)
                     (expand-file-name (symbol-value file-var))))
          (issues nil))
@@ -591,7 +645,10 @@ Returns a list of issues."
               (setq issues (nconc issues
                                   (org-canvas--validate-entry-at-marker
                                    props date-order structural-fn file))))
-            (dolist (m markers) (set-marker m nil))))))
+            (dolist (m markers) (set-marker m nil)))))
+      ;; File-level hooks take the path and read it themselves.
+      (when file-fn
+        (setq issues (nconc issues (funcall file-fn file)))))
     issues))
 
 ;;;; 7. Report Buffer and Mode
