@@ -3373,4 +3373,285 @@
              (expect (org-entry-get (point) org-canvas--prop-last-synced) :to-be nil)
              (expect org-canvas--file-changed-ids :to-be nil))))))))
 
+;;;; Mutation hardening (issue #38)
+;;
+;; A full mutation pass scored these paths poorly despite ~99.5% line
+;; coverage: the lines ran, but nothing asserted on what they produced.
+;; The specs below pin the values, not merely the execution.
+
+(describe "org-canvas--file-validate-local size boundary"
+  ;; `>' vs `>=' survived mutation: no fixture sat exactly on the limit.
+  (defun test-files--sized-file (dir mb)
+    "Create a file in DIR of exactly MB megabytes and return its path."
+    (let ((path (expand-file-name (format "sized-%s.bin" mb) dir)))
+      (with-temp-file path
+        (set-buffer-multibyte nil)
+        (insert (make-string (round (* mb org-canvas--bytes-per-mb)) ?x)))
+      path))
+
+  (it "accepts a file exactly on the limit"
+    (let ((dir (make-temp-file "size-" t)))
+      (unwind-protect
+          (let* ((org-canvas-max-file-size-mb 1)
+                 (path (test-files--sized-file dir 1)))
+            (expect (org-canvas--file-validate-local path "exact.bin")
+                    :not :to-throw))
+        (delete-directory dir t))))
+
+  (it "rejects a file over the limit"
+    (let ((dir (make-temp-file "size-" t)))
+      (unwind-protect
+          (let* ((org-canvas-max-file-size-mb 1)
+                 (path (test-files--sized-file dir 2)))
+            (expect (org-canvas--file-validate-local path "big.bin")
+                    :to-throw 'org-canvas-validation-error))
+        (delete-directory dir t)))))
+
+(describe "org-canvas--file-confirm-with-retry attempt count"
+  ;; `<' vs `<=' survived: nothing pinned how many attempts actually run.
+  (it "makes exactly max-retries attempts before giving up"
+    (let ((attempts 0))
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _)
+                   (setq attempts (1+ attempts))
+                   (org-canvas--signal 'org-canvas-api-error "nope")))
+                ((symbol-function 'sleep-for) #'ignore)
+                ((symbol-function 'message) (lambda (&rest _) nil)))
+        (expect (org-canvas--file-confirm-with-retry "https://x.example/1" 3)
+                :to-throw)
+        (expect attempts :to-equal 3))))
+
+  (it "stops at the first success without burning the remaining retries"
+    (let ((attempts 0))
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _)
+                   (setq attempts (1+ attempts))
+                   (if (= attempts 2)
+                       '((id . 5))
+                     (org-canvas--signal 'org-canvas-api-error "nope"))))
+                ((symbol-function 'sleep-for) #'ignore)
+                ((symbol-function 'message) (lambda (&rest _) nil)))
+        (expect (alist-get 'id (org-canvas--file-confirm-with-retry
+                                "https://x.example/1" 5))
+                :to-equal 5)
+        (expect attempts :to-equal 2)))))
+
+(describe "org-canvas-sync-files reported counts"
+  ;; Every `1+' in the counter dispatch survived being flipped to `1-':
+  ;; tests asserted that a sync ran and which requests it made, never the
+  ;; tallies it reports.  The counts are what the user reads.
+  (defun test-files--sync-with (results)
+    "Run `org-canvas-sync-files' with one entry per element of RESULTS.
+Each element is what `org-canvas--file-sync-single-entry' should return.
+Returns (COUNTERS . FINAL-MESSAGE)."
+    (let ((dir (make-temp-file "counts-" t))
+          (recorded nil)
+          (final-message nil)
+          (remaining results))
+      (unwind-protect
+          (let ((org-file (expand-file-name "files.org" dir)))
+            (with-temp-file org-file
+              (dotimes (i (length results))
+                (insert (format "* Entry %d\n:PROPERTIES:\n:END:\n" i))))
+            (let ((org-canvas-files-file org-file))
+              (with-org-canvas-test-config
+                (with-sync-test-env
+                  (cl-letf (((symbol-function 'org-canvas-api-request)
+                             (lambda (&rest _) nil))
+                            ((symbol-function 'org-canvas--file-collect-folder-paths)
+                             (lambda (&rest _) nil))
+                            ((symbol-function 'org-canvas--file-sync-single-entry)
+                             (lambda (_marker) (pop remaining)))
+                            ((symbol-function 'org-canvas--sync-record-feature-stats)
+                             (lambda (_label counters) (setq recorded counters)))
+                            ((symbol-function 'message)
+                             (lambda (fmt &rest args)
+                               (setq final-message (apply #'format fmt args)))))
+                    (org-canvas-sync-files))))))
+        (delete-directory dir t))
+      (cons recorded final-message)))
+
+  (it "counts each outcome exactly once"
+    (let ((counters (car (test-files--sync-with
+                          '(:success :success :skip :fail :dry-run)))))
+      (expect (plist-get counters :success) :to-equal 2)
+      (expect (plist-get counters :skip) :to-equal 1)
+      (expect (plist-get counters :fail) :to-equal 1)
+      (expect (plist-get counters :dry-run) :to-equal 1)))
+
+  (it "reports zeros when nothing matched"
+    (let ((counters (car (test-files--sync-with '()))))
+      (expect (plist-get counters :success) :to-equal 0)
+      (expect (plist-get counters :skip) :to-equal 0)
+      (expect (plist-get counters :fail) :to-equal 0)
+      (expect (plist-get counters :dry-run) :to-equal 0)))
+
+  (it "mentions would-upload only when a dry run produced some"
+    ;; Guards the `(> dry-run-count 0)' branch that picks the wording.
+    (expect (cdr (test-files--sync-with '(:dry-run))) :to-match "1 would upload")
+    (expect (cdr (test-files--sync-with '(:success))) :not :to-match "would upload")))
+
+(describe "org-canvas--file-get-or-create-folder by_path result"
+  ;; No test drove by_path returning an empty list, which is what Canvas
+  ;; gives for a path that does not exist yet.  Note the `and'->`or'
+  ;; mutant here is equivalent and stays alive by design: an empty vector
+  ;; is truthy in Elisp, so `or' takes the "use last folder" branch,
+  ;; `(elt [] -1)' signals, and the enclosing condition-case creates the
+  ;; folder anyway — the same observable outcome.  These specs are for
+  ;; the behavior, not for that mutant.
+  (it "creates the folder when by_path returns an empty list"
+    (with-org-canvas-test-config
+      (let ((created nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _) []))
+                  ((symbol-function 'org-canvas--file-create-folder)
+                   (lambda (path _parent) (setq created path) '((id . 9)))))
+          (expect (alist-get 'id (org-canvas--file-get-or-create-folder "Labs" 1))
+                  :to-equal 9)
+          (expect created :to-equal "Labs")))))
+
+  (it "returns the last folder of a non-empty by_path result"
+    ;; by_path returns the whole chain; the target is the final element.
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _) [((id . 5) (name . "course files"))
+                                    ((id . 6) (name . "Labs"))]))
+                ((symbol-function 'org-canvas--file-create-folder)
+                 (lambda (&rest _) (error "Should not create an existing folder"))))
+        (expect (alist-get 'id (org-canvas--file-get-or-create-folder "Labs" 1))
+                :to-equal 6))))
+
+  (it "creates the folder when by_path signals"
+    (with-org-canvas-test-config
+      (let ((created nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _)
+                     (org-canvas--signal 'org-canvas-api-error "404")))
+                  ((symbol-function 'org-canvas--file-create-folder)
+                   (lambda (path _parent) (setq created path) '((id . 9)))))
+          (org-canvas--file-get-or-create-folder "Labs" 1)
+          (expect created :to-equal "Labs"))))))
+
+(describe "org-canvas--file-get-all-folders ordering"
+  ;; The comparator coalesces a missing full_name with `or ... ""'.  Both
+  ;; the `or' and the `>' survived, because no fixture folder lacked a
+  ;; full_name and none tied on length.
+  (it "sorts deepest path first so children delete before parents"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (&rest _)
+                   '(((id . 2) (full_name . "course files/Labs"))
+                     ((id . 3) (full_name . "course files/Labs/Week1"))
+                     ((id . 1) (full_name . "course files")))))
+                ((symbol-function 'org-canvas--file-get-root-folder)
+                 (lambda () '((id . 1)))))
+        (expect (mapcar (lambda (f) (alist-get 'id f))
+                        (org-canvas--file-get-all-folders))
+                :to-equal '(3 2)))))
+
+  (it "tolerates a folder with no full_name instead of erroring"
+    ;; The `or ... ""' exists for exactly this; nothing exercised it.
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (&rest _)
+                   '(((id . 2) (full_name . nil))
+                     ((id . 3) (full_name . "course files/Labs/Week1")))))
+                ((symbol-function 'org-canvas--file-get-root-folder)
+                 (lambda () '((id . 1)))))
+        (expect (mapcar (lambda (f) (alist-get 'id f))
+                        (org-canvas--file-get-all-folders))
+                :to-equal '(3 2))))))
+
+(describe "org-canvas--file-parse-upload-response branches"
+  ;; The status-line guard and the json/location dispatch both survived:
+  ;; tests only ever fed it a healthy response carrying an id.
+  (it "returns the file object when the body carries an id"
+    (with-temp-buffer
+      (insert "HTTP/1.1 201 Created\nContent-Type: application/json\n\n"
+              "{\"id\": 42, \"display_name\": \"a.pdf\"}")
+      (goto-char (point-min))
+      (let ((result (org-canvas--file-parse-upload-response "/tmp/a.pdf" "https://u")))
+        (expect (alist-get 'id result) :to-equal 42))))
+
+  (it "returns the Location redirect when the body carries no id"
+    (with-temp-buffer
+      (insert "HTTP/1.1 302 Found\nLocation: https://canvas.example/api/v1/files/7\n\n")
+      (goto-char (point-min))
+      (let ((result (org-canvas--file-parse-upload-response "/tmp/a.pdf" "https://u")))
+        (expect (alist-get 'location result)
+                :to-equal "https://canvas.example/api/v1/files/7"))))
+
+  (it "prefers the Location when a JSON body exists but has no id"
+    ;; The discriminating case for the first cond clause: with a JSON
+    ;; body present but no id, `and' must fall through to Location while
+    ;; `or' would wrongly return the idless body as the file object.
+    (with-temp-buffer
+      (insert "HTTP/1.1 201 Created\n"
+              "Location: https://canvas.example/api/v1/files/7\n"
+              "Content-Type: application/json\n\n"
+              "{\"upload_status\": \"pending\"}")
+      (goto-char (point-min))
+      (let ((result (org-canvas--file-parse-upload-response "/tmp/a.pdf" "https://u")))
+        (expect (alist-get 'location result)
+                :to-equal "https://canvas.example/api/v1/files/7")
+        (expect (alist-get 'upload_status result) :to-be nil))))
+
+  (it "signals when there is neither an id nor a Location"
+    (with-temp-buffer
+      (insert "HTTP/1.1 500 Internal Server Error\n\nboom")
+      (goto-char (point-min))
+      (expect (org-canvas--file-parse-upload-response "/tmp/a.pdf" "https://u")
+              :to-throw 'org-canvas-api-error))))
+
+(describe "org-canvas--file-pull-mode partial heading"
+  ;; `(unless (or cid link-path) ...)' marks a heading as a folder
+  ;; container only when BOTH are absent.  Existing tests covered
+  ;; neither-present and both-present, where `or' and `and' agree, so
+  ;; the mutation survived.  The discriminating case is a heading with
+  ;; exactly one of the two: under `and' it would be mistaken for a
+  ;; folder and the pull would reshape the whole file hierarchically.
+  (it "is fresh for a link that has not been synced yet"
+    (with-temp-org-buffer
+     "* [[file:a.pdf][a.pdf]]
+"
+     (expect (org-canvas--file-pull-mode) :to-equal 'fresh))))
+
+(describe "org-canvas-delete-all-files reported count"
+  ;; `(setq deleted-file-count (1+ deleted-file-count))' survived: the
+  ;; closing message was never read back, so the tally could be wrong.
+  (it "counts only the deletions that succeeded"
+    (with-org-canvas-test-config
+      (let ((said nil)
+            (dir (make-temp-file "delall-" t)))
+        (unwind-protect
+            (let ((files-file (expand-file-name "files.org" dir)))
+              (with-temp-file files-file (insert "* Files\n"))
+              (let ((org-canvas-files-file files-file))
+                (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t))
+                          ((symbol-function 'org-canvas-clear-log) #'ignore)
+                          ((symbol-function 'display-buffer) #'ignore)
+                          ((symbol-function 'org-canvas-api-request-all-pages)
+                           (lambda (&rest _)
+                             '(((id . 1) (display_name . "a.pdf"))
+                               ((id . 2) (display_name . "b.pdf"))
+                               ((id . 3) (display_name . "c.pdf")))))
+                          ((symbol-function 'org-canvas--file-delete-all-folders)
+                           (lambda () 0))
+                          ((symbol-function 'org-canvas--clean-local-sync-properties)
+                           #'ignore)
+                          ((symbol-function 'org-canvas-api-request)
+                           (lambda (_method url &rest _)
+                             ;; The middle delete fails.
+                             (when (string-match-p "files/2" url)
+                               (org-canvas--signal 'org-canvas-api-error "nope"))
+                             nil))
+                          ((symbol-function 'message)
+                           (lambda (fmt &rest args)
+                             (setq said (apply #'format fmt args)))))
+                  (org-canvas-delete-all-files))))
+          (delete-directory dir t))
+        ;; Full equality, not a substring match: "2 files" also matches
+        ;; "-2 files", so a negated counter would slip through a regex.
+        (expect said :to-equal "Deletion complete. 2 files, 0 folders removed.")))))
+
 ;;; org-canvas-files-test.el ends here
