@@ -1593,6 +1593,82 @@ Content.
         (expect s :to-match "^#\\+NAME: overrides$")
         ;; Only the differing row appears.
         (expect s :to-match "<2026-03-28")
-        (expect s :not :to-match "<2026-02-15")))))
+        (expect s :not :to-match "<2026-02-15"))))
+
+  ;; Issue #36.  Dropping a column has to drop it from every row too, and
+  ;; the `delq' on the row cells is what does that.  Keeping the nils does
+  ;; not error -- `mapconcat' renders nil as an empty string -- so the row
+  ;; silently grows trailing empty cells the header has no column for, and
+  ;; assertions that only check which headers appear never notice.
+  (it "emits rows with the same column count as the header"
+    (with-temp-buffer
+      (let ((org-canvas-sections-file "/tmp/nonexistent-sections-xyzzy.org"))
+        (org-canvas--override-emit-table
+         '(((id . 1) (course_section_id . 1)
+            (due_at . "2026-03-28T23:59:00Z"))
+           ((id . 2) (course_section_id . 2)
+            (due_at . "2026-03-29T23:59:00Z")))
+         "2026-02-15T23:59:00Z" nil nil))
+      (let* ((lines (seq-filter (lambda (l) (string-prefix-p "|" l))
+                                (split-string (buffer-string) "\n" t)))
+             (header (car lines))
+             ;; Skip the |---+---| separator, which uses a different shape.
+             (data-rows (cddr lines)))
+        (expect (length data-rows) :to-equal 2)
+        (dolist (row data-rows)
+          (expect (cons row (cl-count ?| row))
+                  :to-equal (cons row (cl-count ?| header)))))))
+
+  (it "emits no empty trailing cells when unlock and lock are dropped"
+    ;; The same defect stated directly: with Unlock At and Lock At dropped,
+    ;; a row must end right after the due date.
+    (with-temp-buffer
+      (let ((org-canvas-sections-file "/tmp/nonexistent-sections-xyzzy.org"))
+        (org-canvas--override-emit-table
+         '(((id . 1) (course_section_id . 1)
+            (due_at . "2026-03-28T23:59:00Z")))
+         "2026-02-15T23:59:00Z" nil nil))
+      (expect (buffer-string) :not :to-match "|[[:space:]]+|[[:space:]]*$"))))
+
+;;;; Override fetch error handling (issue #36)
+
+(describe "org-canvas--override-fetch"
+  (it "returns the override list on success"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (&rest _) '(((id . 1) (course_section_id . 7))))))
+        (let ((result (org-canvas--override-fetch "42")))
+          (expect (alist-get 'course_section_id (car result)) :to-equal 7)))))
+
+  (it "records the failure to the pull summary and returns nil"
+    ;; The handler degrades a failed fetch to nil so a pull can continue;
+    ;; the summary record is the only way the user learns it happened, so
+    ;; assert its fields rather than merely that nothing threw.
+    (with-org-canvas-test-config
+      (let ((org-canvas--pull-summary nil)
+            (org-canvas-assignments-file "/tmp/course/assignments.org"))
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (&rest _)
+                     (org-canvas--signal 'org-canvas-api-error "boom"))))
+          (expect (org-canvas--override-fetch "42") :to-be nil)
+          (let ((rec (car (org-canvas--pull-summary-records))))
+            ;; Not merely non-nil: the basename, which is what gets printed.
+            (expect (plist-get rec :file) :to-equal "assignments.org")
+            (expect (plist-get rec :item) :to-equal "assignment 42 overrides")
+            (expect (plist-get rec :error) :to-match "boom"))))))
+
+  (it "catches credentials errors too, not just API errors"
+    ;; The handler catches the parent `org-canvas-error' on purpose: an
+    ;; uncaught credentials error from a test environment would propagate
+    ;; out of `org-canvas--assignment-pull-item'.
+    (with-org-canvas-test-config
+      (let ((org-canvas--pull-summary nil)
+            (org-canvas-assignments-file "/tmp/course/assignments.org"))
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (&rest _)
+                     (org-canvas--signal 'org-canvas-credentials-error
+                       "No API token"))))
+          (expect (org-canvas--override-fetch "42") :to-be nil)
+          (expect (length (org-canvas--pull-summary-records)) :to-equal 1))))))
 
 ;;; org-canvas-assignments-test.el ends here
