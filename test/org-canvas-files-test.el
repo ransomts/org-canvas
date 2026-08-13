@@ -3491,4 +3491,97 @@ Returns (COUNTERS . FINAL-MESSAGE)."
     (expect (cdr (test-files--sync-with '(:dry-run))) :to-match "1 would upload")
     (expect (cdr (test-files--sync-with '(:success))) :not :to-match "would upload")))
 
+(describe "org-canvas--file-get-or-create-folder by_path result"
+  ;; `(and folders (> (length folders) 0))' survived both `and'->`or' and
+  ;; `>'->`>=': no test drove by_path returning an empty list, which is
+  ;; what Canvas gives for a path that does not exist yet.
+  (it "creates the folder when by_path returns an empty list"
+    (with-org-canvas-test-config
+      (let ((created nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _) []))
+                  ((symbol-function 'org-canvas--file-create-folder)
+                   (lambda (path _parent) (setq created path) '((id . 9)))))
+          (expect (alist-get 'id (org-canvas--file-get-or-create-folder "Labs" 1))
+                  :to-equal 9)
+          (expect created :to-equal "Labs")))))
+
+  (it "returns the last folder of a non-empty by_path result"
+    ;; by_path returns the whole chain; the target is the final element.
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _) [((id . 5) (name . "course files"))
+                                    ((id . 6) (name . "Labs"))]))
+                ((symbol-function 'org-canvas--file-create-folder)
+                 (lambda (&rest _) (error "Should not create an existing folder"))))
+        (expect (alist-get 'id (org-canvas--file-get-or-create-folder "Labs" 1))
+                :to-equal 6))))
+
+  (it "creates the folder when by_path signals"
+    (with-org-canvas-test-config
+      (let ((created nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _)
+                     (org-canvas--signal 'org-canvas-api-error "404")))
+                  ((symbol-function 'org-canvas--file-create-folder)
+                   (lambda (path _parent) (setq created path) '((id . 9)))))
+          (org-canvas--file-get-or-create-folder "Labs" 1)
+          (expect created :to-equal "Labs"))))))
+
+(describe "org-canvas--file-get-all-folders ordering"
+  ;; The comparator coalesces a missing full_name with `or ... ""'.  Both
+  ;; the `or' and the `>' survived, because no fixture folder lacked a
+  ;; full_name and none tied on length.
+  (it "sorts deepest path first so children delete before parents"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (&rest _)
+                   '(((id . 2) (full_name . "course files/Labs"))
+                     ((id . 3) (full_name . "course files/Labs/Week1"))
+                     ((id . 1) (full_name . "course files")))))
+                ((symbol-function 'org-canvas--file-get-root-folder)
+                 (lambda () '((id . 1)))))
+        (expect (mapcar (lambda (f) (alist-get 'id f))
+                        (org-canvas--file-get-all-folders))
+                :to-equal '(3 2)))))
+
+  (it "tolerates a folder with no full_name instead of erroring"
+    ;; The `or ... ""' exists for exactly this; nothing exercised it.
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (&rest _)
+                   '(((id . 2) (full_name . nil))
+                     ((id . 3) (full_name . "course files/Labs/Week1")))))
+                ((symbol-function 'org-canvas--file-get-root-folder)
+                 (lambda () '((id . 1)))))
+        (expect (mapcar (lambda (f) (alist-get 'id f))
+                        (org-canvas--file-get-all-folders))
+                :to-equal '(3 2))))))
+
+(describe "org-canvas--file-parse-upload-response branches"
+  ;; The status-line guard and the json/location dispatch both survived:
+  ;; tests only ever fed it a healthy response carrying an id.
+  (it "returns the file object when the body carries an id"
+    (with-temp-buffer
+      (insert "HTTP/1.1 201 Created\nContent-Type: application/json\n\n"
+              "{\"id\": 42, \"display_name\": \"a.pdf\"}")
+      (goto-char (point-min))
+      (let ((result (org-canvas--file-parse-upload-response "/tmp/a.pdf" "https://u")))
+        (expect (alist-get 'id result) :to-equal 42))))
+
+  (it "returns the Location redirect when the body carries no id"
+    (with-temp-buffer
+      (insert "HTTP/1.1 302 Found\nLocation: https://canvas.example/api/v1/files/7\n\n")
+      (goto-char (point-min))
+      (let ((result (org-canvas--file-parse-upload-response "/tmp/a.pdf" "https://u")))
+        (expect (alist-get 'location result)
+                :to-equal "https://canvas.example/api/v1/files/7"))))
+
+  (it "signals when there is neither an id nor a Location"
+    (with-temp-buffer
+      (insert "HTTP/1.1 500 Internal Server Error\n\nboom")
+      (goto-char (point-min))
+      (expect (org-canvas--file-parse-upload-response "/tmp/a.pdf" "https://u")
+              :to-throw 'org-canvas-api-error))))
+
 ;;; org-canvas-files-test.el ends here

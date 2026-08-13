@@ -996,6 +996,97 @@ Returns the final message string."
     (expect (test-sections--pull-message '())
             :to-equal "Section pull: 0 created, 0 updated.")))
 
+(describe "org-canvas--override-row-redundant-p"
+  ;; No test touched this predicate directly, so both `or's and both
+  ;; `equal's in it survived.  It decides whether an override row is
+  ;; worth emitting at all: a row that merely repeats the parent's dates
+  ;; is noise, but dropping one that differs would lose real information.
+  (it "is redundant when every populated date matches the parent"
+    (expect (org-canvas--override-row-redundant-p
+             '((due_at . "2026-02-15T23:59:00Z"))
+             "2026-02-15T23:59:00Z" nil nil)
+            :to-be-truthy))
+
+  (it "is redundant when the row carries no dates at all"
+    (expect (org-canvas--override-row-redundant-p
+             '((course_section_id . 1)) nil nil nil)
+            :to-be-truthy))
+
+  (it "is not redundant when the due date differs"
+    (expect (org-canvas--override-row-redundant-p
+             '((due_at . "2026-03-28T23:59:00Z"))
+             "2026-02-15T23:59:00Z" nil nil)
+            :to-be nil))
+
+  (it "is not redundant when only the unlock date differs"
+    ;; Each date is checked independently; a difference in any one of
+    ;; them has to keep the row.
+    (expect (org-canvas--override-row-redundant-p
+             '((due_at . "2026-02-15T23:59:00Z")
+               (unlock_at . "2026-02-01T00:00:00Z"))
+             "2026-02-15T23:59:00Z" "2026-01-01T00:00:00Z" nil)
+            :to-be nil))
+
+  (it "is not redundant when only the lock date differs"
+    (expect (org-canvas--override-row-redundant-p
+             '((due_at . "2026-02-15T23:59:00Z")
+               (lock_at . "2026-03-01T00:00:00Z"))
+             "2026-02-15T23:59:00Z" nil "2026-04-01T00:00:00Z")
+            :to-be nil))
+
+  (it "treats a nil date on the row as no difference"
+    ;; nil means "the override says nothing about this date", which is
+    ;; not the same as "differs from the parent".
+    (expect (org-canvas--override-row-redundant-p
+             '((due_at . "2026-02-15T23:59:00Z") (unlock_at . nil))
+             "2026-02-15T23:59:00Z" "2026-01-01T00:00:00Z" nil)
+            :to-be-truthy)))
+
+(describe "org-canvas--pull-sections-warn-stale"
+  ;; `(and local-id (not (member local-id remote-ids)))' survived
+  ;; `and'->`or': no test had a heading without a CANVAS_ID, so the
+  ;; left-hand guard was never the deciding factor.
+  (it "warns about a heading whose id is gone from Canvas"
+    (with-temp-org-buffer
+     "* Stale Section
+:PROPERTIES:
+:CANVAS_ID: 999
+:END:
+"
+     (let ((warnings nil))
+       (cl-letf (((symbol-function 'org-canvas--log-warning)
+                  (lambda (_l fmt &rest args) (push (apply #'format fmt args) warnings)))
+                 ((symbol-function 'message) (lambda (&rest _) nil)))
+         (org-canvas--pull-sections-warn-stale '("100" "200"))
+         (expect (length warnings) :to-equal 1)
+         (expect (car warnings) :to-match "999")))))
+
+  (it "stays silent for a heading that has no CANVAS_ID"
+    ;; An unsynced heading is not stale — it was never on Canvas.
+    (with-temp-org-buffer
+     "* Locally Added Section
+"
+     (let ((warnings nil))
+       (cl-letf (((symbol-function 'org-canvas--log-warning)
+                  (lambda (_l fmt &rest args) (push (apply #'format fmt args) warnings)))
+                 ((symbol-function 'message) (lambda (&rest _) nil)))
+         (org-canvas--pull-sections-warn-stale '("100"))
+         (expect warnings :to-be nil)))))
+
+  (it "stays silent when the id is still on Canvas"
+    (with-temp-org-buffer
+     "* Live Section
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+"
+     (let ((warnings nil))
+       (cl-letf (((symbol-function 'org-canvas--log-warning)
+                  (lambda (_l fmt &rest args) (push (apply #'format fmt args) warnings)))
+                 ((symbol-function 'message) (lambda (&rest _) nil)))
+         (org-canvas--pull-sections-warn-stale '("100"))
+         (expect warnings :to-be nil))))))
+
 (describe "org-canvas--override-emit-table empty input"
   ;; `(> (length overrides) 0)' survived mutation to `>=': no test passed
   ;; an empty list, so the guard was never exercised at its boundary.
