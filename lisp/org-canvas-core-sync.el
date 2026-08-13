@@ -22,7 +22,24 @@
   "Non-nil when a sync is running.  Prevents concurrent syncs.")
 
 (defvar org-canvas--dry-run nil
-  "When non-nil, sync shows what would happen without making API calls.")
+  "When non-nil, sync shows what would happen without making API calls.
+Every code path that issues a non-GET request must check this before
+contacting Canvas.  The macro pipeline checks it once in
+`org-canvas--sync-execute-pipeline' (which skips push *and* finalize)
+and again in `org-canvas--push-to-api'; modules with custom sync loops
+\(files, overrides, settings) check it themselves.")
+
+(defconst org-canvas--dry-run-response '((id . "dry-run"))
+  "Sentinel response returned by push helpers during a dry run.
+Recognized by `org-canvas--dry-run-response-p' so callers can skip
+finalization, hash writes, and other bookkeeping that would otherwise
+mark an item as synced without anything having been pushed.")
+
+(defun org-canvas--dry-run-response-p (response)
+  "Return non-nil if RESPONSE is the dry-run sentinel.
+Compares by value, not identity, so a copied or re-consed sentinel
+still reads as a dry run."
+  (equal response org-canvas--dry-run-response))
 
 (defvar org-canvas--sync-global-feature-stats nil
   "Per-feature stat entries accumulated during `org-canvas-sync'.
@@ -55,8 +72,9 @@ Opens the log buffer and logs a sync header."
       "%s file not found: %s" feature-upper sync-file))
   (let ((buf (find-file-noselect sync-file)))
     (when (buffer-modified-p buf)
-      (if (y-or-n-p (format "%s has unsaved changes.  Save before syncing? "
-                            (file-name-nondirectory sync-file)))
+      (if (org-canvas--confirm
+           (format "%s has unsaved changes.  Save before syncing? "
+                   (file-name-nondirectory sync-file)))
           (with-current-buffer buf (org-canvas--save-buffer))
         (user-error "Aborted: unsaved changes in %s" sync-file))))
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
@@ -817,7 +835,7 @@ Returns the API response alist."
     ;; Dry-run: skip API call and return a mock response
     (when org-canvas--dry-run
       (org-canvas--log-info org-canvas--logger "[DRY-RUN] Would %s '%s' to %s" method title full-endpoint)
-      (cl-return-from org-canvas--push-to-api '((id . "dry-run"))))
+      (cl-return-from org-canvas--push-to-api org-canvas--dry-run-response))
 
     ;; Conflict detection: for PUT only, check if remote was modified
     (when (and org-canvas-detect-conflicts

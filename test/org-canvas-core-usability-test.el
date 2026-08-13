@@ -182,9 +182,12 @@
             (with-current-buffer (find-file-noselect temp-file)
               (goto-char (point-max))
               (insert "unsaved change\n"))
-            ;; Sync should prompt, we say no
-            (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil)))
-              (expect (org-canvas-sync-pages) :to-throw 'user-error)))
+            ;; Sync should prompt, we say no.  `noninteractive' is t under
+            ;; the test runner and would skip the prompt (issue #34), so
+            ;; bind it off to exercise the answer.
+            (let ((noninteractive nil))
+              (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil)))
+                (expect (org-canvas-sync-pages) :to-throw 'user-error))))
         (ignore-errors (kill-buffer (get-file-buffer temp-file)))
         (delete-file temp-file))))
 

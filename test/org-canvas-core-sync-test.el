@@ -2133,7 +2133,9 @@ Keep this too
           (progn
             (with-temp-file test-file
               (insert "* Existing Group\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"))
-            (let ((org-canvas-assignment-groups-file test-file))
+            (let ((org-canvas-assignment-groups-file test-file)
+                  ;; Batch mode now skips the prompt (issue #34).
+                  (noninteractive nil))
               (with-org-canvas-test-config
                 (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
                            (lambda (_method _url &optional _params) '()))

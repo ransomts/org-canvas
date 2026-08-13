@@ -404,7 +404,8 @@ Returns a list of plists: (:section-id ID :due-at TS :unlock-at TS :lock-at TS).
 
 (defun org-canvas--override-delete-removed (endpoint existing seen-section-ids)
   "Delete overrides in EXISTING whose section_id is not in SEEN-SECTION-IDS.
-ENDPOINT is the overrides API URL.  Returns the number deleted."
+ENDPOINT is the overrides API URL.  Returns the number deleted.
+During a dry run the deletions are logged but never issued."
   (let ((deleted 0))
     (dolist (item existing)
       (let ((item-section-id (alist-get 'course_section_id item))
@@ -415,8 +416,12 @@ ENDPOINT is the overrides API URL.  Returns the number deleted."
                 (org-canvas--log-debug org-canvas--logger
                             "[Override] Deleting override %s (section %s no longer in table)"
                             item-id item-section-id)
-                (org-canvas-api-request 'DELETE
-                  (format "%s/%s" endpoint item-id))
+                (if org-canvas--dry-run
+                    (org-canvas--log-info org-canvas--logger
+                      "[DRY-RUN] Would DELETE override %s (section %s no longer in table)"
+                      item-id item-section-id)
+                  (org-canvas-api-request 'DELETE
+                    (format "%s/%s" endpoint item-id)))
                 (setq deleted (1+ deleted)))
             (error
              (org-canvas--log-error org-canvas--logger
@@ -432,7 +437,9 @@ Fetches existing overrides from Canvas, then for each local override:
   - Updates the existing override if one matches by course_section_id (PUT)
   - Creates a new override if none matches (POST)
   - Deletes remote overrides whose section_id is absent from the table (DELETE)
-Returns a list (CREATED UPDATED DELETED) as integer counts."
+Returns a list (CREATED UPDATED DELETED) as integer counts.
+Under `org-canvas--dry-run' the remote is still read but no write is
+issued; the counts then report what would have been done."
   (let* ((endpoint (org-canvas-api-course-endpoint
                     "assignments/%s/overrides" assignment-id))
          (existing (condition-case err
@@ -465,13 +472,20 @@ Returns a list (CREATED UPDATED DELETED) as integer counts."
                   (org-canvas--log-debug org-canvas--logger
                               "[Override] Updating override %s for section %s"
                               override-id section-id)
-                  (org-canvas-api-request 'PUT
-                    (format "%s/%s" endpoint override-id) :data payload)
+                  (if org-canvas--dry-run
+                      (org-canvas--log-info org-canvas--logger
+                        "[DRY-RUN] Would UPDATE override %s for section %s"
+                        override-id section-id)
+                    (org-canvas-api-request 'PUT
+                      (format "%s/%s" endpoint override-id) :data payload))
                   (setq updated (1+ updated)))
               ;; Create new override
               (org-canvas--log-debug org-canvas--logger
                           "[Override] Creating override for section %s" section-id)
-              (org-canvas-api-request 'POST endpoint :data payload)
+              (if org-canvas--dry-run
+                  (org-canvas--log-info org-canvas--logger
+                    "[DRY-RUN] Would CREATE override for section %s" section-id)
+                (org-canvas-api-request 'POST endpoint :data payload))
               (setq created (1+ created)))
           (error
            (org-canvas--log-error org-canvas--logger
@@ -537,10 +551,14 @@ reconciles them with Canvas assignment overrides."
       (org-canvas--log-info org-canvas--logger "Assignments: %d | Created: %d | Updated: %d | Deleted: %d"
                  assignments-processed total-created total-updated total-deleted)
       (org-canvas--log-info org-canvas--logger "========================================")
-      (org-canvas--sync-record-feature-stats "Overrides"
-        (list :success (+ total-created total-updated total-deleted)))
-      (message "Override sync: %d assignments, %d created, %d updated, %d deleted."
-               assignments-processed total-created total-updated total-deleted)))
+      (let ((total (+ total-created total-updated total-deleted)))
+        (org-canvas--sync-record-feature-stats "Overrides"
+          (if org-canvas--dry-run
+              (list :dry-run total)
+            (list :success total))))
+      (message "Override sync: %d assignments, %d created, %d updated, %d deleted.%s"
+               assignments-processed total-created total-updated total-deleted
+               (if org-canvas--dry-run " (dry run — nothing sent)" ""))))
 
 (provide 'org-canvas-sections)
 ;;; org-canvas-sections.el ends here

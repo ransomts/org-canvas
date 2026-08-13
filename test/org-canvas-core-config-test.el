@@ -566,5 +566,42 @@
               (expect (buffer-string) :to-match "canvas_session=\\*\\*\\*MASKED\\*\\*\\*")))
         (when (get-buffer buffer-name) (kill-buffer buffer-name))))))
 
+;;;; Confirmation prompts (issue #34)
+
+(describe "org-canvas--confirm"
+  (it "returns t in batch mode without prompting"
+    ;; Under `emacs --batch' `y-or-n-p' reads stdin, which silently ate the
+    ;; Files step of a full sync when `org-canvas-pull-sections' prompted.
+    (let ((prompted nil)
+          (org-canvas-assume-yes nil))
+      (cl-letf (((symbol-function 'y-or-n-p)
+                 (lambda (_) (setq prompted t) nil)))
+        (expect (org-canvas--confirm "Really? ") :to-be t)
+        (expect prompted :to-be nil))))
+
+  (it "returns t without prompting when assume-yes is set"
+    (let ((prompted nil)
+          (org-canvas-assume-yes t)
+          (noninteractive nil))
+      (cl-letf (((symbol-function 'y-or-n-p)
+                 (lambda (_) (setq prompted t) nil)))
+        (expect (org-canvas--confirm "Really? ") :to-be t)
+        (expect prompted :to-be nil))))
+
+  (it "asks the user when interactive and assume-yes is nil"
+    (let ((asked nil)
+          (org-canvas-assume-yes nil)
+          (noninteractive nil))
+      (cl-letf (((symbol-function 'y-or-n-p)
+                 (lambda (prompt) (setq asked prompt) t)))
+        (expect (org-canvas--confirm "Really? ") :to-be t)
+        (expect asked :to-equal "Really? "))))
+
+  (it "passes a negative answer through"
+    (let ((org-canvas-assume-yes nil)
+          (noninteractive nil))
+      (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil)))
+        (expect (org-canvas--confirm "Really? ") :to-be nil)))))
+
 (provide 'org-canvas-core-config-test)
 ;;; org-canvas-core-config-test.el ends here

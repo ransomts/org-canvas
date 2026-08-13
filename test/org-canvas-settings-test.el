@@ -549,7 +549,9 @@ Welcome to the course.
           (progn
             (with-temp-file settings-file
               (insert "#+TITLE: Settings\n* Old Name\n:PROPERTIES:\n:TIME_ZONE: UTC\n:END:\n"))
-            (let ((org-canvas-settings-file settings-file))
+            (let ((org-canvas-settings-file settings-file)
+                  ;; Batch mode now skips the prompt (issue #34).
+                  (noninteractive nil))
               (with-org-canvas-test-config
                 (cl-letf (((symbol-function 'org-canvas-api-request)
                            (lambda (_method _url &rest _args)

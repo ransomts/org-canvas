@@ -283,9 +283,12 @@
                  (org-canvas-sections-file org-file))
             (with-temp-file org-file
               (insert "* Existing Section\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n"))
+            ;; `noninteractive' is t under the test runner and now skips
+            ;; the prompt (issue #34); bind it off to test the decline.
             (with-sync-test-env
-              (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil)))
-                (expect (org-canvas-pull-sections) :to-throw 'user-error))))
+              (let ((noninteractive nil))
+                (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil)))
+                  (expect (org-canvas-pull-sections) :to-throw 'user-error)))))
         (let ((buf (find-buffer-visiting
                     (expand-file-name "sections.org" temp-dir))))
           (when buf (kill-buffer buf)))
@@ -845,5 +848,62 @@ Just a description, no override table.
                        (string-match-p "treating remote as empty" (nth 1 call)))
               (setq warned t)))
           (expect warned :to-be t))))))
+
+;;;; Override dry run (issue #34)
+;;
+;; Overrides reconcile with PUT/POST/DELETE outside the shared push helper,
+;; so they had the same hole the files module did: a preview rewrote and
+;; removed real overrides on Canvas.
+
+(describe "org-canvas--override-sync-for-assignment dry run"
+  (it "reports updates and deletions without issuing them"
+    (with-org-canvas-test-config
+      (let ((calls nil)
+            (logged nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (_method _url &optional _params)
+                     ;; Section 1 is still in the table (update); section 999
+                     ;; has been removed from it (delete).
+                     '(((id . 10) (course_section_id . 1))
+                       ((id . 20) (course_section_id . 999)))))
+                  ((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest _args)
+                     (push (cons method url) calls)
+                     nil))
+                  ((symbol-function 'org-canvas--log-info)
+                   (lambda (_logger fmt &rest args)
+                     (push (apply #'format fmt args) logged))))
+          (let* ((org-canvas--dry-run t)
+                 (counts (org-canvas--override-sync-for-assignment
+                          "42" '((:section-id "1" :due-at "2026-10-19T23:59:00Z")))))
+            ;; Counts still describe the plan: 0 created, 1 updated, 1 deleted.
+            (expect counts :to-equal '(0 1 1))
+            (expect calls :to-equal nil)
+            (expect (seq-filter (lambda (l) (string-match-p "Would UPDATE override" l))
+                                logged)
+                    :not :to-equal nil)
+            (expect (seq-filter (lambda (l) (string-match-p "Would DELETE override" l))
+                                logged)
+                    :not :to-equal nil))))))
+
+  (it "issues the requests when not a dry run"
+    ;; The mirror of the above, so the guard cannot be left permanently on.
+    (with-org-canvas-test-config
+      (let ((calls nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (_method _url &optional _params)
+                     '(((id . 10) (course_section_id . 1))
+                       ((id . 20) (course_section_id . 999)))))
+                  ((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest _args)
+                     (push (cons method url) calls)
+                     nil)))
+          (let ((org-canvas--dry-run nil))
+            (org-canvas--override-sync-for-assignment
+             "42" '((:section-id "1" :due-at "2026-10-19T23:59:00Z")))
+            (expect (seq-filter (lambda (c) (eq (car c) 'PUT)) calls)
+                    :not :to-equal nil)
+            (expect (seq-filter (lambda (c) (eq (car c) 'DELETE)) calls)
+                    :not :to-equal nil)))))))
 
 ;;; org-canvas-sections-test.el ends here

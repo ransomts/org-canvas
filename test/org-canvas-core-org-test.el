@@ -1952,10 +1952,13 @@ Page content.
           (progn
             (with-current-buffer buf
               (insert "edits") (set-buffer-modified-p t))
-            (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t))
-                      ((symbol-function 'org-canvas--save-buffer)
-                       (lambda () (setq saved t) (set-buffer-modified-p nil))))
-              (org-canvas--pull-confirm-unsaved temp "feature"))
+            ;; `noninteractive' is t under the test runner, which would
+            ;; short-circuit the prompt; bind it off to exercise the answer.
+            (let ((noninteractive nil))
+              (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t))
+                        ((symbol-function 'org-canvas--save-buffer)
+                         (lambda () (setq saved t) (set-buffer-modified-p nil))))
+                (org-canvas--pull-confirm-unsaved temp "feature")))
             (expect saved :to-be-truthy))
         (when (buffer-live-p buf)
           (with-current-buffer buf (set-buffer-modified-p nil))
@@ -1969,12 +1972,84 @@ Page content.
           (progn
             (with-current-buffer buf
               (insert "edits") (set-buffer-modified-p t))
-            (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil)))
-              (expect (org-canvas--pull-confirm-unsaved temp "feature")
-                      :to-throw 'user-error)))
+            (let ((noninteractive nil))
+              (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil)))
+                (expect (org-canvas--pull-confirm-unsaved temp "feature")
+                        :to-throw 'user-error))))
         (when (buffer-live-p buf)
           (with-current-buffer buf (set-buffer-modified-p nil))
           (kill-buffer buf))
+        (delete-file temp))))
+
+  ;; Issue #34: under `emacs --batch' this prompt consumed stdin and
+  ;; silently swallowed a step of a full `org-canvas-sync'.
+  (it "saves without prompting in batch mode"
+    (let* ((temp (make-temp-file "batch-" nil ".org"))
+           (buf (find-file-noselect temp))
+           (saved nil)
+           (prompted nil))
+      (unwind-protect
+          (progn
+            (with-current-buffer buf
+              (insert "edits") (set-buffer-modified-p t))
+            (cl-letf (((symbol-function 'y-or-n-p)
+                       (lambda (_) (setq prompted t) nil))
+                      ((symbol-function 'org-canvas--save-buffer)
+                       (lambda () (setq saved t) (set-buffer-modified-p nil))))
+              (org-canvas--pull-confirm-unsaved temp "feature"))
+            (expect prompted :to-be nil)
+            (expect saved :to-be-truthy))
+        (when (buffer-live-p buf)
+          (with-current-buffer buf (set-buffer-modified-p nil))
+          (kill-buffer buf))
+        (delete-file temp)))))
+
+(describe "org-canvas--pull-confirm-overwrite"
+  (it "aborts when the user declines"
+    (let ((temp (make-temp-file "existing-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp (insert "* Existing heading\n"))
+            (let ((noninteractive nil))
+              (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil)))
+                (expect (org-canvas--pull-confirm-overwrite temp "sections")
+                        :to-throw 'user-error))))
+        (delete-file temp))))
+
+  (it "proceeds when the user accepts"
+    (let ((temp (make-temp-file "existing-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp (insert "* Existing heading\n"))
+            (let ((noninteractive nil))
+              (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+                (expect (org-canvas--pull-confirm-overwrite temp "sections")
+                        :not :to-throw))))
+        (delete-file temp))))
+
+  ;; This is the prompt that blocked batch runs: it fires for every pull
+  ;; whose target file already exists, which is the normal case.
+  (it "does not prompt in batch mode"
+    (let ((temp (make-temp-file "existing-" nil ".org"))
+          (prompted nil))
+      (unwind-protect
+          (progn
+            (with-temp-file temp (insert "* Existing heading\n"))
+            (cl-letf (((symbol-function 'y-or-n-p)
+                       (lambda (_) (setq prompted t) nil)))
+              (expect (org-canvas--pull-confirm-overwrite temp "sections")
+                      :not :to-throw))
+            (expect prompted :to-be nil))
+        (delete-file temp))))
+
+  (it "is a no-op for an empty file"
+    (let ((temp (make-temp-file "empty-" nil ".org")))
+      (unwind-protect
+          (let ((noninteractive nil))
+            (cl-letf (((symbol-function 'y-or-n-p)
+                       (lambda (_) (error "Should not prompt for an empty file"))))
+              (expect (org-canvas--pull-confirm-overwrite temp "sections")
+                      :not :to-throw)))
         (delete-file temp)))))
 
 (describe "org-canvas--pull-insert-body file-URL rewriting"
