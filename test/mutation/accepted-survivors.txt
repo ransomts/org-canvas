@@ -1,0 +1,59 @@
+# Accepted mutation survivors.
+#
+# NOT YET POPULATED — see the note at the bottom.
+#
+# Each entry is a mutation the suite does not catch and that we have
+# decided not to chase — almost always because the mutant is equivalent
+# (the mutated code behaves identically, so no test could tell) or
+# because it is masked by a surrounding guard.  Put the reason on a
+# comment line above the entry.
+#
+# Anything that survives and is NOT listed here is a regression: a line
+# whose behavior you could change with nothing to stop you.  That is
+# what `--baseline' fails on.  The score itself is not the target; a
+# clean diff against this file is.
+#
+# Format: FILE :: OPERATOR :: SOURCE LINE   (line numbers deliberately
+# excluded so unrelated edits above a site do not invalidate the entry)
+#
+# Check against it:
+#   python3 test/mutation/mutate.py --files <files> --jobs 8 --max 0 \
+#       --baseline test/mutation/accepted-survivors.txt
+#
+# Regenerate (then annotate each entry with its reason):
+#   python3 test/mutation/mutate.py --files <files> --jobs 8 --max 0 \
+#       --write-baseline test/mutation/accepted-survivors.txt
+#
+# ---------------------------------------------------------------------
+# TODO: populate from a clean full pass.
+#
+# The tooling and the tests that kill the real survivors are in place,
+# but this file has never been generated, because every attempt to run a
+# full pass on the development machine was corrupted by a concurrent
+# mutation run mutating sources in place underneath it (issue #38).
+#
+# Run this when nothing else is touching the tree:
+#
+#   python3 test/mutation/mutate.py \
+#       --files lisp/org-canvas-files.el lisp/org-canvas-sections.el \
+#       --jobs 8 --max 0 \
+#       --write-baseline test/mutation/accepted-survivors.txt
+#
+# Expect roughly 30 minutes, and expect most entries to be `t->nil' /
+# `nil->t' flag flips in argument positions such as
+# `(org-get-heading t t t t)' and `(org-end-of-subtree t)', which are
+# equivalent for every fixture in the suite.  Two others are known to be
+# accepted deliberately and are documented where they occur:
+#
+#   * files.el `by_path' `and'->`or' — masked by the enclosing
+#     condition-case.  An empty vector is truthy in Elisp, so `or' takes
+#     the "use last folder" branch, `(elt [] -1)' signals, and the
+#     handler creates the folder anyway: same observable outcome.
+#
+#   * files.el / sections.el `equal'->`eq' on Canvas ids — equivalent,
+#     since Emacs fixnums reach 2305843009213693951 and Canvas ids are
+#     far below that.
+#
+# Anything in the generated output that is NOT one of the above deserves
+# a second look before being accepted: it may be a real assertion gap.
+# ---------------------------------------------------------------------

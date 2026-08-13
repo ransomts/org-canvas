@@ -114,11 +114,15 @@ def discover_sites(files):
                 s, e = m.start(), m.end()
                 if not all(mask[s:e]):
                     continue
+                line_start = text.rfind("\n", 0, s) + 1
+                line_end = text.find("\n", s)
+                line_end = len(text) if line_end == -1 else line_end
                 sites.append({
                     "file": path, "rel": os.path.relpath(path, ROOT),
                     "start": s, "end": e,
                     "lineno": text.count("\n", 0, s),
                     "op": name, "repl": repl, "orig": text[s:e],
+                    "line": " ".join(text[line_start:line_end].split()),
                 })
     return sites
 
@@ -156,6 +160,36 @@ def label_of(site):
             f"[{site['op']}: {site['orig']}->{site['repl']}]")
 
 
+def key_of(site):
+    """Return a line-number-independent identity for a mutation site.
+
+    The baseline file is keyed on this rather than on `label_of', whose
+    line number shifts whenever anything above it in the file changes —
+    a baseline keyed that way would go stale on every unrelated edit.
+    Identical lines carrying the same operator share a key, so accepting
+    one accepts all of them; that is the intended trade for stability.
+    """
+    return f"{site['rel']} :: {site['op']} :: {site['line']}"
+
+
+def parse_baseline(path):
+    """Read accepted-survivor keys from PATH.
+
+    Blank lines and `#' comments are ignored, so each entry can carry the
+    reason it was accepted on the line above it.  A missing file means an
+    empty baseline: every survivor is then new.
+    """
+    if not path or not os.path.exists(path):
+        return []
+    keys = []
+    with open(path, encoding="utf-8") as fh:
+        for raw in fh:
+            line = raw.strip()
+            if line and not line.startswith("#"):
+                keys.append(line)
+    return keys
+
+
 def execute(sites, root, pattern, timeout, quiet=False):
     """Run each site's mutation against the suite rooted at ROOT.
     Files are snapshot and restored.  Returns a results dict."""
@@ -163,6 +197,7 @@ def execute(sites, root, pattern, timeout, quiet=False):
     originals = {p: open(p, encoding="utf-8").read() for p in files}
     killed = survived = errored = 0
     survivors = []
+    survivor_keys = []
     try:
         for n, site in enumerate(sites, 1):
             text = originals[site["file"]]
@@ -177,6 +212,7 @@ def execute(sites, root, pattern, timeout, quiet=False):
             if status == "survived":
                 survived += 1
                 survivors.append(label_of(site))
+                survivor_keys.append(key_of(site))
             elif status == "error":
                 errored += 1
             else:
@@ -190,7 +226,7 @@ def execute(sites, root, pattern, timeout, quiet=False):
             with open(p, "w", encoding="utf-8") as fh:
                 fh.write(text)
     return {"killed": killed, "survived": survived, "errored": errored,
-            "survivors": survivors}
+            "survivors": survivors, "survivor_keys": survivor_keys}
 
 
 def run_one_worker(idx, shard, timeout, pattern):
@@ -232,7 +268,8 @@ def run_parallel(sites, jobs, timeout, pattern):
     groups = shard_sites(sites, jobs)
     print(f"Running {len(sites)} mutations across {len(groups)} parallel "
           f"workers (isolated copies)...\n", flush=True)
-    merged = {"killed": 0, "survived": 0, "errored": 0, "survivors": []}
+    merged = {"killed": 0, "survived": 0, "errored": 0, "survivors": [],
+              "survivor_keys": []}
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(groups)) as ex:
         futs = {ex.submit(run_one_worker, i, g, timeout, pattern): i
                 for i, g in enumerate(groups)}
@@ -241,6 +278,7 @@ def run_parallel(sites, jobs, timeout, pattern):
             for k in ("killed", "survived", "errored"):
                 merged[k] += res[k]
             merged["survivors"] += res["survivors"]
+            merged["survivor_keys"] += res.get("survivor_keys", [])
             done = merged["killed"] + merged["survived"] + merged["errored"]
             print(f"  worker {futs[fut]} done "
                   f"({res['killed']}k/{res['survived']}s/{res['errored']}e) "
@@ -263,6 +301,74 @@ def report(result, elapsed):
             print(f"  - {s}")
 
 
+BASELINE_HEADER = """\
+# Accepted mutation survivors.
+#
+# Each entry is a mutation the suite does not catch and that we have
+# decided not to chase — almost always because the mutant is equivalent
+# (the mutated code behaves identically, so no test could tell) or
+# because it is masked by a surrounding guard.  Put the reason on a
+# comment line above the entry.
+#
+# Anything that survives and is NOT listed here is a regression: a line
+# whose behavior you could change with nothing to stop you.  That is
+# what `--baseline' fails on.  The score itself is not the target; a
+# clean diff against this file is.
+#
+# Format: FILE :: OPERATOR :: SOURCE LINE   (line numbers deliberately
+# excluded so unrelated edits above a site do not invalidate the entry)
+#
+# Regenerate with:
+#   python3 test/mutation/mutate.py --files <files> --jobs 8 --max 0 \\
+#       --write-baseline test/mutation/accepted-survivors.txt
+"""
+
+
+def write_baseline(path, result):
+    """Write this run's survivors to PATH as an accepted-survivors file."""
+    keys = sorted(set(result.get("survivor_keys", [])))
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(BASELINE_HEADER)
+        for key in keys:
+            fh.write("\n" + key + "\n")
+
+
+def check_baseline(path, result, sites):
+    """Compare this run's survivors against the accepted list at PATH.
+
+    Returns a process exit status: non-zero when a survivor is not in the
+    baseline.  Entries in the baseline that no longer survive are
+    reported too — they are not failures, but leaving them in place would
+    let a real regression hide behind a stale accept.
+    """
+    accepted = set(parse_baseline(path))
+    current = set(result.get("survivor_keys", []))
+    scoped = {key_of(s) for s in sites}
+    new = sorted(current - accepted)
+    # Only consider accepted entries that this run actually covered;
+    # a partial run must not report every out-of-scope entry as stale.
+    stale = sorted((accepted & scoped) - current)
+
+    print("\n" + "=" * 60)
+    print(f"Baseline: {len(accepted)} accepted, {len(current)} surviving now.")
+    if stale:
+        print(f"\n{len(stale)} baseline entr(y/ies) no longer survive — "
+              f"a test now covers them.  Remove from {path}:")
+        for key in stale:
+            print(f"  - {key}")
+    if new:
+        print(f"\n{len(new)} NEW survivor(s) — behavior you could change "
+              f"with no test objecting:")
+        for key in new:
+            print(f"  - {key}")
+        print("\nEither add an assertion that kills it, or record it in "
+              f"{path} with the reason it is acceptable.")
+        return 1
+    print("\nNo new survivors.")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -277,6 +383,10 @@ def main():
     ap.add_argument("--seed", type=int, default=1, help="sampling seed (default 1)")
     ap.add_argument("--sites-file", help="(worker) JSON list of sites to run")
     ap.add_argument("--json", dest="json_out", help="write results JSON to this path")
+    ap.add_argument("--baseline", default=None,
+                    help="file of accepted survivors; fail only on NEW ones")
+    ap.add_argument("--write-baseline", default=None,
+                    help="write this run's survivors to a baseline file")
     ap.add_argument("--min-score", type=float, default=None,
                     help="exit non-zero if mutation score (%% killed) is below "
                          "this floor; for CI ratcheting (default: fail on any "
@@ -327,6 +437,15 @@ def main():
     if args.json_out:
         with open(args.json_out, "w") as fh:
             json.dump(result, fh)
+    if args.write_baseline:
+        write_baseline(args.write_baseline, result)
+        print(f"\nWrote {len(result.get('survivor_keys', []))} survivor key(s) "
+              f"to {args.write_baseline}")
+        sys.exit(0)
+
+    if args.baseline:
+        sys.exit(check_baseline(args.baseline, result, sites))
+
     if args.min_score is not None:
         scored = result["killed"] + result["survived"]
         score = (result["killed"] / scored * 100) if scored else 100.0
