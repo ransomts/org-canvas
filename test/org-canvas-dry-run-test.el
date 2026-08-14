@@ -92,6 +92,24 @@ Log lines are captured into a list rather than read back out of
           (with-current-buffer buf (set-buffer-modified-p nil))
           (kill-buffer buf))))))
 
+(defun org-canvas-dry-run--copy-course (src dst)
+  "Copy the demo course SRC to DST, skipping Emacs lockfiles.
+`copy-directory' is not safe here: an interactive Emacs (the user's
+daemon) visiting a file under SRC — org-canvas.log in practice — owns a
+transient `.#name' lockfile that can vanish between the directory
+enumeration and the `copy-file' call, failing the whole spec with
+file-missing (issue #44 caught this racing exactly once per ~15 full
+suite runs).  Lockfiles carry nothing a fixture wants, so enumerate and
+copy per-file, skipping them; a file that still disappears mid-copy is
+skipped rather than fatal."
+  (dolist (file (directory-files-recursively src ".*" nil))
+    (unless (string-prefix-p ".#" (file-name-nondirectory file))
+      (let ((target (expand-file-name (file-relative-name file src) dst)))
+        (make-directory (file-name-directory target) t)
+        (condition-case nil
+            (copy-file file target t)
+          (file-missing nil))))))
+
 (defmacro org-canvas-dry-run--with-course (dir-var &rest body)
   "Copy the demo course to a temp dir, bind DIR-VAR to it, and run BODY.
 Every `org-canvas-*-file' variable is pointed at the copy, so a sync
@@ -102,7 +120,7 @@ caught by the checksum comparison instead of dirtying the repo."
           (,dir-var (expand-file-name "demo-course" tmp-root)))
      (unwind-protect
          (progn
-           (copy-directory org-canvas-dry-run--demo-dir ,dir-var t t t)
+           (org-canvas-dry-run--copy-course org-canvas-dry-run--demo-dir ,dir-var)
            (let ((org-canvas-directory ,dir-var)
                  (org-canvas-assignments-file (expand-file-name "assignments.org" ,dir-var))
                  (org-canvas-quizzes-file (expand-file-name "quizzes.org" ,dir-var))

@@ -31,6 +31,14 @@
       (file-name-as-directory
        (make-temp-file "org-canvas-test-" t)))
 
+;; Lockfiles have no value in a batch suite and cause real harm: a
+;; `.#name' symlink appearing while some spec has a buffer dirty can
+;; break anything that enumerates the directory (issue #44 — a fixture
+;; copy of demo-course/ died on one).  This stops the suite creating
+;; its own; a concurrent interactive Emacs can still create them, which
+;; is why the dry-run fixture copy also skips them explicitly.
+(setq create-lockfiles nil)
+
 ;;;; Network Guard
 ;;
 ;; The test environment loads the user's real `org-canvas-credentials.el',
