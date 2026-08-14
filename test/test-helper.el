@@ -185,6 +185,22 @@ across Emacs versions."
                (kill-buffer))))
        (delete-file temp-file))))
 
+(defun test-org-canvas-reset-file-caches ()
+  "Reset the files module's session caches to their defvar defaults.
+
+These are module-level globals that a sync populates and never clears on
+the way out, so whatever the previous spec left behind is what the next
+one starts from.  Six describes used to reset them ad hoc and disagreed
+about how — some bound the folder cache to a fresh hash-table, one to
+nil — which left the outcome of specs that never reset at all depending
+on which describe ran before them (issue #43).
+
+nil is the documented default and means \"no caching\"; the sync entry
+points install a hash-table themselves.  Specs that want caching
+behavior still set up their own table after this runs."
+  (setq org-canvas--file-root-folder-cache nil)
+  (setq org-canvas--file-folder-cache nil))
+
 (defmacro with-sync-test-env (&rest body)
   "Execute BODY with sync infrastructure mocked.
 Suppresses `org-canvas-clear-log' and `display-buffer' side effects."

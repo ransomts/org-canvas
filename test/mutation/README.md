@@ -43,10 +43,11 @@ equivalent mutants, or ones masked by a surrounding guard. Entries are keyed
 `FILE :: OPERATOR :: SOURCE LINE`, deliberately without line numbers so an
 unrelated edit above a site does not invalidate the entry.
 
-> **The file is not populated yet.** The tooling and the tests that kill the
-> real survivors are in place, but generating it needs one clean full pass —
-> see the TODO at the bottom of `accepted-survivors.txt` for the exact command.
-> Until then `--baseline` will report every survivor as new.
+The file is populated from a clean full pass over `files.el` and
+`sections.el` (130 killed / 189 scored, six non-terminating timeouts
+excluded) and every entry carries the reason it is accepted. It covers
+those two files only; extending mutation coverage to another file means
+running `--write-baseline` scoped to it and triaging what comes out.
 
 ```bash
 # Fail only on survivors that are NOT in the accepted list
@@ -65,6 +66,19 @@ failed — a partial run only considers entries whose sites it actually covered.
 **Verify a kill per-mutant, not by watching the score move.** Apply the exact
 mutation by hand, confirm the exact spec fails, restore. That is a causal claim
 about one line and one test; the aggregate is not.
+
+Two scoring hazards worth knowing:
+
+- **Any unrelated spec failure during a mutant's run scores it killed.** The
+  harness only sees the failure count, not which spec failed, so one
+  spontaneous flake anywhere in a 195-run pass gets misattributed as a kill.
+  A mutant that a full pass reports killed but survives repeated targeted
+  runs is this hazard, not a contradiction in your tests. De-flaking the
+  suite (issue #43) is the real fix.
+- **Timeouts are non-terminating mutants, not slow machines** — flipping a
+  `while` guard (`and->or`, `1+->1-`) removes the exit condition. They are
+  excluded from the score and listed individually; they are effectively
+  caught (they would hang CI too) and must not enter the baseline.
 
 ## Usage
 

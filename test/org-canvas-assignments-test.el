@@ -1619,6 +1619,27 @@ Content.
           (expect (cons row (cl-count ?| row))
                   :to-equal (cons row (cl-count ?| header)))))))
 
+  (it "emits a separator carrying one cell per header column"
+    ;; The separator row is built with the same `and keep-X' guards as the
+    ;; header and is easy to overlook — the row assertions above skip it
+    ;; deliberately.  A stray separator cell is enough to make Org read
+    ;; the table with a phantom column.
+    (with-temp-buffer
+      (let ((org-canvas-sections-file "/tmp/nonexistent-sections-xyzzy.org"))
+        (org-canvas--override-emit-table
+         '(((id . 1) (course_section_id . 1)
+            (due_at . "2026-03-28T23:59:00Z")))
+         "2026-02-15T23:59:00Z" nil nil))
+      (let* ((lines (seq-filter (lambda (l) (string-prefix-p "|" l))
+                                (split-string (buffer-string) "\n" t)))
+             (header (nth 0 lines))
+             (sep (nth 1 lines))
+             ;; "| A | B |" has three pipes for two columns; the separator
+             ;; "|--+--|" joins the same columns with one `+' between them.
+             (header-cols (1- (cl-count ?| header)))
+             (sep-cols (1+ (cl-count ?+ sep))))
+        (expect (cons sep sep-cols) :to-equal (cons sep header-cols)))))
+
   (it "emits no empty trailing cells when unlock and lock are dropped"
     ;; The same defect stated directly: with Unlock At and Lock At dropped,
     ;; a row must end right after the due date.
