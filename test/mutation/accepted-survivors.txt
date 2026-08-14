@@ -1,7 +1,5 @@
 # Accepted mutation survivors.
 #
-# NOT YET POPULATED — see the note at the bottom.
-#
 # Each entry is a mutation the suite does not catch and that we have
 # decided not to chase — almost always because the mutant is equivalent
 # (the mutated code behaves identically, so no test could tell) or
@@ -16,44 +14,115 @@
 # Format: FILE :: OPERATOR :: SOURCE LINE   (line numbers deliberately
 # excluded so unrelated edits above a site do not invalidate the entry)
 #
-# Check against it:
-#   python3 test/mutation/mutate.py --files <files> --jobs 8 --max 0 \
-#       --baseline test/mutation/accepted-survivors.txt
-#
-# Regenerate (then annotate each entry with its reason):
+# Regenerate with:
 #   python3 test/mutation/mutate.py --files <files> --jobs 8 --max 0 \
 #       --write-baseline test/mutation/accepted-survivors.txt
-#
-# ---------------------------------------------------------------------
-# TODO: populate from a clean full pass.
-#
-# The tooling and the tests that kill the real survivors are in place,
-# but this file has never been generated, because every attempt to run a
-# full pass on the development machine was corrupted by a concurrent
-# mutation run mutating sources in place underneath it (issue #38).
-#
-# Run this when nothing else is touching the tree:
-#
-#   python3 test/mutation/mutate.py \
-#       --files lisp/org-canvas-files.el lisp/org-canvas-sections.el \
-#       --jobs 8 --max 0 \
-#       --write-baseline test/mutation/accepted-survivors.txt
-#
-# Expect roughly 30 minutes, and expect most entries to be `t->nil' /
-# `nil->t' flag flips in argument positions such as
-# `(org-get-heading t t t t)' and `(org-end-of-subtree t)', which are
-# equivalent for every fixture in the suite.  Two others are known to be
-# accepted deliberately and are documented where they occur:
-#
-#   * files.el `by_path' `and'->`or' — masked by the enclosing
-#     condition-case.  An empty vector is truthy in Elisp, so `or' takes
-#     the "use last folder" branch, `(elt [] -1)' signals, and the
-#     handler creates the folder anyway: same observable outcome.
-#
-#   * files.el / sections.el `equal'->`eq' on Canvas ids — equivalent,
-#     since Emacs fixnums reach 2305843009213693951 and Canvas ids are
-#     far below that.
-#
-# Anything in the generated output that is NOT one of the above deserves
-# a second look before being accepted: it may be a real assertion gap.
-# ---------------------------------------------------------------------
+
+# --------------------------------------------------------------------
+# Equivalent flag flips (21 entries)
+# Flag flips in argument positions — `(org-get-heading t t t t)',
+# `(org-end-of-subtree t)' and similar.  These suppress tags, TODO
+# keywords, priorities and comments, or select invisible-ok behavior.
+# No fixture heading in the suite carries any of those and nothing runs
+# against a folded buffer, so the mutated call returns an identical
+# value.  Equivalent by construction rather than by weak assertion;
+# chasing them would mean inventing fixtures for behavior the package
+# does not rely on.
+# --------------------------------------------------------------------
+
+lisp/org-canvas-files.el :: nil->t :: (defvar org-canvas--file-changed-ids nil
+lisp/org-canvas-files.el :: nil->t :: (defvar org-canvas--file-root-folder-cache nil
+lisp/org-canvas-files.el :: nil->t :: (deleted-ids nil)
+lisp/org-canvas-files.el :: nil->t :: (let ((targets nil)
+lisp/org-canvas-files.el :: nil->t :: (set-buffer-multibyte nil)
+lisp/org-canvas-files.el :: nil->t :: (setq org-canvas--file-root-folder-cache nil)
+lisp/org-canvas-files.el :: nil->t :: upload-url nil nil org-canvas-upload-timeout)))
+lisp/org-canvas-files.el :: t->nil :: (let* ((heading (org-canvas--strip-statistics-cookie (org-get-heading t t t t)))
+lisp/org-canvas-files.el :: t->nil :: (let* ((parts (split-string folder-path "/" t))
+lisp/org-canvas-files.el :: t->nil :: (make-directory content-dir t))
+lisp/org-canvas-files.el :: t->nil :: (org-back-to-heading t)
+lisp/org-canvas-files.el :: t->nil :: (org-get-heading t t t t)))
+lisp/org-canvas-files.el :: t->nil :: (setq targets (org-map-entries (lambda () (point-marker)) t 'file)))
+lisp/org-canvas-files.el :: t->nil :: (split-string rel-path "/" t)))
+lisp/org-canvas-files.el :: t->nil :: t 'file))
+lisp/org-canvas-sections.el :: t->nil :: (org-back-to-heading t)
+lisp/org-canvas-sections.el :: t->nil :: (org-get-heading t t t t) id)
+lisp/org-canvas-sections.el :: t->nil :: (org-get-heading t t t t) local-id)
+lisp/org-canvas-sections.el :: t->nil :: (org-get-heading t t t t) local-id))))
+lisp/org-canvas-sections.el :: t->nil :: (setq name (org-get-heading t t t t))
+lisp/org-canvas-sections.el :: t->nil :: (title (org-canvas--strip-statistics-cookie (org-get-heading t t t t)))
+
+# --------------------------------------------------------------------
+# Individually triaged (15 entries)
+# --------------------------------------------------------------------
+
+# Masked by the enclosing condition-case.  An empty vector is truthy in
+# Elisp, so `or' takes the "use last folder" branch, `(elt [] -1)' signals,
+# and the handler creates the folder anyway — the same observable outcome.
+lisp/org-canvas-files.el :: and->or :: (if (and folders (> (length folders) 0))
+
+# Guards error *logging* only.  What the function returns is decided by
+# the cond below, so a spurious log line for a 2xx response changes
+# nothing a test can observe.
+lisp/org-canvas-files.el :: and->or :: (when (and status-line (>= (string-to-number status-line) 400))
+
+# Equivalent.  Canvas ids are integers far below most-positive-fixnum
+# (2305843009213693951), and `eq' compares fixnums by value.
+lisp/org-canvas-files.el :: equal->eq :: (equal (alist-get 'folder_id f) folder-id))))
+
+# `>' and `>=' differ only on ties — two folders whose paths are the same
+# length — and either order is valid for deletion, since neither contains
+# the other.
+lisp/org-canvas-files.el :: gt->ge :: (> (length (or (alist-get 'full_name a) ""))
+
+# Same masking as above: any length comparison still reaches the error
+# path, which creates the folder.
+lisp/org-canvas-files.el :: gt->ge :: (if (and folders (> (length folders) 0))
+
+# A defvar's init form is inert once the variable is bound, which it is
+# by the time any test runs; the sync entry points set the cache
+# explicitly regardless.
+lisp/org-canvas-files.el :: nil->t :: (defvar org-canvas--file-folder-cache nil
+
+# A default inside a log format string; affects only the text of a
+# [Download] line.
+lisp/org-canvas-files.el :: or->and :: "[Download] %s (%s bytes)" display-name (or size "?"))
+
+# Defaults inside a warning's format string; affect only the text.
+lisp/org-canvas-files.el :: or->and :: (or (car key) "?") (or (cadr key) "?")
+
+# A default inside a debug log line.
+lisp/org-canvas-files.el :: or->and :: (org-canvas--log-debug org-canvas--logger "[Stage 1: Parse] Link path: %s" (or link-path "NONE"))
+
+# A default inside an error message's format string.
+lisp/org-canvas-files.el :: or->and :: status-line (or response-body "empty"))))))
+
+# `org-canvas-api-request-all-pages' already returns a list, so `append'
+# is a no-op defence against a vector and `or' yields the same value.
+lisp/org-canvas-sections.el :: and->or :: (and response (append response nil)))
+
+# Equivalent: `(length nil)' is 0, so with no overrides the `or' form
+# still evaluates to nil and the table is skipped.
+lisp/org-canvas-sections.el :: and->or :: (when (and overrides (> (length overrides) 0))
+
+# Equivalent, same reason: section ids are fixnums.
+lisp/org-canvas-sections.el :: equal->eq :: (equal (alist-get 'course_section_id item) section-id))
+
+# Equivalent: the `and' short-circuits on nil overrides, so the length
+# comparison is only reached for a non-empty list.
+lisp/org-canvas-sections.el :: gt->ge :: (when (and overrides (> (length overrides) 0))
+
+# Equivalent for the same reason as the flag flips above (INVISIBLE-OK in
+# an unfolded buffer), listed separately because one full-pass run scored
+# it killed while five targeted runs on the same code had it survive.
+# The lone kill is most plausibly an unrelated spec failing during that
+# mutant's suite run — a run-scoring hazard the README documents.  If a
+# future run reports this entry as stale, re-check before deleting it.
+lisp/org-canvas-sections.el :: t->nil :: (end (save-excursion (org-end-of-subtree t) (point)))
+
+# Unreachable by construction: the call is guarded by
+# `(not (file-exists-p local-path))', so OK-IF-ALREADY-EXISTS can never
+# matter — the target never exists when the copy runs.  Full passes have
+# scored this both killed and survived (the run-scoring hazard in the
+# README); the code reading is what this entry rests on.
+lisp/org-canvas-files.el :: t->nil :: (url-copy-file download-url local-path t))

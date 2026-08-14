@@ -32,6 +32,7 @@ import os
 import random
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -141,15 +142,31 @@ def warm_cache(root):
 
 
 def run_suite(cwd, pattern, timeout):
+    """Run the suite in CWD, returning (status, failed-count).
+
+    The child is started in its own process group so a timeout can kill
+    the whole tree.  `eldev' is a shell wrapper that spawns
+    `emacs --batch'; killing only the wrapper leaves the Emacs behind as
+    a CPU-bound orphan that never exits.  Those accumulate — one per
+    timed-out mutation — until they saturate the machine, which makes
+    further suites time out, which leaks more orphans.  Reap the group.
+    """
     cmd = ["eldev", "test"]
     if pattern:
         cmd.append(pattern)
+    proc = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True,
+                            start_new_session=True)
     try:
-        proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
-                              timeout=timeout)
+        out, err = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            proc.kill()
+        proc.communicate()
         return ("timeout", None)
-    failed = parse_failed(proc.stdout + proc.stderr)
+    failed = parse_failed(out + err)
     if failed is None:
         return ("error", None)
     return (("survived" if failed == 0 else "killed"), failed)
@@ -197,6 +214,7 @@ def execute(sites, root, pattern, timeout, quiet=False):
     originals = {p: open(p, encoding="utf-8").read() for p in files}
     killed = survived = errored = 0
     survivors = []
+    timed_out = []
     survivor_keys = []
     try:
         for n, site in enumerate(sites, 1):
@@ -215,17 +233,20 @@ def execute(sites, root, pattern, timeout, quiet=False):
                 survivor_keys.append(key_of(site))
             elif status == "error":
                 errored += 1
+            elif status == "timeout":
+                timed_out.append(label_of(site))
             else:
                 killed += 1
             if not quiet:
                 mark = {"killed": "killed ", "survived": "SURVIVED",
-                        "error": "error  ", "timeout": "killed*"}[status]
+                        "error": "error  ", "timeout": "TIMEOUT"}[status]
                 print(f"[{n}/{len(sites)}] {mark}  {label_of(site)}", flush=True)
     finally:
         for p, text in originals.items():
             with open(p, "w", encoding="utf-8") as fh:
                 fh.write(text)
     return {"killed": killed, "survived": survived, "errored": errored,
+            "timeouts": len(timed_out), "timed_out": timed_out,
             "survivors": survivors, "survivor_keys": survivor_keys}
 
 
@@ -245,7 +266,15 @@ def run_one_worker(idx, shard, timeout, pattern):
     if pattern:
         cmd += ["--pattern", pattern]
     try:
-        subprocess.run(cmd, cwd=workdir, capture_output=True, text=True)
+        proc = subprocess.run(cmd, cwd=workdir, capture_output=True, text=True)
+        if not os.path.exists(result_file):
+            # Surface the worker's own error.  Without this the driver dies
+            # on a bare FileNotFoundError for mut-result.json, which says
+            # nothing about why the worker failed and discards the whole run.
+            tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-15:]
+            raise RuntimeError(
+                f"worker {idx} produced no result (exit {proc.returncode}):\n"
+                + "\n".join(tail))
         with open(result_file) as fh:
             res = json.load(fh)
     finally:
@@ -257,10 +286,13 @@ def shard_sites(sites, jobs):
     """Round-robin sites into JOBS balanced groups."""
     groups = [[] for _ in range(jobs)]
     for i, s in enumerate(sites):
-        # strip non-serializable / absolute fields; workers resolve via rel
+        # Strip non-serializable / absolute fields; workers resolve via rel.
+        # `line' must survive the trip: workers build the baseline key from
+        # it, and dropping it makes `key_of' raise inside the worker the
+        # first time a mutant survives.
         groups[i % jobs].append({k: s[k] for k in
                                  ("rel", "start", "end", "lineno", "op",
-                                  "repl", "orig")})
+                                  "repl", "orig", "line")})
     return [g for g in groups if g]
 
 
@@ -268,17 +300,18 @@ def run_parallel(sites, jobs, timeout, pattern):
     groups = shard_sites(sites, jobs)
     print(f"Running {len(sites)} mutations across {len(groups)} parallel "
           f"workers (isolated copies)...\n", flush=True)
-    merged = {"killed": 0, "survived": 0, "errored": 0, "survivors": [],
-              "survivor_keys": []}
+    merged = {"killed": 0, "survived": 0, "errored": 0, "timeouts": 0,
+              "timed_out": [], "survivors": [], "survivor_keys": []}
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(groups)) as ex:
         futs = {ex.submit(run_one_worker, i, g, timeout, pattern): i
                 for i, g in enumerate(groups)}
         for fut in concurrent.futures.as_completed(futs):
             res = fut.result()
-            for k in ("killed", "survived", "errored"):
-                merged[k] += res[k]
+            for k in ("killed", "survived", "errored", "timeouts"):
+                merged[k] += res.get(k, 0)
             merged["survivors"] += res["survivors"]
             merged["survivor_keys"] += res.get("survivor_keys", [])
+            merged["timed_out"] += res.get("timed_out", [])
             done = merged["killed"] + merged["survived"] + merged["errored"]
             print(f"  worker {futs[fut]} done "
                   f"({res['killed']}k/{res['survived']}s/{res['errored']}e) "
@@ -294,6 +327,24 @@ def report(result, elapsed):
     print(f"Mutation score: {score:.1f}%  ({killed} killed / {scored} scored)")
     print(f"  survived: {survived}   killed: {killed}   "
           f"compile-errors: {result['errored']}   ({elapsed}s)")
+    if result.get("timeouts"):
+        print(f"\n{result['timeouts']} mutation(s) timed out, excluded from "
+              f"the score (neither killed nor survived):")
+        for label in sorted(result.get("timed_out", [])):
+            print(f"  - {label}")
+        print("\n  A timeout is usually a NON-TERMINATING mutant rather than a "
+              "slow machine —\n"
+              "  flipping a loop guard (and->or, 1+->1-, lt->le) can make the "
+              "loop spin\n"
+              "  forever.  Check whether each site above is a `while' guard: "
+              "if so the\n"
+              "  mutant is effectively caught, since it would hang CI too, and "
+              "it is NOT a\n"
+              "  survivor — it must not appear in the baseline.  If instead the "
+              "sites look\n"
+              "  unrelated to loops, the machine was loaded; re-run when idle "
+              "(check for\n"
+              "  stray `emacs --batch' first) before trusting this run.")
     if result["survivors"]:
         print("\nSurviving mutants (no test caught these — review for weak "
               "assertions or equivalent mutants):")

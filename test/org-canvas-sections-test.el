@@ -1091,6 +1091,25 @@ Returns the final message string."
              "2026-02-15T23:59:00Z" nil "2026-04-01T00:00:00Z")
             :to-be nil))
 
+  (it "is redundant when a populated unlock date equals the parent's"
+    ;; The discriminating case for `(equal unlock parent-unlock)': every
+    ;; other spec either leaves unlock nil (so `null' short-circuits) or
+    ;; makes it differ.  These are ISO8601 *strings* from separate API
+    ;; responses, so `eq' would compare identity and report a difference
+    ;; that is not there — keeping rows that say nothing.
+    (expect (org-canvas--override-row-redundant-p
+             '((due_at . "2026-02-15T23:59:00Z")
+               (unlock_at . "2026-01-01T00:00:00Z"))
+             "2026-02-15T23:59:00Z" "2026-01-01T00:00:00Z" nil)
+            :to-be-truthy))
+
+  (it "is redundant when a populated lock date equals the parent's"
+    (expect (org-canvas--override-row-redundant-p
+             '((due_at . "2026-02-15T23:59:00Z")
+               (lock_at . "2026-03-01T00:00:00Z"))
+             "2026-02-15T23:59:00Z" nil "2026-03-01T00:00:00Z")
+            :to-be-truthy))
+
   (it "treats a nil date on the row as no difference"
     ;; nil means "the override says nothing about this date", which is
     ;; not the same as "differs from the parent".

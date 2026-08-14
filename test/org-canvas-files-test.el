@@ -14,6 +14,8 @@
 ;;;; Helper Functions
 
 (describe "org-canvas--file-extract-link-path"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "extracts path from [[file:path][name]] link"
     (expect (org-canvas--file-extract-link-path "[[file:docs/syllabus.pdf][Syllabus]]")
             :to-equal "docs/syllabus.pdf"))
@@ -39,6 +41,8 @@
             :to-equal "my documents/file.pdf")))
 
 (describe "org-canvas--file-get-display-name"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "extracts display name from link"
     (expect (org-canvas--file-get-display-name "[[file:doc.pdf][My Document]]")
             :to-equal "My Document"))
@@ -56,6 +60,8 @@
             :to-equal "Week 1 - Introduction")))
 
 (describe "org-canvas--file-guess-content-type"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (describe "document types"
     (it "returns application/pdf for PDF files"
       (expect (org-canvas--file-guess-content-type "document.pdf")
@@ -154,6 +160,8 @@
               :to-equal "application/octet-stream"))))
 
 (describe "org-canvas--file-get-folder-path"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "returns empty string for top-level headings"
     (with-temp-org-buffer
      "* [[file:doc.pdf][Document]]
@@ -196,6 +204,8 @@
              :to-equal "Folder"))))
 
 (describe "org-canvas--file-transform-props"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "passes through display-name unchanged"
     (let ((result (org-canvas--file-transform-props
                    '(:display-name "Syllabus.pdf" :local-path "/tmp/syllabus.pdf"
@@ -316,6 +326,8 @@
 ;;;; Stage 1: Parse Entry
 
 (describe "org-canvas--file-parse-entry"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (before-each
     (setq org-canvas-files-file "/tmp/test-files.org"))
 
@@ -455,6 +467,8 @@
 
 (describe "org-canvas--file-build-upload-request"
   :var (temp-file)
+  (before-each (test-org-canvas-reset-file-caches))
+
 
   (before-each
     (setq temp-file (make-temp-file "test-upload" nil ".pdf"))
@@ -541,6 +555,8 @@
 ;;;; Stage 3: Push to API (mocked)
 
 (describe "org-canvas--file-upload-step1-notify (mocked)"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "posts to folder files endpoint"
     (with-org-canvas-test-config
       (with-mock-api
@@ -565,6 +581,8 @@
                     :to-equal "https://s3.example.com/upload")))))))
 
 (describe "org-canvas--file-upload-step3-confirm"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "returns response directly if it contains id"
     (let ((step2-response '((id . 99999) (display_name . "test.pdf"))))
       (expect (alist-get 'id (org-canvas--file-upload-step3-confirm step2-response))
@@ -594,6 +612,8 @@
               :to-throw 'error))))
 
 (describe "org-canvas--file-search-by-name (mocked)"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "searches files endpoint with search_term"
     (with-org-canvas-test-config
       (with-mock-api
@@ -628,6 +648,8 @@
           (expect result :to-be nil))))))
 
 (describe "org-canvas--file-push-to-api (mocked)"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (before-each
     (setq org-canvas--file-root-folder-cache nil)
     (setq org-canvas--file-folder-cache (make-hash-table :test 'equal)))
@@ -752,6 +774,8 @@
 ;;;; Stage 4: Finalize
 
 (describe "org-canvas--file-finalize"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "saves CANVAS_ID from response"
     (with-temp-org-buffer
      "* [[file:doc.pdf][Document]]
@@ -791,6 +815,8 @@
 ;;;; Folder Operations (mocked)
 
 (describe "org-canvas--file-get-root-folder (mocked)"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (before-each
     (setq org-canvas--file-root-folder-cache nil))
 
@@ -814,6 +840,8 @@
         (expect (test-org-canvas-api-call-count) :to-equal 1)))))
 
 (describe "org-canvas--file-ensure-subfolder (mocked)"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "returns existing folder when found"
     (with-org-canvas-test-config
       (with-mock-api
@@ -835,6 +863,8 @@
           (expect-api-called 'POST "folders/100/folders"))))))
 
 (describe "org-canvas--file-resolve-folder-by-path (mocked)"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (before-each
     (setq org-canvas--file-folder-cache (make-hash-table :test 'equal))
     (setq org-canvas--file-root-folder-cache nil))
@@ -893,6 +923,8 @@
         (expect (alist-get 'id (gethash "Labs" org-canvas--file-folder-cache)) :to-equal 200)))))
 
 (describe "org-canvas--file-get-or-create-folder (mocked)"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "returns parent folder directly for empty path"
     (with-org-canvas-test-config
       (with-mock-api
@@ -918,6 +950,8 @@
           (expect (alist-get 'id result) :to-equal 200))))))
 
 (describe "org-canvas--file-create-folder (mocked)"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "creates folder with correct payload"
     (with-org-canvas-test-config
       (with-mock-api
@@ -929,6 +963,12 @@
 
   (it "falls back to resolve when creation fails"
     (with-org-canvas-test-config
+      ;; State the precondition locally.  The fallback resolves the path
+      ;; from the root folder, and this spec used to rely on an earlier
+      ;; spec having left the root cached — passing for a reason that had
+      ;; nothing to do with it (issue #43).
+      (setq org-canvas--file-root-folder-cache
+            '((id . 100) (name . "course files")))
       (let ((call-count 0))
         (cl-letf (((symbol-function 'org-canvas-api-request)
                    (lambda (method url &rest _args)
@@ -947,6 +987,8 @@
 ;;;; Pre-flight Operations
 
 (describe "org-canvas--file-collect-folder-paths"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "collects unique folder paths from file"
     (let ((temp-file (make-temp-file "files" nil ".org")))
       (unwind-protect
@@ -1006,6 +1048,8 @@
 ;;;; Ensure Folders Exist
 
 (describe "org-canvas--file-ensure-folders-exist (mocked)"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "does nothing when folder-paths is nil"
     (with-org-canvas-test-config
       (let ((api-called nil))
@@ -1051,6 +1095,8 @@
 ;;;; Delete Functions
 
 (describe "org-canvas-delete-file-at-point"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "errors when no CANVAS_ID property found"
     (with-temp-org-buffer
      "* [[file:doc.pdf][Document]]
@@ -1062,6 +1108,8 @@
              :to-throw 'user-error))))
 
 (describe "org-canvas--file-get-all-folders (mocked)"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (before-each
     (setq org-canvas--file-root-folder-cache nil))
 
@@ -1090,6 +1138,8 @@
           (expect (alist-get 'id (car result)) :to-equal 400))))))
 
 (describe "org-canvas--file-delete-all-folders (mocked)"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (before-each
     (setq org-canvas--file-root-folder-cache nil))
 
@@ -1131,6 +1181,8 @@
 ;;;; Delete File at Point
 
 (describe "org-canvas-delete-file-at-point (mocked)"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "deletes file and clears properties when confirmed"
     (with-org-canvas-test-config
       (with-temp-org-buffer
@@ -1197,6 +1249,8 @@
 ;;;; Sync Files Pipeline
 
 (describe "org-canvas-sync-files (mocked)"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (before-each
     (setq org-canvas--file-root-folder-cache nil)
     (setq org-canvas--file-folder-cache nil))
@@ -1331,6 +1385,8 @@
 ;;;; Delete All Files
 
 (describe "org-canvas-delete-all-files (mocked)"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (before-each
     (setq org-canvas--file-root-folder-cache nil)
     (setq org-canvas--file-folder-cache nil))
@@ -1496,6 +1552,8 @@
 ;;;; Upload Step 2 Edge Cases
 
 (describe "org-canvas--file-upload-step2-send edge cases"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "handles upload_params with null filename"
     ;; This tests the fix for Canvas returning null filename
     (let* ((temp-file (make-temp-file "upload-test" nil ".pdf"))
@@ -1566,6 +1624,8 @@
 ;;;; Folder Path Resolution Edge Cases
 
 (describe "org-canvas--file-get-or-create-folder edge cases"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "handles API error by creating folder"
     (with-org-canvas-test-config
       (let ((create-called nil))
@@ -1588,6 +1648,8 @@
             (expect create-called :to-be t)))))))
 
 (describe "org-canvas--file-ensure-subfolder"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "creates subfolder when not found in existing list"
     (with-org-canvas-test-config
       (let ((create-called nil))
@@ -1609,6 +1671,8 @@
 ;;;; Pre-flight Folder Operations
 
 (describe "org-canvas--file-collect-folder-paths edge cases"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "handles file with only root-level files"
     (let ((temp-file (make-temp-file "files" nil ".org")))
       (unwind-protect
@@ -1654,6 +1718,8 @@
 ;;;; Upload Step 3 Confirm
 
 (describe "org-canvas--file-upload-step3-confirm edge cases"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "logs warning when confirmation response has no ID"
     (with-org-canvas-test-config
       (let ((warning-logged nil))
@@ -1670,6 +1736,8 @@
 ;;;; Coverage Gap Tests
 
 (describe "org-canvas--file-get-or-create-folder empty list"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "falls through to create-folder when API returns empty list"
     (with-org-canvas-test-config
       (let ((create-called nil))
@@ -1687,6 +1755,8 @@
             (expect (alist-get 'id result) :to-equal 999)))))))
 
 (describe "org-canvas--file-resolve-folder-by-path cached intermediate"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "uses cached intermediate folder path"
     (with-org-canvas-test-config
       (let ((ensure-calls nil)
@@ -1707,6 +1777,8 @@
           (expect ensure-calls :to-contain "Level2"))))))
 
 (describe "org-canvas--file-parse-entry debug log"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "logs canvas folder path during parsing"
     (let ((temp-file (make-temp-file "org-test-" nil ".org"))
           (data-file (make-temp-file "upload-" nil ".pdf")))
@@ -1727,6 +1799,8 @@
         (delete-file data-file)))))
 
 (describe "org-canvas--file-upload-step2-send JSON without id"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "returns JSON response when no id field present"
     (with-org-canvas-test-config
       (let ((temp-file (make-temp-file "upload-test-" nil ".txt")))
@@ -1748,6 +1822,8 @@
           (delete-file temp-file))))))
 
 (describe "org-canvas--file-push-to-api delete warning"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "logs warning when delete of old file fails"
     (with-org-canvas-test-config
       (let ((warning-logged nil))
@@ -1785,6 +1861,8 @@
             (expect warning-logged :to-be t)))))))
 
 (describe "org-canvas--file-search-by-name folder path log"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "logs search location with non-empty folder path"
     (with-org-canvas-test-config
       (with-mock-api
@@ -1795,6 +1873,8 @@
           (expect (alist-get 'id result) :to-equal 100))))))
 
 (describe "org-canvas-sync-files pre-flight warning"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "continues sync when pre-flight check fails"
     (let ((temp-file (make-temp-file "org-test-" nil ".org"))
           (upload-file (make-temp-file "test-upload-" nil ".txt")))
@@ -1834,6 +1914,8 @@
 ;;;; File Upload Step 3 Retry
 
 (describe "org-canvas--file-upload-step3-confirm retry"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "returns directly when step2 response has ID"
     (let ((response '((id . 42) (display_name . "test.pdf"))))
       (expect (alist-get 'id (org-canvas--file-upload-step3-confirm response))
@@ -1868,6 +1950,8 @@
 ;;;; Pull Function Tests
 
 (describe "org-canvas--file-pull-download"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "downloads when file is absent"
     (let* ((temp-dir (make-temp-file "file-pull-test" t))
            (local-path (expand-file-name "test.pdf" temp-dir))
@@ -1934,6 +2018,8 @@
         (delete-directory temp-dir t)))))
 
 (describe "org-canvas-pull-files"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (defun test-files--mock-pages (folders files)
     "Return a lambda that dispatches on URL to FOLDERS or FILES."
     (lambda (_method url &optional _params)
@@ -2167,6 +2253,8 @@
 ;;;; New Property Tests: Usage Rights
 
 (describe "org-canvas--file-parse-entry (usage rights)"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "parses USE_JUSTIFICATION property"
     (let* ((temp-dir (make-temp-file "files-test" t))
            (content-dir (expand-file-name "content" temp-dir))
@@ -2223,6 +2311,8 @@
         (delete-directory temp-dir t)))))
 
 (describe "org-canvas--file-set-usage-rights"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "calls PUT on usage_rights endpoint"
     (with-org-canvas-test-config
       (with-mock-api
@@ -2250,6 +2340,8 @@
 ;;;; Coverage: debug log root folder path (Line 324)
 
 (describe "org-canvas--file-parse-entry root folder debug log"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "logs 'root' when folder-path is empty (top-level file)"
     (let* ((temp-dir (make-temp-file "files-test" t))
            (content-dir (expand-file-name "content" temp-dir))
@@ -2303,6 +2395,8 @@
 ;;;; Coverage: push-to-api error path with root folder (Line 618)
 
 (describe "org-canvas--file-push-to-api error log with root folder"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (before-each
     (setq org-canvas--file-root-folder-cache nil)
     (setq org-canvas--file-folder-cache (make-hash-table :test 'equal)))
@@ -2362,6 +2456,8 @@
 ;;;; Coverage: file-sync-single-entry with usage rights (Line 735)
 
 (describe "org-canvas--file-sync-single-entry with usage rights"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "calls set-usage-rights when USE_JUSTIFICATION is present and push returns id"
     (let* ((temp-dir (make-temp-file "files-test" t))
            (content-dir (expand-file-name "content" temp-dir))
@@ -2434,6 +2530,8 @@
 ;;;; Coverage: file-pull-set-properties usage_rights (Lines 955-963)
 
 (describe "org-canvas--file-pull-set-properties usage rights"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "sets USE_JUSTIFICATION, USAGE_LICENSE, and COPYRIGHT from usage_rights"
     (with-temp-org-buffer
      "* [[file:test.pdf][Test PDF]]
@@ -2484,6 +2582,8 @@
        (expect (org-entry-get (point) "COPYRIGHT") :to-be nil)))))
 
 (describe "org-canvas--file-confirm-with-retry echo area message"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "shows retry progress in echo area"
     (with-org-canvas-test-config
       (let ((attempt-count 0))
@@ -2501,6 +2601,8 @@
                   "File upload: retry %d/%d after %ds..." 2 3 2))))))
 
 (describe "org-canvas-pull-files progress"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "shows per-file progress in echo area"
     (let* ((temp-dir (make-temp-file "pull-files-test" t))
            (files-file (expand-file-name "files.org" temp-dir))
@@ -2530,6 +2632,8 @@
         (delete-directory temp-dir t)))))
 
 (describe "org-canvas--file-pull-folder-relative-path"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "returns empty string for the Canvas root folder"
     (expect (org-canvas--file-pull-folder-relative-path "course files")
             :to-equal ""))
@@ -2547,6 +2651,8 @@
             :to-equal "")))
 
 (describe "org-canvas--file-pull-fetch-folders"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "builds id-to-relative-path hash from folders API response"
     (with-org-canvas-test-config
       (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
@@ -2578,6 +2684,8 @@
           (expect (hash-table-count map) :to-equal 0))))))
 
 (describe "org-canvas--file-pull-mode"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "returns 'fresh for an empty buffer"
     (with-temp-org-buffer ""
       (expect (org-canvas--file-pull-mode) :to-equal 'fresh)))
@@ -2620,6 +2728,8 @@
       (expect (org-canvas--file-pull-mode) :to-equal 'hierarchical))))
 
 (describe "org-canvas--file-pull-emit-fresh-tree"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "emits one top-level heading per file when all files are at root"
     (let* ((temp-dir (make-temp-file "emit-tree-test" t))
            (files-file (expand-file-name "files.org" temp-dir))
@@ -2799,6 +2909,8 @@
         (delete-directory temp-dir t)))))
 
 (describe "file duplicate detection"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "logs a warning for files sharing (size, content-type)"
     (let* ((files '(((id . 1) (display_name . "foo.pdf")
                      (size . 100) (content-type . "application/pdf"))
@@ -2843,6 +2955,8 @@
           (expect joined :to-match "Position-1\\.pdf"))))))
 
 (describe "file headline sanitization"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "escapes brackets in display names used as link descriptions"
     (expect (org-canvas--file-sanitize-headline-desc "[bracketed].pdf")
             :to-equal "\\[bracketed\\].pdf"))
@@ -2860,6 +2974,8 @@
             :to-equal "x\\[1\\]\\[2\\].png")))
 
 (describe "org-canvas--file-safe-local-path (path-traversal guard)"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "keeps a normal file inside the content directory"
     (expect (org-canvas--file-safe-local-path "report.pdf" "/course/content")
             :to-equal "/course/content/report.pdf"))
@@ -2881,6 +2997,8 @@
 ;;;; Unchanged-File Skip and ID-Change Propagation (issue #22)
 
 (describe "org-canvas--file-content-hash"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "is stable for identical content and settings"
     (let ((temp-file (make-temp-file "hash-test" nil ".pdf")))
       (unwind-protect
@@ -2919,6 +3037,8 @@
         (delete-file temp-file)))))
 
 (describe "org-canvas--file-sync-single-entry unchanged skip"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "skips an unchanged file without touching the API"
     (let* ((temp-dir (make-temp-file "files-test" t))
            (pdf-file (expand-file-name "test.pdf" temp-dir))
@@ -3042,6 +3162,8 @@
         (delete-directory temp-dir t)))))
 
 (describe "org-canvas-sync-files ID-change propagation"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "keeps module hashes intact; the items digest picks up the new ID"
     ;; The old behavior cleared PAYLOAD_HASH on every module.  Now the
     ;; hash survives and dirtying happens naturally: a module item
@@ -3108,6 +3230,8 @@
         (delete-directory temp-dir t)))))
 
 (describe "org-canvas--file-warn-changed-ids"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "warns with the changed file names"
     (let ((warned nil))
       (cl-letf (((symbol-function 'org-canvas--log-warning)
@@ -3172,6 +3296,8 @@
 ;; object had already run, so CANVAS_ID was left pointing at a dead id.
 
 (describe "org-canvas--file-upload-step2-send timeout"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "signals a timeout error naming the timeout variable"
     (with-org-canvas-test-config
       (cl-letf (((symbol-function 'url-retrieve-synchronously)
@@ -3203,6 +3329,8 @@
           (expect (org-canvas--timeout-error-p err) :to-be-truthy))))))
 
 (describe "org-canvas--file-search-by-name folder filtering"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "ignores a same-named file living in another folder"
     (with-org-canvas-test-config
       (with-mock-api
@@ -3228,6 +3356,8 @@
         (expect (org-canvas--file-search-by-name "notes.pdf" "Labs" 9) :to-be nil)))))
 
 (describe "org-canvas--file-recover-upload-id"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "returns the file Canvas stored despite the error"
     (cl-letf (((symbol-function 'org-canvas--file-search-by-name)
                (lambda (&rest _) '((id . 555) (display_name . "big.pdf")))))
@@ -3260,6 +3390,8 @@
         (expect (alist-get 'id result) :to-equal 777)))))
 
 (describe "org-canvas--file-push-to-api upload recovery"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (before-each
     (setq org-canvas--file-root-folder-cache nil)
     (setq org-canvas--file-folder-cache (make-hash-table :test 'equal)))
@@ -3324,6 +3456,8 @@
 ;;;; Dry run (issue #34)
 
 (describe "org-canvas--file-push-to-api dry run"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "returns the sentinel without contacting Canvas"
     (with-org-canvas-test-config
       (let ((calls nil))
@@ -3348,6 +3482,8 @@
                 :not :to-throw)))))
 
 (describe "org-canvas--file-sync-single-entry dry run"
+  (before-each (test-org-canvas-reset-file-caches))
+
   (it "records neither CANVAS_ID nor PAYLOAD_HASH"
     (with-org-canvas-test-config
       (with-temp-org-buffer
@@ -3380,6 +3516,8 @@
 ;; The specs below pin the values, not merely the execution.
 
 (describe "org-canvas--file-validate-local size boundary"
+  (before-each (test-org-canvas-reset-file-caches))
+
   ;; `>' vs `>=' survived mutation: no fixture sat exactly on the limit.
   (defun test-files--sized-file (dir mb)
     "Create a file in DIR of exactly MB megabytes and return its path."
@@ -3408,6 +3546,8 @@
         (delete-directory dir t)))))
 
 (describe "org-canvas--file-confirm-with-retry attempt count"
+  (before-each (test-org-canvas-reset-file-caches))
+
   ;; `<' vs `<=' survived: nothing pinned how many attempts actually run.
   (it "makes exactly max-retries attempts before giving up"
     (let ((attempts 0))
@@ -3420,6 +3560,19 @@
         (expect (org-canvas--file-confirm-with-retry "https://x.example/1" 3)
                 :to-throw)
         (expect attempts :to-equal 3))))
+
+  (it "does not back off before the first attempt"
+    ;; `(> attempt 1)' guards the exponential sleep.  With `>=' the very
+    ;; first attempt would sleep a second and log a spurious "Retry 1/N"
+    ;; before it had failed at anything.
+    (let ((slept nil))
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _) '((id . 5))))
+                ((symbol-function 'sleep-for)
+                 (lambda (&rest args) (push args slept)))
+                ((symbol-function 'message) (lambda (&rest _) nil)))
+        (org-canvas--file-confirm-with-retry "https://x.example/1" 3)
+        (expect slept :to-be nil))))
 
   (it "stops at the first success without burning the remaining retries"
     (let ((attempts 0))
@@ -3437,6 +3590,8 @@
         (expect attempts :to-equal 2)))))
 
 (describe "org-canvas-sync-files reported counts"
+  (before-each (test-org-canvas-reset-file-caches))
+
   ;; Every `1+' in the counter dispatch survived being flipped to `1-':
   ;; tests asserted that a sync ran and which requests it made, never the
   ;; tallies it reports.  The counts are what the user reads.
@@ -3492,6 +3647,8 @@ Returns (COUNTERS . FINAL-MESSAGE)."
     (expect (cdr (test-files--sync-with '(:success))) :not :to-match "would upload")))
 
 (describe "org-canvas--file-get-or-create-folder by_path result"
+  (before-each (test-org-canvas-reset-file-caches))
+
   ;; No test drove by_path returning an empty list, which is what Canvas
   ;; gives for a path that does not exist yet.  Note the `and'->`or'
   ;; mutant here is equivalent and stays alive by design: an empty vector
@@ -3533,6 +3690,8 @@ Returns (COUNTERS . FINAL-MESSAGE)."
           (expect created :to-equal "Labs"))))))
 
 (describe "org-canvas--file-get-all-folders ordering"
+  (before-each (test-org-canvas-reset-file-caches))
+
   ;; The comparator coalesces a missing full_name with `or ... ""'.  Both
   ;; the `or' and the `>' survived, because no fixture folder lacked a
   ;; full_name and none tied on length.
@@ -3560,9 +3719,60 @@ Returns (COUNTERS . FINAL-MESSAGE)."
                  (lambda () '((id . 1)))))
         (expect (mapcar (lambda (f) (alist-get 'id f))
                         (org-canvas--file-get-all-folders))
+                :to-equal '(3 2)))))
+
+  (it "orders by actual path length, not merely by having a path"
+    ;; Three folders given shortest-first, so the expected result is a
+    ;; full reversal.  If either side of the comparison stopped yielding
+    ;; the real length — collapsing to 0 or "" — the input order would
+    ;; survive unchanged and children could be deleted after parents.
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (&rest _)
+                   '(((id . 2) (full_name . "cf/a"))
+                     ((id . 3) (full_name . "cf/a/bb"))
+                     ((id . 4) (full_name . "cf/a/bb/cccc")))))
+                ((symbol-function 'org-canvas--file-get-root-folder)
+                 (lambda () '((id . 1)))))
+        (expect (mapcar (lambda (f) (alist-get 'id f))
+                        (org-canvas--file-get-all-folders))
+                :to-equal '(4 3 2)))))
+
+  (it "leaves an already deepest-first list alone"
+    ;; Paired with the test above, which supplies the reverse order.  A
+    ;; comparator that stopped reading the right-hand length would degrade
+    ;; to "always true", which reverses whatever it is given — passing the
+    ;; ascending case by luck and failing this one.
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (&rest _)
+                   '(((id . 4) (full_name . "cf/a/bb/cccc"))
+                     ((id . 3) (full_name . "cf/a/bb"))
+                     ((id . 2) (full_name . "cf/a")))))
+                ((symbol-function 'org-canvas--file-get-root-folder)
+                 (lambda () '((id . 1)))))
+        (expect (mapcar (lambda (f) (alist-get 'id f))
+                        (org-canvas--file-get-all-folders))
+                :to-equal '(4 3 2)))))
+
+  (it "tolerates a missing full_name on either side of the comparison"
+    ;; Both operands coalesce independently, and `sort' decides which
+    ;; folder is which argument — so the nil has to be exercised from the
+    ;; other side too, with the input order reversed.
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (&rest _)
+                   '(((id . 3) (full_name . "course files/Labs/Week1"))
+                     ((id . 2) (full_name . nil)))))
+                ((symbol-function 'org-canvas--file-get-root-folder)
+                 (lambda () '((id . 1)))))
+        (expect (mapcar (lambda (f) (alist-get 'id f))
+                        (org-canvas--file-get-all-folders))
                 :to-equal '(3 2))))))
 
 (describe "org-canvas--file-parse-upload-response branches"
+  (before-each (test-org-canvas-reset-file-caches))
+
   ;; The status-line guard and the json/location dispatch both survived:
   ;; tests only ever fed it a healthy response carrying an id.
   (it "returns the file object when the body carries an id"
@@ -3601,9 +3811,32 @@ Returns (COUNTERS . FINAL-MESSAGE)."
       (insert "HTTP/1.1 500 Internal Server Error\n\nboom")
       (goto-char (point-min))
       (expect (org-canvas--file-parse-upload-response "/tmp/a.pdf" "https://u")
-              :to-throw 'org-canvas-api-error))))
+              :to-throw 'org-canvas-api-error)))
+
+  (it "reports a truncated response as an API error, not a search failure"
+    ;; A response cut off before the header/body separator has no blank
+    ;; line at all.  `re-search-forward' is called with NOERROR so it
+    ;; returns nil and the body stays empty; without it the search
+    ;; signals `search-failed', which escapes as an opaque Lisp error
+    ;; instead of the actionable upload failure.
+    (with-temp-buffer
+      (insert "HTTP/1.1 502 Bad Gateway\nContent-Type: text/plain")
+      (goto-char (point-min))
+      (expect (org-canvas--file-parse-upload-response "/tmp/a.pdf" "https://u")
+              :to-throw 'org-canvas-api-error)))
+
+  (it "extracts no body from a response lacking a separator"
+    (with-temp-buffer
+      (insert "HTTP/1.1 502 Bad Gateway\nContent-Type: text/plain")
+      (goto-char (point-min))
+      (let ((parts (org-canvas--file-extract-response-parts)))
+        (expect (plist-get parts :status) :to-equal "502")
+        (expect (plist-get parts :body) :to-be nil)
+        (expect (plist-get parts :json) :to-be nil)))))
 
 (describe "org-canvas--file-pull-mode partial heading"
+  (before-each (test-org-canvas-reset-file-caches))
+
   ;; `(unless (or cid link-path) ...)' marks a heading as a folder
   ;; container only when BOTH are absent.  Existing tests covered
   ;; neither-present and both-present, where `or' and `and' agree, so
@@ -3617,6 +3850,8 @@ Returns (COUNTERS . FINAL-MESSAGE)."
      (expect (org-canvas--file-pull-mode) :to-equal 'fresh))))
 
 (describe "org-canvas-delete-all-files reported count"
+  (before-each (test-org-canvas-reset-file-caches))
+
   ;; `(setq deleted-file-count (1+ deleted-file-count))' survived: the
   ;; closing message was never read back, so the tally could be wrong.
   (it "counts only the deletions that succeeded"
