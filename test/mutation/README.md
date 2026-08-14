@@ -111,11 +111,15 @@ or `?x` char literal): `t`↔`nil`, `>`→`>=`, `<`→`<=`, `equal`→`eq`,
 
 ## CI ratchet
 
-The `mutation` job in `.github/workflows/ci.yml` runs a sampled mutation pass
-weekly (and on manual dispatch) over the validation engine and core-sync with
-`--min-score 40`, failing if the score drops below the floor. `--min-score N`
-exits non-zero when the score (% killed) is under N, so assertion depth can't
-silently regress as the suite grows. It never blocks PRs.
+The `mutation` job in `.github/workflows/ci.yml` runs weekly (and on manual
+dispatch) in two legs, and never blocks PRs:
+
+1. **Baseline gate** — a full pass over `files.el` + `sections.el` with
+   `--baseline test/mutation/accepted-survivors.txt`. Fails only on a survivor
+   absent from the accepted list; stale entries are reported, not failed.
+2. **Sampled score floor** — `validate.el` + `core-sync.el` keep the crude
+   `--min-score 40` sample until someone triages baselines for them. A sampled
+   score is a smoke check, not a measurement (see above).
 
 ## Workflow
 

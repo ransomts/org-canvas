@@ -133,6 +133,13 @@ def parse_failed(output):
     return int(m.group(1)) if m else None
 
 
+def parse_failed_specs(output):
+    """Return the full names of failed specs from buttercup's summary.
+    Each failure is printed as a long `====' separator followed by the
+    spec's full name on the next line."""
+    return re.findall(r"^={20,}\n(.+)$", output, re.M)
+
+
 def warm_cache(root):
     """Byte-compile ROOT once so its .elc cache is fresh.  Worker copies
     (made with mtime-preserving copytree) then inherit a warm cache and skip
@@ -165,11 +172,12 @@ def run_suite(cwd, pattern, timeout):
         except (ProcessLookupError, PermissionError):
             proc.kill()
         proc.communicate()
-        return ("timeout", None)
+        return ("timeout", None, [])
     failed = parse_failed(out + err)
     if failed is None:
-        return ("error", None)
-    return (("survived" if failed == 0 else "killed"), failed)
+        return ("error", None, [])
+    return (("survived" if failed == 0 else "killed"), failed,
+            parse_failed_specs(out + err) if failed else [])
 
 
 def label_of(site):
@@ -216,6 +224,7 @@ def execute(sites, root, pattern, timeout, quiet=False):
     survivors = []
     timed_out = []
     survivor_keys = []
+    suspect_kills = []
     try:
         for n, site in enumerate(sites, 1):
             text = originals[site["file"]]
@@ -223,7 +232,7 @@ def execute(sites, root, pattern, timeout, quiet=False):
             with open(site["file"], "w", encoding="utf-8") as fh:
                 fh.write(mutated)
             try:
-                status, _ = run_suite(root, pattern, timeout)
+                status, failed, failed_specs = run_suite(root, pattern, timeout)
             finally:
                 with open(site["file"], "w", encoding="utf-8") as fh:
                     fh.write(text)
@@ -237,6 +246,13 @@ def execute(sites, root, pattern, timeout, quiet=False):
                 timed_out.append(label_of(site))
             else:
                 killed += 1
+                # Forensics for the ~1-flake-per-pass hazard (#44): a kill
+                # resting on one or two failures is worth an audit trail —
+                # if the failing spec has nothing to do with the mutated
+                # line, the kill was an unrelated flake, not the suite.
+                if failed is not None and failed <= 2:
+                    suspect_kills.append(
+                        {"mutant": label_of(site), "failed_specs": failed_specs})
             if not quiet:
                 mark = {"killed": "killed ", "survived": "SURVIVED",
                         "error": "error  ", "timeout": "TIMEOUT"}[status]
@@ -247,6 +263,7 @@ def execute(sites, root, pattern, timeout, quiet=False):
                 fh.write(text)
     return {"killed": killed, "survived": survived, "errored": errored,
             "timeouts": len(timed_out), "timed_out": timed_out,
+            "suspect_kills": suspect_kills,
             "survivors": survivors, "survivor_keys": survivor_keys}
 
 
@@ -301,7 +318,8 @@ def run_parallel(sites, jobs, timeout, pattern):
     print(f"Running {len(sites)} mutations across {len(groups)} parallel "
           f"workers (isolated copies)...\n", flush=True)
     merged = {"killed": 0, "survived": 0, "errored": 0, "timeouts": 0,
-              "timed_out": [], "survivors": [], "survivor_keys": []}
+              "timed_out": [], "suspect_kills": [],
+              "survivors": [], "survivor_keys": []}
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(groups)) as ex:
         futs = {ex.submit(run_one_worker, i, g, timeout, pattern): i
                 for i, g in enumerate(groups)}
@@ -312,6 +330,7 @@ def run_parallel(sites, jobs, timeout, pattern):
             merged["survivors"] += res["survivors"]
             merged["survivor_keys"] += res.get("survivor_keys", [])
             merged["timed_out"] += res.get("timed_out", [])
+            merged["suspect_kills"] += res.get("suspect_kills", [])
             done = merged["killed"] + merged["survived"] + merged["errored"]
             print(f"  worker {futs[fut]} done "
                   f"({res['killed']}k/{res['survived']}s/{res['errored']}e) "
@@ -327,6 +346,15 @@ def report(result, elapsed):
     print(f"Mutation score: {score:.1f}%  ({killed} killed / {scored} scored)")
     print(f"  survived: {survived}   killed: {killed}   "
           f"compile-errors: {result['errored']}   ({elapsed}s)")
+    if result.get("suspect_kills"):
+        print(f"\n{len(result['suspect_kills'])} kill(s) rest on only 1-2 "
+              f"failing spec(s) — audit that the spec relates to the mutated "
+              f"line (#44):")
+        for sk in result["suspect_kills"]:
+            print(f"  - {sk['mutant']}")
+            for name in sk["failed_specs"]:
+                print(f"      failed: {name}")
+
     if result.get("timeouts"):
         print(f"\n{result['timeouts']} mutation(s) timed out, excluded from "
               f"the score (neither killed nor survived):")

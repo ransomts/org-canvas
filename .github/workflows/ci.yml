@@ -160,12 +160,18 @@ jobs:
           fi
 
   mutation:
-    # Assertion-depth ratchet: a sampled mutation run with a score floor, so
-    # the suite can't silently fill up with passthrough tests over time.
+    # Assertion-depth ratchet.  Two legs:
+    #  1. files.el + sections.el have a triaged baseline of accepted
+    #     survivors, so they get a FULL pass gated on it — the job fails
+    #     only on a NEW survivor, never on the (noisy, sampled) score.
+    #  2. validate.el + core-sync.el have no baseline yet, so they keep
+    #     the crude sampled score floor until someone triages them.
     # Scheduled weekly (and manually dispatchable); never blocks PRs.
+    # The timeout covers the full pass: ~195 mutations at --jobs 3, plus
+    # six known non-terminating mutants that each burn the 120s timeout.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
 
     steps:
       - name: Checkout
@@ -190,10 +196,24 @@ jobs:
           path: .eldev
           key: eldev-30.1-${{ hashFiles('Eldev') }}
 
+      - name: Full pass gated on the accepted-survivors baseline
+        # Fails only on a survivor absent from the baseline.  Stale
+        # entries (accepted but no longer surviving) are reported, not
+        # failed — see test/mutation/README.md for why, including the
+        # ~1-spurious-kill-per-pass hazard (#44) that makes any
+        # score-based gate on a full pass unreliable.
+        run: |
+          python3 test/mutation/mutate.py \
+            --files lisp/org-canvas-files.el lisp/org-canvas-sections.el \
+            --max 0 --jobs 3 --timeout 120 \
+            --baseline test/mutation/accepted-survivors.txt \
+            --json mutation-baseline-result.json
+
       - name: Sampled mutation run with score floor
         # --jobs 2 suits the 2-4 core GitHub runner (each eldev test spawns
         # ~2 processes). Floor of 40% allows for equivalent mutants in the
         # sample while catching a real depth regression.
+        if: ${{ !cancelled() }}
         run: |
           python3 test/mutation/mutate.py \
             --files lisp/org-canvas-validate.el lisp/org-canvas-core-sync.el \
@@ -205,4 +225,6 @@ jobs:
         if: ${{ !cancelled() }}
         with:
           name: mutation-result
-          path: mutation-result.json
+          path: |
+            mutation-result.json
+            mutation-baseline-result.json
