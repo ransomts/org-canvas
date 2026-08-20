@@ -37,6 +37,7 @@ lisp/
 ├── org-canvas-core-sync.el    # Sync pipeline macros, push/pull/delete infra
 ├── org-canvas-credentials.el  # Secrets (API token, course ID) - not in git
 ├── org-canvas-validate.el     # Offline validation engine (no API contact)
+├── org-canvas-diff.el         # Read-only drift report (org-canvas-diff)
 └── org-canvas-{feature}.el    # Feature modules (pages, rubrics, announcements, etc.)
 ```
 

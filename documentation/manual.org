@@ -1561,6 +1561,58 @@ Pull is available for modules that have a pull-item function: assignments, pages
 
 Conflict detection applies automatically to all modules using the shared =org-canvas--push-to-api= helper: assignments, pages, discussions, announcements, assignment groups, and rubrics.  The pre-skip drift check covers every module that runs through =org-canvas-define-sync=, which additionally includes modules and calendar events.  Modules with fully custom sync loops (files, quizzes, new quizzes, outcomes, overrides) are not covered by either.
 
+* Drift Report
+
+Three commands sound alike and answer different questions.
+
+| Command                   | Question it answers                          | API calls |
+|---------------------------+----------------------------------------------+-----------|
+| =org-canvas-status=         | What do my Org files say about themselves?   | none      |
+| =org-canvas-sync-dry-run=   | What would a sync push?                      | none      |
+| =org-canvas-diff=           | Does Canvas match my Org files?              | read-only |
+
+Only the third can see a change made in the Canvas web UI.  A dry run reports
+entries whose =PAYLOAD_HASH= changed locally, which is a different set
+entirely: an assignment someone published in Canvas has an unchanged hash and
+so appears in neither of the first two.
+
+** What It Reports
+
+Per feature:
+
+- *CHANGED* -- the item exists on both sides but they disagree.  The report
+  names each differing property with both values, and says so when Canvas's
+  =updated_at= is newer than the last sync.
+- *MISSING* -- a heading carries a Canvas id the course no longer has.
+- *EXTRA* -- an item in the course that no Org heading claims.
+
+Every property a module registers is compared, so this covers =PUBLISHED=,
+points, due dates, group weights, drop rules and the rest without a separate
+list to maintain.  Two deliberate exclusions:
+
+- Properties *absent* from the Org file are not compared.  An absent property
+  means the file expresses no opinion, and each module applies its own default
+  at parse time, so treating absence as a value would report differences that
+  no sync would act on.
+- Link-typed properties (=GROUP=, =RUBRIC_LINK=) are skipped: the Org side is a
+  heading link and the Canvas side an id.
+
+** Cost and Safety
+
+One list request per feature.  Nothing is written, locally or on Canvas, so it
+is safe to run at any time.
+
+** Scheduled Checking
+
+=org-canvas-diff-batch= exits non-zero when it finds drift, so a course can be
+checked routinely rather than only when something feels wrong:
+
+#+begin_src sh
+emacs --batch -l /path/to/org-canvas.el -f org-canvas-diff-batch
+#+end_src
+
+Wire that into cron and have it mail you the output on a non-zero exit.
+
 * Canvas-to-Org Migration
 
 Instructors with existing Canvas courses can import their entire course into Org files using =org-canvas-pull-all=.
@@ -1804,7 +1856,9 @@ These commands delete the item at the current cursor position:
 |---------------------------------+-----------------------------------------------|
 | =org-canvas-test-connection=      | Test API connection (prints course name)      |
 | =org-canvas-init=                 | Setup wizard for new courses                  |
-| =org-canvas-status=               | Show sync status overview                     |
+| =org-canvas-status=               | Show sync status from the Org files (no API calls) |
+| =org-canvas-diff=                 | Report how Canvas differs from the Org files (read-only) |
+| =org-canvas-diff-batch=           | As above, exiting non-zero when drift is found |
 | =org-canvas-validate=             | Validate all Org files offline (no API calls) |
 | =org-canvas-sync-dry-run=         | Preview what would be synced (no API calls)   |
 | =org-canvas-cleanup-orphans=      | Find and delete orphaned Canvas items         |

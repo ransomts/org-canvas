@@ -73,6 +73,7 @@
 (require 'org-canvas-settings)
 (require 'org-canvas-group-categories)
 (require 'org-canvas-calendar)
+(require 'org-canvas-diff)
 (require 'org-canvas-validate)
 (require 'org-canvas-submissions)
 (require 'org-canvas-setup)
@@ -409,7 +410,9 @@ ID-PROP is the property used to identify synced items."
 
 ;;;###autoload
 (defun org-canvas-status ()
-  "Display sync status overview for all content types."
+  "Display sync status overview for all content types.
+Reads the Org files only — it reports what they say about themselves,
+not what Canvas currently holds.  Use `org-canvas-diff' for that."
   (interactive)
   (let ((buf (get-buffer-create "*canvas-status*")))
     (with-current-buffer buf
@@ -425,6 +428,8 @@ ID-PROP is the property used to identify synced items."
           (org-canvas--status-report-file
            buf (car entry) (cadr entry) (caddr entry)))
         (insert (format "\n%s\n" (make-string 60 ?=)))
+        (insert "This is a local view: it reads the Org files and makes no API calls.\n")
+        (insert "Use M-x org-canvas-diff to compare against Canvas.\n")
         (insert "Use M-x org-canvas-sync to sync, M-x org-canvas-sync-dry-run to preview.\n"))
       (special-mode))
     (display-buffer buf)))
