@@ -282,7 +282,7 @@ All syncable headings support these properties:
 | =CANVAS_UPDATED_AT=   | string    | Remote modification time (auto-populated) |
 | =PUBLISHED=           | boolean   | Whether item is visible (default: true)   |
 
-=CANVAS_UPDATED_AT= is saved after each successful push and used by conflict detection to compare against the remote =updated_at= timestamp.
+=CANVAS_UPDATED_AT= is saved after each successful push and is the baseline conflict detection compares the remote =updated_at= against.  See [[*Conflict Detection][Conflict Detection]].
 
 ** settings.org
 
@@ -1459,13 +1459,33 @@ When pushing content to Canvas, org-canvas can detect if an item was modified di
 
 ** How It Works
 
-Before each PUT request, org-canvas:
+Every successful push records the remote =updated_at= Canvas returned, as a
+=CANVAS_UPDATED_AT= property on the heading.  That is the baseline: it is
+Canvas's own clock, so it needs no allowance for a workstation whose time
+differs from the server's, and it exists on courses that are only ever pushed.
+Entries synced before it existed fall back to the file-level =#+LAST_SYNCED=
+header, which is written after every pull and after every push that changed
+something.
 
-1. Reads the =LAST_SYNCED= property from the local Org heading
-2. GETs the item from Canvas and reads its =updated_at= timestamp
-3. If the remote timestamp is newer than =LAST_SYNCED=, the item is flagged as a *conflict*
+There are two checks.
 
-This only applies to updates (PUT), not creates (POST).  Items without a =LAST_SYNCED= property (e.g., first sync) are never flagged.
+*Before each update*, org-canvas GETs the item, reads its =updated_at=, and
+flags a conflict if that is newer than the baseline.  This applies to updates,
+not creates, and an entry with no baseline at all (a first sync) is never
+flagged.
+
+*Before skipping an unchanged entry*, org-canvas consults a snapshot of the
+feature's remote items -- one list request per feature per sync -- and takes
+any entry Canvas has touched since the baseline off the skip path, so it goes
+through the full comparison instead.  This matters because a matching
+=PAYLOAD_HASH= only proves the *local* file has not changed.  Without the
+snapshot, an item edited solely in the Canvas web UI was skipped on every
+subsequent sync and the two never reconciled; a sync could report =0 failed=
+while dozens of items disagreed.
+
+When the snapshot cannot be fetched, the run reports how many entries it
+skipped without checking, rather than letting the summary imply a comparison
+that did not happen.
 
 ** Interactive Resolution
 
@@ -1516,7 +1536,7 @@ Pull is available for modules that have a pull-item function: assignments, pages
 
 ** Scope
 
-Conflict detection applies automatically to all modules using the shared =org-canvas--push-to-api= helper: assignments, pages, discussions, announcements, assignment groups, and rubrics.  Modules with custom sync logic (files, quizzes, modules, outcomes) are not covered.
+Conflict detection applies automatically to all modules using the shared =org-canvas--push-to-api= helper: assignments, pages, discussions, announcements, assignment groups, and rubrics.  The pre-skip drift check covers every module that runs through =org-canvas-define-sync=, which additionally includes modules and calendar events.  Modules with fully custom sync loops (files, quizzes, new quizzes, outcomes, overrides) are not covered by either.
 
 * Canvas-to-Org Migration
 

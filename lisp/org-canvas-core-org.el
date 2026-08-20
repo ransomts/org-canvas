@@ -224,11 +224,14 @@ separately by `org-canvas--pull-write-file-header'."
 	(id-str (org-canvas--normalize-id id)))
     (org-canvas-org-set-property pom prop id-str)))
 
-(defun org-canvas--pull-write-file-header ()
+(defun org-canvas--pull-write-file-header (&optional time)
   "Write or replace the #+LAST_SYNCED header in the current buffer.
+TIME is the moment to record, defaulting to now.  Push passes an
+explicit time derived from Canvas\\='s own timestamps rather than the
+local clock (see `org-canvas--sync-write-push-header\').
 Idempotent: replaces an existing header in place; otherwise inserts
 after the existing #+TITLE line, or at the top of the buffer."
-  (let ((timestamp (format-time-string "[%Y-%m-%d %a %H:%M]")))
+  (let ((timestamp (format-time-string "[%Y-%m-%d %a %H:%M]" time)))
     (save-excursion
       (goto-char (point-min))
       (cond
@@ -325,7 +328,7 @@ Returns a list of (success-count . fail-count)."
 ;;;; 4b. Shared Constants
 
 (defconst org-canvas--sync-property-names
-  `("CANVAS_ID" "CANVAS_URL"
+  `("CANVAS_ID" "CANVAS_URL" "CANVAS_UPDATED_AT"
     ,org-canvas--prop-last-synced ,org-canvas--prop-payload-hash)
   "Properties managed by the sync pipeline.")
 
