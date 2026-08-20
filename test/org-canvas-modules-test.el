@@ -538,6 +538,21 @@
            (module (gethash "module" payload)))
       (expect (gethash "published" module) :to-equal :json-false)))
 
+  (it "sends skip_content_tags so the publish state stops at the module"
+    ;; Issue #47: without it, Canvas runs publish_items!/unpublish_items!
+    ;; over every item and rewrites the publish state of the content each
+    ;; one points at, overriding PUBLISHED in the file that owns it.
+    (let* ((data '(:title "Week 1" :published t))
+           (payload (org-canvas--module-build-payload data))
+           (module (gethash "module" payload)))
+      (expect (gethash "skip_content_tags" module) :to-be t)))
+
+  (it "sends skip_content_tags when unpublishing too"
+    (let* ((data '(:title "Week 1" :published nil))
+           (payload (org-canvas--module-build-payload data))
+           (module (gethash "module" payload)))
+      (expect (gethash "skip_content_tags" module) :to-be t)))
+
   (it "includes position when specified"
     (let* ((data '(:title "Test" :published t :position 5))
            (payload (org-canvas--module-build-payload data))
@@ -2368,7 +2383,97 @@
     (let* ((data '(:type "SubHeader" :title "Section" :published nil))
            (payload (org-canvas--module-item-build-payload data 1))
            (item (gethash "module_item" payload)))
+      (expect (gethash "published" item) :to-equal :json-false)))
+
+  (it "always sends published for ExternalUrl items"
+    ;; Self-owned type: there is no content behind it, and Canvas creates
+    ;; external-url items unpublished when the field is absent.
+    (let* ((data '(:type "ExternalUrl" :title "Syllabus"
+                   :external-url "https://example.com" :published t))
+           (payload (org-canvas--module-item-build-payload data 1))
+           (item (gethash "module_item" payload)))
+      (expect (gethash "published" item) :to-be t)))
+
+  (it "omits published for a linked item that does not declare it"
+    ;; Issue #47: Canvas reads module_item[published] as an instruction to
+    ;; publish the content the item points at, which overrode PUBLISHED in
+    ;; files.org.  Omitted, the content keeps its own state.
+    (let* ((data '(:type "File" :title "lecture.pdf" :content-id 42
+                   :published t))
+           (payload (org-canvas--module-item-build-payload data 1))
+           (item (gethash "module_item" payload)))
+      (expect (gethash "published" item 'absent) :to-be 'absent)))
+
+  (it "sends published when the item heading declares it"
+    (let* ((data '(:type "File" :title "lecture.pdf" :content-id 42
+                   :published t :published-specified t))
+           (payload (org-canvas--module-item-build-payload data 1))
+           (item (gethash "module_item" payload)))
+      (expect (gethash "published" item) :to-be t)))
+
+  (it "sends published false when the item heading declares it"
+    (let* ((data '(:type "File" :title "lecture.pdf" :content-id 42
+                   :published nil :published-specified t))
+           (payload (org-canvas--module-item-build-payload data 1))
+           (item (gethash "module_item" payload)))
       (expect (gethash "published" item) :to-equal :json-false))))
+
+(describe "org-canvas--module-item-transform-props (published-specified)"
+  (it "flags published as specified when the heading sets PUBLISHED"
+    (let ((data (org-canvas--module-item-transform-props
+                 '(:title-raw "Lab 1" :heading-with-links nil
+                   :canvas-id "42" :indent-raw nil
+                   :completion-requirement nil :min-score-raw nil
+                   :external-url nil :new-tab-raw nil
+                   :published-raw "false"
+                   :link-info (:type "Assignment" :title "Lab 1"
+                               :content-id 555 :page-url nil)))))
+      (expect (plist-get data :published-specified) :to-be t)
+      (expect (plist-get data :published) :to-be nil)))
+
+  (it "leaves published unspecified when the heading omits PUBLISHED"
+    (let ((data (org-canvas--module-item-transform-props
+                 '(:title-raw "Lab 1" :heading-with-links nil
+                   :canvas-id "42" :indent-raw nil
+                   :completion-requirement nil :min-score-raw nil
+                   :external-url nil :new-tab-raw nil
+                   :published-raw nil
+                   :link-info (:type "Assignment" :title "Lab 1"
+                               :content-id 555 :page-url nil)))))
+      (expect (plist-get data :published-specified) :to-be nil)
+      (expect (plist-get data :published) :to-be t))))
+
+(describe "module item publish state vs. the file that owns it (issue #47)"
+  (it "does not send published for a file item that files.org unpublishes"
+    (let* ((tmpdir (make-temp-file "mod-publish" t))
+           (files-path (expand-file-name "files.org" tmpdir))
+           (modules-path (expand-file-name "modules.org" tmpdir)))
+      (unwind-protect
+          (progn
+            (with-temp-file files-path
+              (insert "* [[file:content/lecture.pdf][lecture.pdf]]\n"
+                      ":PROPERTIES:\n:PUBLISHED: false\n:CANVAS_ID: 42\n:END:\n"))
+            (with-temp-file modules-path
+              (insert "* Week 1\n"
+                      ":PROPERTIES:\n:CANVAS_ID: 10\n:END:\n"
+                      "** [[file:content/lecture.pdf][lecture.pdf]]\n"
+                      ":PROPERTIES:\n:CANVAS_ID: 5787044\n:END:\n"))
+            (with-current-buffer (find-file-noselect modules-path)
+              (unwind-protect
+                  (let* ((_ (progn (goto-char (point-min))
+                                   (search-forward "** [[file:")
+                                   (org-back-to-heading t)))
+                         (data (org-canvas--module-item-parse-entry tmpdir))
+                         (data-type (plist-get data :type))
+                         (payload (org-canvas--module-item-build-payload data 1))
+                         (item (gethash "module_item" payload)))
+                    (expect data-type :to-equal "File")
+                    (expect (gethash "content_id" item) :to-equal 42)
+                    (expect (gethash "published" item 'absent) :to-be 'absent))
+                (kill-buffer))))
+        (let ((buf (find-buffer-visiting files-path)))
+          (when buf (kill-buffer buf)))
+        (delete-directory tmpdir t)))))
 
 (describe "org-canvas--module-pull-insert-items (published)"
   (it "sets PUBLISHED property on pulled items"

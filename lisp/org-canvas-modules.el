@@ -86,7 +86,7 @@
     (:org-prop "NEW_TAB" :data-key :new_tab :type boolean
      :doc "Open external URL in new tab")
     (:org-prop "PUBLISHED" :data-key :published :type boolean
-     :doc "Whether the item is published (default: true)"))
+     :doc "Publish state for this item; omit to keep the linked content's own state"))
   :structural-fn #'org-canvas--validate-module-item-link)
 
 ;;;; Helper Functions
@@ -367,6 +367,7 @@ when available."
          (min-score (org-canvas--interpret-number (plist-get raw :min-score-raw)))
          (new-tab (org-canvas--interpret-boolean (plist-get raw :new-tab-raw)))
          (published (org-canvas--interpret-boolean (plist-get raw :published-raw) t))
+         (published-specified (and (plist-get raw :published-raw) t))
          (external-url (plist-get raw :external-url))
          (link-info (plist-get raw :link-info))
          (explicit-type (plist-get raw :item-type-raw))
@@ -378,7 +379,8 @@ when available."
             :title title
             :canvas-id (plist-get raw :canvas-id)
             :indent indent
-            :published published))
+            :published published
+            :published-specified published-specified))
      ;; External URL item
      (external-url
       (list :type "ExternalUrl"
@@ -388,6 +390,7 @@ when available."
             :external-url external-url
             :new-tab new-tab
             :published published
+            :published-specified published-specified
             :completion-requirement completion-req
             :min-score (when (and min-score (> min-score 0)) min-score)))
      ;; Regular linked item — explicit type (when present) overrides inference
@@ -399,13 +402,15 @@ when available."
             :canvas-id (plist-get raw :canvas-id)
             :indent indent
             :published published
+            :published-specified published-specified
             :completion-requirement completion-req
             :min-score (when (and min-score (> min-score 0)) min-score)))
      ;; No link resolved — return nil to signal wrapper should classify
      (t nil))))
 
 (defun org-canvas--module-classify-unlinked-heading
-    (heading-with-links raw-heading canvas-id indent published pom)
+    (heading-with-links raw-heading canvas-id indent published pom
+                        &optional published-specified)
   "Classify a module item heading whose link could not be fully resolved.
 Distinguishes two cases:
   1. Heading contains a [[file:...]] link but the target has no CANVAS_ID
@@ -414,7 +419,8 @@ Distinguishes two cases:
   2. Heading is genuinely plain text — returns a SubHeader plist.
 HEADING-WITH-LINKS is the raw buffer text (from `org-complex-heading-regexp'
 group 4), RAW-HEADING is from `org-get-heading'.  CANVAS-ID, INDENT,
-PUBLISHED, and POM are passed through to the returned plist."
+PUBLISHED, POM, and PUBLISHED-SPECIFIED are passed through to the
+returned plist."
   (let* ((link-src (or heading-with-links raw-heading))
          (link-file (when (and link-src
                                (string-match "\\[\\[file:\\([^]:]+\\)" link-src))
@@ -430,12 +436,14 @@ PUBLISHED, and POM are passed through to the returned plist."
                            :canvas-id canvas-id
                            :indent indent
                            :published published
+                           :published-specified published-specified
                            :pom pom)
                    (list :type "SubHeader"
                          :title raw-heading
                          :canvas-id canvas-id
                          :indent indent
                          :published published
+                         :published-specified published-specified
                          :pom pom))))
     (if link-file
         (org-canvas--log-warning org-canvas--logger
@@ -476,7 +484,8 @@ MODULES-FILE-DIR is used to resolve relative file links."
                      (plist-get raw :canvas-id)
                      (org-canvas--interpret-number (plist-get raw :indent-raw) 0)
                      (org-canvas--interpret-boolean (plist-get raw :published-raw) t)
-                     pom)))
+                     pom
+                     (and (plist-get raw :published-raw) t))))
         result)))))
 
 ;;;; 2. Stage: Transformation - Module
@@ -489,6 +498,12 @@ MODULES-FILE-DIR is used to resolve relative file links."
     (let ((module (make-hash-table :test 'equal)))
       (puthash "name" title module)
       (puthash "published" (org-canvas--to-json-boolean (plist-get data :published)) module)
+      ;; A module owns its own publish state, but Canvas cascades it: an
+      ;; update carrying module[published] runs publish_items!/unpublish_items!
+      ;; over every item, which publishes or unpublishes the *content* each
+      ;; item points at, overriding PUBLISHED in files.org, pages.org and the
+      ;; rest (issue #47).  skip_content_tags stops the cascade at the module.
+      (puthash "skip_content_tags" t module)
 
       (when (plist-get data :position)
         (puthash "position" (plist-get data :position) module))
@@ -516,6 +531,13 @@ MODULES-FILE-DIR is used to resolve relative file links."
         payload))))
 
 ;;;; 2. Stage: Transformation - Module Item
+
+(defconst org-canvas--module-item-self-owned-types '("SubHeader" "ExternalUrl")
+  "Module item types whose published state belongs to the item itself.
+An item of any other type points at a Canvas object owned by another
+org-canvas feature — a file, page, assignment, quiz or discussion —
+and publishing the item publishes that object.  See
+`org-canvas--module-item-build-payload'.")
 
 (defun org-canvas--module-item-build-payload (data position)
   "Convert module item DATA to Canvas payload at POSITION."
@@ -547,8 +569,16 @@ MODULES-FILE-DIR is used to resolve relative file links."
       (when (plist-get data :new-tab)
         (puthash "new_tab" t item))
 
-      ;; Published state
-      (puthash "published" (org-canvas--to-json-boolean (plist-get data :published)) item)
+      ;; Published state.  For an item pointing at content another feature
+      ;; owns, Canvas reads module_item[published] as an instruction to publish
+      ;; that content, so sending it unconditionally overrode PUBLISHED: false
+      ;; in files.org and friends (issue #47).  Send it only when this heading
+      ;; declares it: omitted, a new item inherits the content's own state and
+      ;; an existing one keeps its state.  Self-owned types always carry it —
+      ;; they have no content behind them, and Canvas creates them unpublished.
+      (when (or (plist-get data :published-specified)
+                (member item-type org-canvas--module-item-self-owned-types))
+        (puthash "published" (org-canvas--to-json-boolean (plist-get data :published)) item))
 
       ;; Completion requirement
       (when (plist-get data :completion-requirement)

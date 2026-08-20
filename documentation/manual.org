@@ -868,7 +868,15 @@ Course navigation structure with ordered content.
 | =MIN_SCORE=              | number  | Required score for min_score completion                                        |
 | =EXTERNAL_URL=           | string  | URL for ExternalUrl items                                                      |
 | =NEW_TAB=                | boolean | Open external URL in new tab                                                   |
-| =PUBLISHED=              | boolean | Whether the item is published (default: true)                                  |
+| =PUBLISHED=              | boolean | Publish state; omit to keep the linked content's own state                     |
+
+A module item only carries a publish state of its own when the heading sets
+=PUBLISHED= explicitly.  Left unset, org-canvas omits the field and Canvas
+gives the item the publish state of the content it links to, so
+=PUBLISHED: false= in =files.org= or =pages.org= is respected.  Setting
+=PUBLISHED= on the item overrides that: in Canvas, publishing a module item
+publishes the content behind it.  =PUBLISHED= on the module itself controls
+only the module and never cascades to the items it lists.
 
 *** Item Type Resolution
 
@@ -2213,7 +2221,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =COMPLETION_REQUIREMENT= | enum | must_view, must_submit, must_contribute, min_score |  | must_view, must_submit, must_contribute, min_score |
 | =MIN_SCORE= | number |  |  | Required score for min_score completion |
 | =NEW_TAB= | boolean | true, false |  | Open external URL in new tab |
-| =PUBLISHED= | boolean | true, false |  | Whether the item is published (default: true) |
+| =PUBLISHED= | boolean | true, false |  | Publish state for this item; omit to keep the linked content's own state |
 
 ** Modules
 

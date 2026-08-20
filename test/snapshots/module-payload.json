@@ -2,6 +2,7 @@
   "module": {
     "name": "Week 1: Introduction",
     "position": 1,
-    "published": true
+    "published": true,
+    "skip_content_tags": true
   }
 }

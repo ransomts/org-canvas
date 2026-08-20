@@ -52,11 +52,15 @@
 (defconst org-canvas-contract--exceptions
   ;; Fields a module legitimately emits that the documented create operation
   ;; omits.  Each must be justified — these are not free passes.
-  '(("modules" . ("published")))
+  '(("modules" . ("published" "skip_content_tags")))
   "Per-module allowed-but-undocumented payload fields.
 modules: Canvas honors `module[published]' on create even though the
 documented create_module operation does not list it; org-canvas relies on
-this to publish modules in a single request.")
+this to publish modules in a single request.  `module[skip_content_tags]'
+is likewise undocumented but read straight from the params in
+ContextModulesApiController#update, where it suppresses the
+publish_items!/unpublish_items! cascade that would otherwise rewrite the
+publish state of every piece of content the module lists (issue #47).")
 
 ;;;; Helpers
 
