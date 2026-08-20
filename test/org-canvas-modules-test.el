@@ -3148,4 +3148,261 @@
       (expect (format "%S" expansion)
               :to-match "org-canvas--module-pull-item"))))
 
+;;;; Bulk Publish (issue #52)
+
+(defun test-publish-52--course ()
+  "Build a temp course with a module, an assignment, a page and a file.
+Returns the directory."
+  (let* ((dir (make-temp-file "publish-" t))
+         (content (expand-file-name "content" dir)))
+    (make-directory content t)
+    (with-temp-file (expand-file-name "content/lecture.pdf" dir) (insert "pdf"))
+    (with-temp-file (expand-file-name "assignments.org" dir)
+      (insert "* Lab 1\n:PROPERTIES:\n:CANVAS_ID: 61\n:PUBLISHED: false\n:END:\n"
+              "* Lab 2\n:PROPERTIES:\n:CANVAS_ID: 62\n:PUBLISHED: false\n:END:\n"))
+    (with-temp-file (expand-file-name "pages.org" dir)
+      (insert "* Welcome\n:PROPERTIES:\n:CANVAS_URL: welcome\n:PUBLISHED: false\n:END:\n"))
+    (with-temp-file (expand-file-name "files.org" dir)
+      (insert "* [[file:content/lecture.pdf][lecture.pdf]]\n"
+              ":PROPERTIES:\n:CANVAS_ID: 42\n:PUBLISHED: false\n:END:\n"))
+    (with-temp-file (expand-file-name "modules.org" dir)
+      (insert "* Week 03\n:PROPERTIES:\n:PUBLISHED: false\n:END:\n"
+              "** Readings\n"
+              "** [[file:assignments.org::*Lab 1][Lab 1]]\n"
+              "** [[file:pages.org::*Welcome][Welcome]]\n"
+              "** [[file:content/lecture.pdf][lecture.pdf]]\n"
+              "* Week 04\n:PROPERTIES:\n:PUBLISHED: false\n:END:\n"
+              "** [[file:assignments.org::*Lab 2][Lab 2]]\n"))
+    dir))
+
+(defun test-publish-52--kill (dir)
+  "Kill the buffers visiting files under DIR and delete it."
+  (dolist (name '("modules.org" "assignments.org" "pages.org" "files.org"))
+    (let ((buf (find-buffer-visiting (expand-file-name name dir))))
+      (when buf
+        (with-current-buffer buf (set-buffer-modified-p nil))
+        (kill-buffer buf))))
+  (delete-directory dir t))
+
+(defun test-publish-52--prop (dir file heading prop)
+  "Return PROP of HEADING in DIR/FILE."
+  (with-current-buffer (find-file-noselect (expand-file-name file dir))
+    (save-excursion
+      (goto-char (point-min))
+      (when (re-search-forward (format "^\\*+ .*%s" (regexp-quote heading)) nil t)
+        (org-back-to-heading t)
+        (org-entry-get (point) prop)))))
+
+(describe "org-canvas--module-item-target"
+  (it "resolves a heading link to the file and heading that own the object"
+    (let ((dir (test-publish-52--course)))
+      (unwind-protect
+          (let ((target (org-canvas--module-item-target
+                         "[[file:assignments.org::*Lab 1][Lab 1]]" dir)))
+            (expect (car target) :to-equal (expand-file-name "assignments.org" dir))
+            (with-current-buffer (find-file-noselect (car target))
+              (expect (org-entry-get (cdr target) "CANVAS_ID") :to-equal "61")))
+        (test-publish-52--kill dir))))
+
+  (it "resolves a direct file link through files.org"
+    (let ((dir (test-publish-52--course)))
+      (unwind-protect
+          (let ((target (org-canvas--module-item-target
+                         "[[file:content/lecture.pdf][lecture.pdf]]" dir)))
+            (expect (car target) :to-equal (expand-file-name "files.org" dir))
+            (with-current-buffer (find-file-noselect (car target))
+              (expect (org-entry-get (cdr target) "CANVAS_ID") :to-equal "42")))
+        (test-publish-52--kill dir))))
+
+  (it "returns nil for a heading that is not a link"
+    (expect (org-canvas--module-item-target "Readings" "/tmp") :to-be nil))
+
+  (it "returns nil when the target heading is absent"
+    (let ((dir (test-publish-52--course)))
+      (unwind-protect
+          (expect (org-canvas--module-item-target
+                   "[[file:assignments.org::*Nonexistent][Nonexistent]]" dir)
+                  :to-be nil)
+        (test-publish-52--kill dir)))))
+
+(describe "org-canvas--module-heading-search-regexp"
+  (it "matches a heading with extra spaces after the stars"
+    (expect (string-match-p (org-canvas--module-heading-search-regexp "Lab 1")
+                            "**  Lab 1")
+            :to-be 0))
+
+  (it "unescapes the brackets Org puts inside link components"
+    ;; A files.org heading reached through the legacy nested form arrives
+    ;; with its brackets escaped.
+    (expect (string-match-p
+             (org-canvas--module-heading-search-regexp
+              "\\[\\[file:content/foo.pdf\\]\\[foo.pdf\\]\\]")
+             "* [[file:content/foo.pdf][foo.pdf]]")
+            :to-be 0))
+
+  (it "quotes regexp metacharacters in the heading"
+    (expect (string-match-p (org-canvas--module-heading-search-regexp "Week 1 (a+b)")
+                            "* Week 1 (a+b)")
+            :to-be 0)))
+
+(describe "org-canvas--module-heading-position"
+  (it "falls back to the display title when the heading text does not match"
+    ;; A files.org heading *is* a link, so the exact-text search misses it —
+    ;; and `org-get-heading' strips link syntax on Org 9.7 but not on 9.6.
+    (let ((dir (test-publish-52--course)))
+      (unwind-protect
+          (let ((pos (org-canvas--module-heading-position
+                      (expand-file-name "files.org" dir)
+                      "content/lecture.pdf" "lecture.pdf")))
+            (expect pos :to-be-truthy)
+            (with-current-buffer (find-file-noselect
+                                  (expand-file-name "files.org" dir))
+              (expect (org-entry-get pos "CANVAS_ID") :to-equal "42")))
+        (test-publish-52--kill dir))))
+
+  (it "matches on the title alone for a link with no heading component"
+    (let ((dir (test-publish-52--course)))
+      (unwind-protect
+          (let ((pos (org-canvas--module-heading-position
+                      (expand-file-name "assignments.org" dir) nil "Lab 2")))
+            (expect pos :to-be-truthy)
+            (with-current-buffer (find-file-noselect
+                                  (expand-file-name "assignments.org" dir))
+              (expect (org-entry-get pos "CANVAS_ID") :to-equal "62")))
+        (test-publish-52--kill dir))))
+
+  (it "returns nil when nothing matches either way"
+    (let ((dir (test-publish-52--course)))
+      (unwind-protect
+          (expect (org-canvas--module-heading-position
+                   (expand-file-name "assignments.org" dir) nil "Nonexistent")
+                  :to-be nil)
+        (test-publish-52--kill dir)))))
+
+(describe "org-canvas--module-publish-apply"
+  (it "publishes the module and every object it lists, across files"
+    ;; The reported chore: six to ten edits in three or four files.
+    (let ((dir (test-publish-52--course)))
+      (unwind-protect
+          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+            (with-current-buffer (find-file-noselect org-canvas-modules-file)
+              (goto-char (point-min))
+              (org-canvas--module-publish-apply (point) t))
+            (expect (test-publish-52--prop dir "modules.org" "Week 03" "PUBLISHED")
+                    :to-equal "true")
+            (expect (test-publish-52--prop dir "assignments.org" "Lab 1" "PUBLISHED")
+                    :to-equal "true")
+            (expect (test-publish-52--prop dir "pages.org" "Welcome" "PUBLISHED")
+                    :to-equal "true")
+            (expect (test-publish-52--prop dir "files.org" "lecture.pdf" "PUBLISHED")
+                    :to-equal "true"))
+        (test-publish-52--kill dir))))
+
+  (it "leaves objects belonging to other modules alone"
+    (let ((dir (test-publish-52--course)))
+      (unwind-protect
+          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+            (with-current-buffer (find-file-noselect org-canvas-modules-file)
+              (goto-char (point-min))
+              (org-canvas--module-publish-apply (point) t))
+            (expect (test-publish-52--prop dir "assignments.org" "Lab 2" "PUBLISHED")
+                    :to-equal "false"))
+        (test-publish-52--kill dir))))
+
+  (it "sets the property in place for a SubHeader, which owns its own state"
+    ;; Issue #47's rule: an item with no object behind it carries its own
+    ;; publish state, so that is where the property belongs.
+    (let ((dir (test-publish-52--course)))
+      (unwind-protect
+          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+            (with-current-buffer (find-file-noselect org-canvas-modules-file)
+              (goto-char (point-min))
+              (org-canvas--module-publish-apply (point) t))
+            (expect (test-publish-52--prop dir "modules.org" "Readings" "PUBLISHED")
+                    :to-equal "true"))
+        (test-publish-52--kill dir))))
+
+  (it "unpublishes the same set"
+    (let ((dir (test-publish-52--course)))
+      (unwind-protect
+          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+            (with-current-buffer (find-file-noselect org-canvas-modules-file)
+              (goto-char (point-min))
+              (org-canvas--module-publish-apply (point) t)
+              (goto-char (point-min))
+              (org-canvas--module-publish-apply (point) nil))
+            (expect (test-publish-52--prop dir "assignments.org" "Lab 1" "PUBLISHED")
+                    :to-equal "false")
+            (expect (test-publish-52--prop dir "files.org" "lecture.pdf" "PUBLISHED")
+                    :to-equal "false"))
+        (test-publish-52--kill dir))))
+
+  (it "counts only the headings it actually changed"
+    (let ((dir (test-publish-52--course)))
+      (unwind-protect
+          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+            (with-current-buffer (find-file-noselect org-canvas-modules-file)
+              (goto-char (point-min))
+              (let ((first (org-canvas--module-publish-apply (point) t)))
+                (goto-char (point-min))
+                (let ((again (org-canvas--module-publish-apply (point) t)))
+                  (expect (plist-get first :changed) :to-be-greater-than 0)
+                  (expect (plist-get again :changed) :to-equal 0)))))
+        (test-publish-52--kill dir))))
+
+  (it "names the items it could not resolve instead of failing"
+    (let ((dir (test-publish-52--course)))
+      (unwind-protect
+          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+            (with-current-buffer (find-file-noselect org-canvas-modules-file)
+              (goto-char (point-max))
+              (insert "** [[file:assignments.org::*Gone][Gone]]\n")
+              (save-buffer)
+              (goto-char (point-min))
+              (re-search-forward "^\\* Week 04")
+              (org-back-to-heading t)
+              (let ((result (org-canvas--module-publish-apply (point) t)))
+                (expect (plist-get result :unresolved) :to-equal '("Gone")))))
+        (test-publish-52--kill dir)))))
+
+(describe "org-canvas--module-due-for-release-p"
+  (it "is true once PUBLISH_AT has passed"
+    (with-temp-org-buffer
+     "* Week 03
+:PROPERTIES:
+:PUBLISH_AT: <2020-01-01 Wed 06:00>
+:END:
+"
+     (org-back-to-heading)
+     (expect (org-canvas--module-due-for-release-p (point)) :to-be-truthy)))
+
+  (it "is false while PUBLISH_AT is still in the future"
+    (with-temp-org-buffer
+     "* Week 03
+:PROPERTIES:
+:PUBLISH_AT: <2099-01-01 Thu 06:00>
+:END:
+"
+     (org-back-to-heading)
+     (expect (org-canvas--module-due-for-release-p (point)) :to-be nil)))
+
+  (it "is false for a module with no release date"
+    (with-temp-org-buffer
+     "* Week 03\n"
+     (org-back-to-heading)
+     (expect (org-canvas--module-due-for-release-p (point)) :to-be nil))))
+
+(describe "org-canvas--module-positions"
+  (it "lists the level-1 module headings with their positions"
+    (let ((dir (test-publish-52--course)))
+      (unwind-protect
+          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+            (expect (mapcar #'car (org-canvas--module-positions))
+                    :to-equal '("Week 03" "Week 04")))
+        (test-publish-52--kill dir))))
+
+  (it "returns nil when modules.org does not exist"
+    (let ((org-canvas-modules-file "/tmp/nonexistent-modules.org"))
+      (expect (org-canvas--module-positions) :to-be nil))))
+
 ;;; org-canvas-modules-test.el ends here

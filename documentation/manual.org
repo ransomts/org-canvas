@@ -1561,6 +1561,56 @@ Pull is available for modules that have a pull-item function: assignments, pages
 
 Conflict detection applies automatically to all modules using the shared =org-canvas--push-to-api= helper: assignments, pages, discussions, announcements, assignment groups, and rubrics.  The pre-skip drift check covers every module that runs through =org-canvas-define-sync=, which additionally includes modules and calendar events.  Modules with fully custom sync loops (files, quizzes, new quizzes, outcomes, overrides) are not covered by either.
 
+* Publishing a Week
+
+Releasing content is the most repeated action in running a course, and doing it
+by hand means editing =PUBLISHED= in every file that owns a piece of the week:
+the module in =modules.org=, its lecture PDFs in =files.org=, the assignments due
+that week, sometimes a page.  Six to ten edits across three or four files, every
+week for a semester.
+
+** Publishing on Demand
+
+#+begin_src elisp
+M-x org-canvas-publish-module RET Week 03 RET
+#+end_src
+
+Sets =PUBLISHED: true= on the module and on the heading that owns each object its
+items point at, in whichever file that is, then offers to sync.
+=org-canvas-unpublish-module= is the reverse.
+
+The publish state is written to the object's own heading, never inferred from
+the module at push time.  A module item that has no object behind it -- a
+SubHeader or an external URL -- owns its state, so those are set in place.  See
+[[*Conflict Detection][Conflict Detection]] for why that distinction matters.
+
+Items whose links do not resolve are named in the report rather than silently
+passed over, so a typo in a link surfaces instead of quietly leaving one piece
+of the week unpublished.
+
+** Publishing on a Schedule
+
+Give a module a =PUBLISH_AT= and the release plan lives in the file:
+
+#+begin_src org
+,* Week 03 (Aug 31 to Sep 4): Ethics II; Networks
+:PROPERTIES:
+:PUBLISH_AT: <2026-08-31 Mon 06:00>
+:END:
+#+end_src
+
+Every =org-canvas-sync= applies any release whose date has passed, before the
+first feature syncs -- so the objects it publishes are pushed by that same run.
+The publish is written into the Org files as ordinary =PUBLISHED: true=
+properties, so the files stay the source of truth and re-running changes
+nothing.  A whole semester can be authored in August and release itself.
+
+=M-x org-canvas-apply-scheduled-releases= runs the same pass on its own.
+
+Note that =PUBLISH_AT= is org-canvas's own scheduling, not Canvas's: it is never
+sent to the API.  A module's =UNLOCK_AT= is Canvas's, and the two are
+independent.
+
 * Drift Report
 
 Three commands sound alike and answer different questions.
@@ -1857,6 +1907,9 @@ These commands delete the item at the current cursor position:
 | =org-canvas-test-connection=      | Test API connection (prints course name)      |
 | =org-canvas-init=                 | Setup wizard for new courses                  |
 | =org-canvas-status=               | Show sync status from the Org files (no API calls) |
+| =org-canvas-publish-module=       | Publish a module and every object it lists    |
+| =org-canvas-unpublish-module=     | The reverse                                   |
+| =org-canvas-apply-scheduled-releases= | Publish modules whose =PUBLISH_AT= has passed |
 | =org-canvas-diff=                 | Report how Canvas differs from the Org files (read-only) |
 | =org-canvas-diff-batch=           | As above, exiting non-zero when drift is found |
 | =org-canvas-validate=             | Validate all Org files offline (no API calls) |
@@ -2357,6 +2410,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =UNLOCK_AT= | timestamp |  |  | Date to unlock the module |
 | =REQUIRE_SEQUENTIAL_PROGRESSION= | boolean | true, false |  | Force items to be completed in order |
 | =PUBLISH_FINAL_GRADE= | boolean | true, false |  | Publish the final grade when this module is completed |
+| =PUBLISH_AT= | timestamp |  |  | Release date: sync publishes this module and its contents once passed |
 
 ** New Quiz Items
 

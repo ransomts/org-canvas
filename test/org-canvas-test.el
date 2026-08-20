@@ -1503,4 +1503,157 @@
     (expect (memq 'org-canvas-api-token org-canvas--bug-report-settings)
             :to-be nil)))
 
+;;;; Bulk Publish Commands (issue #52)
+
+(defun test-publish-cmd--course ()
+  "Build a temp course with one module linking one assignment."
+  (let ((dir (make-temp-file "publish-cmd-" t)))
+    (with-temp-file (expand-file-name "assignments.org" dir)
+      (insert "* Lab 1\n:PROPERTIES:\n:CANVAS_ID: 61\n:PUBLISHED: false\n:END:\n"))
+    (with-temp-file (expand-file-name "modules.org" dir)
+      (insert "* Week 03\n:PROPERTIES:\n:PUBLISHED: false\n:END:\n"
+              "** [[file:assignments.org::*Lab 1][Lab 1]]\n"
+              "* Week 04\n:PROPERTIES:\n:PUBLISHED: false\n"
+              ":PUBLISH_AT: <2020-01-01 Wed 06:00>\n:END:\n"))
+    dir))
+
+(defun test-publish-cmd--kill (dir)
+  "Kill buffers visiting files under DIR and delete it."
+  (dolist (name '("modules.org" "assignments.org"))
+    (let ((buf (find-buffer-visiting (expand-file-name name dir))))
+      (when buf
+        (with-current-buffer buf (set-buffer-modified-p nil))
+        (kill-buffer buf))))
+  (delete-directory dir t))
+
+(defun test-publish-cmd--prop (dir file heading prop)
+  "Return PROP of HEADING in DIR/FILE."
+  (with-current-buffer (find-file-noselect (expand-file-name file dir))
+    (save-excursion
+      (goto-char (point-min))
+      (when (re-search-forward (format "^\\*+ .*%s" (regexp-quote heading)) nil t)
+        (org-back-to-heading t)
+        (org-entry-get (point) prop)))))
+
+(describe "org-canvas-publish-module"
+  (it "publishes the named module and its objects, then offers to sync"
+    (let ((dir (test-publish-cmd--course))
+          (offered nil))
+      (unwind-protect
+          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+            (cl-letf (((symbol-function 'completing-read)
+                       (lambda (&rest _) "Week 03"))
+                      ((symbol-function 'org-canvas--publish-offer-sync)
+                       (lambda () (setq offered t))))
+              (org-canvas-publish-module))
+            (expect (test-publish-cmd--prop dir "modules.org" "Week 03" "PUBLISHED")
+                    :to-equal "true")
+            (expect (test-publish-cmd--prop dir "assignments.org" "Lab 1" "PUBLISHED")
+                    :to-equal "true")
+            (expect offered :to-be t))
+        (test-publish-cmd--kill dir))))
+
+  (it "refuses a module name that is not in the file"
+    (let ((dir (test-publish-cmd--course)))
+      (unwind-protect
+          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+            (expect (org-canvas--publish-module-1 "Week 99" t) :to-throw 'user-error))
+        (test-publish-cmd--kill dir))))
+
+  (it "complains when there are no modules to choose from"
+    (let ((org-canvas-modules-file "/tmp/nonexistent-modules.org"))
+      (expect (org-canvas--publish-read-module) :to-throw 'user-error))))
+
+(describe "org-canvas--publish-report"
+  (it "names the items it could not resolve"
+    (let (warnings)
+      (cl-letf (((symbol-function 'org-canvas--log-warning)
+                 (lambda (_logger fmt &rest args)
+                   (push (apply #'format fmt args) warnings)))
+                ((symbol-function 'org-canvas--log-info) #'ignore)
+                ((symbol-function 'message) #'ignore))
+        (org-canvas--publish-report "Week 03" t '(:changed 4 :unresolved ("Gone")))
+        (expect (car warnings) :to-match "could not be resolved")
+        (expect (car warnings) :to-match "'Gone'"))))
+
+  (it "stays quiet when everything resolved"
+    (let (warnings)
+      (cl-letf (((symbol-function 'org-canvas--log-warning)
+                 (lambda (_logger fmt &rest args)
+                   (push (apply #'format fmt args) warnings)))
+                ((symbol-function 'org-canvas--log-info) #'ignore)
+                ((symbol-function 'message) #'ignore))
+        (org-canvas--publish-report "Week 03" t '(:changed 4 :unresolved nil))
+        (expect warnings :to-be nil)))))
+
+(describe "org-canvas--publish-offer-sync"
+  (it "syncs when the user says yes"
+    (let ((synced nil)
+          (noninteractive nil))
+      (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) t))
+                ((symbol-function 'org-canvas-sync) (lambda () (setq synced t))))
+        (org-canvas--publish-offer-sync)
+        (expect synced :to-be t))))
+
+  (it "does not sync when the user declines"
+    (let ((noninteractive nil))
+      (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) nil))
+                ((symbol-function 'org-canvas-sync)
+                 (lambda () (error "Must not sync"))))
+        (expect (org-canvas--publish-offer-sync) :not :to-throw))))
+
+  (it "never prompts in batch"
+    (cl-letf (((symbol-function 'y-or-n-p)
+               (lambda (&rest _) (error "Must not prompt in batch")))
+              ((symbol-function 'org-canvas-sync)
+               (lambda () (error "Must not sync"))))
+      (expect (org-canvas--publish-offer-sync) :not :to-throw))))
+
+(describe "org-canvas-unpublish-module"
+  (it "is the reverse"
+    (let ((dir (test-publish-cmd--course)))
+      (unwind-protect
+          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+            (cl-letf (((symbol-function 'completing-read)
+                       (lambda (&rest _) "Week 03"))
+                      ((symbol-function 'org-canvas--publish-offer-sync) #'ignore))
+              (org-canvas-publish-module)
+              (org-canvas-unpublish-module))
+            (expect (test-publish-cmd--prop dir "assignments.org" "Lab 1" "PUBLISHED")
+                    :to-equal "false"))
+        (test-publish-cmd--kill dir)))))
+
+(describe "org-canvas-apply-scheduled-releases"
+  (it "publishes a module whose PUBLISH_AT has passed and no other"
+    (let ((dir (test-publish-cmd--course)))
+      (unwind-protect
+          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+            (expect (org-canvas-apply-scheduled-releases) :to-equal '("Week 04"))
+            (expect (test-publish-cmd--prop dir "modules.org" "Week 04" "PUBLISHED")
+                    :to-equal "true")
+            ;; Week 03 has no release date, so it is left alone.
+            (expect (test-publish-cmd--prop dir "modules.org" "Week 03" "PUBLISHED")
+                    :to-equal "false"))
+        (test-publish-cmd--kill dir))))
+
+  (it "is idempotent once the release has been applied"
+    (let ((dir (test-publish-cmd--course)))
+      (unwind-protect
+          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+            (org-canvas-apply-scheduled-releases)
+            (expect (org-canvas-apply-scheduled-releases) :to-be nil))
+        (test-publish-cmd--kill dir))))
+
+  (it "does nothing when no module carries a release date"
+    (let ((dir (make-temp-file "no-release-" t)))
+      (unwind-protect
+          (progn
+            (with-temp-file (expand-file-name "modules.org" dir)
+              (insert "* Week 03\n"))
+            (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+              (expect (org-canvas-apply-scheduled-releases) :to-be nil)))
+        (let ((buf (find-buffer-visiting (expand-file-name "modules.org" dir))))
+          (when buf (kill-buffer buf)))
+        (delete-directory dir t)))))
+
 ;;; org-canvas-test.el ends here
