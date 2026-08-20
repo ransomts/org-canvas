@@ -206,6 +206,22 @@
 (describe "org-canvas--file-transform-props"
   (before-each (test-org-canvas-reset-file-caches))
 
+  (it "defaults hidden to nil and reads HIDDEN when set"
+    (let ((off (org-canvas--file-transform-props
+                '(:display-name "Test" :local-path "/tmp/test.pdf"
+                  :folder-path "" :canvas-id nil
+                  :published-raw nil :hidden-raw nil
+                  :unlock-at-raw nil :lock-at-raw nil
+                  :use-justification nil :usage-license nil :copyright nil)))
+          (on (org-canvas--file-transform-props
+               '(:display-name "Test" :local-path "/tmp/test.pdf"
+                 :folder-path "" :canvas-id nil
+                 :published-raw nil :hidden-raw "true"
+                 :unlock-at-raw nil :lock-at-raw nil
+                 :use-justification nil :usage-license nil :copyright nil))))
+      (expect (plist-get off :hidden) :to-be nil)
+      (expect (plist-get on :hidden) :to-be t)))
+
   (it "passes through display-name unchanged"
     (let ((result (org-canvas--file-transform-props
                    '(:display-name "Syllabus.pdf" :local-path "/tmp/syllabus.pdf"
@@ -508,49 +524,85 @@
       (expect (gethash "size" payload) :to-be-truthy)
       (expect (gethash "size" payload) :to-be-greater-than 0)))
 
-  (it "sets hidden=t when not published"
+  (it "carries no visibility fields — the preflight discards them"
+    ;; Issue #50: api_attachment_preflight reads only name, size,
+    ;; content_type, parent_folder_id and on_duplicate.  Anything else was
+    ;; being sent into a void; visibility is applied by a later PUT.
     (let* ((data (list :display-name "Doc"
                        :local-path temp-file
-                       :published nil))
+                       :published nil
+                       :hidden t
+                       :unlock-at "2024-01-15T09:00:00Z"
+                       :lock-at "2024-06-01T23:59:00Z"))
            (payload (org-canvas--file-build-upload-request data 123)))
+      (expect (gethash "hidden" payload) :to-be nil)
+      (expect (gethash "locked" payload) :to-be nil)
+      (expect (gethash "unlock_at" payload) :to-be nil)
+      (expect (gethash "lock_at" payload) :to-be nil))))
+
+(describe "org-canvas--file-build-settings-payload"
+  (it "maps PUBLISHED: false to locked, not hidden"
+    ;; Issue #50: `hidden' is the weaker "reachable by direct link" state.
+    (let* ((data (list :display-name "Doc" :published nil))
+           (payload (org-canvas--file-build-settings-payload data)))
+      (expect (gethash "locked" payload) :to-be t)
+      (expect (gethash "hidden" payload) :to-equal :json-false)))
+
+  (it "sends locked in both directions so the property is a real toggle"
+    ;; The old mapping only ever set the flag, so a file could not be
+    ;; republished by editing files.org: omitting a field on a partial
+    ;; update leaves the stored value alone.
+    (let* ((data (list :display-name "Doc" :published t))
+           (payload (org-canvas--file-build-settings-payload data)))
+      (expect (gethash "locked" payload) :to-equal :json-false)))
+
+  (it "exposes the unlisted state through its own property"
+    (let* ((data (list :display-name "Doc" :published t :hidden t))
+           (payload (org-canvas--file-build-settings-payload data)))
+      (expect (gethash "locked" payload) :to-equal :json-false)
       (expect (gethash "hidden" payload) :to-be t)))
 
-  (it "omits hidden when published"
-    (let* ((data (list :display-name "Doc"
-                       :local-path temp-file
-                       :published t))
-           (payload (org-canvas--file-build-upload-request data 123)))
-      (expect (gethash "hidden" payload) :to-be nil)))
-
   (it "includes unlock_at when specified"
-    (let* ((data (list :display-name "Doc"
-                       :local-path temp-file
-                       :published t
+    (let* ((data (list :display-name "Doc" :published t
                        :unlock-at "2024-01-15T09:00:00Z"))
-           (payload (org-canvas--file-build-upload-request data 123)))
+           (payload (org-canvas--file-build-settings-payload data)))
       (expect (gethash "unlock_at" payload) :to-equal "2024-01-15T09:00:00Z")))
 
   (it "includes lock_at when specified"
-    (let* ((data (list :display-name "Doc"
-                       :local-path temp-file
-                       :published t
+    (let* ((data (list :display-name "Doc" :published t
                        :lock-at "2024-06-01T23:59:00Z"))
-           (payload (org-canvas--file-build-upload-request data 123)))
+           (payload (org-canvas--file-build-settings-payload data)))
       (expect (gethash "lock_at" payload) :to-equal "2024-06-01T23:59:00Z")))
 
   (it "excludes unlock_at when not specified"
-    (let* ((data (list :display-name "Doc"
-                       :local-path temp-file
-                       :published t))
-           (payload (org-canvas--file-build-upload-request data 123)))
+    (let* ((data (list :display-name "Doc" :published t))
+           (payload (org-canvas--file-build-settings-payload data)))
       (expect (gethash "unlock_at" payload) :to-be nil)))
 
   (it "excludes lock_at when not specified"
-    (let* ((data (list :display-name "Doc"
-                       :local-path temp-file
-                       :published t))
-           (payload (org-canvas--file-build-upload-request data 123)))
+    (let* ((data (list :display-name "Doc" :published t))
+           (payload (org-canvas--file-build-settings-payload data)))
       (expect (gethash "lock_at" payload) :to-be nil))))
+
+(describe "org-canvas--file-apply-settings"
+  (it "PUTs the settings to the file endpoint"
+    (let (calls)
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (method url &rest args)
+                   (push (list method url (plist-get args :data)) calls)
+                   '((id . 42)))))
+        (org-canvas--file-apply-settings 42 '(:display-name "Doc" :published nil))
+        (let ((call (car calls)))
+          (expect (nth 0 call) :to-equal 'PUT)
+          (expect (nth 1 call) :to-match "/api/v1/files/42")
+          (expect (gethash "locked" (nth 2 call)) :to-be t)))))
+
+  (it "sends nothing during a dry run"
+    (let ((org-canvas--dry-run t))
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _) (error "Must not contact the API"))))
+        (expect (org-canvas--file-apply-settings 42 '(:display-name "Doc" :published nil))
+                :to-be org-canvas--dry-run-response)))))
 
 ;;;; Stage 3: Push to API (mocked)
 
@@ -1334,6 +1386,8 @@
                            (lambda (_data)
                              (setq upload-count (1+ upload-count))
                              '((id . 88888))))
+                          ((symbol-function 'org-canvas--file-apply-settings)
+                           (lambda (_fid _data) nil))
                           ((symbol-function 'org-canvas--file-finalize)
                            (lambda (_data _resp) nil)))
                   (org-canvas-sync-files)
@@ -1375,6 +1429,8 @@
                              (if (= push-attempts 1)
                                  (signal 'error '("First file failed"))
                                '((id . 99999)))))
+                          ((symbol-function 'org-canvas--file-apply-settings)
+                           (lambda (_fid _data) nil))
                           ((symbol-function 'org-canvas--file-finalize)
                            (lambda (_data _resp) nil)))
                   (org-canvas-sync-files)
@@ -1898,6 +1954,8 @@
                            (lambda (data)
                              (setq push-called t)
                              '((id . 999))))
+                          ((symbol-function 'org-canvas--file-apply-settings)
+                           (lambda (_fid _data) nil))
                           ((symbol-function 'org-canvas--file-finalize)
                            (lambda (&rest _args) nil))
                           ((symbol-function 'org-canvas--file-collect-folder-paths)
@@ -2482,6 +2540,8 @@
                   (cl-letf (((symbol-function 'org-canvas--file-push-to-api)
                              (lambda (_data)
                                '((id . 42) (display_name . "test.pdf"))))
+                            ((symbol-function 'org-canvas--file-apply-settings)
+                             (lambda (_fid _data) nil))
                             ((symbol-function 'org-canvas--file-finalize)
                              (lambda (_data _resp) nil))
                             ((symbol-function 'org-canvas--file-set-usage-rights)
@@ -2516,6 +2576,8 @@
                   (cl-letf (((symbol-function 'org-canvas--file-push-to-api)
                              (lambda (_data)
                                '((id . 42) (display_name . "test.pdf"))))
+                            ((symbol-function 'org-canvas--file-apply-settings)
+                             (lambda (_fid _data) nil))
                             ((symbol-function 'org-canvas--file-finalize)
                              (lambda (_data _resp) nil))
                             ((symbol-function 'org-canvas--file-set-usage-rights)
@@ -2528,6 +2590,78 @@
         (delete-directory temp-dir t)))))
 
 ;;;; Coverage: file-pull-set-properties usage_rights (Lines 955-963)
+
+(describe "org-canvas--file-record-upload visibility"
+  (it "applies the visibility settings after the id is recorded"
+    ;; Issue #50: ordering is the failure contract — CANVAS_ID first so a
+    ;; settings error cannot cause a duplicate upload, PAYLOAD_HASH last so
+    ;; the entry stays dirty and the settings are retried.
+    (let (order)
+      (cl-letf (((symbol-function 'org-canvas--file-finalize)
+                 (lambda (_data _resp) (push 'finalize order)))
+                ((symbol-function 'org-canvas--file-apply-settings)
+                 (lambda (fid _data) (push (cons 'settings fid) order)))
+                ((symbol-function 'org-canvas-org-set-property)
+                 (lambda (&rest _) (push 'hash order))))
+        (org-canvas--file-record-upload
+         '(:display-name "Doc" :published nil) '((id . 42)) "abc123" nil)
+        (expect (nreverse order) :to-equal '(finalize (settings . 42) hash)))))
+
+  (it "does not apply settings when the response carries no id"
+    (let ((called nil))
+      (cl-letf (((symbol-function 'org-canvas--file-finalize)
+                 (lambda (_data _resp) nil))
+                ((symbol-function 'org-canvas--file-apply-settings)
+                 (lambda (_fid _data) (setq called t)))
+                ((symbol-function 'org-canvas-org-set-property)
+                 (lambda (&rest _) nil)))
+        (org-canvas--file-record-upload
+         '(:display-name "Doc" :published nil) '((display_name . "Doc")) "abc" nil)
+        (expect called :to-be nil)))))
+
+(describe "org-canvas--file-pull-set-properties visibility"
+  (before-each (test-org-canvas-reset-file-caches))
+
+  (it "writes PUBLISHED: false for a locked file"
+    ;; Issue #50: `locked' is the Publish control, so it is what PUBLISHED
+    ;; must round-trip against.
+    (with-temp-org-buffer
+     "* [[file:test.pdf][Test PDF]]
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (org-canvas--file-pull-set-properties
+      (point) '((locked . t) (hidden . :json-false)))
+     (expect (org-entry-get (point) "PUBLISHED") :to-equal "false")
+     (expect (org-entry-get (point) "HIDDEN") :to-be nil)))
+
+  (it "writes HIDDEN: true for an unlisted file and leaves it published"
+    (with-temp-org-buffer
+     "* [[file:test.pdf][Test PDF]]
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (org-canvas--file-pull-set-properties
+      (point) '((locked . :json-false) (hidden . t)))
+     (expect (org-entry-get (point) "HIDDEN") :to-equal "true")
+     (expect (org-entry-get (point) "PUBLISHED") :to-be nil)))
+
+  (it "leaves both properties off for a plain published file"
+    (with-temp-org-buffer
+     "* [[file:test.pdf][Test PDF]]
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (org-canvas--file-pull-set-properties
+      (point) '((locked . :json-false) (hidden . :json-false)))
+     (expect (org-entry-get (point) "PUBLISHED") :to-be nil)
+     (expect (org-entry-get (point) "HIDDEN") :to-be nil))))
 
 (describe "org-canvas--file-pull-set-properties usage rights"
   (before-each (test-org-canvas-reset-file-caches))
@@ -3022,6 +3156,20 @@
                       :not :to-equal h1)))
         (delete-file temp-file))))
 
+  (it "changes when HIDDEN changes"
+    (let ((temp-file (make-temp-file "hash-test" nil ".pdf")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file (insert "PDF content"))
+            (expect (org-canvas--file-content-hash
+                     (list :local-path temp-file :display-name "Test"
+                           :folder-path "" :published t :hidden t))
+                    :not :to-equal
+                    (org-canvas--file-content-hash
+                     (list :local-path temp-file :display-name "Test"
+                           :folder-path "" :published t))))
+        (delete-file temp-file))))
+
   (it "changes when upload-relevant settings change"
     (let ((temp-file (make-temp-file "hash-test" nil ".pdf")))
       (unwind-protect
@@ -3090,6 +3238,8 @@
                 (let ((marker (point-marker)))
                   (cl-letf (((symbol-function 'org-canvas--file-push-to-api)
                              (lambda (_data) '((id . 200))))
+                            ((symbol-function 'org-canvas--file-apply-settings)
+                             (lambda (_fid _data) nil))
                             ((symbol-function 'org-canvas--file-finalize)
                              (lambda (_data _resp) nil)))
                     (expect (org-canvas--file-sync-single-entry marker)
@@ -3123,6 +3273,8 @@
                 (let ((marker (point-marker)))
                   (cl-letf (((symbol-function 'org-canvas--file-push-to-api)
                              (lambda (_data) '((id . 200))))
+                            ((symbol-function 'org-canvas--file-apply-settings)
+                             (lambda (_fid _data) nil))
                             ((symbol-function 'org-canvas--file-finalize)
                              (lambda (_data _resp) nil)))
                     (expect (org-canvas--file-sync-single-entry marker)
@@ -3153,6 +3305,8 @@
                 (let ((marker (point-marker)))
                   (cl-letf (((symbol-function 'org-canvas--file-push-to-api)
                              (lambda (_data) '((id . 100))))
+                            ((symbol-function 'org-canvas--file-apply-settings)
+                             (lambda (_fid _data) nil))
                             ((symbol-function 'org-canvas--file-finalize)
                              (lambda (_data _resp) nil)))
                     (expect (org-canvas--file-sync-single-entry marker)
