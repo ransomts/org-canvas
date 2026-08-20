@@ -166,6 +166,8 @@ Generates `org-canvas--{feature}-build-payload` from registry property specs. Pr
 
 **Modules with custom sync logic (not macro-based):** files (3-step upload), outcomes (hierarchical), quizzes (nested questions), new-quizzes (nested items, `/api/quiz/v1/` API), modules (parent-child items), overrides (reconcile-based)
 
+Files sync in three tiers rather than always re-uploading: `PAYLOAD_HASH` stores `BYTES:METADATA` (`org-canvas--file-hash-parts` splits it), so a whole-hash match skips, a bytes match goes through `org-canvas--file-update-metadata` (one `PUT /api/v1/files/:id` — name, parent_folder_id, locked/hidden/dates — keeping the file id), and only a content change falls back to delete-and-re-upload, which rotates the id and breaks external links. Legacy single-md5 hashes re-upload once, then carry both halves. Before either write path, `org-canvas--file-check-conflict` runs the shared conflict resolution with `org-canvas--file-pull-item` as the pull option (issue #49).
+
 **Pull-only modules:** sections (pulled from Canvas via `org-canvas-pull-sections`, not pushed)
 
 ### Complexity Management

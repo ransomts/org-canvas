@@ -640,6 +640,13 @@ Per Canvas docs, this GET request must be authenticated."
         (org-canvas--signal 'org-canvas-api-error
           "No file ID or location in upload response")))))
 
+(defun org-canvas--file-target-folder-id (folder-path)
+  "Return the Canvas folder id for FOLDER-PATH, creating folders as needed.
+An empty FOLDER-PATH means the course root folder."
+  (alist-get 'id (if (string-empty-p folder-path)
+                     (org-canvas--file-get-root-folder)
+                   (org-canvas--file-resolve-folder-by-path folder-path))))
+
 (cl-defun org-canvas--file-push-to-api (data)
   "Execute the full 3-step upload process for DATA.
 Returns the dry-run sentinel `org-canvas--dry-run-response' without
@@ -668,11 +675,7 @@ DELETE of the old file object and the 3-step upload."
          (org-canvas--log-warning org-canvas--logger "[Stage 3: Execute] Could not delete old file: %s" (error-message-string err)))))
 
     ;; Get or create the target folder
-    (let* ((root-folder (org-canvas--file-get-root-folder))
-           (target-folder (if (string-empty-p folder-path)
-                              root-folder
-                            (org-canvas--file-resolve-folder-by-path folder-path)))
-           (folder-id (alist-get 'id target-folder)))
+    (let ((folder-id (org-canvas--file-target-folder-id folder-path)))
 
       (org-canvas--log-debug org-canvas--logger "[Stage 3: Execute] Target folder ID: %s" folder-id)
 
@@ -844,28 +847,121 @@ is needed: each module's items digest (folded into its PAYLOAD_HASH)
 includes resolved content ids, so exactly the affected modules re-push
 their items on the next modules sync.")
 
+(defun org-canvas--file-bytes-hash (data)
+  "Return the md5 of DATA's local file bytes."
+  (with-temp-buffer
+    (set-buffer-multibyte nil)
+    (insert-file-contents-literally (plist-get data :local-path))
+    (md5 (current-buffer))))
+
+(defun org-canvas--file-metadata-hash (data)
+  "Return a hash of everything about DATA that Canvas can change in place.
+Display name and folder belong here, not with the bytes: renaming or
+moving a file is `PUT /api/v1/files/:id' with `name' and
+`parent_folder_id', not a re-upload."
+  (md5 (format "%s|%s|%s|%s|%s|%s|%s|%s|%s"
+               (plist-get data :display-name)
+               (plist-get data :folder-path)
+               (plist-get data :published)
+               (plist-get data :hidden)
+               (plist-get data :unlock-at)
+               (plist-get data :lock-at)
+               (plist-get data :use-justification)
+               (plist-get data :usage-license)
+               (plist-get data :copyright))))
+
 (defun org-canvas--file-content-hash (data)
-  "Return a hash of DATA's file bytes and upload-relevant settings.
-Changes whenever the local file content, display name, folder, or any
-property that affects the uploaded object changes — so unchanged files
-can be skipped instead of re-uploaded (a re-upload rotates the Canvas
-file ID and kills module items pointing at it)."
-  (let ((content-md5 (with-temp-buffer
-                       (set-buffer-multibyte nil)
-                       (insert-file-contents-literally
-                        (plist-get data :local-path))
-                       (md5 (current-buffer)))))
-    (md5 (format "%s|%s|%s|%s|%s|%s|%s|%s|%s|%s"
-                 content-md5
-                 (plist-get data :display-name)
-                 (plist-get data :folder-path)
-                 (plist-get data :published)
-                 (plist-get data :hidden)
-                 (plist-get data :unlock-at)
-                 (plist-get data :lock-at)
-                 (plist-get data :use-justification)
-                 (plist-get data :usage-license)
-                 (plist-get data :copyright)))))
+  "Return DATA's stored sync hash, \"BYTES:METADATA\".
+The two halves are kept separate because only the first requires a
+re-upload.  Canvas cannot replace a file's bytes in place, so a content
+change means delete-and-upload — which mints a new file id and breaks
+every link that referenced the old one.  Metadata changes do not: they
+are one PUT, and the id survives (issue #49)."
+  (format "%s:%s"
+          (org-canvas--file-bytes-hash data)
+          (org-canvas--file-metadata-hash data)))
+
+(defun org-canvas--file-hash-parts (stored)
+  "Split STORED into a (BYTES . METADATA) cons, or nil if it is not split.
+Entries synced before the split carry a single opaque md5.  There is no
+way to tell from one whether the bytes changed, so such an entry takes
+the re-upload path once more and carries a split hash from then on."
+  (when (and stored
+             (string-match "\\`\\([0-9a-f]+\\):\\([0-9a-f]+\\)\\'" stored))
+    (cons (match-string 1 stored) (match-string 2 stored))))
+
+(cl-defun org-canvas--file-update-metadata (data)
+  "Update DATA's Canvas file in place, without touching its bytes.
+Canvas has no endpoint to replace a file's content, which is why a
+content change still means delete-and-upload.  But it does support
+`PUT /api/v1/files/:id' for name, folder and visibility, so flipping
+PUBLISHED on an unchanged PDF no longer rotates the file id and breaks
+every link pointing at it (issue #49).
+
+Returns the updated Canvas file object, or `org-canvas--dry-run-response'
+when previewing."
+  (let ((canvas-id (plist-get data :canvas-id))
+        (display-name (plist-get data :display-name)))
+    (when org-canvas--dry-run
+      (org-canvas--log-info org-canvas--logger
+        "[DRY-RUN] Would update metadata for '%s' (id %s kept)"
+        display-name canvas-id)
+      (cl-return-from org-canvas--file-update-metadata
+        org-canvas--dry-run-response))
+    (org-canvas--log-info org-canvas--logger
+      "[Stage 3: Execute] Updating metadata for '%s' (id %s, no re-upload)"
+      display-name canvas-id)
+    (let ((payload (org-canvas--file-build-settings-payload data))
+          (folder-id (org-canvas--file-target-folder-id
+                      (plist-get data :folder-path))))
+      (puthash "name" display-name payload)
+      (when folder-id
+        (puthash "parent_folder_id" folder-id payload))
+      ;; Canvas rejects a rename or move that collides unless told what to
+      ;; do; matching the upload path, files.org wins.
+      (puthash "on_duplicate" "overwrite" payload)
+      (org-canvas-api-request
+       'PUT (format "%s/api/v1/files/%s" org-canvas-base-url canvas-id)
+       :data payload))))
+
+(defun org-canvas--file-pull-item (item pos)
+  "Replace the local copy of the file at POS with Canvas's ITEM.
+The pull option in conflict resolution: the heading's properties are
+refreshed from the remote object and the local bytes are overwritten
+with what Canvas currently serves.  Without this, a files conflict
+would offer a pull that silently degraded to a skip."
+  (org-canvas--file-pull-set-properties pos item)
+  (let* ((raw (org-with-point-at pos (org-canvas--file-read-props pos)))
+         (local-path (plist-get raw :local-path))
+         (url (alist-get 'url item)))
+    (when (and local-path url)
+      (org-canvas--file-pull-download
+       (or (alist-get 'display_name item) (plist-get raw :display-name))
+       url local-path (alist-get 'size item) t))))
+
+(defun org-canvas--file-check-conflict (data)
+  "Return `push', `skip' or `pulled' for DATA's file.
+Files never reach `org-canvas--push-to-api', whose conflict guard is
+gated on PUT, so they were exempt from conflict detection entirely: a
+file replaced in the Canvas web UI was overwritten with no diff, no
+prompt and no warning (issue #49).  That matters most here, because a
+content change is a delete plus re-upload — the least recoverable thing
+the package does."
+  (let ((org-canvas--current-pull-item-fn #'org-canvas--file-pull-item))
+    (org-canvas--push-check-and-resolve-conflict
+     "files" (plist-get data :canvas-id) data (plist-get data :display-name))))
+
+(defun org-canvas--file-record-metadata-update (data response file-hash)
+  "Record an in-place metadata update of DATA at point.
+RESPONSE is the updated Canvas file object and FILE-HASH the hash to
+store.  Unlike `org-canvas--file-record-upload' this does not re-apply
+the visibility settings — the PUT already carried them — and the file
+id is unchanged by construction, so there is no id rotation to report."
+  (org-canvas--file-finalize data response)
+  (let ((fid (alist-get 'id response)))
+    (when (and fid (plist-get data :use-justification))
+      (org-canvas--file-set-usage-rights fid data)))
+  (org-canvas-org-set-property (point) org-canvas--prop-payload-hash file-hash))
 
 (defun org-canvas--file-record-upload (data response file-hash old-id)
   "Record a completed upload of DATA at point.
@@ -889,34 +985,69 @@ settings are retried)."
       (push (plist-get data :display-name) org-canvas--file-changed-ids)))
   (org-canvas-org-set-property (point) org-canvas--prop-payload-hash file-hash))
 
+(defun org-canvas--file-sync-metadata-only (data file-hash)
+  "Apply DATA's metadata to Canvas in place and record the result.
+FILE-HASH is stored on success.  Returns :success or :dry-run."
+  (let ((response (org-canvas--file-update-metadata data)))
+    (cond
+     ((org-canvas--dry-run-response-p response)
+      (message "Files [DRY-RUN] Would update metadata for '%s'"
+               (plist-get data :display-name))
+      :dry-run)
+     (t
+      (org-canvas--file-record-metadata-update data response file-hash)
+      :success))))
+
+(defun org-canvas--file-sync-upload (data file-hash old-id)
+  "Upload DATA's file to Canvas and record the result.
+FILE-HASH is stored on success; OLD-ID is the id the entry carried
+beforehand.  Returns :success or :dry-run."
+  (org-canvas--log-info org-canvas--logger "----------------------------------------")
+  (let ((response (org-canvas--file-push-to-api data)))
+    (cond
+     ((org-canvas--dry-run-response-p response)
+      (message "Files [DRY-RUN] Would %s '%s'"
+               (if old-id "replace" "upload")
+               (plist-get data :display-name))
+      :dry-run)
+     (t
+      (org-canvas--file-record-upload data response file-hash old-id)
+      :success))))
+
 (defun org-canvas--file-sync-parsed-entry (data)
-  "Upload the file described by DATA, with point on its heading.
-Returns :success, :skip (content unchanged since the last upload), or
-:dry-run.  During a dry run the push returns the sentinel and none of
-the bookkeeping in `org-canvas--file-record-upload' runs: no CANVAS_ID
-is written, no PAYLOAD_HASH is stored, and no usage rights are set — a
-preview must never leave an entry looking synced."
-  (let ((file-hash (org-canvas--file-content-hash data))
-        (stored-hash (org-entry-get (point) org-canvas--prop-payload-hash))
-        (old-id (plist-get data :canvas-id)))
+  "Sync the file described by DATA, with point on its heading.
+Returns :success, :skip (nothing changed, or the user resolved a
+conflict by skipping or pulling), or :dry-run.
+
+Three outcomes, cheapest first: an entry whose stored hash still
+matches is skipped; one whose bytes match but whose metadata does not
+is updated in place, keeping its Canvas file id; only a genuine content
+change falls back to delete-and-re-upload.  Before either write, a file
+that already exists on Canvas is checked for remote modification —
+files used to bypass conflict detection completely (issue #49).
+
+During a dry run the writes return the sentinel and none of the
+bookkeeping runs: no CANVAS_ID is written, no PAYLOAD_HASH is stored,
+and no usage rights are set — a preview must never leave an entry
+looking synced."
+  (let* ((file-hash (org-canvas--file-content-hash data))
+         (stored-hash (org-entry-get (point) org-canvas--prop-payload-hash))
+         (old-id (plist-get data :canvas-id))
+         (fresh (org-canvas--file-hash-parts file-hash))
+         (parts (org-canvas--file-hash-parts stored-hash))
+         (display-name (plist-get data :display-name)))
     (cond
      ((and old-id stored-hash (string= file-hash stored-hash))
       (org-canvas--log-info org-canvas--logger
-        "[Skip] '%s' unchanged — keeping Canvas file ID %s"
-        (plist-get data :display-name) old-id)
+        "[Skip] '%s' unchanged — keeping Canvas file ID %s" display-name old-id)
       :skip)
+     ((and old-id (not org-canvas--dry-run)
+           (not (eq (org-canvas--file-check-conflict data) 'push)))
+      :skip)
+     ((and old-id parts fresh (string= (car parts) (car fresh)))
+      (org-canvas--file-sync-metadata-only data file-hash))
      (t
-      (org-canvas--log-info org-canvas--logger "----------------------------------------")
-      (let ((response (org-canvas--file-push-to-api data)))
-        (cond
-         ((org-canvas--dry-run-response-p response)
-          (message "Files [DRY-RUN] Would %s '%s'"
-                   (if old-id "replace" "upload")
-                   (plist-get data :display-name))
-          :dry-run)
-         (t
-          (org-canvas--file-record-upload data response file-hash old-id)
-          :success)))))))
+      (org-canvas--file-sync-upload data file-hash old-id)))))
 
 (defun org-canvas--file-sync-single-entry (marker)
   "Process a single file entry at MARKER.
@@ -994,7 +1125,10 @@ unaffected modules keep their skip."
           (success-count 0)
           (fail-count 0)
           (skip-count 0)
-          (dry-run-count 0))
+          (dry-run-count 0)
+          ;; Batch conflict decisions (capital P/L/S) apply across the run,
+          ;; as they do in the macro pipeline.
+          (org-canvas--conflict-apply-all nil))
       ;; Gather all entries (at any level)
       (with-current-buffer (find-file-noselect files-file)
         (setq targets (org-map-entries (lambda () (point-marker)) t 'file)))
@@ -1136,10 +1270,13 @@ unaffected modules keep their skip."
 
 ;;;; Pull
 
-(defun org-canvas--file-pull-download (display-name download-url local-path size)
+(defun org-canvas--file-pull-download (display-name download-url local-path size
+                                                    &optional force)
   "Download file DISPLAY-NAME from DOWNLOAD-URL to LOCAL-PATH if not present.
-SIZE is used for logging; may be nil."
-  (when (and download-url (not (file-exists-p local-path)))
+SIZE is used for logging; may be nil.  With FORCE, overwrite an
+existing local file — that is what resolving a conflict by pulling
+means, and the user chose it at the diff prompt."
+  (when (and download-url (or force (not (file-exists-p local-path))))
     (condition-case err
         (progn
           (make-directory (file-name-directory local-path) t)
