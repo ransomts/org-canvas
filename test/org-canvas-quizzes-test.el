@@ -697,15 +697,14 @@ Content.
            (payload (org-canvas--quiz-build-payload data)))
       (expect (alist-get 'time_limit (alist-get 'quiz payload)) :to-equal 60)))
 
-  (it "includes published true"
-    (let* ((data '(:title "Test" :quiz_type "assignment" :published t))
-           (payload (org-canvas--quiz-build-payload data)))
-      (expect (alist-get 'published (alist-get 'quiz payload)) :to-be t)))
-
-  (it "includes published json-false when nil"
-    (let* ((data '(:title "Test" :quiz_type "assignment" :published nil))
-           (payload (org-canvas--quiz-build-payload data)))
-      (expect (alist-get 'published (alist-get 'quiz payload)) :to-equal :json-false)))
+  (it "carries no published field, in either direction"
+    ;; Issue #59: publishing on the create POST published an empty quiz and
+    ;; froze its totals at zero.  The state is applied after the questions
+    ;; exist; omitting the key also leaves an existing quiz's state alone.
+    (dolist (state '(t nil))
+      (let* ((data `(:title "Test" :quiz_type "assignment" :published ,state))
+             (payload (org-canvas--quiz-build-payload data)))
+        (expect (assq 'published (alist-get 'quiz payload)) :to-be nil))))
 
   (it "includes shuffle_answers"
     (let* ((data '(:title "Test" :quiz_type "assignment" :shuffle_answers t))
@@ -1530,7 +1529,14 @@ Quiz description.
       (unwind-protect
           (let* ((org-file (expand-file-name "quizzes.org" temp-dir))
                  (quiz-writes 0)
-                 (question-writes 0))
+                 (publish-writes 0)
+                 (question-writes 0)
+                 ;; A publish call is a quiz payload carrying nothing but
+                 ;; `published'; the create/update carries the attributes.
+                 (publish-only-p
+                  (lambda (data)
+                    (let ((quiz (alist-get 'quiz data)))
+                      (equal (mapcar #'car quiz) '(published))))))
             (with-temp-file org-file
               (insert "* Test Quiz
 :PROPERTIES:
@@ -1551,23 +1557,28 @@ Quiz description.
                   (org-canvas-course-id "99999"))
               (with-sync-test-env
                 (cl-letf (((symbol-function 'org-canvas-api-request)
-                           (lambda (method url &rest _args)
+                           (lambda (method url &rest args)
                              (cond
                               ((and (memq method '(POST PUT))
                                     (string-match "quizzes\\(/100\\)?$" url))
-                               (setq quiz-writes (1+ quiz-writes))
+                               (if (funcall publish-only-p (plist-get args :data))
+                                   (setq publish-writes (1+ publish-writes))
+                                 (setq quiz-writes (1+ quiz-writes)))
                                '((id . 100) (title . "Test Quiz")))
                               ((and (memq method '(POST PUT))
                                     (string-match "questions\\(/200\\)?$" url))
                                (setq question-writes (1+ question-writes))
                                '((id . 200)))
                               (t nil)))))
-                  ;; Run 1: creates quiz + question, saves PAYLOAD_HASH
+                  ;; Run 1: creates quiz + question, saves PAYLOAD_HASH, and
+                  ;; publishes only once the question exists (issue #59).
                   (org-canvas-sync-quizzes)
                   (expect quiz-writes :to-equal 1)
+                  (expect publish-writes :to-equal 1)
                   ;; Run 2: nothing changed — quiz skipped entirely
                   (org-canvas-sync-quizzes)
                   (expect quiz-writes :to-equal 1)
+                  (expect publish-writes :to-equal 1)
                   ;; Edit an answer; run 3 must re-push quiz + question
                   (with-current-buffer (find-file-noselect org-file)
                     (goto-char (point-min))
@@ -1577,6 +1588,7 @@ Quiz description.
                   (setq question-writes 0)
                   (org-canvas-sync-quizzes)
                   (expect quiz-writes :to-equal 2)
+                  (expect publish-writes :to-equal 2)
                   (expect question-writes :to-equal 1)))))
         (delete-directory temp-dir t))))
 
@@ -1682,8 +1694,11 @@ Intro text.
                     (expect (alist-get 'title quiz) :to-equal "Quiz 1")
                     (expect (alist-get 'quiz_type quiz) :to-equal "practice_quiz")
                     ;; Boolean defaults are emitted as JSON booleans.
-                    (expect (alist-get 'published quiz) :to-be t)
                     (expect (alist-get 'show_correct_answers quiz) :to-be t)
+                    ;; ...but not `published': the quiz is created
+                    ;; unpublished and published once its questions exist
+                    ;; (issue #59).
+                    (expect (assq 'published quiz) :to-be nil)
                     ;; Body text exports to an HTML description.
                     (expect (alist-get 'description quiz)
                             :to-match "Intro text\\."))))))
@@ -3673,5 +3688,199 @@ old Q text B
                        (string-match-p "questions omitted from pull" (nth 1 call)))
               (setq warned t)))
           (expect warned :to-be t))))))
+
+;;;; Publish Sequencing (issue #59)
+
+(describe "org-canvas--quiz-set-published"
+  (it "PUTs the wrapped published field"
+    (let (calls)
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (method url &rest args)
+                   (push (list method url (plist-get args :data)) calls)
+                   '((id . 100)))))
+        (with-org-canvas-test-config
+          (org-canvas--quiz-set-published 100 t))
+        (let ((call (car calls)))
+          (expect (nth 0 call) :to-equal 'PUT)
+          (expect (nth 1 call) :to-match "quizzes/100")
+          (expect (alist-get 'published (alist-get 'quiz (nth 2 call))) :to-be t)))))
+
+  (it "sends json-false when unpublishing"
+    (let (calls)
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (_method _url &rest args)
+                   (push (plist-get args :data) calls)
+                   '((id . 100)))))
+        (with-org-canvas-test-config
+          (org-canvas--quiz-set-published 100 nil))
+        (expect (alist-get 'published (alist-get 'quiz (car calls)))
+                :to-equal :json-false))))
+
+  (it "sends nothing during a dry run"
+    (let ((org-canvas--dry-run t))
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _) (error "Must not contact the API"))))
+        (expect (org-canvas--quiz-set-published 100 t)
+                :to-be org-canvas--dry-run-response)))))
+
+(describe "org-canvas--quiz-totals-stale-p"
+  (it "flags a quiz whose remote count is behind what was written"
+    (expect (org-canvas--quiz-totals-stale-p
+             '((question_count . 0) (points_possible . 0.0))
+             '(:questions 27 :groups 0 :failed 0))
+            :to-be-truthy))
+
+  (it "flags a partial shortfall, not just a flat zero"
+    (expect (org-canvas--quiz-totals-stale-p
+             '((question_count . 26) (points_possible . 26.0))
+             '(:questions 27 :groups 0 :failed 0))
+            :to-be-truthy))
+
+  (it "says nothing when the counts agree"
+    (expect (org-canvas--quiz-totals-stale-p
+             '((question_count . 27) (points_possible . 27.0))
+             '(:questions 27 :groups 0 :failed 0))
+            :to-be nil))
+
+  (it "ignores a remote count higher than what this file describes"
+    ;; Extra questions on Canvas are an orphan problem, not stale totals,
+    ;; and must not trigger an unpublish/republish cycle.
+    (expect (org-canvas--quiz-totals-stale-p
+             '((question_count . 30) (points_possible . 30.0))
+             '(:questions 27 :groups 0 :failed 0))
+            :to-be nil))
+
+  (it "stands down when a child failed to sync"
+    ;; The counts cannot line up, so nothing can be concluded from them.
+    (expect (org-canvas--quiz-totals-stale-p
+             '((question_count . 20) (points_possible . 20.0))
+             '(:questions 27 :groups 0 :failed 1))
+            :to-be nil))
+
+  (it "narrows to a flat zero when the quiz uses question groups"
+    ;; A group draws a subset, so the remote count is not the number of
+    ;; questions written and a shortfall proves nothing.
+    (expect (org-canvas--quiz-totals-stale-p
+             '((question_count . 5) (points_possible . 5.0))
+             '(:questions 27 :groups 2 :failed 0))
+            :to-be nil)
+    (expect (org-canvas--quiz-totals-stale-p
+             '((question_count . 0) (points_possible . 0.0))
+             '(:questions 27 :groups 2 :failed 0))
+            :to-be-truthy))
+
+  (it "says nothing when no questions were written"
+    (expect (org-canvas--quiz-totals-stale-p
+             '((question_count . 0) (points_possible . 0.0))
+             '(:questions 0 :groups 0 :failed 0))
+            :to-be nil)))
+
+(describe "org-canvas--quiz-settle-publish-state"
+  (defun test-quiz-59--settle (data response written)
+    "Run the settle step and return the list of published states it set."
+    (let (states)
+      (cl-letf (((symbol-function 'org-canvas--quiz-set-published)
+                 (lambda (_id published) (push published states) nil))
+                ((symbol-function 'org-canvas--quiz-refresh-totals)
+                 (lambda (&rest _) (push 'refresh states) nil)))
+        (org-canvas--quiz-settle-publish-state data response written))
+      (nreverse states)))
+
+  (it "publishes a freshly created quiz once its questions exist"
+    (expect (test-quiz-59--settle
+             '(:title "Q" :published t) '((id . 100)) '(:questions 27))
+            :to-equal '(t)))
+
+  (it "leaves an unpublished quiz alone when the heading says so"
+    (expect (test-quiz-59--settle
+             '(:title "Q" :published nil) '((id . 100)) '(:questions 27))
+            :to-be nil))
+
+  (it "unpublishes a quiz whose heading turned PUBLISHED off"
+    (expect (test-quiz-59--settle
+             '(:title "Q" :published nil) '((id . 100) (published . t))
+             '(:questions 27))
+            :to-equal '(nil)))
+
+  (it "checks an already published quiz for stale totals instead of republishing blindly"
+    (expect (test-quiz-59--settle
+             '(:title "Q" :published t) '((id . 100) (published . t))
+             '(:questions 27))
+            :to-equal '(refresh)))
+
+  (it "falls back to the entry's CANVAS_ID when the response carries none"
+    (expect (test-quiz-59--settle
+             '(:title "Q" :published t :canvas-id "100") '((title . "Q"))
+             '(:questions 27))
+            :to-equal '(t)))
+
+  (it "does nothing without a quiz id"
+    (expect (test-quiz-59--settle
+             '(:title "Q" :published t) '((title . "Q")) '(:questions 27))
+            :to-be nil))
+
+  (it "does not touch an already published quiz during a dry run"
+    (let ((org-canvas--dry-run t))
+      (expect (test-quiz-59--settle
+               '(:title "Q" :published t) '((id . 100) (published . t))
+               '(:questions 27))
+              :to-be nil))))
+
+(describe "org-canvas--quiz-refresh-totals"
+  (it "cycles publish state to make Canvas recompute"
+    (let (states)
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _)
+                   '((id . 100) (question_count . 0) (points_possible . 0.0)
+                     (unpublishable . t))))
+                ((symbol-function 'org-canvas--quiz-set-published)
+                 (lambda (_id published) (push published states) nil)))
+        (with-org-canvas-test-config
+          (org-canvas--quiz-refresh-totals 100 "Q" '(:questions 27 :groups 0 :failed 0))))
+      ;; Down then up: only the transition regenerates the totals.
+      (expect (nreverse states) :to-equal '(nil t))))
+
+  (it "refuses to unpublish a quiz that has submissions, and says why"
+    (let (states warnings)
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _)
+                   '((id . 100) (question_count . 0) (points_possible . 0.0)
+                     (unpublishable . :json-false))))
+                ((symbol-function 'org-canvas--quiz-set-published)
+                 (lambda (_id published) (push published states) nil))
+                ((symbol-function 'org-canvas--log-warning)
+                 (lambda (_logger fmt &rest args)
+                   (push (apply #'format fmt args) warnings))))
+        (with-org-canvas-test-config
+          (org-canvas--quiz-refresh-totals 100 "Q" '(:questions 27 :groups 0 :failed 0))))
+      (expect states :to-be nil)
+      (expect (car warnings) :to-match "open it in Canvas and save")))
+
+  (it "leaves a quiz whose totals are current alone"
+    (let (states)
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _)
+                   '((id . 100) (question_count . 27) (points_possible . 27.0)
+                     (unpublishable . t))))
+                ((symbol-function 'org-canvas--quiz-set-published)
+                 (lambda (_id published) (push published states) nil)))
+        (with-org-canvas-test-config
+          (org-canvas--quiz-refresh-totals 100 "Q" '(:questions 27 :groups 0 :failed 0))))
+      (expect states :to-be nil))))
+
+(describe "org-canvas--quiz-sync-children reporting"
+  (it "reports what it wrote so the publish step can judge the totals"
+    (cl-letf (((symbol-function 'org-canvas--sync-quiz-groups)
+               (lambda (&rest _) (cons 2 0)))
+              ((symbol-function 'org-canvas--sync-quiz-questions)
+               (lambda (&rest _) (cons 27 1))))
+      (with-temp-org-buffer
+       "* Quiz\n"
+       (org-back-to-heading)
+       (let ((written (org-canvas--quiz-sync-children
+                       '(:canvas-id "100") '((id . 100)))))
+         (expect (plist-get written :groups) :to-equal 2)
+         (expect (plist-get written :questions) :to-equal 27)
+         (expect (plist-get written :failed) :to-equal 1))))))
 
 ;;; org-canvas-quizzes-test.el ends here

@@ -510,6 +510,25 @@ Quizzes with embedded questions.
 - Level 2 headings = Questions (under each quiz)
 - List items under questions = Answer choices
 
+*** Publishing and Point Totals
+
+Canvas computes a classic quiz's =points_possible=, its =question_count= and the
+points on its backing gradebook column when the quiz is *published*, not when a
+question is added.  org-canvas therefore creates a quiz unpublished, syncs its
+questions and question groups, and publishes it last, so publishing is a real
+transition and the totals are computed with the questions in place.
+
+This matters because the failure it prevents is invisible: a quiz published
+while still empty keeps =points_possible: 0= and a gradebook column out of 0,
+while every question still shows its own point value in the Canvas editor.
+
+The same applies when an already published quiz gains a question.  After
+syncing questions, org-canvas checks whether Canvas's counts still match what
+it wrote, and if they are behind it republishes to regenerate them.  A quiz
+that already has submissions cannot be unpublished, so in that case it reports
+the discrepancy and leaves the quiz alone -- open it in Canvas and save to
+regenerate the totals by hand.
+
 *** Quiz Properties
 
 | Property                   | Type      | Description                                                |
