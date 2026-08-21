@@ -385,9 +385,12 @@ Returns a plist of raw string values."
 
 (defun org-canvas--quiz-build-payload (data)
   "Convert quiz DATA to Canvas payload."
+  ;; No `published' here: it is applied after the questions exist, by
+  ;; `org-canvas--quiz-settle-publish-state' (issue #59).  Omitting the
+  ;; key leaves an existing quiz's state untouched, and Canvas creates a
+  ;; new quiz unpublished, which is what the deferred publish needs.
   (let ((quiz-obj `((title . ,(plist-get data :title))
-		    (quiz_type . ,(plist-get data :quiz_type))
-		    (published . ,(org-canvas--to-json-boolean (plist-get data :published))))))
+		    (quiz_type . ,(plist-get data :quiz_type)))))
 
     (when-let ((desc (plist-get data :description)))
       (push `(description . ,desc) quiz-obj))
@@ -468,20 +471,124 @@ Returns a plist of raw string values."
         (plist-get data :title) expected-group actual-group))))
 
 (defun org-canvas--quiz-sync-children (data response)
-  "Sync question groups and questions for the quiz in DATA/RESPONSE."
+  "Sync question groups and questions for the quiz in DATA/RESPONSE.
+Returns a plist (:groups N :questions N :failed N) describing what was
+written, which `org-canvas--quiz-settle-publish-state\' uses to decide
+whether Canvas\'s cached totals still reflect the quiz."
   (let ((quiz-id (or (alist-get 'id response)
                      (plist-get data :canvas-id)))
         (marker (point-marker)))
     (when quiz-id
-      (org-canvas--sync-quiz-groups marker quiz-id)
-      (org-canvas--sync-quiz-questions marker quiz-id))))
+      (let ((groups (org-canvas--sync-quiz-groups marker quiz-id))
+            (questions (org-canvas--sync-quiz-questions marker quiz-id)))
+        (list :groups (car groups)
+              :questions (car questions)
+              :failed (+ (cdr groups) (cdr questions)))))))
+
+;;;; Publish Sequencing
+;;
+;; Canvas computes a classic quiz's points_possible and question_count —
+;; and the points on its backing assignment — when the quiz is published,
+;; not when a question is inserted.  Questions sync inside finalize, after
+;; the quiz record already exists, so a quiz created with PUBLISHED: true
+;; published while it was still empty and froze its totals at zero: 27
+;; one-point questions and a gradebook column out of 0, with every
+;; question showing its point value in the editor (issue #59).
+;;
+;; `published' is therefore kept out of the quiz payload and applied here,
+;; once the questions are in place, where it is a real transition.
+
+(defun org-canvas--quiz-set-published (quiz-id published)
+  "Set the PUBLISHED state of QUIZ-ID on Canvas.
+Returns `org-canvas--dry-run-response' without contacting Canvas when
+previewing."
+  (if org-canvas--dry-run
+      (progn
+        (org-canvas--log-info org-canvas--logger
+          "[DRY-RUN] Would %s quiz %s"
+          (if published "publish" "unpublish") quiz-id)
+        org-canvas--dry-run-response)
+    (org-canvas--log-info org-canvas--logger
+      "[Publish] %s quiz %s" (if published "Publishing" "Unpublishing") quiz-id)
+    (org-canvas-api-request
+     'PUT (org-canvas-api-course-endpoint "quizzes/%s" quiz-id)
+     :data `((quiz . ((published . ,(org-canvas--to-json-boolean published))))))))
+
+(defun org-canvas--quiz-totals-stale-p (quiz written)
+  "Return non-nil when QUIZ's cached totals do not reflect WRITTEN.
+WRITTEN is the plist from `org-canvas--quiz-sync-children'.
+
+Only a remote count *lower* than what we wrote counts as stale: that is
+the signature of questions Canvas has not folded into its quiz data.  A
+higher count means the course holds questions this file does not
+describe, which is a different problem and must not trigger a republish.
+The check is skipped entirely when a child failed to sync (the counts
+would not line up anyway) and narrowed to a flat zero when the quiz uses
+question groups, where the quiz draws a subset and the numbers are not
+comparable."
+  (let ((questions (plist-get written :questions))
+        (groups (plist-get written :groups))
+        (failed (plist-get written :failed))
+        (remote-count (alist-get 'question_count quiz))
+        (points (alist-get 'points_possible quiz)))
+    (cond
+     ((or (null questions) (zerop questions)) nil)
+     ((and failed (> failed 0)) nil)
+     ((and groups (> groups 0))
+      (or (and (numberp remote-count) (zerop remote-count))
+          (and (numberp points) (zerop points))))
+     (t (and (numberp remote-count) (< remote-count questions))))))
+
+(defun org-canvas--quiz-refresh-totals (quiz-id title written)
+  "Regenerate the cached totals of the already published QUIZ-ID if stale.
+TITLE is for logging and WRITTEN is what `org-canvas--quiz-sync-children'
+reported.  Canvas only recomputes on a publish transition, so a quiz that
+gained questions while published needs one; an unpublish is only safe
+while nothing has been submitted, which `unpublishable' reports."
+  (let ((quiz (org-canvas-api-request
+               'GET (org-canvas-api-course-endpoint "quizzes/%s" quiz-id))))
+    (when (org-canvas--quiz-totals-stale-p quiz written)
+      (if (eq (alist-get 'unpublishable quiz) t)
+          (progn
+            (org-canvas--log-info org-canvas--logger
+              "[Publish] '%s' has questions Canvas has not counted (%s of %s); republishing to regenerate its totals"
+              title (alist-get 'question_count quiz) (plist-get written :questions))
+            (org-canvas--quiz-set-published quiz-id nil)
+            (org-canvas--quiz-set-published quiz-id t))
+        (org-canvas--log-warning org-canvas--logger
+          "[Publish] '%s' reads %s question(s) and %s point(s) on Canvas but has %s question(s); it has submissions, so it cannot be republished automatically — open it in Canvas and save to regenerate"
+          title (alist-get 'question_count quiz) (alist-get 'points_possible quiz)
+          (plist-get written :questions))))))
+
+(defun org-canvas--quiz-settle-publish-state (data response written)
+  "Apply DATA's PUBLISHED to the quiz in RESPONSE, now that its questions exist.
+WRITTEN is the plist from `org-canvas--quiz-sync-children', or nil when
+no children were synced.
+
+RESPONSE describes the quiz as it was *before* the questions were
+written, which is what makes it usable here: its `published' field says
+whether this run needs a publish transition or whether the quiz was
+already published and may now be carrying stale totals."
+  (let* ((quiz-id (or (alist-get 'id response) (plist-get data :canvas-id)))
+         (desired (plist-get data :published))
+         (was-published (eq (alist-get 'published response) t))
+         (title (plist-get data :title)))
+    (when quiz-id
+      (cond
+       ((and desired (not was-published))
+        (org-canvas--quiz-set-published quiz-id t))
+       ((and (not desired) was-published)
+        (org-canvas--quiz-set-published quiz-id nil))
+       ((and desired was-published written (not org-canvas--dry-run))
+        (org-canvas--quiz-refresh-totals quiz-id title written))))))
 
 (defun org-canvas--quiz-finalize (data response)
   "Save quiz pointed to in DATA with CANVAS_ID from RESPONSE to org heading."
   (org-canvas--finalize-item data response
     :post-fn (lambda (data response)
                (org-canvas--quiz-verify-response data response)
-               (org-canvas--quiz-sync-children data response))))
+               (let ((written (org-canvas--quiz-sync-children data response)))
+                 (org-canvas--quiz-settle-publish-state data response written)))))
 
 ;;;; Question Parsing (Level 2)
 

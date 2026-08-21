@@ -192,6 +192,10 @@ All items track Canvas state via `CANVAS_ID`:
 
 Use `org-canvas-org-save-sync-state` to standardize saving.
 
+### Quiz Publish Sequencing
+
+Classic quizzes keep `published` **out** of the quiz payload entirely; `org-canvas--quiz-settle-publish-state` applies it in finalize *after* `org-canvas--quiz-sync-children` writes the questions. Canvas computes `points_possible`/`question_count` (and the backing assignment's points) on a publish transition, not on question insert, so publishing on the create POST froze an empty quiz's totals at zero (issue #59). Omitting the key also leaves an existing quiz's state untouched on a PUT. For a quiz that was *already* published, `org-canvas--quiz-refresh-totals` GETs it and republishes only when `org-canvas--quiz-totals-stale-p` sees the remote count *behind* what was written — a higher remote count means orphan questions, not staleness — and only when `unpublishable` is t; with submissions it warns instead.
+
 ### Bulk Publish
 
 `org-canvas-publish-module` / `-unpublish-module` set `PUBLISHED` on the module *and on the heading that owns each linked object* — resolved by `org-canvas--module-item-target`, which returns `(FILE . POSITION)` rather than a Canvas id. Publish state belongs to the object (issue #47), so it is written where the object is declared, never inferred from a module item at push time; SubHeaders and external URLs have no object and are set in place. `PUBLISH_AT` on a module is org-canvas's own release schedule (never sent to Canvas): `org-canvas-apply-scheduled-releases` runs at the start of `org-canvas-sync`, before tier -1, so objects it publishes are pushed by the same run. Mechanics live in modules.el, commands in org-canvas.el (they offer to sync, which modules.el must not require).

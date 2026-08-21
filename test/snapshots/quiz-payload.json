@@ -8,7 +8,6 @@
     "time_limit": 60,
     "description": "<p>Good luck!</p>",
     "title": "Midterm Quiz",
-    "quiz_type": "assignment",
-    "published": false
+    "quiz_type": "assignment"
   }
 }
