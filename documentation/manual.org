@@ -1208,6 +1208,29 @@ Supported link formats:
 | =USAGE_LICENSE= | string | License code (cc_by, cc_by_sa, cc0, etc.) |
 | =COPYRIGHT=  | string    | Copyright notice text         |
 
+*** What a Change Costs
+
+Canvas has no endpoint that replaces a file's bytes in place, so a content
+change means deleting the Canvas file and uploading a new one -- which mints a
+new file id.  Anything that referenced the old id breaks: a link typed into a
+Page or Announcement body, a syllabus link, a student's bookmark.  Module items
+are repaired within the same run; nothing outside the managed Org files is.
+
+Everything else is one =PUT= and keeps the id.  Renaming a heading, moving a
+file to a different folder, flipping =PUBLISHED= or =HIDDEN=, changing the
+dates or the usage rights -- none of those re-upload anything.
+
+org-canvas tracks the two halves separately in =PAYLOAD_HASH=, which is stored
+as =BYTES:METADATA=.  An entry whose whole hash matches is skipped; one whose
+bytes match is updated in place; only a genuine content change re-uploads.
+Entries synced before this split carry a single hash and re-upload once more,
+after which they too carry both halves.
+
+Before either kind of write, a file that already exists on Canvas is checked
+for remote modification, and a file changed in the Canvas web UI opens the same
+diff prompt as any other conflict.  Choosing *pull* there overwrites your local
+copy with the one Canvas is serving.
+
 *** Visibility
 
 Canvas gives a file three visibility states, not two, and they are carried

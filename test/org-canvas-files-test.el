@@ -3663,6 +3663,365 @@
              (expect (org-entry-get (point) org-canvas--prop-last-synced) :to-be nil)
              (expect org-canvas--file-changed-ids :to-be nil))))))))
 
+;;;; Metadata-only updates and conflict detection (issue #49)
+
+(describe "org-canvas--file-hash-parts"
+  (it "splits a stored bytes:metadata hash"
+    (expect (org-canvas--file-hash-parts
+             "5d41402abc4b2a76b9719d911017c592:098f6bcd4621d373cade4e832627b4f6")
+            :to-equal '("5d41402abc4b2a76b9719d911017c592"
+                        . "098f6bcd4621d373cade4e832627b4f6")))
+
+  (it "returns nil for a legacy single hash"
+    ;; Entries synced before the split carry one opaque md5; nothing can be
+    ;; concluded about their bytes, so they re-upload once more.
+    (expect (org-canvas--file-hash-parts "5d41402abc4b2a76b9719d911017c592")
+            :to-be nil))
+
+  (it "returns nil for nil"
+    (expect (org-canvas--file-hash-parts nil) :to-be nil)))
+
+(describe "org-canvas--file-content-hash split"
+  (it "keeps the bytes half stable when only metadata changes"
+    (let ((temp-file (make-temp-file "split-" nil ".pdf")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file (insert "PDF content"))
+            (let* ((published (org-canvas--file-content-hash
+                               (list :local-path temp-file :display-name "Doc"
+                                     :folder-path "" :published t)))
+                   (hidden (org-canvas--file-content-hash
+                            (list :local-path temp-file :display-name "Doc"
+                                  :folder-path "" :published nil))))
+              (expect (car (org-canvas--file-hash-parts published))
+                      :to-equal (car (org-canvas--file-hash-parts hidden)))
+              (expect (cdr (org-canvas--file-hash-parts published))
+                      :not :to-equal (cdr (org-canvas--file-hash-parts hidden)))))
+        (delete-file temp-file))))
+
+  (it "treats a rename as metadata, not content"
+    ;; PUT /api/v1/files/:id takes `name', so renaming needs no re-upload.
+    (let ((temp-file (make-temp-file "split-" nil ".pdf")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file (insert "PDF content"))
+            (expect (car (org-canvas--file-hash-parts
+                          (org-canvas--file-content-hash
+                           (list :local-path temp-file :display-name "Old"
+                                 :folder-path "" :published t))))
+                    :to-equal
+                    (car (org-canvas--file-hash-parts
+                          (org-canvas--file-content-hash
+                           (list :local-path temp-file :display-name "New"
+                                 :folder-path "" :published t))))))
+        (delete-file temp-file))))
+
+  (it "changes the bytes half when the content changes"
+    (let ((temp-file (make-temp-file "split-" nil ".pdf")))
+      (unwind-protect
+          (let ((data (list :local-path temp-file :display-name "Doc"
+                            :folder-path "" :published t)))
+            (with-temp-file temp-file (insert "version 1"))
+            (let ((h1 (car (org-canvas--file-hash-parts
+                            (org-canvas--file-content-hash data)))))
+              (with-temp-file temp-file (insert "version 2"))
+              (expect (car (org-canvas--file-hash-parts
+                            (org-canvas--file-content-hash data)))
+                      :not :to-equal h1)))
+        (delete-file temp-file)))))
+
+(describe "org-canvas--file-update-metadata"
+  (it "PUTs name, folder and visibility without deleting anything"
+    (with-org-canvas-test-config
+      (let (calls)
+        (cl-letf (((symbol-function 'org-canvas--file-target-folder-id)
+                   (lambda (_path) 200))
+                  ((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest args)
+                     (push (list method url (plist-get args :data)) calls)
+                     '((id . 42)))))
+          (org-canvas--file-update-metadata
+           '(:canvas-id "42" :display-name "Syllabus.pdf"
+             :folder-path "Docs" :published nil))
+          (expect (length calls) :to-equal 1)
+          (let ((call (car calls)))
+            (expect (nth 0 call) :to-equal 'PUT)
+            (expect (nth 1 call) :to-match "/api/v1/files/42")
+            (expect (gethash "name" (nth 2 call)) :to-equal "Syllabus.pdf")
+            (expect (gethash "parent_folder_id" (nth 2 call)) :to-equal 200)
+            (expect (gethash "on_duplicate" (nth 2 call)) :to-equal "overwrite")
+            (expect (gethash "locked" (nth 2 call)) :to-be t))))))
+
+  (it "sends nothing during a dry run"
+    (let ((org-canvas--dry-run t))
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _) (error "Must not contact the API"))))
+        (expect (org-canvas--file-update-metadata
+                 '(:canvas-id "42" :display-name "Doc" :folder-path ""))
+                :to-be org-canvas--dry-run-response)))))
+
+(describe "org-canvas--file-sync-metadata-only"
+  (it "records the update and stores the hash on success"
+    (let (recorded)
+      (cl-letf (((symbol-function 'org-canvas--file-update-metadata)
+                 (lambda (_data) '((id . 42) (updated_at . "2026-08-25T00:00:00Z"))))
+                ((symbol-function 'org-canvas--file-record-metadata-update)
+                 (lambda (_data response hash) (setq recorded (list response hash)))))
+        (expect (org-canvas--file-sync-metadata-only
+                 '(:canvas-id "42" :display-name "Doc") "bytes:meta")
+                :to-equal :success)
+        (expect (nth 1 recorded) :to-equal "bytes:meta"))))
+
+  (it "records nothing during a dry run"
+    (let ((org-canvas--dry-run t))
+      (cl-letf (((symbol-function 'org-canvas--file-update-metadata)
+                 (lambda (_data) org-canvas--dry-run-response))
+                ((symbol-function 'org-canvas--file-record-metadata-update)
+                 (lambda (&rest _) (error "A preview must not record anything"))))
+        (expect (org-canvas--file-sync-metadata-only
+                 '(:canvas-id "42" :display-name "Doc") "bytes:meta")
+                :to-equal :dry-run)))))
+
+(describe "org-canvas--file-record-metadata-update"
+  (it "finalizes, applies usage rights, and stores the hash"
+    (let (order)
+      (with-temp-org-buffer
+       "* [[file:doc.pdf][Doc]]\n"
+       (org-back-to-heading t)
+       (cl-letf (((symbol-function 'org-canvas--file-finalize)
+                  (lambda (&rest _) (push 'finalize order)))
+                 ((symbol-function 'org-canvas--file-set-usage-rights)
+                  (lambda (fid _data) (push (cons 'rights fid) order)))
+                 ((symbol-function 'org-canvas-org-set-property)
+                  (lambda (&rest _) (push 'hash order))))
+         (org-canvas--file-record-metadata-update
+          '(:display-name "Doc" :use-justification "own_copyright")
+          '((id . 42)) "bytes:meta")
+         (expect (nreverse order) :to-equal '(finalize (rights . 42) hash))))))
+
+  (it "does not re-apply the visibility settings — the PUT carried them"
+    (with-temp-org-buffer
+     "* [[file:doc.pdf][Doc]]\n"
+     (org-back-to-heading t)
+     (cl-letf (((symbol-function 'org-canvas--file-finalize) #'ignore)
+               ((symbol-function 'org-canvas--file-apply-settings)
+                (lambda (&rest _) (error "Already sent with the metadata PUT")))
+               ((symbol-function 'org-canvas-org-set-property) #'ignore))
+       (expect (org-canvas--file-record-metadata-update
+                '(:display-name "Doc") '((id . 42)) "bytes:meta")
+               :not :to-throw)))))
+
+(describe "org-canvas--file-sync-parsed-entry routing"
+  (before-each (test-org-canvas-reset-file-caches))
+
+  (defun test-files-49--route (stored data)
+    "Run the entry decision with STORED as the recorded hash.
+Returns the symbol naming the path taken."
+    (let ((taken nil))
+      (with-temp-org-buffer
+       "* [[file:doc.pdf][Doc]]\n:PROPERTIES:\n:CANVAS_ID: 42\n:END:\n"
+       (org-back-to-heading t)
+       (when stored
+         (org-canvas-org-set-property (point) org-canvas--prop-payload-hash stored))
+       (cl-letf (((symbol-function 'org-canvas--file-check-conflict)
+                  (lambda (_data) 'push))
+                 ((symbol-function 'org-canvas--file-sync-metadata-only)
+                  (lambda (&rest _) (setq taken 'metadata) :success))
+                 ((symbol-function 'org-canvas--file-sync-upload)
+                  (lambda (&rest _) (setq taken 'upload) :success)))
+         (let ((result (org-canvas--file-sync-parsed-entry data)))
+           (or taken (and (eq result :skip) 'skip)))))))
+
+  (it "skips when nothing changed"
+    (let ((temp-file (make-temp-file "route-" nil ".pdf")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file (insert "bytes"))
+            (let ((data (list :canvas-id "42" :display-name "Doc"
+                              :local-path temp-file :folder-path ""
+                              :published t)))
+              (expect (test-files-49--route
+                       (org-canvas--file-content-hash data) data)
+                      :to-equal 'skip)))
+        (delete-file temp-file))))
+
+  (it "updates in place when only the metadata changed"
+    ;; The reported case: flipping PUBLISHED on an unchanged PDF deleted the
+    ;; Canvas file and re-uploaded it under a new id.
+    (let ((temp-file (make-temp-file "route-" nil ".pdf")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file (insert "bytes"))
+            (let* ((before (org-canvas--file-content-hash
+                            (list :canvas-id "42" :display-name "Doc"
+                                  :local-path temp-file :folder-path ""
+                                  :published nil)))
+                   (data (list :canvas-id "42" :display-name "Doc"
+                               :local-path temp-file :folder-path ""
+                               :published t)))
+              (expect (test-files-49--route before data) :to-equal 'metadata)))
+        (delete-file temp-file))))
+
+  (it "re-uploads when the bytes changed"
+    (let ((temp-file (make-temp-file "route-" nil ".pdf")))
+      (unwind-protect
+          (let ((data (list :canvas-id "42" :display-name "Doc"
+                            :local-path temp-file :folder-path ""
+                            :published t)))
+            (with-temp-file temp-file (insert "version 1"))
+            (let ((before (org-canvas--file-content-hash data)))
+              (with-temp-file temp-file (insert "version 2"))
+              (expect (test-files-49--route before data) :to-equal 'upload)))
+        (delete-file temp-file))))
+
+  (it "re-uploads once for an entry carrying a legacy single hash"
+    (let ((temp-file (make-temp-file "route-" nil ".pdf")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file (insert "bytes"))
+            (let ((data (list :canvas-id "42" :display-name "Doc"
+                              :local-path temp-file :folder-path ""
+                              :published t)))
+              (expect (test-files-49--route "5d41402abc4b2a76b9719d911017c592" data)
+                      :to-equal 'upload)))
+        (delete-file temp-file))))
+
+  (it "writes nothing when the user resolves the conflict by skipping"
+    (let ((temp-file (make-temp-file "route-" nil ".pdf")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file (insert "bytes"))
+            (with-temp-org-buffer
+             "* [[file:doc.pdf][Doc]]\n:PROPERTIES:\n:CANVAS_ID: 42\n:END:\n"
+             (org-back-to-heading t)
+             (cl-letf (((symbol-function 'org-canvas--file-check-conflict)
+                        (lambda (_data) 'skip))
+                       ((symbol-function 'org-canvas--file-sync-upload)
+                        (lambda (&rest _) (error "Must not overwrite Canvas")))
+                       ((symbol-function 'org-canvas--file-sync-metadata-only)
+                        (lambda (&rest _) (error "Must not overwrite Canvas"))))
+               (expect (org-canvas--file-sync-parsed-entry
+                        (list :canvas-id "42" :display-name "Doc"
+                              :local-path temp-file :folder-path ""
+                              :published t))
+                       :to-equal :skip))))
+        (delete-file temp-file))))
+
+  (it "does not prompt for a file Canvas has never seen"
+    (let ((temp-file (make-temp-file "route-" nil ".pdf")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file (insert "bytes"))
+            (with-temp-org-buffer
+             "* [[file:doc.pdf][Doc]]\n"
+             (org-back-to-heading t)
+             (cl-letf (((symbol-function 'org-canvas--file-check-conflict)
+                        (lambda (_data) (error "No remote item to compare")))
+                       ((symbol-function 'org-canvas--file-sync-upload)
+                        (lambda (&rest _) :success)))
+               (expect (org-canvas--file-sync-parsed-entry
+                        (list :display-name "Doc" :local-path temp-file
+                              :folder-path "" :published t))
+                       :to-equal :success))))
+        (delete-file temp-file)))))
+
+(describe "org-canvas--file-check-conflict"
+  (it "asks about the course-scoped file and offers a working pull"
+    (let (args)
+      (cl-letf (((symbol-function 'org-canvas--push-check-and-resolve-conflict)
+                 (lambda (endpoint id _data title)
+                   (setq args (list endpoint id title
+                                    org-canvas--current-pull-item-fn))
+                   'push)))
+        (org-canvas--file-check-conflict
+         '(:canvas-id "42" :display-name "Syllabus.pdf"))
+        (expect (nth 0 args) :to-equal "files")
+        (expect (nth 1 args) :to-equal "42")
+        (expect (nth 2 args) :to-equal "Syllabus.pdf")
+        ;; Without a pull function the prompt's pull option degrades to a
+        ;; skip, which would make the offer a lie.
+        (expect (nth 3 args) :to-be #'org-canvas--file-pull-item)))))
+
+(describe "org-canvas--file-pull-item"
+  (it "overwrites the local copy and refreshes the properties"
+    (let* ((temp-dir (make-temp-file "pull-item-" t))
+           (files-file (expand-file-name "files.org" temp-dir))
+           (local (expand-file-name "doc.pdf" temp-dir))
+           (downloaded nil))
+      (unwind-protect
+          (progn
+            (with-temp-file local (insert "local version"))
+            (with-temp-file files-file
+              (insert "* [[file:doc.pdf][Doc]]\n:PROPERTIES:\n:CANVAS_ID: 42\n:END:\n"))
+            (let ((org-canvas-files-file files-file))
+              (with-current-buffer (find-file-noselect files-file)
+                (goto-char (point-min))
+                (org-back-to-heading t)
+                (cl-letf (((symbol-function 'org-canvas--file-pull-download)
+                           (lambda (_name url path _size &optional force)
+                             (setq downloaded (list url path force)))))
+                  (org-canvas--file-pull-item
+                   '((id . 42) (display_name . "Doc")
+                     (url . "https://canvas.example.com/files/42/download")
+                     (size . 12) (locked . t))
+                   (point)))
+                (expect (nth 0 downloaded)
+                        :to-equal "https://canvas.example.com/files/42/download")
+                (expect (nth 1 downloaded) :to-equal local)
+                ;; Forced: the local file exists, and accepting Canvas's
+                ;; version is the whole point of choosing pull.
+                (expect (nth 2 downloaded) :to-be t)
+                (expect (org-entry-get (point) "PUBLISHED") :to-equal "false")
+                (kill-buffer))))
+        (delete-directory temp-dir t)))))
+
+(describe "org-canvas--file-pull-item display name"
+  (it "falls back to the local name when Canvas sends none"
+    (let* ((dir (make-temp-file "pull-name-" t))
+           (files-file (expand-file-name "files.org" dir))
+           (local (expand-file-name "doc.pdf" dir))
+           (name nil))
+      (unwind-protect
+          (progn
+            (with-temp-file local (insert "local"))
+            (with-temp-file files-file
+              (insert "* [[file:doc.pdf][Doc]]\n:PROPERTIES:\n:CANVAS_ID: 42\n:END:\n"))
+            (let ((org-canvas-files-file files-file))
+              (with-current-buffer (find-file-noselect files-file)
+                (goto-char (point-min))
+                (org-back-to-heading t)
+                (cl-letf (((symbol-function 'org-canvas--file-pull-download)
+                           (lambda (n &rest _) (setq name n))))
+                  (org-canvas--file-pull-item
+                   '((id . 42) (url . "https://x/y") (size . 5)) (point)))
+                (expect name :to-equal "Doc")
+                (kill-buffer))))
+        (delete-directory dir t)))))
+
+(describe "org-canvas--file-pull-download force"
+  (it "leaves an existing file alone by default"
+    (let ((local (make-temp-file "dl-" nil ".pdf")))
+      (unwind-protect
+          (progn
+            (with-temp-file local (insert "local"))
+            (cl-letf (((symbol-function 'url-copy-file)
+                       (lambda (&rest _) (error "Must not download"))))
+              (expect (org-canvas--file-pull-download "Doc" "https://x/y" local 5)
+                      :not :to-throw)))
+        (delete-file local))))
+
+  (it "overwrites when forced"
+    (let ((local (make-temp-file "dl-" nil ".pdf"))
+          (called nil))
+      (unwind-protect
+          (progn
+            (with-temp-file local (insert "local"))
+            (cl-letf (((symbol-function 'url-copy-file)
+                       (lambda (&rest _) (setq called t))))
+              (org-canvas--file-pull-download "Doc" "https://x/y" local 5 t)
+              (expect called :to-be t)))
+        (delete-file local)))))
+
 ;;;; Mutation hardening (issue #38)
 ;;
 ;; A full mutation pass scored these paths poorly despite ~99.5% line
