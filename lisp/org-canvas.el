@@ -238,6 +238,10 @@ LABEL is used for logging (e.g., \"Pages\")."
     (org-canvas--log-info org-canvas--logger "Course: %s | URL: %s" org-canvas-course-id org-canvas-base-url)
     (org-canvas--log-info org-canvas--logger "========================================")
     (org-canvas--preflight-check)
+    ;; Apply the release schedule first: publishing a module edits objects
+    ;; owned by other features, which sync in earlier tiers.
+    (unless org-canvas--dry-run
+      (org-canvas-apply-scheduled-releases))
     ;; Tiers -1 and 0
     (org-canvas--log-info org-canvas--logger "--- Tier -1: Settings ---")
     (message "Syncing: Settings...")
@@ -433,6 +437,109 @@ not what Canvas currently holds.  Use `org-canvas-diff' for that."
         (insert "Use M-x org-canvas-sync to sync, M-x org-canvas-sync-dry-run to preview.\n"))
       (special-mode))
     (display-buffer buf)))
+
+;;;; Bulk Publish
+;;
+;; "Publish week 3" used to mean six to ten hand edits across three or
+;; four files, every week for sixteen weeks (issue #52).  The mechanics
+;; live in org-canvas-modules.el; the commands live here because they
+;; offer to run a full sync afterwards.
+
+(defun org-canvas--publish-read-module ()
+  "Prompt for a module title from modules.org."
+  (let ((modules (org-canvas--module-positions)))
+    (unless modules
+      (user-error "No modules found in %s" org-canvas-modules-file))
+    (completing-read "Module: " (mapcar #'car modules) nil t)))
+
+(defun org-canvas--publish-report (title state result)
+  "Report RESULT of setting publish STATE on module TITLE."
+  (let ((changed (plist-get result :changed))
+        (unresolved (plist-get result :unresolved))
+        (verb (if state "Published" "Unpublished")))
+    (org-canvas--log-info org-canvas--logger
+      "[Publish] %s '%s': %d heading(s) changed" verb title changed)
+    (when unresolved
+      (org-canvas--log-warning org-canvas--logger
+        "[Publish] %d item(s) in '%s' could not be resolved to an object: %s"
+        (length unresolved) title
+        (mapconcat (lambda (x) (format "'%s'" x)) unresolved ", ")))
+    (message "%s '%s': %d heading(s) changed%s"
+             verb title changed
+             (if unresolved
+                 (format ", %d unresolved" (length unresolved))
+               ""))))
+
+(defun org-canvas--publish-module-1 (title state)
+  "Set publish STATE on module TITLE and everything it lists.
+Returns the result plist from `org-canvas--module-publish-apply'."
+  (let* ((modules (org-canvas--module-positions))
+         (pom (cdr (assoc title modules))))
+    (unless pom
+      (user-error "No module named '%s' in %s" title org-canvas-modules-file))
+    (let ((result (with-current-buffer
+                      (find-file-noselect
+                       (expand-file-name org-canvas-modules-file))
+                    (org-canvas--module-publish-apply pom state))))
+      (org-canvas--publish-report title state result)
+      result)))
+
+(defun org-canvas--publish-offer-sync ()
+  "Offer to sync now, unless running non-interactively."
+  (when (and (not noninteractive)
+             (y-or-n-p "Push the change to Canvas now? "))
+    (org-canvas-sync)))
+
+;;;###autoload
+(defun org-canvas-publish-module ()
+  "Publish a module and every object its items point at.
+Sets PUBLISHED: true on the module in modules.org and on the heading
+that owns each linked object, in whichever file that is — the publish
+state belongs to the object, so this edits the file that declares it
+rather than relying on a module item to carry it (see issue #47).
+SubHeaders and external URLs, which have no object of their own, are
+set in place.  Offers to sync afterwards."
+  (interactive)
+  (let ((title (org-canvas--publish-read-module)))
+    (org-canvas--publish-module-1 title t)
+    (org-canvas--publish-offer-sync)))
+
+;;;###autoload
+(defun org-canvas-unpublish-module ()
+  "Unpublish a module and every object its items point at.
+The reverse of `org-canvas-publish-module'."
+  (interactive)
+  (let ((title (org-canvas--publish-read-module)))
+    (org-canvas--publish-module-1 title nil)
+    (org-canvas--publish-offer-sync)))
+
+;;;###autoload
+(defun org-canvas-apply-scheduled-releases ()
+  "Publish every module whose PUBLISH_AT has passed.
+Lets a whole semester's release plan be declared once, in the Org
+files, instead of being applied by hand each week.  Idempotent: a
+module already carrying PUBLISHED: true is left alone, and the
+publish is written into the Org files as explicit properties.
+
+Called at the start of `org-canvas-sync', before any feature syncs, so
+the objects it publishes are pushed by the same run."
+  (interactive)
+  (let ((released nil))
+    (dolist (entry (org-canvas--module-positions))
+      (let ((title (car entry))
+            (pom (cdr entry)))
+        (when (with-current-buffer
+                  (find-file-noselect (expand-file-name org-canvas-modules-file))
+                (and (org-canvas--module-due-for-release-p pom)
+                     (not (equal (org-entry-get pom "PUBLISHED") "true"))))
+          (org-canvas--publish-module-1 title t)
+          (push title released))))
+    (when released
+      (org-canvas--log-info org-canvas--logger
+        "[Release] %d module(s) reached their PUBLISH_AT: %s"
+        (length released)
+        (mapconcat (lambda (x) (format "'%s'" x)) (nreverse released) ", ")))
+    released))
 
 ;;;; Force Push (Bypass Conflict Detection)
 

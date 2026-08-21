@@ -78,6 +78,10 @@
    ("D" "Delete all from Canvas" org-canvas-delete-all)
    ("O" "Cleanup orphans" org-canvas-cleanup-orphans)
    ("X" "Delete at point..." org-canvas-dispatch-delete-at-point)]
+  ["Publish"
+   ("m" "Publish module and its contents..." org-canvas-publish-module)
+   ("M" "Unpublish module and its contents..." org-canvas-unpublish-module)
+   ("R" "Apply scheduled releases (PUBLISH_AT)" org-canvas-apply-scheduled-releases)]
   ["Submissions"
    ("g" "Pull submissions" org-canvas-pull-submissions)
    ("G" "Push grades" org-canvas-submissions-push-grades)]

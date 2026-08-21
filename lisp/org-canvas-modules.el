@@ -70,7 +70,9 @@
     (:org-prop "REQUIRE_SEQUENTIAL_PROGRESSION" :data-key :require_sequential_progression :type boolean
      :doc "Force items to be completed in order")
     (:org-prop "PUBLISH_FINAL_GRADE" :data-key :publish_final_grade :type boolean
-     :doc "Publish the final grade when this module is completed")))
+     :doc "Publish the final grade when this module is completed")
+    (:org-prop "PUBLISH_AT" :data-key :publish_at :type timestamp
+     :doc "Release date: sync publishes this module and its contents once passed")))
 (org-canvas-register-properties "module-items"
   :label "Module Items"
   :file-var 'org-canvas-modules-file
@@ -140,6 +142,14 @@ Returns a (CANVAS_ID . CANVAS_URL) cons cell, or nil."
     (when (or canvas-id page-url)
       (cons canvas-id page-url))))
 
+(defun org-canvas--module-heading-search-regexp (heading)
+  "Return a regexp matching the Org line whose heading text is HEADING.
+Org escapes brackets inside link components, so `\\[' and `\\]' are
+unescaped before quoting; the stars tolerate extra spaces."
+  (format "^\\*+ +%s"
+          (regexp-quote (replace-regexp-in-string
+                         "\\\\[][]" (lambda (m) (substring m 1)) heading))))
+
 (defun org-canvas--module-search-heading-for-id (abs-file heading title)
   "Search ABS-FILE for HEADING and return its Canvas IDs.
 First tries exact match on HEADING (with Org bracket unescaping).
@@ -150,14 +160,10 @@ Returns a (CANVAS_ID . CANVAS_URL) cons cell, or nil if not found."
     (save-excursion
       (goto-char (point-min))
       (if heading
-          (let* ((unescaped (replace-regexp-in-string
-                            "\\\\[][]"
-                            (lambda (m) (substring m 1))
-                            heading))
-                 (search-re (format "^\\*+ +%s" (regexp-quote unescaped))))
-            (if (re-search-forward search-re nil t)
-                (org-canvas--module-get-ids-at-point)
-              (org-canvas--module-search-by-display-title title)))
+          (if (re-search-forward
+               (org-canvas--module-heading-search-regexp heading) nil t)
+              (org-canvas--module-get-ids-at-point)
+            (org-canvas--module-search-by-display-title title))
         (when (re-search-forward "^\\* " nil t)
           (org-canvas--module-get-ids-at-point))))))
 
@@ -679,6 +685,195 @@ Return the matching item alist, or nil if not found."
   "Finalize module sync for DATA/RESPONSE and sync child items."
   (org-canvas--finalize-item data response
     :post-fn #'org-canvas--module-sync-children))
+
+;;;; Bulk Publish
+;;
+;; Releasing a week of content is the most repeated action in running a
+;; course, and it used to mean hand-editing PUBLISHED across several
+;; files: the module in modules.org, its lecture PDFs in files.org, the
+;; assignments due that week, sometimes a page.  Six to ten edits in
+;; three or four files, every week (issue #52).
+;;
+;; The rule here is the one issue #47 settled: publish state belongs to
+;; the object, so publishing a module edits the heading that owns each
+;; object, in whichever file that is.  Nothing is inferred from a module
+;; item at push time.  Items with no object of their own — SubHeaders and
+;; external URLs — carry their own state, so those are set in place.
+
+(defun org-canvas--module-heading-position-by-title (title)
+  "Return the position of the heading in this buffer whose text is TITLE.
+Falls back to a substring match, which is how a heading that *is* a
+link is found: `org-get-heading' strips link syntax on Org 9.7 but not
+on 9.6."
+  (goto-char (point-min))
+  (let (found)
+    (while (and (not found) (re-search-forward "^\\*+ " nil t))
+      (let ((h (org-get-heading t t t t)))
+        (when (and h (or (string= h title)
+                         (string-match-p (regexp-quote title) h)))
+          (org-back-to-heading t)
+          (setq found (point)))))
+    found))
+
+(defun org-canvas--module-heading-position (abs-file heading title)
+  "Return the position of HEADING in ABS-FILE, or nil.
+Falls back to matching TITLE when the exact heading text is not found."
+  (with-current-buffer (find-file-noselect abs-file)
+    (save-excursion
+      (goto-char (point-min))
+      (if heading
+          (if (re-search-forward
+               (org-canvas--module-heading-search-regexp heading) nil t)
+              (progn (org-back-to-heading t) (point))
+            (org-canvas--module-heading-position-by-title title))
+        (org-canvas--module-heading-position-by-title title)))))
+
+(defun org-canvas--module-file-heading-position (files-org rel-path)
+  "Return the position in FILES-ORG of the heading linking to REL-PATH."
+  (let (result)
+    (with-current-buffer (find-file-noselect files-org)
+      (save-excursion
+        (goto-char (point-min))
+        (org-map-entries
+         (lambda ()
+           (when (and (not result)
+                      (looking-at org-complex-heading-regexp))
+             (let ((path (org-canvas--module-extract-heading-link-path
+                          (match-string-no-properties 4))))
+               (when (equal path rel-path)
+                 (setq result (point))))))
+         t 'file)))
+    result))
+
+(defun org-canvas--module-content-target (rel-path modules-file-dir)
+  "Return (FILE . POSITION) in files.org for the file at REL-PATH, or nil.
+MODULES-FILE-DIR is where files.org is looked for."
+  (let ((files-org (expand-file-name "files.org" modules-file-dir)))
+    (when (file-exists-p files-org)
+      (let ((pos (org-canvas--module-file-heading-position files-org rel-path)))
+        (when pos (cons files-org pos))))))
+
+(defun org-canvas--module-org-target (file heading title modules-file-dir)
+  "Return (FILE . POSITION) for HEADING in FILE, or nil.
+FILE is relative to MODULES-FILE-DIR; TITLE is the link description,
+used as a fallback when the exact heading text is not found."
+  (let ((abs-file (org-canvas--module-resolve-file-path file modules-file-dir)))
+    (when abs-file
+      (let ((pos (org-canvas--module-heading-position abs-file heading title)))
+        (when pos (cons abs-file pos))))))
+
+(defun org-canvas--module-item-target (link-string modules-file-dir)
+  "Return (FILE . POSITION) for the object LINK-STRING points at, or nil.
+MODULES-FILE-DIR resolves relative paths.  The same links
+`org-canvas--module-resolve-link' follows, resolved to the owning
+*heading* rather than to its Canvas id — publishing a week means
+editing the file that owns each object."
+  (when (and link-string
+             (string-match
+              "\\[\\[file:\\([^]:]+\\)\\(?:::\\*\\(.+\\)\\)?\\]\\[\\(.+\\)\\]\\]"
+              link-string))
+    (let ((file (match-string 1 link-string))
+          (heading (match-string 2 link-string))
+          (title (match-string 3 link-string)))
+      (if (string-match-p "\\.org\\'" file)
+          (org-canvas--module-org-target file heading title modules-file-dir)
+        ;; A direct file link is owned by a heading in files.org.
+        (org-canvas--module-content-target file modules-file-dir)))))
+
+(defun org-canvas--module-item-display-title (heading-with-links fallback)
+  "Return the display text of HEADING-WITH-LINKS, or FALLBACK.
+`org-get-heading' strips link syntax on Org 9.7 but not on 9.6, so a
+heading that *is* a link cannot be relied on for a readable name."
+  (or (when (and heading-with-links
+                 (string-match "\\]\\[\\(.+\\)\\]\\]" heading-with-links))
+        (match-string 1 heading-with-links))
+      fallback))
+
+(defun org-canvas--module-set-published (pom state)
+  "Set PUBLISHED to STATE at POM.  Return non-nil when the value changed."
+  (let ((new (if state "true" "false")))
+    (unless (equal (org-entry-get pom "PUBLISHED") new)
+      (org-canvas-org-set-property pom "PUBLISHED" new)
+      t)))
+
+(defun org-canvas--module-publish-item (marker state modules-file-dir touched)
+  "Apply publish STATE for the module item at MARKER.
+MODULES-FILE-DIR resolves its link.  TOUCHED is a cons cell whose car
+accumulates the buffers to save.  Return `changed', `unchanged', or
+the item title when its link could not be resolved."
+  (goto-char (marker-position marker))
+  (org-back-to-heading t)
+  (let* ((heading-with-links
+          (save-excursion
+            (beginning-of-line)
+            (when (looking-at org-complex-heading-regexp)
+              (match-string-no-properties 4))))
+         (title (org-canvas--module-item-display-title
+                 heading-with-links
+                 (org-canvas--strip-statistics-cookie
+                  (org-get-heading t t t t))))
+         (self-owned (or (org-entry-get (point) "EXTERNAL_URL")
+                         (not (and heading-with-links
+                                   (string-match-p "\\[\\[file:"
+                                                   heading-with-links)))))
+         (target (unless self-owned
+                   (org-canvas--module-item-target
+                    heading-with-links modules-file-dir))))
+    (cond
+     ;; SubHeaders and external URLs own their publish state (issue #47).
+     (self-owned
+      (push (current-buffer) (car touched))
+      (if (org-canvas--module-set-published (point) state) 'changed 'unchanged))
+     ((null target) title)
+     (t
+      (with-current-buffer (find-file-noselect (car target))
+        (push (current-buffer) (car touched))
+        (if (org-canvas--module-set-published (cdr target) state)
+            'changed
+          'unchanged))))))
+
+(defun org-canvas--module-publish-apply (module-pom state)
+  "Set PUBLISHED to STATE on the module at MODULE-POM and everything it lists.
+Saves every file touched.  Returns a plist (:changed N :unresolved TITLES)."
+  (let ((modules-file-dir (file-name-directory
+                           (expand-file-name org-canvas-modules-file)))
+        (touched (list nil))
+        (changed 0)
+        (unresolved nil))
+    (save-excursion
+      (goto-char module-pom)
+      (when (org-canvas--module-set-published (point) state)
+        (setq changed (1+ changed)))
+      (push (current-buffer) (car touched))
+      (let ((markers (org-canvas--module-collect-item-markers module-pom)))
+        (dolist (marker markers)
+          (save-excursion
+            (let ((result (org-canvas--module-publish-item
+                           marker state modules-file-dir touched)))
+              (cond
+               ((eq result 'changed) (setq changed (1+ changed)))
+               ((stringp result) (push result unresolved))))))
+        (dolist (m markers) (set-marker m nil))))
+    (dolist (buf (delete-dups (car touched)))
+      (with-current-buffer buf (org-canvas--save-buffer)))
+    (list :changed changed :unresolved (nreverse unresolved))))
+
+(defun org-canvas--module-positions ()
+  "Return an alist of (TITLE . POSITION) for the modules in modules.org."
+  (let ((file (expand-file-name org-canvas-modules-file)))
+    (when (file-exists-p file)
+      (with-current-buffer (find-file-noselect file)
+        (org-map-entries
+         (lambda () (cons (org-get-heading t t t t) (point)))
+         "LEVEL=1" 'file)))))
+
+(defun org-canvas--module-due-for-release-p (pom)
+  "Return non-nil when the module at POM has a PUBLISH_AT that has passed."
+  (let ((publish-at (org-entry-get pom "PUBLISH_AT")))
+    (when publish-at
+      (let ((time (ignore-errors
+                    (encode-time (org-parse-time-string publish-at)))))
+        (and time (not (time-less-p (current-time) time)))))))
 
 ;;;; Main Sync Functions
 

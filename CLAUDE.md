@@ -192,6 +192,10 @@ All items track Canvas state via `CANVAS_ID`:
 
 Use `org-canvas-org-save-sync-state` to standardize saving.
 
+### Bulk Publish
+
+`org-canvas-publish-module` / `-unpublish-module` set `PUBLISHED` on the module *and on the heading that owns each linked object* — resolved by `org-canvas--module-item-target`, which returns `(FILE . POSITION)` rather than a Canvas id. Publish state belongs to the object (issue #47), so it is written where the object is declared, never inferred from a module item at push time; SubHeaders and external URLs have no object and are set in place. `PUBLISH_AT` on a module is org-canvas's own release schedule (never sent to Canvas): `org-canvas-apply-scheduled-releases` runs at the start of `org-canvas-sync`, before tier -1, so objects it publishes are pushed by the same run. Mechanics live in modules.el, commands in org-canvas.el (they offer to sync, which modules.el must not require).
+
 ### Global Sync Summary
 
 `org-canvas-sync` ends with a per-type table (Success/Skipped/Failed/Deferred) plus named failed/skipped items, rendered by `org-canvas--sync-log-global-summary`. Feature syncs record stats via `org-canvas--sync-record-feature-stats` — automatic in the macro pipeline (`org-canvas--sync-log-summary`), explicit in the custom syncs (settings, files, overrides). Recording is a no-op outside a global sync (gated on `org-canvas--sync-global-counters`).
