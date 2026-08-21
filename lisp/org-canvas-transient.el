@@ -86,7 +86,8 @@
    ("c" "Switch course" org-canvas-activate-course)
    ("t" "Test connection" org-canvas-test-connection)
    ("v" "Validate files" org-canvas-validate)
-   ("S" "Status overview" org-canvas-status)]
+   ("S" "Status overview (local)" org-canvas-status)
+   ("r" "Drift report (compare with Canvas)" org-canvas-diff)]
   ["Log"
    ("ll" "Set log level" org-canvas-set-log-level)
    ("ld" "Set log destination" org-canvas-set-log-destination)
