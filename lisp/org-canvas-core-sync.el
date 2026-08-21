@@ -175,6 +175,7 @@ PAYLOAD-HASH is saved to the heading.  CTX is the sync context plist."
                      (plist-get (plist-get ctx :counters) :fail)
                      1)))
     (funcall finalize-fn data response)
+    (org-canvas--sync-note-remote-time response ctx)
     (org-canvas-org-set-property (point) org-canvas--prop-payload-hash payload-hash)
     (org-canvas--save-buffer)
     (plist-put counters :success (1+ (plist-get counters :success)))
@@ -219,7 +220,8 @@ CTX is the sync context plist (see `org-canvas--sync-process-entry')."
     (when canvas-id
       (push canvas-id (car synced-ids)))
     (cond
-     ((and stored-hash (string= payload-hash stored-hash) canvas-id)
+     ((and stored-hash (string= payload-hash stored-hash) canvas-id
+           (not (org-canvas--sync-remote-drifted-p canvas-id ctx title)))
       (plist-put counters :skip (1+ (plist-get counters :skip)))
       (org-canvas--log-info org-canvas--logger "[Skip] '%s' unchanged" title)
       (message "%s [%d/%d] Skipping '%s' (unchanged)"
@@ -491,7 +493,17 @@ that otherwise succeeded."
            (all-ids-before (plist-get entries :all-ids-before))
            (counters (list :success 0 :skip 0 :fail 0 :pulled 0 :dry-run 0 :conflict 0))
            (synced-ids (list nil))
-           (ctx (list :parse-fn parse-fn
+           (baseline (org-canvas--sync-file-baseline sync-file))
+           ;; One list request per feature, and only when there is something
+           ;; to compare.  Not gated on BASELINE: an entry carries its own
+           ;; CANVAS_UPDATED_AT, which is what makes this work on a course
+           ;; that has only ever been pushed.
+           (remote-updated (when (and org-canvas-detect-conflicts targets)
+                             (org-canvas--sync-fetch-remote-updated feature-name)))
+           (ctx (list :baseline baseline
+                      :remote-updated remote-updated
+                      :remote-times (list nil)
+                      :parse-fn parse-fn
                       :build-fn build-fn
                       :push-fn push-fn
                       :finalize-fn finalize-fn
@@ -505,6 +517,9 @@ that otherwise succeeded."
       (dolist (marker targets)
         (org-canvas--sync-process-entry marker ctx))
       (dolist (m targets) (set-marker m nil))
+      (unless org-canvas--dry-run
+        (org-canvas--sync-write-push-header sync-file ctx))
+      (org-canvas--sync-warn-unverified-skips feature-name counters ctx)
       (org-canvas--sync-warn-orphans all-ids-before (car synced-ids) feature-name)
       (when after-sync-fn
         (funcall after-sync-fn))
@@ -615,6 +630,124 @@ Example usage:
                 ,parse-fn ,build-fn ,push-fn ,finalize-fn
                 ,(or title-key :title) ,pull-item-fn ,hash-extra-fn)))))))
 
+;;;; 6a. Remote Drift Detection
+;;
+;; A payload-hash match proves the local file has not changed since the
+;; last push.  It says nothing about Canvas.  Before this, an item edited
+;; only in the web UI was skipped before any remote comparison happened —
+;; the per-item conflict check lives inside the push, which the skip
+;; branch never reaches — so the divergence was permanent and silent
+;; (issue #48).  One list request per feature closes that hole.
+
+(defun org-canvas--sync-note-remote-time (response ctx)
+  "Record RESPONSE's `updated_at' in CTX's remote-time accumulator.
+The accumulator is absent for single-entry pushes, where there is no
+file-level header to write afterwards."
+  (let ((times-ref (plist-get ctx :remote-times))
+        (updated (and (listp response) (alist-get 'updated_at response))))
+    (when (and times-ref (stringp updated))
+      (push updated (car times-ref)))))
+
+(defun org-canvas--sync-file-baseline (sync-file)
+  "Return SYNC-FILE\\='s #+LAST_SYNCED header as an Emacs time, or nil."
+  (when (file-exists-p sync-file)
+    (with-current-buffer (find-file-noselect sync-file)
+      (let ((ts (org-canvas--pull-read-file-header)))
+        (when ts (encode-time (org-parse-time-string ts)))))))
+
+(defun org-canvas--sync-fetch-remote-updated (feature-name)
+  "Return a hash of remote id to `updated_at\\=' for FEATURE-NAME, or nil.
+One list request per feature, consulted before a payload-hash skip so
+an item changed only on Canvas is noticed instead of skipped.  Keyed by
+the feature\\='s registered id field, so pages key on `url\\=' to match
+their CANVAS_URL.
+
+Returns nil when the feature is not in the registry or the request
+fails; the caller then falls back to skipping unverified and says so."
+  (let ((feature (org-canvas--registry-find-feature feature-name)))
+    (when feature
+      (condition-case err
+          (let ((map (make-hash-table :test 'equal))
+                (id-field (or (plist-get feature :id-field) 'id)))
+            (dolist (item (append (org-canvas-api-request-all-pages
+                                   'GET (org-canvas-api-course-endpoint
+                                         (plist-get feature :endpoint))
+                                   (plist-get feature :list-params))
+                                  nil))
+              (let ((id (alist-get id-field item))
+                    (updated (alist-get 'updated_at item)))
+                (when (and id (stringp updated))
+                  (puthash (format "%s" id) updated map))))
+            map)
+        (error
+         (org-canvas--log-warning org-canvas--logger
+           "[Conflict] Could not fetch the remote %s snapshot (%s); unchanged entries will be skipped without checking Canvas"
+           feature-name (error-message-string err))
+         nil)))))
+
+(defun org-canvas--sync-remote-drifted-p (canvas-id ctx title)
+  "Return non-nil when CANVAS-ID was modified on Canvas after the baseline.
+Called with point on the entry's heading.  CTX carries the remote
+snapshot and the file-level fallback baseline; TITLE is used for the
+log line.  A drifted entry must not take the
+unchanged-skip: letting it fall through to the push puts it back on the
+normal path, where `org-canvas--push-check-and-resolve-conflict\' shows
+the diff and offers push/pull/skip."
+  (let* ((remote-updated (plist-get ctx :remote-updated))
+         (baseline (org-canvas--conflict-baseline
+                    (point) (plist-get ctx :baseline)))
+         (updated (and remote-updated canvas-id
+                       (gethash (format "%s" canvas-id) remote-updated)))
+         (remote-time (and updated baseline
+                           (org-canvas--parse-iso8601-time updated))))
+    (when (and remote-time (time-less-p baseline remote-time))
+      (org-canvas--log-warning org-canvas--logger
+        "[Drift] '%s' is unchanged locally but Canvas has it as updated at %s — comparing"
+        title updated)
+      t)))
+
+(defun org-canvas--sync-warn-unverified-skips (feature-name counters ctx)
+  "Warn when FEATURE-NAME entries were skipped without checking Canvas.
+COUNTERS supplies the skip tally and CTX the remote snapshot that
+should have verified them.  A payload-hash skip only proves the local
+file is unchanged.  When the
+remote snapshot is missing — no #+LAST_SYNCED baseline yet, or the list
+request failed — say so, rather than let a \"0 failed\" summary imply a
+comparison that never happened (issue #48)."
+  (let ((skips (plist-get counters :skip)))
+    (when (and org-canvas-detect-conflicts
+               (> skips 0)
+               (not (plist-get ctx :remote-updated)))
+      (org-canvas--log-warning org-canvas--logger
+        "[Conflict] %d %s entr%s skipped as unchanged were not verified against Canvas — %s"
+        skips feature-name (if (= skips 1) "y" "ies")
+        (if (plist-get ctx :baseline)
+            "the remote snapshot was unavailable"
+          "this file has no #+LAST_SYNCED baseline yet (one is written after this run)")))))
+
+(defun org-canvas--sync-write-push-header (sync-file ctx)
+  "Record a sync baseline in SYNC-FILE\\='s #+LAST_SYNCED header.
+CTX carries the remote timestamps collected during the run.
+Only pull used to write this header, so a course authored in Org and
+pushed never acquired one and conflict detection stayed permanently
+inert (issue #48).
+
+The stamp comes from the newest `updated_at\\=' Canvas returned during
+this run, not from the local clock: the header is only ever compared
+against remote timestamps, and a client running behind the server would
+otherwise make every item we just pushed look remotely modified on the
+next run.  It is rounded up to the next whole minute because Org
+timestamps carry no seconds — rounding down would place the header
+before our own pushes and produce exactly those false conflicts.  The
+cost is that a remote edit in the same minute as a push is not seen."
+  (let* ((times (car (plist-get ctx :remote-times)))
+         (newest (car (sort (copy-sequence times) #'string>)))
+         (time (and newest (org-canvas--parse-iso8601-time newest))))
+    (when time
+      (with-current-buffer (find-file-noselect sync-file)
+        (org-canvas--pull-write-file-header (time-add time 60))
+        (org-canvas--save-buffer)))))
+
 ;;;; 6b. Conflict Detection
 ;;
 ;; Before overwriting a Canvas item (PUT), check if someone edited it
@@ -640,12 +773,27 @@ if no #+LAST_SYNCED header exists in that buffer."
     (when ts
       (encode-time (org-parse-time-string ts)))))
 
+(defun org-canvas--conflict-baseline (pom &optional fallback)
+  "Return the time the entry at POM was last known to agree with Canvas.
+Prefers the entry's own CANVAS_UPDATED_AT — the remote `updated_at'
+recorded when it was last pushed or pulled.  That is Canvas's own
+clock, so it needs no allowance for skew, and crucially it exists on
+courses that are only ever pushed, which never acquire the file-level
+#+LAST_SYNCED header the check used to depend on (issue #48).
+
+Falls back to FALLBACK when given, otherwise to that header, for
+entries synced before CANVAS_UPDATED_AT was recorded."
+  (or (org-canvas--parse-iso8601-time
+       (org-entry-get pom "CANVAS_UPDATED_AT"))
+      fallback
+      (org-canvas--parse-last-synced pom)))
+
 (cl-defun org-canvas--conflict-check (endpoint id pom)
   "Check if the remote item at ENDPOINT/ID was modified after LAST_SYNCED at POM.
 Returns (cons \\='conflict REMOTE-RESPONSE) if the remote item is newer,
 nil otherwise.  Returns nil on GET failure (allows push to proceed) or
-when no LAST_SYNCED exists (legacy item, first sync)."
-  (let ((local-time (org-canvas--parse-last-synced pom)))
+when there is no baseline at all (first sync)."
+  (let ((local-time (org-canvas--conflict-baseline pom)))
     (unless local-time
       (cl-return-from org-canvas--conflict-check nil))
     (condition-case err

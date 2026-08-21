@@ -236,6 +236,8 @@ Module items skipped because their target lacked a CANVAS_ID are tracked in `org
 - `org-canvas--preflight-check` validates credentials and connection before any sync begins
 
 ### Conflict Resolution
+- Baseline is `org-canvas--conflict-baseline`: the entry's own `CANVAS_UPDATED_AT` (the remote `updated_at` finalize recorded on the last push — Canvas's clock, so no skew allowance, and present on push-only courses), falling back to the file-level `#+LAST_SYNCED` header. Pushes now write that header too, stamped from the newest remote `updated_at` of the run and rounded up a minute (issue #48)
+- The payload-hash skip is drift-aware: `org-canvas--sync-fetch-remote-updated` takes one list snapshot per feature and `org-canvas--sync-remote-drifted-p` pulls any remotely-modified entry off the skip path so it goes through the normal conflict comparison. A matching hash only proves the *local* file is unchanged — without this, an item edited only in the web UI was skipped forever. When the snapshot is unavailable, `org-canvas--sync-warn-unverified-skips` says how many entries went unchecked
 - `org-canvas--conflict-check` returns `(cons 'conflict REMOTE-RESPONSE)` (not bare `'conflict`)
 - `org-canvas--resolve-conflict` shows a diff buffer and prompts: push/pull/skip (capitals = apply to all)
 - `org-canvas--conflict-apply-all` defvar: batch decision bound per-sync by `org-canvas-define-sync`

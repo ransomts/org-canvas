@@ -222,6 +222,17 @@ PLIST has keys :name :endpoint :file-var :id-field :id-property
                      :test #'string=)
       (push plist org-canvas--feature-registry))))
 
+(defun org-canvas--registry-find-feature (feature-name)
+  "Return the feature registry entry whose name matches FEATURE-NAME, or nil.
+Matching ignores case, spaces, underscores and dashes: the sync
+pipeline names features like \"assignment-groups\" while the registry
+labels them \"Assignment Groups\"."
+  (let ((norm (lambda (s) (downcase (replace-regexp-in-string "[ _-]" "" s)))))
+    (cl-find-if (lambda (f)
+                  (string= (funcall norm (plist-get f :name))
+                           (funcall norm feature-name)))
+                org-canvas--feature-registry)))
+
 (defun org-canvas--recompute-file-paths ()
   "Recompute all file-path variables from `org-canvas-directory'."
   (dolist (entry org-canvas--file-var-registry)

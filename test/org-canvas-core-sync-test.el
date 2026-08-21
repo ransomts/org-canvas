@@ -3845,5 +3845,381 @@ Content here.
         (org-canvas-sync-assignment-groups)
         (expect hook-ran :to-be t)))))
 
+
+;;;; Remote Drift Detection (issue #48)
+
+(describe "org-canvas--conflict-baseline"
+  (it "prefers the entry's own CANVAS_UPDATED_AT"
+    ;; Issue #48: a course that is only ever pushed never acquires the
+    ;; file-level header, so the check that depended on it never ran.  The
+    ;; per-entry stamp is written by finalize on every push.
+    (with-temp-org-buffer
+     "* Lab 1
+:PROPERTIES:
+:CANVAS_ID: 61
+:CANVAS_UPDATED_AT: 2026-08-19T13:19:49Z
+:END:
+"
+     (org-back-to-heading)
+     (expect (org-canvas--conflict-baseline (point))
+             :to-equal (date-to-time "2026-08-19T13:19:49Z"))))
+
+  (it "falls back to the file header when the entry has no stamp"
+    (with-temp-org-buffer
+     "#+LAST_SYNCED: [2026-08-19 Wed 12:00]
+* Lab 1
+:PROPERTIES:
+:CANVAS_ID: 61
+:END:
+"
+     (goto-char (point-min))
+     (re-search-forward "^\\* ")
+     (org-back-to-heading)
+     (expect (org-canvas--conflict-baseline (point))
+             :to-equal (encode-time
+                        (org-parse-time-string "[2026-08-19 Wed 12:00]")))))
+
+  (it "prefers an explicit fallback over the file header"
+    (let ((explicit (date-to-time "2026-01-01T00:00:00Z")))
+      (with-temp-org-buffer
+       "#+LAST_SYNCED: [2026-08-19 Wed 12:00]
+* Lab 1
+:PROPERTIES:
+:CANVAS_ID: 61
+:END:
+"
+       (goto-char (point-min))
+       (re-search-forward "^\\* ")
+       (org-back-to-heading)
+       (expect (org-canvas--conflict-baseline (point) explicit)
+               :to-equal explicit))))
+
+  (it "returns nil when nothing has ever been recorded"
+    (with-temp-org-buffer
+     "* Lab 1
+:PROPERTIES:
+:CANVAS_ID: 61
+:END:
+"
+     (org-back-to-heading)
+     (expect (org-canvas--conflict-baseline (point)) :to-be nil))))
+
+(describe "org-canvas--registry-find-feature"
+  (it "matches a pipeline feature name against the registry label"
+    ;; The pipeline says "assignment-groups", the registry says
+    ;; "Assignment Groups".
+    (expect (plist-get (org-canvas--registry-find-feature "assignment-groups")
+                       :endpoint)
+            :to-equal "assignment_groups"))
+
+  (it "matches a single-word name"
+    (expect (plist-get (org-canvas--registry-find-feature "pages") :id-field)
+            :to-equal 'url))
+
+  (it "returns nil for an unregistered feature"
+    (expect (org-canvas--registry-find-feature "not-a-feature") :to-be nil)))
+
+(describe "org-canvas--sync-fetch-remote-updated"
+  (it "maps remote ids to their updated_at"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (&rest _)
+                   '(((id . 1) (updated_at . "2026-08-19T13:19:49Z"))
+                     ((id . 2) (updated_at . "2026-08-01T00:00:00Z"))))))
+        (let ((map (org-canvas--sync-fetch-remote-updated "assignments")))
+          (expect (gethash "1" map) :to-equal "2026-08-19T13:19:49Z")
+          (expect (gethash "2" map) :to-equal "2026-08-01T00:00:00Z")))))
+
+  (it "keys pages on url so the map matches CANVAS_URL"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (&rest _)
+                   '(((url . "welcome") (id . 9)
+                      (updated_at . "2026-08-19T13:19:49Z"))))))
+        (let ((map (org-canvas--sync-fetch-remote-updated "pages")))
+          (expect (gethash "welcome" map) :to-equal "2026-08-19T13:19:49Z")
+          (expect (gethash "9" map) :to-be nil)))))
+
+  (it "returns nil for an unregistered feature without calling the API"
+    (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+               (lambda (&rest _) (error "Must not be called"))))
+      (expect (org-canvas--sync-fetch-remote-updated "not-a-feature") :to-be nil)))
+
+  (it "returns nil and warns when the list request fails"
+    (with-org-canvas-test-config
+      (let ((warnings nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (&rest _) (error "Connection refused")))
+                  ((symbol-function 'org-canvas--log-warning)
+                   (lambda (_logger fmt &rest args)
+                     (push (apply #'format fmt args) warnings))))
+          (expect (org-canvas--sync-fetch-remote-updated "assignments") :to-be nil)
+          (expect (car warnings) :to-match "without checking Canvas"))))))
+
+(describe "org-canvas--sync-remote-drifted-p"
+  (let ((baseline (encode-time (org-parse-time-string "[2026-08-19 Wed 12:00]"))))
+
+    (it "flags an item Canvas updated after the baseline"
+      (let ((map (make-hash-table :test 'equal)))
+        (puthash "61" "2026-08-25T00:00:00Z" map)
+        (expect (org-canvas--sync-remote-drifted-p
+                 "61" (list :remote-updated map :baseline baseline) "Lab 1")
+                :to-be-truthy)))
+
+    (it "leaves an item Canvas has not touched since the baseline alone"
+      (let ((map (make-hash-table :test 'equal)))
+        (puthash "61" "2026-08-01T00:00:00Z" map)
+        (expect (org-canvas--sync-remote-drifted-p
+                 "61" (list :remote-updated map :baseline baseline) "Lab 1")
+                :to-be nil)))
+
+    (it "is inert without a remote snapshot"
+      (expect (org-canvas--sync-remote-drifted-p
+               "61" (list :remote-updated nil :baseline baseline) "Lab 1")
+              :to-be nil))
+
+    (it "is inert without a baseline"
+      (let ((map (make-hash-table :test 'equal)))
+        (puthash "61" "2026-08-25T00:00:00Z" map)
+        (expect (org-canvas--sync-remote-drifted-p
+                 "61" (list :remote-updated map :baseline nil) "Lab 1")
+                :to-be nil)))
+
+    (it "is inert for an id Canvas does not know"
+      (let ((map (make-hash-table :test 'equal)))
+        (expect (org-canvas--sync-remote-drifted-p
+                 "61" (list :remote-updated map :baseline baseline) "Lab 1")
+                :to-be nil)))))
+
+(describe "org-canvas--sync-write-push-header"
+  (it "stamps the header from the newest remote timestamp, not the local clock"
+    ;; The header is only ever compared against remote timestamps, so it has
+    ;; to be expressed in Canvas time or clock skew produces false conflicts.
+    (let ((file (make-temp-file "hdr-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file (insert "* Item\n"))
+            (org-canvas--sync-write-push-header
+             file (list :remote-times (list (list "2026-08-01T00:00:00Z"
+                                                  "2026-08-25T10:30:45Z"
+                                                  "2026-08-10T00:00:00Z"))))
+            (with-current-buffer (find-file-noselect file)
+              (let ((header (org-canvas--pull-read-file-header)))
+                ;; Rounded up to the next minute: rounding down would put the
+                ;; header before the push it records.
+                (expect header :to-equal
+                        (format-time-string
+                         "[%Y-%m-%d %a %H:%M]"
+                         (time-add (date-to-time "2026-08-25T10:30:45Z") 60))))
+              (kill-buffer)))
+        (delete-file file))))
+
+  (it "writes nothing when the run pushed nothing"
+    (let ((file (make-temp-file "hdr-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file (insert "* Item\n"))
+            (org-canvas--sync-write-push-header file (list :remote-times (list nil)))
+            (with-current-buffer (find-file-noselect file)
+              (expect (org-canvas--pull-read-file-header) :to-be nil)
+              (kill-buffer)))
+        (delete-file file)))))
+
+(describe "org-canvas--sync-note-remote-time"
+  (it "collects updated_at from a push response"
+    (let ((ref (list nil)))
+      (org-canvas--sync-note-remote-time
+       '((id . 1) (updated_at . "2026-08-25T10:30:45Z")) (list :remote-times ref))
+      (expect (car ref) :to-equal '("2026-08-25T10:30:45Z"))))
+
+  (it "is a no-op for a single-entry push with no accumulator"
+    (expect (org-canvas--sync-note-remote-time
+             '((id . 1) (updated_at . "2026-08-25T10:30:45Z")) nil)
+            :not :to-throw)))
+
+(describe "org-canvas--sync-warn-unverified-skips"
+  (it "says so when there is no baseline yet"
+    (let ((warnings nil))
+      (cl-letf (((symbol-function 'org-canvas--log-warning)
+                 (lambda (_logger fmt &rest args)
+                   (push (apply #'format fmt args) warnings))))
+        (org-canvas--sync-warn-unverified-skips
+         "assignments" (list :skip 61) (list :baseline nil :remote-updated nil))
+        (expect (car warnings) :to-match "61 assignments")
+        (expect (car warnings) :to-match "no #\\+LAST_SYNCED baseline"))))
+
+  (it "says so when the snapshot could not be fetched"
+    (let ((warnings nil))
+      (cl-letf (((symbol-function 'org-canvas--log-warning)
+                 (lambda (_logger fmt &rest args)
+                   (push (apply #'format fmt args) warnings))))
+        (org-canvas--sync-warn-unverified-skips
+         "assignments" (list :skip 1)
+         (list :baseline (current-time) :remote-updated nil))
+        (expect (car warnings) :to-match "remote snapshot was unavailable"))))
+
+  (it "stays quiet when the snapshot was consulted"
+    (let ((warnings nil))
+      (cl-letf (((symbol-function 'org-canvas--log-warning)
+                 (lambda (_logger fmt &rest args)
+                   (push (apply #'format fmt args) warnings))))
+        (org-canvas--sync-warn-unverified-skips
+         "assignments" (list :skip 61)
+         (list :baseline (current-time)
+               :remote-updated (make-hash-table :test 'equal)))
+        (expect warnings :to-be nil)))))
+
+(describe "the payload-hash skip consults Canvas (issue #48)"
+  ;; The reported failure: 59 assignments were published in the web UI, the
+  ;; next sync reported "0 pushed, 61 skipped", and nothing said the Org
+  ;; files and Canvas now disagreed.
+  (defun test-sync-48--run (file remote-updated)
+    "Run the pipeline over FILE with REMOTE-UPDATED as the snapshot.
+Returns the list of titles that reached the push stage."
+    (let ((pushed nil))
+      (cl-letf (((symbol-function 'org-canvas-clear-log) #'ignore)
+                ((symbol-function 'org-canvas--sync-payload-hash)
+                 (lambda (&rest _) "SAME"))
+                ((symbol-function 'org-canvas--sync-fetch-remote-updated)
+                 (lambda (&rest _) remote-updated))
+                ((symbol-function 'org-canvas--sync-log-summary) #'ignore)
+                ((symbol-function 'org-canvas--sync-warn-orphans) #'ignore)
+                ((symbol-function 'org-canvas--save-buffer) #'ignore))
+        (org-canvas--sync-run-pipeline
+         "assignments" file "LEVEL=1"
+         (lambda () (list :title (org-get-heading t t t t)
+                          :canvas-id (org-entry-get (point) "CANVAS_ID")))
+         (lambda (_data) '((name . "x")))
+         (lambda (data _payload)
+           (push (plist-get data :title) pushed)
+           '((id . 61) (updated_at . "2026-08-25T00:00:00Z")))
+         #'ignore))
+      (nreverse pushed)))
+
+  (it "skips an unchanged entry Canvas has not touched"
+    (let ((file (make-temp-file "drift-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "#+LAST_SYNCED: [2026-08-19 Wed 12:00]\n"
+                      "* Lab 1\n:PROPERTIES:\n:CANVAS_ID: 61\n"
+                      ":PAYLOAD_HASH: SAME\n:END:\n"))
+            (let ((map (make-hash-table :test 'equal)))
+              (puthash "61" "2026-08-01T00:00:00Z" map)
+              (expect (test-sync-48--run file map) :to-be nil)))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file))))
+
+  (it "pushes an unchanged entry that Canvas has since modified"
+    (let ((file (make-temp-file "drift-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "#+LAST_SYNCED: [2026-08-19 Wed 12:00]\n"
+                      "* Lab 1\n:PROPERTIES:\n:CANVAS_ID: 61\n"
+                      ":PAYLOAD_HASH: SAME\n:END:\n"))
+            (let ((map (make-hash-table :test 'equal)))
+              (puthash "61" "2026-08-25T00:00:00Z" map)
+              (expect (test-sync-48--run file map) :to-equal '("Lab 1"))))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file))))
+
+  (it "detects drift on a push-only course, with no file header at all"
+    ;; The reported course had never been pulled, so #+LAST_SYNCED did not
+    ;; exist.  The per-entry CANVAS_UPDATED_AT written by finalize is what
+    ;; makes the comparison possible there.
+    (let ((file (make-temp-file "drift-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "* Lab 1\n:PROPERTIES:\n:CANVAS_ID: 61\n"
+                      ":CANVAS_UPDATED_AT: 2026-08-19T13:19:49Z\n"
+                      ":PAYLOAD_HASH: SAME\n:END:\n"))
+            (let ((map (make-hash-table :test 'equal)))
+              (puthash "61" "2026-08-25T00:00:00Z" map)
+              (expect (test-sync-48--run file map) :to-equal '("Lab 1"))))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file))))
+
+  (it "leaves a push-only entry alone when Canvas matches what we recorded"
+    (let ((file (make-temp-file "drift-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "* Lab 1\n:PROPERTIES:\n:CANVAS_ID: 61\n"
+                      ":CANVAS_UPDATED_AT: 2026-08-19T13:19:49Z\n"
+                      ":PAYLOAD_HASH: SAME\n:END:\n"))
+            (let ((map (make-hash-table :test 'equal)))
+              (puthash "61" "2026-08-19T13:19:49Z" map)
+              (expect (test-sync-48--run file map) :to-be nil)))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file))))
+
+  (it "still skips when detection is off"
+    (let ((file (make-temp-file "drift-" nil ".org"))
+          (org-canvas-detect-conflicts nil))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "#+LAST_SYNCED: [2026-08-19 Wed 12:00]\n"
+                      "* Lab 1\n:PROPERTIES:\n:CANVAS_ID: 61\n"
+                      ":PAYLOAD_HASH: SAME\n:END:\n"))
+            ;; fetch-remote-updated is mocked but run-pipeline must not even
+            ;; ask for it, so the snapshot never reaches the skip check.
+            (expect (test-sync-48--run file nil) :to-be nil))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file)))))
+
+(describe "a push run writes the #+LAST_SYNCED baseline (issue #48)"
+  (it "gives a push-only file the header conflict detection needs"
+    (let ((file (make-temp-file "baseline-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "* Lab 1\n:PROPERTIES:\n:CANVAS_ID: 61\n:END:\n"))
+            (cl-letf (((symbol-function 'org-canvas-clear-log) #'ignore)
+                      ((symbol-function 'org-canvas--sync-log-summary) #'ignore)
+                      ((symbol-function 'org-canvas--sync-fetch-remote-updated)
+                       (lambda (&rest _) nil))
+                      ((symbol-function 'org-canvas--sync-warn-orphans) #'ignore))
+              (org-canvas--sync-run-pipeline
+               "assignments" file "LEVEL=1"
+               (lambda () (list :title (org-get-heading t t t t)
+                                :canvas-id (org-entry-get (point) "CANVAS_ID")))
+               (lambda (_data) '((name . "x")))
+               (lambda (_data _payload)
+                 '((id . 61) (updated_at . "2026-08-25T10:30:45Z")))
+               #'ignore))
+            (with-current-buffer (find-file-noselect file)
+              (expect (org-canvas--pull-read-file-header) :to-be-truthy)
+              (kill-buffer)))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file))))
+
+  (it "leaves the file alone during a dry run"
+    (let ((file (make-temp-file "baseline-" nil ".org"))
+          (org-canvas--dry-run t))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "* Lab 1\n:PROPERTIES:\n:CANVAS_ID: 61\n:END:\n"))
+            (cl-letf (((symbol-function 'org-canvas-clear-log) #'ignore)
+                      ((symbol-function 'org-canvas--sync-log-summary) #'ignore)
+                      ((symbol-function 'org-canvas--sync-fetch-remote-updated)
+                       (lambda (&rest _) nil))
+                      ((symbol-function 'org-canvas--sync-warn-orphans) #'ignore))
+              (org-canvas--sync-run-pipeline
+               "assignments" file "LEVEL=1"
+               (lambda () (list :title (org-get-heading t t t t)
+                                :canvas-id (org-entry-get (point) "CANVAS_ID")))
+               (lambda (_data) '((name . "x")))
+               (lambda (&rest _) (error "Must not push during a dry run"))
+               #'ignore))
+            (with-current-buffer (find-file-noselect file)
+              (expect (org-canvas--pull-read-file-header) :to-be nil)
+              (kill-buffer)))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file)))))
+
 (provide 'org-canvas-core-sync-test)
 ;;; org-canvas-core-sync-test.el ends here
