@@ -69,8 +69,10 @@
   :file-var 'org-canvas-files-file
   :query "LEVEL>0"
   :properties
-  `((:org-prop "PUBLISHED" :data-key :published :type boolean
-     :doc "Whether item is visible (default: true)")
+  `((:org-prop "PUBLISHED" :data-key :published :type boolean :default t
+     :doc "Whether the file is published to students (false sets locked)")
+    (:org-prop "HIDDEN" :data-key :hidden :type boolean
+     :doc "Published but unlisted: reachable only by direct link")
     (:org-prop "UNLOCK_AT" :data-key :unlock_at :type timestamp
      :doc "Date to make file available")
     (:org-prop "LOCK_AT" :data-key :lock_at :type timestamp
@@ -329,6 +331,7 @@ Returns a plist with raw values, or nil for folder-only headings."
               :folder-path folder-path
               :canvas-id (org-entry-get pom "CANVAS_ID")
               :published-raw (org-entry-get pom "PUBLISHED")
+              :hidden-raw (org-entry-get pom "HIDDEN")
               :unlock-at-raw (org-entry-get pom "UNLOCK_AT")
               :lock-at-raw (org-entry-get pom "LOCK_AT")
               :use-justification (org-entry-get pom "USE_JUSTIFICATION")
@@ -343,6 +346,7 @@ Pure function — no buffer access."
         :folder-path (plist-get raw :folder-path)
         :canvas-id (plist-get raw :canvas-id)
         :published (org-canvas--interpret-boolean (plist-get raw :published-raw) t)
+        :hidden (org-canvas--interpret-boolean (plist-get raw :hidden-raw))
         :unlock-at (org-canvas-org-parse-timestamp (plist-get raw :unlock-at-raw))
         :lock-at (org-canvas-org-parse-timestamp (plist-get raw :lock-at-raw))
         :use-justification (plist-get raw :use-justification)
@@ -393,15 +397,61 @@ Returns nil for folder-only headings (no file link)."
     (puthash "content_type" content-type payload)
     (puthash "on_duplicate" "overwrite" payload)
 
-    ;; Add visibility settings
-    (unless (plist-get data :published)
-      (puthash "hidden" t payload))
+    ;; No visibility fields here.  The upload preflight
+    ;; (Api::V1::Attachment#api_attachment_preflight) reads only name, size,
+    ;; content_type, parent_folder_id and on_duplicate; locked, hidden,
+    ;; unlock_at and lock_at are silently discarded.  They are applied after
+    ;; the upload lands, by `org-canvas--file-apply-settings' (issue #50).
+    payload))
+
+(defun org-canvas--file-build-settings-payload (data)
+  "Build the file-settings payload carrying DATA's visibility.
+Canvas models a file's visibility with two independent flags.  `locked'
+is the Publish control; `hidden' is the weaker \"only available to
+students with the link\" state, which leaves the file served to anyone
+holding its URL.  PUBLISHED means the former, so it maps to `locked'
+and is sent in both directions — flipping the property back to true
+republishes the file instead of merely omitting the field, which on a
+partial update would leave the stored value alone (issue #50).  HIDDEN
+is the separate opt-in for the unlisted state.
+
+UNLOCK_AT and LOCK_AT are sent only when set, as in every other module:
+removing the property leaves the date stored on Canvas alone."
+  (let ((payload (make-hash-table :test 'equal)))
+    (puthash "locked" (org-canvas--to-json-boolean
+                       (not (plist-get data :published)))
+             payload)
+    (puthash "hidden" (org-canvas--to-json-boolean (plist-get data :hidden))
+             payload)
     (when (plist-get data :unlock-at)
       (puthash "unlock_at" (plist-get data :unlock-at) payload))
     (when (plist-get data :lock-at)
       (puthash "lock_at" (plist-get data :lock-at) payload))
-
     payload))
+
+(defun org-canvas--file-apply-settings (file-id data)
+  "Apply DATA's visibility settings to FILE-ID on Canvas.
+The upload flow cannot carry them: the preflight endpoint reads only
+name, size, content_type, parent_folder_id and on_duplicate, and
+discards locked/hidden/unlock_at/lock_at without complaint.  They are
+applied afterwards through `PUT /api/v1/files/:id', the documented
+update_file operation.
+
+Returns the updated Canvas file object, or `org-canvas--dry-run-response'
+when previewing."
+  (if org-canvas--dry-run
+      (progn
+        (org-canvas--log-info org-canvas--logger
+          "[DRY-RUN] Would set visibility on '%s'" (plist-get data :display-name))
+        org-canvas--dry-run-response)
+    (org-canvas--log-info org-canvas--logger
+      "[Stage 3: Settings] Applying visibility to file %s (published: %s, hidden: %s)"
+      file-id
+      (if (plist-get data :published) "yes" "no")
+      (if (plist-get data :hidden) "yes" "no"))
+    (org-canvas-api-request
+     'PUT (format "%s/api/v1/files/%s" org-canvas-base-url file-id)
+     :data (org-canvas--file-build-settings-payload data))))
 
 ;;;; 3. Stage: Execution (3-step upload)
 
@@ -805,11 +855,12 @@ file ID and kills module items pointing at it)."
                        (insert-file-contents-literally
                         (plist-get data :local-path))
                        (md5 (current-buffer)))))
-    (md5 (format "%s|%s|%s|%s|%s|%s|%s|%s|%s"
+    (md5 (format "%s|%s|%s|%s|%s|%s|%s|%s|%s|%s"
                  content-md5
                  (plist-get data :display-name)
                  (plist-get data :folder-path)
                  (plist-get data :published)
+                 (plist-get data :hidden)
                  (plist-get data :unlock-at)
                  (plist-get data :lock-at)
                  (plist-get data :use-justification)
@@ -821,10 +872,17 @@ file ID and kills module items pointing at it)."
 RESPONSE is the Canvas file object, FILE-HASH the content hash to store
 so an unchanged file is skipped next time, and OLD-ID the CANVAS_ID the
 entry carried beforehand (nil on a first upload).  Saves the new id,
-applies usage rights, and notes an id change for
-`org-canvas--file-warn-changed-ids'."
+applies visibility and usage rights, and notes an id change for
+`org-canvas--file-warn-changed-ids'.
+
+Ordering matters on failure: CANVAS_ID is written first and
+PAYLOAD_HASH last, so a settings or usage-rights error leaves the id
+recorded (no duplicate upload next run) with the entry still dirty (the
+settings are retried)."
   (org-canvas--file-finalize data response)
   (let ((fid (alist-get 'id response)))
+    (when fid
+      (org-canvas--file-apply-settings fid data))
     (when (and fid (plist-get data :use-justification))
       (org-canvas--file-set-usage-rights fid data))
     (when (and old-id fid (not (string= (format "%s" fid) old-id)))
@@ -1244,7 +1302,13 @@ and `org-canvas--file-pull-set-properties' for parity with flat mode."
     (car counter)))
 
 (defun org-canvas--file-pull-set-properties (pos item)
-  "Set content-type, size, and usage-rights properties at POS from ITEM."
+  "Set visibility, content-type, size, and usage-rights properties at POS.
+ITEM is the Canvas file object.  `locked' is the Publish control, so it
+drives PUBLISHED; `hidden' is the separate unlisted state (issue #50)."
+  (org-canvas--pull-set-boolean-property
+   pos "PUBLISHED" (not (eq (alist-get 'locked item) t)))
+  (org-canvas--pull-set-boolean-property
+   pos "HIDDEN" (alist-get 'hidden item))
   (let ((content-type (alist-get 'content-type item))
         (size (alist-get 'size item)))
     (when content-type

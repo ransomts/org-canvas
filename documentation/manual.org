@@ -1200,11 +1200,39 @@ Supported link formats:
 
 | Property   | Type      | Description                   |
 |------------+-----------+-------------------------------|
+| =PUBLISHED=  | boolean   | Published to students (default: true) |
+| =HIDDEN=     | boolean   | Published but unlisted (default: false) |
 | =UNLOCK_AT=  | timestamp | Date to make file available   |
 | =LOCK_AT=    | timestamp | Date to hide file             |
 | =USE_JUSTIFICATION= | enum | own_copyright, used_by_permission, fair_use, public_domain, creative_commons |
 | =USAGE_LICENSE= | string | License code (cc_by, cc_by_sa, cc0, etc.) |
 | =COPYRIGHT=  | string    | Copyright notice text         |
+
+*** Visibility
+
+Canvas gives a file three visibility states, not two, and they are carried
+by two independent flags:
+
+| State in the Canvas UI                    | =PUBLISHED= | =HIDDEN= | Canvas fields          |
+|-------------------------------------------+-----------+--------+------------------------|
+| Published                                 | =true=      | =false=  | neither set            |
+| Unpublished                               | =false=     | —      | =locked: true=           |
+| Only available to students with the link  | =true=      | =true=   | =hidden: true=           |
+
+The unlisted state is weaker than it looks: the file is not listed in the
+Files tab, but Canvas still serves it to anyone holding the URL.  Use
+=PUBLISHED: false= when you mean "students must not have this yet".
+
+Both flags are sent on every sync, in both directions, so flipping either
+property back and forth is a true toggle.  =UNLOCK_AT= and =LOCK_AT= are sent
+only when present: deleting one of those properties leaves the date already
+stored on Canvas alone, so clear it there if you need it gone.
+
+The upload endpoint itself accepts none of this — Canvas discards
+visibility fields sent with the upload — so org-canvas applies them in a
+follow-up request once the upload lands.  A failure there leaves the entry
+dirty on purpose, so the next sync retries the settings rather than
+reporting a file as synced with the wrong visibility.
 
 *** Example
 
@@ -2199,7 +2227,8 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 
 | Property | Type | Allowed values | Default | Description |
 |----------+------+----------------+---------+-------------|
-| =PUBLISHED= | boolean | true, false |  | Whether item is visible (default: true) |
+| =PUBLISHED= | boolean | true, false | true | Whether the file is published to students (false sets locked) |
+| =HIDDEN= | boolean | true, false |  | Published but unlisted: reachable only by direct link |
 | =UNLOCK_AT= | timestamp |  |  | Date to make file available |
 | =LOCK_AT= | timestamp |  |  | Date to hide file |
 | =USE_JUSTIFICATION= | enum | own_copyright, used_by_permission, fair_use, public_domain, creative_commons |  | How to resolve a name collision on upload (rename vs overwrite) |
