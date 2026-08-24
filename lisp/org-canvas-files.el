@@ -64,12 +64,24 @@
  :name "Files" :endpoint "files"
  :file-var 'org-canvas-files-file
  :id-field 'id :id-property "CANVAS_ID" :title-field 'display_name)
+
+(defun org-canvas--file-remote-published (item)
+  "Return non-nil when the Canvas file ITEM is published to students.
+A Canvas file object has no `published' field — it carries `locked',
+`hidden', `hidden_for_user', `lock_at', `unlock_at' and
+`visibility_level' — so reading `published' returned nil for every
+file and the drift report called them all unpublished (issue #61).
+PUBLISHED is the inverse of `locked', the same mapping the pull path
+uses (issue #50)."
+  (not (eq (alist-get 'locked item) t)))
+
 (org-canvas-register-properties "files"
   :label "Files"
   :file-var 'org-canvas-files-file
   :query "LEVEL>0"
   :properties
   `((:org-prop "PUBLISHED" :data-key :published :type boolean :default t
+     :remote-fn org-canvas--file-remote-published
      :doc "Whether the file is published to students (false sets locked)")
     (:org-prop "HIDDEN" :data-key :hidden :type boolean
      :doc "Published but unlisted: reachable only by direct link")
