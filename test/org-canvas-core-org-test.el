@@ -2753,5 +2753,87 @@ Page content.
        (expect (org-canvas--org-children-digest (point))
                :to-equal before)))))
 
+(describe "org-canvas--pull-known-ids"
+  (it "returns the Canvas ids the file already claims"
+    (let ((temp (make-temp-file "known-ids-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp
+              (insert "* Lab 1\n:PROPERTIES:\n:CANVAS_ID: 61\n:END:\n"
+                      "* Lab 2\n:PROPERTIES:\n:CANVAS_ID: 62\n:END:\n"
+                      "* Draft\n"))
+            (expect (sort (org-canvas--pull-known-ids temp "CANVAS_ID") #'string<)
+                    :to-equal '("61" "62")))
+        (let ((buf (find-buffer-visiting temp)))
+          (when buf (with-current-buffer buf (set-buffer-modified-p nil))
+                (kill-buffer buf)))
+        (delete-file temp))))
+
+  (it "returns nothing for a file that does not exist yet"
+    (expect (org-canvas--pull-known-ids "/tmp/no-such-pull-file.org" "CANVAS_ID")
+            :to-be nil)))
+
+(describe "org-canvas--pull-item-managed-p"
+  (it "recognizes an item the file already claims, comparing as strings"
+    (expect (org-canvas--pull-item-managed-p '((id . 61)) 'id '("61" "62"))
+            :to-be t))
+
+  (it "rejects an item no heading claims"
+    (expect (org-canvas--pull-item-managed-p '((id . 99)) 'id '("61" "62"))
+            :to-be nil))
+
+  (it "rejects an item with no id at all"
+    (expect (org-canvas--pull-item-managed-p '((title . "x")) 'id '("61"))
+            :to-be nil)))
+
+(describe "a generated pull with a prefix argument"
+  ;; Issue #67: pulling a whole endpoint to reconcile two items writes a
+  ;; heading for every item the course holds, managed or not.
+  (it "refreshes only the items the file already claims"
+    (let ((temp (make-temp-file "managed-pull-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp
+              (insert "* Old title\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n"))
+            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                       (lambda (&rest _)
+                         '(((id . 100) (title . "Mine, renamed")
+                            (message . "<p>x</p>"))
+                           ((id . 999) (title . "Someone else's")
+                            (message . "<p>y</p>"))))))
+              (let ((org-canvas-announcements-file temp))
+                (org-canvas-pull-announcements t)))
+            (with-temp-buffer
+              (insert-file-contents temp)
+              (let ((s (buffer-string)))
+                (expect s :to-match "Mine, renamed")
+                (expect s :not :to-match "Someone else's"))))
+        (let ((buf (find-buffer-visiting temp)))
+          (when buf (with-current-buffer buf (set-buffer-modified-p nil))
+                (kill-buffer buf)))
+        (delete-file temp))))
+
+  (it "imports everything when called without the prefix argument"
+    (let ((temp (make-temp-file "unmanaged-pull-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp
+              (insert "* Old title\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n"))
+            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                       (lambda (&rest _)
+                         '(((id . 100) (title . "Mine, renamed")
+                            (message . "<p>x</p>"))
+                           ((id . 999) (title . "Someone else's")
+                            (message . "<p>y</p>"))))))
+              (let ((org-canvas-announcements-file temp))
+                (org-canvas-pull-announcements)))
+            (with-temp-buffer
+              (insert-file-contents temp)
+              (expect (buffer-string) :to-match "Someone else's")))
+        (let ((buf (find-buffer-visiting temp)))
+          (when buf (with-current-buffer buf (set-buffer-modified-p nil))
+                (kill-buffer buf)))
+        (delete-file temp)))))
+
 (provide 'org-canvas-core-org-test)
 ;;; org-canvas-core-org-test.el ends here

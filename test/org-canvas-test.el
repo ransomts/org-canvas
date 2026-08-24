@@ -1756,4 +1756,104 @@ while Lab 4 in the same module is still scheduled ahead."
         (org-canvas--release-report-items nil)
         (expect lines :to-be nil)))))
 
+(describe "org-canvas-pull-at-point"
+  ;; Issue #67: accepting one Canvas-side edit named by the drift report,
+  ;; without pulling the whole endpoint over the file.
+  (it "replaces the heading with the Canvas version and clears the stale hash"
+    (let ((temp (make-temp-file "pull-at-point-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp
+              (insert "* Old title\n:PROPERTIES:\n:CANVAS_ID: 100\n"
+                      ":PAYLOAD_HASH: deadbeef\n:END:\n\nLocal body.\n"))
+            (let ((org-canvas-announcements-file temp))
+              (cl-letf (((symbol-function 'org-canvas-api-request)
+                         (lambda (&rest _)
+                           '((id . 100) (title . "Renamed on Canvas")
+                             (message . "<p>Remote body.</p>")
+                             (updated_at . "2026-08-24T15:00:00Z")))))
+                (with-current-buffer (find-file-noselect temp)
+                  (goto-char (point-min))
+                  (org-canvas-pull-at-point)
+                  ;; The pull writes a #+LAST_SYNCED header, so the heading
+                  ;; is no longer the first line.
+                  (goto-char (point-min))
+                  (re-search-forward "^\\* ")
+                  (org-back-to-heading t)
+                  (expect (org-get-heading t t t t) :to-equal "Renamed on Canvas")
+                  (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
+                          :to-equal "2026-08-24T15:00:00Z")
+                  (expect (org-entry-get (point) "PAYLOAD_HASH") :to-be nil)))))
+        (let ((buf (find-buffer-visiting temp)))
+          (when buf (with-current-buffer buf (set-buffer-modified-p nil))
+                (kill-buffer buf)))
+        (delete-file temp))))
+
+  (it "refuses a buffer that is not one of the course files"
+    (let ((temp (make-temp-file "not-a-course-" nil ".org")))
+      (unwind-protect
+          (with-current-buffer (find-file-noselect temp)
+            (insert "* Something\n")
+            (goto-char (point-min))
+            (expect (org-canvas-pull-at-point) :to-throw 'user-error))
+        (let ((buf (find-buffer-visiting temp)))
+          (when buf (with-current-buffer buf (set-buffer-modified-p nil))
+                (kill-buffer buf)))
+        (delete-file temp))))
+
+  (it "refuses a heading that has never been synced"
+    (let ((temp (make-temp-file "pull-at-point-noid-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp (insert "* Never synced\n"))
+            (let ((org-canvas-announcements-file temp))
+              (with-current-buffer (find-file-noselect temp)
+                (goto-char (point-min))
+                (expect (org-canvas-pull-at-point) :to-throw 'user-error))))
+        (let ((buf (find-buffer-visiting temp)))
+          (when buf (with-current-buffer buf (set-buffer-modified-p nil))
+                (kill-buffer buf)))
+        (delete-file temp))))
+
+  (it "points at the whole-file command for a feature with no single-item pull"
+    (let ((temp (make-temp-file "pull-at-point-nofn-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp
+              (insert "* Quiz 1\n:PROPERTIES:\n:CANVAS_ID: 5\n:END:\n"))
+            (let ((org-canvas--feature-registry
+                   (list (list :name "Quizzes" :endpoint "quizzes"
+                               :file-var 'org-canvas-quizzes-file
+                               :id-property "CANVAS_ID")))
+                  (org-canvas-quizzes-file temp))
+              (with-current-buffer (find-file-noselect temp)
+                (goto-char (point-min))
+                (expect (org-canvas-pull-at-point) :to-throw 'user-error))))
+        (let ((buf (find-buffer-visiting temp)))
+          (when buf (with-current-buffer buf (set-buffer-modified-p nil))
+                (kill-buffer buf)))
+        (delete-file temp))))
+
+  (it "makes no request when the confirmation is declined"
+    (let ((temp (make-temp-file "pull-at-point-no-" nil ".org"))
+          (requested nil))
+      (unwind-protect
+          (progn
+            (with-temp-file temp
+              (insert "* Old title\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n"))
+            (let ((org-canvas-announcements-file temp))
+              (cl-letf (((symbol-function 'org-canvas--confirm) (lambda (_) nil))
+                        ((symbol-function 'org-canvas-api-request)
+                         (lambda (&rest _) (setq requested t) nil)))
+                (with-current-buffer (find-file-noselect temp)
+                  (goto-char (point-min))
+                  (org-canvas-pull-at-point)
+                  (expect requested :to-be nil)
+                  (org-back-to-heading t)
+                  (expect (org-get-heading t t t t) :to-equal "Old title")))))
+        (let ((buf (find-buffer-visiting temp)))
+          (when buf (with-current-buffer buf (set-buffer-modified-p nil))
+                (kill-buffer buf)))
+        (delete-file temp)))))
+
 ;;; org-canvas-test.el ends here

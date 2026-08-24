@@ -73,7 +73,8 @@
    ("@" "Sync at point..." org-canvas-dispatch-sync-at-point)]
   ["Pull"
    ("p" "Pull all from Canvas" org-canvas-pull-all)
-   ("P" "Pull single..." org-canvas-dispatch-pull-single)]
+   ("P" "Pull single..." org-canvas-dispatch-pull-single)
+   ("u" "Pull heading at point" org-canvas-pull-at-point)]
   ["Delete"
    ("D" "Delete all from Canvas" org-canvas-delete-all)
    ("O" "Cleanup orphans" org-canvas-cleanup-orphans)

@@ -1405,6 +1405,21 @@ ITEM is the API response alist, POS is the heading position."
 
 ;;;; 4g. Pull Macro
 
+(defun org-canvas--pull-known-ids (file id-property)
+  "Return the ID-PROPERTY values FILE's headings already carry.
+The set a scoped pull refreshes: what this course file manages, as
+opposed to everything the Canvas course happens to hold."
+  (when (file-exists-p file)
+    (with-current-buffer (find-file-noselect file)
+      (delq nil (org-map-entries
+                 (lambda () (org-entry-get (point) id-property))
+                 nil 'file)))))
+
+(defun org-canvas--pull-item-managed-p (item id-field known-ids)
+  "Return non-nil when ITEM's ID-FIELD is one of KNOWN-IDS."
+  (let ((id (alist-get id-field item)))
+    (and id (member (format "%s" id) known-ids) t)))
+
 (defun org-canvas--pull-confirm-overwrite (file feature-name)
   "Prompt user to confirm overwrite if FILE already has content.
 Signals `user-error' with FEATURE-NAME if aborted.  Uses
@@ -1592,16 +1607,24 @@ Example:
     (unless endpoint-expr (error "org-canvas-define-pull: :endpoint is required"))
     (unless item-fn (error "org-canvas-define-pull: :pull-item-fn is required"))
     `(progn
+       (org-canvas-register-pull-item-fn ,feature-name ,item-fn)
        ;;;###autoload
-       (defun ,pull-fn-name ()
-         ,(format "Pull %s from Canvas into the local Org file." feature-name)
-         (interactive)
+       (defun ,pull-fn-name (&optional managed-only)
+         ,(format "Pull %s from Canvas into the local Org file.
+
+With a prefix argument, MANAGED-ONLY restricts the pull to items the
+Org file already claims — headings carrying a Canvas id — so a course
+holding items you do not manage is refreshed rather than imported
+wholesale (issue #67)." feature-name)
+         (interactive "P")
          (org-canvas--start-operation ,(format "PULLING %s" op-label))
          (let* ((file (expand-file-name ,file-expr))
                 (endpoint (org-canvas-api-course-endpoint ,endpoint-expr))
                 (remote (org-canvas-api-request-all-pages
                          'GET endpoint ,params-expr))
                 (count 0)
+                (known-ids (when managed-only
+                             (org-canvas--pull-known-ids file ,id-property)))
                 (was-fresh (org-canvas--pull-was-fresh-p file)))
            (org-canvas--pull-confirm-overwrite file ,feature-name)
            (org-canvas--pull-confirm-unsaved file ,feature-name)
@@ -1613,17 +1636,20 @@ Example:
              (with-current-buffer (find-file-noselect file)
                (dolist (item (org-canvas--pull-sort-items
                               remote ,secondary-sort-key ,tertiary-sort-key))
-                 ,(let ((body
-                         `(progn
-                            (org-canvas--pull-process-item
-                             item file
-                             (list :id-field ,id-field :title-field ,title-field
-                                   :id-property ,id-property :pull-item-fn ,item-fn))
-                            (cl-incf count))))
-                    (if skip-fn
-                        `(unless (funcall ,skip-fn item)
-                           ,body)
-                      body)))
+                 ,(let* ((body
+                          `(progn
+                             (org-canvas--pull-process-item
+                              item file
+                              (list :id-field ,id-field :title-field ,title-field
+                                    :id-property ,id-property :pull-item-fn ,item-fn))
+                             (cl-incf count)))
+                         (body (if skip-fn
+                                   `(unless (funcall ,skip-fn item) ,body)
+                                 body)))
+                    `(when (or (not managed-only)
+                               (org-canvas--pull-item-managed-p
+                                item ,id-field known-ids))
+                       ,body)))
                (org-canvas--pull-write-file-header)
                (org-canvas--save-buffer)))
            (org-canvas--pull-kill-fresh-buffer file was-fresh)

@@ -1758,6 +1758,7 @@ Each content type can be pulled individually:
 | Command                              | Description                           |
 |--------------------------------------+---------------------------------------|
 | =org-canvas-pull-all=                  | Pull entire course                    |
+| =org-canvas-pull-at-point=             | Refresh the heading at point          |
 | =org-canvas-pull-settings=             | Pull course settings and tabs         |
 | =org-canvas-pull-sections=             | Pull course sections                  |
 | =org-canvas-pull-assignment-groups=    | Pull assignment groups                |
@@ -1772,6 +1773,42 @@ Each content type can be pulled individually:
 | =org-canvas-pull-announcements=       | Pull announcements                    |
 | =org-canvas-pull-files=               | Pull file metadata and download files |
 | =org-canvas-pull-calendar-events=      | Pull calendar events                  |
+
+** Pulling One Heading
+
+=org-canvas-diff= names the items Canvas changed behind your back.  To accept
+one of them, put point on its heading and run:
+
+#+begin_src
+M-x org-canvas-pull-at-point
+#+end_src
+
+That fetches just this item and replaces the heading with Canvas's version:
+the title, the properties, the body, =CANVAS_UPDATED_AT= stamped from the
+remote, and the now-stale =PAYLOAD_HASH= dropped so the next sync does not
+report drift that is no longer there.  It is the same code the conflict
+prompt's "pull" option runs, which until now was reachable only by starting a
+sync.  Local edits to that heading are discarded, so it asks first.
+
+The command works in any course file -- it finds the feature from the file
+you are in.  A content type with no single-item pull (quizzes, outcomes) says
+so and names the whole-file command instead.
+
+** Scoping a Pull to What You Manage
+
+Every =org-canvas-pull-<type>= command takes a prefix argument:
+
+#+begin_src
+C-u M-x org-canvas-pull-assignments
+#+end_src
+
+which restricts the pull to items the Org file already claims -- headings
+carrying a Canvas id.  A course with sixty assignments of which you manage
+thirty is refreshed rather than imported wholesale, and the shadow
+assignments Canvas creates behind quizzes stay out of your file.
+
+Use the plain command to import a course for the first time, and the prefix
+argument afterwards.
 
 ** Heading Matching
 

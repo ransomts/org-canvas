@@ -612,6 +612,70 @@ No properties are modified and no API requests are sent."
   (let ((org-canvas--dry-run t))
     (org-canvas-sync)))
 
+;;;; Pull One Heading
+;;
+;; `org-canvas-diff' names the items Canvas changed behind your back, and
+;; until now nothing accepted one of them: whole-file pull would write a
+;; heading for every item the course holds, and the only single-item pull
+;; was answering `l' at a conflict prompt during a sync you may not want
+;; to run yet (issue #67).  The hard part already existed —
+;; `org-canvas--conflict-pull-local' — and simply had no caller outside
+;; conflict resolution.
+
+(defun org-canvas--pull-at-point-feature ()
+  "Return the feature entry for the current buffer's file.
+Signals a `user-error' when the buffer is not a course file, or when
+its feature has no pull-item function to refresh a heading with."
+  (let* ((file (buffer-file-name))
+         (feature (org-canvas--registry-feature-for-file file)))
+    (unless feature
+      (user-error "%s is not one of this course's Canvas files"
+                  (if file (file-name-nondirectory file) "This buffer")))
+    (unless (plist-get feature :pull-item-fn)
+      (user-error "%s has no single-item pull; use M-x org-canvas-pull-%s"
+                  (plist-get feature :name)
+                  (downcase (replace-regexp-in-string
+                             " " "-" (plist-get feature :name)))))
+    feature))
+
+(defun org-canvas--pull-at-point-1 (feature id title)
+  "Overwrite the heading at point with FEATURE's Canvas item ID.
+TITLE names the heading in the log."
+  (let* ((endpoint (org-canvas-api-course-endpoint
+                    (format "%s/%%s" (plist-get feature :endpoint)) id))
+         (remote (org-canvas-api-request 'GET endpoint)))
+    (org-canvas--conflict-pull-local
+     (list :pom (point-marker)) remote (plist-get feature :pull-item-fn))
+    (org-canvas--log-info org-canvas--logger
+      "[Pull] Refreshed '%s' from Canvas (%s %s)"
+      title (plist-get feature :name) id)
+    (message "Pulled '%s' from Canvas." title)))
+
+;;;###autoload
+(defun org-canvas-pull-at-point ()
+  "Replace the heading at point with Canvas's version of it.
+Accepts one Canvas-side edit — the kind `org-canvas-diff' reports —
+without pulling the whole file.  Fetches just this item and hands it to
+the same code the conflict prompt's pull option uses: the heading is
+renamed, its properties and body are rewritten, CANVAS_UPDATED_AT is
+stamped from the remote, and the now-stale PAYLOAD_HASH is dropped so
+the next sync does not see drift that is no longer there.
+
+Local edits to this heading are discarded, which is the point; you are
+asked to confirm first."
+  (interactive)
+  (org-back-to-heading t)
+  (let* ((feature (org-canvas--pull-at-point-feature))
+         (id-property (or (plist-get feature :id-property) "CANVAS_ID"))
+         (id (org-entry-get (point) id-property))
+         (title (org-get-heading t t t t)))
+    (unless id
+      (user-error "'%s' has no %s — nothing on Canvas to pull from" title
+                  id-property))
+    (when (org-canvas--confirm
+           (format "Replace '%s' with the version on Canvas? " title))
+      (org-canvas--pull-at-point-1 feature id title))))
+
 ;;;; Pull All (Canvas → Org Migration)
 
 (defvar org-canvas--pull-counters nil
