@@ -1566,9 +1566,29 @@ Pull is available for modules that have a pull-item function: assignments, pages
 
 ** Configuration
 
-| Variable                    | Default | Description                              |
-|-----------------------------+---------+------------------------------------------|
-| =org-canvas-detect-conflicts= | =t=       | Enable conflict detection before pushes  |
+| Variable                     | Default | Description                                        |
+|------------------------------+---------+----------------------------------------------------|
+| =org-canvas-detect-conflicts=  | =t=       | Enable conflict detection before pushes            |
+| =org-canvas-conflict-strategy= | =nil=     | Resolve without asking: =push=, =pull= or =skip=         |
+
+*** Unattended Syncs
+
+A scheduled sync has no one to answer the prompt.  Set
+=org-canvas-conflict-strategy= to decide in advance:
+
+#+begin_src elisp
+(setq org-canvas-conflict-strategy 'skip)   ;; leave remote edits alone
+#+end_src
+
+Under =emacs --batch= a nil setting behaves as =skip= rather than blocking, and
+every entry resolved this way is named in the log with the reason.  Before
+this, a remote-modified entry killed the run outright: =read-char-choice= in a
+batch Emacs signals an end-of-file rather than taking a default.
+
+Note that =org-canvas-force-push= is not the same thing.  It disables conflict
+detection entirely and overwrites every remote edit without looking;
+=org-canvas-conflict-strategy= still detects the conflict and applies your
+standing answer to it.
 
 ** Commands
 

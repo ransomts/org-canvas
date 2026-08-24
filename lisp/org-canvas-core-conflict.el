@@ -15,10 +15,33 @@
 (require 'diff)
 (require 'org-canvas-core-config)
 
+(defcustom org-canvas-conflict-strategy nil
+  "How to resolve a remote-modified entry without asking.
+nil, the default, shows the diff and prompts.  `push' overwrites
+Canvas, `pull' overwrites the local heading, `skip' leaves the entry
+alone and names it in the log.
+
+This is the seam a scheduled sync needs.  `org-canvas--conflict-apply-all'
+looks like it would serve, but every sync entry point rebinds it to nil
+so one run's \"apply to all\" answer cannot leak into the next, which
+leaves a caller nothing to set (issue #72).  This variable is never
+rebound by the pipeline.
+
+Under `noninteractive' a nil setting behaves as `skip': a batch Emacs
+has no one to answer `read-char-choice', and a scheduled sync that
+leaves remote edits alone and names them beats one that dies reading a
+keystroke that cannot arrive."
+  :type '(choice (const :tag "Ask" nil)
+                 (const :tag "Always push (overwrite Canvas)" push)
+                 (const :tag "Always pull (overwrite local)" pull)
+                 (const :tag "Always skip" skip))
+  :group 'org-canvas)
+
 (defvar org-canvas--conflict-apply-all nil
   "When non-nil, auto-resolve all conflicts with this action.
 Valid values: nil, \\='push, \\='pull, \\='skip.
-Bound per-sync by `org-canvas-define-sync'.")
+Bound per-sync by `org-canvas-define-sync'.  For a decision that
+outlives one run, see `org-canvas-conflict-strategy'.")
 
 (defvar org-canvas--current-pull-item-fn nil
   "Pull-item function for the module currently being synced.
@@ -123,10 +146,18 @@ Returns the buffer.  The caller should kill it after resolution."
     (display-buffer buf)
     buf))
 
-(defun org-canvas--conflict-prompt (has-pull-fn)
+(cl-defun org-canvas--conflict-prompt (has-pull-fn)
   "Prompt user for conflict resolution action.
 HAS-PULL-FN controls whether pull options are shown.
-Returns one of: push, pull, skip, push-all, pull-all, skip-all."
+Returns one of: push, pull, skip, push-all, pull-all, skip-all.
+
+Returns `skip' without prompting under `noninteractive'.  Callers
+normally settle this earlier, in `org-canvas--conflict-unattended-action';
+the guard is repeated here because `read-char-choice' in a batch Emacs
+does not fall back to a default, it signals end-of-file and takes the
+whole sync with it (issue #72)."
+  (when noninteractive
+    (cl-return-from org-canvas--conflict-prompt 'skip))
   (let* ((pull-keys (when has-pull-fn '(?l ?L)))
          (all-keys (append '(?p ?P) pull-keys '(?s ?S)))
          (prompt (if has-pull-fn
@@ -138,15 +169,37 @@ Returns one of: push, pull, skip, push-all, pull-all, skip-all."
       (?l 'pull) (?L 'pull-all)
       (?s 'skip) (?S 'skip-all))))
 
+(defun org-canvas--conflict-unattended-action (data)
+  "Return the action to take for DATA without prompting, or nil to ask.
+`org-canvas-conflict-strategy' wins when set.  Failing that, a batch
+Emacs takes `skip': `read-char-choice' there reads a keystroke that
+cannot arrive and kills the sync (issue #72)."
+  (let ((action (or org-canvas-conflict-strategy
+                    (and noninteractive 'skip))))
+    (when action
+      (org-canvas--log-warning org-canvas--logger
+        "[Conflict] '%s' resolved as %s without prompting%s"
+        (or (plist-get data :title) (plist-get data :display-name) "entry")
+        action
+        (if org-canvas-conflict-strategy
+            " (org-canvas-conflict-strategy)"
+          " (batch mode; set org-canvas-conflict-strategy to choose)"))
+      action)))
+
 (cl-defun org-canvas--resolve-conflict (data remote-response)
   "Resolve a conflict for DATA given REMOTE-RESPONSE.
-Checks `org-canvas--conflict-apply-all' for a batch decision.
-Otherwise shows a diff buffer and prompts the user.
+Checks `org-canvas--conflict-apply-all' for a batch decision, then
+`org-canvas--conflict-unattended-action' for a configured or batch-mode
+one.  Otherwise shows a diff buffer and prompts the user.
 Returns \\='push, \\='pull, or \\='skip."
   ;; Fast path: apply-all already set by a previous choice
   (when org-canvas--conflict-apply-all
     (cl-return-from org-canvas--resolve-conflict
       org-canvas--conflict-apply-all))
+  ;; No one to ask, or a standing instruction not to
+  (let ((unattended (org-canvas--conflict-unattended-action data)))
+    (when unattended
+      (cl-return-from org-canvas--resolve-conflict unattended)))
   ;; Show diff and prompt
   (let* ((has-pull-fn (not (null org-canvas--current-pull-item-fn)))
          (buf (org-canvas--conflict-format-diff data remote-response))

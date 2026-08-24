@@ -260,6 +260,7 @@ Module items skipped because their target lacked a CANVAS_ID are tracked in `org
 - `org-canvas--conflict-check` returns `(cons 'conflict REMOTE-RESPONSE)` (not bare `'conflict`)
 - `org-canvas--resolve-conflict` shows a diff buffer and prompts: push/pull/skip (capitals = apply to all)
 - `org-canvas--conflict-apply-all` defvar: batch decision bound per-sync by `org-canvas-define-sync`
+- `org-canvas-conflict-strategy` defcustom (nil/`push`/`pull`/`skip`) is the *caller's* seam and is never rebound by the pipeline — `--conflict-apply-all` looks like it would serve but every entry point rebinds it to nil, so a caller's `let` loses (issue #72). `org-canvas--conflict-unattended-action` consults it before prompting, and falls back to `skip` under `noninteractive`: `read-char-choice` in a batch Emacs signals end-of-file rather than taking a default, which killed the whole sync. Tests that exercise the interactive prompt must bind `noninteractive` to nil
 - `org-canvas--current-pull-item-fn` defvar: dynamically bound per-sync so `push-to-api` can access it
 - `org-canvas--conflict-pull-local` overwrites local heading via the module's pull-item function
 - Push-to-api returns `'pulled` (not `'conflict`) when user chooses pull — tracked by `:pulled` counter in sync pipeline
