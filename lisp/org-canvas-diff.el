@@ -75,15 +75,33 @@ feature registry's \"Assignment Groups\" finds the property registry's
 
 (defun org-canvas--diff-remote-field (spec item)
   "Return ITEM's value for the Canvas field described by SPEC.
-Uses the spec's `:api-key' when it declares one; otherwise the
+A spec may name a `:remote-fn' of one argument, the Canvas item, for a
+property the payload does not hold under a flat key of its own: a
+file's publish state lives in `locked' (issue #61) and a group's drop
+rules under `rules' (issue #62), so a flat lookup silently returned
+nil and reported every such item as drifted.  Otherwise uses the
+spec's `:api-key' when it declares one, and failing that the
 `:data-key', which every module already names after the Canvas field."
-  (let ((key (or (plist-get spec :api-key)
-                 (substring (symbol-name (plist-get spec :data-key)) 1))))
-    (alist-get (intern key) item)))
+  (let ((remote-fn (plist-get spec :remote-fn)))
+    (if remote-fn
+        (funcall remote-fn item)
+      (let ((key (or (plist-get spec :api-key)
+                     (substring (symbol-name (plist-get spec :data-key)) 1))))
+        (alist-get (intern key) item)))))
 
 (defun org-canvas--diff-normalize-remote (value)
   "Return VALUE with Canvas's JSON null and false spellings folded to nil."
   (if (memq value '(:json-false :null)) nil value))
+
+(defun org-canvas--diff-remote-list (remote)
+  "Return REMOTE as a list of strings, however Canvas spelled it.
+A `csv-enum' field arrives either as a JSON array or as one comma
+separated string — pages return `editing_roles' as \"teachers\" —
+and `append' on a string yields character codes, which is how
+\"teachers\" came to be reported as 116,101,97,... (issue #63)."
+  (cond ((null remote) nil)
+        ((stringp remote) (split-string remote "," t "[ \t]+"))
+        (t (mapcar (lambda (v) (format "%s" v)) (append remote nil)))))
 
 (defun org-canvas--diff-values-equal-p (type local remote)
   "Return non-nil when LOCAL (an Org string) and REMOTE agree, given TYPE."
@@ -99,9 +117,7 @@ Uses the spec's `:api-key' when it declares one; otherwise the
                      (org-canvas--parse-iso8601-time remote)))))
       ('csv-enum
        (equal (sort (split-string (or local "") "," t "[ \t]+") #'string<)
-              (sort (mapcar (lambda (v) (format "%s" v))
-                            (append remote nil))
-                    #'string<)))
+              (sort (org-canvas--diff-remote-list remote) #'string<)))
       (_ (equal local (and remote (format "%s" remote)))))))
 
 (defun org-canvas--diff-format-remote (type remote)
@@ -109,7 +125,7 @@ Uses the spec's `:api-key' when it declares one; otherwise the
   (let ((remote (org-canvas--diff-normalize-remote remote)))
     (pcase type
       ('boolean (if remote "true" "false"))
-      ('csv-enum (mapconcat (lambda (v) (format "%s" v)) (append remote nil) ","))
+      ('csv-enum (mapconcat #'identity (org-canvas--diff-remote-list remote) ","))
       (_ (if remote (format "%s" remote) "(unset)")))))
 
 (defun org-canvas--diff-compare-fields (specs pom item)

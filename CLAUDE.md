@@ -149,6 +149,8 @@ All 19 validation targets self-register their property definitions at load time.
 
 **Pending-first-sync collapse:** validation warnings for link targets that merely lack a CANVAS_ID carry a `:pending-sync` flag and collapse into one summary line in the report; `C-u M-x org-canvas-validate` lists them individually.
 
+**`:remote-fn` — how the drift report reads a property back off Canvas.** `org-canvas--diff-remote-field` otherwise assumes the payload is a flat alist keyed by `:api-key`, falling back to `:data-key`. That assumption is wrong wherever Canvas nests or renames a field, and the failure is silent: `alist-get` returns nil, the formatter prints `false`/`(unset)`, and *every* item with that property is reported as drifted. Two specs declare a `:remote-fn` (a symbol naming a one-argument function of the Canvas item) for exactly that reason — files' `PUBLISHED` reads the inverse of `locked`, which is the field Canvas actually returns (issue #61, matching the pull mapping from #50), and assignment-groups' `DROP_LOWEST`/`DROP_HIGHEST` read the nested `rules` object the push side already builds (issue #62). When adding a property whose Canvas spelling is not a flat key of the same name, give it a `:remote-fn`; the give-away is a whole feature reporting the same field as changed on an untouched course.
+
 **Declarative Payload Builder:**
 ```elisp
 (org-canvas-define-payload group-category

@@ -53,6 +53,24 @@
  :name "Assignment Groups" :endpoint "assignment_groups"
  :file-var 'org-canvas-assignment-groups-file
  :id-field 'id :id-property "CANVAS_ID" :title-field 'name)
+
+(defun org-canvas--assignment-group-remote-rule (item key)
+  "Return KEY from the Canvas assignment group ITEM's `rules' object.
+Canvas nests the drop rules — {\"rules\": {\"drop_lowest\": 1}} — while
+WEIGHT and POSITION sit at the top level, so a flat lookup found the
+weight and quietly missed the rules (issue #62).  The push side has
+always known this; see `org-canvas--assignment-group-compute-rules'."
+  (let ((rules (alist-get 'rules item)))
+    (and rules (alist-get key rules))))
+
+(defun org-canvas--assignment-group-remote-drop-lowest (item)
+  "Return ITEM's nested drop_lowest rule, or nil."
+  (org-canvas--assignment-group-remote-rule item 'drop_lowest))
+
+(defun org-canvas--assignment-group-remote-drop-highest (item)
+  "Return ITEM's nested drop_highest rule, or nil."
+  (org-canvas--assignment-group-remote-rule item 'drop_highest))
+
 (org-canvas-register-properties "assignment-groups"
   :label "Assignment Groups"
   :file-var 'org-canvas-assignment-groups-file
@@ -64,8 +82,10 @@
   '((:org-prop "WEIGHT" :data-key :group_weight :type number
      :doc "Group weight percentage (0-100)")
     (:org-prop "DROP_LOWEST" :data-key :drop_lowest :type number
+     :remote-fn org-canvas--assignment-group-remote-drop-lowest
      :doc "Number of lowest scores to drop")
     (:org-prop "DROP_HIGHEST" :data-key :drop_highest :type number
+     :remote-fn org-canvas--assignment-group-remote-drop-highest
      :doc "Number of highest scores to drop")
     (:org-prop "POSITION" :data-key :position :type number
      :doc "Position in group ordering"))
