@@ -1830,6 +1830,30 @@ assignments Canvas creates behind quizzes stay out of your file.
 Use the plain command to import a course for the first time, and the prefix
 argument afterwards.
 
+** Forcing a Re-upload
+
+A file sync skips an entry whose =PAYLOAD_HASH= still matches.  That hash
+describes the local file and the last successful upload; it says nothing about
+what Canvas actually holds.  When the two disagree for a reason no hash can
+see, force it:
+
+#+begin_src
+M-x org-canvas-files-force-reupload           ;; every file in files.org
+M-x org-canvas-force-reupload-file-at-point   ;; just this one
+#+end_src
+
+Both confirm first, and both re-upload regardless of content.  The case they
+were built for: files uploaded before the multipart fix, whose Canvas copies
+carry two stray bytes in front of their content, which the ordinary comparison
+deliberately tolerates rather than re-upload the whole course.
+
+Each file lands under a new Canvas id.  That is cheap now -- the upload
+overwrites the file where it stands, Canvas repoints the module items itself,
+and the old ids keep resolving -- with one exception: a file whose folder
+changed is deleted and recreated, and its module items come back on the next
+modules sync.  Run =org-canvas-sync= rather than the files sync alone if any
+entry has moved.
+
 ** Heading Matching
 
 When pulling, each Canvas item is matched to an existing Org heading by its =CANVAS_ID= (or =CANVAS_URL= for pages).  If no match is found, a new heading is created at the end of the file.  This makes pulling idempotent -- running it multiple times updates existing headings rather than creating duplicates.

@@ -71,6 +71,9 @@
    ("d" "Dry-run preview" org-canvas-sync-dry-run)
    ("f" "Force push (skip conflicts)" org-canvas-force-push)
    ("@" "Sync at point..." org-canvas-dispatch-sync-at-point)]
+  ["Files"
+   ("F" "Force re-upload (all files)" org-canvas-files-force-reupload)
+   ("z" "Force re-upload file at point" org-canvas-force-reupload-file-at-point)]
   ["Pull"
    ("p" "Pull all from Canvas" org-canvas-pull-all)
    ("P" "Pull single..." org-canvas-dispatch-pull-single)

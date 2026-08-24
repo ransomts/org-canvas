@@ -3383,6 +3383,148 @@
                     (expect org-canvas--file-changed-ids :to-be nil))))))
         (delete-directory temp-dir t)))))
 
+;;;; Forced re-upload (correcting bytes a hash cannot see)
+
+(describe "org-canvas--file-sync-parsed-entry forced"
+  (it "re-uploads an entry whose hash matches exactly"
+    ;; The case a hash cannot see: local and last-upload agree, but the
+    ;; bytes on Canvas carry issue #70's leading CRLF.
+    (let ((uploaded nil))
+      (with-temp-org-buffer
+       "* doc.pdf
+:PROPERTIES:
+:CANVAS_ID: 42
+:PAYLOAD_HASH: aaa:bbb
+:END:
+"
+       (org-back-to-heading)
+       (let ((org-canvas--file-force-upload t))
+         (cl-letf (((symbol-function 'org-canvas--file-content-hash)
+                    (lambda (&rest _) "aaa:bbb"))
+                   ((symbol-function 'org-canvas--file-sync-upload)
+                    (lambda (&rest _) (setq uploaded t) :success)))
+           (expect (org-canvas--file-sync-parsed-entry
+                    (list :canvas-id "42" :display-name "doc.pdf"))
+                   :to-be :success)
+           (expect uploaded :to-be t))))))
+
+  (it "does not consult the conflict check or the legacy migration"
+    ;; Both reason from the same hashes the force is overriding.
+    (let ((consulted nil))
+      (with-temp-org-buffer
+       "* doc.pdf
+:PROPERTIES:
+:CANVAS_ID: 42
+:PAYLOAD_HASH: 5d41402abc4b2a76b9719d911017c592
+:END:
+"
+       (org-back-to-heading)
+       (let ((org-canvas--file-force-upload t))
+         (cl-letf (((symbol-function 'org-canvas--file-content-hash)
+                    (lambda (&rest _) "aaa:bbb"))
+                   ((symbol-function 'org-canvas--file-check-conflict)
+                    (lambda (&rest _) (setq consulted 'conflict) 'push))
+                   ((symbol-function 'org-canvas--file-migrate-legacy-hash)
+                    (lambda (&rest _) (setq consulted 'migrate) t))
+                   ((symbol-function 'org-canvas--file-sync-upload)
+                    (lambda (&rest _) :success)))
+           (org-canvas--file-sync-parsed-entry
+            (list :canvas-id "42" :display-name "doc.pdf"))
+           (expect consulted :to-be nil))))))
+
+  (it "leaves the ordinary skip alone when not forced"
+    (let ((uploaded nil))
+      (with-temp-org-buffer
+       "* doc.pdf
+:PROPERTIES:
+:CANVAS_ID: 42
+:PAYLOAD_HASH: aaa:bbb
+:END:
+"
+       (org-back-to-heading)
+       (let ((org-canvas--file-force-upload nil))
+         (cl-letf (((symbol-function 'org-canvas--file-content-hash)
+                    (lambda (&rest _) "aaa:bbb"))
+                   ((symbol-function 'org-canvas--file-sync-upload)
+                    (lambda (&rest _) (setq uploaded t) :success)))
+           (expect (org-canvas--file-sync-parsed-entry
+                    (list :canvas-id "42" :display-name "doc.pdf"))
+                   :to-be :skip)
+           (expect uploaded :to-be nil)))))))
+
+(describe "org-canvas-files-force-reupload"
+  (it "binds the force flag for one run and asks first"
+    (let ((forced-during-run nil)
+          (asked nil))
+      (cl-letf (((symbol-function 'org-canvas--confirm)
+                 (lambda (prompt) (setq asked prompt) t))
+                ((symbol-function 'org-canvas-sync-files)
+                 (lambda () (setq forced-during-run org-canvas--file-force-upload))))
+        (org-canvas-files-force-reupload)
+        (expect forced-during-run :to-be t)
+        (expect asked :to-match "new Canvas file id")
+        ;; and the flag does not outlive the run
+        (expect org-canvas--file-force-upload :to-be nil))))
+
+  (it "does nothing when the confirmation is declined"
+    (let ((synced nil))
+      (cl-letf (((symbol-function 'org-canvas--confirm) (lambda (_) nil))
+                ((symbol-function 'org-canvas-sync-files)
+                 (lambda () (setq synced t))))
+        (org-canvas-files-force-reupload)
+        (expect synced :to-be nil)))))
+
+(describe "org-canvas-force-reupload-file-at-point"
+  (it "forces just the entry at point"
+    (let ((forced-during-run nil))
+      (with-temp-org-buffer
+       "* doc.pdf
+:PROPERTIES:
+:CANVAS_ID: 42
+:END:
+"
+       (org-back-to-heading)
+       (cl-letf (((symbol-function 'org-canvas--confirm) (lambda (_) t))
+                 ((symbol-function 'org-canvas--file-sync-single-entry)
+                  (lambda (_marker)
+                    (setq forced-during-run org-canvas--file-force-upload)
+                    :success))
+                 ((symbol-function 'message) #'ignore))
+         (org-canvas-force-reupload-file-at-point)
+         (expect forced-during-run :to-be t)))))
+
+  (it "warns when the forced upload had to recreate the file"
+    (let ((warnings nil))
+      (with-temp-org-buffer
+       "* doc.pdf
+:PROPERTIES:
+:CANVAS_ID: 42
+:END:
+"
+       (org-back-to-heading)
+       (cl-letf (((symbol-function 'org-canvas--confirm) (lambda (_) t))
+                 ((symbol-function 'org-canvas--file-sync-single-entry)
+                  (lambda (_marker)
+                    (push "doc.pdf" org-canvas--file-recreated-ids)
+                    :success))
+                 ((symbol-function 'org-canvas--log-warning)
+                  (lambda (_l fmt &rest args)
+                    (push (apply #'format fmt args) warnings)))
+                 ((symbol-function 'message) #'ignore))
+         (org-canvas-force-reupload-file-at-point)
+         (expect (car warnings) :to-match "moved folders")))))
+
+  (it "does nothing when the confirmation is declined"
+    (let ((synced nil))
+      (with-temp-org-buffer
+       "* doc.pdf\n:PROPERTIES:\n:CANVAS_ID: 42\n:END:\n"
+       (org-back-to-heading)
+       (cl-letf (((symbol-function 'org-canvas--confirm) (lambda (_) nil))
+                 ((symbol-function 'org-canvas--file-sync-single-entry)
+                  (lambda (_m) (setq synced t) :success)))
+         (org-canvas-force-reupload-file-at-point)
+         (expect synced :to-be nil))))))
+
 ;;;; Overwrite in place instead of delete-and-upload (issue #77)
 
 (describe "org-canvas--file-replace-in-place-p"
