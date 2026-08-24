@@ -907,6 +907,20 @@ Creates folders as needed and populates the folder cache."
 
 ;;;; Main Sync Functions
 
+(defvar org-canvas--file-force-upload nil
+  "When non-nil, re-upload every file entry whatever its hash says.
+Every skip in `org-canvas--file-sync-parsed-entry' reasons from a hash,
+which describes the local file and the last successful upload — not
+what Canvas actually holds.  When those disagree, and the reason is not
+something a hash can see, the hash has no answer and the run needs
+overriding.  The case this was built for: the files uploaded before
+issue #70 was fixed, which carry a stray leading CRLF that the issue
+#71 migration deliberately tolerates.
+
+Bound by `org-canvas-files-force-reupload' and its at-point sibling.
+Never set globally: a sync that re-uploads everything on every run is
+the behaviour issue #71 was about.")
+
 (defvar org-canvas--file-changed-ids nil
   "Display names of files whose CANVAS_ID changed during the current sync.
 A replacement upload always lands under a NEW id, even when it
@@ -1189,6 +1203,12 @@ looking synced."
          (parts (org-canvas--file-hash-parts stored-hash))
          (display-name (plist-get data :display-name)))
     (cond
+     ;; Every skip below reasons from a hash; a forced run is the answer
+     ;; when the hash is right and the bytes on Canvas are not.
+     (org-canvas--file-force-upload
+      (org-canvas--log-info org-canvas--logger
+        "[Force] Re-uploading '%s' regardless of its hash" display-name)
+      (org-canvas--file-sync-upload data file-hash old-id))
      ((and old-id stored-hash (string= file-hash stored-hash))
       (org-canvas--log-info org-canvas--logger
         "[Skip] '%s' unchanged — keeping Canvas file ID %s" display-name old-id)
@@ -1375,6 +1395,53 @@ of the same global run); until then those items are missing."
                (if (> dry-run-count 0)
                    (format ", %d would upload" dry-run-count)
                  "")))))
+
+(defun org-canvas--file-force-confirm (what)
+  "Ask before forcing a re-upload of WHAT.  Return non-nil to proceed."
+  (org-canvas--confirm
+   (format "Re-upload %s regardless of content, minting new Canvas file id(s)? "
+           what)))
+
+;;;###autoload
+(defun org-canvas-files-force-reupload ()
+  "Re-upload every file in files.org, ignoring its stored PAYLOAD_HASH.
+For the case a hash cannot see: the local file and the last upload
+agree, but the bytes on Canvas are wrong anyway.  That is true of every
+file uploaded before issue #70 was fixed, which carries a stray leading
+CRLF the issue #71 migration deliberately tolerates.
+
+Each file lands under a new Canvas id.  Since issue #77 that is cheap —
+the upload overwrites in place, Canvas repoints the module items itself
+and the old ids keep resolving — but it is still a write against every
+file in the course, so it asks first.  A file that moved folders is the
+exception: it is deleted and recreated, and its module items are
+restored by the next modules sync.
+
+Run `org-canvas-sync' rather than this command if you also want those
+module items repaired in the same pass."
+  (interactive)
+  (when (org-canvas--file-force-confirm "every file in files.org")
+    (let ((org-canvas--file-force-upload t))
+      (org-canvas-sync-files))))
+
+;;;###autoload
+(defun org-canvas-force-reupload-file-at-point ()
+  "Re-upload the file at point, ignoring its stored PAYLOAD_HASH.
+The single-entry form of `org-canvas-files-force-reupload', for
+correcting one file rather than a course."
+  (interactive)
+  (org-back-to-heading t)
+  (let ((display-name (org-get-heading t t t t)))
+    (when (org-canvas--file-force-confirm (format "'%s'" display-name))
+      (let ((org-canvas--file-force-upload t)
+            (org-canvas--file-changed-ids nil)
+            (org-canvas--file-recreated-ids nil))
+        (org-canvas--file-sync-single-entry (point-marker))
+        (org-canvas--save-buffer)
+        (when org-canvas--file-recreated-ids
+          (org-canvas--file-warn-recreated-ids
+           (nreverse org-canvas--file-recreated-ids)))
+        (message "Re-uploaded '%s'." display-name)))))
 
 ;;;; Delete Functions
 
