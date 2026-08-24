@@ -1370,6 +1370,52 @@ Syllabus text.
               (expect body :not :to-match "name=\"filename\"\r\n\r\nnil")
               ;; Should have actual content type
               (expect body :not :to-match "unknown/unknown")))
+        (delete-file temp-file))))
+
+  ;; Issue #70: the file part's header block was terminated twice, so
+  ;; every file Canvas stored began with two bytes that were not in it.
+  (it "starts the file content immediately after the header block"
+    (let ((temp-file (make-temp-file "upload-crlf" nil ".bin")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file
+              (set-buffer-multibyte nil)
+              (insert "%PDF-1.7 body bytes"))
+            (let* ((body (org-canvas--upload-build-multipart
+                          '((key . "val")) temp-file "BOUNDARY"))
+                   ;; Everything after the last header block is the file.
+                   (start (+ (string-match "name=\"file\"[^\0]*?\r\n\r\n" body)
+                             (length (match-string 0 body))))
+                   (suffix "\r\n--BOUNDARY--\r\n")
+                   (content (substring body start (- (length body) (length suffix)))))
+              (expect content :to-equal "%PDF-1.7 body bytes")))
+        (delete-file temp-file))))
+
+  (it "round-trips a binary file byte for byte"
+    (let ((temp-file (make-temp-file "upload-binary" nil ".bin")))
+      (unwind-protect
+          (let ((bytes (unibyte-string #x25 #x50 #x44 #x46 #x00 #xbf #xf7 #xa2 #xfe)))
+            (with-temp-file temp-file
+              (set-buffer-multibyte nil)
+              (insert bytes))
+            (let* ((body (org-canvas--upload-build-multipart
+                          nil temp-file "B"))
+                   (start (+ (string-match "\r\n\r\n" body) 4))
+                   (content (substring body start (- (length body)
+                                                     (length "\r\n--B--\r\n")))))
+              (expect (length content) :to-equal (length bytes))
+              (expect content :to-equal bytes)))
+        (delete-file temp-file))))
+
+  (it "still separates each form field from the next boundary"
+    (let ((temp-file (make-temp-file "upload-fields" nil ".txt")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file (insert "x"))
+            (let ((body (org-canvas--upload-build-multipart
+                         '((a . "1") (b . "2")) temp-file "BOUNDARY")))
+              (expect body :to-match "\r\n\r\n1\r\n--BOUNDARY")
+              (expect body :to-match "\r\n\r\n2\r\n--BOUNDARY")))
         (delete-file temp-file)))))
 
 ;;;; Coverage: late policy POST also fails (Lines 288-289)
