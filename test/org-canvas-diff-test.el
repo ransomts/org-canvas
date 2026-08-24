@@ -35,7 +35,43 @@
     (expect (org-canvas--diff-remote-field
              '(:data-key :points_possible)
              '((points_possible . 10)))
-            :to-equal 10)))
+            :to-equal 10))
+
+  (it "asks the spec's remote-fn when the value is not under a flat key"
+    ;; Issues #61 and #62: a file's publish state lives in `locked', a
+    ;; group's drop rules under `rules'.
+    (expect (org-canvas--diff-remote-field
+             '(:data-key :drop_lowest
+               :remote-fn org-canvas--assignment-group-remote-drop-lowest)
+             '((group_weight . 15.0) (rules (drop_lowest . 1))))
+            :to-equal 1))
+
+  (it "prefers the remote-fn over a flat key of the same name"
+    (expect (org-canvas--diff-remote-field
+             '(:data-key :published :remote-fn org-canvas--file-remote-published)
+             '((published . :json-false) (locked . :json-false)))
+            :to-be t)))
+
+(describe "org-canvas--diff-remote-list"
+  (it "splits a comma-separated string Canvas sent instead of an array"
+    ;; Issue #63: `append' on a string yields character codes, so
+    ;; "teachers" was reported as 116,101,97,...
+    (expect (org-canvas--diff-remote-list "teachers") :to-equal '("teachers"))
+    (expect (org-canvas--diff-remote-list "teachers,students")
+            :to-equal '("teachers" "students")))
+
+  (it "trims whitespace around the separators"
+    (expect (org-canvas--diff-remote-list "teachers, students")
+            :to-equal '("teachers" "students")))
+
+  (it "passes an array through as strings"
+    (expect (org-canvas--diff-remote-list ["teachers" "students"])
+            :to-equal '("teachers" "students"))
+    (expect (org-canvas--diff-remote-list '(online_upload on_paper))
+            :to-equal '("online_upload" "on_paper")))
+
+  (it "returns nothing for an absent value"
+    (expect (org-canvas--diff-remote-list nil) :to-be nil)))
 
 (describe "org-canvas--diff-values-equal-p"
   (it "compares booleans across Org strings and JSON false"
@@ -70,6 +106,16 @@
             :to-be-truthy)
     (expect (org-canvas--diff-values-equal-p
              'csv-enum "online_upload" ["on_paper"])
+            :to-be nil))
+
+  (it "compares a csv enum Canvas sent as one string, not an array"
+    ;; Issue #63: pages return editing_roles as "teachers".
+    (expect (org-canvas--diff-values-equal-p 'csv-enum "teachers" "teachers")
+            :to-be-truthy)
+    (expect (org-canvas--diff-values-equal-p
+             'csv-enum "teachers,students" "students,teachers")
+            :to-be-truthy)
+    (expect (org-canvas--diff-values-equal-p 'csv-enum "teachers" "students")
             :to-be nil))
 
   (it "compares plain strings"
@@ -137,6 +183,127 @@
        (expect (org-canvas--diff-compare-fields
                 specs (point) '((assignment_group_id . 77)))
                :to-be nil)))))
+
+;;; The three false positives of issues #61, #62 and #63, each driven
+;;; through the module's own registered specs rather than a hand-written
+;;; one — the bugs were in what the specs said, not in the comparison.
+
+(defun org-canvas-diff-test--specs (feature)
+  "Return the registered property specs for FEATURE."
+  (plist-get (org-canvas--diff-find-properties feature) :properties))
+
+(describe "org-canvas--diff-compare-fields against real registry specs"
+  (it "does not call a published file unpublished (issue #61)"
+    (with-temp-org-buffer
+     "* syllabus.pdf
+:PROPERTIES:
+:PUBLISHED: true
+:END:
+"
+     (org-back-to-heading)
+     (expect (org-canvas--diff-compare-fields
+              (org-canvas-diff-test--specs "Files") (point)
+              '((id . 42) (display_name . "syllabus.pdf")
+                (locked . :json-false) (hidden . :json-false)))
+             :to-be nil)))
+
+  (it "still reports a file that really is locked on Canvas"
+    (with-temp-org-buffer
+     "* syllabus.pdf
+:PROPERTIES:
+:PUBLISHED: true
+:END:
+"
+     (org-back-to-heading)
+     (expect (org-canvas--diff-compare-fields
+              (org-canvas-diff-test--specs "Files") (point)
+              '((id . 42) (locked . t)))
+             :to-equal '(("PUBLISHED" "true" "false")))))
+
+  (it "reads drop rules out of the nested rules object (issue #62)"
+    (with-temp-org-buffer
+     "* Quizzes
+:PROPERTIES:
+:WEIGHT: 15
+:DROP_LOWEST: 1
+:END:
+"
+     (org-back-to-heading)
+     (expect (org-canvas--diff-compare-fields
+              (org-canvas-diff-test--specs "Assignment Groups") (point)
+              '((id . 697530) (name . "Quizzes") (group_weight . 15.0)
+                (rules (drop_lowest . 1))))
+             :to-be nil)))
+
+  (it "still reports a drop rule Canvas does not hold"
+    (with-temp-org-buffer
+     "* Quizzes
+:PROPERTIES:
+:WEIGHT: 15
+:DROP_LOWEST: 1
+:END:
+"
+     (org-back-to-heading)
+     (expect (org-canvas--diff-compare-fields
+              (org-canvas-diff-test--specs "Assignment Groups") (point)
+              '((id . 697530) (group_weight . 15.0) (rules)))
+             :to-equal '(("DROP_LOWEST" "1" "(unset)")))))
+
+  (it "compares editing roles Canvas sent as a string (issue #63)"
+    (with-temp-org-buffer
+     "* Course Home
+:PROPERTIES:
+:EDITING_ROLES: teachers
+:END:
+"
+     (org-back-to-heading)
+     (expect (org-canvas--diff-compare-fields
+              (org-canvas-diff-test--specs "Pages") (point)
+              '((url . "course-home") (editing_roles . "teachers")))
+             :to-be nil)))
+
+  (it "prints readable roles when they really differ"
+    (with-temp-org-buffer
+     "* Course Home
+:PROPERTIES:
+:EDITING_ROLES: teachers
+:END:
+"
+     (org-back-to-heading)
+     (expect (org-canvas--diff-compare-fields
+              (org-canvas-diff-test--specs "Pages") (point)
+              '((url . "course-home") (editing_roles . "students")))
+             :to-equal '(("EDITING_ROLES" "teachers" "students"))))))
+
+(describe "org-canvas--file-remote-published"
+  (it "reads a file's publish state from locked, the field Canvas returns"
+    (expect (org-canvas--file-remote-published '((locked . t))) :to-be nil)
+    (expect (org-canvas--file-remote-published '((locked . :json-false)))
+            :to-be t))
+
+  (it "treats a file with no locked field as published"
+    (expect (org-canvas--file-remote-published '((id . 42))) :to-be t)))
+
+(describe "org-canvas--assignment-group-remote-rule"
+  (it "reaches into the nested rules object"
+    (expect (org-canvas--assignment-group-remote-drop-lowest
+             '((rules (drop_lowest . 1))))
+            :to-equal 1)
+    (expect (org-canvas--assignment-group-remote-drop-highest
+             '((rules (drop_highest . 2))))
+            :to-equal 2))
+
+  (it "returns nil for a group Canvas holds no rules for"
+    (expect (org-canvas--assignment-group-remote-drop-lowest
+             '((group_weight . 15.0)))
+            :to-be nil)
+    (expect (org-canvas--assignment-group-remote-drop-lowest '((rules)))
+            :to-be nil))
+
+  (it "returns nil for a rule that is not the one asked for"
+    (expect (org-canvas--assignment-group-remote-drop-highest
+             '((rules (drop_lowest . 1))))
+            :to-be nil)))
 
 (describe "org-canvas--diff-modified-p"
   (it "flags a remote item newer than the recorded baseline"
@@ -324,6 +491,13 @@
   (it "prints a csv enum as the comma-separated form the Org file uses"
     (expect (org-canvas--diff-format-remote 'csv-enum ["online_upload" "on_paper"])
             :to-equal "online_upload,on_paper"))
+
+  (it "prints a string-shaped csv enum as itself, not as character codes"
+    ;; Issue #63's visible symptom: canvas: 116,101,97,99,104,101,114,115
+    (expect (org-canvas--diff-format-remote 'csv-enum "teachers")
+            :to-equal "teachers")
+    (expect (org-canvas--diff-format-remote 'csv-enum "teachers,students")
+            :to-equal "teachers,students"))
 
   (it "prints an unset value plainly"
     (expect (org-canvas--diff-format-remote 'string :null) :to-equal "(unset)"))
