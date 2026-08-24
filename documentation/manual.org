@@ -888,6 +888,7 @@ Course navigation structure with ordered content.
 | =EXTERNAL_URL=           | string  | URL for ExternalUrl items                                                      |
 | =NEW_TAB=                | boolean | Open external URL in new tab                                                   |
 | =PUBLISHED=              | boolean | Publish state; omit to keep the linked content's own state                     |
+| =PUBLISH_AT=             | timestamp | Release date for this item; overrides the module's own =PUBLISH_AT=          |
 
 A module item only carries a publish state of its own when the heading sets
 =PUBLISHED= explicitly.  Left unset, org-canvas omits the field and Canvas
@@ -1626,6 +1627,37 @@ nothing.  A whole semester can be authored in August and release itself.
 
 =M-x org-canvas-apply-scheduled-releases= runs the same pass on its own.
 
+*** Staggering items inside a week
+
+A module item may carry its own =PUBLISH_AT=, and an item's date outranks its
+module's.  That lets a week go live with pieces of it still scheduled ahead --
+the reading list on Monday, the lab that builds on Thursday's lecture on
+Thursday:
+
+#+begin_src org
+,* Week 03 (Aug 31 to Sep 4): Ethics II; Networks
+:PROPERTIES:
+:PUBLISH_AT: <2026-08-31 Mon 06:00>
+:END:
+,** [[file:pages.org::*Reading list][Reading list]]
+,** [[file:assignments.org::*Lab 3][Lab 3]]
+:PROPERTIES:
+:PUBLISH_AT: <2026-09-03 Thu 06:00>
+:END:
+#+end_src
+
+Publishing the module -- on schedule or by hand with =M-x
+org-canvas-publish-module= -- leaves Lab 3 alone until the third, and names it
+in the report as held rather than passing over it silently.  Unpublishing is
+never held back: =M-x org-canvas-unpublish-module= takes the whole week down,
+scheduled items included, since leaving content live behind an unpublished
+module is never what was meant.
+
+An item released inside a module that is still unpublished is reported as
+such.  The module is left alone -- publish state belongs to the object, and
+org-canvas will not publish a module you did not ask it to.  The content is
+live in Canvas, but students reach it only once the module is published too.
+
 Note that =PUBLISH_AT= is org-canvas's own scheduling, not Canvas's: it is never
 sent to the API.  A module's =UNLOCK_AT= is Canvas's, and the two are
 independent.
@@ -1928,7 +1960,7 @@ These commands delete the item at the current cursor position:
 | =org-canvas-status=               | Show sync status from the Org files (no API calls) |
 | =org-canvas-publish-module=       | Publish a module and every object it lists    |
 | =org-canvas-unpublish-module=     | The reverse                                   |
-| =org-canvas-apply-scheduled-releases= | Publish modules whose =PUBLISH_AT= has passed |
+| =org-canvas-apply-scheduled-releases= | Publish modules and items whose =PUBLISH_AT= has passed |
 | =org-canvas-diff=                 | Report how Canvas differs from the Org files (read-only) |
 | =org-canvas-diff-batch=           | As above, exiting non-zero when drift is found |
 | =org-canvas-validate=             | Validate all Org files offline (no API calls) |
@@ -2420,6 +2452,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =MIN_SCORE= | number |  |  | Required score for min_score completion |
 | =NEW_TAB= | boolean | true, false |  | Open external URL in new tab |
 | =PUBLISHED= | boolean | true, false |  | Publish state for this item; omit to keep the linked content's own state |
+| =PUBLISH_AT= | timestamp |  |  | Release date for this item; overrides the module's own PUBLISH_AT |
 
 ** Modules
 

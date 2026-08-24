@@ -1584,7 +1584,21 @@
                 ((symbol-function 'org-canvas--log-info) #'ignore)
                 ((symbol-function 'message) #'ignore))
         (org-canvas--publish-report "Week 03" t '(:changed 4 :unresolved nil))
-        (expect warnings :to-be nil)))))
+        (expect warnings :to-be nil))))
+
+  (it "names the items held back for their own release date"
+    (let (infos messages)
+      (cl-letf (((symbol-function 'org-canvas--log-info)
+                 (lambda (_logger fmt &rest args)
+                   (push (apply #'format fmt args) infos)))
+                ((symbol-function 'org-canvas--log-warning) #'ignore)
+                ((symbol-function 'message)
+                 (lambda (fmt &rest args)
+                   (push (apply #'format fmt args) messages))))
+        (org-canvas--publish-report "Week 03" t '(:changed 3 :held ("Lab 2")))
+        (expect (car infos) :to-match "held for their own PUBLISH_AT")
+        (expect (car infos) :to-match "'Lab 2'")
+        (expect (car messages) :to-match "1 held")))))
 
 (describe "org-canvas--publish-offer-sync"
   (it "syncs when the user says yes"
@@ -1655,5 +1669,91 @@
         (let ((buf (find-buffer-visiting (expand-file-name "modules.org" dir))))
           (when buf (kill-buffer buf)))
         (delete-directory dir t)))))
+
+(defun test-release-cmd--course ()
+  "Build a temp course where a module and one item release on their own dates.
+Week 05 is due now; the Lab 5 item inside undated Week 03 is due now too,
+while Lab 4 in the same module is still scheduled ahead."
+  (let ((dir (make-temp-file "release-cmd-" t)))
+    (with-temp-file (expand-file-name "assignments.org" dir)
+      (insert "* Lab 4\n:PROPERTIES:\n:CANVAS_ID: 64\n:PUBLISHED: false\n:END:\n"
+              "* Lab 5\n:PROPERTIES:\n:CANVAS_ID: 65\n:PUBLISHED: false\n:END:\n"))
+    (with-temp-file (expand-file-name "modules.org" dir)
+      (insert "* Week 03\n:PROPERTIES:\n:PUBLISHED: false\n:END:\n"
+              "** [[file:assignments.org::*Lab 4][Lab 4]]\n"
+              ":PROPERTIES:\n:PUBLISH_AT: <2099-01-01 Thu 06:00>\n:END:\n"
+              "** [[file:assignments.org::*Lab 5][Lab 5]]\n"
+              ":PROPERTIES:\n:PUBLISH_AT: <2020-01-01 Wed 06:00>\n:END:\n"
+              "* Week 05\n:PROPERTIES:\n:PUBLISHED: false\n"
+              ":PUBLISH_AT: <2020-01-01 Wed 06:00>\n:END:\n"))
+    dir))
+
+(describe "org-canvas-apply-scheduled-releases with per-item dates"
+  (it "releases a due item inside a module that has no date of its own"
+    (let ((dir (test-release-cmd--course)))
+      (unwind-protect
+          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+            (expect (org-canvas-apply-scheduled-releases)
+                    :to-equal '("Week 05" "Lab 5"))
+            (expect (test-publish-cmd--prop dir "assignments.org" "Lab 5" "PUBLISHED")
+                    :to-equal "true")
+            ;; Week 03 itself is not published by one of its items going live.
+            (expect (test-publish-cmd--prop dir "modules.org" "Week 03" "PUBLISHED")
+                    :to-equal "false"))
+        (test-publish-cmd--kill dir))))
+
+  (it "leaves an item whose date is still ahead alone"
+    (let ((dir (test-release-cmd--course)))
+      (unwind-protect
+          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+            (org-canvas-apply-scheduled-releases)
+            (expect (test-publish-cmd--prop dir "assignments.org" "Lab 4" "PUBLISHED")
+                    :to-equal "false"))
+        (test-publish-cmd--kill dir))))
+
+  (it "warns that the released item sits in an unpublished module"
+    (let ((dir (test-release-cmd--course))
+          (warnings nil))
+      (unwind-protect
+          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+            (cl-letf (((symbol-function 'org-canvas--log-warning)
+                       (lambda (_logger fmt &rest args)
+                         (push (apply #'format fmt args) warnings))))
+              (org-canvas-apply-scheduled-releases))
+            (expect (car warnings) :to-match "unpublished module 'Week 03'")
+            (expect (car warnings) :to-match "'Lab 5'"))
+        (test-publish-cmd--kill dir)))))
+
+(describe "org-canvas--release-report-items"
+  (it "names the scheduled items it could not resolve"
+    (let (warnings)
+      (cl-letf (((symbol-function 'org-canvas--log-warning)
+                 (lambda (_logger fmt &rest args)
+                   (push (apply #'format fmt args) warnings)))
+                ((symbol-function 'org-canvas--log-info) #'ignore))
+        (org-canvas--release-report-items '(:released nil :unresolved ("Gone")))
+        (expect (car warnings) :to-match "could not be resolved")
+        (expect (car warnings) :to-match "'Gone'"))))
+
+  (it "names what it released" ;; the report is the only record of a silent pass
+    (let (infos)
+      (cl-letf (((symbol-function 'org-canvas--log-info)
+                 (lambda (_logger fmt &rest args)
+                   (push (apply #'format fmt args) infos)))
+                ((symbol-function 'org-canvas--log-warning) #'ignore))
+        (org-canvas--release-report-items '(:released ("Lab 5")))
+        (expect (car infos) :to-match "reached their PUBLISH_AT")
+        (expect (car infos) :to-match "'Lab 5'"))))
+
+  (it "stays quiet when the pass released nothing"
+    (let (lines)
+      (cl-letf (((symbol-function 'org-canvas--log-info)
+                 (lambda (_logger fmt &rest args)
+                   (push (apply #'format fmt args) lines)))
+                ((symbol-function 'org-canvas--log-warning)
+                 (lambda (_logger fmt &rest args)
+                   (push (apply #'format fmt args) lines))))
+        (org-canvas--release-report-items nil)
+        (expect lines :to-be nil)))))
 
 ;;; org-canvas-test.el ends here

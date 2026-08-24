@@ -88,7 +88,9 @@
     (:org-prop "NEW_TAB" :data-key :new_tab :type boolean
      :doc "Open external URL in new tab")
     (:org-prop "PUBLISHED" :data-key :published :type boolean
-     :doc "Publish state for this item; omit to keep the linked content's own state"))
+     :doc "Publish state for this item; omit to keep the linked content's own state")
+    (:org-prop "PUBLISH_AT" :data-key :publish_at :type timestamp
+     :doc "Release date for this item; overrides the module's own PUBLISH_AT"))
   :structural-fn #'org-canvas--validate-module-item-link)
 
 ;;;; Helper Functions
@@ -799,8 +801,10 @@ heading that *is* a link cannot be relied on for a readable name."
 (defun org-canvas--module-publish-item (marker state modules-file-dir touched)
   "Apply publish STATE for the module item at MARKER.
 MODULES-FILE-DIR resolves its link.  TOUCHED is a cons cell whose car
-accumulates the buffers to save.  Return `changed', `unchanged', or
-the item title when its link could not be resolved."
+accumulates the buffers to save.  Return a cons (STATUS . TITLE) where
+STATUS is `changed', `unchanged', `held' (the item has a PUBLISH_AT
+still in the future, see `org-canvas--module-item-held-p'), or
+`unresolved' (its link points at no object)."
   (goto-char (marker-position marker))
   (org-back-to-heading t)
   (let* ((heading-with-links
@@ -820,26 +824,34 @@ the item title when its link could not be resolved."
                    (org-canvas--module-item-target
                     heading-with-links modules-file-dir))))
     (cond
+     ;; The item's own release date outranks the module's.
+     ((org-canvas--module-item-held-p (point) state) (cons 'held title))
      ;; SubHeaders and external URLs own their publish state (issue #47).
      (self-owned
       (push (current-buffer) (car touched))
-      (if (org-canvas--module-set-published (point) state) 'changed 'unchanged))
-     ((null target) title)
+      (cons (if (org-canvas--module-set-published (point) state)
+                'changed 'unchanged)
+            title))
+     ((null target) (cons 'unresolved title))
      (t
       (with-current-buffer (find-file-noselect (car target))
         (push (current-buffer) (car touched))
-        (if (org-canvas--module-set-published (cdr target) state)
-            'changed
-          'unchanged))))))
+        (cons (if (org-canvas--module-set-published (cdr target) state)
+                  'changed 'unchanged)
+              title))))))
 
 (defun org-canvas--module-publish-apply (module-pom state)
   "Set PUBLISHED to STATE on the module at MODULE-POM and everything it lists.
-Saves every file touched.  Returns a plist (:changed N :unresolved TITLES)."
+Items carrying their own PUBLISH_AT are held back until that date and
+named under `:held' rather than published with the rest of the module.
+Saves every file touched.  Returns a plist
+\(:changed N :unresolved TITLES :held TITLES)."
   (let ((modules-file-dir (file-name-directory
                            (expand-file-name org-canvas-modules-file)))
         (touched (list nil))
         (changed 0)
-        (unresolved nil))
+        (unresolved nil)
+        (held nil))
     (save-excursion
       (goto-char module-pom)
       (when (org-canvas--module-set-published (point) state)
@@ -850,13 +862,16 @@ Saves every file touched.  Returns a plist (:changed N :unresolved TITLES)."
           (save-excursion
             (let ((result (org-canvas--module-publish-item
                            marker state modules-file-dir touched)))
-              (cond
-               ((eq result 'changed) (setq changed (1+ changed)))
-               ((stringp result) (push result unresolved))))))
+              (pcase (car result)
+                ('changed (setq changed (1+ changed)))
+                ('unresolved (push (cdr result) unresolved))
+                ('held (push (cdr result) held))))))
         (dolist (m markers) (set-marker m nil))))
     (dolist (buf (delete-dups (car touched)))
       (with-current-buffer buf (org-canvas--save-buffer)))
-    (list :changed changed :unresolved (nreverse unresolved))))
+    (list :changed changed
+          :unresolved (nreverse unresolved)
+          :held (nreverse held))))
 
 (defun org-canvas--module-positions ()
   "Return an alist of (TITLE . POSITION) for the modules in modules.org."
@@ -867,13 +882,102 @@ Saves every file touched.  Returns a plist (:changed N :unresolved TITLES)."
          (lambda () (cons (org-get-heading t t t t) (point)))
          "LEVEL=1" 'file)))))
 
-(defun org-canvas--module-due-for-release-p (pom)
-  "Return non-nil when the module at POM has a PUBLISH_AT that has passed."
+(defun org-canvas--module-publish-at-time (pom)
+  "Return the PUBLISH_AT of the heading at POM as an encoded time, or nil.
+Nil for a heading with no release date and for one whose timestamp
+cannot be parsed: an unreadable date is not a schedule, so it neither
+releases the heading nor holds it back.  Validation reports the bad
+timestamp separately."
   (let ((publish-at (org-entry-get pom "PUBLISH_AT")))
     (when publish-at
-      (let ((time (ignore-errors
-                    (encode-time (org-parse-time-string publish-at)))))
-        (and time (not (time-less-p (current-time) time)))))))
+      (ignore-errors (encode-time (org-parse-time-string publish-at))))))
+
+(defun org-canvas--module-due-for-release-p (pom)
+  "Return non-nil when the heading at POM has a PUBLISH_AT that has passed."
+  (let ((time (org-canvas--module-publish-at-time pom)))
+    (and time (not (time-less-p (current-time) time)))))
+
+(defun org-canvas--module-item-held-p (pom state)
+  "Return non-nil when the item at POM must not be published yet.
+An item carrying its own PUBLISH_AT owns its release moment: publishing
+the module around it — by hand or on schedule — leaves the item alone
+until that date arrives, so a week can go live with pieces of it still
+scheduled ahead.  Only publishing is held; STATE nil (unpublishing a
+module) takes everything down with it, since leaving content live
+behind an unpublished module is never what was asked for."
+  (and state
+       (let ((time (org-canvas--module-publish-at-time pom)))
+         (and time (time-less-p (current-time) time)))))
+
+(defun org-canvas--module-item-release-markers (module-pom)
+  "Return markers for the items under MODULE-POM whose PUBLISH_AT has passed.
+Markers for items that are not due are released before returning; the
+caller owns the ones it gets back."
+  (let (due)
+    (dolist (marker (org-canvas--module-collect-item-markers module-pom))
+      (if (org-canvas--module-due-for-release-p (marker-position marker))
+          (push marker due)
+        (set-marker marker nil)))
+    (nreverse due)))
+
+(defun org-canvas--module-release-module-items (module-pom modules-file-dir touched)
+  "Publish the items under MODULE-POM whose own PUBLISH_AT has passed.
+MODULES-FILE-DIR resolves their links; TOUCHED accumulates buffers to
+save, exactly as in `org-canvas--module-publish-apply'.  Returns a
+plist (:released TITLES :unresolved TITLES :hidden TITLES), where
+`:hidden' repeats the released titles when the module around them is
+explicitly unpublished — the content is live but nobody can reach it."
+  (let ((released nil)
+        (unresolved nil)
+        (module-unpublished
+         (equal (org-entry-get module-pom "PUBLISHED") "false")))
+    (dolist (marker (org-canvas--module-item-release-markers module-pom))
+      (save-excursion
+        (let ((result (org-canvas--module-publish-item
+                       marker t modules-file-dir touched)))
+          (pcase (car result)
+            ('changed (push (cdr result) released))
+            ('unresolved (push (cdr result) unresolved)))))
+      (set-marker marker nil))
+    (setq released (nreverse released))
+    (list :released released
+          :unresolved (nreverse unresolved)
+          :hidden (and module-unpublished released))))
+
+(defun org-canvas--module-release-items ()
+  "Publish every module item whose own PUBLISH_AT has passed.
+An item's date outranks its module's: the module publish leaves it
+alone until this pass releases it, so a week can go live in pieces.
+Idempotent — an item already published is reported as nothing changed.
+
+Returns a plist (:released TITLES :unresolved TITLES :hidden ALIST),
+where ALIST maps a module title to the items released inside it while
+that module is unpublished."
+  (let ((positions (org-canvas--module-positions)))
+    (when positions
+      (let ((modules-file-dir (file-name-directory
+                               (expand-file-name org-canvas-modules-file)))
+            (touched (list nil))
+            (released nil)
+            (unresolved nil)
+            (hidden nil))
+        (with-current-buffer (find-file-noselect
+                              (expand-file-name org-canvas-modules-file))
+          (dolist (entry positions)
+            (save-excursion
+              (let ((result (org-canvas--module-release-module-items
+                             (cdr entry) modules-file-dir touched)))
+                (setq released (append released (plist-get result :released)))
+                (setq unresolved
+                      (append unresolved (plist-get result :unresolved)))
+                (when (plist-get result :hidden)
+                  (push (cons (car entry) (plist-get result :hidden))
+                        hidden))))))
+        (dolist (buf (delete-dups (car touched)))
+          (with-current-buffer buf (org-canvas--save-buffer)))
+        (list :released released
+              :unresolved unresolved
+              :hidden (nreverse hidden))))))
 
 ;;;; Main Sync Functions
 
