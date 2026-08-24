@@ -603,5 +603,56 @@
       (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil)))
         (expect (org-canvas--confirm "Really? ") :to-be nil)))))
 
+(describe "org-canvas-register-pull-item-fn"
+  (it "records the function on the feature entry"
+    ;; Issue #67: the entry is what at-point dispatch reads.
+    (let ((org-canvas--feature-registry
+           (list (list :name "Pages" :endpoint "pages"
+                       :id-property "CANVAS_URL"))))
+      (org-canvas-register-pull-item-fn "pages" #'ignore)
+      (expect (plist-get (car org-canvas--feature-registry) :pull-item-fn)
+              :to-be #'ignore)))
+
+  (it "matches the way the sync pipeline spells a feature name"
+    ;; "assignment-groups" from the macro, "Assignment Groups" in the registry.
+    (let ((org-canvas--feature-registry
+           (list (list :name "Assignment Groups" :endpoint "assignment_groups"))))
+      (org-canvas-register-pull-item-fn "assignment-groups" #'ignore)
+      (expect (plist-get (car org-canvas--feature-registry) :pull-item-fn)
+              :to-be #'ignore)))
+
+  (it "is a no-op for a feature that is not registered"
+    (let ((org-canvas--feature-registry (list (list :name "Pages"))))
+      (org-canvas-register-pull-item-fn "Nonexistent" #'ignore)
+      (expect (plist-get (car org-canvas--feature-registry) :pull-item-fn)
+              :to-be nil))))
+
+(describe "org-canvas--registry-feature-for-file"
+  (it "finds the feature whose file-var points at the file"
+    (let* ((temp (make-temp-file "feature-for-file-" nil ".org"))
+           (org-canvas-pages-file temp)
+           (org-canvas--feature-registry
+            (list (list :name "Pages" :file-var 'org-canvas-pages-file)
+                  (list :name "Assignments"
+                        :file-var 'org-canvas-assignments-file))))
+      (unwind-protect
+          (expect (plist-get (org-canvas--registry-feature-for-file temp) :name)
+                  :to-equal "Pages")
+        (delete-file temp))))
+
+  (it "returns nil for a file no feature claims"
+    (let ((org-canvas--feature-registry
+           (list (list :name "Pages" :file-var 'org-canvas-pages-file))))
+      (expect (org-canvas--registry-feature-for-file "/tmp/not-a-course-file.org")
+              :to-be nil)))
+
+  (it "returns nil for a buffer with no file"
+    (expect (org-canvas--registry-feature-for-file nil) :to-be nil))
+
+  (it "ignores a feature whose file variable is unbound"
+    (let ((org-canvas--feature-registry
+           (list (list :name "Ghost" :file-var 'org-canvas--no-such-file-var))))
+      (expect (org-canvas--registry-feature-for-file "/tmp/x.org") :to-be nil))))
+
 (provide 'org-canvas-core-config-test)
 ;;; org-canvas-core-config-test.el ends here

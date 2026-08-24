@@ -213,14 +213,27 @@ Populated at module load time.  Used by `org-canvas--recompute-file-paths'.")
 Populated at module load time by `org-canvas-register-feature'.")
 
 (defun org-canvas-register-feature (&rest plist)
-  "Register a feature for orphan detection.
+  "Register a feature for orphan detection and at-point dispatch.
 PLIST has keys :name :endpoint :file-var :id-field :id-property
-:title-field and optionally :list-params :skip-fn."
+:title-field and optionally :list-params :skip-fn.  `:pull-item-fn' is
+filled in separately by `org-canvas-register-pull-item-fn', since the
+sync and pull macros are the ones that know it."
   (let ((name (plist-get plist :name)))
     (unless (cl-find name org-canvas--feature-registry
                      :key (lambda (f) (plist-get f :name))
                      :test #'string=)
       (push plist org-canvas--feature-registry))))
+
+(defun org-canvas-register-pull-item-fn (feature-name fn)
+  "Record FN as FEATURE-NAME's pull-item function in the feature registry.
+Modules already declare this function to `org-canvas-define-sync' (for
+conflict resolution) and `org-canvas-define-pull'; recording it on the
+feature entry is what lets `org-canvas-pull-at-point' refresh a single
+heading in any file without a command per module (issue #67).  No-op
+when the feature is not registered, so load order does not matter."
+  (let ((entry (org-canvas--registry-find-feature feature-name)))
+    (when entry
+      (plist-put entry :pull-item-fn fn))))
 
 (defun org-canvas--registry-find-feature (feature-name)
   "Return the feature registry entry whose name matches FEATURE-NAME, or nil.
@@ -232,6 +245,19 @@ labels them \"Assignment Groups\"."
                   (string= (funcall norm (plist-get f :name))
                            (funcall norm feature-name)))
                 org-canvas--feature-registry)))
+
+(defun org-canvas--registry-feature-for-file (file)
+  "Return the feature registry entry whose file is FILE, or nil.
+Matches on the expanded path of the feature's `:file-var', so a command
+run in a course buffer can tell which feature it is looking at without
+being told."
+  (when file
+    (let ((file (expand-file-name file)))
+      (cl-find-if (lambda (f)
+                    (let ((var (plist-get f :file-var)))
+                      (and var (boundp var) (symbol-value var)
+                           (equal file (expand-file-name (symbol-value var))))))
+                  org-canvas--feature-registry))))
 
 (defun org-canvas--recompute-file-paths ()
   "Recompute all file-path variables from `org-canvas-directory'."

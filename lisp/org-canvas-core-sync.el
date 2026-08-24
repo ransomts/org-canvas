@@ -612,6 +612,11 @@ Example usage:
     (unless push-fn (error "org-canvas-define-sync: :push or :endpoint is required"))
     (unless finalize-fn (error "org-canvas-define-sync: :finalize or :endpoint is required"))
     `(progn
+       ;; The module already names its pull-item function for conflict
+       ;; resolution; recording it on the feature entry is what gives
+       ;; `org-canvas-pull-at-point' something to dispatch on (issue #67).
+       ,@(when pull-item-fn
+           `((org-canvas-register-pull-item-fn ,feature-name ,pull-item-fn)))
        ;;;###autoload
        (defun ,sync-fn-name ()
          ,(format "Synchronize %s to Canvas using the 4-stage pipeline." feature-name)

@@ -951,6 +951,10 @@ would offer a pull that silently degraded to a skip."
        (or (alist-get 'display_name item) (plist-get raw :display-name))
        url local-path (alist-get 'size item) t))))
 
+;; Files sync through their own loop rather than `org-canvas-define-sync',
+;; so the macro never registers this for them (issue #67).
+(org-canvas-register-pull-item-fn "Files" #'org-canvas--file-pull-item)
+
 (defun org-canvas--file-check-conflict (data)
   "Return `push', `skip' or `pulled' for DATA's file.
 Files never reach `org-canvas--push-to-api', whose conflict guard is
