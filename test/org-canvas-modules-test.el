@@ -3390,7 +3390,258 @@ Returns the directory."
     (with-temp-org-buffer
      "* Week 03\n"
      (org-back-to-heading)
+     (expect (org-canvas--module-due-for-release-p (point)) :to-be nil)))
+
+  (it "is false for a release date that cannot be parsed"
+    (with-temp-org-buffer
+     "* Week 03
+:PROPERTIES:
+:PUBLISH_AT: whenever
+:END:
+"
+     (org-back-to-heading)
      (expect (org-canvas--module-due-for-release-p (point)) :to-be nil))))
+
+(describe "org-canvas--module-publish-at-time"
+  (it "returns nil for an unparsable timestamp rather than signalling"
+    (with-temp-org-buffer
+     "* Week 03
+:PROPERTIES:
+:PUBLISH_AT: not-a-date
+:END:
+"
+     (org-back-to-heading)
+     (expect (org-canvas--module-publish-at-time (point)) :to-be nil))))
+
+(describe "org-canvas--module-item-held-p"
+  (it "holds an item whose own release date is still ahead"
+    (with-temp-org-buffer
+     "* Week 03
+** Lab 2
+:PROPERTIES:
+:PUBLISH_AT: <2099-01-01 Thu 06:00>
+:END:
+"
+     (goto-char (point-min))
+     (re-search-forward "^\\*\\* Lab 2")
+     (org-back-to-heading t)
+     (expect (org-canvas--module-item-held-p (point) t) :to-be-truthy)))
+
+  (it "does not hold an item whose release date has passed"
+    (with-temp-org-buffer
+     "* Week 03
+** Lab 2
+:PROPERTIES:
+:PUBLISH_AT: <2020-01-01 Wed 06:00>
+:END:
+"
+     (goto-char (point-min))
+     (re-search-forward "^\\*\\* Lab 2")
+     (org-back-to-heading t)
+     (expect (org-canvas--module-item-held-p (point) t) :to-be nil)))
+
+  (it "does not hold an item with no release date of its own"
+    (with-temp-org-buffer
+     "* Week 03\n** Lab 2\n"
+     (goto-char (point-min))
+     (re-search-forward "^\\*\\* Lab 2")
+     (org-back-to-heading t)
+     (expect (org-canvas--module-item-held-p (point) t) :to-be nil)))
+
+  (it "never holds an unpublish, so a week comes down whole"
+    (with-temp-org-buffer
+     "* Week 03
+** Lab 2
+:PROPERTIES:
+:PUBLISH_AT: <2099-01-01 Thu 06:00>
+:END:
+"
+     (goto-char (point-min))
+     (re-search-forward "^\\*\\* Lab 2")
+     (org-back-to-heading t)
+     (expect (org-canvas--module-item-held-p (point) nil) :to-be nil))))
+
+;;; Per-item release dates (PUBLISH_AT on a module item)
+
+(defun test-release-item--course ()
+  "Build a temp course whose module items carry their own release dates.
+Lab 1 has none, Lab 2's is in the future, Lab 3's has passed."
+  (let ((dir (make-temp-file "release-item-" t)))
+    (with-temp-file (expand-file-name "assignments.org" dir)
+      (insert "* Lab 1\n:PROPERTIES:\n:CANVAS_ID: 61\n:PUBLISHED: false\n:END:\n"
+              "* Lab 2\n:PROPERTIES:\n:CANVAS_ID: 62\n:PUBLISHED: false\n:END:\n"
+              "* Lab 3\n:PROPERTIES:\n:CANVAS_ID: 63\n:PUBLISHED: false\n:END:\n"))
+    (with-temp-file (expand-file-name "modules.org" dir)
+      (insert "* Week 03\n:PROPERTIES:\n:PUBLISHED: false\n:END:\n"
+              "** [[file:assignments.org::*Lab 1][Lab 1]]\n"
+              "** [[file:assignments.org::*Lab 2][Lab 2]]\n"
+              ":PROPERTIES:\n:PUBLISH_AT: <2099-01-01 Thu 06:00>\n:END:\n"
+              "** [[file:assignments.org::*Lab 3][Lab 3]]\n"
+              ":PROPERTIES:\n:PUBLISH_AT: <2020-01-01 Wed 06:00>\n:END:\n"))
+    dir))
+
+(defun test-release-item--kill (dir)
+  "Kill buffers visiting files under DIR and delete it."
+  (dolist (name '("modules.org" "assignments.org"))
+    (let ((buf (find-buffer-visiting (expand-file-name name dir))))
+      (when buf
+        (with-current-buffer buf (set-buffer-modified-p nil))
+        (kill-buffer buf))))
+  (delete-directory dir t))
+
+(defun test-release-item--prop (dir file heading prop)
+  "Return PROP of HEADING in DIR/FILE."
+  (with-current-buffer (find-file-noselect (expand-file-name file dir))
+    (save-excursion
+      (goto-char (point-min))
+      (when (re-search-forward (format "^\\*+ .*%s" (regexp-quote heading)) nil t)
+        (org-back-to-heading t)
+        (org-entry-get (point) prop)))))
+
+(defun test-release-item--week-03 (dir)
+  "Return the position of the Week 03 heading in DIR's modules.org."
+  (with-current-buffer (find-file-noselect (expand-file-name "modules.org" dir))
+    (goto-char (point-min))
+    (re-search-forward "^\\* Week 03")
+    (org-back-to-heading t)
+    (point)))
+
+(describe "publishing a module around a scheduled item"
+  (it "holds back the item whose own date is still ahead"
+    (let ((dir (test-release-item--course)))
+      (unwind-protect
+          (let* ((org-canvas-modules-file (expand-file-name "modules.org" dir))
+                 (result (with-current-buffer
+                             (find-file-noselect org-canvas-modules-file)
+                           (org-canvas--module-publish-apply
+                            (test-release-item--week-03 dir) t))))
+            (expect (plist-get result :held) :to-equal '("Lab 2"))
+            (expect (test-release-item--prop dir "assignments.org" "Lab 2" "PUBLISHED")
+                    :to-equal "false")
+            ;; Everything without a date of its own goes live with the module.
+            (expect (test-release-item--prop dir "assignments.org" "Lab 1" "PUBLISHED")
+                    :to-equal "true"))
+        (test-release-item--kill dir))))
+
+  (it "publishes an item whose own date has already passed"
+    (let ((dir (test-release-item--course)))
+      (unwind-protect
+          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+            (with-current-buffer (find-file-noselect org-canvas-modules-file)
+              (org-canvas--module-publish-apply
+               (test-release-item--week-03 dir) t))
+            (expect (test-release-item--prop dir "assignments.org" "Lab 3" "PUBLISHED")
+                    :to-equal "true"))
+        (test-release-item--kill dir))))
+
+  (it "unpublishes the held item along with the rest of the week"
+    (let ((dir (test-release-item--course)))
+      (unwind-protect
+          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+            (with-current-buffer (find-file-noselect
+                                  (expand-file-name "assignments.org" dir))
+              (goto-char (point-min))
+              (re-search-forward "^\\* Lab 2")
+              (org-back-to-heading t)
+              (org-entry-put (point) "PUBLISHED" "true")
+              (save-buffer))
+            (let ((result (with-current-buffer
+                              (find-file-noselect org-canvas-modules-file)
+                            (org-canvas--module-publish-apply
+                             (test-release-item--week-03 dir) nil))))
+              (expect (plist-get result :held) :to-be nil))
+            (expect (test-release-item--prop dir "assignments.org" "Lab 2" "PUBLISHED")
+                    :to-equal "false"))
+        (test-release-item--kill dir)))))
+
+(describe "org-canvas--module-item-release-markers"
+  (it "returns only the items whose release date has passed"
+    (let ((dir (test-release-item--course)))
+      (unwind-protect
+          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+            (with-current-buffer (find-file-noselect org-canvas-modules-file)
+              (let ((markers (org-canvas--module-item-release-markers
+                              (test-release-item--week-03 dir))))
+                (expect (length markers) :to-equal 1)
+                (expect (org-entry-get (marker-position (car markers)) "PUBLISH_AT")
+                        :to-match "2020-01-01")
+                (dolist (m markers) (set-marker m nil)))))
+        (test-release-item--kill dir)))))
+
+(describe "org-canvas--module-release-items"
+  (it "releases only the item whose own date has passed"
+    (let ((dir (test-release-item--course)))
+      (unwind-protect
+          (let* ((org-canvas-modules-file (expand-file-name "modules.org" dir))
+                 (result (org-canvas--module-release-items)))
+            (expect (plist-get result :released) :to-equal '("Lab 3"))
+            (expect (test-release-item--prop dir "assignments.org" "Lab 3" "PUBLISHED")
+                    :to-equal "true")
+            ;; The module and its undated items are left where they were.
+            (expect (test-release-item--prop dir "assignments.org" "Lab 1" "PUBLISHED")
+                    :to-equal "false")
+            (expect (test-release-item--prop dir "modules.org" "Week 03" "PUBLISHED")
+                    :to-equal "false"))
+        (test-release-item--kill dir))))
+
+  (it "reports an item released inside a module that is still unpublished"
+    (let ((dir (test-release-item--course)))
+      (unwind-protect
+          (let* ((org-canvas-modules-file (expand-file-name "modules.org" dir))
+                 (result (org-canvas--module-release-items)))
+            (expect (plist-get result :hidden) :to-equal '(("Week 03" "Lab 3"))))
+        (test-release-item--kill dir))))
+
+  (it "says nothing about hiding when the module is published"
+    (let ((dir (test-release-item--course)))
+      (unwind-protect
+          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+            (with-current-buffer (find-file-noselect org-canvas-modules-file)
+              (org-entry-put (test-release-item--week-03 dir) "PUBLISHED" "true")
+              (save-buffer))
+            (expect (plist-get (org-canvas--module-release-items) :hidden)
+                    :to-be nil))
+        (test-release-item--kill dir))))
+
+  (it "is idempotent once the item has been released"
+    (let ((dir (test-release-item--course)))
+      (unwind-protect
+          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+            (org-canvas--module-release-items)
+            (expect (plist-get (org-canvas--module-release-items) :released)
+                    :to-be nil))
+        (test-release-item--kill dir))))
+
+  (it "names a scheduled item whose link resolves to nothing"
+    (let ((dir (test-release-item--course)))
+      (unwind-protect
+          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+            (with-current-buffer (find-file-noselect org-canvas-modules-file)
+              (goto-char (point-max))
+              (insert "** [[file:assignments.org::*Gone][Gone]]\n"
+                      ":PROPERTIES:\n:PUBLISH_AT: <2020-01-01 Wed 06:00>\n:END:\n")
+              (save-buffer))
+            (expect (plist-get (org-canvas--module-release-items) :unresolved)
+                    :to-equal '("Gone")))
+        (test-release-item--kill dir))))
+
+  (it "releases a SubHeader in place, since it owns its own state"
+    (let ((dir (test-release-item--course)))
+      (unwind-protect
+          (let ((org-canvas-modules-file (expand-file-name "modules.org" dir)))
+            (with-current-buffer (find-file-noselect org-canvas-modules-file)
+              (goto-char (point-max))
+              (insert "** Readings\n"
+                      ":PROPERTIES:\n:PUBLISH_AT: <2020-01-01 Wed 06:00>\n:END:\n")
+              (save-buffer))
+            (org-canvas--module-release-items)
+            (expect (test-release-item--prop dir "modules.org" "Readings" "PUBLISHED")
+                    :to-equal "true"))
+        (test-release-item--kill dir))))
+
+  (it "returns nil when there is no modules file to read"
+    (let ((org-canvas-modules-file "/tmp/nonexistent-release-modules.org"))
+      (expect (org-canvas--module-release-items) :to-be nil))))
 
 (describe "org-canvas--module-positions"
   (it "lists the level-1 module headings with their positions"
