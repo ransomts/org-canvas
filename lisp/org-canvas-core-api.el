@@ -548,9 +548,15 @@ Returns a unibyte string."
     (push (format "--%s\r\nContent-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\nContent-Type: %s\r\n\r\n"
                   boundary actual-filename actual-content-type)
           body-parts)
-    ;; Encode form parts as unibyte before concatenating with binary
+    ;; Encode form parts as unibyte before concatenating with binary.
+    ;; No terminator is appended after the join: `mapconcat' already puts
+    ;; the CRLF that ends each field's value before the next boundary, and
+    ;; the file part — always last — ends with its own CRLFCRLF, the blank
+    ;; line closing a MIME header block.  Appending one more put two bytes
+    ;; in front of every file Canvas stored, so no upload was ever
+    ;; byte-faithful to its source (issue #70).
     (let* ((body-prefix (encode-coding-string
-                         (concat (mapconcat #'identity (nreverse body-parts) "\r\n") "\r\n")
+                         (mapconcat #'identity (nreverse body-parts) "\r\n")
                          'raw-text))
            (body-suffix (encode-coding-string
                          (format "\r\n--%s--\r\n" boundary)
