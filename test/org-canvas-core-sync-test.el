@@ -1686,34 +1686,52 @@ Hello world.
 
 (describe "org-canvas--conflict-prompt"
   (it "returns push for p"
-    (cl-letf (((symbol-function 'read-char-choice)
+    ;; These simulate a human at the keyboard; under batch the prompt
+    ;; short-circuits to skip rather than reading a key (issue #72).
+    (let ((noninteractive nil))
+     (cl-letf (((symbol-function 'read-char-choice)
                (lambda (_prompt _chars) ?p)))
-      (expect (org-canvas--conflict-prompt t) :to-equal 'push)))
+      (expect (org-canvas--conflict-prompt t) :to-equal 'push))))
 
   (it "returns pull for l"
-    (cl-letf (((symbol-function 'read-char-choice)
+    ;; These simulate a human at the keyboard; under batch the prompt
+    ;; short-circuits to skip rather than reading a key (issue #72).
+    (let ((noninteractive nil))
+     (cl-letf (((symbol-function 'read-char-choice)
                (lambda (_prompt _chars) ?l)))
-      (expect (org-canvas--conflict-prompt t) :to-equal 'pull)))
+      (expect (org-canvas--conflict-prompt t) :to-equal 'pull))))
 
   (it "returns skip for s"
-    (cl-letf (((symbol-function 'read-char-choice)
+    ;; These simulate a human at the keyboard; under batch the prompt
+    ;; short-circuits to skip rather than reading a key (issue #72).
+    (let ((noninteractive nil))
+     (cl-letf (((symbol-function 'read-char-choice)
                (lambda (_prompt _chars) ?s)))
-      (expect (org-canvas--conflict-prompt t) :to-equal 'skip)))
+      (expect (org-canvas--conflict-prompt t) :to-equal 'skip))))
 
   (it "returns push-all for P"
-    (cl-letf (((symbol-function 'read-char-choice)
+    ;; These simulate a human at the keyboard; under batch the prompt
+    ;; short-circuits to skip rather than reading a key (issue #72).
+    (let ((noninteractive nil))
+     (cl-letf (((symbol-function 'read-char-choice)
                (lambda (_prompt _chars) ?P)))
-      (expect (org-canvas--conflict-prompt t) :to-equal 'push-all)))
+      (expect (org-canvas--conflict-prompt t) :to-equal 'push-all))))
 
   (it "returns pull-all for L"
-    (cl-letf (((symbol-function 'read-char-choice)
+    ;; These simulate a human at the keyboard; under batch the prompt
+    ;; short-circuits to skip rather than reading a key (issue #72).
+    (let ((noninteractive nil))
+     (cl-letf (((symbol-function 'read-char-choice)
                (lambda (_prompt _chars) ?L)))
-      (expect (org-canvas--conflict-prompt t) :to-equal 'pull-all)))
+      (expect (org-canvas--conflict-prompt t) :to-equal 'pull-all))))
 
   (it "returns skip-all for S"
-    (cl-letf (((symbol-function 'read-char-choice)
+    ;; These simulate a human at the keyboard; under batch the prompt
+    ;; short-circuits to skip rather than reading a key (issue #72).
+    (let ((noninteractive nil))
+     (cl-letf (((symbol-function 'read-char-choice)
                (lambda (_prompt _chars) ?S)))
-      (expect (org-canvas--conflict-prompt t) :to-equal 'skip-all))))
+      (expect (org-canvas--conflict-prompt t) :to-equal 'skip-all)))))
 
 (describe "org-canvas--resolve-conflict"
   (it "returns apply-all value immediately when set"
@@ -1731,37 +1749,141 @@ Hello world.
   (it "sets apply-all on push-all choice"
     (let ((org-canvas--conflict-apply-all nil)
           (org-canvas--current-pull-item-fn nil))
-      (cl-letf (((symbol-function 'org-canvas--conflict-prompt)
-                 (lambda (_has-pull) 'push-all)))
-        (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")))
-                :to-equal 'push)
-        (expect org-canvas--conflict-apply-all :to-equal 'push))))
+      (let ((noninteractive nil))
+        (cl-letf (((symbol-function 'org-canvas--conflict-prompt)
+                   (lambda (_has-pull) 'push-all)))
+          (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")))
+                  :to-equal 'push)
+          (expect org-canvas--conflict-apply-all :to-equal 'push)))))
 
   (it "sets apply-all on skip-all choice"
     (let ((org-canvas--conflict-apply-all nil)
           (org-canvas--current-pull-item-fn nil))
-      (cl-letf (((symbol-function 'org-canvas--conflict-prompt)
-                 (lambda (_has-pull) 'skip-all)))
-        (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")))
-                :to-equal 'skip)
-        (expect org-canvas--conflict-apply-all :to-equal 'skip))))
+      (let ((noninteractive nil))
+        (cl-letf (((symbol-function 'org-canvas--conflict-prompt)
+                   (lambda (_has-pull) 'skip-all)))
+          (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")))
+                  :to-equal 'skip)
+          (expect org-canvas--conflict-apply-all :to-equal 'skip)))))
 
   (it "sets apply-all on pull-all choice"
     (let ((org-canvas--conflict-apply-all nil)
           (org-canvas--current-pull-item-fn #'ignore))
-      (cl-letf (((symbol-function 'org-canvas--conflict-prompt)
-                 (lambda (_has-pull) 'pull-all)))
-        (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")))
-                :to-equal 'pull)
-        (expect org-canvas--conflict-apply-all :to-equal 'pull))))
+      (let ((noninteractive nil))
+        (cl-letf (((symbol-function 'org-canvas--conflict-prompt)
+                   (lambda (_has-pull) 'pull-all)))
+          (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")))
+                  :to-equal 'pull)
+          (expect org-canvas--conflict-apply-all :to-equal 'pull)))))
 
   (it "kills the diff buffer after prompting"
     (let ((org-canvas--conflict-apply-all nil)
           (org-canvas--current-pull-item-fn nil))
-      (cl-letf (((symbol-function 'org-canvas--conflict-prompt)
-                 (lambda (_has-pull) 'push)))
-        (org-canvas--resolve-conflict '(:title "X") '((title . "X")))
-        (expect (get-buffer org-canvas--conflict-buffer-name) :to-be nil)))))
+      (let ((noninteractive nil))
+        (cl-letf (((symbol-function 'org-canvas--conflict-prompt)
+                   (lambda (_has-pull) 'push)))
+          (org-canvas--resolve-conflict '(:title "X") '((title . "X")))
+          (expect (get-buffer org-canvas--conflict-buffer-name) :to-be nil))))))
+
+(describe "org-canvas--conflict-unattended-action"
+  ;; Issue #72: a batch sync died reading a keystroke that cannot arrive.
+  (it "takes skip under batch when nothing is configured"
+    (let ((org-canvas-conflict-strategy nil))
+      (cl-letf (((symbol-function 'org-canvas--log-warning) #'ignore))
+        (expect (org-canvas--conflict-unattended-action '(:title "X"))
+                :to-equal 'skip))))
+
+  (it "honours a configured strategy, batch or not"
+    (let ((org-canvas-conflict-strategy 'push))
+      (cl-letf (((symbol-function 'org-canvas--log-warning) #'ignore))
+        (expect (org-canvas--conflict-unattended-action '(:title "X"))
+                :to-equal 'push)
+        (let ((noninteractive nil))
+          (expect (org-canvas--conflict-unattended-action '(:title "X"))
+                  :to-equal 'push)))))
+
+  (it "defers to the prompt when interactive and unconfigured"
+    (let ((org-canvas-conflict-strategy nil)
+          (noninteractive nil))
+      (expect (org-canvas--conflict-unattended-action '(:title "X")) :to-be nil)))
+
+  (it "names the entry and says why it was not asked about"
+    (let ((org-canvas-conflict-strategy nil)
+          (warnings nil))
+      (cl-letf (((symbol-function 'org-canvas--log-warning)
+                 (lambda (_l fmt &rest args)
+                   (push (apply #'format fmt args) warnings))))
+        (org-canvas--conflict-unattended-action '(:title "Lab 1"))
+        (expect (car warnings) :to-match "'Lab 1'")
+        (expect (car warnings) :to-match "batch mode")
+        (expect (car warnings) :to-match "org-canvas-conflict-strategy"))))
+
+  (it "names a file entry by its display name, and an anonymous one plainly"
+    ;; Files carry :display-name rather than :title.
+    (let ((org-canvas-conflict-strategy 'skip)
+          (warnings nil))
+      (cl-letf (((symbol-function 'org-canvas--log-warning)
+                 (lambda (_l fmt &rest args)
+                   (push (apply #'format fmt args) warnings))))
+        (org-canvas--conflict-unattended-action '(:display-name "syllabus.pdf"))
+        (expect (car warnings) :to-match "'syllabus.pdf'")
+        (org-canvas--conflict-unattended-action nil)
+        (expect (car warnings) :to-match "'entry'"))))
+
+  (it "credits the setting when one is configured"
+    (let ((org-canvas-conflict-strategy 'skip)
+          (warnings nil))
+      (cl-letf (((symbol-function 'org-canvas--log-warning)
+                 (lambda (_l fmt &rest args)
+                   (push (apply #'format fmt args) warnings))))
+        (org-canvas--conflict-unattended-action '(:title "Lab 1"))
+        (expect (car warnings) :to-match "(org-canvas-conflict-strategy)")))))
+
+(describe "org-canvas--conflict-prompt under batch"
+  (it "returns skip instead of reading a key that cannot arrive"
+    ;; read-char-choice signals end-of-file in batch, taking the sync with it.
+    (cl-letf (((symbol-function 'read-char-choice)
+               (lambda (&rest _) (error "should not be called"))))
+      (expect (org-canvas--conflict-prompt t) :to-equal 'skip))))
+
+(describe "org-canvas--resolve-conflict unattended"
+  (it "resolves without prompting under batch"
+    (let ((org-canvas--conflict-apply-all nil)
+          (org-canvas--current-pull-item-fn nil)
+          (org-canvas-conflict-strategy nil))
+      (cl-letf (((symbol-function 'org-canvas--log-warning) #'ignore)
+                ((symbol-function 'org-canvas--conflict-format-diff)
+                 (lambda (&rest _) (error "should not build a diff"))))
+        (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")))
+                :to-equal 'skip))))
+
+  (it "follows the configured strategy ahead of the prompt"
+    (let ((org-canvas--conflict-apply-all nil)
+          (org-canvas--current-pull-item-fn nil)
+          (org-canvas-conflict-strategy 'push)
+          (noninteractive nil))
+      (cl-letf (((symbol-function 'org-canvas--log-warning) #'ignore)
+                ((symbol-function 'org-canvas--conflict-prompt)
+                 (lambda (&rest _) (error "should not prompt"))))
+        (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")))
+                :to-equal 'push))))
+
+  (it "still lets a run's apply-all answer win"
+    ;; The per-run choice is more specific than the standing setting.
+    (let ((org-canvas--conflict-apply-all 'pull)
+          (org-canvas--current-pull-item-fn #'ignore)
+          (org-canvas-conflict-strategy 'push))
+      (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")))
+              :to-equal 'pull)))
+
+  (it "survives the pipeline's rebinding of apply-all"
+    ;; The reported dead end: (let ((org-canvas--conflict-apply-all 'skip)) ...)
+    ;; loses to the pipeline's own binding.  The defcustom does not.
+    (let ((org-canvas-conflict-strategy 'skip))
+      (cl-letf (((symbol-function 'org-canvas--log-warning) #'ignore))
+        (let ((org-canvas--conflict-apply-all nil))
+          (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")))
+                  :to-equal 'skip))))))
 
 (describe "org-canvas--conflict-pull-local"
   (it "calls pull-item-fn and refreshes file-level LAST_SYNCED header"
@@ -2977,6 +3099,9 @@ Body.
       (let ((org-canvas-detect-conflicts t)
             (org-canvas--conflict-apply-all nil)
             (org-canvas--current-pull-item-fn nil)
+            ;; The flow under test is a human answering the prompt once;
+            ;; batch mode resolves without one (issue #72).
+            (noninteractive nil)
             (prompt-count 0)
             (put-count 0))
         (cl-letf (((symbol-function 'org-canvas-api-request)
@@ -3020,6 +3145,9 @@ Body.
       (let ((org-canvas-detect-conflicts t)
             (org-canvas--conflict-apply-all nil)
             (org-canvas--current-pull-item-fn nil)
+            ;; The flow under test is a human answering the prompt once;
+            ;; batch mode resolves without one (issue #72).
+            (noninteractive nil)
             (prompt-count 0)
             (put-count 0))
         (cl-letf (((symbol-function 'org-canvas-api-request)
