@@ -33,12 +33,26 @@ org-canvas is not yet on MELPA. Install from source:
 #+begin_src elisp
 ;; Using use-package with straight.el
 (use-package org-canvas
-  :straight (org-canvas :type git :host github :repo "ransomts/org-canvas"))
+  :straight (org-canvas :type git :host github :repo "ransomts/org-canvas"
+                        :files ("lisp/*.el")))
 
 ;; Using use-package with built-in vc-package (Emacs 29+)
 (use-package org-canvas
   :vc (:url "https://github.com/ransomts/org-canvas"))
 #+end_src
+
+The =:files= directive is not optional.  The sources live in =lisp/=, and a
+symlink at the repository root points at =lisp/org-canvas.el= so that
+=eldev lint= can find the =Package-Requires= header where package-lint expects
+it.  straight.el's default directive matches both =*.el= and =lisp/*.el=, sees
+the same file twice, and warns:
+
+#+begin_example
+Warning (straight): Attempted to link ".../build/org-canvas/org-canvas.el" to both
+  ".../repos/org-canvas/org-canvas.el" and ".../repos/org-canvas/lisp/org-canvas.el"
+#+end_example
+
+Naming =lisp/*.el= resolves the ambiguity.
 
 Or clone for development:
 
