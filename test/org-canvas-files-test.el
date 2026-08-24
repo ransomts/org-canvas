@@ -3681,6 +3681,248 @@
   (it "returns nil for nil"
     (expect (org-canvas--file-hash-parts nil) :to-be nil)))
 
+;;;; Legacy hash migration (issue #71)
+
+(describe "org-canvas--file-legacy-hash-p"
+  (it "recognizes a pre-split opaque hash"
+    (expect (org-canvas--file-legacy-hash-p "5d41402abc4b2a76b9719d911017c592")
+            :to-be-truthy))
+
+  (it "does not claim a split hash"
+    (expect (org-canvas--file-legacy-hash-p
+             "5d41402abc4b2a76b9719d911017c592:098f6bcd4621d373cade4e832627b4f6")
+            :to-be nil))
+
+  (it "does not claim an absent or malformed hash"
+    (expect (org-canvas--file-legacy-hash-p nil) :to-be nil)
+    (expect (org-canvas--file-legacy-hash-p "") :to-be nil)
+    (expect (org-canvas--file-legacy-hash-p "not-a-hash") :to-be nil)))
+
+(describe "org-canvas--file-bytes-match-p"
+  (it "matches identical bytes"
+    (expect (org-canvas--file-bytes-match-p "abc" "abc") :to-be-truthy))
+
+  (it "accepts a remote copy carrying the pre-fix leading CRLF"
+    ;; Issue #70 put two bytes in front of every uploaded file; shedding
+    ;; them is not worth rotating every Canvas file id.
+    (expect (org-canvas--file-bytes-match-p "%PDF-1.7" "\r\n%PDF-1.7")
+            :to-be-truthy))
+
+  (it "rejects genuinely different content"
+    (expect (org-canvas--file-bytes-match-p "abc" "abd") :to-be nil)
+    (expect (org-canvas--file-bytes-match-p "abc" "\r\nabd") :to-be nil))
+
+  (it "rejects a missing side rather than calling it a match"
+    (expect (org-canvas--file-bytes-match-p "abc" nil) :to-be nil)
+    (expect (org-canvas--file-bytes-match-p nil "abc") :to-be nil)))
+
+(describe "org-canvas--file-remote-bytes"
+  (it "returns the downloaded bytes for a Canvas file"
+    (cl-letf (((symbol-function 'org-canvas-api-request)
+               (lambda (&rest _) '((id . 42) (url . "https://example.com/f"))))
+              ((symbol-function 'url-copy-file)
+               (lambda (_url dest &rest _)
+                 (with-temp-file dest (insert "remote bytes")))))
+      (expect (org-canvas--file-remote-bytes "42" "f.pdf")
+              :to-equal "remote bytes")))
+
+  (it "returns nil when Canvas gives no download url"
+    (cl-letf (((symbol-function 'org-canvas-api-request)
+               (lambda (&rest _) '((id . 42)))))
+      (expect (org-canvas--file-remote-bytes "42" "f.pdf") :to-be nil)))
+
+  (it "answers a failed fetch with nil, not an error"
+    (let (warnings)
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _) (error "404 Not Found")))
+                ((symbol-function 'org-canvas--log-warning)
+                 (lambda (_l fmt &rest args)
+                   (push (apply #'format fmt args) warnings))))
+        (expect (org-canvas--file-remote-bytes "42" "f.pdf") :to-be nil)
+        (expect (car warnings) :to-match "treating it as changed")))))
+
+(describe "org-canvas--file-migrate-legacy-hash"
+  (it "adopts the split hash and keeps the Canvas id when bytes agree"
+    (let ((temp (make-temp-file "migrate-" nil ".pdf")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp (insert "same bytes"))
+            (with-temp-org-buffer
+             "* doc.pdf
+:PROPERTIES:
+:CANVAS_ID: 42
+:PAYLOAD_HASH: 5d41402abc4b2a76b9719d911017c592
+:END:
+"
+             (org-back-to-heading)
+             (cl-letf (((symbol-function 'org-canvas--file-remote-bytes)
+                        (lambda (&rest _) "same bytes")))
+               (expect (org-canvas--file-migrate-legacy-hash
+                        (list :canvas-id "42" :display-name "doc.pdf"
+                              :local-path temp)
+                        "aaa:bbb")
+                       :to-be-truthy)
+               (expect (org-entry-get (point) "PAYLOAD_HASH")
+                       :to-equal "aaa:bbb")
+               (expect (org-entry-get (point) "CANVAS_ID") :to-equal "42"))))
+        (delete-file temp))))
+
+  (it "declines when the bytes differ, leaving the entry to re-upload"
+    (let ((temp (make-temp-file "migrate-no-" nil ".pdf")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp (insert "local bytes"))
+            (with-temp-org-buffer
+             "* doc.pdf
+:PROPERTIES:
+:CANVAS_ID: 42
+:PAYLOAD_HASH: 5d41402abc4b2a76b9719d911017c592
+:END:
+"
+             (org-back-to-heading)
+             (cl-letf (((symbol-function 'org-canvas--file-remote-bytes)
+                        (lambda (&rest _) "different bytes")))
+               (expect (org-canvas--file-migrate-legacy-hash
+                        (list :canvas-id "42" :display-name "doc.pdf"
+                              :local-path temp)
+                        "aaa:bbb")
+                       :to-be nil)
+               (expect (org-entry-get (point) "PAYLOAD_HASH")
+                       :to-equal "5d41402abc4b2a76b9719d911017c592"))))
+        (delete-file temp))))
+
+  (it "writes nothing during a dry run"
+    (let ((temp (make-temp-file "migrate-dry-" nil ".pdf")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp (insert "same bytes"))
+            (with-temp-org-buffer
+             "* doc.pdf
+:PROPERTIES:
+:CANVAS_ID: 42
+:PAYLOAD_HASH: 5d41402abc4b2a76b9719d911017c592
+:END:
+"
+             (org-back-to-heading)
+             (let ((org-canvas--dry-run t))
+               (cl-letf (((symbol-function 'org-canvas--file-remote-bytes)
+                          (lambda (&rest _) "same bytes")))
+                 (expect (org-canvas--file-migrate-legacy-hash
+                          (list :canvas-id "42" :display-name "doc.pdf"
+                                :local-path temp)
+                          "aaa:bbb")
+                         :to-be-truthy)
+                 (expect (org-entry-get (point) "PAYLOAD_HASH")
+                         :to-equal "5d41402abc4b2a76b9719d911017c592")))))
+        (delete-file temp)))))
+
+(describe "org-canvas--file-sync-parsed-entry legacy migration"
+  (it "skips an unchanged legacy entry instead of re-uploading it"
+    ;; The reported symptom: 25 files re-uploaded, ids rotated, module
+    ;; items dropped, for content nobody had touched.
+    (let ((temp (make-temp-file "legacy-entry-" nil ".pdf"))
+          (uploaded nil))
+      (unwind-protect
+          (progn
+            (with-temp-file temp (insert "unchanged"))
+            (with-temp-org-buffer
+             "* doc.pdf
+:PROPERTIES:
+:CANVAS_ID: 42
+:PAYLOAD_HASH: 5d41402abc4b2a76b9719d911017c592
+:END:
+"
+             (org-back-to-heading)
+             (cl-letf (((symbol-function 'org-canvas--file-content-hash)
+                        (lambda (&rest _) "aaa:bbb"))
+                       ((symbol-function 'org-canvas--file-check-conflict)
+                        (lambda (&rest _) 'push))
+                       ((symbol-function 'org-canvas--file-remote-bytes)
+                        (lambda (&rest _) "unchanged"))
+                       ((symbol-function 'org-canvas--file-sync-upload)
+                        (lambda (&rest _) (setq uploaded t) :success)))
+               (expect (org-canvas--file-sync-parsed-entry
+                        (list :canvas-id "42" :display-name "doc.pdf"
+                              :local-path temp))
+                       :to-be :skip)
+               (expect uploaded :to-be nil)
+               (expect (org-entry-get (point) "PAYLOAD_HASH")
+                       :to-equal "aaa:bbb"))))
+        (delete-file temp))))
+
+  (it "still re-uploads a legacy entry whose bytes really changed"
+    (let ((temp (make-temp-file "legacy-changed-" nil ".pdf"))
+          (uploaded nil)
+          (warnings nil))
+      (unwind-protect
+          (progn
+            (with-temp-file temp (insert "new content"))
+            (with-temp-org-buffer
+             "* doc.pdf
+:PROPERTIES:
+:CANVAS_ID: 42
+:PAYLOAD_HASH: 5d41402abc4b2a76b9719d911017c592
+:END:
+"
+             (org-back-to-heading)
+             (cl-letf (((symbol-function 'org-canvas--file-content-hash)
+                        (lambda (&rest _) "aaa:bbb"))
+                       ((symbol-function 'org-canvas--file-check-conflict)
+                        (lambda (&rest _) 'push))
+                       ((symbol-function 'org-canvas--file-remote-bytes)
+                        (lambda (&rest _) "old content"))
+                       ((symbol-function 'org-canvas--log-warning)
+                        (lambda (_l fmt &rest args)
+                          (push (apply #'format fmt args) warnings)))
+                       ((symbol-function 'org-canvas--file-sync-upload)
+                        (lambda (&rest _) (setq uploaded t) :success)))
+               (expect (org-canvas--file-sync-parsed-entry
+                        (list :canvas-id "42" :display-name "doc.pdf"
+                              :local-path temp))
+                       :to-be :success)
+               (expect uploaded :to-be t)
+               (expect (car warnings) :to-match "rotates its file id"))))
+        (delete-file temp)))))
+
+(describe "org-canvas--file-announce-legacy-hashes"
+  (it "counts and names how many entries carry a pre-split hash"
+    (let (infos)
+      (with-temp-org-buffer
+       "* a.pdf
+:PROPERTIES:
+:PAYLOAD_HASH: 5d41402abc4b2a76b9719d911017c592
+:END:
+* b.pdf
+:PROPERTIES:
+:PAYLOAD_HASH: aaa:bbb
+:END:
+* c.pdf
+:PROPERTIES:
+:PAYLOAD_HASH: 098f6bcd4621d373cade4e832627b4f6
+:END:
+"
+       (let ((markers (org-map-entries (lambda () (point-marker)) t 'file)))
+         (cl-letf (((symbol-function 'org-canvas--log-info)
+                    (lambda (_l fmt &rest args)
+                      (push (apply #'format fmt args) infos))))
+           (expect (org-canvas--file-announce-legacy-hashes markers) :to-equal 2)
+           (expect (car infos) :to-match "2 entries carry a pre-split"))))))
+
+  (it "says nothing when every entry has a split hash"
+    (let (infos)
+      (with-temp-org-buffer
+       "* a.pdf
+:PROPERTIES:
+:PAYLOAD_HASH: aaa:bbb
+:END:
+"
+       (let ((markers (org-map-entries (lambda () (point-marker)) t 'file)))
+         (cl-letf (((symbol-function 'org-canvas--log-info)
+                    (lambda (_l fmt &rest args)
+                      (push (apply #'format fmt args) infos))))
+           (expect (org-canvas--file-announce-legacy-hashes markers) :to-equal 0)
+           (expect infos :to-be nil)))))))
+
 (describe "org-canvas--file-content-hash split"
   (it "keeps the bytes half stable when only metadata changes"
     (let ((temp-file (make-temp-file "split-" nil ".pdf")))

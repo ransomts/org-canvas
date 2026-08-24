@@ -895,12 +895,89 @@ are one PUT, and the id survives (issue #49)."
 
 (defun org-canvas--file-hash-parts (stored)
   "Split STORED into a (BYTES . METADATA) cons, or nil if it is not split.
-Entries synced before the split carry a single opaque md5.  There is no
-way to tell from one whether the bytes changed, so such an entry takes
-the re-upload path once more and carries a split hash from then on."
+Entries synced before the split carry a single opaque md5, which cannot
+say whether the bytes changed.  Rather than re-upload such an entry on
+faith, `org-canvas--file-migrate-legacy-hash' compares it against the
+copy Canvas holds and adopts a split hash when they agree (issue #71)."
   (when (and stored
              (string-match "\\`\\([0-9a-f]+\\):\\([0-9a-f]+\\)\\'" stored))
     (cons (match-string 1 stored) (match-string 2 stored))))
+
+(defun org-canvas--file-legacy-hash-p (stored)
+  "Return non-nil when STORED is a pre-split, opaque content hash."
+  (and stored
+       (not (org-canvas--file-hash-parts stored))
+       (string-match-p "\\`[0-9a-f]+\\'" stored)))
+
+(defun org-canvas--file-read-bytes (path)
+  "Return the contents of PATH as a unibyte string, or nil if unreadable."
+  (when (and path (file-readable-p path))
+    (with-temp-buffer
+      (set-buffer-multibyte nil)
+      (insert-file-contents-literally path)
+      (buffer-string))))
+
+(defun org-canvas--file-remote-bytes (canvas-id display-name)
+  "Return the Canvas copy of CANVAS-ID as a unibyte string, or nil.
+DISPLAY-NAME is used for logging.  One GET for the file object and one
+download; failures are logged and answered with nil, which sends the
+caller down the ordinary upload path."
+  (let ((temp (make-temp-file "org-canvas-remote-")))
+    (unwind-protect
+        (condition-case err
+            (let* ((item (org-canvas-api-request
+                          'GET (format "%s/api/v1/files/%s"
+                                       org-canvas-base-url canvas-id)))
+                   (url (alist-get 'url item)))
+              (when url
+                (url-copy-file url temp t)
+                (org-canvas--file-read-bytes temp)))
+          (error
+           (org-canvas--log-warning org-canvas--logger
+             "[Files] Could not fetch Canvas copy of '%s' (%s); treating it as changed"
+             display-name (error-message-string err))
+           nil))
+      (when (file-exists-p temp) (delete-file temp)))))
+
+(defun org-canvas--file-bytes-match-p (local remote)
+  "Return non-nil when LOCAL and REMOTE are the same file.
+A copy uploaded before issue #70 was fixed carries two extra bytes in
+front of its content, so a leading CRLF on the remote side is accepted
+as a match: those files differ from their source only by the bug, and
+re-uploading them to shed two bytes would cost every Canvas file id."
+  (and local remote
+       (or (equal local remote)
+           (and (> (length remote) 2)
+                (equal (substring remote 0 2) "\r\n")
+                (equal (substring remote 2) local)))))
+
+(defun org-canvas--file-migrate-legacy-hash (data file-hash)
+  "Adopt FILE-HASH for DATA when the Canvas copy already matches.
+An entry whose PAYLOAD_HASH predates the BYTES:METADATA split says
+nothing about whether the content changed, and the old answer was to
+re-upload it once to find out.  That is not free: a re-upload mints a
+new Canvas file id, and Canvas silently drops the module items pointing
+at the old one, so a routine sync could gut a course's module structure
+until a later modules sync rebuilt it (issue #71).
+
+One GET and one download settle the question instead.  When the bytes
+agree, the split hash is written and the entry skips with its id
+intact.  Returns non-nil when the entry was migrated."
+  (let* ((display-name (plist-get data :display-name))
+         (canvas-id (plist-get data :canvas-id))
+         (local (org-canvas--file-read-bytes (plist-get data :local-path)))
+         (remote (org-canvas--file-remote-bytes canvas-id display-name)))
+    (when (org-canvas--file-bytes-match-p local remote)
+      (if org-canvas--dry-run
+          (org-canvas--log-info org-canvas--logger
+            "[DRY-RUN] Would adopt a split hash for '%s' — Canvas already holds these bytes, id %s kept"
+            display-name canvas-id)
+        (org-canvas-org-set-property (point) org-canvas--prop-payload-hash
+                                     file-hash)
+        (org-canvas--log-info org-canvas--logger
+          "[Migrate] '%s' matches Canvas — split hash adopted, id %s kept"
+          display-name canvas-id))
+      t)))
 
 (cl-defun org-canvas--file-update-metadata (data)
   "Update DATA's Canvas file in place, without touching its bytes.
@@ -1062,7 +1139,15 @@ looking synced."
       :skip)
      ((and old-id parts fresh (string= (car parts) (car fresh)))
       (org-canvas--file-sync-metadata-only data file-hash))
+     ;; A pre-split hash is not evidence of a content change (issue #71).
+     ((and old-id (org-canvas--file-legacy-hash-p stored-hash)
+           (org-canvas--file-migrate-legacy-hash data file-hash))
+      :skip)
      (t
+      (when (org-canvas--file-legacy-hash-p stored-hash)
+        (org-canvas--log-warning org-canvas--logger
+          "[Files] '%s' does not match its Canvas copy — re-uploading, which rotates its file id"
+          display-name))
       (org-canvas--file-sync-upload data file-hash old-id)))))
 
 (defun org-canvas--file-sync-single-entry (marker)
@@ -1084,6 +1169,27 @@ does replace a file's CANVAS_ID, the display name is recorded in
          (org-canvas--log-error org-canvas--logger "[FAILED] At point %d: %s"
            (marker-position marker) (error-message-string err))
          :fail)))))
+
+(defun org-canvas--file-announce-legacy-hashes (targets)
+  "Say up front how many TARGETS carry a pre-split PAYLOAD_HASH.
+Those entries each cost one GET and one download before the run can
+tell whether their bytes changed, and a course that predates the split
+carries them on every file at once.  Silence here was the reported
+surprise: a dry run announcing `Would REPLACE' for a file nobody had
+touched read like a bug rather than a migration (issue #71)."
+  (let ((legacy 0))
+    (dolist (marker targets)
+      (with-current-buffer (marker-buffer marker)
+        (save-excursion
+          (goto-char (marker-position marker))
+          (when (org-canvas--file-legacy-hash-p
+                 (org-entry-get (point) org-canvas--prop-payload-hash))
+            (setq legacy (1+ legacy))))))
+    (when (> legacy 0)
+      (org-canvas--log-info org-canvas--logger
+        "[Files] %d entr%s carry a pre-split PAYLOAD_HASH; each is compared against its Canvas copy once and migrated in place when unchanged.  Only a genuine difference is re-uploaded, which rotates the file id and drops the module items pointing at it"
+        legacy (if (= legacy 1) "y" "ies")))
+    legacy))
 
 (defun org-canvas--file-warn-changed-ids (changed-names)
   "Log that CHANGED-NAMES were re-uploaded under new Canvas file ids.
@@ -1150,6 +1256,7 @@ unaffected modules keep their skip."
         (setq targets (org-map-entries (lambda () (point-marker)) t 'file)))
 
       (org-canvas--log-info org-canvas--logger "Found %d entries to process" (length targets))
+      (org-canvas--file-announce-legacy-hashes targets)
 
       (dolist (marker targets)
         (let ((result (org-canvas--file-sync-single-entry marker)))
