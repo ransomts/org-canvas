@@ -659,6 +659,70 @@ An empty FOLDER-PATH means the course root folder."
                      (org-canvas--file-get-root-folder)
                    (org-canvas--file-resolve-folder-by-path folder-path))))
 
+(defvar org-canvas--file-recreated-ids nil
+  "Display names of files deleted and re-uploaded during the current sync.
+The subset of `org-canvas--file-changed-ids' that could not be
+overwritten in place because the file moved folders, and so did lose
+its module items.  Reset by `org-canvas-sync-files'; consumed by
+`org-canvas--file-warn-recreated-ids'.")
+
+(defun org-canvas--file-remote-folder-id (canvas-id)
+  "Return the id of the Canvas folder CANVAS-ID currently lives in, or nil.
+Nil also on a failed lookup, which sends the caller down the older
+delete-and-upload path rather than guessing."
+  (condition-case err
+      (alist-get 'folder_id
+                 (org-canvas-api-request
+                  'GET (format "%s/api/v1/files/%s"
+                               org-canvas-base-url canvas-id)))
+    (error
+     (org-canvas--log-warning org-canvas--logger
+       "[Stage 3: Execute] Could not read the folder of file %s (%s)"
+       canvas-id (error-message-string err))
+     nil)))
+
+(defun org-canvas--file-replace-in-place-p (canvas-id folder-id)
+  "Return non-nil when an upload can overwrite CANVAS-ID where it stands.
+True when Canvas already holds the file in FOLDER-ID, since
+`on_duplicate=overwrite' matches on name within a folder.  A file whose
+FOLDER-PATH changed has no same-named file at its destination, so there
+is nothing there to overwrite: the old object would survive as an
+orphan and its module items would keep pointing at it."
+  (let ((remote-folder (org-canvas--file-remote-folder-id canvas-id)))
+    (and remote-folder folder-id
+         (equal (format "%s" remote-folder) (format "%s" folder-id)))))
+
+(defun org-canvas--file-clear-way-for-upload (data canvas-id folder-id)
+  "Prepare Canvas to receive a replacement upload of DATA.
+CANVAS-ID is the file being replaced and FOLDER-ID its destination.
+
+An upload into the folder the file already lives in replaces it: the
+preflight carries `on_duplicate=overwrite', and Canvas then repoints the
+module items at the new object and keeps the old id resolving as an
+alias.  Deleting first instead tears down everything hanging off the
+file — that is what removed module item 5832544 from its module and
+left the week with a hole in it (issues #71, #77).  The id rotates
+either way; only the collateral differs.
+
+A file that moved folders still deletes: there is no same-named file at
+the destination for the overwrite to replace, so skipping the delete
+would leave the old object behind with the module items still on it."
+  (if (org-canvas--file-replace-in-place-p canvas-id folder-id)
+      (org-canvas--log-debug org-canvas--logger
+        "[Stage 3: Execute] Overwriting file ID %s in place; Canvas repoints its module items"
+        canvas-id)
+    (org-canvas--log-debug org-canvas--logger
+      "[Stage 3: Execute] Replacing existing file ID: %s (moved folders, so the old object is deleted)"
+      canvas-id)
+    (push (plist-get data :display-name) org-canvas--file-recreated-ids)
+    (condition-case err
+        (org-canvas-api-request
+         'DELETE (format "%s/api/v1/files/%s" org-canvas-base-url canvas-id))
+      (error
+       (org-canvas--log-warning org-canvas--logger
+         "[Stage 3: Execute] Could not delete old file: %s"
+         (error-message-string err))))))
+
 (cl-defun org-canvas--file-push-to-api (data)
   "Execute the full 3-step upload process for DATA.
 Returns the dry-run sentinel `org-canvas--dry-run-response' without
@@ -677,19 +741,13 @@ DELETE of the old file object and the 3-step upload."
 
     (org-canvas--log-info org-canvas--logger "[Stage 3: Execute] Uploading '%s'" display-name)
 
-    ;; If we already have a canvas ID, we're updating - delete old and re-upload
-    ;; (Canvas doesn't support direct file content updates)
-    (when canvas-id
-      (org-canvas--log-debug org-canvas--logger "[Stage 3: Execute] Replacing existing file ID: %s" canvas-id)
-      (condition-case err
-          (org-canvas-api-request 'DELETE (format "%s/api/v1/files/%s" org-canvas-base-url canvas-id))
-        (error
-         (org-canvas--log-warning org-canvas--logger "[Stage 3: Execute] Could not delete old file: %s" (error-message-string err)))))
-
     ;; Get or create the target folder
     (let ((folder-id (org-canvas--file-target-folder-id folder-path)))
 
       (org-canvas--log-debug org-canvas--logger "[Stage 3: Execute] Target folder ID: %s" folder-id)
+
+      (when canvas-id
+        (org-canvas--file-clear-way-for-upload data canvas-id folder-id))
 
       ;; Build upload payload
       (let ((payload (org-canvas--file-build-upload-request data folder-id)))
@@ -851,13 +909,14 @@ Creates folders as needed and populates the folder cache."
 
 (defvar org-canvas--file-changed-ids nil
   "Display names of files whose CANVAS_ID changed during the current sync.
-Canvas cannot update file content in place: a re-upload replaces the
-file object under a NEW id, and Canvas deletes module items pointing
-at the old id.  Reset by `org-canvas-sync-files'; consumed by
-`org-canvas--file-warn-changed-ids' for the log.  No hash invalidation
-is needed: each module's items digest (folded into its PAYLOAD_HASH)
-includes resolved content ids, so exactly the affected modules re-push
-their items on the next modules sync.")
+A replacement upload always lands under a NEW id, even when it
+overwrites the file in place.  What it no longer costs is the module
+items: Canvas repoints them at the new object and keeps the old id
+resolving as an alias (issue #77).  Reset by `org-canvas-sync-files';
+consumed by `org-canvas--file-warn-changed-ids' for the log.  No hash
+invalidation is needed: each module's items digest (folded into its
+PAYLOAD_HASH) includes resolved content ids, so exactly the affected
+modules re-push their items on the next modules sync.")
 
 (defun org-canvas--file-bytes-hash (data)
   "Return the md5 of DATA's local file bytes."
@@ -1193,16 +1252,29 @@ touched read like a bug rather than a migration (issue #71)."
 
 (defun org-canvas--file-warn-changed-ids (changed-names)
   "Log that CHANGED-NAMES were re-uploaded under new Canvas file ids.
-Canvas deletes module items that pointed at a replaced file id.  No
-hash invalidation is performed: the module items digest (see
-`org-canvas--module-items-digest') includes resolved content ids, so
-the modules referencing these files come out dirty on the next
-modules sync (tier 2 of the same global run) and re-push their items;
-unaffected modules keep their skip."
-  (org-canvas--log-warning org-canvas--logger
-    "[Files] %d file ID(s) changed (%s) — modules referencing them will re-sync their items"
+An overwrite in place still mints a new id, so this stays true, but it
+is no longer the news it was: Canvas repoints the module items at the
+new object itself and keeps the old id resolving as an alias, so
+nothing downstream is broken while it waits for a modules sync (issue
+#77).  `org-canvas--file-warn-recreated-ids' covers the case that does
+still lose its items."
+  (org-canvas--log-info org-canvas--logger
+    "[Files] %d file ID(s) changed (%s) — Canvas repointed their module items; the old ids still resolve"
     (length changed-names)
     (mapconcat (lambda (x) (format "'%s'" x)) changed-names ", ")))
+
+(defun org-canvas--file-warn-recreated-ids (recreated-names)
+  "Warn that RECREATED-NAMES were deleted and re-uploaded, not overwritten.
+A file that moved folders cannot be overwritten in place — there is no
+same-named file at the destination — so the old object is deleted, and
+Canvas takes its module items down with it.  The module items digest
+includes resolved content ids, so the modules referencing these files
+come out dirty and re-push their items on the next modules sync (tier 2
+of the same global run); until then those items are missing."
+  (org-canvas--log-warning org-canvas--logger
+    "[Files] %d file(s) moved folders and were recreated (%s) — Canvas dropped their module items; a modules sync restores them"
+    (length recreated-names)
+    (mapconcat (lambda (x) (format "'%s'" x)) recreated-names ", ")))
 
 ;;;###autoload
 (defun org-canvas-sync-files ()
@@ -1213,6 +1285,7 @@ unaffected modules keep their skip."
   (setq org-canvas--file-root-folder-cache nil)
   (setq org-canvas--file-folder-cache (make-hash-table :test 'equal))
   (setq org-canvas--file-changed-ids nil)
+  (setq org-canvas--file-recreated-ids nil)
 
   (let ((files-file (expand-file-name org-canvas-files-file)))
     (unless (and files-file (file-exists-p files-file))
@@ -1282,6 +1355,11 @@ unaffected modules keep their skip."
         (org-canvas--file-warn-changed-ids
          (nreverse org-canvas--file-changed-ids))
         (setq org-canvas--file-changed-ids nil))
+
+      (when org-canvas--file-recreated-ids
+        (org-canvas--file-warn-recreated-ids
+         (nreverse org-canvas--file-recreated-ids))
+        (setq org-canvas--file-recreated-ids nil))
 
       (org-canvas--log-info org-canvas--logger "========================================")
       (org-canvas--log-info org-canvas--logger ">>> FILE SYNC COMPLETE")

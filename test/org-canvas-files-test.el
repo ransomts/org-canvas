@@ -3383,17 +3383,102 @@
                     (expect org-canvas--file-changed-ids :to-be nil))))))
         (delete-directory temp-dir t)))))
 
+;;;; Overwrite in place instead of delete-and-upload (issue #77)
+
+(describe "org-canvas--file-replace-in-place-p"
+  (it "is true when Canvas already holds the file in the target folder"
+    (cl-letf (((symbol-function 'org-canvas-api-request)
+               (lambda (&rest _) '((id . 42) (folder_id . 7)))))
+      (expect (org-canvas--file-replace-in-place-p "42" 7) :to-be-truthy)))
+
+  (it "compares ids across string and number spellings"
+    (cl-letf (((symbol-function 'org-canvas-api-request)
+               (lambda (&rest _) '((id . 42) (folder_id . 7)))))
+      (expect (org-canvas--file-replace-in-place-p "42" "7") :to-be-truthy)))
+
+  (it "is false when the entry moved to another folder"
+    ;; Nothing at the destination to overwrite, so the old object would
+    ;; survive as an orphan holding the module items.
+    (cl-letf (((symbol-function 'org-canvas-api-request)
+               (lambda (&rest _) '((id . 42) (folder_id . 7)))))
+      (expect (org-canvas--file-replace-in-place-p "42" 9) :to-be nil)))
+
+  (it "is false when the folder cannot be read, keeping the old behaviour"
+    (cl-letf (((symbol-function 'org-canvas-api-request)
+               (lambda (&rest _) (error "404 Not Found")))
+              ((symbol-function 'org-canvas--log-warning) #'ignore))
+      (expect (org-canvas--file-replace-in-place-p "42" 7) :to-be nil))))
+
+(describe "org-canvas--file-clear-way-for-upload"
+  (before-each (test-org-canvas-reset-file-caches))
+
+  (it "does not delete a file that is being overwritten where it stands"
+    ;; The whole point of #77: the delete is what took module item
+    ;; 5832544 down with it.
+    (let ((deleted nil)
+          (org-canvas--file-recreated-ids nil))
+      (cl-letf (((symbol-function 'org-canvas--file-replace-in-place-p)
+                 (lambda (&rest _) t))
+                ((symbol-function 'org-canvas-api-request)
+                 (lambda (method _url &rest _)
+                   (when (eq method 'DELETE) (setq deleted t)))))
+        (org-canvas--file-clear-way-for-upload
+         '(:display-name "syllabus.pdf") "42" 7)
+        (expect deleted :to-be nil)
+        (expect org-canvas--file-recreated-ids :to-be nil))))
+
+  (it "still deletes a file that moved folders"
+    (let ((deleted nil)
+          (org-canvas--file-recreated-ids nil))
+      (cl-letf (((symbol-function 'org-canvas--file-replace-in-place-p)
+                 (lambda (&rest _) nil))
+                ((symbol-function 'org-canvas-api-request)
+                 (lambda (method _url &rest _)
+                   (when (eq method 'DELETE) (setq deleted t)))))
+        (org-canvas--file-clear-way-for-upload
+         '(:display-name "syllabus.pdf") "42" 9)
+        (expect deleted :to-be t)
+        (expect org-canvas--file-recreated-ids :to-equal '("syllabus.pdf")))))
+
+  (it "carries on when the delete fails"
+    (let ((warnings nil)
+          (org-canvas--file-recreated-ids nil))
+      (cl-letf (((symbol-function 'org-canvas--file-replace-in-place-p)
+                 (lambda (&rest _) nil))
+                ((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _) (error "Delete failed")))
+                ((symbol-function 'org-canvas--log-warning)
+                 (lambda (_l fmt &rest args)
+                   (push (apply #'format fmt args) warnings))))
+        (org-canvas--file-clear-way-for-upload
+         '(:display-name "syllabus.pdf") "42" 9)
+        (expect (car warnings) :to-match "Could not delete old file")))))
+
+(describe "org-canvas--file-warn-recreated-ids"
+  (it "says the module items are gone and how they come back"
+    (let ((warned nil))
+      (cl-letf (((symbol-function 'org-canvas--log-warning)
+                 (lambda (_l fmt &rest args)
+                   (setq warned (apply #'format fmt args)))))
+        (org-canvas--file-warn-recreated-ids '("lecture.pdf"))
+        (expect warned :to-match "moved folders")
+        (expect warned :to-match "'lecture.pdf'")
+        (expect warned :to-match "modules sync restores them")))))
+
 (describe "org-canvas--file-warn-changed-ids"
   (before-each (test-org-canvas-reset-file-caches))
 
-  (it "warns with the changed file names"
-    (let ((warned nil))
-      (cl-letf (((symbol-function 'org-canvas--log-warning)
+  (it "reports the changed file names"
+    ;; Issue #77: an id change no longer costs the module items, so this
+    ;; is news rather than a warning.
+    (let ((noted nil))
+      (cl-letf (((symbol-function 'org-canvas--log-info)
                  (lambda (_logger fmt &rest args)
-                   (setq warned (apply #'format fmt args)))))
+                   (setq noted (apply #'format fmt args)))))
         (org-canvas--file-warn-changed-ids '("syllabus.pdf" "notes.pdf")))
-      (expect warned :to-match "2 file ID(s) changed")
-      (expect warned :to-match "'syllabus.pdf', 'notes.pdf'")))
+      (expect noted :to-match "2 file ID(s) changed")
+      (expect noted :to-match "'syllabus.pdf', 'notes.pdf'")
+      (expect noted :to-match "old ids still resolve")))
 
   (it "does not clear module PAYLOAD_HASH (items digest handles dirtying)"
     ;; The old blunt invalidation forced EVERY module to re-push; the
@@ -3433,9 +3518,10 @@
                              (lambda (_marker)
                                (push "Test PDF" org-canvas--file-changed-ids)
                                :success))
-                            ((symbol-function 'org-canvas--log-warning)
+                            ((symbol-function 'org-canvas--log-info)
                              (lambda (_l fmt &rest args)
-                               (setq warned (apply #'format fmt args)))))
+                               (when (string-match-p "file ID(s) changed" fmt)
+                                 (setq warned (apply #'format fmt args))))))
                     (org-canvas-sync-files))
                   (expect warned :to-match "'Test PDF'")
                   (expect org-canvas--file-changed-ids :to-be nil)))))
