@@ -208,7 +208,9 @@ Classic quizzes keep `published` **out** of the quiz payload entirely; `org-canv
 
 ### Global Sync Summary
 
-`org-canvas-sync` ends with a per-type table (Success/Skipped/Failed/Deferred) plus named failed/skipped items, rendered by `org-canvas--sync-log-global-summary`. Feature syncs record stats via `org-canvas--sync-record-feature-stats` — automatic in the macro pipeline (`org-canvas--sync-log-summary`), explicit in the custom syncs (settings, files, overrides). Recording is a no-op outside a global sync (gated on `org-canvas--sync-global-counters`).
+`org-canvas-sync` ends with a per-type table plus named failed/skipped items, rendered by `org-canvas--sync-log-global-summary`. Feature syncs record stats via `org-canvas--sync-record-feature-stats` — automatic in the macro pipeline (`org-canvas--sync-log-summary`), explicit in the custom syncs (settings, files, overrides). Recording is a no-op outside a global sync (gated on `org-canvas--sync-global-counters`).
+
+**Its columns follow the run** (`org-canvas--sync-summary-columns`): a dry run swaps Success for **Would sync** under a `DRY RUN` header, and Conflicts/Pulled columns appear only when the run had some. Every counter a run populates must be listed in `org-canvas--sync-stat-keys` — both the aggregate and the per-feature entry are built from it, and a key left out is silently dropped on the way to the table. That is issue #66: `:dry-run`, `:conflict` and `:pulled` were populated but never carried, so a dry run with 31 pending assignment updates printed `0 success` and a sync that hit five conflicts printed `0 failed` and nothing else. A custom sync must record its dry-run outcome as `:dry-run`, not `:success` (settings did the latter), or the mode detection never sees it.
 
 Module items skipped because their target lacked a CANVAS_ID are tracked in `org-canvas--module-items-pending` and retried after the final tier (`org-canvas--module-retry-pending-items`): healed items are reclassified skip→success in the summary; the rest produce a named "re-run org-canvas-sync-modules" hint.
 

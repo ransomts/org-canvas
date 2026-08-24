@@ -592,7 +592,12 @@ and pushes them to Canvas via PUT /courses/:id."
               (org-canvas--log-info org-canvas--logger "========================================")
               (org-canvas--log-info org-canvas--logger ">>> SETTINGS SYNC COMPLETE")
               (org-canvas--log-info org-canvas--logger "========================================")
-              (org-canvas--sync-record-feature-stats "Settings" '(:success 1))
+              ;; A dry run issues only a GET; counting it as a success made
+              ;; the preview table claim work that did not happen (issue #66).
+              (org-canvas--sync-record-feature-stats "Settings"
+                                                     (if org-canvas--dry-run
+                                                         '(:dry-run 1)
+                                                       '(:success 1)))
               (message "Settings sync complete."))
           (error
            (org-canvas--log-error org-canvas--logger "[FAILED] Settings sync: %s"

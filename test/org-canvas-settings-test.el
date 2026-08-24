@@ -382,6 +382,35 @@ Welcome to the course.
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t))))
 
+  (it "records a dry run as would-sync, not as a success"
+    ;; Issue #66: only a GET goes out, so counting it as a success made the
+    ;; preview table claim work that never happened.
+    (let* ((temp-dir (make-temp-file "settings-dry-" t))
+           (settings-file (expand-file-name "settings.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file settings-file
+              (insert "* Test Course\n:PROPERTIES:\n:TIME_ZONE: UTC\n:END:\n\nHello.\n"))
+            (let ((org-canvas-settings-file settings-file)
+                  (org-canvas--dry-run t)
+                  (org-canvas--sync-global-counters
+                   (list :success 0 :skip 0 :fail 0 :dry-run 0 :deferred 0))
+                  (org-canvas--sync-global-feature-stats nil))
+              (with-org-canvas-test-config
+                (cl-letf (((symbol-function 'org-canvas-api-request)
+                           (lambda (_method _url &rest _args)
+                             '((id . 1234) (name . "Test Course"))))
+                          ((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                          ((symbol-function 'display-buffer) (lambda (_) nil)))
+                  (org-canvas-sync-settings)
+                  (let ((entry (car org-canvas--sync-global-feature-stats)))
+                    (expect (plist-get entry :label) :to-equal "Settings")
+                    (expect (plist-get entry :dry-run) :to-equal 1)
+                    (expect (plist-get entry :success) :to-equal 0))))))
+        (let ((buf (find-buffer-visiting settings-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
   (it "signals error for missing file"
     (let ((org-canvas-settings-file "/tmp/nonexistent/settings.org"))
       (cl-letf (((symbol-function 'org-canvas-clear-log) (lambda () nil))

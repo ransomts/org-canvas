@@ -355,6 +355,13 @@ and :dry-run counts."
     ;; Accumulate into the global summary when running inside org-canvas-sync
     (org-canvas--sync-record-feature-stats (capitalize feature-name) counters)))
 
+(defconst org-canvas--sync-stat-keys
+  '(:success :skip :fail :deferred :dry-run :conflict :pulled)
+  "Counter keys carried from a feature's sync into the global summary.
+Every counter a run populates belongs here.  A key left out is
+silently dropped on the way to the table, which is how a dry run with
+31 pending updates came to print 0 success (issue #66).")
+
 (defun org-canvas--sync-record-feature-stats (label counters)
   "Record LABEL's COUNTERS into the global sync summary.
 No-op unless a global sync is active (`org-canvas--sync-global-counters'
@@ -362,7 +369,7 @@ non-nil).  Accumulates the aggregate counters and merges a per-feature
 entry (matched by LABEL) in `org-canvas--sync-global-feature-stats',
 including :failed-titles and :skipped-titles name lists."
   (when org-canvas--sync-global-counters
-    (dolist (key '(:success :skip :fail :dry-run :deferred))
+    (dolist (key org-canvas--sync-stat-keys)
       (plist-put org-canvas--sync-global-counters key
                  (+ (or (plist-get org-canvas--sync-global-counters key) 0)
                     (or (plist-get counters key) 0))))
@@ -371,7 +378,7 @@ including :failed-titles and :skipped-titles name lists."
                           :test #'equal)))
       (if entry
           (progn
-            (dolist (key '(:success :skip :fail :deferred))
+            (dolist (key org-canvas--sync-stat-keys)
               (plist-put entry key (+ (plist-get entry key)
                                       (or (plist-get counters key) 0))))
             (plist-put entry :failed-titles
@@ -380,13 +387,13 @@ including :failed-titles and :skipped-titles name lists."
             (plist-put entry :skipped-titles
                        (append (plist-get entry :skipped-titles)
                                (reverse (plist-get counters :skipped-titles)))))
-        (push (list :label label
-                    :success (or (plist-get counters :success) 0)
-                    :skip (or (plist-get counters :skip) 0)
-                    :fail (or (plist-get counters :fail) 0)
-                    :deferred (or (plist-get counters :deferred) 0)
-                    :failed-titles (reverse (plist-get counters :failed-titles))
-                    :skipped-titles (reverse (plist-get counters :skipped-titles)))
+        (push (append
+               (list :label label)
+               (mapcan (lambda (key)
+                         (list key (or (plist-get counters key) 0)))
+                       org-canvas--sync-stat-keys)
+               (list :failed-titles (reverse (plist-get counters :failed-titles))
+                     :skipped-titles (reverse (plist-get counters :skipped-titles))))
               org-canvas--sync-global-feature-stats)))))
 
 (defun org-canvas--sync-reclassify-skip-as-success (label title-match)
@@ -411,19 +418,56 @@ after all.  No-op unless a global sync is active."
                                  (plist-get entry :skipped-titles)
                                  :count 1))))))
 
+(defun org-canvas--sync-stat-total (stats key)
+  "Return the sum of KEY across STATS."
+  (apply #'+ (mapcar (lambda (s) (or (plist-get s key) 0)) stats)))
+
+(defun org-canvas--sync-summary-columns (stats)
+  "Return the columns the summary table should show for STATS.
+Each entry is (HEADER . KEY).
+
+A dry run reports what it *would* do, so `Would sync' replaces
+`Success': a preview whose table reads 0 success looks like a course
+with nothing pending, which is how a dry run with 31 pending
+assignment updates got taken for a clean one (issue #66).
+
+Conflicts and pulls earn a column only when the run had some, so an
+ordinary clean sync keeps the narrow table it has always printed."
+  (if (> (org-canvas--sync-stat-total stats :dry-run) 0)
+      '(("Would sync" . :dry-run) ("Skipped" . :skip)
+        ("Failed" . :fail) ("Deferred" . :deferred))
+    (append '(("Success" . :success) ("Skipped" . :skip)
+              ("Failed" . :fail) ("Deferred" . :deferred))
+            (when (> (org-canvas--sync-stat-total stats :conflict) 0)
+              '(("Conflicts" . :conflict)))
+            (when (> (org-canvas--sync-stat-total stats :pulled) 0)
+              '(("Pulled" . :pulled))))))
+
+(defun org-canvas--sync-summary-render-table (stats columns)
+  "Log STATS as an aligned table with COLUMNS, one row per feature."
+  (org-canvas--log-info org-canvas--logger "%-20s%s" "Type"
+    (mapconcat (lambda (col) (format "%10s" (car col))) columns ""))
+  (dolist (s stats)
+    (org-canvas--log-info org-canvas--logger "%-20s%s"
+      (plist-get s :label)
+      (mapconcat (lambda (col)
+                   (format "%10d" (or (plist-get s (cdr col)) 0)))
+                 columns ""))))
+
 (defun org-canvas--sync-log-global-summary ()
   "Log the aggregated per-type table and named failed/skipped items.
 Renders `org-canvas--sync-global-feature-stats' (in sync order) as an
-aligned table, followed by one warning line per feature naming failed
-items and noteworthy skipped items.  No-op when no stats were recorded."
+aligned table whose columns follow what the run actually did — see
+`org-canvas--sync-summary-columns' — followed by one warning line per
+feature naming failed items and noteworthy skipped items.  No-op when
+no stats were recorded."
   (let ((stats (reverse org-canvas--sync-global-feature-stats)))
     (when stats
-      (org-canvas--log-info org-canvas--logger "%-20s %8s %8s %7s %9s"
-        "Type" "Success" "Skipped" "Failed" "Deferred")
-      (dolist (s stats)
-        (org-canvas--log-info org-canvas--logger "%-20s %8d %8d %7d %9d"
-          (plist-get s :label) (plist-get s :success) (plist-get s :skip)
-          (plist-get s :fail) (plist-get s :deferred)))
+      (when (> (org-canvas--sync-stat-total stats :dry-run) 0)
+        (org-canvas--log-info org-canvas--logger
+          "DRY RUN — nothing was written; the counts below are what a real sync would do"))
+      (org-canvas--sync-summary-render-table
+       stats (org-canvas--sync-summary-columns stats))
       (dolist (s stats)
         (let ((failed (plist-get s :failed-titles))
               (skipped (plist-get s :skipped-titles)))

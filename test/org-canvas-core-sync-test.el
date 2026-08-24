@@ -3705,7 +3705,73 @@ Content here.
         (expect (plist-get entry :fail) :to-equal 1)
         (expect (plist-get entry :skipped-titles)
                 :to-equal '("A (no linked content)"))
-        (expect (plist-get entry :failed-titles) :to-equal '("B"))))))
+        (expect (plist-get entry :failed-titles) :to-equal '("B")))))
+
+  ;; Issue #66: a counter the run populated but the entry dropped never
+  ;; reaches the table, and the table is what people read.
+  (it "carries the dry-run, conflict and pulled counters into the entry"
+    (let ((org-canvas--sync-global-counters
+           (list :success 0 :skip 0 :fail 0 :dry-run 0 :deferred 0))
+          (org-canvas--sync-global-feature-stats nil))
+      (org-canvas--sync-record-feature-stats
+       "Assignments" '(:dry-run 31 :skip 30 :conflict 2 :pulled 1))
+      (let ((entry (car org-canvas--sync-global-feature-stats)))
+        (expect (plist-get entry :dry-run) :to-equal 31)
+        (expect (plist-get entry :conflict) :to-equal 2)
+        (expect (plist-get entry :pulled) :to-equal 1))))
+
+  (it "merges those counters across repeated records for one label"
+    (let ((org-canvas--sync-global-counters
+           (list :success 0 :skip 0 :fail 0 :dry-run 0 :deferred 0))
+          (org-canvas--sync-global-feature-stats nil))
+      (org-canvas--sync-record-feature-stats "Groups" '(:dry-run 2 :conflict 1))
+      (org-canvas--sync-record-feature-stats "Groups" '(:dry-run 3 :pulled 4))
+      (let ((entry (car org-canvas--sync-global-feature-stats)))
+        (expect (plist-get entry :dry-run) :to-equal 5)
+        (expect (plist-get entry :conflict) :to-equal 1)
+        (expect (plist-get entry :pulled) :to-equal 4))))
+
+  (it "accumulates conflicts and pulls into the aggregate counters"
+    (let ((org-canvas--sync-global-counters
+           (list :success 0 :skip 0 :fail 0 :dry-run 0 :deferred 0))
+          (org-canvas--sync-global-feature-stats nil))
+      (org-canvas--sync-record-feature-stats "Pages" '(:conflict 3 :pulled 2))
+      (expect (plist-get org-canvas--sync-global-counters :conflict) :to-equal 3)
+      (expect (plist-get org-canvas--sync-global-counters :pulled) :to-equal 2))))
+
+(describe "org-canvas--sync-summary-columns"
+  (it "replaces Success with Would sync when the run was a dry run"
+    ;; The reported symptom: a preview printing 0 success reads as clean.
+    (expect (org-canvas--sync-summary-columns '((:dry-run 31 :skip 30)))
+            :to-equal '(("Would sync" . :dry-run) ("Skipped" . :skip)
+                        ("Failed" . :fail) ("Deferred" . :deferred))))
+
+  (it "keeps the narrow table for an ordinary clean sync"
+    (expect (org-canvas--sync-summary-columns '((:success 8 :skip 1)))
+            :to-equal '(("Success" . :success) ("Skipped" . :skip)
+                        ("Failed" . :fail) ("Deferred" . :deferred))))
+
+  (it "adds a Conflicts column only when the run hit conflicts"
+    (expect (mapcar #'car (org-canvas--sync-summary-columns
+                           '((:success 8 :conflict 5))))
+            :to-equal '("Success" "Skipped" "Failed" "Deferred" "Conflicts")))
+
+  (it "adds a Pulled column only when something was pulled"
+    (expect (mapcar #'car (org-canvas--sync-summary-columns
+                           '((:success 8 :pulled 2))))
+            :to-equal '("Success" "Skipped" "Failed" "Deferred" "Pulled")))
+
+  (it "shows both when both happened, across different features"
+    (expect (mapcar #'car (org-canvas--sync-summary-columns
+                           '((:success 8 :conflict 1) (:success 2 :pulled 1))))
+            :to-equal '("Success" "Skipped" "Failed" "Deferred"
+                        "Conflicts" "Pulled"))))
+
+(describe "org-canvas--sync-stat-total"
+  (it "sums a counter across features, treating an absent one as zero"
+    (expect (org-canvas--sync-stat-total
+             '((:dry-run 31) (:skip 2) (:dry-run 16)) :dry-run)
+            :to-equal 47)))
 
 (describe "org-canvas--sync-log-summary feature stats recording"
   (it "records the feature's counters under its capitalized label"
@@ -3797,7 +3863,58 @@ Content here.
                  (lambda (_logger fmt &rest args)
                    (push (apply #'format fmt args) logged))))
         (org-canvas--sync-log-global-summary))
-      (expect logged :to-be nil))))
+      (expect logged :to-be nil)))
+
+  ;; Issue #66, the whole point: the table has to describe the run that
+  ;; happened.  The reported case was 31 assignments and 16 modules pending
+  ;; a push, printed as 0 success.
+  (it "reports what a dry run would do, under a header that says so"
+    (let ((org-canvas--sync-global-feature-stats
+           (list (list :label "Modules" :success 0 :skip 0 :fail 0 :deferred 0
+                       :dry-run 16 :conflict 0 :pulled 0)
+                 (list :label "Assignments" :success 0 :skip 30 :fail 0
+                       :deferred 0 :dry-run 31 :conflict 0 :pulled 0)))
+          (logged nil))
+      (cl-letf (((symbol-function 'org-canvas--log-info)
+                 (lambda (_logger fmt &rest args)
+                   (push (apply #'format fmt args) logged)))
+                ((symbol-function 'org-canvas--log-warning) #'ignore))
+        (org-canvas--sync-log-global-summary))
+      (let ((lines (nreverse logged)))
+        (expect (nth 0 lines) :to-match "DRY RUN")
+        (expect (nth 1 lines) :to-match "Type.*Would sync.*Skipped")
+        (expect (nth 1 lines) :not :to-match "Success")
+        (expect (nth 2 lines) :to-match "Assignments +31 +30 +0 +0")
+        (expect (nth 3 lines) :to-match "Modules +16 +0 +0 +0"))))
+
+  (it "shows conflicts and pulls a real sync hit"
+    ;; The worse half of #66: a run with five conflicts printed 0 failed
+    ;; and nothing else, so the table said the course was clean.
+    (let ((org-canvas--sync-global-feature-stats
+           (list (list :label "Pages" :success 8 :skip 0 :fail 0 :deferred 0
+                       :dry-run 0 :conflict 5 :pulled 2)))
+          (logged nil))
+      (cl-letf (((symbol-function 'org-canvas--log-info)
+                 (lambda (_logger fmt &rest args)
+                   (push (apply #'format fmt args) logged)))
+                ((symbol-function 'org-canvas--log-warning) #'ignore))
+        (org-canvas--sync-log-global-summary))
+      (let ((lines (nreverse logged)))
+        (expect (nth 0 lines) :to-match "Conflicts.*Pulled")
+        (expect (nth 1 lines) :to-match "Pages +8 +0 +0 +0 +5 +2"))))
+
+  (it "says nothing about a dry run when the sync was real"
+    (let ((org-canvas--sync-global-feature-stats
+           (list (list :label "Pages" :success 8 :skip 0 :fail 0 :deferred 0
+                       :dry-run 0 :conflict 0 :pulled 0)))
+          (logged nil))
+      (cl-letf (((symbol-function 'org-canvas--log-info)
+                 (lambda (_logger fmt &rest args)
+                   (push (apply #'format fmt args) logged)))
+                ((symbol-function 'org-canvas--log-warning) #'ignore))
+        (org-canvas--sync-log-global-summary))
+      (expect (cl-find-if (lambda (l) (string-match-p "DRY RUN" l)) logged)
+              :to-be nil))))
 
 ;;;; :after-sync hook (issue #37)
 
