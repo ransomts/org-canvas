@@ -1509,7 +1509,7 @@ Comprehensive review covering all course material.
 
 *** API Note
 
-Calendar events use a global Canvas API endpoint (not course-scoped).  Events are tied to the course via a =context_code= parameter.  This means calendar events are *not* included in orphan cleanup scanning (which uses course-scoped endpoints).
+Calendar events use a global Canvas API endpoint (not course-scoped).  Events are tied to the course via a =context_code= parameter, and every listing asks for =all_events=true= -- without it Canvas returns only the events dated today.  The feature registry knows the global endpoint (#87), so calendar events take part in the drift check, the dry-run conflict preview, the duplicate-title guard, =org-canvas-diff=, orphan cleanup and =org-canvas-pull-at-point= like any other content type.
 
 * Link Resolution
 
@@ -1776,13 +1776,16 @@ Three commands sound alike and answer different questions.
 | Command                   | Question it answers                          | API calls |
 |---------------------------+----------------------------------------------+-----------|
 | =org-canvas-status=         | What do my Org files say about themselves?   | none      |
-| =org-canvas-sync-dry-run=   | What would a sync push?                      | none      |
+| =org-canvas-sync-dry-run=   | What would a sync push, and where would it stop? | read-only |
 | =org-canvas-diff=           | Does Canvas match my Org files?              | read-only |
 
-Only the third can see a change made in the Canvas web UI.  A dry run reports
-entries whose =PAYLOAD_HASH= changed locally, which is a different set
-entirely: an assignment someone published in Canvas has an unchanged hash and
-so appears in neither of the first two.
+Only the last two consult Canvas, and they read it for different reasons.  A
+dry run answers what a sync would do: which entries it would push, and which
+it would stop at because Canvas changed them since the last sync or already
+holds an item of that title.  An entry whose heading is unchanged and that
+Canvas has not touched is skipped without any comparison, so a dry run cannot
+tell you the two sides disagree.  The drift report compares every registered
+property and the body, whether or not anything has changed on either side.
 
 ** What It Reports
 
@@ -2301,7 +2304,7 @@ Day-to-day workflow for an instructor maintaining a live course.
 
 When multiple people edit content -- some via Org files, others via the Canvas web UI.
 
-1. *Enable conflict detection.*  This is on by default (=org-canvas-detect-conflicts= is =t=).  Before each push, org-canvas compares =LAST_SYNCED= against the remote =updated_at= timestamp.
+1. *Enable conflict detection.*  This is on by default (=org-canvas-detect-conflicts= is =t=).  Before each update, org-canvas compares the remote =updated_at= against the baseline recorded at the last sync -- the heading's =CANVAS_UPDATED_AT=, or the file-level =#+LAST_SYNCED= header for entries synced before that property existed.
 
 2. *Resolve conflicts interactively.*  If a TA edited an assignment in Canvas and you modified the same heading locally, =org-canvas-sync= opens a diff buffer showing both versions and prompts you to *push* (overwrite Canvas), *pull* (accept the TA's changes into your Org file), or *skip* (leave both untouched for now).  Use capital letters (=P=, =L=, =S=) to apply the same choice to all remaining conflicts.
 

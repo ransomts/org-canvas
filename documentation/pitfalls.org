@@ -6,12 +6,14 @@ Things that can trip you up, organized from most common to least.
 
 * Don't Delete CANVAS_ID
 
-If you remove the =CANVAS_ID= property from a heading that was previously synced, org-canvas will create a *duplicate* on Canvas instead of updating the existing item.
+If you remove the =CANVAS_ID= property from a heading that was previously synced, the next sync treats the heading as new.  It does not create a duplicate blindly: before any create, org-canvas looks the title up on Canvas, and when an item with that title already exists it stops and asks -- *adopt* the existing item (stamp its id and update it), *skip* the heading, or *create anyway*.  Under =emacs --batch= it skips.  Adopt is almost always the answer here; set =org-canvas-duplicate-title-strategy= to =adopt= to answer without being asked.
 
-org-canvas warns you about this ("N heading(s) have LAST_SYNCED but no CANVAS_ID") and asks whether to continue.  If you see this warning:
+Two cases still need you:
 
-- *To update the existing item:* Restore the =CANVAS_ID= (check git history: =git log -p -- assignments.org=).
-- *To create a new item:* Also delete the =LAST_SYNCED= property so org-canvas treats it as genuinely new.
+- *The title changed too.*  The lookup is by title, so a renamed heading finds nothing and is created.  Restore the =CANVAS_ID= (check git history: =git log -p -- assignments.org=) or run =M-x org-canvas-diff=, which pairs the stray Canvas item with the unstamped heading as *UNCLAIMED*.
+- *Several Canvas items share the title.*  There is nothing to adopt, so the heading is skipped with a warning naming the ids; stamp the right one by hand.
+
+Older files may also carry a per-entry =LAST_SYNCED= property; a heading with one but no =CANVAS_ID= draws a separate warning ("N heading(s) have LAST_SYNCED but no CANVAS_ID") before the sync starts.
 
 * Pull Sections Before Syncing Overrides
 
@@ -167,10 +169,10 @@ Install pandoc from https://pandoc.org/installing.html or your system package ma
 
 * Calendar Events Use a Global API Endpoint
 
-Unlike other content types, calendar events use Canvas's global calendar API (not the course-scoped API).  This means:
+Unlike other content types, calendar events use Canvas's global calendar API (not the course-scoped API), filtered by the course's context code.  The feature registry knows this endpoint, so calendar events get the same coverage as everything else: the drift check, the dry-run conflict preview, =org-canvas-diff=, orphan cleanup and =org-canvas-pull-at-point= (#87).  Two things to know:
 
-- Orphan cleanup does not scan calendar events (no course-scoped list endpoint).
-- If you delete a calendar event heading from your Org file, use =M-x org-canvas-delete-calendar-event-at-point= before removing it, or it will be orphaned.
+- Every calendar listing asks Canvas for =all_events=true=.  Without it, Canvas returns only the events dated *today* -- which is why, before #87, a pull, a prune or a delete-all could report an empty course that held a semester of events.
+- Deleting a calendar event heading from your Org file leaves the event on Canvas until =M-x org-canvas-cleanup-orphans= or =M-x org-canvas-prune-calendar-events= finds it; =M-x org-canvas-delete-calendar-event-at-point= before removing the heading is still the tidiest route.
 
 * Strikethrough in Navigation = Hidden Tab
 

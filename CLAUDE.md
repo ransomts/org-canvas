@@ -6,9 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 org-canvas is an Emacs Lisp package that synchronizes course content from Org Mode files to Canvas LMS via its REST API. The workflow treats Org files as the "source of truth" - instructors design courses in Org Mode and push changes to Canvas.
 
-### Supported Content Types (15)
+### Supported Content Types (16)
 
-Assignments (including LTI/external-tool assignments such as Gradescope), quizzes (classic), new quizzes, pages, modules, rubrics, outcomes, discussions, announcements, files, assignment groups, group categories, calendar events, sections, and per-section date overrides.
+Assignments (including LTI/external-tool assignments such as Gradescope), quizzes (classic), new quizzes, pages, modules, rubrics, outcomes, discussions, announcements, files, assignment groups, group categories, calendar events, sections, per-section date overrides, and course settings.
 
 ## Build Commands
 
@@ -248,7 +248,7 @@ Canvas can be in.
 
 ### Duplicate-Title Guard (issue #85)
 
-`org-canvas--push-to-api` chooses POST purely on the absence of an id, and every recovery from a partial create (POST succeeded, stamp never written) left the course one sync away from a second copy students could submit to. Before any POST, `org-canvas--push-guard-duplicate` looks the title up and asks adopt/skip/create — `org-canvas--resolve-duplicate` mirrors the conflict machinery: `org-canvas--duplicate-apply-all` (capitals, per run), `org-canvas-duplicate-title-strategy` (the caller's seam; `create` also disables the lookup), skip under `noninteractive`. Adopt stamps the id *and* `CANVAS_UPDATED_AT` from the item before the PUT so the conflict check that follows compares against the item's own clock. The lookup source is `org-canvas--current-remote-titles`: the drift snapshot's title index (now built by `org-canvas--sync-fetch-remote-snapshot` from the same one list request) inside a sync, the symbol `none` when a sync had no snapshot (unregistered feature such as calendar, failed fetch, detection off — check nothing rather than spend a GET per entry), and nil outside a sync, where a single-entry push asks the module's `:find-fn`. The pipeline counts a `duplicate` return as a skip with a named `:skipped-titles` entry; `org-canvas--push-at-point-runtime` reports `conflict`/`pulled`/`duplicate` instead of finalizing a symbol. `org-canvas-diff` reports the same situation as `UNCLAIMED` via `org-canvas--diff-pair-unclaimed`.
+`org-canvas--push-to-api` chooses POST purely on the absence of an id, and every recovery from a partial create (POST succeeded, stamp never written) left the course one sync away from a second copy students could submit to. Before any POST, `org-canvas--push-guard-duplicate` looks the title up and asks adopt/skip/create — `org-canvas--resolve-duplicate` mirrors the conflict machinery: `org-canvas--duplicate-apply-all` (capitals, per run), `org-canvas-duplicate-title-strategy` (the caller's seam; `create` also disables the lookup), skip under `noninteractive`. Adopt stamps the id *and* `CANVAS_UPDATED_AT` from the item before the PUT so the conflict check that follows compares against the item's own clock. The lookup source is `org-canvas--current-remote-titles`: the drift snapshot's title index (now built by `org-canvas--sync-fetch-remote-snapshot` from the same one list request) inside a sync, the symbol `none` when a sync had no snapshot (an unregistered feature such as new quizzes, a failed fetch, detection off — check nothing rather than spend a GET per entry), and nil outside a sync, where a single-entry push asks the module's `:find-fn`. The pipeline counts a `duplicate` return as a skip with a named `:skipped-titles` entry; `org-canvas--push-at-point-runtime` reports `conflict`/`pulled`/`duplicate` instead of finalizing a symbol. `org-canvas-diff` reports the same situation as `UNCLAIMED` via `org-canvas--diff-pair-unclaimed`.
 
 ### Dry Run Reports Conflicts (issue #84)
 

@@ -36,11 +36,11 @@ Yes.  Each course is a separate directory with its own =org-canvas-credentials.e
 
 ** Does org-canvas modify my Org files?
 
-Only to add/update sync properties: =CANVAS_ID=, =LAST_SYNCED=, =CANVAS_UPDATED_AT=, and =PAYLOAD_HASH=.  It never modifies your content, headings, or body text (except during a pull, which you explicitly invoke).
+Only to add/update sync properties -- =CANVAS_ID= (=CANVAS_URL= for pages), =CANVAS_UPDATED_AT= and =PAYLOAD_HASH= on the heading, and the file-level =#+LAST_SYNCED= header.  It never modifies your content, headings, or body text (except during a pull, which you explicitly invoke).  Files synced by older versions may still carry a per-entry =LAST_SYNCED=; it is no longer written.
 
 ** Is there a way to preview changes before syncing?
 
-Yes: =M-x org-canvas-sync-dry-run=.  This shows what would be created, updated, or skipped without making any API calls.
+Yes: =M-x org-canvas-sync-dry-run=.  This shows what would be created, updated, or skipped, and which entries a real sync would stop at -- an item Canvas has modified since your last sync, or a create whose title Canvas already holds.  It reads from Canvas (one list request per content type) but never writes, and it leaves your Org files untouched.
 
 ** How do I undo a sync?
 
@@ -436,8 +436,10 @@ Some properties are time-dependent (e.g., =LOCK_AT= in the past causes Canvas to
 A conflict is detected when:
 
 1. The item has a =CANVAS_ID= (it's been synced before).
-2. The item has a =LAST_SYNCED= timestamp.
-3. The remote =updated_at= timestamp is newer than =LAST_SYNCED=.
+2. There is a baseline to compare against: the heading's =CANVAS_UPDATED_AT= (recorded at its last push or pull), or failing that the file-level =#+LAST_SYNCED= header.
+3. The remote =updated_at= timestamp is newer than that baseline.
+
+The conflict line in the log names which baseline it compared, so you can tell the two cases apart.
 
 This means someone (or something) modified the item on Canvas after your last sync.
 
@@ -482,7 +484,7 @@ Your token lacks the required scope.  Ensure it has full access to the course.
 
 ** "N heading(s) have LAST_SYNCED but no CANVAS_ID"
 
-A heading was previously synced but its =CANVAS_ID= was removed.  Syncing would create a duplicate.  Either restore the =CANVAS_ID= (check git history) or remove =LAST_SYNCED= to treat it as new.
+A heading synced by an older version of org-canvas has lost its =CANVAS_ID=.  The sync will not create a duplicate blindly -- it looks the title up on Canvas first and offers to adopt the existing item (see [[file:pitfalls.org::*Don't Delete CANVAS_ID][Don't Delete CANVAS_ID]]) -- but restoring the =CANVAS_ID= from git history is the surest fix.  Remove the stale =LAST_SYNCED= property once the heading is stamped again; it is no longer written.
 
 ** My sync seems stuck
 

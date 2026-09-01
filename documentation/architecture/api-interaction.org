@@ -45,7 +45,18 @@ It concatenates =org-canvas-base-url= + =/api/v1/courses/= +
 
 Some endpoints are not course-scoped (calendar events, group
 categories). These modules provide custom URL functions via
-=:post-url-fn= / =:put-url-fn= / =:list-url-fn= / =:delete-url-fn=.
+=:post-url-fn= / =:put-url-fn= on the push and =:list-url-fn= /
+=:delete-url-fn= on the delete macros -- and, since #87, on the
+feature registry: =org-canvas-register-feature= accepts
+=:list-url-fn=, =:item-url-fn=, a function-valued =:list-params= (for
+parameters that embed =org-canvas-course-id=, unknown at load time)
+and =:delete-data=.  Every consumer of the registry -- the sync's
+remote snapshot, =org-canvas-diff=, the orphan scan and delete,
+=org-canvas-pull-at-point= -- resolves URLs through
+=org-canvas--feature-list-url=, =org-canvas--feature-item-url= and
+=org-canvas--feature-list-params= rather than calling
+=org-canvas-api-course-endpoint= itself, so a global endpoint is
+declared once and honored everywhere.
 
 ** Query String Building
 
