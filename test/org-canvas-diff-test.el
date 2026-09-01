@@ -932,5 +932,119 @@ The remote updated_at is always newer than the baseline."
                                                  '((all_day . :json-false)))
                 :to-equal '(("ALL_DAY" "true" "false")))))))
 
+;;;; Issue #98: a synced course can read zero
+
+(describe "scaffolding skip-fns (issue #98)"
+  (it "suppresses the course root outcome group, but not a child group"
+    (let ((skip (plist-get (org-canvas--registry-find-feature "outcomes") :skip-fn)))
+      (expect (funcall skip '((id . 127270) (title . "Course root"))) :to-be-truthy)
+      (expect (funcall skip '((id . 2) (parent_outcome_group . :null))) :to-be-truthy)
+      (expect (funcall skip '((id . 3) (parent_outcome_group . ((id . 127270)))))
+              :to-be nil)))
+
+  (it "suppresses the stock Assignments group"
+    (let ((skip (plist-get (org-canvas--registry-find-feature "assignment-groups")
+                           :skip-fn)))
+      (expect (funcall skip '((id . 677142) (name . "Assignments"))) :to-be-truthy)
+      (expect (funcall skip '((id . 2) (name . "Homework"))) :to-be nil)))
+
+  (it "suppresses a classic quiz's shadow assignment"
+    (let ((skip (plist-get (org-canvas--registry-find-feature "assignments")
+                           :skip-fn)))
+      (expect (funcall skip '((id . 2555670) (quiz_id . 5))) :to-be-truthy)
+      (expect (funcall skip '((id . 2) (quiz_id . :null))) :to-be nil)
+      (expect (funcall skip '((id . 3) (name . "Essay"))) :to-be nil)))
+
+  (it "names a reason for each"
+    (dolist (f '("outcomes" "assignment-groups" "assignments"))
+      (expect (plist-get (org-canvas--registry-find-feature f) :skip-reason)
+              :to-be-truthy))))
+
+(describe "org-canvas-diff-excluded-features (issue #98)"
+  (it "skips the feature without a request and keeps the count at zero"
+    (with-org-canvas-test-config
+      (let ((org-canvas-diff-excluded-features '("announcements"))
+            (checked nil))
+        (cl-letf (((symbol-function 'org-canvas--preflight-check) #'ignore)
+                  ((symbol-function 'display-buffer) #'ignore)
+                  ((symbol-function 'org-canvas--diff-feature)
+                   (lambda (feature)
+                     (push (plist-get feature :name) checked)
+                     (list :name (plist-get feature :name)))))
+          (expect (org-canvas-diff) :to-equal 0)
+          (expect checked :not :to-contain "Announcements")
+          (expect (length checked)
+                  :to-equal (1- (length org-canvas--feature-registry)))))))
+
+  (it "renders the exclusion as its own visible line"
+    (with-org-canvas-test-config
+      (expect (org-canvas--diff-render '((:name "Announcements" :excluded t)))
+              :to-match "Announcements: not checked (org-canvas-diff-excluded-features)"))))
+
+(describe "org-canvas-diff-known-extras (issue #98)"
+  (defun test-ack-98--files (known remote)
+    "Run the files diff with KNOWN acknowledged against REMOTE items."
+    (let ((file (make-temp-file "ack-98-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "* Real\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"))
+            (let ((org-canvas-files-file file)
+                  (org-canvas-diff-known-extras known))
+              (with-org-canvas-test-config
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (lambda (&rest _) remote)))
+                  (org-canvas--diff-feature
+                   (org-canvas--registry-find-feature "files"))))))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file))))
+
+  (it "keeps an acknowledged extra out of the report and counts it"
+    (let ((result (test-ack-98--files
+                   '(("files" "31505574" "embedded media"))
+                   '(((id . 1) (display_name . "Real"))
+                     ((id . 31505574) (display_name . "media.mp4"))
+                     ((id . 31452881) (display_name . "other.mp4"))))))
+      (expect (plist-get result :acknowledged) :to-equal 1)
+      (expect (mapcar (lambda (e) (plist-get e :id)) (plist-get result :extra))
+              :to-equal '("31452881"))
+      (expect (plist-get result :divergences) :to-be nil)))
+
+  (it "flags an acknowledged id Canvas no longer holds, and counts it"
+    (let ((result (test-ack-98--files
+                   '(("files" "99" "old duplicate"))
+                   '(((id . 1) (display_name . "Real"))))))
+      (expect (plist-get result :acknowledged) :to-equal 0)
+      (let ((d (car (plist-get result :divergences))))
+        (expect (plist-get d :kind) :to-equal 'stale-ack)
+        (expect (plist-get d :id) :to-equal "99")
+        (expect (plist-get d :note) :to-equal "old duplicate"))
+      (expect (org-canvas--diff-count (list result)) :to-equal 1)))
+
+  (it "does not flag an acknowledged id that a heading now claims"
+    (let ((result (test-ack-98--files
+                   '(("files" "1" nil))
+                   '(((id . 1) (display_name . "Real"))))))
+      (expect (plist-get result :divergences) :to-be nil)
+      (expect (plist-get result :acknowledged) :to-equal 0)))
+
+  (it "renders the stale entry and the acknowledged footer count"
+    (with-org-canvas-test-config
+      (let ((report (org-canvas--diff-render
+                     '((:name "Files"
+                        :divergences ((:kind stale-ack :id "99" :note "old dup"))
+                        :extra nil :acknowledged 2)))))
+        (expect report :to-match "STALE-ACK id 99")
+        (expect report :to-match "old dup")
+        (expect report :to-match "Acknowledged extras: 2 (org-canvas-diff-known-extras)")
+        (expect report :to-match "1 divergence"))))
+
+  (it "matches feature names however they are spelled"
+    (expect (org-canvas--diff-known-extras-for "Assignment Groups")
+            :to-equal nil)
+    (let ((org-canvas-diff-known-extras '(("assignment_groups" 677142 nil))))
+      (expect (org-canvas--diff-known-extras-for "Assignment Groups")
+              :to-equal '(("677142" . nil))))))
+
 (provide 'org-canvas-diff-test)
 ;;; org-canvas-diff-test.el ends here

@@ -41,6 +41,20 @@
 ;; calendar event spanning days — the times are kept, the flag is not —
 ;; so comparing it would flag the entry on every run, forever (#93).
 ;;
+;; ACKNOWLEDGED AND EXCLUDED (#98)
+;; ===============================
+;; A synced course can still hold remote objects that are unclaimed by
+;; design — Canvas scaffolding, features authored in the web UI on
+;; purpose, deliberate one-offs — and a report that flags them forever
+;; buries the one extra that matters and pins `org-canvas-diff-batch'
+;; at a non-zero exit.  Three valves, from broad to narrow: a feature's
+;; `:skip-fn' suppresses scaffolding structurally (counted in the
+;; footer, the #81 way); `org-canvas-diff-excluded-features' skips a
+;; feature wholesale, printing one line so the exclusion stays visible;
+;; `org-canvas-diff-known-extras' acknowledges individual ids, counted
+;; once in the footer — and flagged loudly, and counted as drift, when
+;; an acknowledged id stops existing, so the list cannot rot.
+;;
 ;; COST AND SAFETY
 ;; ===============
 ;; One list request per feature.  Nothing is written, locally or
@@ -56,6 +70,35 @@
 (defconst org-canvas--diff-buffer-name "*canvas-diff*"
   "Name of the buffer holding the drift report.")
 
+(defcustom org-canvas-diff-excluded-features nil
+  "Feature names `org-canvas-diff' does not check at all.
+For content that is ad hoc by design — a course whose announcements
+are authored in the web UI on purpose will never have Org headings for
+them, and reporting each one as EXTRA forever buries real drift
+\(issue #98).  Names match the way the registry matches them, so
+\"announcements\" and \"Announcements\" both work.  The report prints
+one line per excluded feature, so the exclusion stays visible.
+Exclusion affects the drift report only."
+  :type '(repeat string)
+  :group 'org-canvas)
+
+(defcustom org-canvas-diff-known-extras nil
+  "Remote items acknowledged as deliberately unclaimed.
+Each entry is (FEATURE-NAME ID) or (FEATURE-NAME ID NOTE) — e.g.
+\(\"files\" \"31505574\" \"embedded announcement media\").  Acknowledged
+ids are excluded from the EXTRA rows and from the divergence total
+that drives `org-canvas-diff-batch''s exit code, and reported once as
+a counted footer line.  An acknowledged id that no longer exists on
+Canvas is flagged as STALE-ACK — and does count as drift — so the
+list cannot rot (issue #98).  Acknowledgment affects the drift report
+only: orphan cleanup and prune still list these items, which is where
+to look if one should be deleted after all."
+  :type '(repeat (list (string :tag "Feature")
+                       (string :tag "Canvas id")
+                       (choice (const :tag "No note" nil)
+                               (string :tag "Note"))))
+  :group 'org-canvas)
+
 (defconst org-canvas--diff-comparable-types
   '(boolean number timestamp enum csv-enum string)
   "Property types the field comparison understands.
@@ -64,20 +107,45 @@ an id, so comparing them would need the same resolution a sync does.")
 
 ;;;; Registry Lookup
 
+(defun org-canvas--diff-normalize-name (name)
+  "Return NAME lowercased with spaces, underscores and dashes removed.
+The same normalization `org-canvas--registry-find-feature' applies, so
+every spelling of a feature name means the same feature."
+  (downcase (replace-regexp-in-string "[ _-]" "" name)))
+
 (defun org-canvas--diff-find-properties (feature-name)
   "Return the property registry entry for FEATURE-NAME, or nil.
 Matches the way `org-canvas--registry-find-feature' does, so the
 feature registry's \"Assignment Groups\" finds the property registry's
 \"assignment-groups\"."
-  (let ((norm (lambda (s) (downcase (replace-regexp-in-string "[ _-]" "" s))))
+  (let ((norm (org-canvas--diff-normalize-name feature-name))
         found)
     (maphash (lambda (key plist)
                (when (and (not found)
-                          (string= (funcall norm key)
-                                   (funcall norm feature-name)))
+                          (string= (org-canvas--diff-normalize-name key) norm))
                  (setq found plist)))
              org-canvas--property-registry)
     found))
+
+(defun org-canvas--diff-feature-excluded-p (name)
+  "Return non-nil when feature NAME is excluded from the drift report.
+Consults `org-canvas-diff-excluded-features', matching names the way
+the registry does (issue #98)."
+  (let ((norm (org-canvas--diff-normalize-name name)))
+    (cl-some (lambda (excluded)
+               (string= norm (org-canvas--diff-normalize-name excluded)))
+             org-canvas-diff-excluded-features)))
+
+(defun org-canvas--diff-known-extras-for (name)
+  "Return feature NAME's entries of `org-canvas-diff-known-extras'.
+Each as (ID . NOTE), the id as a string (issue #98)."
+  (let ((norm (org-canvas--diff-normalize-name name)))
+    (delq nil
+          (mapcar (lambda (entry)
+                    (when (string= norm (org-canvas--diff-normalize-name
+                                         (nth 0 entry)))
+                      (cons (format "%s" (nth 1 entry)) (nth 2 entry))))
+                  org-canvas-diff-known-extras))))
 
 ;;;; Value Comparison
 
@@ -373,9 +441,12 @@ the property to stamp; the rest of EXTRA is returned as it was."
 
 (defun org-canvas--diff-feature (feature)
   "Compare one FEATURE registry entry against Canvas.
-Returns a plist (:name :divergences :extra :error), where :extra holds
-remote items no Org heading claims and :error a message when the list
-request failed."
+Returns a plist (:name :divergences :extra :acknowledged :error):
+:extra holds remote items no Org heading claims — minus the ones
+`org-canvas-diff-known-extras' acknowledges, whose count is
+:acknowledged — and :error a message when the list request failed.
+An acknowledged id Canvas no longer holds joins :divergences as a
+`stale-ack' entry, so the acknowledgment list cannot rot (issue #98)."
   (let* ((name (plist-get feature :name))
          (file-var (plist-get feature :file-var))
          (file (and (boundp file-var) (symbol-value file-var)))
@@ -405,12 +476,25 @@ request failed."
               (when d (push d divergences)))
             (let ((m (plist-get entry :pom)))
               (when (markerp m) (set-marker m nil))))
-          (let ((unclaimed (org-canvas--diff-unclaimed
-                            items claimed id-field title-field skip-fn)))
+          (let* ((unclaimed (org-canvas--diff-unclaimed
+                             items claimed id-field title-field skip-fn))
+                 (paired (org-canvas--diff-pair-unclaimed
+                          (car unclaimed) local id-property))
+                 (known (org-canvas--diff-known-extras-for name))
+                 (acked (cl-remove-if-not
+                         (lambda (e) (assoc (plist-get e :id) known))
+                         paired))
+                 (stale (cl-remove-if (lambda (k) (gethash (car k) index))
+                                      known)))
             (list :name name
-                  :divergences (nreverse divergences)
-                  :extra (org-canvas--diff-pair-unclaimed
-                          (car unclaimed) local id-property)
+                  :divergences (append (nreverse divergences)
+                                       (mapcar (lambda (k)
+                                                 (list :kind 'stale-ack
+                                                       :id (car k)
+                                                       :note (cdr k)))
+                                               stale))
+                  :extra (cl-remove-if (lambda (e) (memq e acked)) paired)
+                  :acknowledged (length acked)
                   :suppressed (cdr unclaimed)
                   :skip-reason (plist-get feature :skip-reason))))
       (error
@@ -427,6 +511,11 @@ request failed."
     ('extra
      (insert (format "  EXTRA     %s (id %s, no Org heading claims it)\n"
                      (plist-get entry :title) (plist-get entry :id))))
+    ('stale-ack
+     (insert (format "  STALE-ACK id %s is acknowledged in org-canvas-diff-known-extras but no longer exists on Canvas — remove the entry%s\n"
+                     (plist-get entry :id)
+                     (let ((note (plist-get entry :note)))
+                       (if note (format " (%s)" note) "")))))
     ('unclaimed
      (insert (format "  UNCLAIMED %s (Canvas id %s has this title and no heading claims it; stamp %s or rename)\n"
                      (plist-get entry :title) (plist-get entry :id)
@@ -481,6 +570,9 @@ show up as extra, so without this the report reads as full coverage."
             (extra (plist-get result :extra))
             (err (plist-get result :error)))
         (cond
+         ((plist-get result :excluded)
+          (insert (format "%s: not checked (org-canvas-diff-excluded-features)\n\n"
+                          (plist-get result :name))))
          (err
           (insert (format "%s: could not check (%s)\n\n"
                           (plist-get result :name) err)))
@@ -498,7 +590,13 @@ show up as extra, so without this the report reads as full coverage."
                   "No drift: Canvas matches the Org files.\n"
                 (format "%d divergence(s) found.\n" total)))
       (when-let* ((note (org-canvas--diff-suppressed-note results)))
-        (insert note)))
+        (insert note))
+      (let ((acked (apply #'+ (mapcar (lambda (r)
+                                        (or (plist-get r :acknowledged) 0))
+                                      results))))
+        (when (> acked 0)
+          (insert (format "Acknowledged extras: %d (org-canvas-diff-known-extras).\n"
+                          acked)))))
     (buffer-string)))
 
 ;;;; Commands
@@ -507,15 +605,21 @@ show up as extra, so without this the report reads as full coverage."
 (defun org-canvas-diff ()
   "Report how Canvas differs from the Org files, without changing anything.
 Makes one read-only list request per feature and compares ids, remote
-modification times and the properties each module registers.  Returns
-the number of divergences found, so a batch caller can act on it; see
+modification times and the properties each module registers.  Features
+in `org-canvas-diff-excluded-features' are skipped with a visible
+line, and ids in `org-canvas-diff-known-extras' are counted as
+acknowledged rather than reported (issue #98).  Returns the number of
+divergences found, so a batch caller can act on it; see
 `org-canvas-diff-batch'."
   (interactive)
   (org-canvas--preflight-check)
   (let (results)
     (dolist (feature org-canvas--feature-registry)
-      (message "Drift: checking %s..." (plist-get feature :name))
-      (push (org-canvas--diff-feature feature) results))
+      (let ((name (plist-get feature :name)))
+        (if (org-canvas--diff-feature-excluded-p name)
+            (push (list :name name :excluded t) results)
+          (message "Drift: checking %s..." name)
+          (push (org-canvas--diff-feature feature) results))))
     (setq results (nreverse results))
     (let ((report (org-canvas--diff-render results))
           (total (org-canvas--diff-count results)))
