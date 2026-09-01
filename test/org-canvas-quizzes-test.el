@@ -3883,4 +3883,32 @@ old Q text B
          (expect (plist-get written :questions) :to-equal 27)
          (expect (plist-get written :failed) :to-equal 1))))))
 
+(describe "org-canvas--quiz-body-html (issue #83)"
+  (it "exports only the text before the first question"
+    (with-temp-org-buffer
+     "* Quiz 1
+:PROPERTIES:
+:CANVAS_ID: 5
+:END:
+
+Read *carefully*.
+
+** Q1
+What is 2+2?
+- [X] 4
+"
+     (org-back-to-heading)
+     (let ((html (org-canvas--quiz-body-html)))
+       (expect html :to-match "<b>carefully</b>")
+       (expect html :not :to-match "2\\+2"))))
+
+  (it "is empty for a quiz with no description"
+    (with-temp-org-buffer "* Quiz 1\n** Q1\nWhat?\n"
+     (org-back-to-heading)
+     (expect (org-canvas--quiz-body-html) :to-equal "")))
+
+  (it "converts text to HTML, and nothing to nil"
+    (expect (org-canvas--quiz-body-text-to-html "") :to-be nil)
+    (expect (org-canvas--quiz-body-text-to-html "Hi") :to-match "Hi")))
+
 ;;; org-canvas-quizzes-test.el ends here

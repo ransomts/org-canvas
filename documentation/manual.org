@@ -1562,7 +1562,16 @@ There are two checks.
 *Before each update*, org-canvas GETs the item, reads its =updated_at=, and
 flags a conflict if that is newer than the baseline.  This applies to updates,
 not creates, and an entry with no baseline at all (a first sync) is never
-flagged.
+flagged.  The log line names the baseline it actually compared:
+
+#+begin_example
+[Conflict] 'Lab 1': remote updated_at 2026-08-31T15:00:53Z is newer than CANVAS_UPDATED_AT 2026-08-19T13:19:49Z
+[Conflict] 'Lab 1': remote updated_at 2026-08-31T15:00:53Z is newer than #+LAST_SYNCED [2026-08-19 Wed 09:59] (entry has no CANVAS_UPDATED_AT)
+#+end_example
+
+(It used to print the file header whichever one it had compared, and =nil=
+when it could not find the header, which sent readers checking a header that
+was fine.)
 
 *Before skipping an unchanged entry*, org-canvas consults a snapshot of the
 feature's remote items -- one list request per feature per sync -- and takes
@@ -1581,7 +1590,8 @@ that did not happen.
 
 When a conflict is detected, org-canvas opens a =*canvas-conflict*= buffer showing a side-by-side comparison of the local and remote versions:
 
-- Timestamps (local =LAST_SYNCED= vs remote =updated_at=)
+- Timestamps (the local baseline -- =CANVAS_UPDATED_AT=, or the file-level
+  =#+LAST_SYNCED= when the entry has none -- vs remote =updated_at=)
 - Title differences (if the title changed remotely)
 - Body/description preview (truncated to 500 characters)
 
@@ -1617,6 +1627,7 @@ Pull is available for modules that have a pull-item function: assignments, pages
 |------------------------------+---------+----------------------------------------------------|
 | =org-canvas-detect-conflicts=  | =t=       | Enable conflict detection before pushes            |
 | =org-canvas-conflict-strategy= | =nil=     | Resolve without asking: =push=, =pull= or =skip=         |
+| =org-canvas-duplicate-title-strategy= | =nil= | A create whose title Canvas holds: =adopt=, =skip= or =create= |
 
 *** Unattended Syncs
 
@@ -1636,6 +1647,35 @@ Note that =org-canvas-force-push= is not the same thing.  It disables conflict
 detection entirely and overwrites every remote edit without looking;
 =org-canvas-conflict-strategy= still detects the conflict and applies your
 standing answer to it.
+
+** Duplicate Titles
+
+A push creates when the heading has no Canvas id.  Every recovery from a
+partial create -- a timeout, an error after the =POST=, a killed Emacs -- leaves
+a heading without its =CANVAS_ID= next to the item it created, and the next
+sync would create a second one that students can see and submit to.  So before
+any create, org-canvas looks the title up in the feature's remote list (the
+same list request the drift check already makes, so this costs nothing during
+a sync; a single-entry =sync-at-point= makes one search request instead).  On
+a hit it asks:
+
+#+begin_example
+'R11: The Ethics Email' already exists on Canvas (id 2563810). [a]dopt [s]kip [c]reate anyway (capitals = all):
+#+end_example
+
+- *Adopt* stamps the heading with the existing id and its =updated_at=, then
+  updates that item instead of creating a second.  This is the usual answer.
+- *Skip* leaves the heading alone; it is named among the skipped in the sync
+  summary so the number of pushes does not quietly shrink.
+- *Create anyway* does what the sync used to do.  Titles are not unique on
+  Canvas, so this remains available -- as the explicit choice, not the default.
+
+When several remote items carry the title there is nothing to adopt, so the
+heading is skipped with a warning naming the ids.  Set
+=org-canvas-duplicate-title-strategy= to answer without asking; under =emacs
+--batch= a =nil= setting behaves as =skip=, as =org-canvas-conflict-strategy=
+does.  =create= also switches the lookup off.  =org-canvas-diff= reports the
+same situation from the other side, as *UNCLAIMED* (see [[*Drift Report][Drift Report]]).
 
 ** Commands
 
@@ -1750,13 +1790,28 @@ Per feature:
 
 - *CHANGED* -- the item exists on both sides but they disagree.  The report
   names each differing property with both values, and says so when Canvas's
-  =updated_at= is newer than the last sync.
+  =updated_at= is newer than the last sync.  When Canvas is newer but no
+  compared field differs, a line says so, so the row is not a puzzle: the
+  change is in something the report does not compare (overrides, a rubric
+  association).
 - *MISSING* -- a heading carries a Canvas id the course no longer has.
 - *EXTRA* -- an item in the course that no Org heading claims.
+- *UNCLAIMED* -- an EXTRA item whose title an unstamped local heading shares.
+  That pair is what a create that lost its stamp looks like, and the next sync
+  would create a second item; the line says which property to stamp.
 
 Every property a module registers is compared, so this covers =PUBLISHED=,
 points, due dates, group weights, drop rules and the rest without a separate
-list to maintain.  Two deliberate exclusions:
+list to maintain.  The body is compared too, for the modules that push one
+(assignments, pages, announcements, discussions, quizzes).  Canvas does not
+hand back the HTML it was given -- it prepends a stylesheet link and
+normalizes whitespace and entities -- so the two sides are compared as the
+text a reader sees, tags dropped and entities decoded, and a difference is
+reported as =DESCRIPTION= (or =BODY=, =MESSAGE=) with a short excerpt of each
+side around the point where they part.  A change in markup alone is invisible
+here, which is the price of never reporting one a student cannot see.  The
+comparison exports the local body without resolving links or images, so it
+never uploads anything.  Two deliberate exclusions:
 
 - Properties *absent* from the Org file are not compared.  An absent property
   means the file expresses no opinion, and each module applies its own default
@@ -2359,6 +2414,19 @@ Canvas throttles API requests. org-canvas automatically retries on 429 responses
 ** Dry Run
 
 =M-x org-canvas-sync-dry-run= previews a sync: it reads from Canvas to work out what would change, but issues no request that writes.  Every module honors this, including the ones with hand-written sync loops (files, overrides, settings) that do not go through the shared push helper.  A dry run also leaves your Org files untouched -- no =CANVAS_ID=, =LAST_SYNCED= or =PAYLOAD_HASH= is recorded -- so a preview never makes an item look synced.
+
+A dry run also says which pending entries a real sync would *stop at* rather
+than push.  The per-item conflict check lives inside the push, which a dry run
+never reaches, so it answers the same question from the remote snapshot it
+already fetched: an entry Canvas has modified since the baseline is reported
+as =Would CONFLICT 'X' (remote updated at ...)=, and a create whose title
+Canvas already holds as =Would CONFLICT 'X' (title already on Canvas as id N)=.
+Each line ends with what a real sync would do about it -- ask, or follow
+=org-canvas-conflict-strategy= / =org-canvas-duplicate-title-strategy= when
+set, or skip in batch.  These count apart, so the summary reads =27 would
+sync, 10 would conflict, 39 skipped= and the final table gains a =Conflicts=
+column.  Without a snapshot (the list request failed, or conflict detection is
+off) the would-sync lines are unverified, and a warning says how many.
 
 Note for files specifically: Canvas cannot update file content in place, so a real sync of a changed file deletes the old file object and uploads a new one under a new ID.  A dry run reports this as "Would REPLACE" and performs neither step.
 

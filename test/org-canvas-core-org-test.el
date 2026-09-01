@@ -2950,5 +2950,23 @@ Page content.
                 (kill-buffer buf)))
         (delete-file temp)))))
 
+(describe "org-canvas--export-subtree-body-to-html offline (issue #83)"
+  (it "skips link and image resolution so a read-only caller never uploads"
+    (with-temp-org-buffer
+     "* Page\n\nSee [[file:pages.org::*Other][Other]] and [[file:img.png]].\n"
+     (org-back-to-heading)
+     (let ((links nil) (images nil))
+       (cl-letf (((symbol-function 'org-canvas--resolve-body-links)
+                  (lambda (_) (setq links t)))
+                 ((symbol-function 'org-canvas--resolve-image-links)
+                  (lambda (_) (setq images t))))
+         (let ((html (org-canvas--export-subtree-body-to-html t)))
+           (expect html :to-match "Other")
+           (expect links :to-be nil)
+           (expect images :to-be nil))
+         (org-canvas--export-subtree-body-to-html)
+         (expect links :to-be t)
+         (expect images :to-be t))))))
+
 (provide 'org-canvas-core-org-test)
 ;;; org-canvas-core-org-test.el ends here

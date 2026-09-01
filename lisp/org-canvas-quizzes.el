@@ -74,6 +74,8 @@
   :label "Quizzes"
   :file-var 'org-canvas-quizzes-file
   :query "LEVEL=1"
+  :body-api-key "description"
+  :body-fn 'org-canvas--quiz-body-html
   :properties
   `((:org-prop "QUIZ_TYPE" :data-key :quiz_type :type enum
      :values ,org-canvas--valid-quiz-types
@@ -357,6 +359,21 @@ Returns a plist of raw string values."
 				      (plist-get props :only-visible-raw))
 	  :assignment_group_id (when group-id-raw (string-to-number group-id-raw)))))
 
+(defun org-canvas--quiz-body-text-to-html (text)
+  "Return TEXT, a quiz's Org description, as HTML, or nil when empty."
+  (when (> (length text) 0)
+    (let ((org-export-with-sub-superscripts nil))
+      (org-export-string-as text 'html t))))
+
+(defun org-canvas--quiz-body-html ()
+  "Return the HTML the quiz at point would push as its description.
+The drift report's body extractor for quizzes, named by the registry's
+`:body-fn': only the text before the first question heading is the
+description (see `org-canvas--quiz-parse-body-text'), so the shared
+subtree export, which would take the questions too, does not apply.
+Returns \"\" for a quiz with none."
+  (or (org-canvas--quiz-body-text-to-html (org-canvas--quiz-parse-body-text)) ""))
+
 (defun org-canvas--quiz-parse-entry ()
   "Extract quiz data from the Org heading at point."
   (org-back-to-heading t)
@@ -376,10 +393,7 @@ Returns a plist of raw string values."
       (org-canvas--log-debug org-canvas--logger "[Quiz Parse] Assignment Group ID: %s"
 	(plist-get data :assignment_group_id)))
 
-    (plist-put data :description
-	       (when (> (length body-text) 0)
-		 (let ((org-export-with-sub-superscripts nil))
-		   (org-export-string-as body-text 'html t))))
+    (plist-put data :description (org-canvas--quiz-body-text-to-html body-text))
     (plist-put data :pom pom)
     data))
 

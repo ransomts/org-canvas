@@ -744,10 +744,15 @@ Images are uploaded to the `org-canvas-image-folder' on Canvas."
 (defvar org-export-with-sub-superscripts)
 (defvar org-export-use-babel)
 
-(defun org-canvas--export-subtree-body-to-html ()
+(defun org-canvas--export-subtree-body-to-html (&optional offline)
   "Export current Org subtree to HTML, resolving cross-file links.
 Returns the HTML string.  Cross-file links [[file:*.org::*...][...]]
-are resolved to Canvas URLs when the target has a CANVAS_ID."
+are resolved to Canvas URLs when the target has a CANVAS_ID.
+
+When OFFLINE is non-nil, neither links nor inline images are
+resolved.  Image resolution uploads the images Canvas lacks, so a
+read-only caller — the drift report comparing bodies (issue #83) —
+must ask for this; it gets the same text with local link markup."
   (save-excursion
     (org-back-to-heading t)
     (let* ((beg (point))
@@ -774,10 +779,11 @@ are resolved to Canvas URLs when the target has a CANVAS_ID."
           (while (re-search-forward org-property-drawer-re nil t)
             (delete-region (match-beginning 0)
                            (min (1+ (match-end 0)) (point-max))))
-          ;; Resolve cross-file links to Canvas URLs
-          (org-canvas--resolve-body-links source-dir)
-          ;; Resolve inline image links to Canvas URLs
-          (org-canvas--resolve-image-links source-dir)
+          (unless offline
+            ;; Resolve cross-file links to Canvas URLs
+            (org-canvas--resolve-body-links source-dir)
+            ;; Resolve inline image links to Canvas URLs
+            (org-canvas--resolve-image-links source-dir))
           ;; Export the subtree to HTML (body only)
           (goto-char (point-min))
           (let ((org-export-with-broken-links 'mark)

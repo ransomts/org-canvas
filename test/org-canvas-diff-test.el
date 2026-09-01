@@ -616,5 +616,234 @@
         (org-canvas-diff-batch)
         (expect code :to-equal 0)))))
 
+;;;; Issue #83: the body is compared, as text
+
+(describe "org-canvas--diff-html-to-text (issue #83)"
+  (it "drops tags, decodes entities and collapses whitespace"
+    (expect (org-canvas--diff-html-to-text
+             "<link rel=\"stylesheet\" href=\"x.css\"><p>Read&nbsp;the   <b>text</b> &amp;\n\nreply&#39;s &#x2019;quote&#8217;</p>")
+            :to-equal "Read the text & reply's ’quote’"))
+
+  (it "drops script and style bodies"
+    (expect (org-canvas--diff-html-to-text
+             "<style>p{color:red}</style><p>Hi</p><script>x()</script>")
+            :to-equal "Hi"))
+
+  (it "reads a non-string as empty"
+    (expect (org-canvas--diff-html-to-text nil) :to-equal "")
+    (expect (org-canvas--diff-html-to-text :null) :to-equal ""))
+
+  (it "keeps an unknown entity as written"
+    (expect (org-canvas--diff-html-to-text "a &bogus; b") :to-equal "a &bogus; b")))
+
+(describe "org-canvas--diff-text-excerpts"
+  (it "cuts both sides around the first difference"
+    (let* ((a (concat (make-string 30 ?x) "same then LOCAL words follow here"))
+           (b (concat (make-string 30 ?x) "same then REMOTE words follow here"))
+           (ex (org-canvas--diff-text-excerpts a b 20)))
+      (expect (nth 0 ex) :to-equal "…same then LOCAL word…")
+      (expect (nth 1 ex) :to-equal "…same then REMOTE wor…")))
+
+  (it "marks an empty side"
+    (expect (org-canvas--diff-text-excerpts "" "text") :to-equal '("(empty)" "text")))
+
+  (it "shows a short pair whole"
+    (expect (org-canvas--diff-text-excerpts "abc" "abd") :to-equal '("abc" "abd"))))
+
+(describe "org-canvas--diff-local-body-html"
+  (it "exports the heading offline, without resolving images"
+    (with-temp-org-buffer "* Lab 1\n\nRead the *book*.\n"
+      (org-back-to-heading)
+      (let ((m (point-marker)) (resolved nil))
+        (cl-letf (((symbol-function 'org-canvas--resolve-image-links)
+                   (lambda (_) (setq resolved t))))
+          ;; From another buffer: the marker must carry its own.
+          (with-temp-buffer
+            (expect (org-canvas--diff-local-body-html m nil) :to-match "<b>book</b>")))
+        (expect resolved :to-be nil))))
+
+  (it "uses the module's extractor when given"
+    (with-temp-org-buffer "* Lab 1\n"
+      (org-back-to-heading)
+      (expect (org-canvas--diff-local-body-html (point-marker) (lambda () "<p>custom</p>"))
+              :to-equal "<p>custom</p>")))
+
+  (it "warns and returns nil when the export fails"
+    (let ((warnings nil))
+      (cl-letf (((symbol-function 'org-canvas--log-warning)
+                 (lambda (_l fmt &rest args) (push (apply #'format fmt args) warnings))))
+        (with-temp-org-buffer "* Lab 1\n"
+          (org-back-to-heading)
+          (expect (org-canvas--diff-local-body-html
+                   (point-marker) (lambda () (error "boom")))
+                  :to-be nil)))
+      (expect (car warnings) :to-match "Could not export the body.*boom"))))
+
+(describe "org-canvas--diff-compare-body (issue #83)"
+  (it "is nil for a feature that declares no body"
+    (expect (org-canvas--diff-compare-body '(:properties ()) nil '((description . "x")))
+            :to-be nil))
+
+  (it "is nil when the item does not carry the field"
+    (with-temp-org-buffer "* Lab 1\n\nText.\n"
+      (org-back-to-heading)
+      (expect (org-canvas--diff-compare-body
+               '(:body-api-key "description") (point-marker) '((id . 1)))
+              :to-be nil)))
+
+  (it "agrees across markup Canvas rewrote"
+    (with-temp-org-buffer "* Lab 1\n\nRead the *book* & reply.\n"
+      (org-back-to-heading)
+      (expect (org-canvas--diff-compare-body
+               '(:body-api-key "description") (point-marker)
+               '((description . "<link rel=\"stylesheet\" href=\"x\"><p>Read the <strong>book</strong> &amp;\nreply.</p>")))
+              :to-equal '(t))))
+
+  (it "reports a rewritten body with excerpts"
+    (with-temp-org-buffer "* Lab 1\n\nWrite about chapter one.\n"
+      (org-back-to-heading)
+      (let ((result (org-canvas--diff-compare-body
+                     '(:body-api-key "description") (point-marker)
+                     '((description . "<p>Write about chapter two.</p>")))))
+        (expect (car result) :to-be t)
+        (expect (nth 0 (cdr result)) :to-equal "DESCRIPTION")
+        (expect (nth 1 (cdr result)) :to-match "chapter one")
+        (expect (nth 2 (cdr result)) :to-match "chapter two"))))
+
+  (it "treats a null remote body as empty"
+    (with-temp-org-buffer "* Lab 1\n"
+      (org-back-to-heading)
+      (expect (org-canvas--diff-compare-body
+               '(:body-api-key "body") (point-marker) '((body . :null)))
+              :to-equal '(t))))
+
+  (it "is nil, not drift, when the local export fails"
+    (cl-letf (((symbol-function 'org-canvas--log-warning) #'ignore))
+      (with-temp-org-buffer "* Lab 1\n"
+        (org-back-to-heading)
+        (expect (org-canvas--diff-compare-body
+                 (list :body-api-key "body" :body-fn (lambda () (error "boom")))
+                 (point-marker) '((body . "x")))
+                :to-be nil)))))
+
+(describe "org-canvas--diff-entry with a body (issue #83)"
+  (it "adds the body row to the fields and marks the body as compared"
+    (with-temp-org-buffer "* Lab 1\n:PROPERTIES:\n:CANVAS_ID: 61\n:END:\n\nOld prompt.\n"
+      (org-back-to-heading)
+      (let ((index (make-hash-table :test 'equal)))
+        (puthash "61" '((id . 61) (description . "<p>New prompt typed in the web UI.</p>"))
+                 index)
+        (let ((d (org-canvas--diff-entry (list :id "61" :title "Lab 1" :pom (point-marker))
+                                         index nil '(:body-api-key "description"))))
+          (expect (plist-get d :kind) :to-equal 'modified)
+          (expect (plist-get d :body-compared) :to-be t)
+          (expect (car (car (plist-get d :fields))) :to-equal "DESCRIPTION")))))
+
+  (it "says nothing when only markup differs"
+    (with-temp-org-buffer "* Lab 1\n:PROPERTIES:\n:CANVAS_ID: 61\n:END:\n\nSame.\n"
+      (org-back-to-heading)
+      (let ((index (make-hash-table :test 'equal)))
+        (puthash "61" '((id . 61) (description . "<div><p>Same.</p></div>")) index)
+        (expect (org-canvas--diff-entry (list :id "61" :title "Lab 1" :pom (point-marker))
+                                        index nil '(:body-api-key "description"))
+                :to-be nil)))))
+
+(describe "org-canvas--diff-insert-entry notes (issues #83, #85)"
+  (it "explains a change no compared field shows, naming the description when it was not compared"
+    (with-temp-buffer
+      (org-canvas--diff-insert-entry
+       '(:kind modified :title "Midterm" :id "1" :remote-newer t
+         :updated "2026-08-20T19:03:10Z" :fields nil))
+      (expect (buffer-string) :to-match "CHANGED   Midterm (Canvas updated 2026-08-20T19:03:10Z)")
+      (expect (buffer-string) :to-match "no compared property differs")
+      (expect (buffer-string) :to-match "e\\.g\\. the description or overrides")))
+
+  (it "points past the description when it was compared"
+    (with-temp-buffer
+      (org-canvas--diff-insert-entry
+       '(:kind modified :title "Midterm" :id "1" :remote-newer t :updated "x"
+         :fields nil :body-compared t))
+      (expect (buffer-string) :to-match "e\\.g\\. overrides or a rubric association")
+      (expect (buffer-string) :not :to-match "the description")))
+
+  (it "adds no note when a field row explains the change"
+    (with-temp-buffer
+      (org-canvas--diff-insert-entry
+       '(:kind modified :title "Lab" :id "1" :remote-newer t :updated "x"
+         :fields (("POINTS" "10" "25"))))
+      (expect (buffer-string) :not :to-match "no compared property")))
+
+  (it "renders an unclaimed pair with the property to stamp"
+    (with-temp-buffer
+      (org-canvas--diff-insert-entry
+       '(:kind unclaimed :title "R11: The Ethics Email" :id "2563810" :property "CANVAS_ID"))
+      (expect (buffer-string)
+              :to-equal "  UNCLAIMED R11: The Ethics Email (Canvas id 2563810 has this title and no heading claims it; stamp CANVAS_ID or rename)\n"))))
+
+(describe "org-canvas--diff-pair-unclaimed (issue #85)"
+  (it "re-kinds an extra whose title an unstamped heading shares"
+    (let ((paired (org-canvas--diff-pair-unclaimed
+                   '((:kind extra :title "R11" :id "2563810")
+                     (:kind extra :title "Surprise" :id "99"))
+                   '((:id nil :title "R11") (:id "5" :title "Surprise"))
+                   "CANVAS_ID")))
+      (expect (plist-get (nth 0 paired) :kind) :to-equal 'unclaimed)
+      (expect (plist-get (nth 0 paired) :property) :to-equal "CANVAS_ID")
+      (expect (plist-get (nth 0 paired) :id) :to-equal "2563810")
+      ;; Surprise is claimed by another heading, so its namesake stays extra.
+      (expect (plist-get (nth 1 paired) :kind) :to-equal 'extra)))
+
+  (it "is the identity with no unstamped headings"
+    (expect (org-canvas--diff-pair-unclaimed '((:kind extra :title "R11" :id "1")) nil "CANVAS_ID")
+            :to-equal '((:kind extra :title "R11" :id "1")))))
+
+(describe "org-canvas--diff-feature unclaimed and body (issues #83, #85)"
+  (it "pairs an extra with the unstamped heading of its name and asks for page bodies"
+    (let ((file (make-temp-file "diff-" nil ".org"))
+          (seen-params nil))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "* R11: The Ethics Email\n\nPrompt.\n"
+                      "* Welcome\n:PROPERTIES:\n:CANVAS_URL: welcome\n"
+                      ":CANVAS_UPDATED_AT: 2026-08-01T00:00:00Z\n:END:\n\nHello class.\n"))
+            (let ((org-canvas-pages-file file))
+              (with-org-canvas-test-config
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (lambda (_method _url &optional params)
+                             (setq seen-params params)
+                             '(((url . "r11-the-ethics-email")
+                                (title . "R11: The Ethics Email")
+                                (body . "<p>Prompt.</p>"))
+                               ((url . "welcome") (title . "Welcome")
+                                (body . "<p>Hello everyone.</p>")
+                                (updated_at . "2026-08-25T00:00:00Z"))))))
+                  (let* ((result (org-canvas--diff-feature
+                                  (org-canvas--registry-find-feature "pages")))
+                         (extra (plist-get result :extra))
+                         (divergences (plist-get result :divergences)))
+                    (expect (assoc "include[]" seen-params) :to-equal '("include[]" . "body"))
+                    (expect (length extra) :to-equal 1)
+                    (expect (plist-get (car extra) :kind) :to-equal 'unclaimed)
+                    (expect (plist-get (car extra) :property) :to-equal "CANVAS_URL")
+                    (expect (length divergences) :to-equal 1)
+                    (expect (plist-get (car divergences) :body-compared) :to-be t)
+                    (expect (car (car (plist-get (car divergences) :fields)))
+                            :to-equal "BODY"))))))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file)))))
+
+(describe "body registry declarations (issue #83)"
+  (it "name the Canvas field for every module that pushes a body"
+    (dolist (pair '(("assignments" . "description") ("pages" . "body")
+                    ("announcements" . "message") ("discussions" . "message")
+                    ("quizzes" . "description")))
+      (expect (plist-get (gethash (car pair) org-canvas--property-registry) :body-api-key)
+              :to-equal (cdr pair))))
+
+  (it "leave modules without a body alone"
+    (expect (plist-get (gethash "modules" org-canvas--property-registry) :body-api-key)
+            :to-be nil)))
+
 (provide 'org-canvas-diff-test)
 ;;; org-canvas-diff-test.el ends here

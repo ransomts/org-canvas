@@ -52,6 +52,7 @@
   :label "Announcements"
   :file-var 'org-canvas-announcements-file
   :query "LEVEL=1"
+  :body-api-key "message"
   :properties
   '((:org-prop "PUBLISHED" :data-key :published :type boolean :default t
      :api-key "published" :boolean-json t

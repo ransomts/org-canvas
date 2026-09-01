@@ -227,26 +227,94 @@ CTX is the sync context plist (see `org-canvas--sync-process-entry')."
       (message "%s [%d/%d] Skipping '%s' (unchanged)"
         cap-feature progress total-count title))
      (org-canvas--dry-run
-      (org-canvas--log-info org-canvas--logger "[DRY-RUN] Would %s '%s'"
-        (if canvas-id "UPDATE" "CREATE") title)
-      (message "%s [DRY-RUN] Would %s '%s'"
-        cap-feature (if canvas-id "update" "create") title)
-      (plist-put counters :dry-run (1+ (or (plist-get counters :dry-run) 0))))
+      (org-canvas--sync-dry-run-entry canvas-id title ctx))
      (t
-      (let ((response (funcall push-fn data payload)))
-        (cond
-         ((eq response 'conflict)
-          (plist-put counters :conflict
-                     (1+ (plist-get counters :conflict)))
-          (message "%s [%d/%d] CONFLICT: '%s' (remote modified)"
-            cap-feature progress total-count title))
-         ((eq response 'pulled)
-          (plist-put counters :pulled
-                     (1+ (or (plist-get counters :pulled) 0)))
-          (message "%s [%d/%d] PULLED: '%s' (local updated)"
-            cap-feature progress total-count title))
-         (t
-          (org-canvas--sync-finalize-push response data payload-hash ctx))))))))
+      (org-canvas--sync-handle-push-response
+       (funcall push-fn data payload) data payload-hash ctx progress)))))
+
+(defun org-canvas--sync-handle-push-response (response data payload-hash ctx progress)
+  "Count RESPONSE from the push of DATA, or finalize it.
+A symbol means the push stopped short: `conflict' and `pulled' come
+from the conflict prompt, `duplicate' from the create guard (issue
+#85), which names the entry among the skipped so the summary says
+where it went.  Anything else is the API response, finalized with
+PAYLOAD-HASH.  CTX is the sync context, PROGRESS the 1-based position
+for the echo-area line."
+  (let* ((counters (plist-get ctx :counters))
+         (cap-feature (capitalize (plist-get ctx :feature-name)))
+         (total-count (plist-get ctx :total-count))
+         (title (plist-get data (or (plist-get ctx :title-key) :title))))
+    (pcase response
+      ('conflict
+       (plist-put counters :conflict (1+ (plist-get counters :conflict)))
+       (message "%s [%d/%d] CONFLICT: '%s' (remote modified)"
+         cap-feature progress total-count title))
+      ('pulled
+       (plist-put counters :pulled (1+ (or (plist-get counters :pulled) 0)))
+       (message "%s [%d/%d] PULLED: '%s' (local updated)"
+         cap-feature progress total-count title))
+      ('duplicate
+       (plist-put counters :skip (1+ (plist-get counters :skip)))
+       (plist-put counters :skipped-titles
+                  (cons (format "%s (already on Canvas; stamp its id or rename)" title)
+                        (plist-get counters :skipped-titles)))
+       (message "%s [%d/%d] SKIPPED: '%s' (title already on Canvas)"
+         cap-feature progress total-count title))
+      (_
+       (org-canvas--sync-finalize-push response data payload-hash ctx)))))
+
+(defun org-canvas--dry-run-decision-note (variable)
+  "Return a note on how a real sync would settle a stop, from VARIABLE.
+VARIABLE is `org-canvas-conflict-strategy' or
+`org-canvas-duplicate-title-strategy'.  When it is set, a real sync
+would not stop at all, and the note names the standing answer; under
+`noninteractive' a nil setting means skip."
+  (let ((value (symbol-value variable)))
+    (cond (value (format "; %s is %s" variable value))
+          (noninteractive "; a batch sync would skip it")
+          (t "; a real sync would ask"))))
+
+(defun org-canvas--sync-dry-run-entry (canvas-id title ctx)
+  "Report what a real sync would do with the entry at point, and count it.
+CANVAS-ID is the entry's id (nil for a create), TITLE its display
+name, CTX the sync context.
+
+The per-item conflict check lives inside the push, which a dry run
+never reaches, so a dry run used to count every pending entry as a
+push — including the ones a real sync would stop at the conflict
+prompt, or skip outright in batch (issue #84).  The remote snapshot
+already holds every `updated_at' and every title, so the two questions
+a real sync would ask are answered here without a request: has Canvas
+touched this item since the baseline, and, for a create, does Canvas
+already hold this title (issue #85)?  Either way the entry counts as
+`:dry-run-conflict', not `:dry-run'."
+  (let* ((counters (plist-get ctx :counters))
+         (cap-feature (capitalize (plist-get ctx :feature-name)))
+         (remote-newer (and canvas-id (org-canvas--sync-remote-newer-at canvas-id ctx)))
+         (existing (and (not canvas-id)
+                        (org-canvas--sync-remote-items-titled title ctx)))
+         (verb (cond ((or remote-newer existing) "CONFLICT")
+                     (canvas-id "UPDATE")
+                     (t "CREATE")))
+         (detail (cond
+                  (remote-newer
+                   (format " (remote updated at %s%s)" remote-newer
+                           (org-canvas--dry-run-decision-note
+                            'org-canvas-conflict-strategy)))
+                  (existing
+                   (format " (title already on Canvas as id %s%s)"
+                           (mapconcat (lambda (item)
+                                        (format "%s" (or (alist-get 'id item)
+                                                         (alist-get 'url item))))
+                                      existing ", ")
+                           (org-canvas--dry-run-decision-note
+                            'org-canvas-duplicate-title-strategy)))
+                  (t "")))
+         (key (if (string= verb "CONFLICT") :dry-run-conflict :dry-run)))
+    (org-canvas--log-info org-canvas--logger "[DRY-RUN] Would %s '%s'%s"
+      verb title detail)
+    (message "%s [DRY-RUN] Would %s '%s'%s" cap-feature (downcase verb) title detail)
+    (plist-put counters key (1+ (or (plist-get counters key) 0)))))
 
 (defun org-canvas--sync-process-entry (marker ctx)
   "Process one entry through the 4-stage pipeline.
@@ -318,17 +386,22 @@ and :dry-run counts."
         (pulled-count (or (plist-get counters :pulled) 0))
         (deferred-count (or (plist-get counters :deferred) 0))
         (dry-run-count (or (plist-get counters :dry-run) 0))
+        (dry-run-conflicts (or (plist-get counters :dry-run-conflict) 0))
         (extra-counts 0))
     (with-current-buffer (find-file-noselect sync-file)
       (org-canvas--save-buffer))
     (org-canvas--log-info org-canvas--logger "========================================")
     (org-canvas--log-info org-canvas--logger ">>> %s SYNC COMPLETE" feature-upper)
     (cond
-     ((> dry-run-count 0)
-      (org-canvas--log-info org-canvas--logger "Would sync: %d | Skipped: %d"
-        dry-run-count skip-count)
-      (message "%s dry-run: %d would sync, %d skipped."
-               (capitalize feature-name) dry-run-count skip-count))
+     ((or org-canvas--dry-run (> dry-run-count 0) (> dry-run-conflicts 0))
+      ;; A pending entry a real sync would stop at is a conflict, not a
+      ;; push, and is counted apart (issue #84).
+      (org-canvas--log-info org-canvas--logger
+        "Would sync: %d | Would conflict: %d | Skipped: %d"
+        dry-run-count dry-run-conflicts skip-count)
+      (message "%s dry-run: %d would sync, %d would conflict, %d skipped."
+               (capitalize feature-name) dry-run-count dry-run-conflicts
+               skip-count))
      (t
       (setq extra-counts (+ conflict-count pulled-count))
       (if (> extra-counts 0)
@@ -356,7 +429,7 @@ and :dry-run counts."
     (org-canvas--sync-record-feature-stats (capitalize feature-name) counters)))
 
 (defconst org-canvas--sync-stat-keys
-  '(:success :skip :fail :deferred :dry-run :conflict :pulled)
+  '(:success :skip :fail :deferred :dry-run :dry-run-conflict :conflict :pulled)
   "Counter keys carried from a feature's sync into the global summary.
 Every counter a run populates belongs here.  A key left out is
 silently dropped on the way to the table, which is how a dry run with
@@ -422,6 +495,15 @@ after all.  No-op unless a global sync is active."
   "Return the sum of KEY across STATS."
   (apply #'+ (mapcar (lambda (s) (or (plist-get s key) 0)) stats)))
 
+(defun org-canvas--sync-stats-dry-run-p (stats)
+  "Return non-nil when STATS describe a dry run.
+True inside a dry run, and for stats recorded by one — a run where
+every pending entry would conflict has a `:dry-run' total of zero and
+must still be reported as the preview it was (issue #84)."
+  (or org-canvas--dry-run
+      (> (org-canvas--sync-stat-total stats :dry-run) 0)
+      (> (org-canvas--sync-stat-total stats :dry-run-conflict) 0)))
+
 (defun org-canvas--sync-summary-columns (stats)
   "Return the columns the summary table should show for STATS.
 Each entry is (HEADER . KEY).
@@ -429,13 +511,17 @@ Each entry is (HEADER . KEY).
 A dry run reports what it *would* do, so `Would sync' replaces
 `Success': a preview whose table reads 0 success looks like a course
 with nothing pending, which is how a dry run with 31 pending
-assignment updates got taken for a clean one (issue #66).
+assignment updates got taken for a clean one (issue #66).  Under the
+DRY RUN header its `Conflicts' column counts the entries a real sync
+would stop at (issue #84).
 
 Conflicts and pulls earn a column only when the run had some, so an
 ordinary clean sync keeps the narrow table it has always printed."
-  (if (> (org-canvas--sync-stat-total stats :dry-run) 0)
-      '(("Would sync" . :dry-run) ("Skipped" . :skip)
-        ("Failed" . :fail) ("Deferred" . :deferred))
+  (if (org-canvas--sync-stats-dry-run-p stats)
+      (append '(("Would sync" . :dry-run))
+              (when (> (org-canvas--sync-stat-total stats :dry-run-conflict) 0)
+                '(("Conflicts" . :dry-run-conflict)))
+              '(("Skipped" . :skip) ("Failed" . :fail) ("Deferred" . :deferred)))
     (append '(("Success" . :success) ("Skipped" . :skip)
               ("Failed" . :fail) ("Deferred" . :deferred))
             (when (> (org-canvas--sync-stat-total stats :conflict) 0)
@@ -463,7 +549,7 @@ feature naming failed items and noteworthy skipped items.  No-op when
 no stats were recorded."
   (let ((stats (reverse org-canvas--sync-global-feature-stats)))
     (when stats
-      (when (> (org-canvas--sync-stat-total stats :dry-run) 0)
+      (when (org-canvas--sync-stats-dry-run-p stats)
         (org-canvas--log-info org-canvas--logger
           "DRY RUN — nothing was written; the counts below are what a real sync would do"))
       (org-canvas--sync-summary-render-table
@@ -529,23 +615,30 @@ must not signal, since a reconciliation problem should never fail a sync
 that otherwise succeeded."
   (org-canvas-clear-log)
   (let ((org-canvas--conflict-apply-all nil)
+        (org-canvas--duplicate-apply-all nil)
         (org-canvas--current-pull-item-fn pull-item-fn)
         (feature-upper (upcase feature-name)))
     (org-canvas--sync-validate-file feature-upper sync-file)
     (let* ((entries (org-canvas--sync-collect-entries sync-file query feature-name))
            (targets (plist-get entries :targets))
            (all-ids-before (plist-get entries :all-ids-before))
-           (counters (list :success 0 :skip 0 :fail 0 :pulled 0 :dry-run 0 :conflict 0))
+           (counters (list :success 0 :skip 0 :fail 0 :pulled 0 :dry-run 0
+                           :dry-run-conflict 0 :conflict 0))
            (synced-ids (list nil))
            (baseline (org-canvas--sync-file-baseline sync-file))
            ;; One list request per feature, and only when there is something
            ;; to compare.  Not gated on BASELINE: an entry carries its own
            ;; CANVAS_UPDATED_AT, which is what makes this work on a course
-           ;; that has only ever been pushed.
-           (remote-updated (when (and org-canvas-detect-conflicts targets)
-                             (org-canvas--sync-fetch-remote-updated feature-name)))
+           ;; that has only ever been pushed.  The same request indexes the
+           ;; remote titles, which the create path consults (issue #85).
+           (snapshot (when (and org-canvas-detect-conflicts targets)
+                       (org-canvas--sync-fetch-remote-snapshot feature-name)))
+           ;; `none' rather than nil: inside a sync the create guard reads
+           ;; this or nothing, and must not fall back to a GET per entry.
+           (org-canvas--current-remote-titles (or (plist-get snapshot :titles) 'none))
            (ctx (list :baseline baseline
-                      :remote-updated remote-updated
+                      :remote-updated (plist-get snapshot :updated)
+                      :remote-titles (plist-get snapshot :titles)
                       :remote-times (list nil)
                       :parse-fn parse-fn
                       :build-fn build-fn
@@ -704,35 +797,81 @@ file-level header to write afterwards."
       (let ((ts (org-canvas--pull-read-file-header)))
         (when ts (encode-time (org-parse-time-string ts)))))))
 
-(defun org-canvas--sync-fetch-remote-updated (feature-name)
-  "Return a hash of remote id to `updated_at\\=' for FEATURE-NAME, or nil.
-One list request per feature, consulted before a payload-hash skip so
-an item changed only on Canvas is noticed instead of skipped.  Keyed by
-the feature\\='s registered id field, so pages key on `url\\=' to match
-their CANVAS_URL.
+(defun org-canvas--sync-remote-updated-index (items id-field)
+  "Return a hash of each of ITEMS' ID-FIELD, as a string, to its `updated_at'."
+  (let ((map (make-hash-table :test 'equal)))
+    (dolist (item items)
+      (let ((id (alist-get id-field item))
+            (updated (alist-get 'updated_at item)))
+        (when (and id (stringp updated))
+          (puthash (format "%s" id) updated map))))
+    map))
+
+(defun org-canvas--sync-remote-title-index (items title-field)
+  "Return a hash of each of ITEMS' TITLE-FIELD to the items carrying it.
+Titles are not unique on Canvas, so a value is a list, in list order;
+a caller that wants to adopt an id must check there is exactly one."
+  (let ((map (make-hash-table :test 'equal)))
+    (dolist (item items)
+      (let ((title (alist-get title-field item)))
+        (when (stringp title)
+          (puthash title (append (gethash title map) (list item)) map))))
+    map))
+
+(defun org-canvas--sync-fetch-remote-snapshot (feature-name)
+  "Return FEATURE-NAME's remote items, indexed two ways, or nil.
+One list request per feature.  The result is a plist:
+
+  :updated  remote id to `updated_at', consulted before a payload-hash
+            skip so an item changed only on Canvas is noticed instead
+            of skipped (issue #48)
+  :titles   remote title to the items carrying it, consulted before a
+            POST so a heading that lost its stamp is not created a
+            second time (issue #85)
+
+Both key by the feature's registered fields, so pages key on `url' to
+match their CANVAS_URL and assignments on `name'.
 
 Returns nil when the feature is not in the registry or the request
 fails; the caller then falls back to skipping unverified and says so."
   (let ((feature (org-canvas--registry-find-feature feature-name)))
     (when feature
       (condition-case err
-          (let ((map (make-hash-table :test 'equal))
-                (id-field (or (plist-get feature :id-field) 'id)))
-            (dolist (item (append (org-canvas-api-request-all-pages
-                                   'GET (org-canvas-api-course-endpoint
-                                         (plist-get feature :endpoint))
-                                   (plist-get feature :list-params))
-                                  nil))
-              (let ((id (alist-get id-field item))
-                    (updated (alist-get 'updated_at item)))
-                (when (and id (stringp updated))
-                  (puthash (format "%s" id) updated map))))
-            map)
+          (let ((items (append (org-canvas-api-request-all-pages
+                                'GET (org-canvas-api-course-endpoint
+                                      (plist-get feature :endpoint))
+                                (plist-get feature :list-params))
+                               nil)))
+            (list :updated (org-canvas--sync-remote-updated-index
+                            items (or (plist-get feature :id-field) 'id))
+                  :titles (org-canvas--sync-remote-title-index
+                           items (or (plist-get feature :title-field) 'title))))
         (error
          (org-canvas--log-warning org-canvas--logger
-           "[Conflict] Could not fetch the remote %s snapshot (%s); unchanged entries will be skipped without checking Canvas"
+           "[Conflict] Could not fetch the remote %s snapshot (%s); unchanged entries will be skipped without checking Canvas, and creates will not be checked for a title Canvas already holds"
            feature-name (error-message-string err))
          nil)))))
+
+(defun org-canvas--sync-fetch-remote-updated (feature-name)
+  "Return a hash of remote id to `updated_at' for FEATURE-NAME, or nil.
+The `:updated' half of `org-canvas--sync-fetch-remote-snapshot'."
+  (plist-get (org-canvas--sync-fetch-remote-snapshot feature-name) :updated))
+
+(defun org-canvas--sync-remote-newer-at (canvas-id ctx)
+  "Return the remote `updated_at' of CANVAS-ID if it postdates the baseline.
+Called with point on the entry's heading.  CTX carries the remote
+snapshot and the file-level fallback baseline.  Nil when there is no
+snapshot, the snapshot has no entry for CANVAS-ID, the entry has no
+baseline, or Canvas has not touched the item since."
+  (let* ((remote-updated (plist-get ctx :remote-updated))
+         (updated (and remote-updated canvas-id
+                       (gethash (format "%s" canvas-id) remote-updated)))
+         (baseline (and updated
+                        (org-canvas--conflict-baseline
+                         (point) (plist-get ctx :baseline))))
+         (remote-time (and baseline (org-canvas--parse-iso8601-time updated))))
+    (when (and remote-time (time-less-p baseline remote-time))
+      updated)))
 
 (defun org-canvas--sync-remote-drifted-p (canvas-id ctx title)
   "Return non-nil when CANVAS-ID was modified on Canvas after the baseline.
@@ -742,18 +881,17 @@ log line.  A drifted entry must not take the
 unchanged-skip: letting it fall through to the push puts it back on the
 normal path, where `org-canvas--push-check-and-resolve-conflict\' shows
 the diff and offers push/pull/skip."
-  (let* ((remote-updated (plist-get ctx :remote-updated))
-         (baseline (org-canvas--conflict-baseline
-                    (point) (plist-get ctx :baseline)))
-         (updated (and remote-updated canvas-id
-                       (gethash (format "%s" canvas-id) remote-updated)))
-         (remote-time (and updated baseline
-                           (org-canvas--parse-iso8601-time updated))))
-    (when (and remote-time (time-less-p baseline remote-time))
+  (let ((updated (org-canvas--sync-remote-newer-at canvas-id ctx)))
+    (when updated
       (org-canvas--log-warning org-canvas--logger
         "[Drift] '%s' is unchanged locally but Canvas has it as updated at %s — comparing"
         title updated)
       t)))
+
+(defun org-canvas--sync-remote-items-titled (title ctx)
+  "Return the remote items in CTX's snapshot that carry TITLE, or nil."
+  (let ((titles (plist-get ctx :remote-titles)))
+    (and titles title (gethash title titles))))
 
 (defun org-canvas--sync-warn-unverified-skips (feature-name counters ctx)
   "Warn when FEATURE-NAME entries were skipped without checking Canvas.
@@ -763,16 +901,23 @@ file is unchanged.  When the
 remote snapshot is missing — no #+LAST_SYNCED baseline yet, or the list
 request failed — say so, rather than let a \"0 failed\" summary imply a
 comparison that never happened (issue #48)."
-  (let ((skips (plist-get counters :skip)))
+  (let ((skips (plist-get counters :skip))
+        (previews (if org-canvas--dry-run (or (plist-get counters :dry-run) 0) 0))
+        (why (if (plist-get ctx :baseline)
+                 "the remote snapshot was unavailable"
+               "this file has no #+LAST_SYNCED baseline yet (one is written after this run)")))
     (when (and org-canvas-detect-conflicts
-               (> skips 0)
                (not (plist-get ctx :remote-updated)))
-      (org-canvas--log-warning org-canvas--logger
-        "[Conflict] %d %s entr%s skipped as unchanged were not verified against Canvas — %s"
-        skips feature-name (if (= skips 1) "y" "ies")
-        (if (plist-get ctx :baseline)
-            "the remote snapshot was unavailable"
-          "this file has no #+LAST_SYNCED baseline yet (one is written after this run)")))))
+      (when (> skips 0)
+        (org-canvas--log-warning org-canvas--logger
+          "[Conflict] %d %s entr%s skipped as unchanged were not verified against Canvas — %s"
+          skips feature-name (if (= skips 1) "y" "ies") why))
+      ;; A dry run answers "would this conflict?" from the same snapshot
+      ;; (issue #84), so without one its would-sync lines are unverified too.
+      (when (> previews 0)
+        (org-canvas--log-warning org-canvas--logger
+          "[DRY-RUN] %d %s entr%s reported as would-sync were not checked for conflicts — %s"
+          previews feature-name (if (= previews 1) "y" "ies") why)))))
 
 (defun org-canvas--sync-write-push-header (sync-file ctx)
   "Record a sync baseline in SYNC-FILE\\='s #+LAST_SYNCED header.
@@ -809,16 +954,21 @@ Returns nil if ISO8601 is nil or :null."
   (when (and iso8601 (not (eq iso8601 :null)) (stringp iso8601))
     (date-to-time iso8601)))
 
+(defun org-canvas--last-synced-header (pom)
+  "Return the file-level #+LAST_SYNCED header of POM's buffer, or nil.
+POM is a marker, or a position in the current buffer."
+  (let ((buf (cond ((markerp pom) (marker-buffer pom))
+                   ((and (numberp pom) (buffer-live-p (current-buffer)))
+                    (current-buffer)))))
+    (when buf
+      (with-current-buffer buf
+        (org-canvas--pull-read-file-header)))))
+
 (defun org-canvas--parse-last-synced (pom)
   "Parse the file-level #+LAST_SYNCED header to an Emacs time value.
 POM is a marker or position in the buffer to query.  Returns nil
 if no #+LAST_SYNCED header exists in that buffer."
-  (let* ((buf (cond ((markerp pom) (marker-buffer pom))
-                    ((and (numberp pom) (buffer-live-p (current-buffer)))
-                     (current-buffer))))
-         (ts (when buf
-               (with-current-buffer buf
-                 (org-canvas--pull-read-file-header)))))
+  (let ((ts (org-canvas--last-synced-header pom)))
     (when ts
       (encode-time (org-parse-time-string ts)))))
 
@@ -832,17 +982,43 @@ courses that are only ever pushed, which never acquire the file-level
 
 Falls back to FALLBACK when given, otherwise to that header, for
 entries synced before CANVAS_UPDATED_AT was recorded."
-  (or (org-canvas--parse-iso8601-time
-       (org-entry-get pom "CANVAS_UPDATED_AT"))
-      fallback
-      (org-canvas--parse-last-synced pom)))
+  (car (org-canvas--conflict-baseline-source pom fallback)))
 
-(cl-defun org-canvas--conflict-check (endpoint id pom)
-  "Check if the remote item at ENDPOINT/ID was modified after LAST_SYNCED at POM.
+(defun org-canvas--conflict-baseline-source (pom &optional fallback)
+  "Return (TIME . LABEL) for the baseline of the entry at POM, or nil.
+TIME is what `org-canvas--conflict-baseline' returns and LABEL says
+where it came from — the entry's own CANVAS_UPDATED_AT, or the
+file-level #+LAST_SYNCED header (FALLBACK, already parsed, when the
+caller supplies it) for an entry that has none.  The conflict line
+used to print the header no matter which was compared, and nil for
+any POM that was not a marker, which sent a reader checking a header
+that was fine (issue #86)."
+  (let* ((own (org-entry-get pom "CANVAS_UPDATED_AT"))
+         (own-time (org-canvas--parse-iso8601-time own))
+         (header (unless (or own-time fallback)
+                   (org-canvas--last-synced-header pom))))
+    (cond
+     (own-time (cons own-time (format "CANVAS_UPDATED_AT %s" own)))
+     (fallback
+      (cons fallback
+            (format "#+LAST_SYNCED %s (entry has no CANVAS_UPDATED_AT)"
+                    (format-time-string "[%Y-%m-%d %a %H:%M]" fallback))))
+     (header
+      (cons (encode-time (org-parse-time-string header))
+            (format "#+LAST_SYNCED %s (entry has no CANVAS_UPDATED_AT)" header))))))
+
+(cl-defun org-canvas--conflict-check (endpoint id pom &optional title)
+  "Check if the remote item at ENDPOINT/ID was modified after the baseline at POM.
+TITLE names the entry in the log line; without it ENDPOINT/ID does.
 Returns (cons \\='conflict REMOTE-RESPONSE) if the remote item is newer,
 nil otherwise.  Returns nil on GET failure (allows push to proceed) or
-when there is no baseline at all (first sync)."
-  (let ((local-time (org-canvas--conflict-baseline pom)))
+when there is no baseline at all (first sync).
+
+The log line names the baseline actually compared — the entry's
+CANVAS_UPDATED_AT, or the file header when it has none — rather than
+the header regardless (issue #86)."
+  (let* ((source (org-canvas--conflict-baseline-source pom))
+         (local-time (car source)))
     (unless local-time
       (cl-return-from org-canvas--conflict-check nil))
     (condition-case err
@@ -852,12 +1028,10 @@ when there is no baseline at all (first sync)."
                (updated-at (alist-get 'updated_at response))
                (remote-time (org-canvas--parse-iso8601-time updated-at)))
           (if (and remote-time (time-less-p local-time remote-time))
-              (let ((local-ts (when (markerp pom)
-                                (with-current-buffer (marker-buffer pom)
-                                  (org-canvas--pull-read-file-header)))))
+              (progn
                 (org-canvas--log-warning org-canvas--logger
-                  "[Conflict] Remote item updated at %s, local #+LAST_SYNCED is %s"
-                  updated-at local-ts)
+                  "[Conflict] '%s': remote updated_at %s is newer than %s"
+                  (or title (format "%s/%s" endpoint id)) updated-at (cdr source))
                 (cons 'conflict response))
             nil))
       (error
@@ -976,7 +1150,8 @@ POST-URL, when non-nil, overrides the default course-scoped POST URL."
 (defun org-canvas--push-check-and-resolve-conflict (endpoint id data title)
   "Check for conflicts on ENDPOINT/ID using DATA.
 TITLE is for logging.  Returns `push', `skip', or `pulled'."
-  (let ((conflict-result (org-canvas--conflict-check endpoint id (plist-get data :pom))))
+  (let ((conflict-result (org-canvas--conflict-check
+                          endpoint id (plist-get data :pom) title)))
     (if (not (and conflict-result (eq (car conflict-result) 'conflict)))
         'push
       (let* ((remote-response (cdr conflict-result))
@@ -1002,6 +1177,92 @@ TITLE is for logging.  Returns `push', `skip', or `pulled'."
              "[Conflict] Force-pushing '%s' (user chose overwrite)" title)
            'push))))))
 
+;;;; 7a. Duplicate-Title Guard
+;;
+;; A create is chosen purely by the absence of an id.  Every recovery
+;; from a partial create — a timeout, an error after the POST, a killed
+;; Emacs — leaves a heading without its stamp next to the item it made,
+;; and the next sync would create a second one that students can see
+;; and submit to (issue #85).  So before any POST the title is looked
+;; up: in the drift snapshot when a sync bound one (free), otherwise
+;; through the module's FIND-FN (one GET).
+
+(defun org-canvas--push-remote-items-titled (title find-fn)
+  "Return the remote items carrying TITLE, or nil.
+Inside a sync `org-canvas--current-remote-titles' is the snapshot's
+title index, read for free, or `none' when the run had no snapshot —
+an unregistered feature, a failed fetch, conflict detection off — in
+which case nothing is checked rather than a GET spent per entry.
+Outside a sync (a single-entry push) FIND-FN, the module's search
+function, is asked; a module without one is not checked."
+  (cond
+   ((hash-table-p org-canvas--current-remote-titles)
+    (gethash title org-canvas--current-remote-titles))
+   (org-canvas--current-remote-titles nil)
+   (find-fn
+    (let ((found (funcall find-fn title)))
+      (and found (list found))))))
+
+(defun org-canvas--push-item-id (item id-key)
+  "Return ITEM's id as a string, from the field ID-KEY implies.
+`:canvas-url' reads `url' (pages); anything else reads `id'."
+  (let ((id (alist-get (if (eq id-key :canvas-url) 'url 'id) item)))
+    (and id (format "%s" id))))
+
+(defun org-canvas--push-adopt-item (data id-key title item)
+  "Stamp DATA's heading with ITEM's id and record it under ID-KEY.
+Writes the id property and CANVAS_UPDATED_AT from ITEM, so the update
+that follows compares against the item's own clock instead of
+reporting the adoption itself as a conflict.  TITLE is for the log.
+Returns the id."
+  (let ((pom (plist-get data :pom))
+        (id (org-canvas--push-item-id item id-key))
+        (updated (alist-get 'updated_at item)))
+    (org-canvas-org-set-property
+     pom (if (eq id-key :canvas-url) "CANVAS_URL" "CANVAS_ID") id)
+    (when (stringp updated)
+      (org-canvas-org-set-property pom "CANVAS_UPDATED_AT" updated))
+    (plist-put data id-key id)
+    (org-canvas--log-info org-canvas--logger
+      "[Duplicate] Adopted Canvas id %s for '%s' — updating it instead of creating a second"
+      id title)
+    id))
+
+(defun org-canvas--push-guard-duplicate (data id-key title find-fn)
+  "Before creating TITLE, look it up on Canvas and decide what to do.
+Returns nil to go ahead and create, `skip' to leave the heading
+alone, or the adopted id — DATA and its heading updated — to PUT
+instead.  Not consulted when `org-canvas-duplicate-title-strategy' is
+`create', when DATA has no :pom to stamp, or when nothing on Canvas
+carries TITLE.  ID-KEY and FIND-FN are as for `org-canvas--push-to-api'."
+  (unless (or (eq org-canvas-duplicate-title-strategy 'create)
+              (null (plist-get data :pom)))
+    (let ((items (org-canvas--push-remote-items-titled title find-fn)))
+      (when items
+        (let* ((ids (mapcar (lambda (item) (org-canvas--push-item-id item id-key))
+                            items))
+               (id-list (mapconcat #'identity ids ", "))
+               (action (org-canvas--resolve-duplicate title ids)))
+          ;; Titles are not unique on Canvas; with several holders there
+          ;; is no one item to adopt.
+          (when (and (eq action 'adopt) (cdr ids))
+            (org-canvas--log-warning org-canvas--logger
+              "[Duplicate] '%s' is held by %d Canvas items (%s); cannot adopt one, skipping"
+              title (length ids) id-list)
+            (setq action 'skip))
+          (pcase action
+            ('adopt (org-canvas--push-adopt-item data id-key title (car items)))
+            ('skip
+             (org-canvas--log-warning org-canvas--logger
+               "[Duplicate] Skipping '%s' — Canvas already holds it as id %s; stamp %s or rename the heading"
+               title id-list (if (eq id-key :canvas-url) "CANVAS_URL" "CANVAS_ID"))
+             'skip)
+            (_
+             (org-canvas--log-warning org-canvas--logger
+               "[Duplicate] Creating '%s' although Canvas already holds it as id %s"
+               title id-list)
+             nil)))))))
+
 (cl-defun org-canvas--push-to-api (data payload
 					&key
 					endpoint
@@ -1025,14 +1286,21 @@ Keyword arguments:
 
 Handle:
   - POST for new items (no ID), PUT for existing items
+  - A title Canvas already holds: asks, or follows
+    `org-canvas-duplicate-title-strategy' — adopting the id turns the
+    POST into a PUT (issue #85)
   - 404 on PUT: retries as POST (stale ID recovery)
   - Timeout: calls FIND-FN to check if item was created
 
-Returns the API response alist."
+Returns the API response alist, or one of the symbols `conflict',
+`pulled' and `duplicate' when the push stopped short."
   (let* ((id-key (or id-key :canvas-id))
          (title-key (or title-key :title))
-         (id (plist-get data id-key))
          (title (plist-get data title-key))
+         (guard (and (not (plist-get data id-key))
+                     (not org-canvas--dry-run)
+                     (org-canvas--push-guard-duplicate data id-key title find-fn)))
+         (id (plist-get data id-key))
          (method (if id 'PUT 'POST))
          (full-endpoint (cond
                          ((and id put-url-fn) (funcall put-url-fn id))
@@ -1040,6 +1308,9 @@ Returns the API response alist."
                          (id (org-canvas-api-course-endpoint (format "%s/%%s" endpoint) id))
                          (t (org-canvas-api-course-endpoint endpoint))))
          (post-url (when post-url-fn (funcall post-url-fn))))
+
+    (when (eq guard 'skip)
+      (cl-return-from org-canvas--push-to-api 'duplicate))
 
     ;; Dry-run: skip API call and return a mock response
     (when org-canvas--dry-run
@@ -1159,12 +1430,27 @@ HASH-EXTRA-FN, when non-nil, is folded into the payload hash
       (org-canvas--log-info org-canvas--logger "[Stage 3: Push] '%s' (%s)"
         title (if canvas-id "UPDATE" "CREATE"))
       (let ((response (funcall push-fn data payload)))
-        (org-canvas--log-info org-canvas--logger "[Stage 4: Finalize] '%s'" title)
-        (funcall finalize-fn data response)
-        (org-canvas-org-set-property (point) org-canvas--prop-payload-hash payload-hash)
-        (org-canvas--save-buffer)
-        (org-canvas--log-info org-canvas--logger "[Sync] '%s' synced successfully" title)
-        (message "%s '%s' synced." (capitalize feature-name) title)))))
+        (if (memq response '(conflict pulled duplicate))
+            (org-canvas--push-at-point-report-stop feature-name title response)
+          (org-canvas--log-info org-canvas--logger "[Stage 4: Finalize] '%s'" title)
+          (funcall finalize-fn data response)
+          (org-canvas-org-set-property (point) org-canvas--prop-payload-hash payload-hash)
+          (org-canvas--save-buffer)
+          (org-canvas--log-info org-canvas--logger "[Sync] '%s' synced successfully" title)
+          (message "%s '%s' synced." (capitalize feature-name) title))))))
+
+(defun org-canvas--push-at-point-report-stop (feature-name title outcome)
+  "Say why the single-entry push of TITLE stopped with OUTCOME.
+FEATURE-NAME names the module.  OUTCOME is `conflict', `pulled' or
+`duplicate', the symbols `org-canvas--push-to-api' returns in place
+of a response; finalizing one as if it were a response is a type
+error, which is how a conflict at point used to end in a backtrace."
+  (let ((why (pcase outcome
+               ('conflict "not pushed — the remote item was modified since the last sync")
+               ('pulled "not pushed — the remote version was pulled instead")
+               (_ "not pushed — Canvas already holds this title; stamp its id or rename"))))
+    (org-canvas--log-warning org-canvas--logger "[Sync] '%s' %s" title why)
+    (message "%s '%s' %s." (capitalize feature-name) title why)))
 
 
 (provide 'org-canvas-core-sync)
