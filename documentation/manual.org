@@ -1511,6 +1511,14 @@ Comprehensive review covering all course material.
 
 Calendar events use a global Canvas API endpoint (not course-scoped).  Events are tied to the course via a =context_code= parameter, and every listing asks for =all_events=true= -- without it Canvas returns only the events dated today.  The feature registry knows the global endpoint (#87), so calendar events take part in the drift check, the dry-run conflict preview, the duplicate-title guard, =org-canvas-diff=, orphan cleanup and =org-canvas-pull-at-point= like any other content type.
 
+=ALL_DAY= applies to single-day events only.  Canvas does not store the flag
+on an event whose start and end fall on different dates: it keeps the times,
+sets =all_day= to false and records =all_day_date= instead.  org-canvas
+therefore treats a span's =ALL_DAY= as expressing no comparable opinion:
+=org-canvas-validate= warns about =ALL_DAY: true= on a span, and the drift
+report does not compare the flag for spans -- it used to report such events
+as changed on every run, forever (#93).
+
 * Link Resolution
 
 Properties like =GROUP= and =RUBRIC_LINK= can contain Org links to headings in other files. During sync, these links are resolved to Canvas IDs.
@@ -2620,7 +2628,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 |----------+------+----------------+---------+-------------|
 | =START_AT= | timestamp |  |  | Event start time (required) |
 | =END_AT= | timestamp |  |  | Event end time |
-| =ALL_DAY= | boolean | true, false |  | All-day event (default: false) |
+| =ALL_DAY= | boolean | true, false |  | All-day event (default: false; single-day events only — Canvas drops the flag on a multi-day span) |
 | =LOCATION_NAME= | string |  |  | Location name |
 | =LOCATION_ADDRESS= | string |  |  | Location address |
 

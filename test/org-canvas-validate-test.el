@@ -2848,5 +2848,32 @@ EXCEPT is a list of filenames to skip."
       (with-current-buffer "*canvas-validate*"
         (expect (buffer-string) :not :to-match "sum to")))))
 
+(describe "org-canvas--validate-all-day-span (issue #93)"
+  (it "warns on ALL_DAY: true over a span"
+    (with-temp-org-buffer "* Break
+:PROPERTIES:
+:START_AT: <2026-11-25 Wed 00:00>
+:END_AT: <2026-11-27 Fri 23:59>
+:ALL_DAY: true
+:END:
+"
+      (org-back-to-heading)
+      (let ((issues (org-canvas--validate-all-day-span
+                     '(:file "calendar.org" :line 1 :heading "Break"))))
+        (expect (length issues) :to-equal 1)
+        (expect (plist-get (car issues) :severity) :to-equal 'warning)
+        (expect (plist-get (car issues) :property) :to-equal "ALL_DAY")
+        (expect (plist-get (car issues) :message) :to-match "single-day"))))
+
+  (it "stays quiet for a single day, a span without the flag, and no end"
+    (dolist (content '("* E\n:PROPERTIES:\n:START_AT: <2026-10-12 Mon 00:00>\n:END_AT: <2026-10-12 Mon 23:59>\n:ALL_DAY: true\n:END:\n"
+                       "* E\n:PROPERTIES:\n:START_AT: <2026-11-25 Wed 00:00>\n:END_AT: <2026-11-27 Fri 23:59>\n:ALL_DAY: false\n:END:\n"
+                       "* E\n:PROPERTIES:\n:START_AT: <2026-10-12 Mon 09:00>\n:ALL_DAY: true\n:END:\n"))
+      (with-temp-org-buffer content
+        (org-back-to-heading)
+        (expect (org-canvas--validate-all-day-span
+                 '(:file "f" :line 1 :heading "E"))
+                :to-be nil)))))
+
 (provide 'org-canvas-validate-test)
 ;;; org-canvas-validate-test.el ends here

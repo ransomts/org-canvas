@@ -488,6 +488,21 @@ LOC is a (:file :line :heading) plist."
         count)
     0))
 
+(defun org-canvas--validate-all-day-span (loc)
+  "Warn when ALL_DAY: true is set on a multi-day calendar event.
+Canvas does not store the flag for a span: it keeps the times, sets
+`all_day' to false and fills `all_day_date', so the property has no
+effect and can never round-trip (issue #93).  LOC is a
+\(:file :line :heading) plist."
+  (let ((all-day (org-entry-get (point) "ALL_DAY")))
+    (when (and all-day (string= (downcase all-day) "true")
+               (org-canvas--org-timestamps-span-days-p
+                (org-entry-get (point) "START_AT")
+                (org-entry-get (point) "END_AT")))
+      (list (org-canvas--validate-make-issue
+             'warning loc "ALL_DAY"
+             "ALL_DAY: true has no effect on a multi-day event — Canvas keeps the times and stores all_day as false; the flag applies to single-day events only")))))
+
 (defun org-canvas--validate-page-structure (loc)
   "Check page-level structural constraints at point.
 Canvas rejects FRONT_PAGE: true combined with PUBLISHED: false with

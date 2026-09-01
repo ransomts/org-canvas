@@ -15,7 +15,9 @@
 ;; ==========
 ;; START_AT         - Event start time (Org timestamp, required)
 ;; END_AT           - Event end time (Org timestamp, optional)
-;; ALL_DAY          - All-day event ("true"/"false", default false)
+;; ALL_DAY          - All-day event ("true"/"false", default false).
+;;                    Single-day events only: Canvas keeps the times but
+;;                    drops the flag on a multi-day span (issue #93)
 ;; LOCATION_NAME    - Location name (optional)
 ;; LOCATION_ADDRESS - Location address (optional)
 ;;
@@ -69,6 +71,18 @@ events on a course that held six (issue #87)."
         (cons "type" "event")
         (cons "all_events" "true")))
 
+(defun org-canvas--calendar-all-day-comparable-p (pom _item)
+  "Return non-nil when ALL_DAY at POM is a comparable opinion.
+Canvas does not store `all_day' on an event spanning days: it keeps
+the times, sets the flag false and fills `all_day_date' instead, so a
+span's ALL_DAY can never round-trip and the drift report would flag
+the entry on every run, forever (issue #93).  Named as the ALL_DAY
+spec's `:compare-p'; `org-canvas--validate-all-day-span' warns about
+the same state at validation time."
+  (not (org-canvas--org-timestamps-span-days-p
+        (org-entry-get pom "START_AT")
+        (org-entry-get pom "END_AT"))))
+
 (org-canvas-register-feature
  :name "Calendar Events" :endpoint "calendar_events"
  :file-var 'org-canvas-calendar-events-file
@@ -90,13 +104,15 @@ events on a course that held six (issue #87)."
      :doc "Event end time")
     (:org-prop "ALL_DAY" :data-key :all_day :type boolean
      :api-key "all_day"
-     :doc "All-day event (default: false)")
+     :compare-p org-canvas--calendar-all-day-comparable-p
+     :doc "All-day event (default: false; single-day events only — Canvas drops the flag on a multi-day span)")
     (:org-prop "LOCATION_NAME" :data-key :location_name :type string
      :api-key "location_name"
      :doc "Location name")
     (:org-prop "LOCATION_ADDRESS" :data-key :location_address :type string
      :api-key "location_address"
-     :doc "Location address")))
+     :doc "Location address"))
+  :structural-fn #'org-canvas--validate-all-day-span)
 
 ;;;; 1. Stage: Extraction
 

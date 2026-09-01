@@ -268,6 +268,21 @@ Falls back to a capitalized feature name when no entry is registered."
     (when (re-search-forward "^#\\+LAST_SYNCED: \\(.+\\)$" nil t)
       (match-string-no-properties 1))))
 
+(defun org-canvas--org-timestamp-date (ts)
+  "Return the YYYY-MM-DD written in Org timestamp TS, or nil."
+  (when (and (stringp ts)
+             (string-match "[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}" ts))
+    (match-string 0 ts)))
+
+(defun org-canvas--org-timestamps-span-days-p (start end)
+  "Return non-nil when Org timestamps START and END fall on different dates.
+Dates are compared as written — the author's local dates — because a
+single-day event expressed in UTC can cross midnight and would look
+like a span (issue #93)."
+  (let ((a (org-canvas--org-timestamp-date start))
+        (b (org-canvas--org-timestamp-date end)))
+    (and a b (not (string= a b)))))
+
 (defun org-canvas-org-parse-timestamp (ts-string)
   "Transform an Org timestamp TS-STRING into a Canvas ISO8601 string."
   (when ts-string
