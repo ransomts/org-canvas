@@ -215,7 +215,8 @@ Populated at module load time by `org-canvas-register-feature'.")
 (defun org-canvas-register-feature (&rest plist)
   "Register a feature for orphan detection and at-point dispatch.
 PLIST has keys :name :endpoint :file-var :id-field :id-property
-:title-field and optionally :list-params :skip-fn :skip-reason.
+:title-field and optionally :list-params :skip-fn :skip-reason
+:modified-field.
 
 A feature that does not list under the course also names a
 `:list-url-fn' (no arguments) and an `:item-url-fn' (one argument,
@@ -226,6 +227,11 @@ the parameters depend on state not known at load time, and a
 are resolved in one place — `org-canvas--feature-list-url',
 `org-canvas--feature-item-url', `org-canvas--feature-list-params' —
 which every consumer of the registry goes through.
+
+`:modified-field' names the remote timestamp drift is decided from,
+default `updated_at'.  Files declare `modified_at', the content
+timestamp: Canvas bumps their `updated_at' on metadata-only touches
+\(issue #94).  See `org-canvas--feature-modified-field'.
 `:skip-reason' is a short phrase naming why `:skip-fn' holds an item
 back; the drift report and the orphan scan print it so a suppressed
 item is not silently absent (issue #81).  `:pull-item-fn' is filled in

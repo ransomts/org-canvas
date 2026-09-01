@@ -5294,5 +5294,73 @@ Returns what `org-canvas--current-remote-titles' was during the push."
         (expect (org-canvas--resolve-duplicate "R11" '("1")) :to-equal 'create)
         (expect org-canvas--duplicate-apply-all :to-be nil)))))
 
+;;;; Issue #94: file drift is decided from modified_at, not updated_at
+
+(describe "org-canvas--sync-remote-updated-index modified field (issue #94)"
+  (it "reads the declared field instead of updated_at"
+    (let ((map (org-canvas--sync-remote-updated-index
+                '(((id . 1) (updated_at . "2026-09-01T12:12:24Z")
+                   (modified_at . "2026-08-31T18:34:37Z")))
+                'id 'modified_at)))
+      (expect (gethash "1" map) :to-equal "2026-08-31T18:34:37Z")))
+
+  (it "keeps updated_at as the default"
+    (let ((map (org-canvas--sync-remote-updated-index
+                '(((id . 1) (updated_at . "2026-09-01T12:12:24Z")))
+                'id)))
+      (expect (gethash "1" map) :to-equal "2026-09-01T12:12:24Z"))))
+
+(describe "org-canvas--conflict-check modified field (issue #94)"
+  (defconst test-mod-94--entry "* syllabus.pdf
+:PROPERTIES:
+:CANVAS_ID: 31495932
+:CANVAS_UPDATED_AT: 2026-08-31T18:34:37Z
+:END:
+")
+
+  (it "ignores a metadata-only touch when told the content field"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer test-mod-94--entry
+        (org-back-to-heading)
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _)
+                     '((id . 31495932)
+                       (updated_at . "2026-09-01T12:12:24Z")
+                       (modified_at . "2026-08-31T18:34:37Z")))))
+          (expect (org-canvas--conflict-check "files" "31495932" (point)
+                                              "syllabus.pdf" 'modified_at)
+                  :to-be nil)))))
+
+  (it "still flags a real content change, naming the field it compared"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer test-mod-94--entry
+        (org-back-to-heading)
+        (let ((warnings nil))
+          (cl-letf (((symbol-function 'org-canvas-api-request)
+                     (lambda (&rest _)
+                       '((id . 31495932)
+                         (updated_at . "2026-09-01T12:12:24Z")
+                         (modified_at . "2026-09-01T09:00:00Z"))))
+                    ((symbol-function 'org-canvas--log-warning)
+                     (lambda (_l fmt &rest args)
+                       (push (apply #'format fmt args) warnings))))
+            (expect (car (org-canvas--conflict-check "files" "31495932" (point)
+                                                     "syllabus.pdf" 'modified_at))
+                    :to-equal 'conflict))
+          (expect (car warnings)
+                  :to-equal "[Conflict] 'syllabus.pdf': remote modified_at 2026-09-01T09:00:00Z is newer than CANVAS_UPDATED_AT 2026-08-31T18:34:37Z"))))))
+
+(describe "org-canvas--finalize-item :updated-field (issue #94)"
+  (it "stamps CANVAS_UPDATED_AT from the declared field"
+    (with-temp-org-buffer "* syllabus.pdf\n"
+      (org-back-to-heading)
+      (org-canvas--finalize-item
+       (list :title "syllabus.pdf" :pom (point))
+       '((id . 31495932) (updated_at . "2026-09-01T12:12:24Z")
+         (modified_at . "2026-08-31T18:34:37Z"))
+       :updated-field 'modified_at)
+      (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
+              :to-equal "2026-08-31T18:34:37Z"))))
+
 (provide 'org-canvas-core-sync-test)
 ;;; org-canvas-core-sync-test.el ends here

@@ -1069,5 +1069,17 @@
               :to-equal '(("type" . "event")))
       (expect (org-canvas--feature-list-params '(:endpoint "pages")) :to-be nil))))
 
+(describe "org-canvas--feature-modified-field (issue #94)"
+  (it "defaults to updated_at and honours a declaration"
+    (expect (org-canvas--feature-modified-field '(:endpoint "assignments"))
+            :to-be 'updated_at)
+    (expect (org-canvas--feature-modified-field '(:modified-field modified_at))
+            :to-be 'modified_at))
+
+  (it "is declared by files, whose updated_at moves on metadata touches"
+    (expect (org-canvas--feature-modified-field
+             (org-canvas--registry-find-feature "files"))
+            :to-be 'modified_at)))
+
 (provide 'org-canvas-core-api-test)
 ;;; org-canvas-core-api-test.el ends here

@@ -4399,7 +4399,7 @@ Returns the symbol naming the path taken."
   (it "asks about the course-scoped file and offers a working pull"
     (let (args)
       (cl-letf (((symbol-function 'org-canvas--push-check-and-resolve-conflict)
-                 (lambda (endpoint id _data title)
+                 (lambda (endpoint id _data title &optional _modified-field)
                    (setq args (list endpoint id title
                                     org-canvas--current-pull-item-fn))
                    'push)))
@@ -4871,5 +4871,37 @@ Returns (COUNTERS . FINAL-MESSAGE)."
         ;; Full equality, not a substring match: "2 files" also matches
         ;; "-2 files", so a negated counter would slip through a regex.
         (expect said :to-equal "Deletion complete. 2 files, 0 folders removed.")))))
+
+(describe "file conflict and finalize use modified_at (issue #94)"
+  (it "does not raise a conflict for a metadata-only touch"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer "* syllabus.pdf
+:PROPERTIES:
+:CANVAS_ID: 31495932
+:CANVAS_UPDATED_AT: 2026-08-31T18:34:37Z
+:END:
+"
+        (org-back-to-heading)
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _)
+                     '((id . 31495932)
+                       (updated_at . "2026-09-01T12:12:24Z")
+                       (modified_at . "2026-08-31T18:34:37Z"))))
+                  ((symbol-function 'org-canvas--resolve-conflict)
+                   (lambda (&rest _) (error "Must not prompt"))))
+          (expect (org-canvas--file-check-conflict
+                   (list :canvas-id "31495932" :display-name "syllabus.pdf"
+                         :pom (point)))
+                  :to-equal 'push)))))
+
+  (it "stamps the content timestamp after an upload"
+    (with-temp-org-buffer "* syllabus.pdf\n"
+      (org-back-to-heading)
+      (org-canvas--file-finalize
+       (list :display-name "syllabus.pdf" :pom (point))
+       '((id . 31495932) (updated_at . "2026-09-01T12:12:24Z")
+         (modified_at . "2026-08-31T18:34:37Z")))
+      (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
+              :to-equal "2026-08-31T18:34:37Z"))))
 
 ;;; org-canvas-files-test.el ends here
