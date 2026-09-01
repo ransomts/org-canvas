@@ -1553,6 +1553,61 @@ PULL-CONFIG is a plist with :id-field :title-field :id-property :pull-item-fn."
     (org-canvas-org-save-sync-state pos id id-property)
     (funcall item-fn item pos)))
 
+(defun org-canvas--pull-item-label (item id-field title-field)
+  "Return a display label for ITEM using TITLE-FIELD, then ID-FIELD."
+  (format "%s" (or (alist-get title-field item)
+                   (alist-get id-field item)
+                   "(unnamed)")))
+
+(defun org-canvas--pull-record-skip (file item id-field title-field reason)
+  "Log ITEM as skipped by a pull `:skip-fn' and record it in the summary.
+FILE is the .org file the pull writes, ID-FIELD and TITLE-FIELD name
+the item alist keys used for the label, REASON is the module's
+`:skip-reason' string or nil.  Without this a skipped item leaves no
+trace anywhere: the completion count reports what was written, which
+reads as what was available (issue #81)."
+  (let ((label (org-canvas--pull-item-label item id-field title-field)))
+    (org-canvas--log-info org-canvas--logger
+      "[Pull] Skipped '%s'%s" label
+      (if reason (format ": %s" reason) ""))
+    (org-canvas--pull-summary-record
+     :kind 'skip
+     :file (file-name-nondirectory file)
+     :item label
+     :error (or reason "excluded by this module's skip rule"))))
+
+(defun org-canvas--pull-skip-suffix (skipped reason)
+  "Return the \" (N skipped: REASON)\" tail of a pull completion line.
+Empty when SKIPPED is zero."
+  (if (zerop skipped)
+      ""
+    (format " (%d skipped%s)" skipped (if reason (format ": %s" reason) ""))))
+
+(defun org-canvas--pull-handle-item (item file config managed-only known-ids)
+  "Process, skip, or pass over ITEM for a generated pull writing FILE.
+CONFIG is the pull plist (:id-field :title-field :id-property
+:pull-item-fn :skip-fn :skip-reason).  MANAGED-ONLY and KNOWN-IDS come
+from the prefix argument (issue #67).  Returns `processed' when the
+item was written, `skipped' when a module's `:skip-fn' held it
+back, and nil when MANAGED-ONLY excluded it.
+
+This runs at pull time rather than being spliced into the macro so the
+generated loop stays a two-branch dispatch."
+  (let ((skip-fn (plist-get config :skip-fn))
+        (id-field (plist-get config :id-field)))
+    (cond
+     ((and managed-only
+           (not (org-canvas--pull-item-managed-p item id-field known-ids)))
+      nil)
+     ((and skip-fn (funcall skip-fn item))
+      (org-canvas--pull-record-skip file item id-field
+                                    (plist-get config :title-field)
+                                    (plist-get config :skip-reason))
+      'skipped)
+     (t
+      (org-canvas--pull-process-item item file config)
+      'processed))))
+
 (defmacro org-canvas-define-pull (feature &rest args)
   "Define `org-canvas-pull-FEATURE' function.
 FEATURE is a symbol like \\='pages or \\='announcements.
@@ -1563,6 +1618,8 @@ ARGS is a plist with the following keys:
   :params      - Extra GET params alist (optional)
   :pull-item-fn - Function (item pos) for per-item property setting (required)
   :skip-fn     - Predicate (item) to skip item when non-nil (optional)
+  :skip-reason - Short phrase naming why `:skip-fn' skips, reported in
+                 the completion line and the pull summary (optional)
   :id-field    - Alist key for item ID (default: \\='id)
   :title-field - Alist key for item title (default: \\='title)
   :id-property - Org property name for Canvas ID (default: \"CANVAS_ID\")
@@ -1597,6 +1654,7 @@ Example:
          (params-expr (plist-get args :params))
          (item-fn (plist-get args :pull-item-fn))
          (skip-fn (plist-get args :skip-fn))
+         (skip-reason (plist-get args :skip-reason))
          (id-field (or (plist-get args :id-field) ''id))
          (title-field (or (plist-get args :title-field) ''title))
          (id-property (or (plist-get args :id-property) "CANVAS_ID"))
@@ -1623,6 +1681,7 @@ wholesale (issue #67)." feature-name)
                 (remote (org-canvas-api-request-all-pages
                          'GET endpoint ,params-expr))
                 (count 0)
+                (skipped 0)
                 (known-ids (when managed-only
                              (org-canvas--pull-known-ids file ,id-property)))
                 (was-fresh (org-canvas--pull-was-fresh-p file)))
@@ -1636,28 +1695,23 @@ wholesale (issue #67)." feature-name)
              (with-current-buffer (find-file-noselect file)
                (dolist (item (org-canvas--pull-sort-items
                               remote ,secondary-sort-key ,tertiary-sort-key))
-                 ,(let* ((body
-                          `(progn
-                             (org-canvas--pull-process-item
-                              item file
-                              (list :id-field ,id-field :title-field ,title-field
-                                    :id-property ,id-property :pull-item-fn ,item-fn))
-                             (cl-incf count)))
-                         (body (if skip-fn
-                                   `(unless (funcall ,skip-fn item) ,body)
-                                 body)))
-                    `(when (or (not managed-only)
-                               (org-canvas--pull-item-managed-p
-                                item ,id-field known-ids))
-                       ,body)))
+                 (pcase (org-canvas--pull-handle-item
+                         item file
+                         (list :id-field ,id-field :title-field ,title-field
+                               :id-property ,id-property :pull-item-fn ,item-fn
+                               :skip-fn ,skip-fn :skip-reason ,skip-reason)
+                         managed-only known-ids)
+                   ('processed (cl-incf count))
+                   ('skipped (cl-incf skipped))))
                (org-canvas--pull-write-file-header)
                (org-canvas--save-buffer)))
            (org-canvas--pull-kill-fresh-buffer file was-fresh)
-           (org-canvas--log-info org-canvas--logger
-             ,(format "%s pull complete: %%d items"
-                      (capitalize feature-name)) count)
-           (message ,(format "%s pull complete: %%d items."
-                             (capitalize feature-name)) count))))))
+           (let ((skip-note (org-canvas--pull-skip-suffix skipped ,skip-reason)))
+             (org-canvas--log-info org-canvas--logger
+               ,(format "%s pull complete: %%d items%%s"
+                        (capitalize feature-name)) count skip-note)
+             (message ,(format "%s pull complete: %%d items%%s."
+                               (capitalize feature-name)) count skip-note)))))))
 
 ;;;; 5. Diagnostics
 
@@ -1703,31 +1757,43 @@ Returns the course name as a string.  Signals an error if the request fails."
 ;; summary buffer without losing the error to the log file.
 
 (defvar org-canvas--pull-summary nil
-  "Accumulator for non-fatal errors during a pull.
-Each element is a plist with :file, :item, :error, :log-line.
-Newest records are pushed onto the head; use
-`org-canvas--pull-summary-records' to read them in insertion order.")
+  "Accumulator for non-fatal errors and skips during a pull.
+Each element is a plist with :kind, :file, :item, :error, :log-line.
+:kind is `error' for a failure that lost content and `skip' for an
+item a module's `:skip-fn' deliberately left out of the local file
+\(issue #81 — a skip with no record is indistinguishable from an item
+that was never on Canvas).  Newest records are pushed onto the head;
+use `org-canvas--pull-summary-records' to read them in insertion order.")
 
 (defun org-canvas--pull-summary-reset ()
   "Clear the pull summary accumulator."
   (setq org-canvas--pull-summary nil))
 
 (defun org-canvas--pull-summary-empty-p ()
-  "Return non-nil when no errors have been recorded this pull."
+  "Return non-nil when no errors or skips have been recorded this pull."
   (null org-canvas--pull-summary))
 
 (defun org-canvas--pull-summary-records ()
   "Return the list of recorded summary entries in insertion order."
   (reverse org-canvas--pull-summary))
 
-(cl-defun org-canvas--pull-summary-record (&key file item error log-line)
-  "Record a non-fatal pull failure.
-FILE is the .org file (basename) the failure was scoped to.
-ITEM is an optional identifier for the failing item (slug, id, title).
-ERROR is a human-readable error message.
-LOG-LINE is an optional pointer into the log buffer/file."
-  (push (list :file file :item item :error error :log-line log-line)
+(cl-defun org-canvas--pull-summary-record (&key file item error log-line
+                                                (kind 'error))
+  "Record a non-fatal pull failure or a deliberate skip.
+FILE is the .org file (basename) the record is scoped to.
+ITEM is an optional identifier for the item (slug, id, title).
+ERROR is a human-readable message — the failure for an error record,
+the reason for a skip record.
+LOG-LINE is an optional pointer into the log buffer/file.
+KIND is `error' (default) or `skip'."
+  (push (list :kind kind :file file :item item :error error :log-line log-line)
         org-canvas--pull-summary))
+
+(defun org-canvas--pull-summary-records-of-kind (kind)
+  "Return recorded summary entries of KIND, in insertion order.
+Records written before :kind existed count as `error'."
+  (cl-remove-if-not (lambda (rec) (eq (or (plist-get rec :kind) 'error) kind))
+                    (org-canvas--pull-summary-records)))
 
 (defun org-canvas--pull-summary-format-record (rec)
   "Format a single summary REC plist as a one-line string."
@@ -1753,15 +1819,36 @@ non-fatal pull error."
 
 (defun org-canvas--pull-summary-print ()
   "Print the pull summary to standard output.
-Emits nothing when the accumulator is empty so callers can wrap this
-unconditionally in `with-output-to-temp-buffer'."
-  (let ((records (org-canvas--pull-summary-records)))
-    (when records
+Errors and skips are printed as separate sections.  Emits nothing when
+the accumulator is empty so callers can wrap this unconditionally in
+`with-output-to-temp-buffer'."
+  (let ((errors (org-canvas--pull-summary-records-of-kind 'error))
+        (skips (org-canvas--pull-summary-records-of-kind 'skip)))
+    (when errors
       (princ (format "Pull complete with %d non-fatal error%s:\n"
-                     (length records)
-                     (if (= (length records) 1) "" "s")))
-      (dolist (rec records)
+                     (length errors)
+                     (if (= (length errors) 1) "" "s")))
+      (dolist (rec errors)
+        (princ (org-canvas--pull-summary-format-record rec))))
+    (when skips
+      (when errors (princ "\n"))
+      (princ (format "%d item%s skipped — on Canvas, not written locally:\n"
+                     (length skips)
+                     (if (= (length skips) 1) "" "s")))
+      (dolist (rec skips)
         (princ (org-canvas--pull-summary-format-record rec))))))
+
+(defun org-canvas--pull-summary-tally ()
+  "Return a short phrase counting the errors and skips recorded this pull."
+  (let ((errors (length (org-canvas--pull-summary-records-of-kind 'error)))
+        (skips (length (org-canvas--pull-summary-records-of-kind 'skip))))
+    (mapconcat #'identity
+               (delq nil
+                     (list (when (> errors 0)
+                             (format "%d non-fatal error(s)" errors))
+                           (when (> skips 0)
+                             (format "%d item(s) skipped" skips))))
+               ", ")))
 
 (defun org-canvas--preflight-check ()
   "Validate credentials and connection before syncing.

@@ -196,6 +196,25 @@ Returns a plist describing the divergence, or nil when they agree."
         (remote (org-canvas--parse-iso8601-time (alist-get 'updated_at item))))
     (and baseline remote (time-less-p baseline remote))))
 
+(defun org-canvas--diff-unclaimed (items claimed id-field title-field skip-fn)
+  "Sort remote ITEMS no local heading CLAIMED into extras and suppressions.
+ID-FIELD and TITLE-FIELD name the item alist keys.  SKIP-FN, when
+non-nil, marks an item the feature never compares.  Returns a cons of
+the extra entry list and the count SKIP-FN held back — a skipped item
+is neither drift nor extra, but it is also not checked, and saying so
+is what keeps the report from reading as full coverage (issue #81)."
+  (let ((extra nil)
+        (suppressed 0))
+    (dolist (item items)
+      (unless (member (format "%s" (alist-get id-field item)) claimed)
+        (if (and skip-fn (funcall skip-fn item))
+            (cl-incf suppressed)
+          (push (list :kind 'extra
+                      :title (format "%s" (or (alist-get title-field item) "?"))
+                      :id (format "%s" (alist-get id-field item)))
+                extra))))
+    (cons (nreverse extra) suppressed)))
+
 (defun org-canvas--diff-feature (feature)
   "Compare one FEATURE registry entry against Canvas.
 Returns a plist (:name :divergences :extra :error), where :extra holds
@@ -220,22 +239,19 @@ request failed."
                (local (org-canvas--diff-collect-local
                        file (plist-get props :query) id-property))
                (claimed (delq nil (mapcar (lambda (e) (plist-get e :id)) local)))
-               divergences extra)
+               divergences)
           (dolist (entry local)
             (let ((d (org-canvas--diff-entry entry index specs)))
               (when d (push d divergences)))
             (let ((m (plist-get entry :pom)))
               (when (markerp m) (set-marker m nil))))
-          (dolist (item items)
-            (unless (or (and skip-fn (funcall skip-fn item))
-                        (member (format "%s" (alist-get id-field item)) claimed))
-              (push (list :kind 'extra
-                          :title (format "%s" (or (alist-get title-field item) "?"))
-                          :id (format "%s" (alist-get id-field item)))
-                    extra)))
-          (list :name name
-                :divergences (nreverse divergences)
-                :extra (nreverse extra)))
+          (let ((unclaimed (org-canvas--diff-unclaimed
+                            items claimed id-field title-field skip-fn)))
+            (list :name name
+                  :divergences (nreverse divergences)
+                  :extra (car unclaimed)
+                  :suppressed (cdr unclaimed)
+                  :skip-reason (plist-get feature :skip-reason))))
       (error
        (list :name name :error (error-message-string err))))))
 
@@ -266,6 +282,22 @@ request failed."
                                     (length (plist-get r :extra))))
                      results)))
 
+(defun org-canvas--diff-suppressed-note (results)
+  "Return a line naming remote items no check in RESULTS covered, or nil.
+Items a `:skip-fn' holds back are not compared and cannot
+show up as extra, so without this the report reads as full coverage."
+  (let ((parts (delq nil
+                     (mapcar
+                      (lambda (r)
+                        (let ((n (plist-get r :suppressed)))
+                          (when (and n (> n 0))
+                            (format "%d %s (%s)" n (plist-get r :name)
+                                    (or (plist-get r :skip-reason)
+                                        "excluded by this module")))))
+                      results))))
+    (when parts
+      (format "Not checked: %s.\n" (mapconcat #'identity parts ", ")))))
+
 (defun org-canvas--diff-render (results)
   "Render RESULTS into a report string."
   (with-temp-buffer
@@ -292,7 +324,9 @@ request failed."
       (insert (make-string 60 ?=) "\n")
       (insert (if (zerop total)
                   "No drift: Canvas matches the Org files.\n"
-                (format "%d divergence(s) found.\n" total))))
+                (format "%d divergence(s) found.\n" total)))
+      (when-let* ((note (org-canvas--diff-suppressed-note results)))
+        (insert note)))
     (buffer-string)))
 
 ;;;; Commands

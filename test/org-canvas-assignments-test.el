@@ -49,7 +49,7 @@
                      :anonymous-grading-raw nil :notify-of-update-raw nil
                      :grade-individually-raw nil :only-visible-to-overrides-raw nil
                      :moderated-grading-raw nil :grader-count-raw nil
-                     :muted-raw nil :turnitin-enabled-raw nil
+                     :muted-raw nil
                      :grading-standard-id-raw nil :position-raw nil
                      :assignment-group-id-raw nil :rubric-id nil
                      :group-category-id-raw nil))))
@@ -67,7 +67,7 @@
                      :anonymous-grading-raw nil :notify-of-update-raw nil
                      :grade-individually-raw nil :only-visible-to-overrides-raw nil
                      :moderated-grading-raw nil :grader-count-raw nil
-                     :muted-raw nil :turnitin-enabled-raw nil
+                     :muted-raw nil
                      :grading-standard-id-raw nil :position-raw nil
                      :assignment-group-id-raw nil :rubric-id nil
                      :group-category-id-raw nil))))
@@ -85,7 +85,7 @@
                      :anonymous-grading-raw nil :notify-of-update-raw nil
                      :grade-individually-raw nil :only-visible-to-overrides-raw nil
                      :moderated-grading-raw nil :grader-count-raw nil
-                     :muted-raw nil :turnitin-enabled-raw nil
+                     :muted-raw nil
                      :grading-standard-id-raw nil :position-raw nil
                      :assignment-group-id-raw nil :rubric-id nil
                      :group-category-id-raw nil))))
@@ -104,7 +104,7 @@
                      :notify-of-update-raw nil :grade-individually-raw nil
                      :only-visible-to-overrides-raw nil :moderated-grading-raw nil
                      :grader-count-raw nil :muted-raw nil
-                     :turnitin-enabled-raw nil :grading-standard-id-raw nil
+                     :grading-standard-id-raw nil
                      :position-raw nil :assignment-group-id-raw nil
                      :rubric-id nil :group-category-id-raw nil))))
       (expect (plist-get result :due_at) :to-match "2026-09-15T")))
@@ -121,7 +121,7 @@
                      :anonymous-grading-raw nil :notify-of-update-raw nil
                      :grade-individually-raw nil :only-visible-to-overrides-raw nil
                      :moderated-grading-raw nil :grader-count-raw nil
-                     :muted-raw nil :turnitin-enabled-raw nil
+                     :muted-raw nil
                      :grading-standard-id-raw nil :position-raw nil
                      :assignment-group-id-raw nil :rubric-id nil
                      :group-category-id-raw nil))))
@@ -140,7 +140,7 @@
                      :notify-of-update-raw nil :grade-individually-raw nil
                      :only-visible-to-overrides-raw nil :moderated-grading-raw nil
                      :grader-count-raw nil :muted-raw nil
-                     :turnitin-enabled-raw nil :grading-standard-id-raw nil
+                     :grading-standard-id-raw nil
                      :position-raw nil :assignment-group-id-raw nil
                      :rubric-id nil :group-category-id-raw nil))))
       (expect (plist-get result :submission_types)
@@ -1370,26 +1370,33 @@ Content.
         (description . ""))
       "GRADING_STANDARD_ID" :to-equal "42")))
 
-;;;; TURNITIN_ENABLED Property Tests
+;;;; External Tool (LTI / Gradescope) Support
 
-(describe "org-canvas--assignment-parse-entry (turnitin_enabled)"
-  (it "parses TURNITIN_ENABLED property"
+(describe "org-canvas--assignment-parse-entry (external tool)"
+  (it "parses the tool properties off the heading"
     (with-temp-org-buffer
-     "* Essay Assignment
+     "* Problem Set 3
 :PROPERTIES:
 :PUBLISHED: true
-:TURNITIN_ENABLED: true
+:SUBMISSION: external_tool
+:EXTERNAL_TOOL_URL: https://www.gradescope.com/auth/lti/callback
+:EXTERNAL_TOOL_ID: 12787
+:EXTERNAL_TOOL_NEW_TAB: true
 :END:
 
 Content.
 "
      (org-back-to-heading)
      (let ((data (org-canvas--assignment-parse-entry)))
-       (expect (plist-get data :turnitin_enabled) :to-be t))))
+       (expect (plist-get data :external_tool_url)
+               :to-equal "https://www.gradescope.com/auth/lti/callback")
+       (expect (plist-get data :external_tool_id) :to-equal 12787)
+       (expect (plist-get data :external_tool_new_tab) :to-be t)
+       (expect (plist-get data :submission_types) :to-equal '("external_tool")))))
 
-  (it "returns nil for missing TURNITIN_ENABLED"
+  (it "leaves the tool keys nil on an ordinary assignment"
     (with-temp-org-buffer
-     "* Assignment
+     "* Essay
 :PROPERTIES:
 :PUBLISHED: true
 :END:
@@ -1398,31 +1405,145 @@ Content.
 "
      (org-back-to-heading)
      (let ((data (org-canvas--assignment-parse-entry)))
-       (expect (plist-get data :turnitin_enabled) :to-be nil)))))
+       (expect (plist-get data :external_tool_url) :to-be nil)
+       (expect (plist-get data :external_tool_id) :to-be nil)
+       (expect (plist-get data :external_tool_new_tab) :to-be nil)))))
 
-(describe "org-canvas--assignment-build-payload (turnitin_enabled)"
-  (it "includes turnitin_enabled when true"
-    (let* ((data '(:title "Test" :description "" :published t
-                   :grading_type "points" :submission_types ("none")
-                   :turnitin_enabled t))
+(describe "org-canvas--assignment-build-payload (external tool)"
+  (it "nests the launch URL where Canvas expects it"
+    (let* ((data '(:title "PS3" :description "" :published t
+                   :grading_type "points" :submission_types ("external_tool")
+                   :external_tool_url "https://www.gradescope.com/auth/lti/callback"))
+           (payload (org-canvas--assignment-build-payload data))
+           (tag (gethash "external_tool_tag_attributes"
+                         (gethash "assignment" payload))))
+      (expect (gethash "url" tag)
+              :to-equal "https://www.gradescope.com/auth/lti/callback")
+      ;; An absent NEW_TAB is a real "no", not an omission.
+      (expect (gethash "new_tab" tag) :to-equal :json-false)
+      (expect (gethash "content_id" tag) :to-be nil)))
+
+  (it "sends an installed tool id with the content type Canvas requires"
+    (let* ((data '(:title "PS3" :description "" :published t
+                   :grading_type "points" :submission_types ("external_tool")
+                   :external_tool_id 12787 :external_tool_new_tab t))
+           (payload (org-canvas--assignment-build-payload data))
+           (tag (gethash "external_tool_tag_attributes"
+                         (gethash "assignment" payload))))
+      (expect (gethash "content_id" tag) :to-equal 12787)
+      (expect (gethash "content_type" tag) :to-equal "context_external_tool")
+      (expect (gethash "new_tab" tag) :to-be t)
+      (expect (gethash "url" tag) :to-be nil)))
+
+  (it "sends both when both are declared"
+    (let* ((data '(:title "PS3" :description "" :published t
+                   :grading_type "points" :submission_types ("external_tool")
+                   :external_tool_url "https://example.test/launch"
+                   :external_tool_id 42))
+           (payload (org-canvas--assignment-build-payload data))
+           (tag (gethash "external_tool_tag_attributes"
+                         (gethash "assignment" payload))))
+      (expect (gethash "url" tag) :to-equal "https://example.test/launch")
+      (expect (gethash "content_id" tag) :to-equal 42)))
+
+  (it "omits the block entirely for an ordinary assignment"
+    (let* ((data '(:title "Essay" :description "" :published t
+                   :grading_type "points" :submission_types ("online_upload")))
            (payload (org-canvas--assignment-build-payload data))
            (assignment (gethash "assignment" payload)))
-      (expect (gethash "turnitin_enabled" assignment) :to-be t)))
+      (expect (gethash "external_tool_tag_attributes" assignment) :to-be nil))))
 
-  (it "excludes turnitin_enabled when nil"
-    (let* ((data '(:title "Test" :description "" :published t
-                   :grading_type "points" :submission_types ("none")))
-           (payload (org-canvas--assignment-build-payload data))
-           (assignment (gethash "assignment" payload)))
-      (expect (gethash "turnitin_enabled" assignment) :to-be nil))))
+(describe "external tool remote readers (drift)"
+  (it "reads the nested launch URL"
+    (expect (org-canvas--assignment-remote-tool-url
+             '((id . 1)
+               (external_tool_tag_attributes
+                . ((url . "https://www.gradescope.com/auth/lti/callback")
+                   (new_tab . t) (content_id . 12787)))))
+            :to-equal "https://www.gradescope.com/auth/lti/callback"))
 
-(describe "org-canvas--assignment-pull-item (turnitin_enabled)"
-  (it "sets TURNITIN_ENABLED property"
+  (it "reads the nested tool id and new-tab flag"
+    (let ((item '((external_tool_tag_attributes
+                   . ((content_id . 12787) (new_tab . t))))))
+      (expect (org-canvas--assignment-remote-tool-id item) :to-equal 12787)
+      (expect (org-canvas--assignment-remote-tool-new-tab item) :to-be t)))
+
+  (it "returns nil for an assignment with no tool rather than erroring"
+    ;; Read as a flat key these would be nil for every assignment, and
+    ;; every one would report drift forever.
+    (let ((item '((id . 1) (name . "Essay"))))
+      (expect (org-canvas--assignment-remote-tool-url item) :to-be nil)
+      (expect (org-canvas--assignment-remote-tool-id item) :to-be nil)
+      (expect (org-canvas--assignment-remote-tool-new-tab item) :to-be nil))))
+
+(describe "org-canvas--assignment-pull-external-tool"
+  (it "writes all three properties back onto the heading"
     (with-pull-property-test #'org-canvas--assignment-pull-item
-      '((id . 1) (name . "Assignment")
-        (turnitin_enabled . t)
-        (description . ""))
-      "TURNITIN_ENABLED" :to-equal "true")))
+      '((id . 1) (name . "PS3") (description . "")
+        (external_tool_tag_attributes
+         . ((url . "https://www.gradescope.com/auth/lti/callback")
+            (content_id . 12787) (new_tab . t))))
+      "EXTERNAL_TOOL_URL"
+      :to-equal "https://www.gradescope.com/auth/lti/callback"))
+
+  (it "writes the tool id"
+    (with-pull-property-test #'org-canvas--assignment-pull-item
+      '((id . 1) (name . "PS3") (description . "")
+        (external_tool_tag_attributes
+         . ((content_id . 12787) (new_tab . :json-false))))
+      "EXTERNAL_TOOL_ID" :to-equal "12787"))
+
+  (it "leaves an ordinary assignment untouched"
+    (with-temp-org-buffer
+     "* Essay
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+"
+     (org-back-to-heading)
+     (org-canvas--assignment-pull-external-tool (point) '((id . 1)))
+     (expect (org-entry-get (point) "EXTERNAL_TOOL_URL") :to-be nil)
+     (expect (org-entry-get (point) "EXTERNAL_TOOL_NEW_TAB") :to-be nil))))
+
+(describe "org-canvas-list-external-tools"
+  (it "lists account-installed tools with their launch URLs"
+    (with-org-canvas-test-config
+      (let ((params nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (_method _url &optional p)
+                     (setq params p)
+                     '(((name . "Gradescope") (id . 12787)
+                        (url . "https://www.gradescope.com/auth/lti/callback"))
+                       ((name . "Kaltura") (domain . "kaltura.example.test")))))
+                  ((symbol-function 'display-buffer) (lambda (b) b)))
+          (org-canvas-list-external-tools)
+          ;; Course-level alone returns nothing on most institutions.
+          (expect (cdr (assoc "include_parents" params)) :to-equal "true")
+          (with-current-buffer org-canvas--external-tools-buffer
+            (expect (buffer-string) :to-match "Gradescope")
+            (expect (buffer-string)
+                    :to-match "https://www.gradescope.com/auth/lti/callback")
+            ;; A tool with no launch URL still lists, by domain.
+            (expect (buffer-string) :to-match "kaltura.example.test"))))))
+
+  (it "says so when nothing is installed"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (&rest _) nil))
+                ((symbol-function 'display-buffer) (lambda (b) b)))
+        (org-canvas-list-external-tools)
+        (with-current-buffer org-canvas--external-tools-buffer
+          (expect (buffer-string) :to-match "No tools are installed")))))
+
+  (it "names a tool that has neither a name nor a URL"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (&rest _) '(((id . 5)))))
+                ((symbol-function 'display-buffer) (lambda (b) b)))
+        (org-canvas-list-external-tools)
+        (with-current-buffer org-canvas--external-tools-buffer
+          (expect (buffer-string) :to-match "(unnamed)")
+          (expect (buffer-string) :to-match "(no launch URL)"))))))
 
 ;;;; Section override pull (Task 16)
 

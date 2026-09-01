@@ -298,7 +298,7 @@ from an API response alist.
 Generates =org-canvas-pull-{feature}s= which fetches all items and
 upserts them into the Org file.
 
-Optional: =:params=, =:skip-fn=, =:id-field=, =:title-field=,
+Optional: =:params=, =:skip-fn=, =:skip-reason=, =:id-field=, =:title-field=,
 =:id-property=.
 
 * Step 7: Register in org-canvas.el

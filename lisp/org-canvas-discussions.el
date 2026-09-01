@@ -51,7 +51,8 @@
  :name "Discussions" :endpoint "discussion_topics"
  :file-var 'org-canvas-discussions-file
  :id-field 'id :id-property "CANVAS_ID" :title-field 'title
- :skip-fn (lambda (item) (eq (alist-get 'is_announcement item) t)))
+ :skip-fn (lambda (item) (eq (alist-get 'is_announcement item) t))
+ :skip-reason "announcement, pulled by the announcements module")
 (org-canvas-register-properties "discussions"
   :label "Discussions"
   :file-var 'org-canvas-discussions-file
@@ -294,6 +295,7 @@ DATA is the parsed discussion plist, RESPONSE is the Canvas API response."
   :file org-canvas-discussions-file
   :endpoint "discussion_topics"
   :skip-fn (lambda (item) (eq (alist-get 'is_announcement item) t))
+  :skip-reason "announcement, pulled by the announcements module"
   :pull-item-fn #'org-canvas--discussion-pull-item)
 
 (provide 'org-canvas-discussions)

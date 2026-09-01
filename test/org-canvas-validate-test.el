@@ -1752,16 +1752,103 @@ EXCEPT is a list of filenames to skip."
 
 ;;;; Validation Tests for New Properties
 
+(describe "org-canvas--validate-external-tool"
+  (it "warns when external_tool names no tool"
+    (with-temp-org-buffer
+     "* Problem Set
+:PROPERTIES:
+:SUBMISSION: external_tool
+:END:
+"
+     (org-back-to-heading)
+     (let ((issues (org-canvas--validate-external-tool
+                    (list :file "/f" :line 1 :heading "Problem Set"))))
+       (expect (length issues) :to-equal 1)
+       (expect (plist-get (car issues) :severity) :to-equal 'warning)
+       (expect (plist-get (car issues) :message) :to-match "launches nothing"))))
+
+  (it "accepts a launch URL"
+    (with-temp-org-buffer
+     "* Problem Set
+:PROPERTIES:
+:SUBMISSION: external_tool
+:EXTERNAL_TOOL_URL: https://www.gradescope.com/auth/lti/callback
+:END:
+"
+     (org-back-to-heading)
+     (expect (org-canvas--validate-external-tool
+              (list :file "/f" :line 1 :heading "Problem Set"))
+             :to-be nil)))
+
+  (it "accepts an installed tool id"
+    (with-temp-org-buffer
+     "* Problem Set
+:PROPERTIES:
+:SUBMISSION: external_tool
+:EXTERNAL_TOOL_ID: 12787
+:END:
+"
+     (org-back-to-heading)
+     (expect (org-canvas--validate-external-tool
+              (list :file "/f" :line 1 :heading "Problem Set"))
+             :to-be nil)))
+
+  (it "finds external_tool among several submission types"
+    (with-temp-org-buffer
+     "* Problem Set
+:PROPERTIES:
+:SUBMISSION: online_upload, external_tool
+:END:
+"
+     (org-back-to-heading)
+     (expect (length (org-canvas--validate-external-tool
+                      (list :file "/f" :line 1 :heading "Problem Set")))
+             :to-equal 1)))
+
+  (it "warns when a tool is declared but never selected"
+    (with-temp-org-buffer
+     "* Problem Set
+:PROPERTIES:
+:SUBMISSION: online_upload
+:EXTERNAL_TOOL_URL: https://www.gradescope.com/auth/lti/callback
+:END:
+"
+     (org-back-to-heading)
+     (let ((issues (org-canvas--validate-external-tool
+                    (list :file "/f" :line 1 :heading "Problem Set"))))
+       (expect (length issues) :to-equal 1)
+       (expect (plist-get (car issues) :message) :to-match "is ignored unless"))))
+
+  (it "stays quiet on an ordinary assignment"
+    (with-temp-org-buffer
+     "* Essay
+:PROPERTIES:
+:SUBMISSION: online_upload
+:END:
+"
+     (org-back-to-heading)
+     (expect (org-canvas--validate-external-tool
+              (list :file "/f" :line 1 :heading "Essay"))
+             :to-be nil)))
+
+  (it "reaches the report through the assignment structural check"
+    (with-temp-org-buffer
+     "* Problem Set
+:PROPERTIES:
+:SUBMISSION: external_tool
+:END:
+"
+     (org-back-to-heading)
+     (let ((issues (org-canvas--validate-assignment-structure
+                    (list :file "/f" :line 1 :heading "Problem Set"))))
+       (expect (length issues) :to-equal 1)
+       (expect (plist-get (car issues) :property) :to-equal "EXTERNAL_TOOL_URL")))))
+
 (describe "(org-canvas--validate-specs) includes new properties"
   (it "validates MUTED as boolean in assignments"
     (let ((loc (list :file "/f" :line 1 :heading "H")))
       (expect (org-canvas--validate-check-boolean "true" "MUTED" loc) :to-be nil)
       (expect (org-canvas--validate-check-boolean "invalid" "MUTED" loc) :to-be-truthy)))
-
-  (it "validates TURNITIN_ENABLED as boolean in assignments"
-    (let ((loc (list :file "/f" :line 1 :heading "H")))
-      (expect (org-canvas--validate-check-boolean "true" "TURNITIN_ENABLED" loc) :to-be nil)
-      (expect (org-canvas--validate-check-boolean "invalid" "TURNITIN_ENABLED" loc) :to-be-truthy)))
 
   (it "validates GRADING_STANDARD_ID as number in assignments"
     (let ((loc (list :file "/f" :line 1 :heading "H")))

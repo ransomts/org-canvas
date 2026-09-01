@@ -829,4 +829,64 @@ Content.
        (expect (org-entry-get (point) "CANVAS_URL") :to-equal "page-slug")
        (expect (org-entry-get (point) "CANVAS_ID") :to-equal "99")))))
 
+(describe "org-canvas--page-pull-item FRONT_PAGE (issue #82)"
+  (it "marks the course home page so the pull round-trips"
+    (org-canvas--pull-summary-reset)
+    (with-temp-org-buffer
+     "* Home
+:PROPERTIES:
+:CANVAS_URL: home
+:END:
+"
+     (org-back-to-heading)
+     (cl-letf (((symbol-function 'org-canvas-api-request)
+                (lambda (&rest _) '((body . "<p>Welcome</p>"))))
+               ((symbol-function 'org-canvas--pull-insert-body)
+                (lambda (&rest _) nil)))
+       (org-canvas--page-pull-item
+        '((url . "home") (page_id . 7) (title . "Home") (front_page . t))
+        (point))
+       (expect (org-entry-get (point) "FRONT_PAGE") :to-equal "true"))))
+
+  (it "leaves an ordinary page without the property"
+    (org-canvas--pull-summary-reset)
+    (with-temp-org-buffer
+     "* Syllabus
+:PROPERTIES:
+:CANVAS_URL: syllabus
+:END:
+"
+     (org-back-to-heading)
+     (cl-letf (((symbol-function 'org-canvas-api-request)
+                (lambda (&rest _) '((body . ""))))
+               ((symbol-function 'org-canvas--pull-insert-body)
+                (lambda (&rest _) nil)))
+       (org-canvas--page-pull-item
+        '((url . "syllabus") (title . "Syllabus")
+          (front_page . :json-false))
+        (point))
+       (expect (org-entry-get (point) "FRONT_PAGE") :to-be nil))))
+
+  (it "clears a stale FRONT_PAGE when the home page moved on Canvas"
+    ;; Two headings claiming to be the home page is not a state Canvas can
+    ;; be in, so the pull must take the property off the old one.
+    (org-canvas--pull-summary-reset)
+    (with-temp-org-buffer
+     "* Old Home
+:PROPERTIES:
+:CANVAS_URL: old-home
+:FRONT_PAGE: true
+:END:
+"
+     (org-back-to-heading)
+     (cl-letf (((symbol-function 'org-canvas-api-request)
+                (lambda (&rest _) '((body . ""))))
+               ((symbol-function 'org-canvas--pull-insert-body)
+                (lambda (&rest _) nil)))
+       (org-canvas--page-pull-item
+        '((url . "old-home") (title . "Old Home")
+          (front_page . :json-false))
+        (point))
+       (expect (org-entry-get (point) "FRONT_PAGE") :to-be nil)))))
+
 ;;; org-canvas-pages-test.el ends here

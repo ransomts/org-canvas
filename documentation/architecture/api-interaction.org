@@ -403,7 +403,10 @@ logs. The result is a single continuous log for the entire sync session.
 =org-canvas--delete-all-items= orchestrates bulk deletion:
 
 1. Fetch all items from Canvas via =org-canvas-api-request-all-pages=
-2. Filter with optional =skip-fn= (e.g., skip front page)
+2. Filter with optional =skip-fn= (e.g., skip the front page, which
+   deletion must never touch).  Skipped items are logged by name, and
+   the prune tally counts them as =protected= — an item held back
+   silently is indistinguishable from one that was not there
 3. Delete each item via =org-canvas--delete-items-queued=
 4. Clean local Org properties (CANVAS_ID, LAST_SYNCED, etc.)
 5. Log summary (N succeeded, M failed)

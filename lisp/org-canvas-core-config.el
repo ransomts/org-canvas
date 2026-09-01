@@ -215,9 +215,12 @@ Populated at module load time by `org-canvas-register-feature'.")
 (defun org-canvas-register-feature (&rest plist)
   "Register a feature for orphan detection and at-point dispatch.
 PLIST has keys :name :endpoint :file-var :id-field :id-property
-:title-field and optionally :list-params :skip-fn.  `:pull-item-fn' is
-filled in separately by `org-canvas-register-pull-item-fn', since the
-sync and pull macros are the ones that know it."
+:title-field and optionally :list-params :skip-fn :skip-reason.
+`:skip-reason' is a short phrase naming why `:skip-fn' holds an item
+back; the drift report and the orphan scan print it so a suppressed
+item is not silently absent (issue #81).  `:pull-item-fn' is filled in
+separately by `org-canvas-register-pull-item-fn', since the sync and
+pull macros are the ones that know it."
   (let ((name (plist-get plist :name)))
     (unless (cl-find name org-canvas--feature-registry
                      :key (lambda (f) (plist-get f :name))
@@ -256,7 +259,7 @@ being told."
       (cl-find-if (lambda (f)
                     (let ((var (plist-get f :file-var)))
                       (and var (boundp var) (symbol-value var)
-                           (equal file (expand-file-name (symbol-value var))))))
+                          (string= file (expand-file-name (symbol-value var))))))
                   org-canvas--feature-registry))))
 
 (defun org-canvas--recompute-file-paths ()

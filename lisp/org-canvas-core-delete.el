@@ -270,9 +270,13 @@ FILE or that SKIP-FN rejects.  Returns the number of deleted items."
                    remote-items)))
     (org-canvas-clear-log)
     (org-canvas--log-info org-canvas--logger
-      "[Prune] %s: %d on Canvas, %d in %s, %d orphaned"
+      "[Prune] %s: %d on Canvas, %d in %s, %d orphaned%s"
       feature-name (length remote-items) (length local-ids)
-      (file-name-nondirectory file) (length orphans))
+      (file-name-nondirectory file) (length orphans)
+      ;; Items SKIP-FN protects are not orphans and not deleted; say so
+      ;; rather than leaving them uncounted in the tally (issue #81).
+      (let ((protected (if skip-fn (cl-count-if skip-fn remote-items) 0)))
+        (if (> protected 0) (format ", %d protected" protected) "")))
     (if (null orphans)
         (progn
           (message "No orphaned %s on Canvas." feature-name)

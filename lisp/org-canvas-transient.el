@@ -95,7 +95,8 @@
    ("t" "Test connection" org-canvas-test-connection)
    ("v" "Validate files" org-canvas-validate)
    ("S" "Status overview (local)" org-canvas-status)
-   ("r" "Drift report (compare with Canvas)" org-canvas-diff)]
+   ("r" "Drift report (compare with Canvas)" org-canvas-diff)
+   ("x" "List external tools (LTI)" org-canvas-list-external-tools)]
   ["Log"
    ("ll" "Set log level" org-canvas-set-log-level)
    ("ld" "Set log destination" org-canvas-set-log-destination)
