@@ -35,6 +35,47 @@ URL never contains a double slash."
 	    org-canvas-course-id
 	    (apply #'format suffix args))))
 
+
+;;;; Feature URL Resolution
+;;
+;; Every consumer of the feature registry — the sync's remote snapshot,
+;; the drift report, the orphan scan, pull-at-point — used to spell its
+;; own `org-canvas-api-course-endpoint' call, which quietly assumed that
+;; every feature lists under the course.  Calendar events do not: they
+;; live at the global /api/v1/calendar_events, filtered by context code,
+;; and could not be registered without every consumer 404ing (issue
+;; #87).  These resolvers are the one place that assumption is made, and
+;; the registry's `:list-url-fn' / `:item-url-fn' the one place a feature
+;; overrides it — the escape hatches `org-canvas-define-delete-all' has
+;; always had.
+
+(defun org-canvas--feature-list-url (feature)
+  "Return the URL that lists FEATURE's items.
+FEATURE is a feature registry entry.  Its `:list-url-fn' wins when
+present; otherwise the course-scoped `:endpoint'."
+  (let ((fn (plist-get feature :list-url-fn)))
+    (if fn
+        (funcall fn)
+      (org-canvas-api-course-endpoint (plist-get feature :endpoint)))))
+
+(defun org-canvas--feature-item-url (feature id)
+  "Return the URL of FEATURE's item ID.
+FEATURE is a feature registry entry.  Its `:item-url-fn' wins when
+present; otherwise ID is appended to the course-scoped `:endpoint'."
+  (let ((fn (plist-get feature :item-url-fn)))
+    (if fn
+        (funcall fn id)
+      (org-canvas-api-course-endpoint
+       (format "%s/%%s" (plist-get feature :endpoint)) id))))
+
+(defun org-canvas--feature-list-params (feature)
+  "Return the query parameters that list FEATURE's items, or nil.
+A `:list-params' value may be a function of no arguments, called each
+time: calendar events filter by a context code that embeds
+`org-canvas-course-id', which is not known when the module loads."
+  (let ((params (plist-get feature :list-params)))
+    (if (functionp params) (funcall params) params)))
+
 (defun org-canvas--build-curl-command (method full-url json-payload)
   "Build a curl command string for debugging.
 METHOD is the HTTP method, FULL-URL is the complete URL with query

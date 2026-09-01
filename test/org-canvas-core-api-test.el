@@ -1042,5 +1042,32 @@
                (lambda (&rest _) "mocked")))
       (expect (plz 'get "https://example.com/") :to-equal "mocked"))))
 
+(describe "feature URL resolution (issue #87)"
+  (it "lists under the course by default"
+    (with-org-canvas-test-config
+      (expect (org-canvas--feature-list-url '(:endpoint "assignments"))
+              :to-equal (org-canvas-api-course-endpoint "assignments"))
+      (expect (org-canvas--feature-item-url '(:endpoint "assignments") 42)
+              :to-equal (org-canvas-api-course-endpoint "assignments/%s" 42))))
+
+  (it "lets a feature name its own list and item URLs"
+    (let ((feature (list :endpoint "calendar_events"
+                         :list-url-fn (lambda () "https://x/api/v1/calendar_events")
+                         :item-url-fn (lambda (id)
+                                        (format "https://x/api/v1/calendar_events/%s" id)))))
+      (expect (org-canvas--feature-list-url feature)
+              :to-equal "https://x/api/v1/calendar_events")
+      (expect (org-canvas--feature-item-url feature 42)
+              :to-equal "https://x/api/v1/calendar_events/42")))
+
+  (it "calls a function-valued list-params each time, and passes a list through"
+    (let ((n 0))
+      (expect (org-canvas--feature-list-params
+               (list :list-params (lambda () (setq n (1+ n)) `(("n" . ,n)))))
+              :to-equal '(("n" . 1)))
+      (expect (org-canvas--feature-list-params '(:list-params (("type" . "event"))))
+              :to-equal '(("type" . "event")))
+      (expect (org-canvas--feature-list-params '(:endpoint "pages")) :to-be nil))))
+
 (provide 'org-canvas-core-api-test)
 ;;; org-canvas-core-api-test.el ends here

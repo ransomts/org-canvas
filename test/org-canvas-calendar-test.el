@@ -736,4 +736,99 @@ Drop by.
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
 
+;;;; Issue #87: calendar events in the feature registry
+
+(describe "calendar events in the feature registry (issue #87)"
+  (it "is registered, with global URLs and the pull-item function attached"
+    (let ((feature (org-canvas--registry-find-feature "calendar-events")))
+      (expect feature :to-be-truthy)
+      (expect (plist-get feature :pull-item-fn)
+              :to-be #'org-canvas--calendar-event-pull-item)
+      (with-org-canvas-test-config
+        (expect (org-canvas--feature-list-url feature)
+                :to-equal (concat test-org-canvas-base-url "/api/v1/calendar_events"))
+        (expect (org-canvas--feature-item-url feature 42)
+                :to-equal (concat test-org-canvas-base-url "/api/v1/calendar_events/42")))))
+
+  (it "computes the context code when asked, not at load, and asks for all events"
+    (let ((org-canvas-course-id "424242"))
+      (let ((params (org-canvas--feature-list-params
+                     (org-canvas--registry-find-feature "calendar-events"))))
+        (expect (assoc "context_codes[]" params)
+                :to-equal '("context_codes[]" . "course_424242"))
+        (expect (assoc "all_events" params) :to-equal '("all_events" . "true"))
+        (expect (assoc "type" params) :to-equal '("type" . "event")))))
+
+  (it "is found from its file, so pull-at-point works in calendar.org"
+    (let ((org-canvas-calendar-events-file "/tmp/org-canvas-87/calendar.org"))
+      (expect (plist-get (org-canvas--registry-feature-for-file
+                          "/tmp/org-canvas-87/calendar.org")
+                         :name)
+              :to-equal "Calendar Events")))
+
+  (it "fetches a single event from the global endpoint for pull-at-point"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer "* Office Hours\n:PROPERTIES:\n:CANVAS_ID: 42\n:END:\n"
+        (org-back-to-heading)
+        (let ((seen-url nil))
+          (cl-letf (((symbol-function 'org-canvas-api-request)
+                     (lambda (_method url &rest _)
+                       (setq seen-url url)
+                       '((id . 42) (title . "Office Hours")
+                         (updated_at . "2026-08-25T00:00:00Z"))))
+                    ((symbol-function 'org-canvas--conflict-pull-local) #'ignore))
+            (org-canvas--pull-at-point-1
+             (org-canvas--registry-find-feature "calendar-events") "42" "Office Hours"))
+          (expect seen-url
+                  :to-equal (concat test-org-canvas-base-url "/api/v1/calendar_events/42"))))))
+
+  (it "lists all of the course's events when searching by title"
+    (with-org-canvas-test-config
+      (let ((seen nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (_m url &optional params) (setq seen (cons url params)) nil)))
+          (org-canvas--calendar-event-search "Office Hours"))
+        (expect (car seen) :to-equal (concat test-org-canvas-base-url "/api/v1/calendar_events"))
+        (expect (assoc "all_events" (cdr seen)) :to-equal '("all_events" . "true"))
+        (expect (assoc "context_codes[]" (cdr seen))
+                :to-equal '("context_codes[]" . "course_99999")))))
+
+  (it "pulls all of the course's events, not only today's"
+    (let ((cal-file (make-temp-file "cal-87-" nil ".org"))
+          (seen nil))
+      (unwind-protect
+          (with-org-canvas-test-config
+            (let ((org-canvas-calendar-events-file cal-file))
+              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                         (lambda (_m url &optional params)
+                           (setq seen (cons url params))
+                           '(((id . 42) (title . "Office Hours")
+                              (start_at . "2026-09-07T04:00:00Z")))))
+                        ((symbol-function 'org-canvas--pull-confirm-overwrite) #'ignore)
+                        ((symbol-function 'org-canvas--pull-confirm-unsaved) #'ignore))
+                (org-canvas-pull-calendar-events))
+              (expect (car seen)
+                      :to-equal (concat test-org-canvas-base-url "/api/v1/calendar_events"))
+              (expect (assoc "all_events" (cdr seen)) :to-equal '("all_events" . "true"))
+              (with-current-buffer (find-file-noselect cal-file)
+                (expect (buffer-string) :to-match "Office Hours"))))
+        (let ((buf (find-buffer-visiting cal-file))) (when buf (kill-buffer buf)))
+        (delete-file cal-file))))
+
+  (it "takes its sync snapshot from the global endpoint"
+    (with-org-canvas-test-config
+      (let ((seen nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (_m url &optional params)
+                     (setq seen (cons url params))
+                     '(((id . 42) (title . "Office Hours")
+                        (updated_at . "2026-08-25T00:00:00Z"))))))
+          (let ((snapshot (org-canvas--sync-fetch-remote-snapshot "calendar-events")))
+            (expect (gethash "42" (plist-get snapshot :updated))
+                    :to-equal "2026-08-25T00:00:00Z")
+            (expect (alist-get 'id (car (gethash "Office Hours" (plist-get snapshot :titles))))
+                    :to-equal 42)))
+        (expect (car seen) :to-equal (concat test-org-canvas-base-url "/api/v1/calendar_events"))
+        (expect (assoc "all_events" (cdr seen)) :to-be-truthy)))))
+
 ;;; org-canvas-calendar-test.el ends here

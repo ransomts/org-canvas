@@ -845,5 +845,32 @@
     (expect (plist-get (gethash "modules" org-canvas--property-registry) :body-api-key)
             :to-be nil)))
 
+(describe "org-canvas--diff-feature for a global endpoint (issue #87)"
+  (it "lists calendar events at their own URL and compares them"
+    (let ((file (make-temp-file "diff-87-" nil ".org"))
+          (seen nil))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "* Office Hours\n:PROPERTIES:\n:CANVAS_ID: 42\n:LOCATION_NAME: Room 1\n:END:\n"))
+            (with-org-canvas-test-config
+              (let ((org-canvas-calendar-events-file file))
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (lambda (_m url &optional params)
+                             (setq seen (cons url params))
+                             '(((id . 42) (title . "Office Hours")
+                                (location_name . "Room 2"))))))
+                  (let* ((result (org-canvas--diff-feature
+                                  (org-canvas--registry-find-feature "calendar-events")))
+                         (d (car (plist-get result :divergences))))
+                    (expect (plist-get result :error) :to-be nil)
+                    (expect (plist-get d :fields)
+                            :to-equal '(("LOCATION_NAME" "Room 1" "Room 2")))))
+                (expect (car seen)
+                        :to-equal (concat test-org-canvas-base-url "/api/v1/calendar_events"))
+                (expect (assoc "all_events" (cdr seen)) :to-be-truthy))))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file)))))
+
 (provide 'org-canvas-diff-test)
 ;;; org-canvas-diff-test.el ends here
