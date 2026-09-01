@@ -375,7 +375,6 @@ Returns t if no error, or the error object."
                           :moderated-grading-raw (fuzz--random-boolean-string)
                           :grader-count-raw (fuzz--random-number-string)
                           :muted-raw (fuzz--random-boolean-string)
-                          :turnitin-enabled-raw (fuzz--random-boolean-string)
                           :grading-standard-id nil
                           :position-raw (fuzz--random-number-string)
                           :body "<p>description</p>"))

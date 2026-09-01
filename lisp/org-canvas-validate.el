@@ -321,16 +321,45 @@ FILE and HEADING identify the location.  Point must be at the first data row."
       (forward-line 1))
     (nreverse issues)))
 
+(defun org-canvas--validate-external-tool (loc)
+  "Check that an LTI-backed assignment at point names a tool, and vice versa.
+An `external_tool' submission type with no EXTERNAL_TOOL_URL and no
+EXTERNAL_TOOL_ID creates a Canvas assignment that launches nothing —
+it looks fine in the assignment list and fails only when a student
+opens it.  The mirror case (a tool declared but never selected as the
+submission type) is the more common typo: Canvas silently ignores the
+attributes and takes submissions itself.  LOC is a
+\(:file :line :heading) plist."
+  (let* ((submission (or (org-entry-get (point) "SUBMISSION") ""))
+         (external-p (member "external_tool" (split-string submission "," t "[ \t]+")))
+         (url (org-entry-get (point) "EXTERNAL_TOOL_URL"))
+         (id (org-entry-get (point) "EXTERNAL_TOOL_ID"))
+         (named (or url id)))
+    (cond
+     ((and external-p (not named))
+      (list (org-canvas--validate-make-issue
+             'warning loc "EXTERNAL_TOOL_URL"
+             (concat "SUBMISSION: external_tool without EXTERNAL_TOOL_URL or "
+                     "EXTERNAL_TOOL_ID — Canvas will create an assignment that "
+                     "launches nothing.  M-x org-canvas-list-external-tools "
+                     "shows the launch URL of every tool installed in the course"))))
+     ((and named (not external-p))
+      (list (org-canvas--validate-make-issue
+             'warning loc "EXTERNAL_TOOL_URL"
+             (concat "EXTERNAL_TOOL_URL/EXTERNAL_TOOL_ID is ignored unless "
+                     "SUBMISSION includes external_tool")))))))
+
 (cl-defun org-canvas--validate-assignment-structure (loc)
-  "Check override table in assignment if present.
+  "Check the LTI tool declaration, and the override table if present.
 LOC is a (:file :line :heading) plist."
-  (let ((end (save-excursion (org-end-of-subtree t) (point))))
+  (let ((issues (org-canvas--validate-external-tool loc))
+        (end (save-excursion (org-end-of-subtree t) (point))))
     (save-excursion
       (unless (re-search-forward "^#\\+NAME: overrides" end t)
-        (cl-return-from org-canvas--validate-assignment-structure nil))
+        (cl-return-from org-canvas--validate-assignment-structure issues))
       (forward-line 1)
       (unless (looking-at "^|")
-        (cl-return-from org-canvas--validate-assignment-structure nil))
+        (cl-return-from org-canvas--validate-assignment-structure issues))
       (forward-line 1)
       (when (looking-at "^|-")
         (forward-line 1))
@@ -340,7 +369,7 @@ LOC is a (:file :line :heading) plist."
              (row-issues (org-canvas--validate-override-rows file heading)))
         (goto-char save-pos)
         (let ((id-issues (org-canvas--validate-override-section-ids file heading)))
-          (nconc row-issues id-issues))))))
+          (nconc issues row-issues id-issues))))))
 
 ;;;; 5b. Cross-Module Structural Validators
 

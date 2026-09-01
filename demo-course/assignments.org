@@ -70,7 +70,6 @@ Your submission will be graded using the Lab Rubric.
 :PEER_REVIEW_COUNT: 2
 :PEER_REVIEW_DUE_AT: <2026-09-28 Mon 23:59>
 :AUTOMATIC_PEER_REVIEWS: true
-:TURNITIN_ENABLED: true
 :POSITION: 1
 :CANVAS_UPDATED_AT: 2026-02-15T14:38:17Z
 :CANVAS_ID: 2391130
@@ -200,3 +199,22 @@ Enter any active Kaggle competition and submit your leaderboard URL.  Points awa
 In groups of 3-4, prepare a 15-minute presentation on a real-world application of data science.  Submit a link to your slide deck.
 
 Topics are first-come, first-served -- sign up in the discussion board.
+
+* Homework 02: Autograded Problem Set
+:PROPERTIES:
+:POINTS:   40.0
+:GRADING_TYPE: points
+:PUBLISHED: false
+:DUE_AT:   <2026-10-19 Mon 23:59>
+:SUBMISSION: external_tool
+:EXTERNAL_TOOL_URL: https://www.gradescope.com/auth/lti/callback
+:EXTERNAL_TOOL_NEW_TAB: true
+:GROUP:    [[file:assignment-groups.org::*Homework][Homework]]
+:POSITION: 2
+:END:
+
+*Homework 02: Autograded Problem Set*
+
+Submitted and graded through Gradescope; the Canvas assignment is the launch point.
+
+Find the launch URL for a tool installed in your own course with =M-x org-canvas-list-external-tools=.

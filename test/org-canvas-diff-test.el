@@ -518,12 +518,66 @@
                 (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
                            (lambda (&rest _)
                              '(((url . "front") (title . "Front") (front_page . t))))))
+                  (let ((result (org-canvas--diff-feature
+                                 (org-canvas--registry-find-feature "pages"))))
+                    (expect (plist-get result :extra) :to-be nil)
+                    ;; ...but it is counted, so the report can say the check
+                    ;; did not cover it (issue #81).
+                    (expect (plist-get result :suppressed) :to-equal 1)
+                    (expect (plist-get result :skip-reason)
+                            :to-equal "front page"))))))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file))))
+
+  (it "does not count a skipped item the Org file already claims"
+    ;; Once the front page is pulled (issue #82) it is compared like any
+    ;; other heading, so counting it as unchecked would be a lie.
+    (let ((file (make-temp-file "diff-skip-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "* Front\n:PROPERTIES:\n:CANVAS_URL: front\n:END:\n"))
+            (let ((org-canvas-pages-file file))
+              (with-org-canvas-test-config
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (lambda (&rest _)
+                             '(((url . "front") (title . "Front") (front_page . t))))))
                   (expect (plist-get (org-canvas--diff-feature
                                       (org-canvas--registry-find-feature "pages"))
-                                     :extra)
-                          :to-be nil)))))
+                                     :suppressed)
+                          :to-equal 0)))))
         (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
         (delete-file file)))))
+
+(describe "org-canvas--diff-suppressed-note (issue #81)"
+  (it "says nothing when every remote item was checked"
+    (expect (org-canvas--diff-suppressed-note
+             '((:name "Pages" :suppressed 0) (:name "Files")))
+            :to-be nil))
+
+  (it "names the count, the feature and the reason"
+    (expect (org-canvas--diff-suppressed-note
+             '((:name "Pages" :suppressed 1 :skip-reason "front page")))
+            :to-equal "Not checked: 1 Pages (front page).\n"))
+
+  (it "falls back when the feature declares no reason"
+    (expect (org-canvas--diff-suppressed-note
+             '((:name "Pages" :suppressed 2)))
+            :to-equal "Not checked: 2 Pages (excluded by this module).\n"))
+
+  (it "joins several features into one line"
+    (expect (org-canvas--diff-suppressed-note
+             '((:name "Pages" :suppressed 1 :skip-reason "front page")
+               (:name "Discussions" :suppressed 3 :skip-reason "announcement")))
+            :to-equal
+            "Not checked: 1 Pages (front page), 3 Discussions (announcement).\n"))
+
+  (it "appears in a clean report so full coverage is not implied"
+    (let ((report (org-canvas--diff-render
+                   '((:name "Pages" :divergences nil :extra nil
+                      :suppressed 1 :skip-reason "front page")))))
+      (expect report :to-match "No drift")
+      (expect report :to-match "Not checked: 1 Pages (front page)"))))
 
 (describe "org-canvas--diff-insert-entry"
   (it "names a heading whose Canvas id is gone"

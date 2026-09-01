@@ -784,6 +784,141 @@
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
 
+(describe "org-canvas--log-protected-items (issue #81)"
+  (it "says nothing when the feature has no skip-fn"
+    (let ((logged nil))
+      (cl-letf (((symbol-function 'org-canvas--log-info)
+                 (lambda (_l fmt &rest args) (push (apply #'format fmt args) logged))))
+        (org-canvas--log-protected-items "Pages" '(((id . 1))) nil "front page"))
+      (expect logged :to-be nil)))
+
+  (it "says nothing when the skip-fn protected nothing"
+    (let ((logged nil))
+      (cl-letf (((symbol-function 'org-canvas--log-info)
+                 (lambda (_l fmt &rest args) (push (apply #'format fmt args) logged))))
+        (org-canvas--log-protected-items
+         "Pages" '(((id . 1))) (lambda (_item) nil) "front page"))
+      (expect logged :to-be nil)))
+
+  (it "counts what cleanup will never consider, with the reason"
+    (let ((logged nil))
+      (cl-letf (((symbol-function 'org-canvas--log-info)
+                 (lambda (_l fmt &rest args) (push (apply #'format fmt args) logged))))
+        (org-canvas--log-protected-items
+         "Pages" '(((front_page . t)) ((front_page . nil)))
+         (lambda (item) (eq (alist-get 'front_page item) t))
+         "front page"))
+      (expect (car logged)
+              :to-equal
+              "[Orphan] Pages: 1 item(s) never considered for cleanup (front page)")))
+
+  (it "omits the parenthetical when the feature declares no reason"
+    (let ((logged nil))
+      (cl-letf (((symbol-function 'org-canvas--log-info)
+                 (lambda (_l fmt &rest args) (push (apply #'format fmt args) logged))))
+        (org-canvas--log-protected-items
+         "Pages" '(((id . 1))) (lambda (_item) t) nil))
+      (expect (car logged)
+              :to-equal
+              "[Orphan] Pages: 1 item(s) never considered for cleanup"))))
+
+(describe "org-canvas-pull-pages front page (issue #82)"
+  (it "writes the course home page instead of skipping it"
+    (let* ((temp-dir (make-temp-file "pull-front-test" t))
+           (test-file (expand-file-name "pages.org" temp-dir)))
+      (unwind-protect
+          (let ((org-canvas-pages-file test-file))
+            (org-canvas--pull-summary-reset)
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                         (lambda (_method _url &optional _params)
+                           '(((url . "home") (title . "Home")
+                              (page_id . 7) (front_page . t))
+                             ((url . "welcome") (title . "Welcome")
+                              (page_id . 8) (front_page . :json-false)))))
+                        ((symbol-function 'org-canvas-api-request)
+                         (lambda (_method _url &rest _args)
+                           '((body . "<p>Hi</p>"))))
+                        ((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                        ((symbol-function 'display-buffer) (lambda (_) nil)))
+                (org-canvas-pull-pages)
+                (let ((content (with-temp-buffer
+                                 (insert-file-contents test-file)
+                                 (buffer-string))))
+                  ;; Both pages land locally, and the home page is marked.
+                  (expect content :to-match "\\* Home")
+                  (expect content :to-match "\\* Welcome")
+                  (expect content :to-match ":FRONT_PAGE: true")
+                  ;; Nothing was withheld, so the summary stays clean.
+                  (expect (org-canvas--pull-summary-records-of-kind 'skip)
+                          :to-be nil)))))
+        (let ((buf (find-buffer-visiting test-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
+(describe "pull skip reporting (issue #81)"
+  (it "counts and names items a module's skip-fn holds back"
+    (let* ((temp-dir (make-temp-file "pull-skip-test" t))
+           (test-file (expand-file-name "discussions.org" temp-dir))
+           (messages nil))
+      (unwind-protect
+          (let ((org-canvas-discussions-file test-file))
+            (org-canvas--pull-summary-reset)
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                         (lambda (_method _url &optional _params)
+                           '(((id . 1) (title . "Week 1 Discussion")
+                              (is_announcement . :json-false))
+                             ((id . 2) (title . "Class cancelled")
+                              (is_announcement . t)))))
+                        ((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                        ((symbol-function 'display-buffer) (lambda (_) nil))
+                        ((symbol-function 'message)
+                         (lambda (fmt &rest args)
+                           (push (apply #'format fmt args) messages))))
+                (org-canvas-pull-discussions))
+              ;; The completion line reports the skip instead of a bare
+              ;; count that reads as "that is everything on Canvas".
+              (expect (car messages)
+                      :to-equal
+                      (concat "Discussions pull complete: 1 items "
+                              "(1 skipped: announcement, pulled by the "
+                              "announcements module)."))
+              (let ((skips (org-canvas--pull-summary-records-of-kind 'skip)))
+                (expect (length skips) :to-equal 1)
+                (expect (plist-get (car skips) :item)
+                        :to-equal "Class cancelled")
+                (expect (plist-get (car skips) :file)
+                        :to-equal "discussions.org"))))
+        (let ((buf (find-buffer-visiting test-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "says nothing about skips when a module skipped nothing"
+    (let* ((temp-dir (make-temp-file "pull-noskip-test" t))
+           (test-file (expand-file-name "discussions.org" temp-dir))
+           (messages nil))
+      (unwind-protect
+          (let ((org-canvas-discussions-file test-file))
+            (org-canvas--pull-summary-reset)
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                         (lambda (_method _url &optional _params)
+                           '(((id . 1) (title . "Week 1 Discussion")
+                              (is_announcement . :json-false)))))
+                        ((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                        ((symbol-function 'display-buffer) (lambda (_) nil))
+                        ((symbol-function 'message)
+                         (lambda (fmt &rest args)
+                           (push (apply #'format fmt args) messages))))
+                (org-canvas-pull-discussions))
+              (expect (car messages)
+                      :to-equal "Discussions pull complete: 1 items.")
+              (expect (org-canvas--pull-summary-empty-p) :to-be t)))
+        (let ((buf (find-buffer-visiting test-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
 (describe "org-canvas-pull-assignments"
   (it "creates assignment headings with properties"
     (let* ((temp-dir (make-temp-file "pull-assign-test" t))

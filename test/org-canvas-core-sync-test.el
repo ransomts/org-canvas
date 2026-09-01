@@ -1057,6 +1057,51 @@ Hello world.
             (when buf (kill-buffer buf)))
           (delete-file temp-file)))))
 
+  (it "counts protected items in the prune tally (issue #81)"
+    (with-org-canvas-test-config
+      (let ((temp-file (make-temp-file "prune-" nil ".org"))
+            (logged nil))
+        (unwind-protect
+            (progn
+              (with-temp-file temp-file (insert "* Empty\n"))
+              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                         (lambda (&rest _)
+                           '(((id . 1) (title . "Front") (front_page . t))
+                             ((id . 2) (title . "Orphan")))))
+                        ((symbol-function 'y-or-n-p) (lambda (_) nil))
+                        ((symbol-function 'org-canvas--log-info)
+                         (lambda (_l fmt &rest args)
+                           (push (apply #'format fmt args) logged))))
+                (org-canvas--prune-runtime "pages"
+                  :endpoint "pages" :file temp-file
+                  :skip-fn (lambda (item) (eq (alist-get 'front_page item) t)))
+                ;; Without this the front page is simply missing from the
+                ;; tally, which reads as "there was nothing else there".
+                (expect (car (last logged)) :to-match ", 1 protected")))
+          (let ((buf (find-buffer-visiting temp-file)))
+            (when buf (kill-buffer buf)))
+          (delete-file temp-file)))))
+
+  (it "omits the protected count when no skip-fn applies"
+    (with-org-canvas-test-config
+      (let ((temp-file (make-temp-file "prune-" nil ".org"))
+            (logged nil))
+        (unwind-protect
+            (progn
+              (with-temp-file temp-file (insert "* Empty\n"))
+              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                         (lambda (&rest _) '(((id . 2) (title . "Orphan")))))
+                        ((symbol-function 'y-or-n-p) (lambda (_) nil))
+                        ((symbol-function 'org-canvas--log-info)
+                         (lambda (_l fmt &rest args)
+                           (push (apply #'format fmt args) logged))))
+                (org-canvas--prune-runtime "pages"
+                  :endpoint "pages" :file temp-file)
+                (expect (car (last logged)) :not :to-match "protected")))
+          (let ((buf (find-buffer-visiting temp-file)))
+            (when buf (kill-buffer buf)))
+          (delete-file temp-file)))))
+
   (it "deletes nothing when the user declines"
     (with-org-canvas-test-config
       (let ((temp-file (make-temp-file "prune-" nil ".org"))

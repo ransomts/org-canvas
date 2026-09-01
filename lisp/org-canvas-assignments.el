@@ -125,10 +125,17 @@ takes effect on the next `org-canvas-pull-assignments' invocation."
      :doc "Number of graders (required when MODERATED_GRADING is true)")
     (:org-prop "MUTED" :data-key :muted :type boolean
      :doc "Mute assignment (hide grades from students)")
-    (:org-prop "TURNITIN_ENABLED" :data-key :turnitin_enabled :type boolean
-     :doc "Enable Turnitin plagiarism detection")
     (:org-prop "GRADING_STANDARD_ID" :data-key :grading_standard_id :type number
      :doc "Canvas grading standard ID")
+    (:org-prop "EXTERNAL_TOOL_URL" :data-key :external_tool_url :type string
+     :remote-fn org-canvas--assignment-remote-tool-url
+     :doc "LTI launch URL (requires SUBMISSION: external_tool)")
+    (:org-prop "EXTERNAL_TOOL_ID" :data-key :external_tool_id :type number
+     :remote-fn org-canvas--assignment-remote-tool-id
+     :doc "Installed LTI tool id, sent as content_id")
+    (:org-prop "EXTERNAL_TOOL_NEW_TAB" :data-key :external_tool_new_tab :type boolean
+     :remote-fn org-canvas--assignment-remote-tool-new-tab
+     :doc "Launch the tool in a new tab")
     (:org-prop "GROUP_CATEGORY_ID" :data-key :group_category_id :type number
      :doc "Group set ID or link to group-categories.org")
     (:org-prop "POSITION" :data-key :position :type number
@@ -196,9 +203,11 @@ here since they require file I/O."
           :moderated-grading-raw (org-entry-get pom "MODERATED_GRADING")
           :grader-count-raw (org-entry-get pom "GRADER_COUNT")
           :muted-raw (org-entry-get pom "MUTED")
-          :turnitin-enabled-raw (org-entry-get pom "TURNITIN_ENABLED")
           :grading-standard-id-raw (org-entry-get pom "GRADING_STANDARD_ID")
           :position-raw (org-entry-get pom "POSITION")
+          :external-tool-url-raw (org-entry-get pom "EXTERNAL_TOOL_URL")
+          :external-tool-id-raw (org-entry-get pom "EXTERNAL_TOOL_ID")
+          :external-tool-new-tab-raw (org-entry-get pom "EXTERNAL_TOOL_NEW_TAB")
           ;; Resolved links (I/O)
           :assignment-group-id-raw (org-canvas--assignment-resolve-link-id group-link "CANVAS_ID")
           :rubric-id (org-canvas--assignment-resolve-link-id rubric-link "CANVAS_ID")
@@ -216,7 +225,8 @@ Pure function — no buffer access."
         (gcid (plist-get raw :group-category-id-raw))
         (grader-count (plist-get raw :grader-count-raw))
         (gsid (plist-get raw :grading-standard-id-raw))
-        (position (plist-get raw :position-raw)))
+        (position (plist-get raw :position-raw))
+        (tool-id (plist-get raw :external-tool-id-raw)))
     (list :title (org-canvas--strip-statistics-cookie (plist-get raw :title-raw))
           :canvas-id (plist-get raw :canvas-id)
           :points_possible (when points (org-canvas--safe-string-to-number points "POINTS"))
@@ -260,12 +270,16 @@ Pure function — no buffer access."
           :grader_count (when grader-count
                           (org-canvas--safe-string-to-number grader-count "GRADER_COUNT"))
           :muted (org-canvas--interpret-boolean (plist-get raw :muted-raw))
-          :turnitin_enabled (org-canvas--interpret-boolean
-                             (plist-get raw :turnitin-enabled-raw))
           :grading_standard_id (when gsid
                                  (org-canvas--safe-string-to-number gsid "GRADING_STANDARD_ID"))
           :position (when position
-                      (org-canvas--safe-string-to-number position "POSITION")))))
+                      (org-canvas--safe-string-to-number position "POSITION"))
+          :external_tool_url (plist-get raw :external-tool-url-raw)
+          :external_tool_id (when tool-id
+                              (org-canvas--safe-string-to-number
+                               tool-id "EXTERNAL_TOOL_ID"))
+          :external_tool_new_tab (org-canvas--interpret-boolean
+                                  (plist-get raw :external-tool-new-tab-raw)))))
 
 (defun org-canvas--assignment-parse-entry ()
   "Extract assignment data from the Org heading at point."
@@ -326,10 +340,67 @@ Pure function — no buffer access."
     (:only_visible_to_overrides "only_visible_to_overrides" bool)
     (:moderated_grading "moderated_grading" bool)
     (:muted "muted" bool)
-    (:turnitin_enabled "turnitin_enabled" bool)
     (:grading_standard_id "grading_standard_id" value)
     (:position "position" value))
   "Specs for optional assignment fields: (data-key hash-key type).")
+
+(defun org-canvas--assignment-pull-external-tool (pos item)
+  "Write ITEM's LTI tool attributes onto the heading at POS.
+Canvas nests these under `external_tool_tag_attributes'; a heading
+pulled without them round-trips as an ordinary assignment and the
+next push would strip the tool off it."
+  (let ((attrs (org-canvas--assignment-remote-tool-attrs item)))
+    (when attrs
+      (let ((url (alist-get 'url attrs))
+            (id (alist-get 'content_id attrs)))
+        (when url
+          (org-canvas-org-set-property pos "EXTERNAL_TOOL_URL" url))
+        (when id
+          (org-canvas-org-set-property pos "EXTERNAL_TOOL_ID" (format "%s" id)))
+        (org-canvas--pull-set-boolean-property
+         pos "EXTERNAL_TOOL_NEW_TAB" (alist-get 'new_tab attrs))))))
+
+(defun org-canvas--assignment-add-external-tool (data assignment)
+  "Attach `external_tool_tag_attributes' to ASSIGNMENT from DATA.
+Canvas takes an LTI-backed assignment (Gradescope and friends) as a
+nested object beside `submission_types': the tool is named by launch
+URL, or by the installed tool id as CONTENT_ID with the content type
+Canvas requires.  Emitted whenever either is declared — an
+`external_tool' submission type with neither points at nothing, which
+`org-canvas--validate-external-tool' warns about before a push.
+
+NEW_TAB rides along only when the block exists, since an explicit
+false is meaningful to Canvas."
+  (let ((url (plist-get data :external_tool_url))
+        (id (plist-get data :external_tool_id)))
+    (when (or url id)
+      (let ((tag (make-hash-table :test 'equal)))
+        (when url (puthash "url" url tag))
+        (when id
+          (puthash "content_id" id tag)
+          (puthash "content_type" "context_external_tool" tag))
+        (puthash "new_tab"
+                 (if (plist-get data :external_tool_new_tab) t :json-false)
+                 tag)
+        (puthash "external_tool_tag_attributes" tag assignment)))))
+
+(defun org-canvas--assignment-remote-tool-attrs (item)
+  "Return the nested `external_tool_tag_attributes' alist of ITEM, or nil."
+  (alist-get 'external_tool_tag_attributes item))
+
+(defun org-canvas--assignment-remote-tool-url (item)
+  "Return the launch URL Canvas has recorded for ITEM, or nil.
+A `:remote-fn' because the field is nested — read flat, every
+external-tool assignment would report drift on every run."
+  (alist-get 'url (org-canvas--assignment-remote-tool-attrs item)))
+
+(defun org-canvas--assignment-remote-tool-id (item)
+  "Return the installed tool id Canvas has recorded for ITEM, or nil."
+  (alist-get 'content_id (org-canvas--assignment-remote-tool-attrs item)))
+
+(defun org-canvas--assignment-remote-tool-new-tab (item)
+  "Return the remote new-tab flag of ITEM, or nil."
+  (alist-get 'new_tab (org-canvas--assignment-remote-tool-attrs item)))
 
 (defun org-canvas--assignment-add-optional-fields (data assignment)
   "Add optional fields from DATA to ASSIGNMENT hash-table."
@@ -340,7 +411,8 @@ Pure function — no buffer access."
                assignment)))
   ;; grader_count only applies when moderated_grading is enabled
   (when (and (plist-get data :moderated_grading) (plist-get data :grader_count))
-    (puthash "grader_count" (plist-get data :grader_count) assignment)))
+    (puthash "grader_count" (plist-get data :grader_count) assignment))
+  (org-canvas--assignment-add-external-tool data assignment))
 
 (defun org-canvas--assignment-build-payload (data)
   "Convert DATA to Canvas assignment payload."
@@ -507,7 +579,7 @@ ITEM is the API response alist, POS is the heading position."
       (when apos
         (org-canvas-org-set-property pos "POSITION" (format "%s" apos))))
     (org-canvas--pull-set-boolean-property pos "MUTED" (alist-get 'muted item))
-    (org-canvas--pull-set-boolean-property pos "TURNITIN_ENABLED" (alist-get 'turnitin_enabled item))
+    (org-canvas--assignment-pull-external-tool pos item)
     (let ((gs-id (alist-get 'grading_standard_id item)))
       (when gs-id
         (org-canvas-org-set-property pos "GRADING_STANDARD_ID" (format "%s" gs-id))))
@@ -534,6 +606,55 @@ ITEM is the API response alist, POS is the heading position."
   :secondary-sort-key 'assignment_group_id
   :tertiary-sort-key (when (eq org-canvas-assignment-sort 'due-at) 'due_at)
   :pull-item-fn #'org-canvas--assignment-pull-item)
+
+;;;; External Tools (LTI)
+
+(defconst org-canvas--external-tools-buffer "*canvas-external-tools*"
+  "Buffer listing the LTI tools installed in the course.")
+
+(defun org-canvas--external-tools-fetch ()
+  "Return the LTI tools available in the course, account-installed included.
+Without `include_parents' Canvas lists only tools installed on the
+course itself, which on most institutional accounts is nothing at all
+— the tools instructors actually use (Gradescope, Turnitin, a
+publisher platform) are installed account-wide."
+  (append (org-canvas-api-request-all-pages
+           'GET (org-canvas-api-course-endpoint "external_tools")
+           '(("include_parents" . "true")))
+          nil))
+
+(defun org-canvas--external-tools-insert (tools)
+  "Insert one line per entry of TOOLS at point."
+  (dolist (tool tools)
+    (insert (format "%-40s %s\n"
+                    (or (alist-get 'name tool) "(unnamed)")
+                    (or (alist-get 'url tool)
+                        (alist-get 'domain tool)
+                        "(no launch URL)")))))
+
+;;;###autoload
+(defun org-canvas-list-external-tools ()
+  "List the LTI tools installed in this course with their launch URLs.
+An `external_tool' assignment is pointed at a tool by URL
+\(EXTERNAL_TOOL_URL) or by installed-tool id (EXTERNAL_TOOL_ID), and
+neither is guessable — this is where you read them off.  Read-only."
+  (interactive)
+  (org-canvas--ensure-credentials)
+  (let ((tools (org-canvas--external-tools-fetch)))
+    (with-current-buffer (get-buffer-create org-canvas--external-tools-buffer)
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert (format "LTI tools available in course %s\n"
+                        org-canvas-course-id))
+        (insert (make-string 60 ?=) "\n\n")
+        (if (null tools)
+            (insert "No tools are installed in this course or its account.\n")
+          (org-canvas--external-tools-insert tools))
+        (goto-char (point-min)))
+      (special-mode)
+      (display-buffer (current-buffer)))
+    (message "%d external tool(s); see %s"
+             (length tools) org-canvas--external-tools-buffer)))
 
 (provide 'org-canvas-assignments)
 ;;; org-canvas-assignments.el ends here

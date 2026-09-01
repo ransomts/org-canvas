@@ -8,7 +8,7 @@ org-canvas is an Emacs Lisp package that synchronizes course content from Org Mo
 
 ### Supported Content Types (15)
 
-Assignments, quizzes (classic), new quizzes, pages, modules, rubrics, outcomes, discussions, announcements, files, assignment groups, group categories, calendar events, sections, and per-section date overrides.
+Assignments (including LTI/external-tool assignments such as Gradescope), quizzes (classic), new quizzes, pages, modules, rubrics, outcomes, discussions, announcements, files, assignment groups, group categories, calendar events, sections, and per-section date overrides.
 
 ## Build Commands
 
@@ -198,6 +198,14 @@ All items track Canvas state via `CANVAS_ID`:
 
 Use `org-canvas-org-save-sync-state` to standardize saving.
 
+### External-Tool (LTI) Assignments — and No Turnitin
+
+An assignment whose submissions an LTI tool takes (Gradescope is the case this was built for) carries `EXTERNAL_TOOL_URL` and/or `EXTERNAL_TOOL_ID` beside `SUBMISSION: external_tool`. `org-canvas--assignment-add-external-tool` nests them into `external_tool_tag_attributes` — a URL, or `content_id` plus the `content_type` Canvas requires — and always sends `new_tab`, since an explicit false is meaningful. Because the field is nested, all three properties declare a `:remote-fn` (`org-canvas--assignment-remote-tool-*`); read flat, `alist-get` returns nil and *every* external-tool assignment reports drift forever. `org-canvas--validate-external-tool` warns both ways: `external_tool` naming no tool (Canvas creates an assignment that launches nothing and fails only when a student opens it) and a tool named without `external_tool` (silently ignored). Launch URLs are not guessable, so `org-canvas-list-external-tools` lists them — it passes `include_parents=true`, without which Canvas returns only course-installed tools and institutional courses come back empty.
+
+The boundary: org-canvas owns the Canvas side only. Gradescope has no supported public API, so the tool-side assignment and its grade push stay in Gradescope's hands; grades arrive in Canvas over LTI and the submissions module reads them from there.
+
+**Turnitin support was removed, deliberately — do not add it back without re-probing.** `TURNITIN_ENABLED` drove the legacy account-level plugin. Probed live on 2026-08-25 against clemson.instructure.com: zero of 62 assignments carried a `turnitin_enabled` key, so the plugin is off; Turnitin is installed as an LTI 1.3 tool (`assignment_selection: no`), the plagiarism-review association, which the Assignments REST API does not expose. The property was inert and `turnitin_settings` would have been dead code. The fields remain in `test/contract/canvas-contract.json` because that fixture describes Canvas's API, not ours.
+
 ### Quiz Publish Sequencing
 
 Classic quizzes keep `published` **out** of the quiz payload entirely; `org-canvas--quiz-settle-publish-state` applies it in finalize *after* `org-canvas--quiz-sync-children` writes the questions. Canvas computes `points_possible`/`question_count` (and the backing assignment's points) on a publish transition, not on question insert, so publishing on the create POST froze an empty quiz's totals at zero (issue #59). Omitting the key also leaves an existing quiz's state untouched on a PUT. For a quiz that was *already* published, `org-canvas--quiz-refresh-totals` GETs it and republishes only when `org-canvas--quiz-totals-stale-p` sees the remote count *behind* what was written — a higher remote count means orphan questions, not staleness — and only when `unpublishable` is t; with submissions it warns instead.
@@ -209,6 +217,34 @@ Classic quizzes keep `published` **out** of the quiz payload entirely; `org-canv
 ### Single-Item Pull
 
 `org-canvas-pull-at-point` refreshes the heading at point from Canvas by handing one fetched item to `org-canvas--conflict-pull-local` — the same function the conflict prompt's pull option uses, which stamps `CANVAS_UPDATED_AT` and drops the stale `PAYLOAD_HASH` (get those wrong by hand and the entry re-triggers drift forever while looking clean). Dispatch is generic: the feature registry carries `:pull-item-fn`, written by `org-canvas-register-pull-item-fn` from whichever of `org-canvas-define-sync` or `org-canvas-define-pull` the module uses, and `org-canvas--registry-feature-for-file` maps the current buffer to its feature. **A module with a custom sync *and* a custom pull registers its own** (files.el does; quizzes and outcomes have no pull-item fn at all and the command says which whole-file command to use instead). Generated `org-canvas-pull-<feature>` commands also take a prefix arg that restricts the pull to ids the file already claims (issue #67).
+
+### A `:skip-fn` Must Say So
+
+A skipped item used to leave no trace: no log line, no counter, nothing in the
+`.org` file. The number a pull prints is the number *written*, which reads as the
+number *available* — so a local copy missing content looked exactly like a clean
+one (issue #81). Every path that consults a `:skip-fn` now accounts for it.
+`org-canvas--pull-handle-item` (the runtime dispatcher the generated pull loop
+calls — it exists so the macro stays a two-branch `pcase`) returns `processed` /
+`skipped` / nil; a skip is logged by name, counted into the completion line via
+`org-canvas--pull-skip-suffix`, and recorded through `org-canvas--pull-record-skip`
+as a `:kind 'skip` entry in `org-canvas--pull-summary`, which
+`org-canvas--pull-summary-print` renders as its own section. `org-canvas-diff`
+counts what it never compared (`org-canvas--diff-unclaimed`) and names it in the
+footer, and the orphan scan and prune tally count protected items. Declare
+`:skip-reason` — a short phrase — wherever a `:skip-fn` is declared, in both
+`org-canvas-define-pull` and `org-canvas-register-feature`; without one the
+reports fall back to a generic "excluded by this module".
+
+**Only push and delete-all skip the front page.** Pull deliberately does not
+(issue #82). The guard is about destruction — one page per course, and Canvas
+refuses to unpublish it — while pull writes local files only, so excluding it
+there left the one page students land on as the one page missing from the source
+of truth: absent from a migration, and invisible to `org-canvas-diff`, which has
+nothing local to compare. `org-canvas--page-pull-item` records `FRONT_PAGE: true`
+so the round-trip survives, and *removes* the property when Canvas no longer
+serves that page as the home page — two headings claiming it is not a state
+Canvas can be in.
 
 ### Global Sync Summary
 

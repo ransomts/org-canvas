@@ -50,7 +50,8 @@
  :name "Pages" :endpoint "pages"
  :file-var 'org-canvas-pages-file
  :id-field 'url :id-property "CANVAS_URL" :title-field 'title
- :skip-fn (lambda (item) (eq (alist-get 'front_page item) t)))
+ :skip-fn (lambda (item) (eq (alist-get 'front_page item) t))
+ :skip-reason "front page")
 (org-canvas-register-properties "pages"
   :label "Pages"
   :file-var 'org-canvas-pages-file
@@ -161,7 +162,13 @@ fetch fails (after retries are exhausted) the error is recorded in
 :CANVAS_URL: property has already been set by `pull-process-item' from
 the list response.  Also sets `:CANVAS_ID:' from the numeric page_id
 for schema consistency with other content types — CANVAS_URL remains
-the primary identifier used for push/sync, but pages now expose both."
+the primary identifier used for push/sync, but pages now expose both.
+
+Records :FRONT_PAGE: on the course home page so the pull round-trips
+\(issue #82): pull no longer skips the front page, and without the
+property it would come back as an ordinary page.  The property is
+removed from a page Canvas no longer serves as the home page, so a
+home page moved in the web UI does not leave two headings claiming it."
   (let* ((url (alist-get 'url item))
          (page-id (alist-get 'page_id item))
          (detail-url (org-canvas-api-course-endpoint "pages/%s" url))
@@ -180,15 +187,22 @@ the primary identifier used for push/sync, but pages now expose both."
          (body (when detail (alist-get 'body detail))))
     (when page-id
       (org-canvas-org-set-property pos "CANVAS_ID" (format "%s" page-id)))
+    (if (eq (alist-get 'front_page item) t)
+        (org-canvas-org-set-property pos "FRONT_PAGE" "true")
+      (org-entry-delete pos "FRONT_PAGE"))
     (when detail
       (org-canvas--pull-insert-body body))))
 
+;; No :skip-fn here on purpose (issue #82).  Push and delete-all guard
+;; the front page because clobbering or deleting the course home page is
+;; destructive; pull only writes local files, so skipping it left the one
+;; page students land on as the one page missing from the source of truth
+;; — invisible to `org-canvas-diff' and absent from a migration.
 (org-canvas-define-pull pages
   :file org-canvas-pages-file
   :endpoint "pages"
   :id-field 'url
   :id-property "CANVAS_URL"
-  :skip-fn (lambda (item) (eq (alist-get 'front_page item) t))
   :pull-item-fn #'org-canvas--page-pull-item)
 
 (provide 'org-canvas-pages)

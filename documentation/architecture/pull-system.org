@@ -36,6 +36,7 @@ Located in =lisp/org-canvas-core-org.el=. Generates an interactive
 | =:item-fn=     | yes      |                | Function =(item pos)= per item    |
 | =:params=      | no       | nil            | Extra GET query params alist      |
 | =:skip-fn=     | no       | nil            | Predicate =(item)= to skip        |
+| =:skip-reason= | no       | nil            | Why =:skip-fn= skips (reported)   |
 | =:id-field=    | no       | ='id=          | Alist key for Canvas ID           |
 | =:title-field= | no       | ='title=       | Alist key for item title          |
 | =:id-property= | no       | ="CANVAS_ID"=  | Org property name for Canvas ID   |
@@ -55,6 +56,21 @@ The generated function executes five steps:
    - Call =org-canvas--pull-process-item= to find or create the heading
    - Call =:item-fn= to set module-specific properties and body
    - Save the buffer
+
+A skipped item is counted, logged by name, and recorded in
+=org-canvas--pull-summary= as a =skip= record, so it appears in
+=*org-canvas-pull-summary*= alongside non-fatal errors.  The completion
+line names the count and the =:skip-reason=:
+
+#+begin_example
+Discussions pull complete: 12 items (1 skipped: announcement, pulled by
+the announcements module)
+#+end_example
+
+Reporting skips is not cosmetic: the count a pull prints is the number
+of items *written*, which reads as the number *available*.  A silent
+skip leaves a local copy that is missing content but looks complete
+(issue #81).
 
 ** Example
 

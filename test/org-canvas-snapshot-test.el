@@ -164,7 +164,6 @@ If UPDATE_SNAPSHOTS is set, write the snapshot instead of comparing."
         :moderated_grading nil
         :grader_count nil
         :muted nil
-        :turnitin_enabled nil
         :grading_standard_id nil
         :position nil
         :canvas-id "555"))

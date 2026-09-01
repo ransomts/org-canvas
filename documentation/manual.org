@@ -422,9 +422,11 @@ Course assignments with due dates, submission types, and grading options.
 | =MODERATED_GRADING=  | boolean   | Enable moderated grading                      |
 | =GRADER_COUNT=       | number    | Number of graders (required when MODERATED_GRADING is true) |
 | =MUTED=              | boolean   | Mute assignment (hide grades from students)   |
-| =TURNITIN_ENABLED=   | boolean   | Enable Turnitin plagiarism detection           |
 | =GRADING_STANDARD_ID= | number  | Canvas grading standard ID                    |
 | =POSITION=           | number    | Position in assignment list                   |
+| =EXTERNAL_TOOL_URL=  | string    | LTI launch URL (requires SUBMISSION: external_tool) |
+| =EXTERNAL_TOOL_ID=   | number    | Installed LTI tool id, sent as content_id     |
+| =EXTERNAL_TOOL_NEW_TAB= | boolean | Launch the tool in a new tab                 |
 
 *** Submission Types
 
@@ -434,9 +436,54 @@ Course assignments with due dates, submission types, and grading options.
 | =online_text_entry=  | Text box in browser            |
 | =online_url=         | URL submission                 |
 | =media_recording=    | Audio/video recording          |
+| =external_tool=      | Submission handled by an LTI tool |
 | =none=               | No submission (e.g., in-class) |
 
 Multiple types can be combined: =online_upload,online_text_entry=
+
+*** External Tool Assignments (Gradescope, and other LTI tools)
+
+When an LTI tool takes the submission — Gradescope is the common case —
+the assignment lives in Canvas as a launch point and the tool does the
+rest.  Set =SUBMISSION: external_tool= and name the tool:
+
+#+begin_src org
+,* Problem Set 3
+:PROPERTIES:
+:POINTS: 40
+:DUE_AT: <2026-09-21 Mon 23:59>
+:SUBMISSION: external_tool
+:EXTERNAL_TOOL_URL: https://www.gradescope.com/auth/lti/callback
+:GROUP: [[file:assignment-groups.org::*Homework][Homework]]
+:END:
+
+Submitted through Gradescope.
+#+end_src
+
+Name the tool by =EXTERNAL_TOOL_URL= (its launch URL) or by
+=EXTERNAL_TOOL_ID= (the id of the installed tool, sent to Canvas as
+=content_id=); either is enough, and both may be given.  Neither is
+guessable, so read them off with:
+
+: M-x org-canvas-list-external-tools
+
+which lists every tool installed in the course *or inherited from the
+account* — institutional tools are almost always account-installed, and
+a course-only listing usually comes back empty.
+
+=org-canvas-validate= warns when =external_tool= names no tool (Canvas
+will happily create an assignment that launches nothing, and it fails
+only when a student opens it) and when a tool is named without
+=external_tool= among the submission types (Canvas ignores it).
+
+**** What org-canvas does and does not manage
+
+org-canvas manages the *Canvas* side: creating the assignment, pointing
+it at the tool, and its dates, points, and group.  It does not talk to
+the tool.  Gradescope in particular has no supported public API — you
+still create the Gradescope assignment and link it there, and grades
+flow back Gradescope → Canvas over LTI.  Once they are in Canvas, the
+submissions module reads them like any other grades.
 
 *** Example
 
@@ -1911,6 +1958,15 @@ The following items are never treated as orphans:
 - Sections (pull-only, not pushed)
 - Per-section overrides (managed per-assignment)
 
+Skipped items are named in the log, and the prune tally counts them
+as =protected=, so nothing is held back silently.
+
+Note that *pull* does not skip the front page.  Deleting or clobbering
+the course home page is destructive, so push and delete-all guard it;
+pulling only writes local files, and excluding it there left the one
+page students land on as the one page missing from the Org copy.  A
+pulled front page carries =:FRONT_PAGE: true=, so it round-trips.
+
 * Commands Reference
 
 ** Sync Commands
@@ -2039,6 +2095,7 @@ These commands delete the item at the current cursor position:
 | =org-canvas-test-connection=      | Test API connection (prints course name)      |
 | =org-canvas-init=                 | Setup wizard for new courses                  |
 | =org-canvas-status=               | Show sync status from the Org files (no API calls) |
+| =org-canvas-list-external-tools=  | List LTI tools in the course with launch URLs (read-only) |
 | =org-canvas-publish-module=       | Publish a module and every object it lists    |
 | =org-canvas-unpublish-module=     | The reverse                                   |
 | =org-canvas-apply-scheduled-releases= | Publish modules and items whose =PUBLISH_AT= has passed |
@@ -2470,8 +2527,10 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =MODERATED_GRADING= | boolean | true, false |  | Enable moderated grading |
 | =GRADER_COUNT= | number |  |  | Number of graders (required when MODERATED_GRADING is true) |
 | =MUTED= | boolean | true, false |  | Mute assignment (hide grades from students) |
-| =TURNITIN_ENABLED= | boolean | true, false |  | Enable Turnitin plagiarism detection |
 | =GRADING_STANDARD_ID= | number |  |  | Canvas grading standard ID |
+| =EXTERNAL_TOOL_URL= | string |  |  | LTI launch URL (requires SUBMISSION: external_tool) |
+| =EXTERNAL_TOOL_ID= | number |  |  | Installed LTI tool id, sent as content_id |
+| =EXTERNAL_TOOL_NEW_TAB= | boolean | true, false |  | Launch the tool in a new tab |
 | =GROUP_CATEGORY_ID= | number |  |  | Group set ID or link to group-categories.org |
 | =POSITION= | number |  |  | Position in assignment list |
 

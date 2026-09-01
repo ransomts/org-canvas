@@ -778,9 +778,8 @@ Canvas courses who want to adopt org-canvas."
       (unless (org-canvas--pull-summary-empty-p)
         (with-output-to-temp-buffer "*org-canvas-pull-summary*"
           (org-canvas--pull-summary-print))
-        (message
-         "Pull complete with %d non-fatal error(s) - see *org-canvas-pull-summary*."
-         (length (org-canvas--pull-summary-records)))))))
+        (message "Pull complete: %s - see *org-canvas-pull-summary*."
+                 (org-canvas--pull-summary-tally))))))
 
 ;;;; Orphan Cleanup
 
@@ -800,6 +799,18 @@ Returns nil if file does not exist."
                  (when id (push id ids))))
              "LEVEL=1" 'file)))
         (nreverse ids)))))
+
+(defun org-canvas--log-protected-items (name items skip-fn reason)
+  "Log the number of ITEMS that SKIP-FN will keep out of cleanup for NAME.
+REASON is the `:skip-reason' of the feature, or nil.  A protected item
+is simply absent from the orphan list otherwise, which reads the same
+as nothing being there (issue #81)."
+  (when skip-fn
+    (let ((protected (cl-count-if skip-fn items)))
+      (when (> protected 0)
+        (org-canvas--log-info org-canvas--logger
+          "[Orphan] %s: %d item(s) never considered for cleanup%s"
+          name protected (if reason (format " (%s)" reason) ""))))))
 
 (defun org-canvas--filter-orphans (remote-items local-ids id-field skip-fn)
   "Return items from REMOTE-ITEMS not present in LOCAL-IDS.
@@ -834,6 +845,8 @@ or nil if no orphans found."
           (let* ((url (org-canvas-api-course-endpoint endpoint))
                  (remote-items (org-canvas-api-request-all-pages
                                 'GET url list-params)))
+            (org-canvas--log-protected-items
+             name remote-items skip-fn (plist-get feature :skip-reason))
             (org-canvas--filter-orphans remote-items local-ids id-field skip-fn))
         (error
          (org-canvas--log-warning org-canvas--logger

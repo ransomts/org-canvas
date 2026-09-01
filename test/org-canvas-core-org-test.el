@@ -2581,6 +2581,121 @@ Page content.
                     (org-canvas--pull-summary-print))))
       (expect output :not :to-match "log line"))))
 
+(describe "pull summary skip records (issue #81)"
+  (it "defaults a record's kind to error"
+    (org-canvas--pull-summary-reset)
+    (org-canvas--pull-summary-record :file "a.org" :error "boom")
+    (expect (plist-get (car (org-canvas--pull-summary-records)) :kind)
+            :to-equal 'error))
+
+  (it "separates skips from errors by kind"
+    (org-canvas--pull-summary-reset)
+    (org-canvas--pull-summary-record :file "a.org" :error "boom")
+    (org-canvas--pull-summary-record :kind 'skip :file "pages.org"
+                                     :item "home" :error "front page")
+    (expect (length (org-canvas--pull-summary-records-of-kind 'error))
+            :to-equal 1)
+    (let ((skips (org-canvas--pull-summary-records-of-kind 'skip)))
+      (expect (length skips) :to-equal 1)
+      (expect (plist-get (car skips) :item) :to-equal "home")))
+
+  (it "counts a record written without a kind as an error"
+    (org-canvas--pull-summary-reset)
+    (push (list :file "a.org" :error "boom") org-canvas--pull-summary)
+    (expect (length (org-canvas--pull-summary-records-of-kind 'error))
+            :to-equal 1)
+    (expect (org-canvas--pull-summary-records-of-kind 'skip) :to-be nil))
+
+  (it "prints skips in their own section"
+    (org-canvas--pull-summary-reset)
+    (org-canvas--pull-summary-record :kind 'skip :file "pages.org"
+                                     :item "home" :error "front page")
+    (let ((output (with-output-to-string
+                    (org-canvas--pull-summary-print))))
+      (expect output :to-match "1 item skipped")
+      (expect output :to-match "pages.org \\[home\\]: front page")
+      (expect output :not :to-match "non-fatal error")))
+
+  (it "pluralizes and separates the two sections when both are present"
+    (org-canvas--pull-summary-reset)
+    (org-canvas--pull-summary-record :file "a.org" :error "boom")
+    (org-canvas--pull-summary-record :kind 'skip :file "pages.org"
+                                     :item "home" :error "front page")
+    (org-canvas--pull-summary-record :kind 'skip :file "d.org"
+                                     :item "news" :error "announcement")
+    (let ((output (with-output-to-string
+                    (org-canvas--pull-summary-print))))
+      (expect output :to-match "1 non-fatal error")
+      (expect output :to-match "2 items skipped")))
+
+  (it "tallies errors alone"
+    (org-canvas--pull-summary-reset)
+    (org-canvas--pull-summary-record :file "a.org" :error "boom")
+    (expect (org-canvas--pull-summary-tally) :to-equal "1 non-fatal error(s)"))
+
+  (it "tallies skips alone"
+    (org-canvas--pull-summary-reset)
+    (org-canvas--pull-summary-record :kind 'skip :file "a.org" :error "why")
+    (expect (org-canvas--pull-summary-tally) :to-equal "1 item(s) skipped"))
+
+  (it "tallies both kinds together"
+    (org-canvas--pull-summary-reset)
+    (org-canvas--pull-summary-record :file "a.org" :error "boom")
+    (org-canvas--pull-summary-record :kind 'skip :file "b.org" :error "why")
+    (expect (org-canvas--pull-summary-tally)
+            :to-equal "1 non-fatal error(s), 1 item(s) skipped"))
+
+  (it "tallies an empty accumulator as an empty string"
+    (org-canvas--pull-summary-reset)
+    (expect (org-canvas--pull-summary-tally) :to-equal "")))
+
+(describe "pull skip helpers (issue #81)"
+  (it "labels an item by its title field"
+    (expect (org-canvas--pull-item-label
+             '((url . "home") (title . "Home")) 'url 'title)
+            :to-equal "Home"))
+
+  (it "falls back to the id field when there is no title"
+    (expect (org-canvas--pull-item-label '((url . "home")) 'url 'title)
+            :to-equal "home"))
+
+  (it "labels an item carrying neither field"
+    (expect (org-canvas--pull-item-label '((foo . 1)) 'url 'title)
+            :to-equal "(unnamed)"))
+
+  (it "returns an empty suffix when nothing was skipped"
+    (expect (org-canvas--pull-skip-suffix 0 "front page") :to-equal ""))
+
+  (it "names the reason in the suffix"
+    (expect (org-canvas--pull-skip-suffix 2 "front page")
+            :to-equal " (2 skipped: front page)"))
+
+  (it "omits the reason when the module declares none"
+    (expect (org-canvas--pull-skip-suffix 1 nil) :to-equal " (1 skipped)"))
+
+  (it "logs and records a skipped item"
+    (org-canvas--pull-summary-reset)
+    (let ((logged nil))
+      (cl-letf (((symbol-function 'org-canvas--log-info)
+                 (lambda (_l fmt &rest args) (push (apply #'format fmt args) logged))))
+        (org-canvas--pull-record-skip
+         "/tmp/course/pages.org" '((url . "home") (title . "Home"))
+         'url 'title "front page"))
+      (expect (car logged) :to-equal "[Pull] Skipped 'Home': front page")
+      (let ((rec (car (org-canvas--pull-summary-records-of-kind 'skip))))
+        (expect (plist-get rec :file) :to-equal "pages.org")
+        (expect (plist-get rec :item) :to-equal "Home")
+        (expect (plist-get rec :error) :to-equal "front page"))))
+
+  (it "records a reasonless skip with a generic explanation"
+    (org-canvas--pull-summary-reset)
+    (cl-letf (((symbol-function 'org-canvas--log-info) #'ignore))
+      (org-canvas--pull-record-skip
+       "/tmp/course/pages.org" '((url . "home")) 'url 'title nil))
+    (expect (plist-get (car (org-canvas--pull-summary-records-of-kind 'skip))
+                       :error)
+            :to-match "skip rule")))
+
 (describe "TZ-aware pull timestamp"
   ;; POSIX TZ string (`EST5EDT,M3.2.0,M11.1.0') is used instead of the
   ;; IANA name `America/New_York' so the test passes on systems whose
