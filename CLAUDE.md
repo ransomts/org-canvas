@@ -21,7 +21,7 @@ eldev lint           # Run linter
 eldev package        # Create distributable package
 ```
 
-**Always run `eldev lint` before committing or pushing.** Fix any warnings before proceeding.
+**Always run `eldev lint` before committing or pushing.** Fix any warnings before proceeding. CI lints on Emacs 30.1, whose checkdoc rejects a third-person verb such as "holds" anywhere in a docstring's first line; a newer local Emacs may accept it, so keep first lines imperative throughout (PRs #89/#90 went red on exactly this).
 
 ## Architecture
 

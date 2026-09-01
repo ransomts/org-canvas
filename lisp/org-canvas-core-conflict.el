@@ -263,7 +263,7 @@ Returns \\='push, \\='pull, or \\='skip."
 ;; do damage: creating an item Canvas already holds (issue #85).
 
 (cl-defun org-canvas--duplicate-prompt (title ids)
-  "Ask what to do about TITLE, which Canvas already holds under IDS.
+  "Ask what to do about TITLE, already on Canvas under IDS.
 Returns one of: adopt, skip, create, adopt-all, skip-all, create-all.
 Adopting is offered only when IDS names exactly one item.  Returns
 `skip' without prompting under `noninteractive', for the reason
@@ -297,7 +297,7 @@ batch Emacs takes `skip'."
       action)))
 
 (cl-defun org-canvas--resolve-duplicate (title ids)
-  "Decide what to do about TITLE, which Canvas already holds under IDS.
+  "Decide what to do about TITLE, already on Canvas under IDS.
 Checks `org-canvas--duplicate-apply-all' for a batch decision, then
 `org-canvas--duplicate-unattended-action' for a configured or
 batch-mode one, and otherwise prompts.  Returns `adopt', `skip' or
