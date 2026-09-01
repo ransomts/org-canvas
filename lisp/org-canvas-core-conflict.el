@@ -15,6 +15,8 @@
 (require 'diff)
 (require 'org-canvas-core-config)
 
+(declare-function org-canvas--conflict-baseline-source "org-canvas-core-sync")
+
 (defcustom org-canvas-conflict-strategy nil
   "How to resolve a remote-modified entry without asking.
 nil, the default, shows the diff and prompts.  `push' overwrites
@@ -37,11 +39,48 @@ keystroke that cannot arrive."
                  (const :tag "Always skip" skip))
   :group 'org-canvas)
 
+(defcustom org-canvas-duplicate-title-strategy nil
+  "What to do when a heading with no Canvas id names a title Canvas holds.
+Every recovery from a partial create — a timeout, an error after the
+POST, a killed Emacs — leaves a heading without its CANVAS_ID next to
+the item it created, and the next sync would create a second one that
+students can see and submit to (issue #85).  So before any POST the
+title is looked up in the feature's remote list, and on a hit:
+
+nil, the default, asks — adopt the existing item (stamp its id and
+update it), skip the heading, or create anyway.  `adopt', `skip' and
+`create' answer without asking; `create' also skips the lookup.
+Under `noninteractive' a nil setting behaves as `skip', for the same
+reason `org-canvas-conflict-strategy' does.
+
+Titles are not unique on Canvas, so `create' stays available, and a
+title several remote items carry is never adopted: there is no one
+item to adopt, so it is skipped with a warning instead."
+  :type '(choice (const :tag "Ask" nil)
+                 (const :tag "Adopt the existing item" adopt)
+                 (const :tag "Skip the heading" skip)
+                 (const :tag "Create anyway" create))
+  :group 'org-canvas)
+
 (defvar org-canvas--conflict-apply-all nil
   "When non-nil, auto-resolve all conflicts with this action.
 Valid values: nil, \\='push, \\='pull, \\='skip.
 Bound per-sync by `org-canvas-define-sync'.  For a decision that
 outlives one run, see `org-canvas-conflict-strategy'.")
+
+(defvar org-canvas--duplicate-apply-all nil
+  "When non-nil, answer every duplicate-title prompt this way.
+Valid values: nil, \\='adopt, \\='skip, \\='create.  Bound per-sync by
+`org-canvas--sync-run-pipeline', like `org-canvas--conflict-apply-all'.")
+
+(defvar org-canvas--current-remote-titles nil
+  "Title index of the feature being synced, `none', or nil.
+A hash of remote title to the items carrying it, taken from the same
+list request as the drift snapshot and bound per-sync by
+`org-canvas--sync-run-pipeline' — to `none' when the run has no
+snapshot, so the create guard checks nothing rather than spending a
+GET per entry.  Nil outside a sync, where `org-canvas--push-to-api'
+asks its FIND-FN instead.")
 
 (defvar org-canvas--current-pull-item-fn nil
   "Pull-item function for the module currently being synced.
@@ -90,9 +129,11 @@ then prompts for an action.  No API calls are made."
 Returns the buffer.  The caller should kill it after resolution."
   (let* ((title (plist-get data :title))
          (pom (plist-get data :pom))
-         (last-synced (when (and pom (markerp pom))
-                        (with-current-buffer (marker-buffer pom)
-                          (org-canvas--pull-read-file-header))))
+         ;; The baseline the check compared, labelled by source (issue #86)
+         (baseline (when pom
+                     (condition-case nil
+                         (cdr (org-canvas--conflict-baseline-source pom))
+                       (error nil))))
          (remote-updated (alist-get 'updated_at remote-response))
          (remote-title (or (alist-get 'title remote-response)
                            (alist-get 'name remote-response)))
@@ -114,7 +155,7 @@ Returns the buffer.  The caller should kill it after resolution."
             (let ((inhibit-read-only t))
               (erase-buffer)
               (insert (format "=== Conflict: %s ===\n\n" (or title "untitled")))
-              (insert (format "  Local LAST_SYNCED:   %s\n" (or last-synced "unknown")))
+              (insert (format "  Local baseline:      %s\n" (or baseline "none (first sync)")))
               (insert (format "  Remote updated_at:   %s\n\n" (or remote-updated "unknown")))
               (when (and remote-title title
                          (not (string= title remote-title)))
@@ -215,6 +256,62 @@ Returns \\='push, \\='pull, or \\='skip."
            (org-canvas--log-warning org-canvas--logger
              "[Conflict] Unexpected choice %S, defaulting to skip" choice)
            'skip)))))
+
+;;;; Duplicate Titles
+;;
+;; The same shape as conflict resolution, for the other way a push can
+;; do damage: creating an item Canvas already holds (issue #85).
+
+(cl-defun org-canvas--duplicate-prompt (title ids)
+  "Ask what to do about TITLE, which Canvas already holds under IDS.
+Returns one of: adopt, skip, create, adopt-all, skip-all, create-all.
+Adopting is offered only when IDS names exactly one item.  Returns
+`skip' without prompting under `noninteractive', for the reason
+`org-canvas--conflict-prompt' gives."
+  (when noninteractive
+    (cl-return-from org-canvas--duplicate-prompt 'skip))
+  (let* ((single (null (cdr ids)))
+         (keys (append (when single '(?a ?A)) '(?s ?S ?c ?C)))
+         (prompt (format "'%s' already exists on Canvas (id %s). %s[s]kip [c]reate anyway (capitals = all): "
+                         title (mapconcat #'identity ids ", ")
+                         (if single "[a]dopt " "")))
+         (choice (read-char-choice prompt keys)))
+    (pcase choice
+      (?a 'adopt) (?A 'adopt-all)
+      (?s 'skip) (?S 'skip-all)
+      (?c 'create) (?C 'create-all))))
+
+(defun org-canvas--duplicate-unattended-action (title)
+  "Return the action to take for TITLE without prompting, or nil to ask.
+`org-canvas-duplicate-title-strategy' wins when set.  Failing that, a
+batch Emacs takes `skip'."
+  (let ((action (or org-canvas-duplicate-title-strategy
+                    (and noninteractive 'skip))))
+    (when action
+      (org-canvas--log-warning org-canvas--logger
+        "[Duplicate] '%s' resolved as %s without prompting%s"
+        title action
+        (if org-canvas-duplicate-title-strategy
+            " (org-canvas-duplicate-title-strategy)"
+          " (batch mode; set org-canvas-duplicate-title-strategy to choose)"))
+      action)))
+
+(cl-defun org-canvas--resolve-duplicate (title ids)
+  "Decide what to do about TITLE, which Canvas already holds under IDS.
+Checks `org-canvas--duplicate-apply-all' for a batch decision, then
+`org-canvas--duplicate-unattended-action' for a configured or
+batch-mode one, and otherwise prompts.  Returns `adopt', `skip' or
+`create'."
+  (when org-canvas--duplicate-apply-all
+    (cl-return-from org-canvas--resolve-duplicate org-canvas--duplicate-apply-all))
+  (let ((unattended (org-canvas--duplicate-unattended-action title)))
+    (when unattended
+      (cl-return-from org-canvas--resolve-duplicate unattended)))
+  (pcase (org-canvas--duplicate-prompt title ids)
+    ('adopt-all (setq org-canvas--duplicate-apply-all 'adopt) 'adopt)
+    ('skip-all (setq org-canvas--duplicate-apply-all 'skip) 'skip)
+    ('create-all (setq org-canvas--duplicate-apply-all 'create) 'create)
+    (choice choice)))
 
 (defun org-canvas--conflict-pull-local (data remote-response pull-item-fn)
   "Overwrite local heading with REMOTE-RESPONSE data.

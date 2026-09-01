@@ -56,6 +56,8 @@
   :label "Pages"
   :file-var 'org-canvas-pages-file
   :query "LEVEL=1"
+  :body-api-key "body"
+  :body-list-params '(("include[]" . "body"))
   :properties
   `((:org-prop "PUBLISHED" :data-key :published :type boolean :default t
      :api-key "published" :boolean-json t

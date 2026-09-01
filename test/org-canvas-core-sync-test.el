@@ -4370,8 +4370,9 @@ Returns the list of titles that reached the push stage."
       (cl-letf (((symbol-function 'org-canvas-clear-log) #'ignore)
                 ((symbol-function 'org-canvas--sync-payload-hash)
                  (lambda (&rest _) "SAME"))
-                ((symbol-function 'org-canvas--sync-fetch-remote-updated)
-                 (lambda (&rest _) remote-updated))
+                ((symbol-function 'org-canvas--sync-fetch-remote-snapshot)
+                 (lambda (&rest _)
+                   (and remote-updated (list :updated remote-updated))))
                 ((symbol-function 'org-canvas--sync-log-summary) #'ignore)
                 ((symbol-function 'org-canvas--sync-warn-orphans) #'ignore)
                 ((symbol-function 'org-canvas--save-buffer) #'ignore))
@@ -4469,7 +4470,7 @@ Returns the list of titles that reached the push stage."
               (insert "* Lab 1\n:PROPERTIES:\n:CANVAS_ID: 61\n:END:\n"))
             (cl-letf (((symbol-function 'org-canvas-clear-log) #'ignore)
                       ((symbol-function 'org-canvas--sync-log-summary) #'ignore)
-                      ((symbol-function 'org-canvas--sync-fetch-remote-updated)
+                      ((symbol-function 'org-canvas--sync-fetch-remote-snapshot)
                        (lambda (&rest _) nil))
                       ((symbol-function 'org-canvas--sync-warn-orphans) #'ignore))
               (org-canvas--sync-run-pipeline
@@ -4495,7 +4496,7 @@ Returns the list of titles that reached the push stage."
               (insert "* Lab 1\n:PROPERTIES:\n:CANVAS_ID: 61\n:END:\n"))
             (cl-letf (((symbol-function 'org-canvas-clear-log) #'ignore)
                       ((symbol-function 'org-canvas--sync-log-summary) #'ignore)
-                      ((symbol-function 'org-canvas--sync-fetch-remote-updated)
+                      ((symbol-function 'org-canvas--sync-fetch-remote-snapshot)
                        (lambda (&rest _) nil))
                       ((symbol-function 'org-canvas--sync-warn-orphans) #'ignore))
               (org-canvas--sync-run-pipeline
@@ -4510,6 +4511,788 @@ Returns the list of titles that reached the push stage."
               (kill-buffer)))
         (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
         (delete-file file)))))
+
+;;;; Issue #86: the conflict line names the baseline it compared
+
+(describe "org-canvas--conflict-baseline-source (issue #86)"
+  (it "labels the entry's own CANVAS_UPDATED_AT"
+    (with-temp-org-buffer
+     "#+LAST_SYNCED: [2026-08-31 Mon 12:43]
+* Lab 1
+:PROPERTIES:
+:CANVAS_ID: 61
+:CANVAS_UPDATED_AT: 2026-08-19T13:19:49Z
+:END:
+"
+     (re-search-forward "^\\* ")
+     (org-back-to-heading)
+     (let ((source (org-canvas--conflict-baseline-source (point))))
+       (expect (car source)
+               :to-equal (org-canvas--parse-iso8601-time "2026-08-19T13:19:49Z"))
+       (expect (cdr source) :to-equal "CANVAS_UPDATED_AT 2026-08-19T13:19:49Z"))))
+
+  (it "labels the file header when the entry has no CANVAS_UPDATED_AT"
+    (with-temp-org-buffer
+     "#+LAST_SYNCED: [2026-08-19 Wed 09:59]
+* Lab 1
+:PROPERTIES:
+:CANVAS_ID: 61
+:END:
+"
+     (re-search-forward "^\\* ")
+     (org-back-to-heading)
+     (let ((source (org-canvas--conflict-baseline-source (point))))
+       (expect (car source)
+               :to-equal (encode-time (org-parse-time-string "[2026-08-19 Wed 09:59]")))
+       (expect (cdr source)
+               :to-equal "#+LAST_SYNCED [2026-08-19 Wed 09:59] (entry has no CANVAS_UPDATED_AT)"))))
+
+  (it "labels a caller-supplied fallback as the header, formatted"
+    (with-temp-org-buffer
+     "* Lab 1
+:PROPERTIES:
+:CANVAS_ID: 61
+:END:
+"
+     (org-back-to-heading)
+     (let* ((fallback (encode-time (org-parse-time-string "[2026-08-19 Wed 09:59]")))
+            (source (org-canvas--conflict-baseline-source (point) fallback)))
+       (expect (car source) :to-equal fallback)
+       ;; The day name is locale-dependent, so it is not pinned.
+       (expect (cdr source)
+               :to-match "\\`#\\+LAST_SYNCED \\[2026-08-19 [A-Za-z]+ 09:59\\] (entry has no CANVAS_UPDATED_AT)\\'"))))
+
+  (it "is nil for an entry with no baseline at all"
+    (with-temp-org-buffer
+     "* Lab 1
+:PROPERTIES:
+:CANVAS_ID: 61
+:END:
+"
+     (org-back-to-heading)
+     (expect (org-canvas--conflict-baseline-source (point)) :to-be nil)
+     (expect (org-canvas--conflict-baseline (point)) :to-be nil))))
+
+(describe "org-canvas--last-synced-header"
+  (it "reads the header through a marker from another buffer"
+    (with-temp-org-buffer
+     "#+LAST_SYNCED: [2026-08-19 Wed 09:59]
+* Lab 1
+"
+     (re-search-forward "^\\* ")
+     (let ((m (point-marker)))
+       (with-temp-buffer
+         (expect (org-canvas--last-synced-header m)
+                 :to-equal "[2026-08-19 Wed 09:59]")))))
+
+  (it "returns nil for nil"
+    (expect (org-canvas--last-synced-header nil) :to-be nil)))
+
+(describe "org-canvas--conflict-check log line (issue #86)"
+  (defun test-conflict-86--check (content &optional title)
+    "Run the conflict check for the heading in CONTENT against a newer remote.
+Returns (RESULT . WARNINGS)."
+    (with-org-canvas-test-config
+      (with-temp-org-buffer content
+       (re-search-forward "^\\* ")
+       (org-back-to-heading)
+       (let ((warnings nil) (result nil))
+         (cl-letf (((symbol-function 'org-canvas-api-request)
+                    (lambda (&rest _)
+                      '((id . 61) (updated_at . "2026-08-31T15:00:53Z"))))
+                   ((symbol-function 'org-canvas--log-warning)
+                    (lambda (_logger fmt &rest args)
+                      (push (apply #'format fmt args) warnings))))
+           ;; A bare position, which used to print nil for the header.
+           (setq result (org-canvas--conflict-check "assignments" "61" (point) title)))
+         (cons result warnings)))))
+
+  (it "names the entry and the CANVAS_UPDATED_AT it compared, not the file header"
+    (let ((run (test-conflict-86--check
+                "#+LAST_SYNCED: [2026-08-31 Mon 12:43]
+* Lab 1
+:PROPERTIES:
+:CANVAS_ID: 61
+:CANVAS_UPDATED_AT: 2026-08-19T13:19:49Z
+:END:
+" "Lab 1")))
+      (expect (car (car run)) :to-equal 'conflict)
+      (expect (car (cdr run))
+              :to-equal "[Conflict] 'Lab 1': remote updated_at 2026-08-31T15:00:53Z is newer than CANVAS_UPDATED_AT 2026-08-19T13:19:49Z")))
+
+  (it "names the header when that is what it compared"
+    (let ((run (test-conflict-86--check
+                "#+LAST_SYNCED: [2026-08-19 Wed 09:59]
+* Lab 1
+:PROPERTIES:
+:CANVAS_ID: 61
+:END:
+" "Lab 1")))
+      (expect (car (car run)) :to-equal 'conflict)
+      (expect (car (cdr run))
+              :to-match "is newer than #\\+LAST_SYNCED \\[2026-08-19 Wed 09:59\\] (entry has no CANVAS_UPDATED_AT)$")
+      (expect (car (cdr run)) :not :to-match "is nil")))
+
+  (it "falls back to endpoint/id when no title is given"
+    (let ((run (test-conflict-86--check
+                "* Lab 1
+:PROPERTIES:
+:CANVAS_ID: 61
+:CANVAS_UPDATED_AT: 2026-08-19T13:19:49Z
+:END:
+")))
+      (expect (car (cdr run)) :to-match "\\`\\[Conflict\\] 'assignments/61':"))))
+
+(describe "org-canvas--conflict-format-diff baseline line (issue #86)"
+  (it "shows the CANVAS_UPDATED_AT the check compared"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer
+       "#+LAST_SYNCED: [2026-01-15 Thu 14:30]
+* My Item
+:PROPERTIES:
+:CANVAS_ID: 123
+:CANVAS_UPDATED_AT: 2026-01-20T10:00:00Z
+:END:
+"
+       (re-search-forward "^\\* ")
+       (org-back-to-heading)
+       (let* ((org-canvas--current-pull-item-fn nil)
+              (data (list :title "My Item" :description "x" :pom (point-marker)))
+              (remote '((title . "My Item") (updated_at . "2026-02-01T10:00:00Z")
+                        (body . "y")))
+              (buf (org-canvas--conflict-format-diff data remote)))
+         (unwind-protect
+             (with-current-buffer buf
+               (expect (buffer-string)
+                       :to-match "Local baseline: +CANVAS_UPDATED_AT 2026-01-20T10:00:00Z")
+               (expect (buffer-string) :not :to-match "Local LAST_SYNCED"))
+           (when (buffer-live-p buf) (kill-buffer buf)))))))
+
+  (it "says there is no baseline when the entry has none"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer
+       "* My Item
+:PROPERTIES:
+:CANVAS_ID: 123
+:END:
+"
+       (org-back-to-heading)
+       (let* ((org-canvas--current-pull-item-fn nil)
+              (data (list :title "My Item" :description "x" :pom (point-marker)))
+              (remote '((title . "My Item") (updated_at . "2026-02-01T10:00:00Z")))
+              (buf (org-canvas--conflict-format-diff data remote)))
+         (unwind-protect
+             (with-current-buffer buf
+               (expect (buffer-string) :to-match "Local baseline: +none (first sync)"))
+           (when (buffer-live-p buf) (kill-buffer buf)))))))
+
+  (it "survives a pom that is not in an Org buffer"
+    (with-org-canvas-test-config
+      (with-temp-buffer
+        (insert "plain text")
+        (let* ((org-canvas--current-pull-item-fn nil)
+               (data (list :title "X" :description "x" :pom (point)))
+               (remote '((title . "X") (updated_at . "2026-02-01T10:00:00Z")))
+               (buf (org-canvas--conflict-format-diff data remote)))
+          (unwind-protect
+              (with-current-buffer buf
+                (expect (buffer-string) :to-match "Local baseline: +none"))
+            (when (buffer-live-p buf) (kill-buffer buf))))))))
+
+;;;; Issue #84: a dry run says which entries a real sync would stop at
+
+(describe "org-canvas--dry-run-decision-note (issue #84)"
+  (it "names the standing answer when the strategy is set"
+    (let ((org-canvas-conflict-strategy 'push))
+      (expect (org-canvas--dry-run-decision-note 'org-canvas-conflict-strategy)
+              :to-equal "; org-canvas-conflict-strategy is push")))
+
+  (it "says a batch sync would skip"
+    (let ((org-canvas-conflict-strategy nil) (noninteractive t))
+      (expect (org-canvas--dry-run-decision-note 'org-canvas-conflict-strategy)
+              :to-equal "; a batch sync would skip it")))
+
+  (it "says a real sync would ask"
+    (let ((org-canvas-duplicate-title-strategy nil) (noninteractive nil))
+      (expect (org-canvas--dry-run-decision-note 'org-canvas-duplicate-title-strategy)
+              :to-equal "; a real sync would ask"))))
+
+(describe "org-canvas--sync-dry-run-entry (issue #84)"
+  (defun test-dry-run-84--run (heading data remote-updated titles)
+    "Run the dry-run branch for HEADING with DATA against a snapshot.
+REMOTE-UPDATED and TITLES are the two halves of the snapshot.
+Returns (COUNTERS . LOG-LINES)."
+    (let ((logged nil) (counters nil))
+      (with-temp-org-buffer heading
+        (org-back-to-heading)
+        (let* ((org-canvas--dry-run t)
+               (ctx (list :push-fn (lambda (&rest _) (error "Must not push"))
+                          :feature-name "assignments" :total-count 1
+                          :counters (list :success 0 :skip 0 :fail 0
+                                          :dry-run 0 :dry-run-conflict 0)
+                          :synced-ids (list nil)
+                          :baseline nil
+                          :remote-updated remote-updated :remote-titles titles)))
+          (cl-letf (((symbol-function 'org-canvas--log-info)
+                     (lambda (_logger fmt &rest args)
+                       (push (apply #'format fmt args) logged)))
+                    ((symbol-function 'message) #'ignore))
+            (org-canvas--sync-execute-pipeline data '((name . "x")) ctx))
+          (setq counters (plist-get ctx :counters))))
+      (cons counters (nreverse logged))))
+
+  (defconst test-dry-run-84--stamped
+    "* Lab 1
+:PROPERTIES:
+:CANVAS_ID: 61
+:CANVAS_UPDATED_AT: 2026-08-19T13:19:49Z
+:END:
+")
+
+  (it "counts a remotely newer entry as a conflict, not a push"
+    (let ((map (make-hash-table :test 'equal))
+          (org-canvas-conflict-strategy nil) (noninteractive nil))
+      (puthash "61" "2026-08-25T00:00:00Z" map)
+      (let ((run (test-dry-run-84--run test-dry-run-84--stamped
+                                        (list :title "Lab 1" :canvas-id "61") map nil)))
+        (expect (plist-get (car run) :dry-run-conflict) :to-equal 1)
+        (expect (plist-get (car run) :dry-run) :to-equal 0)
+        (expect (car (cdr run))
+                :to-equal "[DRY-RUN] Would CONFLICT 'Lab 1' (remote updated at 2026-08-25T00:00:00Z; a real sync would ask)"))))
+
+  (it "names the standing conflict strategy"
+    (let ((map (make-hash-table :test 'equal))
+          (org-canvas-conflict-strategy 'push))
+      (puthash "61" "2026-08-25T00:00:00Z" map)
+      (let ((run (test-dry-run-84--run test-dry-run-84--stamped
+                                        (list :title "Lab 1" :canvas-id "61") map nil)))
+        (expect (car (cdr run)) :to-match "org-canvas-conflict-strategy is push"))))
+
+  (it "still counts an entry Canvas has not touched as an update"
+    (let ((map (make-hash-table :test 'equal)))
+      (puthash "61" "2026-08-01T00:00:00Z" map)
+      (let ((run (test-dry-run-84--run test-dry-run-84--stamped
+                                        (list :title "Lab 1" :canvas-id "61") map nil)))
+        (expect (plist-get (car run) :dry-run) :to-equal 1)
+        (expect (plist-get (car run) :dry-run-conflict) :to-equal 0)
+        (expect (car (cdr run)) :to-equal "[DRY-RUN] Would UPDATE 'Lab 1'"))))
+
+  (it "counts a create whose title Canvas already holds as a conflict (issue #85)"
+    (let ((titles (make-hash-table :test 'equal))
+          (org-canvas-duplicate-title-strategy nil) (noninteractive nil))
+      (puthash "R11" '(((id . 2563810) (name . "R11"))) titles)
+      (let ((run (test-dry-run-84--run "* R11\n" (list :title "R11" :canvas-id nil)
+                                        nil titles)))
+        (expect (plist-get (car run) :dry-run-conflict) :to-equal 1)
+        (expect (car (cdr run))
+                :to-equal "[DRY-RUN] Would CONFLICT 'R11' (title already on Canvas as id 2563810; a real sync would ask)"))))
+
+  (it "names a page holder by url and lists several holders"
+    (let ((titles (make-hash-table :test 'equal))
+          (org-canvas-duplicate-title-strategy 'adopt))
+      (puthash "Welcome" '(((url . "welcome")) ((url . "welcome-2"))) titles)
+      (let ((run (test-dry-run-84--run "* Welcome\n" (list :title "Welcome" :canvas-id nil)
+                                        nil titles)))
+        (expect (car (cdr run))
+                :to-match "as id welcome, welcome-2; org-canvas-duplicate-title-strategy is adopt"))))
+
+  (it "reports a plain create as a create"
+    (let ((run (test-dry-run-84--run "* R11\n" (list :title "R11" :canvas-id nil)
+                                      nil (make-hash-table :test 'equal))))
+      (expect (plist-get (car run) :dry-run) :to-equal 1)
+      (expect (car (cdr run)) :to-equal "[DRY-RUN] Would CREATE 'R11'"))))
+
+(describe "org-canvas--sync-log-summary dry-run conflicts (issue #84)"
+  (defun test-summary-84--run (counters)
+    "Log a summary for COUNTERS.  Returns (LOG-LINES . MESSAGES)."
+    (let ((temp-file (make-temp-file "summary-test" nil ".org"))
+          (logged nil) (msgs nil))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file (insert "* Item\n"))
+            (cl-letf (((symbol-function 'org-canvas--log-info)
+                       (lambda (_l fmt &rest args) (push (apply #'format fmt args) logged)))
+                      ((symbol-function 'message)
+                       (lambda (fmt &rest args) (push (apply #'format fmt args) msgs))))
+              (org-canvas--sync-log-summary "assignments" temp-file counters))
+            (cons (nreverse logged) (nreverse msgs)))
+        (let ((buf (find-buffer-visiting temp-file))) (when buf (kill-buffer buf)))
+        (delete-file temp-file))))
+
+  (it "reports would-conflict apart from would-sync"
+    (let ((run (test-summary-84--run
+                '(:success 0 :skip 39 :fail 0 :dry-run 27 :dry-run-conflict 10))))
+      (expect (car run) :to-contain "Would sync: 27 | Would conflict: 10 | Skipped: 39")
+      (expect (cdr run)
+              :to-equal '("Assignments dry-run: 27 would sync, 10 would conflict, 39 skipped."))))
+
+  (it "stays in dry-run form when every pending entry would conflict"
+    (let ((run (test-summary-84--run
+                '(:success 0 :skip 5 :fail 0 :dry-run 0 :dry-run-conflict 3))))
+      (expect (car (cdr run)) :to-equal "Assignments dry-run: 0 would sync, 3 would conflict, 5 skipped."))))
+
+(describe "org-canvas--sync-summary-columns dry-run conflicts (issue #84)"
+  (it "adds a Conflicts column to the dry-run table when some entries would"
+    (let ((org-canvas--dry-run nil))
+      (expect (org-canvas--sync-summary-columns
+               '((:dry-run 27 :dry-run-conflict 10 :skip 39)))
+              :to-equal '(("Would sync" . :dry-run) ("Conflicts" . :dry-run-conflict)
+                          ("Skipped" . :skip) ("Failed" . :fail)
+                          ("Deferred" . :deferred)))))
+
+  (it "treats stats with only would-conflict entries as a dry run"
+    (let ((org-canvas--dry-run nil))
+      (expect (org-canvas--sync-stats-dry-run-p '((:dry-run 0 :dry-run-conflict 2)))
+              :to-be-truthy)
+      (expect (org-canvas--sync-stats-dry-run-p '((:success 2))) :to-be nil)))
+
+  (it "treats any stats as a dry run while one is running"
+    (let ((org-canvas--dry-run t))
+      (expect (org-canvas--sync-stats-dry-run-p '((:success 0))) :to-be-truthy)))
+
+  (it "carries the count into the global table"
+    (let ((org-canvas--dry-run nil)
+          (org-canvas--sync-global-feature-stats nil)
+          (org-canvas--sync-global-counters (list :success 0))
+          (logged nil))
+      (org-canvas--sync-record-feature-stats "Assignments"
+                                             '(:dry-run 27 :dry-run-conflict 10 :skip 39))
+      (expect (plist-get org-canvas--sync-global-counters :dry-run-conflict) :to-equal 10)
+      (cl-letf (((symbol-function 'org-canvas--log-info)
+                 (lambda (_logger fmt &rest args)
+                   (push (apply #'format fmt args) logged)))
+                ((symbol-function 'org-canvas--log-warning) #'ignore))
+        (org-canvas--sync-log-global-summary))
+      (let ((lines (nreverse logged)))
+        (expect (nth 0 lines) :to-match "DRY RUN")
+        (expect (nth 1 lines) :to-match "Would sync +Conflicts +Skipped")
+        (expect (nth 2 lines) :to-match "Assignments +27 +10 +39")))))
+
+(describe "org-canvas--sync-warn-unverified-skips during a dry run (issue #84)"
+  (it "says would-sync entries were not checked for conflicts without a snapshot"
+    (let ((warnings nil) (org-canvas--dry-run t))
+      (cl-letf (((symbol-function 'org-canvas--log-warning)
+                 (lambda (_logger fmt &rest args)
+                   (push (apply #'format fmt args) warnings))))
+        (org-canvas--sync-warn-unverified-skips
+         "assignments" (list :skip 0 :dry-run 37)
+         (list :baseline (current-time) :remote-updated nil))
+        (expect (length warnings) :to-equal 1)
+        (expect (car warnings)
+                :to-match "37 assignments entries reported as would-sync were not checked for conflicts — the remote snapshot was unavailable"))))
+
+  (it "stays quiet about previews outside a dry run"
+    (let ((warnings nil) (org-canvas--dry-run nil))
+      (cl-letf (((symbol-function 'org-canvas--log-warning)
+                 (lambda (_logger fmt &rest args)
+                   (push (apply #'format fmt args) warnings))))
+        (org-canvas--sync-warn-unverified-skips
+         "assignments" (list :skip 0 :dry-run 37)
+         (list :baseline (current-time) :remote-updated nil))
+        (expect warnings :to-be nil)))))
+
+;;;; Issue #85: an unstamped heading must not create a second item
+
+(describe "org-canvas--sync-fetch-remote-snapshot (issue #85)"
+  (it "indexes titles alongside updated_at, keeping every holder of a title"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (&rest _)
+                   '(((id . 1) (name . "R11") (updated_at . "2026-08-19T13:19:49Z"))
+                     ((id . 2) (name . "R11") (updated_at . "2026-08-01T00:00:00Z"))
+                     ((id . 3) (name . "R12"))))))
+        (let* ((snapshot (org-canvas--sync-fetch-remote-snapshot "assignments"))
+               (titles (plist-get snapshot :titles)))
+          (expect (gethash "1" (plist-get snapshot :updated))
+                  :to-equal "2026-08-19T13:19:49Z")
+          (expect (mapcar (lambda (i) (alist-get 'id i)) (gethash "R11" titles))
+                  :to-equal '(1 2))
+          (expect (length (gethash "R12" titles)) :to-equal 1)
+          (expect (gethash "R13" titles) :to-be nil)))))
+
+  (it "keys pages by title even though their id is a url"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (&rest _)
+                   '(((url . "welcome") (title . "Welcome")
+                      (updated_at . "2026-08-19T13:19:49Z"))))))
+        (let ((titles (plist-get (org-canvas--sync-fetch-remote-snapshot "pages") :titles)))
+          (expect (alist-get 'url (car (gethash "Welcome" titles))) :to-equal "welcome")))))
+
+  (it "warns that creates go unchecked when the list request fails"
+    (with-org-canvas-test-config
+      (let ((warnings nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (&rest _) (error "Connection refused")))
+                  ((symbol-function 'org-canvas--log-warning)
+                   (lambda (_logger fmt &rest args)
+                     (push (apply #'format fmt args) warnings))))
+          (expect (org-canvas--sync-fetch-remote-snapshot "assignments") :to-be nil)
+          (expect (car warnings) :to-match "creates will not be checked"))))))
+
+(describe "org-canvas--sync-remote-items-titled"
+  (it "is nil without a snapshot"
+    (expect (org-canvas--sync-remote-items-titled "R11" (list :remote-titles nil))
+            :to-be nil))
+
+  (it "returns the holders of a title"
+    (let ((titles (make-hash-table :test 'equal)))
+      (puthash "R11" '(((id . 5))) titles)
+      (expect (org-canvas--sync-remote-items-titled "R11" (list :remote-titles titles))
+              :to-equal '(((id . 5)))))))
+
+(describe "org-canvas--push-remote-items-titled (issue #85)"
+  (it "reads the sync's title index without calling find-fn"
+    (let ((titles (make-hash-table :test 'equal)))
+      (puthash "R11" '(((id . 5))) titles)
+      (let ((org-canvas--current-remote-titles titles)
+            (find-fn (lambda (_) (error "Must not be asked"))))
+        (expect (org-canvas--push-remote-items-titled "R11" find-fn) :to-equal '(((id . 5))))
+        (expect (org-canvas--push-remote-items-titled "R12" find-fn) :to-be nil))))
+
+  (it "checks nothing when a sync had no snapshot"
+    (let ((org-canvas--current-remote-titles 'none))
+      (expect (org-canvas--push-remote-items-titled "R11" (lambda (_) '((id . 5))))
+              :to-be nil)))
+
+  (it "asks find-fn outside a sync"
+    (let ((org-canvas--current-remote-titles nil))
+      (expect (org-canvas--push-remote-items-titled "R11" (lambda (_) '((id . 5))))
+              :to-equal '(((id . 5))))
+      (expect (org-canvas--push-remote-items-titled "R11" (lambda (_) nil)) :to-be nil)
+      (expect (org-canvas--push-remote-items-titled "R11" nil) :to-be nil))))
+
+(describe "org-canvas--push-item-id"
+  (it "reads id, or url for pages"
+    (expect (org-canvas--push-item-id '((id . 42)) :canvas-id) :to-equal "42")
+    (expect (org-canvas--push-item-id '((id . 42) (url . "welcome")) :canvas-url)
+            :to-equal "welcome")
+    (expect (org-canvas--push-item-id '((title . "x")) :canvas-id) :to-be nil)))
+
+(describe "org-canvas--push-adopt-item (issue #85)"
+  (it "stamps the heading and the data with the item's id and clock"
+    (with-temp-org-buffer "* R11\n"
+      (org-back-to-heading)
+      (let ((data (list :title "R11" :canvas-id nil :pom (point-marker))))
+        (expect (org-canvas--push-adopt-item
+                 data :canvas-id "R11"
+                 '((id . 2563810) (updated_at . "2026-08-28T10:00:00Z")))
+                :to-equal "2563810")
+        (expect (plist-get data :canvas-id) :to-equal "2563810")
+        (expect (org-entry-get (point) "CANVAS_ID") :to-equal "2563810")
+        (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
+                :to-equal "2026-08-28T10:00:00Z"))))
+
+  (it "stamps CANVAS_URL for a page, and no clock when the item has none"
+    (with-temp-org-buffer "* Welcome\n"
+      (org-back-to-heading)
+      (let ((data (list :title "Welcome" :canvas-url nil :pom (point-marker))))
+        (org-canvas--push-adopt-item data :canvas-url "Welcome" '((url . "welcome")))
+        (expect (org-entry-get (point) "CANVAS_URL") :to-equal "welcome")
+        (expect (org-entry-get (point) "CANVAS_UPDATED_AT") :to-be nil)))))
+
+(describe "org-canvas--push-guard-duplicate (issue #85)"
+  (defun test-dup-85--titles (&rest items)
+    "Return a title index holding ITEMS under R11."
+    (let ((titles (make-hash-table :test 'equal)))
+      (puthash "R11" items titles)
+      titles))
+
+  (it "does not look when the strategy is create"
+    (let ((org-canvas-duplicate-title-strategy 'create)
+          (org-canvas--current-remote-titles nil))
+      (expect (org-canvas--push-guard-duplicate
+               (list :pom 1) :canvas-id "R11" (lambda (_) (error "Must not look")))
+              :to-be nil)))
+
+  (it "does not look for data it could not stamp"
+    (let ((org-canvas-duplicate-title-strategy nil)
+          (org-canvas--current-remote-titles nil))
+      (expect (org-canvas--push-guard-duplicate
+               (list :title "R11") :canvas-id "R11" (lambda (_) (error "Must not look")))
+              :to-be nil)))
+
+  (it "is nil when Canvas has no such title"
+    (let ((org-canvas-duplicate-title-strategy nil)
+          (org-canvas--current-remote-titles (make-hash-table :test 'equal)))
+      (expect (org-canvas--push-guard-duplicate (list :pom 1) :canvas-id "R11" nil)
+              :to-be nil)))
+
+  (it "adopts a single holder"
+    (with-temp-org-buffer "* R11\n"
+      (org-back-to-heading)
+      (let ((org-canvas-duplicate-title-strategy 'adopt)
+            (org-canvas--current-remote-titles
+             (test-dup-85--titles '((id . 2563810) (updated_at . "2026-08-28T10:00:00Z"))))
+            (data (list :title "R11" :canvas-id nil :pom (point-marker))))
+        (cl-letf (((symbol-function 'org-canvas--log-warning) #'ignore))
+          (expect (org-canvas--push-guard-duplicate data :canvas-id "R11" nil)
+                  :to-equal "2563810"))
+        (expect (org-entry-get (point) "CANVAS_ID") :to-equal "2563810"))))
+
+  (it "skips an ambiguous title even under adopt, and says why"
+    (let ((org-canvas-duplicate-title-strategy 'adopt)
+          (org-canvas--current-remote-titles
+           (test-dup-85--titles '((id . 1)) '((id . 2))))
+          (warnings nil))
+      (cl-letf (((symbol-function 'org-canvas--log-warning)
+                 (lambda (_l fmt &rest args) (push (apply #'format fmt args) warnings))))
+        (expect (org-canvas--push-guard-duplicate (list :pom 1) :canvas-id "R11" nil)
+                :to-equal 'skip))
+      (expect warnings :to-contain "[Duplicate] 'R11' is held by 2 Canvas items (1, 2); cannot adopt one, skipping")
+      (expect (car warnings) :to-match "Skipping 'R11' — Canvas already holds it as id 1, 2; stamp CANVAS_ID or rename")))
+
+  (it "skips and names the property to stamp for a page"
+    (let ((org-canvas-duplicate-title-strategy 'skip)
+          (org-canvas--current-remote-titles (test-dup-85--titles '((url . "r11"))))
+          (warnings nil))
+      (cl-letf (((symbol-function 'org-canvas--log-warning)
+                 (lambda (_l fmt &rest args) (push (apply #'format fmt args) warnings))))
+        (expect (org-canvas--push-guard-duplicate (list :pom 1) :canvas-url "R11" nil)
+                :to-equal 'skip))
+      (expect (car warnings) :to-match "as id r11; stamp CANVAS_URL or rename")))
+
+  (it "creates when told, saying so"
+    (let ((org-canvas-duplicate-title-strategy nil)
+          (org-canvas--duplicate-apply-all 'create)
+          (org-canvas--current-remote-titles (test-dup-85--titles '((id . 1))))
+          (warnings nil))
+      (cl-letf (((symbol-function 'org-canvas--log-warning)
+                 (lambda (_l fmt &rest args) (push (apply #'format fmt args) warnings))))
+        (expect (org-canvas--push-guard-duplicate (list :pom 1) :canvas-id "R11" nil)
+                :to-be nil))
+      (expect (car warnings)
+              :to-equal "[Duplicate] Creating 'R11' although Canvas already holds it as id 1"))))
+
+(describe "org-canvas--push-to-api duplicate guard (issue #85)"
+  (it "returns duplicate instead of POSTing when the heading is skipped"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-temp-org-buffer "* R11\n"
+          (org-back-to-heading)
+          (let ((titles (make-hash-table :test 'equal)))
+            (puthash "R11" '(((id . 2563810) (name . "R11"))) titles)
+            (let* ((org-canvas--current-remote-titles titles)
+                   (org-canvas-duplicate-title-strategy 'skip)
+                   (data (list :title "R11" :canvas-id nil :pom (point-marker)))
+                   (result (org-canvas--push-to-api data '((name . "R11"))
+                                                    :endpoint "assignments")))
+              (expect result :to-equal 'duplicate)
+              (expect (test-org-canvas-api-called-p 'POST "assignments") :to-be nil)))))))
+
+  (it "adopts the existing item and updates it in place"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-temp-org-buffer "* R11\n"
+          (org-back-to-heading)
+          (let ((titles (make-hash-table :test 'equal)))
+            (puthash "R11" '(((id . 2563810) (name . "R11")
+                              (updated_at . "2026-08-28T10:00:00Z")))
+                     titles)
+            (let* ((org-canvas--current-remote-titles titles)
+                   (org-canvas-duplicate-title-strategy 'adopt)
+                   (data (list :title "R11" :canvas-id nil :pom (point-marker))))
+              (cl-letf (((symbol-function 'org-canvas--log-warning) #'ignore))
+                (org-canvas--push-to-api data '((name . "R11")) :endpoint "assignments"))
+              (expect (test-org-canvas-api-called-p 'PUT "assignments/2563810") :to-be-truthy)
+              (expect (test-org-canvas-api-called-p 'POST "assignments$") :to-be nil)
+              (expect (org-entry-get (point) "CANVAS_ID") :to-equal "2563810")))))))
+
+  (it "creates as before when nothing on Canvas has the title"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-temp-org-buffer "* R11\n"
+          (org-back-to-heading)
+          (let* ((org-canvas--current-remote-titles (make-hash-table :test 'equal))
+                 (org-canvas-duplicate-title-strategy nil)
+                 (data (list :title "R11" :canvas-id nil :pom (point-marker))))
+            (org-canvas--push-to-api data '((name . "R11")) :endpoint "assignments")
+            (expect (test-org-canvas-api-called-p 'POST "assignments") :to-be-truthy))))))
+
+  (it "leaves a dry run alone"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-temp-org-buffer "* R11\n"
+          (org-back-to-heading)
+          (let ((titles (make-hash-table :test 'equal)))
+            (puthash "R11" '(((id . 2563810))) titles)
+            (let* ((org-canvas--dry-run t)
+                   (org-canvas--current-remote-titles titles)
+                   (org-canvas-duplicate-title-strategy 'adopt)
+                   (data (list :title "R11" :canvas-id nil :pom (point-marker))))
+              (expect (org-canvas--push-to-api data '((name . "R11")) :endpoint "assignments")
+                      :to-equal org-canvas--dry-run-response)
+              (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)
+              (expect (test-org-canvas-api-call-count) :to-equal 0))))))))
+
+(describe "org-canvas--sync-execute-pipeline duplicate outcome (issue #85)"
+  (it "counts a duplicate-title skip among the skipped and names it"
+    (with-temp-org-buffer "* R11\n"
+      (org-back-to-heading)
+      (let* ((counters (list :success 0 :skip 0 :fail 0 :conflict 0))
+             (ctx (list :push-fn (lambda (_d _p) 'duplicate)
+                        :feature-name "assignments" :total-count 1
+                        :counters counters :synced-ids (list nil)))
+             (msgs nil))
+        (cl-letf (((symbol-function 'message)
+                   (lambda (fmt &rest args) (push (apply #'format fmt args) msgs))))
+          (org-canvas--sync-execute-pipeline
+           (list :title "R11" :canvas-id nil) '((name . "R11")) ctx))
+        (expect (plist-get counters :skip) :to-equal 1)
+        (expect (plist-get counters :success) :to-equal 0)
+        (expect (car (plist-get counters :skipped-titles))
+                :to-equal "R11 (already on Canvas; stamp its id or rename)")
+        (expect (car msgs) :to-equal "Assignments [1/1] SKIPPED: 'R11' (title already on Canvas)")))))
+
+(describe "org-canvas--sync-run-pipeline title index (issue #85)"
+  (defun test-titles-85--run (snapshot)
+    "Push one unstamped heading through the pipeline with SNAPSHOT.
+Returns what `org-canvas--current-remote-titles' was during the push."
+    (let ((file (make-temp-file "titles-" nil ".org"))
+          (seen 'unset))
+      (unwind-protect
+          (progn
+            (with-temp-file file (insert "* R11\n"))
+            (cl-letf (((symbol-function 'org-canvas-clear-log) #'ignore)
+                      ((symbol-function 'org-canvas--sync-log-summary) #'ignore)
+                      ((symbol-function 'org-canvas--sync-fetch-remote-snapshot)
+                       (lambda (&rest _) snapshot))
+                      ((symbol-function 'org-canvas--sync-warn-orphans) #'ignore)
+                      ((symbol-function 'org-canvas--save-buffer) #'ignore))
+              (org-canvas--sync-run-pipeline
+               "assignments" file "LEVEL=1"
+               (lambda () (list :title "R11" :canvas-id nil :pom (point-marker)))
+               (lambda (_data) '((name . "R11")))
+               (lambda (_data _payload)
+                 (setq seen org-canvas--current-remote-titles)
+                 '((id . 1)))
+               #'ignore))
+            seen)
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file))))
+
+  (it "binds the snapshot's titles while entries push"
+    (let ((titles (make-hash-table :test 'equal)))
+      (expect (test-titles-85--run (list :updated (make-hash-table :test 'equal)
+                                         :titles titles))
+              :to-be titles)))
+
+  (it "marks the run as unchecked when there is no snapshot"
+    (expect (test-titles-85--run nil) :to-equal 'none)))
+
+(describe "org-canvas--push-at-point-runtime stopped push (issues #85, #86)"
+  (it "reports a duplicate instead of finalizing a symbol"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer "* R11\n"
+        (org-back-to-heading)
+        (let ((finalized nil) (msgs nil))
+          (cl-letf (((symbol-function 'display-buffer) #'ignore)
+                    ((symbol-function 'message)
+                     (lambda (fmt &rest args) (push (apply #'format fmt args) msgs))))
+            (org-canvas--push-at-point-runtime
+             "assignment"
+             (lambda () (list :title "R11" :canvas-id nil :pom (point)))
+             (lambda (_data) '((name . "R11")))
+             (lambda (_data _payload) 'duplicate)
+             (lambda (_data _response) (setq finalized t))
+             :title nil))
+          (expect finalized :to-be nil)
+          (expect (car msgs)
+                  :to-equal "Assignment 'R11' not pushed — Canvas already holds this title; stamp its id or rename.")))))
+
+  (it "words a conflict and a pull"
+    (let ((msgs nil))
+      (cl-letf (((symbol-function 'message)
+                 (lambda (fmt &rest args) (push (apply #'format fmt args) msgs)))
+                ((symbol-function 'org-canvas--log-warning) #'ignore))
+        (org-canvas--push-at-point-report-stop "page" "Welcome" 'conflict)
+        (org-canvas--push-at-point-report-stop "page" "Welcome" 'pulled))
+      (expect (nth 1 msgs) :to-match "remote item was modified")
+      (expect (nth 0 msgs) :to-match "remote version was pulled"))))
+
+(describe "org-canvas--duplicate-prompt (issue #85)"
+  (it "skips without asking in batch"
+    (let ((noninteractive t))
+      (expect (org-canvas--duplicate-prompt "R11" '("1")) :to-equal 'skip)))
+
+  (it "offers adopt only for a single holder"
+    (let ((noninteractive nil) (seen-keys nil) (seen-prompt nil))
+      (cl-letf (((symbol-function 'read-char-choice)
+                 (lambda (prompt keys)
+                   (setq seen-prompt prompt seen-keys keys)
+                   ?a)))
+        (expect (org-canvas--duplicate-prompt "R11" '("1")) :to-equal 'adopt)
+        (expect seen-keys :to-equal '(?a ?A ?s ?S ?c ?C))
+        (expect seen-prompt :to-match "'R11' already exists on Canvas (id 1)\\. \\[a\\]dopt "))
+      (cl-letf (((symbol-function 'read-char-choice)
+                 (lambda (prompt keys)
+                   (setq seen-prompt prompt seen-keys keys)
+                   ?s)))
+        (expect (org-canvas--duplicate-prompt "R11" '("1" "2")) :to-equal 'skip)
+        (expect seen-keys :to-equal '(?s ?S ?c ?C))
+        (expect seen-prompt :to-match "(id 1, 2)\\. \\[s\\]kip")
+        (expect seen-prompt :not :to-match "adopt"))))
+
+  (it "maps every key"
+    (let ((noninteractive nil))
+      (dolist (pair '((?a . adopt) (?A . adopt-all) (?s . skip)
+                      (?S . skip-all) (?c . create) (?C . create-all)))
+        (cl-letf (((symbol-function 'read-char-choice) (lambda (&rest _) (car pair))))
+          (expect (org-canvas--duplicate-prompt "R11" '("1")) :to-equal (cdr pair)))))))
+
+(describe "org-canvas--duplicate-unattended-action (issue #85)"
+  (it "follows the strategy and says so"
+    (let ((org-canvas-duplicate-title-strategy 'adopt) (warnings nil))
+      (cl-letf (((symbol-function 'org-canvas--log-warning)
+                 (lambda (_l fmt &rest args) (push (apply #'format fmt args) warnings))))
+        (expect (org-canvas--duplicate-unattended-action "R11") :to-equal 'adopt))
+      (expect (car warnings)
+              :to-equal "[Duplicate] 'R11' resolved as adopt without prompting (org-canvas-duplicate-title-strategy)")))
+
+  (it "skips in batch and says how to choose"
+    (let ((org-canvas-duplicate-title-strategy nil) (noninteractive t) (warnings nil))
+      (cl-letf (((symbol-function 'org-canvas--log-warning)
+                 (lambda (_l fmt &rest args) (push (apply #'format fmt args) warnings))))
+        (expect (org-canvas--duplicate-unattended-action "R11") :to-equal 'skip))
+      (expect (car warnings) :to-match "batch mode; set org-canvas-duplicate-title-strategy")))
+
+  (it "is nil when someone can be asked"
+    (let ((org-canvas-duplicate-title-strategy nil) (noninteractive nil))
+      (cl-letf (((symbol-function 'org-canvas--log-warning)
+                 (lambda (&rest _) (error "Nothing to say"))))
+        (expect (org-canvas--duplicate-unattended-action "R11") :to-be nil)))))
+
+(describe "org-canvas--resolve-duplicate (issue #85)"
+  (it "honours a standing apply-all answer first"
+    (let ((org-canvas--duplicate-apply-all 'create)
+          (org-canvas-duplicate-title-strategy 'skip))
+      (expect (org-canvas--resolve-duplicate "R11" '("1")) :to-equal 'create)))
+
+  (it "takes the unattended answer before prompting"
+    (let ((org-canvas--duplicate-apply-all nil)
+          (org-canvas-duplicate-title-strategy 'adopt))
+      (cl-letf (((symbol-function 'read-char-choice)
+                 (lambda (&rest _) (error "Must not prompt")))
+                ((symbol-function 'org-canvas--log-warning) #'ignore))
+        (expect (org-canvas--resolve-duplicate "R11" '("1")) :to-equal 'adopt))))
+
+  (it "remembers a capital answer for the rest of the run"
+    (let ((org-canvas--duplicate-apply-all nil)
+          (org-canvas-duplicate-title-strategy nil)
+          (noninteractive nil))
+      (dolist (pair '((?S . skip) (?A . adopt) (?C . create)))
+        (setq org-canvas--duplicate-apply-all nil)
+        (cl-letf (((symbol-function 'read-char-choice) (lambda (&rest _) (car pair))))
+          (expect (org-canvas--resolve-duplicate "R11" '("1")) :to-equal (cdr pair))
+          (expect org-canvas--duplicate-apply-all :to-equal (cdr pair))))))
+
+  (it "passes a lowercase answer through without remembering it"
+    (let ((org-canvas--duplicate-apply-all nil)
+          (org-canvas-duplicate-title-strategy nil)
+          (noninteractive nil))
+      (cl-letf (((symbol-function 'read-char-choice) (lambda (&rest _) ?c)))
+        (expect (org-canvas--resolve-duplicate "R11" '("1")) :to-equal 'create)
+        (expect org-canvas--duplicate-apply-all :to-be nil)))))
 
 (provide 'org-canvas-core-sync-test)
 ;;; org-canvas-core-sync-test.el ends here

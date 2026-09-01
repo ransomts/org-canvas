@@ -303,8 +303,19 @@ Each plist has keys :file-var, :query, :properties, and optionally
   "Register property specs for FEATURE-NAME.
 PLIST has keys :file-var, :query, :properties, and optionally
 :date-order, :structural-fn (run per matched heading), and :file-fn
-\(run once per file, for rules about the file as a whole).  Does
-nothing if FEATURE-NAME is already registered (idempotent)."
+\(run once per file, for rules about the file as a whole).
+
+A module whose payload carries the heading's body declares
+`:body-api-key', the Canvas field it lands in (\"description\",
+\"body\", \"message\"), so the drift report can compare it — the
+field is set directly on the payload, outside the property specs, and
+was invisible to the report until it was named here (issue #83).
+`:body-fn' optionally names the module's own extractor (a function of
+no arguments, called with point on the heading) where the shared
+subtree export is not what gets pushed; `:body-list-params' adds
+request parameters the list endpoint needs before it returns bodies.
+
+Does nothing if FEATURE-NAME is already registered (idempotent)."
   (unless (gethash feature-name org-canvas--property-registry)
     (puthash feature-name plist org-canvas--property-registry)))
 

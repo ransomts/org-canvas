@@ -76,6 +76,7 @@ takes effect on the next `org-canvas-pull-assignments' invocation."
   :label "Assignments"
   :file-var 'org-canvas-assignments-file
   :query "LEVEL=1"
+  :body-api-key "description"
   :properties
   `((:org-prop "POINTS" :data-key :points_possible :type number
      :doc "Points possible")

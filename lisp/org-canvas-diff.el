@@ -15,16 +15,20 @@
 ;;
 ;; WHAT IT REPORTS
 ;; ===============
-;; Per feature, three kinds of divergence:
+;; Per feature, four kinds of divergence:
 ;;
 ;;   Modified remotely  the item's `updated_at' is newer than the
 ;;                      baseline recorded at the last push or pull
 ;;   Missing on Canvas  a heading carries a Canvas id that the course
 ;;                      no longer has
 ;;   Only on Canvas     an item in the course that no Org heading claims
+;;   Unclaimed          such an item whose title an unstamped heading
+;;                      shares — a create that lost its stamp (#85)
 ;;
 ;; plus, for every property the module registers, the differing values
-;; themselves — published, points, due dates, group weights and so on.
+;; themselves — published, points, due dates, group weights and so on —
+;; and, for modules that declare a `:body-api-key', the body, compared
+;; as text (#83).
 ;;
 ;; SCOPE OF THE FIELD COMPARISON
 ;; =============================
@@ -147,6 +151,117 @@ the commentary on why absence is not a value."
                         diffs))))))))
     (nreverse diffs)))
 
+;;;; Body Comparison
+;;
+;; The description is the one field a student actually reads, and the
+;; one field the property specs never mention: modules set it directly
+;; on the payload, outside the registry, so the report gave a rewritten
+;; body a clean bill of health (issue #83).  Canvas does not hand back
+;; the HTML it was given — it prepends a stylesheet link, rewrites
+;; attributes, normalizes whitespace and entities — so the two sides
+;; are compared as the text a reader sees.  A difference in markup
+;; alone is invisible here, which is the price of never reporting one
+;; a student cannot see.
+
+(defconst org-canvas--diff-named-entities
+  '(("amp" . "&") ("lt" . "<") ("gt" . ">") ("quot" . "\"")
+    ("apos" . "'") ("nbsp" . " "))
+  "Named HTML entities decoded when comparing bodies as text.")
+
+(defun org-canvas--diff-decode-entity (entity)
+  "Return the text ENTITY (\"&amp;\", \"&#39;\", \"&#x2019;\") stands for.
+An entity this does not know is kept as written, so both sides still
+agree when they spell it the same way."
+  (let ((name (substring entity 1 -1)))
+    (cond
+     ((assoc name org-canvas--diff-named-entities)
+      (cdr (assoc name org-canvas--diff-named-entities)))
+     ((string-match "\\`#[xX]\\([0-9a-fA-F]+\\)\\'" name)
+      (string (string-to-number (match-string 1 name) 16)))
+     ((string-match "\\`#\\([0-9]+\\)\\'" name)
+      (string (string-to-number (match-string 1 name))))
+     (t entity))))
+
+(defun org-canvas--diff-html-to-text (html)
+  "Return HTML as normalized plain text.
+Tags are dropped, entities decoded and whitespace collapsed, so two
+renderings of the same text compare equal however they were marked
+up.  Anything that is not a string reads as \"\"."
+  (if (not (stringp html))
+      ""
+    (let* ((s (replace-regexp-in-string
+               "<\\(script\\|style\\)\\(?:.\\|\n\\)*?</\\1>" " " html))
+           (s (replace-regexp-in-string "<[^>]*>" " " s))
+           (s (replace-regexp-in-string
+               "&#?[[:alnum:]]+;"
+               (lambda (m) (save-match-data (org-canvas--diff-decode-entity m)))
+               s))
+           ;; An explicit class, not [:space:]: that one goes by the current
+           ;; buffer's syntax table, and in a Lisp buffer newline is not space.
+           (s (replace-regexp-in-string "[ \t\n\r\f\u00a0]+" " " s)))
+      (string-trim s))))
+
+(defun org-canvas--diff-text-excerpts (local remote &optional width)
+  "Return excerpts of LOCAL and REMOTE around their first difference.
+Each is WIDTH characters (default 40), starting a little before the
+point where the two stop agreeing; an empty side reads \"(empty)\"."
+  (let* ((width (or width 40))
+         (n (min (length local) (length remote)))
+         (i 0))
+    (while (and (< i n) (eq (aref local i) (aref remote i)))
+      (setq i (1+ i)))
+    (let ((start (max 0 (- i 10))))
+      (mapcar (lambda (s)
+                (if (string-empty-p s)
+                    "(empty)"
+                  (let ((end (min (length s) (+ start width))))
+                    (concat (if (> start 0) "…" "")
+                            (substring s start end)
+                            (if (< end (length s)) "…" "")))))
+              (list local remote)))))
+
+(defun org-canvas--diff-local-body-html (pom body-fn)
+  "Return the HTML the entry at POM would push as its body, or nil.
+BODY-FN, when non-nil, is the module's own extractor (a quiz's
+description is only the text before its first question); otherwise
+the shared subtree exporter runs offline.  Offline matters: the full
+exporter resolves inline images by uploading the ones Canvas lacks,
+and a report must not write.  Links change only markup, which the
+text comparison ignores anyway.  Nil, with a warning, when the export
+fails, so a broken body is reported as unchecked rather than changed."
+  (condition-case err
+      (with-current-buffer (marker-buffer pom)
+        (save-excursion
+          (goto-char pom)
+          (if body-fn
+              (funcall body-fn)
+            (org-canvas--export-subtree-body-to-html t))))
+    (error
+     (org-canvas--log-warning org-canvas--logger
+       "[Diff] Could not export the body at %s: %s" pom (error-message-string err))
+     nil)))
+
+(defun org-canvas--diff-compare-body (props pom item)
+  "Compare the body at POM against Canvas ITEM, as text.
+PROPS is the feature's property registry entry: `:body-api-key' names
+the Canvas field (description, body, message) and the optional
+`:body-fn' the local extractor.  Returns nil when the feature has no
+body, ITEM does not carry the field, or the local export failed —
+none of which is drift — and otherwise (t . ROW), where ROW is nil
+when the two agree and (LABEL LOCAL REMOTE), with excerpts around the
+first difference, when they do not."
+  (let* ((api-key (plist-get props :body-api-key))
+         (cell (and api-key (assq (intern api-key) item)))
+         (html (and cell (org-canvas--diff-local-body-html
+                          pom (plist-get props :body-fn)))))
+    (when html
+      (let ((local (org-canvas--diff-html-to-text html))
+            (remote (org-canvas--diff-html-to-text
+                     (org-canvas--diff-normalize-remote (cdr cell)))))
+        (cons t (unless (string= local remote)
+                  (cons (upcase api-key)
+                        (org-canvas--diff-text-excerpts local remote))))))))
+
 ;;;; Per-Feature Comparison
 
 (defun org-canvas--diff-collect-local (file query id-property)
@@ -172,9 +287,11 @@ silently be read against whatever buffer happened to be."
         (when id (puthash (format "%s" id) item index))))
     index))
 
-(defun org-canvas--diff-entry (entry index specs)
+(defun org-canvas--diff-entry (entry index specs &optional props)
   "Compare local ENTRY against the remote INDEX using property SPECS.
-Returns a plist describing the divergence, or nil when they agree."
+PROPS, the feature's property registry entry, enables the body
+comparison when it names a `:body-api-key' (issue #83).  Returns a
+plist describing the divergence, or nil when they agree."
   (let* ((id (plist-get entry :id))
          (pom (plist-get entry :pom))
          (item (and id (gethash id index))))
@@ -183,12 +300,15 @@ Returns a plist describing the divergence, or nil when they agree."
      ((null item)
       (list :kind 'missing :title (plist-get entry :title) :id id))
      (t
-      (let ((fields (org-canvas--diff-compare-fields specs pom item))
-            (drifted (org-canvas--diff-modified-p pom item)))
+      (let* ((body (org-canvas--diff-compare-body props pom item))
+             (fields (append (org-canvas--diff-compare-fields specs pom item)
+                             (and (cdr body) (list (cdr body)))))
+             (drifted (org-canvas--diff-modified-p pom item)))
         (when (or fields drifted)
           (list :kind 'modified :title (plist-get entry :title) :id id
                 :updated (alist-get 'updated_at item)
-                :remote-newer drifted :fields fields)))))))
+                :remote-newer drifted :fields fields
+                :body-compared (and body t))))))))
 
 (defun org-canvas--diff-modified-p (pom item)
   "Return non-nil when ITEM's `updated_at' is newer than POM's baseline."
@@ -215,6 +335,25 @@ is what keeps the report from reading as full coverage (issue #81)."
                 extra))))
     (cons (nreverse extra) suppressed)))
 
+(defun org-canvas--diff-pair-unclaimed (extra local id-property)
+  "Pair each EXTRA remote item with an unstamped LOCAL heading of its title.
+A partial create — the POST succeeded, the stamp was never written —
+leaves exactly this pair: a remote item nothing claims and, a few
+lines away, a heading of the same name with no ID-PROPERTY.  Reported
+apart they are a two-line mystery, and the next sync creates a second
+item (issue #85).  Such an entry becomes kind `unclaimed' and names
+the property to stamp; the rest of EXTRA is returned as it was."
+  (let ((unstamped (delq nil (mapcar (lambda (e)
+                                       (and (null (plist-get e :id))
+                                            (plist-get e :title)))
+                                     local))))
+    (mapcar (lambda (e)
+              (if (member (plist-get e :title) unstamped)
+                  (list :kind 'unclaimed :title (plist-get e :title)
+                        :id (plist-get e :id) :property id-property)
+                e))
+            extra)))
+
 (defun org-canvas--diff-feature (feature)
   "Compare one FEATURE registry entry against Canvas.
 Returns a plist (:name :divergences :extra :error), where :extra holds
@@ -233,7 +372,10 @@ request failed."
         (let* ((items (append (org-canvas-api-request-all-pages
                                'GET (org-canvas-api-course-endpoint
                                      (plist-get feature :endpoint))
-                               (plist-get feature :list-params))
+                               ;; e.g. include[]=body — the pages list
+                               ;; omits bodies unless asked (issue #83)
+                               (append (plist-get feature :list-params)
+                                       (plist-get props :body-list-params)))
                               nil))
                (index (org-canvas--diff-remote-index items id-field))
                (local (org-canvas--diff-collect-local
@@ -241,7 +383,7 @@ request failed."
                (claimed (delq nil (mapcar (lambda (e) (plist-get e :id)) local)))
                divergences)
           (dolist (entry local)
-            (let ((d (org-canvas--diff-entry entry index specs)))
+            (let ((d (org-canvas--diff-entry entry index specs props)))
               (when d (push d divergences)))
             (let ((m (plist-get entry :pom)))
               (when (markerp m) (set-marker m nil))))
@@ -249,7 +391,8 @@ request failed."
                             items claimed id-field title-field skip-fn)))
             (list :name name
                   :divergences (nreverse divergences)
-                  :extra (car unclaimed)
+                  :extra (org-canvas--diff-pair-unclaimed
+                          (car unclaimed) local id-property)
                   :suppressed (cdr unclaimed)
                   :skip-reason (plist-get feature :skip-reason))))
       (error
@@ -266,6 +409,10 @@ request failed."
     ('extra
      (insert (format "  EXTRA     %s (id %s, no Org heading claims it)\n"
                      (plist-get entry :title) (plist-get entry :id))))
+    ('unclaimed
+     (insert (format "  UNCLAIMED %s (Canvas id %s has this title and no heading claims it; stamp %s or rename)\n"
+                     (plist-get entry :title) (plist-get entry :id)
+                     (or (plist-get entry :property) "CANVAS_ID"))))
     ('modified
      (insert (format "  CHANGED   %s%s\n"
                      (plist-get entry :title)
@@ -274,7 +421,14 @@ request failed."
                        "")))
      (dolist (field (plist-get entry :fields))
        (insert (format "              %-18s org: %-24s canvas: %s\n"
-                       (nth 0 field) (nth 1 field) (nth 2 field)))))))
+                       (nth 0 field) (nth 1 field) (nth 2 field))))
+     ;; A timestamp-only change used to be a puzzle: every compared
+     ;; field matched, so the row could not say what had changed.
+     (when (and (plist-get entry :remote-newer) (null (plist-get entry :fields)))
+       (insert (format "              (no compared property differs; the change is in a field this report does not compare — e.g. %s)\n"
+                       (if (plist-get entry :body-compared)
+                           "overrides or a rubric association"
+                         "the description or overrides")))))))
 
 (defun org-canvas--diff-count (results)
   "Return the total number of divergences across RESULTS."

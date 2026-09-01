@@ -57,6 +57,7 @@
   :label "Discussions"
   :file-var 'org-canvas-discussions-file
   :query "LEVEL=1"
+  :body-api-key "message"
   :properties
   `((:org-prop "PUBLISHED" :data-key :published :type boolean
      :doc "Whether the discussion is visible to students (default: true)")

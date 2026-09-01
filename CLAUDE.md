@@ -246,6 +246,22 @@ so the round-trip survives, and *removes* the property when Canvas no longer
 serves that page as the home page — two headings claiming it is not a state
 Canvas can be in.
 
+### Duplicate-Title Guard (issue #85)
+
+`org-canvas--push-to-api` chooses POST purely on the absence of an id, and every recovery from a partial create (POST succeeded, stamp never written) left the course one sync away from a second copy students could submit to. Before any POST, `org-canvas--push-guard-duplicate` looks the title up and asks adopt/skip/create — `org-canvas--resolve-duplicate` mirrors the conflict machinery: `org-canvas--duplicate-apply-all` (capitals, per run), `org-canvas-duplicate-title-strategy` (the caller's seam; `create` also disables the lookup), skip under `noninteractive`. Adopt stamps the id *and* `CANVAS_UPDATED_AT` from the item before the PUT so the conflict check that follows compares against the item's own clock. The lookup source is `org-canvas--current-remote-titles`: the drift snapshot's title index (now built by `org-canvas--sync-fetch-remote-snapshot` from the same one list request) inside a sync, the symbol `none` when a sync had no snapshot (unregistered feature such as calendar, failed fetch, detection off — check nothing rather than spend a GET per entry), and nil outside a sync, where a single-entry push asks the module's `:find-fn`. The pipeline counts a `duplicate` return as a skip with a named `:skipped-titles` entry; `org-canvas--push-at-point-runtime` reports `conflict`/`pulled`/`duplicate` instead of finalizing a symbol. `org-canvas-diff` reports the same situation as `UNCLAIMED` via `org-canvas--diff-pair-unclaimed`.
+
+### Dry Run Reports Conflicts (issue #84)
+
+The dry-run branch of `org-canvas--sync-execute-pipeline` returns before the push, where the conflict check lives, so it used to count every pending entry as a push. `org-canvas--sync-dry-run-entry` answers from the snapshot in ctx (`:remote-updated` via `org-canvas--sync-remote-newer-at`, `:remote-titles` via `org-canvas--sync-remote-items-titled`) and counts a would-stop entry as `:dry-run-conflict`, which is in `org-canvas--sync-stat-keys` (a key left out is silently dropped — issue #66). Dry-run mode detection is `org-canvas--sync-stats-dry-run-p`, which also consults `org-canvas--dry-run` itself: a run where every pending entry would conflict has a `:dry-run` total of zero.
+
+### The Drift Report Compares Bodies (issue #83)
+
+The description is set directly on the payload, outside the property specs, so `org-canvas-diff` could not see it. Modules that push a body declare `:body-api-key` on `org-canvas-register-properties` (assignments/quizzes `description`, pages `body`, announcements/discussions `message`); pages add `:body-list-params '(("include[]" . "body"))` because the pages index omits bodies unless asked, and quizzes a `:body-fn` because their description is only the text before the first question. Local bodies come from `(org-canvas--export-subtree-body-to-html t)` — the OFFLINE flag skips link *and image* resolution, and image resolution uploads; a report must never write. Both sides go through `org-canvas--diff-html-to-text` (tags dropped, entities decoded, whitespace collapsed) so markup-only differences stay invisible. Its whitespace class is explicit, not `[[:space:]]`: that class goes by the current buffer's syntax table, and in a Lisp buffer newline is comment-end, so the same string normalized differently depending on which buffer was current. A remote item lacking the field, or a failed export, means "not compared", never drift. A CHANGED row with no field differences now carries a line saying the change is in something uncompared.
+
+### Conflict Log Line Names Its Baseline (issue #86)
+
+`org-canvas--conflict-baseline-source` returns `(TIME . LABEL)`; `org-canvas--conflict-baseline` is its car. The conflict warning and the `*canvas-conflict*` buffer print the LABEL (`CANVAS_UPDATED_AT ...` or `#+LAST_SYNCED [...] (entry has no CANVAS_UPDATED_AT)`) rather than re-reading the file header, which was wrong whenever the entry's own stamp was compared and nil whenever POM was a bare position.
+
 ### Global Sync Summary
 
 `org-canvas-sync` ends with a per-type table plus named failed/skipped items, rendered by `org-canvas--sync-log-global-summary`. Feature syncs record stats via `org-canvas--sync-record-feature-stats` — automatic in the macro pipeline (`org-canvas--sync-log-summary`), explicit in the custom syncs (settings, files, overrides). Recording is a no-op outside a global sync (gated on `org-canvas--sync-global-counters`).
@@ -388,7 +404,7 @@ test/
 
 ### Test Coverage Summary
 
-**~2800 tests total** (2791 as of 2026-08-10) covering core utilities, all feature modules, and validation (9 tests skip on Emacs 29.x due to org-mode differences). Line coverage is ~99.5% — the pre-push hook blocks below 99%. Run `eldev test` for the exact current count and `eldev test -u "on,codecov,dontsend" -U coverage/coverage.json` for per-file coverage.
+**~3400 tests total** (3397 as of 2026-09-01) covering core utilities, all feature modules, and validation (9 tests skip on Emacs 29.x due to org-mode differences). Line coverage is ~99.5% — the pre-push hook blocks below 99%. Run `eldev test` for the exact current count and `eldev test -u "on,codecov,dontsend" -U coverage/coverage.json` for per-file coverage.
 
 Largest suites: core-sync, core-org, quizzes, modules, files, new-quizzes, validate (one `org-canvas-{name}-test.el` per module; exact sizes drift, don't track them here).
 
