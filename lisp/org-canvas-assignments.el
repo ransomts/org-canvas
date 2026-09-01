@@ -71,7 +71,13 @@ takes effect on the next `org-canvas-pull-assignments' invocation."
 (org-canvas-register-feature
  :name "Assignments" :endpoint "assignments"
  :file-var 'org-canvas-assignments-file
- :id-field 'id :id-property "CANVAS_ID" :title-field 'name)
+ :id-field 'id :id-property "CANVAS_ID" :title-field 'name
+ ;; A classic quiz drags a shadow assignment behind it; the quiz is the
+ ;; thing the Org files manage (issue #98).
+ :skip-fn (lambda (item)
+            (let ((quiz-id (alist-get 'quiz_id item)))
+              (and quiz-id (not (eq quiz-id :null)))))
+ :skip-reason "a classic quiz's shadow assignment, managed via quizzes.org")
 (org-canvas-register-properties "assignments"
   :label "Assignments"
   :file-var 'org-canvas-assignments-file

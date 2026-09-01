@@ -55,7 +55,13 @@
 (org-canvas-register-feature
  :name "Outcomes" :endpoint "outcome_groups"
  :file-var 'org-canvas-outcomes-file
- :id-field 'id :id-property "CANVAS_ID" :title-field 'title)
+ :id-field 'id :id-property "CANVAS_ID" :title-field 'title
+ ;; Every course has exactly one root group; it cannot be claimed and
+ ;; is not drift (issue #98).
+ :skip-fn (lambda (item)
+            (let ((parent (alist-get 'parent_outcome_group item)))
+              (or (null parent) (eq parent :null))))
+ :skip-reason "the course root outcome group")
 (org-canvas-register-properties "outcome-groups"
   :label "Outcome Groups"
   :file-var 'org-canvas-outcomes-file

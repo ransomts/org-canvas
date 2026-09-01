@@ -1845,6 +1845,43 @@ never uploads anything.  Two deliberate exclusions:
 - Link-typed properties (=GROUP=, =RUBRIC_LINK=) are skipped: the Org side is a
   heading link and the Canvas side an id.
 
+** Reading Zero on a Synced Course
+
+A fully synced course can still hold remote objects that are unclaimed *by
+design*, and a report that flags them forever buries the one extra that
+matters — and pins =org-canvas-diff-batch= at a non-zero exit (#98).  Three
+valves, from broad to narrow:
+
+- *Canvas scaffolding is suppressed structurally.*  The course root outcome
+  group, the stock =Assignments= assignment group (when no heading claims it)
+  and a classic quiz's shadow assignment exist in every course and are never
+  drift.  They are counted in the report's "Not checked" footer line rather
+  than silently dropped.
+- *A feature that is ad hoc by design can opt out.*  If announcements are
+  authored in the web UI on purpose, say so once:
+
+  #+begin_src elisp
+  (setq org-canvas-diff-excluded-features '("announcements"))
+  #+end_src
+
+  The report prints one =not checked= line per excluded feature, so the
+  exclusion stays visible.
+- *Anything else deliberate is acknowledged by id*, with an optional note:
+
+  #+begin_src elisp
+  (setq org-canvas-diff-known-extras
+        '(("files" "31452881" "media embedded in a web-UI announcement")))
+  #+end_src
+
+  Acknowledged ids are excluded from the EXTRA rows and from the total that
+  drives the batch exit code, and reported once as "Acknowledged extras: N".
+  An acknowledged id that no longer exists on Canvas is flagged as
+  =STALE-ACK= — and *does* count as drift — so the list cannot rot.
+
+All three affect the drift report only.  Orphan cleanup and prune still list
+acknowledged items (scaffolding stays protected there by the same skip-fns),
+which is where to look if one of them should be deleted after all.
+
 ** Cost and Safety
 
 One list request per feature.  Nothing is written, locally or on Canvas, so it

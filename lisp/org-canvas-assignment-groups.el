@@ -52,7 +52,13 @@
 (org-canvas-register-feature
  :name "Assignment Groups" :endpoint "assignment_groups"
  :file-var 'org-canvas-assignment-groups-file
- :id-field 'id :id-property "CANVAS_ID" :title-field 'name)
+ :id-field 'id :id-property "CANVAS_ID" :title-field 'name
+ ;; The stock group every new course ships with.  A skip-fn only holds
+ ;; back items no heading claims, so a managed group that happens to be
+ ;; named Assignments is still compared (issue #98); an unmanaged one
+ ;; holding assignments is reported by the after-sync check regardless.
+ :skip-fn (lambda (item) (equal (alist-get 'name item) "Assignments"))
+ :skip-reason "the stock Assignments group every course ships with")
 
 (defun org-canvas--assignment-group-remote-rule (item key)
   "Return KEY from the Canvas assignment group ITEM's `rules' object.
