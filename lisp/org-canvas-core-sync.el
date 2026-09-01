@@ -838,9 +838,8 @@ fails; the caller then falls back to skipping unverified and says so."
     (when feature
       (condition-case err
           (let ((items (append (org-canvas-api-request-all-pages
-                                'GET (org-canvas-api-course-endpoint
-                                      (plist-get feature :endpoint))
-                                (plist-get feature :list-params))
+                                'GET (org-canvas--feature-list-url feature)
+                                (org-canvas--feature-list-params feature))
                                nil)))
             (list :updated (org-canvas--sync-remote-updated-index
                             items (or (plist-get feature :id-field) 'id))

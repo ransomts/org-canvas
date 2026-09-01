@@ -216,6 +216,16 @@ Populated at module load time by `org-canvas-register-feature'.")
   "Register a feature for orphan detection and at-point dispatch.
 PLIST has keys :name :endpoint :file-var :id-field :id-property
 :title-field and optionally :list-params :skip-fn :skip-reason.
+
+A feature that does not list under the course also names a
+`:list-url-fn' (no arguments) and an `:item-url-fn' (one argument,
+the id): calendar events live at a global endpoint (issue #87).  Such
+a feature may give `:list-params' as a function of no arguments when
+the parameters depend on state not known at load time, and a
+`:delete-data' body for the DELETE the orphan cleanup sends.  These
+are resolved in one place — `org-canvas--feature-list-url',
+`org-canvas--feature-item-url', `org-canvas--feature-list-params' —
+which every consumer of the registry goes through.
 `:skip-reason' is a short phrase naming why `:skip-fn' holds an item
 back; the drift report and the orphan scan print it so a suppressed
 item is not silently absent (issue #81).  `:pull-item-fn' is filled in

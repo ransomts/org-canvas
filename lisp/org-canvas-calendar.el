@@ -42,6 +42,41 @@
   :type 'file
   :group 'org-canvas)
 (org-canvas-register-file-var 'org-canvas-calendar-events-file "calendar.org")
+
+;; Calendar events are not course-scoped: they live at the global
+;; /api/v1/calendar_events and are filtered by a context code.  These
+;; three functions are the one spelling of that, shared by the sync, the
+;; search, delete-all and the feature registry (issue #87).
+
+(defun org-canvas--calendar-event-list-url ()
+  "Return the global calendar-events endpoint."
+  (format "%s/api/v1/calendar_events" org-canvas-base-url))
+
+(defun org-canvas--calendar-event-item-url (id)
+  "Return the URL of calendar event ID."
+  (format "%s/api/v1/calendar_events/%s" org-canvas-base-url id))
+
+(defun org-canvas--calendar-event-list-params ()
+  "Return the query parameters that list this course's calendar events.
+A function rather than a constant because the context code embeds
+`org-canvas-course-id', which is not known when this file loads.
+
+`all_events' is essential.  Without it Canvas returns only the events
+dated today — `start_date' defaults to today and `end_date' to
+`start_date' — so prune, delete-all and the title search saw zero
+events on a course that held six (issue #87)."
+  (list (cons "context_codes[]" (format "course_%s" org-canvas-course-id))
+        (cons "type" "event")
+        (cons "all_events" "true")))
+
+(org-canvas-register-feature
+ :name "Calendar Events" :endpoint "calendar_events"
+ :file-var 'org-canvas-calendar-events-file
+ :id-field 'id :id-property "CANVAS_ID" :title-field 'title
+ :list-url-fn #'org-canvas--calendar-event-list-url
+ :item-url-fn #'org-canvas--calendar-event-item-url
+ :list-params #'org-canvas--calendar-event-list-params
+ :delete-data '((cancel_reason . "Deleted by org-canvas")))
 (org-canvas-register-properties "calendar-events"
   :label "Calendar Events"
   :file-var 'org-canvas-calendar-events-file
@@ -106,18 +141,16 @@ Calendar events use global endpoints (not course-scoped)."
   (org-canvas--push-to-api data payload
     :endpoint "calendar_events"
     :find-fn #'org-canvas--calendar-event-search
-    :post-url-fn (lambda () (format "%s/api/v1/calendar_events" org-canvas-base-url))
-    :put-url-fn (lambda (id) (format "%s/api/v1/calendar_events/%s" org-canvas-base-url id))))
+    :post-url-fn #'org-canvas--calendar-event-list-url
+    :put-url-fn #'org-canvas--calendar-event-item-url))
 
 (defun org-canvas--calendar-event-search (title)
   "Search Canvas for a calendar event matching TITLE.
-Returns the matching item alist or nil."
-  (let* ((context-code (format "course_%s" org-canvas-course-id))
-         (url (format "%s/api/v1/calendar_events" org-canvas-base-url))
-         (items (org-canvas-api-request-all-pages
-                 'GET url
-                 `(("context_codes[]" . ,context-code)
-                   ("type" . "event")))))
+Returns the matching item alist or nil.  Lists all of the course's
+events, not only today's (issue #87)."
+  (let ((items (org-canvas-api-request-all-pages
+                'GET (org-canvas--calendar-event-list-url)
+                (org-canvas--calendar-event-list-params))))
     (cl-find-if (lambda (item)
                   (equal (alist-get 'title item) title))
                 items)))
@@ -138,18 +171,13 @@ Returns the matching item alist or nil."
 (org-canvas-define-delete-all calendar-events
   :endpoint "calendar_events"
   :file org-canvas-calendar-events-file
-  :list-url-fn (lambda ()
-                 (format "%s/api/v1/calendar_events" org-canvas-base-url))
-  :list-params (list (cons "context_codes[]" (format "course_%s" org-canvas-course-id))
-                     (cons "type" "event"))
-  :delete-url-fn (lambda (id)
-                   (format "%s/api/v1/calendar_events/%s" org-canvas-base-url id))
+  :list-url-fn #'org-canvas--calendar-event-list-url
+  :list-params (org-canvas--calendar-event-list-params)
+  :delete-url-fn #'org-canvas--calendar-event-item-url
   :delete-data '((cancel_reason . "Deleted by org-canvas")))
 
 (org-canvas-define-delete-at-point calendar-event
-  :delete-url-fn (lambda (id)
-                   (format "%s/api/v1/calendar_events/%s"
-                           org-canvas-base-url id))
+  :delete-url-fn #'org-canvas--calendar-event-item-url
   :delete-data ((cancel_reason . "Deleted by org-canvas")))
 
 ;;;; Pull
@@ -166,15 +194,13 @@ Returns the matching item alist or nil."
 ;;;###autoload
 (defun org-canvas-pull-calendar-events ()
   "Pull calendar events from Canvas into calendar.org.
-Fetches events via the global calendar API filtered by course context code."
+Fetches events via the global calendar API filtered by course context
+code — all of them, not only today's (issue #87)."
   (interactive)
   (org-canvas--start-operation "PULLING CALENDAR EVENTS FROM CANVAS")
-  (let* ((context-code (format "course_%s" org-canvas-course-id))
-         (url (format "%s/api/v1/calendar_events" org-canvas-base-url))
-         (items (org-canvas-api-request-all-pages
-                 'GET url
-                 `(("context_codes[]" . ,context-code)
-                   ("type" . "event"))))
+  (let* ((items (org-canvas-api-request-all-pages
+                 'GET (org-canvas--calendar-event-list-url)
+                 (org-canvas--calendar-event-list-params)))
          (file (expand-file-name org-canvas-calendar-events-file))
          (was-fresh (org-canvas--pull-was-fresh-p file)))
     (org-canvas--pull-confirm-overwrite file "calendar events")

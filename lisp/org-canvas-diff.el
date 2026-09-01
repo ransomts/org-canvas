@@ -370,11 +370,10 @@ request failed."
          (skip-fn (plist-get feature :skip-fn)))
     (condition-case err
         (let* ((items (append (org-canvas-api-request-all-pages
-                               'GET (org-canvas-api-course-endpoint
-                                     (plist-get feature :endpoint))
+                               'GET (org-canvas--feature-list-url feature)
                                ;; e.g. include[]=body — the pages list
                                ;; omits bodies unless asked (issue #83)
-                               (append (plist-get feature :list-params)
+                               (append (org-canvas--feature-list-params feature)
                                        (plist-get props :body-list-params)))
                               nil))
                (index (org-canvas--diff-remote-index items id-field))

@@ -1991,4 +1991,49 @@ while Lab 4 in the same module is still scheduled ahead."
                 (kill-buffer buf)))
         (delete-file temp)))))
 
+;;;; Issue #87: the orphan scan and delete go through the feature URL resolvers
+
+(describe "orphan scan and delete for a global endpoint (issue #87)"
+  (it "lists a global feature at its own URL with its computed params"
+    (let ((file (make-temp-file "orph-87-" nil ".org"))
+          (seen nil))
+      (unwind-protect
+          (progn
+            (with-temp-file file (insert "* Kept\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"))
+            (with-org-canvas-test-config
+              (let ((org-canvas-calendar-events-file file))
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (lambda (_m url &optional params)
+                             (setq seen (cons url params))
+                             '(((id . 1) (title . "Kept")) ((id . 2) (title . "Gone"))))))
+                  (let ((orphans (org-canvas--find-orphans-for-feature
+                                  (org-canvas--registry-find-feature "calendar-events"))))
+                    (expect (mapcar (lambda (o) (alist-get 'id o)) orphans) :to-equal '(2))))
+                (expect (car seen)
+                        :to-equal (concat test-org-canvas-base-url "/api/v1/calendar_events"))
+                (expect (assoc "context_codes[]" (cdr seen))
+                        :to-equal '("context_codes[]" . "course_99999"))
+                (expect (assoc "all_events" (cdr seen)) :to-be-truthy))))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file))))
+
+  (it "deletes a global feature's orphan at its item URL with its body"
+    (with-org-canvas-test-config
+      (let ((calls nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest args)
+                     (push (list method url (plist-get args :data)) calls)
+                     nil)))
+          (org-canvas--orphan-delete-all
+           (list (cons (org-canvas--registry-find-feature "calendar-events")
+                       '(((id . 2) (title . "Gone"))))
+                 (cons (org-canvas--registry-find-feature "assignments")
+                       '(((id . 9) (name . "Old")))))))
+        (expect calls :to-contain
+                (list 'DELETE (concat test-org-canvas-base-url "/api/v1/calendar_events/2")
+                      '((cancel_reason . "Deleted by org-canvas"))))
+        ;; A course-scoped feature still deletes as before, with no body.
+        (expect calls :to-contain
+                (list 'DELETE (org-canvas-api-course-endpoint "assignments/%s" 9) nil))))))
+
 ;;; org-canvas-test.el ends here

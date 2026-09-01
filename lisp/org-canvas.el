@@ -641,8 +641,7 @@ its feature has no pull-item function to refresh a heading with."
 (defun org-canvas--pull-at-point-1 (feature id title)
   "Overwrite the heading at point with FEATURE's Canvas item ID.
 TITLE names the heading in the log."
-  (let* ((endpoint (org-canvas-api-course-endpoint
-                    (format "%s/%%s" (plist-get feature :endpoint)) id))
+  (let* ((endpoint (org-canvas--feature-item-url feature id))
          (remote (org-canvas-api-request 'GET endpoint)))
     (org-canvas--conflict-pull-local
      (list :pom (point-marker)) remote (plist-get feature :pull-item-fn))
@@ -830,11 +829,9 @@ FEATURE is a plist from `org-canvas--feature-registry'.
 Returns a list of orphaned items (alists from the Canvas API),
 or nil if no orphans found."
   (let* ((name (plist-get feature :name))
-         (endpoint (plist-get feature :endpoint))
          (file-var (plist-get feature :file-var))
          (id-field (plist-get feature :id-field))
          (id-property (plist-get feature :id-property))
-         (list-params (plist-get feature :list-params))
          (skip-fn (plist-get feature :skip-fn))
          (file (and (boundp file-var) (symbol-value file-var))))
     (unless file
@@ -842,9 +839,9 @@ or nil if no orphans found."
       (cl-return-from org-canvas--find-orphans-for-feature nil))
     (let ((local-ids (org-canvas--collect-local-ids file id-property)))
       (condition-case err
-          (let* ((url (org-canvas-api-course-endpoint endpoint))
+          (let* ((url (org-canvas--feature-list-url feature))
                  (remote-items (org-canvas-api-request-all-pages
-                                'GET url list-params)))
+                                'GET url (org-canvas--feature-list-params feature))))
             (org-canvas--log-protected-items
              name remote-items skip-fn (plist-get feature :skip-reason))
             (org-canvas--filter-orphans remote-items local-ids id-field skip-fn))
@@ -892,15 +889,15 @@ ALL-ORPHANS is a list of (FEATURE . ITEMS) pairs."
     (let* ((feature (car entry))
            (orphans (cdr entry))
            (name (plist-get feature :name))
-           (endpoint (plist-get feature :endpoint))
+           (delete-data (plist-get feature :delete-data))
            (id-field (plist-get feature :id-field)))
       (dolist (item orphans)
         (let* ((id (alist-get id-field item))
-               (url (org-canvas-api-course-endpoint
-                     (format "%s/%%s" endpoint) id)))
+               (url (org-canvas--feature-item-url feature id)))
           (condition-case err
               (progn
-                (org-canvas-api-request 'DELETE url)
+                (apply #'org-canvas-api-request 'DELETE url
+                       (and delete-data (list :data delete-data)))
                 (org-canvas--log-info org-canvas--logger
                   "[Orphan] Deleted %s #%s" name id))
             (error

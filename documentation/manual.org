@@ -1686,7 +1686,7 @@ same situation from the other side, as *UNCLAIMED* (see [[*Drift Report][Drift R
 
 ** Scope
 
-Conflict detection applies automatically to all modules using the shared =org-canvas--push-to-api= helper: assignments, pages, discussions, announcements, assignment groups, and rubrics.  The pre-skip drift check covers every module that runs through =org-canvas-define-sync=, which additionally includes modules and calendar events.  Modules with fully custom sync loops (files, quizzes, new quizzes, outcomes, overrides) are not covered by either.
+The per-update conflict check applies to every module whose push goes through the shared =org-canvas--push-to-api= helper: assignments, pages, discussions, announcements, assignment groups, rubrics, group categories, modules, quizzes and calendar events.  The pre-skip drift check, the dry-run conflict preview and the duplicate-title guard all read the remote snapshot, which exists for every module that both runs through =org-canvas-define-sync= and is in the feature registry -- since #87 that includes calendar events, which list from the global =/api/v1/calendar_events= endpoint rather than under the course.  Modules with fully custom sync loops (files, quizzes, new quizzes, outcomes, overrides) take no snapshot; files run their own conflict check.
 
 * Publishing a Week
 
@@ -1824,6 +1824,11 @@ never uploads anything.  Two deliberate exclusions:
 
 One list request per feature.  Nothing is written, locally or on Canvas, so it
 is safe to run at any time.
+
+Calendar events are covered too.  They list from the global calendar endpoint
+with =all_events=true=; without that parameter Canvas returns only the events
+dated today, which is why =org-canvas-pull-calendar-events=, the calendar
+prune and delete-all used to see an empty course (#87).
 
 ** Scheduled Checking
 
