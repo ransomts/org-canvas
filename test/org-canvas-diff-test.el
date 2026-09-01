@@ -913,5 +913,24 @@ The remote updated_at is always newer than the baseline."
       (expect (plist-get d :remote-newer) :to-be-truthy)
       (expect (plist-get d :updated) :to-equal "2026-09-01T09:00:00Z"))))
 
+(describe "org-canvas--diff-compare-fields :compare-p (issue #93)"
+  (it "skips a property whose predicate says there is no opinion to compare"
+    (with-temp-org-buffer "* E\n:PROPERTIES:\n:ALL_DAY: true\n:END:\n"
+      (org-back-to-heading)
+      (let ((specs `((:org-prop "ALL_DAY" :data-key :all_day :type boolean
+                      :compare-p ,(lambda (_pom _item) nil)))))
+        (expect (org-canvas--diff-compare-fields specs (point)
+                                                 '((all_day . :json-false)))
+                :to-be nil))))
+
+  (it "compares as before when the predicate agrees"
+    (with-temp-org-buffer "* E\n:PROPERTIES:\n:ALL_DAY: true\n:END:\n"
+      (org-back-to-heading)
+      (let ((specs `((:org-prop "ALL_DAY" :data-key :all_day :type boolean
+                      :compare-p ,(lambda (_pom _item) t)))))
+        (expect (org-canvas--diff-compare-fields specs (point)
+                                                 '((all_day . :json-false)))
+                :to-equal '(("ALL_DAY" "true" "false")))))))
+
 (provide 'org-canvas-diff-test)
 ;;; org-canvas-diff-test.el ends here

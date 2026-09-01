@@ -831,4 +831,78 @@ Drop by.
         (expect (car seen) :to-equal (concat test-org-canvas-base-url "/api/v1/calendar_events"))
         (expect (assoc "all_events" (cdr seen)) :to-be-truthy)))))
 
+(describe "ALL_DAY on a multi-day span (issue #93)"
+  (it "is not a comparable opinion for a span"
+    (with-temp-org-buffer "* Break
+:PROPERTIES:
+:START_AT: <2026-11-25 Wed 00:00>
+:END_AT: <2026-11-27 Fri 23:59>
+:ALL_DAY: true
+:END:
+"
+      (org-back-to-heading)
+      (expect (org-canvas--calendar-all-day-comparable-p (point) nil) :to-be nil)))
+
+  (it "stays comparable for a single day, or with no end"
+    (with-temp-org-buffer "* Exam
+:PROPERTIES:
+:START_AT: <2026-10-12 Mon 00:00>
+:END_AT: <2026-10-12 Mon 23:59>
+:ALL_DAY: true
+:END:
+"
+      (org-back-to-heading)
+      (expect (org-canvas--calendar-all-day-comparable-p (point) nil) :to-be-truthy))
+    (with-temp-org-buffer "* Exam
+:PROPERTIES:
+:START_AT: <2026-10-12 Mon 09:00>
+:END:
+"
+      (org-back-to-heading)
+      (expect (org-canvas--calendar-all-day-comparable-p (point) nil) :to-be-truthy)))
+
+  (it "declares the predicate and the validator in the registry"
+    (let* ((props (gethash "calendar-events" org-canvas--property-registry))
+           (all-day (cl-find "ALL_DAY" (plist-get props :properties)
+                             :key (lambda (s) (plist-get s :org-prop))
+                             :test #'string=)))
+      (expect (plist-get all-day :compare-p)
+              :to-be 'org-canvas--calendar-all-day-comparable-p)
+      (expect (plist-get props :structural-fn)
+              :to-be #'org-canvas--validate-all-day-span)))
+
+  (it "keeps a span out of the drift report even when Canvas holds all_day false"
+    (let ((file (make-temp-file "cal-93-" nil ".org"))
+          ;; The remote times must equal the local ones however the test
+          ;; machine's timezone falls, so they are computed, not pinned.
+          (start-iso (org-canvas-org-parse-timestamp "<2026-11-25 Wed 00:00>"))
+          (end-iso (org-canvas-org-parse-timestamp "<2026-11-27 Fri 23:59>")))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "* No Class: Thanksgiving Break\n:PROPERTIES:\n"
+                      ":CANVAS_ID: 1477911\n"
+                      ":START_AT: <2026-11-25 Wed 00:00>\n"
+                      ":END_AT: <2026-11-27 Fri 23:59>\n"
+                      ":ALL_DAY: true\n"
+                      ":CANVAS_UPDATED_AT: 2026-08-20T19:01:38Z\n:END:\n"))
+            (let ((org-canvas-calendar-events-file file))
+              (with-org-canvas-test-config
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (lambda (&rest _)
+                             `(((id . 1477911)
+                                (title . "No Class: Thanksgiving Break")
+                                (all_day . :json-false)
+                                (all_day_date . "2026-11-25")
+                                (start_at . ,start-iso)
+                                (end_at . ,end-iso)
+                                (updated_at . "2026-08-20T19:01:38Z"))))))
+                  (expect (plist-get (org-canvas--diff-feature
+                                      (org-canvas--registry-find-feature
+                                       "calendar-events"))
+                                     :divergences)
+                          :to-be nil)))))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file)))))
+
 ;;; org-canvas-calendar-test.el ends here

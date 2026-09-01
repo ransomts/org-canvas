@@ -35,7 +35,11 @@
 ;; Only properties actually written in the Org file are compared.  An
 ;; absent property means the file expresses no opinion, and each module
 ;; applies its own default at parse time, so treating absence as a value
-;; would invent differences that no sync would act on.
+;; would invent differences that no sync would act on.  A spec may also
+;; name a `:compare-p' predicate of (POM ITEM) saying whether the
+;; property is a comparable opinion at all: Canvas drops ALL_DAY on a
+;; calendar event spanning days — the times are kept, the flag is not —
+;; so comparing it would flag the entry on every run, forever (#93).
 ;;
 ;; COST AND SAFETY
 ;; ===============
@@ -136,12 +140,17 @@ and `append' on a string yields character codes, which is how
   "Compare the properties at POM against Canvas ITEM using SPECS.
 Returns a list of (ORG-PROP LOCAL REMOTE) for the ones that differ.
 Only properties actually present in the Org file are considered — see
-the commentary on why absence is not a value."
+the commentary on why absence is not a value — and a spec's
+`:compare-p' predicate, when it declares one, can rule the property
+out for this entry: ALL_DAY on a multi-day calendar event cannot
+round-trip, so it is no one's opinion to compare (issue #93)."
   (let (diffs)
     (dolist (spec specs)
       (let ((type (plist-get spec :type))
+            (compare-p (plist-get spec :compare-p))
             (org-prop (plist-get spec :org-prop)))
-        (when (memq type org-canvas--diff-comparable-types)
+        (when (and (memq type org-canvas--diff-comparable-types)
+                   (or (null compare-p) (funcall compare-p pom item)))
           (let ((local (org-entry-get pom org-prop)))
             (when (and local (not (string-empty-p local)))
               (let ((remote (org-canvas--diff-remote-field spec item)))

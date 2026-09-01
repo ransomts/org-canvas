@@ -2968,5 +2968,23 @@ Page content.
          (expect links :to-be t)
          (expect images :to-be t))))))
 
+(describe "org-canvas--org-timestamps-span-days-p (issue #93)"
+  (it "reads the date as written, so local days survive UTC"
+    (expect (org-canvas--org-timestamp-date "<2026-11-25 Wed 00:00>")
+            :to-equal "2026-11-25")
+    (expect (org-canvas--org-timestamp-date "no date here") :to-be nil)
+    (expect (org-canvas--org-timestamp-date nil) :to-be nil))
+
+  (it "tells a span from a single day"
+    (expect (org-canvas--org-timestamps-span-days-p
+             "<2026-11-25 Wed 00:00>" "<2026-11-27 Fri 23:59>")
+            :to-be-truthy)
+    (expect (org-canvas--org-timestamps-span-days-p
+             "<2026-11-25 Wed 00:00>" "<2026-11-25 Wed 23:59>")
+            :to-be nil)
+    (expect (org-canvas--org-timestamps-span-days-p
+             "<2026-11-25 Wed 00:00>" nil)
+            :to-be nil)))
+
 (provide 'org-canvas-core-org-test)
 ;;; org-canvas-core-org-test.el ends here
