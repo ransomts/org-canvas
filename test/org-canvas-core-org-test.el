@@ -2986,5 +2986,86 @@ Page content.
              "<2026-11-25 Wed 00:00>" nil)
             :to-be nil)))
 
+(describe "org-canvas--ensure-buffer-fresh (issue #97)"
+  (defun test-fresh-97--make-stale (file)
+    "Rewrite FILE behind the current buffer and make the modtime differ."
+    (with-temp-file file (insert "* New heading\n"))
+    (set-file-times file (time-add (current-time) 5)))
+
+  (it "rereads an unmodified stale buffer before writing, in batch"
+    (let ((file (make-temp-file "fresh-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file (insert "* Old heading\n"))
+            (with-current-buffer (find-file-noselect file)
+              (unwind-protect
+                  (progn
+                    (test-fresh-97--make-stale file)
+                    (expect (verify-visited-file-modtime (current-buffer))
+                            :to-be nil)
+                    (let ((noninteractive t))
+                      (org-canvas--ensure-buffer-fresh))
+                    (expect (buffer-string) :to-equal "* New heading\n")
+                    (expect (verify-visited-file-modtime (current-buffer))
+                            :to-be-truthy))
+                (kill-buffer))))
+        (delete-file file))))
+
+  (it "refuses, with a clear error, when the stale buffer holds edits"
+    (let ((file (make-temp-file "fresh-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file (insert "* Old heading\n"))
+            (with-current-buffer (find-file-noselect file)
+              (unwind-protect
+                  (progn
+                    (goto-char (point-max))
+                    (insert "local edit\n")
+                    (test-fresh-97--make-stale file)
+                    (let ((noninteractive t))
+                      (expect (org-canvas--ensure-buffer-fresh)
+                              :to-throw 'error))
+                    ;; The local edit survives; nothing was clobbered.
+                    (expect (buffer-string) :to-match "local edit"))
+                (set-buffer-modified-p nil)
+                (kill-buffer))))
+        (delete-file file))))
+
+  (it "leaves a fresh buffer, and any interactive session, alone"
+    (let ((file (make-temp-file "fresh-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file (insert "* Old heading\n"))
+            (with-current-buffer (find-file-noselect file)
+              (unwind-protect
+                  (progn
+                    (let ((noninteractive t))
+                      (expect (org-canvas--ensure-buffer-fresh) :to-be nil))
+                    (test-fresh-97--make-stale file)
+                    ;; Interactive: Emacs's own protection stays in charge.
+                    (let ((noninteractive nil))
+                      (org-canvas--ensure-buffer-fresh))
+                    (expect (buffer-string) :to-equal "* Old heading\n"))
+                (kill-buffer))))
+        (delete-file file))))
+
+  (it "lets a property write land on the reread content"
+    (let ((file (make-temp-file "fresh-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file (insert "* Old heading\n"))
+            (with-current-buffer (find-file-noselect file)
+              (unwind-protect
+                  (progn
+                    (test-fresh-97--make-stale file)
+                    (let ((noninteractive t))
+                      (org-canvas-org-set-property (point-min) "CANVAS_ID" "9"))
+                    (expect (buffer-string) :to-match "\\* New heading")
+                    (expect (org-entry-get (point-min) "CANVAS_ID")
+                            :to-equal "9"))
+                (set-buffer-modified-p nil)
+                (kill-buffer))))
+        (delete-file file)))))
+
 (provide 'org-canvas-core-org-test)
 ;;; org-canvas-core-org-test.el ends here

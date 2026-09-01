@@ -136,6 +136,7 @@ safety saves after per-item saves would otherwise log duplicate
 \[Saved] lines for writes that never happened.  When the current buffer
 has no associated file (e.g., a scratch buffer used for HTML export)
 the save still happens but no log line is emitted."
+  (org-canvas--ensure-buffer-fresh)
   (when (buffer-modified-p)
     (save-buffer)
     (when buffer-file-name
@@ -156,9 +157,31 @@ ID-PROPERTY defaults to \"CANVAS_ID\"."
          (format "%s={.}" id-prop) 'file)
         (org-canvas--save-buffer)))))
 
+(defun org-canvas--ensure-buffer-fresh ()
+  "Under `noninteractive', reconcile the current buffer with its file.
+A course file rewritten on disk behind a buffer trips Emacs's
+\"changed on disk; really edit the buffer?\" protection, and a batch
+Emacs cannot answer it — the run dies reading input, after the API
+call already landed (issue #97).  An unmodified stale buffer is simply
+reread: the writer just saved it.  A modified stale buffer is a
+dual-buffer clobber in progress, so this signals a clear error instead
+of letting the unanswerable prompt kill the run.  Interactive sessions
+keep Emacs's own protection and are left alone."
+  (when (and noninteractive
+             buffer-file-name
+             (not (verify-visited-file-modtime (current-buffer))))
+    (if (buffer-modified-p)
+        (error "%s changed on disk while this buffer holds unsaved edits — refusing to write over either (issue #97: two buffers for one file, usually a symlinked org-canvas-directory)"
+               (file-name-nondirectory buffer-file-name))
+      (org-canvas--log-info org-canvas--logger
+        "[Fresh] %s changed on disk; rereading it before writing"
+        (file-name-nondirectory buffer-file-name))
+      (revert-buffer t t t))))
+
 (defun org-canvas-org-set-property (pom property value)
   "Set Org PROPERTY to VALUE at POM (point or marker).
 Ensures the correct buffer is used if POM is a marker.
+<<<<>>>>
 
 Binds `org-property-format' to \"%s %s\" so property names shorter than
 10 characters are not padded with extra spaces (e.g. `:LICENSE:  private'
@@ -166,6 +189,7 @@ with two spaces).  We always emit a single space between the property
 name and value for consistent diffs and easier scripting."
   (let ((buf (if (markerp pom) (marker-buffer pom) (current-buffer))))
     (with-current-buffer buf
+      (org-canvas--ensure-buffer-fresh)
       (save-excursion
 	(goto-char pom)
         (let ((org-property-format "%s %s"))

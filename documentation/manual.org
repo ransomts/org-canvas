@@ -124,7 +124,17 @@ Each file path is configured via a variable:
 | =org-canvas-calendar-events-file=   | =calendar.org=             |
 | =org-canvas-sections-file=          | =sections.org=             |
 
-All paths are relative to =org-canvas-directory=.
+All paths are relative to =org-canvas-directory=, and are resolved to their
+truename: if the directory setting goes through a symlink, org-canvas opens
+every course file under the real path, so one file is always one buffer no
+matter which spelling a caller uses.  Before this, a batch script that
+=find-file='d a course file under the other spelling got a second buffer for
+the same file — every API call landed, only the local stamping died on
+Emacs's unanswerable changed-on-disk prompt, and the script's final save
+clobbered stamps the sync had written (#97).  In batch, org-canvas also
+rereads its own unmodified buffers when the file changed on disk, and refuses
+with a clear error — rather than dying on the prompt — when such a buffer
+holds unsaved edits.
 
 * Sync Order and Dependencies
 
