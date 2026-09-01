@@ -267,15 +267,17 @@ labels them \"Assignment Groups\"."
 
 (defun org-canvas--registry-feature-for-file (file)
   "Return the feature registry entry whose file is FILE, or nil.
-Matches on the expanded path of the feature's `:file-var', so a command
-run in a course buffer can tell which feature it is looking at without
-being told."
+Matches on the truename of the feature's `:file-var', so a command run
+in a course buffer can tell which feature it is looking at without
+being told — whichever spelling of a symlinked directory either side
+uses (issue #97)."
   (when file
-    (let ((file (expand-file-name file)))
+    (let ((file (file-truename (expand-file-name file))))
       (cl-find-if (lambda (f)
                     (let ((var (plist-get f :file-var)))
                       (and var (boundp var) (symbol-value var)
-                          (string= file (expand-file-name (symbol-value var))))))
+                          (string= file (file-truename
+                                         (expand-file-name (symbol-value var)))))))
                   org-canvas--feature-registry))))
 
 (defun org-canvas--recompute-file-paths ()
@@ -375,7 +377,15 @@ Each spec has :label, :file, :query, :properties, :date-order,
 (defun org-canvas--path (filename)
   "Return the absolute path to FILENAME in `org-canvas-directory`.
 Falls back to `org-directory` or `user-emacs-directory`
-if `org-canvas-directory` is not set, and warns about the fallback."
+if `org-canvas-directory` is not set, and warns about the fallback.
+
+The result is a truename (`file-truename'), so one inode always means
+one spelling and therefore one buffer.  A symlinked
+`org-canvas-directory' used to hand a batch caller who opened the same
+file under the other spelling a second buffer for the same file: every
+PUT landed, only the local stamping died on the unanswerable
+changed-on-disk prompt, and the caller's final save clobbered stamps
+the sync had already written (issue #97)."
   (let* ((dir-set (and org-canvas-directory
                        (not (string-empty-p org-canvas-directory))))
          (base (if dir-set
@@ -385,7 +395,7 @@ if `org-canvas-directory` is not set, and warns about the fallback."
       (when (boundp 'org-canvas--logger)
         (org-canvas--log-warning org-canvas--logger
           "[Config] org-canvas-directory not set, falling back to %s" base)))
-    (expand-file-name filename base)))
+    (file-truename (expand-file-name filename base))))
 
 ;;;; 2. Logging Layer
 

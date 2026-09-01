@@ -5362,5 +5362,49 @@ Returns what `org-canvas--current-remote-titles' was during the push."
       (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
               :to-equal "2026-08-31T18:34:37Z"))))
 
+(describe "stamp failure after a landed push (issue #97)"
+  (it "says the PUT landed and only the stamp failed, in the pipeline"
+    (with-temp-org-buffer "* Lab 1\n"
+      (org-back-to-heading)
+      (let* ((logged nil)
+             (counters (list :success 0 :skip 0 :fail 0))
+             (ctx (list :parse-fn (lambda () (list :title "Lab 1" :canvas-id "61"
+                                                   :pom (point-marker)))
+                        :build-fn (lambda (_d) '((name . "x")))
+                        :push-fn (lambda (_d _p) '((id . 61)))
+                        :finalize-fn (lambda (_d _r) (error "disk full"))
+                        :feature-name "assignments" :feature-upper "ASSIGNMENTS"
+                        :total-count 1 :counters counters :synced-ids (list nil))))
+        (cl-letf (((symbol-function 'org-canvas--log-error)
+                   (lambda (_l fmt &rest args) (push (apply #'format fmt args) logged)))
+                  ((symbol-function 'message) #'ignore))
+          (org-canvas--sync-process-entry (point-marker) ctx))
+        (expect (plist-get counters :fail) :to-equal 1)
+        (expect (cl-find-if
+                 (lambda (l)
+                   (string-match-p "\\[Stamp\\] The push of 'Lab 1' landed on Canvas" l))
+                 logged)
+                :to-be-truthy))))
+
+  (it "says the same for a single-entry push"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer "* Lab 1\n"
+        (org-back-to-heading)
+        (let ((logged nil))
+          (cl-letf (((symbol-function 'display-buffer) #'ignore)
+                    ((symbol-function 'org-canvas--log-error)
+                     (lambda (_l fmt &rest args) (push (apply #'format fmt args) logged)))
+                    ((symbol-function 'message) #'ignore))
+            (condition-case nil
+                (org-canvas--push-at-point-runtime
+                 "assignment"
+                 (lambda () (list :title "Lab 1" :canvas-id "61" :pom (point)))
+                 (lambda (_d) '((name . "x")))
+                 (lambda (_d _p) '((id . 61)))
+                 (lambda (_d _r) (error "disk full"))
+                 :title nil)
+              (error nil)))
+          (expect (car logged) :to-match "\\[Stamp\\].*landed on Canvas"))))))
+
 (provide 'org-canvas-core-sync-test)
 ;;; org-canvas-core-sync-test.el ends here

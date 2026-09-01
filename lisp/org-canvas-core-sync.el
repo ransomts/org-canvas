@@ -261,7 +261,17 @@ for the echo-area line."
        (message "%s [%d/%d] SKIPPED: '%s' (title already on Canvas)"
          cap-feature progress total-count title))
       (_
-       (org-canvas--sync-finalize-push response data payload-hash ctx)))))
+       (condition-case err
+           (org-canvas--sync-finalize-push response data payload-hash ctx)
+         (error
+          ;; The API call landed; only the local bookkeeping failed.  Say
+          ;; exactly that, or the operator reads the [FAILED] line as a
+          ;; push that never happened and a re-run walks into phantom
+          ;; drift (issue #97).
+          (org-canvas--log-error org-canvas--logger
+            "[Stamp] The push of '%s' landed on Canvas, but stamping the file failed: %s — the entry still carries its old CANVAS_UPDATED_AT and PAYLOAD_HASH, so the next sync will report drift that is not real"
+            title (error-message-string err))
+          (signal (car err) (cdr err))))))))
 
 (defun org-canvas--dry-run-decision-note (variable)
   "Return a note on how a real sync would settle a stop, from VARIABLE.
@@ -1452,9 +1462,17 @@ HASH-EXTRA-FN, when non-nil, is folded into the payload hash
         (if (memq response '(conflict pulled duplicate))
             (org-canvas--push-at-point-report-stop feature-name title response)
           (org-canvas--log-info org-canvas--logger "[Stage 4: Finalize] '%s'" title)
-          (funcall finalize-fn data response)
-          (org-canvas-org-set-property (point) org-canvas--prop-payload-hash payload-hash)
-          (org-canvas--save-buffer)
+          (condition-case err
+              (progn
+                (funcall finalize-fn data response)
+                (org-canvas-org-set-property (point) org-canvas--prop-payload-hash payload-hash)
+                (org-canvas--save-buffer))
+            (error
+             ;; The push landed; only the stamp died (issue #97).
+             (org-canvas--log-error org-canvas--logger
+               "[Stamp] The push of '%s' landed on Canvas, but stamping the file failed: %s — the entry still carries its old CANVAS_UPDATED_AT and PAYLOAD_HASH, so the next sync will report drift that is not real"
+               title (error-message-string err))
+             (signal (car err) (cdr err))))
           (org-canvas--log-info org-canvas--logger "[Sync] '%s' synced successfully" title)
           (message "%s '%s' synced." (capitalize feature-name) title))))))
 

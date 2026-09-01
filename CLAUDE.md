@@ -334,6 +334,8 @@ Module items skipped because their target lacked a CANVAS_ID are tracked in `org
 - Always `org-back-to-heading t` before property access
 - Use markers for safe position tracking
 - Save buffer after modifications
+- `org-canvas--path` returns truenames — one inode, one buffer. A symlinked `org-canvas-directory` spelling used to give a batch caller a dual buffer: every PUT landed, only the stamps died on the unanswerable changed-on-disk prompt, and the caller's final save clobbered stamps the sync had written (issue #97). `org-canvas--registry-feature-for-file` compares truenames for the same reason
+- `org-canvas--ensure-buffer-fresh` guards `org-canvas-org-set-property` and `org-canvas--save-buffer` in batch: an unmodified stale buffer is reverted (`[Fresh]` log), a modified stale one signals a clear error instead of the prompt. A finalize failure after a successful API call logs `[Stamp]` naming the phantom-drift consequence — the [FAILED] line alone reads as a push that never happened
 
 ## Key Files
 

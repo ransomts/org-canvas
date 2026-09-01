@@ -654,5 +654,35 @@
            (list (list :name "Ghost" :file-var 'org-canvas--no-such-file-var))))
       (expect (org-canvas--registry-feature-for-file "/tmp/x.org") :to-be nil))))
 
+(describe "org-canvas--path truename (issue #97)"
+  (it "resolves a symlinked org-canvas-directory to one spelling"
+    (let* ((real (file-name-as-directory (make-temp-file "canvas-real-" t)))
+           (link (concat (make-temp-file "canvas-link-") "-ln")))
+      (unwind-protect
+          (progn
+            (make-symbolic-link (directory-file-name real) link)
+            (let ((org-canvas-directory link))
+              (expect (org-canvas--path "assignments.org")
+                      :to-equal (file-truename
+                                 (expand-file-name "assignments.org" real)))))
+        (delete-file link)
+        (delete-directory real t)))))
+
+(describe "org-canvas--registry-feature-for-file truename (issue #97)"
+  (it "matches a course file through another spelling of its directory"
+    (let* ((real (file-name-as-directory (make-temp-file "canvas-real-" t)))
+           (link (concat (make-temp-file "canvas-link-") "-ln")))
+      (unwind-protect
+          (progn
+            (make-symbolic-link (directory-file-name real) link)
+            (let ((org-canvas-assignments-file
+                   (expand-file-name "assignments.org" link)))
+              (expect (plist-get (org-canvas--registry-feature-for-file
+                                  (expand-file-name "assignments.org" real))
+                                 :name)
+                      :to-equal "Assignments")))
+        (delete-file link)
+        (delete-directory real t)))))
+
 (provide 'org-canvas-core-config-test)
 ;;; org-canvas-core-config-test.el ends here
