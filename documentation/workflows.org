@@ -137,7 +137,7 @@ Time: 30-60 minutes.  Mostly updating dates.
 2. *Strip sync state* so everything is created fresh:
 
    #+begin_src bash
-   sed -i '/:CANVAS_ID:/d; /:CANVAS_URL:/d; /:LAST_SYNCED:/d; /:CANVAS_UPDATED_AT:/d; /:PAYLOAD_HASH:/d' *.org
+   sed -i '/:CANVAS_ID:/d; /:CANVAS_URL:/d; /:LAST_SYNCED:/d; /:CANVAS_UPDATED_AT:/d; /:PAYLOAD_HASH:/d; /^#+LAST_SYNCED:/d' *.org
    #+end_src
 
 3. *Update dates.*  Search for timestamps and adjust to the new semester.  Don't forget override tables in =assignments.org=.
@@ -476,7 +476,7 @@ See [[*Copying from a Previous Semester]] above.  The key steps:
 
 1. Copy the directory.
 2. Update credentials with the new course ID.
-3. Strip =CANVAS_ID=, =LAST_SYNCED=, =CANVAS_UPDATED_AT=, and =PAYLOAD_HASH= from all headings.
+3. Strip =CANVAS_ID= (=CANVAS_URL= for pages), =CANVAS_UPDATED_AT= and =PAYLOAD_HASH= from all headings, and the =#+LAST_SYNCED= header from each file (the =sed= above does all of it, including any per-entry =LAST_SYNCED= older files still carry).
 4. Update all dates.
 5. Validate and push.
 

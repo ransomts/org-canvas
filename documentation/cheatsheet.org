@@ -9,7 +9,7 @@
 | Key (in dispatch) | Command                 | Description                 |
 |-------------------+-------------------------+-----------------------------|
 | =s s=               | =org-canvas-sync=         | Sync all (with conflicts)   |
-| =s d=               | =org-canvas-sync-dry-run= | Preview sync (no API calls) |
+| =s d=               | =org-canvas-sync-dry-run= | Preview sync (reads, never writes) |
 | =s f=               | =org-canvas-force-push=   | Sync all, skip conflicts    |
 | =s @=               | /sync-at-point submenu/   | Sync single heading         |
 
@@ -65,8 +65,7 @@ Open the dispatch menu: =M-x org-canvas-dispatch=
 | Property          | Type    | Description                         |
 |-------------------+---------+-------------------------------------|
 | =CANVAS_ID=         | auto    | Canvas ID (set after sync)          |
-| =LAST_SYNCED=       | auto    | Last sync timestamp                 |
-| =CANVAS_UPDATED_AT= | auto    | Remote modification time            |
+| =CANVAS_UPDATED_AT= | auto    | Remote modification time (conflict baseline) |
 | =PAYLOAD_HASH=      | auto    | Hash for skip-if-unchanged          |
 | =PUBLISHED=         | boolean | Visible to students (default: =true=) |
 

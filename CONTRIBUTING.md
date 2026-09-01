@@ -20,7 +20,7 @@ Thank you for your interest in contributing! This guide covers the development w
 4. **Verify your setup**:
    ```bash
    eldev compile     # Verify everything builds
-   eldev test        # Run all ~2361 specs
+   eldev test        # Run all ~3400 specs
    eldev lint        # Run linter (must be clean)
    eldev complexity  # Check cognitive complexity
    ```

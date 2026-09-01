@@ -253,10 +253,40 @@ module's pull function.
 
 Modules with =:pull-item-fn=: announcements, pages, discussions,
 assignments, assignment-groups, rubrics, group-categories, calendar
-events.
+events, and modules (whose pull-item also replaces the child item
+headings from the remote list).  Files have a custom sync loop and
+register theirs directly with =org-canvas-register-pull-item-fn=.
 
-Modules without (too complex for automatic conflict pull): outcomes,
-files, quizzes, new-quizzes, modules.
+Modules without (no single-item pull): outcomes, quizzes, new-quizzes.
+
+* Pull at Point
+
+=org-canvas-pull-at-point= (issue #67) refreshes the single heading at
+point from Canvas -- no conflict prompt, and none of the whole-file
+pull's overwriting of every other heading.  It is how a change that
+=org-canvas-diff= names gets accepted.
+
+Dispatch is generic.  =org-canvas--registry-feature-for-file= maps the
+current buffer's file to its feature registry entry, whose
+=:pull-item-fn= was recorded by =org-canvas-register-pull-item-fn= from
+whichever of =org-canvas-define-sync= or =org-canvas-define-pull= the
+module uses, so declaring the function once covers it.  The feature
+must be in the registry: the recording is a documented no-op otherwise,
+which is why calendar events had no pull-at-point until #87 registered
+them.  The item is fetched from =org-canvas--feature-item-url=, so a
+feature with a global endpoint names an =:item-url-fn= (see
+api-interaction.org).
+
+The fetched item goes through =org-canvas--conflict-pull-local=, the
+same path the conflict prompt's pull option takes, which stamps
+=CANVAS_UPDATED_AT= and drops the stale =PAYLOAD_HASH=.  Doing either
+by hand gets the entry re-flagged as drifted on every later sync while
+looking clean.
+
+A module with no pull-item function (outcomes, quizzes, new quizzes)
+gets a =user-error= naming the whole-file command to use instead.  The
+generated =org-canvas-pull-<feature>= commands also take a prefix
+argument that restricts the pull to ids the file already claims.
 
 * Module-Specific Pull Implementations
 

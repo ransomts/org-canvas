@@ -38,6 +38,26 @@ Create =lisp/org-canvas-{feature}.el= with this skeleton:
   "Path to the {features}.org file."
   :type 'file
   :group 'org-canvas)
+(org-canvas-register-file-var 'org-canvas-{feature}s-file "{features}.org")
+
+;; The feature registry drives the drift check, the dry-run conflict
+;; preview, the duplicate-title guard, org-canvas-diff, orphan cleanup
+;; and org-canvas-pull-at-point.  A module that is not registered gets
+;; none of them, and nothing says so (issue #87).  Register BEFORE the
+;; sync macro, so the pull-item function attaches.
+(org-canvas-register-feature
+ :name "{Feature}s" :endpoint "{features}"
+ :file-var 'org-canvas-{feature}s-file
+ :id-field 'id :id-property "CANVAS_ID" :title-field 'name)
+
+;; Property specs: one declaration feeds the parser, the validator, the
+;; drift report and the manual's Property Reference (see Step 9).
+(org-canvas-register-properties "{features}"
+  :label "{Feature}s"
+  :file-var 'org-canvas-{feature}s-file
+  :query "LEVEL=1"
+  :properties
+  `(...))
 
 ;;;; Stage 1: Parse
 
@@ -63,6 +83,12 @@ Key rules:
 - Require only =org-canvas-core= (never other feature modules)
 - Add =ox-html= require if you export subtree body to HTML
 - Use =org-canvas--path= for the file defcustom default
+- Register the feature and its properties at the top, before
+  =org-canvas-define-sync=
+- A feature that does not list under the course (calendar events)
+  declares =:list-url-fn= / =:item-url-fn= and a function-valued
+  =:list-params= on =org-canvas-register-feature=; see
+  api-interaction.org
 
 * Step 2: Define the Parse Stage
 
@@ -362,26 +388,49 @@ Each entry needs a unique key binding and a label.
 
 * Step 9: Add Validation Rules
 
-In =lisp/org-canvas-validate.el=, add to =org-canvas--validate-specs=:
+Validation reads the property registry.  The
+=org-canvas-register-properties= call from Step 1 is the single source
+for the parser, the offline validator (=org-canvas-validate=), the
+drift report and the manual's generated Property Reference; there is
+no separate spec constant to edit.  A full declaration looks like:
 
 #+begin_src elisp
-(:label "{Feature}s"
- :file org-canvas-{feature}s-file
- :query "LEVEL=1"
- :properties
- ((:name "PUBLISHED" :type boolean)
-  (:name "POINTS" :type number)
-  (:name "TYPE" :type enum :values ,org-canvas--valid-types)
-  (:name "DUE_AT" :type timestamp)
-  (:name "GROUP" :type link
-   :target-file org-canvas-assignment-groups-file
-   :id-property "CANVAS_ID"))
- :date-order (("UNLOCK_AT" "DUE_AT" "LOCK_AT")))
+(org-canvas-register-properties "{features}"
+  :label "{Feature}s"
+  :file-var 'org-canvas-{feature}s-file
+  :query "LEVEL=1"                      ; must match the sync's heading level
+  :body-api-key "description"           ; only if the module pushes a body
+  :properties
+  `((:org-prop "PUBLISHED" :data-key :published :type boolean :default t
+     :api-key "published" :boolean-json t
+     :doc "Whether item is visible (default: true)")
+    (:org-prop "POINTS" :data-key :points_possible :type number
+     :doc "Points possible")
+    (:org-prop "TYPE" :data-key :type :type enum :values ,org-canvas--valid-types
+     :doc "Kind of item")
+    (:org-prop "DUE_AT" :data-key :due_at :type timestamp :api-key "due_at"
+     :doc "Due date")
+    (:org-prop "GROUP" :data-key :assignment_group_id :type link
+     :target-file org-canvas-assignment-groups-file
+     :link-id-property "CANVAS_ID"
+     :doc "Link to the assignment group heading"))
+  :date-order '(("UNLOCK_AT" "DUE_AT" "LOCK_AT")))
 #+end_src
 
-Property types for validation: =boolean=, =number=, =enum=,
-=csv-enum=, =timestamp=, =link=. Date-order checks warn when dates
-are out of sequence.
+Property types: =boolean= (with optional =:default=), =number=, =enum=
+and =csv-enum= (with =:values=), =timestamp=, =string=, and =link= (with
+=:target-file= and =:link-id-property=).  =:api-key= names the Canvas
+field, which the declarative payload builder and the drift report both
+read; give a =:remote-fn= when Canvas returns the value under a nested
+or differently named key, or the drift report reports every item as
+changed.  =:date-order= warns when dates are out of sequence;
+=:structural-fn= runs a per-heading check and =:file-fn= a per-file one.
+=:body-api-key= (with optional =:body-fn= and =:body-list-params=) lets
+the drift report compare the heading's body as text.
+
+The =:query= must match the sync's heading level: a =LEVEL=1= query on a
+module whose items are level-2 headings validates only the container
+and silently skips every item.
 
 * Step 10: Add to Eldev Coverage
 
