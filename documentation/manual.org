@@ -1560,7 +1560,11 @@ something.
 There are two checks.
 
 *Before each update*, org-canvas GETs the item, reads its =updated_at=, and
-flags a conflict if that is newer than the baseline.  This applies to updates,
+flags a conflict if that is newer than the baseline.  For files both this
+check and the drift snapshot read =modified_at= instead, the content
+timestamp: Canvas bumps a file's =updated_at= on metadata-only touches -- a
+lock, a usage-rights edit, a module-item relink -- none of which change what
+a student downloads (#94).  This applies to updates,
 not creates, and an entry with no baseline at all (a first sync) is never
 flagged.  The log line names the baseline it actually compared:
 

@@ -76,6 +76,15 @@ time: calendar events filter by a context code that embeds
   (let ((params (plist-get feature :list-params)))
     (if (functionp params) (funcall params) params)))
 
+(defun org-canvas--feature-modified-field (feature)
+  "Return the field that tracks FEATURE's remote content modification.
+`:modified-field' when the feature declares one, otherwise
+`updated_at'.  Files declare `modified_at': Canvas bumps a file's
+`updated_at' on metadata-only touches — a lock, a usage-rights edit, a
+module-item relink — none of which change what a student downloads, so
+drift decided from it re-flagged unchanged files forever (issue #94)."
+  (or (plist-get feature :modified-field) 'updated_at))
+
 (defun org-canvas--build-curl-command (method full-url json-payload)
   "Build a curl command string for debugging.
 METHOD is the HTTP method, FULL-URL is the complete URL with query

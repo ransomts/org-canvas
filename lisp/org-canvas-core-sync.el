@@ -797,12 +797,17 @@ file-level header to write afterwards."
       (let ((ts (org-canvas--pull-read-file-header)))
         (when ts (encode-time (org-parse-time-string ts)))))))
 
-(defun org-canvas--sync-remote-updated-index (items id-field)
-  "Return a hash of each of ITEMS' ID-FIELD, as a string, to its `updated_at'."
-  (let ((map (make-hash-table :test 'equal)))
+(defun org-canvas--sync-remote-updated-index (items id-field &optional modified-field)
+  "Return a hash of each of ITEMS' ID-FIELD, as a string, to its modification time.
+MODIFIED-FIELD names the alist key that holds it, default `updated_at'.
+Files read `modified_at', the content timestamp — Canvas bumps their
+`updated_at' on metadata-only touches, which must not count as drift
+\(issue #94)."
+  (let ((field (or modified-field 'updated_at))
+        (map (make-hash-table :test 'equal)))
     (dolist (item items)
       (let ((id (alist-get id-field item))
-            (updated (alist-get 'updated_at item)))
+            (updated (alist-get field item)))
         (when (and id (stringp updated))
           (puthash (format "%s" id) updated map))))
     map))
@@ -842,7 +847,8 @@ fails; the caller then falls back to skipping unverified and says so."
                                 (org-canvas--feature-list-params feature))
                                nil)))
             (list :updated (org-canvas--sync-remote-updated-index
-                            items (or (plist-get feature :id-field) 'id))
+                            items (or (plist-get feature :id-field) 'id)
+                            (org-canvas--feature-modified-field feature))
                   :titles (org-canvas--sync-remote-title-index
                            items (or (plist-get feature :title-field) 'title))))
         (error
@@ -1006,9 +1012,13 @@ that was fine (issue #86)."
       (cons (encode-time (org-parse-time-string header))
             (format "#+LAST_SYNCED %s (entry has no CANVAS_UPDATED_AT)" header))))))
 
-(cl-defun org-canvas--conflict-check (endpoint id pom &optional title)
+(cl-defun org-canvas--conflict-check (endpoint id pom &optional title modified-field)
   "Check if the remote item at ENDPOINT/ID was modified after the baseline at POM.
 TITLE names the entry in the log line; without it ENDPOINT/ID does.
+MODIFIED-FIELD names the response field that tracks content
+modification, default `updated_at'; files pass `modified_at', because
+Canvas bumps their `updated_at' on metadata-only touches and comparing
+it re-flagged files whose bytes never changed (issue #94).
 Returns (cons \\='conflict REMOTE-RESPONSE) if the remote item is newer,
 nil otherwise.  Returns nil on GET failure (allows push to proceed) or
 when there is no baseline at all (first sync).
@@ -1021,16 +1031,18 @@ the header regardless (issue #86)."
     (unless local-time
       (cl-return-from org-canvas--conflict-check nil))
     (condition-case err
-        (let* ((full-url (org-canvas-api-course-endpoint
+        (let* ((field (or modified-field 'updated_at))
+               (full-url (org-canvas-api-course-endpoint
                           (format "%s/%%s" endpoint) id))
                (response (org-canvas-api-request 'GET full-url))
-               (updated-at (alist-get 'updated_at response))
+               (updated-at (alist-get field response))
                (remote-time (org-canvas--parse-iso8601-time updated-at)))
           (if (and remote-time (time-less-p local-time remote-time))
               (progn
                 (org-canvas--log-warning org-canvas--logger
-                  "[Conflict] '%s': remote updated_at %s is newer than %s"
-                  (or title (format "%s/%s" endpoint id)) updated-at (cdr source))
+                  "[Conflict] '%s': remote %s %s is newer than %s"
+                  (or title (format "%s/%s" endpoint id)) field updated-at
+                  (cdr source))
                 (cons 'conflict response))
             nil))
       (error
@@ -1146,11 +1158,15 @@ POST-URL, when non-nil, overrides the default course-scoped POST URL."
            (org-canvas--handle-timeout-recovery find-fn title post-err)
          (signal (car post-err) (cdr post-err)))))))
 
-(defun org-canvas--push-check-and-resolve-conflict (endpoint id data title)
+(defun org-canvas--push-check-and-resolve-conflict (endpoint id data title
+                                                             &optional modified-field)
   "Check for conflicts on ENDPOINT/ID using DATA.
-TITLE is for logging.  Returns `push', `skip', or `pulled'."
+TITLE is for logging.  MODIFIED-FIELD is passed to
+`org-canvas--conflict-check' — files compare `modified_at' (issue #94).
+Returns `push', `skip', or `pulled'."
   (let ((conflict-result (org-canvas--conflict-check
-                          endpoint id (plist-get data :pom) title)))
+                          endpoint id (plist-get data :pom) title
+                          modified-field)))
     (if (not (and conflict-result (eq (car conflict-result) 'conflict)))
         'push
       (let* ((remote-response (cdr conflict-result))
@@ -1354,6 +1370,7 @@ Returns the API response alist, or one of the symbols `conflict',
 					  id-field
 					  id-property
 					  title-key
+					  updated-field
 					  post-fn)
   "Finalize sync by saving Canvas ID and LAST_SYNCED.
 
@@ -1364,6 +1381,9 @@ Keyword arguments:
   ID-FIELD - Alist key for ID in response (default: \\='id).
   ID-PROPERTY - Org property name to save (default: \"CANVAS_ID\").
   TITLE-KEY - Key in DATA for title (default: :title).
+  UPDATED-FIELD - Response field stamped into CANVAS_UPDATED_AT
+    (default: \\='updated_at).  Files use \\='modified_at so the baseline
+    agrees with what drift detection compares (issue #94).
   POST-FN - Optional function (DATA RESPONSE) for additional finalization.
 
 Save the Canvas ID and LAST_SYNCED timestamp to the Org entry."
@@ -1384,7 +1404,7 @@ Save the Canvas ID and LAST_SYNCED timestamp to the Org entry."
           (org-canvas--log-info org-canvas--logger "[Finalize] Saving %s=%s for '%s'" id-property id title)
           (org-canvas-org-save-sync-state pom id id-property)
           ;; Save CANVAS_UPDATED_AT for conflict detection
-          (let ((updated-at (alist-get 'updated_at response)))
+          (let ((updated-at (alist-get (or updated-field 'updated_at) response)))
             (when updated-at
               (org-canvas-org-set-property pom "CANVAS_UPDATED_AT"
                                            (format "%s" updated-at))))

@@ -63,7 +63,11 @@
 (org-canvas-register-feature
  :name "Files" :endpoint "files"
  :file-var 'org-canvas-files-file
- :id-field 'id :id-property "CANVAS_ID" :title-field 'display_name)
+ :id-field 'id :id-property "CANVAS_ID" :title-field 'display_name
+ ;; updated_at moves on metadata-only touches (a lock, a usage-rights
+ ;; edit, a module-item relink); modified_at is the content timestamp
+ ;; (issue #94).
+ :modified-field 'modified_at)
 
 (defun org-canvas--file-remote-published (item)
   "Return non-nil when the Canvas file ITEM is published to students.
@@ -830,8 +834,12 @@ dirty rather than be recorded as synced."
 ;;;; 4. Stage: Finalization
 
 (defun org-canvas--file-finalize (data response)
-  "Update local Org file with CANVAS_ID using DATA and RESPONSE."
-  (org-canvas--finalize-item data response :title-key :display-name))
+  "Update local Org file with CANVAS_ID using DATA and RESPONSE.
+CANVAS_UPDATED_AT is stamped from `modified_at', the content
+timestamp, so the baseline agrees with what conflict detection and the
+drift report compare for files (issue #94)."
+  (org-canvas--finalize-item data response :title-key :display-name
+                             :updated-field 'modified_at))
 
 (defun org-canvas--file-set-usage-rights (file-id data)
   "Set usage rights on FILE-ID using DATA plist properties.
@@ -1114,8 +1122,11 @@ prompt and no warning (issue #49).  That matters most here, because a
 content change is a delete plus re-upload — the least recoverable thing
 the package does."
   (let ((org-canvas--current-pull-item-fn #'org-canvas--file-pull-item))
+    ;; modified_at, not updated_at: a metadata-only touch is not a
+    ;; remote content change (issue #94).
     (org-canvas--push-check-and-resolve-conflict
-     "files" (plist-get data :canvas-id) data (plist-get data :display-name))))
+     "files" (plist-get data :canvas-id) data (plist-get data :display-name)
+     'modified_at)))
 
 (defun org-canvas--file-record-metadata-update (data response file-hash)
   "Record an in-place metadata update of DATA at point.

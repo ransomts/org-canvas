@@ -872,5 +872,46 @@
         (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
         (delete-file file)))))
 
+(describe "org-canvas--diff-modified-p modified field (issue #94)"
+  (it "ignores an updated_at bump when told the content field"
+    (with-temp-org-buffer "* f\n:PROPERTIES:\n:CANVAS_UPDATED_AT: 2026-08-31T18:34:37Z\n:END:\n"
+      (org-back-to-heading)
+      (let ((item '((updated_at . "2026-09-01T12:12:24Z")
+                    (modified_at . "2026-08-31T18:34:37Z"))))
+        (expect (org-canvas--diff-modified-p (point) item 'modified_at) :to-be nil)
+        (expect (org-canvas--diff-modified-p (point) item) :to-be-truthy)))))
+
+(describe "org-canvas--diff-feature for files (issue #94)"
+  (defun test-diff-94--run (modified-at)
+    "Diff one stamped file heading against a remote with MODIFIED-AT.
+The remote updated_at is always newer than the baseline."
+    (let ((file (make-temp-file "diff-94-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "* syllabus.pdf\n:PROPERTIES:\n:CANVAS_ID: 31495932\n"
+                      ":CANVAS_UPDATED_AT: 2026-08-31T18:34:37Z\n:END:\n"))
+            (let ((org-canvas-files-file file))
+              (with-org-canvas-test-config
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (lambda (&rest _)
+                             `(((id . 31495932) (display_name . "syllabus.pdf")
+                                (updated_at . "2026-09-01T12:12:24Z")
+                                (modified_at . ,modified-at))))))
+                  (org-canvas--diff-feature
+                   (org-canvas--registry-find-feature "files"))))))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file))))
+
+  (it "does not report a file whose bytes are unchanged"
+    (expect (plist-get (test-diff-94--run "2026-08-31T18:34:37Z") :divergences)
+            :to-be nil))
+
+  (it "reports a replaced file, showing the content timestamp"
+    (let ((d (car (plist-get (test-diff-94--run "2026-09-01T09:00:00Z")
+                             :divergences))))
+      (expect (plist-get d :remote-newer) :to-be-truthy)
+      (expect (plist-get d :updated) :to-equal "2026-09-01T09:00:00Z"))))
+
 (provide 'org-canvas-diff-test)
 ;;; org-canvas-diff-test.el ends here

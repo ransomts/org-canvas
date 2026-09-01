@@ -287,11 +287,14 @@ silently be read against whatever buffer happened to be."
         (when id (puthash (format "%s" id) item index))))
     index))
 
-(defun org-canvas--diff-entry (entry index specs &optional props)
+(defun org-canvas--diff-entry (entry index specs &optional props modified-field)
   "Compare local ENTRY against the remote INDEX using property SPECS.
 PROPS, the feature's property registry entry, enables the body
-comparison when it names a `:body-api-key' (issue #83).  Returns a
-plist describing the divergence, or nil when they agree."
+comparison when it names a `:body-api-key' (issue #83).
+MODIFIED-FIELD names the remote timestamp \"modified remotely\" is
+decided from, default `updated_at'; files pass `modified_at' (issue
+#94).  Returns a plist describing the divergence, or nil when they
+agree."
   (let* ((id (plist-get entry :id))
          (pom (plist-get entry :pom))
          (item (and id (gethash id index))))
@@ -303,17 +306,22 @@ plist describing the divergence, or nil when they agree."
       (let* ((body (org-canvas--diff-compare-body props pom item))
              (fields (append (org-canvas--diff-compare-fields specs pom item)
                              (and (cdr body) (list (cdr body)))))
-             (drifted (org-canvas--diff-modified-p pom item)))
+             (drifted (org-canvas--diff-modified-p pom item modified-field)))
         (when (or fields drifted)
           (list :kind 'modified :title (plist-get entry :title) :id id
-                :updated (alist-get 'updated_at item)
+                :updated (alist-get (or modified-field 'updated_at) item)
                 :remote-newer drifted :fields fields
                 :body-compared (and body t))))))))
 
-(defun org-canvas--diff-modified-p (pom item)
-  "Return non-nil when ITEM's `updated_at' is newer than POM's baseline."
+(defun org-canvas--diff-modified-p (pom item &optional modified-field)
+  "Return non-nil when ITEM was modified after POM's baseline.
+MODIFIED-FIELD names the timestamp compared, default `updated_at'.
+Files compare `modified_at', the content timestamp — Canvas bumps
+their `updated_at' on metadata-only touches, which is not drift
+\(issue #94)."
   (let ((baseline (org-canvas--conflict-baseline pom))
-        (remote (org-canvas--parse-iso8601-time (alist-get 'updated_at item))))
+        (remote (org-canvas--parse-iso8601-time
+                 (alist-get (or modified-field 'updated_at) item))))
     (and baseline remote (time-less-p baseline remote))))
 
 (defun org-canvas--diff-unclaimed (items claimed id-field title-field skip-fn)
@@ -367,6 +375,7 @@ request failed."
          (title-field (plist-get feature :title-field))
          (props (org-canvas--diff-find-properties name))
          (specs (plist-get props :properties))
+         (modified-field (org-canvas--feature-modified-field feature))
          (skip-fn (plist-get feature :skip-fn)))
     (condition-case err
         (let* ((items (append (org-canvas-api-request-all-pages
@@ -382,7 +391,8 @@ request failed."
                (claimed (delq nil (mapcar (lambda (e) (plist-get e :id)) local)))
                divergences)
           (dolist (entry local)
-            (let ((d (org-canvas--diff-entry entry index specs props)))
+            (let ((d (org-canvas--diff-entry entry index specs props
+                                             modified-field)))
               (when d (push d divergences)))
             (let ((m (plist-get entry :pom)))
               (when (markerp m) (set-marker m nil))))
