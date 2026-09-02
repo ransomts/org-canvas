@@ -70,6 +70,8 @@
 (require 'org-canvas-core)
 (require 'cl-lib)
 
+(declare-function org-canvas-pull-at-point "org-canvas")
+
 (defconst org-canvas--diff-buffer-name "*canvas-diff*"
   "Name of the buffer holding the drift report.")
 
@@ -508,7 +510,10 @@ is what keeps the report from reading as full coverage (issue #81)."
             (cl-incf suppressed)
           (push (list :kind 'extra
                       :title (format "%s" (or (alist-get title-field item) "?"))
-                      :id (format "%s" (alist-get id-field item)))
+                      :id (format "%s" (alist-get id-field item))
+                      ;; Where RET on the row can take a reader (#103).
+                      :html-url (org-canvas--diff-normalize-remote
+                                 (alist-get 'html_url item)))
                 extra))))
     (cons (nreverse extra) suppressed)))
 
@@ -527,7 +532,8 @@ the property to stamp; the rest of EXTRA is returned as it was."
     (mapcar (lambda (e)
               (if (member (plist-get e :title) unstamped)
                   (list :kind 'unclaimed :title (plist-get e :title)
-                        :id (plist-get e :id) :property id-property)
+                        :id (plist-get e :id) :property id-property
+                        :html-url (plist-get e :html-url))
                 e))
             extra)))
 
@@ -636,6 +642,16 @@ An acknowledged id Canvas no longer holds joins :divergences as a
                            "overrides or a rubric association"
                          "the description or overrides")))))))
 
+(defun org-canvas--diff-insert-row (feature-name entry)
+  "Insert ENTRY of FEATURE-NAME's report at point, as an actionable row.
+The text carries an `org-canvas-diff-row' property naming the feature
+and the entry, which is what the report's keys act on (issue #103).
+Batch output prints the same text, properties and all invisible."
+  (let ((start (point)))
+    (org-canvas--diff-insert-entry entry)
+    (put-text-property start (point) 'org-canvas-diff-row
+                       (list :feature feature-name :entry entry))))
+
 (defun org-canvas--diff-count (results)
   "Return the total number of divergences across RESULTS."
   (apply #'+ (mapcar (lambda (r) (+ (length (plist-get r :divergences))
@@ -681,7 +697,7 @@ show up as extra, so without this the report reads as full coverage."
                           (plist-get result :name)
                           (+ (length divergences) (length extra))))
           (dolist (entry (append divergences extra))
-            (org-canvas--diff-insert-entry entry))
+            (org-canvas--diff-insert-row (plist-get result :name) entry))
           (insert "\n")))))
     (let ((total (org-canvas--diff-count results)))
       (insert (make-string 60 ?=) "\n")
@@ -704,6 +720,272 @@ show up as extra, so without this the report reads as full coverage."
                           referenced (if (= referenced 1) "" "s"))))))
     (buffer-string)))
 
+;;;; Acting on the Report
+;;
+;; The report named problems and offered no verbs: visiting the heading,
+;; acknowledging an extra, deleting a stray remote object, pulling one
+;; item all happened somewhere else, by hand — a one-off elisp script
+;; around a DELETE, a drawer edit, a line appended to a config file, a
+;; search for the heading (issue #103).  Each action's machinery already
+;; existed; only the rows could not reach it.  Rows carry their entry as
+;; a text property, and these commands act on the row at point.
+
+(defcustom org-canvas-diff-acknowledge-function #'org-canvas--diff-acknowledge-save
+  "Function that persists `org-canvas-diff-known-extras' after the report edits it.
+Called with the new value of the whole list, after the variable itself
+has been set, when `a' on a report row acknowledges an extra or drops
+a stale acknowledgment.  The default saves through `customize-save-variable';
+a course that keeps its configuration in a file of its own can name a
+function that writes the list there instead."
+  :type 'function
+  :group 'org-canvas)
+
+(defun org-canvas--diff-acknowledge-save (extras)
+  "Save EXTRAS as `org-canvas-diff-known-extras' with Customize."
+  (customize-save-variable 'org-canvas-diff-known-extras extras))
+
+(defvar org-canvas-diff-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "RET") #'org-canvas-diff-visit)
+    (define-key map (kbd "a") #'org-canvas-diff-acknowledge)
+    (define-key map (kbd "k") #'org-canvas-diff-delete)
+    (define-key map (kbd "p") #'org-canvas-diff-pull)
+    (define-key map (kbd "g") #'org-canvas-diff-refresh)
+    (define-key map (kbd "TAB") #'org-canvas-diff-next-row)
+    (define-key map (kbd "<backtab>") #'org-canvas-diff-previous-row)
+    map)
+  "Keymap for `org-canvas-diff-mode'.")
+
+(define-derived-mode org-canvas-diff-mode special-mode "Canvas-Diff"
+  "Major mode for the drift report, with actions on its rows.
+\\<org-canvas-diff-mode-map>
+\\[org-canvas-diff-visit] visits the Org heading of the row at point, or
+opens the Canvas object of an EXTRA row in a browser;
+\\[org-canvas-diff-acknowledge] acknowledges the EXTRA at point (or drops a
+STALE-ACK); \\[org-canvas-diff-delete] deletes the remote object of an EXTRA
+or UNCLAIMED row, after confirming; \\[org-canvas-diff-pull] pulls a CHANGED
+row's item over the heading; \\[org-canvas-diff-refresh] runs the report
+again; \\[org-canvas-diff-next-row] and \\[org-canvas-diff-previous-row]
+move between rows."
+  (setq-local revert-buffer-function (lambda (&rest _) (org-canvas-diff))))
+
+(defconst org-canvas--diff-key-legend
+  "RET visit   a acknowledge   k delete   p pull   g refresh   TAB next row\n"
+  "One line naming the report's keys, shown in the interactive buffer only.")
+
+(defun org-canvas--diff-row-at-point ()
+  "Return the (:feature NAME :entry ENTRY) plist of the row at point.
+Signals a `user-error' off any row."
+  (or (get-text-property (point) 'org-canvas-diff-row)
+      (user-error "No report row at point")))
+
+(defun org-canvas--diff-row-feature (row)
+  "Return the feature registry entry for ROW, or signal."
+  (or (org-canvas--registry-find-feature (plist-get row :feature))
+      (user-error "%s is not a registered feature" (plist-get row :feature))))
+
+(defun org-canvas--diff-rewrite-row (text)
+  "Replace the row at point with TEXT, keeping its row property.
+TEXT is one line without a newline.  How an action leaves its mark
+without re-running every list request."
+  (let* ((row (org-canvas--diff-row-at-point))
+         (inhibit-read-only t)
+         (start (line-beginning-position))
+         (end (line-end-position)))
+    (delete-region start end)
+    (goto-char start)
+    (insert text)
+    (put-text-property start (point) 'org-canvas-diff-row row)
+    (goto-char start)))
+
+(defun org-canvas--diff-find-heading-by-id (file id-property id)
+  "Return the position of the heading in FILE whose ID-PROPERTY is ID, or nil."
+  (when (and file (file-exists-p file))
+    (with-current-buffer (find-file-noselect file)
+      (save-excursion
+        (goto-char (point-min))
+        (catch 'found
+          (org-map-entries
+           (lambda ()
+             (when (equal (org-entry-get (point) id-property) id)
+               (throw 'found (point))))
+           nil 'file)
+          nil)))))
+
+(defun org-canvas--diff-heading-position (feature entry)
+  "Return (FILE . POSITION) of the heading ENTRY of FEATURE describes, or nil.
+MISSING and CHANGED rows are found by their id property; an UNCLAIMED
+row names an unstamped heading, found by title."
+  (let* ((file-var (plist-get feature :file-var))
+         (file (and file-var (boundp file-var) (symbol-value file-var)))
+         (pos (pcase (plist-get entry :kind)
+                ('unclaimed
+                 (org-canvas--find-heading-in-file file (plist-get entry :title)))
+                ((or 'missing 'modified)
+                 (org-canvas--diff-find-heading-by-id
+                  file (or (plist-get feature :id-property) "CANVAS_ID")
+                  (plist-get entry :id))))))
+    (and pos (cons file pos))))
+
+(defun org-canvas--diff-goto-heading (feature entry)
+  "Make the buffer of ENTRY's heading current, with point on it, or signal.
+FEATURE is the registry entry that says which file to look in.
+Returns the buffer."
+  (let ((where (org-canvas--diff-heading-position feature entry)))
+    (unless where
+      (user-error "Cannot find the heading for '%s' in %s"
+                  (plist-get entry :title) (plist-get feature :name)))
+    (set-buffer (find-file-noselect (car where)))
+    (goto-char (cdr where))
+    (org-back-to-heading t)
+    (current-buffer)))
+
+(defun org-canvas-diff-visit ()
+  "Visit what the row at point is about.
+A row with an Org heading (MISSING, CHANGED, UNCLAIMED) opens the
+course file with point on that heading.  An EXTRA row has no heading,
+so its Canvas object is opened in a browser when the API said where
+it lives."
+  (interactive)
+  (let* ((row (org-canvas--diff-row-at-point))
+         (entry (plist-get row :entry))
+         (feature (org-canvas--diff-row-feature row)))
+    (pcase (plist-get entry :kind)
+      ((or 'missing 'modified 'unclaimed)
+       (let ((buf (save-excursion (org-canvas--diff-goto-heading feature entry)))
+             (pos nil))
+         (with-current-buffer buf (setq pos (point)))
+         (pop-to-buffer buf)
+         (goto-char pos)
+         (when (fboundp 'org-fold-show-context) (org-fold-show-context))))
+      (_
+       (let ((url (plist-get entry :html-url)))
+         (unless url
+           (user-error "Canvas did not say where %s %s lives; look it up by id"
+                       (plist-get feature :name) (plist-get entry :id)))
+         (browse-url url))))))
+
+(defun org-canvas-diff-acknowledge ()
+  "Acknowledge the EXTRA or UNCLAIMED row at point as deliberately unclaimed.
+Adds it to `org-canvas-diff-known-extras', with a note if you give one,
+and persists the list through `org-canvas-diff-acknowledge-function'.
+On a STALE-ACK row, drops the acknowledgment instead."
+  (interactive)
+  (let* ((row (org-canvas--diff-row-at-point))
+         (entry (plist-get row :entry))
+         (feature (plist-get row :feature))
+         (id (plist-get entry :id)))
+    (pcase (plist-get entry :kind)
+      ('stale-ack
+       (setq org-canvas-diff-known-extras
+             (cl-remove-if (lambda (k)
+                             (and (string= (org-canvas--diff-normalize-name (nth 0 k))
+                                           (org-canvas--diff-normalize-name feature))
+                                  (string= (format "%s" (nth 1 k)) id)))
+                           org-canvas-diff-known-extras))
+       (funcall org-canvas-diff-acknowledge-function org-canvas-diff-known-extras)
+       (org-canvas--diff-rewrite-row
+        (format "  DROPPED   acknowledgment of id %s (%s)" id feature))
+       (message "Dropped the acknowledgment of %s %s." feature id))
+      ((or 'extra 'unclaimed)
+       (let* ((note (read-string (format "Note for %s '%s' (optional): "
+                                         feature (plist-get entry :title))))
+              (note (and (not (string-empty-p note)) note)))
+         (setq org-canvas-diff-known-extras
+               (append org-canvas-diff-known-extras (list (list feature id note))))
+         (funcall org-canvas-diff-acknowledge-function org-canvas-diff-known-extras)
+         (org-canvas--diff-rewrite-row
+          (format "  ACK       %s (id %s acknowledged%s)"
+                  (plist-get entry :title) id (if note (format ": %s" note) "")))
+         (message "Acknowledged %s %s." feature id)))
+      (kind (user-error "A %s row is not something to acknowledge" (upcase (symbol-name kind)))))))
+
+(defun org-canvas-diff-delete ()
+  "Delete the EXTRA or UNCLAIMED row's Canvas object, after confirming.
+Uses the feature's item URL and delete body, as orphan cleanup does."
+  (interactive)
+  (let* ((row (org-canvas--diff-row-at-point))
+         (entry (plist-get row :entry))
+         (feature (org-canvas--diff-row-feature row))
+         (id (plist-get entry :id))
+         (name (plist-get feature :name)))
+    (unless (memq (plist-get entry :kind) '(extra unclaimed))
+      (user-error "Only an EXTRA or UNCLAIMED row names a remote object to delete"))
+    (when (y-or-n-p (format "Delete %s '%s' (id %s) from Canvas? "
+                            name (plist-get entry :title) id))
+      (let ((delete-data (plist-get feature :delete-data)))
+        (apply #'org-canvas-api-request 'DELETE
+               (org-canvas--feature-item-url feature id)
+               (and delete-data (list :data delete-data))))
+      (org-canvas--log-info org-canvas--logger
+        "[Diff] Deleted %s #%s '%s' from the report" name id (plist-get entry :title))
+      (org-canvas--diff-rewrite-row
+       (format "  DELETED   %s (id %s)" (plist-get entry :title) id))
+      (message "Deleted %s %s." name id))))
+
+(defun org-canvas-diff-pull ()
+  "Pull the item of the CHANGED row at point over its Org heading.
+Runs `org-canvas-pull-at-point' on the heading, which asks first."
+  (interactive)
+  (let* ((row (org-canvas--diff-row-at-point))
+         (entry (plist-get row :entry))
+         (feature (org-canvas--diff-row-feature row)))
+    (unless (eq (plist-get entry :kind) 'modified)
+      (user-error "Only a CHANGED row has a Canvas version to pull"))
+    (let ((pulled (save-excursion
+                    (with-current-buffer (org-canvas--diff-goto-heading feature entry)
+                      (org-canvas-pull-at-point)
+                      t))))
+      (when pulled
+        (org-canvas--diff-rewrite-row
+         (format "  PULLED    %s (id %s)" (plist-get entry :title) (plist-get entry :id)))))))
+
+(defun org-canvas-diff-refresh ()
+  "Run the drift report again."
+  (interactive)
+  (org-canvas-diff))
+
+(defun org-canvas--diff-row-start (pos)
+  "Return where the row run containing POS begins.
+A CHANGED row spans several lines, all carrying the same property
+value; its start is the line the verb is on."
+  (let ((row (get-text-property pos 'org-canvas-diff-row)))
+    (while (and (> pos (point-min))
+                (eq (get-text-property (1- pos) 'org-canvas-diff-row) row))
+      (setq pos (1- pos)))
+    pos))
+
+(defun org-canvas-diff-next-row ()
+  "Move point to the next report row."
+  (interactive)
+  (let* ((row (get-text-property (point) 'org-canvas-diff-row))
+         (pos (point))
+         (found nil))
+    (while (and row (< pos (point-max))
+                (eq (get-text-property pos 'org-canvas-diff-row) row))
+      (setq pos (1+ pos)))
+    (while (and (not found) (< pos (point-max)))
+      (if (get-text-property pos 'org-canvas-diff-row)
+          (setq found pos)
+        (setq pos (1+ pos))))
+    (if found (goto-char found) (user-error "No more rows"))))
+
+(defun org-canvas-diff-previous-row ()
+  "Move point to the previous report row."
+  (interactive)
+  (let ((pos (if (get-text-property (point) 'org-canvas-diff-row)
+                 (org-canvas--diff-row-start (point))
+               (point)))
+        (found nil))
+    (while (and (not found) (> pos (point-min)))
+      (setq pos (1- pos))
+      (when (get-text-property pos 'org-canvas-diff-row)
+        (setq found pos)))
+    (if found
+        (goto-char (org-canvas--diff-row-start found))
+      (user-error "No previous row"))))
+
+;;;; Commands
 ;;;; Commands
 
 ;;;###autoload
@@ -737,8 +1019,9 @@ divergences found, so a batch caller can act on it; see
           (let ((inhibit-read-only t))
             (erase-buffer)
             (insert report)
+            (insert "\n" org-canvas--diff-key-legend)
             (goto-char (point-min)))
-          (special-mode)
+          (org-canvas-diff-mode)
           (display-buffer (current-buffer)))
         (message "Drift: %d divergence(s)" total))
       total)))
