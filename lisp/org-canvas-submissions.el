@@ -3,38 +3,49 @@
 
 ;;; Commentary:
 
-;; Browse student submissions for Canvas assignments without leaving Emacs.
-;; Provides two views (summary table and per-student detail) with toggle,
-;; comment posting, and on-demand file download.
+;; Pull, read, grade, and comment on student submissions without leaving
+;; Emacs.  A pulled assignment becomes a GRADING FILE, saved under
+;; `org-canvas-submissions-directory' as <assignment>.org: one heading
+;; per student with the submitted text, attachments, comments, rubric,
+;; and a property drawer that carries the grade.  Grading can therefore
+;; span sessions: close Emacs, reopen the file later, push then.
+;;
+;; WORKFLOW
+;; ========
+;; 1. `org-canvas-pull-submissions'  select an assignment; the grading
+;;    file is written and visited (or the summary table shown, see
+;;    `org-canvas-submissions-default-view').
+;; 2. Read.  `d' downloads the attachments of the student at point, `D'
+;;    everyone's, into files/<assignment>/<student>/ beside the file.
+;; 3. Grade.  Edit :SCORE: on each heading; `c' posts a comment.
+;; 4. `S' pushes every SCORE that differs from its CANVAS_SCORE, the
+;;    score as last pulled or pushed.  Before pushing from a saved file
+;;    Canvas is re-read: a student whose grade changed there since the
+;;    pull, or who resubmitted, is skipped and marked :CONFLICT: rather
+;;    than overwritten (`org-canvas-submissions-check-conflicts').
+;;    Pushed scores become the new CANVAS_SCORE and the file is saved.
+;; 5. `org-canvas-open-submissions' reopens a saved grading file.
 ;;
 ;; VIEWS
 ;; =====
-;; Summary: Org table with student name, status, timestamp, score
-;; Detail:  Per-student headings with body, attachments, comments, rubric
+;; Detail:  the grading file, per-student headings (editable)
+;; Summary: a read-only table, derived from the headings so it shows
+;;          unpushed edits; `v' switches between the two.
 ;;
-;; COMMANDS
-;; ========
-;; org-canvas-pull-submissions          - Select assignment, fetch, render
-;; org-canvas-submissions-refresh       - Re-fetch current buffer
-;; org-canvas-submissions-toggle-view   - Switch summary <-> detail
-;; org-canvas-submissions-add-comment   - Post comment on student submission
-;; org-canvas-submissions-download-attachments - Download files locally
+;; KEYS (org-canvas-submissions-mode)
+;; ===============================
+;; g  refresh from Canvas (asks first if edits are unpushed)
+;; v  summary <-> detail
+;; d  download attachments for the student at point
+;; D  download attachments for every student
+;; c  post a comment on the student at point
+;; S  push grade changes
 ;;
-;; MINOR MODE KEYS
-;; ===============
-;; g - refresh
-;; v - toggle view
-;; d - download attachments
-;; c - add comment
-;;
-;; S - push grade changes to Canvas
-;;
-;; GRADE WRITING
-;; =============
-;; Edit :SCORE: properties (detail view) or Score column cells (summary
-;; view) in-place, then press S to push all changes.  The buffer is
-;; ephemeral so direct editing is safe.  A single change uses PUT;
-;; multiple changes use the bulk update_grades endpoint.
+;; PRIVACY
+;; =======
+;; Grading files are student work.  The directory gets a .gitignore
+;; when created (`org-canvas-submissions-write-gitignore') so they never
+;; travel with a course repository.
 
 ;;; Code:
 
@@ -43,17 +54,41 @@
 
 ;;;; Configuration
 
-(defcustom org-canvas-submissions-directory
-  (org-canvas--path "submissions/")
-  "Directory for submission view files."
-  :type 'directory
+(defcustom org-canvas-submissions-directory nil
+  "Directory for grading files, or nil for submissions/ under the course.
+Each pulled assignment is saved here as <assignment>.org and its
+downloaded attachments under files/<assignment>/<student>/.  Nil means
+`org-canvas-directory'/submissions/, resolved when used rather than
+when the package loads, so a course activated later still gets its own
+tree.  Everything in it is student work; see
+`org-canvas-submissions-write-gitignore'."
+  :type '(choice (const :tag "submissions/ under org-canvas-directory" nil)
+                 directory)
   :group 'org-canvas)
 
-(defcustom org-canvas-submissions-default-view 'summary
-  "Default view when pulling submissions.
-Either `summary' (table) or `detail' (per-student headings)."
-  :type '(choice (const :tag "Summary table" summary)
-                 (const :tag "Detail headings" detail))
+(defcustom org-canvas-submissions-default-view 'detail
+  "View shown after a pull.
+`detail' visits the saved grading file, one heading per student;
+`summary' shows the read-only overview table instead.  Grades are
+edited in the detail file either way."
+  :type '(choice (const :tag "Detail headings (grading file)" detail)
+                 (const :tag "Summary table" summary))
+  :group 'org-canvas)
+
+(defcustom org-canvas-submissions-check-conflicts t
+  "Non-nil means re-read Canvas before pushing grades from a saved file.
+A heading whose CANVAS_SCORE no longer matches what Canvas holds, or
+whose student resubmitted since the pull, is skipped and marked with a
+CONFLICT property instead of being overwritten."
+  :type 'boolean
+  :group 'org-canvas)
+
+(defcustom org-canvas-submissions-write-gitignore t
+  "Non-nil means write a .gitignore into the submissions directory.
+It is written once, when the directory is created, and excludes
+everything in it: grading files hold student work and must not travel
+with a course repository."
+  :type 'boolean
   :group 'org-canvas)
 
 ;;;; Buffer-Local State
@@ -71,7 +106,12 @@ Either `summary' (table) or `detail' (per-student headings)."
   "Current view: `summary' or `detail'.")
 
 (defvar-local org-canvas-submissions--original-scores nil
-  "Alist of (user-id . score-string) captured at render time.")
+  "Alist of (user-id . score-string) captured at render time.
+The in-memory baseline for ephemeral buffers; a grading file carries
+its baseline in each heading's CANVAS_SCORE property instead.")
+
+(defvar-local org-canvas-submissions--source-file nil
+  "Grading file a read-only summary buffer was derived from.")
 
 ;;;; Minor Mode
 
@@ -82,6 +122,7 @@ Either `summary' (table) or `detail' (per-student headings)."
     (define-key map (kbd "d") #'org-canvas-submissions-download-attachments)
     (define-key map (kbd "c") #'org-canvas-submissions-add-comment)
     (define-key map (kbd "S") #'org-canvas-submissions-push-grades)
+    (define-key map (kbd "D") #'org-canvas-submissions-download-all-attachments)
     map)
   "Keymap for `org-canvas-submissions-mode'.")
 
@@ -90,6 +131,93 @@ Either `summary' (table) or `detail' (per-student headings)."
 \\{org-canvas-submissions-mode-map}"
   :lighter " Submissions"
   :keymap org-canvas-submissions-mode-map)
+
+;;;; Grading Files
+
+(defun org-canvas--submissions-dir ()
+  "Return the submissions directory as an absolute path.
+`org-canvas-submissions-directory' when set, else submissions/ under
+`org-canvas-directory', resolved now (see the defcustom)."
+  (expand-file-name (or org-canvas-submissions-directory
+                        (org-canvas--path "submissions/"))))
+
+(defun org-canvas--submissions-file-path (assignment-name)
+  "Return the grading file path for ASSIGNMENT-NAME."
+  (expand-file-name
+   (format "%s.org" (org-canvas--submissions-sanitize-filename assignment-name))
+   (org-canvas--submissions-dir)))
+
+(defun org-canvas--submissions-ensure-directory ()
+  "Create the submissions directory and return it.
+Write a .gitignore there once, when
+`org-canvas-submissions-write-gitignore' is non-nil, so the student
+work the directory holds never travels with a course repository."
+  (let ((dir (org-canvas--submissions-dir)))
+    (make-directory dir t)
+    (when org-canvas-submissions-write-gitignore
+      (let ((gitignore (expand-file-name ".gitignore" dir)))
+        (unless (file-exists-p gitignore)
+          (with-temp-file gitignore
+            (insert "# Student work pulled by org-canvas.  Never commit it.\n"
+                    "*\n!.gitignore\n")))))
+    dir))
+
+(defun org-canvas--submissions-file-property (name)
+  "Return the value of the #+PROPERTY: NAME keyword in this buffer, or nil."
+  (save-excursion
+    (save-restriction
+      (widen)
+      (goto-char (point-min))
+      (when (re-search-forward
+             (format "^#\\+PROPERTY: %s[ \t]+\\(.+\\)$" (regexp-quote name))
+             nil t)
+        (string-trim (match-string 1))))))
+
+(defun org-canvas--submissions-ensure-context ()
+  "Recover the assignment id, name, and view of a reopened grading file.
+A buffer created by a pull already carries them; a file visited later
+gets them back from its #+PROPERTY: header and its headings."
+  (unless org-canvas-submissions--assignment-id
+    (setq org-canvas-submissions--assignment-id
+          (org-canvas--submissions-file-property "CANVAS_ASSIGNMENT_ID")))
+  (unless org-canvas-submissions--assignment-name
+    (setq org-canvas-submissions--assignment-name
+          (or (org-canvas--submissions-file-property "CANVAS_ASSIGNMENT_NAME")
+              (and buffer-file-name (file-name-base buffer-file-name)))))
+  (unless org-canvas-submissions--current-view
+    (setq org-canvas-submissions--current-view
+          (if (save-excursion
+                (goto-char (point-min))
+                (re-search-forward "^[ \t]*:USER_ID:" nil t))
+              'detail
+            'summary))))
+
+(defun org-canvas--submissions-goto-user (user-id)
+  "Move point to the heading whose USER_ID property is USER-ID.
+Return non-nil when found."
+  (goto-char (point-min))
+  (when (re-search-forward
+         (format "^[ \t]*:USER_ID:[ \t]+%s[ \t]*$" user-id) nil t)
+    (org-back-to-heading t)
+    t))
+
+(defun org-canvas--submissions-guard-unpushed (verb)
+  "Ask before VERB (a capitalized verb) discards unpushed score edits."
+  (let ((pending (length (org-canvas--submissions-collect-grade-changes))))
+    (when (and (> pending 0)
+               (not (y-or-n-p
+                     (format "%d unpushed score change(s) will be lost; %s anyway? "
+                             pending verb))))
+      (user-error "%s cancelled" verb))))
+
+(defun org-canvas--submissions-entered-score (submission)
+  "Return the grader-entered score of SUBMISSION, or nil.
+Canvas reports `entered_score' (what the grader typed) and `score'
+\(after any late-policy deduction).  Grading works with what was typed."
+  (let ((entered (alist-get 'entered_score submission))
+        (score (alist-get 'score submission)))
+    (cond ((numberp entered) entered)
+          ((numberp score) score))))
 
 ;;;; Data Fetching
 
@@ -257,17 +385,26 @@ SUBMISSIONS is the list of submission alists."
                                  (org-canvas--submissions-user-sortable-name b))))))
     (erase-buffer)
     (insert (format "#+TITLE: Submissions: %s\n" assignment-name))
-    (insert (format "#+PROPERTY: CANVAS_ASSIGNMENT_ID %s\n\n" assignment-id))
+    (insert (format "#+PROPERTY: CANVAS_ASSIGNMENT_ID %s\n" assignment-id))
+    (insert (format "#+PROPERTY: CANVAS_ASSIGNMENT_NAME %s\n" assignment-name))
+    (insert (format "#+PROPERTY: PULLED_AT %s\n\n"
+                    (format-time-string "<%Y-%m-%d %a %H:%M>")))
     (dolist (sub sorted)
       (org-canvas--submissions-render-detail-entry sub))))
 
 (defun org-canvas--submissions-render-detail-entry (submission)
-  "Render a single SUBMISSION as an Org heading with properties."
+  "Render a single SUBMISSION as an Org heading with properties.
+SCORE is the editable grade; CANVAS_SCORE is the same value as pulled,
+the baseline a later push compares against.  FINAL_SCORE appears only
+when Canvas's late policy made the recorded score differ from the one
+entered.  ATTEMPT lets a push notice a resubmission."
   (let ((name (org-canvas--submissions-user-sortable-name submission))
         (user-id (org-canvas--submissions-user-id submission))
         (sub-id (alist-get 'id submission))
         (status (org-canvas--submissions-normalize-status submission))
-        (score (alist-get 'score submission))
+        (entered (org-canvas--submissions-entered-score submission))
+        (final (alist-get 'score submission))
+        (attempt (alist-get 'attempt submission))
         (submitted-at (org-canvas--submissions-format-submitted-at submission))
         (body (alist-get 'body submission))
         (attachments (alist-get 'attachments submission))
@@ -280,8 +417,15 @@ SUBMISSIONS is the list of submission alists."
     (when sub-id
       (insert (format ":SUBMISSION_ID: %s\n" sub-id)))
     (insert (format ":STATUS: %s\n" status))
-    (when (and score (numberp score))
-      (insert (format ":SCORE: %s\n" (org-canvas--submissions-format-number score))))
+    (when entered
+      (let ((shown (org-canvas--submissions-format-number entered)))
+        (insert (format ":SCORE: %s\n" shown))
+        (insert (format ":CANVAS_SCORE: %s\n" shown))))
+    (when (and entered (numberp final) (/= final entered))
+      (insert (format ":FINAL_SCORE: %s\n"
+                      (org-canvas--submissions-format-number final))))
+    (when (numberp attempt)
+      (insert (format ":ATTEMPT: %s\n" attempt)))
     (when (not (string-empty-p submitted-at))
       (insert (format ":SUBMITTED_AT: %s\n" submitted-at)))
     (insert ":END:\n")
@@ -345,10 +489,24 @@ SUBMISSIONS is the list of submission alists."
 
 ;;;###autoload
 (defun org-canvas-submissions-toggle-view ()
-  "Toggle between summary and detail views using cached data."
+  "Toggle between the summary table and the detail headings.
+In a saved grading file the summary opens as a separate read-only
+buffer derived from the headings, so it reflects unpushed edits, and
+`v' there returns to the file.  An ephemeral buffer re-renders in place."
   (interactive)
   (unless org-canvas-submissions-mode
     (user-error "Not in a submissions buffer"))
+  (org-canvas--submissions-ensure-context)
+  (cond
+   (org-canvas-submissions--source-file
+    (find-file org-canvas-submissions--source-file))
+   (buffer-file-name
+    (org-canvas--submissions-show-summary-of-file))
+   (t
+    (org-canvas--submissions-toggle-in-place))))
+
+(defun org-canvas--submissions-toggle-in-place ()
+  "Re-render the current ephemeral buffer in the other view."
   (let ((current org-canvas-submissions--current-view)
         (name org-canvas-submissions--assignment-name)
         (id org-canvas-submissions--assignment-id)
@@ -364,6 +522,44 @@ SUBMISSIONS is the list of submission alists."
       (goto-char (point-min))
       (message "Switched to %s view" new-view))))
 
+(defun org-canvas--submissions-heading-rows ()
+  "Return (name status submitted-at score) for each heading of a grading file."
+  (org-map-entries
+   (lambda ()
+     (list (org-get-heading t t t t)
+           (or (org-entry-get (point) "STATUS") "")
+           (or (org-entry-get (point) "SUBMITTED_AT") "")
+           (or (org-entry-get (point) "SCORE") "")))
+   "LEVEL=1"))
+
+(defun org-canvas--submissions-show-summary-of-file ()
+  "Show a read-only summary table of the current grading file."
+  (let* ((name org-canvas-submissions--assignment-name)
+         (id org-canvas-submissions--assignment-id)
+         (file buffer-file-name)
+         (rows (org-canvas--submissions-heading-rows))
+         (buf (get-buffer-create (format "*submissions summary: %s*" name))))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (org-mode)
+        (insert (format "#+TITLE: Submissions: %s\n" name))
+        (insert (format "#+PROPERTY: CANVAS_ASSIGNMENT_ID %s\n\n" id))
+        (insert "Read-only overview of the grading file; edit scores there (press v).\n\n")
+        (insert "| Student | Status | Submitted At | Score |\n")
+        (insert "|---------+--------+--------------+-------|\n")
+        (dolist (row rows)
+          (insert (apply #'format "| %s | %s | %s | %s |\n" row)))
+        (org-table-align)
+        (goto-char (point-min)))
+      (setq org-canvas-submissions--assignment-name name
+            org-canvas-submissions--assignment-id id
+            org-canvas-submissions--current-view 'summary
+            org-canvas-submissions--source-file file)
+      (org-canvas-submissions-mode 1)
+      (setq buffer-read-only t))
+    (switch-to-buffer buf)))
+
 ;;;; Comment Writing
 
 ;;;###autoload
@@ -373,6 +569,7 @@ Must be on or inside a student heading in detail view."
   (interactive)
   (unless org-canvas-submissions-mode
     (user-error "Not in a submissions buffer"))
+  (org-canvas--submissions-ensure-context)
   (unless (eq org-canvas-submissions--current-view 'detail)
     (user-error "Switch to detail view first (press v)"))
   (save-excursion
@@ -426,10 +623,12 @@ Searches from point for the ** Comments sub-heading under the current heading."
 ;;;###autoload
 (defun org-canvas-submissions-download-attachments ()
   "Download attachments for the submission at point.
-Files are saved to submissions/files/<assignment>/<student>/."
+Files are saved to files/<assignment>/<student>/ under the
+submissions directory, beside the grading file."
   (interactive)
   (unless org-canvas-submissions-mode
     (user-error "Not in a submissions buffer"))
+  (org-canvas--submissions-ensure-context)
   (unless (eq org-canvas-submissions--current-view 'detail)
     (user-error "Switch to detail view first (press v)"))
   (save-excursion
@@ -438,12 +637,10 @@ Files are saved to submissions/files/<assignment>/<student>/."
            (end (save-excursion (org-end-of-subtree t) (point)))
            (assignment-name org-canvas-submissions--assignment-name)
            (download-dir (expand-file-name
-                          (format "submissions/files/%s/%s/"
+                          (format "files/%s/%s/"
                                   (org-canvas--submissions-sanitize-filename assignment-name)
                                   (org-canvas--submissions-sanitize-filename user-name))
-                          (or org-canvas-directory
-                              (file-name-directory
-                               (directory-file-name org-canvas-submissions-directory)))))
+                          (org-canvas--submissions-dir)))
            (urls nil))
       ;; Collect attachment URLs from the Attachments sub-heading
       (save-excursion
@@ -464,6 +661,27 @@ Files are saved to submissions/files/<assignment>/<student>/."
           (org-canvas--submissions-download-file url download-dir filename)))
       (message "Downloaded %d file(s) to %s" (length urls) download-dir))))
 
+;;;###autoload
+(defun org-canvas-submissions-download-all-attachments ()
+  "Download every student's attachments in this grading file.
+Students without attachments are skipped; the count is reported."
+  (interactive)
+  (unless org-canvas-submissions-mode
+    (user-error "Not in a submissions buffer"))
+  (org-canvas--submissions-ensure-context)
+  (unless (eq org-canvas-submissions--current-view 'detail)
+    (user-error "Switch to detail view first (press v)"))
+  (let ((students 0))
+    (save-excursion
+      (goto-char (point-min))
+      (while (re-search-forward "^\\* " nil t)
+        (when (condition-case nil
+                  (progn (org-canvas-submissions-download-attachments) t)
+                (user-error nil))
+          (cl-incf students))
+        (org-end-of-subtree t)))
+    (message "Downloaded attachments for %d student(s)" students)))
+
 (defun org-canvas--submissions-download-file (url directory filename)
   "Download URL to DIRECTORY as FILENAME using Bearer auth."
   (let ((output-path (expand-file-name filename directory)))
@@ -482,9 +700,11 @@ Replaces problematic characters with underscores."
 
 ;;;###autoload
 (defun org-canvas-pull-submissions ()
-  "Select an assignment and view its submissions.
-Prompts for assignment selection, fetches submissions, and renders
-to a buffer in `org-canvas-submissions-directory'."
+  "Select an assignment and pull its submissions.
+The detail view is saved as a grading file under
+`org-canvas-submissions-directory' and visited; the summary view is
+an ephemeral table.  Which one opens first is
+`org-canvas-submissions-default-view'."
   (interactive)
   (let* ((assignments (org-canvas--submissions-fetch-assignments))
          (names (mapcar (lambda (a) (alist-get 'name a)) assignments))
@@ -499,32 +719,49 @@ to a buffer in `org-canvas-submissions-directory'."
      org-canvas-submissions-default-view)))
 
 ;;;###autoload
+(defun org-canvas-open-submissions ()
+  "Visit a saved grading file and turn on `org-canvas-submissions-mode'.
+Grading files are the detail views `org-canvas-pull-submissions' saves
+under `org-canvas-submissions-directory'."
+  (interactive)
+  (let* ((dir (org-canvas--submissions-dir))
+         (files (and (file-directory-p dir)
+                     (directory-files dir nil "\\.org\\'"))))
+    (unless files
+      (user-error "No grading files in %s; pull an assignment first" dir))
+    (find-file (expand-file-name (completing-read "Grading file: " files nil t) dir))
+    (org-canvas-submissions-mode 1)
+    (org-canvas--submissions-ensure-context)))
+
+;;;###autoload
 (defun org-canvas-submissions-refresh ()
-  "Re-fetch and re-render submissions for the current buffer."
+  "Re-fetch and re-render the submissions for the current buffer.
+Ask first when the buffer holds score edits that were never pushed."
   (interactive)
   (unless org-canvas-submissions-mode
     (user-error "Not in a submissions buffer"))
+  (org-canvas--submissions-ensure-context)
   (let ((id org-canvas-submissions--assignment-id)
         (name org-canvas-submissions--assignment-name)
         (view org-canvas-submissions--current-view))
     (unless id
       (user-error "No assignment ID in this buffer"))
+    (org-canvas--submissions-guard-unpushed "Refresh")
     (message "Refreshing submissions for %s..." name)
     (let ((submissions (org-canvas--submissions-fetch-for-assignment id)))
       (org-canvas--submissions-display name id submissions view))))
 
 (defun org-canvas--submissions-display (assignment-name assignment-id submissions view)
-  "Display SUBMISSIONS in a buffer.
-ASSIGNMENT-NAME and ASSIGNMENT-ID identify the assignment.
-VIEW is `summary' or `detail'."
-  (let* ((dir (expand-file-name org-canvas-submissions-directory))
-         (filename (format "%s.org"
-                           (org-canvas--submissions-sanitize-filename assignment-name)))
-         (buf (get-buffer-create (format "*submissions: %s*" assignment-name))))
-    (make-directory dir t)
+  "Show SUBMISSIONS for ASSIGNMENT-NAME (ASSIGNMENT-ID) in VIEW.
+The detail view is the grading file under the submissions directory,
+rendered and saved; the summary view is an ephemeral buffer."
+  (let ((buf (if (eq view 'detail)
+                 (org-canvas--submissions-grading-buffer assignment-name)
+               (get-buffer-create (format "*submissions: %s*" assignment-name)))))
     (with-current-buffer buf
       (let ((inhibit-read-only t))
-        (org-mode)
+        (unless (derived-mode-p 'org-mode)
+          (org-mode))
         (if (eq view 'summary)
             (org-canvas--submissions-render-summary
              assignment-name assignment-id submissions)
@@ -537,20 +774,34 @@ VIEW is `summary' or `detail'."
         (setq-local org-canvas-submissions--current-view view)
         (setq-local org-canvas-submissions--original-scores
                     (org-canvas--submissions-snapshot-scores submissions))
-        (org-canvas-submissions-mode 1)))
+        (org-canvas-submissions-mode 1)
+        (when buffer-file-name
+          (save-buffer))))
     (switch-to-buffer buf)))
+
+(defun org-canvas--submissions-grading-buffer (assignment-name)
+  "Return the buffer visiting ASSIGNMENT-NAME's grading file.
+Create the submissions directory as needed, and ask before an existing
+file's unpushed score edits are overwritten."
+  (org-canvas--submissions-ensure-directory)
+  (let ((buf (find-file-noselect (org-canvas--submissions-file-path assignment-name))))
+    (with-current-buffer buf
+      (unless (derived-mode-p 'org-mode)
+        (org-mode))
+      (org-canvas--submissions-ensure-context)
+      (org-canvas--submissions-guard-unpushed "Re-pull"))
+    buf))
 
 
 ;;;; Grade Writing
 
 (defun org-canvas--submissions-snapshot-scores (submissions)
   "Build an alist of (user-id . score-string) from SUBMISSIONS.
-Score-string is the formatted number or nil when no score."
+The score is the entered one, formatted as the buffer shows it."
   (mapcar (lambda (sub)
-            (let ((uid (org-canvas--submissions-user-id sub))
-                  (score (alist-get 'score sub)))
-              (cons uid (when (and score (numberp score))
-                          (org-canvas--submissions-format-number score)))))
+            (let ((score (org-canvas--submissions-entered-score sub)))
+              (cons (org-canvas--submissions-user-id sub)
+                    (when score (org-canvas--submissions-format-number score)))))
           submissions))
 
 (defun org-canvas--submissions-parse-score (score-string)
@@ -575,24 +826,38 @@ Each element is a plist (:user-id ID :name NAME :old-score OLD :new-score NEW)."
     (org-canvas--submissions-collect-summary-changes)))
 
 (defun org-canvas--submissions-collect-detail-changes ()
-  "Return grade diffs from detail view by reading :SCORE: and :USER_ID: properties."
+  "Return grade diffs from the detail view.
+Each heading's SCORE is compared with its CANVAS_SCORE property, the
+score as last pulled or pushed; a heading without that property falls
+back to the in-memory snapshot taken at render time."
   (let ((changes nil))
     (save-excursion
       (goto-char (point-min))
       (while (re-search-forward "^\\* " nil t)
         (org-back-to-heading t)
-        (let* ((user-id-str (org-entry-get (point) "USER_ID"))
-               (user-id (when user-id-str (string-to-number user-id-str)))
-               (name (org-get-heading t t t t))
-               (score-raw (org-entry-get (point) "SCORE"))
-               (new-score (org-canvas--submissions-parse-score score-raw))
-               (old-score (alist-get user-id org-canvas-submissions--original-scores)))
-          (when (and user-id (not (equal new-score old-score)))
-            (push (list :user-id user-id :name name
-                        :old-score old-score :new-score new-score)
-                  changes)))
+        (let ((change (org-canvas--submissions-detail-change-at-point)))
+          (when change
+            (push change changes)))
         (forward-line 1)))
     (nreverse changes)))
+
+(defun org-canvas--submissions-detail-change-at-point ()
+  "Return the grade change plist for the heading at point, or nil."
+  (let* ((user-id-str (org-entry-get (point) "USER_ID"))
+         (user-id (when user-id-str (string-to-number user-id-str)))
+         (baseline (org-entry-get (point) "CANVAS_SCORE"))
+         (old-score (if baseline
+                        (org-canvas--submissions-parse-score baseline)
+                      (alist-get user-id org-canvas-submissions--original-scores)))
+         (new-score (org-canvas--submissions-parse-score
+                     (org-entry-get (point) "SCORE")))
+         (attempt (org-entry-get (point) "ATTEMPT")))
+    (when (and user-id (not (equal new-score old-score)))
+      (list :user-id user-id
+            :name (org-get-heading t t t t)
+            :old-score old-score
+            :new-score new-score
+            :attempt (and attempt (string-to-number attempt))))))
 
 (defun org-canvas--submissions-collect-summary-changes ()
   "Return grade diffs from summary view by parsing org-table rows."
@@ -650,42 +915,121 @@ DIFFS is a list of plists with :user-id and :new-score."
     (org-canvas-api-request 'POST url
       :data `((grade_data . ,grade-data)))))
 
+(defun org-canvas--submissions-live-baselines (assignment-id)
+  "Fetch ASSIGNMENT-ID's submissions as (user-id . (score . attempt)).
+The score is the entered score as a string, or nil when ungraded."
+  (mapcar (lambda (sub)
+            (let ((score (org-canvas--submissions-entered-score sub)))
+              (cons (org-canvas--submissions-user-id sub)
+                    (cons (and score (org-canvas--submissions-format-number score))
+                          (alist-get 'attempt sub)))))
+          (org-canvas--submissions-fetch-for-assignment assignment-id)))
+
+(defun org-canvas--submissions-conflict-p (change live)
+  "Return why CHANGE conflicts with LIVE Canvas state, or nil.
+LIVE is (score . attempt) for the same student, or nil if gone."
+  (let ((live-score (car live))
+        (live-attempt (cdr live))
+        (attempt (plist-get change :attempt)))
+    (cond ((not (equal live-score (plist-get change :old-score)))
+           (format "Canvas now has %s" (or live-score "no grade")))
+          ((and attempt (numberp live-attempt) (/= attempt live-attempt))
+           (format "resubmitted (attempt %s)" live-attempt)))))
+
+(defun org-canvas--submissions-partition-conflicts (assignment-id diffs)
+  "Split DIFFS into (pushable . conflicting) against live Canvas state.
+ASSIGNMENT-ID names the assignment whose submissions are re-read.
+Only a buffer visiting a saved grading file is checked, and only when
+`org-canvas-submissions-check-conflicts' is non-nil; otherwise every
+diff is pushable.  A conflicting diff carries a :conflict reason."
+  (if (not (and diffs buffer-file-name org-canvas-submissions-check-conflicts))
+      (cons diffs nil)
+    (let ((live (org-canvas--submissions-live-baselines assignment-id))
+          (ok nil)
+          (bad nil))
+      (dolist (change diffs)
+        (let ((reason (org-canvas--submissions-conflict-p
+                       change (alist-get (plist-get change :user-id) live))))
+          (if reason
+              (push (plist-put (copy-sequence change) :conflict reason) bad)
+            (push change ok))))
+      (cons (nreverse ok) (nreverse bad)))))
+
+(defun org-canvas--submissions-mark-conflicts (conflicts)
+  "Write a CONFLICT property on the heading of each of CONFLICTS."
+  (save-excursion
+    (dolist (c conflicts)
+      (when (org-canvas--submissions-goto-user (plist-get c :user-id))
+        (org-entry-put (point) "CONFLICT"
+                       (format "%s; pull again, or set CANVAS_SCORE to Canvas's value to override"
+                               (plist-get c :conflict)))))))
+
+(defun org-canvas--submissions-describe-changes (diffs)
+  "Return DIFFS as one line per student: name, old score, new score."
+  (mapconcat (lambda (ch)
+               (format "  %s: %s → %s"
+                       (plist-get ch :name)
+                       (or (plist-get ch :old-score) "nil")
+                       (or (plist-get ch :new-score) "nil")))
+             diffs "\n"))
+
+(defun org-canvas--submissions-send-grades (assignment-id diffs)
+  "Send DIFFS for ASSIGNMENT-ID: one PUT, or the bulk endpoint for several."
+  (if (= (length diffs) 1)
+      (let ((ch (car diffs)))
+        (org-canvas--submissions-push-single-grade
+         assignment-id (plist-get ch :user-id) (plist-get ch :new-score)))
+    (org-canvas--submissions-push-bulk-grades assignment-id diffs)))
+
+(defun org-canvas--submissions-record-pushed (diffs)
+  "Make DIFFS the new baseline: snapshot, CANVAS_SCORE, and the file."
+  (dolist (ch diffs)
+    (setf (alist-get (plist-get ch :user-id) org-canvas-submissions--original-scores)
+          (plist-get ch :new-score)))
+  (when (eq org-canvas-submissions--current-view 'detail)
+    (save-excursion
+      (dolist (ch diffs)
+        (when (org-canvas--submissions-goto-user (plist-get ch :user-id))
+          (if (plist-get ch :new-score)
+              (org-entry-put (point) "CANVAS_SCORE" (plist-get ch :new-score))
+            (org-entry-delete (point) "CANVAS_SCORE"))
+          (org-entry-delete (point) "CONFLICT")))))
+  (when buffer-file-name
+    (save-buffer)))
+
 ;;;###autoload
 (cl-defun org-canvas-submissions-push-grades ()
-  "Push all modified grades from the current buffer to Canvas.
-Compare current scores against the snapshot taken at render time."
+  "Push every changed score in the current buffer to Canvas.
+In a grading file a change is a SCORE that differs from its
+CANVAS_SCORE.  Changes that conflict with what Canvas holds now are
+skipped and marked (see `org-canvas-submissions-check-conflicts').
+After a successful push the baselines and the file are updated."
   (interactive)
   (unless org-canvas-submissions-mode
     (user-error "Not in a submissions buffer"))
-  (let ((changes (org-canvas--submissions-collect-grade-changes))
-        (assignment-id org-canvas-submissions--assignment-id))
-    (unless changes
-      (message "No grade changes to push")
-      (cl-return-from org-canvas-submissions-push-grades))
-    (message "Grade changes:\n%s"
-             (mapconcat (lambda (ch)
-                          (format "  %s: %s → %s"
-                                  (plist-get ch :name)
-                                  (or (plist-get ch :old-score) "nil")
-                                  (or (plist-get ch :new-score) "nil")))
-                        changes "\n"))
-    (when (y-or-n-p (format "Push %d grade change(s)? " (length changes)))
-      (condition-case err
-          (progn
-            (if (= (length changes) 1)
-                (let ((ch (car changes)))
-                  (org-canvas--submissions-push-single-grade
-                   assignment-id
-                   (plist-get ch :user-id)
-                   (plist-get ch :new-score)))
-              (org-canvas--submissions-push-bulk-grades assignment-id changes))
-            ;; Update snapshot so re-pressing S won't re-push
-            (dolist (ch changes)
-              (setf (alist-get (plist-get ch :user-id)
-                               org-canvas-submissions--original-scores)
-                    (plist-get ch :new-score)))
-            (message "Pushed %d grade(s) successfully" (length changes)))
-        (error (message "Error pushing grades: %s" (error-message-string err)))))))
+  (org-canvas--submissions-ensure-context)
+  (let ((assignment-id org-canvas-submissions--assignment-id))
+    (unless assignment-id
+      (user-error "No CANVAS_ASSIGNMENT_ID in this buffer"))
+    (pcase-let ((`(,changes . ,conflicts)
+                 (org-canvas--submissions-partition-conflicts
+                  assignment-id (org-canvas--submissions-collect-grade-changes))))
+      (org-canvas--submissions-mark-conflicts conflicts)
+      (unless changes
+        (message "No grade changes to push%s"
+                 (if conflicts (format " (%d conflict(s) marked)" (length conflicts)) ""))
+        (cl-return-from org-canvas-submissions-push-grades))
+      (message "Grade changes:\n%s" (org-canvas--submissions-describe-changes changes))
+      (when (y-or-n-p (format "Push %d grade change(s)%s? " (length changes)
+                              (if conflicts
+                                  (format ", skipping %d conflict(s)" (length conflicts))
+                                "")))
+        (condition-case err
+            (progn
+              (org-canvas--submissions-send-grades assignment-id changes)
+              (org-canvas--submissions-record-pushed changes)
+              (message "Pushed %d grade(s) successfully" (length changes)))
+          (error (message "Error pushing grades: %s" (error-message-string err))))))))
 
 (provide 'org-canvas-submissions)
 ;;; org-canvas-submissions.el ends here

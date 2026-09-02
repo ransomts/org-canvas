@@ -1988,6 +1988,47 @@ emacs --batch -l /path/to/org-canvas.el -f org-canvas-diff-batch
 
 Wire that into cron and have it mail you the output on a non-zero exit.
 
+* Grading Submissions
+
+Pulling an assignment's submissions produces a *grading file*: an Org file with one heading per student, saved under =org-canvas-submissions-directory= (by default =submissions/= inside the course directory) as =<assignment>.org=. Grading happens in that file and can span sessions: pull today, grade tomorrow, push when done.
+
+** Workflow
+
+1. =M-x org-canvas-pull-submissions= (transient: Submissions, =g=). Pick the assignment; the grading file is written, saved, and visited. Set =org-canvas-submissions-default-view= to =summary= to see the overview table first instead.
+2. Read the work. Each heading carries the submitted text, an =Attachments= list, the =Comments= so far, and the =Rubric Assessment= when one exists. =d= downloads the attachments of the student at point and =D= everyone's, into =files/<assignment>/<student>/= beside the grading file.
+3. Grade. Edit the =:SCORE:= property on each heading. =c= posts a text comment on the student at point (it goes to Canvas immediately).
+4. =S= pushes. Every heading whose =SCORE= differs from its =CANVAS_SCORE= is listed and, after one confirmation, sent: one change as a single PUT, several through Canvas's bulk endpoint. Pushed scores become the new =CANVAS_SCORE= and the file is saved, so a second =S= pushes nothing.
+5. Later: =M-x org-canvas-open-submissions= (transient: Submissions, =o=) reopens a saved grading file with the mode and its context restored, ready for more grading or another push.
+
+=v= shows a read-only summary table derived from the file's headings, so it reflects grades not yet pushed; =v= there returns to the file. =g= re-pulls from Canvas and asks first if the file holds unpushed edits, since a re-pull rewrites it.
+
+** Conflicts
+
+Before pushing from a saved file, org-canvas re-reads the assignment once and compares. A student whose grade on Canvas no longer matches the file's =CANVAS_SCORE= (someone graded in SpeedGrader since the pull), or whose =attempt= changed (a resubmission), is skipped and gets a =:CONFLICT:= property naming what Canvas holds. Resolve it by pulling again, or by setting =CANVAS_SCORE= to Canvas's value to say the override is intended; the property is cleared on the next successful push. Set =org-canvas-submissions-check-conflicts= to nil to push without the check.
+
+** Properties in a Grading File
+
+| Property | Meaning |
+|---|---|
+| =#+PROPERTY: CANVAS_ASSIGNMENT_ID= | Assignment the file belongs to |
+| =#+PROPERTY: CANVAS_ASSIGNMENT_NAME= | Its name, used for the attachments folder |
+| =#+PROPERTY: PULLED_AT= | When the file was last written from Canvas |
+| =:USER_ID:= | Canvas user id; the key every push uses |
+| =:SUBMISSION_ID:= | Canvas submission id, used for comments |
+| =:STATUS:= | submitted, late, missing, graded, pending_review, or unsubmitted at pull time |
+| =:SCORE:= | The grade you enter (or entered before) |
+| =:CANVAS_SCORE:= | The entered score as last pulled or pushed; the push baseline |
+| =:FINAL_SCORE:= | Present only when a Canvas late policy made the recorded score differ from the entered one |
+| =:ATTEMPT:= | Submission attempt at pull time; a change flags a resubmission |
+| =:SUBMITTED_AT:= | Submission timestamp |
+| =:CONFLICT:= | Written by a push that skipped this heading; cleared by the next successful push |
+
+Scores compare as entered values: with a late policy of 20% per day, a student graded 5 who was a day late shows =SCORE: 5=, =CANVAS_SCORE: 5=, =FINAL_SCORE: 4=.
+
+** Privacy
+
+Grading files are student work. The submissions directory receives a =.gitignore= excluding everything in it when it is first created (=org-canvas-submissions-write-gitignore=), so the files never travel with a course repository. Keep the directory out of any other sharing you would not extend to a gradebook export.
+
 * Canvas-to-Org Migration
 
 Instructors with existing Canvas courses can import their entire course into Org files using =org-canvas-pull-all=.
@@ -2320,6 +2361,21 @@ These commands delete the item at the current cursor position:
 | =org-canvas-delete-assignment-group-at-point= | Delete assignment group at point |
 | =org-canvas-delete-group-category-at-point=  | Delete group category at point   |
 | =org-canvas-delete-calendar-event-at-point=  | Delete calendar event at point   |
+
+** Submission Commands
+
+| Command | Description |
+|---|---|
+| =org-canvas-pull-submissions= | Pull an assignment into a grading file (or the summary table) |
+| =org-canvas-open-submissions= | Reopen a saved grading file |
+| =org-canvas-submissions-push-grades= | Push changed scores (=S= in the file) |
+| =org-canvas-submissions-add-comment= | Post a comment on the student at point (=c=) |
+| =org-canvas-submissions-download-attachments= | Download the attachments at point (=d=) |
+| =org-canvas-submissions-download-all-attachments= | Download every student's attachments (=D=) |
+| =org-canvas-submissions-toggle-view= | Summary table and grading file (=v=) |
+| =org-canvas-submissions-refresh= | Re-pull the file from Canvas (=g=) |
+
+See [[*Grading Submissions]] for the workflow.
 
 ** Utility Commands
 

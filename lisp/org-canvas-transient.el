@@ -88,7 +88,8 @@
    ("M" "Unpublish module and its contents..." org-canvas-unpublish-module)
    ("R" "Apply scheduled releases (PUBLISH_AT)" org-canvas-apply-scheduled-releases)]
   ["Submissions"
-   ("g" "Pull submissions" org-canvas-pull-submissions)
+   ("g" "Pull submissions (grading file)" org-canvas-pull-submissions)
+   ("o" "Open a saved grading file" org-canvas-open-submissions)
    ("G" "Push grades" org-canvas-submissions-push-grades)]
   ["Tools"
    ("i" "Init (setup wizard)" org-canvas-init)
