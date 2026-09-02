@@ -199,10 +199,28 @@
       (expect (org-canvas--submissions-user-sortable-name sub)
               :to-equal "Alice")))
 
-  (it "returns Unknown when no user"
+  (it "falls back to User <id> from the submission's user_id when the user object is missing"
     (let ((sub (test-org-canvas-make-submission '((user . nil)))))
       (expect (org-canvas--submissions-user-sortable-name sub)
+              :to-equal "User 5001")))
+
+  (it "returns Unknown only when there is no user and no user_id"
+    (let ((sub (test-org-canvas-make-submission '((user . nil) (user_id . nil)))))
+      (expect (org-canvas--submissions-user-sortable-name sub)
               :to-equal "Unknown"))))
+
+(describe "org-canvas--submissions-user-id"
+  (it "reads the id from the included user object"
+    (expect (org-canvas--submissions-user-id (test-org-canvas-make-submission))
+            :to-equal 5001))
+
+  (it "falls back to the submission's top-level user_id"
+    (let ((sub (test-org-canvas-make-submission '((user . nil) (user_id . 7007)))))
+      (expect (org-canvas--submissions-user-id sub) :to-equal 7007)))
+
+  (it "is nil when neither is present"
+    (let ((sub (test-org-canvas-make-submission '((user . nil) (user_id . nil)))))
+      (expect (org-canvas--submissions-user-id sub) :to-be nil))))
 
 (describe "org-canvas--submissions-sanitize-filename"
   (it "replaces spaces and special chars"
@@ -528,6 +546,26 @@
      (expect (buffer-string) :to-match "\\*\\* Comments")
      (expect (buffer-string) :to-match "First comment"))))
 
+;;;; Fetch Parameters
+
+(describe "org-canvas--submissions-fetch-for-assignment"
+  (it "sends each include as its own include[] key, never comma-joined (#112)"
+    (with-org-canvas-test-config
+      (let ((captured nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (_method _url &optional params)
+                     (setq captured params)
+                     nil)))
+          (org-canvas--submissions-fetch-for-assignment "1001")
+          (let ((includes (mapcar #'cdr
+                                  (cl-remove-if-not
+                                   (lambda (p) (equal (car p) "include[]"))
+                                   captured))))
+            (expect includes :to-have-same-items-as
+                    '("submission_comments" "rubric_assessment" "user"))
+            (expect (cl-some (lambda (v) (string-match-p "," v)) includes)
+                    :to-be nil)))))))
+
 ;;;; Entry Point (org-canvas-pull-submissions)
 
 (describe "org-canvas-pull-submissions"
@@ -636,12 +674,13 @@
       (org-canvas--submissions-render-summary "HW" "1" nil)
       (expect (buffer-string) :to-match "\\+TITLE")))
 
-  (it "handles submission with no user"
+  (it "handles submission with no user by naming the row after its user_id"
     (let ((sub (test-org-canvas-make-submission '((user . nil)))))
       (with-temp-buffer
         (org-mode)
         (org-canvas--submissions-render-detail "HW" "1" (list sub))
-        (expect (buffer-string) :to-match "Unknown"))))
+        (expect (buffer-string) :to-match "User 5001")
+        (expect (buffer-string) :not :to-match "Unknown"))))
 
   (it "handles submission with no score"
     (let ((sub (test-org-canvas-make-submission '((score . nil)))))

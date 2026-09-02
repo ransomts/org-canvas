@@ -102,10 +102,14 @@ Returns a list of alists with `id' and `name' keys."
 
 (defun org-canvas--submissions-fetch-for-assignment (assignment-id)
   "Fetch all submissions for ASSIGNMENT-ID with comments, rubric, and user info.
-Returns a list of submission alists."
+Returns a list of submission alists.  Each include travels as its own
+include[] key: Canvas ignores a comma-joined list and returns the bare
+submission, which is how every student rendered as Unknown (#112)."
   (org-canvas-api-request-all-pages
    'GET (org-canvas-api-course-endpoint "assignments/%s/submissions" assignment-id)
-   '(("include[]" . "submission_comments,rubric_assessment,user"))))
+   '(("include[]" . "submission_comments")
+     ("include[]" . "rubric_assessment")
+     ("include[]" . "user"))))
 
 ;;;; Status Normalization
 
@@ -172,16 +176,22 @@ Returns a plist with :submitted :missing :late :graded :average :total :points."
 
 (defun org-canvas--submissions-user-sortable-name (submission)
   "Extract sortable name from SUBMISSION's user data.
-Falls back to `name' or \"Unknown\"."
-  (let ((user (alist-get 'user submission)))
+Falls back to `name', then to \"User <id>\" built from the submission's
+own `user_id' so rows stay distinct when the user include is missing,
+and to \"Unknown\" only when there is no id at all."
+  (let ((user (alist-get 'user submission))
+        (uid (org-canvas--submissions-user-id submission)))
     (or (alist-get 'sortable_name user)
         (alist-get 'name user)
+        (and uid (format "User %s" uid))
         "Unknown")))
 
 (defun org-canvas--submissions-user-id (submission)
-  "Extract user ID from SUBMISSION."
-  (let ((user (alist-get 'user submission)))
-    (alist-get 'id user)))
+  "Extract user ID from SUBMISSION.
+Prefers the included user object and falls back to the submission's
+top-level `user_id', which Canvas returns without any include."
+  (or (alist-get 'id (alist-get 'user submission))
+      (alist-get 'user_id submission)))
 
 ;;;; Score Formatting
 
