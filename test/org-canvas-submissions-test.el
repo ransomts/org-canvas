@@ -1659,5 +1659,57 @@
              (expect calls :to-equal 1)))
         (delete-directory dir t)))))
 
+(describe "org-canvas--submissions-refresh-links"
+  (it "rewrites the Assignment line when the heading was renamed, once"
+    (with-grading-file (concat test-grading-file-header
+                               "Assignment: [[file:../assignments.org::*Old Title][in Org]], [[https://x/courses/1/assignments/1001][on Canvas]], [[https://x/courses/1/gradebook/speed_grader?assignment_id=1001][SpeedGrader]]\n\n* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n")
+      (cl-letf (((symbol-function 'org-canvas--submissions-heading-for-assignment)
+                 (lambda (_id) "New Title"))
+                ((symbol-function 'org-canvas--submissions-assignments-file)
+                 (lambda () (expand-file-name "../assignments.org" dir))))
+        (expect (org-canvas--submissions-refresh-links) :to-be-truthy)
+        (expect (buffer-string) :to-match "^Assignment: \\[\\[file:\\.\\./assignments\\.org::\\*New Title\\]\\[in Org\\]\\]")
+        (expect (buffer-string) :not :to-match "Old Title")
+        (expect (count-matches "^Assignment: " (point-min) (point-max)) :to-equal 1)
+        (expect (org-canvas--submissions-refresh-links) :to-be nil))))
+  (it "leaves a file without an Assignment line alone"
+    (with-grading-file (concat test-grading-file-header "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n")
+      (expect (org-canvas--submissions-refresh-links) :to-be nil)
+      (expect (buffer-string) :not :to-match "Assignment:")))
+  (it "runs when a grading file is opened, and saves the result"
+    (let* ((dir (make-temp-file "org-canvas-subs-" t))
+           (org-canvas-submissions-directory dir)
+           (file (expand-file-name "HW.org" dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert test-grading-file-header
+                      "Assignment: [[file:../assignments.org::*Old Title][in Org]], [[https://x/courses/1/assignments/1001][on Canvas]], [[https://x/courses/1/gradebook/speed_grader?assignment_id=1001][SpeedGrader]]\n\n* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n"))
+            (cl-letf (((symbol-function 'completing-read) (lambda (_p files &rest _) (car files)))
+                      ((symbol-function 'org-canvas--submissions-heading-for-assignment) (lambda (_id) "Fresh Title"))
+                      ((symbol-function 'org-canvas--submissions-assignments-file)
+                       (lambda () (expand-file-name "../assignments.org" dir))))
+              (org-canvas-open-submissions))
+            (expect (buffer-string) :to-match "::\\*Fresh Title\\]")
+            (expect (buffer-modified-p) :to-be nil)
+            (expect (with-temp-buffer (insert-file-contents file) (buffer-string)) :to-match "Fresh Title"))
+        (when (get-file-buffer file) (kill-buffer (get-file-buffer file)))
+        (delete-directory dir t))))
+  (it "runs after a successful push"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (concat test-grading-file-header
+                                   "Assignment: [[file:../assignments.org::*Old Title][in Org]], [[https://x/courses/1/assignments/1001][on Canvas]], [[https://x/courses/1/gradebook/speed_grader?assignment_id=1001][SpeedGrader]]\n\n* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:END:\n")
+          (let ((org-canvas-submissions-check-conflicts nil))
+            (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t))
+                      ((symbol-function 'org-canvas--submissions-heading-for-assignment) (lambda (_id) "Renamed"))
+                      ((symbol-function 'org-canvas--submissions-assignments-file)
+                       (lambda () (expand-file-name "../assignments.org" dir))))
+              (org-canvas-submissions-push-grades)))
+          (expect-api-called 'PUT "assignments/1001/submissions/5001")
+          (expect (buffer-string) :to-match "::\\*Renamed\\]")
+          (expect (buffer-string) :to-match ":CANVAS_SCORE: 95")
+          (expect (buffer-modified-p) :to-be nil))))))
+
 (provide 'org-canvas-submissions-test)
 ;;; org-canvas-submissions-test.el ends here

@@ -263,19 +263,43 @@ a classic quiz's shadow assignment or one authored in the web UI."
              nil 'file)
             nil))))))
 
-(defun org-canvas--submissions-render-links (assignment-id)
-  "Insert the links line for ASSIGNMENT-ID: Org heading, Canvas page, SpeedGrader.
-The Org link is omitted when no assignments heading carries the id."
+(defun org-canvas--submissions-links-line (assignment-id)
+  "Return the Assignment: line for ASSIGNMENT-ID, without its newline.
+It links the assignments heading that carries the id (omitted when
+none does), the Canvas assignment page, and SpeedGrader."
   (let* ((title (org-canvas--submissions-heading-for-assignment assignment-id))
          (file (and title (org-canvas--submissions-assignments-file)))
          (org-link (and file
                         (format "[[file:%s::*%s][in Org]], "
                                 (file-relative-name file (org-canvas--submissions-dir))
                                 title))))
-    (insert (format "Assignment: %s[[%s][on Canvas]], [[%s][SpeedGrader]]\n"
-                    (or org-link "")
-                    (org-canvas--submissions-assignment-url assignment-id)
-                    (org-canvas--submissions-speedgrader-url assignment-id)))))
+    (format "Assignment: %s[[%s][on Canvas]], [[%s][SpeedGrader]]"
+            (or org-link "")
+            (org-canvas--submissions-assignment-url assignment-id)
+            (org-canvas--submissions-speedgrader-url assignment-id))))
+
+(defun org-canvas--submissions-render-links (assignment-id)
+  "Insert the Assignment: links line for ASSIGNMENT-ID."
+  (insert (org-canvas--submissions-links-line assignment-id) "\n"))
+
+(defun org-canvas--submissions-refresh-links ()
+  "Rebuild this grading file's Assignment: line from the current sources.
+The assignments heading may have been renamed since the pull; the line
+is recomputed by CANVAS_ID with no Canvas request.  Return non-nil when
+the line changed."
+  (org-canvas--submissions-ensure-context)
+  (when org-canvas-submissions--assignment-id
+    (save-excursion
+      (goto-char (point-min))
+      (let ((limit (save-excursion (or (re-search-forward "^\\* " nil t) (point-max)))))
+        (when (re-search-forward "^Assignment: .*$" limit t)
+          (let ((current (match-string 0))
+                (fresh (org-canvas--submissions-links-line
+                        org-canvas-submissions--assignment-id))
+                (inhibit-read-only t))
+            (unless (equal current fresh)
+              (replace-match fresh t t)
+              t)))))))
 
 ;;;; Attachments on Disk
 
@@ -872,7 +896,9 @@ under `org-canvas-submissions-directory'."
       (user-error "No grading files in %s; pull an assignment first" dir))
     (find-file (expand-file-name (completing-read "Grading file: " files nil t) dir))
     (org-canvas-submissions-mode 1)
-    (org-canvas--submissions-ensure-context)))
+    (org-canvas--submissions-ensure-context)
+    (when (org-canvas--submissions-refresh-links)
+      (save-buffer))))
 
 ;;;###autoload
 (defun org-canvas-submissions-refresh ()
@@ -1134,7 +1160,8 @@ diff is pushable.  A conflicting diff carries a :conflict reason."
           (if (plist-get ch :new-score)
               (org-entry-put (point) "CANVAS_SCORE" (plist-get ch :new-score))
             (org-entry-delete (point) "CANVAS_SCORE"))
-          (org-entry-delete (point) "CONFLICT")))))
+          (org-entry-delete (point) "CONFLICT"))))
+    (org-canvas--submissions-refresh-links))
   (when buffer-file-name
     (save-buffer)))
 
