@@ -1055,6 +1055,10 @@ The remote updated_at is always newer than the baseline."
       (let ((noninteractive nil))
         (cl-letf (((symbol-function 'org-canvas--preflight-check) #'ignore)
                   ((symbol-function 'display-buffer) (lambda (&rest _) nil))
+                  ;; The referenced-media scan (#102) would otherwise
+                  ;; read the syllabus, one request these specs count.
+                  ((symbol-function 'org-canvas--diff-syllabus-references)
+                   (lambda () nil))
                   ((symbol-function 'org-canvas--diff-feature)
                    (lambda (feature)
                      (or (cl-find (plist-get feature :name) results
