@@ -1994,11 +1994,11 @@ Pulling an assignment's submissions produces a *grading file*: an Org file with 
 
 ** Workflow
 
-1. =M-x org-canvas-pull-submissions= (transient: Submissions, =g=). Pick the assignment; the grading file is written, saved, and visited. Set =org-canvas-submissions-default-view= to =summary= to see the overview table first instead.
-2. Read the work. Each heading carries the submitted text, an =Attachments= list, the =Comments= so far, and the =Rubric Assessment= when one exists. =d= downloads the attachments of the student at point and =D= everyone's, into =files/<assignment>/<student>/= beside the grading file.
+1. =M-x org-canvas-pull-submissions= (transient: Submissions, =g=). Pick the assignment; the grading file is written, saved, and visited. Its =Assignment:= line links the assignment's heading in the assignments file (when one carries the id), its Canvas page, and SpeedGrader, and every student heading carries an =Open in SpeedGrader= link, which is where rubric grading finishes since rubric scores cannot be written back from Org. Set =org-canvas-submissions-default-view= to =summary= to see the overview table first instead.
+2. Read the work. Each heading carries the submitted text, an =Attachments= list, the =Comments= so far, and the =Rubric Assessment= when one exists. =d= downloads the attachments of the student at point and =D= everyone's, into =files/<assignment>/<student>/= beside the grading file. After a download each =Attachments= entry links the local copy first, with the Canvas link kept beside it, and a later pull keeps that local link as long as the file is still there.
 3. Grade. Edit the =:SCORE:= property on each heading. =c= posts a text comment on the student at point (it goes to Canvas immediately).
 4. =S= pushes. Every heading whose =SCORE= differs from its =CANVAS_SCORE= is listed and, after one confirmation, sent: one change as a single PUT, several through Canvas's bulk endpoint. Pushed scores become the new =CANVAS_SCORE= and the file is saved, so a second =S= pushes nothing.
-5. Later: =M-x org-canvas-open-submissions= (transient: Submissions, =o=) reopens a saved grading file with the mode and its context restored, ready for more grading or another push.
+5. Later: =M-x org-canvas-open-submissions= (transient: Submissions, =o=) reopens a saved grading file with the mode and its context restored, ready for more grading or another push. Opening a file, and every successful push, rebuilds its =Assignment:= line from the assignments file by =CANVAS_ID=, so a renamed heading never leaves a stale link; nothing else in the file is touched, and no Canvas request is made.
 
 =v= shows a read-only summary table derived from the file's headings, so it reflects grades not yet pushed; =v= there returns to the file. =g= re-pulls from Canvas and asks first if the file holds unpushed edits, since a re-pull rewrites it.
 

@@ -219,6 +219,164 @@ Canvas reports `entered_score' (what the grader typed) and `score'
     (cond ((numberp entered) entered)
           ((numberp score) score))))
 
+;;;; Links
+
+(defun org-canvas--submissions-course-url (path)
+  "Return the web URL of PATH under the course."
+  (format "%s/courses/%s/%s"
+          (replace-regexp-in-string "/+\\'" "" org-canvas-base-url)
+          org-canvas-course-id path))
+
+(defun org-canvas--submissions-assignment-url (assignment-id)
+  "Return the Canvas page URL of ASSIGNMENT-ID."
+  (org-canvas--submissions-course-url (format "assignments/%s" assignment-id)))
+
+(defun org-canvas--submissions-speedgrader-url (assignment-id &optional user-id)
+  "Return the SpeedGrader URL for ASSIGNMENT-ID, at USER-ID's work when given."
+  (concat (org-canvas--submissions-course-url
+           (format "gradebook/speed_grader?assignment_id=%s" assignment-id))
+          (if user-id (format "&student_id=%s" user-id) "")))
+
+(defun org-canvas--submissions-assignments-file ()
+  "Return the assignments file registered with org-canvas, or nil.
+Read through the feature registry so this module does not depend on
+the assignments module."
+  (let* ((feature (cl-find "assignments" org-canvas--feature-registry
+                           :key (lambda (f) (plist-get f :endpoint))
+                           :test #'equal))
+         (var (and feature (plist-get feature :file-var))))
+    (and var (boundp var) (symbol-value var))))
+
+(defun org-canvas--submissions-heading-for-assignment (assignment-id)
+  "Return the title of the assignments heading whose CANVAS_ID is ASSIGNMENT-ID.
+Nil when the assignments file or such a heading does not exist, as for
+a classic quiz's shadow assignment or one authored in the web UI."
+  (let ((file (org-canvas--submissions-assignments-file)))
+    (when (and file (file-exists-p file))
+      (with-current-buffer (find-file-noselect file)
+        (save-excursion
+          (catch 'found
+            (org-map-entries
+             (lambda ()
+               (when (equal (org-entry-get (point) "CANVAS_ID") assignment-id)
+                 (throw 'found (org-get-heading t t t t))))
+             nil 'file)
+            nil))))))
+
+(defun org-canvas--submissions-links-line (assignment-id)
+  "Return the Assignment: line for ASSIGNMENT-ID, without its newline.
+It links the assignments heading that carries the id (omitted when
+none does), the Canvas assignment page, and SpeedGrader."
+  (let* ((title (org-canvas--submissions-heading-for-assignment assignment-id))
+         (file (and title (org-canvas--submissions-assignments-file)))
+         (org-link (and file
+                        (format "[[file:%s::*%s][in Org]], "
+                                (file-relative-name file (org-canvas--submissions-dir))
+                                title))))
+    (format "Assignment: %s[[%s][on Canvas]], [[%s][SpeedGrader]]"
+            (or org-link "")
+            (org-canvas--submissions-assignment-url assignment-id)
+            (org-canvas--submissions-speedgrader-url assignment-id))))
+
+(defun org-canvas--submissions-render-links (assignment-id)
+  "Insert the Assignment: links line for ASSIGNMENT-ID."
+  (insert (org-canvas--submissions-links-line assignment-id) "\n"))
+
+(defun org-canvas--submissions-refresh-links ()
+  "Rebuild this grading file's Assignment: line from the current sources.
+The assignments heading may have been renamed since the pull; the line
+is recomputed by CANVAS_ID with no Canvas request.  Return non-nil when
+the line changed."
+  (org-canvas--submissions-ensure-context)
+  (when org-canvas-submissions--assignment-id
+    (save-excursion
+      (goto-char (point-min))
+      (let ((limit (save-excursion (or (re-search-forward "^\\* " nil t) (point-max)))))
+        (when (re-search-forward "^Assignment: .*$" limit t)
+          (let ((current (match-string 0))
+                (fresh (org-canvas--submissions-links-line
+                        org-canvas-submissions--assignment-id))
+                (inhibit-read-only t))
+            (unless (equal current fresh)
+              (replace-match fresh t t)
+              t)))))))
+
+;;;; Attachments on Disk
+
+(defun org-canvas--submissions-attachment-dir (assignment-name student-name)
+  "Return the download directory for STUDENT-NAME's work on ASSIGNMENT-NAME."
+  (expand-file-name
+   (format "files/%s/%s/"
+           (org-canvas--submissions-sanitize-filename assignment-name)
+           (org-canvas--submissions-sanitize-filename student-name))
+   (org-canvas--submissions-dir)))
+
+(defun org-canvas--submissions-local-attachment (assignment-name student-name filename)
+  "Return FILENAME's link path, relative to the grading file, if downloaded.
+Nil otherwise.  ASSIGNMENT-NAME and STUDENT-NAME locate the download
+directory."
+  (when (and assignment-name student-name filename)
+    (let ((path (expand-file-name
+                 filename (org-canvas--submissions-attachment-dir assignment-name student-name))))
+      (when (file-exists-p path)
+        (file-relative-name path (org-canvas--submissions-dir))))))
+
+(defun org-canvas--submissions-attachment-line (name url local)
+  "Return the Attachments list line for NAME at URL.
+With LOCAL, the downloaded copy's link path, the local file comes first
+and the Canvas link stays beside it."
+  (if local
+      (format "- [[file:%s][%s]] ([[%s][Canvas]])\n" local name url)
+    (format "- [[%s][%s]]\n" url name)))
+
+(defconst org-canvas--submissions-attachment-line-re
+  (concat "^- \\(?:"
+          "\\[\\[file:\\([^]]+\\)\\]\\[\\([^]]+\\)\\]\\] (\\[\\[\\(https?://[^]]+\\)\\]\\[Canvas\\]\\])"
+          "\\|"
+          "\\[\\[\\(https?://[^]]+\\)\\]\\[\\([^]]+\\)\\]\\]"
+          "\\)[ \t]*$")
+  "An Attachments entry, in either form.
+Local: groups 1 path, 2 name, 3 url.  Remote: groups 4 url, 5 name.")
+
+(defun org-canvas--submissions-attachments-region ()
+  "Return (START . END) of the Attachments list under the heading at point, or nil."
+  (save-excursion
+    (org-back-to-heading t)
+    (let ((end (save-excursion (org-end-of-subtree t) (point))))
+      (when (re-search-forward "^\\*\\* Attachments$" end t)
+        (forward-line 1)
+        (cons (point)
+              (save-excursion
+                (if (re-search-forward "^\\*\\*" end t) (line-beginning-position) end)))))))
+
+(defun org-canvas--submissions-attachment-entries ()
+  "Return the Attachments entries of the heading at point as plists.
+Each has :name, :url, and :local (the downloaded copy's link path or nil)."
+  (let ((region (org-canvas--submissions-attachments-region))
+        (entries nil))
+    (when region
+      (save-excursion
+        (goto-char (car region))
+        (while (re-search-forward org-canvas--submissions-attachment-line-re (cdr region) t)
+          (push (if (match-beginning 4)
+                    (list :name (match-string 5) :url (match-string 4) :local nil)
+                  (list :name (match-string 2) :url (match-string 3) :local (match-string 1)))
+                entries))))
+    (nreverse entries)))
+
+(defun org-canvas--submissions-rewrite-attachments (entries)
+  "Replace the Attachments list of the heading at point with ENTRIES."
+  (let ((region (org-canvas--submissions-attachments-region)))
+    (when region
+      (save-excursion
+        (goto-char (car region))
+        (delete-region (car region) (cdr region))
+        (dolist (e entries)
+          (insert (org-canvas--submissions-attachment-line
+                   (plist-get e :name) (plist-get e :url) (plist-get e :local))))
+        (when (looking-at "^\\*")
+          (insert "\n"))))))
+
 ;;;; Data Fetching
 
 (defun org-canvas--submissions-fetch-assignments ()
@@ -387,17 +545,21 @@ SUBMISSIONS is the list of submission alists."
     (insert (format "#+TITLE: Submissions: %s\n" assignment-name))
     (insert (format "#+PROPERTY: CANVAS_ASSIGNMENT_ID %s\n" assignment-id))
     (insert (format "#+PROPERTY: CANVAS_ASSIGNMENT_NAME %s\n" assignment-name))
-    (insert (format "#+PROPERTY: PULLED_AT %s\n\n"
+    (insert (format "#+PROPERTY: PULLED_AT %s\n"
                     (format-time-string "<%Y-%m-%d %a %H:%M>")))
+    (org-canvas--submissions-render-links assignment-id)
+    (insert "\n")
     (dolist (sub sorted)
-      (org-canvas--submissions-render-detail-entry sub))))
+      (org-canvas--submissions-render-detail-entry sub assignment-name assignment-id))))
 
-(defun org-canvas--submissions-render-detail-entry (submission)
+(defun org-canvas--submissions-render-detail-entry (submission &optional assignment-name assignment-id)
   "Render a single SUBMISSION as an Org heading with properties.
 SCORE is the editable grade; CANVAS_SCORE is the same value as pulled,
 the baseline a later push compares against.  FINAL_SCORE appears only
 when Canvas's late policy made the recorded score differ from the one
-entered.  ATTEMPT lets a push notice a resubmission."
+entered.  ATTEMPT lets a push notice a resubmission.  With
+ASSIGNMENT-ID the heading gets its SpeedGrader link, and with
+ASSIGNMENT-NAME attachments already downloaded link to the local copy."
   (let ((name (org-canvas--submissions-user-sortable-name submission))
         (user-id (org-canvas--submissions-user-id submission))
         (sub-id (alist-get 'id submission))
@@ -429,23 +591,30 @@ entered.  ATTEMPT lets a push notice a resubmission."
     (when (not (string-empty-p submitted-at))
       (insert (format ":SUBMITTED_AT: %s\n" submitted-at)))
     (insert ":END:\n")
+    (when (and user-id assignment-id)
+      (insert (format "[[%s][Open in SpeedGrader]]\n"
+                      (org-canvas--submissions-speedgrader-url assignment-id user-id))))
     (when (and body (stringp body) (not (string-empty-p body)))
       (insert "\n" (org-canvas--html-to-org body) "\n"))
-    (org-canvas--submissions-render-attachments attachments)
+    (org-canvas--submissions-render-attachments attachments assignment-name name)
     (org-canvas--submissions-render-comments comments)
     (org-canvas--submissions-render-rubric rubric)
     (insert "\n")))
 
-(defun org-canvas--submissions-render-attachments (attachments)
-  "Render ATTACHMENTS list as a sub-heading with links."
+(defun org-canvas--submissions-render-attachments (attachments &optional assignment-name student-name)
+  "Render ATTACHMENTS as a sub-heading with links.
+With ASSIGNMENT-NAME and STUDENT-NAME, an attachment already downloaded
+links to the local copy first, with the Canvas link beside it."
   (when (and attachments (> (length attachments) 0))
     (insert "\n** Attachments\n")
-    (let ((att-list (append attachments nil)))
-      (dolist (att att-list)
-        (let ((url (alist-get 'url att))
-              (filename (alist-get 'display_name att)))
-          (when (and url filename)
-            (insert (format "- [[%s][%s]]\n" url filename))))))))
+    (dolist (att (append attachments nil))
+      (let ((url (alist-get 'url att))
+            (filename (alist-get 'display_name att)))
+        (when (and url filename)
+          (insert (org-canvas--submissions-attachment-line
+                   filename url
+                   (org-canvas--submissions-local-attachment
+                    assignment-name student-name filename))))))))
 
 (defun org-canvas--submissions-render-comments (comments)
   "Render submission COMMENTS as a sub-heading."
@@ -622,9 +791,11 @@ Searches from point for the ** Comments sub-heading under the current heading."
 
 ;;;###autoload
 (defun org-canvas-submissions-download-attachments ()
-  "Download attachments for the submission at point.
-Files are saved to files/<assignment>/<student>/ under the
-submissions directory, beside the grading file."
+  "Download the attachments of the submission at point.
+Files land in files/<assignment>/<student>/ under the submissions
+directory, beside the grading file, and each Attachments entry is then
+rewritten to link the local copy with the Canvas link kept beside it.
+Entries already downloaded are skipped."
   (interactive)
   (unless org-canvas-submissions-mode
     (user-error "Not in a submissions buffer"))
@@ -634,32 +805,26 @@ submissions directory, beside the grading file."
   (save-excursion
     (org-back-to-heading t)
     (let* ((user-name (org-get-heading t t t t))
-           (end (save-excursion (org-end-of-subtree t) (point)))
            (assignment-name org-canvas-submissions--assignment-name)
-           (download-dir (expand-file-name
-                          (format "files/%s/%s/"
-                                  (org-canvas--submissions-sanitize-filename assignment-name)
-                                  (org-canvas--submissions-sanitize-filename user-name))
-                          (org-canvas--submissions-dir)))
-           (urls nil))
-      ;; Collect attachment URLs from the Attachments sub-heading
-      (save-excursion
-        (when (re-search-forward "^\\*\\* Attachments$" end t)
-          (let ((att-end (save-excursion
-                           (if (re-search-forward "^\\*\\*" end t)
-                               (line-beginning-position)
-                             end))))
-            (while (re-search-forward "\\[\\[\\(https?://[^]]+\\)\\]\\[\\([^]]+\\)\\]\\]" att-end t)
-              (push (cons (match-string 1) (match-string 2)) urls)))))
-      (unless urls
+           (dir (org-canvas--submissions-attachment-dir assignment-name user-name))
+           (entries (org-canvas--submissions-attachment-entries))
+           (fetched 0))
+      (unless entries
         (user-error "No attachments found for %s" user-name))
-      (make-directory download-dir t)
-      (dolist (url-pair (nreverse urls))
-        (let ((url (car url-pair))
-              (filename (cdr url-pair)))
-          (message "Downloading %s..." filename)
-          (org-canvas--submissions-download-file url download-dir filename)))
-      (message "Downloaded %d file(s) to %s" (length urls) download-dir))))
+      (make-directory dir t)
+      (dolist (e entries)
+        (unless (plist-get e :local)
+          (message "Downloading %s..." (plist-get e :name))
+          (org-canvas--submissions-download-file (plist-get e :url) dir (plist-get e :name))
+          (cl-incf fetched)
+          (plist-put e :local (org-canvas--submissions-local-attachment
+                               assignment-name user-name (plist-get e :name)))))
+      (when (> fetched 0)
+        (let ((inhibit-read-only t))
+          (org-canvas--submissions-rewrite-attachments entries))
+        (when buffer-file-name
+          (save-buffer)))
+      (message "Downloaded %d file(s) to %s" fetched dir))))
 
 ;;;###autoload
 (defun org-canvas-submissions-download-all-attachments ()
@@ -731,7 +896,9 @@ under `org-canvas-submissions-directory'."
       (user-error "No grading files in %s; pull an assignment first" dir))
     (find-file (expand-file-name (completing-read "Grading file: " files nil t) dir))
     (org-canvas-submissions-mode 1)
-    (org-canvas--submissions-ensure-context)))
+    (org-canvas--submissions-ensure-context)
+    (when (org-canvas--submissions-refresh-links)
+      (save-buffer))))
 
 ;;;###autoload
 (defun org-canvas-submissions-refresh ()
@@ -993,7 +1160,8 @@ diff is pushable.  A conflicting diff carries a :conflict reason."
           (if (plist-get ch :new-score)
               (org-entry-put (point) "CANVAS_SCORE" (plist-get ch :new-score))
             (org-entry-delete (point) "CANVAS_SCORE"))
-          (org-entry-delete (point) "CONFLICT")))))
+          (org-entry-delete (point) "CONFLICT"))))
+    (org-canvas--submissions-refresh-links))
   (when buffer-file-name
     (save-buffer)))
 

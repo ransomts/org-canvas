@@ -1533,5 +1533,183 @@
           (org-canvas--submissions-goto-user 5001)
           (expect (org-entry-get (point) "CANVAS_SCORE") :to-be nil))))))
 
+;;;; Links and Local Attachments
+
+(describe "submission link helpers"
+  (it "build course URLs without a doubled slash"
+    (let ((org-canvas-base-url "https://canvas.example.edu/")
+          (org-canvas-course-id "42"))
+      (expect (org-canvas--submissions-assignment-url "7")
+              :to-equal "https://canvas.example.edu/courses/42/assignments/7")
+      (expect (org-canvas--submissions-speedgrader-url "7")
+              :to-equal "https://canvas.example.edu/courses/42/gradebook/speed_grader?assignment_id=7")
+      (expect (org-canvas--submissions-speedgrader-url "7" 5001)
+              :to-equal "https://canvas.example.edu/courses/42/gradebook/speed_grader?assignment_id=7&student_id=5001"))))
+
+(describe "org-canvas--submissions-heading-for-assignment"
+  (it "finds the assignments heading by CANVAS_ID"
+    (let ((file (make-temp-file "org-canvas-assignments-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "* Other\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n* Closer: First Stakes\n:PROPERTIES:\n:CANVAS_ID: 1001\n:END:\n"))
+            (cl-letf (((symbol-function 'org-canvas--submissions-assignments-file) (lambda () file)))
+              (expect (org-canvas--submissions-heading-for-assignment "1001")
+                      :to-equal "Closer: First Stakes")
+              (expect (org-canvas--submissions-heading-for-assignment "999") :to-be nil)))
+        (when (get-file-buffer file) (kill-buffer (get-file-buffer file)))
+        (delete-file file))))
+  (it "is nil when the assignments file does not exist"
+    (cl-letf (((symbol-function 'org-canvas--submissions-assignments-file)
+               (lambda () "/nonexistent/assignments.org")))
+      (expect (org-canvas--submissions-heading-for-assignment "1001") :to-be nil))))
+
+(describe "grading file links line"
+  (it "links the Org heading, the Canvas page, and SpeedGrader"
+    (let ((org-canvas-base-url "https://canvas.example.edu")
+          (org-canvas-course-id "42")
+          (org-canvas-submissions-directory "/course/submissions/"))
+      (cl-letf (((symbol-function 'org-canvas--submissions-heading-for-assignment)
+                 (lambda (_id) "Closer: First Stakes"))
+                ((symbol-function 'org-canvas--submissions-assignments-file)
+                 (lambda () "/course/assignments.org")))
+        (with-temp-buffer
+          (org-mode)
+          (org-canvas--submissions-render-detail "HW" "1001" nil)
+          (let ((content (buffer-string)))
+            (expect content :to-match "Assignment: \\[\\[file:\\.\\./assignments\\.org::\\*Closer: First Stakes\\]\\[in Org\\]\\]")
+            (expect content :to-match "\\[\\[https://canvas\\.example\\.edu/courses/42/assignments/1001\\]\\[on Canvas\\]\\]")
+            (expect content :to-match "speed_grader\\?assignment_id=1001\\]\\[SpeedGrader\\]\\]"))))))
+  (it "omits the Org link when no heading carries the id"
+    (cl-letf (((symbol-function 'org-canvas--submissions-heading-for-assignment) (lambda (_id) nil)))
+      (with-temp-buffer
+        (org-mode)
+        (org-canvas--submissions-render-detail "HW" "1001" nil)
+        (expect (buffer-string) :to-match "^Assignment: \\[\\[https://")
+        (expect (buffer-string) :not :to-match "in Org")))))
+
+(describe "per-student SpeedGrader link"
+  (it "follows the property drawer when the assignment id is known"
+    (let ((org-canvas-base-url "https://canvas.example.edu")
+          (org-canvas-course-id "42"))
+      (with-temp-buffer
+        (org-mode)
+        (org-canvas--submissions-render-detail-entry (test-org-canvas-make-submission) "HW" "1001")
+        (expect (buffer-string)
+                :to-match ":END:\n\\[\\[https://canvas\\.example\\.edu/courses/42/gradebook/speed_grader\\?assignment_id=1001&student_id=5001\\]\\[Open in SpeedGrader\\]\\]"))))
+  (it "is absent without an assignment id"
+    (with-temp-buffer
+      (org-mode)
+      (org-canvas--submissions-render-detail-entry (test-org-canvas-make-submission))
+      (expect (buffer-string) :not :to-match "SpeedGrader"))))
+
+(describe "attachment entries"
+  (it "parses remote and local forms"
+    (with-temp-org-buffer
+     "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n\n** Attachments\n- [[https://example.com/files/1/download][hw.pdf]]\n- [[file:files/HW/Adams__Alice/notes.pdf][notes.pdf]] ([[https://example.com/files/2/download][Canvas]])\n\n** Comments\n- [[https://example.com/x][not an attachment]]\n"
+     (org-back-to-heading)
+     (let ((entries (org-canvas--submissions-attachment-entries)))
+       (expect (length entries) :to-equal 2)
+       (expect (plist-get (nth 0 entries) :name) :to-equal "hw.pdf")
+       (expect (plist-get (nth 0 entries) :local) :to-be nil)
+       (expect (plist-get (nth 1 entries) :name) :to-equal "notes.pdf")
+       (expect (plist-get (nth 1 entries) :url) :to-equal "https://example.com/files/2/download")
+       (expect (plist-get (nth 1 entries) :local) :to-equal "files/HW/Adams__Alice/notes.pdf"))))
+  (it "renders a downloaded attachment with the local link first"
+    (let* ((dir (make-temp-file "org-canvas-subs-" t))
+           (org-canvas-submissions-directory dir)
+           (local-dir (org-canvas--submissions-attachment-dir "HW" "Adams, Alice")))
+      (unwind-protect
+          (progn
+            (make-directory local-dir t)
+            (with-temp-file (expand-file-name "hw.pdf" local-dir) (insert "pdf"))
+            (with-temp-buffer
+              (org-canvas--submissions-render-attachments
+               [((display_name . "hw.pdf") (url . "https://example.com/files/1/download"))
+                ((display_name . "late.pdf") (url . "https://example.com/files/2/download"))]
+               "HW" "Adams, Alice")
+              (expect (buffer-string)
+                      :to-match "- \\[\\[file:files/HW/Adams__Alice/hw\\.pdf\\]\\[hw\\.pdf\\]\\] (\\[\\[https://example\\.com/files/1/download\\]\\[Canvas\\]\\])")
+              (expect (buffer-string)
+                      :to-match "- \\[\\[https://example\\.com/files/2/download\\]\\[late\\.pdf\\]\\]")))
+        (delete-directory dir t)))))
+
+(describe "download rewrites attachment entries"
+  (it "links the local copy after downloading and skips it next time"
+    (let* ((dir (make-temp-file "org-canvas-subs-" t))
+           (org-canvas-submissions-directory dir)
+           (calls 0))
+      (unwind-protect
+          (with-temp-org-buffer
+           "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n\n** Attachments\n- [[https://example.com/files/1/download][hw.pdf]]\n\n** Comments\n- *Prof* :: fine\n"
+           (org-back-to-heading)
+           (setq-local org-canvas-submissions--current-view 'detail)
+           (setq-local org-canvas-submissions--assignment-name "HW")
+           (org-canvas-submissions-mode 1)
+           (cl-letf (((symbol-function 'org-canvas--submissions-download-file)
+                      (lambda (_url d filename)
+                        (cl-incf calls)
+                        (with-temp-file (expand-file-name filename d) (insert "pdf")))))
+             (org-canvas-submissions-download-attachments)
+             (expect calls :to-equal 1)
+             (expect (buffer-string)
+                     :to-match "- \\[\\[file:files/HW/Adams__Alice/hw\\.pdf\\]\\[hw\\.pdf\\]\\] (\\[\\[https://example\\.com/files/1/download\\]\\[Canvas\\]\\])\n\n\\*\\* Comments")
+             (expect (buffer-modified-p) :to-be nil)
+             (org-canvas-submissions-download-attachments)
+             (expect calls :to-equal 1)))
+        (delete-directory dir t)))))
+
+(describe "org-canvas--submissions-refresh-links"
+  (it "rewrites the Assignment line when the heading was renamed, once"
+    (with-grading-file (concat test-grading-file-header
+                               "Assignment: [[file:../assignments.org::*Old Title][in Org]], [[https://x/courses/1/assignments/1001][on Canvas]], [[https://x/courses/1/gradebook/speed_grader?assignment_id=1001][SpeedGrader]]\n\n* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n")
+      (cl-letf (((symbol-function 'org-canvas--submissions-heading-for-assignment)
+                 (lambda (_id) "New Title"))
+                ((symbol-function 'org-canvas--submissions-assignments-file)
+                 (lambda () (expand-file-name "../assignments.org" dir))))
+        (expect (org-canvas--submissions-refresh-links) :to-be-truthy)
+        (expect (buffer-string) :to-match "^Assignment: \\[\\[file:\\.\\./assignments\\.org::\\*New Title\\]\\[in Org\\]\\]")
+        (expect (buffer-string) :not :to-match "Old Title")
+        (expect (count-matches "^Assignment: " (point-min) (point-max)) :to-equal 1)
+        (expect (org-canvas--submissions-refresh-links) :to-be nil))))
+  (it "leaves a file without an Assignment line alone"
+    (with-grading-file (concat test-grading-file-header "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n")
+      (expect (org-canvas--submissions-refresh-links) :to-be nil)
+      (expect (buffer-string) :not :to-match "Assignment:")))
+  (it "runs when a grading file is opened, and saves the result"
+    (let* ((dir (make-temp-file "org-canvas-subs-" t))
+           (org-canvas-submissions-directory dir)
+           (file (expand-file-name "HW.org" dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert test-grading-file-header
+                      "Assignment: [[file:../assignments.org::*Old Title][in Org]], [[https://x/courses/1/assignments/1001][on Canvas]], [[https://x/courses/1/gradebook/speed_grader?assignment_id=1001][SpeedGrader]]\n\n* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n"))
+            (cl-letf (((symbol-function 'completing-read) (lambda (_p files &rest _) (car files)))
+                      ((symbol-function 'org-canvas--submissions-heading-for-assignment) (lambda (_id) "Fresh Title"))
+                      ((symbol-function 'org-canvas--submissions-assignments-file)
+                       (lambda () (expand-file-name "../assignments.org" dir))))
+              (org-canvas-open-submissions))
+            (expect (buffer-string) :to-match "::\\*Fresh Title\\]")
+            (expect (buffer-modified-p) :to-be nil)
+            (expect (with-temp-buffer (insert-file-contents file) (buffer-string)) :to-match "Fresh Title"))
+        (when (get-file-buffer file) (kill-buffer (get-file-buffer file)))
+        (delete-directory dir t))))
+  (it "runs after a successful push"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (concat test-grading-file-header
+                                   "Assignment: [[file:../assignments.org::*Old Title][in Org]], [[https://x/courses/1/assignments/1001][on Canvas]], [[https://x/courses/1/gradebook/speed_grader?assignment_id=1001][SpeedGrader]]\n\n* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:END:\n")
+          (let ((org-canvas-submissions-check-conflicts nil))
+            (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t))
+                      ((symbol-function 'org-canvas--submissions-heading-for-assignment) (lambda (_id) "Renamed"))
+                      ((symbol-function 'org-canvas--submissions-assignments-file)
+                       (lambda () (expand-file-name "../assignments.org" dir))))
+              (org-canvas-submissions-push-grades)))
+          (expect-api-called 'PUT "assignments/1001/submissions/5001")
+          (expect (buffer-string) :to-match "::\\*Renamed\\]")
+          (expect (buffer-string) :to-match ":CANVAS_SCORE: 95")
+          (expect (buffer-modified-p) :to-be nil))))))
+
 (provide 'org-canvas-submissions-test)
 ;;; org-canvas-submissions-test.el ends here
