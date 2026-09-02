@@ -83,6 +83,13 @@ CONFLICT property instead of being overwritten."
   :type 'boolean
   :group 'org-canvas)
 
+(defcustom org-canvas-submissions-include-rubric-criteria t
+  "Non-nil means a grading file lists the assignment's rubric criteria.
+The table (criterion, points, ratings) follows the Rubric: line, so the
+work can be read against the rubric offline.  Nil keeps just the line."
+  :type 'boolean
+  :group 'org-canvas)
+
 (defcustom org-canvas-submissions-write-gitignore t
   "Non-nil means write a .gitignore into the submissions directory.
 It is written once, when the directory is created, and excludes
@@ -237,31 +244,49 @@ Canvas reports `entered_score' (what the grader typed) and `score'
            (format "gradebook/speed_grader?assignment_id=%s" assignment-id))
           (if user-id (format "&student_id=%s" user-id) "")))
 
-(defun org-canvas--submissions-assignments-file ()
-  "Return the assignments file registered with org-canvas, or nil.
-Read through the feature registry so this module does not depend on
-the assignments module."
-  (let* ((feature (cl-find "assignments" org-canvas--feature-registry
+(defun org-canvas--submissions-feature-file (endpoint)
+  "Return the Org file registered for the feature whose endpoint is ENDPOINT.
+Read through the feature registry so this module depends on no feature
+module.  Nil when the feature is not loaded."
+  (let* ((feature (cl-find endpoint org-canvas--feature-registry
                            :key (lambda (f) (plist-get f :endpoint))
                            :test #'equal))
          (var (and feature (plist-get feature :file-var))))
     (and var (boundp var) (symbol-value var))))
 
+(defun org-canvas--submissions-assignments-file ()
+  "Return the assignments file registered with org-canvas, or nil."
+  (org-canvas--submissions-feature-file "assignments"))
+
+(defun org-canvas--submissions-rubrics-file ()
+  "Return the rubrics file registered with org-canvas, or nil."
+  (org-canvas--submissions-feature-file "rubrics"))
+
+(defun org-canvas--submissions-heading-for-id (file id)
+  "Return the title of the heading in FILE whose CANVAS_ID is ID, or nil.
+Nil as well when FILE is nil or missing."
+  (when (and file (file-exists-p file))
+    (with-current-buffer (find-file-noselect file)
+      (save-excursion
+        (catch 'found
+          (org-map-entries
+           (lambda ()
+             (when (equal (org-entry-get (point) "CANVAS_ID") id)
+               (throw 'found (org-get-heading t t t t))))
+           nil 'file)
+          nil)))))
+
 (defun org-canvas--submissions-heading-for-assignment (assignment-id)
   "Return the title of the assignments heading whose CANVAS_ID is ASSIGNMENT-ID.
-Nil when the assignments file or such a heading does not exist, as for
-a classic quiz's shadow assignment or one authored in the web UI."
-  (let ((file (org-canvas--submissions-assignments-file)))
-    (when (and file (file-exists-p file))
-      (with-current-buffer (find-file-noselect file)
-        (save-excursion
-          (catch 'found
-            (org-map-entries
-             (lambda ()
-               (when (equal (org-entry-get (point) "CANVAS_ID") assignment-id)
-                 (throw 'found (org-get-heading t t t t))))
-             nil 'file)
-            nil))))))
+Nil when there is none, as for a classic quiz's shadow assignment or
+one authored in the web UI."
+  (org-canvas--submissions-heading-for-id
+   (org-canvas--submissions-assignments-file) assignment-id))
+
+(defun org-canvas--submissions-heading-for-rubric (rubric-id)
+  "Return the title of the rubrics heading whose CANVAS_ID is RUBRIC-ID, or nil."
+  (org-canvas--submissions-heading-for-id
+   (org-canvas--submissions-rubrics-file) rubric-id))
 
 (defun org-canvas--submissions-links-line (assignment-id)
   "Return the Assignment: line for ASSIGNMENT-ID, without its newline.
@@ -282,24 +307,101 @@ none does), the Canvas assignment page, and SpeedGrader."
   "Insert the Assignment: links line for ASSIGNMENT-ID."
   (insert (org-canvas--submissions-links-line assignment-id) "\n"))
 
+(defun org-canvas--submissions-rubric-url (rubric-id)
+  "Return the Canvas page URL of RUBRIC-ID."
+  (org-canvas--submissions-course-url (format "rubrics/%s" rubric-id)))
+
+(defun org-canvas--submissions-rubric-settings (assignment)
+  "Return (ID . TITLE) of ASSIGNMENT's attached rubric, or nil."
+  (let ((settings (alist-get 'rubric_settings assignment)))
+    (when (and settings (alist-get 'id settings))
+      (cons (format "%s" (alist-get 'id settings))
+            (or (alist-get 'title settings) "")))))
+
+(defun org-canvas--submissions-rubric-line (rubric-id)
+  "Return the Rubric: line for RUBRIC-ID, without its newline.
+It links the rubrics heading that carries the id (omitted when none
+does) and the rubric's Canvas page."
+  (let* ((title (org-canvas--submissions-heading-for-rubric rubric-id))
+         (file (and title (org-canvas--submissions-rubrics-file)))
+         (org-link (and file
+                        (format "[[file:%s::*%s][in Org]], "
+                                (file-relative-name file (org-canvas--submissions-dir))
+                                title))))
+    (format "Rubric: %s[[%s][on Canvas]]"
+            (or org-link "")
+            (org-canvas--submissions-rubric-url rubric-id))))
+
+(defun org-canvas--submissions-render-rubric-properties (assignment)
+  "Insert the CANVAS_RUBRIC_ID and CANVAS_RUBRIC_TITLE keywords for ASSIGNMENT.
+Nothing is inserted when no rubric is attached.  A reopened file uses
+them to rebuild its Rubric: line without a request."
+  (let ((rubric (org-canvas--submissions-rubric-settings assignment)))
+    (when rubric
+      (insert (format "#+PROPERTY: CANVAS_RUBRIC_ID %s\n" (car rubric)))
+      (insert (format "#+PROPERTY: CANVAS_RUBRIC_TITLE %s\n" (cdr rubric))))))
+
+(defun org-canvas--submissions-table-cell (text)
+  "Return TEXT safe for an Org table cell.
+Pipes and newlines, with the whitespace around them, become one space."
+  (string-trim (replace-regexp-in-string "[ \t]*[|\n]+[ \t]*" " " (or text ""))))
+
+(defun org-canvas--submissions-render-criteria (criteria)
+  "Insert a table of rubric CRITERIA: criterion, points, and ratings."
+  (when (and criteria (> (length criteria) 0))
+    (insert "\n| Criterion | Points | Ratings |\n|---+---+---|\n")
+    (dolist (c (append criteria nil))
+      (insert (format "| %s | %s | %s |\n"
+                      (org-canvas--submissions-table-cell (alist-get 'description c))
+                      (org-canvas--submissions-format-number (or (alist-get 'points c) 0))
+                      (mapconcat
+                       (lambda (r)
+                         (format "%s (%s)"
+                                 (org-canvas--submissions-table-cell (alist-get 'description r))
+                                 (org-canvas--submissions-format-number (or (alist-get 'points r) 0))))
+                       (append (alist-get 'ratings c) nil) ", "))))
+    (org-table-align)))
+
+(defun org-canvas--submissions-render-rubric-header (assignment)
+  "Insert ASSIGNMENT's Rubric: line and, when enabled, its criteria table.
+Nothing is inserted when no rubric is attached; the table follows
+`org-canvas-submissions-include-rubric-criteria'."
+  (let ((rubric (org-canvas--submissions-rubric-settings assignment)))
+    (when rubric
+      (insert (org-canvas--submissions-rubric-line (car rubric)) "\n")
+      (when org-canvas-submissions-include-rubric-criteria
+        (org-canvas--submissions-render-criteria (alist-get 'rubric assignment))))))
+
+(defun org-canvas--submissions-replace-header-line (regexp fresh)
+  "Replace the header line matching REGEXP with FRESH.
+Only the region before the first heading is searched.  Return non-nil
+when the line changed."
+  (save-excursion
+    (goto-char (point-min))
+    (let ((limit (save-excursion (or (re-search-forward "^\\* " nil t) (point-max)))))
+      (when (re-search-forward regexp limit t)
+        (unless (equal (match-string 0) fresh)
+          (let ((inhibit-read-only t))
+            (replace-match fresh t t))
+          t)))))
+
 (defun org-canvas--submissions-refresh-links ()
-  "Rebuild this grading file's Assignment: line from the current sources.
-The assignments heading may have been renamed since the pull; the line
-is recomputed by CANVAS_ID with no Canvas request.  Return non-nil when
-the line changed."
+  "Rebuild this grading file's Assignment: and Rubric: lines from current sources.
+Headings may have been renamed since the pull; both lines are recomputed
+by CANVAS_ID with no Canvas request.  Return non-nil when either changed."
   (org-canvas--submissions-ensure-context)
   (when org-canvas-submissions--assignment-id
-    (save-excursion
-      (goto-char (point-min))
-      (let ((limit (save-excursion (or (re-search-forward "^\\* " nil t) (point-max)))))
-        (when (re-search-forward "^Assignment: .*$" limit t)
-          (let ((current (match-string 0))
-                (fresh (org-canvas--submissions-links-line
-                        org-canvas-submissions--assignment-id))
-                (inhibit-read-only t))
-            (unless (equal current fresh)
-              (replace-match fresh t t)
-              t)))))))
+    (let ((rubric-id (org-canvas--submissions-file-property "CANVAS_RUBRIC_ID"))
+          (changed nil))
+      (when (org-canvas--submissions-replace-header-line
+             "^Assignment: .*$"
+             (org-canvas--submissions-links-line org-canvas-submissions--assignment-id))
+        (setq changed t))
+      (when (and rubric-id
+                 (org-canvas--submissions-replace-header-line
+                  "^Rubric: .*$" (org-canvas--submissions-rubric-line rubric-id)))
+        (setq changed t))
+      changed)))
 
 ;;;; Attachments on Disk
 
@@ -385,6 +487,15 @@ Returns a list of alists with `id' and `name' keys."
   (org-canvas-api-request-all-pages
    'GET (org-canvas-api-course-endpoint "assignments")
    '(("order_by" . "name"))))
+
+(defun org-canvas--submissions-fetch-assignment (assignment-id)
+  "Fetch ASSIGNMENT-ID's assignment object, or nil when the request fails.
+The object carries `rubric_settings' and `rubric' for the grading file
+header; a refresh needs it because only the pull had the object."
+  (condition-case nil
+      (org-canvas-api-request
+       'GET (org-canvas-api-course-endpoint "assignments/%s" assignment-id))
+    (error nil)))
 
 (defun org-canvas--submissions-fetch-for-assignment (assignment-id)
   "Fetch all submissions for ASSIGNMENT-ID with comments, rubric, and user info.
@@ -533,10 +644,11 @@ SUBMISSIONS is the list of submission alists."
 
 ;;;; Detail View Rendering
 
-(defun org-canvas--submissions-render-detail (assignment-name assignment-id submissions)
+(defun org-canvas--submissions-render-detail (assignment-name assignment-id submissions &optional assignment)
   "Render detail view with per-student headings into current buffer.
 ASSIGNMENT-NAME and ASSIGNMENT-ID identify the assignment.
-SUBMISSIONS is the list of submission alists."
+SUBMISSIONS is the list of submission alists.  ASSIGNMENT, the Canvas
+assignment object when at hand, supplies the rubric header."
   (let ((sorted (sort (copy-sequence submissions)
                       (lambda (a b)
                         (string< (org-canvas--submissions-user-sortable-name a)
@@ -547,7 +659,9 @@ SUBMISSIONS is the list of submission alists."
     (insert (format "#+PROPERTY: CANVAS_ASSIGNMENT_NAME %s\n" assignment-name))
     (insert (format "#+PROPERTY: PULLED_AT %s\n"
                     (format-time-string "<%Y-%m-%d %a %H:%M>")))
+    (org-canvas--submissions-render-rubric-properties assignment)
     (org-canvas--submissions-render-links assignment-id)
+    (org-canvas--submissions-render-rubric-header assignment)
     (insert "\n")
     (dolist (sub sorted)
       (org-canvas--submissions-render-detail-entry sub assignment-name assignment-id))))
@@ -881,7 +995,7 @@ an ephemeral table.  Which one opens first is
          (submissions (org-canvas--submissions-fetch-for-assignment assignment-id)))
     (org-canvas--submissions-display
      selected-name assignment-id submissions
-     org-canvas-submissions-default-view)))
+     org-canvas-submissions-default-view selected)))
 
 ;;;###autoload
 (defun org-canvas-open-submissions ()
@@ -916,12 +1030,15 @@ Ask first when the buffer holds score edits that were never pushed."
     (org-canvas--submissions-guard-unpushed "Refresh")
     (message "Refreshing submissions for %s..." name)
     (let ((submissions (org-canvas--submissions-fetch-for-assignment id)))
-      (org-canvas--submissions-display name id submissions view))))
+      (org-canvas--submissions-display
+       name id submissions view (org-canvas--submissions-fetch-assignment id)))))
 
-(defun org-canvas--submissions-display (assignment-name assignment-id submissions view)
+(defun org-canvas--submissions-display (assignment-name assignment-id submissions view &optional assignment)
   "Show SUBMISSIONS for ASSIGNMENT-NAME (ASSIGNMENT-ID) in VIEW.
 The detail view is the grading file under the submissions directory,
-rendered and saved; the summary view is an ephemeral buffer."
+rendered and saved; the summary view is an ephemeral buffer.
+ASSIGNMENT, the Canvas assignment object when at hand, supplies the
+rubric header of the detail view."
   (let ((buf (if (eq view 'detail)
                  (org-canvas--submissions-grading-buffer assignment-name)
                (get-buffer-create (format "*submissions: %s*" assignment-name)))))
@@ -933,7 +1050,7 @@ rendered and saved; the summary view is an ephemeral buffer."
             (org-canvas--submissions-render-summary
              assignment-name assignment-id submissions)
           (org-canvas--submissions-render-detail
-           assignment-name assignment-id submissions))
+           assignment-name assignment-id submissions assignment))
         (goto-char (point-min))
         (setq-local org-canvas-submissions--assignment-name assignment-name)
         (setq-local org-canvas-submissions--assignment-id assignment-id)
