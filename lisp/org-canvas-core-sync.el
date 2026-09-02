@@ -224,6 +224,7 @@ CTX is the sync context plist (see `org-canvas--sync-process-entry')."
            (not (org-canvas--sync-remote-drifted-p canvas-id ctx title)))
       (plist-put counters :skip (1+ (plist-get counters :skip)))
       (org-canvas--log-info org-canvas--logger "[Skip] '%s' unchanged" title)
+      (org-canvas--sync-backfill-baseline canvas-id title ctx)
       (message "%s [%d/%d] Skipping '%s' (unchanged)"
         cap-feature progress total-count title))
      (org-canvas--dry-run
@@ -256,7 +257,7 @@ for the echo-area line."
       ('duplicate
        (plist-put counters :skip (1+ (plist-get counters :skip)))
        (plist-put counters :skipped-titles
-                  (cons (format "%s (already on Canvas; stamp its id or rename)" title)
+                  (cons (format "%s (already on Canvas; adopt it with org-canvas-adopt-at-point or rename)" title)
                         (plist-get counters :skipped-titles)))
        (message "%s [%d/%d] SKIPPED: '%s' (title already on Canvas)"
          cap-feature progress total-count title))
@@ -948,14 +949,80 @@ otherwise make every item we just pushed look remotely modified on the
 next run.  It is rounded up to the next whole minute because Org
 timestamps carry no seconds — rounding down would place the header
 before our own pushes and produce exactly those false conflicts.  The
-cost is that a remote edit in the same minute as a push is not seen."
+cost is that a remote edit in the same minute as a push is not seen.
+
+The write is forward-only (`org-canvas--sync-advance-file-header'),
+and single-entry pushes advance the same header (issue #104)."
   (let* ((times (car (plist-get ctx :remote-times)))
          (newest (car (sort (copy-sequence times) #'string>)))
          (time (and newest (org-canvas--parse-iso8601-time newest))))
     (when time
       (with-current-buffer (find-file-noselect sync-file)
-        (org-canvas--pull-write-file-header (time-add time 60))
+        (org-canvas--sync-advance-file-header time)
         (org-canvas--save-buffer)))))
+
+(defun org-canvas--sync-advance-file-header (time)
+  "Move the current buffer's #+LAST_SYNCED header forward to TIME.
+TIME is an Emacs time, normally a remote `updated_at' Canvas has just
+returned; it is rounded up to the next whole minute for the reason
+`org-canvas--sync-write-push-header' gives.  Forward-only: a header
+already at or past that minute is left alone, since a baseline that
+moves backward can only manufacture conflicts.  Returns the stamp
+written, or nil when nothing changed.  Does not save."
+  (let* ((stamp-time (time-add time 60))
+         (stamp (format-time-string "[%Y-%m-%d %a %H:%M]" stamp-time))
+         (new-time (encode-time (org-parse-time-string stamp)))
+         (current (org-canvas--pull-read-file-header))
+         (current-time (and current
+                            (ignore-errors
+                              (encode-time (org-parse-time-string current))))))
+    (when (or (null current-time) (time-less-p current-time new-time))
+      (org-canvas--pull-write-file-header stamp-time)
+      stamp)))
+
+(defun org-canvas--sync-advance-header-from-entry ()
+  "Advance the file header from the CANVAS_UPDATED_AT of the entry at point.
+Called once a single-entry push has been finalized.  A full sync
+writes #+LAST_SYNCED at the end of the run and nothing else did, so a
+file maintained by at-point syncs carried a header weeks behind the
+entries in it — every heading pushed and re-stamped, the first line
+still naming a date 13 days gone (issue #104).  The entry's
+CANVAS_UPDATED_AT is whatever finalize just stamped, so this needs no
+knowledge of which response field the module reads.  Returns the
+stamp written, or nil."
+  (let ((updated (org-canvas--parse-iso8601-time
+                  (org-entry-get (point) "CANVAS_UPDATED_AT"))))
+    (when updated
+      (let ((stamp (org-canvas--sync-advance-file-header updated)))
+        (when stamp
+          (org-canvas--log-info org-canvas--logger
+            "[Finalize] #+LAST_SYNCED advanced to %s" stamp))
+        stamp))))
+
+(defun org-canvas--sync-backfill-baseline (canvas-id title ctx)
+  "Give the unchanged entry at point its own CANVAS_UPDATED_AT, if it has none.
+Called on the skip path once `org-canvas--sync-remote-drifted-p' has
+found CANVAS-ID untouched since the baseline in CTX; TITLE is for the
+log.  An entry synced before CANVAS_UPDATED_AT existed leans on the
+file-level #+LAST_SYNCED header for its baseline, and that header now
+advances on any successful push in the file (issue #104), including
+one that never compared this entry.  The snapshot holds the remote
+`updated_at' this run has just checked against a real baseline, so
+recording it is exactly as sound as the skip itself, and from then on
+the entry judges drift by its own clock.  Nothing is written when the
+entry is already stamped, the snapshot has no entry for it, there was
+no baseline (nothing was proven), or this is a dry run."
+  (let ((remote-updated (plist-get ctx :remote-updated)))
+    (when (and remote-updated
+               (plist-get ctx :baseline)
+               (not org-canvas--dry-run)
+               (null (org-entry-get (point) "CANVAS_UPDATED_AT")))
+      (let ((updated (gethash (format "%s" canvas-id) remote-updated)))
+        (when updated
+          (org-canvas-org-set-property (point) "CANVAS_UPDATED_AT" updated)
+          (org-canvas--log-info org-canvas--logger
+            "[Skip] Recorded CANVAS_UPDATED_AT %s for '%s' from the remote snapshot"
+            updated title))))))
 
 ;;;; 6b. Conflict Detection
 ;;
@@ -1234,19 +1301,36 @@ function, is asked; a module without one is not checked."
   (let ((id (alist-get (if (eq id-key :canvas-url) 'url 'id) item)))
     (and id (format "%s" id))))
 
+(defun org-canvas--adopt-stamp (pom id-property item &optional modified-field)
+  "Stamp the heading at POM as the owner of Canvas ITEM.
+Writes ID-PROPERTY from ITEM's `url' (pages) or `id', CANVAS_UPDATED_AT
+from MODIFIED-FIELD (default `updated_at'; files pass `modified_at')
+so the next comparison is against the item's own clock rather than
+reporting the adoption itself as a conflict, and removes PAYLOAD_HASH
+so the next sync verifies content it has never compared instead of
+taking the unchanged-skip.  This is the one spelling of adoption,
+shared by the duplicate-title guard and `org-canvas-adopt-at-point'
+\(issue #101).  Returns the id as a string, or nil when ITEM has none."
+  (let* ((field (if (equal id-property "CANVAS_URL") 'url 'id))
+         (id (alist-get field item))
+         (updated (alist-get (or modified-field 'updated_at) item)))
+    (when id
+      (setq id (format "%s" id))
+      (org-canvas-org-set-property pom id-property id)
+      (when (stringp updated)
+        (org-canvas-org-set-property pom "CANVAS_UPDATED_AT" updated))
+      (org-entry-delete pom org-canvas--prop-payload-hash)
+      id)))
+
 (defun org-canvas--push-adopt-item (data id-key title item)
   "Stamp DATA's heading with ITEM's id and record it under ID-KEY.
-Writes the id property and CANVAS_UPDATED_AT from ITEM, so the update
-that follows compares against the item's own clock instead of
-reporting the adoption itself as a conflict.  TITLE is for the log.
-Returns the id."
-  (let ((pom (plist-get data :pom))
-        (id (org-canvas--push-item-id item id-key))
-        (updated (alist-get 'updated_at item)))
-    (org-canvas-org-set-property
-     pom (if (eq id-key :canvas-url) "CANVAS_URL" "CANVAS_ID") id)
-    (when (stringp updated)
-      (org-canvas-org-set-property pom "CANVAS_UPDATED_AT" updated))
+Writes the id property and CANVAS_UPDATED_AT from ITEM through
+`org-canvas--adopt-stamp', so the update that follows compares against
+the item's own clock.  TITLE is for the log.  Returns the id."
+  (let ((id (org-canvas--adopt-stamp
+             (plist-get data :pom)
+             (if (eq id-key :canvas-url) "CANVAS_URL" "CANVAS_ID")
+             item)))
     (plist-put data id-key id)
     (org-canvas--log-info org-canvas--logger
       "[Duplicate] Adopted Canvas id %s for '%s' — updating it instead of creating a second"
@@ -1279,7 +1363,7 @@ carries TITLE.  ID-KEY and FIND-FN are as for `org-canvas--push-to-api'."
             ('adopt (org-canvas--push-adopt-item data id-key title (car items)))
             ('skip
              (org-canvas--log-warning org-canvas--logger
-               "[Duplicate] Skipping '%s' — Canvas already holds it as id %s; stamp %s or rename the heading"
+               "[Duplicate] Skipping '%s' — Canvas already holds it as id %s; adopt it with M-x org-canvas-adopt-at-point (which stamps %s), or rename the heading"
                title id-list (if (eq id-key :canvas-url) "CANVAS_URL" "CANVAS_ID"))
              'skip)
             (_
@@ -1466,6 +1550,7 @@ HASH-EXTRA-FN, when non-nil, is folded into the payload hash
               (progn
                 (funcall finalize-fn data response)
                 (org-canvas-org-set-property (point) org-canvas--prop-payload-hash payload-hash)
+                (org-canvas--sync-advance-header-from-entry)
                 (org-canvas--save-buffer))
             (error
              ;; The push landed; only the stamp died (issue #97).
@@ -1485,7 +1570,7 @@ error, which is how a conflict at point used to end in a backtrace."
   (let ((why (pcase outcome
                ('conflict "not pushed — the remote item was modified since the last sync")
                ('pulled "not pushed — the remote version was pulled instead")
-               (_ "not pushed — Canvas already holds this title; stamp its id or rename"))))
+               (_ "not pushed — Canvas already holds this title; adopt it with M-x org-canvas-adopt-at-point or rename"))))
     (org-canvas--log-warning org-canvas--logger "[Sync] '%s' %s" title why)
     (message "%s '%s' %s." (capitalize feature-name) title why)))
 

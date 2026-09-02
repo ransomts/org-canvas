@@ -778,7 +778,7 @@
       (org-canvas--diff-insert-entry
        '(:kind unclaimed :title "R11: The Ethics Email" :id "2563810" :property "CANVAS_ID"))
       (expect (buffer-string)
-              :to-equal "  UNCLAIMED R11: The Ethics Email (Canvas id 2563810 has this title and no heading claims it; stamp CANVAS_ID or rename)\n"))))
+              :to-equal "  UNCLAIMED R11: The Ethics Email (Canvas id 2563810 has this title and no heading claims it; adopt it with org-canvas-adopt-at-point, which stamps CANVAS_ID, or rename)\n"))))
 
 (describe "org-canvas--diff-pair-unclaimed (issue #85)"
   (it "re-kinds an extra whose title an unstamped heading shares"

@@ -392,6 +392,7 @@ of the quiz payload."
          (payload (org-canvas--new-quiz-build-payload data))
          (response (org-canvas--new-quiz-push-to-api data payload)))
     (org-canvas--new-quiz-finalize data response)
+    (org-canvas--sync-advance-header-from-entry)
     (let ((quiz-id (or (alist-get 'assignment_id response)
                        (alist-get 'id response)
                        (plist-get data :canvas-id))))

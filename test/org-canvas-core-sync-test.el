@@ -5040,7 +5040,7 @@ Returns (COUNTERS . LOG-LINES)."
         (expect (org-canvas--push-guard-duplicate (list :pom 1) :canvas-id "R11" nil)
                 :to-equal 'skip))
       (expect warnings :to-contain "[Duplicate] 'R11' is held by 2 Canvas items (1, 2); cannot adopt one, skipping")
-      (expect (car warnings) :to-match "Skipping 'R11' — Canvas already holds it as id 1, 2; stamp CANVAS_ID or rename")))
+      (expect (car warnings) :to-match "Skipping 'R11' — Canvas already holds it as id 1, 2; adopt it with M-x org-canvas-adopt-at-point (which stamps CANVAS_ID), or rename")))
 
   (it "skips and names the property to stamp for a page"
     (let ((org-canvas-duplicate-title-strategy 'skip)
@@ -5050,7 +5050,7 @@ Returns (COUNTERS . LOG-LINES)."
                  (lambda (_l fmt &rest args) (push (apply #'format fmt args) warnings))))
         (expect (org-canvas--push-guard-duplicate (list :pom 1) :canvas-url "R11" nil)
                 :to-equal 'skip))
-      (expect (car warnings) :to-match "as id r11; stamp CANVAS_URL or rename")))
+      (expect (car warnings) :to-match "as id r11; adopt it with M-x org-canvas-adopt-at-point (which stamps CANVAS_URL), or rename")))
 
   (it "creates when told, saying so"
     (let ((org-canvas-duplicate-title-strategy nil)
@@ -5141,7 +5141,7 @@ Returns (COUNTERS . LOG-LINES)."
         (expect (plist-get counters :skip) :to-equal 1)
         (expect (plist-get counters :success) :to-equal 0)
         (expect (car (plist-get counters :skipped-titles))
-                :to-equal "R11 (already on Canvas; stamp its id or rename)")
+                :to-equal "R11 (already on Canvas; adopt it with org-canvas-adopt-at-point or rename)")
         (expect (car msgs) :to-equal "Assignments [1/1] SKIPPED: 'R11' (title already on Canvas)")))))
 
 (describe "org-canvas--sync-run-pipeline title index (issue #85)"
@@ -5198,7 +5198,7 @@ Returns what `org-canvas--current-remote-titles' was during the push."
              :title nil))
           (expect finalized :to-be nil)
           (expect (car msgs)
-                  :to-equal "Assignment 'R11' not pushed — Canvas already holds this title; stamp its id or rename.")))))
+                  :to-equal "Assignment 'R11' not pushed — Canvas already holds this title; adopt it with M-x org-canvas-adopt-at-point or rename.")))))
 
   (it "words a conflict and a pull"
     (let ((msgs nil))
@@ -5405,6 +5405,296 @@ Returns what `org-canvas--current-remote-titles' was during the push."
                  :title nil)
               (error nil)))
           (expect (car logged) :to-match "\\[Stamp\\].*landed on Canvas"))))))
+
+(describe "org-canvas--adopt-stamp (issue #101)"
+  (it "stamps the id, the clock, and drops the hash"
+    (with-temp-org-buffer
+     "* Lab 1
+:PROPERTIES:
+:PAYLOAD_HASH: deadbeef
+:END:
+"
+     (org-back-to-heading t)
+     (expect (org-canvas--adopt-stamp
+              (point) "CANVAS_ID"
+              '((id . 61) (updated_at . "2026-08-28T12:42:35Z")))
+             :to-equal "61")
+     (expect (org-entry-get (point) "CANVAS_ID") :to-equal "61")
+     (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
+             :to-equal "2026-08-28T12:42:35Z")
+     (expect (org-entry-get (point) "PAYLOAD_HASH") :to-be nil)))
+
+  (it "reads url for CANVAS_URL and an alternate modified field"
+    (with-temp-org-buffer "* Welcome\n"
+      (org-back-to-heading t)
+      (expect (org-canvas--adopt-stamp
+               (point) "CANVAS_URL"
+               '((url . "welcome") (id . 3)
+                 (updated_at . "2026-08-30T00:00:00Z")
+                 (modified_at . "2026-08-28T00:00:00Z"))
+               'modified_at)
+              :to-equal "welcome")
+      (expect (org-entry-get (point) "CANVAS_URL") :to-equal "welcome")
+      (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
+              :to-equal "2026-08-28T00:00:00Z")))
+
+  (it "writes nothing for an item with no id"
+    (with-temp-org-buffer "* Lab 1\n"
+      (org-back-to-heading t)
+      (expect (org-canvas--adopt-stamp (point) "CANVAS_ID" '((title . "x")))
+              :to-be nil)
+      (expect (org-entry-get (point) "CANVAS_ID") :to-be nil))))
+
+;;;; #+LAST_SYNCED advances on any successful stamp (issue #104)
+
+(describe "org-canvas--sync-advance-file-header (issue #104)"
+  (let ((stamp-of (lambda (iso)
+                    (format-time-string "[%Y-%m-%d %a %H:%M]"
+                                        (time-add (date-to-time iso) 60)))))
+
+    (it "writes a header, rounded up a minute, when the file has none"
+      (with-temp-org-buffer "* Item\n"
+        (expect (org-canvas--sync-advance-file-header
+                 (date-to-time "2026-09-01T14:10:30Z"))
+                :to-equal (funcall stamp-of "2026-09-01T14:10:30Z"))
+        (expect (org-canvas--pull-read-file-header)
+                :to-equal (funcall stamp-of "2026-09-01T14:10:30Z"))))
+
+    (it "moves an older header forward"
+      (with-temp-org-buffer "* Item\n"
+        (org-canvas--sync-advance-file-header (date-to-time "2026-08-19T09:58:00Z"))
+        (expect (org-canvas--sync-advance-file-header
+                 (date-to-time "2026-09-01T14:10:30Z"))
+                :to-equal (funcall stamp-of "2026-09-01T14:10:30Z"))
+        (expect (org-canvas--pull-read-file-header)
+                :to-equal (funcall stamp-of "2026-09-01T14:10:30Z"))))
+
+    (it "leaves a later header alone"
+      ;; A baseline that moves backward can only manufacture conflicts.
+      (with-temp-org-buffer "* Item\n"
+        (org-canvas--sync-advance-file-header (date-to-time "2026-09-01T14:10:30Z"))
+        (set-buffer-modified-p nil)
+        (expect (org-canvas--sync-advance-file-header
+                 (date-to-time "2026-08-19T09:58:00Z"))
+                :to-be nil)
+        (expect (buffer-modified-p) :to-be nil)
+        (expect (org-canvas--pull-read-file-header)
+                :to-equal (funcall stamp-of "2026-09-01T14:10:30Z"))))
+
+    (it "does not rewrite a header already on the same minute"
+      (with-temp-org-buffer "* Item\n"
+        (org-canvas--sync-advance-file-header (date-to-time "2026-09-01T14:10:05Z"))
+        (set-buffer-modified-p nil)
+        (expect (org-canvas--sync-advance-file-header
+                 (date-to-time "2026-09-01T14:10:50Z"))
+                :to-be nil)
+        (expect (buffer-modified-p) :to-be nil)))))
+
+(describe "org-canvas--sync-write-push-header is forward-only (issue #104)"
+  (it "keeps a header later than the run's newest remote time"
+    (let ((file (make-temp-file "hdr-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "#+LAST_SYNCED: [2026-09-01 Tue 16:00]\n* Item\n"))
+            (org-canvas--sync-write-push-header
+             file (list :remote-times (list (list "2026-08-01T00:00:00Z"))))
+            (with-current-buffer (find-file-noselect file)
+              (expect (org-canvas--pull-read-file-header)
+                      :to-equal "[2026-09-01 Tue 16:00]")
+              (kill-buffer)))
+        (delete-file file)))))
+
+(describe "org-canvas--sync-advance-header-from-entry (issue #104)"
+  (it "advances the header from the entry's CANVAS_UPDATED_AT"
+    (with-temp-org-buffer
+     "#+LAST_SYNCED: [2026-08-19 Wed 09:59]
+* Lab 1
+:PROPERTIES:
+:CANVAS_ID: 61
+:CANVAS_UPDATED_AT: 2026-09-01T14:10:30Z
+:END:
+"
+     (search-forward "* Lab 1")
+     (org-back-to-heading t)
+     (let ((logged nil))
+       (cl-letf (((symbol-function 'org-canvas--log-info)
+                  (lambda (_logger fmt &rest args)
+                    (push (apply #'format fmt args) logged))))
+         (expect (org-canvas--sync-advance-header-from-entry)
+                 :to-equal (format-time-string
+                            "[%Y-%m-%d %a %H:%M]"
+                            (time-add (date-to-time "2026-09-01T14:10:30Z") 60))))
+       (expect (car logged) :to-match "#\\+LAST_SYNCED advanced")
+       ;; Point stays on the heading the caller is still stamping.
+       (expect (org-get-heading t t t t) :to-equal "Lab 1"))))
+
+  (it "does nothing for an entry with no CANVAS_UPDATED_AT"
+    (with-temp-org-buffer
+     "* Lab 1
+:PROPERTIES:
+:CANVAS_ID: 61
+:END:
+"
+     (org-back-to-heading t)
+     (expect (org-canvas--sync-advance-header-from-entry) :to-be nil)
+     (expect (org-canvas--pull-read-file-header) :to-be nil))))
+
+(describe "org-canvas--push-at-point-runtime refreshes #+LAST_SYNCED (issue #104)"
+  (it "writes the file header from the stamp finalize recorded"
+    ;; assignments.org read [2026-08-19] after sixty at-point pushes:
+    ;; only the full-sync path ever touched the header.
+    (with-org-canvas-test-config
+      (with-temp-org-buffer
+       "#+LAST_SYNCED: [2026-08-19 Wed 09:59]
+* Lab 1
+:PROPERTIES:
+:CANVAS_ID: 61
+:END:
+"
+       (search-forward "* Lab 1")
+       (org-back-to-heading t)
+       (cl-letf (((symbol-function 'org-canvas-clear-log) #'ignore)
+                 ((symbol-function 'display-buffer) #'ignore))
+         (org-canvas--push-at-point-runtime
+          "assignment"
+          (lambda () (list :title "Lab 1" :canvas-id "61" :pom (point-marker)))
+          (lambda (_data) '((name . "Lab 1")))
+          (lambda (_data _payload)
+            '((id . 61) (updated_at . "2026-09-01T14:10:30Z")))
+          (lambda (data response) (org-canvas--finalize-item data response))
+          :title nil))
+       (expect (org-canvas--pull-read-file-header)
+               :to-equal (format-time-string
+                          "[%Y-%m-%d %a %H:%M]"
+                          (time-add (date-to-time "2026-09-01T14:10:30Z") 60))))))
+
+  (it "leaves the header alone when the push stops at a conflict"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer
+       "#+LAST_SYNCED: [2026-08-19 Wed 09:59]
+* Lab 1
+:PROPERTIES:
+:CANVAS_ID: 61
+:END:
+"
+       (search-forward "* Lab 1")
+       (org-back-to-heading t)
+       (cl-letf (((symbol-function 'org-canvas-clear-log) #'ignore)
+                 ((symbol-function 'display-buffer) #'ignore))
+         (org-canvas--push-at-point-runtime
+          "assignment"
+          (lambda () (list :title "Lab 1" :canvas-id "61" :pom (point-marker)))
+          (lambda (_data) '((name . "Lab 1")))
+          (lambda (_data _payload) 'conflict)
+          (lambda (data response) (org-canvas--finalize-item data response))
+          :title nil))
+       (expect (org-canvas--pull-read-file-header)
+               :to-equal "[2026-08-19 Wed 09:59]")))))
+
+(describe "org-canvas--sync-backfill-baseline (issue #104)"
+  (let ((baseline (encode-time (org-parse-time-string "[2026-08-19 Wed 12:00]"))))
+
+    (it "stamps a legacy entry with the remote updated_at the skip verified"
+      (with-temp-org-buffer
+       "* Lab 1
+:PROPERTIES:
+:CANVAS_ID: 61
+:END:
+"
+       (org-back-to-heading t)
+       (let ((map (make-hash-table :test 'equal)))
+         (puthash "61" "2026-08-01T00:00:00Z" map)
+         (org-canvas--sync-backfill-baseline
+          "61" "Lab 1" (list :remote-updated map :baseline baseline))
+         (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
+                 :to-equal "2026-08-01T00:00:00Z"))))
+
+    (it "leaves an entry that already has a stamp alone"
+      (with-temp-org-buffer
+       "* Lab 1
+:PROPERTIES:
+:CANVAS_ID: 61
+:CANVAS_UPDATED_AT: 2026-07-01T00:00:00Z
+:END:
+"
+       (org-back-to-heading t)
+       (let ((map (make-hash-table :test 'equal)))
+         (puthash "61" "2026-08-01T00:00:00Z" map)
+         (org-canvas--sync-backfill-baseline
+          "61" "Lab 1" (list :remote-updated map :baseline baseline))
+         (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
+                 :to-equal "2026-07-01T00:00:00Z"))))
+
+    (it "writes nothing without a baseline, since nothing was proven"
+      (with-temp-org-buffer
+       "* Lab 1
+:PROPERTIES:
+:CANVAS_ID: 61
+:END:
+"
+       (org-back-to-heading t)
+       (let ((map (make-hash-table :test 'equal)))
+         (puthash "61" "2026-08-01T00:00:00Z" map)
+         (org-canvas--sync-backfill-baseline
+          "61" "Lab 1" (list :remote-updated map :baseline nil))
+         (expect (org-entry-get (point) "CANVAS_UPDATED_AT") :to-be nil))))
+
+    (it "writes nothing during a dry run"
+      (with-temp-org-buffer
+       "* Lab 1
+:PROPERTIES:
+:CANVAS_ID: 61
+:END:
+"
+       (org-back-to-heading t)
+       (let ((map (make-hash-table :test 'equal))
+             (org-canvas--dry-run t))
+         (puthash "61" "2026-08-01T00:00:00Z" map)
+         (org-canvas--sync-backfill-baseline
+          "61" "Lab 1" (list :remote-updated map :baseline baseline))
+         (expect (org-entry-get (point) "CANVAS_UPDATED_AT") :to-be nil))))
+
+    (it "writes nothing when the snapshot does not know the id"
+      (with-temp-org-buffer
+       "* Lab 1
+:PROPERTIES:
+:CANVAS_ID: 61
+:END:
+"
+       (org-back-to-heading t)
+       (org-canvas--sync-backfill-baseline
+        "61" "Lab 1" (list :remote-updated (make-hash-table :test 'equal)
+                           :baseline baseline))
+       (expect (org-entry-get (point) "CANVAS_UPDATED_AT") :to-be nil)))))
+
+(describe "org-canvas--sync-execute-pipeline skip path backfills the baseline (issue #104)"
+  (it "records CANVAS_UPDATED_AT for an unchanged legacy entry"
+    (with-temp-org-buffer
+     "* Lab 1
+:PROPERTIES:
+:CANVAS_ID: 61
+:END:
+"
+     (org-back-to-heading t)
+     (let* ((payload '((name . "Lab 1")))
+            (map (make-hash-table :test 'equal))
+            (counters (list :success 0 :skip 0 :fail 0))
+            (ctx (list :push-fn (lambda (&rest _) (error "Must not push"))
+                       :feature-name "assignments"
+                       :total-count 1
+                       :counters counters
+                       :synced-ids (list nil)
+                       :remote-updated map
+                       :baseline (encode-time
+                                  (org-parse-time-string "[2026-08-19 Wed 12:00]")))))
+       (puthash "61" "2026-08-01T00:00:00Z" map)
+       (org-entry-put (point) "PAYLOAD_HASH" (md5 (json-encode payload)))
+       (org-canvas--sync-execute-pipeline
+        (list :title "Lab 1" :canvas-id "61" :pom (point-marker)) payload ctx)
+       (expect (plist-get counters :skip) :to-equal 1)
+       (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
+               :to-equal "2026-08-01T00:00:00Z")))))
 
 (provide 'org-canvas-core-sync-test)
 ;;; org-canvas-core-sync-test.el ends here

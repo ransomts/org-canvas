@@ -77,7 +77,8 @@
   ["Pull"
    ("p" "Pull all from Canvas" org-canvas-pull-all)
    ("P" "Pull single..." org-canvas-dispatch-pull-single)
-   ("u" "Pull heading at point" org-canvas-pull-at-point)]
+   ("u" "Pull heading at point" org-canvas-pull-at-point)
+   ("A" "Adopt Canvas item for heading at point" org-canvas-adopt-at-point)]
   ["Delete"
    ("D" "Delete all from Canvas" org-canvas-delete-all)
    ("O" "Cleanup orphans" org-canvas-cleanup-orphans)
