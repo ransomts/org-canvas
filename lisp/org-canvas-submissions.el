@@ -90,6 +90,16 @@ work can be read against the rubric offline.  Nil keeps just the line."
   :type 'boolean
   :group 'org-canvas)
 
+(defcustom org-canvas-submissions-comment-template
+  "# Write your comment for this student below these lines.  S posts every
+# drafted comment along with the grade changes; nothing is sent until then.
+# Lines starting with # are never sent.  c posts a one-off comment now."
+  "Text placed under each student's \"Comment to post\" heading at pull time.
+Written as Org comment lines so it is never sent.  Nil omits the heading
+and turns drafted comments off."
+  :type '(choice (const :tag "No draft heading" nil) string)
+  :group 'org-canvas)
+
 (defcustom org-canvas-submissions-write-gitignore t
   "Non-nil means write a .gitignore into the submissions directory.
 It is written once, when the directory is created, and excludes
@@ -208,12 +218,17 @@ Return non-nil when found."
     (org-back-to-heading t)
     t))
 
+(defun org-canvas--submissions-pending-count ()
+  "Return how many score edits and drafted comments have not been pushed."
+  (+ (length (org-canvas--submissions-collect-grade-changes))
+     (length (org-canvas--submissions-collect-comment-drafts))))
+
 (defun org-canvas--submissions-guard-unpushed (verb)
-  "Ask before VERB (a capitalized verb) discards unpushed score edits."
-  (let ((pending (length (org-canvas--submissions-collect-grade-changes))))
+  "Ask before VERB (a capitalized verb) discards unpushed edits."
+  (let ((pending (org-canvas--submissions-pending-count)))
     (when (and (> pending 0)
                (not (y-or-n-p
-                     (format "%d unpushed score change(s) will be lost; %s anyway? "
+                     (format "%d unpushed score change(s) or comment(s) will be lost; %s anyway? "
                              pending verb))))
       (user-error "%s cancelled" verb))))
 
@@ -713,7 +728,68 @@ ASSIGNMENT-NAME attachments already downloaded link to the local copy."
     (org-canvas--submissions-render-attachments attachments assignment-name name)
     (org-canvas--submissions-render-comments comments)
     (org-canvas--submissions-render-rubric rubric)
+    (org-canvas--submissions-render-comment-draft)
     (insert "\n")))
+
+(defconst org-canvas--submissions-draft-heading "** Comment to post"
+  "Heading under which a student's drafted comment is written.")
+
+(defun org-canvas--submissions-render-comment-draft ()
+  "Insert the Comment to post heading with the template, when enabled."
+  (when org-canvas-submissions-comment-template
+    (insert "\n" org-canvas--submissions-draft-heading "\n"
+            org-canvas-submissions-comment-template "\n")))
+
+(defun org-canvas--submissions-draft-region ()
+  "Return (START . END) of the draft body under the heading at point, or nil.
+START is the line after the Comment to post heading; END the next heading
+or the end of the student's subtree."
+  (save-excursion
+    (org-back-to-heading t)
+    (let ((end (save-excursion (org-end-of-subtree t) (point))))
+      (when (re-search-forward (concat "^" (regexp-quote org-canvas--submissions-draft-heading) "$") end t)
+        (forward-line 1)
+        (cons (point)
+              (save-excursion
+                (if (re-search-forward "^\\*" end t) (line-beginning-position) end)))))))
+
+(defun org-canvas--submissions-comment-draft ()
+  "Return the drafted comment of the heading at point, or nil when empty.
+Org comment lines (the template) and blank lines are dropped."
+  (let ((region (org-canvas--submissions-draft-region)))
+    (when region
+      (let* ((raw (buffer-substring-no-properties (car region) (cdr region)))
+             (kept (seq-remove (lambda (l) (string-match-p "\\`[ \t]*\\(#\\|\\'\\)" l))
+                               (split-string raw "\n"))))
+        (when kept
+          (string-trim (mapconcat #'identity kept "\n")))))))
+
+(defun org-canvas--submissions-reset-draft ()
+  "Put the template back under the Comment to post heading at point."
+  (let ((region (org-canvas--submissions-draft-region)))
+    (when region
+      (save-excursion
+        (goto-char (car region))
+        (delete-region (car region) (cdr region))
+        (insert (or org-canvas-submissions-comment-template "") "\n")
+        (when (looking-at "^\\*") (insert "\n"))))))
+
+(defun org-canvas--submissions-collect-comment-drafts ()
+  "Return (:user-id :name :text) for every heading with a drafted comment."
+  (let ((drafts nil))
+    (save-excursion
+      (goto-char (point-min))
+      (while (re-search-forward "^\\* " nil t)
+        (org-back-to-heading t)
+        (let ((text (org-canvas--submissions-comment-draft))
+              (user-id (org-entry-get (point) "USER_ID")))
+          (when (and text user-id)
+            (push (list :user-id (string-to-number user-id)
+                        :name (org-get-heading t t t t)
+                        :text text)
+                  drafts)))
+        (forward-line 1)))
+    (nreverse drafts)))
 
 (defun org-canvas--submissions-render-attachments (attachments &optional assignment-name student-name)
   "Render ATTACHMENTS as a sub-heading with links.
@@ -847,8 +923,9 @@ buffer derived from the headings, so it reflects unpushed edits, and
 
 ;;;###autoload
 (defun org-canvas-submissions-add-comment ()
-  "Post a text comment on the submission at point.
-Must be on or inside a student heading in detail view."
+  "Post a text comment on the submission at point, right now.
+Prompts for the text; for comments written while grading, use the
+student's Comment to post heading and `S' instead."
   (interactive)
   (unless org-canvas-submissions-mode
     (user-error "Not in a submissions buffer"))
@@ -857,49 +934,53 @@ Must be on or inside a student heading in detail view."
     (user-error "Switch to detail view first (press v)"))
   (save-excursion
     (org-back-to-heading t)
-    (let ((sub-id (org-entry-get (point) "SUBMISSION_ID"))
+    (let ((user-id (org-entry-get (point) "USER_ID"))
           (user-name (org-get-heading t t t t)))
-      (unless sub-id
-        (user-error "No SUBMISSION_ID at point"))
+      (unless user-id
+        (user-error "No USER_ID at point"))
       (let ((text (read-string (format "Comment for %s: " user-name))))
         (when (string-empty-p text)
           (user-error "Empty comment"))
         (when (y-or-n-p (format "Post comment to %s? " user-name))
           (org-canvas--submissions-post-comment
-           org-canvas-submissions--assignment-id sub-id text)
+           org-canvas-submissions--assignment-id user-id text)
           (org-canvas--submissions-append-comment-to-buffer user-name text)
+          (when buffer-file-name (save-buffer))
           (message "Comment posted for %s" user-name))))))
 
-(defun org-canvas--submissions-post-comment (assignment-id submission-id text)
-  "POST TEXT as a comment on SUBMISSION-ID for ASSIGNMENT-ID."
+(defun org-canvas--submissions-post-comment (assignment-id user-id text)
+  "Post TEXT as a comment on USER-ID's submission to ASSIGNMENT-ID.
+Canvas addresses a submission by the student's user id, not by the
+submission's own id; the latter is a 404 (#125)."
   (let ((url (org-canvas-api-course-endpoint
-              "assignments/%s/submissions/%s" assignment-id submission-id)))
+              "assignments/%s/submissions/%s" assignment-id user-id)))
     (org-canvas-api-request 'PUT url
       :data `((comment . ((text_comment . ,text)))))))
 
 (defun org-canvas--submissions-append-comment-to-buffer (_user-name text)
-  "Append posted comment TEXT to the Comments section for USER-NAME.
-Searches from point for the ** Comments sub-heading under the current heading."
-  (let ((inhibit-read-only t))
+  "Record posted comment TEXT under the Comments heading of the entry at point.
+A Comments heading is created when missing, ahead of the Comment to post
+heading so the record reads in order.  Newlines in TEXT become spaces in
+the one-line record; Canvas keeps the original."
+  (let ((inhibit-read-only t)
+        (line (format "- *You* %s :: %s\n"
+                      (format-time-string "<%Y-%m-%d %a %H:%M>")
+                      (replace-regexp-in-string "\n+" " " text))))
     (save-excursion
       (org-back-to-heading t)
       (let ((end (save-excursion (org-end-of-subtree t) (point))))
         (if (re-search-forward "^\\*\\* Comments$" end t)
             (progn
               (forward-line 1)
-              ;; Find end of comments section
-              (while (and (< (point) end)
-                          (looking-at "^- "))
+              (while (and (< (point) end) (looking-at "^- "))
                 (forward-line 1))
-              (insert (format "- *You* %s :: %s\n"
-                              (format-time-string "<%Y-%m-%d %a %H:%M>")
-                              text)))
-          ;; No Comments section yet — create one
-          (goto-char end)
-          (insert "\n** Comments\n")
-          (insert (format "- *You* %s :: %s\n"
-                          (format-time-string "<%Y-%m-%d %a %H:%M>")
-                          text)))))))
+              (insert line))
+          (goto-char (org-back-to-heading t))
+          (if (re-search-forward (concat "^" (regexp-quote org-canvas--submissions-draft-heading) "$") end t)
+              (progn (beginning-of-line)
+                     (insert "** Comments\n" line "\n"))
+            (goto-char end)
+            (insert "\n** Comments\n" line)))))))
 
 ;;;; File Download
 
@@ -1282,39 +1363,67 @@ diff is pushable.  A conflicting diff carries a :conflict reason."
   (when buffer-file-name
     (save-buffer)))
 
+(defun org-canvas--submissions-post-drafts (assignment-id drafts)
+  "Post each of DRAFTS to ASSIGNMENT-ID, recording it under Comments as it lands.
+The draft is reset to the template after its comment is posted, so a
+failure midway leaves the file accurate: posted comments are recorded,
+unposted ones still drafted.  Return the number posted."
+  (let ((posted 0))
+    (dolist (d drafts)
+      (org-canvas--submissions-post-comment assignment-id (plist-get d :user-id) (plist-get d :text))
+      (save-excursion
+        (when (org-canvas--submissions-goto-user (plist-get d :user-id))
+          (org-canvas--submissions-append-comment-to-buffer (plist-get d :name) (plist-get d :text))
+          (org-canvas--submissions-reset-draft)))
+      (cl-incf posted))
+    posted))
+
+(defun org-canvas--submissions-describe-push (changes drafts)
+  "Return a one-line summary of CHANGES and DRAFTS for the confirmation."
+  (concat (when changes (format "%d grade change(s)" (length changes)))
+          (when (and changes drafts) " and ")
+          (when drafts (format "%d comment(s)" (length drafts)))))
+
 ;;;###autoload
 (cl-defun org-canvas-submissions-push-grades ()
-  "Push every changed score in the current buffer to Canvas.
+  "Push every changed score and every drafted comment in this buffer.
 In a grading file a change is a SCORE that differs from its
-CANVAS_SCORE.  Changes that conflict with what Canvas holds now are
+CANVAS_SCORE; a drafted comment is text under a student's Comment to
+post heading.  Changes that conflict with what Canvas holds now are
 skipped and marked (see `org-canvas-submissions-check-conflicts').
-After a successful push the baselines and the file are updated."
+After a successful push the baselines, the comment records, and the
+file are updated."
   (interactive)
   (unless org-canvas-submissions-mode
     (user-error "Not in a submissions buffer"))
   (org-canvas--submissions-ensure-context)
-  (let ((assignment-id org-canvas-submissions--assignment-id))
+  (let ((assignment-id org-canvas-submissions--assignment-id)
+        (drafts (org-canvas--submissions-collect-comment-drafts)))
     (unless assignment-id
       (user-error "No CANVAS_ASSIGNMENT_ID in this buffer"))
     (pcase-let ((`(,changes . ,conflicts)
                  (org-canvas--submissions-partition-conflicts
                   assignment-id (org-canvas--submissions-collect-grade-changes))))
       (org-canvas--submissions-mark-conflicts conflicts)
-      (unless changes
-        (message "No grade changes to push%s"
+      (unless (or changes drafts)
+        (message "Nothing to push%s"
                  (if conflicts (format " (%d conflict(s) marked)" (length conflicts)) ""))
         (cl-return-from org-canvas-submissions-push-grades))
-      (message "Grade changes:\n%s" (org-canvas--submissions-describe-changes changes))
-      (when (y-or-n-p (format "Push %d grade change(s)%s? " (length changes)
+      (when changes
+        (message "Grade changes:\n%s" (org-canvas--submissions-describe-changes changes)))
+      (when (y-or-n-p (format "Push %s%s? "
+                              (org-canvas--submissions-describe-push changes drafts)
                               (if conflicts
                                   (format ", skipping %d conflict(s)" (length conflicts))
                                 "")))
         (condition-case err
-            (progn
-              (org-canvas--submissions-send-grades assignment-id changes)
+            (let ((posted 0))
+              (when changes
+                (org-canvas--submissions-send-grades assignment-id changes))
+              (setq posted (org-canvas--submissions-post-drafts assignment-id drafts))
               (org-canvas--submissions-record-pushed changes)
-              (message "Pushed %d grade(s) successfully" (length changes)))
-          (error (message "Error pushing grades: %s" (error-message-string err))))))))
+              (message "Pushed %d grade(s) and %d comment(s)" (length changes) posted))
+          (error (message "Error pushing: %s" (error-message-string err))))))))
 
 (provide 'org-canvas-submissions)
 ;;; org-canvas-submissions.el ends here

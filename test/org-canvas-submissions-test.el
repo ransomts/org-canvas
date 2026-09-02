@@ -466,7 +466,7 @@
     (with-org-canvas-test-config
       (with-mock-api
         (with-temp-org-buffer
-         "* Adams, Alice\n:PROPERTIES:\n:SUBMISSION_ID: 50001\n:END:\n"
+         "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SUBMISSION_ID: 50001\n:END:\n"
          (org-back-to-heading)
          (setq-local org-canvas-submissions--assignment-id "1001")
          (setq-local org-canvas-submissions--current-view 'detail)
@@ -474,7 +474,8 @@
          (cl-letf (((symbol-function 'read-string) (lambda (_) "Nice!"))
                    ((symbol-function 'y-or-n-p) (lambda (_) t)))
            (org-canvas-submissions-add-comment))
-         (expect-api-called 'PUT "assignments/1001/submissions/50001")
+         ;; Canvas addresses the submission by the student's user id (#125)
+         (expect-api-called 'PUT "assignments/1001/submissions/5001")
          (expect (buffer-string) :to-match "Nice!")))))
 
   (it "errors when not in detail view"
@@ -489,27 +490,27 @@
 
   (it "errors on empty comment"
     (with-temp-org-buffer
-     "* Adams, Alice\n:PROPERTIES:\n:SUBMISSION_ID: 50001\n:END:\n"
+     "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n"
      (org-back-to-heading)
      (setq-local org-canvas-submissions--current-view 'detail)
      (org-canvas-submissions-mode 1)
      (cl-letf (((symbol-function 'read-string) (lambda (_) "")))
        (expect (org-canvas-submissions-add-comment) :to-throw 'user-error))))
 
-  (it "errors when no SUBMISSION_ID"
+  (it "errors when no USER_ID"
     (with-temp-org-buffer
-     "* Adams, Alice\n:PROPERTIES:\n:END:\n"
+     "* Adams, Alice\n:PROPERTIES:\n:SUBMISSION_ID: 50001\n:END:\n"
      (org-back-to-heading)
      (setq-local org-canvas-submissions--current-view 'detail)
      (org-canvas-submissions-mode 1)
      (expect (org-canvas-submissions-add-comment) :to-throw 'user-error))))
 
 (describe "org-canvas--submissions-post-comment"
-  (it "sends PUT request with comment data"
+  (it "sends PUT request with comment data, addressed by user id"
     (with-org-canvas-test-config
       (with-mock-api
-        (org-canvas--submissions-post-comment "1001" "50001" "Great job!")
-        (expect-api-called 'PUT "assignments/1001/submissions/50001")
+        (org-canvas--submissions-post-comment "1001" "5001" "Great job!")
+        (expect-api-called 'PUT "assignments/1001/submissions/5001")
         (let* ((call (test-org-canvas-last-api-call))
                (data (nth 2 call)))
           (expect (alist-get 'text_comment (alist-get 'comment data))
@@ -1813,6 +1814,87 @@
   (it "is nil when the request fails"
     (cl-letf (((symbol-function 'org-canvas-api-request) (lambda (&rest _) (error "down"))))
       (expect (org-canvas--submissions-fetch-assignment "1001") :to-be nil))))
+
+;;;; Drafted Comments
+
+(describe "comment draft heading"
+  (it "is rendered under each student with the template as comment lines"
+    (with-temp-buffer
+      (org-mode)
+      (org-canvas--submissions-render-detail-entry (test-org-canvas-make-submission))
+      (expect (buffer-string) :to-match "^\\*\\* Comment to post\n# Write your comment")
+      (expect (buffer-string) :to-match "Lines starting with # are never sent")))
+  (it "is omitted when the template is nil"
+    (let ((org-canvas-submissions-comment-template nil))
+      (with-temp-buffer
+        (org-mode)
+        (org-canvas--submissions-render-detail-entry (test-org-canvas-make-submission))
+        (expect (buffer-string) :not :to-match "Comment to post")))))
+
+(describe "org-canvas--submissions-comment-draft"
+  (it "is nil while only the template is there"
+    (with-temp-org-buffer
+     (concat "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n\n** Comment to post\n"
+             org-canvas-submissions-comment-template "\n\n")
+     (org-back-to-heading)
+     (expect (org-canvas--submissions-comment-draft) :to-be nil)))
+  (it "returns the written text with the template lines dropped and lines joined"
+    (with-temp-org-buffer
+     (concat "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n\n** Comment to post\n"
+             org-canvas-submissions-comment-template "\nStrong opening.\n\nName the stakeholders next time.\n")
+     (org-back-to-heading)
+     (expect (org-canvas--submissions-comment-draft)
+             :to-equal "Strong opening.\nName the stakeholders next time.")))
+  (it "stops at the next heading"
+    (with-temp-org-buffer
+     "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n\n** Comment to post\nGood.\n\n* Beta, Bob\n:PROPERTIES:\n:USER_ID: 5002\n:END:\n\n** Comment to post\n# only the template\n"
+     (org-back-to-heading)
+     (expect (org-canvas--submissions-comment-draft) :to-equal "Good.")
+     (let ((drafts (org-canvas--submissions-collect-comment-drafts)))
+       (expect (length drafts) :to-equal 1)
+       (expect (plist-get (car drafts) :user-id) :to-equal 5001)
+       (expect (plist-get (car drafts) :text) :to-equal "Good.")))))
+
+(describe "pushing drafted comments"
+  (it "posts each draft by user id, records it under Comments, and resets the draft"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (concat test-grading-file-header
+                                   "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 92\n:CANVAS_SCORE: 92\n:END:\n\n** Comment to post\n"
+                                   org-canvas-submissions-comment-template "\nStrong opening.\n")
+          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+            (org-canvas-submissions-push-grades))
+          (expect-api-called 'PUT "assignments/1001/submissions/5001")
+          (let ((data (nth 2 (test-org-canvas-last-api-call))))
+            (expect (alist-get 'text_comment (alist-get 'comment data)) :to-equal "Strong opening."))
+          (expect (buffer-string) :to-match "^\\*\\* Comments\n- \\*You\\* <[^>]+> :: Strong opening\\.\n")
+          (expect (string-match "\\*\\* Comments" (buffer-string))
+                  :to-be-less-than (string-match "\\*\\* Comment to post" (buffer-string)))
+          (org-canvas--submissions-goto-user 5001)
+          (expect (org-canvas--submissions-comment-draft) :to-be nil)
+          (expect (buffer-modified-p) :to-be nil)))))
+  (it "posts grades and comments in one confirmation"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (concat test-grading-file-header
+                                   "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:END:\n\n** Comment to post\nNice.\n")
+          (let ((org-canvas-submissions-check-conflicts nil) (prompt nil))
+            (cl-letf (((symbol-function 'y-or-n-p) (lambda (p) (setq prompt p) t)))
+              (org-canvas-submissions-push-grades))
+            (expect prompt :to-match "1 grade change(s) and 1 comment(s)")
+            (expect (test-org-canvas-api-call-count) :to-equal 2)
+            (expect (buffer-string) :to-match ":CANVAS_SCORE: 95")
+            (expect (buffer-string) :to-match ":: Nice\\."))))))
+  (it "counts drafts as unpushed work for the refresh guard"
+    (with-org-canvas-test-config
+      (with-grading-file (concat test-grading-file-header
+                                 "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 92\n:CANVAS_SCORE: 92\n:END:\n\n** Comment to post\nA draft.\n")
+        (let ((fetched nil))
+          (cl-letf (((symbol-function 'org-canvas--submissions-fetch-for-assignment)
+                     (lambda (_id) (setq fetched t) nil))
+                    ((symbol-function 'y-or-n-p) (lambda (_) nil)))
+            (expect (org-canvas-submissions-refresh) :to-throw 'user-error))
+          (expect fetched :to-be nil))))))
 
 (provide 'org-canvas-submissions-test)
 ;;; org-canvas-submissions-test.el ends here
