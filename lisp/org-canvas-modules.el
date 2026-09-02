@@ -1061,7 +1061,7 @@ Cleared when the modules sync finishes.")
   (setq org-canvas--module-items-moved nil))
 
 (defun org-canvas--module-remote-items (module-id)
-  "Return the items Canvas holds in module MODULE-ID, or `unknown'.
+  "Return the items in module MODULE-ID on Canvas, or `unknown'.
 `unknown', with a warning, when the list request fails: the sync then
 proceeds as it always did, PUT by id, and reconciles nothing."
   (condition-case err
@@ -1169,7 +1169,7 @@ Returns the number removed."
     removed))
 
 (defun org-canvas--module-reconcile-unclaimed-item (module-id module-pom item)
-  "Settle ITEM, which module MODULE-ID holds and no heading at MODULE-POM claims.
+  "Settle ITEM, held by module MODULE-ID and unclaimed by any heading at MODULE-POM.
 Deleted when it has moved — another module's heading claims it, or it
 was recreated elsewhere this run — and otherwise left in place and
 named.  Returns non-nil when it was deleted."
