@@ -180,8 +180,10 @@ keep Emacs's own protection and are left alone."
 
 (defun org-canvas-org-set-property (pom property value)
   "Set Org PROPERTY to VALUE at POM (point or marker).
-Ensures the correct buffer is used if POM is a marker.
-<<<<>>>>
+Ensures the correct buffer is used if POM is a marker.  Reverts an
+unmodified buffer whose file changed on disk before writing, and
+refuses to write over a modified one (`org-canvas--ensure-buffer-fresh',
+issue #97).
 
 Binds `org-property-format' to \"%s %s\" so property names shorter than
 10 characters are not padded with extra spaces (e.g. `:LICENSE:  private'

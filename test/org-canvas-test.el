@@ -2036,4 +2036,163 @@ while Lab 4 in the same module is still scheduled ahead."
         (expect calls :to-contain
                 (list 'DELETE (org-canvas-api-course-endpoint "assignments/%s" 9) nil))))))
 
+(describe "org-canvas-adopt-at-point (issue #101)"
+  ;; The UNCLAIMED row's recovery, as a command instead of a drawer edit.
+  (defun test-org-canvas--adopt-fixture (content)
+    "Write CONTENT to a temp announcements file and return its path."
+    (let ((temp (make-temp-file "adopt-" nil ".org")))
+      (with-temp-file temp (insert content))
+      temp))
+
+  (defun test-org-canvas--adopt-cleanup (temp)
+    "Kill TEMP's buffer without saving and delete the file."
+    (let ((buf (find-buffer-visiting temp)))
+      (when buf (with-current-buffer buf (set-buffer-modified-p nil))
+            (kill-buffer buf)))
+    (delete-file temp))
+
+  (it "stamps the id and CANVAS_UPDATED_AT of the one item sharing the title, and drops the hash"
+    (let ((temp (test-org-canvas--adopt-fixture
+                 "* The Ethics Email\n:PROPERTIES:\n:PAYLOAD_HASH: deadbeef\n:END:\n\nBody.\n"))
+          (requests nil))
+      (unwind-protect
+          (let ((org-canvas-announcements-file temp))
+            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                       (lambda (method url &optional params)
+                         (push (list method url params) requests)
+                         '(((id . 2563810) (title . "The Ethics Email")
+                            (updated_at . "2026-08-28T12:42:35Z"))
+                           ((id . 1) (title . "Something else")
+                            (updated_at . "2026-08-01T00:00:00Z")))))
+                      ((symbol-function 'org-canvas-api-request)
+                       (lambda (&rest _) (error "Adoption must not write to Canvas"))))
+              (with-current-buffer (find-file-noselect temp)
+                (goto-char (point-min))
+                (expect (org-canvas-adopt-at-point) :to-equal "2563810")
+                (org-back-to-heading t)
+                (expect (org-entry-get (point) "CANVAS_ID") :to-equal "2563810")
+                (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
+                        :to-equal "2026-08-28T12:42:35Z")
+                (expect (org-entry-get (point) "PAYLOAD_HASH") :to-be nil)
+                (expect (buffer-modified-p) :to-be nil))
+              ;; One list request, through the registry's URL and params.
+              (expect (length requests) :to-equal 1)
+              (expect (car (car requests)) :to-equal 'GET)
+              (expect (nth 1 (car requests)) :to-match "discussion_topics")
+              (expect (nth 2 (car requests))
+                      :to-equal '(("only_announcements" . "true")))))
+        (test-org-canvas--adopt-cleanup temp))))
+
+  (it "stamps CANVAS_URL for pages and reads modified_at for files"
+    (let ((temp (test-org-canvas--adopt-fixture "* Welcome\n")))
+      (unwind-protect
+          (let ((org-canvas-pages-file temp))
+            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                       (lambda (&rest _)
+                         '(((url . "welcome") (title . "Welcome")
+                            (updated_at . "2026-08-28T12:42:35Z"))))))
+              (with-current-buffer (find-file-noselect temp)
+                (goto-char (point-min))
+                (org-canvas-adopt-at-point)
+                (org-back-to-heading t)
+                (expect (org-entry-get (point) "CANVAS_URL") :to-equal "welcome")
+                (expect (org-entry-get (point) "CANVAS_ID") :to-be nil))))
+        (test-org-canvas--adopt-cleanup temp)))
+    (let ((temp (test-org-canvas--adopt-fixture "* [[file:content/a.pdf][a.pdf]]\n")))
+      (unwind-protect
+          (let ((org-canvas-files-file temp))
+            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                       (lambda (&rest _)
+                         '(((id . 7) (display_name . "a.pdf")
+                            (updated_at . "2026-08-30T00:00:00Z")
+                            (modified_at . "2026-08-28T00:00:00Z"))))))
+              (with-current-buffer (find-file-noselect temp)
+                (goto-char (point-min))
+                (org-canvas-adopt-at-point)
+                (org-back-to-heading t)
+                (expect (org-entry-get (point) "CANVAS_ID") :to-equal "7")
+                ;; The content timestamp, the one drift is decided from (#94).
+                (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
+                        :to-equal "2026-08-28T00:00:00Z"))))
+        (test-org-canvas--adopt-cleanup temp))))
+
+  (it "refuses a heading that already claims an id"
+    (let ((temp (test-org-canvas--adopt-fixture
+                 "* Done\n:PROPERTIES:\n:CANVAS_ID: 5\n:END:\n")))
+      (unwind-protect
+          (let ((org-canvas-announcements-file temp))
+            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                       (lambda (&rest _) (error "Must not list"))))
+              (with-current-buffer (find-file-noselect temp)
+                (goto-char (point-min))
+                (expect (org-canvas-adopt-at-point) :to-throw 'user-error))))
+        (test-org-canvas--adopt-cleanup temp))))
+
+  (it "refuses a buffer that is not one of the course files"
+    (let ((temp (test-org-canvas--adopt-fixture "* Something\n")))
+      (unwind-protect
+          (with-current-buffer (find-file-noselect temp)
+            (goto-char (point-min))
+            (expect (org-canvas-adopt-at-point) :to-throw 'user-error))
+        (test-org-canvas--adopt-cleanup temp))))
+
+  (it "refuses when nothing on Canvas has the title"
+    (let ((temp (test-org-canvas--adopt-fixture "* Orphan\n")))
+      (unwind-protect
+          (let ((org-canvas-announcements-file temp))
+            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                       (lambda (&rest _) '(((id . 1) (title . "Other"))))))
+              (with-current-buffer (find-file-noselect temp)
+                (goto-char (point-min))
+                (let ((err (should-error (org-canvas-adopt-at-point) :type 'user-error)))
+                  (expect (cadr err) :to-match "Nothing on Canvas is titled .Orphan."))
+                (expect (org-entry-get (point) "CANVAS_ID") :to-be nil))))
+        (test-org-canvas--adopt-cleanup temp))))
+
+  (it "refuses when several items share the title, naming them"
+    ;; Titles are not unique on Canvas; there is no one item to adopt.
+    (let ((temp (test-org-canvas--adopt-fixture "* Twice\n")))
+      (unwind-protect
+          (let ((org-canvas-announcements-file temp))
+            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                       (lambda (&rest _)
+                         '(((id . 1) (title . "Twice")) ((id . 2) (title . "Twice"))))))
+              (with-current-buffer (find-file-noselect temp)
+                (goto-char (point-min))
+                (let ((err (should-error (org-canvas-adopt-at-point) :type 'user-error)))
+                  (expect (cadr err) :to-match "held by 2 Canvas items (1, 2)"))
+                (expect (org-entry-get (point) "CANVAS_ID") :to-be nil))))
+        (test-org-canvas--adopt-cleanup temp))))
+
+  (it "holds back a match the feature's skip-fn disowns, and says why"
+    ;; A classic quiz's shadow assignment shares the quiz's title, and it is
+    ;; not assignments.org's to manage (#98).
+    (let ((temp (test-org-canvas--adopt-fixture "* Quiz 1\n")))
+      (unwind-protect
+          (let ((org-canvas-assignments-file temp))
+            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                       (lambda (&rest _)
+                         '(((id . 9) (name . "Quiz 1") (quiz_id . 4))))))
+              (with-current-buffer (find-file-noselect temp)
+                (goto-char (point-min))
+                (let ((err (should-error (org-canvas-adopt-at-point) :type 'user-error)))
+                  (expect (cadr err) :to-match "Nothing on Canvas is titled .Quiz 1.")
+                  (expect (cadr err) :to-match "id 9 is a classic quiz's shadow assignment")))))
+        (test-org-canvas--adopt-cleanup temp))))
+
+  (it "holds back an id another heading in the file already claims"
+    (let ((temp (test-org-canvas--adopt-fixture
+                 "* Lab 1\n:PROPERTIES:\n:CANVAS_ID: 61\n:END:\n* Lab 1\n")))
+      (unwind-protect
+          (let ((org-canvas-assignments-file temp))
+            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                       (lambda (&rest _) '(((id . 61) (name . "Lab 1"))))))
+              (with-current-buffer (find-file-noselect temp)
+                (goto-char (point-max))
+                (org-back-to-heading t)
+                (let ((err (should-error (org-canvas-adopt-at-point) :type 'user-error)))
+                  (expect (cadr err) :to-match "id 61 is already claimed by another heading"))
+                (expect (org-entry-get (point) "CANVAS_ID") :to-be nil))))
+        (test-org-canvas--adopt-cleanup temp)))))
+
 ;;; org-canvas-test.el ends here

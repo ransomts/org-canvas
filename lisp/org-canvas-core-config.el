@@ -140,6 +140,18 @@ Separate from `org-canvas-request-timeout' which governs plz API calls."
   :type 'integer
   :group 'org-canvas)
 
+(defcustom org-canvas-request-min-interval 0
+  "Minimum seconds between consecutive Canvas API requests.
+Zero, the default, sends requests as fast as the sync produces them.
+A positive value spaces them out: before each request org-canvas
+sleeps for whatever remains of the interval since the previous one
+went out.  This is the built-in form of the `sleep-for' that batch
+scripts used to wrap around every at-point call (issue #101), and a
+gentler answer to a rate limit than waiting for the 429 and retrying
+\(`org-canvas-rate-limit-wait').  Fractions are fine."
+  :type 'number
+  :group 'org-canvas)
+
 (defcustom org-canvas-emit-defaults nil
   "When non-nil, emit Org properties whose values match the registry default.
 Default behavior (nil) suppresses these to keep drawers terse.  Set to
