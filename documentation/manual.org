@@ -969,6 +969,34 @@ For most item types, org-canvas resolves links to find the Canvas ID:
 | SubHeader   | (no link - text only) |
 | ExternalUrl | (uses EXTERNAL_URL)   |
 
+*** Moving Items Between Modules
+
+Move the item's block -- heading, property drawer and all -- under the new
+module heading and sync.  Canvas has no cross-module move (the module id is
+part of the item's URL), so org-canvas performs the only mechanism there is,
+delete-and-create, and owns the bookkeeping (#105):
+
+- When a module syncs, its items on Canvas are listed once.  An item heading
+  whose =CANVAS_ID= the module does not hold has arrived from another module:
+  it is created here and the heading is restamped with the new id.
+- An item the module holds on Canvas that none of its headings claim is
+  removed *when it has moved*: another module's heading claims the id, or it
+  was recreated under its new module earlier in the same run.  Either sync
+  order works.
+- An item the module holds that =modules.org= does not list anywhere is left
+  in place and named in the log.  Module items are not pruned without being
+  asked, the same rule quiz questions follow.
+
+Dropping the =:CANVAS_ID:= drawer by hand before the move still works -- it is
+what the reconcile does for you -- and a same-module reorder keeps the id and
+goes out as an update, as before.  If the item list cannot be fetched, the
+run says so and falls back to updating by id, reconciling nothing.
+
+=org-canvas-validate= warns when two item headings claim the same
+=CANVAS_ID=: a block that was copied rather than cut.  The sync copes (the
+copy is created fresh where it sits), but the extra heading is rarely what
+was meant.
+
 *** File Item Links
 
 File-type module items should link *directly to the file on disk*
