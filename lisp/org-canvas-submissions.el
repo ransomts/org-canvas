@@ -100,6 +100,22 @@ and turns drafted comments off."
   :type '(choice (const :tag "No draft heading" nil) string)
   :group 'org-canvas)
 
+(defcustom org-canvas-submissions-notes-template
+  "# Your notes for this student.  Never sent to Canvas, and kept across pulls."
+  "Text placed under each student's \"Notes\" heading at pull time.
+Whatever is written under that heading survives a re-pull.  Nil omits
+the heading."
+  :type '(choice (const :tag "No notes heading" nil) string)
+  :group 'org-canvas)
+
+(defcustom org-canvas-submissions-late-window-days 2
+  "Days of lateness the completion rule still gives full credit for.
+`org-canvas-submissions-apply-completion-rule' scores a submission later
+than this as 0.  Canvas's own late policy, if any, still deducts inside
+the window."
+  :type 'integer
+  :group 'org-canvas)
+
 (defcustom org-canvas-submissions-write-gitignore t
   "Non-nil means write a .gitignore into the submissions directory.
 It is written once, when the directory is created, and excludes
@@ -219,16 +235,16 @@ Return non-nil when found."
     t))
 
 (defun org-canvas--submissions-pending-count ()
-  "Return how many score edits and drafted comments have not been pushed."
-  (+ (length (org-canvas--submissions-collect-grade-changes))
-     (length (org-canvas--submissions-collect-comment-drafts))))
+  "Return how many score edits have not been pushed.
+Drafted comments and notes are not counted: a re-pull carries them over."
+  (length (org-canvas--submissions-collect-grade-changes)))
 
 (defun org-canvas--submissions-guard-unpushed (verb)
   "Ask before VERB (a capitalized verb) discards unpushed edits."
   (let ((pending (org-canvas--submissions-pending-count)))
     (when (and (> pending 0)
                (not (y-or-n-p
-                     (format "%d unpushed score change(s) or comment(s) will be lost; %s anyway? "
+                     (format "%d unpushed score change(s) will be lost; %s anyway? "
                              pending verb))))
       (user-error "%s cancelled" verb))))
 
@@ -240,6 +256,26 @@ Canvas reports `entered_score' (what the grader typed) and `score'
         (score (alist-get 'score submission)))
     (cond ((numberp entered) entered)
           ((numberp score) score))))
+
+(defun org-canvas--submissions-excused-p (submission)
+  "Return non-nil when SUBMISSION is excused."
+  (let ((v (alist-get 'excused submission)))
+    (and v (not (eq v :json-false)))))
+
+(defun org-canvas--submissions-shown-score (submission)
+  "Return SUBMISSION's score as the grading file spells it, or nil.
+\"EX\" for an excused submission, otherwise the entered score formatted
+as a number."
+  (cond ((org-canvas--submissions-excused-p submission) "EX")
+        ((org-canvas--submissions-entered-score submission)
+         (org-canvas--submissions-format-number
+          (org-canvas--submissions-entered-score submission)))))
+
+(defun org-canvas--submissions-days-late (submission)
+  "Return how many days late SUBMISSION is, rounded up, or nil when not late."
+  (let ((secs (alist-get 'seconds_late submission)))
+    (when (and (numberp secs) (> secs 0))
+      (ceiling secs 86400))))
 
 ;;;; Links
 
@@ -348,10 +384,15 @@ does) and the rubric's Canvas page."
             (org-canvas--submissions-rubric-url rubric-id))))
 
 (defun org-canvas--submissions-render-rubric-properties (assignment)
-  "Insert the CANVAS_RUBRIC_ID and CANVAS_RUBRIC_TITLE keywords for ASSIGNMENT.
-Nothing is inserted when no rubric is attached.  A reopened file uses
-them to rebuild its Rubric: line without a request."
-  (let ((rubric (org-canvas--submissions-rubric-settings assignment)))
+  "Insert the ASSIGNMENT keywords a reopened file needs: points and rubric.
+POINTS_POSSIBLE feeds the completion rule; CANVAS_RUBRIC_ID and
+CANVAS_RUBRIC_TITLE rebuild the Rubric: line without a request.  Nothing
+rubric-related is inserted when no rubric is attached."
+  (let ((points (alist-get 'points_possible assignment))
+        (rubric (org-canvas--submissions-rubric-settings assignment)))
+    (when (numberp points)
+      (insert (format "#+PROPERTY: POINTS_POSSIBLE %s\n"
+                      (org-canvas--submissions-format-number points))))
     (when rubric
       (insert (format "#+PROPERTY: CANVAS_RUBRIC_ID %s\n" (car rubric)))
       (insert (format "#+PROPERTY: CANVAS_RUBRIC_TITLE %s\n" (cdr rubric))))))
@@ -683,10 +724,11 @@ assignment object when at hand, supplies the rubric header."
 
 (defun org-canvas--submissions-render-detail-entry (submission &optional assignment-name assignment-id)
   "Render a single SUBMISSION as an Org heading with properties.
-SCORE is the editable grade; CANVAS_SCORE is the same value as pulled,
-the baseline a later push compares against.  FINAL_SCORE appears only
-when Canvas's late policy made the recorded score differ from the one
-entered.  ATTEMPT lets a push notice a resubmission.  With
+SCORE is the editable grade (a number, or EX for excused); CANVAS_SCORE
+is the same value as pulled, the baseline a later push compares against.
+FINAL_SCORE appears only when Canvas's late policy made the recorded
+score differ from the one entered.  DAYS_LATE, rounded up, appears on a
+late submission.  ATTEMPT lets a push notice a resubmission.  With
 ASSIGNMENT-ID the heading gets its SpeedGrader link, and with
 ASSIGNMENT-NAME attachments already downloaded link to the local copy."
   (let ((name (org-canvas--submissions-user-sortable-name submission))
@@ -694,6 +736,8 @@ ASSIGNMENT-NAME attachments already downloaded link to the local copy."
         (sub-id (alist-get 'id submission))
         (status (org-canvas--submissions-normalize-status submission))
         (entered (org-canvas--submissions-entered-score submission))
+        (shown (org-canvas--submissions-shown-score submission))
+        (days-late (org-canvas--submissions-days-late submission))
         (final (alist-get 'score submission))
         (attempt (alist-get 'attempt submission))
         (submitted-at (org-canvas--submissions-format-submitted-at submission))
@@ -708,11 +752,12 @@ ASSIGNMENT-NAME attachments already downloaded link to the local copy."
     (when sub-id
       (insert (format ":SUBMISSION_ID: %s\n" sub-id)))
     (insert (format ":STATUS: %s\n" status))
-    (when entered
-      (let ((shown (org-canvas--submissions-format-number entered)))
-        (insert (format ":SCORE: %s\n" shown))
-        (insert (format ":CANVAS_SCORE: %s\n" shown))))
-    (when (and entered (numberp final) (/= final entered))
+    (when days-late
+      (insert (format ":DAYS_LATE: %s\n" days-late)))
+    (when shown
+      (insert (format ":SCORE: %s\n" shown))
+      (insert (format ":CANVAS_SCORE: %s\n" shown)))
+    (when (and entered (not (equal shown "EX")) (numberp final) (/= final entered))
       (insert (format ":FINAL_SCORE: %s\n"
                       (org-canvas--submissions-format-number final))))
     (when (numberp attempt)
@@ -728,11 +773,21 @@ ASSIGNMENT-NAME attachments already downloaded link to the local copy."
     (org-canvas--submissions-render-attachments attachments assignment-name name)
     (org-canvas--submissions-render-comments comments)
     (org-canvas--submissions-render-rubric rubric)
+    (org-canvas--submissions-render-notes)
     (org-canvas--submissions-render-comment-draft)
     (insert "\n")))
 
 (defconst org-canvas--submissions-draft-heading "** Comment to post"
   "Heading under which a student's drafted comment is written.")
+
+(defconst org-canvas--submissions-notes-heading "** Notes"
+  "Heading under which a grader's own notes on a student live.")
+
+(defun org-canvas--submissions-render-notes ()
+  "Insert the Notes heading with its template, when enabled."
+  (when org-canvas-submissions-notes-template
+    (insert "\n" org-canvas--submissions-notes-heading "\n"
+            org-canvas-submissions-notes-template "\n")))
 
 (defun org-canvas--submissions-render-comment-draft ()
   "Insert the Comment to post heading with the template, when enabled."
@@ -740,23 +795,23 @@ ASSIGNMENT-NAME attachments already downloaded link to the local copy."
     (insert "\n" org-canvas--submissions-draft-heading "\n"
             org-canvas-submissions-comment-template "\n")))
 
-(defun org-canvas--submissions-draft-region ()
-  "Return (START . END) of the draft body under the heading at point, or nil.
-START is the line after the Comment to post heading; END the next heading
-or the end of the student's subtree."
+(defun org-canvas--submissions-section-region (heading)
+  "Return (START . END) of the body under HEADING within the entry at point.
+START is the line after HEADING; END the next heading or the end of the
+student's subtree.  Nil when the entry has no such heading."
   (save-excursion
     (org-back-to-heading t)
     (let ((end (save-excursion (org-end-of-subtree t) (point))))
-      (when (re-search-forward (concat "^" (regexp-quote org-canvas--submissions-draft-heading) "$") end t)
+      (when (re-search-forward (concat "^" (regexp-quote heading) "$") end t)
         (forward-line 1)
         (cons (point)
               (save-excursion
                 (if (re-search-forward "^\\*" end t) (line-beginning-position) end)))))))
 
-(defun org-canvas--submissions-comment-draft ()
-  "Return the drafted comment of the heading at point, or nil when empty.
-Org comment lines (the template) and blank lines are dropped."
-  (let ((region (org-canvas--submissions-draft-region)))
+(defun org-canvas--submissions-section-text (heading)
+  "Return what is written under HEADING in the entry at point, or nil.
+Org comment lines (the templates) and blank lines are dropped."
+  (let ((region (org-canvas--submissions-section-region heading)))
     (when region
       (let* ((raw (buffer-substring-no-properties (car region) (cdr region)))
              (kept (seq-remove (lambda (l) (string-match-p "\\`[ \t]*\\(#\\|\\'\\)" l))
@@ -764,15 +819,62 @@ Org comment lines (the template) and blank lines are dropped."
         (when kept
           (string-trim (mapconcat #'identity kept "\n")))))))
 
-(defun org-canvas--submissions-reset-draft ()
-  "Put the template back under the Comment to post heading at point."
-  (let ((region (org-canvas--submissions-draft-region)))
+(defun org-canvas--submissions-set-section (heading template text)
+  "Replace the body under HEADING in the entry at point with TEMPLATE and TEXT.
+Either may be nil.  Does nothing when the entry has no such heading."
+  (let ((region (org-canvas--submissions-section-region heading)))
     (when region
       (save-excursion
         (goto-char (car region))
         (delete-region (car region) (cdr region))
-        (insert (or org-canvas-submissions-comment-template "") "\n")
+        (when template (insert template "\n"))
+        (when text (insert text "\n"))
         (when (looking-at "^\\*") (insert "\n"))))))
+
+(defun org-canvas--submissions-draft-region ()
+  "Return (START . END) of the draft body under the heading at point, or nil."
+  (org-canvas--submissions-section-region org-canvas--submissions-draft-heading))
+
+(defun org-canvas--submissions-comment-draft ()
+  "Return the drafted comment of the heading at point, or nil when empty."
+  (org-canvas--submissions-section-text org-canvas--submissions-draft-heading))
+
+(defun org-canvas--submissions-reset-draft ()
+  "Put the template back under the Comment to post heading at point."
+  (org-canvas--submissions-set-section org-canvas--submissions-draft-heading
+                                       org-canvas-submissions-comment-template nil))
+
+;;;; Carry-over Across Pulls
+
+(defun org-canvas--submissions-collect-carryover ()
+  "Return (user-id . (:notes TEXT :draft TEXT)) for entries with either.
+Read from the current buffer before a re-render replaces it."
+  (let ((carry nil))
+    (save-excursion
+      (goto-char (point-min))
+      (while (re-search-forward "^\\* " nil t)
+        (org-back-to-heading t)
+        (let ((user-id (org-entry-get (point) "USER_ID"))
+              (notes (org-canvas--submissions-section-text org-canvas--submissions-notes-heading))
+              (draft (org-canvas--submissions-section-text org-canvas--submissions-draft-heading)))
+          (when (and user-id (or notes draft))
+            (push (cons (string-to-number user-id) (list :notes notes :draft draft)) carry)))
+        (forward-line 1)))
+    carry))
+
+(defun org-canvas--submissions-restore-carryover (carry)
+  "Write CARRY, as `org-canvas--submissions-collect-carryover' returns it, back."
+  (save-excursion
+    (dolist (entry carry)
+      (when (org-canvas--submissions-goto-user (car entry))
+        (let ((notes (plist-get (cdr entry) :notes))
+              (draft (plist-get (cdr entry) :draft)))
+          (when notes
+            (org-canvas--submissions-set-section org-canvas--submissions-notes-heading
+                                                 org-canvas-submissions-notes-template notes))
+          (when draft
+            (org-canvas--submissions-set-section org-canvas--submissions-draft-heading
+                                                 org-canvas-submissions-comment-template draft)))))))
 
 (defun org-canvas--submissions-collect-comment-drafts ()
   "Return (:user-id :name :text) for every heading with a drafted comment."
@@ -1021,6 +1123,60 @@ Entries already downloaded are skipped."
           (save-buffer)))
       (message "Downloaded %d file(s) to %s" fetched dir))))
 
+;;;; Completion Rule
+
+(defun org-canvas--submissions-completion-score (points window)
+  "Return the score the completion rule gives the entry at point.
+POINTS for a submission within WINDOW days of lateness, 0 for a later
+one or a missing one, nil when there is nothing to grade."
+  (let ((status (org-entry-get (point) "STATUS"))
+        (days (org-entry-get (point) "DAYS_LATE")))
+    (cond ((member status '("missing" "unsubmitted")) "0")
+          ((and days (> (string-to-number days) window)) "0")
+          ((member status '("submitted" "late" "graded" "pending_review"))
+           (org-canvas--submissions-format-number points))
+          (t nil))))
+
+(defun org-canvas--submissions-default-points ()
+  "Return the assignment's points from the file header, or nil."
+  (let ((p (org-canvas--submissions-file-property "POINTS_POSSIBLE")))
+    (and p (string-to-number p))))
+
+;;;###autoload
+(defun org-canvas-submissions-apply-completion-rule (points &optional overwrite)
+  "Score every ungraded student in this grading file by completion.
+A submission within `org-canvas-submissions-late-window-days' of the
+due date gets POINTS, a later or missing one gets 0.  Only headings with
+an empty SCORE are touched, so hand grading is never overwritten, unless
+OVERWRITE (the prefix argument) is given; excused rows are always left
+alone.  Nothing is pushed: review the scores, then press S."
+  (interactive
+   (list (read-number "Full credit points: " (or (org-canvas--submissions-default-points) 0))
+         current-prefix-arg))
+  (unless org-canvas-submissions-mode
+    (user-error "Not in a submissions buffer"))
+  (org-canvas--submissions-ensure-context)
+  (unless (eq org-canvas-submissions--current-view 'detail)
+    (user-error "Switch to detail view first (press v)"))
+  (let ((window org-canvas-submissions-late-window-days)
+        (full 0) (zero 0) (skipped 0))
+    (save-excursion
+      (goto-char (point-min))
+      (while (re-search-forward "^\\* " nil t)
+        (org-back-to-heading t)
+        (let* ((current (org-entry-get (point) "SCORE"))
+               (has (and current (not (string-empty-p (string-trim current)))))
+               (score (org-canvas--submissions-completion-score points window)))
+          (cond ((or (equal (and has (org-canvas--submissions-parse-score current)) "EX")
+                     (and has (not overwrite))
+                     (null score))
+                 (cl-incf skipped))
+                (t (org-entry-put (point) "SCORE" score)
+                   (if (equal score "0") (cl-incf zero) (cl-incf full)))))
+        (forward-line 1)))
+    (message "Completion rule: %d at %s, %d at 0 (missing or more than %d day(s) late), %d left as they were; press S to push"
+             full (org-canvas--submissions-format-number points) zero window skipped)))
+
 ;;;###autoload
 (defun org-canvas-submissions-download-all-attachments ()
   "Download every student's attachments in this grading file.
@@ -1119,19 +1275,22 @@ Ask first when the buffer holds score edits that were never pushed."
 The detail view is the grading file under the submissions directory,
 rendered and saved; the summary view is an ephemeral buffer.
 ASSIGNMENT, the Canvas assignment object when at hand, supplies the
-rubric header of the detail view."
+rubric header of the detail view.  Notes and drafted comments already
+in the file are carried over to the new render."
   (let ((buf (if (eq view 'detail)
                  (org-canvas--submissions-grading-buffer assignment-name)
                (get-buffer-create (format "*submissions: %s*" assignment-name)))))
     (with-current-buffer buf
-      (let ((inhibit-read-only t))
+      (let ((inhibit-read-only t)
+            (carry (and (eq view 'detail) (org-canvas--submissions-collect-carryover))))
         (unless (derived-mode-p 'org-mode)
           (org-mode))
         (if (eq view 'summary)
             (org-canvas--submissions-render-summary
              assignment-name assignment-id submissions)
           (org-canvas--submissions-render-detail
-           assignment-name assignment-id submissions assignment))
+           assignment-name assignment-id submissions assignment)
+          (org-canvas--submissions-restore-carryover carry))
         (goto-char (point-min))
         (setq-local org-canvas-submissions--assignment-name assignment-name)
         (setq-local org-canvas-submissions--assignment-id assignment-id)
@@ -1162,21 +1321,22 @@ file's unpushed score edits are overwritten."
 
 (defun org-canvas--submissions-snapshot-scores (submissions)
   "Build an alist of (user-id . score-string) from SUBMISSIONS.
-The score is the entered one, formatted as the buffer shows it."
+The score is spelled as the buffer shows it: a number, or EX."
   (mapcar (lambda (sub)
-            (let ((score (org-canvas--submissions-entered-score sub)))
-              (cons (org-canvas--submissions-user-id sub)
-                    (when score (org-canvas--submissions-format-number score)))))
+            (cons (org-canvas--submissions-user-id sub)
+                  (org-canvas--submissions-shown-score sub)))
           submissions))
 
 (defun org-canvas--submissions-parse-score (score-string)
-  "Parse SCORE-STRING into a numeric string suitable for Canvas posted_grade.
-Handles \"92\", \"85.5\", \"95/100\" (extracts numerator), trims whitespace.
-Returns nil for non-numeric or empty input."
+  "Parse SCORE-STRING into a string suitable for Canvas posted_grade.
+Handles \"92\", \"85.5\", \"95/100\" (extracts numerator), and \"EX\" or
+\"excused\" in any case, which becomes \"EX\".  Trims whitespace.
+Returns nil for anything else, including empty input."
   (when (and score-string (stringp score-string))
     (let ((trimmed (string-trim score-string)))
       (cond
        ((string-empty-p trimmed) nil)
+       ((string-match-p "\\`\\(?:ex\\|excused\\)\\'" (downcase trimmed)) "EX")
        ((string-match "^\\([0-9]+\\.?[0-9]*\\)/[0-9]" trimmed)
         (match-string 1 trimmed))
        ((string-match "^[0-9]+\\.?[0-9]*$" trimmed)
@@ -1282,12 +1442,12 @@ DIFFS is a list of plists with :user-id and :new-score."
 
 (defun org-canvas--submissions-live-baselines (assignment-id)
   "Fetch ASSIGNMENT-ID's submissions as (user-id . (score . attempt)).
-The score is the entered score as a string, or nil when ungraded."
+The score is spelled as the buffer shows it (a number or EX), or nil
+when ungraded."
   (mapcar (lambda (sub)
-            (let ((score (org-canvas--submissions-entered-score sub)))
-              (cons (org-canvas--submissions-user-id sub)
-                    (cons (and score (org-canvas--submissions-format-number score))
-                          (alist-get 'attempt sub)))))
+            (cons (org-canvas--submissions-user-id sub)
+                  (cons (org-canvas--submissions-shown-score sub)
+                        (alist-get 'attempt sub))))
           (org-canvas--submissions-fetch-for-assignment assignment-id)))
 
 (defun org-canvas--submissions-conflict-p (change live)
