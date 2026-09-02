@@ -538,6 +538,41 @@ LOC is a (:file :line :heading) plist."
                  (format "Drop rules (%d) >= assignment count (%d) for group '%s'"
                          total-drops assignment-count group-name))))))))
 
+(defun org-canvas--validate-module-item-ids (file)
+  "Warn when two module item headings in FILE claim the same CANVAS_ID.
+An item's id belongs to one module.  A block copied under a second
+module with its drawer intact claims an item the first module holds;
+the sync copes — the copy is created fresh where it sits (issue #105)
+— but two headings naming one id is never what was meant, and the
+extra copy is what a move that should have been a cut looks like.
+Returns a list of issues, one per duplicated id."
+  (let ((seen (make-hash-table :test 'equal))
+        (order nil)
+        (issues nil))
+    (with-current-buffer (find-file-noselect file)
+      (save-excursion
+        (goto-char (point-min))
+        (org-map-entries
+         (lambda ()
+           (let ((id (org-entry-get (point) "CANVAS_ID")))
+             (when id
+               (unless (gethash id seen) (push id order))
+               (push (cons (line-number-at-pos) (org-get-heading t t t t))
+                     (gethash id seen)))))
+         "LEVEL=2" 'file)))
+    (dolist (id (nreverse order))
+      (let ((places (reverse (gethash id seen))))
+        (when (cdr places)
+          (push (org-canvas--validate-make-issue
+                 'warning
+                 (list :file file :line (car (car places)) :heading (cdr (car places)))
+                 "CANVAS_ID"
+                 (format "Module item CANVAS_ID %s is claimed by %d headings (lines %s) — an item belongs to one module; drop the id on the copy so it is created fresh"
+                         id (length places)
+                         (mapconcat (lambda (p) (format "%d" (car p))) places ", ")))
+                issues))))
+    (nreverse issues)))
+
 (defconst org-canvas--validate-weight-sum-tolerance 0.01
   "Slack allowed when checking that group weights sum to 100.
 Weights are read as floats, so an exact comparison would reject

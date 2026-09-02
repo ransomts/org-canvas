@@ -3656,4 +3656,227 @@ Lab 1 has none, Lab 2's is in the future, Lab 3's has passed."
     (let ((org-canvas-modules-file "/tmp/nonexistent-modules.org"))
       (expect (org-canvas--module-positions) :to-be nil))))
 
+;;;; Cross-module moves (issue #105)
+
+(describe "module item cross-module move (issue #105)"
+  (defmacro test-org-canvas--with-module-remote (remote &rest body)
+    "Run BODY with the module item list mocked to REMOTE and requests recorded.
+REMOTE is a form; the symbol `fail' makes the list request signal.
+`requests' collects (METHOD URL) for every `org-canvas-api-request'."
+    (declare (indent 1))
+    `(let ((requests nil)
+           (org-canvas--module-items-moved nil))
+       (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                  (lambda (&rest _)
+                    (if (eq ,remote 'fail) (error "listing failed") ,remote)))
+                 ((symbol-function 'org-canvas-api-request)
+                  (lambda (method url &rest _)
+                    (push (list method url) requests)
+                    ;; A PUT answers with the item it updated; a POST with a new id.
+                    (if (and (eq method 'PUT) (string-match "/items/\\([0-9]+\\)$" url))
+                        `((id . ,(string-to-number (match-string 1 url))) (title . "Updated"))
+                      '((id . 900) (title . "Created"))))))
+         ,@body)))
+
+  (it "creates an item here when the module does not hold its id, and remembers the old id"
+    (with-org-canvas-test-config
+      (test-org-canvas--with-module-remote '(((id . 77) (title . "Other")))
+        (with-temp-org-buffer
+         "* Week 1
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** Check 3
+:PROPERTIES:
+:ITEM_TYPE: SubHeader
+:CANVAS_ID: 55
+:END:
+"
+         (org-back-to-heading)
+         (org-canvas--module-sync-items 100 (point) default-directory)
+         ;; POST to the module, not PUT against an item it does not hold.
+         (expect (cl-find-if (lambda (r) (and (eq (car r) 'POST)
+                                              (string-match-p "modules/100/items$" (cadr r))))
+                             requests)
+                 :to-be-truthy)
+         (expect (cl-find-if (lambda (r) (eq (car r) 'PUT)) requests) :to-be nil)
+         (expect org-canvas--module-items-moved :to-equal '("55"))
+         (search-forward "** Check 3")
+         (org-back-to-heading t)
+         (expect (org-entry-get (point) "CANVAS_ID") :to-equal "900")))))
+
+  (it "keeps a same-module reorder on PUT"
+    (with-org-canvas-test-config
+      (test-org-canvas--with-module-remote '(((id . 55) (title . "Check 3")))
+        (with-temp-org-buffer
+         "* Week 1
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** Check 3
+:PROPERTIES:
+:ITEM_TYPE: SubHeader
+:CANVAS_ID: 55
+:END:
+"
+         (org-back-to-heading)
+         (org-canvas--module-sync-items 100 (point) default-directory)
+         (expect (cl-find-if (lambda (r) (and (eq (car r) 'PUT)
+                                              (string-match-p "modules/100/items/55$" (cadr r))))
+                             requests)
+                 :to-be-truthy)
+         (expect (cl-find-if (lambda (r) (eq (car r) 'DELETE)) requests) :to-be nil)
+         (expect org-canvas--module-items-moved :to-be nil)))))
+
+  (it "removes an unclaimed remote item that another module's heading claims"
+    (with-org-canvas-test-config
+      (test-org-canvas--with-module-remote '(((id . 55) (title . "Check 3")))
+        (with-temp-org-buffer
+         "* Week 1
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+* Week 2
+:PROPERTIES:
+:CANVAS_ID: 200
+:END:
+** Check 3
+:PROPERTIES:
+:ITEM_TYPE: SubHeader
+:CANVAS_ID: 55
+:END:
+"
+         (org-back-to-heading)
+         (org-canvas--module-sync-items 100 (point) default-directory)
+         (expect (cl-find-if (lambda (r) (and (eq (car r) 'DELETE)
+                                              (string-match-p "modules/100/items/55$" (cadr r))))
+                             requests)
+                 :to-be-truthy)))))
+
+  (it "removes an unclaimed remote item that was recreated elsewhere this run"
+    ;; Its new heading is already restamped, so no heading claims the old id.
+    (with-org-canvas-test-config
+      (test-org-canvas--with-module-remote '(((id . 55) (title . "Check 3")))
+        (setq org-canvas--module-items-moved '("55"))
+        (with-temp-org-buffer
+         "* Week 1
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+"
+         (org-back-to-heading)
+         (org-canvas--module-sync-items 100 (point) default-directory)
+         (expect (cl-find-if (lambda (r) (eq (car r) 'DELETE)) requests) :to-be-truthy)))))
+
+  (it "leaves an unlisted remote item in place and names it"
+    (with-org-canvas-test-config
+      (test-org-canvas--with-module-remote '(((id . 55) (title . "Web UI item")))
+        (let ((warnings nil))
+          (cl-letf (((symbol-function 'org-canvas--log-warning)
+                     (lambda (_logger fmt &rest args)
+                       (push (apply #'format fmt args) warnings))))
+            (with-temp-org-buffer
+             "* Week 1
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+"
+             (org-back-to-heading)
+             (org-canvas--module-sync-items 100 (point) default-directory)))
+          (expect (cl-find-if (lambda (r) (eq (car r) 'DELETE)) requests) :to-be nil)
+          (expect (car warnings) :to-match "holds 'Web UI item' (item 55) that modules.org does not list")))))
+
+  (it "keeps a remote item this module's own heading claims, even if a copy claims it too"
+    ;; A duplicated drawer: this module holds 55 and lists it; the copy
+    ;; under Week 2 is the reconcile's problem when Week 2 syncs.
+    (with-org-canvas-test-config
+      (test-org-canvas--with-module-remote '(((id . 55) (title . "Check 3")))
+        (with-temp-org-buffer
+         "* Week 1
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** Check 3
+:PROPERTIES:
+:ITEM_TYPE: SubHeader
+:CANVAS_ID: 55
+:END:
+* Week 2
+:PROPERTIES:
+:CANVAS_ID: 200
+:END:
+** Check 3
+:PROPERTIES:
+:ITEM_TYPE: SubHeader
+:CANVAS_ID: 55
+:END:
+"
+         (org-back-to-heading)
+         (org-canvas--module-sync-items 100 (point) default-directory)
+         (expect (cl-find-if (lambda (r) (eq (car r) 'DELETE)) requests) :to-be nil)))))
+
+  (it "reconciles nothing when the item list cannot be fetched"
+    (with-org-canvas-test-config
+      (test-org-canvas--with-module-remote 'fail
+        (let ((warnings nil))
+          (cl-letf (((symbol-function 'org-canvas--log-warning)
+                     (lambda (_logger fmt &rest args)
+                       (push (apply #'format fmt args) warnings))))
+            (with-temp-org-buffer
+             "* Week 1
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** Check 3
+:PROPERTIES:
+:ITEM_TYPE: SubHeader
+:CANVAS_ID: 55
+:END:
+"
+             (org-back-to-heading)
+             (org-canvas--module-sync-items 100 (point) default-directory)))
+          ;; PUT by id, as before; no delete; and it says so.
+          (expect (cl-find-if (lambda (r) (eq (car r) 'PUT)) requests) :to-be-truthy)
+          (expect (cl-find-if (lambda (r) (eq (car r) 'DELETE)) requests) :to-be nil)
+          (expect (cl-find-if (lambda (w) (string-match-p "moved items will not be reconciled" w))
+                              warnings)
+                  :to-be-truthy)))))
+
+  (it "sends no delete during a dry run"
+    (with-org-canvas-test-config
+      (test-org-canvas--with-module-remote '(((id . 55) (title . "Check 3")))
+        (let ((org-canvas--dry-run t))
+          (with-temp-org-buffer
+           "* Week 1
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+"
+           (org-back-to-heading)
+           (expect (org-canvas--module-reconcile-departed
+                    100 (point) '(((id . 55) (title . "Check 3"))) nil)
+                   :to-equal 0)
+           (expect requests :to-be nil))))))
+
+  (it "survives a failed delete and says so"
+    (with-org-canvas-test-config
+      (let ((warnings nil)
+            (org-canvas--module-items-moved '("55")))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _) (error "HTTP 500")))
+                  ((symbol-function 'org-canvas--log-warning)
+                   (lambda (_logger fmt &rest args)
+                     (push (apply #'format fmt args) warnings))))
+          (with-temp-org-buffer "* Week 1\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n"
+            (org-back-to-heading)
+            (expect (org-canvas--module-reconcile-departed
+                     100 (point) '(((id . 55) (title . "Check 3"))) nil)
+                    :to-equal 0)))
+        (expect (car warnings) :to-match "Could not remove moved item 55"))))
+
+  (it "clears the moved list when the modules sync finishes"
+    (let ((org-canvas--module-items-moved '("55")))
+      (org-canvas--module-forget-moved)
+      (expect org-canvas--module-items-moved :to-be nil))))
+
 ;;; org-canvas-modules-test.el ends here

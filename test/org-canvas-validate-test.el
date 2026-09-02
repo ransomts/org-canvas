@@ -2876,4 +2876,38 @@ EXCEPT is a list of filenames to skip."
                 :to-be nil)))))
 
 (provide 'org-canvas-validate-test)
+(describe "org-canvas--validate-module-item-ids (issue #105)"
+  (it "warns once per item id claimed by more than one heading, naming the lines"
+    (let ((file (make-temp-file "dup-item-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "* Week 1\n** Check 3\n:PROPERTIES:\n:CANVAS_ID: 55\n:END:\n"
+                      "* Week 2\n** Check 3\n:PROPERTIES:\n:CANVAS_ID: 55\n:END:\n"
+                      "** Check 4\n:PROPERTIES:\n:CANVAS_ID: 56\n:END:\n"))
+            (let ((issues (org-canvas--validate-module-item-ids file)))
+              (expect (length issues) :to-equal 1)
+              (expect (plist-get (car issues) :severity) :to-equal 'warning)
+              (expect (plist-get (car issues) :line) :to-equal 2)
+              (expect (plist-get (car issues) :message)
+                      :to-match "CANVAS_ID 55 is claimed by 2 headings (lines 2, 7)")))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file))))
+
+  (it "is quiet when every item id is unique"
+    (let ((file (make-temp-file "uniq-item-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "* Week 1\n** Check 3\n:PROPERTIES:\n:CANVAS_ID: 55\n:END:\n"
+                      "* Week 2\n** Check 4\n:PROPERTIES:\n:CANVAS_ID: 56\n:END:\n"
+                      "** No id yet\n"))
+            (expect (org-canvas--validate-module-item-ids file) :to-be nil))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file))))
+
+  (it "is wired in as the module-items file check"
+    (expect (plist-get (gethash "module-items" org-canvas--property-registry) :file-fn)
+            :to-be #'org-canvas--validate-module-item-ids)))
+
 ;;; org-canvas-validate-test.el ends here
