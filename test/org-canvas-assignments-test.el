@@ -1896,4 +1896,24 @@ Content.
                    :to-have-same-items-as '("RUBRIC_USE_FOR_GRADING" "RUBRIC_HIDE_SCORE_TOTAL"))
            (expect (nth 2 (assoc "RUBRIC_USE_FOR_GRADING" diffs)) :to-equal "false")))))))
 
+
+;;;; Rubric Data in the Change Hash (#120)
+
+(describe "org-canvas--assignment-rubric-hash-extra"
+  (it "is empty for a heading without rubric data, so its hash is unchanged"
+    (expect (org-canvas--assignment-rubric-hash-extra '(:title "HW")) :to-equal "")
+    (expect (org-canvas--assignment-rubric-hash-extra '(:title "HW" :rubric-id nil)) :to-equal ""))
+  (it "dirties the payload hash when the rubric or a flag changes"
+    (let* ((payload (make-hash-table :test 'equal))
+           (hash (lambda (data)
+                   (org-canvas--sync-payload-hash
+                    payload data #'org-canvas--assignment-rubric-hash-extra))))
+      (expect (funcall hash '(:title "HW")) :to-equal (funcall hash '(:title "HW" :rubric-id nil)))
+      (expect (funcall hash '(:title "HW" :rubric-id "789"))
+              :not :to-equal (funcall hash '(:title "HW")))
+      (expect (funcall hash '(:title "HW" :rubric-id "789" :rubric-use-for-grading t))
+              :not :to-equal (funcall hash '(:title "HW" :rubric-id "789")))
+      (expect (funcall hash '(:title "HW" :rubric-id "789" :rubric-hide-score-total :json-false))
+              :not :to-equal (funcall hash '(:title "HW" :rubric-id "789"))))))
+
 ;;; org-canvas-assignments-test.el ends here
