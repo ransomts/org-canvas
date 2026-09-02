@@ -601,6 +601,8 @@
                    (lambda (_method _url &optional _params)
                      (cl-incf fetch-count)
                      (list (test-org-canvas-make-submission))))
+                  ((symbol-function 'org-canvas--submissions-fetch-assignment)
+                   (lambda (_id) nil))
                   ((symbol-function 'switch-to-buffer)
                    (lambda (buf) buf)))
           (with-temp-buffer
@@ -1150,6 +1152,8 @@
         (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
                    (lambda (_method _url &optional _params)
                      (list (test-org-canvas-make-submission '((score . 99))))))
+                  ((symbol-function 'org-canvas--submissions-fetch-assignment)
+                   (lambda (_id) nil))
                   ((symbol-function 'switch-to-buffer)
                    (lambda (buf) (setq target-buf buf) buf)))
           (with-temp-buffer
@@ -1449,10 +1453,15 @@
         (let ((fetched nil))
           (cl-letf (((symbol-function 'org-canvas--submissions-fetch-for-assignment)
                      (lambda (_id) (setq fetched t) (list (test-org-canvas-make-submission))))
+                    ((symbol-function 'org-canvas--submissions-fetch-assignment)
+                     (lambda (_id) '((id . 1001) (rubric_settings . ((id . 133477) (title . "Essay Rubric"))))))
+                    ((symbol-function 'org-canvas--submissions-heading-for-rubric) (lambda (_id) nil))
                     ((symbol-function 'switch-to-buffer) (lambda (b) b))
                     ((symbol-function 'y-or-n-p) (lambda (_) (error "must not ask"))))
             (org-canvas-submissions-refresh))
-          (expect fetched :to-be-truthy))))))
+          (expect fetched :to-be-truthy)
+          (expect (buffer-string) :to-match "^#\\+PROPERTY: CANVAS_RUBRIC_ID 133477")
+          (expect (buffer-string) :to-match "^Rubric: \\[\\[https://.*/rubrics/133477\\]\\[on Canvas\\]\\]"))))))
 
 (describe "org-canvas-open-submissions"
   (it "visits a chosen grading file with the mode and context set"
@@ -1710,6 +1719,100 @@
           (expect (buffer-string) :to-match "::\\*Renamed\\]")
           (expect (buffer-string) :to-match ":CANVAS_SCORE: 95")
           (expect (buffer-modified-p) :to-be nil))))))
+
+;;;; Rubric Link and Criteria
+
+(defconst test-rubric-assignment
+  '((id . 1001)
+    (name . "Global Challenge Essay")
+    (rubric_settings . ((id . 133477) (title . "Essay Rubric") (points_possible . 100)))
+    (rubric . [((description . "Thesis") (points . 20.0)
+                (ratings . [((description . "Excellent") (points . 20.0))
+                            ((description . "Weak | vague") (points . 5.0))]))
+               ((description . "Evidence") (points . 30)
+                (ratings . [((description . "Strong") (points . 30))]))])))
+
+(describe "org-canvas--submissions-rubric-settings"
+  (it "returns the rubric id and title as strings"
+    (expect (org-canvas--submissions-rubric-settings test-rubric-assignment)
+            :to-equal '("133477" . "Essay Rubric")))
+  (it "is nil without an attached rubric"
+    (expect (org-canvas--submissions-rubric-settings '((id . 1))) :to-be nil)
+    (expect (org-canvas--submissions-rubric-settings nil) :to-be nil)))
+
+(describe "org-canvas--submissions-heading-for-rubric"
+  (it "looks the rubric up in the registered rubrics file"
+    (let ((file (make-temp-file "org-canvas-rubrics-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "* Essay Rubric\n:PROPERTIES:\n:CANVAS_ID: 133477\n:END:\n"))
+            (cl-letf (((symbol-function 'org-canvas--submissions-rubrics-file) (lambda () file)))
+              (expect (org-canvas--submissions-heading-for-rubric "133477") :to-equal "Essay Rubric")
+              (expect (org-canvas--submissions-heading-for-rubric "1") :to-be nil)))
+        (when (get-file-buffer file) (kill-buffer (get-file-buffer file)))
+        (delete-file file)))))
+
+(describe "rubric header in the grading file"
+  (it "writes the rubric properties, the Rubric line, and the criteria table"
+    (let ((org-canvas-base-url "https://canvas.example.edu")
+          (org-canvas-course-id "42")
+          (org-canvas-submissions-directory "/course/submissions/"))
+      (cl-letf (((symbol-function 'org-canvas--submissions-heading-for-assignment) (lambda (_id) nil))
+                ((symbol-function 'org-canvas--submissions-heading-for-rubric) (lambda (_id) "Essay Rubric"))
+                ((symbol-function 'org-canvas--submissions-rubrics-file) (lambda () "/course/rubrics.org")))
+        (with-temp-buffer
+          (org-mode)
+          (org-canvas--submissions-render-detail "Essay" "1001" nil test-rubric-assignment)
+          (let ((content (buffer-string)))
+            (expect content :to-match "^#\\+PROPERTY: CANVAS_RUBRIC_ID 133477$")
+            (expect content :to-match "^#\\+PROPERTY: CANVAS_RUBRIC_TITLE Essay Rubric$")
+            (expect content :to-match "^Rubric: \\[\\[file:\\.\\./rubrics\\.org::\\*Essay Rubric\\]\\[in Org\\]\\], \\[\\[https://canvas\\.example\\.edu/courses/42/rubrics/133477\\]\\[on Canvas\\]\\]$")
+            (expect content :to-match "| Criterion *| Points *| Ratings *|")
+            (expect content :to-match "| Thesis *| *20 *| Excellent (20), Weak vague (5) *|")
+            (expect content :to-match "| Evidence *| *30 *| Strong (30) *|")
+            ;; the Rubric block precedes the students and follows the Assignment line
+            (expect (string-match "^Assignment: " content)
+                    :to-be-less-than (string-match "^Rubric: " content)))))))
+  (it "omits the criteria table when the option is off"
+    (let ((org-canvas-submissions-include-rubric-criteria nil))
+      (cl-letf (((symbol-function 'org-canvas--submissions-heading-for-assignment) (lambda (_id) nil))
+                ((symbol-function 'org-canvas--submissions-heading-for-rubric) (lambda (_id) nil)))
+        (with-temp-buffer
+          (org-mode)
+          (org-canvas--submissions-render-detail "Essay" "1001" nil test-rubric-assignment)
+          (expect (buffer-string) :to-match "^Rubric: \\[\\[https://")
+          (expect (buffer-string) :not :to-match "Criterion")))))
+  (it "writes nothing rubric-related for an assignment without one"
+    (cl-letf (((symbol-function 'org-canvas--submissions-heading-for-assignment) (lambda (_id) nil)))
+      (with-temp-buffer
+        (org-mode)
+        (org-canvas--submissions-render-detail "HW" "1001" nil '((id . 1001) (name . "HW")))
+        (expect (buffer-string) :not :to-match "Rubric")
+        (expect (buffer-string) :not :to-match "CANVAS_RUBRIC")))))
+
+(describe "refresh-links also rebuilds the Rubric line"
+  (it "recomputes it from the CANVAS_RUBRIC_ID property"
+    (with-grading-file (concat test-grading-file-header
+                               "#+PROPERTY: CANVAS_RUBRIC_ID 133477\n#+PROPERTY: CANVAS_RUBRIC_TITLE Old Rubric\nAssignment: [[https://x/courses/1/assignments/1001][on Canvas]], [[https://x/speed][SpeedGrader]]\nRubric: [[file:../rubrics.org::*Old Rubric][in Org]], [[https://x/courses/1/rubrics/133477][on Canvas]]\n\n* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n")
+      (cl-letf (((symbol-function 'org-canvas--submissions-heading-for-assignment) (lambda (_id) nil))
+                ((symbol-function 'org-canvas--submissions-heading-for-rubric) (lambda (_id) "Renamed Rubric"))
+                ((symbol-function 'org-canvas--submissions-rubrics-file)
+                 (lambda () (expand-file-name "../rubrics.org" dir))))
+        (expect (org-canvas--submissions-refresh-links) :to-be-truthy)
+        (expect (buffer-string) :to-match "^Rubric: \\[\\[file:\\.\\./rubrics\\.org::\\*Renamed Rubric\\]\\[in Org\\]\\]")
+        (expect (buffer-string) :not :to-match "Old Rubric\\]")
+        (expect (count-matches "^Rubric: " (point-min) (point-max)) :to-equal 1)))))
+
+(describe "org-canvas--submissions-fetch-assignment"
+  (it "GETs the assignment"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (org-canvas--submissions-fetch-assignment "1001")
+        (expect-api-called 'GET "assignments/1001"))))
+  (it "is nil when the request fails"
+    (cl-letf (((symbol-function 'org-canvas-api-request) (lambda (&rest _) (error "down"))))
+      (expect (org-canvas--submissions-fetch-assignment "1001") :to-be nil))))
 
 (provide 'org-canvas-submissions-test)
 ;;; org-canvas-submissions-test.el ends here
