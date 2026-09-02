@@ -936,18 +936,18 @@ LIVE is (score . attempt) for the same student, or nil if gone."
           ((and attempt (numberp live-attempt) (/= attempt live-attempt))
            (format "resubmitted (attempt %s)" live-attempt)))))
 
-(defun org-canvas--submissions-partition-conflicts (assignment-id changes)
-  "Split CHANGES into (pushable . conflicting) against live Canvas state.
+(defun org-canvas--submissions-partition-conflicts (assignment-id diffs)
+  "Split DIFFS into (pushable . conflicting) against live Canvas state.
 ASSIGNMENT-ID names the assignment whose submissions are re-read.
 Only a buffer visiting a saved grading file is checked, and only when
 `org-canvas-submissions-check-conflicts' is non-nil; otherwise every
-change is pushable.  A conflicting change carries a :conflict reason."
-  (if (not (and changes buffer-file-name org-canvas-submissions-check-conflicts))
-      (cons changes nil)
+diff is pushable.  A conflicting diff carries a :conflict reason."
+  (if (not (and diffs buffer-file-name org-canvas-submissions-check-conflicts))
+      (cons diffs nil)
     (let ((live (org-canvas--submissions-live-baselines assignment-id))
           (ok nil)
           (bad nil))
-      (dolist (change changes)
+      (dolist (change diffs)
         (let ((reason (org-canvas--submissions-conflict-p
                        change (alist-get (plist-get change :user-id) live))))
           (if reason
@@ -964,31 +964,31 @@ change is pushable.  A conflicting change carries a :conflict reason."
                        (format "%s; pull again, or set CANVAS_SCORE to Canvas's value to override"
                                (plist-get c :conflict)))))))
 
-(defun org-canvas--submissions-describe-changes (changes)
-  "Return CHANGES as one line per student: name, old score, new score."
+(defun org-canvas--submissions-describe-changes (diffs)
+  "Return DIFFS as one line per student: name, old score, new score."
   (mapconcat (lambda (ch)
                (format "  %s: %s → %s"
                        (plist-get ch :name)
                        (or (plist-get ch :old-score) "nil")
                        (or (plist-get ch :new-score) "nil")))
-             changes "\n"))
+             diffs "\n"))
 
-(defun org-canvas--submissions-send-grades (assignment-id changes)
-  "Send CHANGES for ASSIGNMENT-ID: one PUT, or the bulk endpoint for several."
-  (if (= (length changes) 1)
-      (let ((ch (car changes)))
+(defun org-canvas--submissions-send-grades (assignment-id diffs)
+  "Send DIFFS for ASSIGNMENT-ID: one PUT, or the bulk endpoint for several."
+  (if (= (length diffs) 1)
+      (let ((ch (car diffs)))
         (org-canvas--submissions-push-single-grade
          assignment-id (plist-get ch :user-id) (plist-get ch :new-score)))
-    (org-canvas--submissions-push-bulk-grades assignment-id changes)))
+    (org-canvas--submissions-push-bulk-grades assignment-id diffs)))
 
-(defun org-canvas--submissions-record-pushed (changes)
-  "Make CHANGES the new baseline: snapshot, CANVAS_SCORE, and the file."
-  (dolist (ch changes)
+(defun org-canvas--submissions-record-pushed (diffs)
+  "Make DIFFS the new baseline: snapshot, CANVAS_SCORE, and the file."
+  (dolist (ch diffs)
     (setf (alist-get (plist-get ch :user-id) org-canvas-submissions--original-scores)
           (plist-get ch :new-score)))
   (when (eq org-canvas-submissions--current-view 'detail)
     (save-excursion
-      (dolist (ch changes)
+      (dolist (ch diffs)
         (when (org-canvas--submissions-goto-user (plist-get ch :user-id))
           (if (plist-get ch :new-score)
               (org-entry-put (point) "CANVAS_SCORE" (plist-get ch :new-score))

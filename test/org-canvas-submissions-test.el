@@ -1507,5 +1507,31 @@
         (kill-buffer summary)
         (expect (buffer-string) :to-match ":SCORE: 95")))))
 
+(describe "org-canvas--submissions-live-baselines"
+  (it "maps each student to the entered score string and attempt"
+    (cl-letf (((symbol-function 'org-canvas--submissions-fetch-for-assignment)
+               (lambda (_id)
+                 (list (test-org-canvas-make-submission
+                        '((entered_score . 5.0) (score . 4.0) (attempt . 2)))
+                       (test-org-canvas-make-submission
+                        '((score . nil) (attempt . nil)
+                          (user . ((id . 5002) (sortable_name . "Beta, Bob")))))))))
+      (let ((live (org-canvas--submissions-live-baselines "1001")))
+        (expect (alist-get 5001 live) :to-equal '("5" . 2))
+        (expect (alist-get 5002 live) :to-equal '(nil . nil))))))
+
+(describe "clearing a grade"
+  (it "pushes the empty score and drops the CANVAS_SCORE baseline"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (concat test-grading-file-header
+                                   "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE:\n:CANVAS_SCORE: 92\n:END:\n")
+          (let ((org-canvas-submissions-check-conflicts nil))
+            (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+              (org-canvas-submissions-push-grades)))
+          (expect-api-called 'PUT "assignments/1001/submissions/5001")
+          (org-canvas--submissions-goto-user 5001)
+          (expect (org-entry-get (point) "CANVAS_SCORE") :to-be nil))))))
+
 (provide 'org-canvas-submissions-test)
 ;;; org-canvas-submissions-test.el ends here
