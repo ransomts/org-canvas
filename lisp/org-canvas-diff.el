@@ -708,7 +708,7 @@ without re-running every list request."
           nil)))))
 
 (defun org-canvas--diff-heading-position (feature entry)
-  "Return (FILE . POSITION) of the Org heading ENTRY of FEATURE describes, or nil.
+  "Return (FILE . POSITION) of the heading ENTRY of FEATURE describes, or nil.
 MISSING and CHANGED rows are found by their id property; an UNCLAIMED
 row names an unstamped heading, found by title."
   (let* ((file-var (plist-get feature :file-var))
@@ -796,7 +796,7 @@ On a STALE-ACK row, drops the acknowledgment instead."
       (kind (user-error "A %s row is not something to acknowledge" (upcase (symbol-name kind)))))))
 
 (defun org-canvas-diff-delete ()
-  "Delete the Canvas object of the EXTRA or UNCLAIMED row at point, after confirming.
+  "Delete the EXTRA or UNCLAIMED row's Canvas object, after confirming.
 Uses the feature's item URL and delete body, as orphan cleanup does."
   (interactive)
   (let* ((row (org-canvas--diff-row-at-point))
