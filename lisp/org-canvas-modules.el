@@ -1169,7 +1169,7 @@ Returns the number removed."
     removed))
 
 (defun org-canvas--module-reconcile-unclaimed-item (module-id module-pom item)
-  "Settle ITEM, held by module MODULE-ID and unclaimed by any heading at MODULE-POM.
+  "Settle unclaimed ITEM of module MODULE-ID against the headings at MODULE-POM.
 Deleted when it has moved — another module's heading claims it, or it
 was recreated elsewhere this run — and otherwise left in place and
 named.  Returns non-nil when it was deleted."
