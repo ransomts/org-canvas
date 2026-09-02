@@ -933,6 +933,24 @@ Content.
         (org-canvas--assignment-associate-rubric 123 "456")
         (expect-api-called 'POST "rubric_associations"))))
 
+  (it "sends the grading flags it is given, and only those (#118)"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (org-canvas--assignment-associate-rubric 123 "456" '(:use-for-grading t :hide-score-total :json-false))
+        (let* ((call (test-org-canvas-last-api-call))
+               (assoc (gethash "rubric_association" (nth 2 call))))
+          (expect (gethash "use_for_grading" assoc) :to-be t)
+          (expect (gethash "hide_score_total" assoc) :to-equal :json-false)
+          (expect (gethash "purpose" assoc) :to-equal "grading")))))
+
+  (it "leaves an unset flag out of the payload so Canvas keeps its value"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (org-canvas--assignment-associate-rubric 123 "456" '(:use-for-grading nil :hide-score-total nil))
+        (let ((assoc (gethash "rubric_association" (nth 2 (test-org-canvas-last-api-call)))))
+          (expect (gethash "use_for_grading" assoc 'absent) :to-equal 'absent)
+          (expect (gethash "hide_score_total" assoc 'absent) :to-equal 'absent)))))
+
   (it "handles association error gracefully"
     (with-org-canvas-test-config
       (cl-letf (((symbol-function 'org-canvas-api-request)
@@ -951,6 +969,16 @@ Content.
               (response '((id . 123))))
           (org-canvas--assignment-post-finalize data response)
           (expect-api-called 'POST "rubric_associations")))))
+
+  (it "passes RUBRIC_USE_FOR_GRADING through to the association (#118)"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (let ((data '(:rubric-id "789" :rubric-use-for-grading t))
+              (response '((id . 123))))
+          (org-canvas--assignment-post-finalize data response)
+          (let ((assoc (gethash "rubric_association" (nth 2 (test-org-canvas-last-api-call)))))
+            (expect (gethash "use_for_grading" assoc) :to-be t)
+            (expect (gethash "hide_score_total" assoc 'absent) :to-equal 'absent))))))
 
   (it "skips rubric association when no rubric-id"
     (with-org-canvas-test-config
@@ -1122,7 +1150,7 @@ Content.
           (response '((id . 1001) (assignment_group_id . 200))))
       (org-canvas--assignment-post-finalize data response)
       (expect 'org-canvas--assignment-associate-rubric
-              :to-have-been-called-with 1001 "55"))))
+              :to-have-been-called-with 1001 "55" '(:use-for-grading nil :hide-score-total nil)))))
 
 ;;;; Pull Function Tests
 
@@ -1812,5 +1840,60 @@ Content.
                        "No API token"))))
           (expect (org-canvas--override-fetch "42") :to-be nil)
           (expect (length (org-canvas--pull-summary-records)) :to-equal 1))))))
+
+
+;;;; Rubric Association Flags (#118)
+
+(describe "org-canvas--assignment-tristate"
+  (it "maps true, false, and unset"
+    (expect (org-canvas--assignment-tristate "true") :to-be t)
+    (expect (org-canvas--assignment-tristate "false") :to-equal :json-false)
+    (expect (org-canvas--assignment-tristate nil) :to-be nil)))
+
+(describe "rubric flag properties"
+  (it "are read from the heading and transformed as tristates"
+    (with-temp-org-buffer
+     "* Essay\n:PROPERTIES:\n:RUBRIC_USE_FOR_GRADING: true\n:RUBRIC_HIDE_SCORE_TOTAL: false\n:END:\n"
+     (org-back-to-heading)
+     (let* ((raw (org-canvas--assignment-read-props (point-marker)))
+            (data (org-canvas--assignment-transform-props raw)))
+       (expect (plist-get raw :rubric-use-for-grading-raw) :to-equal "true")
+       (expect (plist-get raw :rubric-hide-score-total-raw) :to-equal "false")
+       (expect (plist-get data :rubric-use-for-grading) :to-be t)
+       (expect (plist-get data :rubric-hide-score-total) :to-equal :json-false))))
+  (it "are nil when the drawer leaves them out"
+    (with-temp-org-buffer
+     "* Essay\n:PROPERTIES:\n:POINTS: 10\n:END:\n"
+     (org-back-to-heading)
+     (let ((data (org-canvas--assignment-transform-props
+                  (org-canvas--assignment-read-props (point-marker)))))
+       (expect (plist-get data :rubric-use-for-grading) :to-be nil)
+       (expect (plist-get data :rubric-hide-score-total) :to-be nil))))
+  (it "stay out of the assignment payload itself"
+    (let* ((data (list :title "Essay" :published t :grading_type "points"
+                       :submission_types '("online_upload")
+                       :rubric-id "789" :rubric-use-for-grading t))
+           (payload (gethash "assignment" (org-canvas--assignment-build-payload data))))
+      (expect (gethash "use_for_grading" payload 'absent) :to-equal 'absent)
+      (expect (gethash "use_rubric_for_grading" payload 'absent) :to-equal 'absent))))
+
+(describe "drift report on the rubric flags"
+  (it "compares RUBRIC_USE_FOR_GRADING with the assignment's use_rubric_for_grading"
+    (require 'org-canvas-diff)
+    (let ((specs (plist-get (org-canvas--diff-find-properties "assignments") :properties)))
+      (with-temp-org-buffer
+       "* Essay\n:PROPERTIES:\n:RUBRIC_USE_FOR_GRADING: true\n:RUBRIC_HIDE_SCORE_TOTAL: true\n:END:\n"
+       (org-back-to-heading)
+       (let ((pom (point-marker)))
+         (expect (org-canvas--diff-compare-fields
+                  specs pom '((use_rubric_for_grading . t)
+                              (rubric_settings . ((hide_score_total . t)))))
+                 :to-equal nil)
+         (let ((diffs (org-canvas--diff-compare-fields
+                       specs pom '((use_rubric_for_grading . :json-false)
+                                   (rubric_settings . ((hide_score_total . :json-false)))))))
+           (expect (mapcar #'car diffs)
+                   :to-have-same-items-as '("RUBRIC_USE_FOR_GRADING" "RUBRIC_HIDE_SCORE_TOTAL"))
+           (expect (nth 2 (assoc "RUBRIC_USE_FOR_GRADING" diffs)) :to-equal "false")))))))
 
 ;;; org-canvas-assignments-test.el ends here
