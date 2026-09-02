@@ -525,6 +525,19 @@ DATA is the parsed assignment plist, RESPONSE is the Canvas API response."
 ;;;; Main Sync Function
 
 ;; Generate org-canvas-sync-assignments using the pipeline macro
+(defun org-canvas--assignment-rubric-hash-extra (data)
+  "Return DATA's rubric material for change detection, or \"\".
+The rubric id and the association flags travel outside the assignment
+payload, so without this an added or changed RUBRIC_LINK never dirtied
+the entry and its association was never made (issue #120).  Empty when
+the heading carries none of them, so other headings keep their hash."
+  (let ((rubric-id (plist-get data :rubric-id))
+        (use-for-grading (plist-get data :rubric-use-for-grading))
+        (hide-score-total (plist-get data :rubric-hide-score-total)))
+    (if (or rubric-id use-for-grading hide-score-total)
+        (format "rubric:%s:%s:%s" rubric-id use-for-grading hide-score-total)
+      "")))
+
 (org-canvas-define-sync assignments
   :file org-canvas-assignments-file
   :parse #'org-canvas--assignment-parse-entry
@@ -532,6 +545,7 @@ DATA is the parsed assignment plist, RESPONSE is the Canvas API response."
   :endpoint "assignments"
   :find-fn (lambda (name) (org-canvas--search-item "assignments" name :match-field 'name))
   :post-fn #'org-canvas--assignment-post-finalize
+  :hash-extra #'org-canvas--assignment-rubric-hash-extra
   :pull-item-fn #'org-canvas--assignment-pull-item)
 
 ;;;; Delete Functions
