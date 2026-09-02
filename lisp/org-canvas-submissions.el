@@ -863,7 +863,9 @@ Read from the current buffer before a re-render replaces it."
     carry))
 
 (defun org-canvas--submissions-restore-carryover (carry)
-  "Write CARRY, as `org-canvas--submissions-collect-carryover' returns it, back."
+  "Write CARRY back under the students it names.
+CARRY is the alist `org-canvas--submissions-collect-carryover' produced
+before the buffer was re-rendered."
   (save-excursion
     (dolist (entry carry)
       (when (org-canvas--submissions-goto-user (car entry))
