@@ -272,9 +272,13 @@ as a number."
           (org-canvas--submissions-entered-score submission)))))
 
 (defun org-canvas--submissions-days-late (submission)
-  "Return how many days late SUBMISSION is, rounded up, or nil when not late."
+  "Return how many days late SUBMISSION arrived, rounded up, or nil.
+Nil when it was on time and also when nothing was submitted: Canvas
+reports `seconds_late' for a missing submission as the time since the
+due date, which is not lateness of a submission."
   (let ((secs (alist-get 'seconds_late submission)))
-    (when (and (numberp secs) (> secs 0))
+    (when (and (alist-get 'submitted_at submission)
+               (numberp secs) (> secs 0))
       (ceiling secs 86400))))
 
 ;;;; Links
