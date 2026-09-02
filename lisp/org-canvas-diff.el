@@ -616,7 +616,7 @@ An acknowledged id Canvas no longer holds joins :divergences as a
                      (let ((note (plist-get entry :note)))
                        (if note (format " (%s)" note) "")))))
     ('unclaimed
-     (insert (format "  UNCLAIMED %s (Canvas id %s has this title and no heading claims it; stamp %s or rename)\n"
+     (insert (format "  UNCLAIMED %s (Canvas id %s has this title and no heading claims it; adopt it with org-canvas-adopt-at-point, which stamps %s, or rename)\n"
                      (plist-get entry :title) (plist-get entry :id)
                      (or (plist-get entry :property) "CANVAS_ID"))))
     ('modified

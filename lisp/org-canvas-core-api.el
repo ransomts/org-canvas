@@ -449,6 +449,28 @@ HEADERS, JSON-PAYLOAD, and ACTUAL-TIMEOUT configure the request."
                   (org-canvas--api-handle-transient-retry err transient-retry-index)))))))
     result))
 
+(defvar org-canvas--last-request-time nil
+  "Time the previous Canvas API request went out, for pacing.
+Consulted by `org-canvas--api-pace' when
+`org-canvas-request-min-interval' is positive.")
+
+(defun org-canvas--api-pace ()
+  "Wait out `org-canvas-request-min-interval' since the previous request.
+Sleeps only for whatever part of the interval has not already passed,
+so a sync that spends its time parsing and exporting pays nothing
+extra.  Records the time this request goes out."
+  (when (and (numberp org-canvas-request-min-interval)
+             (> org-canvas-request-min-interval 0)
+             org-canvas--last-request-time)
+    (let ((wait (- org-canvas-request-min-interval
+                   (float-time (time-subtract nil org-canvas--last-request-time)))))
+      (when (> wait 0)
+        (org-canvas--log-debug org-canvas--logger
+          "[Pace] Waiting %.1fs before the next request (org-canvas-request-min-interval)"
+          wait)
+        (sleep-for wait))))
+  (setq org-canvas--last-request-time (current-time)))
+
 (cl-defun org-canvas-api-request (method url &key params data timeout)
   "Perform an HTTP request to the Canvas API synchronously using `plz'.
 METHOD is \\='GET, \\='POST, \\='PUT, or \\='DELETE.
@@ -478,6 +500,7 @@ silently corrupts unrecognized methods into bodyless GETs."
     (org-canvas--api-log-request
      (list :method method :url full-url :params params
            :body json-payload :timeout actual-timeout :headers headers))
+    (org-canvas--api-pace)
     (org-canvas--api-execute-with-retry plz-method full-url headers json-payload actual-timeout)))
 
 (defun org-canvas-api-request-all-pages (method url &optional params)
