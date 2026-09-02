@@ -1927,9 +1927,11 @@
 
 (describe "DAYS_LATE"
   (it "is the lateness rounded up to whole days, only when late"
-    (expect (org-canvas--submissions-days-late '((seconds_late . 133200))) :to-equal 2)
-    (expect (org-canvas--submissions-days-late '((seconds_late . 86400))) :to-equal 1)
-    (expect (org-canvas--submissions-days-late '((seconds_late . 0))) :to-be nil)
+    (expect (org-canvas--submissions-days-late '((submitted_at . "2026-02-15T23:45:00Z") (seconds_late . 133200))) :to-equal 2)
+    (expect (org-canvas--submissions-days-late '((submitted_at . "2026-02-15T23:45:00Z") (seconds_late . 86400))) :to-equal 1)
+    (expect (org-canvas--submissions-days-late '((submitted_at . "2026-02-15T23:45:00Z") (seconds_late . 0))) :to-be nil)
+    ;; a missing submission carries seconds_late as time since due; that is not lateness
+    (expect (org-canvas--submissions-days-late '((submitted_at . nil) (seconds_late . 1000000))) :to-be nil)
     (with-temp-buffer
       (org-mode)
       (org-canvas--submissions-render-detail-entry
