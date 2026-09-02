@@ -572,7 +572,8 @@
   (it "fetches assignments and submissions"
     (with-org-canvas-test-config
       (let ((assignments-fetched nil)
-            (submissions-fetched nil))
+            (submissions-fetched nil)
+            (org-canvas-submissions-default-view 'summary))
         (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
                    (lambda (_method url &optional _params)
                      (cond
@@ -630,7 +631,9 @@
       (expect (lookup-key org-canvas-submissions-mode-map (kbd "d"))
               :to-equal #'org-canvas-submissions-download-attachments)
       (expect (lookup-key org-canvas-submissions-mode-map (kbd "c"))
-              :to-equal #'org-canvas-submissions-add-comment))))
+              :to-equal #'org-canvas-submissions-add-comment)
+      (expect (lookup-key org-canvas-submissions-mode-map (kbd "D"))
+              :to-equal #'org-canvas-submissions-download-all-attachments))))
 
 ;;;; Full Detail Rendering Integration
 
@@ -1142,7 +1145,8 @@
 (describe "refresh resets original-scores"
   (it "repopulates snapshot after refresh"
     (with-org-canvas-test-config
-      (let ((target-buf nil))
+      (let ((target-buf nil)
+            (org-canvas-submissions-directory (make-temp-file "org-canvas-subs-" t)))
         (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
                    (lambda (_method _url &optional _params)
                      (list (test-org-canvas-make-submission '((score . 99))))))
@@ -1176,6 +1180,332 @@
        (expect (length changes) :to-equal 1)
        (expect (plist-get (car changes) :old-score) :to-be nil)
        (expect (plist-get (car changes) :new-score) :to-equal "75")))))
+
+;;;; Grading Files (file-backed round trip)
+
+(defmacro with-grading-file (content &rest body)
+  "Visit a scratch grading file holding CONTENT, in submissions mode, run BODY."
+  (declare (indent 1))
+  `(let* ((dir (make-temp-file "org-canvas-subs-" t))
+          (org-canvas-submissions-directory dir)
+          (file (expand-file-name "HW.org" dir))
+          (buf nil))
+     (unwind-protect
+         (progn
+           (with-temp-file file (insert ,content))
+           (setq buf (find-file-noselect file))
+           (with-current-buffer buf
+             (org-mode)
+             (org-canvas-submissions-mode 1)
+             ,@body))
+       (when (buffer-live-p buf)
+         (with-current-buffer buf (set-buffer-modified-p nil))
+         (kill-buffer buf))
+       (delete-directory dir t))))
+
+(defconst test-grading-file-header
+  "#+TITLE: Submissions: HW\n#+PROPERTY: CANVAS_ASSIGNMENT_ID 1001\n#+PROPERTY: CANVAS_ASSIGNMENT_NAME HW\n\n")
+
+(describe "org-canvas--submissions-entered-score"
+  (it "prefers entered_score over the late-adjusted score"
+    (expect (org-canvas--submissions-entered-score
+             '((entered_score . 5.0) (score . 4.0)))
+            :to-equal 5.0))
+  (it "falls back to score"
+    (expect (org-canvas--submissions-entered-score '((score . 92))) :to-equal 92))
+  (it "is nil when ungraded"
+    (expect (org-canvas--submissions-entered-score '((score . nil))) :to-be nil)))
+
+(describe "org-canvas--submissions-dir"
+  (it "resolves submissions/ under org-canvas-directory when unset"
+    (let ((org-canvas-submissions-directory nil)
+          (org-canvas-directory "/tmp/course/"))
+      (expect (org-canvas--submissions-dir) :to-match "/tmp/course/submissions/?$")))
+  (it "honors an explicit directory"
+    (let ((org-canvas-submissions-directory "/tmp/elsewhere/"))
+      (expect (org-canvas--submissions-dir) :to-equal "/tmp/elsewhere/"))))
+
+(describe "grading file header and baseline properties"
+  (it "writes the assignment name, pull time, and per-student baselines"
+    (let ((sub (test-org-canvas-make-submission
+                '((entered_score . 5.0) (score . 4.0) (attempt . 2)))))
+      (with-temp-buffer
+        (org-mode)
+        (org-canvas--submissions-render-detail "HW" "1001" (list sub))
+        (let ((content (buffer-string)))
+          (expect content :to-match "#\\+PROPERTY: CANVAS_ASSIGNMENT_NAME HW")
+          (expect content :to-match "#\\+PROPERTY: PULLED_AT <")
+          (expect content :to-match ":SCORE: 5\n")
+          (expect content :to-match ":CANVAS_SCORE: 5\n")
+          (expect content :to-match ":FINAL_SCORE: 4\n")
+          (expect content :to-match ":ATTEMPT: 2\n")))))
+  (it "omits FINAL_SCORE when nothing was deducted and the baseline when ungraded"
+    (with-temp-buffer
+      (org-mode)
+      (org-canvas--submissions-render-detail
+       "HW" "1001" (list (test-org-canvas-make-submission '((score . 92)))
+                         (test-org-canvas-make-submission
+                          '((score . nil) (user . ((id . 5002) (sortable_name . "Beta, Bob")))))))
+      (let ((content (buffer-string)))
+        (expect content :to-match ":CANVAS_SCORE: 92")
+        (expect content :not :to-match "FINAL_SCORE")
+        (expect (with-temp-buffer (insert content) (count-matches "CANVAS_SCORE" (point-min) (point-max)))
+                :to-equal 1)))))
+
+(describe "org-canvas--submissions-file-property"
+  (it "reads a #+PROPERTY keyword"
+    (with-temp-buffer
+      (insert test-grading-file-header "* Adams, Alice\n")
+      (expect (org-canvas--submissions-file-property "CANVAS_ASSIGNMENT_ID") :to-equal "1001")
+      (expect (org-canvas--submissions-file-property "CANVAS_ASSIGNMENT_NAME") :to-equal "HW")))
+  (it "is nil when absent"
+    (with-temp-buffer
+      (insert "* Adams, Alice\n")
+      (expect (org-canvas--submissions-file-property "CANVAS_ASSIGNMENT_ID") :to-be nil))))
+
+(describe "org-canvas--submissions-ensure-context"
+  (it "recovers id, name, and view from a reopened grading file"
+    (with-grading-file (concat test-grading-file-header
+                               "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 92\n:CANVAS_SCORE: 92\n:END:\n")
+      (org-canvas--submissions-ensure-context)
+      (expect org-canvas-submissions--assignment-id :to-equal "1001")
+      (expect org-canvas-submissions--assignment-name :to-equal "HW")
+      (expect org-canvas-submissions--current-view :to-equal 'detail)))
+  (it "leaves values a pull already set alone"
+    (with-temp-buffer
+      (org-mode)
+      (setq-local org-canvas-submissions--assignment-id "7")
+      (setq-local org-canvas-submissions--current-view 'summary)
+      (org-canvas--submissions-ensure-context)
+      (expect org-canvas-submissions--assignment-id :to-equal "7")
+      (expect org-canvas-submissions--current-view :to-equal 'summary))))
+
+(describe "CANVAS_SCORE baseline in change detection"
+  (it "compares SCORE against CANVAS_SCORE, ignoring a stale snapshot"
+    (with-temp-org-buffer
+     "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:ATTEMPT: 1\n:END:\n"
+     (setq-local org-canvas-submissions--current-view 'detail)
+     (setq-local org-canvas-submissions--original-scores '((5001 . "95")))
+     (let ((changes (org-canvas--submissions-collect-detail-changes)))
+       (expect (length changes) :to-equal 1)
+       (expect (plist-get (car changes) :old-score) :to-equal "92")
+       (expect (plist-get (car changes) :new-score) :to-equal "95")
+       (expect (plist-get (car changes) :attempt) :to-equal 1))))
+  (it "sees no change when SCORE equals CANVAS_SCORE"
+    (with-temp-org-buffer
+     "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 92\n:CANVAS_SCORE: 92\n:END:\n"
+     (setq-local org-canvas-submissions--current-view 'detail)
+     (setq-local org-canvas-submissions--original-scores nil)
+     (expect (org-canvas--submissions-collect-detail-changes) :to-equal nil)))
+  (it "treats a first grade on an ungraded heading as a change"
+    (with-temp-org-buffer
+     "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 5\n:END:\n"
+     (setq-local org-canvas-submissions--current-view 'detail)
+     (setq-local org-canvas-submissions--original-scores nil)
+     (let ((changes (org-canvas--submissions-collect-detail-changes)))
+       (expect (plist-get (car changes) :old-score) :to-be nil)
+       (expect (plist-get (car changes) :new-score) :to-equal "5")))))
+
+(describe "org-canvas--submissions-display as a grading file"
+  (it "writes and visits the detail view, with a .gitignore beside it"
+    (let* ((dir (make-temp-file "org-canvas-subs-" t))
+           (org-canvas-submissions-directory dir)
+           (subs (list (test-org-canvas-make-submission)))
+           (shown nil))
+      (unwind-protect
+          (progn
+            (cl-letf (((symbol-function 'switch-to-buffer) (lambda (b) (setq shown b) b)))
+              (org-canvas--submissions-display "HW 1" "1001" subs 'detail))
+            (expect (file-exists-p (expand-file-name "HW_1.org" dir)) :to-be-truthy)
+            (expect (file-exists-p (expand-file-name ".gitignore" dir)) :to-be-truthy)
+            (with-current-buffer shown
+              (expect buffer-file-name :to-match "HW_1\\.org$")
+              (expect (buffer-modified-p) :to-be nil)
+              (expect org-canvas-submissions-mode :to-be-truthy)
+              (expect (buffer-string) :to-match ":CANVAS_SCORE: 92")))
+        (when (buffer-live-p shown) (kill-buffer shown))
+        (delete-directory dir t))))
+  (it "keeps the summary view ephemeral"
+    (let* ((dir (make-temp-file "org-canvas-subs-" t))
+           (org-canvas-submissions-directory dir)
+           (shown nil))
+      (unwind-protect
+          (progn
+            (cl-letf (((symbol-function 'switch-to-buffer) (lambda (b) (setq shown b) b)))
+              (org-canvas--submissions-display "HW 1" "1001" (list (test-org-canvas-make-submission)) 'summary))
+            (expect (directory-files dir nil "\\.org\\'") :to-equal nil)
+            (with-current-buffer shown
+              (expect buffer-file-name :to-be nil)))
+        (when (buffer-live-p shown) (kill-buffer shown))
+        (delete-directory dir t))))
+  (it "does not rewrite an existing .gitignore and honors the option"
+    (let* ((dir (make-temp-file "org-canvas-subs-" t))
+           (org-canvas-submissions-directory dir)
+           (gi (expand-file-name ".gitignore" dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file gi (insert "custom\n"))
+            (org-canvas--submissions-ensure-directory)
+            (expect (with-temp-buffer (insert-file-contents gi) (buffer-string)) :to-equal "custom\n")
+            (delete-file gi)
+            (let ((org-canvas-submissions-write-gitignore nil))
+              (org-canvas--submissions-ensure-directory))
+            (expect (file-exists-p gi) :to-be nil))
+        (delete-directory dir t)))))
+
+(describe "pushing from a reopened grading file"
+  (it "recovers the assignment id, pushes, updates CANVAS_SCORE, and saves"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (concat test-grading-file-header
+                                   "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:END:\n")
+          (let ((org-canvas-submissions-check-conflicts nil))
+            (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+              (org-canvas-submissions-push-grades)))
+          (expect-api-called 'PUT "assignments/1001/submissions/5001")
+          (expect (buffer-string) :to-match ":CANVAS_SCORE: 95")
+          (expect (buffer-modified-p) :to-be nil)
+          (expect (with-temp-buffer (insert-file-contents file) (buffer-string))
+                  :to-match ":CANVAS_SCORE: 95")))))
+  (it "pushes nothing when the file needs no push"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (concat test-grading-file-header
+                                   "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 92\n:CANVAS_SCORE: 92\n:END:\n")
+          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+            (org-canvas-submissions-push-grades))
+          (expect (test-org-canvas-api-call-count) :to-equal 0))))))
+
+(describe "conflict handling on push"
+  (it "skips and marks a heading Canvas has since regraded"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (concat test-grading-file-header
+                                   "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:END:\n")
+          (cl-letf (((symbol-function 'org-canvas--submissions-live-baselines)
+                     (lambda (_id) '((5001 . ("93" . 1)))))
+                    ((symbol-function 'y-or-n-p) (lambda (_) t)))
+            (org-canvas-submissions-push-grades))
+          (expect (test-org-canvas-api-call-count) :to-equal 0)
+          (goto-char (point-min))
+          (org-canvas--submissions-goto-user 5001)
+          (expect (org-entry-get (point) "CONFLICT") :to-match "Canvas now has 93")
+          (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "92")))))
+  (it "skips a student who resubmitted since the pull"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (concat test-grading-file-header
+                                   "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:ATTEMPT: 1\n:END:\n")
+          (cl-letf (((symbol-function 'org-canvas--submissions-live-baselines)
+                     (lambda (_id) '((5001 . ("92" . 2)))))
+                    ((symbol-function 'y-or-n-p) (lambda (_) t)))
+            (org-canvas-submissions-push-grades))
+          (expect (test-org-canvas-api-call-count) :to-equal 0)
+          (org-canvas--submissions-goto-user 5001)
+          (expect (org-entry-get (point) "CONFLICT") :to-match "resubmitted (attempt 2)")))))
+  (it "pushes the clean changes and clears CONFLICT once resolved"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (concat test-grading-file-header
+                                   "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:CONFLICT: stale\n:END:\n\n* Beta, Bob\n:PROPERTIES:\n:USER_ID: 5002\n:SCORE: 80\n:CANVAS_SCORE: 75\n:END:\n")
+          (cl-letf (((symbol-function 'org-canvas--submissions-live-baselines)
+                     (lambda (_id) '((5001 . ("92" . nil)) (5002 . ("75" . nil)))))
+                    ((symbol-function 'y-or-n-p) (lambda (_) t)))
+            (org-canvas-submissions-push-grades))
+          (expect-api-called 'POST "assignments/1001/submissions/update_grades")
+          (org-canvas--submissions-goto-user 5001)
+          (expect (org-entry-get (point) "CONFLICT") :to-be nil)
+          (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "95")))))
+  (it "does not consult Canvas for an ephemeral buffer"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-temp-buffer
+          (org-mode)
+          (insert "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:END:\n")
+          (setq-local org-canvas-submissions--current-view 'detail)
+          (setq-local org-canvas-submissions--assignment-id "1001")
+          (org-canvas-submissions-mode 1)
+          (cl-letf (((symbol-function 'org-canvas--submissions-live-baselines)
+                     (lambda (_id) (error "should not be called")))
+                    ((symbol-function 'y-or-n-p) (lambda (_) t)))
+            (org-canvas-submissions-push-grades))
+          (expect-api-called 'PUT "assignments/1001/submissions/5001"))))))
+
+(describe "refresh guards unpushed edits"
+  (it "refuses when the grader declines to lose edits"
+    (with-org-canvas-test-config
+      (with-grading-file (concat test-grading-file-header
+                                 "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:END:\n")
+        (let ((fetched nil))
+          (cl-letf (((symbol-function 'org-canvas--submissions-fetch-for-assignment)
+                     (lambda (_id) (setq fetched t) nil))
+                    ((symbol-function 'y-or-n-p) (lambda (_) nil)))
+            (expect (org-canvas-submissions-refresh) :to-throw 'user-error))
+          (expect fetched :to-be nil)))))
+  (it "refreshes when nothing is pending"
+    (with-org-canvas-test-config
+      (with-grading-file (concat test-grading-file-header
+                                 "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 92\n:CANVAS_SCORE: 92\n:END:\n")
+        (let ((fetched nil))
+          (cl-letf (((symbol-function 'org-canvas--submissions-fetch-for-assignment)
+                     (lambda (_id) (setq fetched t) (list (test-org-canvas-make-submission))))
+                    ((symbol-function 'switch-to-buffer) (lambda (b) b))
+                    ((symbol-function 'y-or-n-p) (lambda (_) (error "must not ask"))))
+            (org-canvas-submissions-refresh))
+          (expect fetched :to-be-truthy))))))
+
+(describe "org-canvas-open-submissions"
+  (it "visits a chosen grading file with the mode and context set"
+    (let* ((dir (make-temp-file "org-canvas-subs-" t))
+           (org-canvas-submissions-directory dir)
+           (file (expand-file-name "HW.org" dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file file (insert test-grading-file-header "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n"))
+            (cl-letf (((symbol-function 'completing-read)
+                       (lambda (_prompt files &rest _) (car files))))
+              (org-canvas-open-submissions))
+            (expect buffer-file-name :to-equal file)
+            (expect org-canvas-submissions-mode :to-be-truthy)
+            (expect org-canvas-submissions--assignment-id :to-equal "1001")
+            (expect org-canvas-submissions--current-view :to-equal 'detail))
+        (when (get-file-buffer file) (kill-buffer (get-file-buffer file)))
+        (delete-directory dir t))))
+  (it "explains when there is nothing to open"
+    (let* ((dir (make-temp-file "org-canvas-subs-" t))
+           (org-canvas-submissions-directory dir))
+      (unwind-protect
+          (expect (org-canvas-open-submissions) :to-throw 'user-error)
+        (delete-directory dir t)))))
+
+(describe "org-canvas-submissions-download-all-attachments"
+  (it "downloads for every student with attachments and skips the rest"
+    (with-grading-file (concat test-grading-file-header
+                               "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n\n** Attachments\n- [[https://example.com/files/1/download][a.pdf]]\n\n* Beta, Bob\n:PROPERTIES:\n:USER_ID: 5002\n:END:\n\n* Cruz, Cal\n:PROPERTIES:\n:USER_ID: 5003\n:END:\n\n** Attachments\n- [[https://example.com/files/2/download][c.pdf]]\n")
+      (let ((downloaded nil))
+        (cl-letf (((symbol-function 'org-canvas--submissions-download-file)
+                   (lambda (_url _dir filename) (push filename downloaded)))
+                  ((symbol-function 'make-directory) (lambda (_dir &rest _) nil)))
+          (org-canvas-submissions-download-all-attachments))
+        (expect (sort downloaded #'string<) :to-equal '("a.pdf" "c.pdf"))))))
+
+(describe "summary of a grading file"
+  (it "opens a read-only table built from the headings and returns with v"
+    (with-grading-file (concat test-grading-file-header
+                               "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:STATUS: submitted\n:SCORE: 95\n:CANVAS_SCORE: 92\n:END:\n")
+      (let ((summary nil))
+        (cl-letf (((symbol-function 'switch-to-buffer) (lambda (b) (setq summary b) b)))
+          (org-canvas-submissions-toggle-view))
+        (with-current-buffer summary
+          (expect buffer-read-only :to-be-truthy)
+          (expect (buffer-string) :to-match "| Adams, Alice *| submitted *| *| *95 *|")
+          (expect org-canvas-submissions--source-file :to-equal file)
+          (let ((returned nil))
+            (cl-letf (((symbol-function 'find-file) (lambda (f) (setq returned f))))
+              (org-canvas-submissions-toggle-view))
+            (expect returned :to-equal file)))
+        (kill-buffer summary)
+        (expect (buffer-string) :to-match ":SCORE: 95")))))
 
 (provide 'org-canvas-submissions-test)
 ;;; org-canvas-submissions-test.el ends here
