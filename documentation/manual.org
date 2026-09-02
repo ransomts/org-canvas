@@ -1878,9 +1878,23 @@ valves, from broad to narrow:
   An acknowledged id that no longer exists on Canvas is flagged as
   =STALE-ACK= — and *does* count as drift — so the list cannot rot.
 
-All three affect the drift report only.  Orphan cleanup and prune still list
-acknowledged items (scaffolding stays protected there by the same skip-fns),
-which is where to look if one of them should be deleted after all.
+- *Media that course content embeds is recognized on its own.*  Every image
+  or PDF the rich-content editor uploads lands in Uploaded Media as a file no
+  heading claims, and telling a referenced attachment from a stray upload used
+  to mean fetching bodies by hand and searching them for the file id (#102).
+  The report already lists assignments, pages, announcements, discussions and
+  quizzes with their bodies for the body comparison, so it scans those -- plus
+  the syllabus, one extra request -- for =/files/<id>= references and reports
+  unclaimed files that are referenced as "Referenced media: N" in the footer
+  rather than as EXTRA rows.  An unreferenced unclaimed file keeps alarming,
+  which is exactly right: after this, a double upload is the only files row
+  on the report.  A file whose referent disappears reverts to EXTRA on its
+  own.  =org-canvas-diff-scan-references= turns the scan off.
+
+All four affect the drift report only.  Orphan cleanup and prune still list
+acknowledged and referenced items (scaffolding stays protected there by the
+same skip-fns), which is where to look if one of them should be deleted after
+all.
 
 ** Cost and Safety
 
