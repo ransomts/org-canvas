@@ -1087,12 +1087,12 @@ proceeds as it always did, PUT by id, and reconciles nothing."
      'unknown)))
 
 (defun org-canvas--module-remote-item-ids (remote)
-  "Return the ids in REMOTE, a module's item list, as strings; nil if `unknown'."
+  "Return the ids in REMOTE, a module's item list, as strings; nil if unknown."
   (unless (eq remote 'unknown)
     (mapcar (lambda (item) (format "%s" (alist-get 'id item))) remote)))
 
 (defun org-canvas--module-item-disown-foreign-id (data module-id remote)
-  "Clear DATA's id when module MODULE-ID does not hold it, so it is created here.
+  "Clear DATA's id when module MODULE-ID lacks it, so it is created here.
 REMOTE is the module's item list from `org-canvas--module-remote-items';
 nothing is disowned while it is `unknown'.  The old id is remembered in
 `org-canvas--module-items-moved' so the module it came from can delete
@@ -1109,7 +1109,7 @@ its copy when it syncs.  Returns the disowned id, or nil."
       id)))
 
 (defun org-canvas--module-item-claimed-elsewhere (item-id module-pom)
-  "Return the title of a module other than the one at MODULE-POM claiming ITEM-ID.
+  "Return the title of another module than MODULE-POM's claiming ITEM-ID.
 Scans the current buffer's level-2 headings; nil when no other
 module's item heading carries ITEM-ID as its CANVAS_ID."
   (let ((here (save-excursion (goto-char module-pom) (org-back-to-heading t) (point)))
