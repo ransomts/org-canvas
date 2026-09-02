@@ -1572,8 +1572,23 @@ Every successful push records the remote =updated_at= Canvas returned, as a
 Canvas's own clock, so it needs no allowance for a workstation whose time
 differs from the server's, and it exists on courses that are only ever pushed.
 Entries synced before it existed fall back to the file-level =#+LAST_SYNCED=
-header, which is written after every pull and after every push that changed
-something.
+header.
+
+That header is written after every pull, and advanced after any successful
+push into the file -- a full sync, or a single heading synced at point.  It
+used to move only on the full-sync path, so a file maintained by at-point
+syncs reported a freshness date weeks behind the entries in it (#104).  The
+write is forward-only: a header later than the push being recorded is left
+alone, since a baseline moving backward can only manufacture conflicts.  The
+header therefore means "the last time an entry in this file was confirmed to
+agree with Canvas", which is what it reads as.
+
+Because a single-heading push advances the header without comparing the
+other headings, an entry that still leans on it for its baseline is stamped
+with its own =CANVAS_UPDATED_AT= the first time a full sync verifies it: the
+snapshot holds the remote =updated_at= the skip was checked against, so
+recording it is exactly as sound as the skip.  After one full sync with the
+snapshot available, no entry depends on the header any more.
 
 There are two checks.
 
