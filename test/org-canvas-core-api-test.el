@@ -754,6 +754,19 @@
           (expect (car caught) :to-be 'org-canvas-api-error)
           (expect (format "%S" caught) :not :to-match "SECRET"))))))
 
+(describe "org-canvas--associate-rubric flags (#118)"
+  (it "adds use_for_grading and hide_score_total only when given"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (org-canvas--associate-rubric "42" "99" "Discussion")
+        (let ((assoc (gethash "rubric_association" (nth 2 (test-org-canvas-last-api-call)))))
+          (expect (gethash "use_for_grading" assoc 'absent) :to-equal 'absent)
+          (expect (gethash "association_type" assoc) :to-equal "Discussion"))
+        (org-canvas--associate-rubric "42" "99" "Assignment" '(:use-for-grading :json-false))
+        (let ((assoc (gethash "rubric_association" (nth 2 (test-org-canvas-last-api-call)))))
+          (expect (gethash "use_for_grading" assoc) :to-equal :json-false)
+          (expect (gethash "hide_score_total" assoc 'absent) :to-equal 'absent))))))
+
 (describe "org-canvas--associate-rubric failure message"
   (it "shows warning in echo area on failure"
     (with-org-canvas-test-config

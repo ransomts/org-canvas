@@ -530,18 +530,29 @@ Returns a flat list of all items across all pages."
 
 ;;;; 3b. Rubric Association
 
-(defun org-canvas--associate-rubric (item-id rubric-id association-type)
+(defun org-canvas--associate-rubric (item-id rubric-id association-type &optional flags)
   "Associate RUBRIC-ID with ITEM-ID on Canvas.
-ASSOCIATION-TYPE is \"Assignment\" or \"Discussion\"."
+ASSOCIATION-TYPE is \"Assignment\" or \"Discussion\".  FLAGS is a plist
+whose :use-for-grading and :hide-score-total, when non-nil, travel as
+the association's `use_for_grading' and `hide_score_total' (t or
+`:json-false'); a nil flag is not sent, so Canvas keeps its value.
+Canvas updates the existing association for the pair, so sending the
+flags on every push keeps Org the source of truth (issue #118)."
   (org-canvas--log-info org-canvas--logger "[Rubric] Associating rubric %s with %s %s"
              rubric-id (downcase association-type) item-id)
   (let* ((endpoint (org-canvas-api-course-endpoint "rubric_associations"))
          (payload (make-hash-table :test 'equal))
-         (assoc (make-hash-table :test 'equal)))
+         (assoc (make-hash-table :test 'equal))
+         (use-for-grading (plist-get flags :use-for-grading))
+         (hide-score-total (plist-get flags :hide-score-total)))
     (puthash "rubric_id" (string-to-number rubric-id) assoc)
     (puthash "association_id" item-id assoc)
     (puthash "association_type" association-type assoc)
     (puthash "purpose" "grading" assoc)
+    (when use-for-grading
+      (puthash "use_for_grading" use-for-grading assoc))
+    (when hide-score-total
+      (puthash "hide_score_total" hide-score-total assoc))
     (puthash "rubric_association" assoc payload)
     (condition-case err
         (progn

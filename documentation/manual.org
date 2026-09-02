@@ -419,6 +419,8 @@ Course assignments with due dates, submission types, and grading options.
 | =MAX_ATTEMPTS=       | number    | Max submission attempts (-1 = unlimited)      |
 | =GROUP=              | link      | Link to assignment-groups.org heading         |
 | =RUBRIC_LINK=        | link      | Link to rubrics.org heading                   |
+| =RUBRIC_USE_FOR_GRADING= | boolean | Rubric total becomes the grade; sent with the rubric association on every push |
+| =RUBRIC_HIDE_SCORE_TOTAL= | boolean | Hide the rubric's score total from students |
 | =OMIT_FROM_GRADES=   | boolean   | Exclude from grade calculations               |
 | =ANONYMOUS_GRADING=  | boolean   | Hide student names during grading             |
 | =PEER_REVIEWS=       | boolean   | Enable peer reviews                           |
@@ -2831,6 +2833,8 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =PEER_REVIEW_DUE_AT= | timestamp |  |  | Peer review due date |
 | =GROUP= | link | org link |  | Link to assignment-groups.org heading |
 | =RUBRIC_LINK= | link | org link |  | Link to rubrics.org heading |
+| =RUBRIC_USE_FOR_GRADING= | boolean | true, false |  | Rubric total becomes the grade; sent with the rubric association (needs RUBRIC_LINK) |
+| =RUBRIC_HIDE_SCORE_TOTAL= | boolean | true, false |  | Hide the rubric's score total from students; sent with the rubric association |
 | =OMIT_FROM_GRADES= | boolean | true, false |  | Exclude from grade calculations |
 | =ANONYMOUS_GRADING= | boolean | true, false |  | Hide student names during grading |
 | =NOTIFY_OF_UPDATE= | boolean | true, false |  | Notify students of changes (write-only) |

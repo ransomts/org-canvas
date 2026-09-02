@@ -18,6 +18,8 @@
 ;;   SUBMISSION       - Submission type(s): online_upload, online_text_entry, etc.
 ;;   GROUP            - Link to assignment-groups.org heading
 ;;   RUBRIC_LINK      - Link to rubrics.org heading
+;;   RUBRIC_USE_FOR_GRADING - true: the rubric total becomes the grade
+;;   RUBRIC_HIDE_SCORE_TOTAL - true: students do not see the rubric total
 ;;
 ;; LINK RESOLUTION
 ;; ===============
@@ -114,6 +116,11 @@ takes effect on the next `org-canvas-pull-assignments' invocation."
     (:org-prop "RUBRIC_LINK" :data-key :rubric_id :type link
      :target-file org-canvas-rubrics-file :link-id-property "CANVAS_ID"
      :doc "Link to rubrics.org heading")
+    (:org-prop "RUBRIC_USE_FOR_GRADING" :data-key :use_rubric_for_grading :type boolean
+     :doc "Rubric total becomes the grade; sent with the rubric association (needs RUBRIC_LINK)")
+    (:org-prop "RUBRIC_HIDE_SCORE_TOTAL" :data-key :rubric_hide_score_total :type boolean
+     :remote-fn ,#'org-canvas--assignment-remote-hide-score-total
+     :doc "Hide the rubric's score total from students; sent with the rubric association")
     (:org-prop "OMIT_FROM_GRADES" :data-key :omit_from_final_grade :type boolean
      :doc "Exclude from grade calculations")
     (:org-prop "ANONYMOUS_GRADING" :data-key :anonymous_grading :type boolean
@@ -210,6 +217,8 @@ here since they require file I/O."
           :moderated-grading-raw (org-entry-get pom "MODERATED_GRADING")
           :grader-count-raw (org-entry-get pom "GRADER_COUNT")
           :muted-raw (org-entry-get pom "MUTED")
+          :rubric-use-for-grading-raw (org-entry-get pom "RUBRIC_USE_FOR_GRADING")
+          :rubric-hide-score-total-raw (org-entry-get pom "RUBRIC_HIDE_SCORE_TOTAL")
           :grading-standard-id-raw (org-entry-get pom "GRADING_STANDARD_ID")
           :position-raw (org-entry-get pom "POSITION")
           :external-tool-url-raw (org-entry-get pom "EXTERNAL_TOOL_URL")
@@ -221,6 +230,20 @@ here since they require file I/O."
           :group-category-id-raw (org-canvas--resolve-link-or-raw
                                   pom "GROUP_CATEGORY_ID" "CANVAS_ID"
                                   org-canvas-assignments-file))))
+
+(defun org-canvas--assignment-tristate (raw)
+  "Return t for \"true\", `:json-false' for \"false\", nil when RAW is unset.
+Association flags use this rather than a plain boolean so that a
+property left out of the drawer is not sent as false."
+  (cond ((null raw) nil)
+        ((string-equal "true" raw) t)
+        ((string-equal "false" raw) :json-false)))
+
+(defun org-canvas--assignment-remote-hide-score-total (item)
+  "Return the hide_score_total flag of ITEM's rubric settings.
+Canvas nests it under `rubric_settings', so the drift report cannot
+read it as a flat field."
+  (alist-get 'hide_score_total (alist-get 'rubric_settings item)))
 
 (defun org-canvas--assignment-transform-props (raw)
   "Transform raw property strings RAW into typed assignment data.
@@ -253,6 +276,10 @@ Pure function — no buffer access."
                               (org-canvas--safe-string-to-number max-attempts "MAX_ATTEMPTS"))
           :assignment_group_id (when agid (string-to-number agid))
           :rubric-id (plist-get raw :rubric-id)
+          :rubric-use-for-grading (org-canvas--assignment-tristate
+                                   (plist-get raw :rubric-use-for-grading-raw))
+          :rubric-hide-score-total (org-canvas--assignment-tristate
+                                    (plist-get raw :rubric-hide-score-total-raw))
           :peer_reviews (org-canvas--interpret-boolean (plist-get raw :peer-reviews-raw))
           :peer_review_count (when peer-count
                                (org-canvas--safe-string-to-number peer-count "PEER_REVIEW_COUNT"))
@@ -470,9 +497,10 @@ external-tool assignment would report drift on every run."
 
 ;;;; 3. Stage: Execution Helper
 
-(defun org-canvas--assignment-associate-rubric (assignment-id rubric-id)
-  "Associate RUBRIC-ID with ASSIGNMENT-ID on Canvas."
-  (org-canvas--associate-rubric assignment-id rubric-id "Assignment"))
+(defun org-canvas--assignment-associate-rubric (assignment-id rubric-id &optional flags)
+  "Associate RUBRIC-ID with ASSIGNMENT-ID on Canvas.
+FLAGS is the association plist `org-canvas--associate-rubric' takes."
+  (org-canvas--associate-rubric assignment-id rubric-id "Assignment" flags))
 
 (defun org-canvas--assignment-post-finalize (data response)
   "Verify assignment properties and associate rubric.
@@ -485,11 +513,14 @@ DATA is the parsed assignment plist, RESPONSE is the Canvas API response."
       (org-canvas--log-warning org-canvas--logger
         "[Verify] '%s': assignment_group_id mismatch! Expected %s, got %s"
         (plist-get data :title) expected-group actual-group)))
-  ;; Associate rubric
+  ;; Associate rubric, carrying the grading flags so a push keeps them
   (let ((rubric-id (plist-get data :rubric-id))
         (assignment-id (alist-get 'id response)))
     (when rubric-id
-      (org-canvas--assignment-associate-rubric assignment-id rubric-id))))
+      (org-canvas--assignment-associate-rubric
+       assignment-id rubric-id
+       (list :use-for-grading (plist-get data :rubric-use-for-grading)
+             :hide-score-total (plist-get data :rubric-hide-score-total))))))
 
 ;;;; Main Sync Function
 
