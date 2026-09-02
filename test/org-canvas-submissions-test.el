@@ -1885,16 +1885,126 @@
             (expect (test-org-canvas-api-call-count) :to-equal 2)
             (expect (buffer-string) :to-match ":CANVAS_SCORE: 95")
             (expect (buffer-string) :to-match ":: Nice\\."))))))
-  (it "counts drafts as unpushed work for the refresh guard"
+  (it "carries a draft across a refresh instead of asking about it"
     (with-org-canvas-test-config
       (with-grading-file (concat test-grading-file-header
                                  "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 92\n:CANVAS_SCORE: 92\n:END:\n\n** Comment to post\nA draft.\n")
-        (let ((fetched nil))
-          (cl-letf (((symbol-function 'org-canvas--submissions-fetch-for-assignment)
-                     (lambda (_id) (setq fetched t) nil))
-                    ((symbol-function 'y-or-n-p) (lambda (_) nil)))
-            (expect (org-canvas-submissions-refresh) :to-throw 'user-error))
-          (expect fetched :to-be nil))))))
+        (cl-letf (((symbol-function 'org-canvas--submissions-fetch-for-assignment)
+                   (lambda (_id) (list (test-org-canvas-make-submission))))
+                  ((symbol-function 'org-canvas--submissions-fetch-assignment) (lambda (_id) nil))
+                  ((symbol-function 'switch-to-buffer) (lambda (b) b))
+                  ((symbol-function 'y-or-n-p) (lambda (_) (error "must not ask"))))
+          (org-canvas-submissions-refresh))
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-canvas--submissions-comment-draft) :to-equal "A draft.")))))
+
+;;;; Excused, DAYS_LATE, Notes, Completion Rule
+
+(describe "excused submissions"
+  (it "parse EX in any spelling"
+    (expect (org-canvas--submissions-parse-score "EX") :to-equal "EX")
+    (expect (org-canvas--submissions-parse-score " excused ") :to-equal "EX")
+    (expect (org-canvas--submissions-parse-score "extra") :to-be nil))
+  (it "render as SCORE EX with no FINAL_SCORE and snapshot as EX"
+    (let ((sub (test-org-canvas-make-submission '((excused . t) (score . nil)))))
+      (with-temp-buffer
+        (org-mode)
+        (org-canvas--submissions-render-detail-entry sub)
+        (expect (buffer-string) :to-match ":SCORE: EX\n:CANVAS_SCORE: EX\n")
+        (expect (buffer-string) :not :to-match "FINAL_SCORE"))
+      (expect (alist-get 5001 (org-canvas--submissions-snapshot-scores (list sub))) :to-equal "EX")))
+  (it "push EX as the posted grade"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (concat test-grading-file-header
+                                   "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: ex\n:CANVAS_SCORE: 92\n:END:\n")
+          (let ((org-canvas-submissions-check-conflicts nil))
+            (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+              (org-canvas-submissions-push-grades)))
+          (let ((data (nth 2 (test-org-canvas-last-api-call))))
+            (expect (alist-get 'posted_grade (alist-get 'submission data)) :to-equal "EX"))
+          (expect (buffer-string) :to-match ":CANVAS_SCORE: EX"))))))
+
+(describe "DAYS_LATE"
+  (it "is the lateness rounded up to whole days, only when late"
+    (expect (org-canvas--submissions-days-late '((seconds_late . 133200))) :to-equal 2)
+    (expect (org-canvas--submissions-days-late '((seconds_late . 86400))) :to-equal 1)
+    (expect (org-canvas--submissions-days-late '((seconds_late . 0))) :to-be nil)
+    (with-temp-buffer
+      (org-mode)
+      (org-canvas--submissions-render-detail-entry
+       (test-org-canvas-make-submission '((late . t) (seconds_late . 400000))))
+      (expect (buffer-string) :to-match ":DAYS_LATE: 5\n"))))
+
+(describe "notes heading and carry-over"
+  (it "renders the Notes heading with its template ahead of the draft heading"
+    (with-temp-buffer
+      (org-mode)
+      (org-canvas--submissions-render-detail-entry (test-org-canvas-make-submission))
+      (expect (buffer-string) :to-match "^\\*\\* Notes\n# Your notes for this student")
+      (expect (string-match "\\*\\* Notes" (buffer-string))
+              :to-be-less-than (string-match "\\*\\* Comment to post" (buffer-string)))))
+  (it "keeps notes and drafts when the file is re-rendered from Canvas"
+    (let* ((dir (make-temp-file "org-canvas-subs-" t))
+           (org-canvas-submissions-directory dir)
+           (subs (list (test-org-canvas-make-submission)))
+           (shown nil))
+      (unwind-protect
+          (cl-letf (((symbol-function 'switch-to-buffer) (lambda (b) (setq shown b) b))
+                    ((symbol-function 'org-canvas--submissions-heading-for-assignment) (lambda (_id) nil)))
+            (org-canvas--submissions-display "HW" "1001" subs 'detail)
+            (with-current-buffer shown
+              (org-canvas--submissions-goto-user 5001)
+              (org-canvas--submissions-set-section org-canvas--submissions-notes-heading
+                                                   org-canvas-submissions-notes-template
+                                                   "Struggled with the maxim.")
+              (org-canvas--submissions-set-section org-canvas--submissions-draft-heading
+                                                   org-canvas-submissions-comment-template
+                                                   "Say the maxim first.")
+              (save-buffer))
+            (org-canvas--submissions-display "HW" "1001" subs 'detail)
+            (with-current-buffer shown
+              (org-canvas--submissions-goto-user 5001)
+              (expect (org-canvas--submissions-section-text org-canvas--submissions-notes-heading)
+                      :to-equal "Struggled with the maxim.")
+              (expect (org-canvas--submissions-comment-draft) :to-equal "Say the maxim first.")
+              (expect (count-matches "^\\*\\* Notes" (point-min) (point-max)) :to-equal 1)
+              (expect (buffer-string) :to-match ":CANVAS_SCORE: 92")))
+        (when (buffer-live-p shown) (kill-buffer shown))
+        (delete-directory dir t)))))
+
+(describe "org-canvas-submissions-apply-completion-rule"
+  (it "scores the ungraded by status and lateness and leaves graded or excused rows alone"
+    (with-grading-file (concat test-grading-file-header
+                               "#+PROPERTY: POINTS_POSSIBLE 5\n"
+                               "* A\n:PROPERTIES:\n:USER_ID: 1\n:STATUS: submitted\n:END:\n"
+                               "* B\n:PROPERTIES:\n:USER_ID: 2\n:STATUS: late\n:DAYS_LATE: 1\n:END:\n"
+                               "* C\n:PROPERTIES:\n:USER_ID: 3\n:STATUS: late\n:DAYS_LATE: 4\n:END:\n"
+                               "* D\n:PROPERTIES:\n:USER_ID: 4\n:STATUS: missing\n:END:\n"
+                               "* E\n:PROPERTIES:\n:USER_ID: 5\n:STATUS: graded\n:SCORE: 3\n:CANVAS_SCORE: 3\n:END:\n"
+                               "* F\n:PROPERTIES:\n:USER_ID: 6\n:STATUS: graded\n:SCORE: EX\n:CANVAS_SCORE: EX\n:END:\n")
+      (expect (org-canvas--submissions-default-points) :to-equal 5)
+      (org-canvas-submissions-apply-completion-rule 5)
+      (let ((scores (mapcar (lambda (uid) (org-canvas--submissions-goto-user uid) (org-entry-get (point) "SCORE"))
+                            '(1 2 3 4 5 6))))
+        (expect scores :to-equal '("5" "5" "0" "0" "3" "EX")))
+      (expect (length (org-canvas--submissions-collect-grade-changes)) :to-equal 4)))
+  (it "overwrites hand grades only with the prefix argument"
+    (with-grading-file (concat test-grading-file-header
+                               "* E\n:PROPERTIES:\n:USER_ID: 5\n:STATUS: submitted\n:SCORE: 3\n:CANVAS_SCORE: 3\n:END:\n")
+      (org-canvas-submissions-apply-completion-rule 10)
+      (org-canvas--submissions-goto-user 5)
+      (expect (org-entry-get (point) "SCORE") :to-equal "3")
+      (org-canvas-submissions-apply-completion-rule 10 t)
+      (org-canvas--submissions-goto-user 5)
+      (expect (org-entry-get (point) "SCORE") :to-equal "10")))
+  (it "honors the late window setting"
+    (let ((org-canvas-submissions-late-window-days 5))
+      (with-grading-file (concat test-grading-file-header
+                                 "* C\n:PROPERTIES:\n:USER_ID: 3\n:STATUS: late\n:DAYS_LATE: 4\n:END:\n")
+        (org-canvas-submissions-apply-completion-rule 5)
+        (org-canvas--submissions-goto-user 3)
+        (expect (org-entry-get (point) "SCORE") :to-equal "5")))))
 
 (provide 'org-canvas-submissions-test)
 ;;; org-canvas-submissions-test.el ends here

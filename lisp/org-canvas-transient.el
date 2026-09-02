@@ -90,6 +90,7 @@
   ["Submissions"
    ("g" "Pull submissions (grading file)" org-canvas-pull-submissions)
    ("o" "Open a saved grading file" org-canvas-open-submissions)
+   ("a" "Apply the completion rule to this file" org-canvas-submissions-apply-completion-rule)
    ("G" "Push grades" org-canvas-submissions-push-grades)]
   ["Tools"
    ("i" "Init (setup wizard)" org-canvas-init)

@@ -1998,7 +1998,7 @@ Pulling an assignment's submissions produces a *grading file*: an Org file with 
 
 1. =M-x org-canvas-pull-submissions= (transient: Submissions, =g=). Pick the assignment; the grading file is written, saved, and visited. Its =Assignment:= line links the assignment's heading in the assignments file (when one carries the id), its Canvas page, and SpeedGrader, and every student heading carries an =Open in SpeedGrader= link, which is where rubric grading finishes since rubric scores cannot be written back from Org. When the assignment has a rubric, a =Rubric:= line follows, linking the rubric's heading in the rubrics file and its Canvas page, and, unless =org-canvas-submissions-include-rubric-criteria= is nil, a table of its criteria, points, and ratings so the work can be read against the rubric offline. Set =org-canvas-submissions-default-view= to =summary= to see the overview table first instead.
 2. Read the work. Each heading carries the submitted text, an =Attachments= list, the =Comments= so far, and the =Rubric Assessment= when one exists. =d= downloads the attachments of the student at point and =D= everyone's, into =files/<assignment>/<student>/= beside the grading file. After a download each =Attachments= entry links the local copy first, with the Canvas link kept beside it, and a later pull keeps that local link as long as the file is still there.
-3. Grade. Edit the =:SCORE:= property on each heading. Write any comment for the student under their =Comment to post= heading; the lines there that begin with =#= are instructions and are never sent. =c= still posts a one-off comment through a prompt, immediately.
+3. Grade. Edit the =:SCORE:= property on each heading: a number, or =EX= to excuse. Write any comment for the student under their =Comment to post= heading; the lines there that begin with =#= are instructions and are never sent. =c= still posts a one-off comment through a prompt, immediately. Your own remarks go under the student's =Notes= heading, which is never sent and survives a re-pull, as do unposted drafts. For completion-graded work, =M-x org-canvas-submissions-apply-completion-rule= (transient: Submissions, =a=) fills every empty =SCORE= at once: full credit for a submission within =org-canvas-submissions-late-window-days= of the due date (default 2, the value comes from the file's =POINTS_POSSIBLE=), 0 for a later or missing one; hand-entered scores and =EX= rows are left alone unless you give a prefix argument. Review, then push.
 4. =S= pushes. Every heading whose =SCORE= differs from its =CANVAS_SCORE= is listed and, after one confirmation, sent: one change as a single PUT, several through Canvas's bulk endpoint. Drafted comments go in the same push, one request each; a posted comment moves under the student's =Comments= heading as a dated record and the draft resets to the template. Pushed scores become the new =CANVAS_SCORE= and the file is saved, so a second =S= pushes nothing. Set =org-canvas-submissions-comment-template= to nil to leave the draft heading out.
 5. Later: =M-x org-canvas-open-submissions= (transient: Submissions, =o=) reopens a saved grading file with the mode and its context restored, ready for more grading or another push. Opening a file, and every successful push, rebuilds its =Assignment:= line from the assignments file by =CANVAS_ID=, so a renamed heading never leaves a stale link; nothing else in the file is touched, and no Canvas request is made.
 
@@ -2015,12 +2015,14 @@ Before pushing from a saved file, org-canvas re-reads the assignment once and co
 | =#+PROPERTY: CANVAS_ASSIGNMENT_ID= | Assignment the file belongs to |
 | =#+PROPERTY: CANVAS_ASSIGNMENT_NAME= | Its name, used for the attachments folder |
 | =#+PROPERTY: PULLED_AT= | When the file was last written from Canvas |
+| =#+PROPERTY: POINTS_POSSIBLE= | The assignment's points, the completion rule's default |
 | =#+PROPERTY: CANVAS_RUBRIC_ID= | Attached rubric's id; present only when there is one |
 | =#+PROPERTY: CANVAS_RUBRIC_TITLE= | Its title at pull time |
 | =:USER_ID:= | Canvas user id; the key every push uses |
 | =:SUBMISSION_ID:= | Canvas submission id, used for comments |
 | =:STATUS:= | submitted, late, missing, graded, pending_review, or unsubmitted at pull time |
-| =:SCORE:= | The grade you enter (or entered before) |
+| =:DAYS_LATE:= | Lateness at pull time, rounded up to whole days; present only when late |
+| =:SCORE:= | The grade you enter (or entered before); =EX= excuses the student |
 | =:CANVAS_SCORE:= | The entered score as last pulled or pushed; the push baseline |
 | =:FINAL_SCORE:= | Present only when a Canvas late policy made the recorded score differ from the entered one |
 | =:ATTEMPT:= | Submission attempt at pull time; a change flags a resubmission |
@@ -2372,7 +2374,8 @@ These commands delete the item at the current cursor position:
 |---|---|
 | =org-canvas-pull-submissions= | Pull an assignment into a grading file (or the summary table) |
 | =org-canvas-open-submissions= | Reopen a saved grading file |
-| =org-canvas-submissions-push-grades= | Push changed scores (=S= in the file) |
+| =org-canvas-submissions-push-grades= | Push changed scores and drafted comments (=S= in the file) |
+| =org-canvas-submissions-apply-completion-rule= | Fill empty scores by completion and lateness |
 | =org-canvas-submissions-add-comment= | Post a comment on the student at point (=c=) |
 | =org-canvas-submissions-download-attachments= | Download the attachments at point (=d=) |
 | =org-canvas-submissions-download-all-attachments= | Download every student's attachments (=D=) |
