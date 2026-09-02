@@ -53,7 +53,10 @@
 ;; feature wholesale, printing one line so the exclusion stays visible;
 ;; `org-canvas-diff-known-extras' acknowledges individual ids, counted
 ;; once in the footer — and flagged loudly, and counted as drift, when
-;; an acknowledged id stops existing, so the list cannot rot.
+;; an acknowledged id stops existing, so the list cannot rot.  A fourth
+;; valve is automatic (#102): a file that course content embeds is
+;; referenced media, counted in the footer, so an attachment uploaded
+;; through the rich-content editor does not need acknowledging by hand.
 ;;
 ;; COST AND SAFETY
 ;; ===============
@@ -97,6 +100,23 @@ to look if one should be deleted after all."
                        (string :tag "Canvas id")
                        (choice (const :tag "No note" nil)
                                (string :tag "Note"))))
+  :group 'org-canvas)
+
+(defcustom org-canvas-diff-scan-references t
+  "Whether the drift report treats media embedded in course content as claimed.
+Every image or PDF the rich-content editor uploads lands in Uploaded
+Media as a file no Org heading claims, and telling a *referenced*
+attachment apart from a stray upload used to mean fetching content
+bodies by hand and searching them for the file id (issue #102).  When
+non-nil, the report scans the bodies it already has — assignments,
+pages, announcements, discussions and quizzes are listed with their
+bodies for the body comparison — plus the syllabus, one extra request,
+for `/files/<id>' references, and reports unclaimed files that are
+referenced as a counted footer line instead of EXTRA rows.  An
+unreferenced unclaimed file keeps alarming, which is exactly right; a
+file whose referent disappears reverts to EXTRA on its own.  Affects
+the drift report only."
+  :type 'boolean
   :group 'org-canvas)
 
 (defconst org-canvas--diff-comparable-types
@@ -339,6 +359,78 @@ first difference, when they do not."
                   (cons (upcase api-key)
                         (org-canvas--diff-text-excerpts local remote))))))))
 
+;;;; Referenced Media
+;;
+;; A file id appears in course content as `/files/<id>' — in a download
+;; link, a preview `src', a `data-api-endpoint' — whichever host and
+;; course path precede it.  The bodies are already in hand: the body
+;; comparison lists every body-bearing feature with its body (#83), so
+;; only the syllabus costs a request.
+
+(defun org-canvas--diff-file-references (html)
+  "Return the file ids `/files/<id>' references in HTML, as strings, deduplicated.
+Anything that is not a string yields nil."
+  (when (stringp html)
+    (let ((ids nil) (start 0))
+      (while (string-match "/files/\\([0-9]+\\)" html start)
+        (cl-pushnew (match-string 1 html) ids :test #'string=)
+        (setq start (match-end 0)))
+      (nreverse ids))))
+
+(defun org-canvas--diff-items-references (items api-key)
+  "Return the file ids the API-KEY bodies of ITEMS reference, deduplicated."
+  (let ((ids nil))
+    (dolist (item items)
+      (dolist (id (org-canvas--diff-file-references
+                   (org-canvas--diff-normalize-remote
+                    (alist-get (intern api-key) item))))
+        (cl-pushnew id ids :test #'string=)))
+    (nreverse ids)))
+
+(defun org-canvas--diff-syllabus-references ()
+  "Return the file ids the course syllabus references, or nil.
+One request; a failure is logged and reads as no references, so the
+report still comes out."
+  (condition-case err
+      (org-canvas--diff-file-references
+       (org-canvas--diff-normalize-remote
+        (alist-get 'syllabus_body
+                   (org-canvas-api-request
+                    'GET (org-canvas-api-course-endpoint "")
+                    :params '(("include[]" . "syllabus_body"))))))
+    (error
+     (org-canvas--log-warning org-canvas--logger
+       "[Diff] Could not read the syllabus for file references: %s"
+       (error-message-string err))
+     nil)))
+
+(defun org-canvas--diff-apply-references (results)
+  "Move referenced files out of the Files result's extras in RESULTS.
+Collects every `:referenced-files' the body features recorded, plus
+the syllabus's, and turns each Files extra whose id is among them into
+a `:referenced' count rather than a row (issue #102).  Does nothing
+when `org-canvas-diff-scan-references' is off, or when Files was not
+checked.  Returns RESULTS, mutated in place."
+  (let ((files (cl-find-if (lambda (r)
+                             (string= (org-canvas--diff-normalize-name
+                                       (plist-get r :name))
+                                      "files"))
+                           results)))
+    (when (and org-canvas-diff-scan-references files
+               (not (plist-get files :excluded))
+               (not (plist-get files :error)))
+      (let ((refs (org-canvas--diff-syllabus-references)))
+        (dolist (r results)
+          (dolist (id (plist-get r :referenced-files))
+            (cl-pushnew id refs :test #'string=)))
+        (let* ((extra (plist-get files :extra))
+               (referenced (cl-remove-if-not
+                            (lambda (e) (member (plist-get e :id) refs)) extra)))
+          (plist-put files :extra (cl-set-difference extra referenced))
+          (plist-put files :referenced (length referenced)))))
+    results))
+
+;;;; Per-Feature Comparison
 ;;;; Per-Feature Comparison
 
 (defun org-canvas--diff-collect-local (file query id-property)
@@ -496,7 +588,14 @@ An acknowledged id Canvas no longer holds joins :divergences as a
                   :extra (cl-remove-if (lambda (e) (memq e acked)) paired)
                   :acknowledged (length acked)
                   :suppressed (cdr unclaimed)
-                  :skip-reason (plist-get feature :skip-reason))))
+                  :skip-reason (plist-get feature :skip-reason)
+                  ;; The bodies are in hand; note what media they embed
+                  ;; for the files result to consult (issue #102).
+                  :referenced-files
+                  (and org-canvas-diff-scan-references
+                       (plist-get props :body-api-key)
+                       (org-canvas--diff-items-references
+                        items (plist-get props :body-api-key))))))
       (error
        (list :name name :error (error-message-string err))))))
 
@@ -596,7 +695,13 @@ show up as extra, so without this the report reads as full coverage."
                                       results))))
         (when (> acked 0)
           (insert (format "Acknowledged extras: %d (org-canvas-diff-known-extras).\n"
-                          acked)))))
+                          acked))))
+      (let ((referenced (apply #'+ (mapcar (lambda (r)
+                                             (or (plist-get r :referenced) 0))
+                                           results))))
+        (when (> referenced 0)
+          (insert (format "Referenced media: %d unclaimed file%s embedded in course content (org-canvas-diff-scan-references).\n"
+                          referenced (if (= referenced 1) "" "s"))))))
     (buffer-string)))
 
 ;;;; Commands
@@ -608,7 +713,10 @@ Makes one read-only list request per feature and compares ids, remote
 modification times and the properties each module registers.  Features
 in `org-canvas-diff-excluded-features' are skipped with a visible
 line, and ids in `org-canvas-diff-known-extras' are counted as
-acknowledged rather than reported (issue #98).  Returns the number of
+acknowledged rather than reported (issue #98); with
+`org-canvas-diff-scan-references' on, unclaimed files that course
+content embeds are counted rather than reported too (issue #102).
+Returns the number of
 divergences found, so a batch caller can act on it; see
 `org-canvas-diff-batch'."
   (interactive)
@@ -620,7 +728,7 @@ divergences found, so a batch caller can act on it; see
             (push (list :name name :excluded t) results)
           (message "Drift: checking %s..." name)
           (push (org-canvas--diff-feature feature) results))))
-    (setq results (nreverse results))
+    (setq results (org-canvas--diff-apply-references (nreverse results)))
     (let ((report (org-canvas--diff-render results))
           (total (org-canvas--diff-count results)))
       (if noninteractive
