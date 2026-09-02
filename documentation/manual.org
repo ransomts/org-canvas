@@ -1882,6 +1882,33 @@ All three affect the drift report only.  Orphan cleanup and prune still list
 acknowledged items (scaffolding stays protected there by the same skip-fns),
 which is where to look if one of them should be deleted after all.
 
+** Acting on the Report
+
+The report used to name problems and offer no verbs: everything an operator
+did next -- visit the heading, acknowledge an extra, delete a stray remote
+object, pull one item -- happened somewhere else, by hand (#103).  The
+=*canvas-diff*= buffer is now in =org-canvas-diff-mode=, and each row is
+something the keys act on:
+
+| Key     | On a row                | Effect                                                              |
+|---------+-------------------------+---------------------------------------------------------------------|
+| =RET=     | CHANGED, MISSING, UNCLAIMED | Open the course file with point on the heading                  |
+| =RET=     | EXTRA                   | Open the Canvas object in a browser, when the API said where it lives |
+| =a=       | EXTRA, UNCLAIMED        | Acknowledge the id in =org-canvas-diff-known-extras=, with an optional note |
+| =a=       | STALE-ACK               | Drop the acknowledgment                                             |
+| =k=       | EXTRA, UNCLAIMED        | Delete the remote object, after confirming                          |
+| =p=       | CHANGED                 | Pull the Canvas version over the heading (=org-canvas-pull-at-point=, which asks first) |
+| =g=       | anywhere                | Run the report again                                                |
+| =TAB= / =S-TAB= | anywhere          | Move to the next / previous row                                     |
+
+An action rewrites its row in place (=ACK=, =DELETED=, =PULLED=, =DROPPED=)
+rather than re-running every list request; =g= refreshes when you want the
+totals recounted.  Acknowledgments are persisted through
+=org-canvas-diff-acknowledge-function=, which receives the whole new list.
+The default saves with =customize-save-variable=; a course that keeps its
+configuration in a file of its own can name a function that writes the list
+there instead.  Batch output is unchanged.
+
 ** Cost and Safety
 
 One list request per feature.  Nothing is written, locally or on Canvas, so it
@@ -2223,6 +2250,7 @@ These commands delete the item at the current cursor position:
 | =org-canvas-apply-scheduled-releases= | Publish modules and items whose =PUBLISH_AT= has passed |
 | =org-canvas-diff=                 | Report how Canvas differs from the Org files (read-only) |
 | =org-canvas-diff-batch=           | As above, exiting non-zero when drift is found |
+| =org-canvas-diff-visit= / =-acknowledge= / =-delete= / =-pull= | Row actions in the report buffer (see [[*Acting on the Report][Acting on the Report]]) |
 | =org-canvas-validate=             | Validate all Org files offline (no API calls) |
 | =org-canvas-sync-dry-run=         | Preview what would be synced (no API calls)   |
 | =org-canvas-cleanup-orphans=      | Find and delete orphaned Canvas items         |

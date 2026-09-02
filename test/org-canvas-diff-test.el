@@ -1046,5 +1046,298 @@ The remote updated_at is always newer than the baseline."
       (expect (org-canvas--diff-known-extras-for "Assignment Groups")
               :to-equal '(("677142" . nil))))))
 
+;;;; Acting on the report (issue #103)
+
+(describe "org-canvas-diff-mode (issue #103)"
+  (defun test-org-canvas--diff-report-buffer (results)
+    "Render RESULTS the way `org-canvas-diff' does and return the buffer."
+    (with-org-canvas-test-config
+      (let ((noninteractive nil))
+        (cl-letf (((symbol-function 'org-canvas--preflight-check) #'ignore)
+                  ((symbol-function 'display-buffer) (lambda (&rest _) nil))
+                  ((symbol-function 'org-canvas--diff-feature)
+                   (lambda (feature)
+                     (or (cl-find (plist-get feature :name) results
+                                  :key (lambda (r) (plist-get r :name))
+                                  :test #'string=)
+                         (list :name (plist-get feature :name))))))
+          (org-canvas-diff)
+          (get-buffer org-canvas--diff-buffer-name)))))
+
+  (defun test-org-canvas--diff-goto-row (kind)
+    "Put point on the first row of KIND in the current buffer."
+    (goto-char (point-min))
+    (let (found)
+      (while (and (not found) (not (eobp)))
+        (let ((row (get-text-property (point) 'org-canvas-diff-row)))
+          (if (and row (eq (plist-get (plist-get row :entry) :kind) kind))
+              (setq found t)
+            (forward-line 1))))
+      (unless found (error "No %s row" kind))))
+
+  (it "puts the report in its own mode with the verbs bound and a legend"
+    (with-current-buffer (test-org-canvas--diff-report-buffer nil)
+      (expect major-mode :to-be 'org-canvas-diff-mode)
+      (expect (derived-mode-p 'special-mode) :to-be-truthy)
+      (expect (lookup-key org-canvas-diff-mode-map (kbd "RET")) :to-be #'org-canvas-diff-visit)
+      (expect (lookup-key org-canvas-diff-mode-map (kbd "a")) :to-be #'org-canvas-diff-acknowledge)
+      (expect (lookup-key org-canvas-diff-mode-map (kbd "k")) :to-be #'org-canvas-diff-delete)
+      (expect (lookup-key org-canvas-diff-mode-map (kbd "p")) :to-be #'org-canvas-diff-pull)
+      (expect (lookup-key org-canvas-diff-mode-map (kbd "g")) :to-be #'org-canvas-diff-refresh)
+      (expect (buffer-string) :to-match "RET visit   a acknowledge")))
+
+  (it "carries each row's feature and entry as a text property, and none off a row"
+    (with-current-buffer (test-org-canvas--diff-report-buffer
+                          '((:name "Assignments"
+                             :extra ((:kind extra :title "Surprise" :id "99")))))
+      (test-org-canvas--diff-goto-row 'extra)
+      (let ((row (get-text-property (point) 'org-canvas-diff-row)))
+        (expect (plist-get row :feature) :to-equal "Assignments")
+        (expect (plist-get (plist-get row :entry) :id) :to-equal "99"))
+      (goto-char (point-min))
+      (expect (org-canvas-diff-visit) :to-throw 'user-error)))
+
+  (it "moves between rows with TAB and back"
+    (with-current-buffer (test-org-canvas--diff-report-buffer
+                          '((:name "Assignments"
+                             :divergences ((:kind missing :title "Lab 2" :id "62"))
+                             :extra ((:kind extra :title "Surprise" :id "99")))))
+      (goto-char (point-min))
+      (org-canvas-diff-next-row)
+      (expect (thing-at-point 'line t) :to-match "MISSING   Lab 2")
+      (org-canvas-diff-next-row)
+      (expect (thing-at-point 'line t) :to-match "EXTRA     Surprise")
+      (expect (org-canvas-diff-next-row) :to-throw 'user-error)
+      (org-canvas-diff-previous-row)
+      (expect (thing-at-point 'line t) :to-match "MISSING   Lab 2")
+      (expect (org-canvas-diff-previous-row) :to-throw 'user-error)))
+
+  (it "reruns the report on g"
+    (let ((ran nil))
+      (cl-letf (((symbol-function 'org-canvas-diff) (lambda () (setq ran t))))
+        (org-canvas-diff-refresh))
+      (expect ran :to-be t))))
+
+(describe "org-canvas-diff-visit (issue #103)"
+  (it "opens the course file on the heading a CHANGED row names"
+    (let ((file (make-temp-file "diff-visit-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "* Lab 1\n:PROPERTIES:\n:CANVAS_ID: 60\n:END:\n"
+                      "* Lab 2\n:PROPERTIES:\n:CANVAS_ID: 61\n:END:\n"
+                      "* Lab 3\n:PROPERTIES:\n:CANVAS_ID: 62\n:END:\n"))
+            (let ((org-canvas-assignments-file file)
+                  (shown nil))
+              (cl-letf (((symbol-function 'pop-to-buffer)
+                         (lambda (buf &rest _) (setq shown buf) (set-buffer buf))))
+                (with-current-buffer (test-org-canvas--diff-report-buffer
+                                      '((:name "Assignments"
+                                         :divergences ((:kind modified :title "Lab 2" :id "61"
+                                                        :fields (("POINTS" "10" "25")))))))
+                  (test-org-canvas--diff-goto-row 'modified)
+                  (org-canvas-diff-visit)))
+              (expect (buffer-file-name shown) :to-equal (file-truename file))
+              (with-current-buffer shown
+                (expect (org-get-heading t t t t) :to-equal "Lab 2"))))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file))))
+
+  (it "finds the unstamped heading an UNCLAIMED row names by title"
+    (let ((file (make-temp-file "diff-visit-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "* Lab 1\n:PROPERTIES:\n:CANVAS_ID: 60\n:END:\n* R11: The Ethics Email\n"))
+            (let ((org-canvas-assignments-file file)
+                  (shown nil))
+              (cl-letf (((symbol-function 'pop-to-buffer)
+                         (lambda (buf &rest _) (setq shown buf) (set-buffer buf))))
+                (with-current-buffer (test-org-canvas--diff-report-buffer
+                                      '((:name "Assignments"
+                                         :extra ((:kind unclaimed :title "R11: The Ethics Email"
+                                                  :id "2563810" :property "CANVAS_ID")))))
+                  (test-org-canvas--diff-goto-row 'unclaimed)
+                  (org-canvas-diff-visit)))
+              (with-current-buffer shown
+                (expect (org-get-heading t t t t) :to-equal "R11: The Ethics Email"))))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file))))
+
+  (it "opens an EXTRA row's Canvas object in a browser, when Canvas said where"
+    (let ((opened nil))
+      (cl-letf (((symbol-function 'browse-url) (lambda (url &rest _) (setq opened url))))
+        (with-current-buffer (test-org-canvas--diff-report-buffer
+                              '((:name "Assignments"
+                                 :extra ((:kind extra :title "Surprise" :id "99"
+                                          :html-url "https://x.test/courses/1/assignments/99")))))
+          (test-org-canvas--diff-goto-row 'extra)
+          (org-canvas-diff-visit)))
+      (expect opened :to-equal "https://x.test/courses/1/assignments/99")))
+
+  (it "says so when an EXTRA row has no web address"
+    (with-current-buffer (test-org-canvas--diff-report-buffer
+                          '((:name "Modules" :extra ((:kind extra :title "Week 9" :id "7")))))
+      (test-org-canvas--diff-goto-row 'extra)
+      (expect (org-canvas-diff-visit) :to-throw 'user-error)))
+
+  (it "signals when the heading cannot be found"
+    (let ((file (make-temp-file "diff-visit-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file (insert "* Lab 1\n"))
+            (let ((org-canvas-assignments-file file))
+              (with-current-buffer (test-org-canvas--diff-report-buffer
+                                    '((:name "Assignments"
+                                       :divergences ((:kind missing :title "Gone" :id "61")))))
+                (test-org-canvas--diff-goto-row 'missing)
+                (expect (org-canvas-diff-visit) :to-throw 'user-error))))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file)))))
+
+(describe "org-canvas-diff-unclaimed carries the web address (issue #103)"
+  (it "keeps html_url on extra and unclaimed entries"
+    (let* ((unclaimed (org-canvas--diff-unclaimed
+                       '(((id . 99) (name . "Surprise") (html_url . "https://x.test/a/99")))
+                       nil 'id 'name nil))
+           (paired (org-canvas--diff-pair-unclaimed
+                    (car unclaimed) '((:id nil :title "Surprise")) "CANVAS_ID")))
+      (expect (plist-get (car (car unclaimed)) :html-url) :to-equal "https://x.test/a/99")
+      (expect (plist-get (car paired) :kind) :to-be 'unclaimed)
+      (expect (plist-get (car paired) :html-url) :to-equal "https://x.test/a/99"))))
+
+(describe "org-canvas-diff-acknowledge (issue #103)"
+  (it "adds the row's id to the known extras with a note, persists, and marks the row"
+    (let ((org-canvas-diff-known-extras nil)
+          (saved nil))
+      (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "embedded media"))
+                ((symbol-function 'org-canvas--diff-acknowledge-save)
+                 (lambda (extras) (setq saved extras))))
+        (with-current-buffer (test-org-canvas--diff-report-buffer
+                              '((:name "Files" :extra ((:kind extra :title "a.png" :id "31452881")))))
+          (test-org-canvas--diff-goto-row 'extra)
+          (org-canvas-diff-acknowledge)
+          (expect (thing-at-point 'line t)
+                  :to-match "ACK       a.png (id 31452881 acknowledged: embedded media)")
+          ;; The row keeps its property, so a second key still knows it.
+          (expect (get-text-property (point) 'org-canvas-diff-row) :to-be-truthy)))
+      (expect org-canvas-diff-known-extras
+              :to-equal '(("Files" "31452881" "embedded media")))
+      (expect saved :to-equal org-canvas-diff-known-extras)))
+
+  (it "records no note when none is given"
+    (let ((org-canvas-diff-known-extras nil))
+      (cl-letf (((symbol-function 'read-string) (lambda (&rest _) ""))
+                ((symbol-function 'org-canvas--diff-acknowledge-save) #'ignore))
+        (with-current-buffer (test-org-canvas--diff-report-buffer
+                              '((:name "Files" :extra ((:kind extra :title "a.png" :id "1")))))
+          (test-org-canvas--diff-goto-row 'extra)
+          (org-canvas-diff-acknowledge)))
+      (expect org-canvas-diff-known-extras :to-equal '(("Files" "1" nil)))))
+
+  (it "drops the acknowledgment on a STALE-ACK row"
+    (let ((org-canvas-diff-known-extras '(("files" "1" "old") ("Pages" "2" nil)))
+          (saved nil))
+      (cl-letf (((symbol-function 'org-canvas--diff-acknowledge-save)
+                 (lambda (extras) (setq saved extras))))
+        (with-current-buffer (test-org-canvas--diff-report-buffer
+                              '((:name "Files" :divergences ((:kind stale-ack :id "1" :note "old")))))
+          (test-org-canvas--diff-goto-row 'stale-ack)
+          (org-canvas-diff-acknowledge)
+          (expect (thing-at-point 'line t) :to-match "DROPPED   acknowledgment of id 1")))
+      (expect org-canvas-diff-known-extras :to-equal '(("Pages" "2" nil)))
+      (expect saved :to-equal '(("Pages" "2" nil)))))
+
+  (it "refuses a row that is not an extra"
+    (with-current-buffer (test-org-canvas--diff-report-buffer
+                          '((:name "Assignments" :divergences ((:kind missing :title "Gone" :id "61")))))
+      (test-org-canvas--diff-goto-row 'missing)
+      (expect (org-canvas-diff-acknowledge) :to-throw 'user-error)))
+
+  (it "saves through Customize by default"
+    (let ((saved nil))
+      (cl-letf (((symbol-function 'customize-save-variable)
+                 (lambda (sym val) (setq saved (list sym val)))))
+        (org-canvas--diff-acknowledge-save '(("Files" "1" nil))))
+      (expect saved :to-equal '(org-canvas-diff-known-extras (("Files" "1" nil)))))))
+
+(describe "org-canvas-diff-delete (issue #103)"
+  (it "deletes the remote object through the feature's URL after confirming, and marks the row"
+    (let ((requests nil))
+      (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) t))
+                ((symbol-function 'org-canvas-api-request)
+                 (lambda (method url &rest args) (push (list method url args) requests) nil)))
+        (with-current-buffer (test-org-canvas--diff-report-buffer
+                              '((:name "Files" :extra ((:kind extra :title "dup.png" :id "31505574")))))
+          (test-org-canvas--diff-goto-row 'extra)
+          (org-canvas-diff-delete)
+          (expect (thing-at-point 'line t) :to-match "DELETED   dup.png (id 31505574)")))
+      (expect (length requests) :to-equal 1)
+      (expect (car (car requests)) :to-be 'DELETE)
+      (expect (nth 1 (car requests)) :to-match "files/31505574$")))
+
+  (it "sends the feature's delete body when it declares one"
+    (let ((requests nil))
+      (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) t))
+                ((symbol-function 'org-canvas-api-request)
+                 (lambda (method url &rest args) (push (list method url args) requests) nil)))
+        (with-current-buffer (test-org-canvas--diff-report-buffer
+                              '((:name "Calendar Events" :extra ((:kind extra :title "Old" :id "5")))))
+          (test-org-canvas--diff-goto-row 'extra)
+          (org-canvas-diff-delete)))
+      (expect (nth 1 (car requests)) :to-match "calendar_events/5$")
+      (expect (plist-get (nth 2 (car requests)) :data)
+              :to-equal '((cancel_reason . "Deleted by org-canvas")))))
+
+  (it "sends nothing when the confirmation is declined"
+    (let ((requests nil))
+      (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) nil))
+                ((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest args) (push args requests) nil)))
+        (with-current-buffer (test-org-canvas--diff-report-buffer
+                              '((:name "Files" :extra ((:kind extra :title "dup.png" :id "1")))))
+          (test-org-canvas--diff-goto-row 'extra)
+          (org-canvas-diff-delete)
+          (expect (thing-at-point 'line t) :to-match "EXTRA     dup.png")))
+      (expect requests :to-be nil)))
+
+  (it "refuses a row with no remote object of its own to delete"
+    (with-current-buffer (test-org-canvas--diff-report-buffer
+                          '((:name "Assignments" :divergences ((:kind missing :title "Gone" :id "61")))))
+      (test-org-canvas--diff-goto-row 'missing)
+      (expect (org-canvas-diff-delete) :to-throw 'user-error))))
+
+(describe "org-canvas-diff-pull (issue #103)"
+  (it "runs the single-heading pull on the CHANGED row's heading and marks the row"
+    (let ((file (make-temp-file "diff-pull-" nil ".org"))
+          (pulled-in nil))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "* Lab 1\n:PROPERTIES:\n:CANVAS_ID: 60\n:END:\n"
+                      "* Lab 2\n:PROPERTIES:\n:CANVAS_ID: 61\n:END:\n"))
+            (let ((org-canvas-assignments-file file))
+              (cl-letf (((symbol-function 'org-canvas-pull-at-point)
+                         (lambda () (setq pulled-in (cons (buffer-file-name)
+                                                          (org-get-heading t t t t))))))
+                (with-current-buffer (test-org-canvas--diff-report-buffer
+                                      '((:name "Assignments"
+                                         :divergences ((:kind modified :title "Lab 2" :id "61"
+                                                        :remote-newer t
+                                                        :updated "2026-08-25T00:00:00Z")))))
+                  (test-org-canvas--diff-goto-row 'modified)
+                  (org-canvas-diff-pull)
+                  (expect (thing-at-point 'line t) :to-match "PULLED    Lab 2 (id 61)")))
+              (expect (car pulled-in) :to-equal (file-truename file))
+              (expect (cdr pulled-in) :to-equal "Lab 2")))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file))))
+
+  (it "refuses a row with no Canvas version to pull"
+    (with-current-buffer (test-org-canvas--diff-report-buffer
+                          '((:name "Assignments" :extra ((:kind extra :title "Surprise" :id "99")))))
+      (test-org-canvas--diff-goto-row 'extra)
+      (expect (org-canvas-diff-pull) :to-throw 'user-error))))
+
 (provide 'org-canvas-diff-test)
 ;;; org-canvas-diff-test.el ends here
