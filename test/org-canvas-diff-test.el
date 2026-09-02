@@ -1338,6 +1338,156 @@ The remote updated_at is always newer than the baseline."
                           '((:name "Assignments" :extra ((:kind extra :title "Surprise" :id "99")))))
       (test-org-canvas--diff-goto-row 'extra)
       (expect (org-canvas-diff-pull) :to-throw 'user-error))))
+;;;; Referenced media (issue #102)
+
+(describe "org-canvas--diff-file-references (issue #102)"
+  (it "finds file ids in download links, previews and API endpoints, once each"
+    (expect (org-canvas--diff-file-references
+             (concat "<p><a href=\"https://x.instructure.com/courses/297530/files/31452881/download?wrap=1\""
+                     " data-api-endpoint=\"https://x.instructure.com/api/v1/courses/297530/files/31452881\">a</a>"
+                     "<img src=\"/courses/297530/files/31505590/preview\"></p>"))
+            :to-equal '("31452881" "31505590")))
+
+  (it "ignores paths that are not files"
+    (expect (org-canvas--diff-file-references
+             "<a href=\"/courses/297530/pages/welcome\">p</a> /files/ /filesystem/12")
+            :to-be nil))
+
+  (it "yields nothing for a non-string"
+    (expect (org-canvas--diff-file-references nil) :to-be nil)
+    (expect (org-canvas--diff-file-references :null) :to-be nil)))
+
+(describe "org-canvas--diff-items-references (issue #102)"
+  (it "collects the ids every item's body references, deduplicated"
+    (expect (org-canvas--diff-items-references
+             '(((id . 1) (message . "<img src=\"/files/10/preview\">"))
+               ((id . 2) (message . :null))
+               ((id . 3) (message . "/files/10/download and /files/11/download")))
+             "message")
+            :to-equal '("10" "11"))))
+
+(describe "org-canvas--diff-feature records referenced media (issue #102)"
+  (it "notes the file ids a body feature's items embed"
+    (let ((file (make-temp-file "diff-refs-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file (insert "* Welcome\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"))
+            (let ((org-canvas-announcements-file file))
+              (with-org-canvas-test-config
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (lambda (&rest _)
+                             '(((id . 1) (title . "Welcome")
+                                (message . "<img src=\"/courses/1/files/31452881/preview\">"))))))
+                  (let ((result (org-canvas--diff-feature
+                                 (org-canvas--registry-find-feature "announcements"))))
+                    (expect (plist-get result :referenced-files)
+                            :to-equal '("31452881")))
+                  (let ((org-canvas-diff-scan-references nil))
+                    (expect (plist-get (org-canvas--diff-feature
+                                        (org-canvas--registry-find-feature "announcements"))
+                                       :referenced-files)
+                            :to-be nil))))))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file)))))
+
+(describe "org-canvas--diff-syllabus-references (issue #102)"
+  (it "asks for the syllabus body and scans it"
+    (with-org-canvas-test-config
+      (let ((params nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_method _url &rest args)
+                     (setq params (plist-get args :params))
+                     '((id . 99999)
+                       (syllabus_body . "<a href=\"/courses/99999/files/42/download\">s</a>")))))
+          (expect (org-canvas--diff-syllabus-references) :to-equal '("42")))
+        (expect params :to-equal '(("include[]" . "syllabus_body"))))))
+
+  (it "reads a failure as no references, and says so"
+    (with-org-canvas-test-config
+      (let ((warnings nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _) (error "HTTP 500")))
+                  ((symbol-function 'org-canvas--log-warning)
+                   (lambda (_logger fmt &rest args)
+                     (push (apply #'format fmt args) warnings))))
+          (expect (org-canvas--diff-syllabus-references) :to-be nil))
+        (expect (car warnings) :to-match "Could not read the syllabus")))))
+
+(describe "org-canvas--diff-apply-references (issue #102)"
+  (let ((files-result (lambda ()
+                        (list :name "Files"
+                              :extra (list (list :kind 'extra :title "a.png" :id "31452881")
+                                           (list :kind 'extra :title "b.png" :id "31505590")
+                                           (list :kind 'extra :title "dup.png" :id "31505574"))))))
+
+    (it "moves referenced files out of the extras and counts them"
+      ;; Course 297530: two attachments embedded by announcements, one
+      ;; double upload nothing referenced.  Only the stray should remain.
+      (cl-letf (((symbol-function 'org-canvas--diff-syllabus-references)
+                 (lambda () '("31505590"))))
+        (let* ((results (list (list :name "Announcements"
+                                    :referenced-files '("31452881"))
+                              (funcall files-result)))
+               (files (nth 1 (org-canvas--diff-apply-references results))))
+          (expect (mapcar (lambda (e) (plist-get e :id)) (plist-get files :extra))
+                  :to-equal '("31505574"))
+          (expect (plist-get files :referenced) :to-equal 2)
+          (expect (org-canvas--diff-count results) :to-equal 1))))
+
+    (it "does nothing when the scan is off"
+      (let ((org-canvas-diff-scan-references nil))
+        (cl-letf (((symbol-function 'org-canvas--diff-syllabus-references)
+                   (lambda () (error "Must not be asked"))))
+          (let* ((results (list (list :name "Announcements"
+                                      :referenced-files '("31452881"))
+                                (funcall files-result)))
+                 (files (nth 1 (org-canvas--diff-apply-references results))))
+            (expect (length (plist-get files :extra)) :to-equal 3)
+            (expect (plist-get files :referenced) :to-be nil)))))
+
+    (it "does nothing when Files was excluded or could not be checked"
+      (cl-letf (((symbol-function 'org-canvas--diff-syllabus-references)
+                 (lambda () (error "Must not be asked"))))
+        (expect (org-canvas--diff-apply-references
+                 (list (list :name "Files" :excluded t)))
+                :not :to-throw)
+        (expect (org-canvas--diff-apply-references
+                 (list (list :name "Files" :error "boom")))
+                :not :to-throw)
+        (expect (org-canvas--diff-apply-references
+                 (list (list :name "Pages" :referenced-files '("1"))))
+                :not :to-throw)))))
+
+(describe "org-canvas--diff-render referenced media footer (issue #102)"
+  (it "counts referenced files in the footer"
+    (with-org-canvas-test-config
+      (let ((report (org-canvas--diff-render
+                     '((:name "Files" :referenced 2)))))
+        (expect report :to-match "No drift")
+        (expect report :to-match
+                "Referenced media: 2 unclaimed files embedded in course content (org-canvas-diff-scan-references)"))))
+
+  (it "uses the singular for one"
+    (with-org-canvas-test-config
+      (expect (org-canvas--diff-render '((:name "Files" :referenced 1)))
+              :to-match "Referenced media: 1 unclaimed file embedded"))))
+
+(describe "org-canvas-diff applies the reference scan (issue #102)"
+  (it "excludes referenced files from the divergence count"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas--preflight-check) #'ignore)
+                ((symbol-function 'display-buffer) (lambda (&rest _) nil))
+                ((symbol-function 'org-canvas--diff-syllabus-references) (lambda () nil))
+                ((symbol-function 'org-canvas--diff-feature)
+                 (lambda (feature)
+                   (pcase (plist-get feature :name)
+                     ("Files" (list :name "Files"
+                                    :extra '((:kind extra :title "a.png" :id "31452881")
+                                             (:kind extra :title "dup.png" :id "31505574"))))
+                     ("Announcements" (list :name "Announcements"
+                                            :referenced-files '("31452881")))
+                     (name (list :name name))))))
+        (expect (org-canvas-diff) :to-equal 1)))))
 
 (provide 'org-canvas-diff-test)
 ;;; org-canvas-diff-test.el ends here
