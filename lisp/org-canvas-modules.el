@@ -91,7 +91,8 @@
      :doc "Publish state for this item; omit to keep the linked content's own state")
     (:org-prop "PUBLISH_AT" :data-key :publish_at :type timestamp
      :doc "Release date for this item; overrides the module's own PUBLISH_AT"))
-  :structural-fn #'org-canvas--validate-module-item-link)
+  :structural-fn #'org-canvas--validate-module-item-link
+  :file-fn #'org-canvas--validate-module-item-ids)
 
 ;;;; Helper Functions
 
@@ -688,6 +689,16 @@ Return the matching item alist, or nil if not found."
   (org-canvas--finalize-item data response
     :post-fn #'org-canvas--module-sync-children))
 
+(defun org-canvas--module-item-finalize (data response)
+  "Save the id RESPONSE returned for the module item DATA.
+Items used to go through `org-canvas--module-finalize', whose post-fn
+runs the child sync again with the *item's* id as a module id — a
+harmless no-op while that only collected the item's (nonexistent)
+children, but once the child sync lists the module's items on Canvas
+\(issue #105) it would have asked for the items of a module that does
+not exist, once per item."
+  (org-canvas--finalize-item data response))
+
 ;;;; Bulk Publish
 ;;
 ;; Releasing a week of content is the most repeated action in running a
@@ -1022,14 +1033,169 @@ Each entry is a plist (:module-id ID :marker MARKER :title STRING
 \(`org-canvas--sync-global-counters' non-nil); consumed and cleared by
 `org-canvas--module-retry-pending-items' at the end of the run.")
 
+;;;; Cross-Module Moves
+;;
+;; Canvas offers no way to move an item between modules: the module id
+;; is in the item's URL, so delete-and-create is the only mechanism.
+;; Nothing said what happened when an item's block, drawer and all, was
+;; moved under another heading in modules.org, and an operator
+;; reorganizing a course had to guess — dropping the CANVAS_ID by hand
+;; worked, but only because a PUT against the wrong module 404s and is
+;; retried as a POST, and the old copy stayed behind in the old module
+;; either way (issue #105).  The reconcile below owns the rule: an item
+;; whose id the module does not hold is created here, and an item the
+;; module holds that has moved elsewhere is removed.  An item the
+;; module holds that modules.org does not list at all is left alone and
+;; named — children are not pruned without being asked, as with quiz
+;; questions.
+
+(defvar org-canvas--module-items-moved nil
+  "Item ids recreated under a new module during this sync.
+An item's id is claimed by its heading until that heading is restamped
+with the new id, after which the old module's copy would look like an
+unlisted item; this list keeps the old id recognizable as departed.
+Cleared when the modules sync finishes.")
+
+(defun org-canvas--module-forget-moved ()
+  "Clear `org-canvas--module-items-moved' at the end of a modules sync."
+  (setq org-canvas--module-items-moved nil))
+
+(defun org-canvas--module-remote-items (module-id)
+  "Return the items in module MODULE-ID on Canvas, or `unknown'.
+`unknown', with a warning, when the list request fails: the sync then
+proceeds as it always did, PUT by id, and reconciles nothing."
+  (condition-case err
+      (let ((items (append (org-canvas-api-request-all-pages
+                            'GET (org-canvas-api-course-endpoint "modules/%s/items" module-id))
+                           nil)))
+        ;; Reconcile only against a list that is unmistakably one: every
+        ;; element an object with an id.  Anything else is treated as no
+        ;; answer, since deleting on the strength of a misread would be
+        ;; the worst outcome here.
+        (if (cl-every (lambda (item) (and (consp item) (consp (car item))
+                                          (alist-get 'id item)))
+                      items)
+            items
+          (org-canvas--log-warning org-canvas--logger
+            "[Module Items] Unexpected item list for module %s; moved items will not be reconciled this run"
+            module-id)
+          'unknown))
+    (error
+     (org-canvas--log-warning org-canvas--logger
+       "[Module Items] Could not list the items of module %s (%s); moved items will not be reconciled this run"
+       module-id (error-message-string err))
+     'unknown)))
+
+(defun org-canvas--module-remote-item-ids (remote)
+  "Return the ids in REMOTE, a module's item list, as strings; nil if unknown."
+  (unless (eq remote 'unknown)
+    (mapcar (lambda (item) (format "%s" (alist-get 'id item))) remote)))
+
+(defun org-canvas--module-item-disown-foreign-id (data module-id remote)
+  "Clear DATA's id when module MODULE-ID lacks it, so it is created here.
+REMOTE is the module's item list from `org-canvas--module-remote-items';
+nothing is disowned while it is `unknown'.  The old id is remembered in
+`org-canvas--module-items-moved' so the module it came from can delete
+its copy when it syncs.  Returns the disowned id, or nil."
+  (let ((id (plist-get data :canvas-id)))
+    (when (and id (not (eq remote 'unknown))
+               (not (member (format "%s" id)
+                            (org-canvas--module-remote-item-ids remote))))
+      (org-canvas--log-info org-canvas--logger
+        "[Module Item] '%s' carries item id %s, which module %s does not hold — creating it here; its copy in the old module is removed when that module syncs"
+        (plist-get data :title) id module-id)
+      (push (format "%s" id) org-canvas--module-items-moved)
+      (plist-put data :canvas-id nil)
+      id)))
+
+(defun org-canvas--module-item-claimed-elsewhere (item-id module-pom)
+  "Return the title of another module than MODULE-POM's claiming ITEM-ID.
+Scans the current buffer's level-2 headings; nil when no other
+module's item heading carries ITEM-ID as its CANVAS_ID."
+  (let ((here (save-excursion (goto-char module-pom) (org-back-to-heading t) (point)))
+        (found nil))
+    (save-excursion
+      (org-map-entries
+       (lambda ()
+         (when (and (not found)
+                    (equal (org-entry-get (point) "CANVAS_ID") item-id))
+           (save-excursion
+             (when (and (org-up-heading-safe) (/= (point) here))
+               (setq found (org-get-heading t t t t))))))
+       "LEVEL=2" 'file))
+    found))
+
+(defun org-canvas--module-delete-departed-item (module-id item new-home)
+  "Delete ITEM from module MODULE-ID on Canvas; it now lives in NEW-HOME.
+NEW-HOME is the title of the module whose heading claims it, or nil
+when it was recreated under its new module earlier this run.  Nothing
+is sent during a dry run.  Returns non-nil when the delete went out."
+  (let ((id (alist-get 'id item))
+        (title (or (alist-get 'title item) "?")))
+    (if org-canvas--dry-run
+        (org-canvas--log-info org-canvas--logger
+          "[DRY-RUN] Would remove item %s '%s' from module %s (moved)" id title module-id)
+      (condition-case err
+          (progn
+            (org-canvas-api-request
+             'DELETE (org-canvas-api-course-endpoint "modules/%s/items/%s" module-id id))
+            (org-canvas--log-info org-canvas--logger
+              "[Module Item] Removed item %s '%s' from module %s — it %s"
+              id title module-id
+              (if new-home
+                  (format "now lives in module '%s'" new-home)
+                "was recreated under its new module this run"))
+            t)
+        (error
+         (org-canvas--log-warning org-canvas--logger
+           "[Module Item] Could not remove moved item %s '%s' from module %s: %s"
+           id title module-id (error-message-string err))
+         nil)))))
+
+(defun org-canvas--module-reconcile-departed (module-id module-pom remote claimed)
+  "Remove from module MODULE-ID the items that have moved to another module.
+REMOTE is the module's item list (nothing happens while it is
+`unknown'); CLAIMED the ids the module's own headings at MODULE-POM
+carry after this sync.  An unclaimed remote item is departed when
+another module's heading claims it or when it was recreated elsewhere
+this run; any other unclaimed item is left in place and named.
+Returns the number removed."
+  (let ((removed 0))
+    (unless (eq remote 'unknown)
+      (dolist (item remote)
+        (unless (member (format "%s" (alist-get 'id item)) claimed)
+          (when (org-canvas--module-reconcile-unclaimed-item module-id module-pom item)
+            (cl-incf removed)))))
+    removed))
+
+(defun org-canvas--module-reconcile-unclaimed-item (module-id module-pom item)
+  "Settle unclaimed ITEM of module MODULE-ID against the headings at MODULE-POM.
+Deleted when it has moved — another module's heading claims it, or it
+was recreated elsewhere this run — and otherwise left in place and
+named.  Returns non-nil when it was deleted."
+  (let* ((id (format "%s" (alist-get 'id item)))
+         (new-home (org-canvas--module-item-claimed-elsewhere id module-pom)))
+    (if (or new-home (member id org-canvas--module-items-moved))
+        (org-canvas--module-delete-departed-item module-id item new-home)
+      (org-canvas--log-warning org-canvas--logger
+        "[Module Item] Module %s holds '%s' (item %s) that modules.org does not list — left in place; delete it in Canvas or add a heading for it"
+        module-id (or (alist-get 'title item) "?") id)
+      nil)))
+
 (defun org-canvas--module-sync-items (module-id module-pom modules-file-dir)
   "Sync all items for MODULE-ID starting from MODULE-POM.
 MODULES-FILE-DIR is used for resolving links.
 Items whose linked content has no CANVAS_ID yet count as skips (not
 failures), with titles recorded.  Item outcomes roll into the global
 sync summary under \"Module Items\".
+
+The module's remote item list is fetched once: an item heading whose
+id the module does not hold has moved here from another module and is
+created fresh, and a remote item no heading here claims is removed
+when it has moved elsewhere (issue #105; see Cross-Module Moves).
 Returns (success-count skip-count fail-count)."
   (let ((item-markers (org-canvas--module-collect-item-markers module-pom))
+        (remote (org-canvas--module-remote-items module-id))
         (success-count 0)
         (skip-count 0)
         (fail-count 0)
@@ -1045,6 +1211,7 @@ Returns (success-count skip-count fail-count)."
           (condition-case err
               (let* ((data (org-canvas--module-item-parse-entry modules-file-dir))
                      (item-type (plist-get data :type)))
+                (org-canvas--module-item-disown-foreign-id data module-id remote)
                 ;; Skip items without content ID (except SubHeader and ExternalUrl)
                 (if (and (not (string= item-type "SubHeader"))
                          (not (string= item-type "ExternalUrl"))
@@ -1066,7 +1233,7 @@ Returns (success-count skip-count fail-count)."
                               org-canvas--module-items-pending)))
                   (let* ((payload (org-canvas--module-item-build-payload data position))
                          (response (org-canvas--module-item-push-to-api module-id data payload)))
-                    (org-canvas--module-finalize data response)
+                    (org-canvas--module-item-finalize data response)
                     (setq success-count (1+ success-count))
                     (setq position (1+ position)))))
             (error
@@ -1075,6 +1242,14 @@ Returns (success-count skip-count fail-count)."
                    failed-titles)
              (org-canvas--log-error org-canvas--logger "[FAILED] Item at point %d: %s"
                (marker-position marker) (error-message-string err)))))))
+
+    ;; Whatever the headings claim now — including ids just stamped on
+    ;; items created here — is what this module keeps.
+    (let ((claimed (delq nil (mapcar (lambda (m)
+                                       (with-current-buffer (marker-buffer m)
+                                         (org-entry-get m "CANVAS_ID")))
+                                     item-markers))))
+      (org-canvas--module-reconcile-departed module-id module-pom remote claimed))
 
     ;; Release markers to avoid memory leaks
     (dolist (m item-markers) (set-marker m nil))
@@ -1134,7 +1309,7 @@ as already-synced on the next run."
                   (let* ((position (org-canvas--module-item-position (point)))
                          (payload (org-canvas--module-item-build-payload data position))
                          (response (org-canvas--module-item-push-to-api module-id data payload)))
-                    (org-canvas--module-finalize data response)
+                    (org-canvas--module-item-finalize data response)
                     (save-excursion
                       (goto-char marker)
                       (when (org-up-heading-safe)
@@ -1187,6 +1362,7 @@ clears `org-canvas--module-items-pending'."
   ;; Module attributes alone miss item-level edits — fold an items
   ;; digest into the payload hash so they dirty the module (issue #26).
   :hash-extra #'org-canvas--module-items-digest
+  :after-sync #'org-canvas--module-forget-moved
   :pull-item-fn #'org-canvas--module-pull-item)
 
 ;;;; Delete Functions
