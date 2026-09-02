@@ -224,6 +224,7 @@ CTX is the sync context plist (see `org-canvas--sync-process-entry')."
            (not (org-canvas--sync-remote-drifted-p canvas-id ctx title)))
       (plist-put counters :skip (1+ (plist-get counters :skip)))
       (org-canvas--log-info org-canvas--logger "[Skip] '%s' unchanged" title)
+      (org-canvas--sync-backfill-baseline canvas-id title ctx)
       (message "%s [%d/%d] Skipping '%s' (unchanged)"
         cap-feature progress total-count title))
      (org-canvas--dry-run
@@ -948,14 +949,80 @@ otherwise make every item we just pushed look remotely modified on the
 next run.  It is rounded up to the next whole minute because Org
 timestamps carry no seconds — rounding down would place the header
 before our own pushes and produce exactly those false conflicts.  The
-cost is that a remote edit in the same minute as a push is not seen."
+cost is that a remote edit in the same minute as a push is not seen.
+
+The write is forward-only (`org-canvas--sync-advance-file-header'),
+and single-entry pushes advance the same header (issue #104)."
   (let* ((times (car (plist-get ctx :remote-times)))
          (newest (car (sort (copy-sequence times) #'string>)))
          (time (and newest (org-canvas--parse-iso8601-time newest))))
     (when time
       (with-current-buffer (find-file-noselect sync-file)
-        (org-canvas--pull-write-file-header (time-add time 60))
+        (org-canvas--sync-advance-file-header time)
         (org-canvas--save-buffer)))))
+
+(defun org-canvas--sync-advance-file-header (time)
+  "Move the current buffer's #+LAST_SYNCED header forward to TIME.
+TIME is an Emacs time, normally a remote `updated_at' Canvas has just
+returned; it is rounded up to the next whole minute for the reason
+`org-canvas--sync-write-push-header' gives.  Forward-only: a header
+already at or past that minute is left alone, since a baseline that
+moves backward can only manufacture conflicts.  Returns the stamp
+written, or nil when nothing changed.  Does not save."
+  (let* ((stamp-time (time-add time 60))
+         (stamp (format-time-string "[%Y-%m-%d %a %H:%M]" stamp-time))
+         (new-time (encode-time (org-parse-time-string stamp)))
+         (current (org-canvas--pull-read-file-header))
+         (current-time (and current
+                            (ignore-errors
+                              (encode-time (org-parse-time-string current))))))
+    (when (or (null current-time) (time-less-p current-time new-time))
+      (org-canvas--pull-write-file-header stamp-time)
+      stamp)))
+
+(defun org-canvas--sync-advance-header-from-entry ()
+  "Advance the file header from the CANVAS_UPDATED_AT of the entry at point.
+Called once a single-entry push has been finalized.  A full sync
+writes #+LAST_SYNCED at the end of the run and nothing else did, so a
+file maintained by at-point syncs carried a header weeks behind the
+entries in it — every heading pushed and re-stamped, the first line
+still naming a date 13 days gone (issue #104).  The entry's
+CANVAS_UPDATED_AT is whatever finalize just stamped, so this needs no
+knowledge of which response field the module reads.  Returns the
+stamp written, or nil."
+  (let ((updated (org-canvas--parse-iso8601-time
+                  (org-entry-get (point) "CANVAS_UPDATED_AT"))))
+    (when updated
+      (let ((stamp (org-canvas--sync-advance-file-header updated)))
+        (when stamp
+          (org-canvas--log-info org-canvas--logger
+            "[Finalize] #+LAST_SYNCED advanced to %s" stamp))
+        stamp))))
+
+(defun org-canvas--sync-backfill-baseline (canvas-id title ctx)
+  "Give the unchanged entry at point its own CANVAS_UPDATED_AT, if it has none.
+Called on the skip path once `org-canvas--sync-remote-drifted-p' has
+found CANVAS-ID untouched since the baseline in CTX; TITLE is for the
+log.  An entry synced before CANVAS_UPDATED_AT existed leans on the
+file-level #+LAST_SYNCED header for its baseline, and that header now
+advances on any successful push in the file (issue #104), including
+one that never compared this entry.  The snapshot holds the remote
+`updated_at' this run has just checked against a real baseline, so
+recording it is exactly as sound as the skip itself, and from then on
+the entry judges drift by its own clock.  Nothing is written when the
+entry is already stamped, the snapshot has no entry for it, there was
+no baseline (nothing was proven), or this is a dry run."
+  (let ((remote-updated (plist-get ctx :remote-updated)))
+    (when (and remote-updated
+               (plist-get ctx :baseline)
+               (not org-canvas--dry-run)
+               (null (org-entry-get (point) "CANVAS_UPDATED_AT")))
+      (let ((updated (gethash (format "%s" canvas-id) remote-updated)))
+        (when updated
+          (org-canvas-org-set-property (point) "CANVAS_UPDATED_AT" updated)
+          (org-canvas--log-info org-canvas--logger
+            "[Skip] Recorded CANVAS_UPDATED_AT %s for '%s' from the remote snapshot"
+            updated title))))))
 
 ;;;; 6b. Conflict Detection
 ;;
@@ -1466,6 +1533,7 @@ HASH-EXTRA-FN, when non-nil, is folded into the payload hash
               (progn
                 (funcall finalize-fn data response)
                 (org-canvas-org-set-property (point) org-canvas--prop-payload-hash payload-hash)
+                (org-canvas--sync-advance-header-from-entry)
                 (org-canvas--save-buffer))
             (error
              ;; The push landed; only the stamp died (issue #97).
