@@ -1378,10 +1378,10 @@ unposted ones still drafted.  Return the number posted."
       (cl-incf posted))
     posted))
 
-(defun org-canvas--submissions-describe-push (changes drafts)
-  "Return a one-line summary of CHANGES and DRAFTS for the confirmation."
-  (concat (when changes (format "%d grade change(s)" (length changes)))
-          (when (and changes drafts) " and ")
+(defun org-canvas--submissions-describe-push (diffs drafts)
+  "Return a one-line summary of DIFFS and DRAFTS for the confirmation."
+  (concat (when diffs (format "%d grade change(s)" (length diffs)))
+          (when (and diffs drafts) " and ")
           (when drafts (format "%d comment(s)" (length drafts)))))
 
 ;;;###autoload
