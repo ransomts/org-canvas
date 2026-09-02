@@ -1838,7 +1838,8 @@ Per feature:
 - *EXTRA* -- an item in the course that no Org heading claims.
 - *UNCLAIMED* -- an EXTRA item whose title an unstamped local heading shares.
   That pair is what a create that lost its stamp looks like, and the next sync
-  would create a second item; the line says which property to stamp.
+  would create a second item.  =org-canvas-adopt-at-point= on the heading
+  stamps the id (see [[*Claiming an Unclaimed Item][Claiming an Unclaimed Item]]).
 
 Every property a module registers is compared, so this covers =PUBLISHED=,
 points, due dates, group weights, drop rules and the rest without a separate
@@ -1997,6 +1998,32 @@ sync.  Local edits to that heading are discarded, so it asks first.
 The command works in any course file -- it finds the feature from the file
 you are in.  A content type with no single-item pull (quizzes, outcomes) says
 so and names the whole-file command instead.
+
+** Claiming an Unclaimed Item
+
+=org-canvas-diff= reports an *UNCLAIMED* row when a remote item shares its
+title with a heading that has no Canvas id.  That is what a create that lost
+its stamp looks like -- the POST landed, the id never reached the file -- and
+the next sync would create a second copy students can see.  Put point on the
+heading and run:
+
+#+begin_src
+M-x org-canvas-adopt-at-point
+#+end_src
+
+It lists the feature's items on Canvas and, when exactly one carries the
+heading's title, stamps its id (=CANVAS_ID=, or =CANVAS_URL= for pages) and
+=CANVAS_UPDATED_AT= from the item and drops any =PAYLOAD_HASH=, so the next
+sync updates that item in place and verifies its content rather than taking
+the unchanged skip.  Nothing is sent to Canvas.  Zero or several matches
+refuse -- titles are not unique on Canvas, so with several there is no one
+item to adopt -- and the message names the candidates, including any held
+back because the feature does not manage them (a classic quiz's shadow
+assignment, the front page) or because another heading already claims the id.
+
+This is the same act the duplicate-title guard offers at the moment it blocks
+a create (see [[*Duplicate Titles][Duplicate Titles]]); the command is for
+after the fact, when the stamp died and the guard was never asked.
 
 ** Scoping a Pull to What You Manage
 
@@ -2238,6 +2265,7 @@ These commands delete the item at the current cursor position:
 | =org-canvas-apply-scheduled-releases= | Publish modules and items whose =PUBLISH_AT= has passed |
 | =org-canvas-diff=                 | Report how Canvas differs from the Org files (read-only) |
 | =org-canvas-diff-batch=           | As above, exiting non-zero when drift is found |
+| =org-canvas-adopt-at-point=       | Stamp the heading at point with the Canvas item of the same title (local write only) |
 | =org-canvas-validate=             | Validate all Org files offline (no API calls) |
 | =org-canvas-sync-dry-run=         | Preview what would be synced (no API calls)   |
 | =org-canvas-cleanup-orphans=      | Find and delete orphaned Canvas items         |
@@ -2492,6 +2520,13 @@ Canvas throttles API requests. org-canvas automatically retries on 429 responses
 |---------------------------------+---------+--------------------------------|
 | =org-canvas-rate-limit-retries=   |       3 | Number of retries on 429/403   |
 | =org-canvas-rate-limit-wait=      |      10 | Seconds between retries        |
+| =org-canvas-request-min-interval= |       0 | Minimum seconds between any two requests |
+
+=org-canvas-request-min-interval= spaces requests out *before* a limit is
+hit: with it set, every request waits out whatever remains of the interval
+since the previous one.  It is the built-in form of the =sleep-for= a batch
+script used to wrap around each at-point call, and a gentler answer to a
+throttle than waiting for the 429 (#101).
 
 ** Dry Run
 
