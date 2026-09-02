@@ -1081,5 +1081,50 @@
              (org-canvas--registry-find-feature "files"))
             :to-be 'modified_at)))
 
+(describe "org-canvas--api-pace (issue #101)"
+  (it "sleeps out what remains of the interval since the previous request"
+    (let ((org-canvas-request-min-interval 2)
+          (org-canvas--last-request-time (time-subtract nil 0.5))
+          (slept nil))
+      (cl-letf (((symbol-function 'sleep-for) (lambda (s) (setq slept s))))
+        (org-canvas--api-pace))
+      (expect slept :to-be-greater-than 1.0)
+      (expect slept :to-be-less-than 2.0)))
+
+  (it "does not sleep when the interval has already passed"
+    (let ((org-canvas-request-min-interval 1)
+          (org-canvas--last-request-time (time-subtract nil 5))
+          (slept nil))
+      (cl-letf (((symbol-function 'sleep-for) (lambda (s) (setq slept s))))
+        (org-canvas--api-pace))
+      (expect slept :to-be nil)))
+
+  (it "does not sleep at the default, or before the first request"
+    (let ((slept nil))
+      (cl-letf (((symbol-function 'sleep-for) (lambda (s) (setq slept s))))
+        (let ((org-canvas-request-min-interval 0)
+              (org-canvas--last-request-time (current-time)))
+          (org-canvas--api-pace))
+        (let ((org-canvas-request-min-interval 3)
+              (org-canvas--last-request-time nil))
+          (org-canvas--api-pace)))
+      (expect slept :to-be nil)))
+
+  (it "records the time of each request"
+    (let ((org-canvas-request-min-interval 0)
+          (org-canvas--last-request-time nil))
+      (org-canvas--api-pace)
+      (expect org-canvas--last-request-time :to-be-truthy)))
+
+  (it "runs before every request org-canvas-api-request sends"
+    (with-org-canvas-test-config
+      (let ((org-canvas-request-min-interval 0)
+            (paced nil))
+        (cl-letf (((symbol-function 'org-canvas--api-pace) (lambda () (setq paced t)))
+                  ((symbol-function 'org-canvas--api-execute-with-retry)
+                   (lambda (&rest _) '((id . 1)))))
+          (org-canvas-api-request 'GET "https://example.test/api/v1/x"))
+        (expect paced :to-be t)))))
+
 (provide 'org-canvas-core-api-test)
 ;;; org-canvas-core-api-test.el ends here

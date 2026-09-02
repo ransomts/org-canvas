@@ -5040,7 +5040,7 @@ Returns (COUNTERS . LOG-LINES)."
         (expect (org-canvas--push-guard-duplicate (list :pom 1) :canvas-id "R11" nil)
                 :to-equal 'skip))
       (expect warnings :to-contain "[Duplicate] 'R11' is held by 2 Canvas items (1, 2); cannot adopt one, skipping")
-      (expect (car warnings) :to-match "Skipping 'R11' — Canvas already holds it as id 1, 2; stamp CANVAS_ID or rename")))
+      (expect (car warnings) :to-match "Skipping 'R11' — Canvas already holds it as id 1, 2; adopt it with M-x org-canvas-adopt-at-point (which stamps CANVAS_ID), or rename")))
 
   (it "skips and names the property to stamp for a page"
     (let ((org-canvas-duplicate-title-strategy 'skip)
@@ -5050,7 +5050,7 @@ Returns (COUNTERS . LOG-LINES)."
                  (lambda (_l fmt &rest args) (push (apply #'format fmt args) warnings))))
         (expect (org-canvas--push-guard-duplicate (list :pom 1) :canvas-url "R11" nil)
                 :to-equal 'skip))
-      (expect (car warnings) :to-match "as id r11; stamp CANVAS_URL or rename")))
+      (expect (car warnings) :to-match "as id r11; adopt it with M-x org-canvas-adopt-at-point (which stamps CANVAS_URL), or rename")))
 
   (it "creates when told, saying so"
     (let ((org-canvas-duplicate-title-strategy nil)
@@ -5141,7 +5141,7 @@ Returns (COUNTERS . LOG-LINES)."
         (expect (plist-get counters :skip) :to-equal 1)
         (expect (plist-get counters :success) :to-equal 0)
         (expect (car (plist-get counters :skipped-titles))
-                :to-equal "R11 (already on Canvas; stamp its id or rename)")
+                :to-equal "R11 (already on Canvas; adopt it with org-canvas-adopt-at-point or rename)")
         (expect (car msgs) :to-equal "Assignments [1/1] SKIPPED: 'R11' (title already on Canvas)")))))
 
 (describe "org-canvas--sync-run-pipeline title index (issue #85)"
@@ -5198,7 +5198,7 @@ Returns what `org-canvas--current-remote-titles' was during the push."
              :title nil))
           (expect finalized :to-be nil)
           (expect (car msgs)
-                  :to-equal "Assignment 'R11' not pushed — Canvas already holds this title; stamp its id or rename.")))))
+                  :to-equal "Assignment 'R11' not pushed — Canvas already holds this title; adopt it with M-x org-canvas-adopt-at-point or rename.")))))
 
   (it "words a conflict and a pull"
     (let ((msgs nil))
@@ -5405,6 +5405,45 @@ Returns what `org-canvas--current-remote-titles' was during the push."
                  :title nil)
               (error nil)))
           (expect (car logged) :to-match "\\[Stamp\\].*landed on Canvas"))))))
+
+(describe "org-canvas--adopt-stamp (issue #101)"
+  (it "stamps the id, the clock, and drops the hash"
+    (with-temp-org-buffer
+     "* Lab 1
+:PROPERTIES:
+:PAYLOAD_HASH: deadbeef
+:END:
+"
+     (org-back-to-heading t)
+     (expect (org-canvas--adopt-stamp
+              (point) "CANVAS_ID"
+              '((id . 61) (updated_at . "2026-08-28T12:42:35Z")))
+             :to-equal "61")
+     (expect (org-entry-get (point) "CANVAS_ID") :to-equal "61")
+     (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
+             :to-equal "2026-08-28T12:42:35Z")
+     (expect (org-entry-get (point) "PAYLOAD_HASH") :to-be nil)))
+
+  (it "reads url for CANVAS_URL and an alternate modified field"
+    (with-temp-org-buffer "* Welcome\n"
+      (org-back-to-heading t)
+      (expect (org-canvas--adopt-stamp
+               (point) "CANVAS_URL"
+               '((url . "welcome") (id . 3)
+                 (updated_at . "2026-08-30T00:00:00Z")
+                 (modified_at . "2026-08-28T00:00:00Z"))
+               'modified_at)
+              :to-equal "welcome")
+      (expect (org-entry-get (point) "CANVAS_URL") :to-equal "welcome")
+      (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
+              :to-equal "2026-08-28T00:00:00Z")))
+
+  (it "writes nothing for an item with no id"
+    (with-temp-org-buffer "* Lab 1\n"
+      (org-back-to-heading t)
+      (expect (org-canvas--adopt-stamp (point) "CANVAS_ID" '((title . "x")))
+              :to-be nil)
+      (expect (org-entry-get (point) "CANVAS_ID") :to-be nil))))
 
 (provide 'org-canvas-core-sync-test)
 ;;; org-canvas-core-sync-test.el ends here
