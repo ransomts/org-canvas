@@ -1079,7 +1079,9 @@ the one-line record; Canvas keeps the original."
               (while (and (< (point) end) (looking-at "^- "))
                 (forward-line 1))
               (insert line))
-          (goto-char (org-back-to-heading t))
+          ;; Org 9.6 returns t from `org-back-to-heading', later versions the
+          ;; position; never use its value.
+          (org-back-to-heading t)
           (if (re-search-forward (concat "^" (regexp-quote org-canvas--submissions-draft-heading) "$") end t)
               (progn (beginning-of-line)
                      (insert "** Comments\n" line "\n"))
