@@ -231,7 +231,7 @@ exist: pruning treats the file as the source of truth, and a missing
 file would classify every remote item as an orphan."
   (unless (and file (file-exists-p file))
     (user-error "Cannot prune without %s — every remote item would count as orphaned" file))
-  (with-current-buffer (find-file-noselect file)
+  (with-current-buffer (org-canvas--find-file-noselect file)
     (delq nil
           (org-map-entries
            (lambda ()

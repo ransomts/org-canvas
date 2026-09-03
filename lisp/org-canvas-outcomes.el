@@ -548,7 +548,7 @@ Point must be at the parent group heading."
          file (org-canvas--pull-label-for "outcomes"))
       (unless (file-exists-p file)
         (with-temp-file file (insert "")))
-      (with-current-buffer (find-file-noselect file)
+      (with-current-buffer (org-canvas--find-file-noselect file)
         (dolist (group (org-canvas--pull-sort-items remote-groups))
           (cl-incf group-count)
           (let* ((gid (alist-get 'id group))

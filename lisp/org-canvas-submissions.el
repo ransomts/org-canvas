@@ -321,7 +321,7 @@ module.  Nil when the feature is not loaded."
   "Return the title of the heading in FILE whose CANVAS_ID is ID, or nil.
 Nil as well when FILE is nil or missing."
   (when (and file (file-exists-p file))
-    (with-current-buffer (find-file-noselect file)
+    (with-current-buffer (org-canvas--find-file-noselect file)
       (save-excursion
         (catch 'found
           (org-map-entries
@@ -1316,7 +1316,7 @@ in the file are carried over to the new render."
 Create the submissions directory as needed, and ask before an existing
 file's unpushed score edits are overwritten."
   (org-canvas--submissions-ensure-directory)
-  (let ((buf (find-file-noselect (org-canvas--submissions-file-path assignment-name))))
+  (let ((buf (org-canvas--find-file-noselect (org-canvas--submissions-file-path assignment-name))))
     (with-current-buffer buf
       (unless (derived-mode-p 'org-mode)
         (org-mode))

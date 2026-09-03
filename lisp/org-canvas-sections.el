@@ -171,7 +171,7 @@ local headings whose CANVAS_ID no longer exists on Canvas."
 
       (unless (file-exists-p sections-file)
         (with-temp-file sections-file (insert "")))
-      (with-current-buffer (find-file-noselect sections-file)
+      (with-current-buffer (org-canvas--find-file-noselect sections-file)
         (dolist (section remote-sections)
           (push (number-to-string (alist-get 'id section)) remote-ids)
           (let ((result (org-canvas--pull-sections-upsert section)))
@@ -215,7 +215,7 @@ Returns the CANVAS_ID string, or nil if the link cannot be resolved."
            (heading (match-string 2 link-string))
            (abs-file (expand-file-name file source-dir)))
       (when (file-exists-p abs-file)
-        (with-current-buffer (find-file-noselect abs-file)
+        (with-current-buffer (org-canvas--find-file-noselect abs-file)
           (save-excursion
             (goto-char (point-min))
             (when (re-search-forward
@@ -242,7 +242,7 @@ function turns a link into an ID; this one turns an ID into a link."
                     (format "%s" section-id))))
       (or (and sections-file
                (file-exists-p sections-file)
-               (with-current-buffer (find-file-noselect sections-file)
+               (with-current-buffer (org-canvas--find-file-noselect sections-file)
                  (save-excursion
                    (goto-char (point-min))
                    (let (found name)
@@ -526,7 +526,7 @@ reconciles them with Canvas assignment overrides."
           (total-created 0) (total-updated 0) (total-deleted 0)
           (assignments-processed 0))
 
-      (with-current-buffer (find-file-noselect assignments-file)
+      (with-current-buffer (org-canvas--find-file-noselect assignments-file)
         (let ((markers (org-map-entries (lambda () (point-marker)) "LEVEL=1" 'file)))
           (dolist (marker markers)
             (goto-char (marker-position marker))

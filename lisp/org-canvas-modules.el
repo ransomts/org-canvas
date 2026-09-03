@@ -159,7 +159,7 @@ First tries exact match on HEADING (with Org bracket unescaping).
 Falls back to matching TITLE against `org-get-heading' output, which
 handles Emacs 29/30 differences in link stripping.
 Returns a (CANVAS_ID . CANVAS_URL) cons cell, or nil if not found."
-  (with-current-buffer (find-file-noselect abs-file)
+  (with-current-buffer (org-canvas--find-file-noselect abs-file)
     (save-excursion
       (goto-char (point-min))
       (if heading
@@ -190,7 +190,7 @@ HEADING.  Used to look up file-typed module items in files.org."
   "Find a heading in FILES-ORG whose link target is REL-PATH.
 Returns its CANVAS_ID (string) or nil."
   (let (result)
-    (with-current-buffer (find-file-noselect files-org)
+    (with-current-buffer (org-canvas--find-file-noselect files-org)
       (save-excursion
         (goto-char (point-min))
         (org-map-entries
@@ -731,7 +731,7 @@ on 9.6."
 (defun org-canvas--module-heading-position (abs-file heading title)
   "Return the position of HEADING in ABS-FILE, or nil.
 Falls back to matching TITLE when the exact heading text is not found."
-  (with-current-buffer (find-file-noselect abs-file)
+  (with-current-buffer (org-canvas--find-file-noselect abs-file)
     (save-excursion
       (goto-char (point-min))
       (if heading
@@ -744,7 +744,7 @@ Falls back to matching TITLE when the exact heading text is not found."
 (defun org-canvas--module-file-heading-position (files-org rel-path)
   "Return the position in FILES-ORG of the heading linking to REL-PATH."
   (let (result)
-    (with-current-buffer (find-file-noselect files-org)
+    (with-current-buffer (org-canvas--find-file-noselect files-org)
       (save-excursion
         (goto-char (point-min))
         (org-map-entries
@@ -845,7 +845,7 @@ still in the future, see `org-canvas--module-item-held-p'), or
             title))
      ((null target) (cons 'unresolved title))
      (t
-      (with-current-buffer (find-file-noselect (car target))
+      (with-current-buffer (org-canvas--find-file-noselect (car target))
         (push (current-buffer) (car touched))
         (cons (if (org-canvas--module-set-published (cdr target) state)
                   'changed 'unchanged)
@@ -888,7 +888,7 @@ Saves every file touched.  Returns a plist
   "Return an alist of (TITLE . POSITION) for the modules in modules.org."
   (let ((file (expand-file-name org-canvas-modules-file)))
     (when (file-exists-p file)
-      (with-current-buffer (find-file-noselect file)
+      (with-current-buffer (org-canvas--find-file-noselect file)
         (org-map-entries
          (lambda () (cons (org-get-heading t t t t) (point)))
          "LEVEL=1" 'file)))))
@@ -972,7 +972,7 @@ that module is unpublished."
             (released nil)
             (unresolved nil)
             (hidden nil))
-        (with-current-buffer (find-file-noselect
+        (with-current-buffer (org-canvas--find-file-noselect
                               (expand-file-name org-canvas-modules-file))
           (dolist (entry positions)
             (save-excursion
@@ -1415,7 +1415,7 @@ heading is itself a link."
      (t
       (let ((target (format "%s" content-id))
             rel-path heading-name)
-        (with-current-buffer (find-file-noselect files-org)
+        (with-current-buffer (org-canvas--find-file-noselect files-org)
           (save-excursion
             (goto-char (point-min))
             (org-map-entries
@@ -1450,7 +1450,7 @@ display title."
         (if (not (file-exists-p file-path))
             (or title "Untitled")
           (let ((heading-name nil))
-            (with-current-buffer (find-file-noselect file-path)
+            (with-current-buffer (org-canvas--find-file-noselect file-path)
               (save-excursion
                 (goto-char (point-min))
                 (org-map-entries
@@ -1617,7 +1617,7 @@ ITEM lacks an `items' key."
     (org-canvas--pull-confirm-unsaved file "modules")
     (unless (file-exists-p file)
       (with-temp-file file (insert "")))
-    (with-current-buffer (find-file-noselect file)
+    (with-current-buffer (org-canvas--find-file-noselect file)
       (dolist (mod (org-canvas--pull-sort-items remote))
         (let* ((mid (alist-get 'id mod))
                (mname (alist-get 'name mod))

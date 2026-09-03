@@ -168,7 +168,7 @@ because Canvas rejects drop rules when no assignments exist yet."
   "Return the CANVAS_IDs recorded in `org-canvas-assignment-groups-file'."
   (let ((file (expand-file-name org-canvas-assignment-groups-file)))
     (when (file-exists-p file)
-      (with-current-buffer (find-file-noselect file)
+      (with-current-buffer (org-canvas--find-file-noselect file)
         (save-excursion
           (goto-char (point-min))
           (org-map-entries

@@ -570,7 +570,7 @@ and pushes them to Canvas via PUT /courses/:id."
     (org-canvas--log-info org-canvas--logger ">>> STARTING SETTINGS SYNC")
     (org-canvas--log-info org-canvas--logger "File: %s" settings-file)
     (org-canvas--log-info org-canvas--logger "========================================")
-    (with-current-buffer (find-file-noselect settings-file)
+    (with-current-buffer (org-canvas--find-file-noselect settings-file)
       (save-excursion
         (goto-char (point-min))
         (unless (re-search-forward "^\\*+ " nil t)
@@ -760,7 +760,7 @@ and heading if they don't exist."
       (unless (file-exists-p settings-file)
         (with-temp-file settings-file
           (insert (format "#+TITLE: Settings\n* %s\n" (or name "Course")))))
-      (with-current-buffer (find-file-noselect settings-file)
+      (with-current-buffer (org-canvas--find-file-noselect settings-file)
         (goto-char (point-min))
         (unless (re-search-forward "^\\*+ " nil t)
           (goto-char (point-max))

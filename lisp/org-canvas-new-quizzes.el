@@ -497,7 +497,7 @@ of the quiz payload."
          file (org-canvas--pull-label-for "new-quizzes"))
       (unless (file-exists-p file)
         (with-temp-file file (insert "")))
-      (with-current-buffer (find-file-noselect file)
+      (with-current-buffer (org-canvas--find-file-noselect file)
         (dolist (quiz (org-canvas--pull-sort-items remote))
           (let* ((assignment-id (or (alist-get 'assignment_id quiz)
                                     (alist-get 'id quiz)))

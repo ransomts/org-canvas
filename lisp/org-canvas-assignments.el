@@ -571,7 +571,7 @@ Built lazily on first call, invalidated when the groups file changes.")
   "Build a cache cons (GROUPS-FILE . hash-table) from GROUPS-FILE."
   (let ((cache (make-hash-table :test 'equal)))
     (when (file-exists-p groups-file)
-      (with-current-buffer (find-file-noselect groups-file)
+      (with-current-buffer (org-canvas--find-file-noselect groups-file)
         (save-excursion
           (goto-char (point-min))
           (org-map-entries
