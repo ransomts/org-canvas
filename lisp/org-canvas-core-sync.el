@@ -595,15 +595,19 @@ with ENDPOINT and optional ID-KEY, TITLE-KEY, FIND-FN."
        ,@(when title-key `(:title-key ,title-key))
        ,@(when find-fn `(:find-fn ,find-fn)))))
 
-(defun org-canvas--make-finalize-fn-form (id-field id-property title-key post-fn)
+(defun org-canvas--make-finalize-fn-form (id-field id-property title-key post-fn
+                                                   &optional endpoint)
   "Build a finalize lambda form for endpoint-based sync macros.
 Returns a quoted lambda that calls `org-canvas--finalize-item'
-with optional ID-FIELD, ID-PROPERTY, TITLE-KEY, POST-FN."
+with optional ID-FIELD, ID-PROPERTY, TITLE-KEY, POST-FN.  ENDPOINT
+travels with POST-FN so a post-fn that writes to Canvas again can have
+the baseline re-read from it (issue #124)."
   `(lambda (data response)
      (org-canvas--finalize-item data response
        ,@(when id-field `(:id-field ,id-field))
        ,@(when id-property `(:id-property ,id-property))
        ,@(when title-key `(:title-key ,title-key))
+       ,@(when (and post-fn endpoint) `(:endpoint ,endpoint))
        ,@(when post-fn `(:post-fn ,post-fn)))))
 
 (defun org-canvas--sync-run-pipeline (feature-name sync-file query
@@ -751,7 +755,8 @@ Example usage:
                             (org-canvas--make-finalize-fn-form
                              (plist-get args :id-field)
                              (plist-get args :id-property)
-                             title-key (plist-get args :post-fn)))))
+                             title-key (plist-get args :post-fn)
+                             endpoint))))
          (singular (org-canvas--singularize feature-name))
          (at-point-fn-name (intern (format "org-canvas-sync-%s-at-point" singular))))
     (unless file-expr (error "org-canvas-define-sync: :file is required"))
@@ -1459,13 +1464,67 @@ Returns the API response alist, or one of the symbols `conflict',
         ;; Default: Re-throw
         (t (signal (car err) (cdr err))))))))
 
+(defvar org-canvas--finalize-remote-touched nil
+  "Non-nil when the running finalize post-fn has written to Canvas again.
+Bound around every `:post-fn' call by `org-canvas--finalize-run-post-fn';
+a post-fn sets it through `org-canvas--finalize-note-remote-write'.")
+
+(defun org-canvas--finalize-note-remote-write ()
+  "Declare that the running finalize post-fn has written to Canvas again.
+The push response's timestamp is no longer what Canvas holds, so
+`org-canvas--finalize-run-post-fn' re-reads the item and restamps the
+baseline from it (issue #124)."
+  (setq org-canvas--finalize-remote-touched t))
+
+(defun org-canvas--finalize-restamp-updated (pom endpoint id field title)
+  "Re-read ENDPOINT/ID and stamp its FIELD into CANVAS_UPDATED_AT at POM.
+A post-fn that writes to Canvas again — the rubric association is the
+one that started this — moves the item's timestamp past the stamp
+finalize just wrote from the push response.  The baseline is then
+permanently behind by the length of that write: `org-canvas-diff' calls
+the entry CHANGED with no compared property differing, and the next
+push walks into the conflict check, both over the sync's own doing
+\(issue #124).  One GET, spent only when a post-fn reported a write,
+leaves the heading's baseline equal to what Canvas holds.  A failed
+read is logged and leaves the stamp alone.  TITLE names the entry in
+the log."
+  (when (and endpoint id (not org-canvas--dry-run))
+    (condition-case err
+        (let* ((url (org-canvas-api-course-endpoint (format "%s/%%s" endpoint) id))
+               (updated (alist-get (or field 'updated_at)
+                                   (org-canvas-api-request 'GET url))))
+          (if (not (stringp updated))
+              (org-canvas--log-debug org-canvas--logger
+                "[Finalize] '%s' reports no %s to restamp after its post-sync write"
+                title (or field 'updated_at))
+            (org-canvas-org-set-property pom "CANVAS_UPDATED_AT" updated)
+            (org-canvas--log-info org-canvas--logger
+              "[Finalize] Baseline for '%s' restamped to %s after its post-sync write"
+              title updated)))
+      (error
+       (org-canvas--log-warning org-canvas--logger
+         "[Finalize] Could not re-read '%s' after its post-sync write (%s); the next drift report may report this push as a change"
+         title (error-message-string err))))))
+
+(defun org-canvas--finalize-run-post-fn (post-fn data response pom endpoint id
+                                                 field title)
+  "Call POST-FN with DATA and RESPONSE, then restamp if it wrote to Canvas.
+POM, ENDPOINT, ID, FIELD and TITLE are passed on to
+`org-canvas--finalize-restamp-updated', which runs only when POST-FN
+called `org-canvas--finalize-note-remote-write'."
+  (let ((org-canvas--finalize-remote-touched nil))
+    (funcall post-fn data response)
+    (when org-canvas--finalize-remote-touched
+      (org-canvas--finalize-restamp-updated pom endpoint id field title))))
+
 (cl-defun org-canvas--finalize-item (data response
 					  &key
 					  id-field
 					  id-property
 					  title-key
 					  updated-field
-					  post-fn)
+					  post-fn
+					  endpoint)
   "Finalize sync by saving Canvas ID and LAST_SYNCED.
 
 DATA is the parsed entry plist (must contain :pom).
@@ -1479,6 +1538,11 @@ Keyword arguments:
     (default: \\='updated_at).  Files use \\='modified_at so the baseline
     agrees with what drift detection compares (issue #94).
   POST-FN - Optional function (DATA RESPONSE) for additional finalization.
+  ENDPOINT - API endpoint suffix the item lives under.  Only consulted
+    when POST-FN calls `org-canvas--finalize-note-remote-write': the
+    item is then re-read from it and CANVAS_UPDATED_AT restamped, so a
+    push that associates a rubric does not report itself as drift
+    afterwards (issue #124).
 
 Save the Canvas ID and LAST_SYNCED timestamp to the Org entry."
   (let* ((id-field (or id-field 'id))
@@ -1503,7 +1567,8 @@ Save the Canvas ID and LAST_SYNCED timestamp to the Org entry."
               (org-canvas-org-set-property pom "CANVAS_UPDATED_AT"
                                            (format "%s" updated-at))))
           (when post-fn
-            (funcall post-fn data response))
+            (org-canvas--finalize-run-post-fn post-fn data response pom
+                                              endpoint id updated-field title))
           (org-canvas--log-info org-canvas--logger "[Finalize] Complete for '%s'" title))
       (org-canvas--log-error org-canvas--logger "[Finalize] No ID in response for '%s'!" title)
       (org-canvas--signal 'org-canvas-api-error

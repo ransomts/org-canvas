@@ -537,7 +537,10 @@ whose :use-for-grading and :hide-score-total, when non-nil, travel as
 the association's `use_for_grading' and `hide_score_total' (t or
 `:json-false'); a nil flag is not sent, so Canvas keeps its value.
 Canvas updates the existing association for the pair, so sending the
-flags on every push keeps Org the source of truth (issue #118)."
+flags on every push keeps Org the source of truth (issue #118).
+Returns t when the association was written, nil when it failed —
+the caller reports the write so the item's baseline can be re-read
+from Canvas afterwards (issue #124)."
   (org-canvas--log-info org-canvas--logger "[Rubric] Associating rubric %s with %s %s"
              rubric-id (downcase association-type) item-id)
   (let* ((endpoint (org-canvas-api-course-endpoint "rubric_associations"))
@@ -557,10 +560,12 @@ flags on every push keeps Org the source of truth (issue #118)."
     (condition-case err
         (progn
           (org-canvas-api-request 'POST endpoint :data payload)
-          (org-canvas--log-info org-canvas--logger "[Rubric] Association created"))
+          (org-canvas--log-info org-canvas--logger "[Rubric] Association created")
+          t)
       (error
        (org-canvas--log-warning org-canvas--logger "[Rubric] Association failed: %s" (error-message-string err))
-       (message "WARNING: Rubric association failed for %s: %s" item-id (error-message-string err))))))
+       (message "WARNING: Rubric association failed for %s: %s" item-id (error-message-string err))
+       nil))))
 
 ;;;; 3c. File Upload Infrastructure
 ;;

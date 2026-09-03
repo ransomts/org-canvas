@@ -257,8 +257,11 @@ Returns an alist for the `assignment' key."
 DATA is the parsed discussion plist, RESPONSE is the Canvas API response."
   (let ((rubric-id (plist-get data :rubric-id))
         (discussion-id (alist-get 'id response)))
-    (when rubric-id
-      (org-canvas--associate-rubric discussion-id rubric-id "Discussion"))))
+    (when (and rubric-id
+               (org-canvas--associate-rubric discussion-id rubric-id "Discussion"))
+      ;; The association bumps the topic's updated_at past the stamp
+      ;; finalize just wrote; have it re-read (issue #124).
+      (org-canvas--finalize-note-remote-write))))
 
 ;;;; Main Sync Function
 
