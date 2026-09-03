@@ -50,7 +50,9 @@
 ;; at a non-zero exit.  Three valves, from broad to narrow: a feature's
 ;; `:skip-fn' suppresses scaffolding structurally (counted in the
 ;; footer, the #81 way); `org-canvas-diff-excluded-features' skips a
-;; feature wholesale, printing one line so the exclusion stays visible;
+;; feature wholesale, printing one line so the exclusion stays visible
+;; (its bodies are still read for referenced media, since excluding a
+;; feature from the rows should not blind that scan — #111);
 ;; `org-canvas-diff-known-extras' acknowledges individual ids, counted
 ;; once in the footer — and flagged loudly, and counted as drift, when
 ;; an acknowledged id stops existing, so the list cannot rot.  A fourth
@@ -83,6 +85,9 @@ them, and reporting each one as EXTRA forever buries real drift
 \(issue #98).  Names match the way the registry matches them, so
 \"announcements\" and \"Announcements\" both work.  The report prints
 one line per excluded feature, so the exclusion stays visible.
+An excluded feature that has a body is still listed once, without
+producing rows, so the media its content embeds is recognized rather
+than reported as unclaimed files (issue #111); the line says so.
 Exclusion affects the drift report only."
   :type '(repeat string)
   :group 'org-canvas)
@@ -406,6 +411,47 @@ report still comes out."
        (error-message-string err))
      nil)))
 
+(defun org-canvas--diff-scan-excluded-references (feature props body-api-key)
+  "Return the file ids the BODY-API-KEY bodies of excluded FEATURE reference.
+PROPS is FEATURE's registered property spec.  Excluding a feature from
+the rows must not blind the reference scan (issue #111).  Announcements
+are the case it was written for: the body feature most often authored
+in the web UI and kept out of the report, whose every attached flyer
+lands in Uploaded Media, where it reads as a Files EXTRA that only a
+hand-written `org-canvas-diff-known-extras' entry could quiet.  Costs
+one read-only list request; a failed request is logged and reads as no
+references, so the report still comes out."
+  (condition-case err
+      (org-canvas--diff-items-references
+       (append (org-canvas-api-request-all-pages
+                'GET (org-canvas--feature-list-url feature)
+                (append (org-canvas--feature-list-params feature)
+                        (plist-get props :body-list-params)))
+               nil)
+       body-api-key)
+    (error
+     (org-canvas--log-warning org-canvas--logger
+       "[Diff] Could not read %s for file references: %s"
+       (plist-get feature :name) (error-message-string err))
+     nil)))
+
+(defun org-canvas--diff-excluded-result (feature)
+  "Return the report entry for excluded FEATURE.
+A feature with a body still has its bodies read, so
+`org-canvas--diff-apply-references' can acknowledge the media they
+embed (issue #111); `:references-scanned' records that it happened, so
+the report can say so beside the exclusion line."
+  (let* ((name (plist-get feature :name))
+         (props (org-canvas--diff-find-properties name))
+         (body-api-key (and org-canvas-diff-scan-references
+                            (plist-get props :body-api-key))))
+    (list :name name :excluded t
+          :references-scanned (and body-api-key t)
+          :referenced-files
+          (and body-api-key
+               (org-canvas--diff-scan-excluded-references
+                feature props body-api-key)))))
+
 (defun org-canvas--diff-apply-references (results)
   "Move referenced files out of the Files result's extras in RESULTS.
 Collects every `:referenced-files' the body features recorded, plus
@@ -686,8 +732,11 @@ show up as extra, so without this the report reads as full coverage."
             (err (plist-get result :error)))
         (cond
          ((plist-get result :excluded)
-          (insert (format "%s: not checked (org-canvas-diff-excluded-features)\n\n"
-                          (plist-get result :name))))
+          (insert (format "%s: not checked (org-canvas-diff-excluded-features)%s\n\n"
+                          (plist-get result :name)
+                          (if (plist-get result :references-scanned)
+                              "; bodies read for referenced media only"
+                            ""))))
          (err
           (insert (format "%s: could not check (%s)\n\n"
                           (plist-get result :name) err)))
@@ -994,7 +1043,8 @@ value; its start is the line the verb is on."
 Makes one read-only list request per feature and compares ids, remote
 modification times and the properties each module registers.  Features
 in `org-canvas-diff-excluded-features' are skipped with a visible
-line, and ids in `org-canvas-diff-known-extras' are counted as
+line — their bodies are still read for the media they embed (issue
+#111) — and ids in `org-canvas-diff-known-extras' are counted as
 acknowledged rather than reported (issue #98); with
 `org-canvas-diff-scan-references' on, unclaimed files that course
 content embeds are counted rather than reported too (issue #102).
@@ -1007,7 +1057,7 @@ divergences found, so a batch caller can act on it; see
     (dolist (feature org-canvas--feature-registry)
       (let ((name (plist-get feature :name)))
         (if (org-canvas--diff-feature-excluded-p name)
-            (push (list :name name :excluded t) results)
+            (push (org-canvas--diff-excluded-result feature) results)
           (message "Drift: checking %s..." name)
           (push (org-canvas--diff-feature feature) results))))
     (setq results (org-canvas--diff-apply-references (nreverse results)))

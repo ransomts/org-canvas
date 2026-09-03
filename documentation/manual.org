@@ -1911,7 +1911,12 @@ valves, from broad to narrow:
   #+end_src
 
   The report prints one =not checked= line per excluded feature, so the
-  exclusion stays visible.
+  exclusion stays visible.  An excluded feature that has a body is still
+  listed once -- one read-only request, no rows -- so the media its content
+  embeds is recognized rather than reported as unclaimed files (#111); the
+  =not checked= line says when that happened.  Announcements are the case
+  it was written for: kept out of the report on purpose, and the feature
+  whose every attached flyer lands in Uploaded Media.
 - *Anything else deliberate is acknowledged by id*, with an optional note:
 
   #+begin_src elisp

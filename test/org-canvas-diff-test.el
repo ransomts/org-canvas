@@ -961,9 +961,12 @@ The remote updated_at is always newer than the baseline."
               :to-be-truthy))))
 
 (describe "org-canvas-diff-excluded-features (issue #98)"
-  (it "skips the feature without a request and keeps the count at zero"
+  (it "does not diff the feature and keeps the count at zero"
     (with-org-canvas-test-config
       (let ((org-canvas-diff-excluded-features '("announcements"))
+            ;; The bodies of an excluded feature are still read for the
+            ;; media they embed (issue #111); nothing else is requested.
+            (org-canvas-diff-scan-references nil)
             (checked nil))
         (cl-letf (((symbol-function 'org-canvas--preflight-check) #'ignore)
                   ((symbol-function 'display-buffer) #'ignore)
@@ -980,6 +983,81 @@ The remote updated_at is always newer than the baseline."
     (with-org-canvas-test-config
       (expect (org-canvas--diff-render '((:name "Announcements" :excluded t)))
               :to-match "Announcements: not checked (org-canvas-diff-excluded-features)"))))
+
+(describe "an excluded feature still feeds the reference scan (issue #111)"
+  (it "reads the bodies of an excluded body feature for the media they embed"
+    (with-org-canvas-test-config
+      (let ((requested nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (_method url &rest _args)
+                     (push url requested)
+                     '(((id . 1812713) (title . "Week 1")
+                        (message . "<a class=\"instructure_file_link\" href=\"/courses/1/files/31505590/download\">flyer</a>"))))))
+          (let ((result (org-canvas--diff-excluded-result
+                         (org-canvas--registry-find-feature "announcements"))))
+            (expect (plist-get result :excluded) :to-be t)
+            (expect (plist-get result :referenced-files) :to-equal '("31505590"))
+            (expect (plist-get result :references-scanned) :to-be t)
+            (expect (length requested) :to-equal 1))))))
+
+  (it "spends no request on an excluded feature with no body to read"
+    (with-org-canvas-test-config
+      (let ((called nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (&rest _) (setq called t) nil)))
+          (let ((result (org-canvas--diff-excluded-result
+                         (org-canvas--registry-find-feature "files"))))
+            (expect called :to-be nil)
+            (expect (plist-get result :references-scanned) :to-be nil)
+            (expect (plist-get result :referenced-files) :to-be nil))))))
+
+  (it "spends no request when the reference scan is off"
+    (with-org-canvas-test-config
+      (let ((called nil)
+            (org-canvas-diff-scan-references nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (&rest _) (setq called t) nil)))
+          (expect (plist-get (org-canvas--diff-excluded-result
+                              (org-canvas--registry-find-feature "announcements"))
+                             :references-scanned)
+                  :to-be nil)
+          (expect called :to-be nil)))))
+
+  (it "reads as no references when the list request fails"
+    (with-org-canvas-test-config
+      (let ((warned nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (&rest _) (signal 'error '("HTTP 500"))))
+                  ((symbol-function 'org-canvas--log-warning)
+                   (lambda (_logger fmt &rest args)
+                     (push (apply #'format fmt args) warned))))
+          (let ((result (org-canvas--diff-excluded-result
+                         (org-canvas--registry-find-feature "announcements"))))
+            (expect (plist-get result :referenced-files) :to-be nil)
+            (expect (plist-get result :references-scanned) :to-be t)
+            (expect (car warned) :to-match "for file references"))))))
+
+  (it "acknowledges a file only an excluded feature's body embeds"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas--diff-syllabus-references)
+                 (lambda () nil)))
+        (let* ((results (list (list :name "Files"
+                                    :extra (list (list :kind 'extra :id "31505590")
+                                                 (list :kind 'extra :id "999")))
+                              (list :name "Announcements" :excluded t
+                                    :references-scanned t
+                                    :referenced-files '("31505590"))))
+               (files (car (org-canvas--diff-apply-references results))))
+          (expect (plist-get files :referenced) :to-equal 1)
+          (expect (mapcar (lambda (e) (plist-get e :id))
+                          (plist-get files :extra))
+                  :to-equal '("999"))))))
+
+  (it "says on the exclusion line that the bodies were read anyway"
+    (with-org-canvas-test-config
+      (expect (org-canvas--diff-render
+               '((:name "Announcements" :excluded t :references-scanned t)))
+              :to-match "not checked (org-canvas-diff-excluded-features); bodies read for referenced media only"))))
 
 (describe "org-canvas-diff-known-extras (issue #98)"
   (defun test-ack-98--files (known remote)
