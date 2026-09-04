@@ -649,6 +649,150 @@
        (expect (car post-fn-called-with) :to-equal data)
        (expect (cadr post-fn-called-with) :to-equal response)))))
 
+(describe "org-canvas--finalize-item restamps after a post-fn write (issue #124)"
+  (it "re-reads the item and stamps what Canvas holds after the association"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer
+       "* Essay
+:PROPERTIES:
+:END:
+"
+       (org-back-to-heading)
+       (let ((urls nil))
+         (cl-letf (((symbol-function 'org-canvas-api-request)
+                    (lambda (_method url &rest _args)
+                      (push url urls)
+                      '((id . 2497349) (updated_at . "2026-09-02T14:07:34Z")))))
+           (org-canvas--finalize-item
+            (list :title "Essay" :pom (point-marker))
+            '((id . 2497349) (updated_at . "2026-09-02T14:07:31Z"))
+            :endpoint "assignments"
+            :post-fn (lambda (_d _r) (org-canvas--finalize-note-remote-write))))
+         (expect (length urls) :to-equal 1)
+         (expect (car urls) :to-match "assignments/2497349")
+         ;; The push response's stamp was three seconds behind what the
+         ;; association left on Canvas; the baseline follows Canvas.
+         (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
+                 :to-equal "2026-09-02T14:07:34Z")))))
+
+  (it "spends no request when the post-fn wrote nothing"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer
+       "* Essay
+:PROPERTIES:
+:END:
+"
+       (org-back-to-heading)
+       (let ((called nil))
+         (cl-letf (((symbol-function 'org-canvas-api-request)
+                    (lambda (&rest _) (setq called t) nil)))
+           (org-canvas--finalize-item
+            (list :title "Essay" :pom (point-marker))
+            '((id . 7) (updated_at . "2026-09-02T14:07:31Z"))
+            :endpoint "assignments"
+            :post-fn #'ignore))
+         (expect called :to-be nil)
+         (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
+                 :to-equal "2026-09-02T14:07:31Z")))))
+
+  (it "spends no request when the module named no endpoint"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer
+       "* Topic
+:PROPERTIES:
+:END:
+"
+       (org-back-to-heading)
+       (let ((called nil))
+         (cl-letf (((symbol-function 'org-canvas-api-request)
+                    (lambda (&rest _) (setq called t) nil)))
+           (org-canvas--finalize-item
+            (list :title "Topic" :pom (point-marker))
+            '((id . 7) (updated_at . "2026-09-02T14:07:31Z"))
+            :post-fn (lambda (_d _r) (org-canvas--finalize-note-remote-write))))
+         (expect called :to-be nil)))))
+
+  (it "keeps the stamp it has when the re-read fails"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer
+       "* Essay
+:PROPERTIES:
+:END:
+"
+       (org-back-to-heading)
+       (let ((warned nil))
+         (cl-letf (((symbol-function 'org-canvas-api-request)
+                    (lambda (&rest _) (signal 'error '("HTTP 500"))))
+                   ((symbol-function 'org-canvas--log-warning)
+                    (lambda (_logger fmt &rest args)
+                      (push (apply #'format fmt args) warned))))
+           (org-canvas--finalize-item
+            (list :title "Essay" :pom (point-marker))
+            '((id . 7) (updated_at . "2026-09-02T14:07:31Z"))
+            :endpoint "assignments"
+            :post-fn (lambda (_d _r) (org-canvas--finalize-note-remote-write))))
+         (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
+                 :to-equal "2026-09-02T14:07:31Z")
+         (expect (car warned) :to-match "may report this push as a change")))))
+
+  (it "leaves the stamp alone when the re-read carries no timestamp"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer
+       "* Essay
+:PROPERTIES:
+:END:
+"
+       (org-back-to-heading)
+       (cl-letf (((symbol-function 'org-canvas-api-request)
+                  (lambda (&rest _) '((id . 7)))))
+         (org-canvas--finalize-item
+          (list :title "Essay" :pom (point-marker))
+          '((id . 7) (updated_at . "2026-09-02T14:07:31Z"))
+          :endpoint "assignments"
+          :post-fn (lambda (_d _r) (org-canvas--finalize-note-remote-write))))
+       (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
+               :to-equal "2026-09-02T14:07:31Z"))))
+
+  (it "reads the field the feature tracks, not always updated_at"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer
+       "* Handout
+:PROPERTIES:
+:END:
+"
+       (org-back-to-heading)
+       (cl-letf (((symbol-function 'org-canvas-api-request)
+                  (lambda (&rest _)
+                    '((id . 7) (updated_at . "2026-09-02T15:00:00Z")
+                      (modified_at . "2026-09-02T14:00:00Z")))))
+         (org-canvas--finalize-item
+          (list :title "Handout" :pom (point-marker))
+          '((id . 7) (modified_at . "2026-09-02T13:00:00Z"))
+          :endpoint "files"
+          :updated-field 'modified_at
+          :post-fn (lambda (_d _r) (org-canvas--finalize-note-remote-write))))
+       (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
+               :to-equal "2026-09-02T14:00:00Z"))))
+
+  (it "writes nothing during a dry run"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer
+       "* Essay
+:PROPERTIES:
+:END:
+"
+       (org-back-to-heading)
+       (let ((called nil)
+             (org-canvas--dry-run t))
+         (cl-letf (((symbol-function 'org-canvas-api-request)
+                    (lambda (&rest _) (setq called t) nil)))
+           (org-canvas--finalize-item
+            (list :title "Essay" :pom (point-marker))
+            '((id . 7) (updated_at . "2026-09-02T14:07:31Z"))
+            :endpoint "assignments"
+            :post-fn (lambda (_d _r) (org-canvas--finalize-note-remote-write))))
+         (expect called :to-be nil))))))
+
 ;;;; 27. org-canvas--push-to-api nested recovery
 
 (describe "org-canvas--push-to-api nested recovery"
@@ -2546,7 +2690,16 @@ Keep this too
 
   (it "includes post-fn when provided"
     (let ((form (org-canvas--make-finalize-fn-form nil nil nil '#'my-post)))
-      (expect (format "%S" form) :to-match "my-post"))))
+      (expect (format "%S" form) :to-match "my-post")))
+
+  (it "carries the endpoint alongside a post-fn, for the restamp (issue #124)"
+    (let ((form (org-canvas--make-finalize-fn-form nil nil nil '#'my-post
+                                                   "assignments")))
+      (expect (format "%S" form) :to-match ":endpoint \"assignments\"")))
+
+  (it "leaves the endpoint out when there is no post-fn to restamp after"
+    (let ((form (org-canvas--make-finalize-fn-form nil nil nil nil "pages")))
+      (expect (format "%S" form) :not :to-match ":endpoint"))))
 
 ;;;; Runtime sync pipeline
 

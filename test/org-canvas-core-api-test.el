@@ -774,9 +774,15 @@
       (spy-on 'org-canvas--log-warning)
       (cl-letf (((symbol-function 'org-canvas-api-request)
                  (lambda (&rest _) (error "Network error"))))
-        (org-canvas--associate-rubric "42" "99" "Assignment")
+        (expect (org-canvas--associate-rubric "42" "99" "Assignment") :to-be nil)
         (expect 'message :to-have-been-called-with
                 "WARNING: Rubric association failed for %s: %s" "42" "Network error")))))
+
+(describe "org-canvas--associate-rubric return value (issue #124)"
+  (it "answers t when the association was written"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (expect (org-canvas--associate-rubric "42" "99" "Assignment") :to-be t)))))
 
 (describe "org-canvas--upload-file"
   (it "errors when Canvas returns no upload_url"
