@@ -513,14 +513,17 @@ DATA is the parsed assignment plist, RESPONSE is the Canvas API response."
       (org-canvas--log-warning org-canvas--logger
         "[Verify] '%s': assignment_group_id mismatch! Expected %s, got %s"
         (plist-get data :title) expected-group actual-group)))
-  ;; Associate rubric, carrying the grading flags so a push keeps them
+  ;; Associate rubric, carrying the grading flags so a push keeps them.
+  ;; Canvas touches the assignment for the association, so the write is
+  ;; reported and finalize re-reads updated_at from it (issue #124).
   (let ((rubric-id (plist-get data :rubric-id))
         (assignment-id (alist-get 'id response)))
-    (when rubric-id
-      (org-canvas--assignment-associate-rubric
-       assignment-id rubric-id
-       (list :use-for-grading (plist-get data :rubric-use-for-grading)
-             :hide-score-total (plist-get data :rubric-hide-score-total))))))
+    (when (and rubric-id
+               (org-canvas--assignment-associate-rubric
+                assignment-id rubric-id
+                (list :use-for-grading (plist-get data :rubric-use-for-grading)
+                      :hide-score-total (plist-get data :rubric-hide-score-total))))
+      (org-canvas--finalize-note-remote-write))))
 
 ;;;; Main Sync Function
 
