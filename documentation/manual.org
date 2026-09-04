@@ -1094,6 +1094,17 @@ The 4th column is backward compatible---3-column tables work as before.  When pr
 
 Tables without =>=  rows use the default 2-level rating (Full Marks / No Marks).
 
+*** Updates Keep the Canvas Rubric
+
+A rubric heading that carries a =CANVAS_ID= is *updated in place*: the id, the
+assignment associations that point at it, and the rubric assessments already
+recorded against it all survive the push (#123).  A rubric is created only
+when the heading has no id; if Canvas already holds one under the same title,
+the duplicate-title guard offers to adopt it rather than replacing it.  Should
+Canvas ever answer an update with a different rubric id, the log says so and
+names what to do -- the assignments whose =RUBRIC_LINK= points here need
+another push to re-associate.
+
 *** Multi-Level Ratings
 
 To define custom rating levels per criterion, add rows prefixed with => = after the criterion row:

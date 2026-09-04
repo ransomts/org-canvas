@@ -331,62 +331,49 @@ Returns total points across all criteria."
 
 ;;;; 3. Stage: Execution
 
-(defun org-canvas--rubric-delete-by-id (id)
-  "Delete rubric with ID from Canvas."
-  (org-canvas--log-info org-canvas--logger "[Stage 3: Delete] Deleting rubric ID: %s" id)
-  (let ((endpoint (org-canvas-api-course-endpoint "rubrics/%s" id)))
-    (org-canvas-api-request 'DELETE endpoint)
-    (org-canvas--log-info org-canvas--logger "[Stage 3: Delete] Successfully deleted rubric ID: %s" id)))
+(defun org-canvas--rubric-find-by-title (title)
+  "Return the Canvas rubric titled TITLE, or nil."
+  (org-canvas--search-item "rubrics" title))
 
 (defun org-canvas--rubric-push-to-api (data payload)
-  "Send PAYLOAD (using DATA title) to Canvas API.
-Checks for existing rubric with same title and deletes
-it before creating new one."
-  (let* ((title (plist-get data :title))
-         (endpoint (org-canvas-api-course-endpoint "rubrics")))
+  "Send PAYLOAD (using DATA title) to Canvas, updating in place when known.
 
-    (org-canvas--log-info org-canvas--logger "[Stage 3: Execute] Starting push for rubric '%s'" title)
-
-    ;; Check for existing rubric with same title
-    (let ((existing (org-canvas--search-item "rubrics" title :params nil)))
-      (when existing
-        (let ((existing-id (alist-get 'id existing)))
-          (org-canvas--log-warning org-canvas--logger "[Stage 3: Conflict] Rubric '%s' already exists (ID: %s). Deleting..." title existing-id)
-          (condition-case err
-              (org-canvas--rubric-delete-by-id existing-id)
-            (error
-             (org-canvas--log-error org-canvas--logger "[Stage 3: Conflict] Failed to delete existing rubric (may be in use): %s" (error-message-string err)))))))
-
-    (org-canvas--log-info org-canvas--logger "[Stage 3: Execute] POST Rubric '%s' to %s" title endpoint)
-
-    (condition-case err
-        (let ((response (org-canvas-api-request 'POST endpoint :data payload)))
-          (org-canvas--log-info org-canvas--logger "[Stage 3: Execute] POST successful for '%s'" title)
-          response)
-      (error
-       (org-canvas--log-error org-canvas--logger "[Stage 3: Execute] POST failed: %s" (error-message-string err))
-       (if (org-canvas--timeout-error-p err)
-           (org-canvas--handle-timeout-recovery
-            (lambda (t_) (org-canvas--search-item "rubrics" t_ :params nil)) title err)
-         (signal (car err) (cdr err)))))))
+A rubric used to be pushed by deleting whatever carried its title and
+POSTing a fresh one.  That silently dropped every assignment
+association — the associations belong to the old rubric id and go down
+with it, taking the rubric assessments students had already been
+graded with (issue #123).  A heading that carries a CANVAS_ID is now
+PUT to `rubrics/ID', which keeps the id, its associations and its
+assessments; only a heading without one creates, and a title Canvas
+already holds is offered for adoption by the duplicate-title guard
+rather than deleted (issue #85).  A stale id 404s and retries as a
+POST, as everywhere else."
+  (org-canvas--push-to-api data payload
+    :endpoint "rubrics"
+    :find-fn #'org-canvas--rubric-find-by-title))
 
 ;;;; 4. Stage: Finalization
 
+(defun org-canvas--rubric-warn-recreated (data id)
+  "Warn when Canvas answered a rubric update with a different id than ID.
+DATA is the parsed rubric plist.  An update keeps the id; a new one
+means the old rubric is gone, and the assignment associations that
+pointed at it went with it, so the assignments linking this rubric
+have to be pushed again to re-associate (issue #123)."
+  (let ((previous (plist-get data :canvas-id)))
+    (when (and previous id (not (equal (format "%s" id) (format "%s" previous))))
+      (org-canvas--log-warning org-canvas--logger
+        "[Stage 4: Finalize] Rubric '%s' came back as id %s, not %s: any assignment associated with %s lost it — re-push the assignments whose RUBRIC_LINK names this rubric"
+        (plist-get data :title) id previous previous))))
+
 (defun org-canvas--rubric-finalize (data response)
-  "Update local Org file with CANVAS_ID using DATA and RESPONSE."
+  "Update local Org file with CANVAS_ID using DATA and RESPONSE.
+Canvas answers a rubric write with the rubric under a `rubric' key,
+so RESPONSE is unwrapped before the shared finalize sees it."
   (org-canvas--log-debug org-canvas--logger "[Stage 4: Finalize] Processing response...")
-
-  (let* ((rubric-data (or (alist-get 'rubric response) response))
-         (id (alist-get 'id rubric-data))
-         (pom (plist-get data :pom))
-         (title (plist-get data :title)))
-
-    (if id
-        (progn
-          (org-canvas--log-info org-canvas--logger "[Stage 4: Finalize] Saving CANVAS_ID=%s for '%s'" id title)
-          (org-canvas-org-save-sync-state pom id "CANVAS_ID")
-          (org-canvas--log-info org-canvas--logger "[Stage 4: Finalize] Complete for '%s'" title))
-      (org-canvas--log-warning org-canvas--logger "[Stage 4: Finalize] No ID in response for '%s'! Keys: %S" title (mapcar #'car response)))))
+  (let ((rubric-data (or (alist-get 'rubric response) response)))
+    (org-canvas--rubric-warn-recreated data (alist-get 'id rubric-data))
+    (org-canvas--finalize-item data rubric-data)))
 
 ;;;; Main Sync Functions
 
