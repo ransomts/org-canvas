@@ -329,13 +329,6 @@ This is a longer description of the criterion.
 
 ;;;; Stage 3: Push to API (mocked)
 
-(describe "org-canvas--rubric-delete-by-id (mocked)"
-  (it "calls DELETE on rubrics endpoint"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (org-canvas--rubric-delete-by-id "12345")
-        (expect-api-called 'DELETE "rubrics/12345")))))
-
 (describe "org-canvas--rubric-push-to-api (mocked)"
   (it "uses POST to create rubric"
     (with-org-canvas-test-config
@@ -345,93 +338,87 @@ This is a longer description of the criterion.
           (org-canvas--rubric-push-to-api data payload)
           (expect-api-called 'POST "rubrics")))))
 
-  (it "deletes existing rubric with same title before creating"
+  (it "updates a known rubric in place, without deleting anything (issue #123)"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (let ((data '(:title "Existing Rubric" :canvas-id "133477"))
+              (payload (make-hash-table))
+              (org-canvas-detect-conflicts nil))
+          (org-canvas--rubric-push-to-api data payload)
+          (expect-api-called 'PUT "rubrics/133477")
+          (expect (test-org-canvas-api-called-p 'DELETE "rubrics/133477")
+                  :to-be nil)))))
+
+  (it "does not delete a rubric Canvas already holds under the same title"
     (with-org-canvas-test-config
       (with-mock-api
         (setq test-org-canvas-api-responses
               '(("rubrics$" . [((id . 555) (title . "Duplicate Rubric"))])))
+        ;; No :pom, so the duplicate guard stays out of it; what matters
+        ;; is that nothing is destroyed on the way to the create.
         (let ((data '(:title "Duplicate Rubric"))
               (payload (make-hash-table)))
           (org-canvas--rubric-push-to-api data payload)
-          (expect-api-called 'DELETE "rubrics/555")
+          (expect (test-org-canvas-api-called-p 'DELETE "rubrics/555")
+                  :to-be nil)
           (expect-api-called 'POST "rubrics")))))
+
+  (it "retries a stale id as a create"
+    (with-org-canvas-test-config
+      (let ((methods nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest _args)
+                     (push (cons method url) methods)
+                     (cond
+                      ((eq method 'PUT) (signal 'error '("HTTP 404 Not Found")))
+                      (t '((id . 138234) (title . "Gone Rubric")))))))
+          (let ((data '(:title "Gone Rubric" :canvas-id "133477"))
+                (payload (make-hash-table))
+                (org-canvas-detect-conflicts nil))
+            (expect (alist-get 'id (org-canvas--rubric-push-to-api data payload))
+                    :to-equal 138234)
+            (expect (cl-find 'DELETE methods :key #'car) :to-be nil))))))
 
   (it "recovers from timeout by searching for created rubric"
     (with-org-canvas-test-config
-      (let ((call-count 0))
-        (cl-letf (((symbol-function 'org-canvas-api-request)
-                   (lambda (method url &rest _args)
-                     (setq call-count (1+ call-count))
-                     (cond
-                      ((and (eq method 'GET) (= call-count 1))
-                       [])
-                      ((eq method 'POST)
-                       (signal 'error '("Timeout waiting for response")))
-                      ((and (eq method 'GET) (>= call-count 3))
-                       [((id . 999) (title . "Timeout Rubric"))])
-                      (t nil)))))
-          (let ((data '(:title "Timeout Rubric"))
-                (payload (make-hash-table)))
-            (let ((result (org-canvas--rubric-push-to-api data payload)))
-              (expect (alist-get 'id result) :to-equal 999)))))))
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (method _url &rest _args)
+                   (cond
+                    ((eq method 'POST)
+                     (signal 'error '("Timeout waiting for response")))
+                    ((eq method 'GET)
+                     [((id . 999) (title . "Timeout Rubric"))])
+                    (t nil)))))
+        (let ((data '(:title "Timeout Rubric"))
+              (payload (make-hash-table)))
+          (let ((result (org-canvas--rubric-push-to-api data payload)))
+            (expect (alist-get 'id result) :to-equal 999))))))
 
   (it "signals non-timeout errors"
     (with-org-canvas-test-config
-      (let ((call-count 0))
-        (cl-letf (((symbol-function 'org-canvas-api-request)
-                   (lambda (method _url &rest _args)
-                     (setq call-count (1+ call-count))
-                     (cond
-                      ((and (eq method 'GET) (= call-count 1))
-                       [])
-                      ((eq method 'POST)
-                       (signal 'error '("Bad Request: Invalid rubric")))
-                      (t nil)))))
-          (let ((data '(:title "Bad Rubric"))
-                (payload (make-hash-table)))
-            (expect (org-canvas--rubric-push-to-api data payload)
-                    :to-throw 'error))))))
-
-  (it "continues after failing to delete existing rubric"
-    (with-org-canvas-test-config
-      (let ((call-count 0)
-            (delete-called nil))
-        (cl-letf (((symbol-function 'org-canvas-api-request)
-                   (lambda (method url &rest _args)
-                     (setq call-count (1+ call-count))
-                     (cond
-                      ((and (eq method 'GET) (= call-count 1))
-                       [((id . 111) (title . "In Use Rubric"))])
-                      ((eq method 'DELETE)
-                       (setq delete-called t)
-                       (signal 'error '("Rubric is in use and cannot be deleted")))
-                      ((eq method 'POST)
-                       '((id . 222) (title . "In Use Rubric")))
-                      (t nil)))))
-          (let ((data '(:title "In Use Rubric"))
-                (payload (make-hash-table)))
-            (let ((result (org-canvas--rubric-push-to-api data payload)))
-              (expect delete-called :to-be t)
-              (expect (alist-get 'id result) :to-equal 222)))))))
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (method _url &rest _args)
+                   (cond
+                    ((eq method 'POST)
+                     (signal 'error '("Bad Request: Invalid rubric")))
+                    (t nil)))))
+        (let ((data '(:title "Bad Rubric"))
+              (payload (make-hash-table)))
+          (expect (org-canvas--rubric-push-to-api data payload)
+                  :to-throw 'error)))))
 
   (it "signals error when timeout recovery finds no rubric"
     (with-org-canvas-test-config
-      (let ((call-count 0))
-        (cl-letf (((symbol-function 'org-canvas-api-request)
-                   (lambda (method _url &rest _args)
-                     (setq call-count (1+ call-count))
-                     (cond
-                      ((and (eq method 'GET) (= call-count 1))
-                       [])
-                      ((eq method 'POST)
-                       (signal 'error '("Timeout waiting for response")))
-                      ((and (eq method 'GET) (>= call-count 3))
-                       nil)
-                      (t nil)))))
-          (let ((data '(:title "Lost Rubric"))
-                (payload (make-hash-table)))
-            (expect (org-canvas--rubric-push-to-api data payload)
-                    :to-throw 'error))))))
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (method _url &rest _args)
+                   (cond
+                    ((eq method 'POST)
+                     (signal 'error '("Timeout waiting for response")))
+                    (t nil)))))
+        (let ((data '(:title "Lost Rubric"))
+              (payload (make-hash-table)))
+          (expect (org-canvas--rubric-push-to-api data payload)
+                  :to-throw 'error)))))
 
   (it "sends a CREATE body reflecting the org rubric title and criteria"
     (let ((temp-dir (make-temp-file "rubrics-test" t)))
@@ -764,7 +751,7 @@ This is a longer description of the criterion.
        (org-canvas--rubric-finalize data response)
        (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil))))
 
-  (it "does not save CANVAS_ID when response has no id"
+  (it "signals, and saves nothing, when the response has no id"
     (with-temp-org-buffer
      "* No ID Rubric
 :PROPERTIES:
@@ -777,8 +764,52 @@ This is a longer description of the criterion.
      (org-back-to-heading)
      (let ((data (list :title "No ID Rubric" :pom (point-marker)))
            (response '((error . "something went wrong"))))
-       (org-canvas--rubric-finalize data response)
-       (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)))))
+       (expect (org-canvas--rubric-finalize data response)
+               :to-throw 'org-canvas-api-error)
+       (expect (org-entry-get (point) "CANVAS_ID") :to-be nil))))
+
+  (it "warns when Canvas answers an update with a different rubric (issue #123)"
+    (with-temp-org-buffer
+     "* Moved Rubric
+:PROPERTIES:
+:CANVAS_ID: 133477
+:END:
+** Item :5pt:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Full Marks | 5 | |
+"
+     (org-back-to-heading)
+     (let ((warnings nil))
+       (cl-letf (((symbol-function 'org-canvas--log-warning)
+                  (lambda (_logger fmt &rest args)
+                    (push (apply #'format fmt args) warnings))))
+         (org-canvas--rubric-finalize
+          (list :title "Moved Rubric" :canvas-id "133477" :pom (point-marker))
+          '((rubric . ((id . 138234))))))
+       (expect (org-entry-get (point) "CANVAS_ID") :to-equal "138234")
+       (expect (car warnings) :to-match "re-push the assignments"))))
+
+  (it "says nothing when the update kept the id"
+    (with-temp-org-buffer
+     "* Kept Rubric
+:PROPERTIES:
+:CANVAS_ID: 133477
+:END:
+** Item :5pt:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Full Marks | 5 | |
+"
+     (org-back-to-heading)
+     (let ((warnings nil))
+       (cl-letf (((symbol-function 'org-canvas--log-warning)
+                  (lambda (_logger fmt &rest args)
+                    (push (apply #'format fmt args) warnings))))
+         (org-canvas--rubric-finalize
+          (list :title "Kept Rubric" :canvas-id "133477" :pom (point-marker))
+          '((rubric . ((id . 133477))))))
+       (expect warnings :to-be nil)))))
 
 ;;;; Pull Function Tests (new format)
 
