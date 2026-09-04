@@ -148,7 +148,7 @@ ID-PROPERTY defaults to \"CANVAS_ID\"."
   (let ((id-prop (or id-property "CANVAS_ID")))
     (when (and file (file-exists-p file))
       (org-canvas--log-info org-canvas--logger "Cleaning local properties...")
-      (with-current-buffer (find-file-noselect file)
+      (with-current-buffer (org-canvas--find-file-noselect file)
         (org-map-entries
          (lambda ()
            (org-canvas--log-debug org-canvas--logger "Removing properties for: %s"
@@ -177,6 +177,23 @@ keep Emacs's own protection and are left alone."
         "[Fresh] %s changed on disk; rereading it before writing"
         (file-name-nondirectory buffer-file-name))
       (revert-buffer t t t))))
+
+(defun org-canvas--find-file-noselect (file)
+  "Visit FILE and return its buffer, without the batch supersession prompt.
+`find-file-noselect' asks \"File ... changed on disk.  Reread from
+disk?\" when a file it already visits was rewritten behind the buffer,
+and a file-sync client that restamps mtimes (OneDrive, Dropbox) provokes
+exactly that between one entry's save and the next entry's link
+resolution.  A batch Emacs cannot answer: the question reads stdin, gets
+EOF, and the run dies with some entries pushed and the rest not (issue
+#121).  Under `noninteractive' the question is therefore suppressed and
+`org-canvas--ensure-buffer-fresh' decides instead — an unmodified stale
+buffer is reread, a modified one signals a clear error.  Interactive
+sessions keep Emacs's own prompt."
+  (let ((buffer (find-file-noselect file noninteractive)))
+    (with-current-buffer buffer
+      (org-canvas--ensure-buffer-fresh))
+    buffer))
 
 (defun org-canvas-org-set-property (pom property value)
   "Set Org PROPERTY to VALUE at POM (point or marker).
@@ -349,7 +366,7 @@ Returns a list of (success-count . fail-count)."
   (let ((targets nil)
 	(success-count 0)
 	(fail-count 0))
-    (with-current-buffer (find-file-noselect file)
+    (with-current-buffer (org-canvas--find-file-noselect file)
       (setq targets (org-map-entries (lambda () (point-marker)) query 'file)))
     (dolist (marker targets)
       (with-current-buffer (marker-buffer marker)
@@ -466,7 +483,7 @@ SOURCE-FILE is the file containing the link, used to resolve relative paths."
                 (org-canvas--log-warning org-canvas--logger
                   "[Links] Heading '%s' not found in %s" clean-heading abs-file)
                 nil)
-            (with-current-buffer (find-file-noselect abs-file)
+            (with-current-buffer (org-canvas--find-file-noselect abs-file)
               (let ((value (org-entry-get heading-point id-property)))
                 (unless value
                   (org-canvas--log-warning org-canvas--logger
@@ -488,7 +505,7 @@ context.  Otherwise return the raw string."
 
 (defun org-canvas--find-section-id-by-name (name sections-file)
   "Look up section NAME in SECTIONS-FILE and return its CANVAS_ID, or nil."
-  (with-current-buffer (find-file-noselect sections-file)
+  (with-current-buffer (org-canvas--find-file-noselect sections-file)
     (save-excursion
       (goto-char (point-min))
       (let ((found nil))
@@ -548,7 +565,7 @@ Returns the resolved ID string, or nil if nothing resolved."
 Tries exact match first, then display-name fallback for link headings.
 HEADING should already be unescaped (no \\=\\[ or \\=\\] escapes)."
   (when (file-exists-p abs-file)
-    (with-current-buffer (find-file-noselect abs-file)
+    (with-current-buffer (org-canvas--find-file-noselect abs-file)
       (save-excursion
         (goto-char (point-min))
         (or
@@ -578,7 +595,7 @@ SOURCE-DIR is the directory of the source file containing the link."
             (clean-heading (org-canvas--unescape-org-brackets heading)))
         (let ((heading-point (org-canvas--find-heading-in-file abs-file clean-heading)))
           (when heading-point
-            (with-current-buffer (find-file-noselect abs-file)
+            (with-current-buffer (org-canvas--find-file-noselect abs-file)
               (let ((id (org-entry-get heading-point id-prop)))
                 (when id
                   (format "%s/courses/%s/%s/%s"
@@ -1064,7 +1081,7 @@ Headings without a CANVAS_ID property or without a `[[file:...]]' title
 link are skipped.  Returns an empty hash if FILES-FILE does not exist."
   (let ((cache (make-hash-table :test 'equal)))
     (when (and files-file (file-exists-p files-file))
-      (with-current-buffer (find-file-noselect files-file)
+      (with-current-buffer (org-canvas--find-file-noselect files-file)
         (org-with-wide-buffer
          (org-map-entries
           (lambda ()
@@ -1143,7 +1160,7 @@ Saves the buffer.  Creates the file if it does not yet exist."
       (error "Variable `org-canvas-files-file' not set"))
     (unless (file-exists-p files-file)
       (with-temp-file files-file (insert "")))
-    (with-current-buffer (find-file-noselect files-file)
+    (with-current-buffer (org-canvas--find-file-noselect files-file)
       (org-with-wide-buffer
        (goto-char (point-min))
        (let ((parent-re (format "^\\* +%s\\s-*$" (regexp-quote parent))))
@@ -1308,7 +1325,7 @@ CANVAS-ID exists, return its position.  Otherwise create a new heading
 at the end of the buffer with TITLE and return its position.
 Returns a point in the buffer visiting FILE."
   (let ((id-prop (or id-property "CANVAS_ID"))
-        (buf (find-file-noselect (expand-file-name file))))
+        (buf (org-canvas--find-file-noselect (expand-file-name file))))
     (with-current-buffer buf
       (save-excursion
         ;; Search for existing heading by CANVAS_ID
@@ -1342,7 +1359,7 @@ Sets `org-canvas--pull-tz-cache' to the IANA TZ string or nil."
         (let ((settings-file (and (boundp 'org-canvas-settings-file)
                                   org-canvas-settings-file)))
           (when (and settings-file (file-exists-p settings-file))
-            (with-current-buffer (find-file-noselect settings-file)
+            (with-current-buffer (org-canvas--find-file-noselect settings-file)
               (save-excursion
                 (goto-char (point-min))
                 (when (re-search-forward "^[ \t]*:TIME_ZONE:[ \t]+\\(.+\\)$" nil t)
@@ -1457,7 +1474,7 @@ ITEM is the API response alist, POS is the heading position."
 The set a scoped pull refreshes: what this course file manages, as
 opposed to everything the Canvas course happens to hold."
   (when (file-exists-p file)
-    (with-current-buffer (find-file-noselect file)
+    (with-current-buffer (org-canvas--find-file-noselect file)
       (delq nil (org-map-entries
                  (lambda () (org-entry-get (point) id-property))
                  nil 'file)))))
@@ -1739,7 +1756,7 @@ wholesale (issue #67)." feature-name)
                 file (org-canvas--pull-label-for ,feature-name))
              (unless (file-exists-p file)
                (with-temp-file file (insert "")))
-             (with-current-buffer (find-file-noselect file)
+             (with-current-buffer (org-canvas--find-file-noselect file)
                (dolist (item (org-canvas--pull-sort-items
                               remote ,secondary-sort-key ,tertiary-sort-key))
                  (pcase (org-canvas--pull-handle-item

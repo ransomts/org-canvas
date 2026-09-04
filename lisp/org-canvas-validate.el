@@ -385,7 +385,7 @@ Returns a list of issues."
              (format "Module item links to missing heading: '%s' in %s"
                      clean-heading file-path))))
      (t
-      (with-current-buffer (find-file-noselect abs-path)
+      (with-current-buffer (org-canvas--find-file-noselect abs-path)
         (unless (or (org-entry-get heading-point "CANVAS_ID")
                     (org-entry-get heading-point "CANVAS_URL"))
           (list (org-canvas--validate-make-issue
@@ -475,7 +475,7 @@ LOC is a (:file :line :heading) plist."
   "Count assignments in GROUP-NAME by scanning ASSIGNMENTS-FILE."
   (if (and assignments-file (file-exists-p assignments-file))
       (let ((count 0))
-        (with-current-buffer (find-file-noselect assignments-file)
+        (with-current-buffer (org-canvas--find-file-noselect assignments-file)
           (save-excursion
             (goto-char (point-min))
             (org-map-entries
@@ -549,7 +549,7 @@ Returns a list of issues, one per duplicated id."
   (let ((seen (make-hash-table :test 'equal))
         (order nil)
         (issues nil))
-    (with-current-buffer (find-file-noselect file)
+    (with-current-buffer (org-canvas--find-file-noselect file)
       (save-excursion
         (goto-char (point-min))
         (org-map-entries
@@ -594,7 +594,7 @@ configuration rather than a mistake."
     ;; Read FILE rather than whatever buffer happens to be current: the
     ;; hook is handed a path, so it should not depend on its caller
     ;; having visited it.
-    (with-current-buffer (find-file-noselect file)
+    (with-current-buffer (org-canvas--find-file-noselect file)
       (save-excursion
         (goto-char (point-min))
         (org-map-entries
@@ -715,7 +715,7 @@ the assignment-group weights sum to 100."
                     (expand-file-name (symbol-value file-var))))
          (issues nil))
     (when (and file (file-exists-p file))
-      (with-current-buffer (find-file-noselect file)
+      (with-current-buffer (org-canvas--find-file-noselect file)
         (save-excursion
           (goto-char (point-min))
           (let ((markers (org-map-entries (lambda () (point-marker)) query 'file)))

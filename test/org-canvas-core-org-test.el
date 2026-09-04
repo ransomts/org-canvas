@@ -3067,5 +3067,84 @@ Page content.
                 (kill-buffer))))
         (delete-file file)))))
 
+(describe "org-canvas--find-file-noselect (issue #121)"
+  (defun test-visit-121--stale (file text)
+    "Rewrite FILE with TEXT behind its buffer and move its modtime forward."
+    (with-temp-file file (insert text))
+    (set-file-times file (time-add (current-time) 5)))
+
+  (it "rereads a file rewritten behind its buffer instead of asking, in batch"
+    (let ((file (make-temp-file "visit-121-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file (insert "* Old heading\n"))
+            (let ((buf (find-file-noselect file)))
+              (unwind-protect
+                  (progn
+                    (test-visit-121--stale file "* Restamped heading\n")
+                    ;; A sync client's mtime rewrite used to reach
+                    ;; yes-or-no-p here, which in batch reads stdin.
+                    (cl-letf (((symbol-function 'yes-or-no-p)
+                               (lambda (&rest _)
+                                 (error "Supersession question asked in batch"))))
+                      (let ((noninteractive t))
+                        (expect (org-canvas--find-file-noselect file)
+                                :to-be buf)))
+                    (with-current-buffer buf
+                      (expect (buffer-string) :to-equal "* Restamped heading\n")))
+                (kill-buffer buf))))
+        (delete-file file))))
+
+  (it "signals rather than choosing between a stale file and unsaved edits"
+    (let ((file (make-temp-file "visit-121-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file (insert "* Old heading\n"))
+            (let ((buf (find-file-noselect file)))
+              (unwind-protect
+                  (progn
+                    (with-current-buffer buf
+                      (goto-char (point-max))
+                      (insert "local edit\n"))
+                    (test-visit-121--stale file "* Restamped heading\n")
+                    (let ((noninteractive t))
+                      (expect (org-canvas--find-file-noselect file)
+                              :to-throw 'error)))
+                (with-current-buffer buf (set-buffer-modified-p nil))
+                (kill-buffer buf))))
+        (delete-file file))))
+
+  (it "leaves Emacs's own protection in charge interactively"
+    (let ((file (make-temp-file "visit-121-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file (insert "* Old heading\n"))
+            (let ((buf (find-file-noselect file))
+                  (asked nil))
+              (unwind-protect
+                  (progn
+                    (test-visit-121--stale file "* Restamped heading\n")
+                    (cl-letf (((symbol-function 'yes-or-no-p)
+                               (lambda (&rest _) (setq asked t) nil)))
+                      (let ((noninteractive nil))
+                        (org-canvas--find-file-noselect file)))
+                    (expect asked :to-be t)
+                    (with-current-buffer buf
+                      (expect (buffer-string) :to-equal "* Old heading\n")))
+                (kill-buffer buf))))
+        (delete-file file))))
+
+  (it "visits a file nothing has opened yet"
+    (let ((file (make-temp-file "visit-121-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file (insert "* Fresh heading\n"))
+            (let ((buf (org-canvas--find-file-noselect file)))
+              (unwind-protect
+                  (with-current-buffer buf
+                    (expect (buffer-string) :to-equal "* Fresh heading\n"))
+                (kill-buffer buf))))
+        (delete-file file)))))
+
 (provide 'org-canvas-core-org-test)
 ;;; org-canvas-core-org-test.el ends here

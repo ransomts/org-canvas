@@ -371,7 +371,7 @@ entries with a Canvas ID but missing a file header (i.e., the file has
 no #+LAST_SYNCED, indicating it has not been re-pulled since the
 schema cutover)."
   (let ((synced 0) (pending 0) (legacy 0) (last-synced nil))
-    (with-current-buffer (find-file-noselect file)
+    (with-current-buffer (org-canvas--find-file-noselect file)
       (setq last-synced (org-canvas--pull-read-file-header))
       (save-excursion
         (goto-char (point-min))
@@ -488,7 +488,7 @@ Returns the result plist from `org-canvas--module-publish-apply'."
     (unless pom
       (user-error "No module named '%s' in %s" title org-canvas-modules-file))
     (let ((result (with-current-buffer
-                      (find-file-noselect
+                      (org-canvas--find-file-noselect
                        (expand-file-name org-canvas-modules-file))
                     (org-canvas--module-publish-apply pom state))))
       (org-canvas--publish-report title state result)
@@ -536,7 +536,7 @@ than leaving scheduled content live behind an unpublished module."
       (let ((title (car entry))
             (pom (cdr entry)))
         (when (with-current-buffer
-                  (find-file-noselect (expand-file-name org-canvas-modules-file))
+                  (org-canvas--find-file-noselect (expand-file-name org-canvas-modules-file))
                 (and (org-canvas--module-due-for-release-p pom)
                      (not (equal (org-entry-get pom "PUBLISHED") "true"))))
           (org-canvas--publish-module-1 title t)
@@ -920,7 +920,7 @@ Returns nil if file does not exist."
   (let ((file (expand-file-name file)))
     (when (file-exists-p file)
       (let (ids)
-        (with-current-buffer (find-file-noselect file)
+        (with-current-buffer (org-canvas--find-file-noselect file)
           (save-excursion
             (goto-char (point-min))
             (org-map-entries

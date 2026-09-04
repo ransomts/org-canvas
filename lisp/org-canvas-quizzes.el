@@ -1104,7 +1104,7 @@ parent quiz or under a dedicated subheading."
     (org-canvas--pull-confirm-unsaved file "quizzes")
     (unless (file-exists-p file)
       (with-temp-file file (insert "")))
-    (with-current-buffer (find-file-noselect file)
+    (with-current-buffer (org-canvas--find-file-noselect file)
       (dolist (quiz (org-canvas--pull-sort-items remote))
         (let* ((id (alist-get 'id quiz))
                (title (alist-get 'title quiz))

@@ -597,7 +597,7 @@ Returns the heading title string, or nil if not found."
   (when (and outcome-id
              (boundp 'org-canvas-outcomes-file)
              (file-exists-p org-canvas-outcomes-file))
-    (with-current-buffer (find-file-noselect org-canvas-outcomes-file)
+    (with-current-buffer (org-canvas--find-file-noselect org-canvas-outcomes-file)
       (let ((id-str (if (numberp outcome-id)
                         (number-to-string outcome-id)
                       (format "%s" outcome-id))))

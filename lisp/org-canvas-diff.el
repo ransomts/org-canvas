@@ -488,7 +488,7 @@ position is a marker, not an offset: the comparison reads properties
 long after this buffer stops being current, and a bare offset would
 silently be read against whatever buffer happened to be."
   (when (and file (file-exists-p file))
-    (with-current-buffer (find-file-noselect file)
+    (with-current-buffer (org-canvas--find-file-noselect file)
       (org-map-entries
        (lambda ()
          (list :id (org-entry-get (point) id-property)
@@ -850,7 +850,7 @@ without re-running every list request."
 (defun org-canvas--diff-find-heading-by-id (file id-property id)
   "Return the position of the heading in FILE whose ID-PROPERTY is ID, or nil."
   (when (and file (file-exists-p file))
-    (with-current-buffer (find-file-noselect file)
+    (with-current-buffer (org-canvas--find-file-noselect file)
       (save-excursion
         (goto-char (point-min))
         (catch 'found
@@ -884,7 +884,7 @@ Returns the buffer."
     (unless where
       (user-error "Cannot find the heading for '%s' in %s"
                   (plist-get entry :title) (plist-get feature :name)))
-    (set-buffer (find-file-noselect (car where)))
+    (set-buffer (org-canvas--find-file-noselect (car where)))
     (goto-char (cdr where))
     (org-back-to-heading t)
     (current-buffer)))

@@ -70,7 +70,7 @@ Opens the log buffer and logs a sync header."
   (unless (and sync-file (file-exists-p sync-file))
     (org-canvas--signal 'org-canvas-config-error
       "%s file not found: %s" feature-upper sync-file))
-  (let ((buf (find-file-noselect sync-file)))
+  (let ((buf (org-canvas--find-file-noselect sync-file)))
     (when (buffer-modified-p buf)
       (if (org-canvas--confirm
            (format "%s has unsaved changes.  Save before syncing? "
@@ -91,7 +91,7 @@ QUERY is the `org-map-entries' match string.
 FEATURE-NAME is used for log messages.
 Returns a plist (:targets MARKERS :all-ids-before IDS)."
   (let (targets all-ids-before)
-    (with-current-buffer (find-file-noselect sync-file)
+    (with-current-buffer (org-canvas--find-file-noselect sync-file)
       (setq targets (org-map-entries (lambda () (point-marker)) query 'file))
       (setq all-ids-before
             (org-map-entries
@@ -399,7 +399,7 @@ and :dry-run counts."
         (dry-run-count (or (plist-get counters :dry-run) 0))
         (dry-run-conflicts (or (plist-get counters :dry-run-conflict) 0))
         (extra-counts 0))
-    (with-current-buffer (find-file-noselect sync-file)
+    (with-current-buffer (org-canvas--find-file-noselect sync-file)
       (org-canvas--save-buffer))
     (org-canvas--log-info org-canvas--logger "========================================")
     (org-canvas--log-info org-canvas--logger ">>> %s SYNC COMPLETE" feature-upper)
@@ -809,7 +809,7 @@ file-level header to write afterwards."
 (defun org-canvas--sync-file-baseline (sync-file)
   "Return SYNC-FILE\\='s #+LAST_SYNCED header as an Emacs time, or nil."
   (when (file-exists-p sync-file)
-    (with-current-buffer (find-file-noselect sync-file)
+    (with-current-buffer (org-canvas--find-file-noselect sync-file)
       (let ((ts (org-canvas--pull-read-file-header)))
         (when ts (encode-time (org-parse-time-string ts)))))))
 
@@ -962,7 +962,7 @@ and single-entry pushes advance the same header (issue #104)."
          (newest (car (sort (copy-sequence times) #'string>)))
          (time (and newest (org-canvas--parse-iso8601-time newest))))
     (when time
-      (with-current-buffer (find-file-noselect sync-file)
+      (with-current-buffer (org-canvas--find-file-noselect sync-file)
         (org-canvas--sync-advance-file-header time)
         (org-canvas--save-buffer)))))
 

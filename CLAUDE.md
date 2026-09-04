@@ -354,6 +354,7 @@ Module items skipped because their target lacked a CANVAS_ID are tracked in `org
 - Use markers for safe position tracking
 - Save buffer after modifications
 - `org-canvas--path` returns truenames — one inode, one buffer. A symlinked `org-canvas-directory` spelling used to give a batch caller a dual buffer: every PUT landed, only the stamps died on the unanswerable changed-on-disk prompt, and the caller's final save clobbered stamps the sync had written (issue #97). `org-canvas--registry-feature-for-file` compares truenames for the same reason
+- `org-canvas--find-file-noselect` is how every module opens a course file — never `find-file-noselect` directly. `find-file-noselect` asks "changed on disk. Reread from disk?" for a file it already visits whose mtime moved, which a file-sync client (OneDrive, Dropbox) does moments after each save; in batch the question reads stdin, gets EOF, and the run dies *after* some entries pushed and before the rest (issue #121). The wrapper passes NOWARN under `noninteractive` and lets `org-canvas--ensure-buffer-fresh` decide instead, keeping Emacs's own prompt interactively
 - `org-canvas--ensure-buffer-fresh` guards `org-canvas-org-set-property` and `org-canvas--save-buffer` in batch: an unmodified stale buffer is reverted (`[Fresh]` log), a modified stale one signals a clear error instead of the prompt. A finalize failure after a successful API call logs `[Stamp]` naming the phantom-drift consequence — the [FAILED] line alone reads as a push that never happened
 
 ## Key Files

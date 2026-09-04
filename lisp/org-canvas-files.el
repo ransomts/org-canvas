@@ -871,7 +871,7 @@ USE_JUSTIFICATION is set."
 Returns a list of folder paths that need to exist for file uploads."
   (let ((folder-paths nil)
         (seen (make-hash-table :test 'equal)))
-    (with-current-buffer (find-file-noselect files-file)
+    (with-current-buffer (org-canvas--find-file-noselect files-file)
       (org-map-entries
        (lambda ()
          (let* ((heading-with-links
@@ -1356,7 +1356,7 @@ of the same global run); until then those items are missing."
           ;; as they do in the macro pipeline.
           (org-canvas--conflict-apply-all nil))
       ;; Gather all entries (at any level)
-      (with-current-buffer (find-file-noselect files-file)
+      (with-current-buffer (org-canvas--find-file-noselect files-file)
         (setq targets (org-map-entries (lambda () (point-marker)) t 'file)))
 
       (org-canvas--log-info org-canvas--logger "Found %d entries to process" (length targets))
@@ -1379,7 +1379,7 @@ of the same global run); until then those items are missing."
       (dolist (m targets) (set-marker m nil))
 
       ;; Save the org file after all modifications
-      (with-current-buffer (find-file-noselect files-file)
+      (with-current-buffer (org-canvas--find-file-noselect files-file)
         (org-canvas--save-buffer))
 
       (when org-canvas--file-changed-ids
@@ -1825,7 +1825,7 @@ with `user-error' (delete files.org and re-run to refresh)."
       (with-temp-file file (insert "")))
     (unless (file-directory-p content-dir)
       (make-directory content-dir t))
-    (with-current-buffer (find-file-noselect file)
+    (with-current-buffer (org-canvas--find-file-noselect file)
       (let ((mode (org-canvas--file-pull-mode)))
         (pcase mode
           ('hierarchical
