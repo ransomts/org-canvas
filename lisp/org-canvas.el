@@ -5,7 +5,7 @@
 ;; Maintainer: Tim Ransom <ransomtim8078@gmail.com>
 ;; Created: 2026-02-08
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "28.1") (plz "0.9") (org "9.6") (transient "0.4"))
+;; Package-Requires: ((emacs "29.1") (plz "0.9") (org "9.6") (transient "0.4"))
 
 ;; Keywords: comm, tools
 ;; URL: https://github.com/ransomts/org-canvas
@@ -44,6 +44,11 @@
 ;;   (setq org-canvas-course-id "12345")
 ;;   (setq org-canvas-base-url "https://canvas.instructure.com")
 ;;   (setq org-canvas-directory "/path/to/course/")
+;;
+;; The token may instead come from auth-source, keyed on the host and
+;; course, so it can stay in an encrypted ~/.authinfo.gpg:
+;;
+;;   machine canvas.instructure.com login 12345 password your-token
 ;;
 ;; SEE ALSO
 ;; ========
@@ -156,11 +161,11 @@ above the marker, then file an issue at the project URL."
         (dolist (sym org-canvas--bug-report-settings)
           (insert (org-canvas--bug-report-format-setting sym) "\n"))
         (insert (format "  org-canvas-api-token: %s\n"
-                        (if (and (boundp 'org-canvas-api-token)
-                                 (stringp org-canvas-api-token)
-                                 (not (string-empty-p org-canvas-api-token)))
-                            "[redacted]"
-                          "[unset]")))
+                        (cond ((org-canvas--nonempty-string-p org-canvas-api-token)
+                               "[redacted]")
+                              ((ignore-errors (org-canvas--api-token))
+                               "[redacted, resolved via auth-source]")
+                              (t "[unset]"))))
         (insert "\nLoaded modules:\n")
         (dolist (m modules)
           (insert "  " m "\n")))

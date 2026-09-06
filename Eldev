@@ -65,6 +65,13 @@
 ;; Exclude vendor directory from linting
 (setf eldev-lint-ignored-fileset '("vendor/" "test/" "scripts/"))
 
+;; Keep scripts/ out of every standard fileset (compile, package).  They are
+;; standalone batch programs: scripts/mutation-test.el ends in a top-level
+;; (mutant--report) call, which byte-compilation executes, so a plain
+;; eldev compile used to start a full mutation run that rewrote lisp/ files
+;; and spawned eldev test per mutant.
+(setf eldev-standard-excludes (append eldev-standard-excludes '("./scripts/")))
+
 ;;; Code Complexity Analyzer
 
 ;; --- Cognitive complexity (SonarSource, 2016) ---

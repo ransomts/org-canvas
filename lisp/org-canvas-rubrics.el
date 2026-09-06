@@ -52,6 +52,8 @@
 (require 'org-table)
 (require 'cl-lib)
 
+(declare-function org-canvas--validate-rubric-structure "org-canvas-validate")
+
 ;;;; Configuration
 
 (defcustom org-canvas-rubrics-file (org-canvas--path "rubrics.org")

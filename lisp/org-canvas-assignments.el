@@ -47,6 +47,7 @@
 (declare-function org-canvas--override-fetch "org-canvas-sections" (assignment-id))
 (declare-function org-canvas--override-emit-table "org-canvas-sections"
                   (overrides &optional parent-due parent-unlock parent-lock))
+(declare-function org-canvas--validate-assignment-structure "org-canvas-validate")
 
 ;;;; Configuration
 

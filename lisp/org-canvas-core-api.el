@@ -13,6 +13,7 @@
 (require 'json)
 (require 'plz)
 (require 'url-util)
+(require 'auth-source)
 (require 'org-canvas-core-config)
 
 ;;;; 3. API Layer
@@ -105,12 +106,121 @@ placeholder for the API token (requires double quotes for expansion)."
     ;; Join in reverse order (we pushed, so it's backwards)
     (mapconcat #'identity (nreverse parts) " \\\n     ")))
 
+;;;; Token Resolution
+;;
+;; Every read of the API token goes through `org-canvas--api-token'
+;; (issue #138).  `org-canvas-api-token' is what the per-course
+;; credentials file and `org-canvas-init' set, and it still wins when
+;; it is non-empty.  Otherwise the token comes from `auth-source', so
+;; it can live in ~/.authinfo.gpg — encrypted, outside the course
+;; directory, and not inside a file that `load' evaluates — as
+;;
+;;   machine HOST login COURSE-ID password TOKEN
+;;
+;; where HOST is `org-canvas-base-url' with its scheme stripped.  An
+;; entry whose login is the course id is preferred; failing that, any
+;; entry for the host serves every course there.
+
+(defun org-canvas--nonempty-string-p (value)
+  "Return non-nil when VALUE is a string with at least one character."
+  (and (stringp value) (not (string-empty-p value))))
+
+(defvar org-canvas--api-token-cache nil
+  "Cache of the auth-source token as ((HOST . COURSE-ID) . TOKEN), or nil.
+Only a hit is kept, so an entry added mid-session is found on the next
+request.  `org-canvas--api-token-forget' drops it, as does
+`org-canvas--api-token-cache-watcher' whenever `org-canvas-base-url'
+or `org-canvas-course-id' changes; the key guards against a change
+neither saw.")
+
+(defun org-canvas--api-token-forget ()
+  "Drop the cached auth-source token so the next request resolves it again.
+`org-canvas-activate-course' calls this after loading a course: that
+is how a token rotated in ~/.authinfo.gpg for the same host and course
+takes effect without restarting Emacs."
+  (setq org-canvas--api-token-cache nil))
+
+(defun org-canvas--api-token-cache-watcher (_symbol _newval _operation _where)
+  "Drop the cached token after a change of host or course.
+Installed on `org-canvas-base-url' and `org-canvas-course-id'.  Unlike
+`org-canvas--directory-watcher' it reacts to every operation, not only
+`set': a `let' binding of either variable changes which token applies
+for as long as it lasts, and forgetting a cache costs nothing."
+  (setq org-canvas--api-token-cache nil))
+
+(add-variable-watcher 'org-canvas-base-url #'org-canvas--api-token-cache-watcher)
+(add-variable-watcher 'org-canvas-course-id #'org-canvas--api-token-cache-watcher)
+
+(defun org-canvas--api-host ()
+  "Return the host `org-canvas-base-url' names, or nil when it names none.
+The scheme, any port and any path are stripped: the result is the
+`machine' an authinfo entry for the instance names."
+  (when (stringp org-canvas-base-url)
+    (let ((host (car (split-string
+                      (replace-regexp-in-string
+                       "\\`[A-Za-z][A-Za-z0-9+.-]*://" "" org-canvas-base-url)
+                      "[/:]"))))
+      (unless (string-empty-p host) host))))
+
+(defun org-canvas--api-token-from-auth-source (host course-id)
+  "Return the auth-source secret for HOST, or nil when it has none.
+An entry whose login is COURSE-ID is tried first, then any entry for
+HOST at all.  A secret auth-source hands back as a function (it does
+so for encrypted backends) is called, so the result is always the
+token string."
+  (cl-some
+   (lambda (user)
+     (let* ((entry (car (apply #'auth-source-search
+                               :host host :max 1 :require '(:secret)
+                               (and user (list :user user)))))
+            (secret (plist-get entry :secret)))
+       (if (functionp secret) (funcall secret) secret)))
+   (if (org-canvas--nonempty-string-p course-id)
+       (list course-id nil)
+     (list nil))))
+
+(defun org-canvas--api-token ()
+  "Return the Canvas API token, or nil when none is configured.
+A non-empty `org-canvas-api-token' wins.  Otherwise the token is looked
+up in `auth-source' under the host of `org-canvas-base-url', preferring
+an entry whose login is `org-canvas-course-id' (see
+`org-canvas--api-token-from-auth-source'), and a hit is kept in
+`org-canvas--api-token-cache' for that host and course."
+  (let* ((host (org-canvas--api-host))
+         (key (cons host org-canvas-course-id)))
+    (cond
+     ((org-canvas--nonempty-string-p org-canvas-api-token)
+      org-canvas-api-token)
+     ((null host) nil)
+     ((equal (car org-canvas--api-token-cache) key)
+      (cdr org-canvas--api-token-cache))
+     (t
+      (let ((token (org-canvas--api-token-from-auth-source
+                    host org-canvas-course-id)))
+        (when token
+          (setq org-canvas--api-token-cache (cons key token)))
+        token)))))
+
+(defun org-canvas--api-authinfo-line ()
+  "Return the authinfo line naming the token for this host and course.
+A host or course id that is not configured is shown as a placeholder.
+Spelled once here for the preflight message and the setup wizard."
+  (format "machine %s login %s password <token>"
+          (or (org-canvas--api-host) "<canvas-host>")
+          (if (org-canvas--nonempty-string-p org-canvas-course-id)
+              org-canvas-course-id
+            "<course-id>")))
+
 (defun org-canvas--ensure-credentials ()
-  "Signal error if API token or course ID are not configured."
-  (when (or (null org-canvas-api-token) (string-empty-p org-canvas-api-token))
+  "Signal an error unless an API token and a course ID are configured.
+The token is whatever `org-canvas--api-token' resolves; the message
+names both places it may come from, with the authinfo line spelled
+out for this host and course."
+  (unless (org-canvas--api-token)
     (org-canvas--signal 'org-canvas-credentials-error
-      "API token not configured.  Set org-canvas-api-token in org-canvas-credentials.el\nRun M-x org-canvas-init for guided setup"))
-  (when (or (null org-canvas-course-id) (string-empty-p org-canvas-course-id))
+      "API token not configured.  Add a line to ~/.authinfo.gpg:\n  %s\nor set org-canvas-api-token in org-canvas-credentials.el\nRun M-x org-canvas-init for guided setup"
+      (org-canvas--api-authinfo-line)))
+  (unless (org-canvas--nonempty-string-p org-canvas-course-id)
     (org-canvas--signal 'org-canvas-credentials-error
       "Course ID not configured.  Set org-canvas-course-id in org-canvas-credentials.el\nRun M-x org-canvas-init for guided setup")))
 
@@ -490,7 +600,7 @@ silently corrupts unrecognized methods into bodyless GETs."
   (let* ((full-url (concat url (org-canvas--api-build-query-string params)))
 	 (json-payload (when data
 			 (if (stringp data) data (json-encode data))))
-	 (headers `(("Authorization" . ,(concat "Bearer " org-canvas-api-token))
+	 (headers `(("Authorization" . ,(concat "Bearer " (org-canvas--api-token)))
 		    ("Content-Type" . "application/json")))
 	 (actual-timeout (or timeout org-canvas-request-timeout))
 	 ;; IMPORTANT: plz requires lowercase method symbols ('post not 'POST)

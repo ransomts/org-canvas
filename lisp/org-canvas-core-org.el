@@ -123,6 +123,11 @@ When BOOLEAN-P is non-nil, convert \"true\"/\"false\" to t/:json-false."
                val)
              hash)))
 
+(defconst org-canvas--sync-property-names
+  `("CANVAS_ID" "CANVAS_URL" "CANVAS_UPDATED_AT"
+    ,org-canvas--prop-last-synced ,org-canvas--prop-payload-hash)
+  "Properties managed by the sync pipeline.")
+
 (defun org-canvas-clear-sync-properties (pom)
   "Clear all sync-related properties from entry at POM."
   (dolist (prop org-canvas--sync-property-names)
@@ -389,11 +394,6 @@ Returns a list of (success-count . fail-count)."
     (cons success-count fail-count)))
 
 ;;;; 4b. Shared Constants
-
-(defconst org-canvas--sync-property-names
-  `("CANVAS_ID" "CANVAS_URL" "CANVAS_UPDATED_AT"
-    ,org-canvas--prop-last-synced ,org-canvas--prop-payload-hash)
-  "Properties managed by the sync pipeline.")
 
 (defconst org-canvas--children-digest-excluded-props
   '("CANVAS_ID" "CANVAS_ITEM_ID" "CANVAS_URL" "LAST_SYNCED"
