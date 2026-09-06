@@ -58,6 +58,12 @@ remote snapshot, =org-canvas-diff=, the orphan scan and delete,
 =org-canvas-api-course-endpoint= itself, so a global endpoint is
 declared once and honored everywhere.
 
+** Feature Registry URL Resolution (issue #87)
+
+Every consumer of =org-canvas--feature-registry= — the sync snapshot, =org-canvas-diff=, the orphan scan and delete, =org-canvas-pull-at-point= — resolves URLs through =org-canvas--feature-list-url= / =org-canvas--feature-item-url= / =org-canvas--feature-list-params= (core-api), never by spelling =org-canvas-api-course-endpoint= itself. A feature that does not list under the course registers =:list-url-fn=, =:item-url-fn=, a function-valued =:list-params= (called per use — the calendar context code embeds =org-canvas-course-id=, unknown at load) and =:delete-data=. Calendar events were the first: unregistered, they had no drift check, no duplicate guard, no diff, and =pull-at-point= refused calendar.org because =org-canvas-register-pull-item-fn= is a no-op for an unregistered feature — so =org-canvas-register-feature= must precede the module's =org-canvas-define-sync=. *=GET /api/v1/calendar_events= returns only today's events unless ~all_events=true~* (probed 2026-09-01: 0 vs 6 on course 297530); =org-canvas--calendar-event-list-params= is the one spelling of the parameters, shared by sync, search, pull, delete-all and the registry. New quizzes stay unregistered: they key on =CANVAS_ASSIGNMENT_ID=, no course with New Quizzes was available to confirm the list's id field, and a wrong =:id-field= would make the orphan prune see every real quiz as an orphan.
+
+=:modified-field= names the remote timestamp drift is decided from (default =updated_at=), resolved by =org-canvas--feature-modified-field=. Files declare =modified_at=: Canvas bumps a file's =updated_at= on metadata-only touches (a lock, usage rights, a module-item relink), which re-flagged unchanged files forever and, under =org-canvas-conflict-strategy= =push=, re-uploaded identical bytes and rotated ids (issue #94). The field feeds the snapshot index, =org-canvas--conflict-check= (files pass it through =org-canvas--file-check-conflict=) and =org-canvas--diff-modified-p=, and =org-canvas--finalize-item= stamps =CANVAS_UPDATED_AT= from the same field via =:updated-field= so baseline and comparison agree.
+
 ** Query String Building
 
 =org-canvas--api-build-query-string= converts an alist to URL-encoded
@@ -76,6 +82,45 @@ The codebase uses uppercase symbols (='POST=, ='PUT=, ='GET=,
 
 This is important because passing uppercase symbols or keywords to plz
 causes 400 Bad Request errors.
+
+** Error Handling Conventions
+
+- Wrap API calls in =condition-case=
+- API-layer signals carry a single concise message: Canvas 4xx JSON bodies are parsed into it via =org-canvas--api-error-message= (e.g. ="The front page cannot be unpublished (HTTP 400)"=); full URL/body detail logs at DEBUG. Each item failure produces exactly one =[ERROR]= line — the =[FAILED]= summary
+- plz supports only GET/HEAD/POST/PUT/DELETE; PATCH goes through the direct curl fallback =org-canvas--api-curl-patch= (mimics plz's contract — parsed JSON on success, =plz-error= structs on failure — so shared retry/error machinery applies). Any other method is rejected up front (it would silently degrade to a bodyless GET inside plz). Late-policy updates use PATCH via this fallback — Canvas routes that update as PATCH only, and PUT 404s even when a policy exists (issue #13; do not "simplify" it back to PUT)
+- On timeout: search Canvas for item, retry if needed — use =org-canvas--timeout-error-p= to detect timeout errors (matches both ="Timeout"= and ="timed out"= case-insensitively)
+- On 404 for PUT: retry as POST
+- On 429 or rate-limit 403: retry with configurable delay (=org-canvas-rate-limit-retries=, =org-canvas-rate-limit-wait=)
+- On 401: actionable message about expired API token
+- On 403 (non-rate-limit): message about insufficient token scope
+- Continue processing other items if one fails
+- Deferrable rejections (drop rules exceeding the group's assignment count) count as =:deferred=, not failures — =org-canvas--sync-deferred-error-p= classifies them; they self-resolve on a later sync
+- Master sync wraps each feature in =org-canvas--safe-sync= so missing =.org= files are skipped
+- =org-canvas--preflight-check= validates credentials and connection before any sync begins
+
+* HTTP Library: Use =plz= instead of =request.el=
+
+The =request.el= library with =:sync t= has a known race condition where synchronous requests can freeze indefinitely, even when the underlying curl process completes successfully. The =plz= library handles synchronous requests more reliably.
+
+*plz method format*: Pass HTTP methods as lowercase symbols:
+#+begin_src elisp
+;; Correct
+(plz 'get url ...)
+(plz 'post url ...)
+
+;; Wrong - will cause 400 Bad Request
+(plz 'GET url ...)   ; uppercase symbol
+(plz :get url ...)   ; keyword
+#+end_src
+
+The conversion from the codebase convention (='GET=, ='POST=) to plz format:
+#+begin_src elisp
+(intern (downcase (symbol-name method)))  ; 'POST -> 'post
+#+end_src
+
+*Note*: The =request.el= library is NOT a dependency. Some files had leftover =(require 'request)= statements that were removed - these were dead code from the migration to =plz=.
+
+*plz has no PATCH support* (verified empirically against a local echo server): an unrecognized method symbol falls through plz's curl-argument builder, the request goes out as a *plain GET with no body*, and plz then crashes in its process sentinel. This is why New Quizzes updates (a PATCH-only API) and late-policy updates (also PATCH-only — PUT is not routed and 404s, issue #13) never worked until PATCH got its own transport: =org-canvas--api-curl-patch= invokes curl directly, passing method/headers/url via a config stream on stdin (keeping the token off the command line, same trick as plz) with the body appended after the trailing ~data-binary = "@-"~ directive. It returns parsed JSON and signals =plz-error= structs, so the shared retry and error machinery treats it exactly like a plz request. Methods outside =org-canvas--api-supported-methods= are rejected with a clear error.
 
 * Rate Limiting and Retries
 
@@ -183,6 +228,28 @@ It GETs from the endpoint with =search_term= parameter, then loops
 results to find an exact match on the specified field. Returns the
 matching item alist or nil. Catches and logs search failures gracefully.
 
+** Generic Push and Finalize Helpers
+
+*Push/Search/Finalize Helpers:*
+#+begin_src elisp
+;; Generic search - replaces duplicated find-by-title/name functions
+(org-canvas--search-item "assignments" title :match-field 'name)
+
+;; Generic push with 404 retry, timeout recovery, and conflict detection
+;; Conflict check is delegated to org-canvas--push-check-and-resolve-conflict
+;; which returns 'push, 'skip, or 'pulled
+(org-canvas--push-to-api data payload
+  :endpoint "pages"
+  :id-key :canvas-url           ; for pages (default :canvas-id)
+  :find-fn (lambda (title) (org-canvas--search-item "pages" title)))
+
+;; Generic finalize with optional post-processing
+(org-canvas--finalize-item data response
+  :id-field 'url                ; default 'id
+  :id-property "CANVAS_URL"     ; default "CANVAS_ID"
+  :post-fn #'associate-rubric)  ; optional callback
+#+end_src
+
 * Conflict Detection
 
 When =org-canvas-detect-conflicts= is non-nil (the default), PUT
@@ -242,6 +309,30 @@ flow:
 The push function checks this return value and either proceeds,
 returns ='pulled=, or returns ='conflict= (for skip).
 
+** Baseline, Drift-Aware Skip, and Strategy Rules
+
+- Baseline is =org-canvas--conflict-baseline=: the entry's own =CANVAS_UPDATED_AT= (the remote =updated_at= finalize recorded on the last push — Canvas's clock, so no skew allowance, and present on push-only courses), falling back to the file-level =#+LAST_SYNCED= header. Pushes now write that header too, stamped from the newest remote =updated_at= of the run and rounded up a minute (issue #48). The write is forward-only (=org-canvas--sync-advance-file-header=) and every single-entry push advances it from the stamp finalize just wrote (=org-canvas--sync-advance-header-from-entry=, issue #104: a file maintained at point read 13 days stale). Since that advance never compared the file's other entries, the verified-skip path backfills =CANVAS_UPDATED_AT= on a legacy entry from the snapshot (=org-canvas--sync-backfill-baseline=) so the header stops being anyone's baseline after one full sync
+- The payload-hash skip is drift-aware: =org-canvas--sync-fetch-remote-updated= takes one list snapshot per feature and =org-canvas--sync-remote-drifted-p= pulls any remotely-modified entry off the skip path so it goes through the normal conflict comparison. A matching hash only proves the /local/ file is unchanged — without this, an item edited only in the web UI was skipped forever. When the snapshot is unavailable, =org-canvas--sync-warn-unverified-skips= says how many entries went unchecked
+- =org-canvas--conflict-check= returns =(cons 'conflict REMOTE-RESPONSE)= (not bare ='conflict=)
+- =org-canvas--resolve-conflict= shows a diff buffer and prompts: push/pull/skip (capitals = apply to all)
+- =org-canvas--conflict-apply-all= defvar: batch decision bound per-sync by =org-canvas-define-sync=
+- =org-canvas-conflict-strategy= defcustom (nil/=push=/=pull=/=skip=) is the /caller's/ seam and is never rebound by the pipeline — =--conflict-apply-all= looks like it would serve but every entry point rebinds it to nil, so a caller's =let= loses (issue #72). =org-canvas--conflict-unattended-action= consults it before prompting, and falls back to =skip= under =noninteractive=: =read-char-choice= in a batch Emacs signals end-of-file rather than taking a default, which killed the whole sync. Tests that exercise the interactive prompt must bind =noninteractive= to nil
+- =org-canvas--current-pull-item-fn= defvar: dynamically bound per-sync so =push-to-api= can access it
+- =org-canvas--conflict-pull-local= overwrites local heading via the module's pull-item function
+- Push-to-api returns ='pulled= (not ='conflict=) when user chooses pull — tracked by =:pulled= counter in sync pipeline
+- A =:post-fn= that writes to Canvas again must say so with =org-canvas--finalize-note-remote-write=. =org-canvas--finalize-item= stamps =CANVAS_UPDATED_AT= from the push response and /then/ runs the post-fn, so the rubric association — a further POST that Canvas counts as touching the assignment — left the baseline seconds behind: =org-canvas-diff= called every rubric-bearing assignment CHANGED with no compared property differing, and the next push walked into the conflict check, both over the sync's own writes (issue #124). =org-canvas--finalize-run-post-fn= binds the flag around the call and =org-canvas--finalize-restamp-updated= re-reads the item once and stamps what Canvas holds, honouring =:updated-field= so files still compare =modified_at=. The endpoint reaches the generated finalize from =org-canvas-define-sync='s =:endpoint= and only alongside a =:post-fn=; a module with a custom finalize must pass =:endpoint= itself. =org-canvas--associate-rubric= returns t/nil so assignments and discussions declare only a write that landed
+- Modules with =:pull-item-fn= in their =org-canvas-define-sync=: announcements, pages, discussions, assignments, assignment-groups, rubrics, group-categories, calendar-events, modules (whose pull-item also replaces child item headings from the remote list, fetching them when the conflict-check GET response lacks an =items= key)
+
+** Conflict Log Line Names Its Baseline (issue #86)
+
+=org-canvas--conflict-baseline-source= returns =(TIME . LABEL)=; =org-canvas--conflict-baseline= is its car. The conflict warning and the =*canvas-conflict*= buffer print the LABEL (=CANVAS_UPDATED_AT ...= or =#+LAST_SYNCED [...] (entry has no CANVAS_UPDATED_AT)=) rather than re-reading the file header, which was wrong whenever the entry's own stamp was compared and nil whenever POM was a bare position.
+
+* Duplicate-Title Guard (issue #85)
+
+=org-canvas--push-to-api= chooses POST purely on the absence of an id, and every recovery from a partial create (POST succeeded, stamp never written) left the course one sync away from a second copy students could submit to. Before any POST, =org-canvas--push-guard-duplicate= looks the title up and asks adopt/skip/create — =org-canvas--resolve-duplicate= mirrors the conflict machinery: =org-canvas--duplicate-apply-all= (capitals, per run), =org-canvas-duplicate-title-strategy= (the caller's seam; =create= also disables the lookup), skip under =noninteractive=. Adopt stamps the id /and/ =CANVAS_UPDATED_AT= from the item before the PUT so the conflict check that follows compares against the item's own clock. The lookup source is =org-canvas--current-remote-titles=: the drift snapshot's title index (now built by =org-canvas--sync-fetch-remote-snapshot= from the same one list request) inside a sync, the symbol =none= when a sync had no snapshot (an unregistered feature such as new quizzes, a failed fetch, detection off — check nothing rather than spend a GET per entry), and nil outside a sync, where a single-entry push asks the module's =:find-fn=. The pipeline counts a =duplicate= return as a skip with a named =:skipped-titles= entry; =org-canvas--push-at-point-runtime= reports =conflict=/=pulled=/=duplicate= instead of finalizing a symbol. =org-canvas-diff= reports the same situation as =UNCLAIMED= via =org-canvas--diff-pair-unclaimed=.
+
+*=org-canvas-adopt-at-point= is the same act after the fact (issue #101).* The guard only fires when a create is attempted; a stamp that died after the POST (#99's =[Stamp]= line) leaves no local record of the id, so adoption by title is the recovery. The command lists the feature's items through the registry URL helpers, matches the heading title (via =org-link-display-format=, since a files.org heading is a link), and on exactly one match calls =org-canvas--adopt-stamp= (core-sync) — the one spelling of adoption, which =org-canvas--push-adopt-item= also uses: id property, =CANVAS_UPDATED_AT= from the feature's =:modified-field=, and =PAYLOAD_HASH= dropped so the next sync verifies content. Matches a =:skip-fn= disowns or another heading already claims are held back and named; zero or several refuse. =org-canvas-request-min-interval= (core-api =org-canvas--api-pace=, called by every =org-canvas-api-request=) replaces the =sleep-for= batch scripts wrapped around at-point calls.
+
 * Dry-Run Mode
 
 When =org-canvas--dry-run= is non-nil, =push-to-api= logs the
@@ -255,6 +346,18 @@ operation but makes no API call:
 
 The sync pipeline counts these as =:dry-run= instead of =:success=.
 Invoked via =M-x org-canvas-sync-dry-run=.
+
+** Dry Run Reports Conflicts (issue #84)
+
+The dry-run branch of =org-canvas--sync-execute-pipeline= returns before the push, where the conflict check lives, so it used to count every pending entry as a push. =org-canvas--sync-dry-run-entry= answers from the snapshot in ctx (=:remote-updated= via =org-canvas--sync-remote-newer-at=, =:remote-titles= via =org-canvas--sync-remote-items-titled=) and counts a would-stop entry as =:dry-run-conflict=, which is in =org-canvas--sync-stat-keys= (a key left out is silently dropped — issue #66). Dry-run mode detection is =org-canvas--sync-stats-dry-run-p=, which also consults =org-canvas--dry-run= itself: a run where every pending entry would conflict has a =:dry-run= total of zero.
+
+** Dry Run Is a Per-Module Obligation, Not a Shared Guarantee
+
+=org-canvas--dry-run= is checked by the shared machinery — =org-canvas--sync-execute-pipeline= (which skips push /and/ finalize) and =org-canvas--push-to-api= — so every macro-based module is covered for free. *Modules with custom sync loops are not.* Issue #34: =org-canvas-sync-dry-run= issued =DELETE /api/v1/files/:id= against a live course and re-uploaded five files, because =org-canvas-sync-files= runs its own loop into =org-canvas--file-push-to-api=, which talks to =org-canvas-api-request= directly. Overrides (PUT/POST/DELETE reconcile) and the settings late-policy PATCH had the same hole.
+
+When adding or editing a module that does not go through =org-canvas-define-sync=, guard *every* write path yourself, and put the check at the point where one guard covers the whole sequence (=org-canvas--file-push-to-api= covers the DELETE /and/ the 3-step upload; =org-canvas--settings-push-late-policy= covers the PATCH /and/ its POST fallback). Return =org-canvas--dry-run-response= and have the caller recognize it with =org-canvas--dry-run-response-p=, so finalize, =PAYLOAD_HASH= writes, and other bookkeeping are skipped — a preview must never leave an entry looking synced. Side effects that are not requests need guarding too (folder pre-creation in files).
+
+=test/org-canvas-dry-run-test.el= enforces this for every sync entry point against a throwaway copy of =demo-course/=: zero non-GET requests, and the .org files byte-identical afterward. Add new sync commands to =org-canvas-dry-run--sync-commands= (a spec asserts each is =fboundp=, so a rename surfaces there).
 
 * File Upload (3-Step Process)
 
@@ -289,6 +392,31 @@ separate =org-canvas-upload-timeout= (default: 120 seconds).
 - If =Location= header present: needs Step 3 confirmation
 - Otherwise: error
 
+*** Canvas Returns Null upload_params
+
+Canvas's 3-step file upload process returns =upload_params= with null/unknown values:
+#+begin_src json
+{
+  "upload_params": {
+    "filename": null,
+    "content_type": "unknown/unknown"
+  }
+}
+#+end_src
+
+The multipart form upload code must override these with actual values:
+#+begin_src elisp
+(cond
+ ((and (eq key 'filename) (null raw-value))
+  actual-filename)
+ ((and (eq key 'content_type)
+       (or (null raw-value) (string= raw-value "unknown/unknown")))
+  actual-content-type)
+ (t raw-value))
+#+end_src
+
+Without this fix, files get uploaded with =display_name: "nil"=.
+
 ** Step 3: Confirm
 
 =org-canvas--upload-confirm= follows the Location header if needed:
@@ -313,6 +441,14 @@ throughout:
 - Fix: =encode-coding-string= with =raw-text= on ASCII form parts
   before concatenating with binary content
 
+** When a File Is Re-uploaded: Three Tiers (issues #49, #70, #71, #77)
+
+Files sync in three tiers rather than always re-uploading: =PAYLOAD_HASH= stores =BYTES:METADATA= (=org-canvas--file-hash-parts= splits it), so a whole-hash match skips, a bytes match goes through =org-canvas--file-update-metadata= (one =PUT /api/v1/files/:id= — name, parent_folder_id, locked/hidden/dates — keeping the file id), and only a content change re-uploads. A legacy single-md5 hash is no longer taken as evidence of a content change: =org-canvas--file-migrate-legacy-hash= fetches the Canvas copy once and adopts a split hash when the bytes agree (tolerating the leading CRLF that issue #70 put on every pre-fix upload), so the id survives. Only a genuine difference re-uploads, and =org-canvas--file-announce-legacy-hashes= says up front how many entries face that check — issue #71: a re-upload rotates the file id, and deleting the old object first made Canvas /silently drop the module items pointing at it/.
+
+*A replacement upload no longer deletes first* (issue #77). =org-canvas--file-clear-way-for-upload= deletes only when =org-canvas--file-replace-in-place-p= says the file moved folders; otherwise the upload's ~on_duplicate=overwrite~ (already in the preflight payload) replaces it where it stands. Measured on a live course: the id still rotates, but Canvas repoints the module items itself and keeps the old id resolving as an alias, so the collateral is gone. The delete survives for a folder move because overwrite matches on name /within a folder/ — with nothing to overwrite at the destination the old object would linger as an orphan still holding the items. That case records into =org-canvas--file-recreated-ids= and warns; ordinary id changes now log at info via =org-canvas--file-warn-changed-ids=.
+
+*=org-canvas--file-force-upload=* overrides every skip in =org-canvas--file-sync-parsed-entry=, which all reason from a hash — and a hash describes the local file and the last upload, never what Canvas actually holds. Built for the files uploaded before issue #70 was fixed, whose remote copies carry a stray CRLF that the issue #71 migration deliberately tolerates. Bound for one run by =org-canvas-files-force-reupload= / =org-canvas-force-reupload-file-at-point=, both of which confirm first; never set it globally, or every sync re-uploads everything, which is what #71 was about. Before either write path, =org-canvas--file-check-conflict= runs the shared conflict resolution with =org-canvas--file-pull-item= as the pull option (issue #49).
+
 * Rubric Association
 
 =org-canvas--associate-rubric= links a rubric to an assignment or
@@ -326,6 +462,16 @@ discussion after both are synced:
 
 This is called as a =:post-fn= callback during finalize. Errors are
 caught and logged as warnings (non-fatal — the assignment still syncs).
+
+* Canvas Quiz Questions API
+
+Quizzes and questions are *separate API resources*. The quiz description field is just introductory text - actual questions must be synced via the Quiz Questions API:
+
+#+begin_example
+POST /api/v1/courses/:course_id/quizzes/:quiz_id/questions
+#+end_example
+
+The question payload includes =question_name=, =question_text=, =question_type=, =points_possible=, and an =answers= array. Different question types have different answer formats (see =org-canvas--question-build-answers=).
 
 * Credentials
 
@@ -398,6 +544,8 @@ curl "https://canvas.example.com/api/v1/courses/123/assignments" \
 This is invaluable for isolating whether issues are in the Elisp HTTP
 library or the API call itself.
 
+The =org-canvas--build-curl-command= function logs curl commands that can be copy/pasted to terminal for testing. This is invaluable for isolating whether issues are in the Elisp HTTP library or the API call itself.
+
 ** Log Clearing
 
 =org-canvas-clear-log= clears the =*canvas-log*= buffer and log file.
@@ -440,6 +588,22 @@ the others. Progress messages show =[N/M]= counts.
 =org-canvas-define-delete-all= and =org-canvas-define-delete-at-point=
 generate module-specific delete functions declaratively, similar to how
 =org-canvas-define-sync= generates sync functions.
+
+#+begin_src elisp
+(org-canvas-define-delete-all pages
+  :endpoint "pages"
+  :file org-canvas-pages-file
+  :id-field 'url              ; optional, default 'id
+  :id-property "CANVAS_URL"   ; optional, default "CANVAS_ID"
+  :skip-fn (lambda (item) (eq (alist-get 'front_page item) t))
+  ;; For non-course-scoped endpoints:
+  :list-url-fn (lambda () (format "%s/api/v1/calendar_events" org-canvas-base-url))
+  :delete-url-fn (lambda (id) (format "%s/api/v1/group_categories/%s" org-canvas-base-url id))
+  :delete-data '((cancel_reason . "Deleted by org-canvas")))
+
+(org-canvas-define-delete-at-point assignment
+  :endpoint "assignments/%s")
+#+end_src
 
 * Configuration Reference
 
