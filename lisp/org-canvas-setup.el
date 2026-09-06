@@ -61,7 +61,10 @@
 (defun org-canvas-init ()
   "Set up org-canvas for a new course.
 Prompts for required configuration, tests the connection,
-and writes org-canvas-credentials.el."
+and writes org-canvas-credentials.el.  The token can instead be kept
+in ~/.authinfo.gpg as `machine HOST login COURSE-ID password TOKEN',
+which `org-canvas--api-token' consults whenever `org-canvas-api-token'
+is empty."
   (interactive)
   (let* ((dir (read-directory-name "Course directory: " nil nil t))
          (url (read-string "Canvas base URL: " "https://canvas.instructure.com"))
@@ -118,7 +121,7 @@ and writes org-canvas-credentials.el."
            (cons (cons course-name dir)
                  (assoc-delete-all course-name org-canvas-courses)))
           (setq org-canvas--active-course-name course-name)))
-    (message "org-canvas initialized!  Use M-x org-canvas-status to see sync state.")))
+    (message "org-canvas initialized!  Use M-x org-canvas-status to see sync state.  An ~/.authinfo.gpg line (%s) can replace the token in the credentials file." (org-canvas--api-authinfo-line))))
 
 (defun org-canvas--read-course-name ()
   "Prompt for a course name from `org-canvas-courses'."
@@ -145,6 +148,9 @@ If NAME is nil and called interactively, prompt with completion."
       (unless (file-exists-p cred-file)
         (user-error "No org-canvas-credentials.el in %s" dir))
       (load cred-file nil t)
+      ;; A token rotated in authinfo for the same host and course would
+      ;; otherwise stay cached until Emacs restarts (issue #138).
+      (org-canvas--api-token-forget)
       ;; The credentials file's `(setq org-canvas-directory ...)' triggers
       ;; the directory watcher in core-config.el, which recomputes all
       ;; registered file vars — no explicit `recompute-file-paths' needed.

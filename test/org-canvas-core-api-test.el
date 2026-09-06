@@ -6,6 +6,7 @@
 (require 'buttercup)
 (require 'test-helper)
 (require 'org-canvas-core)
+(require 'org-canvas-setup)
 
 ;;;; 3. API Layer
 
@@ -498,16 +499,24 @@
 
 ;;;; Preflight Check
 
+(defconst org-canvas-api-test--no-token-message
+  "API token not configured.  Add a line to ~/.authinfo.gpg:\n  machine test.canvas.example.com login 99999 password <token>\nor set org-canvas-api-token in org-canvas-credentials.el\nRun M-x org-canvas-init for guided setup"
+  "The preflight message for the test host and course when no token resolves.")
+
 (describe "org-canvas--preflight-check"
   (it "errors when API token is empty"
-    (let ((org-canvas-api-token ""))
-      (expect (org-canvas--preflight-check) :to-throw 'error
-              '("API token not configured.  Set org-canvas-api-token in org-canvas-credentials.el\nRun M-x org-canvas-init for guided setup"))))
+    (with-org-canvas-test-config
+      (let ((org-canvas-api-token ""))
+        (cl-letf (((symbol-function 'auth-source-search) #'ignore))
+          (expect (org-canvas--preflight-check) :to-throw 'error
+                  (list org-canvas-api-test--no-token-message))))))
 
   (it "errors when API token is nil"
-    (let ((org-canvas-api-token nil))
-      (expect (org-canvas--preflight-check) :to-throw 'error
-              '("API token not configured.  Set org-canvas-api-token in org-canvas-credentials.el\nRun M-x org-canvas-init for guided setup"))))
+    (with-org-canvas-test-config
+      (let ((org-canvas-api-token nil))
+        (cl-letf (((symbol-function 'auth-source-search) #'ignore))
+          (expect (org-canvas--preflight-check) :to-throw 'error
+                  (list org-canvas-api-test--no-token-message))))))
 
   (it "errors when course ID is empty"
     (let ((org-canvas-api-token "valid-token")
@@ -529,6 +538,203 @@
       (cl-letf (((symbol-function 'org-canvas-api-request)
                  (lambda (&rest _) '((name . "Test Course")))))
         (expect (org-canvas--preflight-check) :not :to-throw)))))
+
+;;;; Token Resolution (issue #138)
+
+(defun org-canvas-api-test--auth-entry (secret &optional user)
+  "Return an auth-source result list holding SECRET, for USER when given."
+  (list (append (list :host "canvas.example.edu" :secret secret)
+                (and user (list :user user)))))
+
+(defun org-canvas-api-test--auth-source-stub (calls-cell table)
+  "Return a stand-in for `auth-source-search'.
+Each call's spec plist is pushed onto the car of CALLS-CELL.  The
+result is TABLE's entry for the spec's `:user' (nil keys a host-only
+search), so a spec can script which login carries the token."
+  (lambda (&rest spec)
+    (push spec (car calls-cell))
+    (cdr (assoc (plist-get spec :user) table))))
+
+(describe "org-canvas--api-host"
+  (it "strips the scheme, port and path"
+    (let ((org-canvas-base-url "https://canvas.example.edu:8443/api/"))
+      (expect (org-canvas--api-host) :to-equal "canvas.example.edu")))
+
+  (it "accepts a bare host"
+    (let ((org-canvas-base-url "canvas.example.edu"))
+      (expect (org-canvas--api-host) :to-equal "canvas.example.edu")))
+
+  (it "returns nil for an empty or non-string URL"
+    (let ((org-canvas-base-url ""))
+      (expect (org-canvas--api-host) :to-be nil))
+    (let ((org-canvas-base-url nil))
+      (expect (org-canvas--api-host) :to-be nil))))
+
+(describe "org-canvas--api-token"
+  :var (calls)
+  (before-each
+    (setq calls (list nil))
+    (org-canvas--api-token-forget))
+  (after-each
+    (org-canvas--api-token-forget))
+
+  (it "returns org-canvas-api-token when it is non-empty"
+    (let ((org-canvas-api-token "custom-token")
+          (org-canvas-base-url "https://canvas.example.edu")
+          (org-canvas-course-id "42"))
+      (cl-letf (((symbol-function 'auth-source-search)
+                 (org-canvas-api-test--auth-source-stub
+                  calls `(("42" . ,(org-canvas-api-test--auth-entry "as-token" "42"))))))
+        (expect (org-canvas--api-token) :to-equal "custom-token")
+        (expect (car calls) :to-be nil))))
+
+  (it "resolves a string secret from auth-source when the defcustom is empty"
+    (let ((org-canvas-api-token "")
+          (org-canvas-base-url "https://canvas.example.edu:8443/")
+          (org-canvas-course-id "42"))
+      (cl-letf (((symbol-function 'auth-source-search)
+                 (org-canvas-api-test--auth-source-stub
+                  calls `(("42" . ,(org-canvas-api-test--auth-entry "as-token" "42"))))))
+        (expect (org-canvas--api-token) :to-equal "as-token")
+        (let ((spec (car (car calls))))
+          (expect (plist-get spec :host) :to-equal "canvas.example.edu")
+          (expect (plist-get spec :user) :to-equal "42")
+          (expect (plist-get spec :max) :to-equal 1)
+          (expect (plist-get spec :require) :to-equal '(:secret))))))
+
+  (it "calls a secret that auth-source stores as a function"
+    (let ((org-canvas-api-token "")
+          (org-canvas-base-url "https://canvas.example.edu")
+          (org-canvas-course-id "42"))
+      (cl-letf (((symbol-function 'auth-source-search)
+                 (org-canvas-api-test--auth-source-stub
+                  calls `(("42" . ,(org-canvas-api-test--auth-entry
+                                    (lambda () "fn-token") "42"))))))
+        (expect (org-canvas--api-token) :to-equal "fn-token"))))
+
+  (it "tries the course id as login before any entry for the host"
+    (let ((org-canvas-api-token "")
+          (org-canvas-base-url "https://canvas.example.edu")
+          (org-canvas-course-id "42"))
+      (cl-letf (((symbol-function 'auth-source-search)
+                 (org-canvas-api-test--auth-source-stub
+                  calls `((nil . ,(org-canvas-api-test--auth-entry "host-token"))))))
+        (expect (org-canvas--api-token) :to-equal "host-token")
+        (expect (mapcar (lambda (spec) (plist-get spec :user))
+                        (reverse (car calls)))
+                :to-equal '("42" nil)))))
+
+  (it "searches the host only once when no course id is set"
+    (let ((org-canvas-api-token "")
+          (org-canvas-base-url "https://canvas.example.edu")
+          (org-canvas-course-id ""))
+      (cl-letf (((symbol-function 'auth-source-search)
+                 (org-canvas-api-test--auth-source-stub calls nil)))
+        (expect (org-canvas--api-token) :to-be nil)
+        (expect (mapcar (lambda (spec) (plist-get spec :user)) (car calls))
+                :to-equal '(nil)))))
+
+  (it "returns nil when nothing matches and does not cache the miss"
+    (let ((org-canvas-api-token "")
+          (org-canvas-base-url "https://canvas.example.edu")
+          (org-canvas-course-id "42"))
+      (cl-letf (((symbol-function 'auth-source-search)
+                 (org-canvas-api-test--auth-source-stub calls nil)))
+        (expect (org-canvas--api-token) :to-be nil)
+        (expect org-canvas--api-token-cache :to-be nil)
+        (expect (org-canvas--api-token) :to-be nil)
+        (expect (length (car calls)) :to-equal 4))))
+
+  (it "makes preflight name the authinfo line for this host and course"
+    (let ((org-canvas-api-token "")
+          (org-canvas-base-url "https://canvas.example.edu")
+          (org-canvas-course-id "42"))
+      (cl-letf (((symbol-function 'auth-source-search)
+                 (org-canvas-api-test--auth-source-stub calls nil)))
+        (expect (org-canvas--preflight-check)
+                :to-throw 'org-canvas-credentials-error
+                '("API token not configured.  Add a line to ~/.authinfo.gpg:\n  machine canvas.example.edu login 42 password <token>\nor set org-canvas-api-token in org-canvas-credentials.el\nRun M-x org-canvas-init for guided setup")))))
+
+  (it "uses placeholders in the message when host and course are unknown"
+    (let ((org-canvas-api-token "")
+          (org-canvas-base-url "")
+          (org-canvas-course-id ""))
+      (expect (org-canvas--ensure-credentials)
+              :to-throw 'org-canvas-credentials-error
+              '("API token not configured.  Add a line to ~/.authinfo.gpg:\n  machine <canvas-host> login <course-id> password <token>\nor set org-canvas-api-token in org-canvas-credentials.el\nRun M-x org-canvas-init for guided setup"))))
+
+  (it "does not search when the base URL names no host"
+    (let ((org-canvas-api-token "")
+          (org-canvas-base-url "")
+          (org-canvas-course-id "42"))
+      (cl-letf (((symbol-function 'auth-source-search)
+                 (org-canvas-api-test--auth-source-stub calls nil)))
+        (expect (org-canvas--api-token) :to-be nil)
+        (expect (car calls) :to-be nil))))
+
+  (it "caches a hit for the host and course"
+    (let ((org-canvas-api-token "")
+          (org-canvas-base-url "https://canvas.example.edu")
+          (org-canvas-course-id "42"))
+      (cl-letf (((symbol-function 'auth-source-search)
+                 (org-canvas-api-test--auth-source-stub
+                  calls `(("42" . ,(org-canvas-api-test--auth-entry "as-token" "42"))))))
+        (expect (org-canvas--api-token) :to-equal "as-token")
+        (expect (org-canvas--api-token) :to-equal "as-token")
+        (expect (length (car calls)) :to-equal 1)
+        (expect org-canvas--api-token-cache
+                :to-equal '(("canvas.example.edu" . "42") . "as-token")))))
+
+  (it "sends the resolved token in the Authorization header"
+    (let ((org-canvas-api-token "")
+          (org-canvas-base-url "https://canvas.example.edu")
+          (org-canvas-course-id "42")
+          (captured-headers nil))
+      (cl-letf (((symbol-function 'auth-source-search)
+                 (org-canvas-api-test--auth-source-stub
+                  calls `(("42" . ,(org-canvas-api-test--auth-entry "as-token" "42")))))
+                ((symbol-function 'plz)
+                 (lambda (_method _url &rest args)
+                   (setq captured-headers (plist-get args :headers))
+                   '((id . 1)))))
+        (org-canvas-api-request 'GET "https://canvas.example.edu/api/v1/x")
+        (expect (cdr (assoc "Authorization" captured-headers))
+                :to-equal "Bearer as-token"))))
+
+  (it "forgets the cache when the base URL or course id changes"
+    (setq org-canvas--api-token-cache '(("canvas.example.edu" . "42") . "as-token"))
+    (let ((org-canvas-course-id "43"))
+      (expect org-canvas--api-token-cache :to-be nil))
+    (setq org-canvas--api-token-cache '(("canvas.example.edu" . "42") . "as-token"))
+    (let ((org-canvas-base-url "https://other.example.edu"))
+      (expect org-canvas--api-token-cache :to-be nil)))
+
+  (it "is forgotten when a course is activated"
+    (let* ((dir (make-temp-file "course-" t))
+           (org-canvas-courses `(("Math" . ,dir)))
+           (org-canvas--active-course-name nil)
+           (org-canvas--inhibit-log-clear t)
+           (org-canvas--file-var-registry nil)
+           (saved (list org-canvas-directory org-canvas-base-url
+                        org-canvas-api-token org-canvas-course-id)))
+      (unwind-protect
+          (progn
+            (with-temp-file (expand-file-name "org-canvas-credentials.el" dir)
+              (insert (format "(setq org-canvas-directory %S)\n" dir)
+                      "(setq org-canvas-base-url \"https://canvas.example.edu\")\n"
+                      "(setq org-canvas-api-token \"\")\n"
+                      "(setq org-canvas-course-id \"42\")\n"))
+            (spy-on 'org-canvas--api-token-forget :and-call-through)
+            (setq org-canvas--api-token-cache
+                  '(("canvas.example.edu" . "42") . "stale"))
+            (org-canvas-activate-course "Math")
+            (expect 'org-canvas--api-token-forget :to-have-been-called)
+            (expect org-canvas--api-token-cache :to-be nil))
+        (setq org-canvas-directory (nth 0 saved)
+              org-canvas-base-url (nth 1 saved)
+              org-canvas-api-token (nth 2 saved)
+              org-canvas-course-id (nth 3 saved))
+        (delete-directory dir t)))))
 
 ;;;; Rate Limit Handling
 

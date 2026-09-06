@@ -20,6 +20,7 @@
 ;;; Code:
 
 (require 'buttercup)
+(require 'test-helper)
 (require 'org-canvas)
 
 (defconst org-canvas-doc-ref--generator

@@ -1619,6 +1619,21 @@
           (expect (buffer-string) :to-match
                   "org-canvas-api-token: \\[unset\\]")))))
 
+  (it "labels a token resolved via auth-source without printing it"
+    (let ((org-canvas-api-token "")
+          (org-canvas-base-url "https://canvas.example.edu")
+          (org-canvas-course-id "42"))
+      (cl-letf (((symbol-function 'auth-source-search)
+                 (lambda (&rest _)
+                   '((:host "canvas.example.edu" :secret "as-secret"))))
+                ((symbol-function 'pop-to-buffer) #'identity))
+        (org-canvas-submit-bug-report)
+        (with-current-buffer "*org-canvas-bug-report*"
+          (let ((content (buffer-string)))
+            (expect content :to-match
+                    "org-canvas-api-token: \\[redacted, resolved via auth-source\\]")
+            (expect content :not :to-match "as-secret"))))))
+
   (it "lists the documented configuration variables"
     (cl-letf (((symbol-function 'pop-to-buffer) #'identity))
       (org-canvas-submit-bug-report)
