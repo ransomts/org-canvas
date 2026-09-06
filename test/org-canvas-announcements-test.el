@@ -573,4 +573,22 @@ Content for everyone.
               (expect (buffer-string) :not :to-match ":AUTHOR:")))
         (delete-file temp)))))
 
+
+(describe "announcement pull reads nested fields through the registry (issue #135)"
+  (it "writes AUTHOR from user.display_name"
+    (with-pull-property-test #'org-canvas--announcement-pull-item
+      '((id . 1) (title . "Hi") (message . "<p>x</p>")
+        (user . ((display_name . "Prof. Ada"))))
+      "AUTHOR" :to-equal "Prof. Ada"))
+
+  (it "leaves ALLOW_COMMENTS implicit when Canvas reports the topic locked"
+    (with-pull-property-test #'org-canvas--announcement-pull-item
+      '((id . 1) (title . "Hi") (message . "<p>x</p>") (locked . t))
+      "ALLOW_COMMENTS" :to-be nil))
+
+  (it "writes ALLOW_COMMENTS true when replies are open"
+    (with-pull-property-test #'org-canvas--announcement-pull-item
+      '((id . 1) (title . "Hi") (message . "<p>x</p>") (locked . :json-false))
+      "ALLOW_COMMENTS" :to-equal "true")))
+
 ;;; org-canvas-announcements-test.el ends here

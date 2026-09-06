@@ -1403,4 +1403,11 @@ Keep this body
      (org-back-to-heading)
      (expect (org-canvas-delete-rubric-at-point) :to-throw 'user-error))))
 
+
+(describe "rubric pull reads the registry (issue #135)"
+  (it "writes FREE_FORM_CRITERION_COMMENTS from Canvas's field"
+    (with-pull-property-test #'org-canvas--rubric-pull-item
+      '((id . 1) (title . "R") (free_form_criterion_comments . t) (data . []))
+      "FREE_FORM_CRITERION_COMMENTS" :to-equal "true")))
+
 ;;; org-canvas-rubrics-test.el ends here

@@ -408,3 +408,88 @@ nothing local to compare. =org-canvas--page-pull-item= records =FRONT_PAGE: true
 so the round-trip survives, and /removes/ the property when Canvas no longer
 serves that page as the home page — two headings claiming it is not a state
 Canvas can be in.
+
+* Registry-Driven Pull (issue #135)
+
+Every property a pull writes comes from the module's
+=org-canvas-register-properties= entry.  Push parse, validation, the
+drift report and the payload builder already read that registry; pull
+used to spell the same mapping a second time in each module's
+=org-canvas-define-pull-item= spec, or write properties by hand, and
+the copies drifted: the assignment pull wrote =SUBMISSION_TYPES= and
+never =PUBLISHED=, the discussion pull wrote =DELAYED_POST_AT= where
+push reads =AVAILABLE_FROM= (issue #134).
+
+** How a property is pulled
+
+=org-canvas--pull-item-from-registry REGISTRY-KEY ITEM POS= walks the
+entry's specs and hands each to =org-canvas--pull-apply-spec=, which
+decides per spec:
+
+| Situation                                        | Action                                  |
+|--------------------------------------------------+-----------------------------------------|
+| ITEM does not carry the field                    | property left untouched                 |
+| value is the property's default                  | property deleted (drawer stays terse)   |
+| same, with =org-canvas-emit-defaults= set        | default written out                     |
+| value has an Org spelling                        | written                                 |
+| value has none (a link to a missing heading)     | logged, left unchanged                  |
+| spec is =:local-only=                            | skipped                                 |
+
+"Default" is what the property means when absent: the registered
+=:default= for a boolean (nil when none is declared), zero for a
+number, nothing at all for the rest (=org-canvas--registry-value-default-p=).
+The registry's =:default= must therefore match the parse side's
+fallback — =PUBLISHED= declares =:default t= wherever parse treats an
+absent property as published.
+
+** Where the Canvas field comes from
+
+=org-canvas--registry-remote-field= is shared with =org-canvas-diff=
+\(the diff's =org-canvas--diff-remote-field= is an alias), so the
+report and the pull can never disagree about which field a property
+means: a =:remote-fn= of one argument when the spec names one,
+otherwise the =:api-key=, otherwise the =:data-key= name.  A field
+Canvas nests or spells differently needs a =:remote-fn=; the tell is a
+property the pull never writes or the report always calls drifted.
+Examples: an announcement's =AUTHOR= (=user.display_name=) and
+=ALLOW_COMMENTS= (the inverse of =locked=), an assignment's
+=RUBRIC_LINK= (=rubric_settings.id=), a module's
+=REQUIRE_SEQUENTIAL_PROGRESSION= (=require_sequential_progress=), a
+rubric's free-form flag, a file's usage rights.
+
+A =:remote-fn= answers for its field, so its nil means "unset", never
+"absent"; a flat key must be present in the item for the property to
+be touched at all, because a conflict-check GET can return a partial
+object.
+
+** Types
+
+=org-canvas--registry-remote-as-org= spells a value for the Org drawer
+by spec type: booleans as =true=/=false=, timestamps through
+=org-canvas--iso8601-to-org-timestamp=, =csv-enum= joined with commas
+from either a JSON array or a comma string (issue #63), and =link=
+through =org-canvas--pull-resolve-link=, which finds the heading in
+the spec's =:target-file= whose =:link-id-property= (default
+=CANVAS_ID=) is the id and returns a =[[file:...::*Heading][Heading]]=
+link — the inverse of the push side's =org-canvas--resolve-link-property=.
+The heading index is cached per file and keyed on the buffer's
+modification tick, so an edit to the target file invalidates it
+without anyone clearing a cache.
+
+** :local-only
+
+A property org-canvas keeps for itself is never Canvas's opinion.
+=PUBLISH_AT= on modules and module items is org-canvas's own release
+schedule; the spec carries =:local-only t= and both the pull and the
+drift comparison skip it.
+
+** What a module still writes by hand
+
+Only what the registry cannot express: the body
+(=org-canvas--pull-insert-body=, via =:body-field=), child structures
+\(an assignment's override table, a rubric's criteria, a module's item
+headings) and informational extras nothing pushes (a file's
+=CONTENT_TYPE= and =SIZE=).  These go through =:after-pull= or the
+module's own pull-item function, which starts by calling
+=org-canvas--pull-item-from-registry=.
+||||||| 8969686

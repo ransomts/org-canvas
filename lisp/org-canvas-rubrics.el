@@ -65,12 +65,19 @@
  :name "Rubrics" :endpoint "rubrics"
  :file-var 'org-canvas-rubrics-file
  :id-field 'id :id-property "CANVAS_ID" :title-field 'title)
+(defun org-canvas--rubric-remote-free-form (item)
+  "Return ITEM's `free_form_criterion_comments' flag.
+The Org property is named after it; the payload key is the shorter
+`:free-form', which is no Canvas field at all."
+  (alist-get 'free_form_criterion_comments item))
+
 (org-canvas-register-properties "rubrics"
   :label "Rubrics"
   :file-var 'org-canvas-rubrics-file
   :query "LEVEL=1"
   :properties
   '((:org-prop "FREE_FORM_CRITERION_COMMENTS" :data-key :free-form :type boolean
+     :remote-fn org-canvas--rubric-remote-free-form
      :doc "Allow freeform comments"))
   :structural-fn #'org-canvas--validate-rubric-structure)
 
@@ -667,10 +674,12 @@ C is the API alist for one criterion."
       (org-canvas--rubric-pull-emit-rating-rows ratings))
     (insert "\n")))
 
-(defun org-canvas--rubric-pull-item (item _pos)
+(defun org-canvas--rubric-pull-item (item pos)
   "Set per-item content for a pulled rubric.
 ITEM is the API response alist, POS is the heading position.
-Replaces the rubric body with one level-2 heading per criterion."
+Writes the registry's properties, then replaces the rubric body with
+one level-2 heading per criterion."
+  (org-canvas--pull-item-from-registry "rubrics" item pos)
   (let ((criteria (alist-get 'data item)))
     (when criteria
       ;; Anchor deletion at the end of the drawer's last non-blank line so

@@ -1545,14 +1545,25 @@ Content.
       "EXTERNAL_TOOL_ID" :to-equal "12787"))
 
   (it "leaves an ordinary assignment untouched"
+    (with-pull-property-test #'org-canvas--assignment-pull-item
+      '((id . 1) (name . "Essay") (description . ""))
+      "EXTERNAL_TOOL_URL" :to-be nil))
+
+  (it "drops a stale tool URL when Canvas no longer holds one"
     (with-temp-org-buffer
      "* Essay
 :PROPERTIES:
 :CANVAS_ID: 1
+:EXTERNAL_TOOL_URL: https://old.example/launch
+:EXTERNAL_TOOL_NEW_TAB: true
 :END:
 "
      (org-back-to-heading)
-     (org-canvas--assignment-pull-external-tool (point) '((id . 1)))
+     (with-html-to-org-identity
+       (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                  (lambda (&rest _) nil)))
+         (org-canvas--assignment-pull-item
+          '((id . 1) (name . "Essay") (description . "")) (point))))
      (expect (org-entry-get (point) "EXTERNAL_TOOL_URL") :to-be nil)
      (expect (org-entry-get (point) "EXTERNAL_TOOL_NEW_TAB") :to-be nil))))
 
@@ -1938,5 +1949,30 @@ Content.
               :not :to-equal (funcall hash '(:title "HW" :rubric-id "789")))
       (expect (funcall hash '(:title "HW" :rubric-id "789" :rubric-hide-score-total :json-false))
               :not :to-equal (funcall hash '(:title "HW" :rubric-id "789"))))))
+
+
+(describe "assignment pull reads the registry (issues #134, #135)"
+  (it "writes PUBLISHED false, the field the drift report pointed at"
+    (with-pull-property-test #'org-canvas--assignment-pull-item
+      '((id . 1) (name . "A") (description . "") (published . :json-false))
+      "PUBLISHED" :to-equal "false"))
+
+  (it "writes SUBMISSION, the property push reads"
+    (with-pull-property-test #'org-canvas--assignment-pull-item
+      '((id . 1) (name . "A") (description . "")
+        (submission_types . ["online_upload" "online_url"]))
+      "SUBMISSION" :to-equal "online_upload,online_url"))
+
+  (it "never injects Canvas's own field name into the drawer"
+    (with-pull-property-test #'org-canvas--assignment-pull-item
+      '((id . 1) (name . "A") (description . "")
+        (submission_types . ["on_paper"]))
+      "SUBMISSION_TYPES" :to-be nil))
+
+  (it "reads the rubric id from rubric_settings"
+    (expect (org-canvas--assignment-remote-rubric-id
+             '((rubric_settings . ((id . 77)))))
+            :to-equal 77)
+    (expect (org-canvas--assignment-remote-rubric-id '((id . 1))) :to-be nil)))
 
 ;;; org-canvas-assignments-test.el ends here

@@ -78,8 +78,10 @@ PROPERTY names the property.  LOC is a (:file :line :heading) plist."
 
 (defun org-canvas--validate-check-csv-enum (value property valid-values loc)
   "Check that each comma-separated part of VALUE is in VALID-VALUES.
-PROPERTY names the property.  LOC is a (:file :line :heading) plist."
-  (when value
+PROPERTY names the property.  LOC is a (:file :line :heading) plist.
+A `csv-enum' spec without `:values' is a free-form list (file
+extensions, Canvas ids) and has nothing to check against."
+  (when (and value valid-values)
     (let ((parts (split-string value "," t "[ \t]+")))
       (let ((bad (cl-remove-if (lambda (p) (member p valid-values)) parts)))
         (when bad

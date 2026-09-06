@@ -80,6 +80,10 @@ always known this; see `org-canvas--assignment-group-compute-rules'."
   "Return ITEM's nested drop_highest rule, or nil."
   (org-canvas--assignment-group-remote-rule item 'drop_highest))
 
+(defun org-canvas--assignment-group-remote-never-drop (item)
+  "Return ITEM's nested never_drop id list, or nil."
+  (org-canvas--assignment-group-remote-rule item 'never_drop))
+
 (org-canvas-register-properties "assignment-groups"
   :label "Assignment Groups"
   :file-var 'org-canvas-assignment-groups-file
@@ -96,6 +100,9 @@ always known this; see `org-canvas--assignment-group-compute-rules'."
     (:org-prop "DROP_HIGHEST" :data-key :drop_highest :type number
      :remote-fn org-canvas--assignment-group-remote-drop-highest
      :doc "Number of highest scores to drop")
+    (:org-prop "NEVER_DROP" :data-key :never_drop :type csv-enum
+     :remote-fn org-canvas--assignment-group-remote-never-drop
+     :doc "Assignment ids never dropped by the drop rules (comma separated)")
     (:org-prop "POSITION" :data-key :position :type number
      :doc "Position in group ordering"))
   :structural-fn #'org-canvas--validate-drop-rules
@@ -269,29 +276,8 @@ otherwise good sync."
 
 ;;;; Pull
 
-(defun org-canvas--assignment-group-pull-item (item pos)
-  "Set per-item properties for a pulled assignment group.
-ITEM is the API response alist, POS is the heading position."
-  (let ((weight (alist-get 'group_weight item))
-        (rules (alist-get 'rules item))
-        (position (alist-get 'position item)))
-    (when weight
-      (org-canvas-org-set-property pos "WEIGHT" (format "%s" weight)))
-    (when position
-      (org-canvas-org-set-property pos "POSITION" (format "%s" position)))
-    (when rules
-      (let ((drop-lowest (alist-get 'drop_lowest rules))
-            (drop-highest (alist-get 'drop_highest rules))
-            (never-drop (alist-get 'never_drop rules)))
-        (when (and drop-lowest (> drop-lowest 0))
-          (org-canvas-org-set-property pos "DROP_LOWEST"
-                                       (format "%s" drop-lowest)))
-        (when (and drop-highest (> drop-highest 0))
-          (org-canvas-org-set-property pos "DROP_HIGHEST"
-                                       (format "%s" drop-highest)))
-        (when (and never-drop (> (length never-drop) 0))
-          (org-canvas-org-set-property pos "NEVER_DROP"
-                                       (mapconcat #'number-to-string (append never-drop nil) ",")))))))
+(org-canvas-define-pull-item assignment-group
+  :registry-key "assignment-groups")
 
 (org-canvas-define-pull assignment-groups
   :file org-canvas-assignment-groups-file

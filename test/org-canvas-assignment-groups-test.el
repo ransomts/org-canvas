@@ -618,4 +618,18 @@
                     '((id . 111) (name . "Original Name") (assignments . [])))))
           (expect (org-canvas--assignment-group-reconcile-unmanaged) :to-be nil))))))
 
+
+(describe "assignment-group pull reads drop rules through the registry (issue #135)"
+  (it "writes NEVER_DROP from the nested rules"
+    (with-pull-property-test #'org-canvas--assignment-group-pull-item
+      '((id . 1) (name . "HW") (group_weight . 40)
+        (rules . ((drop_lowest . 1) (never_drop . [11 12]))))
+      "NEVER_DROP" :to-equal "11,12"))
+
+  (it "leaves a zero drop rule implicit"
+    (with-pull-property-test #'org-canvas--assignment-group-pull-item
+      '((id . 1) (name . "HW") (group_weight . 40)
+        (rules . ((drop_lowest . 1) (drop_highest . 0))))
+      "DROP_HIGHEST" :to-be nil)))
+
 ;;; org-canvas-assignment-groups-test.el ends here

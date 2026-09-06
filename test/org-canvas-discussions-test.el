@@ -553,11 +553,17 @@ Content.
         (message . "<p>Discuss</p>"))
       "DISCUSSION_TYPE" :to-equal "threaded"))
 
-  (it "sets DELAYED_POST_AT when present"
+  (it "writes delayed_post_at to AVAILABLE_FROM, the property push reads (issue #135)"
     (with-pull-property-test #'org-canvas--discussion-pull-item
       '((id . 1) (title . "Discussion") (delayed_post_at . "2026-06-15T09:00:00Z")
         (message . "<p>Later</p>"))
-      "DELAYED_POST_AT" :to-match "<2026-06-15"))
+      "AVAILABLE_FROM" :to-match "<2026-06-15"))
+
+  (it "never writes DELAYED_POST_AT, which no discussion push reads"
+    (with-pull-property-test #'org-canvas--discussion-pull-item
+      '((id . 1) (title . "Discussion") (delayed_post_at . "2026-06-15T09:00:00Z")
+        (message . "<p>Later</p>"))
+      "DELAYED_POST_AT" :to-be nil))
 
   (it "inserts body text"
     (with-temp-org-buffer

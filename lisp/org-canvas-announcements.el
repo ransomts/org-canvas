@@ -48,6 +48,23 @@
  :file-var 'org-canvas-announcements-file
  :id-field 'id :id-property "CANVAS_ID" :title-field 'title
  :list-params '(("only_announcements" . "true")))
+;; The two properties Canvas does not hold under a flat key of their own.
+;; A `:remote-fn' is what the drift report and the registry-driven pull
+;; both read (issue #135); without one the pull could not write AUTHOR
+;; at all and the report called every announcement's ALLOW_COMMENTS drifted.
+
+(defun org-canvas--announcement-remote-author (item)
+  "Return the display name of the user who posted ITEM, or nil.
+Canvas nests it under `user'."
+  (let ((user (alist-get 'user item)))
+    (and (listp user) (alist-get 'display_name user))))
+
+(defun org-canvas--announcement-remote-allow-comments (item)
+  "Return non-nil when ITEM still accepts replies.
+Disabling comments is pushed as a `lock_at' in the past (see the
+payload builder), which Canvas reports back as `locked'."
+  (not (eq (alist-get 'locked item) t)))
+
 (org-canvas-register-properties "announcements"
   :label "Announcements"
   :file-var 'org-canvas-announcements-file
@@ -63,8 +80,10 @@
      :api-key "delayed_post_at"
      :doc "Schedule the announcement to publish at this time")
     (:org-prop "AUTHOR" :data-key :author :type string
+     :remote-fn org-canvas--announcement-remote-author
      :doc "Announcement author display name (read-only)")
     (:org-prop "ALLOW_COMMENTS" :data-key :allow_discussion_comments :type boolean
+     :remote-fn org-canvas--announcement-remote-allow-comments
      :doc "Allow student replies")))
 
 ;;;; 1. Stage: Extraction
@@ -127,24 +146,9 @@ DATA is the parsed plist, PAYLOAD is the alist so far."
 
 ;;;; Pull
 
-(defun org-canvas--announcement-pull-set-author (item pos)
-  "Set AUTHOR property at POS from ITEM's user.display_name when present.
-The Canvas API returns `user' as a nested alist; this helper extracts
-`display_name' and writes it as :AUTHOR:.  Skipped when user is nil or
-missing display_name."
-  (let* ((user (alist-get 'user item))
-         (display-name (and user (listp user)
-                            (alist-get 'display_name user))))
-    (when (and display-name (not (eq display-name :null))
-               (stringp display-name) (not (string-empty-p display-name)))
-      (org-canvas-org-set-property pos "AUTHOR" display-name))))
-
 (org-canvas-define-pull-item announcement
-  :body-field message
-  :properties
-  ((posted_at "POSTED_AT" :type timestamp)
-   (delayed_post_at "DELAYED_POST_AT" :type timestamp))
-  :after-pull #'org-canvas--announcement-pull-set-author)
+  :registry-key "announcements"
+  :body-field message)
 
 (org-canvas-define-pull announcements
   :file org-canvas-announcements-file

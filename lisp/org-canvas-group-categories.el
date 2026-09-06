@@ -117,10 +117,7 @@ PUT is global."
 ;;;; Pull
 
 (org-canvas-define-pull-item group-category
-  :properties
-  ((self_signup  "SELF_SIGNUP"  :type non-null)
-   (group_limit  "GROUP_LIMIT"  :type number)
-   (auto_leader  "AUTO_LEADER"  :type non-null)))
+  :registry-key "group-categories")
 
 (org-canvas-define-pull group-categories
   :file org-canvas-group-categories-file
