@@ -3881,7 +3881,7 @@ REMOTE is a form; the symbol `fail' makes the list request signal.
 
 
 (describe "module pull reads the registry (issue #135)"
-  (it "reads require_sequential_progress under Canvas's spelling"
+  (it "reads require_sequential_progress, the field the registry names"
     (with-pull-property-test #'org-canvas--module-pull-item
       '((id . 1) (name . "Week 1") (require_sequential_progress . t) (items . []))
       "REQUIRE_SEQUENTIAL_PROGRESSION" :to-equal "true"))
@@ -3900,5 +3900,69 @@ REMOTE is a form; the symbol `fail' makes the list request signal.
     (with-pull-property-test #'org-canvas--module-pull-item
       '((id . 2) (name . "Week 2") (prerequisite_module_ids . [7 8]) (items . []))
       "PREREQUISITE_MODULE_IDS" :to-equal "7,8")))
+
+
+(describe "module pull keeps the following modules intact (issue #133)"
+  (it "gives every inserted item its own drawer and leaves the next module's alone"
+    (with-temp-org-buffer
+     "* Week 03
+:PROPERTIES:
+:CANVAS_ID: 781703
+:POSITION: 3
+:END:
+
+** Old item
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+
+* Week 04
+:PROPERTIES:
+:CANVAS_ID: 781704
+:POSITION: 4
+:END:
+
+** Item in week 4
+:PROPERTIES:
+:CANVAS_ID: 2
+:END:
+"
+     (goto-char (point-min))
+     (re-search-forward "^\\* Week 03")
+     (org-back-to-heading t)
+     (org-canvas--module-pull-item
+      '((id . 781703) (name . "Week 03") (published . :json-false)
+        (items . [((id . 5701150) (type . "SubHeader")
+                   (title . "--- Monday ---") (position . 1))
+                  ((id . 5707143) (type . "Assignment")
+                   (title . "Chapter Check 01") (content_id . 2497355)
+                   (position . 2))
+                  ((id . 5707144) (type . "ExternalUrl") (title . "Link")
+                   (external_url . "https://example.edu") (position . 3))]))
+      (point))
+     (let ((ids nil) (modules nil))
+       (org-map-entries
+        (lambda ()
+          (if (= (org-current-level) 1)
+              (push (cons (org-get-heading t t t t)
+                          (org-entry-get (point) "CANVAS_ID"))
+                    modules)
+            (push (cons (org-get-heading t t t t)
+                        (list (org-entry-get (point) "CANVAS_ID")
+                              (org-entry-get (point) "ITEM_TYPE")))
+                  ids)))
+        nil 'file)
+       (setq ids (nreverse ids) modules (nreverse modules))
+       ;; Two modules, each still holding its own id and nothing of an item's.
+       (expect modules :to-equal '(("Week 03" . "781703") ("Week 04" . "781704")))
+       (expect (org-entry-get (org-find-exact-headline-in-buffer "Week 04") "ITEM_TYPE")
+               :to-be nil)
+       ;; Every pulled item carries its own drawer, in order, and week 4's item survives.
+       (expect (mapcar #'cadr ids)
+               :to-equal '("5701150" "5707143" "5707144" "2"))
+       (expect (mapcar #'caddr ids)
+               :to-equal '("SubHeader" "Assignment" "ExternalUrl" nil))
+       ;; The old item under Week 03 was replaced, not kept.
+       (expect (assoc "Old item" ids) :to-be nil)))))
 
 ;;; org-canvas-modules-test.el ends here
