@@ -11,6 +11,58 @@
 ;;; Code:
 
 (require 'cl-lib)
+
+;;;; Credentials Isolation
+;;
+;; `org-canvas-core-config' ends with `(require 'org-canvas-credentials
+;; nil t)', which loads the developer's real credentials file whenever
+;; one sits on the load path — and lisp/ is on it, gitignored file and
+;; all.  Tests used to run with those values, which is how an unmocked
+;; fallback branch once made a live call with real credentials (issue
+;; #138; the network guard below was the reaction).  Providing the
+;; feature first turns that `require' into a no-op, so the file is never
+;; read, and the dummies below are what every defcustom then keeps:
+;; `defcustom' leaves an already-bound variable alone, and they are set
+;; before `org-canvas-core' is required so no load-time code sees
+;; anything else.
+;;
+;; `org-canvas-directory' gets a per-process temp directory rather than
+;; a fixed dummy.  Logging lands under it: with a shared real directory
+;; tests wrote one log file and created `.#org-canvas.log' locks, which
+;; collide when the pre-push hook runs the Emacs 29 and Emacs 30 jobs in
+;; parallel and one job aborts.  The directory itself is rebound rather
+;; than `org-canvas-log-destination' because a test asserts that the
+;; defcustom default remains `both'.
+;;
+;; `org-canvas--api-token' falls through to `auth-source' when the token
+;; is empty, so `auth-sources' is emptied too: a spec that binds the
+;; token to "" must never reach the developer's ~/.authinfo.  Specs
+;; that exercise the resolver mock `auth-source-search' with `cl-letf'.
+
+(defvar test-org-canvas-base-url "https://test.canvas.example.com"
+  "Test Canvas base URL.")
+
+(defvar test-org-canvas-api-token "test-token-12345"
+  "Test API token.")
+
+(defvar test-org-canvas-course-id "99999"
+  "Test course ID.")
+
+(defvar org-canvas-directory)
+(defvar org-canvas-base-url)
+(defvar org-canvas-api-token)
+(defvar org-canvas-course-id)
+
+(provide 'org-canvas-credentials)
+(setq org-canvas-directory (file-name-as-directory
+                            (make-temp-file "org-canvas-test-" t))
+      org-canvas-base-url test-org-canvas-base-url
+      org-canvas-api-token test-org-canvas-api-token
+      org-canvas-course-id test-org-canvas-course-id)
+
+(require 'auth-source)
+(setq auth-sources nil)
+
 (require 'org-canvas-core)
 
 ;; Suppress "Non-existent agenda file" prompt in batch mode.
@@ -18,18 +70,6 @@
 ;; during test cleanup trigger an interactive prompt that hangs batch runs.
 (when noninteractive
   (defun org-check-agenda-file (_file) nil))
-
-;; Redirect logging away from the user's real `org-canvas-directory'
-;; (typically pinned by `org-canvas-credentials.el') to a per-process
-;; temp directory.  Without this, tests write to a shared real log
-;; file and create `.#org-canvas.log' locks; the pre-push hook runs
-;; Emacs 29 and Emacs 30 test jobs in parallel, so the locks collide
-;; and one job aborts.  We rebind the directory itself rather than
-;; `org-canvas-log-destination' because a test asserts that the
-;; defcustom default remains `both'.
-(setq org-canvas-directory
-      (file-name-as-directory
-       (make-temp-file "org-canvas-test-" t)))
 
 ;; Lockfiles have no value in a batch suite and cause real harm: a
 ;; `.#name' symlink appearing while some spec has a buffer dirty can
@@ -41,12 +81,15 @@
 
 ;;;; Network Guard
 ;;
-;; The test environment loads the user's real `org-canvas-credentials.el',
-;; so any code path that reaches a network primitive without a mock hits
-;; the LIVE Canvas API with real credentials (observed 2026-08-10: an
-;; unmocked fallback branch made a live call from a test).  Refuse at
-;; the bottom of the stack instead of hoping every test mocks high
-;; enough.  Tests that exercise the API internals mock these same
+;; The test environment used to load the user's real
+;; `org-canvas-credentials.el', so any code path that reached a network
+;; primitive without a mock hit the LIVE Canvas API with real
+;; credentials (observed 2026-08-10: an unmocked fallback branch made a
+;; live call from a test).  Credentials Isolation above now keeps the
+;; real values out, but an unmocked call would still leave the process,
+;; and the isolation could regress: refuse at the bottom of the stack
+;; instead of hoping every test mocks high enough.  Tests that
+;; exercise the API internals mock these same
 ;; symbols with `cl-letf', which replaces the whole function cell —
 ;; advice included — so they are unaffected.
 
@@ -84,15 +127,6 @@ KIND names the blocked primitive; DETAIL is safe-to-print context
   "Non-nil if running on Emacs 30 or later.
 Some org-mode functions behave differently in Emacs 29.x regarding
 heading structure recognition in programmatic buffers.")
-
-(defvar test-org-canvas-base-url "https://test.canvas.example.com"
-  "Test Canvas base URL.")
-
-(defvar test-org-canvas-api-token "test-token-12345"
-  "Test API token.")
-
-(defvar test-org-canvas-course-id "99999"
-  "Test course ID.")
 
 (defvar test-org-canvas-request-timeout 5
   "Test timeout in seconds.")

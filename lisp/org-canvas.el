@@ -45,6 +45,11 @@
 ;;   (setq org-canvas-base-url "https://canvas.instructure.com")
 ;;   (setq org-canvas-directory "/path/to/course/")
 ;;
+;; The token may instead come from auth-source, keyed on the host and
+;; course, so it can stay in an encrypted ~/.authinfo.gpg:
+;;
+;;   machine canvas.instructure.com login 12345 password your-token
+;;
 ;; SEE ALSO
 ;; ========
 ;; - documentation/manual.org for full documentation
@@ -156,11 +161,11 @@ above the marker, then file an issue at the project URL."
         (dolist (sym org-canvas--bug-report-settings)
           (insert (org-canvas--bug-report-format-setting sym) "\n"))
         (insert (format "  org-canvas-api-token: %s\n"
-                        (if (and (boundp 'org-canvas-api-token)
-                                 (stringp org-canvas-api-token)
-                                 (not (string-empty-p org-canvas-api-token)))
-                            "[redacted]"
-                          "[unset]")))
+                        (cond ((org-canvas--nonempty-string-p org-canvas-api-token)
+                               "[redacted]")
+                              ((ignore-errors (org-canvas--api-token))
+                               "[redacted, resolved via auth-source]")
+                              (t "[unset]"))))
         (insert "\nLoaded modules:\n")
         (dolist (m modules)
           (insert "  " m "\n")))
