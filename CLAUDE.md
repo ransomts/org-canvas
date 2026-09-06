@@ -47,6 +47,7 @@ lisp/
 - Feature modules must NOT depend on each other
 - `org-canvas-core` must NOT import any feature modules (prevents circular deps)
 - `org-canvas.el` orchestrates by requiring all modules
+- A feature module may name an `org-canvas-validate` function by symbol (as a registry `:structural-fn` or `:file-fn`) with a `declare-function`, never a `require`; validate itself requires only core
 
 ### 4-Stage Pipeline Pattern
 

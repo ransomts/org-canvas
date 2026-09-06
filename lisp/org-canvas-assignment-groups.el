@@ -42,6 +42,9 @@
 ;;; Code:
 (require 'org-canvas-core)
 
+(declare-function org-canvas--validate-drop-rules "org-canvas-validate")
+(declare-function org-canvas--validate-weight-sum "org-canvas-validate")
+
 ;;;; Configuration
 
 (defcustom org-canvas-assignment-groups-file (org-canvas--path "assignment-groups.org")

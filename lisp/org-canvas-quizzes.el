@@ -59,6 +59,8 @@
 (require 'ox-html)
 (require 'cl-lib)
 
+(declare-function org-canvas--validate-quiz-point-total "org-canvas-validate")
+
 ;;;; Configuration
 
 (defcustom org-canvas-quizzes-file (org-canvas--path "quizzes.org")

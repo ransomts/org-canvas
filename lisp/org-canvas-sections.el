@@ -54,6 +54,8 @@
 (require 'org-canvas-core)
 (require 'cl-lib)
 
+(declare-function org-canvas--validate-section-structure "org-canvas-validate")
+
 ;;;; Configuration
 
 (defcustom org-canvas-sections-file (org-canvas--path "sections.org")
