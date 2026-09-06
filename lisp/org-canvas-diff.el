@@ -176,35 +176,18 @@ Each as (ID . NOTE), the id as a string (issue #98)."
 
 ;;;; Value Comparison
 
-(defun org-canvas--diff-remote-field (spec item)
+(defalias 'org-canvas--diff-remote-field #'org-canvas--registry-remote-field
   "Return ITEM's value for the Canvas field described by SPEC.
-A spec may name a `:remote-fn' of one argument, the Canvas item, for a
-property the payload does not hold under a flat key of its own: a
-file's publish state lives in `locked' (issue #61) and a group's drop
-rules under `rules' (issue #62), so a flat lookup silently returned
-nil and reported every such item as drifted.  Otherwise uses the
-spec's `:api-key' when it declares one, and failing that the
-`:data-key', which every module already names after the Canvas field."
-  (let ((remote-fn (plist-get spec :remote-fn)))
-    (if remote-fn
-        (funcall remote-fn item)
-      (let ((key (or (plist-get spec :api-key)
-                     (substring (symbol-name (plist-get spec :data-key)) 1))))
-        (alist-get (intern key) item)))))
+The registry-driven pull reads the same function (core-org), so the
+report and the pull can never disagree about which field a property
+means (issue #135).")
 
-(defun org-canvas--diff-normalize-remote (value)
-  "Return VALUE with Canvas's JSON null and false spellings folded to nil."
-  (if (memq value '(:json-false :null)) nil value))
+(defalias 'org-canvas--diff-normalize-remote
+  #'org-canvas--registry-normalize-remote
+  "Return VALUE with Canvas's JSON null and false spellings folded to nil.")
 
-(defun org-canvas--diff-remote-list (remote)
-  "Return REMOTE as a list of strings, however Canvas spelled it.
-A `csv-enum' field arrives either as a JSON array or as one comma
-separated string — pages return `editing_roles' as \"teachers\" —
-and `append' on a string yields character codes, which is how
-\"teachers\" came to be reported as 116,101,97,... (issue #63)."
-  (cond ((null remote) nil)
-        ((stringp remote) (split-string remote "," t "[ \t]+"))
-        (t (mapcar (lambda (v) (format "%s" v)) (append remote nil)))))
+(defalias 'org-canvas--diff-remote-list #'org-canvas--registry-remote-list
+  "Return REMOTE as a list of strings, however Canvas spelled it (issue #63).")
 
 (defun org-canvas--diff-values-equal-p (type local remote)
   "Return non-nil when LOCAL (an Org string) and REMOTE agree, given TYPE."
@@ -245,6 +228,7 @@ round-trip, so it is no one's opinion to compare (issue #93)."
             (compare-p (plist-get spec :compare-p))
             (org-prop (plist-get spec :org-prop)))
         (when (and (memq type org-canvas--diff-comparable-types)
+                   (not (plist-get spec :local-only))
                    (or (null compare-p) (funcall compare-p pom item)))
           (let ((local (org-entry-get pom org-prop)))
             (when (and local (not (string-empty-p local)))

@@ -79,6 +79,23 @@ PUBLISHED is the inverse of `locked', the same mapping the pull path
 uses (issue #50)."
   (not (eq (alist-get 'locked item) t)))
 
+(defun org-canvas--file-remote-usage-right (item key)
+  "Return KEY from the Canvas file ITEM's nested `usage_rights' object."
+  (let ((rights (alist-get 'usage_rights item)))
+    (and (listp rights) (alist-get key rights))))
+
+(defun org-canvas--file-remote-use-justification (item)
+  "Return ITEM's usage-rights justification, or nil."
+  (org-canvas--file-remote-usage-right item 'use_justification))
+
+(defun org-canvas--file-remote-usage-license (item)
+  "Return ITEM's usage-rights license code, or nil."
+  (org-canvas--file-remote-usage-right item 'license))
+
+(defun org-canvas--file-remote-copyright (item)
+  "Return ITEM's usage-rights copyright holder, or nil."
+  (org-canvas--file-remote-usage-right item 'legal_copyright))
+
 (org-canvas-register-properties "files"
   :label "Files"
   :file-var 'org-canvas-files-file
@@ -95,7 +112,14 @@ uses (issue #50)."
      :doc "Date to hide file")
     (:org-prop "USE_JUSTIFICATION" :data-key :use_justification :type enum
      :values ,org-canvas--valid-use-justifications
-     :doc "How to resolve a name collision on upload (rename vs overwrite)"))
+     :remote-fn org-canvas--file-remote-use-justification
+     :doc "How to resolve a name collision on upload (rename vs overwrite)")
+    (:org-prop "USAGE_LICENSE" :data-key :usage-license :type string
+     :remote-fn org-canvas--file-remote-usage-license
+     :doc "Usage-rights license code (for example cc_by, public_domain)")
+    (:org-prop "COPYRIGHT" :data-key :copyright :type string
+     :remote-fn org-canvas--file-remote-copyright
+     :doc "Copyright holder recorded with the usage rights"))
   :structural-fn #'org-canvas--validate-file-structure)
 
 (defcustom org-canvas-max-file-size-mb 500
@@ -1718,30 +1742,19 @@ and `org-canvas--file-pull-set-properties' for parity with flat mode."
     (car counter)))
 
 (defun org-canvas--file-pull-set-properties (pos item)
-  "Set visibility, content-type, size, and usage-rights properties at POS.
-ITEM is the Canvas file object.  `locked' is the Publish control, so it
-drives PUBLISHED; `hidden' is the separate unlisted state (issue #50)."
-  (org-canvas--pull-set-boolean-property
-   pos "PUBLISHED" (not (eq (alist-get 'locked item) t)))
-  (org-canvas--pull-set-boolean-property
-   pos "HIDDEN" (alist-get 'hidden item))
+  "Set visibility, usage-rights, content-type and size properties at POS.
+ITEM is the Canvas file object.  Everything push reads comes from the
+registry (issue #135): PUBLISHED is the inverse of `locked', the
+Publish control, and `hidden' is the separate unlisted state (issue
+#50); the usage rights are nested and read through `:remote-fn's.
+CONTENT_TYPE and SIZE are informational and written directly."
+  (org-canvas--pull-item-from-registry "files" item pos)
   (let ((content-type (alist-get 'content-type item))
         (size (alist-get 'size item)))
     (when content-type
       (org-canvas-org-set-property pos "CONTENT_TYPE" content-type))
     (when size
-      (org-canvas-org-set-property pos "SIZE" (format "%s" size))))
-  (let ((usage-rights (alist-get 'usage_rights item)))
-    (when usage-rights
-      (let ((justification (alist-get 'use_justification usage-rights))
-            (license (alist-get 'license usage-rights))
-            (legal-copyright (alist-get 'legal_copyright usage-rights)))
-        (when justification
-          (org-canvas-org-set-property pos "USE_JUSTIFICATION" justification))
-        (when license
-          (org-canvas-org-set-property pos "USAGE_LICENSE" license))
-        (when legal-copyright
-          (org-canvas-org-set-property pos "COPYRIGHT" legal-copyright))))))
+      (org-canvas-org-set-property pos "SIZE" (format "%s" size)))))
 
 (defun org-canvas--file-pull-emit-flat (file remote content-dir)
   "Upsert REMOTE files as flat top-level headings in FILE.

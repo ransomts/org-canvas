@@ -1398,12 +1398,180 @@ Returns a string like \"[2026-01-15 Thu 10:00]\" or nil."
           (format-time-string "[%Y-%m-%d %a %H:%M]" time zone))
       (error nil))))
 
-;;;; 4f. Declarative Pull-Item Macro
+;;;; 4f. Registry-Driven Pull
+;;
+;; The property registry is where a module says which Org properties it
+;; owns, how each is typed, and which Canvas field holds it.  Push parse,
+;; validation, the drift report and the payload builder all read it.
+;; Pull did not: the same mapping was spelled a second time in each
+;; module's pull spec, or written out by hand, and the copies drifted —
+;; the assignment pull wrote SUBMISSION_TYPES and never PUBLISHED, the
+;; discussion pull wrote DELAYED_POST_AT where push reads AVAILABLE_FROM
+;; (issue #134).  Everything below reads the registry, and the drift
+;; report's remote-field readers live here too so both sides agree on
+;; which Canvas field a property means (issue #135).
+
+(defun org-canvas--registry-normalize-remote (value)
+  "Return VALUE with Canvas's JSON null and false spellings folded to nil."
+  (if (memq value '(:json-false :null)) nil value))
+
+(defun org-canvas--registry-remote-list (remote)
+  "Return REMOTE as a list of strings, however Canvas spelled it.
+A `csv-enum' field arrives either as a JSON array or as one comma
+separated string — pages return `editing_roles' as \"teachers\" —
+and `append' on a string yields character codes, which is how
+\"teachers\" came to be reported as 116,101,97,... (issue #63)."
+  (cond ((null remote) nil)
+        ((stringp remote) (split-string remote "," t "[ \t]+"))
+        (t (mapcar (lambda (v) (format "%s" v)) (append remote nil)))))
+
+(defun org-canvas--registry-remote-key (spec)
+  "Return the Canvas field SPEC reads when it names no `:remote-fn'.
+The spec's `:api-key' when it declares one, and failing that the
+`:data-key', which every module already names after the Canvas field."
+  (intern (or (plist-get spec :api-key)
+              (substring (symbol-name (plist-get spec :data-key)) 1))))
+
+(defun org-canvas--registry-remote-field (spec item)
+  "Return ITEM's value for the Canvas field described by SPEC.
+A spec may name a `:remote-fn' of one argument, the Canvas item, for a
+property the payload does not hold under a flat key of its own: a
+file's publish state lives in `locked' (issue #61) and a group's drop
+rules under `rules' (issue #62), so a flat lookup silently returned
+nil and reported every such item as drifted."
+  (let ((remote-fn (plist-get spec :remote-fn)))
+    (if remote-fn
+        (funcall remote-fn item)
+      (alist-get (org-canvas--registry-remote-key spec) item))))
+
+(defun org-canvas--registry-remote-present-p (spec item)
+  "Return non-nil when ITEM carries the field SPEC reads.
+A `:remote-fn' answers for its field; a flat key must be in ITEM.  A
+conflict-check GET can return a partial object, and a field Canvas
+did not send is no reason to touch the local property."
+  (or (and (plist-get spec :remote-fn) t)
+      (and (assq (org-canvas--registry-remote-key spec) item) t)))
+
+(defvar org-canvas--pull-link-index-cache nil
+  "Alist of (FILE ID-PROPERTY TICK) to an id-to-heading hash.
+Built by `org-canvas--pull-link-index'; TICK is the visiting buffer's
+`buffer-chars-modified-tick', so an edit to the target file invalidates
+its entry without anyone having to remember to clear it.")
+
+(defun org-canvas--pull-link-index (file id-property)
+  "Return a hash of ID-PROPERTY value to heading text for FILE's headings."
+  (with-current-buffer (org-canvas--find-file-noselect file)
+    (let* ((key (list file id-property (buffer-chars-modified-tick)))
+           (hit (assoc key org-canvas--pull-link-index-cache)))
+      (or (cdr hit)
+          (let ((index (make-hash-table :test 'equal)))
+            (save-excursion
+              (goto-char (point-min))
+              (org-map-entries
+               (lambda ()
+                 (let ((id (org-entry-get (point) id-property)))
+                   (when id
+                     (puthash id (org-get-heading t t t t) index))))
+               nil 'file))
+            (setq org-canvas--pull-link-index-cache
+                  (cons (cons key index)
+                        (cl-remove-if
+                         (lambda (cell)
+                           (and (equal (nth 0 (car cell)) file)
+                                (equal (nth 1 (car cell)) id-property)))
+                         org-canvas--pull-link-index-cache)))
+            index)))))
+
+(defun org-canvas--pull-resolve-link (spec id)
+  "Return an Org link to the heading SPEC's target file keeps for Canvas ID.
+SPEC is a `link' property spec naming a `:target-file' variable and,
+optionally, the `:link-id-property' the target headings are keyed by
+\(default CANVAS_ID).  The inverse of `org-canvas--resolve-link-property',
+which push uses to turn the link back into the id.  Nil when the file
+or the heading is not there."
+  (let* ((target-var (plist-get spec :target-file))
+         (file (and target-var (boundp target-var) (symbol-value target-var)))
+         (id-prop (or (plist-get spec :link-id-property) "CANVAS_ID")))
+    (when (and id file (file-exists-p file))
+      (let ((heading (gethash (format "%s" id)
+                              (org-canvas--pull-link-index file id-prop))))
+        (when heading
+          (org-link-make-string
+           (format "file:%s::*%s" (file-name-nondirectory file) heading)
+           heading))))))
+
+(defun org-canvas--registry-remote-as-org (spec value)
+  "Return VALUE as the Org property string SPEC's type calls for.
+Nil means the value has no Org spelling: Canvas holds nothing, or a
+link's target heading does not exist locally."
+  (let ((value (org-canvas--registry-normalize-remote value)))
+    (pcase (plist-get spec :type)
+      ('boolean (if value "true" "false"))
+      ('timestamp (org-canvas--iso8601-to-org-timestamp value))
+      ('csv-enum (let ((parts (org-canvas--registry-remote-list value)))
+                   (and parts (mapconcat #'identity parts ","))))
+      ('link (org-canvas--pull-resolve-link spec value))
+      (_ (and value (not (equal value ""))
+              (format "%s" value))))))
+
+(defun org-canvas--registry-value-default-p (spec value)
+  "Return non-nil when VALUE is what SPEC's property means when absent.
+A terse drawer leaves such values implicit: the registered `:default'
+for a boolean (nil when none is declared), zero for a number, and
+nothing at all for the rest."
+  (let ((value (org-canvas--registry-normalize-remote value))
+        (default (plist-get spec :default)))
+    (pcase (plist-get spec :type)
+      ('boolean (eq (and value t) (and default t)))
+      ('number (or (null value) (equal value default)
+                   (and (numberp value) (zerop value))))
+      (_ (or (null value) (equal value "") (equal value default)
+             (and (vectorp value) (zerop (length value))))))))
+
+(defun org-canvas--pull-apply-spec (spec item pos)
+  "Write the property SPEC describes at POS from the Canvas ITEM.
+A field ITEM does not carry leaves the property untouched.  A value
+that is the property's default is deleted so the drawer stays terse
+\(written out when `org-canvas-emit-defaults' is set).  Anything else
+is written in its Org spelling; a value with no Org spelling — a link
+whose target heading is missing — is logged and left alone rather than
+erased.  A `:local-only' spec is org-canvas's own bookkeeping, never
+Canvas's opinion, and is skipped."
+  (unless (plist-get spec :local-only)
+    (when (org-canvas--registry-remote-present-p spec item)
+      (let* ((org-prop (plist-get spec :org-prop))
+             (value (org-canvas--registry-remote-field spec item))
+             (text (org-canvas--registry-remote-as-org spec value)))
+        (cond
+         ((org-canvas--registry-value-default-p spec value)
+          (if (and org-canvas-emit-defaults text)
+              (org-canvas-org-set-property pos org-prop text)
+            (org-entry-delete pos org-prop)))
+         (text
+          (org-canvas-org-set-property pos org-prop text))
+         (t
+          (org-canvas--log-warning org-canvas--logger
+            "[Pull] %s: no local spelling for Canvas value %S; property left unchanged"
+            org-prop value)))))))
+
+(defun org-canvas--pull-item-from-registry (registry-key item pos)
+  "Write every property the registry lists under REGISTRY-KEY at POS from ITEM.
+REGISTRY-KEY is the string the module passed to
+`org-canvas-register-properties'.  This is the whole of a pull for the
+properties a module owns; a module adds only what the registry cannot
+express — a body, a child table — through `:after-pull'."
+  (let ((entry (gethash registry-key org-canvas--property-registry)))
+    (unless entry
+      (error "No property registry entry named %S" registry-key))
+    (dolist (spec (plist-get entry :properties))
+      (org-canvas--pull-apply-spec spec item pos))))
 
 (defun org-canvas--pull-item-set-property (pos api-field property
                                                type item)
   "Set PROPERTY on heading at POS from ITEM's API-FIELD.
-TYPE controls conversion: string, boolean, timestamp, number."
+TYPE controls conversion: string, boolean, timestamp, number.  The
+explicit-spec path of `org-canvas-define-pull-item', for a property a
+module keeps outside the registry."
   (let ((value (alist-get api-field item)))
     (pcase type
       ('boolean
@@ -1429,22 +1597,25 @@ TYPE controls conversion: string, boolean, timestamp, number."
 FEATURE is a symbol like \\='announcement or \\='discussion.
 
 ARGS is a plist with the following keys:
-  :body-field  - API alist key for body HTML (optional)
-  :after-pull  - Function (item pos) for custom logic (optional)
-  :properties  - List of (API-FIELD ORG-PROPERTY :type TYPE) specs
+  :registry-key - String naming the module's `org-canvas-register-properties'
+                  entry; every property it lists is written from the
+                  item through `org-canvas--pull-item-from-registry'
+  :body-field   - API alist key for body HTML (optional)
+  :after-pull   - Function (item pos) for custom logic (optional)
+  :properties   - List of (API-FIELD ORG-PROPERTY :type TYPE) specs for
+                  properties kept outside the registry (optional)
 
 Type can be: string (default), boolean, timestamp, number, non-null.
 
 Example:
   (org-canvas-define-pull-item discussion
-    :body-field \\='message
-    :properties
-    ((discussion_type  \"DISCUSSION_TYPE\"  :type string)
-     (allow_rating     \"ALLOW_RATING\"     :type boolean)))"
+    :registry-key \"discussions\"
+    :body-field \\='message)"
   (declare (indent 1))
   (let* ((feature-name (symbol-name feature))
          (fn-name (intern (format "org-canvas--%s-pull-item"
                                   feature-name)))
+         (registry-key (plist-get args :registry-key))
          (body-field (plist-get args :body-field))
          (after-pull (plist-get args :after-pull))
          (properties (plist-get args :properties)))
@@ -1452,6 +1623,8 @@ Example:
        ,(format "Set per-item properties for a pulled %s.\n\
 ITEM is the API response alist, POS is the heading position."
                 feature-name)
+       ,@(when registry-key
+           `((org-canvas--pull-item-from-registry ,registry-key item pos)))
        ,@(mapcar
           (lambda (spec)
             (let ((api-field (nth 0 spec))
@@ -1462,8 +1635,9 @@ ITEM is the API response alist, POS is the heading position."
                 pos ',api-field ,org-prop ',type item)))
           properties)
        ,@(when body-field
-           `((org-canvas--pull-insert-body
-              (alist-get ',body-field item))))
+           `((org-with-point-at pos
+               (org-canvas--pull-insert-body
+                (alist-get ',body-field item)))))
        ,@(when after-pull
            `((funcall ,after-pull item pos))))))
 

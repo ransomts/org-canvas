@@ -3146,5 +3146,256 @@ Page content.
                 (kill-buffer buf))))
         (delete-file file)))))
 
+;;;; Registry-driven pull (issue #135)
+
+(describe "org-canvas--registry-remote-field"
+  (it "prefers :api-key over :data-key"
+    (expect (org-canvas--registry-remote-field
+             '(:org-prop "X" :data-key :other :api-key "wanted" :type string)
+             '((wanted . "yes") (other . "no")))
+            :to-equal "yes"))
+
+  (it "falls back to the :data-key name"
+    (expect (org-canvas--registry-remote-field
+             '(:org-prop "X" :data-key :points_possible :type number)
+             '((points_possible . 10)))
+            :to-equal 10))
+
+  (it "calls a :remote-fn with the item"
+    (expect (org-canvas--registry-remote-field
+             (list :org-prop "X" :data-key :nested :type (quote string)
+                   :remote-fn (lambda (item)
+                                (alist-get 'deep (alist-get 'outer item))))
+             '((outer . ((deep . "found")))))
+            :to-equal "found")))
+
+(describe "org-canvas--registry-remote-present-p"
+  (it "is true for a flat key the item carries, even when null"
+    (expect (org-canvas--registry-remote-present-p
+             '(:data-key :due_at) '((due_at . :null)))
+            :to-be t))
+
+  (it "is nil for a flat key the item lacks"
+    (expect (org-canvas--registry-remote-present-p
+             '(:data-key :due_at) '((id . 1)))
+            :to-be nil))
+
+  (it "trusts a :remote-fn to answer for its field"
+    (expect (org-canvas--registry-remote-present-p
+             (list :data-key :x :remote-fn #'ignore) '((id . 1)))
+            :to-be t)))
+
+(describe "org-canvas--registry-remote-as-org"
+  (it "spells booleans true and false, folding :json-false"
+    (expect (org-canvas--registry-remote-as-org '(:type boolean) t)
+            :to-equal "true")
+    (expect (org-canvas--registry-remote-as-org '(:type boolean) :json-false)
+            :to-equal "false")
+    (expect (org-canvas--registry-remote-as-org '(:type boolean) nil)
+            :to-equal "false"))
+
+  (it "converts a timestamp to an Org timestamp and rejects garbage"
+    (let ((org-canvas--pull-tz-cache nil))
+      (expect (org-canvas--registry-remote-as-org
+               '(:type timestamp) "2026-06-15T09:00:00Z")
+              :to-match "<2026-06-15 [A-Za-z]+ 09:00>")
+      (expect (org-canvas--registry-remote-as-org '(:type timestamp) "soon")
+              :to-be nil)
+      (expect (org-canvas--registry-remote-as-org '(:type timestamp) :null)
+              :to-be nil)))
+
+  (it "joins a csv-enum from an array or a comma string"
+    (expect (org-canvas--registry-remote-as-org
+             '(:type csv-enum) ["online_upload" "online_url"])
+            :to-equal "online_upload,online_url")
+    (expect (org-canvas--registry-remote-as-org
+             '(:type csv-enum) "teachers, students")
+            :to-equal "teachers,students")
+    (expect (org-canvas--registry-remote-as-org '(:type csv-enum) [])
+            :to-be nil))
+
+  (it "formats numbers and strings, treating the empty string as unset"
+    (expect (org-canvas--registry-remote-as-org '(:type number) 12.5)
+            :to-equal "12.5")
+    (expect (org-canvas--registry-remote-as-org '(:type enum) "points")
+            :to-equal "points")
+    (expect (org-canvas--registry-remote-as-org '(:type string) "")
+            :to-be nil)
+    (expect (org-canvas--registry-remote-as-org '(:type string) :null)
+            :to-be nil)))
+
+(describe "org-canvas--registry-value-default-p"
+  (it "compares a boolean against its registered default"
+    (expect (org-canvas--registry-value-default-p '(:type boolean :default t) t)
+            :to-be t)
+    (expect (org-canvas--registry-value-default-p
+             '(:type boolean :default t) :json-false)
+            :to-be nil)
+    (expect (org-canvas--registry-value-default-p '(:type boolean) :json-false)
+            :to-be t)
+    (expect (org-canvas--registry-value-default-p '(:type boolean) t)
+            :to-be nil))
+
+  (it "treats zero and null as a number's default"
+    (expect (org-canvas--registry-value-default-p '(:type number) 0) :to-be t)
+    (expect (org-canvas--registry-value-default-p '(:type number) :null)
+            :to-be t)
+    (expect (org-canvas--registry-value-default-p '(:type number) 3)
+            :to-be nil))
+
+  (it "treats nothing at all as the default for the other types"
+    (expect (org-canvas--registry-value-default-p '(:type string) "")
+            :to-be t)
+    (expect (org-canvas--registry-value-default-p '(:type csv-enum) [])
+            :to-be t)
+    (expect (org-canvas--registry-value-default-p
+             '(:type timestamp) "2026-01-01T00:00:00Z")
+            :to-be nil)
+    (expect (org-canvas--registry-value-default-p
+             '(:type enum :default "points") "points")
+            :to-be t)))
+
+(describe "org-canvas--pull-apply-spec"
+  (it "leaves a property alone when the item does not carry its field"
+    (with-temp-org-buffer
+     "* T\n:PROPERTIES:\n:CANVAS_ID: 1\n:DUE_AT: <2026-01-01 Thu 09:00>\n:END:\n"
+     (org-back-to-heading)
+     (org-canvas--pull-apply-spec
+      '(:org-prop "DUE_AT" :data-key :due_at :type timestamp)
+      '((id . 1)) (point))
+     (expect (org-entry-get (point) "DUE_AT")
+             :to-equal "<2026-01-01 Thu 09:00>")))
+
+  (it "writes a non-default value"
+    (with-temp-org-buffer
+     "* T\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+     (org-back-to-heading)
+     (org-canvas--pull-apply-spec
+      '(:org-prop "POINTS" :data-key :points_possible :type number)
+      '((points_possible . 10)) (point))
+     (expect (org-entry-get (point) "POINTS") :to-equal "10")))
+
+  (it "deletes a property whose remote value is the default"
+    (with-temp-org-buffer
+     "* T\n:PROPERTIES:\n:CANVAS_ID: 1\n:PUBLISHED: false\n:END:\n"
+     (org-back-to-heading)
+     (org-canvas--pull-apply-spec
+      '(:org-prop "PUBLISHED" :data-key :published :type boolean :default t)
+      '((published . t)) (point))
+     (expect (org-entry-get (point) "PUBLISHED") :to-be nil)))
+
+  (it "writes the default when org-canvas-emit-defaults is set"
+    (with-temp-org-buffer
+     "* T\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+     (org-back-to-heading)
+     (let ((org-canvas-emit-defaults t))
+       (org-canvas--pull-apply-spec
+        '(:org-prop "PUBLISHED" :data-key :published :type boolean :default t)
+        '((published . t)) (point)))
+     (expect (org-entry-get (point) "PUBLISHED") :to-equal "true")))
+
+  (it "writes false over a stale true when the default is true (issue #134)"
+    (with-temp-org-buffer
+     "* T\n:PROPERTIES:\n:CANVAS_ID: 1\n:PUBLISHED: true\n:END:\n"
+     (org-back-to-heading)
+     (org-canvas--pull-apply-spec
+      '(:org-prop "PUBLISHED" :data-key :published :type boolean :default t)
+      '((published . :json-false)) (point))
+     (expect (org-entry-get (point) "PUBLISHED") :to-equal "false")))
+
+  (it "skips a :local-only spec entirely"
+    (with-temp-org-buffer
+     "* T\n:PROPERTIES:\n:CANVAS_ID: 1\n:PUBLISH_AT: <2026-09-01 Tue 08:00>\n:END:\n"
+     (org-back-to-heading)
+     (org-canvas--pull-apply-spec
+      '(:org-prop "PUBLISH_AT" :data-key :publish_at :type timestamp
+        :local-only t)
+      '((publish_at . "2030-01-01T00:00:00Z")) (point))
+     (expect (org-entry-get (point) "PUBLISH_AT")
+             :to-equal "<2026-09-01 Tue 08:00>")))
+
+  (it "leaves a value it cannot spell unchanged and says so"
+    (with-temp-org-buffer
+     "* T\n:PROPERTIES:\n:CANVAS_ID: 1\n:GROUP: [[file:assignment-groups.org::*Homework][Homework]]\n:END:\n"
+     (org-back-to-heading)
+     (let ((warnings nil))
+       (cl-letf (((symbol-function 'org-canvas--log-warning)
+                  (lambda (_logger fmt &rest args)
+                    (push (apply #'format fmt args) warnings))))
+         (let ((org-canvas-assignment-groups-file
+                "/nonexistent/assignment-groups.org"))
+           (org-canvas--pull-apply-spec
+            '(:org-prop "GROUP" :data-key :assignment_group_id :type link
+              :target-file org-canvas-assignment-groups-file)
+            '((assignment_group_id . 42)) (point))))
+       (expect (org-entry-get (point) "GROUP")
+               :to-equal "[[file:assignment-groups.org::*Homework][Homework]]")
+       (expect (car warnings) :to-match "GROUP")))))
+
+(describe "org-canvas--pull-resolve-link"
+  (it "links to the heading the target file keeps for the id, and tracks edits"
+    (let ((target (make-temp-file "org-canvas-groups-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file target
+              (insert "* Homework\n:PROPERTIES:\n:CANVAS_ID: 42\n:END:\n"))
+            (let* ((org-canvas-assignment-groups-file target)
+                   (spec '(:type link
+                           :target-file org-canvas-assignment-groups-file))
+                   (base (file-name-nondirectory target)))
+              (expect (org-canvas--pull-resolve-link spec 42)
+                      :to-equal (format "[[file:%s::*Homework][Homework]]" base))
+              (expect (org-canvas--pull-resolve-link spec 99) :to-be nil)
+              (expect (org-canvas--pull-resolve-link spec nil) :to-be nil)
+              ;; An edit to the target file invalidates the cached index.
+              (with-current-buffer (org-canvas--find-file-noselect target)
+                (goto-char (point-max))
+                (insert "* Labs\n:PROPERTIES:\n:CANVAS_ID: 99\n:END:\n"))
+              (expect (org-canvas--pull-resolve-link spec 99)
+                      :to-equal (format "[[file:%s::*Labs][Labs]]" base))))
+        (let ((buf (find-buffer-visiting target)))
+          (when buf
+            (with-current-buffer buf (set-buffer-modified-p nil))
+            (kill-buffer buf)))
+        (delete-file target)))))
+
+(describe "org-canvas--pull-item-from-registry"
+  (it "signals on an unknown registry key"
+    (expect (org-canvas--pull-item-from-registry "no-such-feature" nil 1)
+            :to-throw 'error))
+
+  (it "writes every registered property from the item"
+    (let ((org-canvas--property-registry (make-hash-table :test 'equal)))
+      (puthash "widgets"
+               '(:properties
+                 ((:org-prop "PUBLISHED" :data-key :published :type boolean
+                   :default t)
+                  (:org-prop "POINTS" :data-key :points_possible :type number)
+                  (:org-prop "DUE_AT" :data-key :due_at :type timestamp)))
+               org-canvas--property-registry)
+      (with-temp-org-buffer
+       "* T\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+       (org-back-to-heading)
+       (let ((org-canvas--pull-tz-cache nil))
+         (org-canvas--pull-item-from-registry
+          "widgets"
+          '((published . :json-false) (points_possible . 5)
+            (due_at . "2026-06-15T09:00:00Z"))
+          (point)))
+       (expect (org-entry-get (point) "PUBLISHED") :to-equal "false")
+       (expect (org-entry-get (point) "POINTS") :to-equal "5")
+       (expect (org-entry-get (point) "DUE_AT") :to-match "<2026-06-15")))))
+
+(describe "org-canvas-define-pull-item :registry-key"
+  (it "expands to a registry-driven pull followed by the body and after-pull"
+    (let ((form (format "%S" (macroexpand
+                              '(org-canvas-define-pull-item test--rk
+                                 :registry-key "widgets"
+                                 :body-field message
+                                 :after-pull #'ignore)))))
+      (expect form :to-match "org-canvas--pull-item-from-registry \"widgets\" item pos")
+      (expect form :to-match "org-canvas--pull-insert-body")
+      (expect form :to-match "funcall"))))
+
 (provide 'org-canvas-core-org-test)
 ;;; org-canvas-core-org-test.el ends here

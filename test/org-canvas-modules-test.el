@@ -3879,4 +3879,26 @@ REMOTE is a form; the symbol `fail' makes the list request signal.
       (org-canvas--module-forget-moved)
       (expect org-canvas--module-items-moved :to-be nil))))
 
+
+(describe "module pull reads the registry (issue #135)"
+  (it "reads require_sequential_progress under Canvas's spelling"
+    (with-pull-property-test #'org-canvas--module-pull-item
+      '((id . 1) (name . "Week 1") (require_sequential_progress . t) (items . []))
+      "REQUIRE_SEQUENTIAL_PROGRESSION" :to-equal "true"))
+
+  (it "never overwrites PUBLISH_AT, org-canvas's own schedule"
+    (with-temp-org-buffer
+     "* Week 1\n:PROPERTIES:\n:CANVAS_ID: 1\n:PUBLISH_AT: <2026-09-01 Tue 08:00>\n:END:\n"
+     (org-back-to-heading)
+     (org-canvas--module-pull-item
+      '((id . 1) (name . "Week 1") (publish_at . "2030-01-01T00:00:00Z") (items . []))
+      (point))
+     (expect (org-entry-get (point) "PUBLISH_AT")
+             :to-equal "<2026-09-01 Tue 08:00>")))
+
+  (it "writes PREREQUISITE_MODULE_IDS as a comma list"
+    (with-pull-property-test #'org-canvas--module-pull-item
+      '((id . 2) (name . "Week 2") (prerequisite_module_ids . [7 8]) (items . []))
+      "PREREQUISITE_MODULE_IDS" :to-equal "7,8")))
+
 ;;; org-canvas-modules-test.el ends here

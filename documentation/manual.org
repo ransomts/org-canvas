@@ -2833,6 +2833,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =WEIGHT= | number |  |  | Group weight percentage (0-100) |
 | =DROP_LOWEST= | number |  |  | Number of lowest scores to drop |
 | =DROP_HIGHEST= | number |  |  | Number of highest scores to drop |
+| =NEVER_DROP= | csv-enum |  |  | Assignment ids never dropped by the drop rules (comma separated) |
 | =POSITION= | number |  |  | Position in group ordering |
 
 ** Assignments
@@ -2841,8 +2842,9 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 |----------+------+----------------+---------+-------------|
 | =POINTS= | number |  |  | Points possible |
 | =GRADING_TYPE= | enum | points, percent, letter_grade, gpa_scale, pass_fail, not_graded |  | How the assignment is graded |
-| =PUBLISHED= | boolean | true, false |  | Whether item is visible (default: true) |
+| =PUBLISHED= | boolean | true, false | true | Whether item is visible (default: true) |
 | =SUBMISSION= | csv-enum | online_upload, online_url, online_text_entry, media_recording, on_paper, external_tool, none |  | Submission type (see below) |
+| =ALLOWED_EXTENSIONS= | csv-enum |  |  | File extensions accepted for online uploads (comma separated) |
 | =MAX_ATTEMPTS= | number |  |  | Max submission attempts (-1 = unlimited) |
 | =DUE_AT= | timestamp |  |  | Due date |
 | =UNLOCK_AT= | timestamp |  |  | Available from date |
@@ -2884,7 +2886,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 
 | Property | Type | Allowed values | Default | Description |
 |----------+------+----------------+---------+-------------|
-| =PUBLISHED= | boolean | true, false |  | Whether the discussion is visible to students (default: true) |
+| =PUBLISHED= | boolean | true, false | true | Whether the discussion is visible to students (default: true) |
 | =DISCUSSION_TYPE= | enum | side_comment, threaded |  | side_comment, threaded |
 | =GRADING_TYPE= | enum | points, percent, letter_grade, gpa_scale, pass_fail, not_graded |  | points, percent (for graded) |
 | =POINTS= | number |  |  | Points possible (for graded) |
@@ -2909,6 +2911,8 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =UNLOCK_AT= | timestamp |  |  | Date to make file available |
 | =LOCK_AT= | timestamp |  |  | Date to hide file |
 | =USE_JUSTIFICATION= | enum | own_copyright, used_by_permission, fair_use, public_domain, creative_commons |  | How to resolve a name collision on upload (rename vs overwrite) |
+| =USAGE_LICENSE= | string |  |  | Usage-rights license code (for example cc_by, public_domain) |
+| =COPYRIGHT= | string |  |  | Copyright holder recorded with the usage rights |
 
 ** Group Categories
 
@@ -2934,10 +2938,12 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 
 | Property | Type | Allowed values | Default | Description |
 |----------+------+----------------+---------+-------------|
-| =PUBLISHED= | boolean | true, false |  | Whether the module is visible to students (default: true) |
+| =PUBLISHED= | boolean | true, false | true | Whether the module is visible to students (default: true) |
 | =UNLOCK_AT= | timestamp |  |  | Date to unlock the module |
 | =REQUIRE_SEQUENTIAL_PROGRESSION= | boolean | true, false |  | Force items to be completed in order |
 | =PUBLISH_FINAL_GRADE= | boolean | true, false |  | Publish the final grade when this module is completed |
+| =POSITION= | number |  |  | Position in the module list |
+| =PREREQUISITE_MODULE_IDS= | csv-enum |  |  | Canvas ids of modules that must be completed first (comma separated) |
 | =PUBLISH_AT= | timestamp |  |  | Release date: sync publishes this module and its contents once passed |
 
 ** New Quiz Items
@@ -2993,7 +2999,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | Property | Type | Allowed values | Default | Description |
 |----------+------+----------------+---------+-------------|
 | =QUIZ_TYPE= | enum | assignment, practice_quiz, graded_survey, survey |  | The kind of quiz |
-| =PUBLISHED= | boolean | true, false |  | Whether item is visible (default: true) |
+| =PUBLISHED= | boolean | true, false | true | Whether item is visible (default: true) |
 | =SHUFFLE_ANSWERS= | boolean | true, false |  | Randomize answer order |
 | =TIME_LIMIT= | number |  |  | Time limit in minutes |
 | =ALLOWED_ATTEMPTS= | number |  |  | Max attempts (-1 = unlimited) |

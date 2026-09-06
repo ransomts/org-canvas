@@ -91,11 +91,13 @@ takes effect on the next `org-canvas-pull-assignments' invocation."
     (:org-prop "GRADING_TYPE" :data-key :grading_type :type enum
      :values ,org-canvas--valid-grading-types
      :doc "How the assignment is graded")
-    (:org-prop "PUBLISHED" :data-key :published :type boolean
+    (:org-prop "PUBLISHED" :data-key :published :type boolean :default t
      :doc "Whether item is visible (default: true)")
     (:org-prop "SUBMISSION" :data-key :submission_types :type csv-enum
      :values ,org-canvas--valid-submission-types
      :doc "Submission type (see below)")
+    (:org-prop "ALLOWED_EXTENSIONS" :data-key :allowed_extensions :type csv-enum
+     :doc "File extensions accepted for online uploads (comma separated)")
     (:org-prop "MAX_ATTEMPTS" :data-key :allowed_attempts :type number
      :doc "Max submission attempts (-1 = unlimited)")
     (:org-prop "DUE_AT" :data-key :due_at :type timestamp
@@ -115,6 +117,7 @@ takes effect on the next `org-canvas-pull-assignments' invocation."
      :doc "Link to assignment-groups.org heading")
     (:org-prop "RUBRIC_LINK" :data-key :rubric_id :type link
      :target-file org-canvas-rubrics-file :link-id-property "CANVAS_ID"
+     :remote-fn org-canvas--assignment-remote-rubric-id
      :doc "Link to rubrics.org heading")
     (:org-prop "RUBRIC_USE_FOR_GRADING" :data-key :use_rubric_for_grading :type boolean
      :doc "Rubric total becomes the grade; sent with the rubric association (needs RUBRIC_LINK)")
@@ -245,6 +248,12 @@ Canvas nests it under `rubric_settings', so the drift report cannot
 read it as a flat field."
   (alist-get 'hide_score_total (alist-get 'rubric_settings item)))
 
+(defun org-canvas--assignment-remote-rubric-id (item)
+  "Return the id of the rubric attached to ITEM, or nil.
+An assignment carries no `rubric_id'; the association lives under
+`rubric_settings'."
+  (alist-get 'id (alist-get 'rubric_settings item)))
+
 (defun org-canvas--assignment-transform-props (raw)
   "Transform raw property strings RAW into typed assignment data.
 Pure function — no buffer access."
@@ -335,7 +344,7 @@ Pure function — no buffer access."
     (when (plist-get data :assignment_group_id)
       (org-canvas--log-debug org-canvas--logger "[Stage 1: Parse] Assignment Group ID: %s"
                   (plist-get data :assignment_group_id)))
-    (when (plist-get data :rubric-id)
+   (unless (plist-get data :rubric-id)
       (org-canvas--log-debug org-canvas--logger "[Stage 1: Parse] Rubric ID: %s"
                   (plist-get data :rubric-id)))
 
@@ -377,22 +386,6 @@ Pure function — no buffer access."
     (:grading_standard_id "grading_standard_id" value)
     (:position "position" value))
   "Specs for optional assignment fields: (data-key hash-key type).")
-
-(defun org-canvas--assignment-pull-external-tool (pos item)
-  "Write ITEM's LTI tool attributes onto the heading at POS.
-Canvas nests these under `external_tool_tag_attributes'; a heading
-pulled without them round-trips as an ordinary assignment and the
-next push would strip the tool off it."
-  (let ((attrs (org-canvas--assignment-remote-tool-attrs item)))
-    (when attrs
-      (let ((url (alist-get 'url attrs))
-            (id (alist-get 'content_id attrs)))
-        (when url
-          (org-canvas-org-set-property pos "EXTERNAL_TOOL_URL" url))
-        (when id
-          (org-canvas-org-set-property pos "EXTERNAL_TOOL_ID" (format "%s" id)))
-        (org-canvas--pull-set-boolean-property
-         pos "EXTERNAL_TOOL_NEW_TAB" (alist-get 'new_tab attrs))))))
 
 (defun org-canvas--assignment-add-external-tool (data assignment)
   "Attach `external_tool_tag_attributes' to ASSIGNMENT from DATA.
@@ -566,82 +559,25 @@ the heading carries none of them, so other headings keep their hash."
 
 ;;;; Pull
 
-(defvar org-canvas--assignment-group-id-cache nil
-  "Cons cell (FILE . HASH-TABLE) mapping group ID strings to names.
-Built lazily on first call, invalidated when the groups file changes.")
-
-(defun org-canvas--assignment-build-group-cache (groups-file)
-  "Build a cache cons (GROUPS-FILE . hash-table) from GROUPS-FILE."
-  (let ((cache (make-hash-table :test 'equal)))
-    (when (file-exists-p groups-file)
-      (with-current-buffer (org-canvas--find-file-noselect groups-file)
-        (save-excursion
-          (goto-char (point-min))
-          (org-map-entries
-           (lambda ()
-             (let ((id (org-entry-get (point) "CANVAS_ID")))
-               (when id
-                 (puthash id (org-get-heading t t t t) cache))))
-           "LEVEL=1" 'file))))
-    (cons groups-file cache)))
-
 (defun org-canvas--assignment-resolve-group-link (group-id)
-  "Resolve assignment GROUP-ID to an Org link to assignment-groups.org.
-Returns a string like \"[[file:assignment-groups.org::*Name][Name]]\" or nil.
-Uses a cached lookup table to avoid repeated file scans."
-  (when group-id
-    (let ((groups-file (expand-file-name org-canvas-assignment-groups-file)))
-      (when (or (null org-canvas--assignment-group-id-cache)
-                (not (equal (car org-canvas--assignment-group-id-cache) groups-file)))
-        (setq org-canvas--assignment-group-id-cache
-              (org-canvas--assignment-build-group-cache groups-file)))
-      (let ((group-name (gethash (format "%s" group-id)
-                                 (cdr org-canvas--assignment-group-id-cache))))
-        (when group-name
-          (format "[[file:assignment-groups.org::*%s][%s]]"
-                  group-name group-name))))))
+  "Resolve assignment GROUP-ID to an Org link into assignment-groups.org.
+Returns a string like \"[[file:assignment-groups.org::*Name][Name]]\"
+or nil.  The registry's GROUP spec resolves the same way during a pull;
+this is the one spelling kept for callers that hold a bare id."
+  (org-canvas--pull-resolve-link
+   (list :type 'link :target-file 'org-canvas-assignment-groups-file
+         :link-id-property "CANVAS_ID")
+   group-id))
 
-(defun org-canvas--assignment-pull-item (item pos)
-  "Set per-item properties for a pulled assignment.
-ITEM is the API response alist, POS is the heading position."
-  (let ((points (alist-get 'points_possible item))
-        (submission-types (alist-get 'submission_types item))
-        (peer-reviews (alist-get 'peer_reviews item))
-        (group-id (alist-get 'assignment_group_id item)))
-    (when points
-      (org-canvas-org-set-property pos "POINTS" (format "%s" points)))
-    (org-canvas--pull-set-timestamp-property pos "DUE_AT" (alist-get 'due_at item))
-    (org-canvas--pull-set-timestamp-property pos "UNLOCK_AT" (alist-get 'unlock_at item))
-    (org-canvas--pull-set-timestamp-property pos "LOCK_AT" (alist-get 'lock_at item))
-    (when submission-types
-      (org-canvas-org-set-property
-       pos "SUBMISSION_TYPES"
-       (mapconcat #'identity (append submission-types nil) ",")))
-    (when peer-reviews
-      (org-canvas--pull-set-boolean-property pos "PEER_REVIEWS" peer-reviews))
-    (org-canvas--pull-set-boolean-property pos "OMIT_FROM_GRADES" (alist-get 'omit_from_final_grade item))
-    (org-canvas--pull-set-boolean-property pos "ANONYMOUS_GRADING" (alist-get 'anonymous_grading item))
-    (org-canvas--pull-set-boolean-property pos "ONLY_VISIBLE_TO_OVERRIDES" (alist-get 'only_visible_to_overrides item))
-    (org-canvas--pull-set-boolean-property pos "MODERATED_GRADING" (alist-get 'moderated_grading item))
-    (let ((gc (alist-get 'grader_count item)))
-      (when (and gc (> gc 0))
-        (org-canvas-org-set-property pos "GRADER_COUNT" (format "%s" gc))))
-    (org-canvas--pull-set-boolean-property pos "GRADE_INDIVIDUALLY" (alist-get 'grade_group_students_individually item))
-    (let ((gcat-id (alist-get 'group_category_id item)))
-      (when gcat-id
-        (org-canvas-org-set-property pos "GROUP_CATEGORY_ID" (format "%s" gcat-id))))
-    (let ((apos (alist-get 'position item)))
-      (when apos
-        (org-canvas-org-set-property pos "POSITION" (format "%s" apos))))
-    (org-canvas--pull-set-boolean-property pos "MUTED" (alist-get 'muted item))
-    (org-canvas--assignment-pull-external-tool pos item)
-    (let ((gs-id (alist-get 'grading_standard_id item)))
-      (when gs-id
-        (org-canvas-org-set-property pos "GRADING_STANDARD_ID" (format "%s" gs-id))))
-    (let ((group-link (org-canvas--assignment-resolve-group-link group-id)))
-      (when group-link
-        (org-canvas-org-set-property pos "GROUP" group-link))))
-  (org-canvas--pull-insert-body (alist-get 'description item))
+(defun org-canvas--assignment-pull-after (item pos)
+  "Write what the registry cannot express for the assignment pulled at POS.
+ITEM is the API response alist: its description becomes the heading's
+body, and its section overrides, fetched separately, its table.  Every
+property comes from the registry (issue #135), so a field the push
+side reads is a field the pull writes — PUBLISHED, SUBMISSION, the LTI
+tool attributes — and nothing outside the schema lands in the drawer."
+  (org-with-point-at pos
+    (org-canvas--pull-insert-body (alist-get 'description item)))
   (let ((overrides (org-canvas--override-fetch (alist-get 'id item))))
     (when overrides
       (save-excursion
@@ -653,6 +589,10 @@ ITEM is the API response alist, POS is the heading position."
          (alist-get 'due_at item)
          (alist-get 'unlock_at item)
          (alist-get 'lock_at item))))))
+
+(org-canvas-define-pull-item assignment
+  :registry-key "assignments"
+  :after-pull #'org-canvas--assignment-pull-after)
 
 (org-canvas-define-pull assignments
   :file org-canvas-assignments-file

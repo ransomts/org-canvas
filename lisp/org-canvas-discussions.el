@@ -59,7 +59,7 @@
   :query "LEVEL=1"
   :body-api-key "message"
   :properties
-  `((:org-prop "PUBLISHED" :data-key :published :type boolean
+  `((:org-prop "PUBLISHED" :data-key :published :type boolean :default t
      :doc "Whether the discussion is visible to students (default: true)")
     (:org-prop "DISCUSSION_TYPE" :data-key :discussion_type :type enum
      :values ,org-canvas--valid-discussion-types
@@ -287,13 +287,8 @@ DATA is the parsed discussion plist, RESPONSE is the Canvas API response."
 ;;;; Pull
 
 (org-canvas-define-pull-item discussion
-  :body-field message
-  :properties
-  ((discussion_type       "DISCUSSION_TYPE"       :type string)
-   (delayed_post_at       "DELAYED_POST_AT"       :type timestamp)
-   (allow_rating          "ALLOW_RATING"          :type boolean)
-   (only_graders_can_rate "ONLY_GRADERS_CAN_RATE" :type boolean)
-   (sort_by_rating        "SORT_BY_RATING"        :type boolean)))
+  :registry-key "discussions"
+  :body-field message)
 
 (org-canvas-define-pull discussions
   :file org-canvas-discussions-file

@@ -189,11 +189,14 @@ home page moved in the web UI does not leave two headings claiming it."
          (body (when detail (alist-get 'body detail))))
     (when page-id
       (org-canvas-org-set-property pos "CANVAS_ID" (format "%s" page-id)))
-    (if (eq (alist-get 'front_page item) t)
-        (org-canvas-org-set-property pos "FRONT_PAGE" "true")
-      (org-entry-delete pos "FRONT_PAGE"))
+    ;; PUBLISHED, FRONT_PAGE, EDITING_ROLES and the rest come from the
+    ;; registry (issue #135).  A page that is no longer the home page
+    ;; arrives with `front_page' false, the property's default, so the
+    ;; stale FRONT_PAGE is deleted rather than left claiming it.
+    (org-canvas--pull-item-from-registry "pages" item pos)
     (when detail
-      (org-canvas--pull-insert-body body))))
+      (org-with-point-at pos
+        (org-canvas--pull-insert-body body)))))
 
 ;; No :skip-fn here on purpose (issue #82).  Push and delete-all guard
 ;; the front page because clobbering or deleting the course home page is

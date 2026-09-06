@@ -58,20 +58,32 @@
  :name "Modules" :endpoint "modules"
  :file-var 'org-canvas-modules-file
  :id-field 'id :id-property "CANVAS_ID" :title-field 'name)
+(defun org-canvas--module-remote-require-sequential (item)
+  "Return ITEM's sequential-progress flag.
+Canvas spells the field `require_sequential_progress'; the Org
+property and the payload key keep the longer word, so a flat lookup
+never found it."
+  (alist-get 'require_sequential_progress item))
+
 (org-canvas-register-properties "modules"
   :label "Modules"
   :file-var 'org-canvas-modules-file
   :query "LEVEL=1"
   :properties
-  '((:org-prop "PUBLISHED" :data-key :published :type boolean
+  '((:org-prop "PUBLISHED" :data-key :published :type boolean :default t
      :doc "Whether the module is visible to students (default: true)")
     (:org-prop "UNLOCK_AT" :data-key :unlock_at :type timestamp
      :doc "Date to unlock the module")
     (:org-prop "REQUIRE_SEQUENTIAL_PROGRESSION" :data-key :require_sequential_progression :type boolean
+     :remote-fn org-canvas--module-remote-require-sequential
      :doc "Force items to be completed in order")
     (:org-prop "PUBLISH_FINAL_GRADE" :data-key :publish_final_grade :type boolean
      :doc "Publish the final grade when this module is completed")
-    (:org-prop "PUBLISH_AT" :data-key :publish_at :type timestamp
+    (:org-prop "POSITION" :data-key :position :type number
+     :doc "Position in the module list")
+    (:org-prop "PREREQUISITE_MODULE_IDS" :data-key :prerequisite_module_ids :type csv-enum
+     :doc "Canvas ids of modules that must be completed first (comma separated)")
+    (:org-prop "PUBLISH_AT" :data-key :publish_at :type timestamp :local-only t
      :doc "Release date: sync publishes this module and its contents once passed")))
 (org-canvas-register-properties "module-items"
   :label "Module Items"
@@ -89,7 +101,7 @@
      :doc "Open external URL in new tab")
     (:org-prop "PUBLISHED" :data-key :published :type boolean
      :doc "Publish state for this item; omit to keep the linked content's own state")
-    (:org-prop "PUBLISH_AT" :data-key :publish_at :type timestamp
+    (:org-prop "PUBLISH_AT" :data-key :publish_at :type timestamp :local-only t
      :doc "Release date for this item; overrides the module's own PUBLISH_AT"))
   :structural-fn #'org-canvas--validate-module-item-link
   :file-fn #'org-canvas--validate-module-item-ids)
@@ -1566,23 +1578,10 @@ ITEM lacks an `items' key."
     (goto-char pos)
     (org-back-to-heading t)
     (let ((pom (point)))
-      (let ((position (alist-get 'position item)))
-        (when position
-          (org-canvas-org-set-property pom "POSITION" (format "%s" position))))
-      (org-canvas--pull-set-timestamp-property pom "UNLOCK_AT"
-                                               (alist-get 'unlock_at item))
-      (org-canvas--pull-set-boolean-property pom "PUBLISHED"
-                                             (alist-get 'published item))
-      (org-canvas--pull-set-boolean-property
-       pom "REQUIRE_SEQUENTIAL_PROGRESSION"
-       (alist-get 'require_sequential_progress item))
-      (org-canvas--pull-set-boolean-property
-       pom "PUBLISH_FINAL_GRADE" (alist-get 'publish_final_grade item))
-      (let ((prereqs (append (alist-get 'prerequisite_module_ids item) nil)))
-        (when prereqs
-          (org-canvas-org-set-property
-           pom "PREREQUISITE_MODULE_IDS"
-           (mapconcat (lambda (id) (format "%s" id)) prereqs ","))))
+      ;; Every module property comes from the registry (issue #135);
+      ;; PUBLISH_AT is org-canvas's own schedule and is marked
+      ;; `:local-only' there, so Canvas never overwrites it.
+      (org-canvas--pull-item-from-registry "modules" item pom)
       ;; Replace child items with the remote list.  Distinguish a
       ;; present-but-empty `items' key (module has no items) from an
       ;; absent one (conflict-check GET omits items — fetch them).

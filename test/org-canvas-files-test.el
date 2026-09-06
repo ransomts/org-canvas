@@ -4904,4 +4904,28 @@ Returns (COUNTERS . FINAL-MESSAGE)."
       (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
               :to-equal "2026-08-31T18:34:37Z"))))
 
+
+(describe "file pull reads usage rights through the registry (issue #135)"
+  (it "writes USE_JUSTIFICATION, USAGE_LICENSE and COPYRIGHT from usage_rights"
+    (with-temp-org-buffer
+     "* [[file:content/a.pdf][a.pdf]]\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+     (org-back-to-heading)
+     (org-canvas--file-pull-set-properties
+      (point)
+      '((id . 1) (locked . :json-false)
+        (usage_rights . ((use_justification . "own_copyright")
+                         (license . "cc_by")
+                         (legal_copyright . "(C) 2026 Ada")))))
+     (expect (org-entry-get (point) "USE_JUSTIFICATION") :to-equal "own_copyright")
+     (expect (org-entry-get (point) "USAGE_LICENSE") :to-equal "cc_by")
+     (expect (org-entry-get (point) "COPYRIGHT") :to-equal "(C) 2026 Ada")
+     (expect (org-entry-get (point) "PUBLISHED") :to-be nil)))
+
+  (it "writes PUBLISHED false for a locked file"
+    (with-temp-org-buffer
+     "* [[file:content/a.pdf][a.pdf]]\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+     (org-back-to-heading)
+     (org-canvas--file-pull-set-properties (point) '((id . 1) (locked . t)))
+     (expect (org-entry-get (point) "PUBLISHED") :to-equal "false"))))
+
 ;;; org-canvas-files-test.el ends here

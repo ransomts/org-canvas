@@ -199,13 +199,8 @@ events, not only today's (issue #87)."
 ;;;; Pull
 
 (org-canvas-define-pull-item calendar-event
-  :body-field description
-  :properties
-  ((start_at         "START_AT"         :type timestamp)
-   (end_at           "END_AT"           :type timestamp)
-   (all_day          "ALL_DAY"          :type boolean)
-   (location_name    "LOCATION_NAME"    :type non-null)
-   (location_address "LOCATION_ADDRESS" :type non-null)))
+  :registry-key "calendar-events"
+  :body-field description)
 
 ;;;###autoload
 (defun org-canvas-pull-calendar-events ()

@@ -80,7 +80,7 @@
   `((:org-prop "QUIZ_TYPE" :data-key :quiz_type :type enum
      :values ,org-canvas--valid-quiz-types
      :doc "The kind of quiz")
-    (:org-prop "PUBLISHED" :data-key :published :type boolean
+    (:org-prop "PUBLISHED" :data-key :published :type boolean :default t
      :doc "Whether item is visible (default: true)")
     (:org-prop "SHUFFLE_ANSWERS" :data-key :shuffle_answers :type boolean
      :doc "Randomize answer order")
