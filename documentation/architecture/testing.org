@@ -9,7 +9,9 @@ writing tests.
 * Overview
 
 - Framework: Buttercup (RSpec-style BDD)
-- Coverage: undercover plugin (99.99%, 6732/6733 lines)
+- Coverage: undercover plugin; the pre-push hook gates at 99% (run
+  =eldev test -u "on,codecov,dontsend" -U coverage/coverage.json= for
+  the current figure)
 - CI: GitHub Actions matrix (Emacs 29.3, 29.4, 30.1)
 - Local gate: pre-push hook (lint + complexity + both Emacs versions)
 - Reports: JUnit XML (Codecov test analytics), Codecov JSON (coverage)
@@ -212,6 +214,45 @@ Every feature module test follows this layout:
   describe "delete-all"          ;; Bulk deletion
 #+end_example
 
+* Coverage Map
+
+The suite covers core utilities, all feature modules, and validation; a few specs skip on Emacs 29.x due to org-mode differences (grep for =buttercup-pending= to enumerate them). The pre-push hook blocks pushes below 99% line coverage. Run =eldev test= for the exact current spec count and =eldev test -u "on,codecov,dontsend" -U coverage/coverage.json= for per-file coverage; do not record either number in the documentation, it drifts.
+
+Largest suites: core-sync, core-org, quizzes, modules, files, new-quizzes, validate (one =org-canvas-{name}-test.el= per module; exact sizes drift, don't track them here).
+
+*Core tests cover:*
+- Path utilities (=org-canvas--path=)
+- API endpoint construction and curl command generation
+- Org property getters/setters (string, boolean, number)
+- Sync state persistence (=org-canvas-org-save-sync-state=)
+- Timestamp parsing (Org → ISO8601)
+- Safe entry iteration (=org-canvas--for-each-entry=)
+- Generic push/search/finalize helpers
+- Error handling (timeout recovery, 404 retry, cascading errors)
+- Link resolution between files
+- Rate limit retry (429/403), 401/403 actionable error messages
+- Preflight credential and connection validation
+- Payload hashing, date validation, title stripping
+
+*Feature module tests cover all 4 stages:*
+1. *Parse*: Property extraction, defaults, CANVAS_ID detection, timestamp conversion
+2. *Build*: Payload construction, boolean handling, optional fields
+3. *Push*: POST/PUT selection, timeout recovery, 404 retry logic
+4. *Finalize*: CANVAS_ID saving, LAST_SYNCED timestamps, error handling
+
+*Pull function tests cover:*
+- Canvas-to-Org import for all 15 feature modules
+- =pull-upsert-heading=, =pull-insert-body=, property/timestamp setting
+- Item link resolution across files (modules → pages/assignments/etc.)
+
+*Integration tests cover:*
+- Full sync pipelines (=org-canvas-sync-{feature}=)
+- Full pull pipelines (=org-canvas-pull-{feature}=)
+- Delete-all commands (=org-canvas-delete-all-{feature}=)
+- Delete-at-point commands
+- User confirmation prompts
+- Cross-file link resolution
+
 * Advanced Mock Patterns
 
 ** Direct plz Mocking
@@ -274,7 +315,61 @@ responses:
     (expect call-count :to-equal 2)))
 #+end_src
 
+* Test Isolation
+
+** Test Isolation: the Network Guard Blocks Unmocked HTTP
+
+test-helper.el advises the network primitives — =plz=, =url-retrieve-synchronously=, and =call-process= when spawning =plz-curl-program= — to signal "Unmocked network call during tests" instead of performing real I/O. The test environment loads the user's real =org-canvas-credentials.el=, so before the guard an unmocked code path (e.g. the assignment overrides sub-fetch) silently attempted live API calls with real credentials. Tests that exercise API internals are unaffected: =cl-letf= on those same symbols replaces the whole function cell, advice included. If a new test trips the guard, mock =org-canvas-api-request=/=org-canvas-api-request-all-pages= (or the primitive itself) — never weaken the guard.
+
+** Test Isolation: Don't Assert on the Shared Log Buffer
+
+Integration tests must not assert on =*org-canvas-log*= buffer contents — earlier tests mutate logger state (handlers, buffer names, leftover content), so such assertions pass in isolation but fail in the full run. Instead capture log lines by =cl-letf=-ing =org-canvas--log-info=/=org-canvas--log-warning= into a list and match on that.
+
 * Emacs 29 vs 30 Compatibility
+
+** Org-mode Versions and File-Backed Buffers
+
+Org-mode ships with Emacs but has its own version (e.g., org 9.6 in Emacs 29.x, org 9.7 in Emacs 30.x). Functions like =org-back-to-heading=, =org-end-of-subtree=, and =org-get-heading= may behave differently between org-mode versions, especially in programmatically created buffers.
+
+*Testing across Emacs versions:*
+
+#+begin_src yaml
+# CI matrix tests on multiple Emacs versions
+strategy:
+  matrix:
+    emacs-version: ['29.3', '29.4', '30.1']
+#+end_src
+
+*File-backed buffers for org-mode tests:*
+
+Org-mode functions work more reliably in file-backed buffers than =with-temp-buffer=. The =with-temp-org-buffer= macro creates real temp files:
+
+#+begin_src elisp
+(defmacro with-temp-org-buffer (content &rest body)
+  `(let ((temp-file (make-temp-file "org-test-" nil ".org")))
+     (unwind-protect
+         (progn
+           (with-temp-file temp-file (insert ,content))
+           (with-current-buffer (find-file-noselect temp-file)
+             (unwind-protect
+                 (progn (goto-char (point-min)) ,@body)
+               (kill-buffer))))
+       (delete-file temp-file))))
+#+end_src
+
+*Skip tests for version-specific org-mode behavior:*
+
+Some tests depend on org-mode internals that differ between versions. Use skip conditions:
+
+#+begin_src elisp
+(defvar test-org-canvas-emacs-30-p (>= emacs-major-version 30))
+
+(it "test requiring newer org-mode"
+  (unless test-org-canvas-emacs-30-p
+    (signal 'buttercup-pending "Requires Emacs 30+ org-mode"))
+  ;; test body
+  )
+#+end_src
 
 ** Skip Pattern
 
@@ -286,11 +381,14 @@ responses:
   )
 #+end_src
 
-** Skipped Tests (6 total)
+** Skipped Tests
 
-- Module item SubHeader parsing (=org-back-to-heading= differences)
-- Module link type detection from filename
-- Quiz numerical answer parsing (exact and range)
+*Currently skipped tests* (grep for =buttercup-pending= for the exact list and count):
+- =test/org-canvas-modules-test.el= — SubHeader parsing, link type detection
+- =test/org-canvas-new-quizzes-test.el= — nested item parsing
+- =test/org-canvas-quizzes-test.el= — numerical answer exact/range parsing
+
+These involve =org-back-to-heading= and =org-end-of-subtree= which don't recognize heading structure consistently in Emacs 29.x's org-mode when using =search-forward= positioning. Grep for =buttercup-pending= to enumerate.
 
 ** The :type Keyword Bug (Emacs 29)
 
@@ -337,12 +435,75 @@ Only =:type= is affected; other keywords work fine.
   Complexity job: eldev complexity (30.1 only)
 #+end_example
 
-** JUnit XML Output
+** JUnit XML Output with buttercup-junit
 
-Enabled by environment variable =ELDEV_JUNIT=1=. Configured in the
-Eldev file via =with-eval-after-load 'buttercup= (must load after
-buttercup is installed). Output path controlled by
-=JUNIT_REPORT_FILE=.
+Buttercup doesn't have built-in JUnit XML output, but the =buttercup-junit= package (available on MELPA) provides a JUnit reporter. This is required for Codecov Test Analytics and other CI tools that consume JUnit XML.
+
+*Eldev configuration* (in =Eldev= file):
+
+#+begin_src elisp
+(eldev-add-extra-dependencies 'test 'buttercup-junit)
+
+;; Enable JUnit output via environment variable
+(when (getenv "ELDEV_JUNIT")
+  (with-eval-after-load 'buttercup
+    (require 'buttercup-junit)
+    (setq buttercup-reporter #'buttercup-junit-reporter)
+    (setq buttercup-junit-result-file
+          (or (getenv "JUNIT_REPORT_FILE") "test-results.xml"))))
+#+end_src
+
+*Key insight*: The JUnit reporter must be configured /after/ buttercup is loaded. Using =with-eval-after-load 'buttercup= ensures the reporter is set at the right time. Eldev's =--setup= option runs too early (before dependencies are installed).
+
+*Running locally with JUnit output:*
+
+#+begin_src bash
+ELDEV_JUNIT=1 JUNIT_REPORT_FILE=test-results.xml eldev test
+#+end_src
+
+*buttercup-junit variables:*
+- =buttercup-junit-result-file= - Output file path (default: "results.xml")
+- =buttercup-junit-inner-reporter= - Secondary reporter for console output (default: =buttercup-reporter-adaptive=)
+- =buttercup-junit--to-stdout= - Whether to also print XML to stdout
+
+** Codecov Integration
+
+Codecov provides two types of reports: *coverage* (line coverage) and *test analytics* (test results, timing, flaky test detection).
+
+*GitHub Actions setup* (=.github/workflows/ci.yml=):
+
+#+begin_src yaml
+- name: Run tests with coverage
+  run: |
+    mkdir -p coverage
+    eldev test -u "on,codecov,dontsend" -U coverage/coverage.json
+  env:
+    ELDEV_JUNIT: 1
+    JUNIT_REPORT_FILE: test-results.xml
+
+# Upload coverage report
+- name: Upload coverage to Codecov
+  uses: codecov/codecov-action@v5
+  with:
+    token: ${{ secrets.CODECOV_TOKEN }}
+    files: coverage/coverage.json
+
+# Upload test results (separate upload with report_type)
+- name: Upload test results to Codecov
+  uses: codecov/codecov-action@v5
+  if: ${{ !cancelled() }}  # Upload even if tests fail
+  with:
+    token: ${{ secrets.CODECOV_TOKEN }}
+    files: test-results.xml
+    report_type: test_results
+#+end_src
+
+*Key points:*
+- Use =codecov-action@v5= (v4 works but v5 has better test analytics support)
+- Coverage and test results require *separate upload steps* with different =report_type= values
+- Use =if: ${{ !cancelled() }}= for test results to ensure upload even when tests fail
+- The =CODECOV_TOKEN= secret must be configured in GitHub repository settings
+- Test Analytics may need to be enabled in Codecov settings (beta feature)
 
 * Pre-Push Hook
 
@@ -387,6 +548,32 @@ Key settings in the =Eldev= file:
     (setq buttercup-reporter #'buttercup-junit-reporter)
     (setq buttercup-junit-result-file
           (or (getenv "JUNIT_REPORT_FILE") "test-results.xml"))))
+#+end_src
+
+** Project Structure Quirk
+
+The main file =org-canvas.el= lives in =lisp/= but the package linter expects it at the project root. A *symlink* at the root resolves this:
+
+#+begin_example
+org-canvas.el -> lisp/org-canvas.el
+#+end_example
+
+This allows =eldev lint= to find the =Package-Requires= header while keeping the actual file in =lisp/= where Eldev's load path expects it.
+
+** Key Eldev Settings
+
+#+begin_src elisp
+(setf eldev-project-source-dirs '("lisp"))
+(setf eldev-project-main-file "org-canvas.el")
+(push "test" eldev-project-source-dirs)  ; For test discovery
+(setf eldev-lint-ignored-fileset '("vendor/" "test/"))
+#+end_src
+
+** Cleaning Build Artifacts
+
+If builds fail mysteriously, clean the Eldev cache:
+#+begin_src bash
+eldev clean all
 #+end_src
 
 * Coverage Strategy
@@ -445,3 +632,45 @@ nix-shell -I nixpkgs=https://github.com/NixOS/nixpkgs/archive/nixos-24.05.tar.gz
 - *Argument order*: Custom pull functions must match
   =(pull-fn item pos)=. Always read the defun signature.
 - *cl-return-from*: Functions using it must be =cl-defun=, not =defun=.
+
+* Debugging Techniques
+
+** Diagnosing Paren Imbalances in Elisp
+
+The byte compiler's =Invalid read syntax: ")"= error reports a byte offset, not a line number, making it hard to locate. Use Emacs batch mode with =emacs-lisp-mode= (required for correct string/comment handling):
+
+#+begin_src bash
+emacs --batch -Q --eval '
+(with-temp-buffer
+  (insert-file-contents "lisp/org-canvas-core.el")
+  (emacs-lisp-mode)
+  (goto-char (point-min))
+  (let ((last-good 1))
+    (condition-case err
+        (while (< (point) (point-max))
+          (setq last-good (line-number-at-pos))
+          (forward-sexp))
+      (error
+       (message "Last good sexp at line %d, error at line %d: %s"
+                last-good (line-number-at-pos) err)))))
+'
+#+end_src
+
+To check a single function:
+
+#+begin_src bash
+emacs --batch -Q --eval '
+(with-temp-buffer
+  (insert-file-contents "lisp/org-canvas-core.el")
+  (emacs-lisp-mode)
+  (goto-char (point-min))
+  (search-forward "(defun org-canvas--my-function")
+  (beginning-of-line)
+  (condition-case err
+      (progn (forward-sexp)
+             (message "Balanced, ends at line %d" (line-number-at-pos)))
+    (error (message "Error at line %d: %s" (line-number-at-pos) err))))
+'
+#+end_src
+
+*Important:* Without =emacs-lisp-mode=, =forward-sexp= in =fundamental-mode= misparses strings containing brackets (e.g., regex literals like ="\\[\\["=) and reports false positives.
