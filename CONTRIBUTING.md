@@ -4,7 +4,7 @@ Thank you for your interest in contributing! This guide covers the development w
 
 ## Development Setup
 
-1. **Install Emacs** (28.1+; CI tests on 29.3 and 30.1).
+1. **Install Emacs** (minimum version: see `Package-Requires` in `lisp/org-canvas.el`; CI tests on 29.3, 29.4 and 30.1).
 2. **Install [Eldev](https://github.com/emacs-eldev/eldev)**:
    ```bash
    curl -fsSL https://raw.github.com/emacs-eldev/eldev/master/webinstall/eldev | sh
@@ -20,7 +20,7 @@ Thank you for your interest in contributing! This guide covers the development w
 4. **Verify your setup**:
    ```bash
    eldev compile     # Verify everything builds
-   eldev test        # Run all ~3400 specs
+   eldev test        # Run all specs (the last line prints the count)
    eldev lint        # Run linter (must be clean)
    eldev complexity  # Check cognitive complexity
    ```
@@ -29,17 +29,7 @@ Thank you for your interest in contributing! This guide covers the development w
 
 ### Module Structure
 
-```
-lisp/
-├── org-canvas.el              # Main entry point, orchestrates all modules
-├── org-canvas-core.el         # Meta-require for all core-* files
-├── org-canvas-core-config.el  # Config, constants, shared enum values
-├── org-canvas-core-api.el     # API request helpers, rate limiting
-├── org-canvas-core-org.el     # Org property/buffer helpers, HTML export
-├── org-canvas-core-sync.el    # Sync pipeline macros, push/pull/delete infra
-├── org-canvas-validate.el     # Offline validation engine
-└── org-canvas-{feature}.el    # Feature modules (one per content type)
-```
+The annotated tree of `lisp/` is maintained in [CLAUDE.md](CLAUDE.md) (section "Module Structure"); the reasoning behind the layout is in [documentation/architecture/design.org](documentation/architecture/design.org). Decisions made in response to specific issues are collected in [documentation/architecture/decisions.org](documentation/architecture/decisions.org).
 
 ### Dependency Rules
 
@@ -85,11 +75,11 @@ Most modules use the `org-canvas-define-sync` macro to generate the sync functio
 
 ### Logging
 
-Use `elog` with `org-canvas--logger`:
+Use the in-tree logger (`lisp/org-canvas-core-log.el`):
 
 ```elisp
-(elog-info org-canvas--logger "[Stage 1: Parse] Processing '%s'" title)
-(elog-warning org-canvas--logger "[Sync] Skipped '%s': missing CANVAS_ID" title)
+(org-canvas--log-info "[Stage 1: Parse] Processing '%s'" title)
+(org-canvas--log-warning "[Sync] Skipped '%s': missing CANVAS_ID" title)
 ```
 
 Stage markers follow the format `[Stage N: StageName]`.
@@ -224,6 +214,7 @@ git push --no-verify
 ## Documentation
 
 - **[Reference manual](documentation/manual.org)** — Complete property specs, command reference, file formats
+- **[Architecture notes](documentation/architecture/)** — `design.org`, `api-interaction.org`, `pull-system.org`, `testing.org`, `module-developer-guide.org`, `decisions.org`; historical plans and specs under `plans/` and `specs/`
 - **[Workflows guide](documentation/workflows.org)** — Semester/weekly/daily/per-assignment workflows
 - **[FAQ & Recipes](documentation/faq.org)** — Quick answers to "how do I..." questions
 
