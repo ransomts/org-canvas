@@ -201,10 +201,10 @@ Reads raw properties, transforms them, and exports description to HTML."
   (let ((payload (make-hash-table :test 'equal)))
     (puthash "title" (plist-get data :title) payload)
 
-    (when-let ((desc (plist-get data :description)))
+    (when-let* ((desc (plist-get data :description)))
       (puthash "instructions" desc payload))
 
-    (when-let ((limit (plist-get data :time_limit)))
+    (when-let* ((limit (plist-get data :time_limit)))
       (puthash "time_limit" limit payload))
 
     (when (plist-get data :shuffle_answers)
@@ -213,13 +213,13 @@ Reads raw properties, transforms them, and exports description to HTML."
     (when (plist-get data :one_at_a_time)
       (puthash "one_at_a_time" t payload))
 
-    (when-let ((attempts (plist-get data :allowed_attempts)))
+    (when-let* ((attempts (plist-get data :allowed_attempts)))
       (puthash "allowed_attempts" attempts payload))
 
-    (when-let ((scoring (plist-get data :scoring_policy)))
+    (when-let* ((scoring (plist-get data :scoring_policy)))
       (puthash "scoring_policy" scoring payload))
 
-    (when-let ((group-id (plist-get data :assignment_group_id)))
+    (when-let* ((group-id (plist-get data :assignment_group_id)))
       (puthash "assignment_group_id" group-id payload))
 
     payload))
