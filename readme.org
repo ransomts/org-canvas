@@ -231,7 +231,7 @@ In detail view, edit the =:SCORE:= property on any student heading and press =S=
 
 * Dependencies
 
-- Emacs 28.1+
+- Emacs 29.1+
 - Org Mode 9.6+
 - [[https://github.com/alphapapa/plz.el][plz]] - HTTP library
 - [[https://github.com/Kinneyzhang/elog][elog]] - Logging framework

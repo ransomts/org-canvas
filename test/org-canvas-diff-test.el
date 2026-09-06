@@ -9,6 +9,7 @@
 ;;; Code:
 
 (require 'buttercup)
+(require 'test-helper)
 (require 'org-canvas)
 
 (describe "org-canvas--diff-find-properties"

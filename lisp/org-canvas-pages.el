@@ -39,6 +39,8 @@
 (require 'org-canvas-core)
 (require 'ox-html)
 
+(declare-function org-canvas--validate-page-structure "org-canvas-validate")
+
 ;;;; Configuration
 
 (defcustom org-canvas-pages-file (org-canvas--path "pages.org")
@@ -110,13 +112,13 @@ Logs warnings for invalid roles.  Returns RAW unchanged."
 
 ;;;; 2. Stage: Transformation
 
-(defun org-canvas--page-pre-build-check (data _payload)
+(defun org-canvas--page-pre-build-check (data payload)
   "Validate page DATA before building payload.  Return PAYLOAD unchanged."
   (when (string-empty-p (plist-get data :title))
     (org-canvas--log-error org-canvas--logger "[Stage 2: Transform] Empty title!")
     (org-canvas--signal 'org-canvas-validation-error
       "Page title cannot be empty during payload build"))
-  _payload)
+  payload)
 
 (org-canvas-define-payload page
   :registry-key "pages"

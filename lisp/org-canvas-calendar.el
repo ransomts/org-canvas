@@ -37,6 +37,8 @@
 (require 'ox-html)
 (require 'cl-lib)
 
+(declare-function org-canvas--validate-all-day-span "org-canvas-validate")
+
 ;;;; Configuration
 
 (defcustom org-canvas-calendar-events-file (org-canvas--path "calendar.org")

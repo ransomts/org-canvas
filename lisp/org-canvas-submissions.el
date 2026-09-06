@@ -1212,7 +1212,7 @@ Students without attachments are skipped; the count is reported."
     (url-copy-file
      (concat url
              (if (string-match-p "\\?" url) "&" "?")
-             "access_token=" org-canvas-api-token)
+             "access_token=" (org-canvas--api-token))
      output-path t)))
 
 (defun org-canvas--submissions-sanitize-filename (name)

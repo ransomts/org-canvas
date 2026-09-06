@@ -61,6 +61,28 @@ Or create =org-canvas-credentials.el= manually in your course directory:
 
 *Important*: Add =org-canvas-credentials.el= to =.gitignore= to avoid committing your API token.
 
+** Keeping the Token in authinfo
+
+The token does not have to sit in the credentials file.  When =org-canvas-api-token= is empty, org-canvas asks Emacs's =auth-source= library for it, so one line in =~/.authinfo.gpg= (or =~/.authinfo=) serves instead:
+
+#+begin_example
+machine your-institution.instructure.com login 12345 password your-canvas-api-token
+#+end_example
+
+=machine= is the host of =org-canvas-base-url= with the scheme (and any port or path) stripped; =login= is the course ID.  An entry without a =login= serves every course on that host, which is what a token issued to one Canvas account already does:
+
+#+begin_example
+machine your-institution.instructure.com password your-canvas-api-token
+#+end_example
+
+Resolution order, on every request:
+
+1. A non-empty =org-canvas-api-token= (set by the credentials file, =M-x org-canvas-init=, or your init file) wins.
+2. Otherwise the first =auth-source= entry for the host whose =login= is the course ID.
+3. Otherwise the first =auth-source= entry for the host at all.
+
+The credentials file remains fully supported and is still where =org-canvas-directory=, =org-canvas-base-url= and =org-canvas-course-id= live; to use authinfo, leave its =(setq org-canvas-api-token ...)= line out or set the value to ="".  =~/.authinfo.gpg= is encrypted by Emacs's EasyPG, so the token never rests on disk in plaintext, and unlike the credentials file it is not Lisp that =M-x org-canvas-activate-course= evaluates.  A resolved token is cached per host and course; activating a course, or changing =org-canvas-base-url= or =org-canvas-course-id=, drops the cache, so a rotated token takes effect without restarting Emacs (=auth-source= keeps a cache of its own -- see =auth-source-forget-all-cached= if a stale secret persists).  When no token resolves, the preflight check names the exact authinfo line for your host and course.
+
 ** Testing Connection
 
 #+begin_src elisp
@@ -2671,7 +2693,7 @@ The item exists in your Org file but was deleted from Canvas. org-canvas will au
 
 *** "Authentication failed (HTTP 401)"
 
-Your API token has expired or been revoked. Generate a new one at Canvas > Account > Settings > Approved Integrations, and update =org-canvas-credentials.el=.
+Your API token has expired or been revoked. Generate a new one at Canvas > Account > Settings > Approved Integrations, and update =org-canvas-credentials.el= or your =~/.authinfo.gpg= entry.
 
 *** "Permission denied (HTTP 403)"
 
@@ -2751,7 +2773,7 @@ This covers prompts that merely confirm the operation you already asked for, suc
 
 When running =org-canvas-sync=, a preflight check runs automatically before any content is synced. It validates:
 
-1. =org-canvas-api-token= is set and non-empty
+1. An API token resolves: =org-canvas-api-token= is non-empty, or =auth-source= has an entry for the host (see "Keeping the Token in authinfo")
 2. =org-canvas-course-id= is set and non-empty
 3. The API connection works (fetches course name)
 

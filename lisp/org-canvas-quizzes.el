@@ -59,6 +59,8 @@
 (require 'ox-html)
 (require 'cl-lib)
 
+(declare-function org-canvas--validate-quiz-point-total "org-canvas-validate")
+
 ;;;; Configuration
 
 (defcustom org-canvas-quizzes-file (org-canvas--path "quizzes.org")
@@ -406,31 +408,31 @@ Returns \"\" for a quiz with none."
   (let ((quiz-obj `((title . ,(plist-get data :title))
 		    (quiz_type . ,(plist-get data :quiz_type)))))
 
-    (when-let ((desc (plist-get data :description)))
+    (when-let* ((desc (plist-get data :description)))
       (push `(description . ,desc) quiz-obj))
 
-    (when-let ((limit (plist-get data :time_limit)))
+    (when-let* ((limit (plist-get data :time_limit)))
       (push `(time_limit . ,limit) quiz-obj))
 
     (when (plist-get data :shuffle_answers)
       (push `(shuffle_answers . t) quiz-obj))
 
-    (when-let ((attempts (plist-get data :allowed_attempts)))
+    (when-let* ((attempts (plist-get data :allowed_attempts)))
       (push `(allowed_attempts . ,attempts) quiz-obj))
 
-    (when-let ((due (plist-get data :due_at)))
+    (when-let* ((due (plist-get data :due_at)))
       (push `(due_at . ,due) quiz-obj))
 
-    (when-let ((group-id (plist-get data :assignment_group_id)))
+    (when-let* ((group-id (plist-get data :assignment_group_id)))
       (push `(assignment_group_id . ,group-id) quiz-obj))
 
-    (when-let ((unlock (plist-get data :unlock_at)))
+    (when-let* ((unlock (plist-get data :unlock_at)))
       (push `(unlock_at . ,unlock) quiz-obj))
 
-    (when-let ((lock (plist-get data :lock_at)))
+    (when-let* ((lock (plist-get data :lock_at)))
       (push `(lock_at . ,lock) quiz-obj))
 
-    (when-let ((code (plist-get data :access_code)))
+    (when-let* ((code (plist-get data :access_code)))
       (push `(access_code . ,code) quiz-obj))
 
     ;; Always send show_correct_answers (meaningful default of true)
@@ -438,16 +440,16 @@ Returns \"\" for a quiz with none."
 				     (plist-get data :show_correct_answers)))
 	  quiz-obj)
 
-    (when-let ((show-at (plist-get data :show_correct_answers_at)))
+    (when-let* ((show-at (plist-get data :show_correct_answers_at)))
       (push `(show_correct_answers_at . ,show-at) quiz-obj))
 
-    (when-let ((hide-at (plist-get data :hide_correct_answers_at)))
+    (when-let* ((hide-at (plist-get data :hide_correct_answers_at)))
       (push `(hide_correct_answers_at . ,hide-at) quiz-obj))
 
-    (when-let ((hide (plist-get data :hide_results)))
+    (when-let* ((hide (plist-get data :hide_results)))
       (push `(hide_results . ,hide) quiz-obj))
 
-    (when-let ((scoring (plist-get data :scoring_policy)))
+    (when-let* ((scoring (plist-get data :scoring_policy)))
       (push `(scoring_policy . ,scoring) quiz-obj))
 
     (when (plist-get data :one_question_at_a_time)
@@ -456,7 +458,7 @@ Returns \"\" for a quiz with none."
     (when (plist-get data :cant_go_back)
       (push `(cant_go_back . t) quiz-obj))
 
-    (when-let ((ip (plist-get data :ip_filter)))
+    (when-let* ((ip (plist-get data :ip_filter)))
       (push `(ip_filter . ,ip) quiz-obj))
 
     (when (plist-get data :show_correct_answers_last_attempt)
