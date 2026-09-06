@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Land all 20 items from `canvas-structure/improvements.md` plus the latent pagination bug found in the pull log, per the design at `docs/superpowers/specs/2026-04-26-pull-improvements-design.md`.
+**Goal:** Land all 20 items from `canvas-structure/improvements.md` plus the latent pagination bug found in the pull log, per the design at `documentation/architecture/specs/2026-04-26-pull-improvements-design.md`.
 
 **Architecture:** Five waves, executed direct-to-main with one commit per task. Wave 1 builds reliability primitives (pagination migration, transient-error retry, end-of-pull summary, double-slash fix). Wave 2 fixes embedded-image rot via on-demand metadata fetch. Wave 3 is the hard schema cutover (file-level `LAST_SYNCED`, default suppression, rubric/description format, module item `:ITEM_TYPE:`, sort by position, `:INDENT:` suppression). Wave 4 is content fidelity (course image, TZ localization, override pull, announcement metadata, quiz-question bug). Wave 5 is empty-file headers and cosmetic polish.
 
