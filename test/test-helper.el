@@ -546,5 +546,12 @@ Handles both Emacs 29 (transient 0.4) and Emacs 30 (transient 0.7+) layout forma
     (cl-some (lambda (col) (test-org-canvas-transient--column-has-command-p col command))
              columns)))
 
+;; Pin the zone Org timestamps are read and written in (issue #136).  With
+;; nil the converters would use this machine's local zone whenever no
+;; settings.org names a course zone, and every exact timestamp expectation
+;; in the suite would depend on where the tests run.  Specs about the zone
+;; policy itself bind `org-canvas-time-zone' to nil.
+(setq org-canvas-time-zone "UTC")
+
 (provide 'test-helper)
 ;;; test-helper.el ends here

@@ -256,5 +256,24 @@
         (expect (assq var org-canvas--file-var-registry)
                 :to-be-truthy)))))
 
+(describe "org-canvas-activate-course forgets the course zone (issue #136)"
+  (it "resets the resolved zone when a course is activated"
+    (let* ((dir (make-temp-file "course-" t))
+           (cred-file (expand-file-name "org-canvas-credentials.el" dir))
+           (org-canvas-courses `(("Math" . ,dir)))
+           (org-canvas--active-course-name nil)
+           (org-canvas--inhibit-log-clear t)
+           (org-canvas--pull-tz-cache "America/Chicago")
+           (org-canvas--time-zone-resolved t))
+      (unwind-protect
+          (progn
+            (with-temp-file cred-file (insert ""))
+            (cl-letf (((symbol-function 'load) #'ignore)
+                      ((symbol-function 'message) #'ignore))
+              (org-canvas-activate-course "Math"))
+            (expect org-canvas--pull-tz-cache :to-be nil)
+            (expect org-canvas--time-zone-resolved :to-be nil))
+        (delete-directory dir t)))))
+
 (provide 'org-canvas-multicourse-test)
 ;;; org-canvas-multicourse-test.el ends here

@@ -2704,19 +2704,28 @@ Page content.
   ;; whatever string Canvas returned (typically IANA), and IANA name
   ;; resolution works on all common end-user systems.
   (it "converts UTC ISO-8601 to course-local Org active timestamp"
-    (let ((org-canvas--pull-tz-cache "EST5EDT,M3.2.0,M11.1.0"))
+    (let ((org-canvas-time-zone nil)
+          (org-canvas--pull-tz-cache "EST5EDT,M3.2.0,M11.1.0"))
       (expect (org-canvas--iso8601-to-org-timestamp "2026-04-04T03:59:00Z")
               :to-equal "<2026-04-03 Fri 23:59>")))
 
   (it "converts UTC ISO-8601 to course-local Org inactive timestamp"
-    (let ((org-canvas--pull-tz-cache "EST5EDT,M3.2.0,M11.1.0"))
+    (let ((org-canvas-time-zone nil)
+          (org-canvas--pull-tz-cache "EST5EDT,M3.2.0,M11.1.0"))
       (expect (org-canvas--iso8601-to-org-inactive-timestamp "2026-04-04T03:59:00Z")
               :to-equal "[2026-04-03 Fri 23:59]")))
 
-  (it "uses UTC when cache is unset (back-compat)"
-    (let ((org-canvas--pull-tz-cache nil))
-      (expect (org-canvas--iso8601-to-org-timestamp "2026-04-04T03:59:00Z")
-              :to-equal "<2026-04-04 Sat 03:59>")))
+  (it "uses Emacs's local zone when no course zone is known (issue #136)"
+    (let ((orig-tz (getenv "TZ")))
+      (unwind-protect
+          (progn
+            (set-time-zone-rule "EST5EDT,M3.2.0,M11.1.0")
+            (let ((org-canvas-time-zone nil)
+                  (org-canvas--pull-tz-cache nil)
+                  (org-canvas--time-zone-resolved t))
+              (expect (org-canvas--iso8601-to-org-timestamp "2026-04-04T03:59:00Z")
+                      :to-equal "<2026-04-03 Fri 23:59>")))
+        (set-time-zone-rule orig-tz))))
 
   (it "returns nil for nil input"
     (expect (org-canvas--iso8601-to-org-timestamp nil) :to-be nil))
@@ -3396,6 +3405,71 @@ Page content.
       (expect form :to-match "org-canvas--pull-item-from-registry \"widgets\" item pos")
       (expect form :to-match "org-canvas--pull-insert-body")
       (expect form :to-match "funcall"))))
+
+
+(describe "one time zone for push and pull (issue #136)"
+  (it "push reads an Org timestamp in the course zone"
+    (let ((org-canvas--pull-tz-cache "EST5EDT,M3.2.0,M11.1.0")
+          (org-canvas-time-zone nil))
+      (expect (org-canvas-org-parse-timestamp "<2026-08-31 Mon 23:59>")
+              :to-equal "2026-09-01T03:59:00Z")))
+
+  (it "a deadline survives a round trip"
+    (let ((org-canvas--pull-tz-cache "EST5EDT,M3.2.0,M11.1.0")
+          (org-canvas-time-zone nil))
+      (let ((org-ts (org-canvas--iso8601-to-org-timestamp "2026-09-01T03:59:00Z")))
+        (expect org-ts :to-equal "<2026-08-31 Mon 23:59>")
+        (expect (org-canvas-org-parse-timestamp org-ts)
+                :to-equal "2026-09-01T03:59:00Z"))))
+
+  (it "org-canvas-time-zone pins the zone over settings.org"
+    (let ((org-canvas-time-zone "UTC")
+          (org-canvas--pull-tz-cache "EST5EDT,M3.2.0,M11.1.0"))
+      (expect (org-canvas-org-parse-timestamp "<2026-08-31 Mon 23:59>")
+              :to-equal "2026-08-31T23:59:00Z")
+      (expect (org-canvas--iso8601-to-org-timestamp "2026-08-31T23:59:00Z")
+              :to-equal "<2026-08-31 Mon 23:59>")))
+
+  (it "resolves the course zone lazily from settings.org on any path"
+    (let* ((dir (make-temp-file "tz-lazy-" t))
+           (settings-file (expand-file-name "settings.org" dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file settings-file
+              (insert "* Settings\n:PROPERTIES:\n:TIME_ZONE: EST5EDT,M3.2.0,M11.1.0\n:END:\n"))
+            (let ((org-canvas-settings-file settings-file)
+                  (org-canvas-time-zone nil)
+                  (org-canvas--pull-tz-cache nil)
+                  (org-canvas--time-zone-resolved nil))
+              ;; No explicit resolve first: pull-at-point and the conflict
+              ;; pull never called one, and wrote UTC (issue #134).
+              (expect (org-canvas--iso8601-to-org-timestamp "2026-09-01T03:59:00Z")
+                      :to-equal "<2026-08-31 Mon 23:59>")
+              (expect org-canvas--time-zone-resolved :to-be t)))
+        (let ((buf (find-buffer-visiting settings-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory dir t))))
+
+  (it "resolves once and remembers a course with no zone"
+    (let ((org-canvas-settings-file "/nonexistent/settings.org")
+          (org-canvas-time-zone nil)
+          (org-canvas--pull-tz-cache nil)
+          (org-canvas--time-zone-resolved nil)
+          (real (symbol-function 'org-canvas--pull-resolve-tz))
+          (calls 0))
+      (cl-letf (((symbol-function 'org-canvas--pull-resolve-tz)
+                 (lambda () (cl-incf calls) (funcall real))))
+        (org-canvas--time-zone)
+        (org-canvas--time-zone)
+        (expect calls :to-equal 1)
+        (expect (org-canvas--time-zone) :to-be nil))))
+
+  (it "org-canvas--time-zone-reset forgets the resolved zone"
+    (let ((org-canvas--pull-tz-cache "UTC")
+          (org-canvas--time-zone-resolved t))
+      (org-canvas--time-zone-reset)
+      (expect org-canvas--pull-tz-cache :to-be nil)
+      (expect org-canvas--time-zone-resolved :to-be nil))))
 
 (provide 'org-canvas-core-org-test)
 ;;; org-canvas-core-org-test.el ends here
