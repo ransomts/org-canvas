@@ -141,7 +141,7 @@ takes effect without restarting Emacs."
   (setq org-canvas--api-token-cache nil))
 
 (defun org-canvas--api-token-cache-watcher (_symbol _newval _operation _where)
-  "Drop the cached token when the host or course it was resolved for moves.
+  "Drop the cached token after a change of host or course.
 Installed on `org-canvas-base-url' and `org-canvas-course-id'.  Unlike
 `org-canvas--directory-watcher' it reacts to every operation, not only
 `set': a `let' binding of either variable changes which token applies
