@@ -6,7 +6,7 @@
 
 **Architecture:** Add a folder-fetch step ahead of the file-fetch, build a `folder-id → relative-path` map, and dispatch on a 3-state mode predicate (`fresh`/`flat`/`hierarchical`). Fresh mode emits a nested heading tree directly into `files.org` and downloads to nested paths under `content/`. Flat mode keeps current upsert behavior. Hierarchical re-pull is rejected with `user-error`.
 
-**Tech Stack:** Emacs Lisp; `plz` (HTTP); `buttercup` (tests); `eldev` (build/test); `undercover` (coverage). Spec: `docs/superpowers/specs/2026-04-25-pull-files-folder-hierarchy-design.md`.
+**Tech Stack:** Emacs Lisp; `plz` (HTTP); `buttercup` (tests); `eldev` (build/test); `undercover` (coverage). Spec: `documentation/architecture/specs/2026-04-25-pull-files-folder-hierarchy-design.md`.
 
 ---
 

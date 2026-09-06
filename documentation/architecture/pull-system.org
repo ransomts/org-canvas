@@ -376,3 +376,35 @@ pulling, the next sync will compute a fresh hash.
 | PAYLOAD_HASH     | Not set                           | Deleted (stale after pull)       |
 | Failure handling | Continues with next item          | Returns ='pulled= to pipeline   |
 | File creation    | Creates file if missing           | File must exist (item exists)    |
+
+* Single-Item Pull: Registration Rules
+
+=org-canvas-pull-at-point= refreshes the heading at point from Canvas by handing one fetched item to =org-canvas--conflict-pull-local= — the same function the conflict prompt's pull option uses, which stamps =CANVAS_UPDATED_AT= and drops the stale =PAYLOAD_HASH= (get those wrong by hand and the entry re-triggers drift forever while looking clean). Dispatch is generic: the feature registry carries =:pull-item-fn=, written by =org-canvas-register-pull-item-fn= from whichever of =org-canvas-define-sync= or =org-canvas-define-pull= the module uses, and =org-canvas--registry-feature-for-file= maps the current buffer to its feature. *A module with a custom sync /and/ a custom pull registers its own* (files.el does; quizzes and outcomes have no pull-item fn at all and the command says which whole-file command to use instead). Generated =org-canvas-pull-<feature>= commands also take a prefix arg that restricts the pull to ids the file already claims (issue #67).
+
+* A :skip-fn Must Say So (issues #81, #82)
+
+A skipped item used to leave no trace: no log line, no counter, nothing in the
+=.org= file. The number a pull prints is the number /written/, which reads as the
+number /available/ — so a local copy missing content looked exactly like a clean
+one (issue #81). Every path that consults a =:skip-fn= now accounts for it.
+=org-canvas--pull-handle-item= (the runtime dispatcher the generated pull loop
+calls — it exists so the macro stays a two-branch =pcase=) returns =processed= /
+=skipped= / nil; a skip is logged by name, counted into the completion line via
+=org-canvas--pull-skip-suffix=, and recorded through =org-canvas--pull-record-skip=
+as a =:kind 'skip= entry in =org-canvas--pull-summary=, which
+=org-canvas--pull-summary-print= renders as its own section. =org-canvas-diff=
+counts what it never compared (=org-canvas--diff-unclaimed=) and names it in the
+footer, and the orphan scan and prune tally count protected items. Declare
+=:skip-reason= — a short phrase — wherever a =:skip-fn= is declared, in both
+=org-canvas-define-pull= and =org-canvas-register-feature=; without one the
+reports fall back to a generic "excluded by this module".
+
+*Only push and delete-all skip the front page.* Pull deliberately does not
+(issue #82). The guard is about destruction — one page per course, and Canvas
+refuses to unpublish it — while pull writes local files only, so excluding it
+there left the one page students land on as the one page missing from the source
+of truth: absent from a migration, and invisible to =org-canvas-diff=, which has
+nothing local to compare. =org-canvas--page-pull-item= records =FRONT_PAGE: true=
+so the round-trip survives, and /removes/ the property when Canvas no longer
+serves that page as the home page — two headings claiming it is not a state
+Canvas can be in.

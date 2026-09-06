@@ -18,6 +18,14 @@ Familiarize yourself with the Canvas API endpoint you're implementing
 by consulting =documentation/architecture/canvas-openapi3.yaml= or the
 Canvas API documentation.
 
+Before changing an existing module, also read the heading that covers it
+in =documentation/architecture/decisions.org= -- the issue post-mortems
+(rubrics update in place, quiz publish sequencing, module-item
+reconciliation, bulk publish, the drift report's rules) live there, and
+the macro reference blocks (=org-canvas-define-sync= options,
+=org-canvas-define-payload=, the property registry's =:remote-fn= and
+=:compare-p=) are in =design.org=.
+
 * Step 1: Create the Module File
 
 Create =lisp/org-canvas-{feature}.el= with this skeleton:
