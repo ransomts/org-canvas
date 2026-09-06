@@ -4,7 +4,7 @@ Thank you for your interest in contributing! This guide covers the development w
 
 ## Development Setup
 
-1. **Install Emacs** (28.1+; CI tests on 29.3 and 30.1).
+1. **Install Emacs** (29.1+; CI tests on 29.3 and 30.1).
 2. **Install [Eldev](https://github.com/emacs-eldev/eldev)**:
    ```bash
    curl -fsSL https://raw.github.com/emacs-eldev/eldev/master/webinstall/eldev | sh
