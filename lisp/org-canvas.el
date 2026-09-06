@@ -5,7 +5,7 @@
 ;; Maintainer: Tim Ransom <ransomtim8078@gmail.com>
 ;; Created: 2026-02-08
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "28.1") (plz "0.9") (org "9.6") (transient "0.4"))
+;; Package-Requires: ((emacs "29.1") (plz "0.9") (org "9.6") (transient "0.4"))
 
 ;; Keywords: comm, tools
 ;; URL: https://github.com/ransomts/org-canvas

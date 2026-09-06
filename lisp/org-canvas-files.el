@@ -53,6 +53,8 @@
 (require 'url-util)
 (require 'json)
 
+(declare-function org-canvas--validate-file-structure "org-canvas-validate")
+
 ;;;; Configuration
 
 (defcustom org-canvas-files-file (org-canvas--path "files.org")
