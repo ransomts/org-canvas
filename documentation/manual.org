@@ -359,6 +359,26 @@ Course-level settings such as timezone, homepage view, grading scheme, license, 
 
 Invalid enum values are replaced with the first valid option and a warning is logged.
 
+*** Time zone
+
+Every Org timestamp org-canvas reads or writes is in one zone: the
+course's own, the =TIME_ZONE= above, which is what students see in the
+Canvas web UI.  Push reads =DUE_AT= and its kin in that zone and pull
+writes them in it, so a deadline survives a round trip; before this
+was one policy, push read the machine's zone while pull wrote UTC on
+most paths, and a pulled deadline moved by the UTC offset (issue #136).
+
+When no settings.org names a zone, Emacs's local zone is used.  To pin
+a zone regardless, set =org-canvas-time-zone= to a TZ rule string:
+
+#+begin_src elisp
+(setq org-canvas-time-zone "America/New_York")
+#+end_src
+
+The zone is read once per operation (and again after a settings pull
+or a course activation), so editing =TIME_ZONE= takes effect on the
+next sync or pull without restarting Emacs.
+
 *** Example
 
 #+begin_src org

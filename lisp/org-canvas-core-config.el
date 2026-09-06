@@ -152,6 +152,40 @@ gentler answer to a rate limit than waiting for the 429 and retrying
   :type 'number
   :group 'org-canvas)
 
+(defcustom org-canvas-time-zone nil
+  "Time zone Org timestamps are written in and read from.
+Nil means the course's own zone, the TIME_ZONE property in settings.org
+\(what students see in the Canvas web UI), falling back to Emacs's
+local zone when no settings.org names one.  A TZ rule string such as
+\"America/New_York\" pins it regardless.
+
+One zone serves both directions: push reads an Org timestamp in it and
+pull writes one in it, so a deadline survives a round trip.  Push used
+to read in the machine's zone while pull wrote UTC (or the course zone
+on some paths only), which moved a pulled deadline by the UTC offset
+\(issue #136)."
+  :type '(choice (const :tag "Course zone from settings.org, else local" nil)
+                 (string :tag "TZ rule"))
+  :group 'org-canvas)
+
+(defvar org-canvas--pull-tz-cache nil
+  "The course time zone resolved for the current operation, or nil.
+A TZ rule string read from settings.org's TIME_ZONE by
+`org-canvas--pull-resolve-tz'; nil once resolved means none is known
+and Emacs's local zone applies.  Read through `org-canvas--time-zone',
+never directly.  Tests may bind it to a zone to pin conversions.")
+
+(defvar org-canvas--time-zone-resolved nil
+  "Non-nil once `org-canvas--pull-resolve-tz' has run for this operation.
+Cleared by `org-canvas--time-zone-reset' at the start of every
+operation and on course activation, so a TIME_ZONE edited in
+settings.org or a different course is picked up without a restart.")
+
+(defun org-canvas--time-zone-reset ()
+  "Forget the resolved course time zone so the next use re-reads it."
+  (setq org-canvas--pull-tz-cache nil
+        org-canvas--time-zone-resolved nil))
+
 (defcustom org-canvas-emit-defaults nil
   "When non-nil, emit Org properties whose values match the registry default.
 Default behavior (nil) suppresses these to keep drawers terse.  Set to
@@ -563,6 +597,7 @@ yet be set."
   "Clear log, display log buffer, and log OPERATION-NAME banner.
 Respects `org-canvas--inhibit-log-clear'."
   (org-canvas-clear-log)
+  (org-canvas--time-zone-reset)
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (org-canvas--log-info org-canvas--logger "========================================")
   (org-canvas--log-info org-canvas--logger ">>> %s" operation-name)

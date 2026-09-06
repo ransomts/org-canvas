@@ -154,6 +154,8 @@ If NAME is nil and called interactively, prompt with completion."
       ;; The credentials file's `(setq org-canvas-directory ...)' triggers
       ;; the directory watcher in core-config.el, which recomputes all
       ;; registered file vars — no explicit `recompute-file-paths' needed.
+      ;; The course zone belongs to the old course; forget it.
+      (org-canvas--time-zone-reset)
       (org-canvas-clear-log)
       (setq org-canvas--active-course-name name)
       (message "Activated course: %s (ID: %s at %s)"

@@ -332,11 +332,16 @@ like a span (issue #93)."
     (and a b (not (string= a b)))))
 
 (defun org-canvas-org-parse-timestamp (ts-string)
-  "Transform an Org timestamp TS-STRING into a Canvas ISO8601 string."
+  "Transform an Org timestamp TS-STRING into a Canvas ISO8601 string.
+The timestamp is read in `org-canvas--time-zone', the same zone the
+pull side writes in, so a deadline survives a round trip (issue #136).
+A timestamp that names no time is midnight in that zone."
   (when ts-string
-    (format-time-string "%Y-%m-%dT%H:%M:%SZ"
-			(encode-time (org-parse-time-string ts-string))
-			t)))
+    (let ((decoded (org-parse-time-string ts-string))
+          (zone (org-canvas--time-zone)))
+      (when zone
+        (setf (nth 8 decoded) zone))
+      (format-time-string "%Y-%m-%dT%H:%M:%SZ" (encode-time decoded) t))))
 
 (defun org-canvas-current-iso8601-timestamp ()
   "Return the current time as a Canvas ISO8601 string."
@@ -1346,16 +1351,14 @@ Returns a point in the buffer visiting FILE."
             (org-back-to-heading t)
             (point)))))))
 
-(defvar org-canvas--pull-tz-cache nil
-  "Resolved course timezone for the current pull session.
-String IANA TZ name (e.g., \"America/New_York\") or nil.
-nil means UTC will be used (back-compat with pre-Task-15 behavior).
-Set by `org-canvas--pull-resolve-tz' at the start of a pull.")
-
 (defun org-canvas--pull-resolve-tz ()
-  "Resolve the course TZ from settings.org and cache it.
-Sets `org-canvas--pull-tz-cache' to the IANA TZ string or nil."
-  (setq org-canvas--pull-tz-cache
+  "Resolve the course time zone from settings.org and cache it.
+Sets `org-canvas--pull-tz-cache' to the TIME_ZONE string settings.org
+carries, or nil when it has none, and marks the zone resolved.  Runs
+lazily from `org-canvas--time-zone'; the settings pull calls it
+directly after writing a fresh TIME_ZONE."
+  (setq org-canvas--time-zone-resolved t
+        org-canvas--pull-tz-cache
         (let ((settings-file (and (boundp 'org-canvas-settings-file)
                                   org-canvas-settings-file)))
           (when (and settings-file (file-exists-p settings-file))
@@ -1364,6 +1367,20 @@ Sets `org-canvas--pull-tz-cache' to the IANA TZ string or nil."
                 (goto-char (point-min))
                 (when (re-search-forward "^[ \t]*:TIME_ZONE:[ \t]+\\(.+\\)$" nil t)
                   (string-trim (match-string-no-properties 1)))))))))
+
+(defun org-canvas--time-zone ()
+  "Return the zone Org timestamps are read and written in, or nil for local.
+`org-canvas-time-zone' when the user pinned one; otherwise the course
+zone from settings.org, resolved once per operation (a zone already in
+`org-canvas--pull-tz-cache' is taken as resolved, so a test can bind
+it).  Nil means Emacs's local zone.  Both `org-canvas-org-parse-timestamp'
+and the ISO-to-Org converters read this and nothing else, which is
+what keeps push and pull agreeing (issue #136)."
+  (or org-canvas-time-zone
+      (progn
+        (unless (or org-canvas--pull-tz-cache org-canvas--time-zone-resolved)
+          (org-canvas--pull-resolve-tz))
+        org-canvas--pull-tz-cache)))
 
 (defun org-canvas--iso8601-date-p (value)
   "Return non-nil when VALUE is a string beginning with an ISO8601 date.
@@ -1374,7 +1391,7 @@ Used to reject malformed timestamps before parsing.  Canvas always sends
 
 (defun org-canvas--iso8601-to-org-timestamp (iso8601)
   "Convert ISO8601 timestamp to Org active timestamp.
-Localizes to `org-canvas--pull-tz-cache' (course TZ) when set, else UTC.
+Written in `org-canvas--time-zone', the zone push reads timestamps in.
 Returns a string like \"<2026-01-15 Thu 10:00>\" or nil."
   ;; Require an ISO date prefix before parsing: `date-to-time' is version-
   ;; inconsistent on garbage (errors on some inputs, returns a bogus epoch
@@ -1383,18 +1400,18 @@ Returns a string like \"<2026-01-15 Thu 10:00>\" or nil."
   (when (org-canvas--iso8601-date-p iso8601)
     (condition-case nil
         (let ((time (date-to-time iso8601))
-              (zone (or org-canvas--pull-tz-cache t)))
+              (zone (org-canvas--time-zone)))
           (format-time-string "<%Y-%m-%d %a %H:%M>" time zone))
       (error nil))))
 
 (defun org-canvas--iso8601-to-org-inactive-timestamp (iso8601)
   "Convert ISO8601 timestamp to Org inactive timestamp.
-Localizes to `org-canvas--pull-tz-cache' (course TZ) when set, else UTC.
+Written in `org-canvas--time-zone', the zone push reads timestamps in.
 Returns a string like \"[2026-01-15 Thu 10:00]\" or nil."
   (when (org-canvas--iso8601-date-p iso8601)
     (condition-case nil
         (let ((time (date-to-time iso8601))
-              (zone (or org-canvas--pull-tz-cache t)))
+              (zone (org-canvas--time-zone)))
           (format-time-string "[%Y-%m-%d %a %H:%M]" time zone))
       (error nil))))
 

@@ -684,5 +684,16 @@
         (delete-file link)
         (delete-directory real t)))))
 
+
+(describe "org-canvas--start-operation (issue #136)"
+  (it "forgets the resolved course zone so the run re-reads settings.org"
+    (let ((org-canvas--pull-tz-cache "UTC")
+          (org-canvas--time-zone-resolved t)
+          (org-canvas--inhibit-log-clear t))
+      (cl-letf (((symbol-function 'display-buffer) #'ignore))
+        (org-canvas--start-operation "TEST"))
+      (expect org-canvas--pull-tz-cache :to-be nil)
+      (expect org-canvas--time-zone-resolved :to-be nil))))
+
 (provide 'org-canvas-core-config-test)
 ;;; org-canvas-core-config-test.el ends here
