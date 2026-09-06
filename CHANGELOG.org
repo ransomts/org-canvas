@@ -1,0 +1,87 @@
+#+TITLE: Changelog
+#+OPTIONS: toc:nil num:nil
+
+All notable changes to org-canvas are recorded here, newest first.
+Each entry names the pull request that merged it.
+
+* Unreleased
+
+** Added
+
+- #127 Submissions: completion rule, =DAYS_LATE=, notes that survive pulls, and =EX= for excused grades
+- #126 Submissions: draft comments in the grading file and post them with =S=
+- #119 =RUBRIC_USE_FOR_GRADING= and =RUBRIC_HIDE_SCORE_TOTAL= on assignments
+- #117 Submissions: link the assignment's rubric and list its criteria
+- #116 Submissions: link the assignment, SpeedGrader, and local attachments
+- #115 Submissions: grading files that survive the session
+- #110 Drift report rows have verbs: visit, acknowledge, delete, and pull
+- #109 Drift report recognizes media that course content embeds instead of listing it as extra
+- #108 Module items moved between modules are reconciled instead of duplicated
+- #107 =org-canvas-adopt-at-point= adopts the Canvas item that shares a heading's title
+- #100 Known-extras and excluded-features valves let a synced course read zero divergences
+- #90 Calendar events register as a feature: drift checks, duplicate guard, and pull-at-point
+- #88 External-tool (LTI) assignments such as Gradescope; skipped items are reported by name; pull includes the front page
+- #80 =org-canvas-files-force-reupload= re-uploads when the hash cannot see the difference
+- #69 =org-canvas-pull-at-point= accepts one Canvas-side edit without pulling the whole file
+- #64 A module item may carry its own =PUBLISH_AT=, ahead of its module's
+- #58 Publish a module and everything it lists, on demand or on a =PUBLISH_AT= schedule
+- #57 =org-canvas-diff=, a read-only drift report between the Org files and Canvas
+- #41 Report Canvas assignment groups the org file does not manage
+- #40 Warn when assignment group weights do not sum to 100
+- #32 =org-canvas-prune-FEATURE= commands delete Canvas items the org file no longer lists
+- #31 Conflict resolution can pull a module, items included
+- #21 End-of-run retry pass for module items whose targets synced later in the run
+- #20 Aggregated global sync summary with item-level skips
+- #19 Validation rule for front-page and published state; the drop-rules check runs again
+
+** Changed
+
+- #140 Emacs 29.1 is the minimum (was 28.1); obsolete =when-let= replaced; a clean compile is warning-free; this changelog
+- #92 Documentation brought up to date with issues #48, #67, and #81 to #87
+- #91 Docstring first lines kept imperative for checkdoc on Emacs 30
+- #76 The straight.el recipe names =lisp/*.el=
+- #46 The weekly mutation job gates on the survivor baseline
+- #45 Mutation baseline populated, harness fixed, suite de-flaked
+- #42 Mutation testing gates on a baseline instead of a score
+- #39 Override handling gains tests that kill two mutation survivors
+- #33 The test suite refuses unmocked HTTP calls
+- #29 File-id rotation repair relies on the items digest; hash refreshed after a heal
+- #24 Demo course uses direct file links for File module items
+- #18 Canvas error messages surface in the log; drop-rule rejections defer instead of failing; duplicate log lines removed
+- #2 Security hardening, pull-side contract tests, and complete property docs
+- #1 Robustness fixes and deep test infrastructure (contract, mutation, round-trip, SSOT)
+
+** Fixed
+
+- #132 Drift report reads an excluded feature's bodies for the media they embed
+- #131 Baseline re-read after a post-fn (rubric association) writes to Canvas, ending phantom drift
+- #130 Rubrics update in place instead of being deleted and re-created, keeping associations and assessments
+- #129 Batch runs no longer ask the supersession question
+- #128 =DAYS_LATE= only on rows that were actually submitted
+- #122 Rubric data folded into the assignment change hash
+- #113 Submissions send each =include[]= separately and fall back to =user_id=
+- #106 =#+LAST_SYNCED= advances on any successful stamp, not only full syncs
+- #99 Course files open by truename; stale buffers survive in batch
+- #96 =ALL_DAY= is not compared on multi-day calendar events
+- #95 File drift is decided from =modified_at=, the content timestamp
+- #89 Drift report compares bodies; a dry run previews conflicts; duplicate titles are guarded before a create
+- #78 A replaced file is overwritten in place instead of deleted first
+- #75 A pre-split file hash is verified against Canvas instead of re-uploaded
+- #74 Uploaded files no longer start with a stray CRLF
+- #73 An unattended sync resolves a conflict via =org-canvas-conflict-strategy= instead of dying
+- #68 The global sync summary describes the run that happened (dry-run, conflict, and pulled columns)
+- #65 Drift report reads nested Canvas fields via =:remote-fn= instead of flagging every item
+- #60 A classic quiz publishes only once its questions exist
+- #56 Files that only changed metadata are updated, not re-uploaded, and checked for conflicts
+- #55 Conflict detection actually runs, and Canvas is checked before a skip
+- #54 File =PUBLISHED= maps to =locked= and applies after the upload
+- #53 Module sync no longer publishes the content its items point at
+- #35 Dry runs never write to Canvas; stranded upload ids are recovered
+- #30 Question and item digests are folded into quiz payload hashes
+- #28 Late-policy updates use PATCH; PUT is not routed and always 404s
+- #27 Module items are folded into =PAYLOAD_HASH= so item edits trigger a sync
+- #25 Real PATCH support via a direct curl fallback (New Quizzes updates)
+- #23 Unchanged file uploads are skipped; modules are repaired when file ids rotate
+- #16 No false "Unresolved link" warnings for property-drawer links
+- #14 Unsupported HTTP methods are rejected up front instead of degrading to a bodyless GET
+- #12 Session cookies no longer leak into sync logs
