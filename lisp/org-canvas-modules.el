@@ -61,13 +61,6 @@
  :name "Modules" :endpoint "modules"
  :file-var 'org-canvas-modules-file
  :id-field 'id :id-property "CANVAS_ID" :title-field 'name)
-(defun org-canvas--module-remote-require-sequential (item)
-  "Return ITEM's sequential-progress flag.
-Canvas spells the field `require_sequential_progress'; the Org
-property and the payload key keep the longer word, so a flat lookup
-never found it."
-  (alist-get 'require_sequential_progress item))
-
 (org-canvas-register-properties "modules"
   :label "Modules"
   :file-var 'org-canvas-modules-file
@@ -77,8 +70,10 @@ never found it."
      :doc "Whether the module is visible to students (default: true)")
     (:org-prop "UNLOCK_AT" :data-key :unlock_at :type timestamp
      :doc "Date to unlock the module")
-    (:org-prop "REQUIRE_SEQUENTIAL_PROGRESSION" :data-key :require_sequential_progression :type boolean
-     :remote-fn org-canvas--module-remote-require-sequential
+    ;; Canvas spells the field `require_sequential_progress'; the Org
+    ;; property keeps the longer word.  The data-key is the Canvas field,
+    ;; which is what the drift report and the pull read it by (issue #137).
+    (:org-prop "REQUIRE_SEQUENTIAL_PROGRESSION" :data-key :require_sequential_progress :type boolean
      :doc "Force items to be completed in order")
     (:org-prop "PUBLISH_FINAL_GRADE" :data-key :publish_final_grade :type boolean
      :doc "Publish the final grade when this module is completed")
@@ -1499,11 +1494,24 @@ Returns a link string or just the title if resolution fails."
    (t
     (org-canvas--module-resolve-org-item-link item-type content-id title))))
 
+(defun org-canvas--module-pull-insert-heading (text)
+  "Insert a level-2 heading TEXT at point and leave point on its line.
+Every item inserter used to `org-back-to-heading' after the insert,
+which is wrong the moment the next line is a heading: after the first
+item, point sits at the start of the following *module* heading, so
+`org-back-to-heading' stayed there and the item's whole drawer —
+CANVAS_ID, ITEM_TYPE, PUBLISHED — was written onto the next module.
+Every module after the pulled one ended up claiming an item id and the
+items came out bare (issue #133).  Returning to where the heading was
+inserted cannot be fooled by what follows."
+  (let ((start (point)))
+    (insert (format "** %s\n" text))
+    (goto-char start)))
+
 (defun org-canvas--module-pull-insert-subheader (item-title item-id item-published &optional indent)
   "Insert a SubHeader heading with ITEM-TITLE, ITEM-ID, and ITEM-PUBLISHED.
 Optional INDENT is emitted as :INDENT: only when nonzero."
-  (insert (format "** %s\n" (or item-title "Section")))
-  (org-back-to-heading t)
+  (org-canvas--module-pull-insert-heading (or item-title "Section"))
   (org-canvas-org-set-property (point) "CANVAS_ID" (format "%s" item-id))
   (org-canvas-org-set-property (point) "ITEM_TYPE" "SubHeader")
   (when (and indent (numberp indent) (> indent 0))
@@ -1517,8 +1525,7 @@ Optional INDENT is emitted as :INDENT: only when nonzero."
         (ext-url (alist-get 'external_url item))
         (new-tab (alist-get 'new_tab item))
         (indent (alist-get 'indent item)))
-    (insert (format "** %s\n" (or item-title "External Link")))
-    (org-back-to-heading t)
+    (org-canvas--module-pull-insert-heading (or item-title "External Link"))
     (org-canvas-org-set-property (point) "CANVAS_ID" (format "%s" item-id))
     (org-canvas-org-set-property (point) "ITEM_TYPE" "ExternalUrl")
     (when ext-url
@@ -1538,8 +1545,7 @@ Optional INDENT is emitted as :INDENT: only when nonzero."
         (indent (alist-get 'indent item)))
     (let ((link (org-canvas--module-resolve-item-link
                  item-type content-id item-title)))
-      (insert (format "** %s\n" link))
-      (org-back-to-heading t)
+      (org-canvas--module-pull-insert-heading link)
       (org-canvas-org-set-property (point) "CANVAS_ID" (format "%s" item-id))
       (when item-type
         (org-canvas-org-set-property (point) "ITEM_TYPE" item-type))
