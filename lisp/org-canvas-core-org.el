@@ -1426,7 +1426,7 @@ and `append' on a string yields character codes, which is how
         (t (mapcar (lambda (v) (format "%s" v)) (append remote nil)))))
 
 (defun org-canvas--registry-remote-key (spec)
-  "Return the Canvas field SPEC reads when it names no `:remote-fn'.
+  "Return the Canvas field for SPEC when it names no `:remote-fn'.
 The spec's `:api-key' when it declares one, and failing that the
 `:data-key', which every module already names after the Canvas field."
   (intern (or (plist-get spec :api-key)
@@ -1445,7 +1445,7 @@ nil and reported every such item as drifted."
       (alist-get (org-canvas--registry-remote-key spec) item))))
 
 (defun org-canvas--registry-remote-present-p (spec item)
-  "Return non-nil when ITEM carries the field SPEC reads.
+  "Return non-nil when ITEM carries the field named by SPEC.
 A `:remote-fn' answers for its field; a flat key must be in ITEM.  A
 conflict-check GET can return a partial object, and a field Canvas
 did not send is no reason to touch the local property."
@@ -1483,7 +1483,7 @@ its entry without anyone having to remember to clear it.")
             index)))))
 
 (defun org-canvas--pull-resolve-link (spec id)
-  "Return an Org link to the heading SPEC's target file keeps for Canvas ID.
+  "Return an Org link to the heading in SPEC's target file with Canvas ID.
 SPEC is a `link' property spec naming a `:target-file' variable and,
 optionally, the `:link-id-property' the target headings are keyed by
 \(default CANVAS_ID).  The inverse of `org-canvas--resolve-link-property',
@@ -1501,7 +1501,7 @@ or the heading is not there."
            heading))))))
 
 (defun org-canvas--registry-remote-as-org (spec value)
-  "Return VALUE as the Org property string SPEC's type calls for.
+  "Return VALUE spelled as an Org property string of SPEC's type.
 Nil means the value has no Org spelling: Canvas holds nothing, or a
 link's target heading does not exist locally."
   (let ((value (org-canvas--registry-normalize-remote value)))
