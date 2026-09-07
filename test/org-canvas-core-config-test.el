@@ -550,6 +550,34 @@
     (let ((msg "canvas_session=***MASKED*** Bearer ***MASKED***"))
       (expect (org-canvas--log-redact msg) :to-equal msg))))
 
+(describe "org-canvas--user-message (issue #154)"
+  (it "masks a credential on its way to the echo area"
+    ;; Redaction used to live only in the logger, so the same error text
+    ;; handed to `message' reached *Messages* and, in batch, stderr.
+    (let (said)
+      (cl-letf (((symbol-function 'message)
+                 (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+        (org-canvas--user-message
+         "Settings: %s not pulled (%s)" "late policy"
+         "API Request Failed: set-cookie: canvas_session=HIJACKME; secure"))
+      (expect said :to-match "late policy")
+      (expect said :to-match "canvas_session=\\*\\*\\*MASKED\\*\\*\\*")
+      (expect said :not :to-match "HIJACKME")))
+
+  (it "masks a bearer token too"
+    (let (said)
+      (cl-letf (((symbol-function 'message)
+                 (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+        (org-canvas--user-message "failed: %s" "Authorization: Bearer 7~SECRETTOKEN"))
+      (expect said :not :to-match "SECRETTOKEN")))
+
+  (it "leaves ordinary text alone, percent signs included"
+    (let (said)
+      (cl-letf (((symbol-function 'message)
+                 (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+        (org-canvas--user-message "Synced %d%% of %s" 50 "pages"))
+      (expect said :to-equal "Synced 50% of pages"))))
+
 (describe "org-canvas--log-dispatch redaction"
   (it "redacts secrets before they reach the log buffer"
     (let* ((buffer-name "*org-canvas-log-test-redact*")

@@ -1032,13 +1032,26 @@ search), so a spec can script which login carries the token."
 (describe "org-canvas--associate-rubric failure message"
   (it "shows warning in echo area on failure"
     (with-org-canvas-test-config
-      (spy-on 'message)
-      (spy-on 'org-canvas--log-warning)
-      (cl-letf (((symbol-function 'org-canvas-api-request)
-                 (lambda (&rest _) (error "Network error"))))
-        (expect (org-canvas--associate-rubric "42" "99" "Assignment") :to-be nil)
-        (expect 'message :to-have-been-called-with
-                "WARNING: Rubric association failed for %s: %s" "42" "Network error")))))
+      (let (said)
+        (spy-on 'org-canvas--log-warning)
+        (cl-letf (((symbol-function 'message)
+                   (lambda (fmt &rest args) (setq said (apply #'format fmt args))))
+                  ((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _) (error "Network error"))))
+          (expect (org-canvas--associate-rubric "42" "99" "Assignment") :to-be nil))
+        (expect said :to-equal
+                "WARNING: Rubric association failed for 42: Network error"))))
+
+  (it "masks a credential the failure text carried (issue #154)"
+    (with-org-canvas-test-config
+      (let (said)
+        (spy-on 'org-canvas--log-warning)
+        (cl-letf (((symbol-function 'message)
+                   (lambda (fmt &rest args) (setq said (apply #'format fmt args))))
+                  ((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _) (error "denied: canvas_session=HIJACKME"))))
+          (org-canvas--associate-rubric "42" "99" "Assignment"))
+        (expect said :not :to-match "HIJACKME")))))
 
 (describe "org-canvas--associate-rubric return value (issue #124)"
   (it "answers t when the association was written"
@@ -1245,6 +1258,183 @@ search), so a spec can script which login carries the token."
 
   (it "returns nil for JSON without any message"
     (expect (org-canvas--api-error-message "{\"ok\":true}") :to-be nil)))
+
+;;;; plz's real error datum shape (issue #152)
+;;
+;; A condition-case on `plz-error' catches three shapes: our own curl
+;; fallback's bare struct, plz's own `("HTTP error" STRUCT)' list, and a
+;; few parse failures carrying no struct at all.  Every fixture in this
+;; file used to signal one of the first kind, so the handler's
+;; `plz-error-p' guards were never exercised against what plz actually
+;; raises — which is how live cookies, struct dumps and un-retried 429s
+;; all shipped at once.
+
+(defun test-org-canvas-152--http-error (status body &optional headers)
+  "Return plz's real datum for a STATUS response with BODY and HEADERS."
+  (list "HTTP error"
+        (make-plz-error
+         :response (make-plz-response :status status :body body
+                                      :headers (or headers
+                                                   '((content-type . "application/json")))))))
+
+(defconst test-org-canvas-152--cookie-headers
+  '((content-type . "application/json; charset=utf-8")
+    (set-cookie . "canvas_session=btKC5sLIVEVALUE; path=/; HttpOnly")
+    (set-cookie . "_csrf_token=jknGl%2FLIVEVALUE"))
+  "Response headers as Canvas really sends them, cookies included.")
+
+(defconst test-org-canvas-152--403-body
+  "{\"status\":\"unauthorized\",\"errors\":[{\"message\":\"user not authorized to perform that action\"}]}"
+  "The 403 body Canvas returns to a Designer reading group categories.")
+
+(describe "org-canvas--api-unwrap-plz-error (issue #152)"
+  (it "passes a bare struct through, as our curl fallback signals it"
+    (let ((struct (make-plz-error :curl-error '(28 . "Operation timeout."))))
+      (expect (org-canvas--api-unwrap-plz-error struct) :to-be struct)))
+
+  (it "finds the struct inside plz's list datum"
+    (let* ((struct (make-plz-error
+                    :response (make-plz-response :status 403 :body "denied")))
+           (datum (list "HTTP error" struct)))
+      (expect (org-canvas--api-unwrap-plz-error datum) :to-be struct)))
+
+  (it "finds it wherever in the list it sits"
+    (let ((struct (make-plz-error :curl-error '(7 . "Failed to connect."))))
+      (expect (org-canvas--api-unwrap-plz-error (list "Curl error" struct))
+              :to-be struct)))
+
+  (it "returns a struct-less datum unchanged, for the caller to describe"
+    ;; plz signals some parse failures with strings only.
+    (let ((datum '("plz--response: Unable to parse HTTP response status line" "<html>")))
+      (expect (org-canvas--api-unwrap-plz-error datum) :to-equal datum)))
+
+  (it "survives a nil datum"
+    (expect (org-canvas--api-unwrap-plz-error nil) :to-be nil))
+
+  (it "returns a datum that is neither struct nor list unchanged"
+    (expect (org-canvas--api-unwrap-plz-error "bare message") :to-equal "bare message")))
+
+(describe "org-canvas--api-error-datum (issue #152)"
+  (it "masks the cookies in a response plz signalled as a list"
+    ;; The leak: scrub returned its argument untouched because the datum
+    ;; was a list, so the live session cookie reached the error string.
+    (let* ((err (cons 'plz-http-error
+                      (test-org-canvas-152--http-error
+                       403 test-org-canvas-152--403-body
+                       test-org-canvas-152--cookie-headers)))
+           (clean (org-canvas--api-error-datum err))
+           (headers (plz-response-headers (plz-error-response clean))))
+      (expect (plz-error-p clean) :to-be-truthy)
+      (expect (cdr (assq 'set-cookie headers)) :to-equal "***MASKED***")
+      (expect (format "%S" clean) :not :to-match "LIVEVALUE")))
+
+  (it "still masks the bare-struct shape"
+    (let* ((err (cons 'plz-error
+                      (make-plz-error
+                       :response (make-plz-response
+                                  :status 403
+                                  :headers test-org-canvas-152--cookie-headers))))
+           (clean (org-canvas--api-error-datum err)))
+      (expect (format "%S" clean) :not :to-match "LIVEVALUE"))))
+
+(describe "org-canvas--api-describe-datum (issue #152)"
+  (it "joins a struct-less datum into the sentence plz wrote"
+    (expect (org-canvas--api-describe-datum
+             '("plz--response: End of headers not found" "<html>"))
+            :to-equal "plz--response: End of headers not found: <html>"))
+
+  (it "prints anything else readably"
+    (expect (org-canvas--api-describe-datum 42) :to-equal "42")))
+
+(describe "org-canvas--api-handle-plz-error on plz's real shape (issue #152)"
+  (it "reports Canvas's own message and status, not a struct dump"
+    (with-org-canvas-test-config
+      (let ((err (cons 'plz-http-error
+                       (test-org-canvas-152--http-error
+                        403 test-org-canvas-152--403-body
+                        test-org-canvas-152--cookie-headers))))
+        (condition-case signalled
+            (org-canvas--api-handle-plz-error err "https://test.example.com/api")
+          (error
+           (let ((msg (error-message-string signalled)))
+             (expect msg :to-match "Permission denied (HTTP 403)")
+             (expect msg :not :to-match "plz-response")
+             (expect msg :not :to-match "LIVEVALUE")))))))
+
+  (it "names the Canvas message for a status with no special handling"
+    (with-org-canvas-test-config
+      (let ((err (cons 'plz-http-error
+                       (test-org-canvas-152--http-error
+                        422 "{\"errors\":[{\"message\":\"title is too long\"}]}"))))
+        (condition-case signalled
+            (org-canvas--api-handle-plz-error err "https://test.example.com/api")
+          (error
+           (expect (error-message-string signalled)
+                   :to-match "title is too long (HTTP 422)"))))))
+
+  (it "retries a 429 that arrived in plz's shape"
+    ;; The documented rate-limit retry never fired on the primary path:
+    ;; status resolved to nil, so no branch matched it.
+    (with-org-canvas-test-config
+      (let ((org-canvas-rate-limit-wait 1))
+        (spy-on 'org-canvas--wait)
+        (expect (org-canvas--api-handle-plz-error
+                 (cons 'plz-http-error
+                       (test-org-canvas-152--http-error 429 "rate limit"))
+                 "https://test.example.com/api")
+                :to-equal :retry))))
+
+  (it "classifies a 5xx in plz's shape as transient"
+    (with-org-canvas-test-config
+      (expect (org-canvas--api-handle-plz-error
+               (cons 'plz-http-error
+                     (test-org-canvas-152--http-error 503 "unavailable"))
+               "https://test.example.com/api")
+              :to-equal :retry-transient)))
+
+  (it "classifies a curl timeout in plz's shape as transient"
+    (with-org-canvas-test-config
+      (expect (org-canvas--api-handle-plz-error
+               (cons 'plz-curl-error
+                     (list "Curl error"
+                           (make-plz-error :curl-error '(28 . "Operation timeout."))))
+               "https://test.example.com/api")
+              :to-equal :retry-transient))))
+
+(describe "org-canvas-api-request against a plz-signalled error (issue #152)"
+  (it "retries a 429 plz raised, then returns the reply"
+    (with-org-canvas-test-config
+      (let ((calls 0)
+            (org-canvas-rate-limit-retries 2)
+            (org-canvas-rate-limit-wait 1))
+        (spy-on 'org-canvas--wait)
+        (cl-letf (((symbol-function 'plz)
+                   (lambda (&rest _)
+                     (setq calls (1+ calls))
+                     (if (= calls 1)
+                         (signal 'plz-http-error
+                                 (test-org-canvas-152--http-error 429 "rate limit"))
+                       '((id . 1))))))
+          (expect (alist-get 'id (org-canvas-api-request
+                                  'GET "https://test.example.com/api/v1/test"))
+                  :to-equal 1)
+          (expect calls :to-equal 2)))))
+
+  (it "keeps live cookies out of the error it signals"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'plz)
+                 (lambda (&rest _)
+                   (signal 'plz-http-error
+                           (test-org-canvas-152--http-error
+                            422 "{\"errors\":[{\"message\":\"nope\"}]}"
+                            test-org-canvas-152--cookie-headers)))))
+        (condition-case signalled
+            (org-canvas-api-request 'GET "https://test.example.com/api/v1/test")
+          (error
+           (let ((msg (error-message-string signalled)))
+             (expect msg :not :to-match "LIVEVALUE")
+             (expect msg :not :to-match "canvas_session=[A-Za-z0-9]")
+             (expect msg :to-match "nope"))))))))
 
 (describe "org-canvas--scrub-plz-error"
   (it "masks set-cookie headers in the response"

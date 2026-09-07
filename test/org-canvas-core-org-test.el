@@ -3471,5 +3471,35 @@ Page content.
       (expect org-canvas--pull-tz-cache :to-be nil)
       (expect org-canvas--time-zone-resolved :to-be nil))))
 
+;;;; The pull summary is a sink users share (issue #154)
+
+(describe "org-canvas--pull-summary-record redaction"
+  (before-each (org-canvas--pull-summary-reset))
+  (after-each (org-canvas--pull-summary-reset))
+
+  (it "masks a credential in the error text it stores"
+    ;; The summary is rendered into a buffer the user is invited to read
+    ;; and share, and its :error is raw error-message-string text.
+    (org-canvas--pull-summary-record
+     :file "settings.org" :item "late policy"
+     :error "not pulled: set-cookie: canvas_session=HIJACKME; secure")
+    (let ((rec (car (org-canvas--pull-summary-records))))
+      (expect (plist-get rec :error) :to-match "canvas_session=\\*\\*\\*MASKED\\*\\*\\*")
+      (expect (plist-get rec :error) :not :to-match "HIJACKME")
+      (expect (plist-get rec :item) :to-equal "late policy")))
+
+  (it "keeps the printed summary clean"
+    (org-canvas--pull-summary-record
+     :file "settings.org" :item "tabs"
+     :error "Bearer 7~SECRETTOKEN")
+    (expect (org-canvas--pull-summary-format-record
+             (car (org-canvas--pull-summary-records)))
+            :not :to-match "SECRETTOKEN"))
+
+  (it "records a nil error without failing"
+    (org-canvas--pull-summary-record :file "pages.org" :kind 'skip)
+    (expect (plist-get (car (org-canvas--pull-summary-records)) :error)
+            :to-be nil)))
+
 (provide 'org-canvas-core-org-test)
 ;;; org-canvas-core-org-test.el ends here

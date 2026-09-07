@@ -168,6 +168,7 @@ What stays dynamically bound is the *caller's* seam, set around a command by who
 - Use the in-tree logger in `lisp/org-canvas-core-log.el`: `org-canvas--log-{trace,debug,info,warning,error}`, `org-canvas--logger-{set-level,set-file,set-handlers}`; levels trace, debug, info, warning, error, fatal
 - Stage markers: `[Stage N: StageName]` prefix
 - Secrets never reach logs: every line passes through `org-canvas--log-redact` (Bearer tokens, session/csrf/token cookie or query values); plz-error structs are scrubbed by `org-canvas--scrub-plz-error` before entering signal data
+- Secrets never reach the *user* either: a message carrying text the package did not write itself (`error-message-string` above all) goes through `org-canvas--user-message`, never a bare `message`, and `org-canvas--pull-summary-record` masks its `:error` on the way in (#154). The echo area, `*Messages*` and batch stderr are shared sinks too
 - `org-canvas--save-buffer` is a no-op on unmodified buffers; each sync command clears the log unless `org-canvas--inhibit-log-clear` is bound (the master sync binds it)
 
 ### JSON/API
@@ -178,6 +179,7 @@ What stays dynamically bound is the *caller's* seam, set around a command by who
 ### Error Handling
 - Wrap API calls in `condition-case`; continue processing other items if one fails
 - One concise message per failure: 4xx bodies parse through `org-canvas--api-error-message`, detail logs at DEBUG, exactly one `[ERROR]` line per item
+- Read an error datum with `org-canvas--api-error-datum`, never `(cdr err)`: plz signals `plz-http-error` with a *list* of a label and the struct, so a bare `(cdr err)` fails every `plz-error-p` guard and loses the status, body and cookies (#152)
 - Timeout → search Canvas for the item, retry if needed (`org-canvas--timeout-error-p` is the predicate); 404 on PUT → retry as POST; 429 or rate-limit 403 → retry (`org-canvas-rate-limit-retries`, `org-canvas-rate-limit-wait`); 401 → expired-token message; other 403 → scope message
 - Deferrable rejections (drop rules exceeding the group's assignment count) count as `:deferred` (`org-canvas--sync-deferred-error-p`), not failures
 - `org-canvas--safe-sync` skips missing `.org` files; `org-canvas--preflight-check` runs before any sync

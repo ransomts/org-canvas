@@ -1591,7 +1591,7 @@ file are updated."
               (setq posted (org-canvas--submissions-post-drafts assignment-id drafts))
               (org-canvas--submissions-record-pushed changes)
               (message "Pushed %d grade(s) and %d comment(s)" (length changes) posted))
-          (error (message "Error pushing: %s" (error-message-string err))))))))
+          (error (org-canvas--user-message "Error pushing: %s" (error-message-string err))))))))
 
 (provide 'org-canvas-submissions)
 ;;; org-canvas-submissions.el ends here
