@@ -367,6 +367,38 @@ an `errors' structure and/or a top-level `message'."
             (mapconcat #'identity (delete-dups msgs) "; ")))
       (error nil))))
 
+;;;; Waiting
+;;
+;; Every pause a sync takes — a rate-limit back-off, a transient retry,
+;; the request pacing interval, the folder-creation settle — used to be
+;; a bare `sleep-for', which freezes the display for its whole length:
+;; no countdown, no redisplay, timers stalled (issue #142).  One helper
+;; owns the pause instead.
+
+(defun org-canvas--wait (seconds &optional reason)
+  "Pause for SECONDS, keeping the display alive when someone is watching.
+REASON, when non-nil, is a short phrase — \"Rate limited (HTTP 429).
+Retrying\" — shown in the echo area with the seconds left, so a wait
+reads as a countdown rather than a hang.  In batch this is a single
+`sleep-for'.  Interactively the wait is taken in one-second slices
+through `sit-for', which redisplays and lets timers run; a slice during
+which input arrives falls back to `sleep-for', so the wait never spins
+and never ends early.  Fractions are fine."
+  (cond
+   (noninteractive
+    (when reason
+      (message "%s in %ds..." reason (ceiling seconds)))
+    (sleep-for seconds))
+   (t
+    (let ((left seconds))
+      (while (> left 0)
+        (let ((slice (min 1 left)))
+          (when reason
+            (message "%s in %ds..." reason (ceiling left)))
+          (unless (sit-for slice)
+            (sleep-for slice))
+          (setq left (- left slice))))))))
+
 (defun org-canvas--api-handle-plz-error (err full-url)
   "Handle a plz-error ERR from a request to FULL-URL.
 Return `:retry' for rate-limited (sleep already done),
@@ -399,10 +431,8 @@ in [FAILED] lines stays readable."
       (org-canvas--log-warning org-canvas--logger
         "[API] Rate limited (HTTP %d). Waiting %ds..."
         status org-canvas-rate-limit-wait)
-      (dotimes (i org-canvas-rate-limit-wait)
-        (message "Rate limited (HTTP %d). Retrying in %ds..."
-                 status (- org-canvas-rate-limit-wait i))
-        (sleep-for 1))
+      (org-canvas--wait org-canvas-rate-limit-wait
+                        (format "Rate limited (HTTP %d). Retrying" status))
       :retry)
 
      ;; Authentication failure (401)
@@ -503,7 +533,10 @@ once the delay list is exhausted."
             "[API] Transient error, retrying in %ds (%d/%d)"
             delay (1+ transient-retry-index)
             (length org-canvas-transient-retry-delays))
-          (sleep-for delay)
+          (org-canvas--wait delay
+                            (format "Transient error, retry %d/%d"
+                                    (1+ transient-retry-index)
+                                    (length org-canvas-transient-retry-delays)))
           (1+ transient-retry-index))
       (let* ((plz-err (org-canvas--scrub-plz-error (cdr err)))
              (response (and (plz-error-p plz-err) (plz-error-response plz-err)))
@@ -578,7 +611,7 @@ extra.  Records the time this request goes out."
         (org-canvas--log-debug org-canvas--logger
           "[Pace] Waiting %.1fs before the next request (org-canvas-request-min-interval)"
           wait)
-        (sleep-for wait))))
+        (org-canvas--wait wait))))
   (setq org-canvas--last-request-time (current-time)))
 
 (cl-defun org-canvas-api-request (method url &key params data timeout)

@@ -11,8 +11,15 @@
 ;; finalize pipeline and a rich set of interaction types (multiple choice,
 ;; matching, ordering, categorization, numerical, fill-in-the-blank, etc.).
 ;;
-;; This module provides the item-level primitives.  Orchestration lives in
-;; `org-canvas-new-quizzes'.
+;; This file provides the item-level primitives.  Orchestration lives in
+;; `org-canvas-new-quizzes', which requires this file — the one sanctioned
+;; feature-to-feature require in the package.  This is a sub-module, not
+;; a feature: it registers nothing, defines no sync command, and requires
+;; only `org-canvas-core', so it can never form a cycle.  It stays out of
+;; core because everything in it is New Quizzes vocabulary (interaction
+;; types, scoring data, the /api/quiz/v1/ endpoints) that no other
+;; feature reads; it is a separate file only to keep the quiz container
+;; and its questions each under a readable length.
 
 ;;; Code:
 

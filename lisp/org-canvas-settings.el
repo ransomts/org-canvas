@@ -732,6 +732,34 @@ LATE-POLICY is the late policy API response (may be nil)."
     (org-end-of-subtree t)
     (insert "\n" nav-text)))
 
+(defun org-canvas--settings-pull-optional (what fetch-fn &optional absent-on-404)
+  "Call FETCH-FN for WHAT, returning nil and saying so when it fails.
+WHAT names an optional piece of the settings pull (\"late policy\",
+\"navigation tabs\").  The failure used to be swallowed, so a 403 on
+the late-policy endpoint read as a course with no late policy — a
+skip that did not say so (issues #81, #142).  Any failure is now a
+warning in the log, an echo-area line, and a record in the pull
+summary, except the one that is an answer rather than a failure:
+ABSENT-ON-404 non-nil says a 404 means the course has no WHAT, which
+is noted at INFO and nothing more."
+  (condition-case err
+      (funcall fetch-fn)
+    (error
+     (let ((msg (error-message-string err)))
+       (if (and absent-on-404 (org-canvas--404-error-p err))
+           (org-canvas--log-info org-canvas--logger
+             "[Pull] The course has no %s (404)" what)
+         (org-canvas--log-warning org-canvas--logger
+           "[Pull] Settings: %s not pulled (%s); settings.org is written without it"
+           what msg)
+         (message "Settings: %s not pulled (%s)" what msg)
+         (org-canvas--pull-summary-record
+          :file (file-name-nondirectory org-canvas-settings-file)
+          :item what
+          :error (format "not pulled: %s" msg)
+          :log-line (org-canvas--pull-summary-current-log-line)))
+       nil))))
+
 ;;;###autoload
 (defun org-canvas-pull-settings ()
   "Pull course settings from Canvas into settings.org.
@@ -750,10 +778,12 @@ and heading if they don't exist."
          (settings-file (expand-file-name org-canvas-settings-file))
          (was-fresh (org-canvas--pull-was-fresh-p settings-file)))
     ;; Fetch late policy (separate endpoint)
-    (let ((late-policy (condition-case nil
-                           (org-canvas-api-request
-                            'GET (org-canvas-api-course-endpoint "late_policy"))
-                         (error nil))))
+    (let ((late-policy (org-canvas--settings-pull-optional
+                        "late policy"
+                        (lambda ()
+                          (org-canvas-api-request
+                           'GET (org-canvas-api-course-endpoint "late_policy")))
+                        'absent-on-404)))
       (org-canvas--pull-confirm-overwrite settings-file "settings")
       (org-canvas--pull-confirm-unsaved settings-file "settings")
       ;; Open or create the settings file
@@ -772,9 +802,8 @@ and heading if they don't exist."
         (org-canvas--settings-pull-set-properties
          (point) response syllabus-body late-policy)
         ;; Pull navigation tabs
-        (let ((nav-text (condition-case nil
-                            (org-canvas--settings-pull-tabs)
-                          (error nil))))
+        (let ((nav-text (org-canvas--settings-pull-optional
+                         "navigation tabs" #'org-canvas--settings-pull-tabs)))
           (when nav-text
             (org-canvas--settings-insert-navigation-heading nav-text)))
         (org-canvas--pull-write-file-header)

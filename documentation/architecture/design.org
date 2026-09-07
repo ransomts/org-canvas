@@ -42,6 +42,8 @@ control integration.
     │           ├── org-canvas-core-api    (HTTP, rate limiting, upload)
     │           └── org-canvas-core-config (defcustoms, logging, constants)
     │
+    ├── org-canvas-status / -publish / -adopt / -orphans (one command each;
+    │     publish requires org-canvas-modules, adopt requires org-canvas-diff)
     ├── org-canvas-validate (offline validation engine)
     ├── org-canvas-transient (UI command palette)
     ├── org-canvas-setup (init wizard)
@@ -288,6 +290,24 @@ Generates =org-canvas--{feature}-build-payload= from registry property specs. Pr
 
 Both serialize identically via =json-encode=, so the choice is about
 code clarity, not functionality.
+
+** Why the Formats Are Not Converged (issue #142)
+
+The 2026-09 quality review noted that =org-canvas-define-payload=
+supports both formats and suggested converging on one.  The two were
+kept, deliberately.  =PAYLOAD_HASH= is the MD5 of =json-encode= over the
+payload (=org-canvas--sync-payload-hash=), and =json-encode= writes keys
+in the order the container yields them — alist order for an alist,
+insertion order for a hash-table.  Rewriting a module's builder in the
+other format changes that order unless it is reproduced key for key,
+and a changed order changes every stored hash: the first sync after
+the upgrade re-pushes every entry of that feature once, for a change
+with no behavioural content.  Converting the hand-written builders
+(assignments, rubrics, modules, files, settings, new-quizzes) would
+also rewrite several hundred =gethash= assertions in the suite.  The
+rule stands as written above — nested payloads with a wrapper key are
+hash-tables, flat ones are alists — and a new module picks by that
+rule rather than by precedent.
 
 ** Boolean Handling
 

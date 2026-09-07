@@ -34,7 +34,11 @@ eldev clean all      # Clear the Eldev cache — mandatory after editing a macro
 
 ```
 lisp/
-├── org-canvas.el                # Entry point: requires everything, sync/pull/delete tiers, commands
+├── org-canvas.el                # Entry point: requires everything, sync/pull/delete tiers, at-point dispatch
+├── org-canvas-status.el         # org-canvas-status (local overview) and the content-type table
+├── org-canvas-publish.el        # Bulk publish/unpublish and PUBLISH_AT releases (requires modules)
+├── org-canvas-adopt.el          # org-canvas-adopt-at-point (requires diff)
+├── org-canvas-orphans.el        # org-canvas-cleanup-orphans
 ├── org-canvas-core.el           # Meta-require for all core-* files
 ├── org-canvas-core-config.el    # Config, constants, enum values, property and feature registries
 ├── org-canvas-core-log.el       # In-tree logger (org-canvas--log-*), secret redaction
@@ -66,6 +70,7 @@ lisp/
 - Feature modules must NOT depend on each other. The one sanctioned exception is a sub-module: `org-canvas-new-quizzes` requires `org-canvas-new-quiz-items`, which itself requires only core
 - `org-canvas-core` must NOT import any feature modules (prevents circular deps)
 - `org-canvas.el` orchestrates by requiring all modules
+- Command files (status, publish, adopt, orphans, diff, validate, submissions) sit above the feature modules: they require core and may require the feature module they drive (publish requires modules, adopt requires diff); no feature module may require a command file
 - A feature module may name a validate.el function by symbol — `:structural-fn #'org-canvas--validate-drop-rules` on its property registration, resolved when validation runs — and may `declare-function` a function it must call from another module (assignments does this for `org-canvas--override-fetch` in sections.el). Declare; never require another feature
 
 ### 4-Stage Pipeline Pattern

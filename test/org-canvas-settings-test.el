@@ -1601,4 +1601,119 @@ Keep this.
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
 
+;;;; Optional pieces of the settings pull say so when they fail (issue #142)
+;;
+;; The late policy and navigation tabs are fetched after the course
+;; object.  A failure used to be swallowed with (error nil), so a 403
+;; read as "no late policy".  A skip must say so (issue #81).
+
+(defun test-org-canvas-settings--pull-with (responder)
+  "Run `org-canvas-pull-settings' against RESPONDER in a temp course dir.
+RESPONDER is called with the request URL and returns the response or
+signals.  Returns a plist (:content FILE-TEXT :warnings LIST :infos
+LIST :records LIST)."
+  (let* ((temp-dir (make-temp-file "pull-settings" t))
+         (settings-file (expand-file-name "settings.org" temp-dir))
+         (warnings nil)
+         (infos nil))
+    (unwind-protect
+        (let ((org-canvas-settings-file settings-file))
+          (org-canvas--pull-summary-reset)
+          (with-org-canvas-test-config
+            (cl-letf (((symbol-function 'org-canvas-api-request)
+                       (lambda (_method url &rest _args) (funcall responder url)))
+                      ((symbol-function 'org-canvas--log-warning)
+                       (lambda (_logger fmt &rest args)
+                         (push (apply #'format fmt args) warnings)))
+                      ((symbol-function 'org-canvas--log-info)
+                       (lambda (_logger fmt &rest args)
+                         (push (apply #'format fmt args) infos)))
+                      ((symbol-function 'message) #'ignore)
+                      ((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                      ((symbol-function 'display-buffer) (lambda (_) nil)))
+              (org-canvas-pull-settings)))
+          (list :content (with-temp-buffer
+                           (insert-file-contents settings-file)
+                           (buffer-string))
+                :warnings (nreverse warnings)
+                :infos (nreverse infos)
+                :records (org-canvas--pull-summary-records)))
+      (let ((buf (find-buffer-visiting settings-file)))
+        (when buf (kill-buffer buf)))
+      (org-canvas--pull-summary-reset)
+      (delete-directory temp-dir t))))
+
+(defconst test-org-canvas-settings--course-response
+  '((name . "Test Course")
+    (time_zone . "UTC")
+    (default_view . "modules")
+    (apply_assignment_group_weights . :json-false)
+    (hide_final_grades . :json-false)
+    (public_syllabus . :json-false)
+    (is_public . :json-false))
+  "Course object the optional-piece specs answer the course GET with.")
+
+(describe "org-canvas-pull-settings optional pieces (issue #142)"
+  (it "warns and records a summary entry when the late policy is forbidden"
+    (let ((result (test-org-canvas-settings--pull-with
+                   (lambda (url)
+                     (cond
+                      ((string-match "late_policy" url)
+                       (signal 'org-canvas-api-error
+                               '("user not authorized to perform that action (HTTP 403)")))
+                      ((string-match "tabs" url) nil)
+                      (t test-org-canvas-settings--course-response))))))
+      (expect (plist-get result :content) :to-match "Test Course")
+      (expect (cl-some (lambda (w) (string-match-p "late policy not pulled.*HTTP 403" w))
+                       (plist-get result :warnings))
+              :to-be-truthy)
+      (let ((rec (car (plist-get result :records))))
+        (expect (plist-get rec :file) :to-equal "settings.org")
+        (expect (plist-get rec :item) :to-equal "late policy")
+        (expect (plist-get rec :error) :to-match "HTTP 403"))))
+
+  (it "treats a 404 on the late policy as the course having none"
+    (let ((result (test-org-canvas-settings--pull-with
+                   (lambda (url)
+                     (cond
+                      ((string-match "late_policy" url)
+                       (signal 'org-canvas-api-error '("Not found (HTTP 404)")))
+                      ((string-match "tabs" url) nil)
+                      (t test-org-canvas-settings--course-response))))))
+      (expect (plist-get result :content) :to-match "Test Course")
+      (expect (plist-get result :warnings) :to-equal nil)
+      (expect (plist-get result :records) :to-equal nil)
+      (expect (cl-some (lambda (i) (string-match-p "no late policy (404)" i))
+                       (plist-get result :infos))
+              :to-be-truthy)))
+
+  (it "warns and records when the navigation tabs cannot be read, and still writes the file"
+    (let ((result (test-org-canvas-settings--pull-with
+                   (lambda (url)
+                     (cond
+                      ((string-match "late_policy" url) nil)
+                      ((string-match "tabs" url)
+                       (signal 'org-canvas-api-error '("Gateway timeout (HTTP 504)")))
+                      (t test-org-canvas-settings--course-response))))))
+      (expect (plist-get result :content) :to-match "Test Course")
+      (expect (plist-get result :content) :not :to-match "\\*\\* Navigation")
+      (expect (cl-some (lambda (w) (string-match-p "navigation tabs not pulled.*HTTP 504" w))
+                       (plist-get result :warnings))
+              :to-be-truthy)
+      (let ((rec (car (plist-get result :records))))
+        (expect (plist-get rec :item) :to-equal "navigation tabs")
+        (expect (plist-get rec :error) :to-match "HTTP 504"))))
+
+  (it "does not treat a tabs 404 as an answer"
+    (let ((result (test-org-canvas-settings--pull-with
+                   (lambda (url)
+                     (cond
+                      ((string-match "late_policy" url) nil)
+                      ((string-match "tabs" url)
+                       (signal 'org-canvas-api-error '("Not found (HTTP 404)")))
+                      (t test-org-canvas-settings--course-response))))))
+      (expect (length (plist-get result :records)) :to-equal 1)
+      (expect (plist-get (car (plist-get result :records)) :item)
+              :to-equal "navigation tabs"))))
+
 ;;; org-canvas-settings-test.el ends here

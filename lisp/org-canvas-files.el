@@ -640,8 +640,8 @@ Returns the API response or signals the last error."
                 (org-canvas--log-warning org-canvas--logger
                   "[Stage 3: Upload Step 3] Retry %d/%d after %ds..."
                   attempt max-retries delay)
-                (message "File upload: retry %d/%d after %ds..." attempt max-retries delay)
-                (sleep-for delay)))
+                (org-canvas--wait delay (format "File upload: retry %d/%d"
+                                                attempt max-retries))))
             (setq response (org-canvas-api-request 'GET url)))
         (error
          (setq last-err err)
@@ -936,7 +936,8 @@ Creates folders as needed and populates the folder cache."
            "Cannot create required folder '%s': %s" path (error-message-string err)))))
     ;; Brief delay to let Canvas process newly created folders
     (org-canvas--log-debug org-canvas--logger "[Pre-flight] Waiting for Canvas to process folders...")
-    (sleep-for org-canvas--folder-creation-delay)
+    (org-canvas--wait org-canvas--folder-creation-delay
+                      "Files: waiting for Canvas to process new folders")
     (org-canvas--log-info org-canvas--logger "[Pre-flight] All folders ready")))
 
 ;;;; Main Sync Functions
