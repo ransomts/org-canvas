@@ -1493,6 +1493,86 @@ search), so a spec can script which login carries the token."
              (expect msg :not :to-match "canvas_session=[A-Za-z0-9]")
              (expect msg :to-match "nope"))))))))
 
+;;;; Read-only courses (issue #163)
+;;
+;; Adopting a course means pointing org-canvas at one someone else may
+;; be teaching.  A comment at the top of the credentials file is not a
+;; guard, and the Canvas role is not one either: a Designer enrolment
+;; refuses group categories and the late policy but writes assignments,
+;; pages, quizzes and modules quite happily.
+
+(describe "org-canvas--check-writable (issue #163)"
+  (it "lets everything through when the course is writable"
+    (let ((org-canvas-read-only nil))
+      (dolist (method '(GET POST PUT PATCH DELETE))
+        (expect (org-canvas--check-writable method) :to-be nil))))
+
+  (it "still allows GET on a read-only course"
+    (let ((org-canvas-read-only t))
+      (expect (org-canvas--check-writable 'GET) :to-be nil)))
+
+  (it "refuses every writing method"
+    (let ((org-canvas-read-only t))
+      (dolist (method '(POST PUT PATCH DELETE))
+        (expect (org-canvas--check-writable method)
+                :to-throw 'org-canvas-read-only-error))))
+
+  (it "says how to allow writes, and what still works"
+    (let ((org-canvas-read-only t))
+      (condition-case err (org-canvas--check-writable 'POST)
+        (org-canvas-read-only-error
+         (let ((msg (error-message-string err)))
+           (expect msg :to-match "read-only")
+           (expect msg :to-match "org-canvas-credentials.el")
+           (expect msg :to-match "Pull, status and diff still work"))))))
+
+  (it "names the operation when the caller supplies one"
+    (let ((org-canvas-read-only t))
+      (condition-case err (org-canvas--check-writable 'POST "a file upload")
+        (org-canvas-read-only-error
+         (expect (error-message-string err) :to-match "a file upload")))))
+
+  (it "is an org-canvas-error, so the pull wrappers catch it"
+    (let ((org-canvas-read-only t))
+      (expect (org-canvas--check-writable 'DELETE) :to-throw 'org-canvas-error))))
+
+(describe "org-canvas-api-request on a read-only course (issue #163)"
+  (it "refuses a write before anything is sent"
+    (with-org-canvas-test-config
+      (let ((org-canvas-read-only t)
+            (sent nil))
+        (cl-letf (((symbol-function 'plz) (lambda (&rest _) (setq sent t) nil)))
+          (expect (org-canvas-api-request
+                   'POST "https://test.example.com/api/v1/courses/1/assignments"
+                   :data '((name . "x")))
+                  :to-throw 'org-canvas-read-only-error))
+        (expect sent :to-be nil))))
+
+  (it "refuses a DELETE too"
+    (with-org-canvas-test-config
+      (let ((org-canvas-read-only t))
+        (cl-letf (((symbol-function 'plz)
+                   (lambda (&rest _) (error "must not be reached"))))
+          (expect (org-canvas-api-request
+                   'DELETE "https://test.example.com/api/v1/courses/1/pages/x")
+                  :to-throw 'org-canvas-read-only-error)))))
+
+  (it "reads perfectly happily"
+    (with-org-canvas-test-config
+      (let ((org-canvas-read-only t))
+        (cl-letf (((symbol-function 'plz) (lambda (&rest _) '((id . 1)))))
+          (expect (alist-get 'id (org-canvas-api-request
+                                  'GET "https://test.example.com/api/v1/courses/1"))
+                  :to-equal 1)))))
+
+  (it "refuses before checking credentials, so a read-only course needs no token"
+    (with-org-canvas-test-config
+      (let ((org-canvas-read-only t))
+        (cl-letf (((symbol-function 'org-canvas--ensure-credentials)
+                   (lambda (&rest _) (error "must not be reached"))))
+          (expect (org-canvas-api-request 'PUT "https://test.example.com/api/v1/x")
+                  :to-throw 'org-canvas-read-only-error))))))
+
 (describe "org-canvas--scrub-plz-error"
   (it "masks set-cookie headers in the response"
     (let* ((err (make-plz-error

@@ -307,6 +307,28 @@
               (expect (buffer-string) :to-match "99999")))
         (delete-directory temp-dir t))))
 
+  (it "records a read-only course in the credentials file (issue #163)"
+    (let ((temp-dir (make-temp-file "org-canvas-init-" t)))
+      (unwind-protect
+          (let ((cred-file (org-canvas--write-credentials-file
+                            temp-dir "https://test.example.com" "t" "1" t)))
+            (with-temp-buffer
+              (insert-file-contents cred-file)
+              (expect (buffer-string) :to-match "(setq org-canvas-read-only t)")
+              ;; The line above it says why, since the file is read by hand.
+              (expect (buffer-string) :to-match "Adopted course")))
+        (delete-directory temp-dir t))))
+
+  (it "leaves a course you own writable (issue #163)"
+    (let ((temp-dir (make-temp-file "org-canvas-init-" t)))
+      (unwind-protect
+          (let ((cred-file (org-canvas--write-credentials-file
+                            temp-dir "https://test.example.com" "t" "1")))
+            (with-temp-buffer
+              (insert-file-contents cred-file)
+              (expect (buffer-string) :not :to-match "org-canvas-read-only")))
+        (delete-directory temp-dir t))))
+
   (it "creates skeleton files"
     (let ((temp-dir (make-temp-file "org-canvas-init-" t)))
       (unwind-protect

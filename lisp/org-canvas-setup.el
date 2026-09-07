@@ -17,8 +17,11 @@
     "settings.org")
   "List of org files to create in a new course skeleton.")
 
-(defun org-canvas--write-credentials-file (dir url token course-id)
-  "Write org-canvas-credentials.el in DIR with URL, TOKEN, COURSE-ID."
+(defun org-canvas--write-credentials-file (dir url token course-id &optional read-only)
+  "Write org-canvas-credentials.el in DIR with URL, TOKEN, COURSE-ID.
+READ-ONLY non-nil marks the course as one to read and never write,
+which is the safe setting for a course being adopted rather than
+owned (issue #163)."
   (let ((file (expand-file-name "org-canvas-credentials.el" dir)))
     (with-temp-file file
       (insert ";;; org-canvas-credentials.el --- Course credentials  -*- lexical-binding: t; -*-\n\n")
@@ -28,6 +31,9 @@
       (insert (format "(setq org-canvas-base-url %S)\n" url))
       (insert (format "(setq org-canvas-api-token %S)\n" token))
       (insert (format "(setq org-canvas-course-id %S)\n" course-id))
+      (when read-only
+        (insert "\n;; Adopted course: read and compare, never write.\n")
+        (insert "(setq org-canvas-read-only t)\n"))
       (insert "\n(provide 'org-canvas-credentials)\n")
       (insert ";;; org-canvas-credentials.el ends here\n"))
     file))
@@ -69,7 +75,8 @@ is empty."
   (let* ((dir (read-directory-name "Course directory: " nil nil t))
          (url (read-string "Canvas base URL: " "https://canvas.instructure.com"))
          (token (read-passwd "API token (Canvas > Account > Settings > + New Access Token): "))
-         (course-id (read-string "Course ID (number from your Canvas course URL): ")))
+         (course-id (read-string "Course ID (number from your Canvas course URL): "))
+         (read-only nil))
     ;; Validate inputs
     (when (string-empty-p token)
       (user-error "API token cannot be empty"))
@@ -98,9 +105,16 @@ is empty."
                                (error-message-string err)))
              (message "Saving credentials without connection verification...")
            (user-error "Aborted")))))
+    ;; Asked once the inputs are known good, and while the answer is
+    ;; still in mind.  A course you are adopting is one someone else may
+    ;; be teaching right now (issue #163).
+    (setq read-only
+          (not (y-or-n-p "Is this a course you own and will push to? ")))
     ;; Write credentials
-    (let ((cred-file (org-canvas--write-credentials-file dir url token course-id)))
-      (message "Credentials saved to %s" cred-file))
+    (let ((cred-file (org-canvas--write-credentials-file
+                      dir url token course-id read-only)))
+      (message "Credentials saved to %s%s" cred-file
+               (if read-only " (read-only: pull, status and diff only)" "")))
     ;; Suggest .gitignore protection
     (org-canvas--suggest-gitignore dir)
     ;; Optionally create skeleton files
@@ -112,6 +126,7 @@ is empty."
     (setq org-canvas-base-url url)
     (setq org-canvas-api-token token)
     (setq org-canvas-course-id course-id)
+    (setq org-canvas-read-only read-only)
     (org-canvas--recompute-file-paths)
     ;; Offer to register in course registry
     (let ((course-name (read-string "Register as course (empty to skip): ")))

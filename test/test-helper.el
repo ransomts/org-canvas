@@ -191,11 +191,15 @@ Use to assert request body structure, not merely that a call happened."
 ;;;; Macros
 
 (defmacro with-org-canvas-test-config (&rest body)
-  "Execute BODY with test Canvas configuration."
+  "Execute BODY with test Canvas configuration.
+`org-canvas-read-only' is bound to nil so a spec that exercises writing
+is never refused by a value another spec left behind — `org-canvas-init'
+sets it globally, as it does the course id beside it (issue #163)."
   (declare (indent 0))
   `(let ((org-canvas-base-url test-org-canvas-base-url)
          (org-canvas-api-token test-org-canvas-api-token)
          (org-canvas-course-id test-org-canvas-course-id)
+         (org-canvas-read-only nil)
          (org-canvas-request-timeout test-org-canvas-request-timeout))
      ,@body))
 
