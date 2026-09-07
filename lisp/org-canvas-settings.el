@@ -604,7 +604,7 @@ and pushes them to Canvas via PUT /courses/:id."
              (error-message-string err))
            (org-canvas--sync-record-feature-stats "Settings"
                                                   '(:fail 1 :failed-titles ("Settings")))
-           (message "Settings sync FAILED: %s" (error-message-string err))))))))
+           (org-canvas--user-message "Settings sync FAILED: %s" (error-message-string err))))))))
 
 (defun org-canvas--settings-replace-syllabus-body (syllabus-body)
   "Replace the body under the current heading with SYLLABUS-BODY.
@@ -752,7 +752,7 @@ is noted at INFO and nothing more."
          (org-canvas--log-warning org-canvas--logger
            "[Pull] Settings: %s not pulled (%s); settings.org is written without it"
            what msg)
-         (message "Settings: %s not pulled (%s)" what msg)
+         (org-canvas--user-message "Settings: %s not pulled (%s)" what msg)
          (org-canvas--pull-summary-record
           :file (file-name-nondirectory org-canvas-settings-file)
           :item what

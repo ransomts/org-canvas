@@ -83,6 +83,54 @@ The codebase uses uppercase symbols (='POST=, ='PUT=, ='GET=,
 This is important because passing uppercase symbols or keywords to plz
 causes 400 Bad Request errors.
 
+** The Shape of an Error Datum (issue #152)
+
+A =condition-case= on =plz-error= catches errors signalled three ways,
+and only one of them is what the handler assumed. Our own curl fallback
+signals the struct as the datum. plz signals =plz-http-error= and
+=plz-curl-error=, both of which inherit from =plz-error= and whose datum
+is a *list* of a label and the struct. A few of its parse failures carry
+no struct at all.
+
+Reading =(cdr err)= as a struct therefore failed for every real HTTP
+error plz raised, and every =plz-error-p= guard downstream failed with
+it. Observed together on one live pull: the unmasked response reached the
+error string, so live =canvas_session= and =_csrf_token= cookies escaped
+=org-canvas--scrub-plz-error=; =status=, =body= and =curl-error= all read
+nil, so Canvas's own =user not authorized to perform that action= became
+a two-kilobyte printed struct; and =org-canvas--api-transient-error-p=
+returned nil for everything, so the documented 429 and 5xx retries never
+fired on the primary path at all.
+
+=org-canvas--api-error-datum= is now the only way to read an error:
+it unwraps (=org-canvas--api-unwrap-plz-error=) and then masks
+(=org-canvas--scrub-plz-error=). Both halves belong to every caller —
+skipping the unwrap loses the response, skipping the scrub leaks the
+cookies in it. A datum holding no struct is described by
+=org-canvas--api-describe-datum=, which joins plz's strings into the
+sentence it wrote rather than printing a quoted list.
+
+*Test fixtures must use the real shape.* Every fixture in the suite
+signalled the bare struct, which is why this shipped. Signal
+='plz-http-error= with =(list "HTTP error" STRUCT)=.
+
+** Redaction Reaches the User, Not Only the Log (issue #154)
+
+=org-canvas--log-dispatch= masks every line it writes, and it works. But
+redaction was a property of the /logger/, so the same error text handed
+to =message= reached the echo area, =*Messages*=, and under =--batch=
+stderr and whatever file the run was redirected to — unmasked. Both are
+sinks users share; issue #3 was itself found by someone reading a saved
+log.
+
+Any message carrying text the package did not write itself —
+=error-message-string= above all — goes through
+=org-canvas--user-message=, which redacts and then messages.
+=org-canvas--pull-summary-record= masks its =:error= on the way in, so
+the summary buffer the user is invited to read is clean whatever the
+recorder passed. The review rule is "no bare =message= with an
+=error-message-string= argument".
+
 ** Error Handling Conventions
 
 - Wrap API calls in =condition-case=

@@ -313,6 +313,24 @@ structs on failure so shared error handling applies."
         (and status
              (memq status org-canvas--api-transient-http-statuses)))))
 
+(defun org-canvas--api-unwrap-plz-error (datum)
+  "Return the `plz-error' struct DATUM carries, whatever shape it arrived in.
+A `condition-case' on `plz-error' catches errors signalled three ways.
+Our own curl fallback signals the struct as the datum.  plz itself
+signals `plz-http-error' and `plz-curl-error', whose datum is a list
+of a label and the struct, and a handful of its parse failures carry
+no struct at all, only strings.
+
+Reading `(cdr err)' as a struct is therefore wrong for every real HTTP
+error plz raises: `plz-error-p' fails, the response inside is never
+found, and with it go the status, the body and the cookies that need
+masking (issue #152).  A datum holding no struct is returned as it
+came, for the caller to describe."
+  (cond
+   ((plz-error-p datum) datum)
+   ((listp datum) (or (cl-find-if #'plz-error-p datum) datum))
+   (t datum)))
+
 (defun org-canvas--scrub-plz-error (plz-err)
   "Return a copy of PLZ-ERR with sensitive response headers masked.
 PLZ-ERR structs embed the full `plz-response', whose headers include
@@ -327,6 +345,25 @@ output.  Non-struct or response-less values pass through unchanged."
         (setf (plz-error-response clean) clean-resp)
         clean)
     plz-err))
+
+(defun org-canvas--api-error-datum (err)
+  "Return the scrubbed `plz-error' struct behind the error condition ERR.
+Unwraps plz's list datum (`org-canvas--api-unwrap-plz-error') before
+masking it (`org-canvas--scrub-plz-error'), so every reader of an error
+gets a struct whose headers are safe to print.  Both steps belong to
+every caller: skipping the unwrap loses the response, skipping the
+scrub leaks the session cookies in it."
+  (org-canvas--scrub-plz-error
+   (org-canvas--api-unwrap-plz-error (cdr err))))
+
+(defun org-canvas--api-describe-datum (datum)
+  "Return a readable description of a DATUM that holds no `plz-error'.
+plz signals a few parse failures with a list of strings and no struct.
+Printing that with `%S' gives the user a quoted list; joining the
+strings gives them the sentence plz wrote."
+  (if (and (listp datum) (cl-every #'stringp datum))
+      (mapconcat #'identity datum ": ")
+    (format "%S" datum)))
 
 (defun org-canvas--api-collect-error-messages (node)
   "Collect message strings from a Canvas `errors' JSON subtree NODE.
@@ -409,7 +446,7 @@ Signaled errors carry a single concise, human-readable message
 \(Canvas's own error text when the body provides one); the full
 response detail is logged at DEBUG so `error-message-string' output
 in [FAILED] lines stays readable."
-  (let* ((plz-err (org-canvas--scrub-plz-error (cdr err)))
+  (let* ((plz-err (org-canvas--api-error-datum err))
          (response (and (plz-error-p plz-err)
                         (plz-error-response plz-err)))
          (status (and response (plz-response-status response)))
@@ -421,7 +458,8 @@ in [FAILED] lines stays readable."
                     (format "%s (HTTP %s)" canvas-msg status))
                    (status (format "API Request Failed (HTTP %s)" status))
                    (curl-err (format "API Request Failed: %s" (cdr curl-err)))
-                   (t (format "API Request Failed: %S" plz-err)))))
+                   (t (format "API Request Failed: %s"
+                              (org-canvas--api-describe-datum plz-err))))))
     (org-canvas--log-debug org-canvas--logger "[API] <<< RESPONSE: %s" (or status "error"))
     (cond
      ;; Rate limited (429 or 403 with rate limit indication)
@@ -470,7 +508,7 @@ Returns a string like \"?key=value&...\" or \"\" if PARAMS is nil."
 (defun org-canvas--api-retries-exhausted (retry-count err)
   "Signal an error after RETRY-COUNT rate-limit retries.
 ERR is the last plz-error condition."
-  (let* ((plz-err (org-canvas--scrub-plz-error (cdr err)))
+  (let* ((plz-err (org-canvas--api-error-datum err))
          (response (and (plz-error-p plz-err)
                         (plz-error-response plz-err)))
          (body (and response (plz-response-body response))))
@@ -538,7 +576,7 @@ once the delay list is exhausted."
                                     (1+ transient-retry-index)
                                     (length org-canvas-transient-retry-delays)))
           (1+ transient-retry-index))
-      (let* ((plz-err (org-canvas--scrub-plz-error (cdr err)))
+      (let* ((plz-err (org-canvas--api-error-datum err))
              (response (and (plz-error-p plz-err) (plz-error-response plz-err)))
              (status (and response (plz-response-status response)))
              (body (and response (plz-response-body response)))
@@ -707,7 +745,8 @@ from Canvas afterwards (issue #124)."
           t)
       (error
        (org-canvas--log-warning org-canvas--logger "[Rubric] Association failed: %s" (error-message-string err))
-       (message "WARNING: Rubric association failed for %s: %s" item-id (error-message-string err))
+       (org-canvas--user-message "WARNING: Rubric association failed for %s: %s"
+         item-id (error-message-string err))
        nil))))
 
 ;;;; 3c. File Upload Infrastructure

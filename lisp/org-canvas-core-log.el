@@ -98,6 +98,18 @@ inside printed plz-error structs.")
     (dolist (rule org-canvas--log-redactions message)
       (setq message (replace-regexp-in-string (car rule) (cdr rule) message)))))
 
+(defun org-canvas--user-message (format-string &rest args)
+  "Show a redacted message built from FORMAT-STRING and ARGS.
+The logger masks every line it writes, but redaction was scoped to the
+logger alone: the same error text handed to `message' reached the echo
+area, `*Messages*' and, under `--batch', stderr and whatever file the
+run was redirected to — unmasked (issue #154).  Both sinks are ones
+users share, and issue #3 was itself found by someone reading a saved
+log.  Any message carrying text the package did not write itself —
+`error-message-string' above all — belongs here rather than in a bare
+`message'."
+  (message "%s" (org-canvas--log-redact (apply #'format format-string args))))
+
 (defun org-canvas--log-dispatch (logger level format-string args)
   "Emit a log entry on LOGGER at LEVEL formatted from FORMAT-STRING and ARGS.
 The formatted message passes through `org-canvas--log-redact' so

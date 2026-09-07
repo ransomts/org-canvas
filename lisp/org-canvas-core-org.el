@@ -2002,7 +2002,7 @@ Returns the course name as a string.  Signals an error if the request fails."
         ((string-match-p "resolve\\|getaddrinfo\\|network\\|unreachable" msg)
          (message "Connection failed: network error. Check your URL and internet connection."))
         (t
-         (message "Connection failed: %s" msg)))))))
+         (org-canvas--user-message "Connection failed: %s" msg)))))))
 
 ;;;; Pull Summary Accumulator
 ;;
@@ -2038,10 +2038,15 @@ use `org-canvas--pull-summary-records' to read them in insertion order.")
 FILE is the .org file (basename) the record is scoped to.
 ITEM is an optional identifier for the item (slug, id, title).
 ERROR is a human-readable message — the failure for an error record,
-the reason for a skip record.
+the reason for a skip record.  It is usually raw
+`error-message-string' text, so it is masked on the way in: the
+summary is rendered into a buffer the user is invited to read and
+share, and redaction used to stop at the logger (issue #154).
 LOG-LINE is an optional pointer into the log buffer/file.
 KIND is `error' (default) or `skip'."
-  (push (list :kind kind :file file :item item :error error :log-line log-line)
+  (push (list :kind kind :file file :item item
+              :error (and error (org-canvas--log-redact error))
+              :log-line log-line)
         org-canvas--pull-summary))
 
 (defun org-canvas--pull-summary-records-of-kind (kind)

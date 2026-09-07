@@ -55,6 +55,9 @@ Each entry names the pull request that merged it.
 
 ** Fixed
 
+- #152 Unwrap plz's error datum: it signals =plz-http-error= with a list, not a bare struct, so session cookies escaped masking, Canvas's own error text was replaced by a printed struct, and 429 and 5xx were never retried on the primary request path
+- #154 Redact on the way to the user, not only to the log: error text sent through =message= or stored in the pull summary reached stdout unmasked
+
 - #132 Drift report reads an excluded feature's bodies for the media they embed
 - #131 Baseline re-read after a post-fn (rubric association) writes to Canvas, ending phantom drift
 - #130 Rubrics update in place instead of being deleted and re-created, keeping associations and assessments
