@@ -74,25 +74,29 @@
 
   (it "gates the writing groups and leaves reading alone"
     ;; The menu should say what mode the course is in, not only error
-    ;; when a push command is chosen.  A prefix's layout is
-    ;; [DEPTH _ (GROUP...)], each group a vector whose slot 1 is its plist.
-    (let* ((layout (get 'org-canvas-dispatch 'transient--layout))
-           (groups (aref layout 2)))
-      (cl-labels ((plist-of (name)
-                    (let ((g (cl-find-if
-                              (lambda (grp)
-                                (equal (plist-get (aref grp 1) :description) name))
-                              groups)))
-                      (and g (aref g 1))))
-                  (gated-p (name)
-                    (eq (plist-get (plist-of name) :inapt-if-not)
-                        'org-canvas--transient-writable-p)))
-        (dolist (writing '("Sync" "Files" "Delete" "Publish"))
-          (expect (plist-of writing) :to-be-truthy)
-          (expect (gated-p writing) :to-be-truthy))
-        (dolist (reading '("Pull" "Tools" "Log"))
-          (expect (plist-of reading) :to-be-truthy)
-          (expect (gated-p reading) :to-be nil))))))
+    ;; when a push command is chosen.  A prefix's layout is walked
+    ;; structurally rather than by index: transient has moved the groups
+    ;; and their plists between versions, and the suite runs on three.
+    (cl-labels
+        ((group-plist (node name)
+           (cond
+            ((and (listp node) (plist-member node :description)
+                  (equal (plist-get node :description) name))
+             node)
+            ((or (vectorp node) (listp node))
+             (cl-some (lambda (child) (group-plist child name))
+                      (append node nil)))))
+         (plist-of (name)
+           (group-plist (get 'org-canvas-dispatch 'transient--layout) name))
+         (gated-p (name)
+           (eq (plist-get (plist-of name) :inapt-if-not)
+               'org-canvas--transient-writable-p)))
+      (dolist (writing '("Sync" "Files" "Delete" "Publish"))
+        (expect (plist-of writing) :to-be-truthy)
+        (expect (gated-p writing) :to-be-truthy))
+      (dolist (reading '("Pull" "Tools" "Log"))
+        (expect (plist-of reading) :to-be-truthy)
+        (expect (gated-p reading) :to-be nil)))))
 
 (provide 'org-canvas-transient-test)
 ;;; org-canvas-transient-test.el ends here
