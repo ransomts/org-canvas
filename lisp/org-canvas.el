@@ -551,11 +551,55 @@ carrying a Canvas id across every content type and names the total."
                (format "Pull will overwrite %d existing local headings.  Continue? " existing))
         (user-error "Aborted")))))
 
+(defun org-canvas--pull-count-titles (file)
+  "Return (TOTAL . DISTINCT) for the level-1 headings in FILE.
+DISTINCT counts titles that survive `org-canvas--validate-normalize-title'
+as different, so course-copy twins collapse together."
+  (let ((total 0)
+        (seen (make-hash-table :test 'equal)))
+    (with-current-buffer (org-canvas--find-file-noselect file)
+      (save-excursion
+        (goto-char (point-min))
+        (org-map-entries
+         (lambda ()
+           (let ((norm (org-canvas--validate-normalize-title
+                        (org-link-display-format (or (org-get-heading t t t t) "")))))
+             (when norm
+               (setq total (1+ total))
+               (puthash norm t seen))))
+         "LEVEL=1" 'file)))
+    (cons total (hash-table-count seen))))
+
+(defun org-canvas--pull-report-duplicate-titles ()
+  "Name the content types whose pulled titles collapse into fewer distinct ones.
+Costs no API call: the files are already on disk.  A course carried
+forward for years arrives full of near-twins — 46 pages under 29 titles
+on the course that prompted this — and a count is enough to say so
+without repeating the validator's per-group detail (issue #164)."
+  (let ((noisy nil))
+    (dolist (entry org-canvas--status-content-types)
+      (let* ((file-var (cadr entry))
+             (file (and (boundp file-var)
+                        (expand-file-name (symbol-value file-var)))))
+        (when (and file (file-exists-p file))
+          (let ((counts (org-canvas--pull-count-titles file)))
+            (when (> (car counts) (cdr counts))
+              (push (format "%s: %d pulled, %d distinct titles"
+                            (car entry) (car counts) (cdr counts))
+                    noisy))))))
+    (when noisy
+      (setq noisy (nreverse noisy))
+      (org-canvas--log-warning org-canvas--logger
+        "[Pull] Duplicate titles: %s — run M-x org-canvas-validate for the groups"
+        (mapconcat #'identity noisy "; ")))
+    noisy))
+
 (defun org-canvas--pull-all-report (counters)
   "Close a full pull described by COUNTERS.
 Renders the non-fatal summary, to a buffer interactively and to stdout
 under `noninteractive' — `with-output-to-temp-buffer' shows a batch run
 nothing, so a scripted pull used to lose the whole report (issue #155)."
+  (org-canvas--pull-report-duplicate-titles)
   (unless (org-canvas--pull-summary-empty-p)
     (if noninteractive
         (org-canvas--pull-summary-print)

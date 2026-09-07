@@ -397,8 +397,10 @@ Each plist has keys :file-var, :query, :properties, and optionally
 (defun org-canvas-register-properties (feature-name &rest plist)
   "Register property specs for FEATURE-NAME.
 PLIST has keys :file-var, :query, :properties, and optionally
-:date-order, :structural-fn (run per matched heading), and :file-fn
-\(run once per file, for rules about the file as a whole).
+:date-order, :structural-fn (run per matched heading), :file-fn
+\(run once per file, for rules about the file as a whole), and
+:duplicate-titles (non-nil to check the file for entries whose titles
+collide once course-copy debris is stripped, issue #164).
 
 A module whose payload carries the heading's body declares
 `:body-api-key', the Canvas field it lands in (\"description\",
@@ -432,7 +434,7 @@ Registry keys: :org-prop :data-key :type :values :target-file
 (defun org-canvas--get-validate-specs-from-registry ()
   "Build a list of validation specs from the property registry.
 Each spec has :label, :file, :query, :properties, :date-order,
-:structural-fn, and :file-fn, matching the format of
+:structural-fn, :file-fn and :duplicate-titles, matching the format of
 `org-canvas--validate-specs'."
   (let (specs)
     (maphash
@@ -444,7 +446,8 @@ Each spec has :label, :file, :query, :properties, :date-order,
                                        (plist-get plist :properties))
                    :date-order (plist-get plist :date-order)
                    :structural-fn (plist-get plist :structural-fn)
-                   :file-fn (plist-get plist :file-fn))
+                   :file-fn (plist-get plist :file-fn)
+                   :duplicate-titles (plist-get plist :duplicate-titles))
              specs))
      org-canvas--property-registry)
     (nreverse specs)))

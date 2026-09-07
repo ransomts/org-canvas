@@ -62,6 +62,7 @@
  :file-var 'org-canvas-modules-file
  :id-field 'id :id-property "CANVAS_ID" :title-field 'name)
 (org-canvas-register-properties "modules"
+  :duplicate-titles t
   :label "Modules"
   :file-var 'org-canvas-modules-file
   :query "LEVEL=1"
