@@ -173,6 +173,7 @@ What stays dynamically bound is the *caller's* seam, set around a command by who
 
 ### JSON/API
 - Nested payloads (assignments, pages, modules, rubrics, files) use hash-tables; flat payloads (discussions, announcements, quizzes, outcomes) use alists; both serialize via `json-encode`
+- `org-canvas-api-request` decodes with `json-read`, so a JSON array arrives as a **vector**: walk a reply with `cl-find-if`/`seq-*`, or coerce with `(append reply nil)` first. An empty vector is also non-nil, so it passes a `when` guard (#153). A list-returning test stub hides both
 - Booleans: `t` for true, `:json-false` for false (nil is JSON null, which Canvas reads differently). Org properties are strings — compare with `"true"`/`"false"`
 - The codebase passes `'POST`; `org-canvas-api-request` lowercases it for plz (`'post`). Uppercase or keyword methods to plz are a 400
 
@@ -183,6 +184,7 @@ What stays dynamically bound is the *caller's* seam, set around a command by who
 - Timeout → search Canvas for the item, retry if needed (`org-canvas--timeout-error-p` is the predicate); 404 on PUT → retry as POST; 429 or rate-limit 403 → retry (`org-canvas-rate-limit-retries`, `org-canvas-rate-limit-wait`); 401 → expired-token message; other 403 → scope message
 - Deferrable rejections (drop rules exceeding the group's assignment count) count as `:deferred` (`org-canvas--sync-deferred-error-p`), not failures
 - `org-canvas--safe-sync` skips missing `.org` files; `org-canvas--preflight-check` runs before any sync
+- An optional dependency loads through `org-canvas--require-optional`, never `(require 'x nil t)`: NOERROR covers a missing file only, so a feature that raises while loading takes org-canvas down with it (#157)
 - Full list: api-interaction.org, "Error Handling Conventions"
 
 ### Conflict Resolution

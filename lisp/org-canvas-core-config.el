@@ -231,8 +231,30 @@ Emacs is running in batch mode (`noninteractive')."
       t
     (y-or-n-p prompt)))
 
+(defun org-canvas--require-optional (feature what)
+  "Require FEATURE, reporting rather than aborting when it will not load.
+WHAT names, for the message, what is lost.  Returns the feature symbol
+when it loaded, nil otherwise.
+
+NOERROR on `require' suppresses only a missing file.  A feature that is
+on `load-path' but raises while loading takes its caller down with it.
+Transient pulls in cond-let, llama and a recent seq, so a batch run with
+transient visible but those absent aborted before a single org-canvas
+symbol was defined, leaving a backtrace that named cond-let and nothing
+to connect it to a menu the package had called optional (issue #157).  A
+credentials file with a typo in it fails the same way.  An absent
+feature stays silent, as before; one that breaks says why and the run
+carries on."
+  (condition-case err
+      (require feature nil t)
+    (error
+     (org-canvas--user-message "org-canvas: %s unavailable (%s)"
+                               what (error-message-string err))
+     nil)))
+
 ;; Attempt to load credentials from a separate file if present
-(require 'org-canvas-credentials nil t)
+(org-canvas--require-optional 'org-canvas-credentials
+                              "the credentials file")
 
 ;;;; 1b. Multi-Course Support
 
