@@ -57,6 +57,7 @@ Each entry names the pull request that merged it.
 
 ** Fixed
 
+- #158 A nested =files.org= can be re-pulled: files are matched by Canvas id wherever they sit, a file whose folder changed is moved rather than duplicated, and hand-written content survives; downloads skip a local copy that is already the right size
 - #153 Navigation tabs are pulled again: Canvas sends a JSON array, which =json-read= decodes as a vector, and the formatter walked it with =dolist=
 - #157 An optional require is optional again: a feature that is on =load-path= but raises while loading no longer aborts loading org-canvas, and says what was lost
 - #152 Unwrap plz's error datum: it signals =plz-http-error= with a list, not a bare struct, so session cookies escaped masking, Canvas's own error text was replaced by a printed struct, and 429 and 5xx were never retried on the primary request path

@@ -337,6 +337,41 @@ for override management. The pull:
 2. Matches by CANVAS_ID (allows local heading renames)
 3. Warns about stale local headings (CANVAS_ID not on Canvas)
 
+* Files: Three Pull Modes (issue #158)
+
+=org-canvas--file-pull-mode= reads the buffer and answers =fresh=,
+=flat= or =hierarchical=, and each has its own emitter.
+
+- =fresh= (no CANVAS_IDs, no folder-only headings) builds the nested
+  tree from Canvas's folders.
+- =flat= (every heading has an id or a file link) upserts top-level
+  headings in place, the legacy layout from before folder support.
+- =hierarchical= (a folder-only heading is present) upserts folder by
+  folder.
+
+The nested mode used to /refuse/, telling the operator to delete
+files.org and re-run. That meant deleting the file holding every
+CANVAS_ID mapping, re-downloading the whole course, and throwing away
+anything hand-written in it — and since a fresh pull builds the nested
+tree by default, =org-canvas-pull-all= hit the refusal on every run
+after the first.
+
+=org-canvas--file-pull-emit-hierarchical= matches each remote file by
+its Canvas id /wherever the heading sits/, so a heading an operator
+moved by hand is found rather than duplicated. A file whose
+=folder_id= changed is cut and rewritten under the folder Canvas now
+names, creating any missing folder heading on the way; an existing
+folder heading is reused rather than written beside itself. A file
+Canvas no longer lists is left alone, as are notes in the file:
+pruning is =org-canvas-cleanup-orphans=, deliberately a separate verb.
+
+*Downloads are incremental.* =org-canvas--file-pull-stale-p= fetches a
+file only when nothing is there or the local copy is a different
+length, so refreshing a large course costs one listing rather than
+every byte. The trade is that a Canvas-side edit preserving the byte
+count is not noticed; =org-canvas-files-force-reupload= is the push-side
+answer to the same class of problem.
+
 * Link Resolution During Pull
 
 When pulling modules, items reference other content by =content_id= and

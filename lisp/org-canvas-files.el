@@ -1565,13 +1565,27 @@ correcting one file rather than a course."
 
 ;;;; Pull
 
+(defun org-canvas--file-pull-stale-p (local-path size)
+  "Return non-nil when LOCAL-PATH should be fetched again.
+True when nothing is there, or when SIZE is known and the local file is
+a different length.  A file whose size matches is left alone, which is
+what keeps a re-pull of a 192 MB course from downloading it again
+\(issue #158); it also means a Canvas-side edit that happens to
+preserve the byte count is not noticed, which is the trade the size
+check makes."
+  (or (not (file-exists-p local-path))
+      (and (numberp size)
+           (/= size (file-attribute-size (file-attributes local-path))))))
+
 (defun org-canvas--file-pull-download (display-name download-url local-path size
                                                     &optional force)
-  "Download file DISPLAY-NAME from DOWNLOAD-URL to LOCAL-PATH if not present.
-SIZE is used for logging; may be nil.  With FORCE, overwrite an
-existing local file — that is what resolving a conflict by pulling
-means, and the user chose it at the diff prompt."
-  (when (and download-url (or force (not (file-exists-p local-path))))
+  "Download file DISPLAY-NAME from DOWNLOAD-URL to LOCAL-PATH when it is stale.
+SIZE is used for logging and to decide staleness; may be nil.  With
+FORCE, overwrite the local file whatever its size — that is what
+resolving a conflict by pulling means, and the user chose it at the
+diff prompt."
+  (when (and download-url
+             (or force (org-canvas--file-pull-stale-p local-path size)))
     (condition-case err
         (progn
           (make-directory (file-name-directory local-path) t)
@@ -1748,6 +1762,204 @@ CONTENT_TYPE and SIZE are informational and written directly."
     (when size
       (org-canvas-org-set-property pos "SIZE" (format "%s" size)))))
 
+(defun org-canvas--file-pull-folder-heading-p ()
+  "Return non-nil when the heading at point is a folder rather than a file.
+A folder heading is the one thing the tree emits that carries neither a
+Canvas id nor a file link; the mode detector reads the same two marks."
+  (let* ((heading (org-canvas--strip-statistics-cookie
+                   (org-get-heading t t t t)))
+         (link-path (org-canvas--file-extract-link-path heading)))
+    (and (null (org-entry-get (point) "CANVAS_ID"))
+         (null link-path))))
+
+(defun org-canvas--file-pull-find-by-id (id)
+  "Return the position of the heading whose CANVAS_ID is ID, or nil.
+Searches the whole buffer, since a re-pull may find a file the operator
+has moved to a different folder heading by hand."
+  (let ((target (format "%s" id))
+        (found nil))
+    (org-with-wide-buffer
+     (goto-char (point-min))
+     (org-map-entries
+      (lambda ()
+        (when (and (not found)
+                   (equal (org-entry-get (point) "CANVAS_ID") target))
+          (setq found (point))))
+      t 'file))
+    found))
+
+(defun org-canvas--file-pull-heading-folder-parts (pos)
+  "Return the folder path of the heading at POS, as a list of names.
+Nil for a heading at level 1, which lives at the root."
+  (org-with-wide-buffer
+   (goto-char pos)
+   (org-back-to-heading t)
+   (let (parts)
+     (while (org-up-heading-safe)
+       (push (org-canvas--strip-statistics-cookie (org-get-heading t t t t))
+             parts))
+     parts)))
+
+(defun org-canvas--file-pull-child-folder (parent name)
+  "Return the position of folder heading NAME under PARENT, creating it.
+PARENT is the position of the containing folder heading, or nil for the
+top level.  A folder heading is matched by name among PARENT's direct
+children; a file heading of the same name never matches, so a folder and
+a file may share a name without colliding."
+  (let* ((level (if parent
+                    (1+ (org-with-wide-buffer (goto-char parent)
+                                              (org-current-level)))
+                  1))
+         (found nil))
+    (org-with-wide-buffer
+     (if parent (goto-char parent) (goto-char (point-min)))
+     (let ((limit (if parent
+                      (org-with-wide-buffer (goto-char parent)
+                                            (org-end-of-subtree t t)
+                                            (point))
+                    (point-max))))
+       (when parent (org-back-to-heading t) (forward-line 1))
+       (while (and (not found)
+                   (re-search-forward org-complex-heading-regexp limit t))
+         (org-back-to-heading t)
+         (when (and (= (org-current-level) level)
+                    (org-canvas--file-pull-folder-heading-p)
+                    (equal (org-canvas--strip-statistics-cookie
+                            (org-get-heading t t t t))
+                           name))
+           (setq found (point)))
+         (org-end-of-subtree t t))))
+    (or found
+        (org-canvas--file-pull-insert-folder parent name level))))
+
+(defun org-canvas--file-pull-insert-folder (parent name level)
+  "Insert folder heading NAME at LEVEL at the end of PARENT.
+Returns its position.  PARENT is nil for the top level."
+  (org-with-wide-buffer
+   (if parent
+       (progn (goto-char parent) (org-end-of-subtree t t))
+     (goto-char (point-max)))
+   (unless (bolp) (insert "\n"))
+   (let ((start (point)))
+     (insert (make-string level ?*) " " name "\n")
+     start)))
+
+(defun org-canvas--file-pull-folder-position (parts)
+  "Return the position a file under folder PARTS should be inserted at.
+Creates any folder heading PARTS names that does not exist yet.  Nil
+PARTS means the root, whose insertion point is the end of the buffer."
+  (let ((parent nil))
+    (dolist (part parts)
+      (setq parent (org-canvas--file-pull-child-folder parent part)))
+    (org-with-wide-buffer
+     (if parent
+         (progn (goto-char parent) (org-end-of-subtree t t))
+       (goto-char (point-max)))
+     (unless (bolp) (insert "\n"))
+     (point))))
+
+(defun org-canvas--file-pull-heading-text (item rel-path)
+  "Return the Org heading text for ITEM living under REL-PATH."
+  (let* ((display-name (alist-get 'display_name item))
+         (local-rel (if (string-empty-p rel-path)
+                        display-name
+                      (concat rel-path "/" display-name))))
+    (org-link-make-string
+     (concat "file:content/" local-rel)
+     (org-canvas--file-sanitize-headline-desc display-name))))
+
+(defun org-canvas--file-pull-insert-at (item rel-path parts content-dir)
+  "Insert a heading for ITEM under folder PARTS, and return its position.
+REL-PATH is the folder path as a string, CONTENT-DIR the download root."
+  (let ((pos (org-canvas--file-pull-folder-position parts))
+        (level (1+ (length parts))))
+    (org-with-wide-buffer
+     (goto-char pos)
+     (insert (make-string level ?*) " "
+             (org-canvas--file-pull-heading-text item rel-path) "\n")
+     (goto-char pos)
+     (org-canvas--file-pull-record item rel-path content-dir)
+     pos)))
+
+(defun org-canvas--file-pull-record (item rel-path content-dir)
+  "Stamp the heading at point from ITEM and fetch its bytes.
+REL-PATH places the download under CONTENT-DIR."
+  (let* ((display-name (alist-get 'display_name item))
+         (local-rel (if (string-empty-p rel-path)
+                        display-name
+                      (concat rel-path "/" display-name)))
+         (local-path (org-canvas--file-safe-local-path local-rel content-dir)))
+    (org-canvas-org-save-sync-state (point) (alist-get 'id item))
+    (org-canvas--file-pull-set-properties (point) item)
+    (org-canvas--file-pull-download
+     display-name (alist-get 'url item) local-path (alist-get 'size item))))
+
+(defun org-canvas--file-pull-refresh-at (pos item rel-path content-dir)
+  "Refresh the heading at POS in place from ITEM under REL-PATH.
+The heading text is rewritten so a rename on Canvas lands locally, and
+CONTENT-DIR receives the bytes."
+  (org-with-wide-buffer
+   (goto-char pos)
+   (org-back-to-heading t)
+   (org-edit-headline (org-canvas--file-pull-heading-text item rel-path))
+   (org-canvas--file-pull-record item rel-path content-dir)))
+
+(defun org-canvas--file-pull-cut-subtree (pos)
+  "Delete the heading subtree at POS."
+  (org-with-wide-buffer
+   (goto-char pos)
+   (org-back-to-heading t)
+   (delete-region (point) (org-end-of-subtree t t))))
+
+(defun org-canvas--file-pull-upsert-item (item folder-map content-dir)
+  "Place ITEM in the current buffer, under the folder Canvas now names.
+FOLDER-MAP maps folder id to relative path; CONTENT-DIR is the download
+root.  Returns `added', `moved' or `updated'.  A file whose folder changed is
+cut from where it was and written under the new one, rather than left
+behind as a second copy of itself; a file the buffer has never seen is
+created, and its folder headings with it."
+  (let* ((folder-id (alist-get 'folder_id item))
+         (rel-path (or (and folder-id (gethash folder-id folder-map)) ""))
+         (parts (if (string-empty-p rel-path) nil (split-string rel-path "/" t)))
+         (pos (org-canvas--file-pull-find-by-id (alist-get 'id item))))
+    (cond
+     ((null pos)
+      (org-canvas--file-pull-insert-at item rel-path parts content-dir)
+      'added)
+     ((equal (org-canvas--file-pull-heading-folder-parts pos) parts)
+      (org-canvas--file-pull-refresh-at pos item rel-path content-dir)
+      'updated)
+     (t
+      (org-canvas--file-pull-cut-subtree pos)
+      (org-canvas--file-pull-insert-at item rel-path parts content-dir)
+      'moved))))
+
+(defun org-canvas--file-pull-emit-hierarchical (folder-map remote content-dir)
+  "Upsert REMOTE into the nested files.org in the current buffer.
+FOLDER-MAP maps folder id to relative path; CONTENT-DIR is the download
+root.  Returns a plist (:added N :moved N :updated N).
+
+A nested layout used to refuse re-pull outright, so refreshing files
+meant deleting files.org — the file holding every CANVAS_ID mapping —
+and rebuilding, which also discarded anything hand-written in it and
+was hit by `org-canvas-pull-all' on every run after the first (issue
+#158).  Each file is matched by its Canvas id wherever it sits, so a
+heading an operator moved by hand is found; only a file whose folder
+changed on Canvas is relocated.  Nothing local is deleted for being
+absent from Canvas: pruning stays with `org-canvas-cleanup-orphans'."
+  (let ((total (length remote))
+        (count 0)
+        (added 0) (moved 0) (updated 0))
+    (dolist (item remote)
+      (cl-incf count)
+      (message "Files [%d/%d] Pulling '%s'..."
+               count total (alist-get 'display_name item))
+      (pcase (org-canvas--file-pull-upsert-item item folder-map content-dir)
+        ('added (cl-incf added))
+        ('moved (cl-incf moved))
+        (_ (cl-incf updated))))
+    (list :added added :moved moved :updated updated)))
+
 (defun org-canvas--file-pull-emit-flat (file remote content-dir)
   "Upsert REMOTE files as flat top-level headings in FILE.
 FILE is the path to files.org, REMOTE is the list of file alists from
@@ -1806,9 +2018,15 @@ On a fresh pull (no CANVAS_IDs in files.org and no folder-only
 headings), reconstructs the Canvas folder hierarchy as nested Org
 headings and downloads under content/<rel-path>/.
 
-On a re-pull of an existing flat files.org, updates entries in place
-without restructuring.  Refuses to re-pull a hierarchical files.org
-with `user-error' (delete files.org and re-run to refresh)."
+On a re-pull, entries are updated in place: a flat files.org stays
+flat, and a nested one is upserted folder by folder, with a file whose
+folder changed on Canvas moved rather than duplicated.  Nothing local
+is deleted for being absent from Canvas — that is
+`org-canvas-cleanup-orphans'.
+
+A file whose local copy is already the right size is not downloaded
+again, so refreshing a large course costs one listing rather than every
+byte."
   (interactive)
   (org-canvas--start-operation "PULLING FILES")
   (let* ((file (expand-file-name org-canvas-files-file))
@@ -1834,8 +2052,18 @@ with `user-error' (delete files.org and re-run to refresh)."
       (let ((mode (org-canvas--file-pull-mode)))
         (pcase mode
           ('hierarchical
-           (user-error
-            "Hierarchical files.org detected; re-pull is not yet supported on a nested layout.  Delete files.org and re-run org-canvas-pull-files"))
+           (let* ((stats (org-canvas--file-pull-emit-hierarchical
+                          folder-map remote content-dir))
+                  (added (plist-get stats :added))
+                  (moved (plist-get stats :moved))
+                  (updated (plist-get stats :updated)))
+             (org-canvas--pull-write-file-header)
+             (org-canvas--save-buffer)
+             (org-canvas--log-info org-canvas--logger
+               "Files pull complete (nested upsert): %d new, %d moved, %d refreshed"
+               added moved updated)
+             (message "Files pull complete: %d new, %d moved, %d refreshed."
+                      added moved updated)))
           ('fresh
            (let ((emitted
                   (org-canvas--file-pull-emit-fresh-tree
