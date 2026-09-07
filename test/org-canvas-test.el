@@ -2273,15 +2273,55 @@ while Lab 4 in the same module is still scheduled ahead."
              (list :success 12 :fail 1 :skipped '("Rubrics")))
             :to-match "12 pulled, 1 failed, 1 skipped (Rubrics")))
 
-(describe "org-canvas-pull-all batch summary (issue #155)"
+(describe "org-canvas--pull-all-report (issue #155)"
+  (before-each (org-canvas--pull-summary-reset))
+  (after-each (org-canvas--pull-summary-reset))
+
   (it "prints the summary to stdout, which is all batch has"
-    (org-canvas--pull-summary-reset)
     (org-canvas--pull-summary-record
      :file "group-categories.org" :item "whole type"
      :error "Permission denied (HTTP 403)" :kind 'skip)
     (let ((printed (with-output-to-string (org-canvas--pull-summary-print))))
       (expect printed :to-match "group-categories.org")
-      (expect printed :to-match "Permission denied"))
-    (org-canvas--pull-summary-reset)))
+      (expect printed :to-match "Permission denied")))
+
+  (it "sends batch output to stdout and names no buffer"
+    (org-canvas--pull-summary-record
+     :file "group-categories.org" :error "Permission denied (HTTP 403)" :kind 'skip)
+    (let ((noninteractive t)
+          said temp-buffer-used)
+      (cl-letf (((symbol-function 'message)
+                 (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+        (cl-letf (((symbol-function 'org-canvas--pull-summary-print) #'ignore))
+          (advice-add 'with-output-to-temp-buffer :override
+                      (lambda (&rest _) (setq temp-buffer-used t))
+                      '((name . test-155-temp)))
+          (unwind-protect
+              (org-canvas--pull-all-report (list :success 1 :fail 0 :skipped nil))
+            (advice-remove 'with-output-to-temp-buffer 'test-155-temp))))
+      (expect temp-buffer-used :to-be nil)
+      (expect said :to-match "Pull complete:")
+      (expect said :not :to-match "org-canvas-pull-summary")))
+
+  (it "renders into a buffer, and points at it, when someone is watching"
+    (org-canvas--pull-summary-record
+     :file "group-categories.org" :error "Permission denied (HTTP 403)" :kind 'skip)
+    (let ((noninteractive nil)
+          said)
+      (cl-letf (((symbol-function 'message)
+                 (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+        (org-canvas--pull-all-report (list :success 1 :fail 0 :skipped nil)))
+      (expect (get-buffer "*org-canvas-pull-summary*") :to-be-truthy)
+      (expect said :to-match "see \\*org-canvas-pull-summary\\*")
+      (with-current-buffer "*org-canvas-pull-summary*"
+        (expect (buffer-string) :to-match "group-categories.org"))
+      (kill-buffer "*org-canvas-pull-summary*")))
+
+  (it "says nothing at all when the pull was clean"
+    (let ((said nil))
+      (cl-letf (((symbol-function 'message)
+                 (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+        (org-canvas--pull-all-report (list :success 15 :fail 0 :skipped nil)))
+      (expect said :to-be nil))))
 
 ;;; org-canvas-test.el ends here
