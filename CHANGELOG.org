@@ -36,6 +36,8 @@ Each entry names the pull request that merged it.
 
 ** Changed
 
+- #155 A 403 your Canvas role cannot do anything about is reported as a permission skip, named in the closing line and recorded in the pull summary, instead of counted as a failure; the summary prints to stdout under =--batch=
+- #156 Pagination progress names the resource and speaks only when a fetch really is paging; the first page is logged, not announced
 - #141 Sync run state (batch conflict answers, the module's pull function, the moved/pending/changed id lists) lives in a per-run context instead of dynamically bound globals, so nothing one run decides reaches the next
 - #142 Every pause a sync takes goes through =org-canvas--wait=, which counts down in the echo area and keeps the display alive; the settings pull says so when the late policy or navigation tabs cannot be read; =org-canvas.el= split into status, publish, adopt, and orphans command files
 - #140 Emacs 29.1 is the minimum (was 28.1); obsolete =when-let= replaced; a clean compile is warning-free; this changelog

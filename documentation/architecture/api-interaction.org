@@ -131,6 +131,26 @@ the summary buffer the user is invited to read is clean whatever the
 recorder passed. The review rule is "no bare =message= with an
 =error-message-string= argument".
 
+** A Role Refusal Is a Skip (issue #155)
+
+Pulling a course you were added to as a Designer — adopting or
+inheriting one you do not own yet — 403s on =group_categories= and
+=late_policy= purely because of the enrolment. Reporting that as the
+run's one failure names neither the type nor the reason, and the
+remedy (ask for a Teacher enrolment, or accept the gap) is nothing like
+the remedy for a real failure.
+
+A non-rate-limit 403 now signals =org-canvas-permission-error=, a child
+of =org-canvas-credentials-error= so every existing handler still
+catches it, carrying the resource the URL named and Canvas's own
+message. =org-canvas--safe-pull= counts it under =:skipped= rather than
+=:fail=, records it in the pull summary as a skip, and
+=org-canvas--pull-completion-line= names the types: /Pull complete: 14
+pulled, 0 failed, 1 skipped (Group Categories: insufficient
+permission)./ The summary also prints with =princ= under
+=noninteractive=, since =with-output-to-temp-buffer= shows a batch run
+nothing.
+
 ** Error Handling Conventions
 
 - Wrap API calls in =condition-case=

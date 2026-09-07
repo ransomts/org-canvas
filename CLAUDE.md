@@ -181,7 +181,7 @@ What stays dynamically bound is the *caller's* seam, set around a command by who
 - Wrap API calls in `condition-case`; continue processing other items if one fails
 - One concise message per failure: 4xx bodies parse through `org-canvas--api-error-message`, detail logs at DEBUG, exactly one `[ERROR]` line per item
 - Read an error datum with `org-canvas--api-error-datum`, never `(cdr err)`: plz signals `plz-http-error` with a *list* of a label and the struct, so a bare `(cdr err)` fails every `plz-error-p` guard and loses the status, body and cookies (#152)
-- Timeout → search Canvas for the item, retry if needed (`org-canvas--timeout-error-p` is the predicate); 404 on PUT → retry as POST; 429 or rate-limit 403 → retry (`org-canvas-rate-limit-retries`, `org-canvas-rate-limit-wait`); 401 → expired-token message; other 403 → scope message
+- Timeout → search Canvas for the item, retry if needed (`org-canvas--timeout-error-p` is the predicate); 404 on PUT → retry as POST; 429 or rate-limit 403 → retry (`org-canvas-rate-limit-retries`, `org-canvas-rate-limit-wait`); 401 → expired-token message; other 403 → `org-canvas-permission-error`, a child of the credentials error, which `org-canvas--safe-pull` counts as a skip and names in the closing line (#155)
 - Deferrable rejections (drop rules exceeding the group's assignment count) count as `:deferred` (`org-canvas--sync-deferred-error-p`), not failures
 - `org-canvas--safe-sync` skips missing `.org` files; `org-canvas--preflight-check` runs before any sync
 - An optional dependency loads through `org-canvas--require-optional`, never `(require 'x nil t)`: NOERROR covers a missing file only, so a feature that raises while loading takes org-canvas down with it (#157)
