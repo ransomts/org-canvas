@@ -29,6 +29,15 @@
   "Canvas API request failed" 'org-canvas-error)
 (define-error 'org-canvas-credentials-error
   "Canvas credentials missing or invalid" 'org-canvas-error)
+;; A child, so anything already catching a credentials error still
+;; catches this.  Canvas answers a request your enrolment cannot make
+;; with the same 403 it uses for a token that lacks a scope, but the
+;; two need different remedies: ask for a Teacher enrolment, or mint a
+;; new token.  Pulling a course you were added to as a Designer is a
+;; normal thing to do, and the types it cannot read are a skip rather
+;; than a failure (issue #155).
+(define-error 'org-canvas-permission-error
+  "Canvas role cannot access this resource" 'org-canvas-credentials-error)
 (define-error 'org-canvas-conflict-error
   "Sync conflict between local and remote state" 'org-canvas-error)
 (define-error 'org-canvas-timeout-error

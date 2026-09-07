@@ -826,33 +826,69 @@ search), so a spec can script which login carries the token."
           (expect call-count :to-equal 2)
           (expect (alist-get 'id result) :to-equal 1))))))
 
-(describe "org-canvas-api-request-all-pages pagination progress"
-  (it "shows progress for each page fetched"
-    (with-org-canvas-test-config
-      (let ((call-count 0))
-        (spy-on 'message)
-        (cl-letf (((symbol-function 'org-canvas-api-request)
-                   (lambda (_method _url &rest _args)
-                     (setq call-count (1+ call-count))
-                     (if (= call-count 1)
-                         ;; First page: 100 items (full page triggers next)
-                         (make-list 100 '((id . 1)))
-                       ;; Second page: fewer than 100 (done)
-                       (make-list 5 '((id . 2)))))))
-          (org-canvas-api-request-all-pages 'GET "https://test.example.com/api/v1/pages")
-          (expect 'message :to-have-been-called-with
-                  "Fetching page %d (%d items so far)..." 1 0)
-          (expect 'message :to-have-been-called-with
-                  "Fetching page %d (%d items so far)..." 2 100)))))
+(describe "org-canvas-api-request-all-pages pagination progress (issue #156)"
+  (defun test-org-canvas-156--pages (pages url)
+    "Fetch URL with the API returning PAGES in turn.  Returns the messages."
+    (let ((remaining pages)
+          (said nil))
+      (cl-letf (((symbol-function 'message)
+                 (lambda (fmt &rest args) (push (apply #'format fmt args) said)))
+                ((symbol-function 'org-canvas-api-request)
+                 (lambda (_method _url &rest _args) (or (pop remaining) nil))))
+        (org-canvas-api-request-all-pages 'GET url))
+      (nreverse said)))
 
-  (it "shows progress for single page"
+  (it "says nothing for a single-page fetch, which is most of them"
+    ;; Ninety-nine identical "Fetching page 1 (0 items so far)" lines were
+    ;; a quarter of one pull's output and told the reader nothing.
     (with-org-canvas-test-config
-      (spy-on 'message)
-      (cl-letf (((symbol-function 'org-canvas-api-request)
-                 (lambda (_method _url &rest _args) '((id . 1)))))
-        (org-canvas-api-request-all-pages 'GET "https://test.example.com/api/v1/pages")
-        (expect 'message :to-have-been-called-with
-                "Fetching page %d (%d items so far)..." 1 0)))))
+      (expect (test-org-canvas-156--pages
+               (list '((id . 1)))
+               "https://test.example.com/api/v1/courses/1/assignments")
+              :to-equal nil)))
+
+  (it "names the resource once a fetch really is paging"
+    (with-org-canvas-test-config
+      (expect (test-org-canvas-156--pages
+               (list (make-list 100 '((id . 1))) (make-list 5 '((id . 2))))
+               "https://test.example.com/api/v1/courses/1/assignments")
+              :to-equal '("Fetching assignments, page 2 (100 so far)..."))))
+
+  (it "logs every page, including the first"
+    (with-org-canvas-test-config
+      (let (logged)
+        (cl-letf (((symbol-function 'org-canvas--log-debug)
+                   (lambda (_l fmt &rest args) (push (apply #'format fmt args) logged)))
+                  ((symbol-function 'message) #'ignore)
+                  ((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _) '((id . 1)))))
+          (org-canvas-api-request-all-pages
+           'GET "https://test.example.com/api/v1/courses/1/files"))
+        (expect (car (last logged)) :to-match "Fetching files page 1")))))
+
+(describe "org-canvas--api-resource-name (issue #156)"
+  (it "names the collection a course-scoped URL addresses"
+    (expect (org-canvas--api-resource-name
+             "https://x.instructure.com/api/v1/courses/295790/assignments")
+            :to-equal "assignments"))
+
+  (it "skips the id in a nested URL"
+    (expect (org-canvas--api-resource-name
+             "https://x.instructure.com/api/v1/courses/1/modules/123/items")
+            :to-equal "items"))
+
+  (it "reads an underscored resource as words"
+    (expect (org-canvas--api-resource-name
+             "https://x.instructure.com/api/v1/courses/1/group_categories")
+            :to-equal "group categories"))
+
+  (it "ignores a query string"
+    (expect (org-canvas--api-resource-name
+             "https://x.instructure.com/api/v1/courses/1/tabs?per_page=100")
+            :to-equal "tabs"))
+
+  (it "is nil when there is nothing to name"
+    (expect (org-canvas--api-resource-name nil) :to-be nil)))
 
 (describe "org-canvas--api-handle-plz-error rate-limit countdown"
   (it "waits out the whole rate-limit interval through org-canvas--wait"
@@ -1106,10 +1142,31 @@ search), so a spec can script which login carries the token."
              (org-canvas-fault--status-err 401 "unauthorized") "u")
             :to-throw 'org-canvas-credentials-error))
 
-  (it "403 (non-rate-limit) -> credentials error (scope)"
+  (it "403 (non-rate-limit) -> permission error, a credentials error still"
+    ;; A child of org-canvas-credentials-error, so anything already
+    ;; catching that keeps working, while a pull can single out the
+    ;; refusals a role cannot do anything about (issue #155).
+    (expect (org-canvas--api-handle-plz-error
+             (org-canvas-fault--status-err 403 "forbidden") "u")
+            :to-throw 'org-canvas-permission-error)
     (expect (org-canvas--api-handle-plz-error
              (org-canvas-fault--status-err 403 "forbidden") "u")
             :to-throw 'org-canvas-credentials-error))
+
+  (it "names the resource the role could not read, and Canvas's own words"
+    (condition-case err
+        (org-canvas--api-handle-plz-error
+         (cons 'plz-http-error
+               (list "HTTP error"
+                     (make-plz-error
+                      :response (make-plz-response
+                                 :status 403
+                                 :body "{\"status\":\"unauthorized\",\"errors\":[{\"message\":\"user not authorized to perform that action\"}]}"))))
+         "https://x.instructure.com/api/v1/courses/1/group_categories")
+      (org-canvas-permission-error
+       (let ((msg (error-message-string err)))
+         (expect msg :to-match "group categories")
+         (expect msg :to-match "user not authorized to perform that action")))))
 
   (it "502/503/504 -> :retry-transient"
     (dolist (status '(502 503 504))

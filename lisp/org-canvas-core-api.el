@@ -482,8 +482,10 @@ in [FAILED] lines stays readable."
      ;; Forbidden (403, non-rate-limit)
      ((and status (= status 403))
       (org-canvas--log-debug org-canvas--logger "[API] 403 body: %S" body)
-      (signal 'org-canvas-credentials-error
-        (list "Permission denied (HTTP 403). Your token may lack the required scope for this operation.")))
+      (signal 'org-canvas-permission-error
+              (list (format "Permission denied (HTTP 403) reading %s%s.  Your Canvas role, or your token scopes, cannot see it"
+                            (or (org-canvas--api-resource-name full-url) "this resource")
+                            (if canvas-msg (format ": %s" canvas-msg) "")))))
 
      ;; Transient (curl timeout / 5xx); caller will sleep based on retry index
      ((org-canvas--api-transient-error-p plz-err)
@@ -684,6 +686,19 @@ silently corrupts unrecognized methods into bodyless GETs."
     (org-canvas--api-pace)
     (org-canvas--api-execute-with-retry plz-method full-url headers json-payload actual-timeout)))
 
+(defun org-canvas--api-resource-name (url)
+  "Return the Canvas resource URL addresses, for a progress message.
+The last path segment that is not an id, with underscores read as
+spaces: a modules-items URL reads \"items\", an outcome-groups one
+reads \"subgroups\".  Nil when nothing usable is left."
+  (when (stringp url)
+    (let* ((path (car (split-string url "[?#]")))
+           (segments (nreverse (split-string path "/" t)))
+           (name (cl-find-if-not (lambda (s) (string-match-p "\\`[0-9]+\\'" s))
+                                 segments)))
+      (when (and name (not (string-match-p "\\`[0-9.]*\\'" name)))
+        (replace-regexp-in-string "_" " " name)))))
+
 (defun org-canvas-api-request-all-pages (method url &optional params)
   "Fetch all pages of results from a paginated Canvas API endpoint.
 METHOD is the HTTP method (usually \\='GET).
@@ -695,9 +710,20 @@ Returns a flat list of all items across all pages."
   (let ((page 1)
         (per-page 100)
         (all-items nil)
-        (done nil))
+        (done nil)
+        (resource (or (org-canvas--api-resource-name url) "results")))
     (while (not done)
-      (message "Fetching page %d (%d items so far)..." page (length all-items))
+      ;; Page 1 is the whole story for most fetches, and announcing it
+      ;; said neither what was being fetched nor anything that changes:
+      ;; ninety-nine identical "Fetching page 1 (0 items so far)" lines
+      ;; were a quarter of one pull\='s output (issue #156).  The echo
+      ;; area now hears only about a fetch that really is paging; the
+      ;; log hears about every page.
+      (org-canvas--log-debug org-canvas--logger
+        "[API] Fetching %s page %d (%d so far)" resource page (length all-items))
+      (when (> page 1)
+        (message "Fetching %s, page %d (%d so far)..."
+                 resource page (length all-items)))
       (let* ((page-params (append (or params '())
                                   `(("per_page" . ,(number-to-string per-page))
                                     ("page" . ,(number-to-string page)))))

@@ -1435,7 +1435,8 @@
         (let ((found nil))
           (dolist (call (spy-calls-all-args 'message))
             (when (and (stringp (car call))
-                       (string-match-p "Pull complete:.*pulled.*failed" (car call)))
+                       (string-match-p "Pull complete:.*pulled.*failed"
+                                       (apply #'format call)))
               (setq found t)))
           (expect found :to-be-truthy)))))
 
@@ -1465,10 +1466,10 @@
         ;; Final message should show "1 failed"
         (let ((found nil))
           (dolist (call (spy-calls-all-args 'message))
-            (when (and (stringp (car call))
-                       (string-match-p "Pull complete:" (car call)))
+            (when (stringp (car call))
               (let ((formatted (apply #'format call)))
-                (when (string-match-p "1 failed" formatted)
+                (when (and (string-match-p "Pull complete:" formatted)
+                           (string-match-p "1 failed" formatted))
                   (setq found t)))))
           (expect found :to-be-truthy))))))
 
@@ -2209,5 +2210,118 @@ while Lab 4 in the same module is still scheduled ahead."
                   (expect (cadr err) :to-match "id 61 is already claimed by another heading"))
                 (expect (org-entry-get (point) "CANVAS_ID") :to-be nil))))
         (test-org-canvas--adopt-cleanup temp)))))
+
+;;;; A role-based refusal is a skip, not a failure (issue #155)
+;;
+;; Pulling a course you hold as a Designer 403s on the types that role
+;; cannot read.  That is a gap to accept or a Teacher enrolment to ask
+;; for, not something that broke, and the run should say which type.
+
+(describe "org-canvas--safe-pull permission handling (issue #155)"
+  (before-each (org-canvas--pull-summary-reset))
+  (after-each (org-canvas--pull-summary-reset))
+
+  (it "counts a role refusal apart from a failure and names the type"
+    (let ((counters (list :success 0 :fail 0 :skipped nil)))
+      (cl-letf (((symbol-function 'org-canvas--log-warning) #'ignore))
+        (org-canvas--safe-pull
+         (lambda () (signal 'org-canvas-permission-error
+                            (list "Permission denied (HTTP 403) reading group categories")))
+         "Group Categories" counters))
+      (expect (plist-get counters :fail) :to-equal 0)
+      (expect (plist-get counters :success) :to-equal 0)
+      (expect (plist-get counters :skipped) :to-equal '("Group Categories"))))
+
+  (it "records the reason in the pull summary, as a skip"
+    (cl-letf (((symbol-function 'org-canvas--log-warning) #'ignore))
+      (org-canvas--safe-pull
+       (lambda () (signal 'org-canvas-permission-error
+                          (list "Permission denied (HTTP 403) reading late policy")))
+       "Settings" (list :success 0 :fail 0 :skipped nil)))
+    (let ((rec (car (org-canvas--pull-summary-records-of-kind 'skip))))
+      (expect (plist-get rec :file) :to-equal "Settings")
+      (expect (plist-get rec :error) :to-match "Permission denied")))
+
+  (it "still counts a real failure as a failure, and records it"
+    (let ((counters (list :success 0 :fail 0 :skipped nil)))
+      (cl-letf (((symbol-function 'org-canvas--log-warning) #'ignore))
+        (org-canvas--safe-pull (lambda () (error "Connection reset"))
+                               "Pages" counters))
+      (expect (plist-get counters :fail) :to-equal 1)
+      (expect (plist-get counters :skipped) :to-be nil)
+      (expect (org-canvas--pull-summary-records-of-kind 'error) :to-be-truthy)))
+
+  (it "counts a clean pull as a success"
+    (let ((counters (list :success 0 :fail 0 :skipped nil)))
+      (org-canvas--safe-pull #'ignore "Pages" counters)
+      (expect (plist-get counters :success) :to-equal 1)
+      (expect (org-canvas--pull-summary-empty-p) :to-be t))))
+
+(describe "org-canvas--pull-completion-line (issue #155)"
+  (it "names the types a role could not read"
+    (expect (org-canvas--pull-completion-line
+             (list :success 14 :fail 0 :skipped '("Settings" "Group Categories")))
+            :to-equal
+            "Pull complete: 14 pulled, 0 failed, 2 skipped (Group Categories, Settings: insufficient permission)."))
+
+  (it "stays as it was when nothing was skipped"
+    (expect (org-canvas--pull-completion-line (list :success 15 :fail 0 :skipped nil))
+            :to-equal "Pull complete: 15 pulled, 0 failed."))
+
+  (it "reports failures and skips together"
+    (expect (org-canvas--pull-completion-line
+             (list :success 12 :fail 1 :skipped '("Rubrics")))
+            :to-match "12 pulled, 1 failed, 1 skipped (Rubrics")))
+
+(describe "org-canvas--pull-all-report (issue #155)"
+  (before-each (org-canvas--pull-summary-reset))
+  (after-each (org-canvas--pull-summary-reset))
+
+  (it "prints the summary to stdout, which is all batch has"
+    (org-canvas--pull-summary-record
+     :file "group-categories.org" :item "whole type"
+     :error "Permission denied (HTTP 403)" :kind 'skip)
+    (let ((printed (with-output-to-string (org-canvas--pull-summary-print))))
+      (expect printed :to-match "group-categories.org")
+      (expect printed :to-match "Permission denied")))
+
+  (it "sends batch output to stdout and names no buffer"
+    (org-canvas--pull-summary-record
+     :file "group-categories.org" :error "Permission denied (HTTP 403)" :kind 'skip)
+    (let ((noninteractive t)
+          said temp-buffer-used)
+      (cl-letf (((symbol-function 'message)
+                 (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+        (cl-letf (((symbol-function 'org-canvas--pull-summary-print) #'ignore))
+          (advice-add 'with-output-to-temp-buffer :override
+                      (lambda (&rest _) (setq temp-buffer-used t))
+                      '((name . test-155-temp)))
+          (unwind-protect
+              (org-canvas--pull-all-report (list :success 1 :fail 0 :skipped nil))
+            (advice-remove 'with-output-to-temp-buffer 'test-155-temp))))
+      (expect temp-buffer-used :to-be nil)
+      (expect said :to-match "Pull complete:")
+      (expect said :not :to-match "org-canvas-pull-summary")))
+
+  (it "renders into a buffer, and points at it, when someone is watching"
+    (org-canvas--pull-summary-record
+     :file "group-categories.org" :error "Permission denied (HTTP 403)" :kind 'skip)
+    (let ((noninteractive nil)
+          said)
+      (cl-letf (((symbol-function 'message)
+                 (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+        (org-canvas--pull-all-report (list :success 1 :fail 0 :skipped nil)))
+      (expect (get-buffer "*org-canvas-pull-summary*") :to-be-truthy)
+      (expect said :to-match "see \\*org-canvas-pull-summary\\*")
+      (with-current-buffer "*org-canvas-pull-summary*"
+        (expect (buffer-string) :to-match "group-categories.org"))
+      (kill-buffer "*org-canvas-pull-summary*")))
+
+  (it "says nothing at all when the pull was clean"
+    (let ((said nil))
+      (cl-letf (((symbol-function 'message)
+                 (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+        (org-canvas--pull-all-report (list :success 15 :fail 0 :skipped nil)))
+      (expect said :to-be nil))))
 
 ;;; org-canvas-test.el ends here

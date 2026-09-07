@@ -457,18 +457,54 @@ asked to confirm first."
 
 (defun org-canvas--safe-pull (pull-fn label &optional counters)
   "Call PULL-FN, catching errors gracefully.
-LABEL is used for logging.  COUNTERS, when non-nil, is a plist
-\(:success N :fail N) mutated in place with the outcome."
+LABEL names the content type, for the log and the closing line.
+COUNTERS, when non-nil, is a plist (:success N :fail N :skipped LIST)
+mutated in place with the outcome.
+
+A refusal your enrolment cannot do anything about is counted apart from
+a failure: pulling a course you hold as a Designer 403s on the types
+that role cannot read, which is a gap to accept or a Teacher enrolment
+to ask for, not something that broke (issue #155).  Either way the
+reason is recorded in the pull summary, so a run that ends with a
+number also says which type and why."
   (condition-case err
       (progn
         (funcall pull-fn)
         (when counters
           (plist-put counters :success (1+ (plist-get counters :success)))))
+    (org-canvas-permission-error
+     (org-canvas--log-warning org-canvas--logger "[Pull] %s skipped: %s"
+       label (error-message-string err))
+     (org-canvas--pull-summary-record
+      :kind 'skip :file label :item "whole type"
+      :error (error-message-string err)
+      :log-line (org-canvas--pull-summary-current-log-line))
+     (when counters
+       (plist-put counters :skipped
+                  (cons label (plist-get counters :skipped)))))
     (error
      (org-canvas--log-warning org-canvas--logger "[Pull] %s failed: %s"
        label (error-message-string err))
+     (org-canvas--pull-summary-record
+      :file label :item "whole type"
+      :error (error-message-string err)
+      :log-line (org-canvas--pull-summary-current-log-line))
      (when counters
        (plist-put counters :fail (1+ (plist-get counters :fail)))))))
+
+(defun org-canvas--pull-completion-line (counters)
+  "Return the closing line for a pull with COUNTERS.
+Names the types a role could not read, rather than leaving a bare
+count for the operator to chase through the log (issue #155)."
+  (let ((skipped (reverse (plist-get counters :skipped))))
+    (format "Pull complete: %d pulled, %d failed%s."
+            (plist-get counters :success)
+            (plist-get counters :fail)
+            (if skipped
+                (format ", %d skipped (%s: insufficient permission)"
+                        (length skipped)
+                        (mapconcat #'identity skipped ", "))
+              ""))))
 
 ;; Pull in dependency order:
 ;;   Settings, then structural items, then linked items, then modules
@@ -493,20 +529,14 @@ Within tier 2, `pull-files' runs early so its CANVAS_ID -> path map is
 available when later modules (pages, assignments, etc.) rewrite Canvas
 file URLs in their HTML bodies via `org-canvas--pull-insert-body'.")
 
-;;;###autoload
-(defun org-canvas-pull-all ()
-  "Import an entire Canvas course into Org files.
-Pulls all content types in dependency order, creating .org files
-as needed.  HTML content is converted to Org format via pandoc.
-
-This is the migration entry point for instructors with existing
-Canvas courses who want to adopt org-canvas."
-  (interactive)
+(defun org-canvas--pull-all-confirm ()
+  "Ask before a full pull overwrites local work.  Signals on refusal.
+Warns once about missing pandoc, then counts the headings already
+carrying a Canvas id across every content type and names the total."
   (unless (executable-find "pandoc")
     (unless (yes-or-no-p
              "Pandoc not found.  HTML will be stored raw.  Continue? ")
       (user-error "Aborted")))
-  ;; Warn about existing content that will be overwritten
   (let ((existing 0))
     (dolist (entry org-canvas--status-content-types)
       (let ((file-var (cadr entry)))
@@ -519,40 +549,64 @@ Canvas courses who want to adopt org-canvas."
     (when (> existing 0)
       (unless (yes-or-no-p
                (format "Pull will overwrite %d existing local headings.  Continue? " existing))
-        (user-error "Aborted"))))
+        (user-error "Aborted")))))
+
+(defun org-canvas--pull-all-report (counters)
+  "Close a full pull described by COUNTERS.
+Renders the non-fatal summary, to a buffer interactively and to stdout
+under `noninteractive' — `with-output-to-temp-buffer' shows a batch run
+nothing, so a scripted pull used to lose the whole report (issue #155)."
+  (unless (org-canvas--pull-summary-empty-p)
+    (if noninteractive
+        (org-canvas--pull-summary-print)
+      (with-output-to-temp-buffer "*org-canvas-pull-summary*"
+        (org-canvas--pull-summary-print)))
+    (message "Pull complete: %s%s"
+             (org-canvas--pull-summary-tally)
+             (if noninteractive "." " - see *org-canvas-pull-summary*.")))
+  counters)
+
+(defun org-canvas--pull-all-run (counters)
+  "Pull every content type in dependency order, tallying into COUNTERS."
+  (org-canvas--log-info org-canvas--logger "========================================")
+  (org-canvas--log-info org-canvas--logger ">>> STARTING FULL COURSE PULL")
+  (org-canvas--log-info org-canvas--logger "Course: %s | URL: %s"
+    org-canvas-course-id org-canvas-base-url)
+  (org-canvas--log-info org-canvas--logger "========================================")
+  (org-canvas--preflight-check)
+  ;; Resolve course TZ from any pre-existing settings.org so timestamps
+  ;; emitted by tier-0 pulls (before settings is refreshed) localize
+  ;; correctly.  `org-canvas-pull-settings' calls this again after
+  ;; writing the new file.
+  (org-canvas--pull-resolve-tz)
+  (dolist (tier org-canvas--pull-tiers)
+    (message "Pulling: %s..." (org-canvas--tier-description tier))
+    (org-canvas--run-tier tier (lambda (fn label)
+                                 (org-canvas--safe-pull fn label counters))))
+  (org-canvas--log-info org-canvas--logger "========================================")
+  (org-canvas--log-info org-canvas--logger ">>> FULL COURSE PULL COMPLETE")
+  (org-canvas--log-info org-canvas--logger "========================================")
+  (message "%s See *canvas-log* for details."
+           (org-canvas--pull-completion-line counters)))
+
+;;;###autoload
+(defun org-canvas-pull-all ()
+  "Import an entire Canvas course into Org files.
+Pulls all content types in dependency order, creating .org files
+as needed.  HTML content is converted to Org format via pandoc.
+
+This is the migration entry point for instructors with existing
+Canvas courses who want to adopt org-canvas."
+  (interactive)
+  (org-canvas--pull-all-confirm)
   (org-canvas-clear-log)
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (org-canvas--pull-summary-reset)
   (let ((org-canvas--inhibit-log-clear t)
-        (counters (list :success 0 :fail 0)))
+        (counters (list :success 0 :fail 0 :skipped nil)))
     (unwind-protect
-        (progn
-          (org-canvas--log-info org-canvas--logger "========================================")
-          (org-canvas--log-info org-canvas--logger ">>> STARTING FULL COURSE PULL")
-          (org-canvas--log-info org-canvas--logger "Course: %s | URL: %s"
-            org-canvas-course-id org-canvas-base-url)
-          (org-canvas--log-info org-canvas--logger "========================================")
-          (org-canvas--preflight-check)
-          ;; Resolve course TZ from any pre-existing settings.org so
-          ;; timestamps emitted by tier-0 pulls (before settings is
-          ;; refreshed) localize correctly.  `org-canvas-pull-settings'
-          ;; calls this again after writing the new file.
-          (org-canvas--pull-resolve-tz)
-          (dolist (tier org-canvas--pull-tiers)
-            (message "Pulling: %s..." (org-canvas--tier-description tier))
-            (org-canvas--run-tier tier (lambda (fn label)
-                                         (org-canvas--safe-pull fn label counters))))
-          (org-canvas--log-info org-canvas--logger "========================================")
-          (org-canvas--log-info org-canvas--logger ">>> FULL COURSE PULL COMPLETE")
-          (org-canvas--log-info org-canvas--logger "========================================")
-          (message "Pull complete: %d pulled, %d failed. See *canvas-log* for details."
-                   (plist-get counters :success)
-                   (plist-get counters :fail)))
-      (unless (org-canvas--pull-summary-empty-p)
-        (with-output-to-temp-buffer "*org-canvas-pull-summary*"
-          (org-canvas--pull-summary-print))
-        (message "Pull complete: %s - see *org-canvas-pull-summary*."
-                 (org-canvas--pull-summary-tally))))))
+        (org-canvas--pull-all-run counters)
+      (org-canvas--pull-all-report counters))))
 
 (provide 'org-canvas)
 ;;; org-canvas.el ends here
