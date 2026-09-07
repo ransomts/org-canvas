@@ -66,6 +66,7 @@ payload builder), which Canvas reports back as `locked'."
   (not (eq (alist-get 'locked item) t)))
 
 (org-canvas-register-properties "announcements"
+  :duplicate-titles t
   :label "Announcements"
   :file-var 'org-canvas-announcements-file
   :query "LEVEL=1"

@@ -82,6 +82,7 @@ takes effect on the next `org-canvas-pull-assignments' invocation."
               (and quiz-id (not (eq quiz-id :null)))))
  :skip-reason "a classic quiz's shadow assignment, managed via quizzes.org")
 (org-canvas-register-properties "assignments"
+  :duplicate-titles t
   :label "Assignments"
   :file-var 'org-canvas-assignments-file
   :query "LEVEL=1"

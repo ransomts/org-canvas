@@ -2324,4 +2324,67 @@ while Lab 4 in the same module is still scheduled ahead."
         (org-canvas--pull-all-report (list :success 15 :fail 0 :skipped nil)))
       (expect said :to-be nil))))
 
+;;;; Pull names the types that arrived full of twins (issue #164)
+
+(describe "org-canvas--pull-count-titles (issue #164)"
+  (defun test-org-canvas-164--counts (content)
+    "Return (TOTAL . DISTINCT) for a pages.org holding CONTENT."
+    (let* ((dir (make-temp-file "count-titles" t))
+           (file (expand-file-name "pages.org" dir)))
+      (unwind-protect
+          (progn (with-temp-file file (insert content))
+                 (org-canvas--pull-count-titles file))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-directory dir t))))
+
+  (it "counts distinct titles, collapsing course-copy twins"
+    (expect (test-org-canvas-164--counts
+             "* api-tools\n* api-tools (2)\n* api-tools (3)\n* Syllabus\n")
+            :to-equal '(4 . 2)))
+
+  (it "agrees with itself when every title is distinct"
+    (expect (test-org-canvas-164--counts "* One\n* Two\n") :to-equal '(2 . 2)))
+
+  (it "counts only level-1 headings"
+    (expect (test-org-canvas-164--counts "* One\n** Sub\n* Two\n")
+            :to-equal '(2 . 2))))
+
+(describe "org-canvas--pull-report-duplicate-titles (issue #164)"
+  (it "names a type whose titles collapse, and points at the validator"
+    (let* ((dir (make-temp-file "dup-report" t))
+           (pages (expand-file-name "pages.org" dir))
+           (warned nil))
+      (unwind-protect
+          (progn
+            (with-temp-file pages (insert "* api-tools\n* api-tools (2)\n"))
+            (with-nonexistent-canvas-files
+             (let ((org-canvas-pages-file pages))
+               (cl-letf (((symbol-function 'org-canvas--log-warning)
+                          (lambda (_l fmt &rest args)
+                            (setq warned (apply #'format fmt args)))))
+                 (expect (org-canvas--pull-report-duplicate-titles)
+                         :to-equal '("Pages: 2 pulled, 1 distinct titles")))
+               (expect warned :to-match "Pages: 2 pulled, 1 distinct titles")
+               (expect warned :to-match "org-canvas-validate"))))
+        (let ((buf (find-buffer-visiting pages))) (when buf (kill-buffer buf)))
+        (delete-directory dir t))))
+
+  (it "says nothing when every title is distinct"
+    (let* ((dir (make-temp-file "dup-report" t))
+           (pages (expand-file-name "pages.org" dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file pages (insert "* One\n* Two\n"))
+            (with-nonexistent-canvas-files
+             (let ((org-canvas-pages-file pages))
+               (cl-letf (((symbol-function 'org-canvas--log-warning)
+                          (lambda (&rest _) (error "must not warn"))))
+                 (expect (org-canvas--pull-report-duplicate-titles) :to-be nil)))))
+        (let ((buf (find-buffer-visiting pages))) (when buf (kill-buffer buf)))
+        (delete-directory dir t))))
+
+  (it "skips a content type whose file is absent"
+    (with-nonexistent-canvas-files
+     (expect (org-canvas--pull-report-duplicate-titles) :to-be nil))))
+
 ;;; org-canvas-test.el ends here

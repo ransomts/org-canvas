@@ -54,6 +54,7 @@
  :skip-fn (lambda (item) (eq (alist-get 'is_announcement item) t))
  :skip-reason "announcement, pulled by the announcements module")
 (org-canvas-register-properties "discussions"
+  :duplicate-titles t
   :label "Discussions"
   :file-var 'org-canvas-discussions-file
   :query "LEVEL=1"

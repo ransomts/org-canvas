@@ -321,6 +321,41 @@ All boolean properties use =:json-false= for false values. The
 =org-canvas-define-parse= macro handles this automatically for
 =:type boolean= properties.
 
+* Duplicate and Superseded Titles (issue #164)
+
+Duplicate detection existed only for files, keyed on size and
+content-type — and files are where duplication matters least. A real
+course carried forward for years arrived with 46 pages under 29
+distinct titles, 131 rubrics under about 40, =Homework Rubric= fifteen
+times over, and live assignments attached to rubrics named =Some Rubric
+(5)= and =Some Rubric (2) (3)=.
+
+The check lives in the offline validator, which is what the situation
+calls for: it costs no API call and runs on an inherited course before
+anything is touched. A content type opts in with =:duplicate-titles t=
+on its =org-canvas-register-properties= call — pages, assignments,
+quizzes, new quizzes, rubrics, discussions, announcements and modules
+do. Child levels deliberately do not: two quizzes may each have a
+question called "True or false", and the spec's own =:query= is what
+the comparison uses, so a module item never joins the modules above it.
+
+=org-canvas--validate-normalize-title= strips what a course copy leaves
+behind (=org-canvas--validate-supersede-markers=): a parenthetical
+carrying OLD, a leading =OLD DON'T USE=, a semester stamp leading or
+parenthesised, and Canvas's own =(n)= disambiguators, which stack.
+
+*Two severities, and the second is the point.* Entries sharing a
+normalised title are a warning — untidy. Entries sharing one where more
+than one carries a =DUE_AT= are an /error/: two live assignments a
+student cannot tell apart, which is invisible in the Canvas UI when the
+twins sit in different assignment groups. The report names each twin
+with its line and due date and leaves the judgement to a human, since
+which copy is canonical is not something the tool can know.
+
+=org-canvas-pull-all= closes with a count per affected type
+(=Pages: 46 pulled, 29 distinct titles=) and points at the validator
+for the groups.
+
 * Sync State Properties
 
 Every synced heading carries these Org properties:

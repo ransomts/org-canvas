@@ -55,6 +55,7 @@
  :skip-fn (lambda (item) (eq (alist-get 'front_page item) t))
  :skip-reason "front page")
 (org-canvas-register-properties "pages"
+  :duplicate-titles t
   :label "Pages"
   :file-var 'org-canvas-pages-file
   :query "LEVEL=1"

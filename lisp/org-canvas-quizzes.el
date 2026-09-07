@@ -73,6 +73,7 @@
  :file-var 'org-canvas-quizzes-file
  :id-field 'id :id-property "CANVAS_ID" :title-field 'title)
 (org-canvas-register-properties "quizzes"
+  :duplicate-titles t
   :label "Quizzes"
   :file-var 'org-canvas-quizzes-file
   :query "LEVEL=1"

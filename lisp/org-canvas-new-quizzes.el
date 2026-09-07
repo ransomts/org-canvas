@@ -62,6 +62,7 @@
   :group 'org-canvas)
 (org-canvas-register-file-var 'org-canvas-new-quizzes-file "new-quizzes.org")
 (org-canvas-register-properties "new-quizzes"
+  :duplicate-titles t
   :label "New Quizzes"
   :file-var 'org-canvas-new-quizzes-file
   :query "LEVEL=1"

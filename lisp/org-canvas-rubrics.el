@@ -72,6 +72,7 @@ The Org property is named after it; the payload key is the shorter
   (alist-get 'free_form_criterion_comments item))
 
 (org-canvas-register-properties "rubrics"
+  :duplicate-titles t
   :label "Rubrics"
   :file-var 'org-canvas-rubrics-file
   :query "LEVEL=1"

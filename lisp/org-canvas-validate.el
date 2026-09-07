@@ -647,6 +647,102 @@ FILE and HEADING identify the location.  Point must be at the first data row."
       (forward-line 1))
     (nreverse issues)))
 
+;;;; 5c. Duplicate and Superseded Titles (issue #164)
+;;
+;; Years of course copies leave a course full of near-twins.  On one
+;; real course: 46 pages under 29 distinct titles, 131 rubrics under
+;; about 40, `Homework Rubric' fifteen times over.  Duplicate detection
+;; existed only for files, keyed on size and content-type, which is
+;; where duplication matters least.
+;;
+;; The offline validator is the right place for the rest: it costs no
+;; API call and runs on an inherited course before anything is touched.
+
+(defconst org-canvas--validate-supersede-markers
+  '(" *([^)]*\\(?:OLD\\|old\\|Old\\)[^)]*) *"
+    "\\`\\(?:OLD DON'T USE\\|OLD DONT USE\\|DO NOT USE\\) *"
+    "\\`[SsFf][0-9][0-9] +"
+    " *([SsFf][0-9][0-9][^)]*) *"
+    " *([0-9]+) *")
+  "Regexps stripped from a title before two titles are compared.
+Between them they cover what a course copy leaves behind: a
+parenthetical carrying OLD, such as \"(OLD)\" or \"(s25 - old)\"; a
+leading \"OLD DON'T USE\"; a semester stamp, leading \"S24 \" or
+parenthesised \"(F23)\"; and Canvas's own \"(2)\" disambiguators, which
+stack into \"Some Rubric (2) (3)\".")
+
+(defun org-canvas--validate-normalize-title (title)
+  "Return TITLE with course-copy debris stripped, for comparison.
+Case and surrounding whitespace are dropped too, so \\\"Sprint 2 (S25 -
+OLD)\\\" and \\\"Sprint 2\\\" compare equal.  Returns nil for a title that
+normalizes to nothing."
+  (when title
+    (let ((s title))
+      (dolist (re org-canvas--validate-supersede-markers)
+        (setq s (replace-regexp-in-string re " " s)))
+      (setq s (string-trim (replace-regexp-in-string " +" " " s)))
+      (unless (string-empty-p s) (downcase s)))))
+
+(defun org-canvas--validate-collect-titles (query)
+  "Return the current buffer's entries grouped by normalized title.
+QUERY is the spec's `org-map-entries' match, so only the level the
+feature declares is read and a module item never joins the modules it
+sits under.  Each group is (NORMALIZED . ENTRIES), where an entry is a
+plist (:title :line :due) in document order."
+  (let ((groups nil))
+    (dolist (marker (org-map-entries (lambda () (point-marker)) query 'file))
+      (goto-char (marker-position marker))
+      (let* ((title (org-get-heading t t t t))
+             (norm (org-canvas--validate-normalize-title
+                    (org-link-display-format (or title "")))))
+        (when norm
+          (let ((cell (assoc norm groups))
+                (entry (list :title title
+                             :line (line-number-at-pos)
+                             :due (org-entry-get (point) "DUE_AT"))))
+            (if cell
+                (setcdr cell (append (cdr cell) (list entry)))
+              (push (cons norm (list entry)) groups)))))
+      (set-marker marker nil))
+    (nreverse groups)))
+
+(defun org-canvas--validate-duplicate-issue (file entries)
+  "Return the issue for ENTRIES in FILE sharing a title, or nil.
+Two headings that differ only in course-copy debris are a warning.
+Two that also carry a `DUE_AT' are an error: a superseded twin left
+scheduled is a gradebook hazard, and it is invisible in the Canvas UI
+when the two sit in different assignment groups."
+  (let* ((first (car entries))
+         (loc (list :file file :line (plist-get first :line)
+                    :heading (plist-get first :title)))
+         (named (mapconcat (lambda (e)
+                             (format "'%s' (line %d%s)"
+                                     (plist-get e :title) (plist-get e :line)
+                                     (if (plist-get e :due)
+                                         (format ", due %s" (plist-get e :due))
+                                       "")))
+                           entries ", "))
+         (scheduled (seq-filter (lambda (e) (plist-get e :due)) entries)))
+    (if (> (length scheduled) 1)
+        (org-canvas--validate-make-issue
+         'error loc nil
+         (format "%d entries share this title once OLD/semester/(n) markers are stripped, and %d of them carry a DUE_AT: %s — students see both; decide which is canonical"
+                 (length entries) (length scheduled) named))
+      (org-canvas--validate-make-issue
+       'warning loc nil
+       (format "%d entries share this title once OLD/semester/(n) markers are stripped: %s"
+               (length entries) named)))))
+
+(defun org-canvas--validate-duplicate-titles (file query)
+  "Return issues for entries whose titles collide in the current buffer.
+FILE names it for the report; QUERY selects the headings to compare.
+Called after the per-entry checks, with the buffer current."
+  (delq nil
+        (mapcar (lambda (group)
+                  (when (cdr (cdr group))
+                    (org-canvas--validate-duplicate-issue file (cdr group))))
+                (org-canvas--validate-collect-titles query))))
+
 ;;;; 6. Validation Engine
 
 (defun org-canvas--validate-entry-properties (props loc)
@@ -706,13 +802,17 @@ Returns a list of issues.
 `:structural-fn' runs once per matched heading, with point on it.
 `:file-fn' runs once for the whole file and receives its path — for
 rules that only make sense across every entry at once, such as whether
-the assignment-group weights sum to 100."
+the assignment-group weights sum to 100.
+
+`:duplicate-titles' runs the course-copy twin check over the same
+headings the query selected (issue #164)."
   (let* ((file-var (plist-get spec :file))
          (query (plist-get spec :query))
          (props (plist-get spec :properties))
          (date-order (plist-get spec :date-order))
          (structural-fn (plist-get spec :structural-fn))
          (file-fn (plist-get spec :file-fn))
+         (duplicate-titles (plist-get spec :duplicate-titles))
          (file (and (boundp file-var)
                     (expand-file-name (symbol-value file-var))))
          (issues nil))
@@ -726,7 +826,12 @@ the assignment-group weights sum to 100."
               (setq issues (nconc issues
                                   (org-canvas--validate-entry-at-marker
                                    props date-order structural-fn file))))
-            (dolist (m markers) (set-marker m nil)))))
+            (dolist (m markers) (set-marker m nil)))
+          (when duplicate-titles
+            (goto-char (point-min))
+            (setq issues
+                  (nconc issues
+                         (org-canvas--validate-duplicate-titles file query))))))
       ;; File-level hooks take the path and read it themselves.
       (when file-fn
         (setq issues (nconc issues (funcall file-fn file)))))
