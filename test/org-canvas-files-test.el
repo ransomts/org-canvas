@@ -2022,7 +2022,7 @@
             (expect downloaded :to-equal local-path))
         (delete-directory temp-dir t))))
 
-  (it "skips when file already exists"
+  (it "skips when the local copy is already the right size (issue #158)"
     (let* ((temp-dir (make-temp-file "file-pull-test" t))
            (local-path (expand-file-name "existing.pdf" temp-dir))
            (downloaded nil))
@@ -2032,8 +2032,40 @@
             (cl-letf (((symbol-function 'url-copy-file)
                        (lambda (_url _path &rest _args)
                          (setq downloaded t))))
-              (org-canvas--file-pull-download "existing.pdf" "https://example.com/f" local-path 100)
+              (org-canvas--file-pull-download
+               "existing.pdf" "https://example.com/f" local-path
+               (file-attribute-size (file-attributes local-path)))
               (expect downloaded :to-be nil)))
+        (delete-directory temp-dir t))))
+
+  (it "skips when the size is unknown and something is already there"
+    (let* ((temp-dir (make-temp-file "file-pull-test" t))
+           (local-path (expand-file-name "existing.pdf" temp-dir))
+           (downloaded nil))
+      (unwind-protect
+          (progn
+            (with-temp-file local-path (insert "existing"))
+            (cl-letf (((symbol-function 'url-copy-file)
+                       (lambda (_url _path &rest _args) (setq downloaded t))))
+              (org-canvas--file-pull-download
+               "existing.pdf" "https://example.com/f" local-path nil)
+              (expect downloaded :to-be nil)))
+        (delete-directory temp-dir t))))
+
+  (it "fetches again when the local copy is a different length (issue #158)"
+    ;; A refresh that skipped every file that merely existed left a
+    ;; Canvas-side edit invisible for ever.
+    (let* ((temp-dir (make-temp-file "file-pull-test" t))
+           (local-path (expand-file-name "stale.pdf" temp-dir))
+           (downloaded nil))
+      (unwind-protect
+          (progn
+            (with-temp-file local-path (insert "short"))
+            (cl-letf (((symbol-function 'url-copy-file)
+                       (lambda (_url _path &rest _args) (setq downloaded t))))
+              (org-canvas--file-pull-download
+               "stale.pdf" "https://example.com/f" local-path 999)
+              (expect downloaded :to-be t)))
         (delete-directory temp-dir t))))
 
   (it "handles download errors gracefully"
@@ -2229,23 +2261,178 @@
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t))))
 
-  (it "re-pull on a hierarchical files.org refuses with user-error"
+  (defun test-files-158--headings (body regexp)
+    "Return the heading lines in BODY whose text matches REGEXP."
+    (seq-filter (lambda (line)
+                  (and (string-match-p "\\`\\*+ " line)
+                       (string-match-p regexp line)))
+                (split-string body "\n")))
+
+  (defun test-files-158--repull (initial folders remote check)
+    "Re-pull INITIAL files.org against FOLDERS and REMOTE, then CHECK the body."
     (let* ((temp-dir (make-temp-file "pull-files-test" t))
            (files-file (expand-file-name "files.org" temp-dir)))
       (unwind-protect
           (let ((org-canvas-files-file files-file))
-            (with-temp-file files-file
-              (insert "#+TITLE: Files\n* Labs\n** [[file:content/Labs/a.pdf][a.pdf]]\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"))
+            (with-temp-file files-file (insert initial))
             (with-org-canvas-test-config
               (with-sync-test-env
                 (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                           (test-files--mock-pages '() '()))
+                           (test-files--mock-pages folders remote))
                           ((symbol-function 'url-copy-file)
                            (lambda (_url _path &rest _args) nil)))
-                  (expect (org-canvas-pull-files) :to-throw 'user-error)))))
+                  (org-canvas-pull-files)
+                  (with-current-buffer (find-file-noselect files-file)
+                    (funcall check (buffer-string)))))))
         (let ((buf (find-buffer-visiting files-file)))
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t))))
+
+  (it "re-pulls a hierarchical files.org in place (issue #158)"
+    ;; It used to refuse, so refreshing files meant deleting the file
+    ;; holding every CANVAS_ID mapping and re-downloading the course.
+    (test-files-158--repull
+     "#+TITLE: Files\n* Labs\n** [[file:content/Labs/a.pdf][a.pdf]]\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+     '(((id . 100) (full_name . "course files/Labs")))
+     '(((id . 1) (display_name . "a.pdf") (folder_id . 100)
+        (url . "https://example.com/a.pdf") (size . 10)))
+     (lambda (body)
+       (expect body :to-match "^\\* Labs$")
+       ;; One heading for the file, not a second copy of it.
+       (expect (length (test-files-158--headings body "a\\.pdf")) :to-equal 1)
+       (expect body :to-match "CANVAS_ID: +1"))))
+
+  (it "adds a new file under its folder, creating the folder heading (issue #158)"
+    (test-files-158--repull
+     "#+TITLE: Files\n* Labs\n** [[file:content/Labs/a.pdf][a.pdf]]\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+     '(((id . 100) (full_name . "course files/Labs"))
+       ((id . 200) (full_name . "course files/Lectures/Week 1")))
+     '(((id . 1) (display_name . "a.pdf") (folder_id . 100)
+        (url . "https://example.com/a.pdf") (size . 10))
+       ((id . 2) (display_name . "slides.pdf") (folder_id . 200)
+        (url . "https://example.com/slides.pdf") (size . 20)))
+     (lambda (body)
+       ;; The whole folder path is built, not just the leaf.
+       (expect body :to-match "^\\* Lectures$")
+       (expect body :to-match "^\\*\\* Week 1$")
+       (expect body :to-match "^\\*\\*\\* \\[\\[file:content/Lectures/Week 1/slides\\.pdf\\]")
+       (expect body :to-match "CANVAS_ID: +2")
+       ;; The file that was already there is untouched.
+       (expect (length (test-files-158--headings body "a\\.pdf")) :to-equal 1))))
+
+  (it "files a new file under a folder heading that already exists (issue #158)"
+    ;; The folder is reused, not written a second time beside itself.
+    (test-files-158--repull
+     "#+TITLE: Files\n* Labs\n** [[file:content/Labs/a.pdf][a.pdf]]\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+     '(((id . 100) (full_name . "course files/Labs")))
+     '(((id . 1) (display_name . "a.pdf") (folder_id . 100)
+        (url . "https://example.com/a.pdf") (size . 10))
+       ((id . 2) (display_name . "b.pdf") (folder_id . 100)
+        (url . "https://example.com/b.pdf") (size . 20)))
+     (lambda (body)
+       (expect (length (test-files-158--headings body "^\\* Labs$")) :to-equal 1)
+       (expect (length (test-files-158--headings body "b\\.pdf")) :to-equal 1)
+       (expect body :to-match "^\\*\\* \\[\\[file:content/Labs/b\\.pdf\\]"))))
+
+  (it "reuses a deep folder path that already exists (issue #158)"
+    (test-files-158--repull
+     "#+TITLE: Files\n* Lectures\n** Week 1\n*** [[file:content/Lectures/Week 1/a.pdf][a.pdf]]\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+     '(((id . 200) (full_name . "course files/Lectures/Week 1")))
+     '(((id . 1) (display_name . "a.pdf") (folder_id . 200)
+        (url . "https://example.com/a.pdf") (size . 10))
+       ((id . 2) (display_name . "b.pdf") (folder_id . 200)
+        (url . "https://example.com/b.pdf") (size . 20)))
+     (lambda (body)
+       (expect (length (test-files-158--headings body "^\\* Lectures$")) :to-equal 1)
+       (expect (length (test-files-158--headings body "^\\*\\* Week 1$")) :to-equal 1)
+       (expect body :to-match "^\\*\\*\\* \\[\\[file:content/Lectures/Week 1/b\\.pdf\\]"))))
+
+  (it "appends a root-level file to a buffer with no trailing newline (issue #158)"
+    (test-files-158--repull
+     "#+TITLE: Files\n* Labs\n** [[file:content/Labs/a.pdf][a.pdf]]\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:"
+     '(((id . 100) (full_name . "course files/Labs")))
+     '(((id . 1) (display_name . "a.pdf") (folder_id . 100)
+        (url . "https://example.com/a.pdf") (size . 10))
+       ((id . 8) (display_name . "syllabus.pdf") (folder_id . nil)
+        (url . "https://example.com/s.pdf") (size . 5)))
+     (lambda (body)
+       (expect body :to-match "^\\* \\[\\[file:content/syllabus\\.pdf\\]")
+       (expect body :not :to-match ":END:\\*")))) 
+
+  (it "appends cleanly to a files.org with no trailing newline (issue #158)"
+    (test-files-158--repull
+     "#+TITLE: Files\n* Labs\n** [[file:content/Labs/a.pdf][a.pdf]]\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:"
+     '(((id . 100) (full_name . "course files/Labs"))
+       ((id . 300) (full_name . "course files/Archive")))
+     '(((id . 1) (display_name . "a.pdf") (folder_id . 100)
+        (url . "https://example.com/a.pdf") (size . 10))
+       ((id . 2) (display_name . "c.pdf") (folder_id . 300)
+        (url . "https://example.com/c.pdf") (size . 30)))
+     (lambda (body)
+       (expect body :to-match "^\\* Archive$")
+       (expect body :to-match "^\\*\\* \\[\\[file:content/Archive/c\\.pdf\\]")
+       ;; No heading ran into the line above it.
+       (expect body :not :to-match ":END:\\*"))))
+
+  (it "moves a file whose folder changed, rather than duplicating it (issue #158)"
+    (test-files-158--repull
+     "#+TITLE: Files\n* Labs\n** [[file:content/Labs/a.pdf][a.pdf]]\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+     '(((id . 100) (full_name . "course files/Labs"))
+       ((id . 300) (full_name . "course files/Archive")))
+     '(((id . 1) (display_name . "a.pdf") (folder_id . 300)
+        (url . "https://example.com/a.pdf") (size . 10)))
+     (lambda (body)
+       (expect (length (test-files-158--headings body "a\\.pdf")) :to-equal 1)
+       (expect body :to-match "^\\* Archive$")
+       (expect body :to-match "\\[\\[file:content/Archive/a\\.pdf\\]")
+       (expect body :not :to-match "content/Labs/a\\.pdf"))))
+
+  (it "keeps a file at the course root at level 1 (issue #158)"
+    (test-files-158--repull
+     "#+TITLE: Files\n* Labs\n"
+     '(((id . 100) (full_name . "course files/Labs")))
+     '(((id . 7) (display_name . "syllabus.pdf") (folder_id . nil)
+        (url . "https://example.com/s.pdf") (size . 5)))
+     (lambda (body)
+       (expect body :to-match "^\\* \\[\\[file:content/syllabus\\.pdf\\]"))))
+
+  (it "leaves hand-written content and files Canvas no longer lists alone (issue #158)"
+    ;; Deletion stays with org-canvas-cleanup-orphans, and the reason the
+    ;; old advice was bad is that it threw away notes like this one.
+    (test-files-158--repull
+     "#+TITLE: Files\n* Labs\nA note I wrote by hand.\n** [[file:content/Labs/a.pdf][a.pdf]]\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n** [[file:content/Labs/gone.pdf][gone.pdf]]\n:PROPERTIES:\n:CANVAS_ID: 9\n:END:\n"
+     '(((id . 100) (full_name . "course files/Labs")))
+     '(((id . 1) (display_name . "a.pdf") (folder_id . 100)
+        (url . "https://example.com/a.pdf") (size . 10)))
+     (lambda (body)
+       (expect body :to-match "A note I wrote by hand\\.")
+       (expect body :to-match "CANVAS_ID: +9"))))
+
+  (it "finds a file the operator moved by hand, and files it where Canvas says (issue #158)"
+    ;; Matching is by Canvas id wherever the heading sits, so a hand-moved
+    ;; file is found rather than created a second time.  Canvas is the
+    ;; source of truth for which folder it belongs in, so it is filed
+    ;; there.
+    (test-files-158--repull
+     "#+TITLE: Files\n* Mine\n** [[file:content/Labs/a.pdf][a.pdf]]\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+     '(((id . 100) (full_name . "course files/Labs")))
+     '(((id . 1) (display_name . "a.pdf") (folder_id . 100)
+        (url . "https://example.com/a.pdf") (size . 10)))
+     (lambda (body)
+       (expect (length (test-files-158--headings body "a\\.pdf")) :to-equal 1)
+       ;; Canvas says Labs, the heading sits under Mine: it is moved to
+       ;; the folder Canvas names, which is the one source of truth here.
+       (expect body :to-match "^\\* Labs$"))))
+
+  (it "renames a heading when Canvas renamed the file (issue #158)"
+    (test-files-158--repull
+     "#+TITLE: Files\n* Labs\n** [[file:content/Labs/old.pdf][old.pdf]]\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+     '(((id . 100) (full_name . "course files/Labs")))
+     '(((id . 1) (display_name . "new.pdf") (folder_id . 100)
+        (url . "https://example.com/new.pdf") (size . 10)))
+     (lambda (body)
+       (expect body :to-match "new\\.pdf")
+       (expect body :not :to-match "old\\.pdf"))))
 
   (it "falls back to flat emission when folder fetch fails"
     (let* ((temp-dir (make-temp-file "pull-files-test" t))
