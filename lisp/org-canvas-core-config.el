@@ -46,6 +46,8 @@
   "Local data failed validation" 'org-canvas-error)
 (define-error 'org-canvas-config-error
   "Org-canvas configuration or required file is missing" 'org-canvas-error)
+(define-error 'org-canvas-read-only-error
+  "Course is marked read-only" 'org-canvas-error)
 
 (defmacro org-canvas--signal (type format-string &rest args)
   "Signal a TYPE error whose message comes from FORMAT-STRING and ARGS.
@@ -239,6 +241,32 @@ Emacs is running in batch mode (`noninteractive')."
   (if (or org-canvas-assume-yes noninteractive)
       t
     (y-or-n-p prompt)))
+
+(defcustom org-canvas-read-only nil
+  "When non-nil, refuse every request that would change this Canvas course.
+Set it in `org-canvas-credentials.el', beside the course id it
+protects:
+
+  (setq org-canvas-read-only t)
+
+Adopting or inheriting a course means pointing org-canvas at a course
+someone else may be teaching right now.  Pull, `org-canvas-status' and
+`org-canvas-diff' are exactly what that calls for; a stray
+`org-canvas-sync' is not, and a comment at the top of the credentials
+file is not a guard (issue #163).  Nor is the Canvas role: a Designer
+enrolment refuses group categories and the late policy, but happily
+writes assignments, pages, quizzes and modules.
+
+The check sits at the transport, so it covers every writer the package
+has and every one it grows later, and it refuses before the request is
+sent rather than after.  Reading is untouched.
+
+A defcustom rather than a mode, because it has to survive
+\\[execute-extended-command] from a fresh Emacs, a batch job, and a
+scheduled drift report: anything that loads the credentials file
+inherits it."
+  :type 'boolean
+  :group 'org-canvas)
 
 (defun org-canvas--require-optional (feature what)
   "Require FEATURE, reporting rather than aborting when it will not load.

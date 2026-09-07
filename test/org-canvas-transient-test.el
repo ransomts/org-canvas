@@ -61,5 +61,42 @@
              'org-canvas-dispatch-delete-at-point 'org-canvas-delete-page-at-point)
             :to-be-truthy)))
 
+;;;; Read-only courses grey out the writing half (issue #163)
+
+(describe "org-canvas--transient-writable-p"
+  (it "is true for a course you own"
+    (let ((org-canvas-read-only nil))
+      (expect (org-canvas--transient-writable-p) :to-be-truthy)))
+
+  (it "is false for a course marked read-only"
+    (let ((org-canvas-read-only t))
+      (expect (org-canvas--transient-writable-p) :to-be nil)))
+
+  (it "gates the writing groups and leaves reading alone"
+    ;; The menu should say what mode the course is in, not only error
+    ;; when a push command is chosen.  A prefix's layout is walked
+    ;; structurally rather than by index: transient has moved the groups
+    ;; and their plists between versions, and the suite runs on three.
+    (cl-labels
+        ((group-plist (node name)
+           (cond
+            ((and (listp node) (plist-member node :description)
+                  (equal (plist-get node :description) name))
+             node)
+            ((or (vectorp node) (listp node))
+             (cl-some (lambda (child) (group-plist child name))
+                      (append node nil)))))
+         (plist-of (name)
+           (group-plist (get 'org-canvas-dispatch 'transient--layout) name))
+         (gated-p (name)
+           (eq (plist-get (plist-of name) :inapt-if-not)
+               'org-canvas--transient-writable-p)))
+      (dolist (writing '("Sync" "Files" "Delete" "Publish"))
+        (expect (plist-of writing) :to-be-truthy)
+        (expect (gated-p writing) :to-be-truthy))
+      (dolist (reading '("Pull" "Tools" "Log"))
+        (expect (plist-of reading) :to-be-truthy)
+        (expect (gated-p reading) :to-be nil)))))
+
 (provide 'org-canvas-transient-test)
 ;;; org-canvas-transient-test.el ends here

@@ -1612,7 +1612,8 @@
 
   (it "handles upload_params with null filename"
     ;; This tests the fix for Canvas returning null filename
-    (let* ((temp-file (make-temp-file "upload-test" nil ".pdf"))
+    (with-org-canvas-test-config
+     (let* ((temp-file (make-temp-file "upload-test" nil ".pdf"))
            (upload-info '((upload_url . "https://s3.example.com/upload")
                           (upload_params . ((key . "abc123")
                                             (filename . nil)
@@ -1633,12 +1634,13 @@
               (let ((result (org-canvas--file-upload-step2-send upload-info temp-file)))
                 ;; Should return the file object
                 (expect (alist-get 'id result) :to-equal 12345))))
-        (delete-file temp-file))))
+        (delete-file temp-file)))))
 
   (it "handles redirect with Location header"
-    (let* ((temp-file (make-temp-file "upload-test" nil ".pdf"))
-           (upload-info '((upload_url . "https://s3.example.com/upload")
-                          (upload_params . ((key . "abc"))))))
+    (with-org-canvas-test-config
+     (let* ((temp-file (make-temp-file "upload-test" nil ".pdf"))
+            (upload-info '((upload_url . "https://s3.example.com/upload")
+                           (upload_params . ((key . "abc"))))))
       (unwind-protect
           (progn
             (with-temp-file temp-file (insert "content"))
@@ -1652,7 +1654,7 @@
               (let ((result (org-canvas--file-upload-step2-send upload-info temp-file)))
                 (expect (alist-get 'location result)
                         :to-equal "https://canvas.example.com/api/v1/files/99999"))))
-        (delete-file temp-file))))
+        (delete-file temp-file)))))
 
   (it "throws error when no JSON or Location in response"
     (let* ((temp-file (make-temp-file "upload-test" nil ".pdf"))

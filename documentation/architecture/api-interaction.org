@@ -151,6 +151,35 @@ permission)./ The summary also prints with =princ= under
 =noninteractive=, since =with-output-to-temp-buffer= shows a batch run
 nothing.
 
+** Read-Only Courses (issue #163)
+
+Adopting or inheriting a course points org-canvas at a Canvas course
+someone else may be teaching right now, mid-semester, with students
+enrolled. Pull, =org-canvas-status= and =org-canvas-diff= are exactly
+what that calls for; =org-canvas-sync= is not, and it sits one
+tab-completion away from =org-canvas-status=.
+
+=(setq org-canvas-read-only t)= in =org-canvas-credentials.el= makes the
+course inert for writing. The check lives at the transport
+(=org-canvas--check-writable=, called from =org-canvas-api-request= and
+from the two multipart upload paths that put bytes on the wire
+directly), so it covers every writer the package has and every one it
+grows later; per-command guards would drift. It refuses /before/ the
+request is built, and before credentials are even resolved, signalling
+=org-canvas-read-only-error=.
+
+Two things follow from it being a defcustom rather than a mode: it
+survives =M-x= from a fresh Emacs, a batch job and a scheduled
+=org-canvas-diff-batch=; and =org-canvas-init= can write it at setup
+time, which it does, asking whether this is a course you own.
+=org-canvas-dispatch= greys its Sync, Files, Delete and Publish groups
+through =:inapt-if-not=, so the menu shows the mode rather than only
+erroring when a command is chosen.
+
+*The Canvas role is not a substitute.* A Designer enrolment refuses
+=group_categories= and =late_policy= with a 403, but writes
+assignments, pages, quizzes and modules without complaint.
+
 ** Error Handling Conventions
 
 - Wrap API calls in =condition-case=

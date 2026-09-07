@@ -11,10 +11,18 @@
 
 (require 'transient)
 
+(defun org-canvas--transient-writable-p ()
+  "Return non-nil unless this course is marked read-only.
+Used as an `:inapt-if-not' predicate so a read-only course shows its
+writing commands greyed rather than only erroring when one is chosen
+\(issue #163)."
+  (not (bound-and-true-p org-canvas-read-only)))
+
 ;;;###autoload
 (transient-define-prefix org-canvas-dispatch-sync-at-point ()
   "Sync a single item at point."
   ["Sync at point"
+   :inapt-if-not org-canvas--transient-writable-p
    ("p" "Page" org-canvas-sync-page-at-point)
    ("a" "Assignment" org-canvas-sync-assignment-at-point)
    ("d" "Discussion" org-canvas-sync-discussion-at-point)
@@ -52,6 +60,7 @@
 (transient-define-prefix org-canvas-dispatch-delete-at-point ()
   "Delete a single item at point from Canvas."
   ["Delete at point"
+   :inapt-if-not org-canvas--transient-writable-p
    ("p" "Page" org-canvas-delete-page-at-point)
    ("a" "Assignment" org-canvas-delete-assignment-at-point)
    ("d" "Discussion" org-canvas-delete-discussion-at-point)
@@ -67,11 +76,13 @@
 (transient-define-prefix org-canvas-dispatch ()
   "Dispatch menu for org-canvas commands."
   ["Sync"
+   :inapt-if-not org-canvas--transient-writable-p
    ("s" "Sync all" org-canvas-sync)
    ("d" "Dry-run preview" org-canvas-sync-dry-run)
    ("f" "Force push (skip conflicts)" org-canvas-force-push)
    ("@" "Sync at point..." org-canvas-dispatch-sync-at-point)]
   ["Files"
+   :inapt-if-not org-canvas--transient-writable-p
    ("F" "Force re-upload (all files)" org-canvas-files-force-reupload)
    ("z" "Force re-upload file at point" org-canvas-force-reupload-file-at-point)]
   ["Pull"
@@ -80,10 +91,12 @@
    ("u" "Pull heading at point" org-canvas-pull-at-point)
    ("A" "Adopt Canvas item for heading at point" org-canvas-adopt-at-point)]
   ["Delete"
+   :inapt-if-not org-canvas--transient-writable-p
    ("D" "Delete all from Canvas" org-canvas-delete-all)
    ("O" "Cleanup orphans" org-canvas-cleanup-orphans)
    ("X" "Delete at point..." org-canvas-dispatch-delete-at-point)]
   ["Publish"
+   :inapt-if-not org-canvas--transient-writable-p
    ("m" "Publish module and its contents..." org-canvas-publish-module)
    ("M" "Unpublish module and its contents..." org-canvas-unpublish-module)
    ("R" "Apply scheduled releases (PUBLISH_AT)" org-canvas-apply-scheduled-releases)]
@@ -91,7 +104,8 @@
    ("g" "Pull submissions (grading file)" org-canvas-pull-submissions)
    ("o" "Open a saved grading file" org-canvas-open-submissions)
    ("a" "Apply the completion rule to this file" org-canvas-submissions-apply-completion-rule)
-   ("G" "Push grades" org-canvas-submissions-push-grades)]
+   ("G" "Push grades" org-canvas-submissions-push-grades
+    :inapt-if-not org-canvas--transient-writable-p)]
   ["Tools"
    ("i" "Init (setup wizard)" org-canvas-init)
    ("c" "Switch course" org-canvas-activate-course)

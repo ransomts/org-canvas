@@ -600,6 +600,7 @@ with `location' key."
     (org-canvas--log-debug org-canvas--logger "[Stage 3: Upload Step 2] upload_url: %s" upload-url)
     (org-canvas--log-debug org-canvas--logger "[Stage 3: Upload Step 2] upload_params from Canvas: %S" upload-params)
 
+    (org-canvas--check-writable 'POST "a file upload")
     ;; Build multipart form data
     (let* ((full-body (org-canvas--file-build-multipart-body upload-params local-path boundary))
            (url-request-method "POST")

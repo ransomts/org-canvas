@@ -654,6 +654,16 @@ extra.  Records the time this request goes out."
         (org-canvas--wait wait))))
   (setq org-canvas--last-request-time (current-time)))
 
+(defun org-canvas--check-writable (method &optional what)
+  "Refuse METHOD on a course flagged with `org-canvas-read-only'.
+WHAT names the operation for the message, defaulting to the method.
+Only GET is allowed through; everything else signals
+`org-canvas-read-only-error' before anything is sent."
+  (when (and org-canvas-read-only (not (eq method 'GET)))
+    (signal 'org-canvas-read-only-error
+            (list (format "This course is marked read-only (org-canvas-read-only is t), so %s was refused.  Pull, status and diff still work; set org-canvas-read-only to nil in org-canvas-credentials.el to allow writes"
+                          (or what (format "a %s request" method)))))))
+
 (cl-defun org-canvas-api-request (method url &key params data timeout)
   "Perform an HTTP request to the Canvas API synchronously using `plz'.
 METHOD is \\='GET, \\='POST, \\='PUT, or \\='DELETE.
@@ -661,6 +671,9 @@ URL is the full endpoint.
 PARAMS is an alist of query parameters.
 DATA is an alist or hash-table to be sent as JSON body (for POST/PUT).
 TIMEOUT is the request timeout in seconds.
+A course marked read-only with `org-canvas-read-only' refuses anything
+but GET, before the request is built (issue #163).
+
 METHOD must be one of `org-canvas--api-supported-methods'.  PATCH is
 sent via a direct curl fallback (plz cannot send it); anything not in
 the list signals `org-canvas-api-error' immediately, since plz
@@ -669,6 +682,7 @@ silently corrupts unrecognized methods into bodyless GETs."
     (org-canvas--signal 'org-canvas-api-error
       "Unsupported HTTP method %s: the plz transport can only send %s"
       method org-canvas--api-supported-methods))
+  (org-canvas--check-writable method)
   (org-canvas--ensure-credentials)
   (let* ((full-url (concat url (org-canvas--api-build-query-string params)))
 	 (json-payload (when data
@@ -937,6 +951,7 @@ Returns the Canvas file object alist (with \\='id key)."
             "Canvas API returned no upload_url in step 1 response: %S" upload-info))
         (org-canvas--log-info org-canvas--logger "[Upload Step 2] Sending file to %s..." upload-url)
         ;; Step 2: Upload the file
+        (org-canvas--check-writable 'POST "a file upload")
         (let* ((full-body (org-canvas--upload-build-multipart
                            upload-params local-path boundary))
                (url-request-method "POST")
