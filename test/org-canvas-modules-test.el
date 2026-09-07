@@ -2860,12 +2860,11 @@
 
 (describe "org-canvas--module-retry-pending-items"
   (it "does nothing when no items are pending"
-    (let ((org-canvas--module-items-pending nil)
-          (logged nil))
+    (let ((logged nil))
       (cl-letf (((symbol-function 'org-canvas--log-info)
                  (lambda (_l fmt &rest args)
                    (push (apply #'format fmt args) logged))))
-        (org-canvas--module-retry-pending-items))
+        (org-canvas--module-retry-pending-items nil))
       (expect logged :to-be nil)))
 
   (it "reclassifies healed items and hints about the rest"
@@ -2893,7 +2892,7 @@
                              :skipped-titles
                              '("Healed (no linked content synced)"
                                "Still Pending (no linked content synced)"))))
-                (org-canvas--module-items-pending
+                (pending
                  (list (list :module-id 100 :marker pending-marker
                              :title "Still Pending" :dir default-directory)
                        (list :module-id 100 :marker healed-marker
@@ -2906,8 +2905,7 @@
                      ((symbol-function 'org-canvas--log-warning)
                       (lambda (_l fmt &rest args)
                         (push (apply #'format fmt args) warnings))))
-             (org-canvas--module-retry-pending-items))
-           (expect org-canvas--module-items-pending :to-be nil)
+             (org-canvas--module-retry-pending-items pending))
            ;; Healed item moved from skip to success
            (let ((entry (car org-canvas--sync-global-feature-stats)))
              (expect (plist-get entry :success) :to-equal 1)
@@ -3665,7 +3663,7 @@ REMOTE is a form; the symbol `fail' makes the list request signal.
 `requests' collects (METHOD URL) for every `org-canvas-api-request'."
     (declare (indent 1))
     `(let ((requests nil)
-           (org-canvas--module-items-moved nil))
+           (ctx (org-canvas--sync-make-ctx)))
        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
                   (lambda (&rest _)
                     (if (eq ,remote 'fail) (error "listing failed") ,remote)))
@@ -3693,14 +3691,14 @@ REMOTE is a form; the symbol `fail' makes the list request signal.
 :END:
 "
          (org-back-to-heading)
-         (org-canvas--module-sync-items 100 (point) default-directory)
+         (org-canvas--module-sync-items 100 (point) default-directory ctx)
          ;; POST to the module, not PUT against an item it does not hold.
          (expect (cl-find-if (lambda (r) (and (eq (car r) 'POST)
                                               (string-match-p "modules/100/items$" (cadr r))))
                              requests)
                  :to-be-truthy)
          (expect (cl-find-if (lambda (r) (eq (car r) 'PUT)) requests) :to-be nil)
-         (expect org-canvas--module-items-moved :to-equal '("55"))
+         (expect (plist-get ctx :module-items-moved) :to-equal '("55"))
          (search-forward "** Check 3")
          (org-back-to-heading t)
          (expect (org-entry-get (point) "CANVAS_ID") :to-equal "900")))))
@@ -3720,13 +3718,13 @@ REMOTE is a form; the symbol `fail' makes the list request signal.
 :END:
 "
          (org-back-to-heading)
-         (org-canvas--module-sync-items 100 (point) default-directory)
+         (org-canvas--module-sync-items 100 (point) default-directory ctx)
          (expect (cl-find-if (lambda (r) (and (eq (car r) 'PUT)
                                               (string-match-p "modules/100/items/55$" (cadr r))))
                              requests)
                  :to-be-truthy)
          (expect (cl-find-if (lambda (r) (eq (car r) 'DELETE)) requests) :to-be nil)
-         (expect org-canvas--module-items-moved :to-be nil)))))
+         (expect (plist-get ctx :module-items-moved) :to-be nil)))))
 
   (it "removes an unclaimed remote item that another module's heading claims"
     (with-org-canvas-test-config
@@ -3747,7 +3745,7 @@ REMOTE is a form; the symbol `fail' makes the list request signal.
 :END:
 "
          (org-back-to-heading)
-         (org-canvas--module-sync-items 100 (point) default-directory)
+         (org-canvas--module-sync-items 100 (point) default-directory ctx)
          (expect (cl-find-if (lambda (r) (and (eq (car r) 'DELETE)
                                               (string-match-p "modules/100/items/55$" (cadr r))))
                              requests)
@@ -3757,7 +3755,7 @@ REMOTE is a form; the symbol `fail' makes the list request signal.
     ;; Its new heading is already restamped, so no heading claims the old id.
     (with-org-canvas-test-config
       (test-org-canvas--with-module-remote '(((id . 55) (title . "Check 3")))
-        (setq org-canvas--module-items-moved '("55"))
+        (plist-put ctx :module-items-moved '("55"))
         (with-temp-org-buffer
          "* Week 1
 :PROPERTIES:
@@ -3765,7 +3763,7 @@ REMOTE is a form; the symbol `fail' makes the list request signal.
 :END:
 "
          (org-back-to-heading)
-         (org-canvas--module-sync-items 100 (point) default-directory)
+         (org-canvas--module-sync-items 100 (point) default-directory ctx)
          (expect (cl-find-if (lambda (r) (eq (car r) 'DELETE)) requests) :to-be-truthy)))))
 
   (it "leaves an unlisted remote item in place and names it"
@@ -3782,7 +3780,7 @@ REMOTE is a form; the symbol `fail' makes the list request signal.
 :END:
 "
              (org-back-to-heading)
-             (org-canvas--module-sync-items 100 (point) default-directory)))
+             (org-canvas--module-sync-items 100 (point) default-directory ctx)))
           (expect (cl-find-if (lambda (r) (eq (car r) 'DELETE)) requests) :to-be nil)
           (expect (car warnings) :to-match "holds 'Web UI item' (item 55) that modules.org does not list")))))
 
@@ -3812,7 +3810,7 @@ REMOTE is a form; the symbol `fail' makes the list request signal.
 :END:
 "
          (org-back-to-heading)
-         (org-canvas--module-sync-items 100 (point) default-directory)
+         (org-canvas--module-sync-items 100 (point) default-directory ctx)
          (expect (cl-find-if (lambda (r) (eq (car r) 'DELETE)) requests) :to-be nil)))))
 
   (it "reconciles nothing when the item list cannot be fetched"
@@ -3834,7 +3832,7 @@ REMOTE is a form; the symbol `fail' makes the list request signal.
 :END:
 "
              (org-back-to-heading)
-             (org-canvas--module-sync-items 100 (point) default-directory)))
+             (org-canvas--module-sync-items 100 (point) default-directory ctx)))
           ;; PUT by id, as before; no delete; and it says so.
           (expect (cl-find-if (lambda (r) (eq (car r) 'PUT)) requests) :to-be-truthy)
           (expect (cl-find-if (lambda (r) (eq (car r) 'DELETE)) requests) :to-be nil)
@@ -3861,7 +3859,7 @@ REMOTE is a form; the symbol `fail' makes the list request signal.
   (it "survives a failed delete and says so"
     (with-org-canvas-test-config
       (let ((warnings nil)
-            (org-canvas--module-items-moved '("55")))
+            (ctx (org-canvas--sync-make-ctx :module-items-moved '("55"))))
         (cl-letf (((symbol-function 'org-canvas-api-request)
                    (lambda (&rest _) (error "HTTP 500")))
                   ((symbol-function 'org-canvas--log-warning)
@@ -3870,14 +3868,19 @@ REMOTE is a form; the symbol `fail' makes the list request signal.
           (with-temp-org-buffer "* Week 1\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n"
             (org-back-to-heading)
             (expect (org-canvas--module-reconcile-departed
-                     100 (point) '(((id . 55) (title . "Check 3"))) nil)
+                     100 (point) '(((id . 55) (title . "Check 3"))) nil ctx)
                     :to-equal 0)))
         (expect (car warnings) :to-match "Could not remove moved item 55"))))
 
-  (it "clears the moved list when the modules sync finishes"
-    (let ((org-canvas--module-items-moved '("55")))
-      (org-canvas--module-forget-moved)
-      (expect org-canvas--module-items-moved :to-be nil))))
+  (it "keeps the moved list in the run context, so it dies with the run (issue #141)"
+    ;; No global survives the sync: a fresh context starts empty, which
+    ;; is what makes the list unable to leak into the next run.
+    (let ((ctx (org-canvas--sync-make-ctx)))
+      (org-canvas--module-item-disown-foreign-id
+       (list :canvas-id "55" :title "Check 3") 100 '(((id . 77))) ctx)
+      (expect (plist-get ctx :module-items-moved) :to-equal '("55"))
+      (expect (plist-get (org-canvas--sync-make-ctx) :module-items-moved)
+              :to-be nil))))
 
 
 (describe "module pull reads the registry (issue #135)"

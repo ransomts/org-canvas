@@ -378,13 +378,15 @@ ID via `string-to-number'.  Pass-through keys: :canvas-id,
 
 ;;;; 4. Stage: Finalization
 
-(defun org-canvas--outcome-group-finalize (data response)
-  "Update local Org file with group CANVAS_ID using DATA and RESPONSE."
-  (org-canvas--finalize-item data response))
+(defun org-canvas--outcome-group-finalize (data response &optional ctx)
+  "Update local Org file with group CANVAS_ID using DATA and RESPONSE.
+CTX is the run context."
+  (org-canvas--finalize-item data response :ctx ctx))
 
-(defun org-canvas--outcome-finalize (data response)
-  "Update local Org file with outcome CANVAS_ID using DATA and RESPONSE."
-  (org-canvas--finalize-item data response))
+(defun org-canvas--outcome-finalize (data response &optional ctx)
+  "Update local Org file with outcome CANVAS_ID using DATA and RESPONSE.
+CTX is the run context."
+  (org-canvas--finalize-item data response :ctx ctx))
 
 ;;;; Main Sync Function
 
@@ -421,7 +423,7 @@ First syncs outcome groups (level-1 headings), then outcomes (level-2 headings).
      "outcome-groups" (expand-file-name org-canvas-outcomes-file) "LEVEL=1"
      #'org-canvas--outcome-group-parse-entry
      #'org-canvas--outcome-group-build-payload
-     (lambda (data _payload)
+     (lambda (data _payload &optional _ctx)
        (org-canvas--outcome-group-push-to-api data root-group-id))
      #'org-canvas--outcome-group-finalize)
     ;; Phase 2: Sync outcomes (level-2 headings)
@@ -429,7 +431,7 @@ First syncs outcome groups (level-1 headings), then outcomes (level-2 headings).
      "outcomes" (expand-file-name org-canvas-outcomes-file) "LEVEL=2"
      #'org-canvas--outcome-parse-entry
      #'org-canvas--outcome-build-payload
-     (lambda (data _payload)
+     (lambda (data _payload &optional _ctx)
        (org-canvas--outcome-push-to-api data))
      #'org-canvas--outcome-finalize)))
 

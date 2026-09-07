@@ -344,7 +344,7 @@ Returns total points across all criteria."
   "Return the Canvas rubric titled TITLE, or nil."
   (org-canvas--search-item "rubrics" title))
 
-(defun org-canvas--rubric-push-to-api (data payload)
+(defun org-canvas--rubric-push-to-api (data payload &optional ctx)
   "Send PAYLOAD (using DATA title) to Canvas, updating in place when known.
 
 A rubric used to be pushed by deleting whatever carried its title and
@@ -358,6 +358,7 @@ already holds is offered for adoption by the duplicate-title guard
 rather than deleted (issue #85).  A stale id 404s and retries as a
 POST, as everywhere else."
   (org-canvas--push-to-api data payload
+    :ctx ctx
     :endpoint "rubrics"
     :find-fn #'org-canvas--rubric-find-by-title))
 
@@ -375,14 +376,15 @@ have to be pushed again to re-associate (issue #123)."
         "[Stage 4: Finalize] Rubric '%s' came back as id %s, not %s: any assignment associated with %s lost it — re-push the assignments whose RUBRIC_LINK names this rubric"
         (plist-get data :title) id previous previous))))
 
-(defun org-canvas--rubric-finalize (data response)
+(defun org-canvas--rubric-finalize (data response &optional ctx)
   "Update local Org file with CANVAS_ID using DATA and RESPONSE.
+CTX is the run context.
 Canvas answers a rubric write with the rubric under a `rubric' key,
 so RESPONSE is unwrapped before the shared finalize sees it."
   (org-canvas--log-debug org-canvas--logger "[Stage 4: Finalize] Processing response...")
   (let ((rubric-data (or (alist-get 'rubric response) response)))
     (org-canvas--rubric-warn-recreated data (alist-get 'id rubric-data))
-    (org-canvas--finalize-item data rubric-data)))
+    (org-canvas--finalize-item data rubric-data :ctx ctx)))
 
 ;;;; Main Sync Functions
 

@@ -388,8 +388,8 @@
         marker
         (list :parse-fn (lambda () (list :title "My Page" :canvas-id "123"))
               :build-fn (lambda (_data) payload)
-              :push-fn (lambda (_data _payload) '((id . 123)))
-              :finalize-fn (lambda (_data _response) nil)
+              :push-fn (lambda (_data _payload &optional _ctx) '((id . 123)))
+              :finalize-fn (lambda (_data _response &optional _ctx) nil)
               :feature-name "pages" :feature-upper "PAGES"
               :total-count 1 :counters counters :synced-ids synced-ids))
        (expect (plist-get counters :skip) :to-equal 1)
@@ -424,8 +424,8 @@
         marker
         (list :parse-fn (lambda () (list :name "My Group" :canvas-id "456"))
               :build-fn (lambda (_data) payload)
-              :push-fn (lambda (_data _payload) '((id . 456)))
-              :finalize-fn (lambda (_data _response) nil)
+              :push-fn (lambda (_data _payload &optional _ctx) '((id . 456)))
+              :finalize-fn (lambda (_data _response &optional _ctx) nil)
               :feature-name "assignment-groups" :feature-upper "ASSIGNMENT-GROUPS"
               :total-count 1 :counters counters :synced-ids synced-ids
               :title-key :name))

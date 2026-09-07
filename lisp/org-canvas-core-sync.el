@@ -174,7 +174,7 @@ PAYLOAD-HASH is saved to the heading.  CTX is the sync context plist."
                      (plist-get (plist-get ctx :counters) :skip)
                      (plist-get (plist-get ctx :counters) :fail)
                      1)))
-    (funcall finalize-fn data response)
+    (funcall finalize-fn data response ctx)
     (org-canvas--sync-note-remote-time response ctx)
     (org-canvas-org-set-property (point) org-canvas--prop-payload-hash payload-hash)
     (org-canvas--save-buffer)
@@ -231,7 +231,7 @@ CTX is the sync context plist (see `org-canvas--sync-process-entry')."
       (org-canvas--sync-dry-run-entry canvas-id title ctx))
      (t
       (org-canvas--sync-handle-push-response
-       (funcall push-fn data payload) data payload-hash ctx progress)))))
+       (funcall push-fn data payload ctx) data payload-hash ctx progress)))))
 
 (defun org-canvas--sync-handle-push-response (response data payload-hash ctx progress)
   "Count RESPONSE from the push of DATA, or finalize it.
@@ -329,14 +329,11 @@ already hold this title (issue #85)?  Either way the entry counts as
 
 (defun org-canvas--sync-process-entry (marker ctx)
   "Process one entry through the 4-stage pipeline.
-MARKER is the position of the entry.
-CTX is a plist with keys:
-  :parse-fn, :build-fn, :push-fn, :finalize-fn - pipeline stage functions
-  :feature-name, :feature-upper - for log messages
-  :total-count - total entries being processed
-  :counters - plist (:success N :skip N :fail N) mutated in place
-  :synced-ids - list (mutated via push) of processed CANVAS_IDs
-  :title-key - plist key for display name (default :title)"
+MARKER is the position of the entry.  CTX is the run context from
+`org-canvas--sync-make-ctx' (see `org-canvas--sync-ctx-keys'): the
+pipeline functions, :feature-name and :feature-upper for the log,
+:total-count, :counters and :synced-ids mutated in place, and
+:title-key, the plist key of the display name (default :title)."
   (let ((parse-fn (plist-get ctx :parse-fn))
         (build-fn (plist-get ctx :build-fn))
         (feature-upper (plist-get ctx :feature-upper))
@@ -586,10 +583,12 @@ no stats were recorded."
 
 (defun org-canvas--make-push-fn-form (endpoint id-key title-key find-fn)
   "Build a push lambda form for endpoint-based sync macros.
-Returns a quoted lambda that calls `org-canvas--push-to-api'
-with ENDPOINT and optional ID-KEY, TITLE-KEY, FIND-FN."
-  `(lambda (data payload)
+Returns a quoted lambda of (DATA PAYLOAD &optional CTX) that calls
+`org-canvas--push-to-api' with ENDPOINT and optional ID-KEY, TITLE-KEY,
+FIND-FN, handing it the run context."
+  `(lambda (data payload &optional ctx)
      (org-canvas--push-to-api data payload
+       :ctx ctx
        :endpoint ,endpoint
        ,@(when id-key `(:id-key ,id-key))
        ,@(when title-key `(:title-key ,title-key))
@@ -598,12 +597,14 @@ with ENDPOINT and optional ID-KEY, TITLE-KEY, FIND-FN."
 (defun org-canvas--make-finalize-fn-form (id-field id-property title-key post-fn
                                                    &optional endpoint)
   "Build a finalize lambda form for endpoint-based sync macros.
-Returns a quoted lambda that calls `org-canvas--finalize-item'
-with optional ID-FIELD, ID-PROPERTY, TITLE-KEY, POST-FN.  ENDPOINT
+Returns a quoted lambda of (DATA RESPONSE &optional CTX) that calls
+`org-canvas--finalize-item' with optional ID-FIELD, ID-PROPERTY,
+TITLE-KEY, POST-FN, handing it the run context.  ENDPOINT
 travels with POST-FN so a post-fn that writes to Canvas again can have
 the baseline re-read from it (issue #124)."
-  `(lambda (data response)
+  `(lambda (data response &optional ctx)
      (org-canvas--finalize-item data response
+       :ctx ctx
        ,@(when id-field `(:id-field ,id-field))
        ,@(when id-property `(:id-property ,id-property))
        ,@(when title-key `(:title-key ,title-key))
@@ -623,16 +624,17 @@ for the display name in logs.  HASH-EXTRA-FN, when non-nil, is called with
 the parsed data and its string result is folded into the payload hash
 \(see `org-canvas--sync-payload-hash').
 
-AFTER-SYNC-FN, when non-nil, is called with no arguments once every entry
-has been processed, just before the summary.  It is the place for checks
-that need remote state and so cannot live in the offline validator — it
-must not signal, since a reconciliation problem should never fail a sync
-that otherwise succeeded."
+AFTER-SYNC-FN, when non-nil, is called with the run context once every
+entry has been processed, just before the summary.  It is the place for
+checks that need remote state and so cannot live in the offline
+validator — it must not signal, since a reconciliation problem should
+never fail a sync that otherwise succeeded.
+
+Returns the run context (`org-canvas--sync-ctx-keys'), so an
+orchestrator can read what the run accumulated — the master sync
+collects the module items left pending — without a global."
   (org-canvas-clear-log)
-  (let ((org-canvas--conflict-apply-all nil)
-        (org-canvas--duplicate-apply-all nil)
-        (org-canvas--current-pull-item-fn pull-item-fn)
-        (feature-upper (upcase feature-name)))
+  (let ((feature-upper (upcase feature-name)))
     (org-canvas--sync-validate-file feature-upper sync-file)
     (let* ((entries (org-canvas--sync-collect-entries sync-file query feature-name))
            (targets (plist-get entries :targets))
@@ -648,24 +650,28 @@ that otherwise succeeded."
            ;; remote titles, which the create path consults (issue #85).
            (snapshot (when (and org-canvas-detect-conflicts targets)
                        (org-canvas--sync-fetch-remote-snapshot feature-name)))
-           ;; `none' rather than nil: inside a sync the create guard reads
-           ;; this or nothing, and must not fall back to a GET per entry.
-           (org-canvas--current-remote-titles (or (plist-get snapshot :titles) 'none))
-           (ctx (list :baseline baseline
-                      :remote-updated (plist-get snapshot :updated)
-                      :remote-titles (plist-get snapshot :titles)
-                      :remote-times (list nil)
-                      :parse-fn parse-fn
-                      :build-fn build-fn
-                      :push-fn push-fn
-                      :finalize-fn finalize-fn
-                      :feature-name feature-name
-                      :feature-upper feature-upper
-                      :total-count (length targets)
-                      :counters counters
-                      :synced-ids synced-ids
-                      :title-key title-key
-                      :hash-extra-fn hash-extra-fn)))
+           ;; Everything this run sets for itself lives here and dies
+           ;; with it (issue #141).  :remote-titles is `none' rather
+           ;; than nil without a snapshot: inside a sync the create
+           ;; guard reads this or nothing, and must not fall back to a
+           ;; GET per entry.
+           (ctx (org-canvas--sync-make-ctx
+                 :baseline baseline
+                 :remote-updated (plist-get snapshot :updated)
+                 :remote-titles (or (plist-get snapshot :titles) 'none)
+                 :remote-times (list nil)
+                 :parse-fn parse-fn
+                 :build-fn build-fn
+                 :push-fn push-fn
+                 :finalize-fn finalize-fn
+                 :feature-name feature-name
+                 :feature-upper feature-upper
+                 :total-count (length targets)
+                 :counters counters
+                 :synced-ids synced-ids
+                 :title-key title-key
+                 :hash-extra-fn hash-extra-fn
+                 :pull-item-fn pull-item-fn)))
       (dolist (marker targets)
         (org-canvas--sync-process-entry marker ctx))
       (dolist (m targets) (set-marker m nil))
@@ -674,8 +680,9 @@ that otherwise succeeded."
       (org-canvas--sync-warn-unverified-skips feature-name counters ctx)
       (org-canvas--sync-warn-orphans all-ids-before (car synced-ids) feature-name)
       (when after-sync-fn
-        (funcall after-sync-fn))
-      (org-canvas--sync-log-summary feature-name sync-file counters))))
+        (funcall after-sync-fn ctx))
+      (org-canvas--sync-log-summary feature-name sync-file counters)
+      ctx)))
 
 (defconst org-canvas--singular-overrides
   '(("group-categories" . "group-category")
@@ -702,23 +709,28 @@ ARGS is a plist with the following keys:
   :query - Org match query for entries (default: \"LEVEL=1\")
   :parse - Function to parse entry at point (required)
   :build - Function to build payload from parsed data (required)
-  :push - Push function (or auto-generated from :endpoint)
-  :finalize - Finalize function (or auto-generated from :endpoint)
+  :push - Push function (DATA PAYLOAD &optional CTX), or auto-generated
+          from :endpoint
+  :finalize - Finalize function (DATA RESPONSE &optional CTX), or
+              auto-generated from :endpoint
   :endpoint - API endpoint suffix; auto-generates :push/:finalize
   :id-key - Plist key for Canvas ID in data (default: :canvas-id)
   :id-field - Alist key for ID in API response (default: \\='id)
   :id-property - Org property name for ID (default: \"CANVAS_ID\")
   :find-fn - Search function for timeout recovery (used by auto-generated :push)
-  :post-fn - Callback after finalize (used by auto-generated :finalize)
+  :post-fn - Callback (DATA RESPONSE &optional CTX) after finalize (used by
+             auto-generated :finalize); one that writes to Canvas again
+             says so with `org-canvas--finalize-note-remote-write'
   :title-key - Plist key for display name in logs (default: :title)
   :pull-item-fn - Optional function to pull remote data into local heading
                   for interactive conflict resolution
   :hash-extra - Optional function called with the parsed data; its string
                 result is folded into the payload hash so state outside the
                 payload (e.g. module items) participates in change detection
-  :after-sync - Optional function of no arguments run once after every entry
-                is processed, for reconciliation that needs remote state and
-                so cannot live in the offline validator.  Must not signal.
+  :after-sync - Optional function of the run context, run once after every
+                entry is processed, for reconciliation that needs remote
+                state and so cannot live in the offline validator.  Must
+                not signal.
   :no-at-point - When non-nil, suppress generating the sync-at-point function
 
 When :endpoint is provided but :push is not, a push function is auto-generated
@@ -910,9 +922,10 @@ the diff and offers push/pull/skip."
       t)))
 
 (defun org-canvas--sync-remote-items-titled (title ctx)
-  "Return the remote items in CTX's snapshot that carry TITLE, or nil."
+  "Return the remote items in CTX's snapshot that carry TITLE, or nil.
+Nil too when the run has no snapshot (:remote-titles is `none')."
   (let ((titles (plist-get ctx :remote-titles)))
-    (and titles title (gethash title titles))))
+    (and (hash-table-p titles) title (gethash title titles))))
 
 (defun org-canvas--sync-warn-unverified-skips (feature-name counters ctx)
   "Warn when FEATURE-NAME entries were skipped without checking Canvas.
@@ -1241,10 +1254,12 @@ POST-URL, when non-nil, overrides the default course-scoped POST URL."
          (signal (car post-err) (cdr post-err)))))))
 
 (defun org-canvas--push-check-and-resolve-conflict (endpoint id data title
-                                                             &optional modified-field)
+                                                             &optional modified-field ctx)
   "Check for conflicts on ENDPOINT/ID using DATA.
 TITLE is for logging.  MODIFIED-FIELD is passed to
 `org-canvas--conflict-check' — files compare `modified_at' (issue #94).
+CTX is the run context: its :pull-item-fn makes the pull option
+available, and its :conflict-apply-all remembers a capital answer.
 Returns `push', `skip', or `pulled'."
   (let ((conflict-result (org-canvas--conflict-check
                           endpoint id (plist-get data :pom) title
@@ -1252,8 +1267,8 @@ Returns `push', `skip', or `pulled'."
     (if (not (and conflict-result (eq (car conflict-result) 'conflict)))
         'push
       (let* ((remote-response (cdr conflict-result))
-             (effective-pull-fn org-canvas--current-pull-item-fn)
-             (resolution (org-canvas--resolve-conflict data remote-response)))
+             (effective-pull-fn (plist-get ctx :pull-item-fn))
+             (resolution (org-canvas--resolve-conflict data remote-response ctx)))
         (pcase resolution
           ('skip
            (org-canvas--log-warning org-canvas--logger
@@ -1284,21 +1299,23 @@ Returns `push', `skip', or `pulled'."
 ;; up: in the drift snapshot when a sync bound one (free), otherwise
 ;; through the module's FIND-FN (one GET).
 
-(defun org-canvas--push-remote-items-titled (title find-fn)
+(defun org-canvas--push-remote-items-titled (title find-fn &optional ctx)
   "Return the remote items carrying TITLE, or nil.
-Inside a sync `org-canvas--current-remote-titles' is the snapshot's
-title index, read for free, or `none' when the run had no snapshot —
-an unregistered feature, a failed fetch, conflict detection off — in
-which case nothing is checked rather than a GET spent per entry.
-Outside a sync (a single-entry push) FIND-FN, the module's search
-function, is asked; a module without one is not checked."
-  (cond
-   ((hash-table-p org-canvas--current-remote-titles)
-    (gethash title org-canvas--current-remote-titles))
-   (org-canvas--current-remote-titles nil)
-   (find-fn
-    (let ((found (funcall find-fn title)))
-      (and found (list found))))))
+Inside a sync CTX's :remote-titles is the snapshot's title index, read
+for free, or `none' when the run had no snapshot — an unregistered
+feature, a failed fetch, conflict detection off — in which case nothing
+is checked rather than a GET spent per entry.  Outside a sync (a
+single-entry push, whose context carries no titles) FIND-FN, the
+module's search function, is asked; a module without one is not
+checked."
+  (let ((titles (plist-get ctx :remote-titles)))
+    (cond
+     ((hash-table-p titles)
+      (gethash title titles))
+     (titles nil)
+     (find-fn
+      (let ((found (funcall find-fn title)))
+        (and found (list found)))))))
 
 (defun org-canvas--push-item-id (item id-key)
   "Return ITEM's id as a string, from the field ID-KEY implies.
@@ -1342,21 +1359,22 @@ the item's own clock.  TITLE is for the log.  Returns the id."
       id title)
     id))
 
-(defun org-canvas--push-guard-duplicate (data id-key title find-fn)
+(defun org-canvas--push-guard-duplicate (data id-key title find-fn &optional ctx)
   "Before creating TITLE, look it up on Canvas and decide what to do.
 Returns nil to go ahead and create, `skip' to leave the heading
 alone, or the adopted id — DATA and its heading updated — to PUT
 instead.  Not consulted when `org-canvas-duplicate-title-strategy' is
 `create', when DATA has no :pom to stamp, or when nothing on Canvas
-carries TITLE.  ID-KEY and FIND-FN are as for `org-canvas--push-to-api'."
+carries TITLE.  ID-KEY, FIND-FN and CTX are as for
+`org-canvas--push-to-api'."
   (unless (or (eq org-canvas-duplicate-title-strategy 'create)
               (null (plist-get data :pom)))
-    (let ((items (org-canvas--push-remote-items-titled title find-fn)))
+    (let ((items (org-canvas--push-remote-items-titled title find-fn ctx)))
       (when items
         (let* ((ids (mapcar (lambda (item) (org-canvas--push-item-id item id-key))
                             items))
                (id-list (mapconcat #'identity ids ", "))
-               (action (org-canvas--resolve-duplicate title ids)))
+               (action (org-canvas--resolve-duplicate title ids ctx)))
           ;; Titles are not unique on Canvas; with several holders there
           ;; is no one item to adopt.
           (when (and (eq action 'adopt) (cdr ids))
@@ -1384,7 +1402,8 @@ carries TITLE.  ID-KEY and FIND-FN are as for `org-canvas--push-to-api'."
 					title-key
 					find-fn
 					post-url-fn
-					put-url-fn)
+					put-url-fn
+					ctx)
   "Generic push-to-API with 404 retry and optional timeout recovery.
 
 DATA is the parsed entry plist (must contain :canvas-id or :canvas-url).
@@ -1397,6 +1416,11 @@ Keyword arguments:
   FIND-FN - Optional function (TITLE) to search for item after timeout.
   POST-URL-FN - Optional () -> URL for POST (overrides course-scoped default).
   PUT-URL-FN - Optional (ID) -> URL for PUT (overrides course-scoped default).
+  CTX - The run context (`org-canvas--sync-make-ctx'): the snapshot's
+    title index for the create guard, the module's pull function for
+    the conflict prompt, and the run's remembered capital answers.  Nil
+    from a caller outside any run, which behaves as a single push: the
+    guard asks FIND-FN, and no answer is remembered.
 
 Handle:
   - POST for new items (no ID), PUT for existing items
@@ -1413,7 +1437,7 @@ Returns the API response alist, or one of the symbols `conflict',
          (title (plist-get data title-key))
          (guard (and (not (plist-get data id-key))
                      (not org-canvas--dry-run)
-                     (org-canvas--push-guard-duplicate data id-key title find-fn)))
+                     (org-canvas--push-guard-duplicate data id-key title find-fn ctx)))
          (id (plist-get data id-key))
          (method (if id 'PUT 'POST))
          (full-endpoint (cond
@@ -1436,7 +1460,7 @@ Returns the API response alist, or one of the symbols `conflict',
                (eq method 'PUT)
                (plist-get data :pom))
       (let ((decision (org-canvas--push-check-and-resolve-conflict
-                       endpoint id data title)))
+                       endpoint id data title nil ctx)))
         (unless (eq decision 'push)
           (cl-return-from org-canvas--push-to-api
             (if (eq decision 'pulled) 'pulled 'conflict)))))
@@ -1464,17 +1488,13 @@ Returns the API response alist, or one of the symbols `conflict',
         ;; Default: Re-throw
         (t (signal (car err) (cdr err))))))))
 
-(defvar org-canvas--finalize-remote-touched nil
-  "Non-nil when the running finalize post-fn has written to Canvas again.
-Bound around every `:post-fn' call by `org-canvas--finalize-run-post-fn';
-a post-fn sets it through `org-canvas--finalize-note-remote-write'.")
-
-(defun org-canvas--finalize-note-remote-write ()
+(defun org-canvas--finalize-note-remote-write (ctx)
   "Declare that the running finalize post-fn has written to Canvas again.
+CTX is the run context the post-fn received as its third argument.
 The push response's timestamp is no longer what Canvas holds, so
 `org-canvas--finalize-run-post-fn' re-reads the item and restamps the
 baseline from it (issue #124)."
-  (setq org-canvas--finalize-remote-touched t))
+  (plist-put ctx :remote-touched t))
 
 (defun org-canvas--finalize-restamp-updated (pom endpoint id field title)
   "Re-read ENDPOINT/ID and stamp its FIELD into CANVAS_UPDATED_AT at POM.
@@ -1507,15 +1527,18 @@ the log."
          title (error-message-string err))))))
 
 (defun org-canvas--finalize-run-post-fn (post-fn data response pom endpoint id
-                                                 field title)
-  "Call POST-FN with DATA and RESPONSE, then restamp if it wrote to Canvas.
+                                                 field title ctx)
+  "Call POST-FN with DATA, RESPONSE and CTX, then restamp if it wrote to Canvas.
 POM, ENDPOINT, ID, FIELD and TITLE are passed on to
 `org-canvas--finalize-restamp-updated', which runs only when POST-FN
-called `org-canvas--finalize-note-remote-write'."
-  (let ((org-canvas--finalize-remote-touched nil))
-    (funcall post-fn data response)
-    (when org-canvas--finalize-remote-touched
-      (org-canvas--finalize-restamp-updated pom endpoint id field title))))
+called `org-canvas--finalize-note-remote-write' on CTX.  The flag is
+cleared before and after the call, so it means this post-fn and no
+other."
+  (plist-put ctx :remote-touched nil)
+  (funcall post-fn data response ctx)
+  (when (plist-get ctx :remote-touched)
+    (org-canvas--finalize-restamp-updated pom endpoint id field title))
+  (plist-put ctx :remote-touched nil))
 
 (cl-defun org-canvas--finalize-item (data response
 					  &key
@@ -1524,7 +1547,8 @@ called `org-canvas--finalize-note-remote-write'."
 					  title-key
 					  updated-field
 					  post-fn
-					  endpoint)
+					  endpoint
+					  ctx)
   "Finalize sync by saving Canvas ID and LAST_SYNCED.
 
 DATA is the parsed entry plist (must contain :pom).
@@ -1543,6 +1567,9 @@ Keyword arguments:
     item is then re-read from it and CANVAS_UPDATED_AT restamped, so a
     push that associates a rubric does not report itself as drift
     afterwards (issue #124).
+  CTX - The run context, handed to POST-FN as its third argument.  A
+    caller outside any run may omit it; a fresh one is made so the
+    post-fn still has somewhere to note a remote write.
 
 Save the Canvas ID and LAST_SYNCED timestamp to the Org entry."
   (let* ((id-field (or id-field 'id))
@@ -1568,7 +1595,8 @@ Save the Canvas ID and LAST_SYNCED timestamp to the Org entry."
                                            (format "%s" updated-at))))
           (when post-fn
             (org-canvas--finalize-run-post-fn post-fn data response pom
-                                              endpoint id updated-field title))
+                                              endpoint id updated-field title
+                                              (or ctx (org-canvas--sync-make-ctx))))
           (org-canvas--log-info org-canvas--logger "[Finalize] Complete for '%s'" title))
       (org-canvas--log-error org-canvas--logger "[Finalize] No ID in response for '%s'!" title)
       (org-canvas--signal 'org-canvas-api-error
@@ -1586,11 +1614,15 @@ PUSH-FN, FINALIZE-FN are the 4-stage pipeline functions.
 TITLE-KEY is the plist key for the display name.
 PULL-ITEM-FN, when non-nil, enables the pull option during conflict resolution.
 HASH-EXTRA-FN, when non-nil, is folded into the payload hash
-\(see `org-canvas--sync-payload-hash')."
+\(see `org-canvas--sync-payload-hash').  The push runs in a context of
+its own, so a capital answer at its conflict prompt is forgotten when
+it returns rather than applied to every later push at point (issue
+#141)."
   (org-back-to-heading t)
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (org-canvas--log-info org-canvas--logger ">>> SYNC-AT-POINT: %s" feature-name)
-  (let* ((org-canvas--current-pull-item-fn pull-item-fn)
+  (let* ((ctx (org-canvas--sync-make-ctx :feature-name feature-name
+                                         :pull-item-fn pull-item-fn))
          (data (funcall parse-fn))
          (title (plist-get data title-key))
          (payload (funcall build-fn data))
@@ -1607,13 +1639,13 @@ HASH-EXTRA-FN, when non-nil, is folded into the payload hash
           (message "%s '%s' unchanged — skipped." (capitalize feature-name) title))
       (org-canvas--log-info org-canvas--logger "[Stage 3: Push] '%s' (%s)"
         title (if canvas-id "UPDATE" "CREATE"))
-      (let ((response (funcall push-fn data payload)))
+      (let ((response (funcall push-fn data payload ctx)))
         (if (memq response '(conflict pulled duplicate))
             (org-canvas--push-at-point-report-stop feature-name title response)
           (org-canvas--log-info org-canvas--logger "[Stage 4: Finalize] '%s'" title)
           (condition-case err
               (progn
-                (funcall finalize-fn data response)
+                (funcall finalize-fn data response ctx)
                 (org-canvas-org-set-property (point) org-canvas--prop-payload-hash payload-hash)
                 (org-canvas--sync-advance-header-from-entry)
                 (org-canvas--save-buffer))

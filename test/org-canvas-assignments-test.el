@@ -991,25 +991,25 @@ Content.
   (it "reports the association so the baseline is re-read (issue #124)"
     (with-org-canvas-test-config
       (with-mock-api
-        (let ((org-canvas--finalize-remote-touched nil))
-          (org-canvas--assignment-post-finalize '(:rubric-id "789") '((id . 123)))
-          (expect org-canvas--finalize-remote-touched :to-be t)))))
+        (let ((ctx (org-canvas--sync-make-ctx)))
+          (org-canvas--assignment-post-finalize '(:rubric-id "789") '((id . 123)) ctx)
+          (expect (plist-get ctx :remote-touched) :to-be t)))))
 
   (it "reports nothing when there was no rubric to associate"
     (with-org-canvas-test-config
       (with-mock-api
-        (let ((org-canvas--finalize-remote-touched nil))
-          (org-canvas--assignment-post-finalize '(:rubric-id nil) '((id . 123)))
-          (expect org-canvas--finalize-remote-touched :to-be nil)))))
+        (let ((ctx (org-canvas--sync-make-ctx)))
+          (org-canvas--assignment-post-finalize '(:rubric-id nil) '((id . 123)) ctx)
+          (expect (plist-get ctx :remote-touched) :to-be nil)))))
 
   (it "reports nothing when the association failed"
     (with-org-canvas-test-config
       (cl-letf (((symbol-function 'org-canvas-api-request)
                  (lambda (&rest _) (signal 'error '("HTTP 400"))))
                 ((symbol-function 'message) #'ignore))
-        (let ((org-canvas--finalize-remote-touched nil))
-          (org-canvas--assignment-post-finalize '(:rubric-id "789") '((id . 123)))
-          (expect org-canvas--finalize-remote-touched :to-be nil))))))
+        (let ((ctx (org-canvas--sync-make-ctx)))
+          (org-canvas--assignment-post-finalize '(:rubric-id "789") '((id . 123)) ctx)
+          (expect (plist-get ctx :remote-touched) :to-be nil))))))
 
 ;;;; Parse Entry with Linked Properties
 

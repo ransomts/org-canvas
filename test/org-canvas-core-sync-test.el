@@ -211,7 +211,7 @@
            (data (list :title "Item" :pom (point-marker)))
            (response '((id . 999))))
        (org-canvas--finalize-item data response
-                                  :post-fn (lambda (_d _r) (setq post-called t)))
+                                  :post-fn (lambda (_d _r &optional _ctx) (setq post-called t)))
        (expect post-called :to-be t))))
 
   (it "signals error when no ID in response"
@@ -643,7 +643,7 @@
            (data (list :title "Test" :pom (point-marker)))
            (response '((id . 999))))
        (org-canvas--finalize-item data response
-                                  :post-fn (lambda (d r)
+                                  :post-fn (lambda (d r &optional _ctx)
                                              (setq post-fn-called-with (list d r))))
        (expect post-fn-called-with :to-be-truthy)
        (expect (car post-fn-called-with) :to-equal data)
@@ -667,7 +667,7 @@
             (list :title "Essay" :pom (point-marker))
             '((id . 2497349) (updated_at . "2026-09-02T14:07:31Z"))
             :endpoint "assignments"
-            :post-fn (lambda (_d _r) (org-canvas--finalize-note-remote-write))))
+            :post-fn (lambda (_d _r ctx) (org-canvas--finalize-note-remote-write ctx))))
          (expect (length urls) :to-equal 1)
          (expect (car urls) :to-match "assignments/2497349")
          ;; The push response's stamp was three seconds behind what the
@@ -709,7 +709,7 @@
            (org-canvas--finalize-item
             (list :title "Topic" :pom (point-marker))
             '((id . 7) (updated_at . "2026-09-02T14:07:31Z"))
-            :post-fn (lambda (_d _r) (org-canvas--finalize-note-remote-write))))
+            :post-fn (lambda (_d _r ctx) (org-canvas--finalize-note-remote-write ctx))))
          (expect called :to-be nil)))))
 
   (it "keeps the stamp it has when the re-read fails"
@@ -730,7 +730,7 @@
             (list :title "Essay" :pom (point-marker))
             '((id . 7) (updated_at . "2026-09-02T14:07:31Z"))
             :endpoint "assignments"
-            :post-fn (lambda (_d _r) (org-canvas--finalize-note-remote-write))))
+            :post-fn (lambda (_d _r ctx) (org-canvas--finalize-note-remote-write ctx))))
          (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
                  :to-equal "2026-09-02T14:07:31Z")
          (expect (car warned) :to-match "may report this push as a change")))))
@@ -749,7 +749,7 @@
           (list :title "Essay" :pom (point-marker))
           '((id . 7) (updated_at . "2026-09-02T14:07:31Z"))
           :endpoint "assignments"
-          :post-fn (lambda (_d _r) (org-canvas--finalize-note-remote-write))))
+          :post-fn (lambda (_d _r ctx) (org-canvas--finalize-note-remote-write ctx))))
        (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
                :to-equal "2026-09-02T14:07:31Z"))))
 
@@ -770,7 +770,7 @@
           '((id . 7) (modified_at . "2026-09-02T13:00:00Z"))
           :endpoint "files"
           :updated-field 'modified_at
-          :post-fn (lambda (_d _r) (org-canvas--finalize-note-remote-write))))
+          :post-fn (lambda (_d _r ctx) (org-canvas--finalize-note-remote-write ctx))))
        (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
                :to-equal "2026-09-02T14:00:00Z"))))
 
@@ -790,7 +790,7 @@
             (list :title "Essay" :pom (point-marker))
             '((id . 7) (updated_at . "2026-09-02T14:07:31Z"))
             :endpoint "assignments"
-            :post-fn (lambda (_d _r) (org-canvas--finalize-note-remote-write))))
+            :post-fn (lambda (_d _r ctx) (org-canvas--finalize-note-remote-write ctx))))
          (expect called :to-be nil))))))
 
 ;;;; 27. org-canvas--push-to-api nested recovery
@@ -1625,7 +1625,7 @@ Hello world.
                       (when (eq method 'GET)
                         '((id . 456) (updated_at . "2026-02-01T10:00:00Z")))))
                    ((symbol-function 'org-canvas--resolve-conflict)
-                    (lambda (_data _remote) 'skip)))
+                    (lambda (_data _remote &optional _ctx) 'skip)))
            (let ((data (list :title "Conflict Item" :canvas-id "456"
                              :pom (point-marker)))
                  (payload '((title . "Conflict Item"))))
@@ -1751,8 +1751,8 @@ Hello world.
                                                    :canvas-id "123"
                                                    :pom (point-marker)))
                        :build-fn (lambda (_data) '((title . "Conflict Item")))
-                       :push-fn (lambda (_data _payload) 'conflict)
-                       :finalize-fn (lambda (_data _response) nil)
+                       :push-fn (lambda (_data _payload &optional _ctx) 'conflict)
+                       :finalize-fn (lambda (_data _response &optional _ctx) nil)
                        :feature-name "items"
                        :feature-upper "ITEMS"
                        :total-count 1
@@ -1816,8 +1816,8 @@ Hello world.
           (remote '((title . "My Page Remote")
                     (updated_at . "2026-02-01T10:00:00Z")
                     (body . "remote body text")))
-          (org-canvas--current-pull-item-fn #'ignore))
-      (let ((buf (org-canvas--conflict-format-diff data remote)))
+)
+      (let ((buf (org-canvas--conflict-format-diff data remote t)))
         (unwind-protect
             (with-current-buffer buf
               (expect (buffer-string) :to-match "Conflict: My Page")
@@ -1829,7 +1829,7 @@ Hello world.
   (it "handles nil body gracefully"
     (let ((data (list :title "No Body" :pom nil))
           (remote '((title . "No Body") (updated_at . "2026-02-01T10:00:00Z")))
-          (org-canvas--current-pull-item-fn nil))
+)
       (let ((buf (org-canvas--conflict-format-diff data remote)))
         (unwind-protect
             (with-current-buffer buf
@@ -1840,14 +1840,14 @@ Hello world.
     (let ((data (list :title "Item" :pom nil))
           (remote '((title . "Item") (updated_at . "2026-02-01T10:00:00Z"))))
       ;; With pull-item-fn
-      (let ((org-canvas--current-pull-item-fn #'ignore))
-        (let ((buf (org-canvas--conflict-format-diff data remote)))
+      (progn
+        (let ((buf (org-canvas--conflict-format-diff data remote t)))
           (unwind-protect
               (with-current-buffer buf
                 (expect (buffer-string) :to-match "l = Pull"))
             (when (buffer-live-p buf) (kill-buffer buf)))))
       ;; Without pull-item-fn
-      (let ((org-canvas--current-pull-item-fn nil))
+      (progn
         (let ((buf (org-canvas--conflict-format-diff data remote)))
           (unwind-protect
               (with-current-buffer buf
@@ -1858,14 +1858,14 @@ Hello world.
     (let ((data (list :title "Item" :pom nil))
           (remote '((title . "Item") (updated_at . "2026-02-01T10:00:00Z"))))
       ;; With pull-item-fn: should show P/L/S
-      (let ((org-canvas--current-pull-item-fn #'ignore))
-        (let ((buf (org-canvas--conflict-format-diff data remote)))
+      (progn
+        (let ((buf (org-canvas--conflict-format-diff data remote t)))
           (unwind-protect
               (with-current-buffer buf
                 (expect (buffer-string) :to-match "P/L/S"))
             (when (buffer-live-p buf) (kill-buffer buf)))))
       ;; Without pull-item-fn: should show P/S
-      (let ((org-canvas--current-pull-item-fn nil))
+      (progn
         (let ((buf (org-canvas--conflict-format-diff data remote)))
           (unwind-protect
               (with-current-buffer buf
@@ -1923,56 +1923,62 @@ Hello world.
       (expect (org-canvas--conflict-prompt t) :to-equal 'skip-all)))))
 
 (describe "org-canvas--resolve-conflict"
-  (it "returns apply-all value immediately when set"
-    (let ((org-canvas--conflict-apply-all 'push)
-          (org-canvas--current-pull-item-fn nil))
-      (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")))
+  (it "returns the run's apply-all answer immediately when set"
+    (let ((ctx (org-canvas--sync-make-ctx :conflict-apply-all 'push)))
+      (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")) ctx)
               :to-equal 'push)))
 
   (it "returns skip when apply-all is skip"
-    (let ((org-canvas--conflict-apply-all 'skip)
-          (org-canvas--current-pull-item-fn nil))
-      (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")))
+    (let ((ctx (org-canvas--sync-make-ctx :conflict-apply-all 'skip)))
+      (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")) ctx)
               :to-equal 'skip)))
 
-  (it "sets apply-all on push-all choice"
-    (let ((org-canvas--conflict-apply-all nil)
-          (org-canvas--current-pull-item-fn nil))
-      (let ((noninteractive nil))
-        (cl-letf (((symbol-function 'org-canvas--conflict-prompt)
-                   (lambda (_has-pull) 'push-all)))
-          (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")))
-                  :to-equal 'push)
-          (expect org-canvas--conflict-apply-all :to-equal 'push)))))
+  (it "remembers push-all in the run context"
+    (let ((ctx (org-canvas--sync-make-ctx))
+          (noninteractive nil))
+      (cl-letf (((symbol-function 'org-canvas--conflict-prompt)
+                 (lambda (_has-pull) 'push-all)))
+        (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")) ctx)
+                :to-equal 'push)
+        (expect (plist-get ctx :conflict-apply-all) :to-equal 'push))))
 
-  (it "sets apply-all on skip-all choice"
-    (let ((org-canvas--conflict-apply-all nil)
-          (org-canvas--current-pull-item-fn nil))
-      (let ((noninteractive nil))
-        (cl-letf (((symbol-function 'org-canvas--conflict-prompt)
-                   (lambda (_has-pull) 'skip-all)))
-          (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")))
-                  :to-equal 'skip)
-          (expect org-canvas--conflict-apply-all :to-equal 'skip)))))
+  (it "remembers skip-all in the run context"
+    (let ((ctx (org-canvas--sync-make-ctx))
+          (noninteractive nil))
+      (cl-letf (((symbol-function 'org-canvas--conflict-prompt)
+                 (lambda (_has-pull) 'skip-all)))
+        (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")) ctx)
+                :to-equal 'skip)
+        (expect (plist-get ctx :conflict-apply-all) :to-equal 'skip))))
 
-  (it "sets apply-all on pull-all choice"
-    (let ((org-canvas--conflict-apply-all nil)
-          (org-canvas--current-pull-item-fn #'ignore))
-      (let ((noninteractive nil))
-        (cl-letf (((symbol-function 'org-canvas--conflict-prompt)
-                   (lambda (_has-pull) 'pull-all)))
-          (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")))
-                  :to-equal 'pull)
-          (expect org-canvas--conflict-apply-all :to-equal 'pull)))))
+  (it "remembers pull-all in the run context"
+    (let ((ctx (org-canvas--sync-make-ctx :pull-item-fn #'ignore))
+          (noninteractive nil))
+      (cl-letf (((symbol-function 'org-canvas--conflict-prompt)
+                 (lambda (_has-pull) 'pull-all)))
+        (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")) ctx)
+                :to-equal 'pull)
+        (expect (plist-get ctx :conflict-apply-all) :to-equal 'pull))))
+
+  (it "offers pull only when the run context names a pull function (issue #141)"
+    (let ((seen nil)
+          (noninteractive nil))
+      (cl-letf (((symbol-function 'org-canvas--conflict-prompt)
+                 (lambda (has-pull) (push has-pull seen) 'skip)))
+        (org-canvas--resolve-conflict '(:title "X") '((title . "X"))
+                                      (org-canvas--sync-make-ctx :pull-item-fn #'ignore))
+        (org-canvas--resolve-conflict '(:title "X") '((title . "X"))
+                                      (org-canvas--sync-make-ctx))
+        (org-canvas--resolve-conflict '(:title "X") '((title . "X")) nil))
+      (expect (nreverse seen) :to-equal '(t nil nil))))
 
   (it "kills the diff buffer after prompting"
-    (let ((org-canvas--conflict-apply-all nil)
-          (org-canvas--current-pull-item-fn nil))
-      (let ((noninteractive nil))
-        (cl-letf (((symbol-function 'org-canvas--conflict-prompt)
-                   (lambda (_has-pull) 'push)))
-          (org-canvas--resolve-conflict '(:title "X") '((title . "X")))
-          (expect (get-buffer org-canvas--conflict-buffer-name) :to-be nil))))))
+    (let ((ctx (org-canvas--sync-make-ctx))
+          (noninteractive nil))
+      (cl-letf (((symbol-function 'org-canvas--conflict-prompt)
+                 (lambda (_has-pull) 'push)))
+        (org-canvas--resolve-conflict '(:title "X") '((title . "X")) ctx)
+        (expect (get-buffer org-canvas--conflict-buffer-name) :to-be nil)))))
 
 (describe "org-canvas--conflict-unattended-action"
   ;; Issue #72: a batch sync died reading a keystroke that cannot arrive.
@@ -2037,42 +2043,44 @@ Hello world.
 
 (describe "org-canvas--resolve-conflict unattended"
   (it "resolves without prompting under batch"
-    (let ((org-canvas--conflict-apply-all nil)
-          (org-canvas--current-pull-item-fn nil)
-          (org-canvas-conflict-strategy nil))
+    (let ((org-canvas-conflict-strategy nil))
       (cl-letf (((symbol-function 'org-canvas--log-warning) #'ignore)
                 ((symbol-function 'org-canvas--conflict-format-diff)
                  (lambda (&rest _) (error "should not build a diff"))))
-        (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")))
+        (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X"))
+                                              (org-canvas--sync-make-ctx))
                 :to-equal 'skip))))
 
   (it "follows the configured strategy ahead of the prompt"
-    (let ((org-canvas--conflict-apply-all nil)
-          (org-canvas--current-pull-item-fn nil)
-          (org-canvas-conflict-strategy 'push)
+    (let ((org-canvas-conflict-strategy 'push)
           (noninteractive nil))
       (cl-letf (((symbol-function 'org-canvas--log-warning) #'ignore)
                 ((symbol-function 'org-canvas--conflict-prompt)
                  (lambda (&rest _) (error "should not prompt"))))
-        (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")))
+        (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X"))
+                                              (org-canvas--sync-make-ctx))
                 :to-equal 'push))))
 
   (it "still lets a run's apply-all answer win"
     ;; The per-run choice is more specific than the standing setting.
-    (let ((org-canvas--conflict-apply-all 'pull)
-          (org-canvas--current-pull-item-fn #'ignore)
-          (org-canvas-conflict-strategy 'push))
-      (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")))
+    (let ((org-canvas-conflict-strategy 'push))
+      (expect (org-canvas--resolve-conflict
+               '(:title "X") '((title . "X"))
+               (org-canvas--sync-make-ctx :conflict-apply-all 'pull
+                                          :pull-item-fn #'ignore))
               :to-equal 'pull)))
 
-  (it "survives the pipeline's rebinding of apply-all"
-    ;; The reported dead end: (let ((org-canvas--conflict-apply-all 'skip)) ...)
-    ;; loses to the pipeline's own binding.  The defcustom does not.
+  (it "is the seam a caller has, since a run's answer dies with its context"
+    ;; The reported dead end (issue #72) was a let of the old apply-all
+    ;; variable losing to the pipeline's rebinding.  The defcustom is
+    ;; read whenever the run context holds no answer of its own.
     (let ((org-canvas-conflict-strategy 'skip))
       (cl-letf (((symbol-function 'org-canvas--log-warning) #'ignore))
-        (let ((org-canvas--conflict-apply-all nil))
-          (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")))
-                  :to-equal 'skip))))))
+        (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X"))
+                                              (org-canvas--sync-make-ctx))
+                :to-equal 'skip)
+        (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")) nil)
+                :to-equal 'skip)))))
 
 (describe "org-canvas--conflict-pull-local"
   (it "calls pull-item-fn and refreshes file-level LAST_SYNCED header"
@@ -2179,7 +2187,7 @@ Hello world.
                         ('GET '((id . 789) (updated_at . "2026-02-01T10:00:00Z")))
                         ('PUT (setq put-called t) '((id . 789))))))
                    ((symbol-function 'org-canvas--resolve-conflict)
-                    (lambda (_data _remote) 'push)))
+                    (lambda (_data _remote &optional _ctx) 'push)))
            (let ((data (list :title "Push Item" :canvas-id "789"
                              :pom (point-marker)))
                  (payload '((title . "Push Item"))))
@@ -2198,17 +2206,17 @@ Hello world.
        (re-search-forward "^\\* ")
        (org-back-to-heading)
        (let ((org-canvas-detect-conflicts t)
-             (org-canvas--current-pull-item-fn (lambda (_item _pos) nil)))
+             (ctx (org-canvas--sync-make-ctx :pull-item-fn (lambda (_item _pos) nil))))
          (cl-letf (((symbol-function 'org-canvas-api-request)
                     (lambda (method _url &rest _args)
                       (when (eq method 'GET)
                         '((id . 111) (updated_at . "2026-02-01T10:00:00Z")))))
                    ((symbol-function 'org-canvas--resolve-conflict)
-                    (lambda (_data _remote) 'pull)))
+                    (lambda (_data _remote &optional _ctx) 'pull)))
            (let ((data (list :title "Pull Item" :canvas-id "111"
                              :pom (point-marker)))
                  (payload '((title . "Pull Item"))))
-             (expect (org-canvas--push-to-api data payload :endpoint "items")
+             (expect (org-canvas--push-to-api data payload :endpoint "items" :ctx ctx)
                      :to-equal 'pulled)))))))
 
   (it "falls back to conflict when pull chosen but no pull-fn"
@@ -2222,14 +2230,13 @@ Hello world.
 "
        (re-search-forward "^\\* ")
        (org-back-to-heading)
-       (let ((org-canvas-detect-conflicts t)
-             (org-canvas--current-pull-item-fn nil))
+       (let ((org-canvas-detect-conflicts t))
          (cl-letf (((symbol-function 'org-canvas-api-request)
                     (lambda (method _url &rest _args)
                       (when (eq method 'GET)
                         '((id . 222) (updated_at . "2026-02-01T10:00:00Z")))))
                    ((symbol-function 'org-canvas--resolve-conflict)
-                    (lambda (_data _remote) 'pull)))
+                    (lambda (_data _remote &optional _ctx) 'pull)))
            (let ((data (list :title "No Pull" :canvas-id "222"
                              :pom (point-marker)))
                  (payload '((title . "No Pull"))))
@@ -2251,8 +2258,8 @@ Hello world.
                                                    :canvas-id "333"
                                                    :pom (point-marker)))
                        :build-fn (lambda (_data) '((title . "Pulled Item")))
-                       :push-fn (lambda (_data _payload) 'pulled)
-                       :finalize-fn (lambda (_data _response) nil)
+                       :push-fn (lambda (_data _payload &optional _ctx) 'pulled)
+                       :finalize-fn (lambda (_data _response &optional _ctx) nil)
                        :feature-name "items"
                        :feature-upper "ITEMS"
                        :total-count 1
@@ -2582,10 +2589,10 @@ Keep this too
                                                   (list :title "Item" :canvas-id nil
                                                         :pom (point-marker)))
                                       :build-fn (lambda (_data) '((title . "Item")))
-                                      :push-fn (lambda (_data _payload)
+                                      :push-fn (lambda (_data _payload &optional _ctx)
                                                  (setq api-called t)
                                                  '((id . 1)))
-                                      :finalize-fn (lambda (_data _response) nil)
+                                      :finalize-fn (lambda (_data _response &optional _ctx) nil)
                                       :feature-name "test" :feature-upper "TEST"
                                       :total-count 1 :counters counters
                                       :synced-ids synced-ids
@@ -2621,7 +2628,7 @@ Keep this too
       (expect orphan-warned :to-be nil))))
 
 (describe "org-canvas--push-at-point-runtime"
-  (it "binds org-canvas--current-pull-item-fn from pull-item-fn arg"
+  (it "hands the pull-item-fn to the push through the run context"
     (with-org-canvas-test-config
       (with-mock-api
         (with-temp-org-buffer
@@ -2637,10 +2644,10 @@ Keep this too
               "test"
               (lambda () (list :title "Test" :canvas-id "99" :pom (point)))
               (lambda (_data) '((title . "Test")))
-              (lambda (_data _payload)
-                (setq captured-pull-fn org-canvas--current-pull-item-fn)
+              (lambda (_data _payload &optional ctx)
+                (setq captured-pull-fn (plist-get ctx :pull-item-fn))
                 '((id . 99)))
-              (lambda (_data _response) nil)
+              (lambda (_data _response &optional _ctx) nil)
               :title
               #'my-pull-fn))
            (expect captured-pull-fn :to-equal #'my-pull-fn)))))))
@@ -2723,43 +2730,38 @@ Keep this too
                    "test" org-file "LEVEL=1"
                    #'org-canvas--announcement-parse-entry
                    #'org-canvas--announcement-build-payload
-                   (lambda (data payload)
-                     (org-canvas--push-to-api data payload :endpoint "test"))
-                   (lambda (data response)
-                     (org-canvas--finalize-item data response))
+                   (lambda (data payload &optional ctx)
+                     (org-canvas--push-to-api data payload :endpoint "test" :ctx ctx))
+                   (lambda (data response &optional ctx)
+                     (org-canvas--finalize-item data response :ctx ctx))
                    nil nil)
                   (expect parse-count :to-be-truthy)))))
         (delete-directory temp-dir t))))
 
-  (it "binds conflict-apply-all to nil"
-    (let ((org-canvas--conflict-apply-all 'push)
-          (captured-val 'not-set))
-      (cl-letf (((symbol-function 'org-canvas-clear-log) #'ignore)
-                ((symbol-function 'org-canvas--sync-validate-file)
-                 (lambda (_upper _file)
-                   (setq captured-val org-canvas--conflict-apply-all)))
-                ((symbol-function 'org-canvas--sync-collect-entries)
-                 (lambda (&rest _) (list :targets nil :all-ids-before nil)))
-                ((symbol-function 'org-canvas--sync-warn-orphans) #'ignore)
-                ((symbol-function 'org-canvas--sync-log-summary) #'ignore))
-        (org-canvas--sync-run-pipeline "test" "/tmp/test.org" "LEVEL=1"
-                                       #'ignore #'ignore #'ignore #'ignore)
-        (expect captured-val :to-be nil))))
+  (it "starts every run with a context holding no apply-all answer"
+    (cl-letf (((symbol-function 'org-canvas-clear-log) #'ignore)
+              ((symbol-function 'org-canvas--sync-validate-file) #'ignore)
+              ((symbol-function 'org-canvas--sync-collect-entries)
+               (lambda (&rest _) (list :targets nil :all-ids-before nil)))
+              ((symbol-function 'org-canvas--sync-warn-orphans) #'ignore)
+              ((symbol-function 'org-canvas--sync-log-summary) #'ignore))
+      (let ((ctx (org-canvas--sync-run-pipeline "test" "/tmp/test.org" "LEVEL=1"
+                                                #'ignore #'ignore #'ignore #'ignore)))
+        (expect (plist-get ctx :conflict-apply-all) :to-be nil)
+        (expect (plist-get ctx :duplicate-apply-all) :to-be nil)
+        (expect (plist-get ctx :feature-name) :to-equal "test"))))
 
-  (it "binds current-pull-item-fn from argument"
-    (let ((captured-fn nil))
-      (cl-letf (((symbol-function 'org-canvas-clear-log) #'ignore)
-                ((symbol-function 'org-canvas--sync-validate-file)
-                 (lambda (&rest _)
-                   (setq captured-fn org-canvas--current-pull-item-fn)))
-                ((symbol-function 'org-canvas--sync-collect-entries)
-                 (lambda (&rest _) (list :targets nil :all-ids-before nil)))
-                ((symbol-function 'org-canvas--sync-warn-orphans) #'ignore)
-                ((symbol-function 'org-canvas--sync-log-summary) #'ignore))
-        (org-canvas--sync-run-pipeline "test" "/tmp/test.org" "LEVEL=1"
-                                       #'ignore #'ignore #'ignore #'ignore
-                                       #'my-pull-fn)
-        (expect captured-fn :to-equal #'my-pull-fn)))))
+  (it "carries the pull-item-fn argument in the returned context"
+    (cl-letf (((symbol-function 'org-canvas-clear-log) #'ignore)
+              ((symbol-function 'org-canvas--sync-validate-file) #'ignore)
+              ((symbol-function 'org-canvas--sync-collect-entries)
+               (lambda (&rest _) (list :targets nil :all-ids-before nil)))
+              ((symbol-function 'org-canvas--sync-warn-orphans) #'ignore)
+              ((symbol-function 'org-canvas--sync-log-summary) #'ignore))
+      (let ((ctx (org-canvas--sync-run-pipeline "test" "/tmp/test.org" "LEVEL=1"
+                                                #'ignore #'ignore #'ignore #'ignore
+                                                #'my-pull-fn)))
+        (expect (plist-get ctx :pull-item-fn) :to-equal #'my-pull-fn)))))
 
 ;;;; Pull Helper Tests
 
@@ -2979,8 +2981,7 @@ Local body content.
 "
        (re-search-forward "^\\* ")
        (org-back-to-heading)
-       (let ((org-canvas--current-pull-item-fn nil)
-             (data (list :title "My Item"
+       (let ((data (list :title "My Item"
                          :description "Local body content."
                          :pom (point-marker)))
              (remote '((name . "Remote Item Name")
@@ -3077,8 +3078,8 @@ Body.
             "page"
             (lambda () (list :title "Test Page" :canvas-id "100" :pom (point)))
             (lambda (_data) payload)
-            (lambda (_data _payload) (setq api-called t) '((id . 100)))
-            (lambda (_data _response) nil)
+            (lambda (_data _payload &optional _ctx) (setq api-called t) '((id . 100)))
+            (lambda (_data _response &optional _ctx) nil)
             :title
             nil))
          ;; API should NOT have been called (skipped)
@@ -3110,8 +3111,8 @@ Body.
             "page"
             (lambda () (list :title "Test Page" :canvas-url "my-page-slug" :pom (point)))
             (lambda (_data) payload)
-            (lambda (_data _payload) (setq api-called t) '((url . "my-page-slug")))
-            (lambda (_data _response) nil)
+            (lambda (_data _payload &optional _ctx) (setq api-called t) '((url . "my-page-slug")))
+            (lambda (_data _response &optional _ctx) nil)
             :title
             nil))
          ;; Should be skipped because hash matches AND canvas-url is truthy
@@ -3295,8 +3296,8 @@ Body.
   (it "auto-pushes second conflict after user chooses Push All on first"
     (with-org-canvas-test-config
       (let ((org-canvas-detect-conflicts t)
-            (org-canvas--conflict-apply-all nil)
-            (org-canvas--current-pull-item-fn nil)
+            ;; One run context shared by both pushes, as a sync would.
+            (ctx (org-canvas--sync-make-ctx))
             ;; The flow under test is a human answering the prompt once;
             ;; batch mode resolves without one (issue #72).
             (noninteractive nil)
@@ -3320,7 +3321,7 @@ Body.
            (org-back-to-heading)
            (let ((data1 (list :title "Item 1" :canvas-id "1" :pom (point-marker)))
                  (payload1 '((title . "Item 1"))))
-             (org-canvas--push-to-api data1 payload1 :endpoint "items")
+             (org-canvas--push-to-api data1 payload1 :endpoint "items" :ctx ctx)
              ;; User was prompted once
              (expect prompt-count :to-equal 1)
              ;; PUT was called (force push)
@@ -3332,7 +3333,7 @@ Body.
            (org-back-to-heading)
            (let ((data2 (list :title "Item 2" :canvas-id "2" :pom (point-marker)))
                  (payload2 '((title . "Item 2"))))
-             (org-canvas--push-to-api data2 payload2 :endpoint "items")
+             (org-canvas--push-to-api data2 payload2 :endpoint "items" :ctx ctx)
              ;; No additional prompt (apply-all active)
              (expect prompt-count :to-equal 1)
              ;; PUT was called again
@@ -3341,8 +3342,8 @@ Body.
   (it "auto-skips second conflict after user chooses Skip All on first"
     (with-org-canvas-test-config
       (let ((org-canvas-detect-conflicts t)
-            (org-canvas--conflict-apply-all nil)
-            (org-canvas--current-pull-item-fn nil)
+            ;; One run context shared by both pushes, as a sync would.
+            (ctx (org-canvas--sync-make-ctx))
             ;; The flow under test is a human answering the prompt once;
             ;; batch mode resolves without one (issue #72).
             (noninteractive nil)
@@ -3366,7 +3367,7 @@ Body.
            (org-back-to-heading)
            (let ((data (list :title "Item A" :canvas-id "10" :pom (point-marker)))
                  (payload '((title . "Item A"))))
-             (let ((result (org-canvas--push-to-api data payload :endpoint "items")))
+             (let ((result (org-canvas--push-to-api data payload :endpoint "items" :ctx ctx)))
                (expect result :to-equal 'conflict))))
           ;; Second push: auto-skipped without prompt
           (with-temp-org-buffer
@@ -3375,12 +3376,40 @@ Body.
            (org-back-to-heading)
            (let ((data (list :title "Item B" :canvas-id "20" :pom (point-marker)))
                  (payload '((title . "Item B"))))
-             (let ((result (org-canvas--push-to-api data payload :endpoint "items")))
+             (let ((result (org-canvas--push-to-api data payload :endpoint "items" :ctx ctx)))
                (expect result :to-equal 'conflict))))
           ;; Prompt was only shown once
           (expect prompt-count :to-equal 1)
           ;; No PUTs were sent
-          (expect put-count :to-equal 0))))))
+          (expect put-count :to-equal 0)))))
+
+  (it "forgets a capital answer once its run context is gone (issue #141)"
+    ;; Two pushes at point are two runs.  The old global kept the first
+    ;; run's Push All alive, so every later push at point overwrote
+    ;; conflicts without asking.
+    (with-org-canvas-test-config
+      (let ((org-canvas-detect-conflicts t)
+            (noninteractive nil)
+            (prompt-count 0))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method _url &rest _args)
+                     (pcase method
+                       ('GET '((id . 1) (updated_at . "2026-03-01T10:00:00Z")))
+                       ('PUT '((id . 1))))))
+                  ((symbol-function 'org-canvas--conflict-prompt)
+                   (lambda (_has-pull)
+                     (setq prompt-count (1+ prompt-count))
+                     'push-all)))
+          (dolist (id '("1" "2"))
+            (with-temp-org-buffer
+             (format "#+LAST_SYNCED: [2026-01-01 Thu 10:00]\n* Item\n:PROPERTIES:\n:CANVAS_ID: %s\n:END:\n" id)
+             (re-search-forward "^\\* ")
+             (org-back-to-heading)
+             (org-canvas--push-to-api
+              (list :title "Item" :canvas-id id :pom (point-marker))
+              '((title . "Item")) :endpoint "items"
+              :ctx (org-canvas--sync-make-ctx))))
+          (expect prompt-count :to-equal 2))))))
 
 ;;;; Macro helper coverage
 
@@ -3552,8 +3581,8 @@ Content here.
         "pages"
         (lambda () (list :title "Test Page" :canvas-id nil :pom (point-marker)))
         (lambda (_) '((title . "Test Page")))
-        (lambda (_data _payload) '((url . "test-page")))
-        (lambda (_data _response) nil)
+        (lambda (_data _payload &optional _ctx) '((url . "test-page")))
+        (lambda (_data _response &optional _ctx) nil)
         :title nil))
      (let ((found-sync-at-point nil)
            (found-stage-2 nil)
@@ -3595,8 +3624,8 @@ Content here.
           "pages"
           (lambda () data)
           (lambda (_) payload)
-          (lambda (_data _payload) (error "Should not be called"))
-          (lambda (_data _response) (error "Should not be called"))
+          (lambda (_data _payload &optional _ctx) (error "Should not be called"))
+          (lambda (_data _response &optional _ctx) (error "Should not be called"))
           :title nil))
        (let ((found-skip nil)
              (found-stage-3 nil))
@@ -3723,13 +3752,12 @@ Content here.
 (describe "org-canvas--resolve-conflict unexpected choice"
   (it "returns skip for unexpected choice symbol"
     (spy-on 'org-canvas--log-warning)
-    (let ((org-canvas--conflict-apply-all nil)
-          (org-canvas--current-pull-item-fn nil))
+    (let ((ctx (org-canvas--sync-make-ctx)))
       (cl-letf (((symbol-function 'org-canvas--conflict-format-diff)
-                 (lambda (_data _remote) (get-buffer-create "*test-diff*")))
+                 (lambda (_data _remote &optional _has-pull) (get-buffer-create "*test-diff*")))
                 ((symbol-function 'org-canvas--conflict-prompt)
                  (lambda (_has-pull) 'unexpected-value)))
-        (let ((result (org-canvas--resolve-conflict '(:title "Test") '((title . "Test")))))
+        (let ((result (org-canvas--resolve-conflict '(:title "Test") '((title . "Test")) ctx)))
           (expect result :to-equal 'skip)
           (expect 'org-canvas--log-warning :to-have-been-called))))))
 
@@ -4259,7 +4287,7 @@ Content here.
         (org-canvas--sync-run-pipeline "test" "/tmp/test.org" "LEVEL=1"
                                        #'ignore #'ignore #'ignore #'ignore
                                        nil nil nil
-                                       (lambda () (push 'after-sync order)))
+                                       (lambda (ctx) (push (if (plist-get ctx :feature-name) 'after-sync 'no-ctx) order)))
         (expect (nreverse order) :to-equal '(after-sync summary)))))
 
   (it "is optional"
@@ -4284,7 +4312,7 @@ Content here.
                 ((symbol-function 'org-canvas--sync-warn-orphans) #'ignore)
                 ((symbol-function 'org-canvas--sync-log-summary) #'ignore)
                 ((symbol-function 'org-canvas--assignment-group-reconcile-unmanaged)
-                 (lambda () (setq hook-ran t))))
+                 (lambda (&rest _) (setq hook-ran t))))
         (org-canvas-sync-assignment-groups)
         (expect hook-ran :to-be t)))))
 
@@ -4534,7 +4562,7 @@ Returns the list of titles that reached the push stage."
          (lambda () (list :title (org-get-heading t t t t)
                           :canvas-id (org-entry-get (point) "CANVAS_ID")))
          (lambda (_data) '((name . "x")))
-         (lambda (data _payload)
+         (lambda (data _payload &optional _ctx)
            (push (plist-get data :title) pushed)
            '((id . 61) (updated_at . "2026-08-25T00:00:00Z")))
          #'ignore))
@@ -4631,7 +4659,7 @@ Returns the list of titles that reached the push stage."
                (lambda () (list :title (org-get-heading t t t t)
                                 :canvas-id (org-entry-get (point) "CANVAS_ID")))
                (lambda (_data) '((name . "x")))
-               (lambda (_data _payload)
+               (lambda (_data _payload &optional _ctx)
                  '((id . 61) (updated_at . "2026-08-25T10:30:45Z")))
                #'ignore))
             (with-current-buffer (find-file-noselect file)
@@ -4809,8 +4837,7 @@ Returns (RESULT . WARNINGS)."
 "
        (re-search-forward "^\\* ")
        (org-back-to-heading)
-       (let* ((org-canvas--current-pull-item-fn nil)
-              (data (list :title "My Item" :description "x" :pom (point-marker)))
+       (let* ((data (list :title "My Item" :description "x" :pom (point-marker)))
               (remote '((title . "My Item") (updated_at . "2026-02-01T10:00:00Z")
                         (body . "y")))
               (buf (org-canvas--conflict-format-diff data remote)))
@@ -4830,8 +4857,7 @@ Returns (RESULT . WARNINGS)."
 :END:
 "
        (org-back-to-heading)
-       (let* ((org-canvas--current-pull-item-fn nil)
-              (data (list :title "My Item" :description "x" :pom (point-marker)))
+       (let* ((data (list :title "My Item" :description "x" :pom (point-marker)))
               (remote '((title . "My Item") (updated_at . "2026-02-01T10:00:00Z")))
               (buf (org-canvas--conflict-format-diff data remote)))
          (unwind-protect
@@ -4843,8 +4869,7 @@ Returns (RESULT . WARNINGS)."
     (with-org-canvas-test-config
       (with-temp-buffer
         (insert "plain text")
-        (let* ((org-canvas--current-pull-item-fn nil)
-               (data (list :title "X" :description "x" :pom (point)))
+        (let* ((data (list :title "X" :description "x" :pom (point)))
                (remote '((title . "X") (updated_at . "2026-02-01T10:00:00Z")))
                (buf (org-canvas--conflict-format-diff data remote)))
           (unwind-protect
@@ -5098,21 +5123,23 @@ Returns (COUNTERS . LOG-LINES)."
   (it "reads the sync's title index without calling find-fn"
     (let ((titles (make-hash-table :test 'equal)))
       (puthash "R11" '(((id . 5))) titles)
-      (let ((org-canvas--current-remote-titles titles)
+      (let ((ctx (org-canvas--sync-make-ctx :remote-titles titles))
             (find-fn (lambda (_) (error "Must not be asked"))))
-        (expect (org-canvas--push-remote-items-titled "R11" find-fn) :to-equal '(((id . 5))))
-        (expect (org-canvas--push-remote-items-titled "R12" find-fn) :to-be nil))))
+        (expect (org-canvas--push-remote-items-titled "R11" find-fn ctx) :to-equal '(((id . 5))))
+        (expect (org-canvas--push-remote-items-titled "R12" find-fn ctx) :to-be nil))))
 
   (it "checks nothing when a sync had no snapshot"
-    (let ((org-canvas--current-remote-titles 'none))
-      (expect (org-canvas--push-remote-items-titled "R11" (lambda (_) '((id . 5))))
+    (let ((ctx (org-canvas--sync-make-ctx :remote-titles 'none)))
+      (expect (org-canvas--push-remote-items-titled "R11" (lambda (_) '((id . 5))) ctx)
               :to-be nil)))
 
   (it "asks find-fn outside a sync"
-    (let ((org-canvas--current-remote-titles nil))
+    (let ((ctx (org-canvas--sync-make-ctx)))
+      (expect (org-canvas--push-remote-items-titled "R11" (lambda (_) '((id . 5))) ctx)
+              :to-equal '(((id . 5))))
       (expect (org-canvas--push-remote-items-titled "R11" (lambda (_) '((id . 5))))
               :to-equal '(((id . 5))))
-      (expect (org-canvas--push-remote-items-titled "R11" (lambda (_) nil)) :to-be nil)
+      (expect (org-canvas--push-remote-items-titled "R11" (lambda (_) nil) ctx) :to-be nil)
       (expect (org-canvas--push-remote-items-titled "R11" nil) :to-be nil))))
 
 (describe "org-canvas--push-item-id"
@@ -5153,66 +5180,66 @@ Returns (COUNTERS . LOG-LINES)."
 
   (it "does not look when the strategy is create"
     (let ((org-canvas-duplicate-title-strategy 'create)
-          (org-canvas--current-remote-titles nil))
+          (ctx (org-canvas--sync-make-ctx :remote-titles nil)))
       (expect (org-canvas--push-guard-duplicate
                (list :pom 1) :canvas-id "R11" (lambda (_) (error "Must not look")))
               :to-be nil)))
 
   (it "does not look for data it could not stamp"
     (let ((org-canvas-duplicate-title-strategy nil)
-          (org-canvas--current-remote-titles nil))
+          (ctx (org-canvas--sync-make-ctx :remote-titles nil)))
       (expect (org-canvas--push-guard-duplicate
                (list :title "R11") :canvas-id "R11" (lambda (_) (error "Must not look")))
               :to-be nil)))
 
   (it "is nil when Canvas has no such title"
     (let ((org-canvas-duplicate-title-strategy nil)
-          (org-canvas--current-remote-titles (make-hash-table :test 'equal)))
-      (expect (org-canvas--push-guard-duplicate (list :pom 1) :canvas-id "R11" nil)
+          (ctx (org-canvas--sync-make-ctx :remote-titles (make-hash-table :test 'equal))))
+      (expect (org-canvas--push-guard-duplicate (list :pom 1) :canvas-id "R11" nil ctx)
               :to-be nil)))
 
   (it "adopts a single holder"
     (with-temp-org-buffer "* R11\n"
       (org-back-to-heading)
       (let ((org-canvas-duplicate-title-strategy 'adopt)
-            (org-canvas--current-remote-titles
-             (test-dup-85--titles '((id . 2563810) (updated_at . "2026-08-28T10:00:00Z"))))
+            (ctx (org-canvas--sync-make-ctx :remote-titles
+             (test-dup-85--titles '((id . 2563810) (updated_at . "2026-08-28T10:00:00Z")))))
             (data (list :title "R11" :canvas-id nil :pom (point-marker))))
         (cl-letf (((symbol-function 'org-canvas--log-warning) #'ignore))
-          (expect (org-canvas--push-guard-duplicate data :canvas-id "R11" nil)
+          (expect (org-canvas--push-guard-duplicate data :canvas-id "R11" nil ctx)
                   :to-equal "2563810"))
         (expect (org-entry-get (point) "CANVAS_ID") :to-equal "2563810"))))
 
   (it "skips an ambiguous title even under adopt, and says why"
     (let ((org-canvas-duplicate-title-strategy 'adopt)
-          (org-canvas--current-remote-titles
-           (test-dup-85--titles '((id . 1)) '((id . 2))))
+          (ctx (org-canvas--sync-make-ctx :remote-titles
+           (test-dup-85--titles '((id . 1)) '((id . 2)))))
           (warnings nil))
       (cl-letf (((symbol-function 'org-canvas--log-warning)
                  (lambda (_l fmt &rest args) (push (apply #'format fmt args) warnings))))
-        (expect (org-canvas--push-guard-duplicate (list :pom 1) :canvas-id "R11" nil)
+        (expect (org-canvas--push-guard-duplicate (list :pom 1) :canvas-id "R11" nil ctx)
                 :to-equal 'skip))
       (expect warnings :to-contain "[Duplicate] 'R11' is held by 2 Canvas items (1, 2); cannot adopt one, skipping")
       (expect (car warnings) :to-match "Skipping 'R11' — Canvas already holds it as id 1, 2; adopt it with M-x org-canvas-adopt-at-point (which stamps CANVAS_ID), or rename")))
 
   (it "skips and names the property to stamp for a page"
     (let ((org-canvas-duplicate-title-strategy 'skip)
-          (org-canvas--current-remote-titles (test-dup-85--titles '((url . "r11"))))
+          (ctx (org-canvas--sync-make-ctx :remote-titles (test-dup-85--titles '((url . "r11")))))
           (warnings nil))
       (cl-letf (((symbol-function 'org-canvas--log-warning)
                  (lambda (_l fmt &rest args) (push (apply #'format fmt args) warnings))))
-        (expect (org-canvas--push-guard-duplicate (list :pom 1) :canvas-url "R11" nil)
+        (expect (org-canvas--push-guard-duplicate (list :pom 1) :canvas-url "R11" nil ctx)
                 :to-equal 'skip))
       (expect (car warnings) :to-match "as id r11; adopt it with M-x org-canvas-adopt-at-point (which stamps CANVAS_URL), or rename")))
 
   (it "creates when told, saying so"
     (let ((org-canvas-duplicate-title-strategy nil)
-          (org-canvas--duplicate-apply-all 'create)
-          (org-canvas--current-remote-titles (test-dup-85--titles '((id . 1))))
+          (ctx (org-canvas--sync-make-ctx :duplicate-apply-all 'create
+                                          :remote-titles (test-dup-85--titles '((id . 1)))))
           (warnings nil))
       (cl-letf (((symbol-function 'org-canvas--log-warning)
                  (lambda (_l fmt &rest args) (push (apply #'format fmt args) warnings))))
-        (expect (org-canvas--push-guard-duplicate (list :pom 1) :canvas-id "R11" nil)
+        (expect (org-canvas--push-guard-duplicate (list :pom 1) :canvas-id "R11" nil ctx)
                 :to-be nil))
       (expect (car warnings)
               :to-equal "[Duplicate] Creating 'R11' although Canvas already holds it as id 1"))))
@@ -5225,11 +5252,11 @@ Returns (COUNTERS . LOG-LINES)."
           (org-back-to-heading)
           (let ((titles (make-hash-table :test 'equal)))
             (puthash "R11" '(((id . 2563810) (name . "R11"))) titles)
-            (let* ((org-canvas--current-remote-titles titles)
+            (let* ((ctx (org-canvas--sync-make-ctx :remote-titles titles))
                    (org-canvas-duplicate-title-strategy 'skip)
                    (data (list :title "R11" :canvas-id nil :pom (point-marker)))
                    (result (org-canvas--push-to-api data '((name . "R11"))
-                                                    :endpoint "assignments")))
+                                                    :endpoint "assignments" :ctx ctx)))
               (expect result :to-equal 'duplicate)
               (expect (test-org-canvas-api-called-p 'POST "assignments") :to-be nil)))))))
 
@@ -5242,11 +5269,11 @@ Returns (COUNTERS . LOG-LINES)."
             (puthash "R11" '(((id . 2563810) (name . "R11")
                               (updated_at . "2026-08-28T10:00:00Z")))
                      titles)
-            (let* ((org-canvas--current-remote-titles titles)
+            (let* ((ctx (org-canvas--sync-make-ctx :remote-titles titles))
                    (org-canvas-duplicate-title-strategy 'adopt)
                    (data (list :title "R11" :canvas-id nil :pom (point-marker))))
               (cl-letf (((symbol-function 'org-canvas--log-warning) #'ignore))
-                (org-canvas--push-to-api data '((name . "R11")) :endpoint "assignments"))
+                (org-canvas--push-to-api data '((name . "R11")) :endpoint "assignments" :ctx ctx))
               (expect (test-org-canvas-api-called-p 'PUT "assignments/2563810") :to-be-truthy)
               (expect (test-org-canvas-api-called-p 'POST "assignments$") :to-be nil)
               (expect (org-entry-get (point) "CANVAS_ID") :to-equal "2563810")))))))
@@ -5256,10 +5283,10 @@ Returns (COUNTERS . LOG-LINES)."
       (with-mock-api
         (with-temp-org-buffer "* R11\n"
           (org-back-to-heading)
-          (let* ((org-canvas--current-remote-titles (make-hash-table :test 'equal))
+          (let* ((ctx (org-canvas--sync-make-ctx :remote-titles (make-hash-table :test 'equal)))
                  (org-canvas-duplicate-title-strategy nil)
                  (data (list :title "R11" :canvas-id nil :pom (point-marker))))
-            (org-canvas--push-to-api data '((name . "R11")) :endpoint "assignments")
+            (org-canvas--push-to-api data '((name . "R11")) :endpoint "assignments" :ctx ctx)
             (expect (test-org-canvas-api-called-p 'POST "assignments") :to-be-truthy))))))
 
   (it "leaves a dry run alone"
@@ -5270,10 +5297,10 @@ Returns (COUNTERS . LOG-LINES)."
           (let ((titles (make-hash-table :test 'equal)))
             (puthash "R11" '(((id . 2563810))) titles)
             (let* ((org-canvas--dry-run t)
-                   (org-canvas--current-remote-titles titles)
+                   (ctx (org-canvas--sync-make-ctx :remote-titles titles))
                    (org-canvas-duplicate-title-strategy 'adopt)
                    (data (list :title "R11" :canvas-id nil :pom (point-marker))))
-              (expect (org-canvas--push-to-api data '((name . "R11")) :endpoint "assignments")
+              (expect (org-canvas--push-to-api data '((name . "R11")) :endpoint "assignments" :ctx ctx)
                       :to-equal org-canvas--dry-run-response)
               (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)
               (expect (test-org-canvas-api-call-count) :to-equal 0))))))))
@@ -5283,7 +5310,7 @@ Returns (COUNTERS . LOG-LINES)."
     (with-temp-org-buffer "* R11\n"
       (org-back-to-heading)
       (let* ((counters (list :success 0 :skip 0 :fail 0 :conflict 0))
-             (ctx (list :push-fn (lambda (_d _p) 'duplicate)
+             (ctx (list :push-fn (lambda (_d _p &optional _ctx) 'duplicate)
                         :feature-name "assignments" :total-count 1
                         :counters counters :synced-ids (list nil)))
              (msgs nil))
@@ -5300,7 +5327,7 @@ Returns (COUNTERS . LOG-LINES)."
 (describe "org-canvas--sync-run-pipeline title index (issue #85)"
   (defun test-titles-85--run (snapshot)
     "Push one unstamped heading through the pipeline with SNAPSHOT.
-Returns what `org-canvas--current-remote-titles' was during the push."
+Returns the :remote-titles of the run context the push received."
     (let ((file (make-temp-file "titles-" nil ".org"))
           (seen 'unset))
       (unwind-protect
@@ -5316,8 +5343,8 @@ Returns what `org-canvas--current-remote-titles' was during the push."
                "assignments" file "LEVEL=1"
                (lambda () (list :title "R11" :canvas-id nil :pom (point-marker)))
                (lambda (_data) '((name . "R11")))
-               (lambda (_data _payload)
-                 (setq seen org-canvas--current-remote-titles)
+               (lambda (_data _payload &optional ctx)
+                 (setq seen (plist-get ctx :remote-titles))
                  '((id . 1)))
                #'ignore))
             seen)
@@ -5346,8 +5373,8 @@ Returns what `org-canvas--current-remote-titles' was during the push."
              "assignment"
              (lambda () (list :title "R11" :canvas-id nil :pom (point)))
              (lambda (_data) '((name . "R11")))
-             (lambda (_data _payload) 'duplicate)
-             (lambda (_data _response) (setq finalized t))
+             (lambda (_data _payload &optional _ctx) 'duplicate)
+             (lambda (_data _response &optional _ctx) (setq finalized t))
              :title nil))
           (expect finalized :to-be nil)
           (expect (car msgs)
@@ -5416,36 +5443,36 @@ Returns what `org-canvas--current-remote-titles' was during the push."
         (expect (org-canvas--duplicate-unattended-action "R11") :to-be nil)))))
 
 (describe "org-canvas--resolve-duplicate (issue #85)"
-  (it "honours a standing apply-all answer first"
-    (let ((org-canvas--duplicate-apply-all 'create)
+  (it "honours the run's standing apply-all answer first"
+    (let ((ctx (org-canvas--sync-make-ctx :duplicate-apply-all 'create))
           (org-canvas-duplicate-title-strategy 'skip))
-      (expect (org-canvas--resolve-duplicate "R11" '("1")) :to-equal 'create)))
+      (expect (org-canvas--resolve-duplicate "R11" '("1") ctx) :to-equal 'create)))
 
   (it "takes the unattended answer before prompting"
-    (let ((org-canvas--duplicate-apply-all nil)
-          (org-canvas-duplicate-title-strategy 'adopt))
+    (let ((org-canvas-duplicate-title-strategy 'adopt))
       (cl-letf (((symbol-function 'read-char-choice)
                  (lambda (&rest _) (error "Must not prompt")))
                 ((symbol-function 'org-canvas--log-warning) #'ignore))
+        (expect (org-canvas--resolve-duplicate "R11" '("1") (org-canvas--sync-make-ctx))
+                :to-equal 'adopt)
         (expect (org-canvas--resolve-duplicate "R11" '("1")) :to-equal 'adopt))))
 
-  (it "remembers a capital answer for the rest of the run"
-    (let ((org-canvas--duplicate-apply-all nil)
-          (org-canvas-duplicate-title-strategy nil)
+  (it "remembers a capital answer in the run context for the rest of the run"
+    (let ((org-canvas-duplicate-title-strategy nil)
           (noninteractive nil))
       (dolist (pair '((?S . skip) (?A . adopt) (?C . create)))
-        (setq org-canvas--duplicate-apply-all nil)
-        (cl-letf (((symbol-function 'read-char-choice) (lambda (&rest _) (car pair))))
-          (expect (org-canvas--resolve-duplicate "R11" '("1")) :to-equal (cdr pair))
-          (expect org-canvas--duplicate-apply-all :to-equal (cdr pair))))))
+        (let ((ctx (org-canvas--sync-make-ctx)))
+          (cl-letf (((symbol-function 'read-char-choice) (lambda (&rest _) (car pair))))
+            (expect (org-canvas--resolve-duplicate "R11" '("1") ctx) :to-equal (cdr pair))
+            (expect (plist-get ctx :duplicate-apply-all) :to-equal (cdr pair)))))))
 
   (it "passes a lowercase answer through without remembering it"
-    (let ((org-canvas--duplicate-apply-all nil)
+    (let ((ctx (org-canvas--sync-make-ctx))
           (org-canvas-duplicate-title-strategy nil)
           (noninteractive nil))
       (cl-letf (((symbol-function 'read-char-choice) (lambda (&rest _) ?c)))
-        (expect (org-canvas--resolve-duplicate "R11" '("1")) :to-equal 'create)
-        (expect org-canvas--duplicate-apply-all :to-be nil)))))
+        (expect (org-canvas--resolve-duplicate "R11" '("1") ctx) :to-equal 'create)
+        (expect (plist-get ctx :duplicate-apply-all) :to-be nil)))))
 
 ;;;; Issue #94: file drift is decided from modified_at, not updated_at
 
@@ -5524,8 +5551,8 @@ Returns what `org-canvas--current-remote-titles' was during the push."
              (ctx (list :parse-fn (lambda () (list :title "Lab 1" :canvas-id "61"
                                                    :pom (point-marker)))
                         :build-fn (lambda (_d) '((name . "x")))
-                        :push-fn (lambda (_d _p) '((id . 61)))
-                        :finalize-fn (lambda (_d _r) (error "disk full"))
+                        :push-fn (lambda (_d _p &optional _ctx) '((id . 61)))
+                        :finalize-fn (lambda (_d _r &optional _ctx) (error "disk full"))
                         :feature-name "assignments" :feature-upper "ASSIGNMENTS"
                         :total-count 1 :counters counters :synced-ids (list nil))))
         (cl-letf (((symbol-function 'org-canvas--log-error)
@@ -5553,8 +5580,8 @@ Returns what `org-canvas--current-remote-titles' was during the push."
                  "assignment"
                  (lambda () (list :title "Lab 1" :canvas-id "61" :pom (point)))
                  (lambda (_d) '((name . "x")))
-                 (lambda (_d _p) '((id . 61)))
-                 (lambda (_d _r) (error "disk full"))
+                 (lambda (_d _p &optional _ctx) '((id . 61)))
+                 (lambda (_d _r &optional _ctx) (error "disk full"))
                  :title nil)
               (error nil)))
           (expect (car logged) :to-match "\\[Stamp\\].*landed on Canvas"))))))
@@ -5713,9 +5740,9 @@ Returns what `org-canvas--current-remote-titles' was during the push."
           "assignment"
           (lambda () (list :title "Lab 1" :canvas-id "61" :pom (point-marker)))
           (lambda (_data) '((name . "Lab 1")))
-          (lambda (_data _payload)
+          (lambda (_data _payload &optional _ctx)
             '((id . 61) (updated_at . "2026-09-01T14:10:30Z")))
-          (lambda (data response) (org-canvas--finalize-item data response))
+          (lambda (data response &optional ctx) (org-canvas--finalize-item data response :ctx ctx))
           :title nil))
        (expect (org-canvas--pull-read-file-header)
                :to-equal (format-time-string
@@ -5739,8 +5766,8 @@ Returns what `org-canvas--current-remote-titles' was during the push."
           "assignment"
           (lambda () (list :title "Lab 1" :canvas-id "61" :pom (point-marker)))
           (lambda (_data) '((name . "Lab 1")))
-          (lambda (_data _payload) 'conflict)
-          (lambda (data response) (org-canvas--finalize-item data response))
+          (lambda (_data _payload &optional _ctx) 'conflict)
+          (lambda (data response &optional ctx) (org-canvas--finalize-item data response :ctx ctx))
           :title nil))
        (expect (org-canvas--pull-read-file-header)
                :to-equal "[2026-08-19 Wed 09:59]")))))

@@ -689,13 +689,6 @@ An empty FOLDER-PATH means the course root folder."
                      (org-canvas--file-get-root-folder)
                    (org-canvas--file-resolve-folder-by-path folder-path))))
 
-(defvar org-canvas--file-recreated-ids nil
-  "Display names of files deleted and re-uploaded during the current sync.
-The subset of `org-canvas--file-changed-ids' that could not be
-overwritten in place because the file moved folders, and so did lose
-its module items.  Reset by `org-canvas-sync-files'; consumed by
-`org-canvas--file-warn-recreated-ids'.")
-
 (defun org-canvas--file-remote-folder-id (canvas-id)
   "Return the id of the Canvas folder CANVAS-ID currently lives in, or nil.
 Nil also on a failed lookup, which sends the caller down the older
@@ -722,9 +715,11 @@ orphan and its module items would keep pointing at it."
     (and remote-folder folder-id
          (equal (format "%s" remote-folder) (format "%s" folder-id)))))
 
-(defun org-canvas--file-clear-way-for-upload (data canvas-id folder-id)
+(defun org-canvas--file-clear-way-for-upload (data canvas-id folder-id &optional ctx)
   "Prepare Canvas to receive a replacement upload of DATA.
 CANVAS-ID is the file being replaced and FOLDER-ID its destination.
+CTX is the run context; a file deleted here is noted in its
+:file-recreated-ids so the run can say whose module items it lost.
 
 An upload into the folder the file already lives in replaces it: the
 preflight carries `on_duplicate=overwrite', and Canvas then repoints the
@@ -744,7 +739,7 @@ would leave the old object behind with the module items still on it."
     (org-canvas--log-debug org-canvas--logger
       "[Stage 3: Execute] Replacing existing file ID: %s (moved folders, so the old object is deleted)"
       canvas-id)
-    (push (plist-get data :display-name) org-canvas--file-recreated-ids)
+    (org-canvas--ctx-push ctx :file-recreated-ids (plist-get data :display-name))
     (condition-case err
         (org-canvas-api-request
          'DELETE (format "%s/api/v1/files/%s" org-canvas-base-url canvas-id))
@@ -753,8 +748,9 @@ would leave the old object behind with the module items still on it."
          "[Stage 3: Execute] Could not delete old file: %s"
          (error-message-string err))))))
 
-(cl-defun org-canvas--file-push-to-api (data)
+(cl-defun org-canvas--file-push-to-api (data &optional ctx)
   "Execute the full 3-step upload process for DATA.
+CTX is the run context, passed on to the replacement bookkeeping.
 Returns the dry-run sentinel `org-canvas--dry-run-response' without
 contacting Canvas when `org-canvas--dry-run' is non-nil.  The guard sits
 here rather than at the call site so a single check covers both the
@@ -777,7 +773,7 @@ DELETE of the old file object and the 3-step upload."
       (org-canvas--log-debug org-canvas--logger "[Stage 3: Execute] Target folder ID: %s" folder-id)
 
       (when canvas-id
-        (org-canvas--file-clear-way-for-upload data canvas-id folder-id))
+        (org-canvas--file-clear-way-for-upload data canvas-id folder-id ctx))
 
       ;; Build upload payload
       (let ((payload (org-canvas--file-build-upload-request data folder-id)))
@@ -956,17 +952,6 @@ Bound by `org-canvas-files-force-reupload' and its at-point sibling.
 Never set globally: a sync that re-uploads everything on every run is
 the behaviour issue #71 was about.")
 
-(defvar org-canvas--file-changed-ids nil
-  "Display names of files whose CANVAS_ID changed during the current sync.
-A replacement upload always lands under a NEW id, even when it
-overwrites the file in place.  What it no longer costs is the module
-items: Canvas repoints them at the new object and keeps the old id
-resolving as an alias (issue #77).  Reset by `org-canvas-sync-files';
-consumed by `org-canvas--file-warn-changed-ids' for the log.  No hash
-invalidation is needed: each module's items digest (folded into its
-PAYLOAD_HASH) includes resolved content ids, so exactly the affected
-modules re-push their items on the next modules sync.")
-
 (defun org-canvas--file-bytes-hash (data)
   "Return the md5 of DATA's local file bytes."
   (with-temp-buffer
@@ -1140,20 +1125,24 @@ would offer a pull that silently degraded to a skip."
 ;; so the macro never registers this for them (issue #67).
 (org-canvas-register-pull-item-fn "Files" #'org-canvas--file-pull-item)
 
-(defun org-canvas--file-check-conflict (data)
+(defun org-canvas--file-check-conflict (data &optional ctx)
   "Return `push', `skip' or `pulled' for DATA's file.
+CTX is the run context; without one, a context naming the files pull
+function is made so the pull option is still offered.
 Files never reach `org-canvas--push-to-api', whose conflict guard is
 gated on PUT, so they were exempt from conflict detection entirely: a
 file replaced in the Canvas web UI was overwritten with no diff, no
 prompt and no warning (issue #49).  That matters most here, because a
 content change is a delete plus re-upload — the least recoverable thing
 the package does."
-  (let ((org-canvas--current-pull-item-fn #'org-canvas--file-pull-item))
+  (let ((ctx (or ctx (org-canvas--sync-make-ctx
+                      :feature-name "files"
+                      :pull-item-fn #'org-canvas--file-pull-item))))
     ;; modified_at, not updated_at: a metadata-only touch is not a
     ;; remote content change (issue #94).
     (org-canvas--push-check-and-resolve-conflict
      "files" (plist-get data :canvas-id) data (plist-get data :display-name)
-     'modified_at)))
+     'modified_at ctx)))
 
 (defun org-canvas--file-record-metadata-update (data response file-hash)
   "Record an in-place metadata update of DATA at point.
@@ -1167,13 +1156,13 @@ id is unchanged by construction, so there is no id rotation to report."
       (org-canvas--file-set-usage-rights fid data)))
   (org-canvas-org-set-property (point) org-canvas--prop-payload-hash file-hash))
 
-(defun org-canvas--file-record-upload (data response file-hash old-id)
+(defun org-canvas--file-record-upload (data response file-hash old-id &optional ctx)
   "Record a completed upload of DATA at point.
 RESPONSE is the Canvas file object, FILE-HASH the content hash to store
 so an unchanged file is skipped next time, and OLD-ID the CANVAS_ID the
 entry carried beforehand (nil on a first upload).  Saves the new id,
-applies visibility and usage rights, and notes an id change for
-`org-canvas--file-warn-changed-ids'.
+applies visibility and usage rights, and notes an id change in CTX's
+:file-changed-ids for `org-canvas--file-warn-changed-ids'.
 
 Ordering matters on failure: CANVAS_ID is written first and
 PAYLOAD_HASH last, so a settings or usage-rights error leaves the id
@@ -1186,7 +1175,7 @@ settings are retried)."
     (when (and fid (plist-get data :use-justification))
       (org-canvas--file-set-usage-rights fid data))
     (when (and old-id fid (not (string= (format "%s" fid) old-id)))
-      (push (plist-get data :display-name) org-canvas--file-changed-ids)))
+      (org-canvas--ctx-push ctx :file-changed-ids (plist-get data :display-name))))
   (org-canvas-org-set-property (point) org-canvas--prop-payload-hash file-hash))
 
 (defun org-canvas--file-sync-metadata-only (data file-hash)
@@ -1202,12 +1191,12 @@ FILE-HASH is stored on success.  Returns :success or :dry-run."
       (org-canvas--file-record-metadata-update data response file-hash)
       :success))))
 
-(defun org-canvas--file-sync-upload (data file-hash old-id)
+(defun org-canvas--file-sync-upload (data file-hash old-id &optional ctx)
   "Upload DATA's file to Canvas and record the result.
 FILE-HASH is stored on success; OLD-ID is the id the entry carried
-beforehand.  Returns :success or :dry-run."
+beforehand; CTX is the run context.  Returns :success or :dry-run."
   (org-canvas--log-info org-canvas--logger "----------------------------------------")
-  (let ((response (org-canvas--file-push-to-api data)))
+  (let ((response (org-canvas--file-push-to-api data ctx)))
     (cond
      ((org-canvas--dry-run-response-p response)
       (message "Files [DRY-RUN] Would %s '%s'"
@@ -1215,13 +1204,13 @@ beforehand.  Returns :success or :dry-run."
                (plist-get data :display-name))
       :dry-run)
      (t
-      (org-canvas--file-record-upload data response file-hash old-id)
+      (org-canvas--file-record-upload data response file-hash old-id ctx)
       :success))))
 
-(defun org-canvas--file-sync-parsed-entry (data)
+(defun org-canvas--file-sync-parsed-entry (data &optional ctx)
   "Sync the file described by DATA, with point on its heading.
-Returns :success, :skip (nothing changed, or the user resolved a
-conflict by skipping or pulling), or :dry-run.
+CTX is the run context.  Returns :success, :skip (nothing changed, or
+the user resolved a conflict by skipping or pulling), or :dry-run.
 
 Three outcomes, cheapest first: an entry whose stored hash still
 matches is skipped; one whose bytes match but whose metadata does not
@@ -1246,13 +1235,13 @@ looking synced."
      (org-canvas--file-force-upload
       (org-canvas--log-info org-canvas--logger
         "[Force] Re-uploading '%s' regardless of its hash" display-name)
-      (org-canvas--file-sync-upload data file-hash old-id))
+      (org-canvas--file-sync-upload data file-hash old-id ctx))
      ((and old-id stored-hash (string= file-hash stored-hash))
       (org-canvas--log-info org-canvas--logger
         "[Skip] '%s' unchanged — keeping Canvas file ID %s" display-name old-id)
       :skip)
      ((and old-id (not org-canvas--dry-run)
-           (not (eq (org-canvas--file-check-conflict data) 'push)))
+           (not (eq (org-canvas--file-check-conflict data ctx) 'push)))
       :skip)
      ((and old-id parts fresh (string= (car parts) (car fresh)))
       (org-canvas--file-sync-metadata-only data file-hash))
@@ -1265,22 +1254,22 @@ looking synced."
         (org-canvas--log-warning org-canvas--logger
           "[Files] '%s' does not match its Canvas copy — re-uploading, which rotates its file id"
           display-name))
-      (org-canvas--file-sync-upload data file-hash old-id)))))
+      (org-canvas--file-sync-upload data file-hash old-id ctx)))))
 
-(defun org-canvas--file-sync-single-entry (marker)
+(defun org-canvas--file-sync-single-entry (marker &optional ctx)
   "Process a single file entry at MARKER.
-Returns :success, :skip (folder heading or unchanged file), :dry-run, or
-:fail.  Unchanged files (same content hash as the last successful
-upload) are skipped to keep their Canvas file ID stable.  When an upload
-does replace a file's CANVAS_ID, the display name is recorded in
-`org-canvas--file-changed-ids'."
+CTX is the run context.  Returns :success, :skip (folder heading or
+unchanged file), :dry-run, or :fail.  Unchanged files (same content
+hash as the last successful upload) are skipped to keep their Canvas
+file ID stable.  When an upload does replace a file's CANVAS_ID, the
+display name is recorded in CTX's :file-changed-ids."
   (with-current-buffer (marker-buffer marker)
     (save-excursion
       (goto-char (marker-position marker))
       (condition-case err
           (let ((data (org-canvas--file-parse-entry)))
             (if data
-                (org-canvas--file-sync-parsed-entry data)
+                (org-canvas--file-sync-parsed-entry data ctx)
               :skip))
         (error
          (org-canvas--log-error org-canvas--logger "[FAILED] At point %d: %s"
@@ -1342,8 +1331,6 @@ of the same global run); until then those items are missing."
   ;; Clear session caches
   (setq org-canvas--file-root-folder-cache nil)
   (setq org-canvas--file-folder-cache (make-hash-table :test 'equal))
-  (setq org-canvas--file-changed-ids nil)
-  (setq org-canvas--file-recreated-ids nil)
 
   (let ((files-file (expand-file-name org-canvas-files-file)))
     (unless (and files-file (file-exists-p files-file))
@@ -1379,9 +1366,12 @@ of the same global run); until then those items are missing."
           (fail-count 0)
           (skip-count 0)
           (dry-run-count 0)
-          ;; Batch conflict decisions (capital P/L/S) apply across the run,
-          ;; as they do in the macro pipeline.
-          (org-canvas--conflict-apply-all nil))
+          ;; The run context: batch conflict decisions (capital P/L/S)
+          ;; apply across the run as in the macro pipeline, and the
+          ;; changed and recreated ids accumulate here (issue #141).
+          (ctx (org-canvas--sync-make-ctx
+                :feature-name "files"
+                :pull-item-fn #'org-canvas--file-pull-item)))
       ;; Gather all entries (at any level)
       (with-current-buffer (org-canvas--find-file-noselect files-file)
         (setq targets (org-map-entries (lambda () (point-marker)) t 'file)))
@@ -1390,7 +1380,7 @@ of the same global run); until then those items are missing."
       (org-canvas--file-announce-legacy-hashes targets)
 
       (dolist (marker targets)
-        (let ((result (org-canvas--file-sync-single-entry marker)))
+        (let ((result (org-canvas--file-sync-single-entry marker ctx)))
           (pcase result
             (:success (setq success-count (1+ success-count))
                       (message "Files [%d/%d] Synced"
@@ -1409,15 +1399,13 @@ of the same global run); until then those items are missing."
       (with-current-buffer (org-canvas--find-file-noselect files-file)
         (org-canvas--save-buffer))
 
-      (when org-canvas--file-changed-ids
+      (when (plist-get ctx :file-changed-ids)
         (org-canvas--file-warn-changed-ids
-         (nreverse org-canvas--file-changed-ids))
-        (setq org-canvas--file-changed-ids nil))
+         (reverse (plist-get ctx :file-changed-ids))))
 
-      (when org-canvas--file-recreated-ids
+      (when (plist-get ctx :file-recreated-ids)
         (org-canvas--file-warn-recreated-ids
-         (nreverse org-canvas--file-recreated-ids))
-        (setq org-canvas--file-recreated-ids nil))
+         (reverse (plist-get ctx :file-recreated-ids))))
 
       (org-canvas--log-info org-canvas--logger "========================================")
       (org-canvas--log-info org-canvas--logger ">>> FILE SYNC COMPLETE")
@@ -1472,13 +1460,14 @@ correcting one file rather than a course."
   (let ((display-name (org-get-heading t t t t)))
     (when (org-canvas--file-force-confirm (format "'%s'" display-name))
       (let ((org-canvas--file-force-upload t)
-            (org-canvas--file-changed-ids nil)
-            (org-canvas--file-recreated-ids nil))
-        (org-canvas--file-sync-single-entry (point-marker))
+            (ctx (org-canvas--sync-make-ctx
+                  :feature-name "files"
+                  :pull-item-fn #'org-canvas--file-pull-item)))
+        (org-canvas--file-sync-single-entry (point-marker) ctx)
         (org-canvas--save-buffer)
-        (when org-canvas--file-recreated-ids
+        (when (plist-get ctx :file-recreated-ids)
           (org-canvas--file-warn-recreated-ids
-           (nreverse org-canvas--file-recreated-ids)))
+           (reverse (plist-get ctx :file-recreated-ids))))
         (message "Re-uploaded '%s'." display-name)))))
 
 ;;;; Delete Functions

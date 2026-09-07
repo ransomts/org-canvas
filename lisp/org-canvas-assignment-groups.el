@@ -203,7 +203,7 @@ active problem, an empty one is a trap that has not sprung yet."
         (file-name-nondirectory (expand-file-name org-canvas-assignment-groups-file))))
     count))
 
-(defun org-canvas--assignment-group-reconcile-unmanaged ()
+(defun org-canvas--assignment-group-reconcile-unmanaged (&optional _ctx)
   "Report Canvas assignment groups that `assignment-groups.org' does not manage.
 
 An assignment landing in an unmanaged group is silently worth nothing
@@ -220,7 +220,8 @@ Nothing is ever deleted: Canvas requires at least one group, removing
 one with assignments forces a move, and silently discarding something a
 user made in the web UI would be worse than the trap.  Returns the list
 of unmanaged groups.  Never signals — a failed check must not fail an
-otherwise good sync."
+otherwise good sync.
+CTX, the run context, is accepted for the :after-sync contract and unused."
   (condition-case err
       (let* ((remote (org-canvas-api-request-all-pages
                       'GET (org-canvas-api-course-endpoint "assignment_groups")

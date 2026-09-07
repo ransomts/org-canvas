@@ -7,8 +7,9 @@
 ;; the conflict pipeline shows a diff buffer and prompts the user to
 ;; push (overwrite remote), pull (overwrite local), or skip.
 ;;
-;; Uppercase answers apply to all remaining conflicts in the current sync
-;; via `org-canvas--conflict-apply-all'.
+;; Uppercase answers apply to all remaining conflicts in the current sync,
+;; remembered in the run context (`org-canvas--sync-make-ctx') and
+;; nowhere else.
 
 ;;; Code:
 
@@ -23,11 +24,10 @@ nil, the default, shows the diff and prompts.  `push' overwrites
 Canvas, `pull' overwrites the local heading, `skip' leaves the entry
 alone and names it in the log.
 
-This is the seam a scheduled sync needs.  `org-canvas--conflict-apply-all'
-looks like it would serve, but every sync entry point rebinds it to nil
-so one run's \"apply to all\" answer cannot leak into the next, which
-leaves a caller nothing to set (issue #72).  This variable is never
-rebound by the pipeline.
+This is the seam a scheduled sync needs.  A run's \"apply to all\"
+answer lives in that run's context and dies with it, so it cannot leak
+into the next run and cannot serve a caller either (issues #72, #141).
+This variable is never rebound by the pipeline.
 
 Under `noninteractive' a nil setting behaves as `skip': a batch Emacs
 has no one to answer `read-char-choice', and a scheduled sync that
@@ -62,31 +62,6 @@ item to adopt, so it is skipped with a warning instead."
                  (const :tag "Create anyway" create))
   :group 'org-canvas)
 
-(defvar org-canvas--conflict-apply-all nil
-  "When non-nil, auto-resolve all conflicts with this action.
-Valid values: nil, \\='push, \\='pull, \\='skip.
-Bound per-sync by `org-canvas-define-sync'.  For a decision that
-outlives one run, see `org-canvas-conflict-strategy'.")
-
-(defvar org-canvas--duplicate-apply-all nil
-  "When non-nil, answer every duplicate-title prompt this way.
-Valid values: nil, \\='adopt, \\='skip, \\='create.  Bound per-sync by
-`org-canvas--sync-run-pipeline', like `org-canvas--conflict-apply-all'.")
-
-(defvar org-canvas--current-remote-titles nil
-  "Title index of the feature being synced, `none', or nil.
-A hash of remote title to the items carrying it, taken from the same
-list request as the drift snapshot and bound per-sync by
-`org-canvas--sync-run-pipeline' — to `none' when the run has no
-snapshot, so the create guard checks nothing rather than spending a
-GET per entry.  Nil outside a sync, where `org-canvas--push-to-api'
-asks its FIND-FN instead.")
-
-(defvar org-canvas--current-pull-item-fn nil
-  "Pull-item function for the module currently being synced.
-Dynamically bound by the sync pipeline so `org-canvas--push-to-api'
-can access it without changing per-module push function signatures.")
-
 (defconst org-canvas--conflict-buffer-name "*canvas-conflict*"
   "Buffer name for the conflict resolution diff display.")
 
@@ -96,8 +71,7 @@ can access it without changing per-module push function signatures.")
 Shows the `diff-mode' conflict resolution interface with mock data,
 then prompts for an action.  No API calls are made."
   (interactive)
-  (let* ((org-canvas--current-pull-item-fn #'ignore)
-         (data (list :title "Software Setup Guide"
+  (let* ((data (list :title "Software Setup Guide"
                      :description (concat
                                    "<p>Follow these steps to set up your "
                                    "development environment for DS 101.</p>\n"
@@ -117,16 +91,17 @@ then prompts for an action.  No API calls are made."
                              "<p>Download from code.visualstudio.com</p>\n"
                              "<p><strong>Step 3: Install Git</strong></p>\n"
                              "<p>Download from git-scm.com</p>"))))
-         (buf (org-canvas--conflict-format-diff data remote))
+         (buf (org-canvas--conflict-format-diff data remote t))
          (choice (unwind-protect
                      (org-canvas--conflict-prompt t)
                    (when (buffer-live-p buf)
                      (kill-buffer buf)))))
     (message "Demo conflict resolved with: %s" choice)))
 
-(defun org-canvas--conflict-format-diff (data remote-response)
+(defun org-canvas--conflict-format-diff (data remote-response &optional has-pull-fn)
   "Create a diff buffer comparing local DATA with REMOTE-RESPONSE.
-Returns the buffer.  The caller should kill it after resolution."
+Returns the buffer.  The caller should kill it after resolution.
+HAS-PULL-FN non-nil adds the pull option to the key help."
   (let* ((title (plist-get data :title))
          (pom (plist-get data :pom))
          ;; The baseline the check compared, labelled by source (issue #86)
@@ -141,7 +116,6 @@ Returns the buffer.  The caller should kill it after resolution."
                           (alist-get 'message remote-response)
                           (alist-get 'description remote-response)))
          (local-body (plist-get data :description))
-         (has-pull-fn (not (null org-canvas--current-pull-item-fn)))
          (buf (get-buffer-create org-canvas--conflict-buffer-name))
          (local-text (or local-body "(none)"))
          (remote-text (or remote-body "(none)"))
@@ -227,31 +201,34 @@ cannot arrive and kills the sync (issue #72)."
           " (batch mode; set org-canvas-conflict-strategy to choose)"))
       action)))
 
-(cl-defun org-canvas--resolve-conflict (data remote-response)
+(cl-defun org-canvas--resolve-conflict (data remote-response &optional ctx)
   "Resolve a conflict for DATA given REMOTE-RESPONSE.
-Checks `org-canvas--conflict-apply-all' for a batch decision, then
-`org-canvas--conflict-unattended-action' for a configured or batch-mode
-one.  Otherwise shows a diff buffer and prompts the user.
-Returns \\='push, \\='pull, or \\='skip."
-  ;; Fast path: apply-all already set by a previous choice
-  (when org-canvas--conflict-apply-all
+CTX is the run context (`org-canvas--sync-make-ctx').  Its
+:conflict-apply-all, a capital answer given earlier in this run, wins;
+then `org-canvas--conflict-unattended-action' for a configured or
+batch-mode decision.  Otherwise shows a diff buffer and prompts the
+user, offering pull only when CTX names a :pull-item-fn; a capital
+answer is remembered in CTX for the rest of the run and nowhere else
+\(issue #141).  Returns \\='push, \\='pull, or \\='skip."
+  ;; Fast path: apply-all already set by a previous choice this run
+  (when (plist-get ctx :conflict-apply-all)
     (cl-return-from org-canvas--resolve-conflict
-      org-canvas--conflict-apply-all))
+      (plist-get ctx :conflict-apply-all)))
   ;; No one to ask, or a standing instruction not to
   (let ((unattended (org-canvas--conflict-unattended-action data)))
     (when unattended
       (cl-return-from org-canvas--resolve-conflict unattended)))
   ;; Show diff and prompt
-  (let* ((has-pull-fn (not (null org-canvas--current-pull-item-fn)))
-         (buf (org-canvas--conflict-format-diff data remote-response))
+  (let* ((has-pull-fn (not (null (plist-get ctx :pull-item-fn))))
+         (buf (org-canvas--conflict-format-diff data remote-response has-pull-fn))
          (choice (unwind-protect
                      (org-canvas--conflict-prompt has-pull-fn)
                    (when (buffer-live-p buf)
                      (kill-buffer buf)))))
     (pcase choice
-      ('push-all (setq org-canvas--conflict-apply-all 'push) 'push)
-      ('pull-all (setq org-canvas--conflict-apply-all 'pull) 'pull)
-      ('skip-all (setq org-canvas--conflict-apply-all 'skip) 'skip)
+      ('push-all (plist-put ctx :conflict-apply-all 'push) 'push)
+      ('pull-all (plist-put ctx :conflict-apply-all 'pull) 'pull)
+      ('skip-all (plist-put ctx :conflict-apply-all 'skip) 'skip)
       (_ (progn
            (org-canvas--log-warning org-canvas--logger
              "[Conflict] Unexpected choice %S, defaulting to skip" choice)
@@ -296,21 +273,24 @@ batch Emacs takes `skip'."
           " (batch mode; set org-canvas-duplicate-title-strategy to choose)"))
       action)))
 
-(cl-defun org-canvas--resolve-duplicate (title ids)
+(cl-defun org-canvas--resolve-duplicate (title ids &optional ctx)
   "Decide what to do about TITLE, already on Canvas under IDS.
-Checks `org-canvas--duplicate-apply-all' for a batch decision, then
+CTX is the run context: its :duplicate-apply-all, a capital answer
+given earlier in this run, wins; then
 `org-canvas--duplicate-unattended-action' for a configured or
-batch-mode one, and otherwise prompts.  Returns `adopt', `skip' or
+batch-mode decision; otherwise the prompt, whose capital answer is
+remembered in CTX for the rest of the run.  Returns `adopt', `skip' or
 `create'."
-  (when org-canvas--duplicate-apply-all
-    (cl-return-from org-canvas--resolve-duplicate org-canvas--duplicate-apply-all))
+  (when (plist-get ctx :duplicate-apply-all)
+    (cl-return-from org-canvas--resolve-duplicate
+      (plist-get ctx :duplicate-apply-all)))
   (let ((unattended (org-canvas--duplicate-unattended-action title)))
     (when unattended
       (cl-return-from org-canvas--resolve-duplicate unattended)))
   (pcase (org-canvas--duplicate-prompt title ids)
-    ('adopt-all (setq org-canvas--duplicate-apply-all 'adopt) 'adopt)
-    ('skip-all (setq org-canvas--duplicate-apply-all 'skip) 'skip)
-    ('create-all (setq org-canvas--duplicate-apply-all 'create) 'create)
+    ('adopt-all (plist-put ctx :duplicate-apply-all 'adopt) 'adopt)
+    ('skip-all (plist-put ctx :duplicate-apply-all 'skip) 'skip)
+    ('create-all (plist-put ctx :duplicate-apply-all 'create) 'create)
     (choice choice)))
 
 (defun org-canvas--conflict-pull-local (data remote-response pull-item-fn)

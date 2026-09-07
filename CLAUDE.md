@@ -136,6 +136,12 @@ Registry keys that bite: `:remote-fn` when Canvas returns a value nested or rena
 
 Modules using `org-canvas-define-parse`: announcements, pages, calendar, group-categories, assignment-groups. Using `org-canvas-define-payload`: group-categories, calendar, pages, announcements. Custom push (non-standard URLs): group-categories, calendar. Custom sync loops (not macro-based): files, outcomes, quizzes, new-quizzes, modules, overrides — see Hard Rule 1. Pull-only: sections.
 
+### The Run Context
+
+One sync run owns one context plist (`org-canvas--sync-make-ctx`, keys in `org-canvas--sync-ctx-keys`): the remote snapshot, the pipeline functions, the counters, and every flag or list the run sets for itself — the capital answers at conflict and duplicate prompts, the module's pull function, the ids modules moved and files changed. It is threaded, never global, so nothing a run decides can reach the next one (#72, #141). Push, finalize and `:post-fn` take it as an optional last argument; `org-canvas--sync-run-pipeline` returns it, which is how the master sync gets the module items left pending. Add a key to `org-canvas--sync-ctx-keys` before using it, or `plist-put` has nothing to mutate in place.
+
+What stays dynamically bound is the *caller's* seam, set around a command by whoever invokes it: `org-canvas--dry-run`, `org-canvas-conflict-strategy`, `org-canvas--file-force-upload`, `org-canvas--inhibit-log-clear`, and the master sync's aggregates.
+
 ### Sync State
 
 `CANVAS_ID` present → UPDATE (PUT); absent → CREATE (POST). Finalize also stamps `LAST_SYNCED`, `CANVAS_UPDATED_AT` (the conflict baseline, Canvas's clock) and the sync runner stores `PAYLOAD_HASH` (skip optimization). Write them with `org-canvas-org-save-sync-state`; pull paths drop `PAYLOAD_HASH` and restamp `CANVAS_UPDATED_AT` via `org-canvas--conflict-pull-local` — by hand, the entry re-flags as drifted forever while looking clean.
@@ -180,9 +186,9 @@ Modules using `org-canvas-define-parse`: announcements, pages, calendar, group-c
 ### Conflict Resolution
 - Baseline is `org-canvas--conflict-baseline`: the entry's `CANVAS_UPDATED_AT`, falling back to the file's `#+LAST_SYNCED` header, which pushes advance forward-only (#48, #104)
 - The payload-hash skip is drift-aware: a matching hash proves only the local side unchanged, so a remotely-modified entry leaves the skip path (`org-canvas--sync-remote-drifted-p`)
-- `org-canvas--conflict-check` returns `(cons 'conflict REMOTE-RESPONSE)`; `org-canvas--resolve-conflict` prompts push/pull/skip (capitals apply to all, via `org-canvas--conflict-apply-all`); push returns `'pulled` when the user pulls
+- `org-canvas--conflict-check` returns `(cons 'conflict REMOTE-RESPONSE)`; `org-canvas--resolve-conflict` prompts push/pull/skip (capitals apply to all, remembered in the run context); push returns `'pulled` when the user pulls
 - `org-canvas-conflict-strategy` is the caller's seam and is never rebound by the pipeline; under `noninteractive` the fallback is `skip` (#72). Tests that exercise the prompt must bind `noninteractive` to nil
-- A `:post-fn` that writes to Canvas again must say so with `org-canvas--finalize-note-remote-write` (#124)
+- A `:post-fn` that writes to Canvas again must say so with `org-canvas--finalize-note-remote-write`, on the context it is handed (#124)
 - Full rules: api-interaction.org, "Conflict Detection"
 
 ### Org Interaction

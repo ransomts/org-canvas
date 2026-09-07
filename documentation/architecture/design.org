@@ -388,9 +388,44 @@ Setting =org-canvas-detect-conflicts= to nil bypasses the check.
 
 When syncing 50 items and 10 have conflicts, answering each
 individually is tedious. Capital-letter choices (P/L/S) apply to all
-remaining conflicts in the current sync session, stored in
-=org-canvas--conflict-apply-all=. The variable is reset at the start
-of each sync.
+remaining conflicts in the current sync run, remembered in that run's
+context under =:conflict-apply-all= (=:duplicate-apply-all= for the
+create guard's A/S/C). Because the context is created by the run and
+discarded with it, the answer cannot outlive the run that gave it —
+two pushes at point are two runs and ask twice.
+
+** The Run Context (issue #141)
+
+A run — a full-file pipeline pass, a push at point, the files loop —
+owns one plist built by =org-canvas--sync-make-ctx=, whose permitted
+keys are =org-canvas--sync-ctx-keys=. It carries the remote snapshot
+(=:baseline=, =:remote-updated=, =:remote-titles=, =:remote-times=),
+the pipeline functions, =:counters= and =:synced-ids=, and the run's
+own state: the capital answers above, =:pull-item-fn= (which is what
+makes "pull" available at a conflict prompt), =:remote-touched= (set by
+a finalize post-fn that wrote to Canvas again, issue #124),
+=:module-items-moved= and =:module-items-pending=, =:file-changed-ids=
+and =:file-recreated-ids=.
+
+Every key is present from creation so =plist-put= mutates the context
+in place and the functions sharing it see one another's writes; a new
+key must be added to =org-canvas--sync-ctx-keys= first. The pipeline
+stage functions take it as an optional third argument (=:push=,
+=:finalize=, =:post-fn=, =:after-sync=), and
+=org-canvas--sync-run-pipeline= returns it.
+
+*Why not dynamic binding.* Fifteen =defvar='s used to serve as let-bound
+run flags. The pattern reads well until two runs meet: issue #72 was a
+caller's =let= of =--conflict-apply-all= losing to the pipeline's own
+rebinding, and the fix at the time added a second variable rather than
+a context. A global also leaks the other way — a capital answer given
+during one push at point stayed set for every later one. What remains
+dynamically bound is deliberately the /caller's/ seam, a variable a
+wrapper binds around a command that takes no arguments:
+=org-canvas--dry-run= (=org-canvas-sync-dry-run=),
+=org-canvas--file-force-upload= (=org-canvas-files-force-reupload=),
+=org-canvas--inhibit-log-clear= and the global summary's accumulators
+(=org-canvas-sync=), and the =org-canvas-conflict-strategy= defcustom.
 
 * Validation Engine
 
@@ -513,7 +548,7 @@ the entire session.
 
 *Its columns follow the run* (=org-canvas--sync-summary-columns=): a dry run swaps Success for *Would sync* under a =DRY RUN= header, and Conflicts/Pulled columns appear only when the run had some. Every counter a run populates must be listed in =org-canvas--sync-stat-keys= — both the aggregate and the per-feature entry are built from it, and a key left out is silently dropped on the way to the table. That is issue #66: =:dry-run=, =:conflict= and =:pulled= were populated but never carried, so a dry run with 31 pending assignment updates printed =0 success= and a sync that hit five conflicts printed =0 failed= and nothing else. A custom sync must record its dry-run outcome as =:dry-run=, not =:success= (settings did the latter), or the mode detection never sees it.
 
-Module items skipped because their target lacked a CANVAS_ID are tracked in =org-canvas--module-items-pending= and retried after the final tier (=org-canvas--module-retry-pending-items=): healed items are reclassified skip→success in the summary; the rest produce a named "re-run org-canvas-sync-modules" hint.
+Module items skipped because their target lacked a CANVAS_ID are collected in the modules run's context under =:module-items-pending=, which =org-canvas-sync= reads off the value =org-canvas--sync-run-pipeline= returned and hands to =org-canvas--module-retry-pending-items= after the final tier: healed items are reclassified skip→success in the summary; the rest produce a named "re-run org-canvas-sync-modules" hint.
 
 * Credential Management
 

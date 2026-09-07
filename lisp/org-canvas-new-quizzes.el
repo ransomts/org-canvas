@@ -232,8 +232,9 @@ Reads raw properties, transforms them, and exports description to HTML."
 
 ;;;; Quiz Push to API
 
-(cl-defun org-canvas--new-quiz-push-to-api (data payload)
+(cl-defun org-canvas--new-quiz-push-to-api (data payload &optional _ctx)
   "Send New Quiz PAYLOAD (from DATA) to Canvas API.
+CTX, the run context, is accepted for the pipeline's sake and unused.
 Uses POST for new quizzes and PATCH for existing ones.
 PAYLOAD is the inner quiz data; it is wrapped under a \"quiz\" key
 as required by the New Quizzes API.
@@ -283,8 +284,9 @@ Returns response with assignment_id."
 
 ;;;; Quiz Finalize
 
-(defun org-canvas--new-quiz-sync-children (data response)
-  "Sync items and associate rubric for the new quiz in DATA/RESPONSE."
+(defun org-canvas--new-quiz-sync-children (data response &optional _ctx)
+  "Sync items and associate rubric for the new quiz in DATA/RESPONSE.
+CTX, the run context, is accepted for the post-fn contract and unused."
   (let ((quiz-id (or (alist-get 'assignment_id response)
                      (alist-get 'id response)
                      (plist-get data :canvas-id)))
@@ -297,15 +299,17 @@ Returns response with assignment_id."
       (when rubric-id
         (org-canvas--associate-rubric assignment-id rubric-id "Assignment")))))
 
-(defun org-canvas--new-quiz-finalize (data response)
+(defun org-canvas--new-quiz-finalize (data response &optional ctx)
   "Finalize new quiz DATA with RESPONSE and sync child items.
-Falls back to \\='id when \\='assignment_id is absent in RESPONSE."
+CTX is the run context.  Falls back to \\='id when \\='assignment_id
+is absent in RESPONSE."
   (let ((effective-response
          (if (alist-get 'assignment_id response)
              response
            ;; Fallback: copy assignment_id from id
            (cons (cons 'assignment_id (alist-get 'id response)) response))))
     (org-canvas--finalize-item data effective-response
+      :ctx ctx
       :id-field 'assignment_id
       :id-property "CANVAS_ASSIGNMENT_ID"
       :post-fn #'org-canvas--new-quiz-sync-children)))

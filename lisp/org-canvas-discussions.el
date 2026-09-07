@@ -252,16 +252,17 @@ Returns an alist for the `assignment' key."
 
 ;;;; Post-Finalize: Rubric Association
 
-(defun org-canvas--discussion-post-finalize (data response)
+(defun org-canvas--discussion-post-finalize (data response &optional ctx)
   "Associate rubric with discussion after finalize.
-DATA is the parsed discussion plist, RESPONSE is the Canvas API response."
+DATA is the parsed discussion plist, RESPONSE is the Canvas API response,
+CTX the run context a remote write is declared on."
   (let ((rubric-id (plist-get data :rubric-id))
         (discussion-id (alist-get 'id response)))
     (when (and rubric-id
                (org-canvas--associate-rubric discussion-id rubric-id "Discussion"))
       ;; The association bumps the topic's updated_at past the stamp
       ;; finalize just wrote; have it re-read (issue #124).
-      (org-canvas--finalize-note-remote-write))))
+      (org-canvas--finalize-note-remote-write ctx))))
 
 ;;;; Main Sync Function
 
