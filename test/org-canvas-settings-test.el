@@ -1023,6 +1023,80 @@ Syllabus text.
            '((:label "Modules" :hidden nil :position 1)))
           (expect api-called :to-be nil))))))
 
+;;;; Canvas sends a JSON array, so json-read hands us a vector (issue #153)
+;;
+;; Every stub here used to return a list, which is not what
+;; `org-canvas-api-request' produces.  The real reply reached `dolist'
+;; as a vector and signalled `listp', so no course ever got a
+;; ** Navigation section.
+
+(describe "org-canvas--settings-pull-tabs on a vector (issue #153)"
+  (it "formats the tabs json-read really returns"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _)
+                   (vector '((id . "home") (label . "Home")
+                             (hidden . :json-false) (position . 1))
+                           '((id . "modules") (label . "Modules")
+                             (hidden . :json-false) (position . 2))
+                           '((id . "pages") (label . "Pages")
+                             (hidden . t) (position . 3))))))
+        (let ((text (org-canvas--settings-pull-tabs)))
+          (expect text :to-match "\\*\\* Navigation")
+          (expect text :to-match "1\\. Home")
+          (expect text :to-match "2\\. Modules")
+          (expect text :to-match "3\\. \\+Pages\\+")))))
+
+  (it "sorts a vector by position, as it did a list"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _)
+                   (vector '((label . "Later") (hidden . :json-false) (position . 9))
+                           '((label . "Earlier") (hidden . :json-false) (position . 2))))))
+        (expect (org-canvas--settings-pull-tabs)
+                :to-match "1\\. Earlier\n2\\. Later"))))
+
+  (it "returns nil for an empty vector, which is not nil in Elisp"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _) (vector))))
+        (expect (org-canvas--settings-pull-tabs) :to-be nil))))
+
+  (it "does not disturb a caller's list"
+    ;; `sort' is destructive on lists; the copy keeps it off the reply.
+    (with-org-canvas-test-config
+      (let ((reply (list '((label . "B") (hidden . :json-false) (position . 2))
+                         '((label . "A") (hidden . :json-false) (position . 1)))))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _) reply)))
+          (org-canvas--settings-pull-tabs)
+          (expect (alist-get 'label (car reply)) :to-equal "B")))))
+
+  (it "reaches the settings file end to end from a vector reply"
+    (let ((result (test-org-canvas-settings--pull-with
+                   (lambda (url)
+                     (cond
+                      ((string-match "late_policy" url) nil)
+                      ((string-match "tabs" url)
+                       (vector '((label . "Home") (hidden . :json-false) (position . 1))
+                               '((label . "Files") (hidden . t) (position . 2))))
+                      (t test-org-canvas-settings--course-response))))))
+      (expect (plist-get result :content) :to-match "\\*\\* Navigation")
+      (expect (plist-get result :content) :to-match "2\\. \\+Files\\+")
+      (expect (plist-get result :records) :to-equal nil))))
+
+(describe "org-canvas--settings-sync-single-tab on a vector (issue #153)"
+  (it "matches against the vector the push side is handed"
+    ;; cl-find-if takes any sequence, so the push side was already safe;
+    ;; this pins that down rather than leaving it to inspection.
+    (with-org-canvas-test-config
+      (with-mock-api
+        (expect (org-canvas--settings-sync-single-tab
+                 '(:label "Modules" :hidden t :position 3)
+                 (vector '((id . "modules") (label . "Modules")
+                           (hidden . :json-false) (position . 2))))
+                :to-be-truthy)))))
+
 (describe "org-canvas--settings-pull-tabs"
   (it "formats tabs as numbered Org list with strikethrough"
     (with-org-canvas-test-config

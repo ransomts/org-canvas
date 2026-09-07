@@ -496,10 +496,17 @@ Fetches current tabs, diffs against desired state, and PUTs changes."
   "Pull navigation tabs from Canvas and write as ** Navigation sub-heading.
 Returns the formatted Org text, or nil if no tabs."
   (let* ((url (org-canvas-api-course-endpoint "tabs"))
-         (tabs (org-canvas-api-request 'GET url)))
+         ;; `json-read' decodes a JSON array as a vector, so Canvas's 46
+         ;; tabs arrive as a vector of alists.  `sort' takes a vector and
+         ;; returns one, so the type survived all the way to `dolist',
+         ;; which signals `listp' — and an empty vector is non-nil, so the
+         ;; guard below needs a list too (issue #153).  `append' with a nil
+         ;; tail copies either shape into a fresh list, which also keeps
+         ;; the destructive `sort' off anything a caller holds.
+         (tabs (append (org-canvas-api-request 'GET url) nil)))
     (when tabs
       ;; Sort by position
-      (setq tabs (sort (copy-sequence tabs)
+      (setq tabs (sort tabs
                        (lambda (a b)
                          (< (or (alist-get 'position a) 999)
                             (or (alist-get 'position b) 999)))))

@@ -784,5 +784,52 @@
       (expect (plist-get ctx :file-changed-ids) :to-equal '("changed"))
       (expect (plist-get ctx :file-recreated-ids) :to-equal '("recreated")))))
 
+;;;; Optional requires are optional (issue #157)
+;;
+;; NOERROR covers a missing file and nothing else.  A feature on
+;; load-path that raises while loading used to take org-canvas with it:
+;; transient needs cond-let, llama and a recent seq, and a batch run
+;; without them aborted before a single org-canvas symbol was defined.
+
+(describe "org-canvas--require-optional"
+  (it "returns the feature when it loads"
+    (expect (org-canvas--require-optional 'cl-lib "cl-lib") :to-be-truthy))
+
+  (it "stays silent and returns nil when the feature is simply absent"
+    (let (said)
+      (cl-letf (((symbol-function 'message)
+                 (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+        (expect (org-canvas--require-optional
+                 'org-canvas-no-such-feature-exists "a menu")
+                :to-be nil))
+      (expect said :to-be nil)))
+
+  (it "reports and carries on when the feature raises while loading"
+    (let (said)
+      (cl-letf (((symbol-function 'require)
+                 (lambda (&rest _) (error "Cannot open load file: cond-let")))
+                ((symbol-function 'message)
+                 (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+        (expect (org-canvas--require-optional 'transient "the transient menu")
+                :to-be nil))
+      (expect said :to-match "the transient menu unavailable")
+      (expect said :to-match "cond-let")))
+
+  (it "does not let the failure escape to the caller"
+    ;; The whole point: loading org-canvas must survive a broken menu.
+    (cl-letf (((symbol-function 'require)
+               (lambda (&rest _) (error "boom")))
+              ((symbol-function 'message) #'ignore))
+      (expect (org-canvas--require-optional 'transient "menu") :not :to-throw)))
+
+  (it "masks a credential the load error carried"
+    (let (said)
+      (cl-letf (((symbol-function 'require)
+                 (lambda (&rest _) (error "bad token canvas_session=HIJACKME")))
+                ((symbol-function 'message)
+                 (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+        (org-canvas--require-optional 'org-canvas-credentials "the credentials file"))
+      (expect said :not :to-match "HIJACKME"))))
+
 (provide 'org-canvas-core-config-test)
 ;;; org-canvas-core-config-test.el ends here
