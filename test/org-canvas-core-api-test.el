@@ -1309,7 +1309,10 @@ search), so a spec can script which login carries the token."
       (expect (org-canvas--api-unwrap-plz-error datum) :to-equal datum)))
 
   (it "survives a nil datum"
-    (expect (org-canvas--api-unwrap-plz-error nil) :to-be nil)))
+    (expect (org-canvas--api-unwrap-plz-error nil) :to-be nil))
+
+  (it "returns a datum that is neither struct nor list unchanged"
+    (expect (org-canvas--api-unwrap-plz-error "bare message") :to-equal "bare message")))
 
 (describe "org-canvas--api-error-datum (issue #152)"
   (it "masks the cookies in a response plz signalled as a list"

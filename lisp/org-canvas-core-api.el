@@ -357,7 +357,7 @@ scrub leaks the session cookies in it."
    (org-canvas--api-unwrap-plz-error (cdr err))))
 
 (defun org-canvas--api-describe-datum (datum)
-  "Return a readable description of a DATUM that holds no `plz-error'.
+  "Return a readable description of a DATUM carrying no `plz-error'.
 plz signals a few parse failures with a list of strings and no struct.
 Printing that with `%S' gives the user a quoted list; joining the
 strings gives them the sentence plz wrote."
