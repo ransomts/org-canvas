@@ -8,6 +8,7 @@ Each entry names the pull request that merged it.
 
 ** Added
 
+- #164 Duplicate-title detection for pages, assignments, quizzes, new quizzes, rubrics, discussions, announcements and modules: the offline validator groups titles once =(OLD)=, semester stamps and Canvas's =(n)= suffixes are stripped, raising a twin that still carries a =DUE_AT= to an error; =org-canvas-pull-all= names the types whose titles collapse
 - #163 =org-canvas-read-only=: mark an adopted course read-only in its credentials file and every write is refused at the transport, the menu's push half greys out, and =org-canvas-init= asks whether the course is yours
 - #127 Submissions: completion rule, =DAYS_LATE=, notes that survive pulls, and =EX= for excused grades
 - #126 Submissions: draft comments in the grading file and post them with =S=

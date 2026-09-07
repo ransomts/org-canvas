@@ -2875,6 +2875,153 @@ EXCEPT is a list of filenames to skip."
                  '(:file "f" :line 1 :heading "E"))
                 :to-be nil)))))
 
+;;;; Duplicate and superseded titles (issue #164)
+;;
+;; Years of course copies leave near-twins behind: on one real course,
+;; 46 pages under 29 distinct titles and `Homework Rubric' fifteen
+;; times.  Duplication is untidy; duplication with live due dates is a
+;; gradebook hazard, and invisible in the Canvas UI when the twins sit
+;; in different assignment groups.
+
+(describe "org-canvas--validate-normalize-title (issue #164)"
+  (it "strips Canvas's own disambiguators, however they stack"
+    (expect (org-canvas--validate-normalize-title "Some Rubric (2)")
+            :to-equal "some rubric")
+    (expect (org-canvas--validate-normalize-title "Some Rubric (2) (3)")
+            :to-equal "some rubric"))
+
+  (it "strips a trailing supersede marker"
+    (dolist (title '("Sprint 2 (OLD)" "Sprint 2 (old)"
+                     "Sprint 2 (s25 - OLD)" "Sprint 2 (S25 - old)"))
+      (expect (org-canvas--validate-normalize-title title)
+              :to-equal "sprint 2")))
+
+  (it "strips a leading do-not-use marker"
+    (expect (org-canvas--validate-normalize-title "OLD DON'T USE Quiz 5")
+            :to-equal "quiz 5"))
+
+  (it "strips a semester stamp"
+    (expect (org-canvas--validate-normalize-title "S24 Homework Rubric")
+            :to-equal "homework rubric")
+    (expect (org-canvas--validate-normalize-title "Homework Rubric (F23)")
+            :to-equal "homework rubric"))
+
+  (it "ignores case and collapsed whitespace"
+    (expect (org-canvas--validate-normalize-title "  Homework   Rubric ")
+            :to-equal "homework rubric"))
+
+  (it "leaves an ordinary title alone but for case"
+    (expect (org-canvas--validate-normalize-title "Week 1 Reading")
+            :to-equal "week 1 reading"))
+
+  (it "is nil for a title that normalizes away"
+    (expect (org-canvas--validate-normalize-title "(2)") :to-be nil)
+    (expect (org-canvas--validate-normalize-title nil) :to-be nil)))
+
+(defun test-org-canvas-164--check (content)
+  "Return the duplicate-title issues for a file holding CONTENT."
+  (let* ((dir (make-temp-file "dup-test" t))
+         (file (expand-file-name "assignments.org" dir)))
+    (unwind-protect
+        (progn
+          (with-temp-file file (insert content))
+          (with-current-buffer (org-canvas--find-file-noselect file)
+            (goto-char (point-min))
+            (org-canvas--validate-duplicate-titles file "LEVEL=1")))
+      (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+      (delete-directory dir t))))
+
+(describe "org-canvas--validate-duplicate-titles (issue #164)"
+  (it "says nothing when every title is distinct"
+    (expect (test-org-canvas-164--check "* Week 1\n* Week 2\n") :to-be nil))
+
+  (it "warns about twins that differ only in course-copy debris"
+    (let ((issues (test-org-canvas-164--check "* Some Rubric\n* Some Rubric (2)\n")))
+      (expect (length issues) :to-equal 1)
+      (expect (plist-get (car issues) :severity) :to-equal 'warning)
+      (expect (plist-get (car issues) :message) :to-match "2 entries share this title")
+      (expect (plist-get (car issues) :message) :to-match "Some Rubric (2)")))
+
+  (it "groups all of a run together, not pairwise"
+    (let ((issues (test-org-canvas-164--check
+                   "* Homework Rubric\n* Homework Rubric (2)\n* S24 Homework Rubric\n")))
+      (expect (length issues) :to-equal 1)
+      (expect (plist-get (car issues) :message) :to-match "3 entries")))
+
+  (it "raises a twin still carrying a due date to an error"
+    ;; The gradebook hazard: two live assignments a student cannot tell
+    ;; apart, sitting in different assignment groups.
+    (let* ((issues (test-org-canvas-164--check
+                    (concat "* Sprint 2 - READ AND FOLLOW INSTRUCTIONS (s25 - OLD)\n"
+                            ":PROPERTIES:\n:DUE_AT: <2026-11-10 Tue>\n:END:\n"
+                            "* Sprint 2 - READ AND FOLLOW INSTRUCTIONS\n"
+                            ":PROPERTIES:\n:DUE_AT: <2026-11-11 Wed>\n:END:\n")))
+           (issue (car issues)))
+      (expect (length issues) :to-equal 1)
+      (expect (plist-get issue :severity) :to-equal 'error)
+      (expect (plist-get issue :message) :to-match "2 of them carry a DUE_AT")
+      (expect (plist-get issue :message) :to-match "2026-11-10")
+      (expect (plist-get issue :message) :to-match "decide which is canonical")))
+
+  (it "stays a warning when only one twin is scheduled"
+    ;; The old copy has been unscheduled already; that is the tidy state.
+    (let ((issues (test-org-canvas-164--check
+                   (concat "* Sprint 2 (OLD)\n"
+                           "* Sprint 2\n"
+                           ":PROPERTIES:\n:DUE_AT: <2026-11-11 Wed>\n:END:\n"))))
+      (expect (plist-get (car issues) :severity) :to-equal 'warning)))
+
+  (it "names the line of each twin, so next-error reaches them"
+    (let ((issues (test-org-canvas-164--check "* Quiz 5\n* OLD DON'T USE Quiz 5\n")))
+      (expect (plist-get (car issues) :message) :to-match "line 1")
+      (expect (plist-get (car issues) :message) :to-match "line 2")))
+
+  (it "compares only the level the feature declares (issue #164)"
+    ;; Modules opt in, and two modules may each hold an item called
+    ;; "Overview"; the query keeps the children out of the comparison.
+    (let* ((dir (make-temp-file "dup-level" t))
+           (file (expand-file-name "modules.org" dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "* Week 1\n** Overview\n* Week 2\n** Overview\n"))
+            (with-current-buffer (org-canvas--find-file-noselect file)
+              (goto-char (point-min))
+              (expect (org-canvas--validate-duplicate-titles file "LEVEL=1")
+                      :to-be nil)
+              ;; The same file does report them when asked about level 2.
+              (goto-char (point-min))
+              (expect (length (org-canvas--validate-duplicate-titles file "LEVEL=2"))
+                      :to-equal 1)))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-directory dir t))))
+
+  (it "reads a heading that is a link by its description"
+    (expect (test-org-canvas-164--check
+             "* [[https://x.example.com/a][Syllabus]]\n* Syllabus (2)\n")
+            :to-be-truthy)))
+
+(describe "duplicate-titles wiring (issue #164)"
+  (it "is declared for the content types that accumulate copies"
+    (dolist (key '("pages" "assignments" "quizzes" "new-quizzes"
+                   "rubrics" "discussions" "announcements" "modules"))
+      (expect (plist-get (gethash key org-canvas--property-registry)
+                         :duplicate-titles)
+              :to-be-truthy)))
+
+  (it "is not declared for child levels, whose titles repeat by design"
+    ;; Two quizzes may both have a question called "True or false".
+    (dolist (key '("quiz-questions" "module-items" "new-quiz-items"))
+      (expect (plist-get (gethash key org-canvas--property-registry)
+                         :duplicate-titles)
+              :to-be nil)))
+
+  (it "reaches the spec the validator runs"
+    (let ((spec (cl-find-if (lambda (s)
+                              (eq (plist-get s :file) 'org-canvas-pages-file))
+                            (org-canvas--validate-specs))))
+      (expect (plist-get spec :duplicate-titles) :to-be-truthy))))
+
 (provide 'org-canvas-validate-test)
 (describe "org-canvas--validate-module-item-ids (issue #105)"
   (it "warns once per item id claimed by more than one heading, naming the lines"
