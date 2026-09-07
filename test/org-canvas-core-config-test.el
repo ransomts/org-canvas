@@ -695,5 +695,66 @@
       (expect org-canvas--pull-tz-cache :to-be nil)
       (expect org-canvas--time-zone-resolved :to-be nil))))
 
+;;;; Sync run context (issue #141)
+;;
+;; One run owns one context.  What a run decides for itself lives in it
+;; and dies with it, instead of in a dynamically bound global that the
+;; next run inherits unless every entry point remembers to rebind it.
+
+(describe "org-canvas--sync-make-ctx"
+  (it "carries every key from creation, so plist-put always mutates in place"
+    (let ((ctx (org-canvas--sync-make-ctx)))
+      (dolist (key org-canvas--sync-ctx-keys)
+        (expect (plist-member ctx key) :to-be-truthy)
+        (expect (plist-get ctx key) :to-be nil))))
+
+  (it "takes the fields it is given and leaves the rest nil"
+    (let ((ctx (org-canvas--sync-make-ctx :feature-name "pages"
+                                          :total-count 7
+                                          :pull-item-fn #'ignore)))
+      (expect (plist-get ctx :feature-name) :to-equal "pages")
+      (expect (plist-get ctx :total-count) :to-equal 7)
+      (expect (plist-get ctx :pull-item-fn) :to-equal #'ignore)
+      (expect (plist-get ctx :conflict-apply-all) :to-be nil)))
+
+  (it "ignores a key that is not part of the context"
+    (let ((ctx (org-canvas--sync-make-ctx :not-a-real-key "x")))
+      (expect (plist-member ctx :not-a-real-key) :to-be nil)))
+
+  (it "hands out a fresh context each time, sharing no structure"
+    ;; The whole point: what one run remembers cannot reach the next.
+    (let ((first (org-canvas--sync-make-ctx)))
+      (plist-put first :conflict-apply-all 'push)
+      (org-canvas--ctx-push first :module-items-moved "55")
+      (let ((second (org-canvas--sync-make-ctx)))
+        (expect (plist-get second :conflict-apply-all) :to-be nil)
+        (expect (plist-get second :module-items-moved) :to-be nil))))
+
+  (it "is mutated in place by plist-put, so callers sharing it see the write"
+    ;; A context is threaded by value through several functions; each
+    ;; must see what the others recorded, which is why every key is
+    ;; present from the start rather than added on first write.
+    (let ((ctx (org-canvas--sync-make-ctx)))
+      (funcall (lambda (c) (plist-put c :remote-touched t)) ctx)
+      (expect (plist-get ctx :remote-touched) :to-be t))))
+
+(describe "org-canvas--ctx-push"
+  (it "pushes onto the list a key holds, newest first"
+    (let ((ctx (org-canvas--sync-make-ctx)))
+      (org-canvas--ctx-push ctx :file-changed-ids "a")
+      (org-canvas--ctx-push ctx :file-changed-ids "b")
+      (expect (plist-get ctx :file-changed-ids) :to-equal '("b" "a"))))
+
+  (it "records nothing, and does not fail, without a context"
+    ;; Helpers shared with single-item paths are called outside any run.
+    (expect (org-canvas--ctx-push nil :file-changed-ids "a") :to-be nil))
+
+  (it "keeps separate keys apart"
+    (let ((ctx (org-canvas--sync-make-ctx)))
+      (org-canvas--ctx-push ctx :file-changed-ids "changed")
+      (org-canvas--ctx-push ctx :file-recreated-ids "recreated")
+      (expect (plist-get ctx :file-changed-ids) :to-equal '("changed"))
+      (expect (plist-get ctx :file-recreated-ids) :to-equal '("recreated")))))
+
 (provide 'org-canvas-core-config-test)
 ;;; org-canvas-core-config-test.el ends here

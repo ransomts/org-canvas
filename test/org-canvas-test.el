@@ -1067,7 +1067,7 @@
         (cl-letf (((symbol-function 'executable-find) (lambda (_) nil))
                   ((symbol-function 'yes-or-no-p) (lambda (_) t))
                   ((symbol-function 'org-canvas--preflight-check) (lambda () nil))
-                  ((symbol-function 'org-canvas--safe-pull) (lambda (_fn _label) nil)))
+                  ((symbol-function 'org-canvas--safe-pull) (lambda (&rest _) nil)))
           ;; Should not throw
           (org-canvas-pull-all)
           (expect t :to-be t)))))

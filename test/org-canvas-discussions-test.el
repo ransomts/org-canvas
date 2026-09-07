@@ -699,18 +699,18 @@ Content.
   (it "reports the association so the baseline is re-read (issue #124)"
     (cl-letf (((symbol-function 'org-canvas--associate-rubric)
                (lambda (&rest _) t)))
-      (let ((org-canvas--finalize-remote-touched nil))
+      (let ((ctx (org-canvas--sync-make-ctx)))
         (org-canvas--discussion-post-finalize
-         '(:title "Test" :rubric-id "99") '((id . 42)))
-        (expect org-canvas--finalize-remote-touched :to-be t))))
+         '(:title "Test" :rubric-id "99") '((id . 42)) ctx)
+        (expect (plist-get ctx :remote-touched) :to-be t))))
 
   (it "reports nothing when the association failed"
     (cl-letf (((symbol-function 'org-canvas--associate-rubric)
                (lambda (&rest _) nil)))
-      (let ((org-canvas--finalize-remote-touched nil))
+      (let ((ctx (org-canvas--sync-make-ctx)))
         (org-canvas--discussion-post-finalize
-         '(:title "Test" :rubric-id "99") '((id . 42)))
-        (expect org-canvas--finalize-remote-touched :to-be nil)))))
+         '(:title "Test" :rubric-id "99") '((id . 42)) ctx)
+        (expect (plist-get ctx :remote-touched) :to-be nil)))))
 
 ;;;; Delete at Point
 

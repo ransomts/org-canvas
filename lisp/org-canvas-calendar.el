@@ -153,10 +153,11 @@ the same state at validation time."
 
 ;;;; 3. Stage: Execution
 
-(defun org-canvas--calendar-event-push-to-api (data payload)
-  "Send PAYLOAD derived from DATA to Canvas API.
+(defun org-canvas--calendar-event-push-to-api (data payload &optional ctx)
+  "Send PAYLOAD derived from DATA to Canvas API in run context CTX.
 Calendar events use global endpoints (not course-scoped)."
   (org-canvas--push-to-api data payload
+    :ctx ctx
     :endpoint "calendar_events"
     :find-fn #'org-canvas--calendar-event-search
     :post-url-fn #'org-canvas--calendar-event-list-url

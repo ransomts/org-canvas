@@ -183,7 +183,8 @@ above the marker, then file an issue at the project URL."
 
 (defun org-canvas--safe-sync (sync-fn label)
   "Call SYNC-FN, catching file-not-found errors gracefully.
-LABEL is used for logging (e.g., \"Pages\")."
+LABEL is used for logging (e.g., \"Pages\").  Returns what SYNC-FN
+returns — the run context for a pipeline sync — or nil when it failed."
   (condition-case err
       (funcall sync-fn)
     (error
@@ -192,16 +193,22 @@ LABEL is used for logging (e.g., \"Pages\")."
            (org-canvas--log-info org-canvas--logger
              "[Skip] %s: %s\n  To import from Canvas: M-x org-canvas-pull-%s\n  To create skeleton files: M-x org-canvas-init"
              label msg (downcase (replace-regexp-in-string " " "-" label)))
-         (org-canvas--log-error org-canvas--logger "[FAILED] %s: %s" label msg))))))
+         (org-canvas--log-error org-canvas--logger "[FAILED] %s: %s" label msg))
+       nil))))
 
 (defun org-canvas--tier-description (tier)
   "Return a comma-separated string of labels in TIER."
   (mapconcat #'cadr tier ", "))
 
 (defun org-canvas--run-tier (tier wrapper-fn)
-  "Run each (FUNCTION LABEL) entry in TIER through WRAPPER-FN."
-  (dolist (entry tier)
-    (funcall wrapper-fn (car entry) (cadr entry))))
+  "Run each (FUNCTION LABEL) entry in TIER through WRAPPER-FN.
+Returns an alist of FUNCTION to what WRAPPER-FN returned for it, so
+the orchestrator can read a run's context back — the master sync
+takes the module items left pending from the modules run — instead
+of through a global (issue #141)."
+  (mapcar (lambda (entry)
+            (cons (car entry) (funcall wrapper-fn (car entry) (cadr entry))))
+          tier))
 
 ;; Sync in dependency order (see documentation/manual.org for details):
 ;;   Tier -1: Course settings (before any content)
@@ -243,7 +250,7 @@ LABEL is used for logging (e.g., \"Pages\")."
         (org-canvas--sync-global-counters
          (list :success 0 :skip 0 :fail 0 :dry-run 0 :deferred 0))
         (org-canvas--sync-global-feature-stats nil)
-        (org-canvas--module-items-pending nil))
+        (results nil))
     (org-canvas--log-info org-canvas--logger "========================================")
     (if org-canvas--dry-run
         (org-canvas--log-info org-canvas--logger ">>> DRY RUN — no changes will be made")
@@ -258,11 +265,12 @@ LABEL is used for logging (e.g., \"Pages\")."
     ;; Tiers -1 and 0
     (org-canvas--log-info org-canvas--logger "--- Tier -1: Settings ---")
     (message "Syncing: Settings...")
-    (org-canvas--run-tier (nth 0 org-canvas--sync-tiers) #'org-canvas--safe-sync)
+    (setq results (org-canvas--run-tier (nth 0 org-canvas--sync-tiers) #'org-canvas--safe-sync))
     (org-canvas--log-info org-canvas--logger "--- Tier 0: %s ---"
       (org-canvas--tier-description (nth 1 org-canvas--sync-tiers)))
     (message "Syncing: %s..." (org-canvas--tier-description (nth 1 org-canvas--sync-tiers)))
-    (org-canvas--run-tier (nth 1 org-canvas--sync-tiers) #'org-canvas--safe-sync)
+    (setq results (append results (org-canvas--run-tier (nth 1 org-canvas--sync-tiers)
+                                                        #'org-canvas--safe-sync)))
     (org-canvas--log-info org-canvas--logger
       "[Note] Same-tier cross-references (e.g., page→page) may require a second sync to fully resolve")
     ;; Tiers 1 through 2
@@ -272,10 +280,12 @@ LABEL is used for logging (e.g., \"Pages\")."
           (pcase tier-num (1 "1") (2 "1.5") (3 "1.75") (4 "2"))
           (org-canvas--tier-description tier))
         (message "Syncing: %s..." (org-canvas--tier-description tier))
-        (org-canvas--run-tier tier #'org-canvas--safe-sync)
+        (setq results (append results (org-canvas--run-tier tier #'org-canvas--safe-sync)))
         (setq tier-num (1+ tier-num))))
-    ;; Heal module items skipped earlier whose targets have IDs by now
-    (org-canvas--module-retry-pending-items)
+    ;; Heal module items skipped earlier whose targets have IDs by now;
+    ;; the modules run left them in its context.
+    (org-canvas--module-retry-pending-items
+     (plist-get (alist-get 'org-canvas-sync-modules results) :module-items-pending))
     (org-canvas--log-info org-canvas--logger "========================================")
     (org-canvas--log-info org-canvas--logger ">>> GLOBAL SYNC COMPLETE")
     (org-canvas--sync-log-global-summary)
@@ -443,25 +453,20 @@ asked to confirm first."
 
 ;;;; Pull All (Canvas → Org Migration)
 
-(defvar org-canvas--pull-counters nil
-  "When non-nil, a plist accumulating counts across pull modules.
-Bound by `org-canvas-pull-all' to aggregate pull/fail totals.")
-
-(defun org-canvas--safe-pull (pull-fn label)
+(defun org-canvas--safe-pull (pull-fn label &optional counters)
   "Call PULL-FN, catching errors gracefully.
-LABEL is used for logging."
+LABEL is used for logging.  COUNTERS, when non-nil, is a plist
+\(:success N :fail N) mutated in place with the outcome."
   (condition-case err
       (progn
         (funcall pull-fn)
-        (when org-canvas--pull-counters
-          (plist-put org-canvas--pull-counters :success
-                     (1+ (plist-get org-canvas--pull-counters :success)))))
+        (when counters
+          (plist-put counters :success (1+ (plist-get counters :success)))))
     (error
      (org-canvas--log-warning org-canvas--logger "[Pull] %s failed: %s"
        label (error-message-string err))
-     (when org-canvas--pull-counters
-       (plist-put org-canvas--pull-counters :fail
-                  (1+ (plist-get org-canvas--pull-counters :fail)))))))
+     (when counters
+       (plist-put counters :fail (1+ (plist-get counters :fail)))))))
 
 ;; Pull in dependency order:
 ;;   Settings, then structural items, then linked items, then modules
@@ -517,7 +522,7 @@ Canvas courses who want to adopt org-canvas."
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (org-canvas--pull-summary-reset)
   (let ((org-canvas--inhibit-log-clear t)
-        (org-canvas--pull-counters (list :success 0 :fail 0)))
+        (counters (list :success 0 :fail 0)))
     (unwind-protect
         (progn
           (org-canvas--log-info org-canvas--logger "========================================")
@@ -533,13 +538,14 @@ Canvas courses who want to adopt org-canvas."
           (org-canvas--pull-resolve-tz)
           (dolist (tier org-canvas--pull-tiers)
             (message "Pulling: %s..." (org-canvas--tier-description tier))
-            (org-canvas--run-tier tier #'org-canvas--safe-pull))
+            (org-canvas--run-tier tier (lambda (fn label)
+                                         (org-canvas--safe-pull fn label counters))))
           (org-canvas--log-info org-canvas--logger "========================================")
           (org-canvas--log-info org-canvas--logger ">>> FULL COURSE PULL COMPLETE")
           (org-canvas--log-info org-canvas--logger "========================================")
           (message "Pull complete: %d pulled, %d failed. See *canvas-log* for details."
-                   (plist-get org-canvas--pull-counters :success)
-                   (plist-get org-canvas--pull-counters :fail)))
+                   (plist-get counters :success)
+                   (plist-get counters :fail)))
       (unless (org-canvas--pull-summary-empty-p)
         (with-output-to-temp-buffer "*org-canvas-pull-summary*"
           (org-canvas--pull-summary-print))

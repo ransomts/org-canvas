@@ -80,11 +80,12 @@
 
 ;;;; 3. Stage: Execution
 
-(defun org-canvas--group-category-push-to-api (data payload)
-  "Send PAYLOAD derived from DATA to Canvas API.
+(defun org-canvas--group-category-push-to-api (data payload &optional ctx)
+  "Send PAYLOAD derived from DATA to Canvas API in run context CTX.
 Group categories use split endpoints: POST is course-scoped,
 PUT is global."
   (org-canvas--push-to-api data payload
+    :ctx ctx
     :endpoint "group_categories"
     :find-fn (lambda (title) (org-canvas--search-item "group_categories" title :match-field 'name))
     :put-url-fn (lambda (id) (format "%s/api/v1/group_categories/%s" org-canvas-base-url id))))

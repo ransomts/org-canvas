@@ -443,6 +443,67 @@ the sync had already written (issue #97)."
           "[Config] org-canvas-directory not set, falling back to %s" base)))
     (file-truename (expand-file-name filename base))))
 
+;;;; 1d. Sync Run Context
+;;
+;; One sync run — a full-file pipeline, a push at point, the files loop
+;; — owns a context plist: the remote snapshot, the pipeline functions,
+;; the counters, and every flag or accumulator the run sets for itself.
+;; Those used to be dynamically bound globals (`org-canvas--conflict-apply-all',
+;; `org-canvas--current-pull-item-fn', the module and file id lists),
+;; and a global set by one run leaks into the next unless every entry
+;; point remembers to rebind it: answering "push all" at one conflict
+;; prompt during a push at point used to make every later push at point
+;; overwrite conflicts without asking (issues #72, #141).  A context is
+;; created by the run and threaded through it, so nothing outlives the
+;; run.
+;;
+;; What stays dynamic is the caller's seam: a variable bound *around* a
+;; command by whoever invokes it, never by the pipeline —
+;; `org-canvas--dry-run', `org-canvas-conflict-strategy',
+;; `org-canvas--file-force-upload', `org-canvas--inhibit-log-clear',
+;; and the master sync's own aggregates.  Commands take no arguments,
+;; so a dynamic binding is the only channel from a wrapper into them.
+
+(defconst org-canvas--sync-ctx-keys
+  '(:feature-name :feature-upper
+    :baseline :remote-updated :remote-titles :remote-times
+    :parse-fn :build-fn :push-fn :finalize-fn :hash-extra-fn
+    :total-count :counters :synced-ids :title-key
+    :pull-item-fn :conflict-apply-all :duplicate-apply-all :remote-touched
+    :module-items-moved :module-items-pending
+    :file-changed-ids :file-recreated-ids)
+  "Every key a sync run context may carry, present from creation.
+Static: :feature-name, :feature-upper, :title-key, the pipeline
+functions, :total-count, :hash-extra-fn.  Snapshot: :baseline (the
+file's #+LAST_SYNCED as a time), :remote-updated (id to `updated_at'),
+:remote-titles (title to items, `none' inside a run that has no
+snapshot, nil outside a run), :remote-times (a cell of the timestamps
+seen).  Run state: :counters, :synced-ids (a cell), :pull-item-fn (the
+module's pull function, which enables the pull option at a conflict),
+:conflict-apply-all and :duplicate-apply-all (a capital answer at a
+prompt, remembered for the rest of this run only), :remote-touched (set
+by a finalize post-fn that wrote to Canvas again, issue #124),
+:module-items-moved and :module-items-pending (modules),
+:file-changed-ids and :file-recreated-ids (files).  Every key is
+present so `plist-put' always mutates the context in place and the
+functions sharing it see one another's writes.")
+
+(defun org-canvas--sync-make-ctx (&rest fields)
+  "Return a fresh sync run context carrying FIELDS.
+FIELDS is a plist of `org-canvas--sync-ctx-keys' entries; the rest are
+nil.  See `org-canvas--sync-ctx-keys' for what each means."
+  (let ((ctx nil))
+    (dolist (key org-canvas--sync-ctx-keys)
+      (setq ctx (nconc ctx (list key (plist-get fields key)))))
+    ctx))
+
+(defun org-canvas--ctx-push (ctx key value)
+  "Push VALUE onto the list CTX holds under KEY.
+Mutates CTX in place; a nil CTX — a helper called outside any run —
+records nothing."
+  (when ctx
+    (plist-put ctx key (cons value (plist-get ctx key)))))
+
 ;;;; 2. Logging Layer
 
 (defconst org-canvas--log-buffer-name "*canvas-log*"

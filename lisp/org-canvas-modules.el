@@ -633,9 +633,10 @@ and publishing the item publishes that object.  See
      (org-canvas--log-warning org-canvas--logger "[Stage 3: Search] Failed: %s" (error-message-string err))
      nil)))
 
-(defun org-canvas--module-push-to-api (data payload)
-  "Send module PAYLOAD to Canvas API based on DATA."
+(defun org-canvas--module-push-to-api (data payload &optional ctx)
+  "Send module PAYLOAD to Canvas API based on DATA in run context CTX."
   (org-canvas--push-to-api data payload
+    :ctx ctx
     :endpoint "modules"
     :find-fn #'org-canvas--module-search-by-name))
 
@@ -685,18 +686,20 @@ Return the matching item alist, or nil if not found."
 
 ;;;; 4. Stage: Finalization
 
-(defun org-canvas--module-sync-children (_data response)
-  "Sync module items for the module described by DATA and RESPONSE."
+(defun org-canvas--module-sync-children (_data response &optional ctx)
+  "Sync module items for the module described by DATA and RESPONSE.
+CTX is the run context the items record their moves and skips in."
   (let ((module-id (alist-get 'id response))
         (modules-file-dir (file-name-directory
                            (expand-file-name org-canvas-modules-file))))
     (when module-id
       (org-canvas--log-info org-canvas--logger "[Module Items] Syncing items for module %s..." module-id)
-      (org-canvas--module-sync-items module-id (point) modules-file-dir))))
+      (org-canvas--module-sync-items module-id (point) modules-file-dir ctx))))
 
-(defun org-canvas--module-finalize (data response)
-  "Finalize module sync for DATA/RESPONSE and sync child items."
+(defun org-canvas--module-finalize (data response &optional ctx)
+  "Finalize module sync for DATA/RESPONSE in run context CTX; sync child items."
   (org-canvas--finalize-item data response
+    :ctx ctx
     :post-fn #'org-canvas--module-sync-children))
 
 (defun org-canvas--module-item-finalize (data response)
@@ -1036,13 +1039,6 @@ finalize must not dirty the hash for the next run."
       (set-marker marker nil))
     (format "%S" (nreverse parts))))
 
-(defvar org-canvas--module-items-pending nil
-  "Module items skipped because their target lacked a CANVAS_ID.
-Each entry is a plist (:module-id ID :marker MARKER :title STRING
-:dir DIR).  Only populated during a global sync
-\(`org-canvas--sync-global-counters' non-nil); consumed and cleared by
-`org-canvas--module-retry-pending-items' at the end of the run.")
-
 ;;;; Cross-Module Moves
 ;;
 ;; Canvas offers no way to move an item between modules: the module id
@@ -1059,16 +1055,11 @@ Each entry is a plist (:module-id ID :marker MARKER :title STRING
 ;; named — children are not pruned without being asked, as with quiz
 ;; questions.
 
-(defvar org-canvas--module-items-moved nil
-  "Item ids recreated under a new module during this sync.
-An item's id is claimed by its heading until that heading is restamped
-with the new id, after which the old module's copy would look like an
-unlisted item; this list keeps the old id recognizable as departed.
-Cleared when the modules sync finishes.")
-
-(defun org-canvas--module-forget-moved ()
-  "Clear `org-canvas--module-items-moved' at the end of a modules sync."
-  (setq org-canvas--module-items-moved nil))
+;; The ids recreated under a new module during a sync are kept in the run
+;; context's :module-items-moved.  An item's id is claimed by its heading
+;; until that heading is restamped with the new id, after which the old
+;; module's copy would look like an unlisted item; the list keeps the old
+;; id recognizable as departed, and dies with the run.
 
 (defun org-canvas--module-remote-items (module-id)
   "Return the items in module MODULE-ID on Canvas, or `unknown'.
@@ -1101,12 +1092,12 @@ proceeds as it always did, PUT by id, and reconciles nothing."
   (unless (eq remote 'unknown)
     (mapcar (lambda (item) (format "%s" (alist-get 'id item))) remote)))
 
-(defun org-canvas--module-item-disown-foreign-id (data module-id remote)
+(defun org-canvas--module-item-disown-foreign-id (data module-id remote &optional ctx)
   "Clear DATA's id when module MODULE-ID lacks it, so it is created here.
 REMOTE is the module's item list from `org-canvas--module-remote-items';
 nothing is disowned while it is `unknown'.  The old id is remembered in
-`org-canvas--module-items-moved' so the module it came from can delete
-its copy when it syncs.  Returns the disowned id, or nil."
+CTX's :module-items-moved so the module it came from can delete its
+copy when it syncs.  Returns the disowned id, or nil."
   (let ((id (plist-get data :canvas-id)))
     (when (and id (not (eq remote 'unknown))
                (not (member (format "%s" id)
@@ -1114,7 +1105,7 @@ its copy when it syncs.  Returns the disowned id, or nil."
       (org-canvas--log-info org-canvas--logger
         "[Module Item] '%s' carries item id %s, which module %s does not hold — creating it here; its copy in the old module is removed when that module syncs"
         (plist-get data :title) id module-id)
-      (push (format "%s" id) org-canvas--module-items-moved)
+      (org-canvas--ctx-push ctx :module-items-moved (format "%s" id))
       (plist-put data :canvas-id nil)
       id)))
 
@@ -1162,11 +1153,13 @@ is sent during a dry run.  Returns non-nil when the delete went out."
            id title module-id (error-message-string err))
          nil)))))
 
-(defun org-canvas--module-reconcile-departed (module-id module-pom remote claimed)
+(defun org-canvas--module-reconcile-departed (module-id module-pom remote claimed
+                                                        &optional ctx)
   "Remove from module MODULE-ID the items that have moved to another module.
 REMOTE is the module's item list (nothing happens while it is
 `unknown'); CLAIMED the ids the module's own headings at MODULE-POM
-carry after this sync.  An unclaimed remote item is departed when
+carry after this sync; CTX the run context naming the ids recreated
+elsewhere this run.  An unclaimed remote item is departed when
 another module's heading claims it or when it was recreated elsewhere
 this run; any other unclaimed item is left in place and named.
 Returns the number removed."
@@ -1174,30 +1167,35 @@ Returns the number removed."
     (unless (eq remote 'unknown)
       (dolist (item remote)
         (unless (member (format "%s" (alist-get 'id item)) claimed)
-          (when (org-canvas--module-reconcile-unclaimed-item module-id module-pom item)
+          (when (org-canvas--module-reconcile-unclaimed-item module-id module-pom item ctx)
             (cl-incf removed)))))
     removed))
 
-(defun org-canvas--module-reconcile-unclaimed-item (module-id module-pom item)
+(defun org-canvas--module-reconcile-unclaimed-item (module-id module-pom item
+                                                              &optional ctx)
   "Settle unclaimed ITEM of module MODULE-ID against the headings at MODULE-POM.
 Deleted when it has moved — another module's heading claims it, or it
-was recreated elsewhere this run — and otherwise left in place and
-named.  Returns non-nil when it was deleted."
+was recreated elsewhere this run (CTX's :module-items-moved) — and
+otherwise left in place and named.  Returns non-nil when it was
+deleted."
   (let* ((id (format "%s" (alist-get 'id item)))
          (new-home (org-canvas--module-item-claimed-elsewhere id module-pom)))
-    (if (or new-home (member id org-canvas--module-items-moved))
+    (if (or new-home (member id (plist-get ctx :module-items-moved)))
         (org-canvas--module-delete-departed-item module-id item new-home)
       (org-canvas--log-warning org-canvas--logger
         "[Module Item] Module %s holds '%s' (item %s) that modules.org does not list — left in place; delete it in Canvas or add a heading for it"
         module-id (or (alist-get 'title item) "?") id)
       nil)))
 
-(defun org-canvas--module-sync-items (module-id module-pom modules-file-dir)
+(defun org-canvas--module-sync-items (module-id module-pom modules-file-dir
+                                                &optional ctx)
   "Sync all items for MODULE-ID starting from MODULE-POM.
-MODULES-FILE-DIR is used for resolving links.
+MODULES-FILE-DIR is used for resolving links; CTX is the run context.
 Items whose linked content has no CANVAS_ID yet count as skips (not
-failures), with titles recorded.  Item outcomes roll into the global
-sync summary under \"Module Items\".
+failures), with titles recorded, and are remembered in CTX's
+:module-items-pending — each a plist (:module-id ID :marker MARKER
+:title STRING :dir DIR) — for the master sync's retry pass.  Item
+outcomes roll into the global sync summary under \"Module Items\".
 
 The module's remote item list is fetched once: an item heading whose
 id the module does not hold has moved here from another module and is
@@ -1221,7 +1219,7 @@ Returns (success-count skip-count fail-count)."
           (condition-case err
               (let* ((data (org-canvas--module-item-parse-entry modules-file-dir))
                      (item-type (plist-get data :type)))
-                (org-canvas--module-item-disown-foreign-id data module-id remote)
+                (org-canvas--module-item-disown-foreign-id data module-id remote ctx)
                 ;; Skip items without content ID (except SubHeader and ExternalUrl)
                 (if (and (not (string= item-type "SubHeader"))
                          (not (string= item-type "ExternalUrl"))
@@ -1235,12 +1233,11 @@ Returns (success-count skip-count fail-count)."
                                     (plist-get data :title))
                             skipped-titles)
                       ;; Remember the item for the end-of-run retry pass
-                      (when org-canvas--sync-global-counters
-                        (push (list :module-id module-id
-                                    :marker (copy-marker marker)
-                                    :title (plist-get data :title)
-                                    :dir modules-file-dir)
-                              org-canvas--module-items-pending)))
+                      (org-canvas--ctx-push ctx :module-items-pending
+                                            (list :module-id module-id
+                                                  :marker (copy-marker marker)
+                                                  :title (plist-get data :title)
+                                                  :dir modules-file-dir)))
                   (let* ((payload (org-canvas--module-item-build-payload data position))
                          (response (org-canvas--module-item-push-to-api module-id data payload)))
                     (org-canvas--module-item-finalize data response)
@@ -1259,7 +1256,7 @@ Returns (success-count skip-count fail-count)."
                                        (with-current-buffer (marker-buffer m)
                                          (org-entry-get m "CANVAS_ID")))
                                      item-markers))))
-      (org-canvas--module-reconcile-departed module-id module-pom remote claimed))
+      (org-canvas--module-reconcile-departed module-id module-pom remote claimed ctx))
 
     ;; Release markers to avoid memory leaks
     (dolist (m item-markers) (set-marker m nil))
@@ -1332,19 +1329,20 @@ as already-synced on the next run."
                title (error-message-string err))
              nil)))))))
 
-(defun org-canvas--module-retry-pending-items ()
-  "Retry module items skipped because their target lacked a CANVAS_ID.
-Called at the end of `org-canvas-sync': items whose target gained an
-ID during the run are synced now (healing same-run ordering
-casualties) and reclassified from skip to success in the global
-summary; the rest produce a closing hint naming them.  Consumes and
-clears `org-canvas--module-items-pending'."
-  (when org-canvas--module-items-pending
+(defun org-canvas--module-retry-pending-items (pending)
+  "Retry the module items PENDING, skipped because their target lacked a CANVAS_ID.
+PENDING is the :module-items-pending of the modules run's context,
+newest first.  Called at the end of `org-canvas-sync': items whose
+target gained an ID during the run are synced now (healing same-run
+ordering casualties) and reclassified from skip to success in the
+global summary; the rest produce a closing hint naming them.  Releases
+the markers."
+  (when pending
     (org-canvas--log-info org-canvas--logger
       "--- Retry pass: %d module item(s) skipped earlier ---"
-      (length org-canvas--module-items-pending))
+      (length pending))
     (let ((still-pending nil))
-      (dolist (entry (nreverse org-canvas--module-items-pending))
+      (dolist (entry (reverse pending))
         (let ((synced-title (org-canvas--module-retry-single-pending entry)))
           (if synced-title
               (progn
@@ -1355,7 +1353,6 @@ clears `org-canvas--module-items-pending'."
             (push (plist-get entry :title) still-pending)))
         (let ((m (plist-get entry :marker)))
           (when (markerp m) (set-marker m nil))))
-      (setq org-canvas--module-items-pending nil)
       (when still-pending
         (org-canvas--log-warning org-canvas--logger
           "%d module item(s) still pending: %s — sync their targets, then re-run M-x org-canvas-sync-modules"
@@ -1372,7 +1369,6 @@ clears `org-canvas--module-items-pending'."
   ;; Module attributes alone miss item-level edits — fold an items
   ;; digest into the payload hash so they dirty the module (issue #26).
   :hash-extra #'org-canvas--module-items-digest
-  :after-sync #'org-canvas--module-forget-moved
   :pull-item-fn #'org-canvas--module-pull-item)
 
 ;;;; Delete Functions

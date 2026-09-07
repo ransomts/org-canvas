@@ -245,11 +245,12 @@ pulled item rather than a push or skip.
 
 ** Wiring into the Sync Macro
 
-The =:pull-item-fn= parameter on =org-canvas-define-sync= is bound to
-=org-canvas--current-pull-item-fn= during the sync run. When
+The =:pull-item-fn= parameter on =org-canvas-define-sync= is carried in
+the run context under =:pull-item-fn= (issue #141). When
 =push-check-and-resolve-conflict= detects a conflict and the user
-chooses pull, it accesses this dynamic variable to call the right
-module's pull function.
+chooses pull, it reads the function off the context it was handed, so
+the right module's pull function is called without every push function
+growing a parameter for it.
 
 Modules with =:pull-item-fn=: announcements, pages, discussions,
 assignments, assignment-groups, rubrics, group-categories, calendar

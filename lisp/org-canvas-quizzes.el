@@ -472,9 +472,10 @@ Returns \"\" for a quiz with none."
 
     `((quiz . ,quiz-obj))))
 
-(defun org-canvas--quiz-push-to-api (data payload)
-  "Send quiz PAYLOAD (from DATA) to Canvas API.  Return response with quiz ID."
-  (org-canvas--push-to-api data payload :endpoint "quizzes"))
+(defun org-canvas--quiz-push-to-api (data payload &optional ctx)
+  "Send quiz PAYLOAD (from DATA) to Canvas API in run context CTX.
+Return response with quiz ID."
+  (org-canvas--push-to-api data payload :ctx ctx :endpoint "quizzes"))
 
 (defun org-canvas--quiz-verify-response (data response)
   "Verify quiz properties in RESPONSE match DATA."
@@ -598,10 +599,12 @@ already published and may now be carrying stale totals."
        ((and desired was-published written (not org-canvas--dry-run))
         (org-canvas--quiz-refresh-totals quiz-id title written))))))
 
-(defun org-canvas--quiz-finalize (data response)
-  "Save quiz pointed to in DATA with CANVAS_ID from RESPONSE to org heading."
+(defun org-canvas--quiz-finalize (data response &optional ctx)
+  "Save quiz pointed to in DATA with CANVAS_ID from RESPONSE to org heading.
+CTX is the run context."
   (org-canvas--finalize-item data response
-    :post-fn (lambda (data response)
+    :ctx ctx
+    :post-fn (lambda (data response &optional _ctx)
                (org-canvas--quiz-verify-response data response)
                (let ((written (org-canvas--quiz-sync-children data response)))
                  (org-canvas--quiz-settle-publish-state data response written)))))

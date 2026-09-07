@@ -496,9 +496,10 @@ external-tool assignment would report drift on every run."
 FLAGS is the association plist `org-canvas--associate-rubric' takes."
   (org-canvas--associate-rubric assignment-id rubric-id "Assignment" flags))
 
-(defun org-canvas--assignment-post-finalize (data response)
+(defun org-canvas--assignment-post-finalize (data response &optional ctx)
   "Verify assignment properties and associate rubric.
-DATA is the parsed assignment plist, RESPONSE is the Canvas API response."
+DATA is the parsed assignment plist, RESPONSE is the Canvas API response,
+CTX the run context a remote write is declared on."
   ;; Verify assignment_group_id
   (let ((expected-group (plist-get data :assignment_group_id))
         (actual-group (alist-get 'assignment_group_id response)))
@@ -517,7 +518,7 @@ DATA is the parsed assignment plist, RESPONSE is the Canvas API response."
                 assignment-id rubric-id
                 (list :use-for-grading (plist-get data :rubric-use-for-grading)
                       :hide-score-total (plist-get data :rubric-hide-score-total))))
-      (org-canvas--finalize-note-remote-write))))
+      (org-canvas--finalize-note-remote-write ctx))))
 
 ;;;; Main Sync Function
 

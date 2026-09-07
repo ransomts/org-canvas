@@ -30,7 +30,6 @@
 # does not rely on.
 # --------------------------------------------------------------------
 
-lisp/org-canvas-files.el :: nil->t :: (defvar org-canvas--file-changed-ids nil
 lisp/org-canvas-files.el :: nil->t :: (defvar org-canvas--file-root-folder-cache nil
 lisp/org-canvas-files.el :: nil->t :: (deleted-ids nil)
 lisp/org-canvas-files.el :: nil->t :: (let ((targets nil)
