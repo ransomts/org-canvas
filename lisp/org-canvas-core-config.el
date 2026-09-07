@@ -498,7 +498,7 @@ nil.  See `org-canvas--sync-ctx-keys' for what each means."
     ctx))
 
 (defun org-canvas--ctx-push (ctx key value)
-  "Push VALUE onto the list CTX holds under KEY.
+  "Push VALUE onto the list stored in CTX under KEY.
 Mutates CTX in place; a nil CTX — a helper called outside any run —
 records nothing."
   (when ctx
