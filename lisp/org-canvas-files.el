@@ -1833,8 +1833,8 @@ a file may share a name without colliding."
         (org-canvas--file-pull-insert-folder parent name level))))
 
 (defun org-canvas--file-pull-insert-folder (parent name level)
-  "Insert folder heading NAME at LEVEL at the end of PARENT, and return its position.
-PARENT is nil for the top level."
+  "Insert folder heading NAME at LEVEL at the end of PARENT.
+Returns its position.  PARENT is nil for the top level."
   (org-with-wide-buffer
    (if parent
        (progn (goto-char parent) (org-end-of-subtree t t))
