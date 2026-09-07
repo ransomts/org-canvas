@@ -11,6 +11,10 @@
 ;; Code coverage with undercover
 (eldev-use-plugin 'undercover)
 (setf eldev-undercover-fileset '("lisp/org-canvas.el"
+                                  "lisp/org-canvas-status.el"
+                                  "lisp/org-canvas-publish.el"
+                                  "lisp/org-canvas-adopt.el"
+                                  "lisp/org-canvas-orphans.el"
                                   "lisp/org-canvas-diff.el"
                                   "lisp/org-canvas-core.el"
                                   "lisp/org-canvas-core-log.el"

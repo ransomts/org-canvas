@@ -2732,7 +2732,7 @@
                        '((id . 42))))))
           (org-canvas--file-confirm-with-retry "https://test.example.com/confirm" 3)
           (expect 'message :to-have-been-called-with
-                  "File upload: retry %d/%d after %ds..." 2 3 2))))))
+                  "%s in %ds..." "File upload: retry 2/3" 2))))))
 
 (describe "org-canvas-pull-files progress"
   (before-each (test-org-canvas-reset-file-caches))

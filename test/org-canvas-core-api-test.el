@@ -759,7 +759,7 @@ search), so a spec can script which login carries the token."
           (expect call-count :to-equal 2)
           (expect (alist-get 'id result) :to-equal 1)
           (expect 'message :to-have-been-called-with
-                  "Rate limited (HTTP %d). Retrying in %ds..." 429 1)))))
+                  "%s in %ds..." "Rate limited (HTTP 429). Retrying" 1)))))
 
   (it "fails after exhausting retries"
     (let ((org-canvas-api-token "test-token")
@@ -855,26 +855,27 @@ search), so a spec can script which login carries the token."
                 "Fetching page %d (%d items so far)..." 1 0)))))
 
 (describe "org-canvas--api-handle-plz-error rate-limit countdown"
-  (it "calls sleep-for 1 second at a time instead of full duration"
+  (it "waits out the whole rate-limit interval through org-canvas--wait"
     (with-org-canvas-test-config
       (let ((org-canvas-rate-limit-wait 3)
             (org-canvas-rate-limit-retries 1))
-        (spy-on 'sleep-for)
-        (spy-on 'message)
+        (spy-on 'org-canvas--wait)
         (let ((result (org-canvas--api-handle-plz-error
                        (cons 'plz-error
                              (make-plz-error
                               :response (make-plz-response :status 429 :body "rate limit")))
                        "https://test.example.com/api")))
           (expect result :to-equal :retry)
-          (expect 'sleep-for :to-have-been-called-times 3)
-          (expect 'sleep-for :to-have-been-called-with 1)))))
+          (expect 'org-canvas--wait :to-have-been-called-with
+                  3 "Rate limited (HTTP 429). Retrying")))))
 
-  (it "shows descending countdown messages"
+  (it "shows descending countdown messages when someone is watching"
     (with-org-canvas-test-config
       (let ((org-canvas-rate-limit-wait 3)
             (org-canvas-rate-limit-retries 1)
+            (noninteractive nil)
             (messages nil))
+        (spy-on 'sit-for :and-return-value t)
         (spy-on 'sleep-for)
         (spy-on 'message :and-call-fake
                 (lambda (fmt &rest args)
@@ -887,7 +888,62 @@ search), so a spec can script which login carries the token."
         (setq messages (nreverse messages))
         (expect (nth 0 messages) :to-match "Retrying in 3s")
         (expect (nth 1 messages) :to-match "Retrying in 2s")
-        (expect (nth 2 messages) :to-match "Retrying in 1s")))))
+        (expect (nth 2 messages) :to-match "Retrying in 1s")
+        (expect 'sleep-for :not :to-have-been-called)))))
+
+;;;; org-canvas--wait (issue #142)
+;;
+;; Every pause a sync takes goes through one helper, so the display
+;; stays alive interactively and batch pays a single sleep.
+
+(describe "org-canvas--wait"
+  (it "is a single sleep-for in batch, announced once when given a reason"
+    (let ((noninteractive t))
+      (spy-on 'sleep-for)
+      (spy-on 'sit-for)
+      (spy-on 'message)
+      (org-canvas--wait 2.5 "Folders settling")
+      (expect 'sleep-for :to-have-been-called-with 2.5)
+      (expect 'sleep-for :to-have-been-called-times 1)
+      (expect 'sit-for :not :to-have-been-called)
+      (expect 'message :to-have-been-called-with "%s in %ds..." "Folders settling" 3)))
+
+  (it "says nothing in batch without a reason"
+    (let ((noninteractive t))
+      (spy-on 'sleep-for)
+      (spy-on 'message)
+      (org-canvas--wait 1)
+      (expect 'sleep-for :to-have-been-called-with 1)
+      (expect 'message :not :to-have-been-called)))
+
+  (it "takes the wait in one-second sit-for slices interactively"
+    (let ((noninteractive nil)
+          (slices nil))
+      (spy-on 'sit-for :and-call-fake (lambda (s) (push s slices) t))
+      (spy-on 'sleep-for)
+      (spy-on 'message)
+      (org-canvas--wait 2.5)
+      (expect (nreverse slices) :to-equal '(1 1 0.5))
+      (expect 'sleep-for :not :to-have-been-called)
+      (expect 'message :not :to-have-been-called)))
+
+  (it "sleeps a slice out when input interrupts sit-for, so the wait never ends early"
+    (let ((noninteractive nil)
+          (sits 0))
+      (spy-on 'sit-for :and-call-fake (lambda (_s) (setq sits (1+ sits)) (= sits 1)))
+      (spy-on 'sleep-for)
+      (org-canvas--wait 3)
+      (expect sits :to-equal 3)
+      (expect 'sleep-for :to-have-been-called-times 2)
+      (expect 'sleep-for :to-have-been-called-with 1)))
+
+  (it "does nothing for a non-positive wait"
+    (let ((noninteractive nil))
+      (spy-on 'sit-for)
+      (spy-on 'sleep-for)
+      (org-canvas--wait 0)
+      (expect 'sit-for :not :to-have-been-called)
+      (expect 'sleep-for :not :to-have-been-called))))
 
 (describe "transient retry"
   (it "retries plz curl-28 timeouts up to retry-delays length"
