@@ -46,6 +46,17 @@ no CANVAS_ID yet); the report collapses these into a summary line."
                 :property property :message message)
           (when pending-sync '(:pending-sync t))))
 
+(defun org-canvas--validate-push-only (issue)
+  "Mark ISSUE as advice that exists only to protect a push, and return it.
+A course marked `org-canvas-read-only' will never make that push, and
+such findings were half of what validation had to say about a mirror
+of somebody else's course — every historical due date reported as
+being in the past, faithfully and uselessly (issue #168).  A finding
+that describes the course itself is never marked: a title collision, a
+broken link or a malformed drawer is true whatever you intend to do
+next.  Nil ISSUE passes through, so a check can wrap its result."
+  (and issue (append issue (list :push-only t))))
+
 ;;;; 2. Type-Specific Validators
 ;;
 ;; Each returns nil (valid) or an issue plist.
@@ -108,9 +119,10 @@ PROPERTY names the property.  LOC is a (:file :line :heading) plist."
                (iso (format-time-string "%Y-%m-%dT%H:%M:%SZ" encoded t))
                (now (format-time-string "%Y-%m-%dT%H:%M:%SZ" (current-time) t)))
           (when (string< iso now)
-            (org-canvas--validate-make-issue
-             'warning loc property
-             (format "%s: timestamp %s is in the past" property value))))
+            (org-canvas--validate-push-only
+             (org-canvas--validate-make-issue
+              'warning loc property
+              (format "%s: timestamp %s is in the past" property value)))))
       (error
        (org-canvas--validate-make-issue
         'error loc property
@@ -131,7 +143,8 @@ Returns nil (valid) or an issue plist."
     (org-canvas--validate-make-issue (or not-link-severity 'error)
                                      loc property not-link-msg))
    ((not (org-canvas--resolve-link-property value id-property source-file))
-    (org-canvas--validate-make-issue 'warning loc property unresolved-msg t))))
+    (org-canvas--validate-push-only
+     (org-canvas--validate-make-issue 'warning loc property unresolved-msg t)))))
 
 (defun org-canvas--validate-check-link (value property _target-file-var id-property loc)
   "Check that VALUE is a valid Org file link and resolves.
@@ -902,7 +915,9 @@ Returns a plist (:issues ISSUES :checked N :skipped N)."
   "Insert the validation report into the current buffer.
 LISTED are the issues printed individually, PENDING the pre-first-sync
 link warnings, collapsed into one line unless VERBOSE.  STATS is a
-plist (:errors :warnings :checked :skipped)."
+plist (:errors :warnings :checked :skipped :suppressed); a non-zero
+:suppressed count is named in a line of its own, so that holding push-only
+findings back on a read-only course is visible rather than silent."
   (insert "org-canvas validation report\n")
   (insert (make-string 60 ?=))
   (insert "\n\n")
@@ -919,6 +934,9 @@ plist (:errors :warnings :checked :skipped)."
             (insert (format "%d link(s) pending first sync (targets have no CANVAS_ID yet); C-u M-x org-canvas-validate lists them\n"
                             (length pending))))))
     (insert "No issues found.\n"))
+  (when (> (plist-get stats :suppressed) 0)
+    (insert (format "%d push-only finding(s) suppressed (org-canvas-read-only is set); M-x org-canvas-validate-all shows them\n"
+                    (plist-get stats :suppressed))))
   (insert "\n")
   (insert (make-string 60 ?=))
   (insert "\n")
@@ -932,7 +950,7 @@ plist (:errors :warnings :checked :skipped)."
   (insert "\n"))
 
 ;;;###autoload
-(defun org-canvas-validate (&optional verbose)
+(defun org-canvas-validate (&optional verbose all)
   "Validate all course org files without contacting the Canvas API.
 Checks property types, enum values, date ordering, and structural
 requirements across all 12 content types.
@@ -947,11 +965,21 @@ Warnings about link targets that merely lack a CANVAS_ID (expected
 state before the first sync) are collapsed into a single summary
 line.  With a prefix argument VERBOSE, list them individually.
 
-Returns the number of errors, so a batch caller can act on it; see
-`org-canvas-validate-batch'."
+On a course marked `org-canvas-read-only', findings that exist only to
+protect a push are held back and counted in one line; non-nil ALL
+keeps them, which is what `org-canvas-validate-all' passes (issue
+#168).
+
+Returns the number of errors reported, so a batch caller can act on
+it; see `org-canvas-validate-batch'."
   (interactive "P")
   (let* ((result (org-canvas--validate-run-all-specs))
-         (all-issues (plist-get result :issues))
+         (found (plist-get result :issues))
+         (suppress (and org-canvas-read-only (not all)))
+         (all-issues (if suppress
+                         (cl-remove-if (lambda (i) (plist-get i :push-only)) found)
+                       found))
+         (suppressed-count (- (length found) (length all-issues)))
          (pending-issues (cl-remove-if-not
                           (lambda (i) (plist-get i :pending-sync)) all-issues))
          (listed-issues (cl-remove-if
@@ -960,7 +988,8 @@ Returns the number of errors, so a batch caller can act on it; see
          (warning-count (cl-count 'warning all-issues :key (lambda (i) (plist-get i :severity))))
          (stats (list :errors error-count :warnings warning-count
                       :checked (plist-get result :checked)
-                      :skipped (plist-get result :skipped))))
+                      :skipped (plist-get result :skipped)
+                      :suppressed suppressed-count)))
     (org-canvas--report-display
      "*canvas-validate*"
      (lambda ()
@@ -969,6 +998,17 @@ Returns the number of errors, so a batch caller can act on it; see
      #'org-canvas-validate-mode)
     (message "%s" (org-canvas--validate-format-summary error-count warning-count))
     error-count))
+
+;;;###autoload
+(defun org-canvas-validate-all (&optional verbose)
+  "Validate every course org file, holding nothing back.
+Same as `org-canvas-validate' except that findings which only protect
+a push are reported even on a course marked `org-canvas-read-only' —
+the list to read when you are about to clear that flag and adopt the
+course for real (issue #168).  VERBOSE lists the pre-first-sync link
+warnings individually, as it does there."
+  (interactive "P")
+  (org-canvas-validate verbose t))
 
 ;;;###autoload
 (defun org-canvas-validate-batch ()

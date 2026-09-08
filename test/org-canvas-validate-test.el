@@ -2659,6 +2659,109 @@ EXCEPT is a list of filenames to skip."
                        (plist-get spec :properties)))))
       (expect (plist-get prop :read-only-values) :to-equal '("online_quiz" "discussion_topic")))))
 
+(describe "read-only validation (issue #168)"
+  (defconst test-validate-push-only-course
+    "* Homework 1
+:PROPERTIES:
+:CANVAS_ID: 11
+:DUE_AT: <2001-01-05 Fri>
+:END:
+"
+    "One assignment whose only finding is a due date long past.")
+
+  (it "holds push-only findings back on a read-only course"
+    (with-validate-test-dir dir
+      (with-temp-file (expand-file-name "assignments.org" dir)
+        (insert test-validate-push-only-course))
+      (test-validate-create-empty-files dir '("assignments.org"))
+      (cl-letf (((symbol-function 'princ) #'ignore))
+        (let ((org-canvas-read-only t))
+          (org-canvas-validate)))
+      (with-current-buffer "*canvas-validate*"
+        (let ((content (buffer-string)))
+          (expect content :not :to-match "is in the past")
+          (expect content :to-match "1 push-only finding(s) suppressed")
+          (expect content :to-match "org-canvas-validate-all")
+          (expect content :to-match "0 error(s), 0 warning(s)")))))
+
+  (it "reports them as usual on a course you can write to"
+    (with-validate-test-dir dir
+      (with-temp-file (expand-file-name "assignments.org" dir)
+        (insert test-validate-push-only-course))
+      (test-validate-create-empty-files dir '("assignments.org"))
+      (cl-letf (((symbol-function 'princ) #'ignore))
+        (let ((org-canvas-read-only nil))
+          (org-canvas-validate)))
+      (with-current-buffer "*canvas-validate*"
+        (let ((content (buffer-string)))
+          (expect content :to-match "is in the past")
+          (expect content :not :to-match "suppressed")
+          (expect content :to-match "0 error(s), 1 warning(s)")))))
+
+  (it "keeps findings that describe the course, read-only or not"
+    (with-validate-test-dir dir
+      (with-temp-file (expand-file-name "pages.org" dir)
+        (insert "* Bad Page\n:PROPERTIES:\n:PUBLISHED: yes\n:END:\n"))
+      (test-validate-create-empty-files dir '("pages.org"))
+      (cl-letf (((symbol-function 'princ) #'ignore))
+        (let ((org-canvas-read-only t))
+          (org-canvas-validate)))
+      (with-current-buffer "*canvas-validate*"
+        (let ((content (buffer-string)))
+          (expect content :to-match "not a valid boolean")
+          (expect content :not :to-match "suppressed")))))
+
+  (it "says so even when nothing else is left to report"
+    (with-validate-test-dir dir
+      (with-temp-file (expand-file-name "assignments.org" dir)
+        (insert test-validate-push-only-course))
+      (test-validate-create-empty-files dir '("assignments.org"))
+      (cl-letf (((symbol-function 'princ) #'ignore))
+        (let ((org-canvas-read-only t))
+          (org-canvas-validate)))
+      (with-current-buffer "*canvas-validate*"
+        (let ((content (buffer-string)))
+          (expect content :to-match "No issues found")
+          (expect content :to-match "suppressed")))))
+
+  (describe "org-canvas-validate-all"
+    (it "shows the push-only findings a read-only course suppresses"
+      (with-validate-test-dir dir
+        (with-temp-file (expand-file-name "assignments.org" dir)
+          (insert test-validate-push-only-course))
+        (test-validate-create-empty-files dir '("assignments.org"))
+        (cl-letf (((symbol-function 'princ) #'ignore))
+          (let ((org-canvas-read-only t))
+            (org-canvas-validate-all)))
+        (with-current-buffer "*canvas-validate*"
+          (let ((content (buffer-string)))
+            (expect content :to-match "is in the past")
+            (expect content :not :to-match "suppressed")
+            (expect content :to-match "0 error(s), 1 warning(s)")))))
+
+    (it "is an interactive command"
+      (expect (commandp 'org-canvas-validate-all) :to-be-truthy)))
+
+  (describe "org-canvas--validate-push-only"
+    (it "marks an issue and leaves everything else about it alone"
+      (let ((issue (org-canvas--validate-push-only
+                    (org-canvas--validate-make-issue
+                     'warning '(:file "a.org" :line 3 :heading "H") "DUE_AT" "late"))))
+        (expect (plist-get issue :push-only) :to-be t)
+        (expect (plist-get issue :message) :to-equal "late")
+        (expect (plist-get issue :line) :to-equal 3)))
+
+    (it "passes nil through, so a check can wrap its result"
+      (expect (org-canvas--validate-push-only nil) :to-be nil))
+
+    (it "marks a pre-first-sync link warning, which no read-only course can act on"
+      (let ((issue (org-canvas--validate-resolve-file-link
+                    "[[file:nowhere.org::*Nothing][Nothing]]" "CANVAS_ID"
+                    "assignments.org" '(:file "assignments.org" :line 1 :heading "H")
+                    "GROUP" "not a link" "no CANVAS_ID yet")))
+        (expect (plist-get issue :push-only) :to-be t)
+        (expect (plist-get issue :pending-sync) :to-be t)))))
+
 (describe "org-canvas-validate in batch (issue #169)"
   (it "prints the whole report, not only the tally"
     (with-validate-test-dir dir

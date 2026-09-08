@@ -2239,6 +2239,34 @@ assignments Canvas creates behind quizzes stay out of your file.
 Use the plain command to import a course for the first time, and the prefix
 argument afterwards.
 
+** Validating an Adopted Course
+
+Adopting an inherited course is where =org-canvas-validate= has the most to
+say: you wrote none of it and you want to know what shape it is in.  It is
+also where its signal is worst, because roughly half of what it knows exists
+to protect a *push* — and a course marked read-only will never make one:
+
+#+begin_src elisp
+;; in org-canvas-credentials.el, beside the course id it protects
+(setq org-canvas-read-only t)
+#+end_src
+
+With that set, validation reports only what describes the course — title
+collisions and superseded twins, broken cross-file links, malformed
+properties, structural problems — and holds back the advice that only
+matters before a write: timestamps in the past (on a mirror of somebody's
+Fall section, every historical date is *supposed* to be in the past) and
+links whose target has no =CANVAS_ID= yet.  What was held back is named in a
+line of its own rather than dropped silently:
+
+#+begin_example
+32 push-only finding(s) suppressed (org-canvas-read-only is set); M-x org-canvas-validate-all shows them
+#+end_example
+
+=M-x org-canvas-validate-all= is that full list — the one to read when you
+are about to clear the flag and adopt the course for real.  On a course you
+already write to, the two commands are identical.
+
 ** Forcing a Re-upload
 
 A file sync skips an entry whose =PAYLOAD_HASH= still matches.  That hash
@@ -2483,6 +2511,7 @@ See [[*Grading Submissions]] for the workflow.
 | =org-canvas-adopt-at-point=       | Stamp the heading at point with the Canvas item of the same title (local write only) |
 | =org-canvas-validate=             | Validate all Org files offline (no API calls) |
 | =org-canvas-validate-batch=       | As above, exiting non-zero when there are errors |
+| =org-canvas-validate-all=         | Validate without suppressing push-only findings on a read-only course |
 | =org-canvas-sync-dry-run=         | Preview what would be synced (no API calls)   |
 | =org-canvas-cleanup-orphans=      | Find and delete orphaned Canvas items         |
 | =org-canvas-clear-log=            | Clear log buffer and log file                 |
