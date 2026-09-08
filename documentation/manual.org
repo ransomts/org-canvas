@@ -1039,7 +1039,16 @@ delete-and-create, and owns the bookkeeping (#105):
   order works.
 - An item the module holds that =modules.org= does not list anywhere is left
   in place and named in the log.  Module items are not pruned without being
-  asked, the same rule quiz questions follow.
+  asked, the same rule quiz questions follow; asking is
+  =org-canvas-prune-module-items=, which lists them and confirms once.
+- An item heading with no =CANVAS_ID= whose content the module already holds
+  -- the same assignment, page, file or quiz; the same title for a SubHeader
+  or an external URL -- adopts that item instead of creating a second copy
+  (#179).  The heading is stamped with the existing id and the item updated
+  in place.  This is what a reverted =modules.org= or a run that died between
+  the create and the stamp needs.  If the module already holds two such
+  items, the first by position is adopted and the log names the rest; the
+  drift report lists them as EXTRA under *Module Items* (#177).
 
 Dropping the =:CANVAS_ID:= drawer by hand before the move still works -- it is
 what the reconcile does for you -- and a same-module reorder keeps the id and
@@ -1934,6 +1943,18 @@ Per feature:
   would create a second item.  =org-canvas-adopt-at-point= on the heading
   stamps the id (see [[*Claiming an Unclaimed Item][Claiming an Unclaimed Item]]).
 
+Module items are compared too, in a section of their own named *Module
+Items* right after *Modules* (#177).  The report lists the items of every
+module =modules.org= claims, one request per module, and an item no item
+heading anywhere in the file claims is an EXTRA row naming the module it sits
+in -- the twin a sync that had lost its stamp left behind (see
+[[*Moving Items Between Modules][Moving Items Between Modules]]).  An item
+another module's heading claims is a pending move, not an extra.  The row's
+verbs work as elsewhere: =k= deletes the item from its module, and =a=
+acknowledges it under ="module-items"= in =org-canvas-diff-known-extras=;
+=org-canvas-prune-module-items= removes every such item at once, after
+confirming.
+
 Every property a module registers is compared, so this covers =PUBLISHED=,
 points, due dates, group weights, drop rules and the rest without a separate
 list to maintain.  The body is compared too, for the modules that push one
@@ -2008,7 +2029,8 @@ valves, from broad to narrow:
 All four affect the drift report only.  Orphan cleanup and prune still list
 acknowledged and referenced items (scaffolding stays protected there by the
 same skip-fns), which is where to look if one of them should be deleted after
-all.
+all.  A module item is acknowledged under ="module-items"=, the section its
+rows report in, since an item id and a module id are different things (#177).
 
 ** Acting on the Report
 
@@ -2462,6 +2484,7 @@ are never touched.
 | =org-canvas-prune-quizzes=               | Prune orphaned classic quizzes   |
 | =org-canvas-prune-pages=                 | Prune orphaned pages             |
 | =org-canvas-prune-modules=               | Prune orphaned modules           |
+| =org-canvas-prune-module-items=          | Prune module items no heading claims (#177) |
 | =org-canvas-prune-discussions=           | Prune orphaned discussions       |
 | =org-canvas-prune-announcements=         | Prune orphaned announcements     |
 | =org-canvas-prune-assignment-groups=     | Prune orphaned assignment groups |

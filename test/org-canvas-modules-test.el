@@ -3968,4 +3968,377 @@ REMOTE is a form; the symbol `fail' makes the list request signal.
        ;; The old item under Week 03 was replaced, not kept.
        (expect (assoc "Old item" ids) :to-be nil)))))
 
+
+(describe "module item adoption (issue #179)"
+  (defmacro test-org-canvas-179--with-remote (remote &rest body)
+    "Run BODY with the module's item list mocked to REMOTE, a vector form.
+The real API answers with a vector, so the mock does too; a list
+would hide a `car' on a vector.  `requests' collects (METHOD URL) for
+every `org-canvas-api-request'; `warnings' the warning lines; `ctx'
+is a fresh run context.  A PUT answers with the item it updated, a
+POST with id 900."
+    (declare (indent 1))
+    `(let ((requests nil)
+           (warnings nil)
+           (ctx (org-canvas--sync-make-ctx)))
+       (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                  (lambda (&rest _) ,remote))
+                 ((symbol-function 'org-canvas--log-warning)
+                  (lambda (_logger fmt &rest args)
+                    (push (apply #'format fmt args) warnings)))
+                 ((symbol-function 'org-canvas-api-request)
+                  (lambda (method url &rest _)
+                    (push (list method url) requests)
+                    (if (and (eq method 'PUT) (string-match "/items/\\([0-9]+\\)$" url))
+                        `((id . ,(string-to-number (match-string 1 url))) (title . "Updated"))
+                      '((id . 900) (title . "Created"))))))
+         ,@body)))
+
+  (defmacro test-org-canvas-179--with-assignment-link (&rest body)
+    "Run BODY with every module item link resolving to assignment 2563803."
+    (declare (indent 0))
+    `(cl-letf (((symbol-function 'org-canvas--module-resolve-link)
+                (lambda (_link _dir)
+                  '(:type "Assignment" :title "R3: Stakeholders" :content-id "2563803"))))
+       ,@body))
+
+  (defconst test-org-canvas-179--twins
+    [((id . 5864670) (type . "Assignment") (title . "R3: Stakeholders")
+      (content_id . 2563803) (position . 10))
+     ((id . 5864661) (type . "Assignment") (title . "R3: Stakeholders")
+      (content_id . 2563803) (position . 10))]
+    "The two items of Clemson module 781703: one content, twice.")
+
+  (defun test-org-canvas-179--request (requests method pattern)
+    "Return the request in REQUESTS of METHOD whose URL matches PATTERN."
+    (cl-find-if (lambda (r) (and (eq (car r) method)
+                                 (string-match-p pattern (cadr r))))
+                requests))
+
+  (it "adopts the item the module already holds for the same content: PUT, not POST"
+    (with-org-canvas-test-config
+      (test-org-canvas-179--with-remote
+          [((id . 5864661) (type . "Assignment") (title . "R3: Stakeholders")
+            (content_id . 2563803) (position . 10))]
+        (test-org-canvas-179--with-assignment-link
+          (with-temp-org-buffer
+           "* Week 3
+:PROPERTIES:
+:CANVAS_ID: 781703
+:END:
+** [[file:assignments.org::*R3: Stakeholders][R3: Stakeholders]]
+"
+           (org-back-to-heading)
+           (org-canvas--module-sync-items 781703 (point) default-directory ctx)
+           (expect (test-org-canvas-179--request requests 'PUT "modules/781703/items/5864661$")
+                   :to-be-truthy)
+           (expect (test-org-canvas-179--request requests 'POST ".") :to-be nil)
+           (expect (plist-get ctx :module-items-adopted) :to-equal '("5864661"))
+           (search-forward "R3: Stakeholders")
+           (org-back-to-heading t)
+           (expect (org-entry-get (point) "CANVAS_ID") :to-equal "5864661")
+           ;; Adopted, so not "left in place" either.
+           (expect warnings :to-be nil))))))
+
+  (it "does not adopt an item of another type, even with the same content id"
+    (with-org-canvas-test-config
+      (test-org-canvas-179--with-remote
+          [((id . 5864661) (type . "Quiz") (title . "R3: Stakeholders")
+            (content_id . 2563803))]
+        (test-org-canvas-179--with-assignment-link
+          (with-temp-org-buffer
+           "* Week 3
+:PROPERTIES:
+:CANVAS_ID: 781703
+:END:
+** [[file:assignments.org::*R3: Stakeholders][R3: Stakeholders]]
+"
+           (org-back-to-heading)
+           (org-canvas--module-sync-items 781703 (point) default-directory ctx)
+           (expect (test-org-canvas-179--request requests 'POST "modules/781703/items$")
+                   :to-be-truthy)
+           (expect (test-org-canvas-179--request requests 'PUT ".") :to-be nil))))))
+
+  (it "still creates the item when the module holds nothing with its content"
+    (with-org-canvas-test-config
+      (test-org-canvas-179--with-remote
+          [((id . 5864661) (type . "Assignment") (title . "R3: Stakeholders")
+            (content_id . 999))]
+        (test-org-canvas-179--with-assignment-link
+          (with-temp-org-buffer
+           "* Week 3
+:PROPERTIES:
+:CANVAS_ID: 781703
+:END:
+** [[file:assignments.org::*R3: Stakeholders][R3: Stakeholders]]
+"
+           (org-back-to-heading)
+           (org-canvas--module-sync-items 781703 (point) default-directory ctx)
+           (expect (test-org-canvas-179--request requests 'POST "modules/781703/items$")
+                   :to-be-truthy)
+           (expect (plist-get ctx :module-items-adopted) :to-be nil)
+           (search-forward "R3: Stakeholders")
+           (org-back-to-heading t)
+           (expect (org-entry-get (point) "CANVAS_ID") :to-equal "900"))))))
+
+  (it "adopts a SubHeader and an external URL by title"
+    (with-org-canvas-test-config
+      (test-org-canvas-179--with-remote
+          [((id . 41) (type . "SubHeader") (title . "Readings") (position . 1))
+           ((id . 42) (type . "ExternalUrl") (title . "Course site")
+            (external_url . "https://example.edu") (position . 2))]
+        (with-temp-org-buffer
+         "* Week 3
+:PROPERTIES:
+:CANVAS_ID: 781703
+:END:
+** Readings
+:PROPERTIES:
+:ITEM_TYPE: SubHeader
+:END:
+** Course site
+:PROPERTIES:
+:EXTERNAL_URL: https://example.edu
+:END:
+"
+         (org-back-to-heading)
+         (org-canvas--module-sync-items 781703 (point) default-directory ctx)
+         (expect (test-org-canvas-179--request requests 'PUT "modules/781703/items/41$")
+                 :to-be-truthy)
+         (expect (test-org-canvas-179--request requests 'PUT "modules/781703/items/42$")
+                 :to-be-truthy)
+         (expect (test-org-canvas-179--request requests 'POST ".") :to-be nil)
+         (search-forward "** Course site")
+         (org-back-to-heading t)
+         (expect (org-entry-get (point) "CANVAS_ID") :to-equal "42")))))
+
+  (it "does not adopt a SubHeader whose title differs"
+    (with-org-canvas-test-config
+      (test-org-canvas-179--with-remote
+          [((id . 41) (type . "SubHeader") (title . "Reading list"))]
+        (with-temp-org-buffer
+         "* Week 3
+:PROPERTIES:
+:CANVAS_ID: 781703
+:END:
+** Readings
+:PROPERTIES:
+:ITEM_TYPE: SubHeader
+:END:
+"
+         (org-back-to-heading)
+         (org-canvas--module-sync-items 781703 (point) default-directory ctx)
+         (expect (test-org-canvas-179--request requests 'POST "modules/781703/items$")
+                 :to-be-truthy)))))
+
+  (it "makes no write during a dry run, and logs the adoption without stamping it"
+    (with-org-canvas-test-config
+      (test-org-canvas-179--with-remote
+          [((id . 5864661) (type . "Assignment") (title . "R3: Stakeholders")
+            (content_id . 2563803))]
+        (test-org-canvas-179--with-assignment-link
+          (let ((org-canvas--dry-run t)
+                (lines nil))
+            (cl-letf (((symbol-function 'org-canvas--log-info)
+                       (lambda (_logger fmt &rest args)
+                         (push (apply #'format fmt args) lines))))
+              (with-temp-org-buffer
+               "* Week 3
+:PROPERTIES:
+:CANVAS_ID: 781703
+:END:
+** [[file:assignments.org::*R3: Stakeholders][R3: Stakeholders]]
+"
+               (org-back-to-heading)
+               (org-canvas--module-sync-items 781703 (point) default-directory ctx)
+               (expect requests :to-be nil)
+               (search-forward "R3: Stakeholders")
+               (org-back-to-heading t)
+               (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)))
+            (expect (cl-find-if (lambda (l) (string-match-p "adopting it" l)) lines)
+                    :to-be-truthy)
+            (expect (cl-find-if (lambda (l) (string-match-p "Would PUT item" l)) lines)
+                    :to-be-truthy)
+            ;; The adopted id counts as claimed, so the reconcile does
+            ;; not call it an unlisted item.
+            (expect warnings :to-be nil))))))
+
+  (it "adopts the first twin by position and id, names the rest, and deletes nothing"
+    (with-org-canvas-test-config
+      (test-org-canvas-179--with-remote test-org-canvas-179--twins
+        (test-org-canvas-179--with-assignment-link
+          (with-temp-org-buffer
+           "* Week 3
+:PROPERTIES:
+:CANVAS_ID: 781703
+:END:
+** [[file:assignments.org::*R3: Stakeholders][R3: Stakeholders]]
+"
+           (org-back-to-heading)
+           (org-canvas--module-sync-items 781703 (point) default-directory ctx)
+           (expect (test-org-canvas-179--request requests 'PUT "items/5864661$")
+                   :to-be-truthy)
+           (expect (test-org-canvas-179--request requests 'DELETE ".") :to-be nil)
+           (expect (cl-find-if (lambda (w) (string-match-p "1 more item(s) with the same content as 'R3: Stakeholders' (5864670)" w))
+                               warnings)
+                   :to-be-truthy)
+           ;; And the reconcile still names the twin as unlisted (issue #105).
+           (expect (cl-find-if (lambda (w) (string-match-p "(item 5864670) that modules.org does not list" w))
+                               warnings)
+                   :to-be-truthy))))))
+
+  (it "leaves alone the twin a sibling heading claims, and adopts the other"
+    (with-org-canvas-test-config
+      (test-org-canvas-179--with-remote test-org-canvas-179--twins
+        (test-org-canvas-179--with-assignment-link
+          (with-temp-org-buffer
+           "* Week 3
+:PROPERTIES:
+:CANVAS_ID: 781703
+:END:
+** [[file:assignments.org::*R3: Stakeholders][R3: Stakeholders]]
+:PROPERTIES:
+:CANVAS_ID: 5864661
+:END:
+** [[file:assignments.org::*R3: Stakeholders][R3: Stakeholders]]
+"
+           (org-back-to-heading)
+           (org-canvas--module-sync-items 781703 (point) default-directory ctx)
+           (expect (test-org-canvas-179--request requests 'PUT "items/5864661$")
+                   :to-be-truthy)
+           (expect (test-org-canvas-179--request requests 'PUT "items/5864670$")
+                   :to-be-truthy)
+           (expect (test-org-canvas-179--request requests 'POST ".") :to-be nil)
+           (expect (plist-get ctx :module-items-adopted) :to-equal '("5864670")))))))
+
+  (it "adopts nothing when the item list could not be fetched"
+    (with-org-canvas-test-config
+      (test-org-canvas-179--with-remote (error "listing failed")
+        (test-org-canvas-179--with-assignment-link
+          (with-temp-org-buffer
+           "* Week 3
+:PROPERTIES:
+:CANVAS_ID: 781703
+:END:
+** [[file:assignments.org::*R3: Stakeholders][R3: Stakeholders]]
+"
+           (org-back-to-heading)
+           (org-canvas--module-sync-items 781703 (point) default-directory ctx)
+           (expect (test-org-canvas-179--request requests 'POST "modules/781703/items$")
+                   :to-be-truthy))))))
+
+  (it "matches a page by its url when the link carries no content id"
+    (let ((data '(:type "Page" :title "Welcome" :page-url "welcome")))
+      (expect (org-canvas--module-item-same-content-p
+               data '((type . "Page") (page_url . "welcome") (title . "Renamed")))
+              :to-be-truthy)
+      (expect (org-canvas--module-item-same-content-p
+               data '((type . "Page") (page_url . "syllabus") (title . "Welcome")))
+              :to-be nil)))
+
+  (it "orders twins by position, then id"
+    (let ((twins (org-canvas--module-item-twins
+                  '(:type "SubHeader" :title "T")
+                  '(((id . 30) (type . "SubHeader") (title . "T") (position . 2))
+                    ((id . 20) (type . "SubHeader") (title . "T") (position . 1))
+                    ((id . 10) (type . "SubHeader") (title . "T") (position . 2))
+                    ((id . 5) (type . "SubHeader") (title . "Other") (position . 1)))
+                  nil)))
+      (expect (mapcar (lambda (i) (alist-get 'id i)) twins) :to-equal '(20 10 30)))))
+
+
+(describe "org-canvas-prune-module-items (issues #177, #179)"
+  (defmacro test-org-canvas-177--with-course (content remote &rest body)
+    "Run BODY with modules.org holding CONTENT and every item list REMOTE.
+REMOTE is a vector form, or the symbol `fail'.  `requests' collects
+\(METHOD URL); `answer' is what `y-or-n-p' returns."
+    (declare (indent 2))
+    `(let ((file (make-temp-file "prune-177-" nil ".org"))
+           (requests nil)
+           (answer t))
+       (unwind-protect
+           (progn
+             (with-temp-file file (insert ,content))
+             (let ((org-canvas-modules-file file))
+               (with-org-canvas-test-config
+                 (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                            (lambda (&rest _)
+                              (if (eq ,remote 'fail) (error "listing failed") ,remote)))
+                           ((symbol-function 'org-canvas-api-request)
+                            (lambda (method url &rest _)
+                              (push (list method url) requests) nil))
+                           ((symbol-function 'y-or-n-p) (lambda (&rest _) answer))
+                           ((symbol-function 'display-buffer) (lambda (&rest _) nil))
+                           ((symbol-function 'message) (lambda (&rest _) nil)))
+                   ,@body))))
+         (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+         (delete-file file))))
+
+  (defconst test-org-canvas-177--course
+    "* Week 3
+:PROPERTIES:
+:CANVAS_ID: 781703
+:END:
+** [[file:assignments.org::*R3][R3: Stakeholders]]
+:PROPERTIES:
+:CANVAS_ID: 5864670
+:END:
+* Week 4
+"
+    "One synced module claiming one item, and an unsynced module.")
+
+  (it "deletes the items no heading claims after confirming, and returns the count"
+    (test-org-canvas-177--with-course test-org-canvas-177--course
+        [((id . 5864670) (title . "R3: Stakeholders"))
+         ((id . 5864661) (title . "R3: Stakeholders"))]
+      (expect (org-canvas-prune-module-items) :to-equal 1)
+      (expect (length requests) :to-equal 1)
+      (expect (car requests) :to-equal
+              (list 'DELETE (org-canvas-api-course-endpoint "modules/781703/items/5864661")))))
+
+  (it "asks with the unclaimed titles and sends nothing when declined"
+    (test-org-canvas-177--with-course test-org-canvas-177--course
+        [((id . 5864661) (title . "R3: Stakeholders"))]
+      (setq answer nil)
+      (expect (org-canvas-prune-module-items) :to-equal 0)
+      (expect requests :to-be nil)))
+
+  (it "says so and asks nothing when every item is claimed"
+    (test-org-canvas-177--with-course test-org-canvas-177--course
+        [((id . 5864670) (title . "R3: Stakeholders"))]
+      (let ((asked nil))
+        (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) (setq asked t))))
+          (expect (org-canvas-prune-module-items) :to-equal 0))
+        (expect asked :to-be nil))
+      (expect requests :to-be nil)))
+
+  (it "sends no delete during a dry run"
+    (test-org-canvas-177--with-course test-org-canvas-177--course
+        [((id . 5864661) (title . "R3: Stakeholders"))]
+      (let ((org-canvas--dry-run t))
+        (expect (org-canvas-prune-module-items) :to-equal 0))
+      (expect requests :to-be nil)))
+
+  (it "skips a module whose item list cannot be fetched"
+    (test-org-canvas-177--with-course test-org-canvas-177--course 'fail
+      (expect (org-canvas-prune-module-items) :to-equal 0)
+      (expect requests :to-be nil)))
+
+  (it "counts a failed delete as not deleted and goes on"
+    (test-org-canvas-177--with-course test-org-canvas-177--course
+        [((id . 5864661) (title . "R3: Stakeholders"))
+         ((id . 5864662) (title . "R3: Stakeholders"))]
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (_method url &rest _)
+                   (push (list 'DELETE url) requests)
+                   (when (string-match-p "5864661$" url) (error "HTTP 500"))
+                   nil)))
+        (expect (org-canvas-prune-module-items) :to-equal 1))
+      (expect (length requests) :to-equal 2)))
+
+  (it "refuses to run without modules.org"
+    (let ((org-canvas-modules-file "/nonexistent/modules.org"))
+      (with-org-canvas-test-config
+        (expect (org-canvas-prune-module-items) :to-throw 'user-error)))))
+
 ;;; org-canvas-modules-test.el ends here
