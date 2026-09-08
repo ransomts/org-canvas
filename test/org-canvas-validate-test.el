@@ -2659,6 +2659,172 @@ EXCEPT is a list of filenames to skip."
                        (plist-get spec :properties)))))
       (expect (plist-get prop :read-only-values) :to-equal '("online_quiz" "discussion_topic")))))
 
+(describe "cross-course links (issue #172)"
+  (describe "org-canvas--validate-canvas-host"
+    (it "reads the host out of the configured base URL"
+      (let ((org-canvas-base-url "https://clemson.instructure.com"))
+        (expect (org-canvas--validate-canvas-host)
+                :to-equal "clemson.instructure.com")))
+
+    (it "tolerates a trailing path and plain http"
+      (let ((org-canvas-base-url "http://canvas.example.edu/lms"))
+        (expect (org-canvas--validate-canvas-host) :to-equal "canvas.example.edu")))
+
+    (it "is nil when no instance is configured"
+      (let ((org-canvas-base-url ""))
+        (expect (org-canvas--validate-canvas-host) :to-be nil))))
+
+  (describe "org-canvas--validate-cross-course-links"
+    (defun test-validate-cross-course (body)
+      "Scan BODY as assignments.org and return the issues.
+Binds the instance and course id: `org-canvas-init' sets both
+globally, so a spec that depends on them must say which it means."
+      (let* ((dir (make-temp-file "org-val-xc-" t))
+             (file (expand-file-name "assignments.org" dir)))
+        (unwind-protect
+            (progn (with-temp-file file (insert body))
+                   (with-org-canvas-test-config
+                     (org-canvas--validate-cross-course-links file)))
+          (delete-directory dir t))))
+
+    (it "reports a link into another course shell"
+      (let ((issues (test-validate-cross-course
+                     "* Sprint 1
+See [[https://test.canvas.example.com/courses/284220/pages/read-this][the page]].
+")))
+        (expect (length issues) :to-equal 1)
+        (expect (plist-get (car issues) :severity) :to-equal 'warning)
+        (expect (plist-get (car issues) :message) :to-match "course 284220")
+        (expect (plist-get (car issues) :cross-course) :to-equal "284220")))
+
+    (it "names the heading and line, so next-error reaches it"
+      (let ((issues (test-validate-cross-course
+                     "* First
+* Sprint 1
+https://test.canvas.example.com/courses/284220/assignments/7
+")))
+        (expect (plist-get (car issues) :heading) :to-equal "Sprint 1")
+        (expect (plist-get (car issues) :line) :to-equal 3)))
+
+    (it "says nothing about a link into this course"
+      (expect (test-validate-cross-course
+               "* Sprint 1
+[[https://test.canvas.example.com/courses/99999/pages/syllabus]]
+")
+              :to-be nil))
+
+    (it "says nothing about a link to another site entirely"
+      (expect (test-validate-cross-course
+               "* Sprint 1
+[[https://example.org/courses/284220/pages/x]]
+")
+              :to-be nil))
+
+    (it "reports a file link into another shell, as the rewriter's twin"
+      (let ((issues (test-validate-cross-course
+                     "* Sprint 1
+[[https://test.canvas.example.com/courses/208463/files/21157335/preview]]
+")))
+        (expect (length issues) :to-equal 1)
+        (expect (plist-get (car issues) :cross-course) :to-equal "208463")))
+
+    (it "reports a top-level users or accounts route"
+      (let ((issues (test-validate-cross-course
+                     "* Sprint 1
+[[https://test.canvas.example.com/users/4211]]
+[[https://test.canvas.example.com/accounts/1]]
+")))
+        (expect (length issues) :to-equal 2)
+        (expect (plist-get (car issues) :message) :to-match "users route")
+        (expect (plist-get (cadr issues) :message) :to-match "accounts route")))
+
+    (it "leaves a course-scoped users route to the course check"
+      (expect (test-validate-cross-course
+               "* Sprint 1
+[[https://test.canvas.example.com/courses/99999/users/4211]]
+")
+              :to-be nil))
+
+    (it "finds a link in a property drawer, not only in a body"
+      (let ((issues (test-validate-cross-course
+                     "* Sprint 1
+:PROPERTIES:
+:EXTERNAL_TOOL_URL: https://test.canvas.example.com/courses/284220/external_tools/9
+:END:
+")))
+        (expect (length issues) :to-equal 1)))
+
+    (it "is quiet when no course is configured to compare against"
+      (let* ((dir (make-temp-file "org-val-xc-" t))
+             (file (expand-file-name "assignments.org" dir)))
+        (unwind-protect
+            (progn
+              (with-temp-file file
+                (insert "* Sprint 1
+[[https://test.canvas.example.com/courses/284220/pages/x]]
+"))
+              (with-org-canvas-test-config
+                (let ((org-canvas-course-id ""))
+                  (expect (org-canvas--validate-cross-course-links file)
+                          :to-be nil))))
+          (delete-directory dir t)))))
+
+  (describe "org-canvas--validate-cross-course-summary"
+    (it "groups the links by the shell they point at"
+      (expect (org-canvas--validate-cross-course-summary
+               (list '(:cross-course "208463") '(:cross-course "284220")
+                     '(:cross-course "208463") '(:severity warning)))
+              :to-equal "3 link(s) into 2 other course(s) or account route(s): 208463, 284220"))
+
+    (it "is nil when there are none"
+      (expect (org-canvas--validate-cross-course-summary
+               (list '(:severity warning :message "x")))
+              :to-be nil)))
+
+  (describe "in the report"
+    (it "lists each link and then groups them"
+      (with-validate-test-dir dir
+        (with-temp-file (expand-file-name "assignments.org" dir)
+          (insert "* Sprint 1
+[[https://test.canvas.example.com/courses/284220/pages/read-this]]
+* Sprint 2
+[[https://test.canvas.example.com/courses/208463/files/21157335/preview]]
+"))
+        (test-validate-create-empty-files dir '("assignments.org"))
+        (cl-letf (((symbol-function 'princ) #'ignore))
+          (with-org-canvas-test-config (org-canvas-validate)))
+        (with-current-buffer "*canvas-validate*"
+          (let ((content (buffer-string)))
+            (expect content :to-match "course 284220")
+            (expect content :to-match "course 208463")
+            (expect content
+                    :to-match "2 link(s) into 2 other course(s) or account route(s): 208463, 284220")))))
+
+    (it "reports each foreign link once, not once per spec sharing the file"
+      (with-validate-test-dir dir
+        (with-temp-file (expand-file-name "modules.org" dir)
+          (insert "* Week 1
+[[https://test.canvas.example.com/courses/284220/pages/read-this]]
+"))
+        (test-validate-create-empty-files dir '("modules.org"))
+        (cl-letf (((symbol-function 'princ) #'ignore))
+          (with-org-canvas-test-config (org-canvas-validate)))
+        (with-current-buffer "*canvas-validate*"
+          (expect (buffer-string) :to-match "1 link(s) into 1 other course"))))
+
+    (it "survives a read-only course, being course state and not push advice"
+      (with-validate-test-dir dir
+        (with-temp-file (expand-file-name "assignments.org" dir)
+          (insert "* Sprint 1
+[[https://test.canvas.example.com/courses/284220/pages/read-this]]
+"))
+        (test-validate-create-empty-files dir '("assignments.org"))
+        (cl-letf (((symbol-function 'princ) #'ignore))
+          (with-org-canvas-test-config
+            (let ((org-canvas-read-only t)) (org-canvas-validate))))
+        (with-current-buffer "*canvas-validate*"
+          (expect (buffer-string) :to-match "course 284220"))))))
+
 (describe "read-only validation (issue #168)"
   (defconst test-validate-push-only-course
     "* Homework 1

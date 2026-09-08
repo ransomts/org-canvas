@@ -2267,6 +2267,31 @@ line of its own rather than dropped silently:
 are about to clear the flag and adopt the course for real.  On a course you
 already write to, the two commands are identical.
 
+*** Links Left Pointing at the Old Shell
+
+A course copied forward carries links to the shell it was copied /from/.
+They resolve for the instructor, who is usually enrolled in both, and 404
+for every student.  Validation reports each one, with the heading that
+holds it, and then groups them by target:
+
+#+begin_example
+assignments.org:412: warning: link into course 284220, not this one:
+  https://clemson.instructure.com/courses/284220/pages/read-this
+  (students not enrolled there get a 404)
+3 link(s) into 2 other course(s) or account route(s): 208463, 284220
+#+end_example
+
+The grouping is the useful part: the question worth answering about
+course-copy residue is /which shell did this come from/.  Top-level
+=/users/= and =/accounts/= links are reported the same way, being equally
+student-visible and equally broken.
+
+These are warnings, not errors — a link to a shared department page or to
+a prerequisite course is occasionally meant — and they are never held back
+on a read-only course, since a dead link is the course's state and not
+advice about a push.  The scan is pure string work over the Org files, so
+it costs no request and runs in =org-canvas-validate-batch= like the rest.
+
 ** Forcing a Re-upload
 
 A file sync skips an entry whose =PAYLOAD_HASH= still matches.  That hash
