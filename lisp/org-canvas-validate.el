@@ -762,6 +762,93 @@ Called after the per-entry checks, with the buffer current."
                     (org-canvas--validate-duplicate-issue file (cdr group))))
                 (org-canvas--validate-collect-titles query))))
 
+;;;; 5d. Cross-Course Links (issue #172)
+
+(defun org-canvas--validate-canvas-host ()
+  "Return the host of `org-canvas-base-url', or nil when it is unset.
+The cross-course scan anchors on the configured instance, so a link to
+some other site is nobody's business here."
+  (when (and (stringp org-canvas-base-url)
+             (string-match "\\`https?://\\([^/]+\\)" org-canvas-base-url))
+    (match-string 1 org-canvas-base-url)))
+
+(defun org-canvas--validate-foreign-url-re (host)
+  "Return a regexp matching a Canvas URL on HOST worth reporting.
+Group 1, when set, is a course id — compared with `org-canvas-course-id'
+by the caller.  Group 2, when set, names a top-level `users' or
+`accounts' route, which no student can follow whichever course it
+sits in.  A course-scoped route (=/courses/ID/users/...=) is group 1's
+business, not group 2's, which is why the alternation anchors both
+directly after the host."
+  (format "https?://%s/\\(?:courses/\\([0-9]+\\)\\|\\(users\\|accounts\\)/[0-9]+\\)"
+          (regexp-quote host)))
+
+(defun org-canvas--validate-cross-course-issue (course-id route url file)
+  "Build the warning for one foreign link, or nil when it points here.
+COURSE-ID is the course the link names (nil for a ROUTE match), ROUTE
+is \"users\" or \"accounts\", URL is the text that matched, and FILE
+is the file being scanned.  Point is on the match."
+  (let* ((heading (ignore-errors
+                    (save-excursion (org-back-to-heading t)
+                                    (org-get-heading t t t t))))
+         (loc (list :file file :line (line-number-at-pos) :heading heading)))
+    (cond
+     ((and course-id (not (equal course-id (format "%s" org-canvas-course-id))))
+      (append (org-canvas--validate-make-issue
+               'warning loc nil
+               (format "link into course %s, not this one: %s (students not enrolled there get a 404)"
+                       course-id url))
+              (list :cross-course course-id)))
+     (route
+      (append (org-canvas--validate-make-issue
+               'warning loc nil
+               (format "link to a Canvas %s route: %s (student-visible and broken)"
+                       route url))
+              (list :cross-course route))))))
+
+(defun org-canvas--validate-cross-course-links (file)
+  "Report links in FILE that point at another course on this instance.
+A course copied forward carries links to the shell it came from.  They
+resolve for the instructor, who is usually enrolled in both, and 404
+for every student, and only the ones that happened to name a file id
+were ever noticed — a link to another shell's *page* passed in silence
+\(issue #172).  Pure string work over the Org file: no request is
+made, so this runs on a read-only course and in batch like the rest.
+
+Warnings rather than errors: a link to a shared department page, or to
+a prerequisite course, is occasionally meant."
+  (let ((host (org-canvas--validate-canvas-host))
+        (issues nil))
+    (when (and host org-canvas-course-id
+               (not (string-empty-p (format "%s" org-canvas-course-id))))
+      (let ((re (org-canvas--validate-foreign-url-re host)))
+        (with-current-buffer (org-canvas--find-file-noselect file)
+          (org-with-wide-buffer
+           (goto-char (point-min))
+           (while (re-search-forward re nil t)
+             (when-let* ((issue (org-canvas--validate-cross-course-issue
+                                 (match-string-no-properties 1)
+                                 (match-string-no-properties 2)
+                                 (match-string-no-properties 0)
+                                 file)))
+               (push issue issues)))))))
+    (nreverse issues)))
+
+(defun org-canvas--validate-cross-course-summary (issues)
+  "Return a line grouping cross-course ISSUES by target, or nil.
+The useful question about course-copy residue is which shell it came
+from, not which link came first, so the targets are named once each."
+  (let ((targets nil)
+        (count 0))
+    (dolist (issue issues)
+      (when-let* ((target (plist-get issue :cross-course)))
+        (setq count (1+ count))
+        (unless (member target targets) (push target targets))))
+    (when (> count 0)
+      (setq targets (sort (nreverse targets) #'string<))
+      (format "%d link(s) into %d other course(s) or account route(s): %s"
+              count (length targets) (string-join targets ", ")))))
+
 ;;;; 6. Validation Engine
 
 (defun org-canvas--validate-entry-properties (props loc)
@@ -885,10 +972,16 @@ Use \\[next-error] and \\[previous-error] to navigate issues."
 
 (defun org-canvas--validate-run-all-specs ()
   "Run all validation specs and collect issues.
+The cross-course link scan runs once per distinct file rather than
+once per spec: two features can register the same file (modules and
+module items both name modules.org), and the scan reads the whole file
+either way, so a per-spec call would report every foreign link twice
+\(issue #172).
 Returns a plist (:issues ISSUES :checked N :skipped N)."
   (let ((all-issues nil)
         (files-checked 0)
-        (files-skipped 0))
+        (files-skipped 0)
+        (scanned nil))
     (dolist (spec (org-canvas--validate-specs))
       (let* ((file-var (plist-get spec :file))
              (file (and (boundp file-var)
@@ -897,7 +990,12 @@ Returns a plist (:issues ISSUES :checked N :skipped N)."
             (progn
               (setq files-checked (1+ files-checked))
               (let ((issues (org-canvas--validate-spec spec)))
-                (setq all-issues (nconc all-issues issues))))
+                (setq all-issues (nconc all-issues issues)))
+              (unless (member file scanned)
+                (push file scanned)
+                (setq all-issues
+                      (nconc all-issues
+                             (org-canvas--validate-cross-course-links file)))))
           (setq files-skipped (1+ files-skipped)))))
     (list :issues all-issues :checked files-checked :skipped files-skipped)))
 
@@ -917,7 +1015,10 @@ LISTED are the issues printed individually, PENDING the pre-first-sync
 link warnings, collapsed into one line unless VERBOSE.  STATS is a
 plist (:errors :warnings :checked :skipped :suppressed); a non-zero
 :suppressed count is named in a line of its own, so that holding push-only
-findings back on a read-only course is visible rather than silent."
+findings back on a read-only course is visible rather than silent.
+Cross-course links are listed individually and then grouped by the
+shell they point at, which is the question worth answering about
+course-copy residue (issue #172)."
   (insert "org-canvas validation report\n")
   (insert (make-string 60 ?=))
   (insert "\n\n")
@@ -934,6 +1035,10 @@ findings back on a read-only course is visible rather than silent."
             (insert (format "%d link(s) pending first sync (targets have no CANVAS_ID yet); C-u M-x org-canvas-validate lists them\n"
                             (length pending))))))
     (insert "No issues found.\n"))
+  (when-let* ((cross (org-canvas--validate-cross-course-summary
+                      (append listed pending))))
+    (insert cross)
+    (insert "\n"))
   (when (> (plist-get stats :suppressed) 0)
     (insert (format "%d push-only finding(s) suppressed (org-canvas-read-only is set); M-x org-canvas-validate-all shows them\n"
                     (plist-get stats :suppressed))))
