@@ -152,7 +152,7 @@ What stays dynamically bound is the *caller's* seam, set around a command by who
 |---|---|
 | Pipeline macros, `:hash-extra`, payload builder, property registry (`:remote-fn` #61/#62, `:compare-p` #93), drop-rules two-phase sync, global sync summary (#66), complexity patterns, key lessons (markers, `save-excursion`, upload nulls, unibyte, property drawers, question body text) | `design.org` |
 | plz and the PATCH fallback (#13), error-handling rules, conflict baseline and strategy rules (#48, #72, #86, #104, #124), duplicate-title guard and adopt-at-point (#85, #101), dry-run rules (#34, #84), file re-upload tiers (#49, #70, #71, #77), feature registry URLs and `:modified-field` (#87, #94), quiz questions API, upload quirks, copy-pasteable curl commands for debugging | `api-interaction.org` |
-| LTI assignments and no Turnitin, quiz publish sequencing (#59), rubrics update in place (#123), bulk publish (#47), module items reconcile moves (#105), drift report bodies (#83), by-design extras (#98, #102, #111), drift report verbs (#103), batch-mode file handling (#97, #121), Canvas-owned submission types (#167), read-only validation (#168), batch reports (#155, #169) | `decisions.org` |
+| LTI assignments and no Turnitin, quiz publish sequencing (#59), rubrics update in place (#123), bulk publish (#47), module items reconcile moves (#105), drift report bodies (#83), by-design extras (#98, #102, #111), drift report verbs (#103), batch-mode file handling (#97, #121), Canvas-owned submission types (#167), read-only validation (#168), batch reports (#155, #169), body headings and the pull entry-count guard (#175) | `decisions.org` |
 | Pull macros and helpers, pull-at-point (#67), single-item pull registration, `:skip-fn` reporting and the front page (#81, #82) | `pull-system.org` |
 | Test helpers and generators, test isolation guards, Emacs 29/30 matrix and skipped tests, JUnit and Codecov, Eldev layout, paren-imbalance debugging | `testing.org` |
 | Adding a module, step by step | `module-developer-guide.org` |
@@ -236,6 +236,7 @@ Non-negotiable. Each was learned on a live course; the pointer holds the full st
 19. **`org-canvas-diff` must never write**: local bodies export with the OFFLINE flag (#83). — decisions.org, "The Drift Report Compares Bodies"
 20. **Before any POST the duplicate-title guard runs** (#85); recovery from a lost stamp is `org-canvas-adopt-at-point` (#101), not a second create. — api-interaction.org, "Duplicate-Title Guard"
 21. **Counts in documentation are commands, not numbers** — spec totals, coverage and skipped-test counts drift with every PR (this file was 823 lines of them; #139).
+22. **A body never introduces a heading at or above its parent's level** — a pulled HTML heading becomes a `#+begin_hN` block at the `org-canvas--html-to-org` chokepoint and exports back as `<hN>`; never let converted text reach an entry as an Org headline, and never demote instead (quiz and new-quiz extractors stop at any heading; #175). — decisions.org, "A Body Never Introduces a Headline"
 
 ## Testing
 

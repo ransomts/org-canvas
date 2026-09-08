@@ -196,8 +196,7 @@ Reads raw properties, transforms them, and exports description to HTML."
     ;; Replace :body-text with HTML :description in final result
     (plist-put data :description
                (when (and body-text (> (length body-text) 0))
-                 (let ((org-export-with-sub-superscripts nil))
-                   (org-export-string-as body-text 'html t))))
+                 (org-canvas--org-to-html-string body-text)))
     (plist-put data :body-text nil)
     data))
 
@@ -509,17 +508,21 @@ of the quiz payload."
       (unless (file-exists-p file)
         (with-temp-file file (insert "")))
       (with-current-buffer (org-canvas--find-file-noselect file)
-        (dolist (quiz (org-canvas--pull-sort-items remote))
-          (let* ((assignment-id (or (alist-get 'assignment_id quiz)
-                                    (alist-get 'id quiz)))
-                 (title (alist-get 'title quiz))
-                 (pos (org-canvas--pull-upsert-heading
-                       file assignment-id title "CANVAS_ASSIGNMENT_ID")))
-            (goto-char pos)
-            (when title (org-edit-headline title))
-            (org-canvas--new-quiz-pull-set-properties pos quiz)
-            (org-canvas--new-quiz-pull-items assignment-id)
-            (cl-incf count)))
+        (let ((idless-before (org-canvas--pull-idless-entry-count
+                              "CANVAS_ASSIGNMENT_ID")))
+          (dolist (quiz (org-canvas--pull-sort-items remote))
+            (let* ((assignment-id (or (alist-get 'assignment_id quiz)
+                                      (alist-get 'id quiz)))
+                   (title (alist-get 'title quiz))
+                   (pos (org-canvas--pull-upsert-heading
+                         file assignment-id title "CANVAS_ASSIGNMENT_ID")))
+              (goto-char pos)
+              (when title (org-edit-headline title))
+              (org-canvas--new-quiz-pull-set-properties pos quiz)
+              (org-canvas--new-quiz-pull-items assignment-id)
+              (cl-incf count)))
+          (org-canvas--pull-check-entry-count
+           "new quizzes" file "CANVAS_ASSIGNMENT_ID" idless-before count))
         (org-canvas--pull-write-file-header)
         (org-canvas--save-buffer)))
     (org-canvas--pull-kill-fresh-buffer file was-fresh)

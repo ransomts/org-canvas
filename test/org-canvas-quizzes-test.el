@@ -3911,4 +3911,88 @@ What is 2+2?
     (expect (org-canvas--quiz-body-text-to-html "") :to-be nil)
     (expect (org-canvas--quiz-body-text-to-html "Hi") :to-match "Hi")))
 
+;;;; A Body Heading Does Not Split a Quiz (issue #175)
+
+(defun test-org-canvas-fake-pandoc (start end _program &optional _delete _buffer
+                                          &rest _args)
+  "Stand in for pandoc on the region START to END.
+Renders <hN> as an Org headline with the drawer pandoc writes under
+it, and <p> as a paragraph; the rest is left as it is."
+  (let ((html (buffer-substring-no-properties start end)))
+    (delete-region start end)
+    (insert html)
+    (goto-char (point-min))
+    (while (re-search-forward "<h\\([1-6]\\)>\\(.*?\\)</h[1-6]>" nil t)
+      (replace-match (concat (make-string (string-to-number (match-string 1)) ?*)
+                             " " (match-string 2)
+                             "\n:PROPERTIES:\n:CUSTOM_ID: x\n:END:\n")
+                     t t))
+    (goto-char (point-min))
+    (while (re-search-forward "<p>\\(.*?\\)</p>" nil t)
+      (replace-match (concat (match-string 1) "\n") t t))
+    0))
+
+(describe "quiz pull with an HTML heading in the description"
+  (it "pulls one quiz with two questions and pushes the heading back"
+    (let ((temp (make-temp-file "quiz-test-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp (insert ""))
+            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                       (lambda (_method url &rest _)
+                         (cond
+                          ((string-match-p "quizzes\\'" url)
+                           '(((id . 100) (title . "Microservices HW")
+                              (description . "<h2>Read the article</h2><p>Then answer.</p>"))))
+                          ((string-match-p "questions" url)
+                           '(((id . 1) (question_name . "Q1")
+                              (question_text . "<p>First?</p>")
+                              (question_type . "essay_question")
+                              (points_possible . 1.0) (answers . []))
+                             ((id . 2) (question_name . "Q2")
+                              (question_text . "<p>Second?</p>")
+                              (question_type . "essay_question")
+                              (points_possible . 1.0) (answers . [])))))))
+                      ((symbol-function 'executable-find) (lambda (_) "pandoc"))
+                      ((symbol-function 'call-process-region)
+                       #'test-org-canvas-fake-pandoc))
+              (let ((org-canvas-quizzes-file temp))
+                (with-org-canvas-test-config
+                  (with-sync-test-env
+                    (org-canvas-pull-quizzes)))))
+            (with-temp-org-buffer
+             (with-temp-buffer (insert-file-contents temp) (buffer-string))
+             ;; Pull shape: one quiz, its description, its two questions.
+             (expect (org-map-entries (lambda () (org-get-heading t t t t))
+                                      "LEVEL=1" 'file)
+                     :to-equal '("Microservices HW"))
+             (expect (org-map-entries (lambda () (org-get-heading t t t t))
+                                      "LEVEL=2" 'file)
+                     :to-equal '("Description" "Q1" "Q2"))
+             (expect (buffer-string) :not :to-match "^\\*\\*\\* ")
+             (expect (buffer-string) :to-match "^#\\+begin_h2\nRead the article\n#\\+end_h2")
+             ;; Push shape: the same body, heading included, and both questions.
+             (goto-char (point-min))
+             (re-search-forward "^\\* ")
+             (org-back-to-heading t)
+             (let ((data (org-canvas--quiz-parse-entry)))
+               (expect (plist-get data :canvas-id) :to-equal "100")
+               (expect (plist-get data :description)
+                       :to-match "<h2>Read the article</h2>")
+               (expect (plist-get data :description) :to-match "Then answer\\."))
+             (let ((questions
+                    (delq nil
+                          (org-map-entries
+                           (lambda ()
+                             (unless (org-canvas--quiz-description-heading-p)
+                               (org-canvas--question-parse-entry 100)))
+                           "LEVEL=2" 'file))))
+               (expect (mapcar (lambda (q) (plist-get q :name)) questions)
+                       :to-equal '("Q1" "Q2"))
+               (expect (plist-get (car questions) :text-html) :to-match "First\\?")
+               (expect (plist-get (cadr questions) :text-html) :to-match "Second\\?"))))
+        (let ((buf (find-buffer-visiting temp)))
+          (when buf (kill-buffer buf)))
+        (delete-file temp)))))
+
 ;;; org-canvas-quizzes-test.el ends here

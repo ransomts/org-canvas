@@ -591,4 +591,78 @@ Content for everyone.
       '((id . 1) (title . "Hi") (message . "<p>x</p>") (locked . :json-false))
       "ALLOW_COMMENTS" :to-equal "true")))
 
+;;;; A Body Heading Does Not Split the Entry (issue #175)
+
+(describe "announcement pull with an HTML heading in the body"
+  (it "keeps the item one level-1 entry with the text after the heading inside"
+    (let ((temp (make-temp-file "ann-test-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp (insert ""))
+            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                       (lambda (&rest _)
+                         '(((id . 100) (title . "Hello")
+                            (message . "<h1>Heading</h1><p>after</p>")))))
+                      ((symbol-function 'executable-find) (lambda (_) "pandoc"))
+                      ((symbol-function 'call-process-region)
+                       (lambda (start end _program &optional _delete _buffer
+                                      &rest _args)
+                         (delete-region start end)
+                         (insert "* Heading\n:PROPERTIES:\n:CUSTOM_ID: heading\n"
+                                 ":END:\n\nafter")
+                         0)))
+              (let ((org-canvas-announcements-file temp))
+                (with-org-canvas-test-config
+                  (with-sync-test-env
+                    (org-canvas-pull-announcements)))))
+            (with-temp-buffer
+              (insert-file-contents temp)
+              (let ((s (buffer-string)))
+                (goto-char (point-min))
+                (expect (how-many "^\\* ") :to-equal 1)
+                (expect s :to-match "^\\* Hello$")
+                (expect s :to-match ":CANVAS_ID: +100")
+                (expect s :to-match "^#\\+begin_h1\nHeading\n#\\+end_h1")
+                (expect s :to-match "^after$")
+                ;; The id and the trailing text sit under the one heading.
+                (expect (string-match ":CANVAS_ID:" s)
+                        :to-be-less-than (string-match "^after$" s)))))
+        (delete-file temp))))
+
+  (it "warns through the log and the pull summary when a body splits an entry"
+    (let ((temp (make-temp-file "ann-test-" nil ".org"))
+          (warnings nil))
+      (unwind-protect
+          (progn
+            (with-temp-file temp (insert ""))
+            (org-canvas--pull-summary-reset)
+            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                       (lambda (&rest _)
+                         '(((id . 100) (title . "Hello")
+                            (message . "<h1>Rogue</h1><p>after</p>")))))
+                      ;; A converter letting a headline through, which
+                      ;; the real one never does.
+                      ((symbol-function 'org-canvas--html-to-org)
+                       (lambda (_html) "* Rogue\nafter"))
+                      ((symbol-function 'org-canvas--log-warning)
+                       (lambda (_logger fmt &rest args)
+                         (push (apply #'format fmt args) warnings))))
+              (let ((org-canvas-announcements-file temp))
+                (with-org-canvas-test-config
+                  (with-sync-test-env
+                    (org-canvas-pull-announcements)))))
+            (expect (cl-some (lambda (w)
+                               (string-match-p
+                                (concat "1 level-1 entry without CANVAS_ID"
+                                        " appeared while writing 1 announcements")
+                                w))
+                             warnings)
+                    :to-be-truthy)
+            (let ((recs (org-canvas--pull-summary-records-of-kind 'error)))
+              (expect (length recs) :to-equal 1)
+              (expect (plist-get (car recs) :file)
+                      :to-equal (file-name-nondirectory temp))))
+        (org-canvas--pull-summary-reset)
+        (delete-file temp)))))
+
 ;;; org-canvas-announcements-test.el ends here

@@ -247,8 +247,7 @@ Reads raw properties and transforms them."
                           (if (string-empty-p body)
                               title
                             (concat title "\n\n" body))))
-         (text-html (let ((org-export-with-sub-superscripts nil))
-                      (org-export-string-as question-text 'html t)))
+         (text-html (org-canvas--org-to-html-string question-text))
          (interaction-data (org-canvas--new-quiz-item-build-interaction-data q-type)))
 
     (org-canvas--log-debug org-canvas--logger "[New Quiz Item Parse] '%s' type=%s" title q-type)
