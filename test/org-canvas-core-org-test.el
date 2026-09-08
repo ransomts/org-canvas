@@ -3501,5 +3501,55 @@ Page content.
     (expect (plist-get (car (org-canvas--pull-summary-records)) :error)
             :to-be nil)))
 
+(describe "org-canvas--report-display (issue #169)"
+  (after-each
+    (when (get-buffer "*test-report*") (kill-buffer "*test-report*")))
+
+  (it "prints the report to standard output under noninteractive"
+    (let ((printed ""))
+      (cl-letf (((symbol-function 'princ)
+                 (lambda (s &optional _) (setq printed (concat printed s)))))
+        (let ((noninteractive t))
+          (org-canvas--report-display "*test-report*"
+                                      (lambda () (insert "17 errors, and here they are\n")))))
+      (expect printed :to-match "17 errors, and here they are")))
+
+  (it "displays the buffer instead when a human is watching"
+    (let (displayed printed)
+      (cl-letf (((symbol-function 'display-buffer)
+                 (lambda (buf &rest _) (setq displayed (buffer-name buf))))
+                ((symbol-function 'princ)
+                 (lambda (s &optional _) (setq printed s))))
+        (let ((noninteractive nil))
+          (org-canvas--report-display "*test-report*"
+                                      (lambda () (insert "report\n")))))
+      (expect displayed :to-equal "*test-report*")
+      (expect printed :to-be nil)))
+
+  (it "leaves the report in the buffer either way, and returns it"
+    (let ((text (cl-letf (((symbol-function 'princ) #'ignore))
+                  (let ((noninteractive t))
+                    (org-canvas--report-display "*test-report*"
+                                                (lambda () (insert "the body\n")))))))
+      (expect text :to-equal "the body\n")
+      (expect (with-current-buffer "*test-report*" (buffer-string))
+              :to-equal "the body\n")))
+
+  (it "empties the buffer before re-rendering"
+    (cl-letf (((symbol-function 'princ) #'ignore))
+      (let ((noninteractive t))
+        (org-canvas--report-display "*test-report*" (lambda () (insert "first\n")))
+        (org-canvas--report-display "*test-report*" (lambda () (insert "second\n")))))
+    (expect (with-current-buffer "*test-report*" (buffer-string))
+            :to-equal "second\n"))
+
+  (it "applies the major mode it is given"
+    (cl-letf (((symbol-function 'princ) #'ignore))
+      (let ((noninteractive t))
+        (org-canvas--report-display "*test-report*" (lambda () (insert "x\n"))
+                                    #'fundamental-mode)))
+    (expect (with-current-buffer "*test-report*" major-mode)
+            :to-equal 'fundamental-mode)))
+
 (provide 'org-canvas-core-org-test)
 ;;; org-canvas-core-org-test.el ends here

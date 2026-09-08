@@ -2659,6 +2659,59 @@ EXCEPT is a list of filenames to skip."
                        (plist-get spec :properties)))))
       (expect (plist-get prop :read-only-values) :to-equal '("online_quiz" "discussion_topic")))))
 
+(describe "org-canvas-validate in batch (issue #169)"
+  (it "prints the whole report, not only the tally"
+    (with-validate-test-dir dir
+      (with-temp-file (expand-file-name "pages.org" dir)
+        (insert "* Bad Page\n:PROPERTIES:\n:PUBLISHED: yes\n:END:\n"))
+      (test-validate-create-empty-files dir '("pages.org"))
+      (let ((printed ""))
+        (cl-letf (((symbol-function 'princ)
+                   (lambda (s &optional _) (setq printed (concat printed s)))))
+          (let ((noninteractive t)) (org-canvas-validate)))
+        (expect printed :to-match "pages\\.org:1: error:")
+        (expect printed :to-match "not a valid boolean"))))
+
+  (it "returns the error count so a caller can act on it"
+    (with-validate-test-dir dir
+      (with-temp-file (expand-file-name "pages.org" dir)
+        (insert "* Bad Page\n:PROPERTIES:\n:PUBLISHED: yes\n:END:\n"))
+      (test-validate-create-empty-files dir '("pages.org"))
+      (cl-letf (((symbol-function 'princ) #'ignore))
+        (expect (org-canvas-validate) :to-equal 1))))
+
+  (it "returns zero when the course is clean"
+    (with-validate-test-dir dir
+      (test-validate-create-empty-files dir)
+      (cl-letf (((symbol-function 'princ) #'ignore))
+        (expect (org-canvas-validate) :to-equal 0)))))
+
+(describe "org-canvas-validate-batch (issue #169)"
+  (it "exits non-zero when there are errors"
+    (let (status)
+      (cl-letf (((symbol-function 'org-canvas-validate) (lambda (&rest _) 3))
+                ((symbol-function 'kill-emacs) (lambda (code) (setq status code))))
+        (org-canvas-validate-batch))
+      (expect status :to-equal 1)))
+
+  (it "exits zero when there are none"
+    (let (status)
+      (cl-letf (((symbol-function 'org-canvas-validate) (lambda (&rest _) 0))
+                ((symbol-function 'kill-emacs) (lambda (code) (setq status code))))
+        (org-canvas-validate-batch))
+      (expect status :to-equal 0)))
+
+  (it "counts only errors, never the warnings the report also holds"
+    (let (status)
+      (with-validate-test-dir dir
+        (with-temp-file (expand-file-name "assignments.org" dir)
+          (insert "* Homework\n:PROPERTIES:\n:DUE_AT: <2001-01-01 Mon>\n:END:\n"))
+        (test-validate-create-empty-files dir '("assignments.org"))
+        (cl-letf (((symbol-function 'princ) #'ignore)
+                  ((symbol-function 'kill-emacs) (lambda (code) (setq status code))))
+          (org-canvas-validate-batch)))
+      (expect status :to-equal 0))))
+
 (describe "org-canvas-validate pending-first-sync collapse"
   (let ((fake-issues nil))
     (before-each

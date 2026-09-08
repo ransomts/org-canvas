@@ -2058,6 +2058,20 @@ emacs --batch -l /path/to/org-canvas.el -f org-canvas-diff-batch
 
 Wire that into cron and have it mail you the output on a non-zero exit.
 
+=org-canvas-validate-batch= is its offline twin, and the cheaper of the two:
+validation contacts no API and so needs no token, which makes it the natural
+pre-commit hook or CI step over a course directory.  It exits non-zero when
+the report holds any *error* — warnings alone are not a failure.
+
+#+begin_src sh
+emacs --batch -l /path/to/org-canvas.el -f org-canvas-validate-batch
+#+end_src
+
+Both commands print their full report to standard output under =--batch=, not
+just a tally: =display-buffer= shows a batch Emacs nothing, so a scripted
+validation used to say "24 error(s)" and give no way to learn which
+twenty-four (#169).
+
 * Grading Submissions
 
 Pulling an assignment's submissions produces a *grading file*: an Org file with one heading per student, saved under =org-canvas-submissions-directory= (by default =submissions/= inside the course directory) as =<assignment>.org=. Grading happens in that file and can span sessions: pull today, grade tomorrow, push when done.
@@ -2468,6 +2482,7 @@ See [[*Grading Submissions]] for the workflow.
 | =org-canvas-diff-visit= / =-acknowledge= / =-delete= / =-pull= | Row actions in the report buffer (see [[*Acting on the Report][Acting on the Report]]) |
 | =org-canvas-adopt-at-point=       | Stamp the heading at point with the Canvas item of the same title (local write only) |
 | =org-canvas-validate=             | Validate all Org files offline (no API calls) |
+| =org-canvas-validate-batch=       | As above, exiting non-zero when there are errors |
 | =org-canvas-sync-dry-run=         | Preview what would be synced (no API calls)   |
 | =org-canvas-cleanup-orphans=      | Find and delete orphaned Canvas items         |
 | =org-canvas-clear-log=            | Clear log buffer and log file                 |

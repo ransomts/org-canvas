@@ -898,6 +898,39 @@ Returns a plist (:issues ISSUES :checked N :skipped N)."
    (t
     "Validation passed: no issues found")))
 
+(defun org-canvas--validate-insert-report (listed pending verbose stats)
+  "Insert the validation report into the current buffer.
+LISTED are the issues printed individually, PENDING the pre-first-sync
+link warnings, collapsed into one line unless VERBOSE.  STATS is a
+plist (:errors :warnings :checked :skipped)."
+  (insert "org-canvas validation report\n")
+  (insert (make-string 60 ?=))
+  (insert "\n\n")
+  (if (or listed pending)
+      (progn
+        (dolist (issue listed)
+          (insert (org-canvas--validate-format-issue issue))
+          (insert "\n"))
+        (when pending
+          (if verbose
+              (dolist (issue pending)
+                (insert (org-canvas--validate-format-issue issue))
+                (insert "\n"))
+            (insert (format "%d link(s) pending first sync (targets have no CANVAS_ID yet); C-u M-x org-canvas-validate lists them\n"
+                            (length pending))))))
+    (insert "No issues found.\n"))
+  (insert "\n")
+  (insert (make-string 60 ?=))
+  (insert "\n")
+  (insert (format "Validation complete: %d error(s), %d warning(s) across %d file(s)"
+                  (plist-get stats :errors) (plist-get stats :warnings)
+                  (plist-get stats :checked)))
+  (when pending
+    (insert (format " (%d pending first sync)" (length pending))))
+  (when (> (plist-get stats :skipped) 0)
+    (insert (format " (%d file(s) not found, skipped)" (plist-get stats :skipped))))
+  (insert "\n"))
+
 ;;;###autoload
 (defun org-canvas-validate (&optional verbose)
   "Validate all course org files without contacting the Canvas API.
@@ -905,11 +938,17 @@ Checks property types, enum values, date ordering, and structural
 requirements across all 12 content types.
 
 Results are displayed in a `*canvas-validate*' buffer with
-`compilation-mode' navigation (\\[next-error] / \\[previous-error]).
+`compilation-mode' navigation (\\[next-error] / \\[previous-error]),
+and printed to standard output under `noninteractive' — validate makes
+no API calls, so a batch Emacs is the natural place to run it, and a
+batch run used to print a tally naming no file (issue #169).
 
 Warnings about link targets that merely lack a CANVAS_ID (expected
 state before the first sync) are collapsed into a single summary
-line.  With a prefix argument VERBOSE, list them individually."
+line.  With a prefix argument VERBOSE, list them individually.
+
+Returns the number of errors, so a batch caller can act on it; see
+`org-canvas-validate-batch'."
   (interactive "P")
   (let* ((result (org-canvas--validate-run-all-specs))
          (all-issues (plist-get result :issues))
@@ -917,45 +956,28 @@ line.  With a prefix argument VERBOSE, list them individually."
                           (lambda (i) (plist-get i :pending-sync)) all-issues))
          (listed-issues (cl-remove-if
                          (lambda (i) (plist-get i :pending-sync)) all-issues))
-         (pending-count (length pending-issues))
-         (files-checked (plist-get result :checked))
-         (files-skipped (plist-get result :skipped))
-         (buf (get-buffer-create "*canvas-validate*"))
          (error-count (cl-count 'error all-issues :key (lambda (i) (plist-get i :severity))))
-         (warning-count (cl-count 'warning all-issues :key (lambda (i) (plist-get i :severity)))))
-    (with-current-buffer buf
-      (let ((inhibit-read-only t))
-        (erase-buffer)
-        (insert (format "org-canvas validation report\n"))
-        (insert (make-string 60 ?=))
-        (insert "\n\n")
-        (if all-issues
-            (progn
-              (dolist (issue listed-issues)
-                (insert (org-canvas--validate-format-issue issue))
-                (insert "\n"))
-              (when (> pending-count 0)
-                (if verbose
-                    (dolist (issue pending-issues)
-                      (insert (org-canvas--validate-format-issue issue))
-                      (insert "\n"))
-                  (insert (format "%d link(s) pending first sync (targets have no CANVAS_ID yet); C-u M-x org-canvas-validate lists them\n"
-                                  pending-count)))))
-          (insert "No issues found.\n"))
-        (insert "\n")
-        (insert (make-string 60 ?=))
-        (insert "\n")
-        (insert (format "Validation complete: %d error(s), %d warning(s) across %d file(s)"
-                        error-count warning-count files-checked))
-        (when (> pending-count 0)
-          (insert (format " (%d pending first sync)" pending-count)))
-        (when (> files-skipped 0)
-          (insert (format " (%d file(s) not found, skipped)" files-skipped)))
-        (insert "\n"))
-      (org-canvas-validate-mode)
-      (goto-char (point-min)))
-    (display-buffer buf)
-    (message "%s" (org-canvas--validate-format-summary error-count warning-count))))
+         (warning-count (cl-count 'warning all-issues :key (lambda (i) (plist-get i :severity))))
+         (stats (list :errors error-count :warnings warning-count
+                      :checked (plist-get result :checked)
+                      :skipped (plist-get result :skipped))))
+    (org-canvas--report-display
+     "*canvas-validate*"
+     (lambda ()
+       (org-canvas--validate-insert-report
+        listed-issues pending-issues verbose stats))
+     #'org-canvas-validate-mode)
+    (message "%s" (org-canvas--validate-format-summary error-count warning-count))
+    error-count))
+
+;;;###autoload
+(defun org-canvas-validate-batch ()
+  "Run `org-canvas-validate', then exit non-zero if it found any error.
+Intended for a pre-commit hook or a CI step over a course directory,
+invoked from a batch-mode Emacs with -f org-canvas-validate-batch.
+Validation contacts no API, so this needs no token.  Mirrors
+`org-canvas-diff-batch'."
+  (kill-emacs (if (> (org-canvas-validate) 0) 1 0)))
 
 (provide 'org-canvas-validate)
 ;;; org-canvas-validate.el ends here
