@@ -189,18 +189,32 @@ means (issue #135).")
 (defalias 'org-canvas--diff-remote-list #'org-canvas--registry-remote-list
   "Return REMOTE as a list of strings, however Canvas spelled it (issue #63).")
 
+(defun org-canvas--diff-time-minute (time)
+  "Return TIME as a count of whole minutes since the epoch.
+An Org timestamp names a minute and nothing finer, so a comparison
+against one can claim no more precision than this.  The seconds are
+dropped, not tolerated: xx:59 and xx+1:00 are different minutes in the
+file even though they are a second apart (issue #176)."
+  (floor (time-convert time 'integer) 60))
+
 (defun org-canvas--diff-values-equal-p (type local remote)
-  "Return non-nil when LOCAL (an Org string) and REMOTE agree, given TYPE."
+  "Return non-nil when LOCAL (an Org string) and REMOTE agree, given TYPE.
+Timestamps agree when they fall in the same minute: a deadline set in
+the Canvas web UI carries :59 seconds, which the Org side can neither
+store nor pull, so an exact comparison was a DUE_AT row that nothing
+but a push could clear (issue #176)."
   (let ((remote (org-canvas--diff-normalize-remote remote)))
     (pcase type
       ('boolean (eq (string= local "true") (and remote t)))
       ('number (and remote (= (string-to-number local)
                               (if (stringp remote) (string-to-number remote) remote))))
       ('timestamp
-       (let ((local-iso (org-canvas-org-parse-timestamp local)))
-         (and local-iso remote
-              (equal (org-canvas--parse-iso8601-time local-iso)
-                     (org-canvas--parse-iso8601-time remote)))))
+       (let ((local-time (org-canvas--parse-iso8601-time
+                          (org-canvas-org-parse-timestamp local)))
+             (remote-time (org-canvas--parse-iso8601-time remote)))
+         (and local-time remote-time
+              (= (org-canvas--diff-time-minute local-time)
+                 (org-canvas--diff-time-minute remote-time)))))
       ('csv-enum
        (equal (sort (split-string (or local "") "," t "[ \t]+") #'string<)
               (sort (org-canvas--diff-remote-list remote) #'string<)))
