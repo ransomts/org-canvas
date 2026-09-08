@@ -666,24 +666,32 @@ Return the matching item alist, or nil if not found."
     (org-canvas--log-info org-canvas--logger "[Stage 3: Execute] %s Item '%s' to module %s"
       method title module-id)
 
-    (condition-case err
-        (let ((response (org-canvas-api-request method endpoint :data payload)))
-          (org-canvas--log-info org-canvas--logger "[Stage 3: Execute] %s successful for item '%s'" method title)
-          response)
-      (error
-       (org-canvas--log-error org-canvas--logger "[Stage 3: Execute] Item failed: %s" (error-message-string err))
+    ;; The item loop is reached outside the sync macro's own dry-run
+    ;; short-circuit (the retry pass, a direct call), so guard here too
+    ;; (Hard Rule 1).
+    (if org-canvas--dry-run
+        (progn
+          (org-canvas--log-info org-canvas--logger "[DRY-RUN] Would %s item '%s' to %s"
+            method title endpoint)
+          org-canvas--dry-run-response)
+      (condition-case err
+          (let ((response (org-canvas-api-request method endpoint :data payload)))
+            (org-canvas--log-info org-canvas--logger "[Stage 3: Execute] %s successful for item '%s'" method title)
+            response)
+        (error
+         (org-canvas--log-error org-canvas--logger "[Stage 3: Execute] Item failed: %s" (error-message-string err))
 
-       (cond
-        ;; CASE 1: Timeout -> Search for item in module
-        ((org-canvas--timeout-error-p err)
-         (org-canvas--handle-timeout-recovery find-fn title err))
+         (cond
+          ;; CASE 1: Timeout -> Search for item in module
+          ((org-canvas--timeout-error-p err)
+           (org-canvas--handle-timeout-recovery find-fn title err))
 
-        ;; CASE 2: 404 on PUT -> Retry as POST (stale ID)
-        ((org-canvas--404-on-put-p err method)
-         (org-canvas--handle-404-retry base-endpoint payload find-fn title err))
+          ;; CASE 2: 404 on PUT -> Retry as POST (stale ID)
+          ((org-canvas--404-on-put-p err method)
+           (org-canvas--handle-404-retry base-endpoint payload find-fn title err))
 
-        ;; Default: Re-throw
-        (t (signal (car err) (cdr err))))))))
+          ;; Default: Re-throw
+          (t (signal (car err) (cdr err)))))))))
 
 ;;;; 4. Stage: Finalization
 
@@ -710,8 +718,14 @@ runs the child sync again with the *item's* id as a module id — a
 harmless no-op while that only collected the item's (nonexistent)
 children, but once the child sync lists the module's items on Canvas
 \(issue #105) it would have asked for the items of a module that does
-not exist, once per item."
-  (org-canvas--finalize-item data response))
+not exist, once per item.  A dry run stamps nothing: the push answered
+with the dry-run sentinel, and an adopted id (issue #179) is only
+logged."
+  (if (org-canvas--dry-run-response-p response)
+      (org-canvas--log-info org-canvas--logger
+        "[DRY-RUN] Would stamp CANVAS_ID %s on item '%s'"
+        (or (plist-get data :canvas-id) "(new)") (plist-get data :title))
+    (org-canvas--finalize-item data response)))
 
 ;;;; Bulk Publish
 ;;
@@ -1110,6 +1124,81 @@ copy when it syncs.  Returns the disowned id, or nil."
       (plist-put data :canvas-id nil)
       id)))
 
+;; Adoption (issue #179).  The assignment level asks, before any POST,
+;; whether Canvas already holds an item of that title (issue #85); the
+;; item level did not, and an unstamped item heading is the likelier
+;; case — a git checkout that reverts a stamped modules.org, or a batch
+;; run that died between the POST and the stamp — so every later sync
+;; created a second copy of the same content and students saw the
+;; assignment twice.  The module's item list is already in hand for the
+;; reconcile above, so an unstamped heading looks there first: a remote
+;; item of the same type and content that no heading claims is adopted
+;; — its id goes on the heading and the push becomes a PUT.  The rest of
+;; the twins are named and left in place (Hard Rule 16); the drift
+;; report lists them as EXTRA (issue #177).
+
+(defun org-canvas--module-item-same-content-p (data item)
+  "Return non-nil when remote ITEM is the module item DATA describes.
+The same type, and the same content: the content id, or the page url
+for a page, or — for a SubHeader, an external URL, or anything else
+that carries no content id — the same title."
+  (and (equal (plist-get data :type) (alist-get 'type item))
+       (let ((content-id (plist-get data :content-id))
+             (page-url (plist-get data :page-url)))
+         (cond
+          (content-id (equal (format "%s" content-id)
+                             (format "%s" (alist-get 'content_id item))))
+          (page-url (equal page-url (alist-get 'page_url item)))
+          (t (equal (plist-get data :title) (alist-get 'title item)))))))
+
+(defun org-canvas--module-item-twins (data remote claimed)
+  "Return the items in REMOTE with DATA's content that no heading CLAIMED.
+REMOTE is a module's item list; CLAIMED the ids (strings) this
+module's headings carry.  Sorted by position, then id, so the choice
+among several is stable."
+  (let ((twins (cl-remove-if-not
+                (lambda (item)
+                  (and (not (member (format "%s" (alist-get 'id item)) claimed))
+                       (org-canvas--module-item-same-content-p data item)))
+                remote))
+        (key (lambda (item)
+               (list (or (alist-get 'position item) most-positive-fixnum)
+                     (string-to-number (format "%s" (alist-get 'id item)))))))
+    (sort twins (lambda (a b)
+                  (let ((ka (funcall key a)) (kb (funcall key b)))
+                    (or (< (car ka) (car kb))
+                        (and (= (car ka) (car kb))
+                             (< (cadr ka) (cadr kb)))))))))
+
+(defun org-canvas--module-item-adopt-twin (data module-id remote claimed
+                                                &optional ctx)
+  "Adopt, for unstamped DATA, a matching item already in module MODULE-ID.
+REMOTE is the module's item list (nothing is adopted while it is
+`unknown'); CLAIMED the ids this module's headings carry.  A remote
+item of DATA's type and content that nothing claims is adopted: its id
+goes into DATA, so the push updates it in place instead of creating a
+second copy (issue #179), and into CTX's :module-items-adopted so the
+reconcile counts it as claimed even before the stamp is written.  With
+several such items, the first by position is adopted and the rest are
+named; they are left in place.  Returns the adopted id, or nil."
+  (when (and (not (plist-get data :canvas-id)) (not (eq remote 'unknown)))
+    (let ((twins (org-canvas--module-item-twins data remote claimed))
+          (title (plist-get data :title)))
+      (when twins
+        (let ((id (format "%s" (alist-get 'id (car twins)))))
+          (org-canvas--log-info org-canvas--logger
+            "[Module Item] '%s' has no CANVAS_ID, but module %s already holds it as item %s (%s) — adopting it; updating in place instead of creating a second copy"
+            title module-id id (plist-get data :type))
+          (when (cdr twins)
+            (org-canvas--log-warning org-canvas--logger
+              "[Module Item] Module %s holds %d more item(s) with the same content as '%s' (%s) — left in place; delete them in Canvas, or run org-canvas-prune-module-items"
+              module-id (length (cdr twins)) title
+              (mapconcat (lambda (item) (format "%s" (alist-get 'id item)))
+                         (cdr twins) ", ")))
+          (plist-put data :canvas-id id)
+          (org-canvas--ctx-push ctx :module-items-adopted id)
+          id)))))
+
 (defun org-canvas--module-item-claimed-elsewhere (item-id module-pom)
   "Return the title of another module than MODULE-POM's claiming ITEM-ID.
 Scans the current buffer's level-2 headings; nil when no other
@@ -1201,11 +1290,19 @@ outcomes roll into the global sync summary under \"Module Items\".
 The module's remote item list is fetched once: an item heading whose
 id the module does not hold has moved here from another module and is
 created fresh, and a remote item no heading here claims is removed
-when it has moved elsewhere (issue #105; see Cross-Module Moves).
+when it has moved elsewhere (issue #105; see Cross-Module Moves).  An
+unstamped heading whose content the module already holds adopts that
+item instead of creating a second copy (issue #179; see Adoption).
 Returns (success-count skip-count fail-count)."
-  (let ((item-markers (org-canvas--module-collect-item-markers module-pom))
-        (remote (org-canvas--module-remote-items module-id))
-        (success-count 0)
+  (let* ((item-markers (org-canvas--module-collect-item-markers module-pom))
+         (remote (org-canvas--module-remote-items module-id))
+         ;; The ids this module's headings carry before anything is
+         ;; adopted or stamped: what adoption must not take.
+         (claimed (delq nil (mapcar (lambda (m)
+                                      (with-current-buffer (marker-buffer m)
+                                        (org-entry-get m "CANVAS_ID")))
+                                    item-markers)))
+         (success-count 0)
         (skip-count 0)
         (fail-count 0)
         (skipped-titles nil)
@@ -1221,6 +1318,9 @@ Returns (success-count skip-count fail-count)."
               (let* ((data (org-canvas--module-item-parse-entry modules-file-dir))
                      (item-type (plist-get data :type)))
                 (org-canvas--module-item-disown-foreign-id data module-id remote ctx)
+                (let ((adopted (org-canvas--module-item-adopt-twin
+                                data module-id remote claimed ctx)))
+                  (when adopted (push adopted claimed)))
                 ;; Skip items without content ID (except SubHeader and ExternalUrl)
                 (if (and (not (string= item-type "SubHeader"))
                          (not (string= item-type "ExternalUrl"))
@@ -1252,11 +1352,13 @@ Returns (success-count skip-count fail-count)."
                (marker-position marker) (error-message-string err)))))))
 
     ;; Whatever the headings claim now — including ids just stamped on
-    ;; items created here — is what this module keeps.
-    (let ((claimed (delq nil (mapcar (lambda (m)
-                                       (with-current-buffer (marker-buffer m)
-                                         (org-entry-get m "CANVAS_ID")))
-                                     item-markers))))
+    ;; items created here, and ids adopted this run, which a dry run
+    ;; decides on but does not stamp — is what this module keeps.
+    (let ((claimed (append (delq nil (mapcar (lambda (m)
+                                               (with-current-buffer (marker-buffer m)
+                                                 (org-entry-get m "CANVAS_ID")))
+                                             item-markers))
+                           (plist-get ctx :module-items-adopted))))
       (org-canvas--module-reconcile-departed module-id module-pom remote claimed ctx))
 
     ;; Release markers to avoid memory leaks
@@ -1392,6 +1494,112 @@ the markers."
 (org-canvas-define-delete-at-point module
   :endpoint "modules/%s"
   :post-delete-fn #'org-canvas--module-clear-children-properties)
+
+;;;; Prune Module Items
+;;
+;; `org-canvas-prune-modules' (generated above) deletes whole modules
+;; the file no longer lists and never looks inside one.  The sync does
+;; not delete an unlisted item either — children are never pruned
+;; unasked (issue #105) — so the twin a lost stamp left behind (issues
+;; #177, #179) had no command to remove it short of the web UI.  This is
+;; the asked-for version: one request per synced module, one list, one
+;; confirmation.
+
+(defun org-canvas--module-claimed-item-ids (file)
+  "Return the CANVAS_IDs of every level-2 heading in FILE, as strings."
+  (with-current-buffer (org-canvas--find-file-noselect file)
+    (delq nil (org-map-entries
+               (lambda () (org-entry-get (point) "CANVAS_ID"))
+               "LEVEL=2" 'file))))
+
+(defun org-canvas--module-synced-modules (file)
+  "Return (ID . NAME) for every level-1 heading in FILE with a CANVAS_ID."
+  (with-current-buffer (org-canvas--find-file-noselect file)
+    (delq nil (org-map-entries
+               (lambda ()
+                 (let ((id (org-entry-get (point) "CANVAS_ID")))
+                   (when id (cons id (org-get-heading t t t t)))))
+               "LEVEL=1" 'file))))
+
+(defun org-canvas--module-unclaimed-items (file)
+  "Return the items of FILE's synced modules that no heading in FILE claims.
+Each as a plist (:module-id ID :module NAME :item ITEM), ITEM the
+Canvas item alist.  One list request per module; a module whose list
+cannot be fetched contributes nothing, and the log says so."
+  (let ((claimed (org-canvas--module-claimed-item-ids file))
+        (found nil))
+    (dolist (module (org-canvas--module-synced-modules file))
+      (let ((remote (org-canvas--module-remote-items (car module))))
+        (unless (eq remote 'unknown)
+          (dolist (item remote)
+            (unless (member (format "%s" (alist-get 'id item)) claimed)
+              (push (list :module-id (car module) :module (cdr module)
+                          :item item)
+                    found))))))
+    (nreverse found)))
+
+(defun org-canvas--module-delete-unclaimed-items (orphans)
+  "Delete the module items ORPHANS (`org-canvas--module-unclaimed-items').
+Nothing is sent during a dry run.  Returns the number deleted."
+  (let ((deleted 0))
+    (dolist (orphan orphans)
+      (let* ((item (plist-get orphan :item))
+             (id (alist-get 'id item))
+             (title (or (alist-get 'title item) "?"))
+             (module-id (plist-get orphan :module-id)))
+        (if org-canvas--dry-run
+            (org-canvas--log-info org-canvas--logger
+              "[DRY-RUN] Would delete item %s '%s' from module %s" id title module-id)
+          (condition-case err
+              (progn
+                (org-canvas-api-request
+                 'DELETE (org-canvas-api-course-endpoint "modules/%s/items/%s" module-id id))
+                (org-canvas--log-info org-canvas--logger
+                  "[Prune] Deleted item %s '%s' from module %s" id title module-id)
+                (cl-incf deleted))
+            (error
+             (org-canvas--log-error org-canvas--logger
+               "[Prune] Could not delete item %s '%s' from module %s: %s"
+               id title module-id (error-message-string err)))))))
+    deleted))
+
+;;;###autoload
+(defun org-canvas-prune-module-items ()
+  "Delete module items on Canvas that no heading in modules.org claims.
+Lists the items of every module the file has synced, names the ones no
+item heading anywhere in the file claims, and asks once before deleting
+them.  The sync never does this on its own — children are not pruned
+unasked (issue #105) — so this is the command for the twin a lost stamp
+left behind (issues #177, #179).  Returns the number deleted."
+  (interactive)
+  (let ((file (expand-file-name org-canvas-modules-file)))
+    (unless (file-exists-p file)
+      (user-error "Cannot prune without %s — every item would count as unclaimed" file))
+    (org-canvas-clear-log)
+    (let ((orphans (org-canvas--module-unclaimed-items file)))
+      (org-canvas--log-info org-canvas--logger
+        "[Prune] Module items: %d unclaimed" (length orphans))
+      (dolist (orphan orphans)
+        (org-canvas--log-warning org-canvas--logger
+          "[Prune] Unclaimed: '%s' (item %s in module '%s')"
+          (or (alist-get 'title (plist-get orphan :item)) "?")
+          (alist-get 'id (plist-get orphan :item)) (plist-get orphan :module)))
+      (cond
+       ((null orphans)
+        (message "No unclaimed module items on Canvas.")
+        0)
+       ((not (y-or-n-p (format "Prune %d unclaimed module item(s) from Canvas (%s)? "
+                               (length orphans)
+                               (mapconcat (lambda (o)
+                                            (format "'%s'" (alist-get 'title (plist-get o :item))))
+                                          orphans ", "))))
+        (message "Prune aborted.")
+        0)
+       (t
+        (display-buffer (get-buffer-create org-canvas--log-buffer-name))
+        (let ((deleted (org-canvas--module-delete-unclaimed-items orphans)))
+          (message "Pruned %d unclaimed module item(s) from Canvas." deleted)
+          deleted))))))
 
 ;;;; Pull
 

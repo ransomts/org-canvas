@@ -550,7 +550,7 @@ the sync had already written (issue #97)."
     :parse-fn :build-fn :push-fn :finalize-fn :hash-extra-fn
     :total-count :counters :synced-ids :title-key
     :pull-item-fn :conflict-apply-all :duplicate-apply-all :remote-touched
-    :module-items-moved :module-items-pending
+    :module-items-moved :module-items-pending :module-items-adopted
     :file-changed-ids :file-recreated-ids)
   "Every key a sync run context may carry, present from creation.
 Static: :feature-name, :feature-upper, :title-key, the pipeline
@@ -563,8 +563,8 @@ module's pull function, which enables the pull option at a conflict),
 :conflict-apply-all and :duplicate-apply-all (a capital answer at a
 prompt, remembered for the rest of this run only), :remote-touched (set
 by a finalize post-fn that wrote to Canvas again, issue #124),
-:module-items-moved and :module-items-pending (modules),
-:file-changed-ids and :file-recreated-ids (files).  Every key is
+:module-items-moved, :module-items-pending and :module-items-adopted
+\(modules), :file-changed-ids and :file-recreated-ids (files).  Every key is
 present so `plist-put' always mutates the context in place and the
 functions sharing it see one another's writes.")
 
