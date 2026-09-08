@@ -1807,6 +1807,37 @@ Page content.
                         :to-equal "content/Uploaded Media/screenshot.png"))))
         (delete-directory org-canvas-directory t))))
 
+  (it "falls back to the placeholder folder when the folder 403s (issue #171)"
+    (let ((org-canvas--rewrite-folder-cache nil))
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _)
+                   (signal 'org-canvas-permission-error
+                           '("Permission denied (HTTP 403) reading folders")))))
+        (expect (org-canvas--rewrite-fetch-folder-relpath 999) :to-be nil))))
+
+  (it "survives a 403 on one file, passing the URL through (issue #171)"
+    ;; A page body embedding a file from another course 403s for a
+    ;; Designer.  Before #171 the permission error escaped this handler
+    ;; and took the whole content type with it.
+    (let ((cache (make-hash-table :test 'equal))
+          (org-canvas-directory (make-temp-file "test-rewrite-403-" t))
+          (org-canvas-files-file nil))
+      (unwind-protect
+          (progn
+            (setq org-canvas-files-file
+                  (expand-file-name "files.org" org-canvas-directory))
+            (with-temp-file org-canvas-files-file (insert ""))
+            (org-canvas--pull-summary-reset)
+            (cl-letf (((symbol-function 'org-canvas-api-request)
+                       (lambda (&rest _)
+                         (signal 'org-canvas-permission-error
+                                 '("Permission denied (HTTP 403) reading files")))))
+              (let* ((input "x [[https://x.com/courses/208463/files/21157335/preview]] y")
+                     (rewritten (org-canvas--rewrite-canvas-file-urls input cache)))
+                (expect rewritten :to-equal input)
+                (expect (length (org-canvas--pull-summary-records)) :to-equal 1))))
+        (delete-directory org-canvas-directory t))))
+
   (it "returns nil and records to summary when metadata GET fails"
     (let ((cache (make-hash-table :test 'equal))
           (org-canvas-directory (make-temp-file "test-rewrite-fail-" t))
