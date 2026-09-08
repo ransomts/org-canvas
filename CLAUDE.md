@@ -152,7 +152,7 @@ What stays dynamically bound is the *caller's* seam, set around a command by who
 |---|---|
 | Pipeline macros, `:hash-extra`, payload builder, property registry (`:remote-fn` #61/#62, `:compare-p` #93), drop-rules two-phase sync, global sync summary (#66), complexity patterns, key lessons (markers, `save-excursion`, upload nulls, unibyte, property drawers, question body text) | `design.org` |
 | plz and the PATCH fallback (#13), error-handling rules, conflict baseline and strategy rules (#48, #72, #86, #104, #124), duplicate-title guard and adopt-at-point (#85, #101), dry-run rules (#34, #84), file re-upload tiers (#49, #70, #71, #77), feature registry URLs and `:modified-field` (#87, #94), quiz questions API, upload quirks, copy-pasteable curl commands for debugging | `api-interaction.org` |
-| LTI assignments and no Turnitin, quiz publish sequencing (#59), rubrics update in place (#123), bulk publish (#47), module items reconcile moves (#105), drift report bodies (#83), by-design extras (#98, #102, #111), drift report verbs (#103), batch-mode file handling (#97, #121), Canvas-owned submission types (#167), read-only validation (#168), batch reports (#155, #169), timestamp precision (#176) | `decisions.org` |
+| LTI assignments and no Turnitin, quiz publish sequencing (#59), rubrics update in place (#123), bulk publish (#47), module items reconcile moves (#105), module items adopt a twin before POST and the drift report lists item twins (#177, #179), drift report bodies (#83), by-design extras (#98, #102, #111), drift report verbs (#103), batch-mode file handling (#97, #121), Canvas-owned submission types (#167), read-only validation (#168), batch reports (#155, #169), timestamp precision (#176) | `decisions.org` |
 | Pull macros and helpers, pull-at-point (#67), single-item pull registration, `:skip-fn` reporting and the front page (#81, #82) | `pull-system.org` |
 | Test helpers and generators, test isolation guards, Emacs 29/30 matrix and skipped tests, JUnit and Codecov, Eldev layout, paren-imbalance debugging | `testing.org` |
 | Adding a module, step by step | `module-developer-guide.org` |
@@ -234,7 +234,7 @@ Non-negotiable. Each was learned on a live course; the pointer holds the full st
 17. **Publish state belongs to the object**, written where it is declared, never inferred from a module item (#47). — decisions.org, "Bulk Publish"
 18. **A property Canvas returns nested or renamed needs a `:remote-fn`**, or the whole feature reports drift forever (#61, #62). — design.org, "The Property Registry"
 19. **`org-canvas-diff` must never write**: local bodies export with the OFFLINE flag (#83). — decisions.org, "The Drift Report Compares Bodies"
-20. **Before any POST the duplicate-title guard runs** (#85); recovery from a lost stamp is `org-canvas-adopt-at-point` (#101), not a second create. — api-interaction.org, "Duplicate-Title Guard"
+20. **Before any POST the duplicate-title guard runs** (#85); recovery from a lost stamp is `org-canvas-adopt-at-point` (#101), not a second create. A module item without CANVAS_ID adopts the same-content item its module already holds (`org-canvas--module-item-adopt-twin`, PUT not POST) before any POST; twins are named, never deleted (#179). — api-interaction.org, "Duplicate-Title Guard"; decisions.org, "Module Items Adopt a Twin"
 21. **Counts in documentation are commands, not numbers** — spec totals, coverage and skipped-test counts drift with every PR (this file was 823 lines of them; #139).
 
 ## Testing

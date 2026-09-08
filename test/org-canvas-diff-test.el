@@ -1609,5 +1609,206 @@ The remote updated_at is always newer than the baseline."
                      (name (list :name name))))))
         (expect (org-canvas-diff) :to-equal 1)))))
 
+;;;; Issue #177: module items are compared too
+
+(describe "org-canvas--diff-module-items (issue #177)"
+  (defconst test-org-canvas-177--modules-org
+    "* Week 3
+:PROPERTIES:
+:CANVAS_ID: 781703
+:END:
+** [[file:assignments.org::*R3][R3: Stakeholders]]
+:PROPERTIES:
+:CANVAS_ID: 5864670
+:END:
+* Week 4
+:PROPERTIES:
+:CANVAS_ID: 781704
+:END:
+** Moved here
+:PROPERTIES:
+:CANVAS_ID: 77
+:END:
+"
+    "Two synced modules; Week 4 claims an item that still sits in Week 3.")
+
+  (defun test-org-canvas-177--modules-diff (content remote &optional known excluded)
+    "Run the Modules diff over CONTENT with the item lists in REMOTE.
+REMOTE maps a module id (string) to its item vector, or to `fail'.
+KNOWN binds `org-canvas-diff-known-extras'; EXCLUDED binds
+`org-canvas-diff-excluded-features'.  Returns the Modules result;
+its :children is the Module Items result."
+    (let ((file (make-temp-file "diff-177-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file (insert content))
+            (let ((org-canvas-modules-file file)
+                  (org-canvas-diff-known-extras known)
+                  (org-canvas-diff-excluded-features excluded))
+              (with-org-canvas-test-config
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (lambda (_method url &rest _)
+                             (if (string-match "modules/\\([0-9]+\\)/items" url)
+                                 (let ((items (cdr (assoc (match-string 1 url) remote))))
+                                   (if (eq items 'fail) (error "items failed") items))
+                               ;; The module list itself, as Canvas sends it.
+                               [((id . 781703) (name . "Week 3"))
+                                ((id . 781704) (name . "Week 4"))]))))
+                  (org-canvas--diff-feature
+                   (org-canvas--registry-find-feature "modules"))))))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file))))
+
+  (defconst test-org-canvas-177--remote
+    '(("781703" . [((id . 5864670) (type . "Assignment") (title . "R3: Stakeholders")
+                    (content_id . 2563803) (position . 10)
+                    (html_url . "https://canvas.example/courses/1/modules/items/5864670"))
+                   ((id . 5864661) (type . "Assignment") (title . "R3: Stakeholders")
+                    (content_id . 2563803) (position . 10)
+                    (html_url . "https://canvas.example/courses/1/modules/items/5864661"))
+                   ((id . 77) (type . "SubHeader") (title . "Moved here"))])
+      ("781704" . []))
+    "Week 3 holds the claimed item, its twin, and an item Week 4's heading claims.")
+
+  (it "reports the twin no heading claims as an EXTRA of Module Items, and counts it"
+    (let* ((result (test-org-canvas-177--modules-diff
+                    test-org-canvas-177--modules-org test-org-canvas-177--remote))
+           (child (plist-get result :children))
+           (extra (plist-get child :extra)))
+      ;; The modules themselves agree.
+      (expect (plist-get result :extra) :to-be nil)
+      (expect (plist-get result :divergences) :to-be nil)
+      (expect (plist-get child :name) :to-equal "Module Items")
+      (expect (length extra) :to-equal 1)
+      (expect (plist-get (car extra) :kind) :to-equal 'extra)
+      (expect (plist-get (car extra) :id) :to-equal "5864661")
+      (expect (plist-get (car extra) :title) :to-equal "R3: Stakeholders")
+      (expect (plist-get (car extra) :module-id) :to-equal "781703")
+      (expect (plist-get (car extra) :where) :to-equal "Week 3")
+      (expect (plist-get (car extra) :html-url) :to-match "items/5864661$")
+      (expect (org-canvas--diff-count (list result child)) :to-equal 1)))
+
+  (it "silences an acknowledged item and counts it, filed under module-items"
+    (let* ((result (test-org-canvas-177--modules-diff
+                    test-org-canvas-177--modules-org test-org-canvas-177--remote
+                    '(("module-items" "5864661" "twin, see #179"))))
+           (child (plist-get result :children)))
+      (expect (plist-get child :extra) :to-be nil)
+      (expect (plist-get child :acknowledged) :to-equal 1)
+      (expect (plist-get child :divergences) :to-be nil)
+      (expect (org-canvas--diff-count (list result child)) :to-equal 0)))
+
+  (it "flags an acknowledged item id no module holds any more"
+    (let* ((result (test-org-canvas-177--modules-diff
+                    test-org-canvas-177--modules-org
+                    '(("781703" . [((id . 5864670) (type . "Assignment")
+                                    (title . "R3: Stakeholders"))
+                                   ((id . 77) (type . "SubHeader") (title . "Moved here"))])
+                      ("781704" . []))
+                    '(("module-items" "5864661" "twin"))))
+           (child (plist-get result :children))
+           (d (car (plist-get child :divergences))))
+      (expect (plist-get d :kind) :to-equal 'stale-ack)
+      (expect (plist-get d :id) :to-equal "5864661")
+      (expect (plist-get child :acknowledged) :to-equal 0)))
+
+  (it "looks only into modules the file claims, and records a failed item list"
+    (let* ((result (test-org-canvas-177--modules-diff
+                    "* Week 3\n:PROPERTIES:\n:CANVAS_ID: 781703\n:END:\n"
+                    '(("781703" . fail) ("781704" . [((id . 1) (title . "x"))]))))
+           (child (plist-get result :children)))
+      (expect (plist-get child :error) :to-match "items failed")
+      ;; The unclaimed module is the parent's business.
+      (expect (mapcar (lambda (e) (plist-get e :id)) (plist-get result :extra))
+              :to-equal '("781704"))))
+
+  (it "skips the pass when module-items is excluded, visibly"
+    (let* ((result (test-org-canvas-177--modules-diff
+                    test-org-canvas-177--modules-org test-org-canvas-177--remote
+                    nil '("module-items")))
+           (child (plist-get result :children)))
+      (expect (plist-get child :excluded) :to-be t)
+      (expect (plist-get child :extra) :to-be nil)))
+
+  (it "gives no other feature a child result"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (&rest _) [])))
+        (expect (plist-get (org-canvas--diff-feature
+                            (org-canvas--registry-find-feature "assignments"))
+                           :children)
+                :to-be nil))))
+
+  (it "renders the row under Module Items, naming the module, and counts it in the total"
+    (with-org-canvas-test-config
+      (let ((report (org-canvas--diff-render
+                     '((:name "Modules")
+                       (:name "Module Items"
+                        :extra ((:kind extra :title "R3: Stakeholders" :id "5864661"
+                                 :module-id "781703" :where "Week 3")))))))
+        (expect report :to-match "Module Items: 1 divergence")
+        (expect report :to-match "EXTRA     R3: Stakeholders (id 5864661 in module 'Week 3', no Org heading claims it)")
+        (expect report :to-match "1 divergence(s) found"))))
+
+  (it "reports the child right after its feature, in the count org-canvas-diff returns"
+    (with-org-canvas-test-config
+      (let ((names nil))
+        (cl-letf (((symbol-function 'org-canvas--preflight-check) #'ignore)
+                  ((symbol-function 'org-canvas--diff-render)
+                   (lambda (results)
+                     (setq names (mapcar (lambda (r) (plist-get r :name)) results))
+                     ""))
+                  ((symbol-function 'org-canvas--diff-syllabus-references) (lambda () nil))
+                  ((symbol-function 'org-canvas--diff-feature)
+                   (lambda (feature)
+                     (let ((name (plist-get feature :name)))
+                       (if (string= name "Modules")
+                           (list :name name
+                                 :children (list :name "Module Items"
+                                                 :extra '((:kind extra :title "Twin" :id "5864661"
+                                                           :module-id "781703"))))
+                         (list :name name))))))
+          (expect (org-canvas-diff) :to-equal 1)
+          (let ((at (cl-position "Modules" names :test #'string=)))
+            (expect at :not :to-be nil)
+            (expect (nth (1+ at) names) :to-equal "Module Items"))))))
+
+  (it "deletes a module item row from its module, not from a feature URL"
+    (let ((requests nil))
+      (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) t))
+                ((symbol-function 'org-canvas-api-request)
+                 (lambda (method url &rest args) (push (list method url args) requests) nil)))
+        ;; The report buffer helper answers by registered feature, so
+        ;; the item result rides along as the Modules result's child.
+        (with-current-buffer (test-org-canvas--diff-report-buffer
+                              '((:name "Modules"
+                                 :children (:name "Module Items"
+                                            :extra ((:kind extra :title "R3: Stakeholders" :id "5864661"
+                                                     :module-id "781703" :where "Week 3"))))))
+          (test-org-canvas--diff-goto-row 'extra)
+          (org-canvas-diff-delete)
+          (expect (thing-at-point 'line t) :to-match "DELETED   R3: Stakeholders (id 5864661)")))
+      (expect (length requests) :to-equal 1)
+      (expect (nth 1 (car requests)) :to-match "modules/781703/items/5864661$")
+      (expect (plist-get (nth 2 (car requests)) :data) :to-be nil)))
+
+  (it "acknowledges a module item row under Module Items"
+    (let* ((org-canvas-diff-known-extras nil)
+           (saved nil)
+           (org-canvas-diff-acknowledge-function
+            (lambda (extras) (setq saved extras))))
+      (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "twin")))
+        (with-current-buffer (test-org-canvas--diff-report-buffer
+                              '((:name "Modules"
+                                 :children (:name "Module Items"
+                                            :extra ((:kind extra :title "R3: Stakeholders" :id "5864661"
+                                                     :module-id "781703"))))))
+          (test-org-canvas--diff-goto-row 'extra)
+          (org-canvas-diff-acknowledge)))
+      (expect saved :to-equal '(("Module Items" "5864661" "twin")))
+      (let ((org-canvas-diff-known-extras saved))
+        (expect (org-canvas--diff-known-extras-for "module-items")
+                :to-equal '(("5864661" . "twin")))))))
+
 (provide 'org-canvas-diff-test)
 ;;; org-canvas-diff-test.el ends here
