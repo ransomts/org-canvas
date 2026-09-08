@@ -40,14 +40,22 @@
     (replace-regexp-in-string "|" "\\\\vert{}" (string-trim s))))
 
 (defun org-canvas-docgen--allowed (prop)
-  "Return the \"allowed values\" cell text for property spec PROP."
-  (let ((type (plist-get prop :type))
-        (values (plist-get prop :values)))
+  "Return the \"allowed values\" cell text for property spec PROP.
+A property's `:read-only-values' are listed too, marked as Canvas's to
+set: they are values a pull writes and validation accepts, not values
+to type by hand (issue #167)."
+  (let* ((type (plist-get prop :type))
+         (values (plist-get prop :values))
+         (read-only (plist-get prop :read-only-values))
+         (suffix (if read-only
+                     (format " (set by Canvas: %s)"
+                             (mapconcat #'identity read-only ", "))
+                   "")))
     (cond
-     (values (mapconcat #'identity values ", "))
-     ((eq type 'boolean) "true, false")
+     (values (concat (mapconcat #'identity values ", ") suffix))
+     ((eq type 'boolean) (concat "true, false" suffix))
      ((eq type 'link) "org link")
-     (t ""))))
+     (t (string-trim-left suffix)))))
 
 (defun org-canvas-docgen--default (prop)
   "Return the default-value cell text for property spec PROP."

@@ -111,6 +111,7 @@ writing commands greyed rather than only erroring when one is chosen
    ("c" "Switch course" org-canvas-activate-course)
    ("t" "Test connection" org-canvas-test-connection)
    ("v" "Validate files" org-canvas-validate)
+   ("V" "Validate files (including push-only advice)" org-canvas-validate-all)
    ("S" "Status overview (local)" org-canvas-status)
    ("r" "Drift report (compare with Canvas)" org-canvas-diff)
    ("x" "List external tools (LTI)" org-canvas-list-external-tools)]

@@ -46,6 +46,17 @@ no CANVAS_ID yet); the report collapses these into a summary line."
                 :property property :message message)
           (when pending-sync '(:pending-sync t))))
 
+(defun org-canvas--validate-push-only (issue)
+  "Mark ISSUE as advice that exists only to protect a push, and return it.
+A course marked `org-canvas-read-only' will never make that push, and
+such findings were half of what validation had to say about a mirror
+of somebody else's course — every historical due date reported as
+being in the past, faithfully and uselessly (issue #168).  A finding
+that describes the course itself is never marked: a title collision, a
+broken link or a malformed drawer is true whatever you intend to do
+next.  Nil ISSUE passes through, so a check can wrap its result."
+  (and issue (append issue (list :push-only t))))
+
 ;;;; 2. Type-Specific Validators
 ;;
 ;; Each returns nil (valid) or an issue plist.
@@ -69,7 +80,9 @@ PROPERTY names the property.  LOC is a (:file :line :heading) plist."
 
 (defun org-canvas--validate-check-enum (value property valid-values loc)
   "Check that VALUE is in VALID-VALUES.
-PROPERTY names the property.  LOC is a (:file :line :heading) plist."
+PROPERTY names the property.  LOC is a (:file :line :heading) plist.
+VALID-VALUES already carries the property's `:read-only-values', so a
+value only Canvas may set passes here and is refused at the push."
   (when (and value (not (member value valid-values)))
     (org-canvas--validate-make-issue
      'error loc property
@@ -80,7 +93,11 @@ PROPERTY names the property.  LOC is a (:file :line :heading) plist."
   "Check that each comma-separated part of VALUE is in VALID-VALUES.
 PROPERTY names the property.  LOC is a (:file :line :heading) plist.
 A `csv-enum' spec without `:values' is a free-form list (file
-extensions, Canvas ids) and has nothing to check against."
+extensions, Canvas ids) and has nothing to check against.
+VALID-VALUES already carries the property's `:read-only-values': a
+pulled quiz-backed assignment says SUBMISSION: online_quiz, and every
+such heading was an error until the value was let through (issue
+#167)."
   (when (and value valid-values)
     (let ((parts (split-string value "," t "[ \t]+")))
       (let ((bad (cl-remove-if (lambda (p) (member p valid-values)) parts)))
@@ -102,9 +119,10 @@ PROPERTY names the property.  LOC is a (:file :line :heading) plist."
                (iso (format-time-string "%Y-%m-%dT%H:%M:%SZ" encoded t))
                (now (format-time-string "%Y-%m-%dT%H:%M:%SZ" (current-time) t)))
           (when (string< iso now)
-            (org-canvas--validate-make-issue
-             'warning loc property
-             (format "%s: timestamp %s is in the past" property value))))
+            (org-canvas--validate-push-only
+             (org-canvas--validate-make-issue
+              'warning loc property
+              (format "%s: timestamp %s is in the past" property value)))))
       (error
        (org-canvas--validate-make-issue
         'error loc property
@@ -125,7 +143,8 @@ Returns nil (valid) or an issue plist."
     (org-canvas--validate-make-issue (or not-link-severity 'error)
                                      loc property not-link-msg))
    ((not (org-canvas--resolve-link-property value id-property source-file))
-    (org-canvas--validate-make-issue 'warning loc property unresolved-msg t))))
+    (org-canvas--validate-push-only
+     (org-canvas--validate-make-issue 'warning loc property unresolved-msg t)))))
 
 (defun org-canvas--validate-check-link (value property _target-file-var id-property loc)
   "Check that VALUE is a valid Org file link and resolves.
@@ -748,12 +767,15 @@ Called after the per-entry checks, with the buffer current."
 (defun org-canvas--validate-entry-properties (props loc)
   "Validate PROPS list for the heading at point.
 LOC is a (:file :line :heading) plist.
+A property's `:read-only-values' join its `:values' as accepted input,
+because they are values a pull wrote down (issue #167).
 Returns a list of issues."
   (let ((issues nil))
     (dolist (prop props)
       (let* ((name (plist-get prop :name))
              (type (plist-get prop :type))
-             (values (plist-get prop :values))
+             (values (append (plist-get prop :values)
+                             (plist-get prop :read-only-values)))
              (target-file (plist-get prop :target-file))
              (id-prop (plist-get prop :id-property))
              (value (org-entry-get (point) name))
@@ -889,64 +911,113 @@ Returns a plist (:issues ISSUES :checked N :skipped N)."
    (t
     "Validation passed: no issues found")))
 
+(defun org-canvas--validate-insert-report (listed pending verbose stats)
+  "Insert the validation report into the current buffer.
+LISTED are the issues printed individually, PENDING the pre-first-sync
+link warnings, collapsed into one line unless VERBOSE.  STATS is a
+plist (:errors :warnings :checked :skipped :suppressed); a non-zero
+:suppressed count is named in a line of its own, so that holding push-only
+findings back on a read-only course is visible rather than silent."
+  (insert "org-canvas validation report\n")
+  (insert (make-string 60 ?=))
+  (insert "\n\n")
+  (if (or listed pending)
+      (progn
+        (dolist (issue listed)
+          (insert (org-canvas--validate-format-issue issue))
+          (insert "\n"))
+        (when pending
+          (if verbose
+              (dolist (issue pending)
+                (insert (org-canvas--validate-format-issue issue))
+                (insert "\n"))
+            (insert (format "%d link(s) pending first sync (targets have no CANVAS_ID yet); C-u M-x org-canvas-validate lists them\n"
+                            (length pending))))))
+    (insert "No issues found.\n"))
+  (when (> (plist-get stats :suppressed) 0)
+    (insert (format "%d push-only finding(s) suppressed (org-canvas-read-only is set); M-x org-canvas-validate-all shows them\n"
+                    (plist-get stats :suppressed))))
+  (insert "\n")
+  (insert (make-string 60 ?=))
+  (insert "\n")
+  (insert (format "Validation complete: %d error(s), %d warning(s) across %d file(s)"
+                  (plist-get stats :errors) (plist-get stats :warnings)
+                  (plist-get stats :checked)))
+  (when pending
+    (insert (format " (%d pending first sync)" (length pending))))
+  (when (> (plist-get stats :skipped) 0)
+    (insert (format " (%d file(s) not found, skipped)" (plist-get stats :skipped))))
+  (insert "\n"))
+
 ;;;###autoload
-(defun org-canvas-validate (&optional verbose)
+(defun org-canvas-validate (&optional verbose all)
   "Validate all course org files without contacting the Canvas API.
 Checks property types, enum values, date ordering, and structural
 requirements across all 12 content types.
 
 Results are displayed in a `*canvas-validate*' buffer with
-`compilation-mode' navigation (\\[next-error] / \\[previous-error]).
+`compilation-mode' navigation (\\[next-error] / \\[previous-error]),
+and printed to standard output under `noninteractive' — validate makes
+no API calls, so a batch Emacs is the natural place to run it, and a
+batch run used to print a tally naming no file (issue #169).
 
 Warnings about link targets that merely lack a CANVAS_ID (expected
 state before the first sync) are collapsed into a single summary
-line.  With a prefix argument VERBOSE, list them individually."
+line.  With a prefix argument VERBOSE, list them individually.
+
+On a course marked `org-canvas-read-only', findings that exist only to
+protect a push are held back and counted in one line; non-nil ALL
+keeps them, which is what `org-canvas-validate-all' passes (issue
+#168).
+
+Returns the number of errors reported, so a batch caller can act on
+it; see `org-canvas-validate-batch'."
   (interactive "P")
   (let* ((result (org-canvas--validate-run-all-specs))
-         (all-issues (plist-get result :issues))
+         (found (plist-get result :issues))
+         (suppress (and org-canvas-read-only (not all)))
+         (all-issues (if suppress
+                         (cl-remove-if (lambda (i) (plist-get i :push-only)) found)
+                       found))
+         (suppressed-count (- (length found) (length all-issues)))
          (pending-issues (cl-remove-if-not
                           (lambda (i) (plist-get i :pending-sync)) all-issues))
          (listed-issues (cl-remove-if
                          (lambda (i) (plist-get i :pending-sync)) all-issues))
-         (pending-count (length pending-issues))
-         (files-checked (plist-get result :checked))
-         (files-skipped (plist-get result :skipped))
-         (buf (get-buffer-create "*canvas-validate*"))
          (error-count (cl-count 'error all-issues :key (lambda (i) (plist-get i :severity))))
-         (warning-count (cl-count 'warning all-issues :key (lambda (i) (plist-get i :severity)))))
-    (with-current-buffer buf
-      (let ((inhibit-read-only t))
-        (erase-buffer)
-        (insert (format "org-canvas validation report\n"))
-        (insert (make-string 60 ?=))
-        (insert "\n\n")
-        (if all-issues
-            (progn
-              (dolist (issue listed-issues)
-                (insert (org-canvas--validate-format-issue issue))
-                (insert "\n"))
-              (when (> pending-count 0)
-                (if verbose
-                    (dolist (issue pending-issues)
-                      (insert (org-canvas--validate-format-issue issue))
-                      (insert "\n"))
-                  (insert (format "%d link(s) pending first sync (targets have no CANVAS_ID yet); C-u M-x org-canvas-validate lists them\n"
-                                  pending-count)))))
-          (insert "No issues found.\n"))
-        (insert "\n")
-        (insert (make-string 60 ?=))
-        (insert "\n")
-        (insert (format "Validation complete: %d error(s), %d warning(s) across %d file(s)"
-                        error-count warning-count files-checked))
-        (when (> pending-count 0)
-          (insert (format " (%d pending first sync)" pending-count)))
-        (when (> files-skipped 0)
-          (insert (format " (%d file(s) not found, skipped)" files-skipped)))
-        (insert "\n"))
-      (org-canvas-validate-mode)
-      (goto-char (point-min)))
-    (display-buffer buf)
-    (message "%s" (org-canvas--validate-format-summary error-count warning-count))))
+         (warning-count (cl-count 'warning all-issues :key (lambda (i) (plist-get i :severity))))
+         (stats (list :errors error-count :warnings warning-count
+                      :checked (plist-get result :checked)
+                      :skipped (plist-get result :skipped)
+                      :suppressed suppressed-count)))
+    (org-canvas--report-display
+     "*canvas-validate*"
+     (lambda ()
+       (org-canvas--validate-insert-report
+        listed-issues pending-issues verbose stats))
+     #'org-canvas-validate-mode)
+    (message "%s" (org-canvas--validate-format-summary error-count warning-count))
+    error-count))
+
+;;;###autoload
+(defun org-canvas-validate-all (&optional verbose)
+  "Validate every course org file, holding nothing back.
+Same as `org-canvas-validate' except that findings which only protect
+a push are reported even on a course marked `org-canvas-read-only' —
+the list to read when you are about to clear that flag and adopt the
+course for real (issue #168).  VERBOSE lists the pre-first-sync link
+warnings individually, as it does there."
+  (interactive "P")
+  (org-canvas-validate verbose t))
+
+;;;###autoload
+(defun org-canvas-validate-batch ()
+  "Run `org-canvas-validate', then exit non-zero if it found any error.
+Intended for a pre-commit hook or a CI step over a course directory,
+invoked from a batch-mode Emacs with -f org-canvas-validate-batch.
+Validation contacts no API, so this needs no token.  Mirrors
+`org-canvas-diff-batch'."
+  (kill-emacs (if (> (org-canvas-validate) 0) 1 0)))
 
 (provide 'org-canvas-validate)
 ;;; org-canvas-validate.el ends here

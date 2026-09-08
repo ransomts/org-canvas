@@ -2004,6 +2004,35 @@ Returns the course name as a string.  Signals an error if the request fails."
         (t
          (org-canvas--user-message "Connection failed: %s" msg)))))))
 
+;;;; 5b. Report Output
+
+(defun org-canvas--report-display (buffer-name render-fn &optional mode-fn)
+  "Render a report into BUFFER-NAME and put it where the caller can read it.
+RENDER-FN is called with no arguments and the report buffer current
+and empty; it inserts the report.  MODE-FN, when given, is called
+afterwards to set the buffer's major mode.
+
+Interactively the buffer is displayed.  Under `noninteractive' it is
+printed to standard output instead: `display-buffer' and
+`with-output-to-temp-buffer' both leave a batch Emacs with nothing to
+look at, which is how a scripted pull lost its whole summary (issue
+#155) and a scripted validation its whole report, leaving only a tally
+naming no file (issue #169).  A report-producing command reaches for
+this rather than rediscovering that.
+
+Returns the report text."
+  (with-current-buffer (get-buffer-create buffer-name)
+    (let ((inhibit-read-only t))
+      (erase-buffer)
+      (funcall render-fn))
+    (when mode-fn (funcall mode-fn))
+    (goto-char (point-min))
+    (let ((text (buffer-string)))
+      (if noninteractive
+          (princ text)
+        (display-buffer (current-buffer)))
+      text)))
+
 ;;;; Pull Summary Accumulator
 ;;
 ;; Per-pull non-fatal error tracking.  Pull functions that catch a

@@ -32,6 +32,11 @@
   (it "includes delete-at-point sub-prefix"
     (expect (test-org-canvas-transient-has-command-p
              'org-canvas-dispatch 'org-canvas-dispatch-delete-at-point)
+            :to-be-truthy))
+
+  (it "offers the unsuppressed validation beside the ordinary one (issue #168)"
+    (expect (test-org-canvas-transient-has-command-p
+             'org-canvas-dispatch 'org-canvas-validate-all)
             :to-be-truthy)))
 
 (describe "org-canvas-dispatch-sync-at-point"

@@ -490,10 +490,20 @@ Course assignments with due dates, submission types, and grading options.
 | =online_text_entry=  | Text box in browser            |
 | =online_url=         | URL submission                 |
 | =media_recording=    | Audio/video recording          |
+| =on_paper=           | Handed in on paper             |
 | =external_tool=      | Submission handled by an LTI tool |
 | =none=               | No submission (e.g., in-class) |
 
 Multiple types can be combined: =online_upload,online_text_entry=
+
+Two more values come back from Canvas but are not yours to type:
+=online_quiz= and =discussion_topic=.  Every classic quiz and every
+graded discussion owns a shadow assignment, and a pull writes that
+assignment into =assignments.org= with the submission type Canvas gave
+it.  Validation accepts them, and pushing such a heading updates the
+assignment as usual; what org-canvas refuses is /creating/ one — an
+assignment with no =CANVAS_ID= and =SUBMISSION: online_quiz= is a quiz
+that belongs in =quizzes.org=, and the error says so.
 
 *** External Tool Assignments (Gradescope, and other LTI tools)
 
@@ -2048,6 +2058,20 @@ emacs --batch -l /path/to/org-canvas.el -f org-canvas-diff-batch
 
 Wire that into cron and have it mail you the output on a non-zero exit.
 
+=org-canvas-validate-batch= is its offline twin, and the cheaper of the two:
+validation contacts no API and so needs no token, which makes it the natural
+pre-commit hook or CI step over a course directory.  It exits non-zero when
+the report holds any *error* — warnings alone are not a failure.
+
+#+begin_src sh
+emacs --batch -l /path/to/org-canvas.el -f org-canvas-validate-batch
+#+end_src
+
+Both commands print their full report to standard output under =--batch=, not
+just a tally: =display-buffer= shows a batch Emacs nothing, so a scripted
+validation used to say "24 error(s)" and give no way to learn which
+twenty-four (#169).
+
 * Grading Submissions
 
 Pulling an assignment's submissions produces a *grading file*: an Org file with one heading per student, saved under =org-canvas-submissions-directory= (by default =submissions/= inside the course directory) as =<assignment>.org=. Grading happens in that file and can span sessions: pull today, grade tomorrow, push when done.
@@ -2214,6 +2238,34 @@ assignments Canvas creates behind quizzes stay out of your file.
 
 Use the plain command to import a course for the first time, and the prefix
 argument afterwards.
+
+** Validating an Adopted Course
+
+Adopting an inherited course is where =org-canvas-validate= has the most to
+say: you wrote none of it and you want to know what shape it is in.  It is
+also where its signal is worst, because roughly half of what it knows exists
+to protect a *push* — and a course marked read-only will never make one:
+
+#+begin_src elisp
+;; in org-canvas-credentials.el, beside the course id it protects
+(setq org-canvas-read-only t)
+#+end_src
+
+With that set, validation reports only what describes the course — title
+collisions and superseded twins, broken cross-file links, malformed
+properties, structural problems — and holds back the advice that only
+matters before a write: timestamps in the past (on a mirror of somebody's
+Fall section, every historical date is *supposed* to be in the past) and
+links whose target has no =CANVAS_ID= yet.  What was held back is named in a
+line of its own rather than dropped silently:
+
+#+begin_example
+32 push-only finding(s) suppressed (org-canvas-read-only is set); M-x org-canvas-validate-all shows them
+#+end_example
+
+=M-x org-canvas-validate-all= is that full list — the one to read when you
+are about to clear the flag and adopt the course for real.  On a course you
+already write to, the two commands are identical.
 
 ** Forcing a Re-upload
 
@@ -2458,6 +2510,8 @@ See [[*Grading Submissions]] for the workflow.
 | =org-canvas-diff-visit= / =-acknowledge= / =-delete= / =-pull= | Row actions in the report buffer (see [[*Acting on the Report][Acting on the Report]]) |
 | =org-canvas-adopt-at-point=       | Stamp the heading at point with the Canvas item of the same title (local write only) |
 | =org-canvas-validate=             | Validate all Org files offline (no API calls) |
+| =org-canvas-validate-batch=       | As above, exiting non-zero when there are errors |
+| =org-canvas-validate-all=         | Validate without suppressing push-only findings on a read-only course |
 | =org-canvas-sync-dry-run=         | Preview what would be synced (no API calls)   |
 | =org-canvas-cleanup-orphans=      | Find and delete orphaned Canvas items         |
 | =org-canvas-clear-log=            | Clear log buffer and log file                 |
@@ -2885,7 +2939,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =POINTS= | number |  |  | Points possible |
 | =GRADING_TYPE= | enum | points, percent, letter_grade, gpa_scale, pass_fail, not_graded |  | How the assignment is graded |
 | =PUBLISHED= | boolean | true, false | true | Whether item is visible (default: true) |
-| =SUBMISSION= | csv-enum | online_upload, online_url, online_text_entry, media_recording, on_paper, external_tool, none |  | Submission type (see below) |
+| =SUBMISSION= | csv-enum | online_upload, online_url, online_text_entry, media_recording, on_paper, external_tool, none (set by Canvas: online_quiz, discussion_topic) |  | Submission type (see below) |
 | =ALLOWED_EXTENSIONS= | csv-enum |  |  | File extensions accepted for online uploads (comma separated) |
 | =MAX_ATTEMPTS= | number |  |  | Max submission attempts (-1 = unlimited) |
 | =DUE_AT= | timestamp |  |  | Due date |

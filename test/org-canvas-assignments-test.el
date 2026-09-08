@@ -1975,4 +1975,60 @@ Content.
             :to-equal 77)
     (expect (org-canvas--assignment-remote-rubric-id '((id . 1))) :to-be nil)))
 
+(describe "Canvas-owned submission types (issue #167)"
+  (describe "org-canvas--assignment-parse-submission-types"
+    (it "accepts online_quiz without warning about it"
+      (let (warnings)
+        (cl-letf (((symbol-function 'message)
+                   (lambda (fmt &rest args) (push (apply #'format fmt args) warnings))))
+          (expect (org-canvas--assignment-parse-submission-types "online_quiz")
+                  :to-equal '("online_quiz")))
+        (expect warnings :to-be nil)))
+
+    (it "accepts discussion_topic without warning about it"
+      (let (warnings)
+        (cl-letf (((symbol-function 'message)
+                   (lambda (fmt &rest args) (push (apply #'format fmt args) warnings))))
+          (expect (org-canvas--assignment-parse-submission-types "discussion_topic")
+                  :to-equal '("discussion_topic")))
+        (expect warnings :to-be nil)))
+
+    (it "still warns about a value Canvas has never heard of"
+      (let (warnings)
+        (cl-letf (((symbol-function 'message)
+                   (lambda (fmt &rest args) (push (apply #'format fmt args) warnings))))
+          (org-canvas--assignment-parse-submission-types "carrier_pigeon"))
+        (expect (car warnings) :to-match "carrier_pigeon"))))
+
+  (describe "org-canvas--assignment-build-payload"
+    (it "builds an update of a quiz-backed assignment unchanged"
+      (let* ((data '(:title "Quiz 1" :canvas-id "4242" :description ""
+                     :published t :grading_type "points"
+                     :submission_types ("online_quiz")))
+             (payload (org-canvas--assignment-build-payload data))
+             (assignment (gethash "assignment" payload)))
+        (expect (gethash "submission_types" assignment) :to-equal '("online_quiz"))))
+
+    (it "refuses to create one, naming the file that owns it"
+      (let ((data '(:title "Quiz 1" :description "" :published t
+                    :grading_type "points" :submission_types ("online_quiz"))))
+        (expect (condition-case err
+                    (progn (org-canvas--assignment-build-payload data) nil)
+                  (error (error-message-string err)))
+                :to-match "quizzes\\.org")))
+
+    (it "names discussions.org for a discussion-backed create"
+      (let ((data '(:title "Debate" :description "" :published t
+                    :grading_type "points" :submission_types ("discussion_topic"))))
+        (expect (condition-case err
+                    (progn (org-canvas--assignment-build-payload data) nil)
+                  (error (error-message-string err)))
+                :to-match "discussions\\.org")))
+
+    (it "leaves an ordinary create alone"
+      (let ((data '(:title "Homework" :description "" :published t
+                    :grading_type "points" :submission_types ("online_upload"))))
+        (expect (gethash "assignment" (org-canvas--assignment-build-payload data))
+                :to-be-truthy)))))
+
 ;;; org-canvas-assignments-test.el ends here
