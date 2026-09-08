@@ -729,6 +729,27 @@ Content.
          (expect (plist-get (car records) :error)
                  :to-match "timeout")))))
 
+  (it "records a 403 on one page rather than aborting the pull (issue #171)"
+    (org-canvas--pull-summary-reset)
+    (with-temp-org-buffer
+     "* Locked Page
+:PROPERTIES:
+:CANVAS_URL: locked-page
+:END:
+"
+     (org-back-to-heading)
+     (cl-letf (((symbol-function 'org-canvas-api-request)
+                (lambda (&rest _)
+                  (signal 'org-canvas-permission-error
+                          (list "Permission denied (HTTP 403) reading pages")))))
+       (org-canvas--page-pull-item
+        '((url . "locked-page") (page_id . 777) (title . "Locked Page"))
+        (point))
+       (let ((records (org-canvas--pull-summary-records)))
+         (expect (length records) :to-equal 1)
+         (expect (plist-get (car records) :item) :to-equal "locked-page")
+         (expect (plist-get (car records) :error) :to-match "403")))))
+
   (it "preserves the heading's CANVAS_URL even when detail fetch fails"
     (org-canvas--pull-summary-reset)
     (with-temp-org-buffer

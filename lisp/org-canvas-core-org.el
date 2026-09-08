@@ -1188,8 +1188,13 @@ Saves the buffer.  Creates the file if it does not yet exist."
 
 (defun org-canvas--rewrite-fetch-unknown-file (id cache)
   "Fetch Canvas file ID, download it, register it, and return the relpath.
-On any API failure (401/403/404/timeout) record to the pull summary
-and return nil so the rewriter passes the URL through unchanged.
+On a failed request (403/404/timeout, and the rest of
+`org-canvas-api-error') record to the pull summary and return nil so
+the rewriter passes the URL through unchanged: one unreadable file —
+a cross-course link, a locked folder — costs that one link, not the
+content type (issue #171).  A 401 is deliberately not among them: an
+expired token will fail every remaining request too, so it aborts
+rather than filling the summary with one entry per item.
 
 On success: GET /api/v1/files/:id, derive the folder-relative path
 via /api/v1/folders/:fid (cached in `org-canvas--rewrite-folder-cache'),
