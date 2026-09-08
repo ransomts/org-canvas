@@ -100,6 +100,43 @@
                'timestamp org-ts "2026-01-01T00:00:00Z")
               :to-be nil)))
 
+  (it "compares timestamps at minute precision, since Org has no seconds (issue #176)"
+    ;; The issue's exact pair: a web-UI end-of-day deadline stored as
+    ;; 03:59:59Z, pulled as <2026-09-09 Wed 23:59> in the course's
+    ;; Eastern zone.  The POSIX rule stands in for America/New_York so
+    ;; the test does not depend on tzdata being installed.
+    (let ((org-canvas-time-zone "EST5EDT,M3.2.0,M11.1.0"))
+      (expect (org-canvas--diff-values-equal-p
+               'timestamp "<2026-09-09 Wed 23:59>" "2026-09-10T03:59:59Z")
+              :to-be-truthy))
+    (let ((org-canvas-time-zone "UTC"))
+      (expect (org-canvas--diff-values-equal-p
+               'timestamp "<2026-09-09 Wed 23:59>" "2026-09-09T23:59:59Z")
+              :to-be-truthy)
+      (expect (org-canvas--diff-values-equal-p
+               'timestamp "<2026-09-09 Wed 23:59>" "2026-09-09T23:59:01Z")
+              :to-be-truthy)))
+
+  (it "still reports a timestamp in a different minute (issue #176)"
+    ;; Truncation, not a 60-second tolerance: one second before the
+    ;; minute and the first second of the next are both drift.
+    (let ((org-canvas-time-zone "UTC"))
+      (expect (org-canvas--diff-values-equal-p
+               'timestamp "<2026-09-09 Wed 23:59>" "2026-09-09T23:58:59Z")
+              :to-be nil)
+      (expect (org-canvas--diff-values-equal-p
+               'timestamp "<2026-09-09 Wed 23:59>" "2026-09-10T00:00:00Z")
+              :to-be nil)))
+
+  (it "reports a timestamp against an absent or unparsable remote as different"
+    (let ((org-canvas-time-zone "UTC"))
+      (expect (org-canvas--diff-values-equal-p
+               'timestamp "<2026-09-09 Wed 23:59>" :null)
+              :to-be nil)
+      (expect (org-canvas--diff-values-equal-p
+               'timestamp "<2026-09-09 Wed 23:59>" 12345)
+              :to-be nil)))
+
   (it "compares csv enums as sets"
     (expect (org-canvas--diff-values-equal-p
              'csv-enum "online_upload,online_text_entry"
