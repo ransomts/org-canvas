@@ -22,22 +22,31 @@
 ;; Custom error hierarchy.  All org-canvas-raised errors descend from
 ;; `org-canvas-error', so callers can `condition-case' on the parent to
 ;; catch any package-originated error, or on a specific child to handle
-;; a single failure mode.
+;; a single failure mode.  A child may have more than one parent where
+;; that is the truth of it; see `org-canvas-permission-error'.
 
 (define-error 'org-canvas-error "org-canvas error")
 (define-error 'org-canvas-api-error
   "Canvas API request failed" 'org-canvas-error)
 (define-error 'org-canvas-credentials-error
   "Canvas credentials missing or invalid" 'org-canvas-error)
-;; A child, so anything already catching a credentials error still
-;; catches this.  Canvas answers a request your enrolment cannot make
-;; with the same 403 it uses for a token that lacks a scope, but the
-;; two need different remedies: ask for a Teacher enrolment, or mint a
-;; new token.  Pulling a course you were added to as a Designer is a
-;; normal thing to do, and the types it cannot read are a skip rather
-;; than a failure (issue #155).
+;; Two parents, because a 403 is honestly both.  Canvas answers a
+;; request your enrolment cannot make with the same 403 it uses for a
+;; token that lacks a scope, but the two need different remedies — ask
+;; for a Teacher enrolment, or mint a new token — so it is a
+;; credentials error, and `org-canvas--safe-pull' names its own clause
+;; first to count the type as a skip rather than a failure (issue
+;; #155).  It is also, plainly, a request that failed: given the
+;; credentials parent alone, every handler written as "any Canvas
+;; request failure" silently stopped covering 403 the day this symbol
+;; appeared, and a cross-course file link in one page body aborted the
+;; whole pull of 46 pages (issue #171).  A handler still gets to be
+;; specific: `condition-case' takes the first clause that matches, so
+;; naming `org-canvas-permission-error' ahead of either parent works
+;; as it did.
 (define-error 'org-canvas-permission-error
-  "Canvas role cannot access this resource" 'org-canvas-credentials-error)
+  "Canvas role cannot access this resource"
+  '(org-canvas-credentials-error org-canvas-api-error))
 (define-error 'org-canvas-conflict-error
   "Sync conflict between local and remote state" 'org-canvas-error)
 (define-error 'org-canvas-timeout-error

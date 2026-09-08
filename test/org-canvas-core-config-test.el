@@ -275,7 +275,45 @@
                    org-canvas-config-error))
       (expect (memq 'org-canvas-error
                     (get sym 'error-conditions))
-              :to-be-truthy))))
+              :to-be-truthy)))
+
+  (describe "org-canvas-permission-error (issues #155, #171)"
+    (it "is a credentials error, so a pull counts the type as a skip"
+      (expect (memq 'org-canvas-credentials-error
+                    (get 'org-canvas-permission-error 'error-conditions))
+              :to-be-truthy))
+
+    (it "is also an api error, so a handler for a failed request covers 403"
+      (expect (memq 'org-canvas-api-error
+                    (get 'org-canvas-permission-error 'error-conditions))
+              :to-be-truthy))
+
+    (it "is caught by a handler written for any failed Canvas request"
+      (expect (condition-case nil
+                  (signal 'org-canvas-permission-error '("403"))
+                (org-canvas-api-error 'caught))
+              :to-equal 'caught))
+
+    (it "still reaches its own clause when one is named first"
+      (expect (condition-case nil
+                  (signal 'org-canvas-permission-error '("403"))
+                (org-canvas-permission-error 'specific)
+                (org-canvas-api-error 'generic))
+              :to-equal 'specific))
+
+    (it "does not make an ordinary api error look like a permission error"
+      (expect (condition-case nil
+                  (signal 'org-canvas-api-error '("500"))
+                (org-canvas-permission-error 'specific)
+                (org-canvas-api-error 'generic))
+              :to-equal 'generic))
+
+    (it "leaves an expired token aborting, not recorded per item"
+      ;; A 401 is a credentials error and deliberately not an api error:
+      ;; it will fail every remaining request too.
+      (expect (memq 'org-canvas-api-error
+                    (get 'org-canvas-credentials-error 'error-conditions))
+              :to-be nil))))
 
 (describe "org-canvas--signal"
   (it "raises the requested error type"
