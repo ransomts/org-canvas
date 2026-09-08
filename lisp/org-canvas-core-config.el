@@ -430,6 +430,12 @@ PLIST has keys :file-var, :query, :properties, and optionally
 :duplicate-titles (non-nil to check the file for entries whose titles
 collide once course-copy debris is stripped, issue #164).
 
+An enum or csv-enum property whose Canvas field can come back holding
+a value only Canvas may set declares those separately as
+`:read-only-values'.  The validator accepts them, since a pull wrote
+them; the module refuses them where a push would be wrong (issue
+#167).
+
 A module whose payload carries the heading's body declares
 `:body-api-key', the Canvas field it lands in (\"description\",
 \"body\", \"message\"), so the drift report can compare it — the
@@ -446,13 +452,16 @@ Does nothing if FEATURE-NAME is already registered (idempotent)."
 
 (defun org-canvas--property-to-validate-prop (prop)
   "Convert a registry property spec PROP to validate.el format.
-Registry keys: :org-prop :data-key :type :values :target-file
-:link-id-property.  Validate keys: :name :type :values
-:target-file :id-property."
+Registry keys: :org-prop :data-key :type :values :read-only-values
+:target-file :link-id-property.  Validate keys: :name :type :values
+:read-only-values :target-file :id-property."
   (let ((result (list :name (plist-get prop :org-prop)
                       :type (plist-get prop :type))))
     (when (plist-get prop :values)
       (setq result (plist-put result :values (plist-get prop :values))))
+    (when (plist-get prop :read-only-values)
+      (setq result (plist-put result :read-only-values
+                              (plist-get prop :read-only-values))))
     (when (plist-get prop :target-file)
       (setq result (plist-put result :target-file (plist-get prop :target-file))))
     (when (plist-get prop :link-id-property)
@@ -788,7 +797,18 @@ backward compatibility.")
 (defconst org-canvas--valid-submission-types
   '("online_upload" "online_url" "online_text_entry" "media_recording"
     "on_paper" "external_tool" "none")
-  "Valid submission types for assignments.")
+  "Valid submission types an assignment may declare for itself.")
+
+(defconst org-canvas--canvas-owned-submission-types
+  '("online_quiz" "discussion_topic")
+  "Submission types that name another Canvas object as the owner.
+Every classic quiz and every graded discussion carries a shadow
+assignment, and Canvas reports its `submission_types' as
+`online_quiz' or `discussion_topic'.  A pull writes that value down
+faithfully, so a course with classic quizzes used to fail its own
+validation once per quiz (issue #167): the value is legitimate on the
+way in, and only a create is wrong on the way out, since the quiz or
+the discussion is what brings such an assignment into being.")
 
 (defconst org-canvas--valid-quiz-types
   '("assignment" "practice_quiz" "graded_survey" "survey")

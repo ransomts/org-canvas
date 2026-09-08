@@ -69,7 +69,9 @@ PROPERTY names the property.  LOC is a (:file :line :heading) plist."
 
 (defun org-canvas--validate-check-enum (value property valid-values loc)
   "Check that VALUE is in VALID-VALUES.
-PROPERTY names the property.  LOC is a (:file :line :heading) plist."
+PROPERTY names the property.  LOC is a (:file :line :heading) plist.
+VALID-VALUES already carries the property's `:read-only-values', so a
+value only Canvas may set passes here and is refused at the push."
   (when (and value (not (member value valid-values)))
     (org-canvas--validate-make-issue
      'error loc property
@@ -80,7 +82,11 @@ PROPERTY names the property.  LOC is a (:file :line :heading) plist."
   "Check that each comma-separated part of VALUE is in VALID-VALUES.
 PROPERTY names the property.  LOC is a (:file :line :heading) plist.
 A `csv-enum' spec without `:values' is a free-form list (file
-extensions, Canvas ids) and has nothing to check against."
+extensions, Canvas ids) and has nothing to check against.
+VALID-VALUES already carries the property's `:read-only-values': a
+pulled quiz-backed assignment says SUBMISSION: online_quiz, and every
+such heading was an error until the value was let through (issue
+#167)."
   (when (and value valid-values)
     (let ((parts (split-string value "," t "[ \t]+")))
       (let ((bad (cl-remove-if (lambda (p) (member p valid-values)) parts)))
@@ -748,12 +754,15 @@ Called after the per-entry checks, with the buffer current."
 (defun org-canvas--validate-entry-properties (props loc)
   "Validate PROPS list for the heading at point.
 LOC is a (:file :line :heading) plist.
+A property's `:read-only-values' join its `:values' as accepted input,
+because they are values a pull wrote down (issue #167).
 Returns a list of issues."
   (let ((issues nil))
     (dolist (prop props)
       (let* ((name (plist-get prop :name))
              (type (plist-get prop :type))
-             (values (plist-get prop :values))
+             (values (append (plist-get prop :values)
+                             (plist-get prop :read-only-values)))
              (target-file (plist-get prop :target-file))
              (id-prop (plist-get prop :id-property))
              (value (org-entry-get (point) name))

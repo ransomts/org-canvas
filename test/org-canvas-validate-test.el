@@ -2614,6 +2614,51 @@ EXCEPT is a list of filenames to skip."
       (expect (plist-get issue :pending-sync) :to-be nil)
       (expect (plist-get issue :severity) :to-equal 'error))))
 
+(describe "Canvas-owned enum values (issue #167)"
+  (it "accepts SUBMISSION: online_quiz on a pulled quiz-backed assignment"
+    (with-temp-org-buffer
+     "* Quiz 1
+:PROPERTIES:
+:CANVAS_ID: 4242
+:SUBMISSION: online_quiz
+:END:
+"
+     (org-back-to-heading)
+     (expect (org-canvas--validate-entry-properties
+              (plist-get (car (seq-filter
+                               (lambda (spec)
+                                 (eq (plist-get spec :file) 'org-canvas-assignments-file))
+                               (org-canvas--validate-specs)))
+                         :properties)
+              '(:file "assignments.org" :line 1 :heading "Quiz 1"))
+             :to-be nil)))
+
+  (it "still rejects a submission type Canvas has never heard of"
+    (with-temp-org-buffer
+     "* Homework
+:PROPERTIES:
+:SUBMISSION: carrier_pigeon
+:END:
+"
+     (org-back-to-heading)
+     (let ((issues (org-canvas--validate-entry-properties
+                    '((:name "SUBMISSION" :type csv-enum
+                       :values ("online_upload" "none")
+                       :read-only-values ("online_quiz")))
+                    '(:file "assignments.org" :line 1 :heading "Homework"))))
+       (expect (length issues) :to-equal 1)
+       (expect (plist-get (car issues) :message) :to-match "carrier_pigeon"))))
+
+  (it "carries :read-only-values from the registry into the validate spec"
+    (let* ((spec (car (seq-filter
+                       (lambda (s)
+                         (eq (plist-get s :file) 'org-canvas-assignments-file))
+                       (org-canvas--validate-specs))))
+           (prop (car (seq-filter
+                       (lambda (p) (equal (plist-get p :name) "SUBMISSION"))
+                       (plist-get spec :properties)))))
+      (expect (plist-get prop :read-only-values) :to-equal '("online_quiz" "discussion_topic")))))
+
 (describe "org-canvas-validate pending-first-sync collapse"
   (let ((fake-issues nil))
     (before-each

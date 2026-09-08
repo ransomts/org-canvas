@@ -97,6 +97,7 @@ takes effect on the next `org-canvas-pull-assignments' invocation."
      :doc "Whether item is visible (default: true)")
     (:org-prop "SUBMISSION" :data-key :submission_types :type csv-enum
      :values ,org-canvas--valid-submission-types
+     :read-only-values ,org-canvas--canvas-owned-submission-types
      :doc "Submission type (see below)")
     (:org-prop "ALLOWED_EXTENSIONS" :data-key :allowed_extensions :type csv-enum
      :doc "File extensions accepted for online uploads (comma separated)")
@@ -178,11 +179,18 @@ Accepts comma or space separated values like \"py, txt\" or \"py txt\"."
 (defun org-canvas--assignment-parse-submission-types (type-string)
   "Convert TYPE-STRING to Canvas submission_types array.
 Accepts: online_upload, online_url, online_text_entry, media_recording,
-         on_paper, external_tool, none, or comma-separated combinations."
+         on_paper, external_tool, none, or comma-separated combinations.
+Also accepts the Canvas-owned values a pull writes for a quiz-backed or
+discussion-backed assignment (`org-canvas--canvas-owned-submission-types'),
+which used to warn once per classic quiz on every parse (issue #167);
+`org-canvas--assignment-check-owned-submission' is what refuses them,
+and only where a push would be wrong."
   (if type-string
-      (let ((types (mapcar #'string-trim (split-string type-string "[, \t]+" t))))
+      (let ((types (mapcar #'string-trim (split-string type-string "[, \t]+" t)))
+            (accepted (append org-canvas--valid-submission-types
+                              org-canvas--canvas-owned-submission-types)))
         (dolist (t-val types)
-          (unless (member t-val org-canvas--valid-submission-types)
+          (unless (member t-val accepted)
             (when (boundp 'org-canvas--logger)
               (org-canvas--log-warning org-canvas--logger
                 "[Validate] SUBMISSION: '%s' is not valid (expected: %s)"
@@ -190,6 +198,31 @@ Accepts: online_upload, online_url, online_text_entry, media_recording,
             (message "Warning: SUBMISSION '%s' is not valid" t-val)))
         types)
     '("none")))
+
+(defconst org-canvas--assignment-owned-submission-owners
+  '(("online_quiz" . "a classic quiz, in quizzes.org")
+    ("discussion_topic" . "a graded discussion, in discussions.org"))
+  "Where the object behind a Canvas-owned submission type is authored.")
+
+(defun org-canvas--assignment-check-owned-submission (data)
+  "Refuse a create whose SUBMISSION names an object Canvas owns.
+DATA is the parsed assignment plist.  A classic quiz and a graded
+discussion each own a shadow assignment, and a pull writes its
+`submission_types' — `online_quiz', `discussion_topic' — into
+assignments.org.  Updating such a heading is the ordinary case and is
+left alone; creating one is not something the assignment API can do,
+because the quiz or the discussion is what brings the assignment into
+being, so it is stopped here with the file that owns it named rather
+than by whatever Canvas makes of the request (issue #167)."
+  (unless (plist-get data :canvas-id)
+    (when-let* ((owned (seq-find
+                        (lambda (type)
+                          (assoc type org-canvas--assignment-owned-submission-owners))
+                        (plist-get data :submission_types))))
+      (error "SUBMISSION: '%s' belongs to %s; create it there, then pull.  \
+An assignment with no CANVAS_ID cannot be created with this submission type"
+             owned
+             (cdr (assoc owned org-canvas--assignment-owned-submission-owners))))))
 
 ;;;; 1. Stage: Extraction
 
@@ -446,6 +479,7 @@ external-tool assignment would report drift on every run."
 (defun org-canvas--assignment-build-payload (data)
   "Convert DATA to Canvas assignment payload."
   (org-canvas--validate-date-ordering data)
+  (org-canvas--assignment-check-owned-submission data)
   (let ((title (plist-get data :title)))
     (org-canvas--log-info org-canvas--logger "[Stage 2: Transform] Building payload for '%s'" title)
 

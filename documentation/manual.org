@@ -490,10 +490,20 @@ Course assignments with due dates, submission types, and grading options.
 | =online_text_entry=  | Text box in browser            |
 | =online_url=         | URL submission                 |
 | =media_recording=    | Audio/video recording          |
+| =on_paper=           | Handed in on paper             |
 | =external_tool=      | Submission handled by an LTI tool |
 | =none=               | No submission (e.g., in-class) |
 
 Multiple types can be combined: =online_upload,online_text_entry=
+
+Two more values come back from Canvas but are not yours to type:
+=online_quiz= and =discussion_topic=.  Every classic quiz and every
+graded discussion owns a shadow assignment, and a pull writes that
+assignment into =assignments.org= with the submission type Canvas gave
+it.  Validation accepts them, and pushing such a heading updates the
+assignment as usual; what org-canvas refuses is /creating/ one — an
+assignment with no =CANVAS_ID= and =SUBMISSION: online_quiz= is a quiz
+that belongs in =quizzes.org=, and the error says so.
 
 *** External Tool Assignments (Gradescope, and other LTI tools)
 
@@ -2885,7 +2895,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =POINTS= | number |  |  | Points possible |
 | =GRADING_TYPE= | enum | points, percent, letter_grade, gpa_scale, pass_fail, not_graded |  | How the assignment is graded |
 | =PUBLISHED= | boolean | true, false | true | Whether item is visible (default: true) |
-| =SUBMISSION= | csv-enum | online_upload, online_url, online_text_entry, media_recording, on_paper, external_tool, none |  | Submission type (see below) |
+| =SUBMISSION= | csv-enum | online_upload, online_url, online_text_entry, media_recording, on_paper, external_tool, none (set by Canvas: online_quiz, discussion_topic) |  | Submission type (see below) |
 | =ALLOWED_EXTENSIONS= | csv-enum |  |  | File extensions accepted for online uploads (comma separated) |
 | =MAX_ATTEMPTS= | number |  |  | Max submission attempts (-1 = unlimited) |
 | =DUE_AT= | timestamp |  |  | Due date |
