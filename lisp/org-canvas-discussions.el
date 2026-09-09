@@ -273,6 +273,7 @@ CTX the run context a remote write is declared on."
   :parse #'org-canvas--discussion-parse-entry
   :build #'org-canvas--discussion-build-payload
   :endpoint "discussion_topics"
+  :find-fn (lambda (title) (org-canvas--search-item "discussion_topics" title))
   :post-fn #'org-canvas--discussion-post-finalize
   :pull-item-fn #'org-canvas--discussion-pull-item)
 

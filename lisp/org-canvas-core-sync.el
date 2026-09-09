@@ -1236,22 +1236,65 @@ Re-signal ERR if item not found."
       (org-canvas--log-error org-canvas--logger "[Recovery] Item not found after timeout")
       (signal (car err) (cdr err)))))
 
-(defun org-canvas--handle-404-retry (endpoint payload find-fn title _err &optional post-url)
-  "Retry as POST after 404 on PUT.
-ENDPOINT is the base endpoint, PAYLOAD the data to send.
-FIND-FN and TITLE are used for timeout recovery on the retry.
-ERR is the original error for re-signaling.
-POST-URL, when non-nil, overrides the default course-scoped POST URL."
-  (org-canvas--log-warning org-canvas--logger "[Recovery] Item not found (404). Retrying as POST...")
-  (let ((new-endpoint (or post-url (org-canvas-api-course-endpoint endpoint))))
-    (condition-case post-err
-        (let ((response (org-canvas-api-request 'POST new-endpoint :data payload)))
-          (org-canvas--log-info org-canvas--logger "[Recovery] POST successful")
-          response)
+(defun org-canvas--recovery-find-twin (find-fn title id-key)
+  "Return the Canvas item FIND-FN reports under TITLE, or nil.
+Asked before the POST a 404 recovery would otherwise send: the stamped
+id is gone, but the title may live on under another id — a course copy,
+or a create whose stamp was lost — and a second copy is the last thing
+a recovery should make (issue #179).  ID-KEY says which field names
+the item (`url' for pages).  Nothing is looked up without a FIND-FN,
+or when `org-canvas-duplicate-title-strategy' is `create'."
+  (when (and find-fn (not (eq org-canvas-duplicate-title-strategy 'create)))
+    (condition-case err
+        (let ((found (funcall find-fn title)))
+          (and found (org-canvas--push-item-id found id-key) found))
       (error
-       (if (and find-fn (org-canvas--timeout-error-p post-err))
-           (org-canvas--handle-timeout-recovery find-fn title post-err)
-         (signal (car post-err) (cdr post-err)))))))
+       (org-canvas--log-warning org-canvas--logger
+         "[Recovery] Could not look '%s' up by title (%s); creating it again"
+         title (error-message-string err))
+       nil))))
+
+(defun org-canvas--recovery-update-twin (endpoint payload twin title put-url-fn id-key)
+  "Update TWIN, the item Canvas holds under TITLE, with PAYLOAD.
+ENDPOINT is the base endpoint; PUT-URL-FN, when non-nil, builds the
+item URL from an id; ID-KEY names the field the id is read from.
+Returns the API response, whose id finalize stamps over the stale
+one."
+  (let* ((id (org-canvas--push-item-id twin id-key))
+         (url (if put-url-fn
+                  (funcall put-url-fn id)
+                (org-canvas-api-course-endpoint (format "%s/%%s" endpoint) id))))
+    (org-canvas--log-warning org-canvas--logger
+      "[Recovery] '%s' is gone under its stamped id, but Canvas holds the title as id %s — updating that one instead of creating a second copy"
+      title id)
+    (let ((response (org-canvas-api-request 'PUT url :data payload)))
+      (org-canvas--log-info org-canvas--logger "[Recovery] PUT successful for '%s'" title)
+      response)))
+
+(defun org-canvas--handle-404-retry (endpoint payload find-fn title _err
+                                              &optional post-url put-url-fn id-key)
+  "Recover from a 404 on PUT: update the item's twin, or create it again.
+ENDPOINT is the base endpoint, PAYLOAD the data to send.  FIND-FN and
+TITLE first look for an item Canvas still holds under the title
+\(issue #179), and serve timeout recovery on the retry.  ERR is the
+original error for re-signaling.  POST-URL, when non-nil, overrides
+the default course-scoped POST URL; PUT-URL-FN builds the URL of an
+adopted twin from its id, which ID-KEY (default `:canvas-id'; pages
+pass `:canvas-url') reads from the item."
+  (let* ((id-key (or id-key :canvas-id))
+         (twin (org-canvas--recovery-find-twin find-fn title id-key)))
+    (if twin
+        (org-canvas--recovery-update-twin endpoint payload twin title put-url-fn id-key)
+      (org-canvas--log-warning org-canvas--logger "[Recovery] Item not found (404). Retrying as POST...")
+      (let ((new-endpoint (or post-url (org-canvas-api-course-endpoint endpoint))))
+        (condition-case post-err
+            (let ((response (org-canvas-api-request 'POST new-endpoint :data payload)))
+              (org-canvas--log-info org-canvas--logger "[Recovery] POST successful")
+              response)
+          (error
+           (if (and find-fn (org-canvas--timeout-error-p post-err))
+               (org-canvas--handle-timeout-recovery find-fn title post-err)
+             (signal (car post-err) (cdr post-err)))))))))
 
 (defun org-canvas--push-check-and-resolve-conflict (endpoint id data title
                                                              &optional modified-field ctx)
@@ -1298,6 +1341,72 @@ Returns `push', `skip', or `pulled'."
 ;; and submit to (issue #85).  So before any POST the title is looked
 ;; up: in the drift snapshot when a sync bound one (free), otherwise
 ;; through the module's FIND-FN (one GET).
+;;
+;; Child levels — quiz questions, New Quiz items, module items — push
+;; outside `org-canvas--push-to-api', so the guard never sees them, and
+;; they are where a lost stamp is likeliest: a git checkout that
+;; reverts a stamped file drops every child's id at once.  Their parent
+;; already lists its children in one request; an unstamped child that
+;; matches a listed item no sibling heading claims adopts it instead
+;; (issue #179).  Module items keep their own spelling in modules.el,
+;; which also feeds the run context; the helpers below serve the rest.
+
+(defun org-canvas--child-twin-before-p (a b)
+  "Return non-nil when remote item A sorts before B: position, then id."
+  (let ((pa (or (alist-get 'position a) 0))
+        (pb (or (alist-get 'position b) 0))
+        (ia (alist-get 'id a))
+        (ib (alist-get 'id b)))
+    (cond ((/= pa pb) (< pa pb))
+          ((and (numberp ia) (numberp ib)) (< ia ib))
+          (t (string< (format "%s" ia) (format "%s" ib))))))
+
+(defun org-canvas--child-twins (remote match-p claimed)
+  "Return the items of REMOTE that MATCH-P accepts and CLAIMED does not name.
+REMOTE is a list or vector of item alists, or the symbol `unknown'
+\(a list that could not be read), which yields nil.  CLAIMED is the
+list of id strings the sibling headings carry.  Ordered by position,
+then id, so the earliest twin is adopted and the rest are named."
+  (unless (eq remote 'unknown)
+    (sort (cl-remove-if-not
+           (lambda (item)
+             ;; An item is an alist; anything else in the list (a bare
+             ;; cons from a reply that was not a list) is not a twin.
+             (and (consp item) (consp (car item))
+                  (alist-get 'id item)
+                  (not (member (format "%s" (alist-get 'id item)) claimed))
+                  (funcall match-p item)))
+           (append remote nil))
+          #'org-canvas--child-twin-before-p)))
+
+(defun org-canvas--adopt-child-twin (data remote match-p claimed label)
+  "Give unstamped DATA the id of the REMOTE item it matches, if any.
+MATCH-P is called with each remote item alist; CLAIMED names the ids
+sibling headings already carry, so two headings with the same title
+take two twins rather than one.  LABEL prefixes the log lines.  On a
+match DATA's :canvas-id is set in place, so the push that follows is
+an update, and finalize writes the stamp; further twins are named and
+left alone (children are never pruned unasked).  Nothing is adopted
+when DATA carries an id, when REMOTE is `unknown', or when
+`org-canvas-duplicate-title-strategy' is `create'.  Returns the
+adopted id as a string, or nil."
+  (when (and (not (plist-get data :canvas-id))
+             (not (eq org-canvas-duplicate-title-strategy 'create)))
+    (let ((twins (org-canvas--child-twins remote match-p claimed))
+          (title (or (plist-get data :title) (plist-get data :name))))
+      (when twins
+        (let ((id (format "%s" (alist-get 'id (car twins)))))
+          (org-canvas--log-info org-canvas--logger
+            "%s '%s' has no id yet, but Canvas already holds it as %s — adopting it; updating in place instead of creating a second copy"
+            label title id)
+          (when (cdr twins)
+            (org-canvas--log-warning org-canvas--logger
+              "%s Canvas holds %d more item(s) matching '%s' (%s) — left in place; delete them in Canvas"
+              label (length (cdr twins)) title
+              (mapconcat (lambda (item) (format "%s" (alist-get 'id item)))
+                         (cdr twins) ", ")))
+          (plist-put data :canvas-id id)
+          id)))))
 
 (defun org-canvas--push-remote-items-titled (title find-fn &optional ctx)
   "Return the remote items carrying TITLE, or nil.
@@ -1481,9 +1590,10 @@ Returns the API response alist, or one of the symbols `conflict',
         ((and find-fn (org-canvas--timeout-error-p err))
          (org-canvas--handle-timeout-recovery find-fn title err))
 
-        ;; CASE 2: 404 on PUT -> Retry as POST (stale ID)
+        ;; CASE 2: 404 on PUT -> update the title's twin, else retry as POST
         ((org-canvas--404-on-put-p err method)
-         (org-canvas--handle-404-retry endpoint payload find-fn title err post-url))
+         (org-canvas--handle-404-retry endpoint payload find-fn title err
+                                       post-url put-url-fn id-key))
 
         ;; Default: Re-throw
         (t (signal (car err) (cdr err))))))))

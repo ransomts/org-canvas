@@ -8,6 +8,7 @@ Each entry names the pull request that merged it.
 
 ** Added
 
+- #179 (follow-up) Every remaining create path adopts a twin before it POSTs: classic quiz questions and New Quiz items match an unclaimed item of their name in the parent's list, New Quizzes ask the same adopt/skip/create question as the generic guard, outcomes and outcome groups search their parent before creating, the generic 404 recovery updates the item that still carries the title instead of POSTing a second, and classic quizzes, discussions, announcements and assignment groups gain a =:find-fn= so a push at point is guarded outside a sync's snapshot
 - #164 Duplicate-title detection for pages, assignments, quizzes, new quizzes, rubrics, discussions, announcements and modules: the offline validator groups titles once =(OLD)=, semester stamps and Canvas's =(n)= suffixes are stripped, raising a twin that still carries a =DUE_AT= to an error; =org-canvas-pull-all= names the types whose titles collapse
 - #163 =org-canvas-read-only=: mark an adopted course read-only in its credentials file and every write is refused at the transport, the menu's push half greys out, and =org-canvas-init= asks whether the course is yours
 - #127 Submissions: completion rule, =DAYS_LATE=, notes that survive pulls, and =EX= for excused grades
