@@ -341,22 +341,47 @@ This is *bold* text.
 ;;;; Additional Push to API Tests
 
 (describe "page push-to-api error recovery (mocked)"
-  (it "retries as POST on 404"
+  (it "retries as POST on 404 when no page carries the title"
     (with-org-canvas-test-config
-      (let ((call-count 0))
+      (let ((writes nil))
         (cl-letf (((symbol-function 'org-canvas-api-request)
                    (lambda (method _url &rest _args)
-                     (setq call-count (1+ call-count))
-                     (if (and (eq method 'PUT) (= call-count 1))
-                         (signal 'error '("API Request Failed (HTTP 404)" nil nil))
-                       '((url . "new-page-url"))))))
+                     (cond
+                      ((eq method 'GET) [((url . "other") (title . "Other Page"))])
+                      ((and (eq method 'PUT) (not writes))
+                       (push method writes)
+                       (signal 'error '("API Request Failed (HTTP 404)" nil nil)))
+                      (t (push method writes) '((url . "new-page-url")))))))
           (let ((data '(:title "Stale Page" :canvas-url "old-url"))
                 (payload (make-hash-table)))
             (let ((result (org-canvas--push-to-api data payload
                             :endpoint "pages" :id-key :canvas-url
                             :find-fn (lambda (title) (org-canvas--search-item "pages" title)))))
               (expect (alist-get 'url result) :to-equal "new-page-url")
-              (expect call-count :to-equal 2)))))))
+              (expect (nreverse writes) :to-equal '(PUT POST))))))))
+
+  (it "updates the page that carries the title on 404 instead of POSTing (issue #179)"
+    (with-org-canvas-test-config
+      (let ((requests nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest _args)
+                     (push (list method url) requests)
+                     (cond
+                      ((eq method 'GET) [((url . "twin-url") (title . "Stale Page"))])
+                      ((and (eq method 'PUT) (string-match-p "/old-url$" url))
+                       (signal 'error '("API Request Failed (HTTP 404)" nil nil)))
+                      (t '((url . "twin-url")))))))
+          (let ((data '(:title "Stale Page" :canvas-url "old-url"))
+                (payload (make-hash-table)))
+            (let ((result (org-canvas--push-to-api data payload
+                            :endpoint "pages" :id-key :canvas-url
+                            :find-fn (lambda (title) (org-canvas--search-item "pages" title)))))
+              (expect (alist-get 'url result) :to-equal "twin-url")
+              (expect (cl-some (lambda (r) (eq (car r) 'POST)) requests) :to-be nil)
+              (expect (cl-some (lambda (r) (and (eq (car r) 'PUT)
+                                                (string-match-p "pages/twin-url$" (cadr r))))
+                               requests)
+                      :to-be-truthy)))))))
 
   (it "recovers from timeout"
     (with-org-canvas-test-config

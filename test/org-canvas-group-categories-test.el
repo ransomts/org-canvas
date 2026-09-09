@@ -222,7 +222,9 @@
       (let ((call-count 0))
         (cl-letf (((symbol-function 'org-canvas-api-request)
                    (lambda (method _url &rest _args)
-                     (setq call-count (1+ call-count))
+                     ;; The recovery looks the title up first (issue #179);
+                     ;; count the writes.
+                     (unless (eq method 'GET) (setq call-count (1+ call-count)))
                      (if (= call-count 1)
                          (signal 'error '("HTTP 404 Not Found"))
                        '((id . 99) (name . "Recovered"))))))
@@ -553,7 +555,9 @@
             (call-count 0))
         (cl-letf (((symbol-function 'org-canvas-api-request)
                    (lambda (method _url &rest _args)
-                     (cl-incf call-count)
+                     ;; The recovery looks the title up first (issue #179);
+                     ;; count the writes.
+                     (unless (eq method 'GET) (cl-incf call-count))
                      (if (= call-count 1)
                          (signal 'error '("404 Not Found"))
                        '((id . 200) (name . "Groups")))))

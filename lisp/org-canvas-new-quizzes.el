@@ -233,15 +233,96 @@ Reads raw properties, transforms them, and exports description to HTML."
 
 ;;;; Quiz Push to API
 
-(cl-defun org-canvas--new-quiz-push-to-api (data payload &optional _ctx)
+(defun org-canvas--new-quiz-find-by-title (title)
+  "Return the New Quiz on Canvas under TITLE, or nil.
+One list request; a failed read is logged and counts as no match, so a
+create goes ahead as it did before the lookup existed."
+  (condition-case err
+      (cl-find-if (lambda (quiz)
+                    (and (consp quiz) (consp (car quiz))
+                         (equal (alist-get 'title quiz) title)))
+                  (append (org-canvas-api-request-all-pages
+                           'GET (org-canvas--new-quiz-api-endpoint "quizzes"))
+                          nil))
+    (error
+     (org-canvas--log-warning org-canvas--logger
+       "[New Quiz API] Could not list the course's New Quizzes (%s); '%s' is created without the duplicate check"
+       (error-message-string err) title)
+     nil)))
+
+(defun org-canvas--new-quiz-remote-id (quiz)
+  "Return the id org-canvas stamps for remote New Quiz QUIZ, as a string."
+  (format "%s" (or (alist-get 'assignment_id quiz) (alist-get 'id quiz))))
+
+(defun org-canvas--new-quiz-guard-duplicate (data title ctx)
+  "Before creating TITLE, ask whether it is already on Canvas.
+The counterpart of `org-canvas--push-guard-duplicate' for the one
+top-level push that does not go through `org-canvas--push-to-api'
+\(issue #179): New Quizzes list from their own API, so the sync's
+snapshot never carries them.  Returns nil to create, `skip' to leave
+the heading alone, or the adopted id — written into DATA so the push
+becomes a PATCH.  Not consulted when DATA carries an id, during a dry
+run, or when `org-canvas-duplicate-title-strategy' is `create'.  CTX
+is the run context, whose capital answer applies."
+  (unless (or (plist-get data :canvas-id)
+              org-canvas--dry-run
+              (eq org-canvas-duplicate-title-strategy 'create))
+    (let ((twin (org-canvas--new-quiz-find-by-title title)))
+      (when twin
+        (let* ((id (org-canvas--new-quiz-remote-id twin))
+               (action (org-canvas--resolve-duplicate title (list id) ctx)))
+          (pcase action
+            ('adopt
+             (org-canvas--log-info org-canvas--logger
+               "[Duplicate] Adopted Canvas id %s for New Quiz '%s' — updating it instead of creating a second"
+               id title)
+             (plist-put data :canvas-id id)
+             id)
+            ('skip
+             (org-canvas--log-warning org-canvas--logger
+               "[Duplicate] Skipping New Quiz '%s' — Canvas already holds it as id %s; stamp CANVAS_ASSIGNMENT_ID, or rename the heading"
+               title id)
+             'skip)
+            (_
+             (org-canvas--log-warning org-canvas--logger
+               "[Duplicate] Creating New Quiz '%s' although Canvas already holds it as id %s"
+               title id)
+             nil)))))))
+
+(defun org-canvas--new-quiz-recover-404 (title wrapped)
+  "Recover a New Quiz PATCH that 404ed: update TITLE's twin, or POST WRAPPED.
+The stamped id is gone; when Canvas still holds the title under
+another id that one is updated, so the recovery cannot make a second
+copy (issue #179)."
+  (let ((twin (unless (eq org-canvas-duplicate-title-strategy 'create)
+                (org-canvas--new-quiz-find-by-title title))))
+    (if twin
+        (let ((id (org-canvas--new-quiz-remote-id twin)))
+          (org-canvas--log-warning org-canvas--logger
+            "[Recovery] New Quiz '%s' is gone under its stamped id, but Canvas holds the title as id %s — updating that one instead of creating a second copy"
+            title id)
+          (org-canvas-api-request
+           'PATCH (org-canvas--new-quiz-api-endpoint "quizzes/%s" id) :data wrapped))
+      (org-canvas--log-warning org-canvas--logger
+        "[Recovery] Item not found (404). Retrying as POST...")
+      (let ((response (org-canvas-api-request
+                       'POST (org-canvas--new-quiz-api-endpoint "quizzes")
+                       :data wrapped)))
+        (org-canvas--log-info org-canvas--logger "[Recovery] POST successful")
+        response))))
+
+(cl-defun org-canvas--new-quiz-push-to-api (data payload &optional ctx)
   "Send New Quiz PAYLOAD (from DATA) to Canvas API.
-CTX, the run context, is accepted for the pipeline's sake and unused.
-Uses POST for new quizzes and PATCH for existing ones.
+Uses POST for new quizzes and PATCH for existing ones; before a POST,
+`org-canvas--new-quiz-guard-duplicate' asks whether Canvas already
+holds the title, and a `skip' answer returns the symbol `duplicate'
+the way `org-canvas--push-to-api' does.  CTX is the run context.
 PAYLOAD is the inner quiz data; it is wrapped under a \"quiz\" key
 as required by the New Quizzes API.
 Returns response with assignment_id."
-  (let* ((id (plist-get data :canvas-id))
-         (title (plist-get data :title))
+  (let* ((title (plist-get data :title))
+         (guard (org-canvas--new-quiz-guard-duplicate data title ctx))
+         (id (plist-get data :canvas-id))
          (method (if id 'PATCH 'POST))
          (endpoint (if id
                        (org-canvas--new-quiz-api-endpoint "quizzes/%s" id)
@@ -249,6 +330,9 @@ Returns response with assignment_id."
          (wrapped (let ((ht (make-hash-table :test 'equal)))
                     (puthash "quiz" payload ht)
                     ht)))
+
+    (when (eq guard 'skip)
+      (cl-return-from org-canvas--new-quiz-push-to-api 'duplicate))
 
     (when org-canvas--dry-run
       (org-canvas--log-info org-canvas--logger "[DRY-RUN] Would %s New Quiz '%s' to %s"
@@ -267,20 +351,10 @@ Returns response with assignment_id."
        (org-canvas--log-error org-canvas--logger "[New Quiz API] Failed: %s"
          (error-message-string err))
        (cond
-        ;; 404 on PATCH -> retry as POST (stale ID)
+        ;; 404 on PATCH -> update the title's twin, else retry as POST
         ((and (eq method 'PATCH)
               (org-canvas--404-error-p err))
-         (org-canvas--log-warning org-canvas--logger
-           "[Recovery] Item not found (404). Retrying as POST...")
-         (condition-case post-err
-             (let ((response (org-canvas-api-request
-                              'POST
-                              (org-canvas--new-quiz-api-endpoint "quizzes")
-                              :data wrapped)))
-               (org-canvas--log-info org-canvas--logger "[Recovery] POST successful")
-               response)
-           (error
-            (signal (car post-err) (cdr post-err)))))
+         (org-canvas--new-quiz-recover-404 title wrapped))
         (t (signal (car err) (cdr err))))))))
 
 ;;;; Quiz Finalize
@@ -320,10 +394,14 @@ is absent in RESPONSE."
 
 (defun org-canvas--sync-new-quiz-items (quiz-marker quiz-assignment-id)
   "Sync all items under the New Quiz at QUIZ-MARKER.
-QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
+QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz.  An item
+heading without a CANVAS_ITEM_ID adopts the item of its title the quiz
+already holds, when one is unclaimed, instead of creating a second
+\(issue #179)."
   (let ((item-markers nil)
         (item-success 0)
-        (item-skipped 0))
+        (item-skipped 0)
+        remote claimed)
     ;; Collect all item markers (level-2 headings under this quiz)
     (with-current-buffer (marker-buffer quiz-marker)
       (save-excursion
@@ -333,7 +411,10 @@ QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
                       (< (point) subtree-end))
             (when (= (org-outline-level) 2)
               (push (point-marker) item-markers)))))
-      (setq item-markers (nreverse item-markers)))
+      (setq item-markers (nreverse item-markers)
+            claimed (delq nil (mapcar (lambda (m) (org-entry-get m "CANVAS_ITEM_ID"))
+                                      item-markers))
+            remote (org-canvas--new-quiz-remote-items quiz-assignment-id item-markers)))
 
     ;; Sync each item using stable markers
     (dolist (m item-markers)
@@ -350,8 +431,13 @@ QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz."
                         "[DEBUG SKIP] Skipping type '%s' for '%s'"
                         q-type (plist-get data :title))
                       (setq item-skipped (1+ item-skipped)))
-                  (let* ((payload (org-canvas--new-quiz-item-build-payload data))
+                  (let* ((adopted (org-canvas--adopt-child-twin
+                                   data remote
+                                   (lambda (item) (org-canvas--new-quiz-item-twin-p data item))
+                                   claimed "[New Quiz Item]"))
+                         (payload (org-canvas--new-quiz-item-build-payload data))
                          (response (org-canvas--new-quiz-item-push-to-api data payload)))
+                    (when adopted (push adopted claimed))
                     (org-canvas--new-quiz-item-finalize data response)
                     (setq item-success (1+ item-success)))))
             (error
@@ -402,6 +488,9 @@ of the quiz payload."
   (let* ((data (org-canvas--new-quiz-parse-entry))
          (payload (org-canvas--new-quiz-build-payload data))
          (response (org-canvas--new-quiz-push-to-api data payload)))
+    (when (eq response 'duplicate)
+      (user-error "New Quiz '%s' is already on Canvas; stamp CANVAS_ASSIGNMENT_ID or rename the heading"
+                  (plist-get data :title)))
     (org-canvas--new-quiz-finalize data response)
     (org-canvas--sync-advance-header-from-entry)
     (let ((quiz-id (or (alist-get 'assignment_id response)

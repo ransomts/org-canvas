@@ -1028,21 +1028,24 @@ Just description, no ratings.
 (describe "org-canvas--outcome-push-to-api recovery paths"
   (it "searches for outcome on creation error"
     (with-org-canvas-test-config
-      (let ((call-count 0))
+      (let ((post-tried nil))
         (cl-letf (((symbol-function 'org-canvas-api-request)
                    (lambda (method url &rest _args)
-                     (setq call-count (1+ call-count))
                      (cond
                       ;; POST fails
-                      ((and (eq method 'POST) (= call-count 1))
+                      ((eq method 'POST)
+                       (setq post-tried t)
                        (signal 'error '("Already exists")))
-                      ;; GET finds existing
-                      ((eq method 'GET)
+                      ;; The search before the create (issue #179) finds
+                      ;; nothing; the one after the failed POST finds it
+                      ((and (eq method 'GET) post-tried)
                        [((outcome . ((id . 888) (title . "Found"))))])
+                      ((eq method 'GET) [])
                       (t nil)))))
-          (let ((data '(:title "Found" :canvas-id nil :parent-group-id 100
-                        :description "" :calculation_method "highest")))
+          (let ((data (list :title "Found" :canvas-id nil :parent-group-id 100
+                            :description "" :calculation_method "highest")))
             (let ((result (org-canvas--outcome-push-to-api data)))
+              (expect post-tried :to-be t)
               (expect (alist-get 'id result) :to-equal 888))))))))
 
 ;;;; Outcome Build Payload - calculation methods
@@ -1626,5 +1629,87 @@ Description B.
         (let ((buf (find-buffer-visiting outcomes-file)))
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
+
+;;;; Twin adoption before a create (issue #179)
+
+(describe "outcome twin adoption (issue #179)"
+  (defmacro test-org-canvas-179-o--with-remote (subgroups outcomes &rest body)
+    "Run BODY with the parent's subgroup list answering SUBGROUPS and its
+outcome list OUTCOMES.  `requests' collects (METHOD URL); a PUT whose
+id is 999 404s, any other PUT answers with its id, a POST with 900."
+    (declare (indent 2))
+    `(let ((requests nil))
+       (cl-letf (((symbol-function 'org-canvas-api-request)
+                  (lambda (method url &rest _)
+                    (push (list method url) requests)
+                    (cond
+                     ((and (eq method 'GET) (string-match-p "/subgroups$" url)) ,subgroups)
+                     ((eq method 'GET) ,outcomes)
+                     ((and (eq method 'PUT) (string-match-p "/999$" url))
+                      (signal 'error '("404 Not Found")))
+                     ((and (eq method 'PUT) (string-match "/\\([0-9]+\\)$" url))
+                      `((id . ,(string-to-number (match-string 1 url)))))
+                     (t '((id . 900)))))))
+         ,@body)))
+
+  (defun test-org-canvas-179-o--request (requests method pattern)
+    "Return the request in REQUESTS of METHOD whose URL matches PATTERN."
+    (cl-find-if (lambda (r) (and (eq (car r) method)
+                                 (string-match-p pattern (cadr r))))
+                requests))
+
+  (it "adopts the group of its title under the parent: PUT, not POST"
+    (with-org-canvas-test-config
+      (test-org-canvas-179-o--with-remote [((id . 5) (title . "Skills"))] []
+        (let ((data (list :title "Skills" :canvas-id nil)))
+          (org-canvas--outcome-group-push-to-api data 100)
+          (expect (plist-get data :canvas-id) :to-equal "5")
+          (expect (test-org-canvas-179-o--request requests 'PUT "outcome_groups/5$") :to-be-truthy)
+          (expect (test-org-canvas-179-o--request requests 'POST ".") :to-be nil)))))
+
+  (it "adopts the outcome of its title in its group"
+    (with-org-canvas-test-config
+      (test-org-canvas-179-o--with-remote [] [((outcome . ((id . 8) (title . "Writing"))))]
+        (let ((data (list :title "Writing" :canvas-id nil :parent-group-id 100
+                          :description "" :calculation_method "highest")))
+          (org-canvas--outcome-push-to-api data)
+          (expect (plist-get data :canvas-id) :to-equal "8")
+          (expect (test-org-canvas-179-o--request requests 'PUT "outcomes/8$") :to-be-truthy)
+          (expect (test-org-canvas-179-o--request requests 'POST ".") :to-be nil)))))
+
+  (it "creates when the parent holds nothing of the title"
+    (with-org-canvas-test-config
+      (test-org-canvas-179-o--with-remote [((id . 5) (title . "Other"))] []
+        (let ((data (list :title "Skills" :canvas-id nil)))
+          (org-canvas--outcome-group-push-to-api data 100)
+          (expect (test-org-canvas-179-o--request requests 'POST "outcome_groups/100/subgroups$")
+                  :to-be-truthy)))))
+
+  (it "creates without searching under the create strategy"
+    (with-org-canvas-test-config
+      (let ((org-canvas-duplicate-title-strategy 'create))
+        (test-org-canvas-179-o--with-remote [((id . 5) (title . "Skills"))] []
+          (let ((data (list :title "Skills" :canvas-id nil)))
+            (org-canvas--outcome-group-push-to-api data 100)
+            (expect (test-org-canvas-179-o--request requests 'GET ".") :to-be nil)
+            (expect (test-org-canvas-179-o--request requests 'POST ".") :to-be-truthy))))))
+
+  (it "updates the title's twin when the stamped id is gone"
+    (with-org-canvas-test-config
+      (test-org-canvas-179-o--with-remote [((id . 5) (title . "Skills"))] []
+        (let* ((data (list :title "Skills" :canvas-id "999"))
+               (result (org-canvas--outcome-group-push-to-api data 100)))
+          (expect (alist-get 'id result) :to-equal 5)
+          (expect (test-org-canvas-179-o--request requests 'PUT "outcome_groups/5$") :to-be-truthy)
+          (expect (test-org-canvas-179-o--request requests 'POST ".") :to-be nil)))))
+
+  (it "creates when the stamped outcome is gone and no twin carries the title"
+    (with-org-canvas-test-config
+      (test-org-canvas-179-o--with-remote [] []
+        (let ((data (list :title "Writing" :canvas-id "999" :parent-group-id 100
+                          :description "" :calculation_method "highest")))
+          (org-canvas--outcome-push-to-api data)
+          (expect (test-org-canvas-179-o--request requests 'POST "outcome_groups/100/outcomes$")
+                  :to-be-truthy))))))
 
 ;;; org-canvas-outcomes-test.el ends here

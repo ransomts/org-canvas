@@ -1816,6 +1816,19 @@ heading is skipped with a warning naming the ids.  Set
 does.  =create= also switches the lookup off.  =org-canvas-diff= reports the
 same situation from the other side, as *UNCLAIMED* (see [[*Drift Report][Drift Report]]).
 
+The same protection covers the levels that push outside the generic helper.
+A module item, a classic quiz question or a New Quiz item whose heading lost
+its stamp adopts the matching item its parent already holds -- by content for
+module items, by name for questions, by the first paragraph of the body for
+New Quiz items -- and updates it instead of creating a second; the parent's
+item list is read once, and only when a child lacks a stamp.  A New Quiz asks
+the same adopt/skip/create question as any other top-level item, listing the
+course's New Quizzes for it.  An outcome or outcome group is looked up under
+its parent before it is created.  And when an update finds its stamped id
+gone (a 404), the recovery looks the title up before it creates again, and
+updates the item that still carries it.  Classic quiz question groups are the
+one level with no protection: Canvas offers no endpoint that lists them.
+
 ** Commands
 
 | Command                | Description                                  |
@@ -1825,7 +1838,7 @@ same situation from the other side, as *UNCLAIMED* (see [[*Drift Report][Drift R
 
 ** Scope
 
-The per-update conflict check applies to every module whose push goes through the shared =org-canvas--push-to-api= helper: assignments, pages, discussions, announcements, assignment groups, rubrics, group categories, modules, quizzes and calendar events.  The pre-skip drift check, the dry-run conflict preview and the duplicate-title guard all read the remote snapshot, which exists for every module that both runs through =org-canvas-define-sync= and is in the feature registry -- since #87 that includes calendar events, which list from the global =/api/v1/calendar_events= endpoint rather than under the course.  Modules with fully custom sync loops (files, quizzes, new quizzes, outcomes, overrides) take no snapshot; files run their own conflict check.
+The per-update conflict check applies to every module whose push goes through the shared =org-canvas--push-to-api= helper: assignments, pages, discussions, announcements, assignment groups, rubrics, group categories, modules, quizzes and calendar events.  The pre-skip drift check, the dry-run conflict preview and the duplicate-title guard all read the remote snapshot, which exists for every module that both runs through =org-canvas-define-sync= and is in the feature registry -- since #87 that includes calendar events, which list from the global =/api/v1/calendar_events= endpoint rather than under the course.  Modules with fully custom sync loops (files, quizzes, new quizzes, outcomes, overrides) take no snapshot; files run their own conflict check.  The duplicate-title guard reaches further than the snapshot: every module that goes through the shared helper declares a search function, so a single push at point is guarded too, and the custom loops look their titles up themselves (see [[*Duplicate Titles][Duplicate Titles]]).
 
 * Publishing a Week
 
