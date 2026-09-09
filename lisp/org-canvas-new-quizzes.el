@@ -234,7 +234,7 @@ Reads raw properties, transforms them, and exports description to HTML."
 ;;;; Quiz Push to API
 
 (defun org-canvas--new-quiz-find-by-title (title)
-  "Return the New Quiz Canvas holds under TITLE, or nil.
+  "Return the New Quiz on Canvas under TITLE, or nil.
 One list request; a failed read is logged and counts as no match, so a
 create goes ahead as it did before the lookup existed."
   (condition-case err
@@ -255,7 +255,7 @@ create goes ahead as it did before the lookup existed."
   (format "%s" (or (alist-get 'assignment_id quiz) (alist-get 'id quiz))))
 
 (defun org-canvas--new-quiz-guard-duplicate (data title ctx)
-  "Before creating TITLE, ask whether Canvas already holds it.
+  "Before creating TITLE, ask whether it is already on Canvas.
 The counterpart of `org-canvas--push-guard-duplicate' for the one
 top-level push that does not go through `org-canvas--push-to-api'
 \(issue #179): New Quizzes list from their own API, so the sync's

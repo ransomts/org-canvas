@@ -295,7 +295,7 @@ its id is gone and no twin carries the title."
      (lambda () (org-canvas--outcome-group-create data root-group-id)))))
 
 (defun org-canvas--outcome-adopt-twin (data label search-fn)
-  "Give unstamped DATA the id of the item SEARCH-FN finds, if any.
+  "Give unstamped DATA the id of the item found by SEARCH-FN, if any.
 LABEL names the kind for the log.  Before an outcome or an outcome
 group is created its title is looked up under its parent, so a heading
 whose stamp was lost updates the item it made instead of creating a

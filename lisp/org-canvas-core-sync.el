@@ -1255,7 +1255,7 @@ or when `org-canvas-duplicate-title-strategy' is `create'."
        nil))))
 
 (defun org-canvas--recovery-update-twin (endpoint payload twin title put-url-fn id-key)
-  "Update TWIN, the item Canvas holds under TITLE, with PAYLOAD.
+  "Update TWIN, the item on Canvas under TITLE, with PAYLOAD.
 ENDPOINT is the base endpoint; PUT-URL-FN, when non-nil, builds the
 item URL from an id; ID-KEY names the field the id is read from.
 Returns the API response, whose id finalize stamps over the stale
@@ -1352,7 +1352,7 @@ Returns `push', `skip', or `pulled'."
 ;; which also feeds the run context; the helpers below serve the rest.
 
 (defun org-canvas--child-twin-before-p (a b)
-  "Return non-nil when remote item A sorts before B: position, then id."
+  "Return non-nil when remote item A is ordered before B: position, then id."
   (let ((pa (or (alist-get 'position a) 0))
         (pb (or (alist-get 'position b) 0))
         (ia (alist-get 'id a))
