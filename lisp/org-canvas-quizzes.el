@@ -475,8 +475,11 @@ Returns \"\" for a quiz with none."
 
 (defun org-canvas--quiz-push-to-api (data payload &optional ctx)
   "Send quiz PAYLOAD (from DATA) to Canvas API in run context CTX.
-Return response with quiz ID."
-  (org-canvas--push-to-api data payload :ctx ctx :endpoint "quizzes"))
+Return response with quiz ID.  The search function serves the
+duplicate guard of a push outside a sync's snapshot, and recovery."
+  (org-canvas--push-to-api data payload :ctx ctx :endpoint "quizzes"
+                           :find-fn (lambda (title)
+                                      (org-canvas--search-item "quizzes" title))))
 
 (defun org-canvas--quiz-verify-response (data response)
   "Verify quiz properties in RESPONSE match DATA."
@@ -887,11 +890,40 @@ Returns a cons (SUCCESS . FAIL) count."
     (let ((heading (org-get-heading t t t t)))
       (and heading (string= (string-trim heading) "Description")))))
 
+(defun org-canvas--quiz-claimed-ids (markers)
+  "Return the CANVAS_ID strings the headings at MARKERS carry."
+  (delq nil (mapcar (lambda (m) (org-entry-get m "CANVAS_ID")) markers)))
+
+(defun org-canvas--quiz-remote-questions (quiz-id markers)
+  "Return QUIZ-ID's questions when a heading at MARKERS has no CANVAS_ID.
+The list serves the twin adoption of `org-canvas--adopt-child-twin'
+\(issue #179); nothing is fetched while every question is stamped, and
+a list that could not be read is `unknown', which adopts nothing.
+Question groups have no list endpoint on Canvas, so they are not
+adopted."
+  (when (cl-some (lambda (m) (not (org-entry-get m "CANVAS_ID"))) markers)
+    (condition-case err
+        (org-canvas-api-request-all-pages
+         'GET (org-canvas-api-course-endpoint "quizzes/%s/questions" quiz-id))
+      (error
+       (org-canvas--log-warning org-canvas--logger
+         "[Question] Could not list quiz %s's questions (%s); an unstamped question is created rather than adopted"
+         quiz-id (error-message-string err))
+       'unknown))))
+
+(defun org-canvas--question-twin-p (data item)
+  "Return non-nil when remote question ITEM carries DATA's name."
+  (string= (or (alist-get 'question_name item) "") (plist-get data :name)))
+
 (defun org-canvas--sync-quiz-questions (quiz-marker quiz-canvas-id)
   "Sync all questions under the quiz at QUIZ-MARKER.
-QUIZ-CANVAS-ID is the Canvas ID of the quiz."
+QUIZ-CANVAS-ID is the Canvas ID of the quiz.  A question heading
+without a CANVAS_ID adopts the question of its name the quiz already
+holds, when one is unclaimed, instead of creating a second (issue
+#179)."
   (let ((question-markers nil)
-	(question-success 0))
+	(question-success 0)
+	remote claimed)
     ;; First, collect all question markers (level-2 headings under this quiz)
     (with-current-buffer (marker-buffer quiz-marker)
       (save-excursion
@@ -903,7 +935,9 @@ QUIZ-CANVAS-ID is the Canvas ID of the quiz."
 		       (not (equal (org-entry-get (point) "TYPE") "group"))
 		       (not (org-canvas--quiz-description-heading-p)))
 	      (push (point-marker) question-markers)))))
-      (setq question-markers (nreverse question-markers)))
+      (setq question-markers (nreverse question-markers)
+            claimed (org-canvas--quiz-claimed-ids question-markers)
+            remote (org-canvas--quiz-remote-questions quiz-canvas-id question-markers)))
 
     ;; Now sync each question using the stable markers
     (dolist (q-marker question-markers)
@@ -912,8 +946,13 @@ QUIZ-CANVAS-ID is the Canvas ID of the quiz."
 	  (goto-char (marker-position q-marker))
 	  (condition-case err
 	      (let* ((data (org-canvas--question-parse-entry quiz-canvas-id))
+		     (adopted (org-canvas--adopt-child-twin
+			       data remote
+			       (lambda (item) (org-canvas--question-twin-p data item))
+			       claimed "[Question]"))
 		     (payload (org-canvas--question-build-payload data))
 		     (response (org-canvas--question-push-to-api data payload)))
+		(when adopted (push adopted claimed))
 		(org-canvas--question-finalize data response)
 		(setq question-success (1+ question-success)))
 	    (error

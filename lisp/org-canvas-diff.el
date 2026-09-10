@@ -100,9 +100,11 @@ ids are excluded from the EXTRA rows and from the divergence total
 that drives `org-canvas-diff-batch''s exit code, and reported once as
 a counted footer line.  An acknowledged id that no longer exists on
 Canvas is flagged as STALE-ACK — and does count as drift — so the
-list cannot rot (issue #98).  Acknowledgment affects the drift report
-only: orphan cleanup and prune still list these items, which is where
-to look if one should be deleted after all."
+list cannot rot (issue #98).  A module item is acknowledged under
+\"module-items\", the section its rows report in — an item id and a
+module id are different things (issue #177).  Acknowledgment affects
+the drift report only: orphan cleanup and prune still list these
+items, which is where to look if one should be deleted after all."
   :type '(repeat (list (string :tag "Feature")
                        (string :tag "Canvas id")
                        (choice (const :tag "No note" nil)
@@ -189,18 +191,32 @@ means (issue #135).")
 (defalias 'org-canvas--diff-remote-list #'org-canvas--registry-remote-list
   "Return REMOTE as a list of strings, however Canvas spelled it (issue #63).")
 
+(defun org-canvas--diff-time-minute (time)
+  "Return TIME as a count of whole minutes since the epoch.
+An Org timestamp names a minute and nothing finer, so a comparison
+against one can claim no more precision than this.  The seconds are
+dropped, not tolerated: xx:59 and xx+1:00 are different minutes in the
+file even though they are a second apart (issue #176)."
+  (floor (time-convert time 'integer) 60))
+
 (defun org-canvas--diff-values-equal-p (type local remote)
-  "Return non-nil when LOCAL (an Org string) and REMOTE agree, given TYPE."
+  "Return non-nil when LOCAL (an Org string) and REMOTE agree, given TYPE.
+Timestamps agree when they fall in the same minute: a deadline set in
+the Canvas web UI carries :59 seconds, which the Org side can neither
+store nor pull, so an exact comparison was a DUE_AT row that nothing
+but a push could clear (issue #176)."
   (let ((remote (org-canvas--diff-normalize-remote remote)))
     (pcase type
       ('boolean (eq (string= local "true") (and remote t)))
       ('number (and remote (= (string-to-number local)
                               (if (stringp remote) (string-to-number remote) remote))))
       ('timestamp
-       (let ((local-iso (org-canvas-org-parse-timestamp local)))
-         (and local-iso remote
-              (equal (org-canvas--parse-iso8601-time local-iso)
-                     (org-canvas--parse-iso8601-time remote)))))
+       (let ((local-time (org-canvas--parse-iso8601-time
+                          (org-canvas-org-parse-timestamp local)))
+             (remote-time (org-canvas--parse-iso8601-time remote)))
+         (and local-time remote-time
+              (= (org-canvas--diff-time-minute local-time)
+                 (org-canvas--diff-time-minute remote-time)))))
       ('csv-enum
        (equal (sort (split-string (or local "") "," t "[ \t]+") #'string<)
               (sort (org-canvas--diff-remote-list remote) #'string<)))
@@ -567,6 +583,125 @@ the property to stamp; the rest of EXTRA is returned as it was."
                 e))
             extra)))
 
+(defun org-canvas--diff-split-acknowledged (name extra index)
+  "Sort feature NAME's EXTRA entries by `org-canvas-diff-known-extras'.
+INDEX is the hash of the remote ids seen.  Returns a plist: :extra,
+the entries left unacknowledged; :acknowledged, how many were; and
+:stale, a `stale-ack' divergence for each acknowledged id INDEX no
+longer holds, so the acknowledgment list cannot rot (issue #98)."
+  (let* ((known (org-canvas--diff-known-extras-for name))
+         (acked (cl-remove-if-not
+                 (lambda (e) (assoc (plist-get e :id) known))
+                 extra))
+         (stale (cl-remove-if (lambda (k) (gethash (car k) index)) known)))
+    (list :extra (cl-remove-if (lambda (e) (memq e acked)) extra)
+          :acknowledged (length acked)
+          :stale (mapcar (lambda (k)
+                           (list :kind 'stale-ack :id (car k) :note (cdr k)))
+                         stale))))
+
+;;;; Module Items (issue #177)
+;;
+;; Modules are the one feature with children the report skipped.  A
+;; sync that had lost an item's stamp created a second copy of the same
+;; assignment in the module (issue #179); students saw it twice, and
+;; the report called Modules clean, since it compared module ids and
+;; never looked inside one.  The child pass below lists the items of
+;; every module the file claims — one request per module, the same
+;; shape as the sync's own reconcile — and reports an item no level-2
+;; heading anywhere in modules.org claims as EXTRA, in a section of its
+;; own named "Module Items": an item id and a module id are different
+;; things, so an acknowledgment in `org-canvas-diff-known-extras' is
+;; filed under "module-items", and the row's delete goes to the item's
+;; own URL.  An item another module's heading claims is a pending move
+;; the next sync settles (issue #105), not an extra.
+
+(defconst org-canvas--diff-children-fns
+  '(("modules" . org-canvas--diff-module-items))
+  "Child checks, by normalized feature name.
+Each a function of (ITEMS LOCAL FILE) — the feature's remote list,
+the local entries `org-canvas--diff-feature' collected, and the file
+they came from — returning a result plist of its own, reported right
+after the feature's.")
+
+(defun org-canvas--diff-children (name items local file)
+  "Run feature NAME's child check, if any, over ITEMS, LOCAL and FILE."
+  (when-let* ((fn (alist-get (org-canvas--diff-normalize-name name)
+                             org-canvas--diff-children-fns
+                             nil nil #'string=)))
+    (funcall fn items local file)))
+
+(defun org-canvas--diff-module-item-lists (modules)
+  "Return (MODULE . ITEMS) for each of MODULES, (ID . NAME) pairs.
+One list request per module."
+  (mapcar (lambda (module)
+            (cons module
+                  (append (org-canvas-api-request-all-pages
+                           'GET (org-canvas-api-course-endpoint
+                                 "modules/%s/items" (car module)))
+                          nil)))
+          modules))
+
+(defun org-canvas--diff-module-item-extras (lists claimed)
+  "Return the items in LISTS no heading CLAIMED, as `extra' entries.
+LISTS is what `org-canvas--diff-module-item-lists' returned; each
+entry names the module it sits in and carries the module id, which is
+what deleting it needs."
+  (let ((extra nil))
+    (dolist (pair lists)
+      (dolist (item (cdr pair))
+        (unless (member (format "%s" (alist-get 'id item)) claimed)
+          (push (list :kind 'extra
+                      :title (format "%s" (or (alist-get 'title item) "?"))
+                      :id (format "%s" (alist-get 'id item))
+                      :html-url (org-canvas--diff-normalize-remote
+                                 (alist-get 'html_url item))
+                      :module-id (car (car pair))
+                      :where (cdr (car pair)))
+                extra))))
+    (nreverse extra)))
+
+(defun org-canvas--diff-module-items (modules local file)
+  "Compare the items of the modules in LOCAL against Canvas.
+MODULES is the course's module list; only a LOCAL entry whose id it
+holds is looked into, one request each.  FILE is modules.org, whose
+level-2 headings are what claims an item.  Returns a result plist named
+\"Module Items\", shaped like `org-canvas--diff-feature''s: an item no
+level-2 heading in modules.org claims is an extra (issue #177), minus
+the ones `org-canvas-diff-known-extras' acknowledges under
+\"module-items\", with a `stale-ack' divergence for an acknowledged id
+no module holds any more."
+  (if (org-canvas--diff-feature-excluded-p "Module Items")
+      (list :name "Module Items" :excluded t)
+    (condition-case err
+        (let* ((index (org-canvas--diff-remote-index modules 'id))
+               (synced (delq nil
+                             (mapcar (lambda (e)
+                                       (and (plist-get e :id)
+                                            (gethash (plist-get e :id) index)
+                                            (cons (plist-get e :id)
+                                                  (plist-get e :title))))
+                                     local)))
+               (claimed (mapcar (lambda (e)
+                                  (let ((m (plist-get e :pom)))
+                                    (when (markerp m) (set-marker m nil)))
+                                  (plist-get e :id))
+                                (org-canvas--diff-collect-local
+                                 file "LEVEL=2" "CANVAS_ID")))
+               (lists (org-canvas--diff-module-item-lists synced))
+               (seen (org-canvas--diff-remote-index
+                      (apply #'append (mapcar #'cdr lists)) 'id))
+               (split (org-canvas--diff-split-acknowledged
+                       "Module Items"
+                       (org-canvas--diff-module-item-extras lists (delq nil claimed))
+                       seen)))
+          (list :name "Module Items"
+                :divergences (plist-get split :stale)
+                :extra (plist-get split :extra)
+                :acknowledged (plist-get split :acknowledged)))
+      (error
+       (list :name "Module Items" :error (error-message-string err))))))
+
 (defun org-canvas--diff-feature (feature)
   "Compare one FEATURE registry entry against Canvas.
 Returns a plist (:name :divergences :extra :acknowledged :error):
@@ -574,7 +709,10 @@ Returns a plist (:name :divergences :extra :acknowledged :error):
 `org-canvas-diff-known-extras' acknowledges, whose count is
 :acknowledged — and :error a message when the list request failed.
 An acknowledged id Canvas no longer holds joins :divergences as a
-`stale-ack' entry, so the acknowledgment list cannot rot (issue #98)."
+`stale-ack' entry, so the acknowledgment list cannot rot (issue #98).
+A feature with a child check (`org-canvas--diff-children-fns') carries
+its child's result as :children, which `org-canvas-diff' reports right
+after this one (issue #177)."
   (let* ((name (plist-get feature :name))
          (file-var (plist-get feature :file-var))
          (file (and (boundp file-var) (symbol-value file-var)))
@@ -608,21 +746,13 @@ An acknowledged id Canvas no longer holds joins :divergences as a
                              items claimed id-field title-field skip-fn))
                  (paired (org-canvas--diff-pair-unclaimed
                           (car unclaimed) local id-property))
-                 (known (org-canvas--diff-known-extras-for name))
-                 (acked (cl-remove-if-not
-                         (lambda (e) (assoc (plist-get e :id) known))
-                         paired))
-                 (stale (cl-remove-if (lambda (k) (gethash (car k) index))
-                                      known)))
+                 (split (org-canvas--diff-split-acknowledged name paired index)))
             (list :name name
                   :divergences (append (nreverse divergences)
-                                       (mapcar (lambda (k)
-                                                 (list :kind 'stale-ack
-                                                       :id (car k)
-                                                       :note (cdr k)))
-                                               stale))
-                  :extra (cl-remove-if (lambda (e) (memq e acked)) paired)
-                  :acknowledged (length acked)
+                                       (plist-get split :stale))
+                  :extra (plist-get split :extra)
+                  :acknowledged (plist-get split :acknowledged)
+                  :children (org-canvas--diff-children name items local file)
                   :suppressed (cdr unclaimed)
                   :skip-reason (plist-get feature :skip-reason)
                   ;; The bodies are in hand; note what media they embed
@@ -644,8 +774,11 @@ An acknowledged id Canvas no longer holds joins :divergences as a
      (insert (format "  MISSING   %s (id %s is not in this course)\n"
                      (plist-get entry :title) (plist-get entry :id))))
     ('extra
-     (insert (format "  EXTRA     %s (id %s, no Org heading claims it)\n"
-                     (plist-get entry :title) (plist-get entry :id))))
+     (insert (format "  EXTRA     %s (id %s%s, no Org heading claims it)\n"
+                     (plist-get entry :title) (plist-get entry :id)
+                     ;; A module item says which module it sits in (#177).
+                     (let ((where (plist-get entry :where)))
+                       (if where (format " in module '%s'" where) "")))))
     ('stale-ack
      (insert (format "  STALE-ACK id %s is acknowledged in org-canvas-diff-known-extras but no longer exists on Canvas — remove the entry%s\n"
                      (plist-get entry :id)
@@ -933,22 +1066,35 @@ On a STALE-ACK row, drops the acknowledgment instead."
          (message "Acknowledged %s %s." feature id)))
       (kind (user-error "A %s row is not something to acknowledge" (upcase (symbol-name kind)))))))
 
+(defun org-canvas--diff-delete-target (row entry)
+  "Return (URL . DELETE-DATA) for the remote object ENTRY of ROW names.
+A module item lives under its module, not at a feature URL (issue
+#177); anything else uses the feature's item URL and delete body, as
+orphan cleanup does."
+  (if-let* ((module-id (plist-get entry :module-id)))
+      (cons (org-canvas-api-course-endpoint "modules/%s/items/%s"
+                                            module-id (plist-get entry :id))
+            nil)
+    (let ((feature (org-canvas--diff-row-feature row)))
+      (cons (org-canvas--feature-item-url feature (plist-get entry :id))
+            (plist-get feature :delete-data)))))
+
 (defun org-canvas-diff-delete ()
   "Delete the EXTRA or UNCLAIMED row's Canvas object, after confirming.
-Uses the feature's item URL and delete body, as orphan cleanup does."
+Uses the feature's item URL and delete body, as orphan cleanup does;
+a module item's row deletes the item from its module (issue #177)."
   (interactive)
   (let* ((row (org-canvas--diff-row-at-point))
          (entry (plist-get row :entry))
-         (feature (org-canvas--diff-row-feature row))
          (id (plist-get entry :id))
-         (name (plist-get feature :name)))
+         (name (plist-get row :feature)))
     (unless (memq (plist-get entry :kind) '(extra unclaimed))
       (user-error "Only an EXTRA or UNCLAIMED row names a remote object to delete"))
     (when (y-or-n-p (format "Delete %s '%s' (id %s) from Canvas? "
                             name (plist-get entry :title) id))
-      (let ((delete-data (plist-get feature :delete-data)))
-        (apply #'org-canvas-api-request 'DELETE
-               (org-canvas--feature-item-url feature id)
+      (let* ((target (org-canvas--diff-delete-target row entry))
+             (delete-data (cdr target)))
+        (apply #'org-canvas-api-request 'DELETE (car target)
                (and delete-data (list :data delete-data))))
       (org-canvas--log-info org-canvas--logger
         "[Diff] Deleted %s #%s '%s' from the report" name id (plist-get entry :title))
@@ -1043,7 +1189,11 @@ divergences found, so a batch caller can act on it; see
         (if (org-canvas--diff-feature-excluded-p name)
             (push (org-canvas--diff-excluded-result feature) results)
           (message "Drift: checking %s..." name)
-          (push (org-canvas--diff-feature feature) results))))
+          (let ((result (org-canvas--diff-feature feature)))
+            (push result results)
+            ;; Module items report right after their modules (#177).
+            (when-let* ((child (plist-get result :children)))
+              (push child results))))))
     (setq results (org-canvas--diff-apply-references (nreverse results)))
     (let ((report (org-canvas--diff-render results))
           (total (org-canvas--diff-count results)))

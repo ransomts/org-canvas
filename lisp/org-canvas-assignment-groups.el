@@ -260,6 +260,7 @@ CTX, the run context, is accepted for the :after-sync contract and unused."
   :build #'org-canvas--assignment-group-build-payload
   :endpoint "assignment_groups"
   :title-key :name
+  :find-fn (lambda (name) (org-canvas--search-item "assignment_groups" name :match-field 'name))
   :pull-item-fn #'org-canvas--assignment-group-pull-item
   :after-sync #'org-canvas--assignment-group-reconcile-unmanaged)
 

@@ -569,7 +569,9 @@ Quiz description.
       (let ((call-count 0))
         (cl-letf (((symbol-function 'org-canvas-api-request)
                    (lambda (method _url &rest _args)
-                     (setq call-count (1+ call-count))
+                     ;; The recovery looks the title up first (issue #179);
+                     ;; count the writes.
+                     (unless (eq method 'GET) (setq call-count (1+ call-count)))
                      (if (and (eq method 'PATCH) (= call-count 1))
                          (error "HTTP 404 Not Found")
                        '((assignment_id . 99))))))
@@ -1439,7 +1441,9 @@ Consider the following expression.
       (let ((call-count 0))
         (cl-letf (((symbol-function 'org-canvas-api-request)
                    (lambda (method _url &rest _args)
-                     (setq call-count (1+ call-count))
+                     ;; The recovery looks the title up first (issue #179);
+                     ;; count the writes.
+                     (unless (eq method 'GET) (setq call-count (1+ call-count)))
                      (if (and (eq method 'PATCH) (= call-count 1))
                          (error "HTTP 404 Not Found")
                        '((id . "new-item-id"))))))
@@ -2712,5 +2716,252 @@ Body text
          (org-entry-put (point) "CANVAS_ITEM_ID" "300"))
        (expect (org-canvas--new-quiz-items-digest data)
                :to-equal before)))))
+
+;;;; Duplicate guard and twin adoption (issue #179)
+
+(describe "New Quiz duplicate guard (issue #179)"
+  (defmacro test-org-canvas-179-nq--with-remote (remote &rest body)
+    "Run BODY with the course's New Quiz list answering REMOTE.
+`requests' collects (METHOD URL); a PATCH answers with the id in its
+URL as assignment_id, a POST with 900, and any GET with REMOTE."
+    (declare (indent 1))
+    `(let ((requests nil))
+       (cl-letf (((symbol-function 'org-canvas-api-request)
+                  (lambda (method url &rest _)
+                    (push (list method url) requests)
+                    (cond
+                     ((eq method 'GET) ,remote)
+                     ((and (eq method 'PATCH) (string-match "/quizzes/\\([^/]+\\)$" url))
+                      `((assignment_id . ,(match-string 1 url))))
+                     (t '((assignment_id . 900)))))))
+         ,@body)))
+
+  (defun test-org-canvas-179-nq--request (requests method pattern)
+    "Return the request in REQUESTS of METHOD whose URL matches PATTERN."
+    (cl-find-if (lambda (r) (and (eq (car r) method)
+                                 (string-match-p pattern (cadr r))))
+                requests))
+
+  (it "adopts the New Quiz of its title and updates it in place"
+    (with-org-canvas-test-config
+      (let ((org-canvas-duplicate-title-strategy 'adopt))
+        (test-org-canvas-179-nq--with-remote [((assignment_id . 55) (title . "Exam 1"))]
+          (let* ((data (list :title "Exam 1" :canvas-id nil :pom (point-marker)))
+                 (payload (make-hash-table :test 'equal))
+                 (response (org-canvas--new-quiz-push-to-api data payload)))
+            (expect (alist-get 'assignment_id response) :to-equal "55")
+            (expect (plist-get data :canvas-id) :to-equal "55")
+            (expect (test-org-canvas-179-nq--request requests 'PATCH "quizzes/55$") :to-be-truthy)
+            (expect (test-org-canvas-179-nq--request requests 'POST ".") :to-be nil))))))
+
+  (it "returns duplicate and writes nothing under skip"
+    (with-org-canvas-test-config
+      (let ((org-canvas-duplicate-title-strategy 'skip))
+        (test-org-canvas-179-nq--with-remote [((assignment_id . 55) (title . "Exam 1"))]
+          (let* ((data (list :title "Exam 1" :canvas-id nil :pom (point-marker)))
+                 (response (org-canvas--new-quiz-push-to-api data (make-hash-table :test 'equal))))
+            (expect response :to-be 'duplicate)
+            (expect (plist-get data :canvas-id) :to-be nil)
+            (expect (test-org-canvas-179-nq--request requests 'PATCH ".") :to-be nil)
+            (expect (test-org-canvas-179-nq--request requests 'POST ".") :to-be nil))))))
+
+  (it "creates when no New Quiz carries the title"
+    (with-org-canvas-test-config
+      (let ((org-canvas-duplicate-title-strategy 'adopt))
+        (test-org-canvas-179-nq--with-remote [((assignment_id . 55) (title . "Exam 2"))]
+          (let ((data (list :title "Exam 1" :canvas-id nil :pom (point-marker))))
+            (org-canvas--new-quiz-push-to-api data (make-hash-table :test 'equal))
+            (expect (test-org-canvas-179-nq--request requests 'POST "quizzes$") :to-be-truthy))))))
+
+  (it "creates without listing under the create strategy"
+    (with-org-canvas-test-config
+      (let ((org-canvas-duplicate-title-strategy 'create))
+        (test-org-canvas-179-nq--with-remote [((assignment_id . 55) (title . "Exam 1"))]
+          (let ((data (list :title "Exam 1" :canvas-id nil :pom (point-marker))))
+            (org-canvas--new-quiz-push-to-api data (make-hash-table :test 'equal))
+            (expect (test-org-canvas-179-nq--request requests 'GET ".") :to-be nil)
+            (expect (test-org-canvas-179-nq--request requests 'POST "quizzes$") :to-be-truthy))))))
+
+  (it "lists nothing during a dry run"
+    (with-org-canvas-test-config
+      (let ((org-canvas--dry-run t)
+            (org-canvas-duplicate-title-strategy 'adopt))
+        (test-org-canvas-179-nq--with-remote [((assignment_id . 55) (title . "Exam 1"))]
+          (let ((data (list :title "Exam 1" :canvas-id nil :pom (point-marker))))
+            (org-canvas--new-quiz-push-to-api data (make-hash-table :test 'equal))
+            (expect requests :to-be nil))))))
+
+  (it "creates rather than adopts when the list cannot be read"
+    (with-org-canvas-test-config
+      (let ((org-canvas-duplicate-title-strategy 'adopt)
+            (requests nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest _)
+                     (push (list method url) requests)
+                     (if (eq method 'GET)
+                         (signal 'error '("API Request Failed (HTTP 500)"))
+                       '((assignment_id . 900))))))
+          (let ((data (list :title "Exam 1" :canvas-id nil :pom (point-marker))))
+            (org-canvas--new-quiz-push-to-api data (make-hash-table :test 'equal))
+            (expect (test-org-canvas-179-nq--request requests 'POST "quizzes$") :to-be-truthy))))))
+
+  (it "recovers a 404 on PATCH by updating the title's twin"
+    (with-org-canvas-test-config
+      (let ((requests nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest _)
+                     (push (list method url) requests)
+                     (cond
+                      ((and (eq method 'PATCH) (string-match-p "/quizzes/old$" url))
+                       (error "HTTP 404 Not Found"))
+                      ((eq method 'GET) [((assignment_id . 66) (title . "Exam 1"))])
+                      ((eq method 'PATCH) '((assignment_id . 66)))
+                      (t '((assignment_id . 900)))))))
+          (let* ((data (list :title "Exam 1" :canvas-id "old" :pom (point-marker)))
+                 (response (org-canvas--new-quiz-push-to-api data (make-hash-table :test 'equal))))
+            (expect (alist-get 'assignment_id response) :to-equal 66)
+            (expect (test-org-canvas-179-nq--request requests 'PATCH "quizzes/66$") :to-be-truthy)
+            (expect (test-org-canvas-179-nq--request requests 'POST ".") :to-be nil)))))))
+
+(describe "New Quiz item adoption (issue #179)"
+  (defmacro test-org-canvas-179-nqi--with-remote (remote &rest body)
+    "Run BODY with the quiz's item list answering REMOTE.
+`requests' collects (METHOD URL); a PATCH answers with the id in its
+URL, a POST with 900."
+    (declare (indent 1))
+    `(let ((requests nil))
+       (cl-letf (((symbol-function 'org-canvas-api-request)
+                  (lambda (method url &rest _)
+                    (push (list method url) requests)
+                    (cond
+                     ((eq method 'GET) ,remote)
+                     ((and (eq method 'PATCH) (string-match "/items/\\([^/]+\\)$" url))
+                      `((id . ,(match-string 1 url))))
+                     (t '((id . 900)))))))
+         ,@body)))
+
+  (defconst test-org-canvas-179-nqi--file
+    "* Quiz
+:PROPERTIES:
+:CANVAS_ASSIGNMENT_ID: 500
+:END:
+** What is DNA?
+- [X] A molecule
+- [ ] A rock
+"
+    "A New Quiz whose one item lost its stamp.")
+
+  (it "adopts the item whose body opens with the heading: PATCH, not POST"
+    (with-org-canvas-test-config
+      (test-org-canvas-179-nqi--with-remote
+          [((id . "i1") (position . 1)
+            (entry . ((item_body . "<p>What is DNA?</p><p>Explain.</p>"))))]
+        (with-temp-org-buffer test-org-canvas-179-nqi--file
+          (org-back-to-heading)
+          (org-canvas--sync-new-quiz-items (point-marker) "500")
+          (expect (cl-some (lambda (r) (and (eq (car r) 'PATCH)
+                                            (string-match-p "quizzes/500/items/i1$" (cadr r))))
+                           requests)
+                  :to-be-truthy)
+          (expect (cl-some (lambda (r) (eq (car r) 'POST)) requests) :to-be nil)
+          (goto-char (point-min))
+          (search-forward "** What is DNA?")
+          (org-back-to-heading t)
+          (expect (org-entry-get (point) "CANVAS_ITEM_ID") :to-equal "i1")))))
+
+  (it "reads a body at the top level of the item too"
+    (with-org-canvas-test-config
+      (test-org-canvas-179-nqi--with-remote
+          [((id . "i2") (item_body . "<p><b>What is DNA?</b></p>"))]
+        (with-temp-org-buffer test-org-canvas-179-nqi--file
+          (org-back-to-heading)
+          (org-canvas--sync-new-quiz-items (point-marker) "500")
+          (expect (cl-some (lambda (r) (and (eq (car r) 'PATCH)
+                                            (string-match-p "items/i2$" (cadr r))))
+                           requests)
+                  :to-be-truthy)))))
+
+  (it "creates the item when the quiz holds none opening with the heading"
+    (with-org-canvas-test-config
+      (test-org-canvas-179-nqi--with-remote
+          [((id . "i1") (entry . ((item_body . "<p>What is RNA?</p>"))))]
+        (with-temp-org-buffer test-org-canvas-179-nqi--file
+          (org-back-to-heading)
+          (org-canvas--sync-new-quiz-items (point-marker) "500")
+          (expect (cl-some (lambda (r) (and (eq (car r) 'POST)
+                                            (string-match-p "quizzes/500/items$" (cadr r))))
+                           requests)
+                  :to-be-truthy)))))
+
+  (it "recovers a 404 on PATCH by updating the twin"
+    (with-org-canvas-test-config
+      (let ((requests nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest _)
+                     (push (list method url) requests)
+                     (cond
+                      ((and (eq method 'PATCH) (string-match-p "/items/gone$" url))
+                       (error "HTTP 404 Not Found"))
+                      ((eq method 'GET)
+                       [((id . "i3") (entry . ((item_body . "<p>What is DNA?</p>"))))])
+                      ((eq method 'PATCH) '((id . "i3")))
+                      (t '((id . 900)))))))
+          (let* ((data (list :title "What is DNA?" :canvas-id "gone"
+                             :quiz-assignment-id "500" :type "choice"))
+                 (response (org-canvas--new-quiz-item-push-to-api
+                            data (make-hash-table :test 'equal))))
+            (expect (alist-get 'id response) :to-equal "i3")
+            (expect (cl-some (lambda (r) (and (eq (car r) 'PATCH)
+                                              (string-match-p "items/i3$" (cadr r))))
+                             requests)
+                    :to-be-truthy)
+            (expect (cl-some (lambda (r) (eq (car r) 'POST)) requests) :to-be nil)))))))
+
+(describe "org-canvas--new-quiz-item-remote-title"
+  (it "reads the first paragraph under entry with its tags stripped"
+    (expect (org-canvas--new-quiz-item-remote-title
+             '((entry . ((item_body . "<p>What <em>is</em>\n DNA?</p><p>Explain.</p>")))))
+            :to-equal "What is DNA?"))
+  (it "reads a top-level body without paragraphs whole"
+    (expect (org-canvas--new-quiz-item-remote-title '((item_body . "Plain <b>text</b>")))
+            :to-equal "Plain text"))
+  (it "is empty for an item without a body"
+    (expect (org-canvas--new-quiz-item-remote-title '((id . 1))) :to-equal "")))
+
+(describe "New Quiz duplicate guard answers (issue #179)"
+  (it "creates anyway when the prompt says so, and says it did"
+    (with-org-canvas-test-config
+      (let ((noninteractive nil)
+            (org-canvas-duplicate-title-strategy nil)
+            (warnings nil)
+            (requests nil))
+        (cl-letf (((symbol-function 'org-canvas--duplicate-prompt) (lambda (&rest _) 'create))
+                  ((symbol-function 'org-canvas--log-warning)
+                   (lambda (_logger fmt &rest args) (push (apply #'format fmt args) warnings)))
+                  ((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest _)
+                     (push (list method url) requests)
+                     (if (eq method 'GET)
+                         [((assignment_id . 55) (title . "Exam 1"))]
+                       '((assignment_id . 900))))))
+          (let* ((data (list :title "Exam 1" :canvas-id nil :pom (point-marker)))
+                 (response (org-canvas--new-quiz-push-to-api data (make-hash-table :test 'equal))))
+            (expect (alist-get 'assignment_id response) :to-equal 900)
+            (expect (cl-some (lambda (r) (eq (car r) 'POST)) requests) :to-be-truthy)
+            (expect (cl-some (lambda (w) (string-match-p "although Canvas already holds it" w)) warnings)
+                    :to-be-truthy))))))
+
+  (it "refuses the push at point when the guard skips"
+    (with-org-canvas-test-config
+      (let ((org-canvas-duplicate-title-strategy 'skip))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method _url &rest _)
+                     (if (eq method 'GET)
+                         [((assignment_id . 55) (title . "Exam 1"))]
+                       '((assignment_id . 900)))))
+                  ((symbol-function 'display-buffer) #'ignore))
+          (with-temp-org-buffer "* Exam 1\nA quiz.\n"
+            (org-back-to-heading)
+            (expect (org-canvas-sync-new-quiz-at-point) :to-throw 'user-error)))))))
 
 ;;; org-canvas-new-quizzes-test.el ends here

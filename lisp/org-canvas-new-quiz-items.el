@@ -511,6 +511,75 @@ avoid duplication in the API payload."
     (puthash "item" item wrapped)
     wrapped))
 
+(defun org-canvas--new-quiz-remote-items (quiz-id markers)
+  "Return QUIZ-ID's items when a heading at MARKERS has no CANVAS_ITEM_ID.
+The list serves the twin adoption of `org-canvas--adopt-child-twin'
+\(issue #179); nothing is fetched while every item is stamped, and a
+list that could not be read is `unknown', which adopts nothing."
+  (when (cl-some (lambda (m) (not (org-entry-get m "CANVAS_ITEM_ID"))) markers)
+    (condition-case err
+        (org-canvas-api-request-all-pages
+         'GET (org-canvas--new-quiz-api-endpoint "quizzes/%s/items" quiz-id))
+      (error
+       (org-canvas--log-warning org-canvas--logger
+         "[New Quiz Item] Could not list quiz %s's items (%s); an unstamped item is created rather than adopted"
+         quiz-id (error-message-string err))
+       'unknown))))
+
+(defun org-canvas--new-quiz-item-remote-title (item)
+  "Return the text of remote ITEM's first paragraph, tags stripped.
+A push sends the heading as the item body's first paragraph, so this
+is what a heading compares against.  The body sits under `entry' in
+the Items API and at the top level in older replies; both are read."
+  (let* ((entry (alist-get 'entry item))
+         (body (or (and (listp entry) (alist-get 'item_body entry))
+                   (alist-get 'item_body item)
+                   ""))
+         (first (if (string-match "<p[^>]*>\\(\\(?:.\\|\n\\)*?\\)</p>" body)
+                    (match-string 1 body)
+                  body)))
+    (string-trim
+     (replace-regexp-in-string
+      "[ \t\n\r]+" " "
+      (replace-regexp-in-string "<[^>]+>" "" first)))))
+
+(defun org-canvas--new-quiz-item-twin-p (data item)
+  "Return non-nil when remote ITEM's first paragraph is DATA's title."
+  (let ((title (string-trim (or (plist-get data :title) ""))))
+    (and (not (string-empty-p title))
+         (string= (org-canvas--new-quiz-item-remote-title item) title))))
+
+(defun org-canvas--new-quiz-item-recover-404 (data wrapped)
+  "Recover an item PATCH that 404ed: update the title's twin, or POST WRAPPED.
+DATA names the quiz and the item.  The stamped id is gone; when the
+quiz still holds an item of the title under another id, that one is
+updated, so the recovery cannot make a second copy (issue #179)."
+  (let* ((quiz-id (plist-get data :quiz-assignment-id))
+         (title (plist-get data :title))
+         (remote (unless (eq org-canvas-duplicate-title-strategy 'create)
+                   (condition-case nil
+                       (org-canvas-api-request-all-pages
+                        'GET (org-canvas--new-quiz-api-endpoint "quizzes/%s/items" quiz-id))
+                     (error nil))))
+         (twin (car (org-canvas--child-twins
+                     remote (lambda (item) (org-canvas--new-quiz-item-twin-p data item))
+                     nil))))
+    (if twin
+        (let ((id (format "%s" (alist-get 'id twin))))
+          (org-canvas--log-warning org-canvas--logger
+            "[Recovery] Item '%s' is gone under its stamped id, but quiz %s holds it as item %s — updating that one instead of creating a second copy"
+            title quiz-id id)
+          (org-canvas-api-request
+           'PATCH (org-canvas--new-quiz-api-endpoint "quizzes/%s/items/%s" quiz-id id)
+           :data wrapped))
+      (org-canvas--log-warning org-canvas--logger
+        "[Recovery] Item not found (404). Retrying as POST...")
+      (let ((response (org-canvas-api-request
+                       'POST (org-canvas--new-quiz-api-endpoint "quizzes/%s/items" quiz-id)
+                       :data wrapped)))
+        (org-canvas--log-info org-canvas--logger "[Recovery] POST successful")
+        response))))
+
 (cl-defun org-canvas--new-quiz-item-push-to-api (data payload)
   "Send New Quiz item PAYLOAD (from DATA) to Canvas API.
 PAYLOAD is the flat item data from `build-payload'.  It is restructured
@@ -539,21 +608,10 @@ into the nested format required by the New Quizzes Items API:
        (org-canvas--log-error org-canvas--logger "[New Quiz Item API] Failed: %s"
          (error-message-string err))
        (cond
-        ;; 404 on PATCH -> retry as POST (stale CANVAS_ITEM_ID)
+        ;; 404 on PATCH -> update the title's twin, else retry as POST
         ((and (eq method 'PATCH)
               (org-canvas--404-error-p err))
-         (org-canvas--log-warning org-canvas--logger
-           "[Recovery] Item not found (404). Retrying as POST...")
-         (condition-case post-err
-             (let ((response (org-canvas-api-request
-                              'POST
-                              (org-canvas--new-quiz-api-endpoint
-                               "quizzes/%s/items" quiz-id)
-                              :data wrapped)))
-               (org-canvas--log-info org-canvas--logger "[Recovery] POST successful")
-               response)
-           (error
-            (signal (car post-err) (cdr post-err)))))
+         (org-canvas--new-quiz-item-recover-404 data wrapped))
         (t (signal (car err) (cdr err))))))))
 
 ;;;; Item Finalize
