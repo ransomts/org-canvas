@@ -169,6 +169,7 @@ What stays dynamically bound is the *caller's* seam, set around a command by who
 - Stage markers: `[Stage N: StageName]` prefix
 - Secrets never reach logs: every line passes through `org-canvas--log-redact` (Bearer tokens, session/csrf/token cookie or query values); plz-error structs are scrubbed by `org-canvas--scrub-plz-error` before entering signal data
 - Secrets never reach the *user* either: a message carrying text the package did not write itself (`error-message-string` above all) goes through `org-canvas--user-message`, never a bare `message`, and `org-canvas--pull-summary-record` masks its `:error` on the way in (#154). The echo area, `*Messages*` and batch stderr are shared sinks too
+- Secrets never reach *backtraces* either: a backtrace prints function arguments verbatim, so the token is never one. `org-canvas--api-request-headers` resolves the Authorization header inside the transport function (`org-canvas--api-execute-request`, `org-canvas--api-curl-patch-config`), which also re-signals whatever plz raises so plz's own frames are gone before an error escapes (#178) — api-interaction.org, "Redaction Cannot Reach a Backtrace"
 - `org-canvas--save-buffer` is a no-op on unmodified buffers; each sync command clears the log unless `org-canvas--inhibit-log-clear` is bound (the master sync binds it)
 
 ### JSON/API

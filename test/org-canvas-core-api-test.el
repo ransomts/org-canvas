@@ -7,6 +7,7 @@
 (require 'test-helper)
 (require 'org-canvas-core)
 (require 'org-canvas-setup)
+(require 'backtrace)
 
 ;;;; 3. API Layer
 
@@ -1209,7 +1210,7 @@ search), so a spec can script which login carries the token."
         (cl-letf (((symbol-function 'plz)
                    (lambda (&rest _args) (setq plz-called t)))
                   ((symbol-function 'org-canvas--api-curl-patch)
-                   (lambda (url _headers payload _timeout)
+                   (lambda (url payload _timeout)
                      (setq curl-args (list url payload))
                      '((id . 9)))))
           (let ((result (org-canvas-api-request 'PATCH "https://example.invalid/api/v1/x"
@@ -1221,21 +1222,23 @@ search), so a spec can script which login carries the token."
 
 (describe "org-canvas--api-curl-patch-config"
   (it "includes the method, headers, url, and trailing data-binary directive"
-    (let ((config (org-canvas--api-curl-patch-config
-                   "https://x.test/api" '(("Authorization" . "Bearer tok")
-                                          ("Content-Type" . "application/json"))
-                   30 "{\"a\":1}")))
-      (expect config :to-match "request = \"PATCH\"")
-      (expect config :to-match "header = \"Authorization: Bearer tok\"")
-      (expect config :to-match "url = \"https://x.test/api\"")
-      (expect config :to-match "max-time = 30")
-      ;; data-binary must be the final directive so curl reads the
-      ;; remaining stdin as the body
-      (expect config :to-match "data-binary = \"@-\"\n\\'")))
+    (with-org-canvas-test-config
+      (let ((config (org-canvas--api-curl-patch-config
+                     "https://x.test/api" 30 "{\"a\":1}")))
+        (expect config :to-match "request = \"PATCH\"")
+        ;; The token is resolved here, not handed in (issue #178)
+        (expect config :to-match "header = \"Authorization: Bearer test-token-12345\"")
+        (expect config :to-match "header = \"Content-Type: application/json\"")
+        (expect config :to-match "url = \"https://x.test/api\"")
+        (expect config :to-match "max-time = 30")
+        ;; data-binary must be the final directive so curl reads the
+        ;; remaining stdin as the body
+        (expect config :to-match "data-binary = \"@-\"\n\\'"))))
 
   (it "omits data-binary when there is no body"
-    (expect (org-canvas--api-curl-patch-config "https://x.test/api" nil 30 nil)
-            :not :to-match "data-binary")))
+    (with-org-canvas-test-config
+      (expect (org-canvas--api-curl-patch-config "https://x.test/api" 30 nil)
+              :not :to-match "data-binary"))))
 
 (describe "org-canvas--api-curl-patch-parse"
   (it "returns parsed JSON on 2xx"
@@ -1265,23 +1268,210 @@ search), so a spec can script which login carries the token."
 
 (describe "org-canvas--api-curl-patch"
   (it "writes config and body to stdin and parses curl output"
-    (let ((seen-stdin nil))
-      (cl-letf (((symbol-function 'call-process)
-                 (lambda (_program infile _dest _display &rest _args)
-                   (setq seen-stdin (with-temp-buffer
-                                      (insert-file-contents infile)
-                                      (buffer-string)))
-                   (insert "{\"id\": 42}\n200")
-                   0)))
-        (let ((result (org-canvas--api-curl-patch
-                       "https://x.test/api"
-                       '(("Authorization" . "Bearer tok"))
-                       "{\"quiz\":{\"title\":\"T\"}}" 30)))
-          (expect result :to-equal '((id . 42)))
-          (expect seen-stdin :to-match "request = \"PATCH\"")
-          (expect seen-stdin :to-match "Bearer tok")
-          ;; Body follows the config in the same stdin stream
-          (expect seen-stdin :to-match "data-binary = \"@-\"\n{\"quiz\":{\"title\":\"T\"}}\\'"))))))
+    (with-org-canvas-test-config
+      (let ((seen-stdin nil))
+        (cl-letf (((symbol-function 'call-process)
+                   (lambda (_program infile _dest _display &rest _args)
+                     (setq seen-stdin (with-temp-buffer
+                                        (insert-file-contents infile)
+                                        (buffer-string)))
+                     (insert "{\"id\": 42}\n200")
+                     0)))
+          (let ((result (org-canvas--api-curl-patch
+                         "https://x.test/api"
+                         "{\"quiz\":{\"title\":\"T\"}}" 30)))
+            (expect result :to-equal '((id . 42)))
+            (expect seen-stdin :to-match "request = \"PATCH\"")
+            (expect seen-stdin :to-match "Bearer test-token-12345")
+            ;; Body follows the config in the same stdin stream
+            (expect seen-stdin :to-match "data-binary = \"@-\"\n{\"quiz\":{\"title\":\"T\"}}\\'"))))))
+
+  (it "writes a config with no body when the payload is nil"
+    (with-org-canvas-test-config
+      (let ((seen-stdin nil))
+        (cl-letf (((symbol-function 'call-process)
+                   (lambda (_program infile _dest _display &rest _args)
+                     (setq seen-stdin (with-temp-buffer
+                                        (insert-file-contents infile)
+                                        (buffer-string)))
+                     (insert "\n204")
+                     0)))
+          (expect (org-canvas--api-curl-patch "https://x.test/api" nil 30)
+                  :to-be nil)
+          (expect seen-stdin :to-match "Bearer test-token-12345")
+          (expect seen-stdin :not :to-match "data-binary"))))))
+
+;;;; The token never reaches a backtrace (issue #178)
+
+;; A batch script that lets an api-error escape gets `debug-early' on
+;; stderr, which prints every frame's arguments verbatim.  The headers
+;; alist used to be an argument on the retry path, so the bearer token
+;; sat in clear text in exactly the output people paste into issues.
+;; These specs capture real backtraces: from inside the transport mock
+;; looking outward, and from a debugger seeing the escaping error.
+
+(defun test-org-canvas--frames-to-request (&optional base skip-base)
+  "Return a string of the frames from BASE out to `org-canvas-api-request'.
+With SKIP-BASE non-nil the frame of BASE itself is left off: a mocked
+transport's own arguments are the header, by definition.  Frames
+outside the request (buttercup's own) are left off so a closure
+printed with its lexical environment cannot smuggle the token into the
+string and fake a failure."
+  (let ((frames nil)
+        (done nil)
+        (all (backtrace-get-frames base)))
+    (dolist (frame (if skip-base (cdr all) all))
+      (unless done
+        (push frame frames)
+        (when (eq (backtrace-frame-fun frame) 'org-canvas-api-request)
+          (setq done t))))
+    (expect done :to-be t)
+    (backtrace-to-string (nreverse frames))))
+
+(defun test-org-canvas--skip-when-instrumented ()
+  "Mark the spec pending while the request path is edebug-instrumented.
+A coverage run instruments `lisp/' through edebug, and
+`edebug-default-enter' rebinds `debugger' to edebug's own inside every
+instrumented function, so a debugger this spec installs never runs and
+a batch Emacs waits for keyboard input instead.  The spec runs on every
+plain `eldev test', which is what CI does."
+  (when (get 'org-canvas-api-request 'edebug)
+    (signal 'buttercup-pending
+            "debugger is edebug's inside instrumented code (coverage run)")))
+
+(defmacro test-org-canvas--with-capturing-debugger (var &rest body)
+  "Run BODY with the debugger replaced, leaving the backtrace in VAR.
+The first error to escape BODY with no handler calls the debugger,
+which records the frames from the signalling `signal' out to
+`org-canvas-api-request' as a string in VAR and abandons BODY."
+  (declare (indent 1))
+  `(let ((debug-on-error t)
+         (debug-ignored-errors nil)
+         (debugger (lambda (&rest _args)
+                     ;; The same bump buttercup's own debugger makes,
+                     ;; without which Emacs enters the debugger once
+                     ;; per batch run
+                     (setq num-nonmacro-input-events
+                           (1+ num-nonmacro-input-events))
+                     (setq ,var (test-org-canvas--frames-to-request 'signal))
+                     (throw 'test-org-canvas--debugger-done nil))))
+     (catch 'test-org-canvas--debugger-done
+       ,@body)))
+
+(describe "org-canvas-api-request and the token (issue #178)"
+  (it "sends the Authorization header to plz"
+    (with-org-canvas-test-config
+      (let ((seen-headers nil))
+        (cl-letf (((symbol-function 'plz)
+                   (lambda (_method _url &rest args)
+                     (setq seen-headers (plist-get args :headers))
+                     '((id . 1)))))
+          (org-canvas-api-request 'GET "https://example.invalid/api/v1/x"))
+        (expect (alist-get "Authorization" seen-headers nil nil #'equal)
+                :to-equal "Bearer test-token-12345")
+        (expect (alist-get "Content-Type" seen-headers nil nil #'equal)
+                :to-equal "application/json"))))
+
+  (it "keeps the token out of every frame above the transport"
+    (with-org-canvas-test-config
+      (let ((backtrace nil))
+        (cl-letf (((symbol-function 'plz)
+                   (lambda (&rest _args)
+                     ;; From plz outward, minus plz's own frame
+                     (setq backtrace (test-org-canvas--frames-to-request 'plz t))
+                     '((id . 1)))))
+          (org-canvas-api-request 'GET "https://example.invalid/api/v1/x"))
+        (expect backtrace :to-match "org-canvas--api-execute-with-retry")
+        (expect backtrace :to-match "org-canvas--api-execute-request")
+        (expect backtrace :to-match "org-canvas-api-request")
+        (expect backtrace :to-match "example.invalid")
+        (expect backtrace :not :to-match "test-token-12345"))))
+
+  (it "keeps the token out of every frame above curl on the PATCH path"
+    (with-org-canvas-test-config
+      (let ((backtrace nil)
+            (seen-stdin nil))
+        (cl-letf (((symbol-function 'call-process)
+                   (lambda (_program infile _dest _display &rest _args)
+                     (setq backtrace (test-org-canvas--frames-to-request 'call-process))
+                     (setq seen-stdin (with-temp-buffer
+                                        (insert-file-contents infile)
+                                        (buffer-string)))
+                     (insert "{\"id\": 7}\n200")
+                     0)))
+          (org-canvas-api-request 'PATCH "https://example.invalid/api/v1/x"
+                                  :data '((title . "T"))))
+        (expect seen-stdin :to-match "Authorization: Bearer test-token-12345")
+        (expect backtrace :to-match "org-canvas--api-curl-patch")
+        (expect backtrace :to-match "org-canvas--api-execute-with-retry")
+        (expect backtrace :not :to-match "test-token-12345"))))
+
+  (it "keeps the token out of the backtrace of an api-error that escapes"
+    (test-org-canvas--skip-when-instrumented)
+    ;; The report in #178: a malformed URL (curl error 3) escaping a
+    ;; batch script's condition-case, printed by `debug-early'
+    (with-org-canvas-test-config
+      (let ((backtrace nil))
+        (cl-letf (((symbol-function 'plz)
+                   (lambda (&rest _args)
+                     (signal 'plz-error
+                             (make-plz-error
+                              :curl-error '(3 . "URL using bad/illegal format"))))))
+          (test-org-canvas--with-capturing-debugger backtrace
+            (org-canvas-api-request 'GET "https://example.invalid/api/v1/x")))
+        (expect backtrace :to-match "org-canvas-api-error")
+        (expect backtrace :to-match "bad/illegal format")
+        (expect backtrace :to-match "org-canvas--api-execute-with-retry")
+        (expect backtrace :to-match "org-canvas-api-request")
+        (expect backtrace :not :to-match "test-token-12345"))))
+
+  (it "re-signals an error plz raises from the transport frame, not plz's"
+    (test-org-canvas--skip-when-instrumented)
+    ;; plz can raise a plain `error' of its own (a missing curl, its
+    ;; process-result check); its frames hold the header, so they must
+    ;; be unwound before the error reaches a backtrace
+    (with-org-canvas-test-config
+      (let ((backtrace nil)
+            (plz-frame-seen nil))
+        (cl-letf (((symbol-function 'plz)
+                   (lambda (&rest _args) (error "Plz: NO RESULT FROM PROCESS"))))
+          (let ((debugger (lambda (&rest _args)
+                            (setq num-nonmacro-input-events
+                                  (1+ num-nonmacro-input-events))
+                            (setq plz-frame-seen
+                                  (cl-some (lambda (f) (eq (backtrace-frame-fun f) 'plz))
+                                           (backtrace-get-frames 'signal)))
+                            (setq backtrace (test-org-canvas--frames-to-request 'signal))
+                            (throw 'test-org-canvas--debugger-done nil)))
+                (debug-on-error t)
+                (debug-ignored-errors nil))
+            (catch 'test-org-canvas--debugger-done
+              (org-canvas-api-request 'GET "https://example.invalid/api/v1/x"))))
+        (expect backtrace :to-match "NO RESULT FROM PROCESS")
+        (expect plz-frame-seen :to-be nil)
+        (expect backtrace :not :to-match "test-token-12345"))))
+
+  (it "re-signals the error plz raises unchanged"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'plz)
+                 (lambda (&rest _args) (signal 'file-missing '("curl" "No such file")))))
+        (let ((caught (condition-case e
+                          (org-canvas-api-request 'GET "https://example.invalid/api/v1/x")
+                        (file-missing e))))
+          (expect caught :to-equal '(file-missing "curl" "No such file"))))))
+
+  (it "logs the request with the header already masked"
+    (with-org-canvas-test-config
+      (let ((logged nil))
+        (cl-letf (((symbol-function 'org-canvas--log-debug)
+                   (lambda (_logger fmt &rest args)
+                     (push (apply #'format fmt args) logged)))
+                  ((symbol-function 'plz)
+                   (lambda (&rest _args) '((id . 1)))))
+          (org-canvas-api-request 'GET "https://example.invalid/api/v1/x"))
+        (let ((line (cl-find-if (lambda (l) (string-match-p "Headers:" l)) logged)))
+          (expect line :to-match "Bearer \\*\\*\\*MASKED\\*\\*\\*")
+          (expect line :not :to-match "test-token-12345"))))))
 
 (describe "org-canvas--api-error-message"
   (it "extracts per-attribute error messages"
