@@ -10,6 +10,7 @@
 
 (require 'cl-lib)
 (require 'org)
+(require 'ox)
 (require 'subr-x)
 (require 'org-canvas-core-config)
 (require 'org-canvas-core-api)
@@ -807,6 +808,47 @@ Images are uploaded to the `org-canvas-image-folder' on Canvas."
 (defvar org-export-with-sub-superscripts)
 (defvar org-export-use-babel)
 
+(defconst org-canvas--html-heading-div-re
+  (concat "\\`<div class=\"h\\([1-6]\\)\"[^>]*>[ \t\n]*<p>"
+          "\\(\\(?:.\\|\n\\)*?\\)</p>[ \t\n]*</div>[ \t\n]*\\'")
+  "Match the HTML ox-html emits for a one-paragraph `#+begin_hN' block.
+G1 = the level, G2 = the paragraph's inner HTML.")
+
+(defun org-canvas--html-heading-block-filter (text backend _info)
+  "Render a `#+begin_hN' special block as an HTML `<hN>' heading.
+An export filter for `org-export-filter-special-block-functions'.
+TEXT is the block as ox-html rendered it, a `<div class=\"hN\">'
+around one paragraph; BACKEND must derive from `html'.  The block is
+what a pulled body keeps an HTML heading as (issue #175), so a push
+returns the heading Canvas had.  A block of more than one paragraph
+stays a div."
+  (let* ((level (and (org-export-derived-backend-p backend 'html)
+                     (string-match org-canvas--html-heading-div-re text)
+                     (match-string 1 text)))
+         (inner (and level (match-string 2 text))))
+    (if (and inner (not (string-match-p "</?p>" inner)))
+        (format "<h%s>%s</h%s>\n" level (string-trim inner) level)
+      text)))
+
+(defmacro org-canvas--with-body-export-settings (&rest body)
+  "Run BODY, an Org to HTML export, the way a pushed body is exported.
+Sub- and superscripts stay literal and a heading block comes back as
+the `<hN>' it was pulled from (issue #175)."
+  (declare (indent 0))
+  `(let ((org-export-with-sub-superscripts nil)
+         (org-export-filter-special-block-functions
+          (cons #'org-canvas--html-heading-block-filter
+                org-export-filter-special-block-functions)))
+     ,@body))
+
+(defun org-canvas--org-to-html-string (text)
+  "Export Org TEXT to an HTML fragment the way a body is pushed.
+The exporter behind every module's own body text — a quiz
+description, a question — so a heading block in any of them reaches
+Canvas as a heading (issue #175)."
+  (org-canvas--with-body-export-settings
+    (org-export-string-as text 'html t)))
+
 (defun org-canvas--export-subtree-body-to-html (&optional offline)
   "Export current Org subtree to HTML, resolving cross-file links.
 Returns the HTML string.  Cross-file links [[file:*.org::*...][...]]
@@ -850,9 +892,9 @@ must ask for this; it gets the same text with local link markup."
           ;; Export the subtree to HTML (body only)
           (goto-char (point-min))
           (let ((org-export-with-broken-links 'mark)
-                (org-export-with-sub-superscripts nil)
                 (org-export-use-babel nil))
-            (org-export-as 'html t nil t nil)))))))
+            (org-canvas--with-body-export-settings
+              (org-export-as 'html t nil t nil))))))))
 
 ;;;; 4e. Pull Helpers (Canvas -> Org)
 
@@ -1029,36 +1071,136 @@ Returns TEXT unchanged when nil."
            (s (org-canvas--repair-toc-and-prune-customids s)))
       s)))
 
+(defconst org-canvas--body-headline-re "^\\(\\*+\\)[ \t]+\\(.*\\)$"
+  "Match an Org headline line.  G1 = stars, G2 = title.")
+
+(defun org-canvas--body-drawer-end ()
+  "Return the end of the property drawer under the headline at point.
+Point is at the end of a headline line.  The drawer is the one
+pandoc writes under a converted heading; nil when the next line is
+not `:PROPERTIES:' or the drawer never closes."
+  (save-excursion
+    (forward-line 1)
+    (when (and (looking-at "[ \t]*:PROPERTIES:[ \t]*$")
+               (re-search-forward "^[ \t]*:END:[ \t]*$" nil t))
+      (point))))
+
+(defun org-canvas--body-drawer-custom-id (start end)
+  "Return the CUSTOM_ID named in the drawer between START and END, or nil."
+  (save-excursion
+    (goto-char start)
+    (when (re-search-forward org-canvas--customid-line-re end t)
+      (string-trim (match-string-no-properties 1)))))
+
+(defun org-canvas--body-replace-headline ()
+  "Replace the headline `org-canvas--body-headline-re' just matched.
+Point is at the end of the match with the match data live.  The
+headline line and the drawer under it go; a heading block of the
+same level takes their place, carrying the drawer's CUSTOM_ID as a
+`<<target>>' so a link to it still resolves.  Returns that id, or
+nil."
+  (let* ((level (min 6 (length (match-string 1))))
+         (title (string-trim (match-string-no-properties 2)))
+         (start (match-beginning 0))
+         (line-end (match-end 0))
+         (drawer-end (org-canvas--body-drawer-end))
+         (id (and drawer-end
+                  (org-canvas--body-drawer-custom-id line-end drawer-end))))
+    (delete-region start (or drawer-end line-end))
+    (goto-char start)
+    (unless (string-empty-p title)
+      ;; A title shaped like a headline (`* starry') would be one
+      ;; again, and indented it would be a list item; the entity
+      ;; keeps the star as text.
+      (when (string-match-p "\\`\\*+[ \t]" title)
+        (setq title (concat "\\ast{}" (substring title 1))))
+      (insert (format "#+begin_h%d\n%s%s\n#+end_h%d"
+                      level (if id (format "<<%s>> " id) "") title level)))
+    id))
+
+(defun org-canvas--body-retarget-anchor-links (ids)
+  "Point `[[#ID]' links in the current buffer at `<<ID>>' targets.
+IDS are the CUSTOM_IDs whose headings became heading blocks: a block
+cannot carry a CUSTOM_ID, so the anchor form of the link would dangle
+where the fuzzy form resolves."
+  (dolist (id ids)
+    (goto-char (point-min))
+    (let ((from (format "[[#%s]" id))
+          (to (format "[[%s]" id)))
+      (while (search-forward from nil t)
+        (replace-match to t t)))))
+
+(defun org-canvas--org-body-neutralize-headlines (text)
+  "Turn every Org headline in TEXT into a `#+begin_hN' heading block.
+TEXT is a converted body about to be inserted under an entry.  An
+HTML heading that pandoc renders as an Org headline ends that entry
+and begins another — the quiz in issue #175 lost five of its six
+questions to one — so a body never carries a headline at any level:
+every module's body extractor stops at the next heading, and quizzes,
+new quizzes and outcomes read child headings as questions and
+outcomes.  The block keeps the heading's level and text and exports
+back to `<hN>' through `org-canvas--html-heading-block-filter'.
+Returns TEXT itself when it carries no headline."
+  (if (or (null text)
+          (not (string-match-p org-canvas--body-headline-re text)))
+      text
+    (with-temp-buffer
+      (insert text)
+      (goto-char (point-min))
+      (let ((ids nil))
+        (while (re-search-forward org-canvas--body-headline-re nil t)
+          (let ((id (org-canvas--body-replace-headline)))
+            (when id (push id ids))))
+        (org-canvas--body-retarget-anchor-links ids))
+      (buffer-string))))
+
+(defun org-canvas--strip-heading-block-markers (text)
+  "Drop the `#+begin_hN' and `#+end_hN' lines of TEXT, keeping their text."
+  (replace-regexp-in-string
+   "^#\\+\\(?:begin\\|end\\)_h[1-6][ \t]*\\(?:\n\\|\\'\\)" "" text))
+
+(defun org-canvas--html-to-org-pandoc (html)
+  "Convert HTML to Org text through pandoc.
+Returns the post-processed Org text, or the raw HTML behind a
+warning line when pandoc exits non-zero."
+  (with-temp-buffer
+    (insert (org-canvas--html-strip-ids html))
+    (let ((exit-code (call-process-region
+                      (point-min) (point-max) "pandoc"
+                      t t nil
+                      "-f" "html" "-t" "org" "--wrap=none")))
+      (if (= exit-code 0)
+          (org-canvas--html-to-org-post-process
+           (string-trim (buffer-string)))
+        (concat "# WARNING: pandoc conversion failed\n" html)))))
+
 (defun org-canvas--html-to-org (html)
   "Convert HTML string to Org format using pandoc.
 Returns the Org-mode text, or the raw HTML prefixed with a warning
 if pandoc is not available.  Output passes through
 `org-canvas--html-to-org-post-process' to clean up NBSP characters,
-whitespace-only lines, and missing spacing before inline timestamps."
-  (if (not (executable-find "pandoc"))
-      (concat "# WARNING: pandoc not found, raw HTML below\n" html)
-    (with-temp-buffer
-      (insert (org-canvas--html-strip-ids html))
-      (let ((exit-code (call-process-region
-                        (point-min) (point-max) "pandoc"
-                        t t nil
-                        "-f" "html" "-t" "org" "--wrap=none")))
-        (if (= exit-code 0)
-            (org-canvas--html-to-org-post-process
-             (string-trim (buffer-string)))
-          (concat "# WARNING: pandoc conversion failed\n" html))))))
+whitespace-only lines, and missing spacing before inline timestamps,
+and then, whichever path produced it, through
+`org-canvas--org-body-neutralize-headlines': a body never carries an
+Org headline (issue #175)."
+  (org-canvas--org-body-neutralize-headlines
+   (if (executable-find "pandoc")
+       (org-canvas--html-to-org-pandoc html)
+     (concat "# WARNING: pandoc not found, raw HTML below\n" html))))
 
 (defun org-canvas--html-to-org-inline (html)
   "Convert HTML to Org and collapse to a single line.
 Delegates to `org-canvas--html-to-org', then replaces newlines with spaces
 and trims whitespace.  Suitable for table cells, list items, and heading
-titles where multi-line output would break formatting.
+titles where multi-line output would break formatting.  A heading
+block's marker lines are dropped first; its text stays.
 Returns empty string for nil or empty HTML."
   (if (or (null html) (string-empty-p html))
       ""
     (string-trim
      (replace-regexp-in-string "[\n\r]+" " "
-                               (org-canvas--html-to-org html)))))
+                               (org-canvas--strip-heading-block-markers
+                                (org-canvas--html-to-org html))))))
 
 (defvar org-canvas--file-id-cache nil
   "Hash mapping CANVAS_ID strings to relative file paths from `files.org'.
@@ -1868,6 +2010,38 @@ generated loop stays a two-branch dispatch."
       (org-canvas--pull-process-item item file config)
       'processed))))
 
+(defun org-canvas--pull-idless-entry-count (id-property)
+  "Count the level-1 entries of the current buffer carrying no ID-PROPERTY."
+  (let ((n 0))
+    (org-map-entries
+     (lambda () (unless (org-entry-get (point) id-property) (cl-incf n)))
+     "LEVEL=1" 'file)
+    n))
+
+(defun org-canvas--pull-check-entry-count (label file id-property
+                                                 idless-before written)
+  "Warn when a pull left FILE with level-1 entries it did not mean to write.
+LABEL names the feature.  IDLESS-BEFORE is what
+`org-canvas--pull-idless-entry-count' returned before the items were
+written and WRITTEN how many entries the pull wrote or matched.  A
+pull stamps ID-PROPERTY on every entry it touches, so a level-1 entry
+without one that was not there before came from a body that split
+its item (issue #175).  The warning goes to the log and the pull
+summary; nothing prompts, so a batch pull runs on.  Counting is one
+pass over the level-1 headings of the current buffer."
+  (let* ((idless (org-canvas--pull-idless-entry-count id-property))
+         (extra (- idless idless-before)))
+    (when (> extra 0)
+      (let ((msg (format "%d level-1 entr%s without %s appeared while \
+writing %d %s: a body heading split an entry?  Check the file before pushing"
+                         extra (if (= extra 1) "y" "ies") id-property
+                         written label)))
+        (org-canvas--log-warning org-canvas--logger "[Pull] %s: %s"
+          (file-name-nondirectory file) msg)
+        (org-canvas--pull-summary-record
+         :file (file-name-nondirectory file) :error msg
+         :log-line (org-canvas--pull-summary-current-log-line))))))
+
 (defmacro org-canvas-define-pull (feature &rest args)
   "Define `org-canvas-pull-FEATURE' function.
 FEATURE is a symbol like \\='pages or \\='announcements.
@@ -1898,7 +2072,8 @@ Generates an interactive function `org-canvas-pull-FEATURE' that:
   2. Fetches all items from the Canvas API endpoint
   3. Upserts a heading for each item, saves sync state
   4. Calls ITEM-FN for module-specific property setting
-  5. Saves the buffer and logs completion
+  5. Warns when a level-1 entry without the id appeared (issue #175)
+  6. Saves the buffer and logs completion
 
 Example:
   (org-canvas-define-pull announcements
@@ -1953,16 +2128,20 @@ wholesale (issue #67)." feature-name)
              (unless (file-exists-p file)
                (with-temp-file file (insert "")))
              (with-current-buffer (org-canvas--find-file-noselect file)
-               (dolist (item (org-canvas--pull-sort-items
-                              remote ,secondary-sort-key ,tertiary-sort-key))
-                 (pcase (org-canvas--pull-handle-item
-                         item file
-                         (list :id-field ,id-field :title-field ,title-field
-                               :id-property ,id-property :pull-item-fn ,item-fn
-                               :skip-fn ,skip-fn :skip-reason ,skip-reason)
-                         managed-only known-ids)
-                   ('processed (cl-incf count))
-                   ('skipped (cl-incf skipped))))
+               (let ((idless-before
+                      (org-canvas--pull-idless-entry-count ,id-property)))
+                 (dolist (item (org-canvas--pull-sort-items
+                                remote ,secondary-sort-key ,tertiary-sort-key))
+                   (pcase (org-canvas--pull-handle-item
+                           item file
+                           (list :id-field ,id-field :title-field ,title-field
+                                 :id-property ,id-property :pull-item-fn ,item-fn
+                                 :skip-fn ,skip-fn :skip-reason ,skip-reason)
+                           managed-only known-ids)
+                     ('processed (cl-incf count))
+                     ('skipped (cl-incf skipped))))
+                 (org-canvas--pull-check-entry-count
+                  ,feature-name file ,id-property idless-before count))
                (org-canvas--pull-write-file-header)
                (org-canvas--save-buffer)))
            (org-canvas--pull-kill-fresh-buffer file was-fresh)

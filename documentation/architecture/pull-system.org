@@ -72,6 +72,16 @@ of items *written*, which reads as the number *available*.  A silent
 skip leaves a local copy that is missing content but looks complete
 (issue #81).
 
+*The entry-count guard (issue #175).* Before the loop the macro counts
+the level-1 entries carrying no id property
+(=org-canvas--pull-idless-entry-count=); after it,
+=org-canvas--pull-check-entry-count= counts again and, when the number
+grew, logs a =[Pull]= warning and records a non-fatal error in the
+summary — an entry the pull did not stamp is one it did not mean to
+write, which is what a body heading that split an item looks like.  It
+never prompts.  The quizzes and new-quizzes custom loops call the same
+pair; see decisions.org, "A Body Never Introduces a Headline".
+
 ** Example
 
 #+begin_src elisp
@@ -171,6 +181,13 @@ property. No-op if the ISO8601 value is nil.
 
 Converts HTML to Org format via pandoc. Falls back to raw HTML with a
 warning prefix if pandoc is not installed or conversion fails.
+
+Whichever path produced the text, it then passes through
+=org-canvas--org-body-neutralize-headlines=: every Org headline becomes
+a =#+begin_hN= … =#+end_hN= special block, so a body can never end the
+entry it is inserted under (issue #175).  The block exports back to
+=<hN>= through =org-canvas--html-heading-block-filter=; see
+decisions.org, "A Body Never Introduces a Headline".
 
 ** org-canvas--html-to-org-inline
 
