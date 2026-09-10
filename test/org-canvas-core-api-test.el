@@ -2172,6 +2172,15 @@ which records the frames from the signalling `signal' out to
           (org-canvas-api-error
            (expect (error-message-string err) :to-match "doesn't exist; not allowed"))))))
 
+  (it "names an error that carries no message by its whole object"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _) '((errors . [((extensions . ((code . "FORBIDDEN"))))])))))
+        (condition-case err
+            (progn (org-canvas--graphql-send "{ x }") (expect nil :to-be t))
+          (org-canvas-api-error
+           (expect (error-message-string err) :to-match "FORBIDDEN"))))))
+
   (it "lets a query through on a read-only course, but not a mutation"
     (with-org-canvas-test-config
       (let ((org-canvas-read-only t))

@@ -2163,7 +2163,12 @@
       (org-mode)
       (org-canvas--submissions-render-detail-entry
        (test-org-canvas-make-submission '((score . 5) (posted_at . :null))) "1001")
-      (expect (buffer-string) :not :to-match "POSTED_AT")))
+      (expect (buffer-string) :not :to-match "POSTED_AT"))
+    (with-temp-buffer
+      (org-mode)
+      (org-canvas--submissions-render-detail-entry
+       (test-org-canvas-make-submission '((score . 5) (posted_at . "not a date"))) "HW" "1001")
+      (expect (buffer-string) :to-match ":POSTED_AT: not a date")))
 
   (it "reads the policy from the file, so no request is needed at push time"
     (with-grading-file (concat test-grading-file-header "#+PROPERTY: POST_POLICY manual\n* A\n:PROPERTIES:\n:USER_ID: 1\n:END:\n")
