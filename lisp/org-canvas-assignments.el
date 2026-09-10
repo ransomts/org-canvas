@@ -16,6 +16,8 @@
 ;;   POINTS           - Points possible
 ;;   DUE_AT           - Due date (Org timestamp)
 ;;   SUBMISSION       - Submission type(s): online_upload, online_text_entry, etc.
+;;   DOCUMENT_PROCESSOR - Turnitin (or another LTI asset processor) attached in
+;;                      the web UI; pull reads it, push never sends it (#184)
 ;;   GROUP            - Link to assignment-groups.org heading
 ;;   RUBRIC_LINK      - Link to rubrics.org heading
 ;;   RUBRIC_USE_FOR_GRADING - true: the rubric total becomes the grade
@@ -156,6 +158,10 @@ takes effect on the next `org-canvas-pull-assignments' invocation."
     (:org-prop "EXTERNAL_TOOL_NEW_TAB" :data-key :external_tool_new_tab :type boolean
      :remote-fn org-canvas--assignment-remote-tool-new-tab
      :doc "Launch the tool in a new tab")
+    (:org-prop "DOCUMENT_PROCESSOR" :data-key :asset_processors :type string
+     :canvas-owned t
+     :remote-fn org-canvas--assignment-remote-document-processor
+     :doc "Document processor (Turnitin) attached in the web UI; written by pull, never pushed")
     (:org-prop "GROUP_CATEGORY_ID" :data-key :group_category_id :type number
      :doc "Group set ID or link to group-categories.org")
     (:org-prop "POSITION" :data-key :position :type number
@@ -464,6 +470,46 @@ external-tool assignment would report drift on every run."
   "Return the remote new-tab flag of ITEM, or nil."
   (alist-get 'new_tab (org-canvas--assignment-remote-tool-attrs item)))
 
+(defun org-canvas--assignment-describe-processor (processor)
+  "Return PROCESSOR, one entry of Canvas's `asset_processors', as a phrase.
+\"Turnitin (asset processor 12345)\" when both a name and an id are
+there; whichever one is there otherwise.  The name is read from the
+fields Canvas has used for an LTI placement's label — `title',
+`tool_name', the nested tool's `name', `text' — because the response
+shape is not documented and was not observable when this was written
+\(no assignment on the probed course carried one), so the reader takes
+what it finds and never raises."
+  (if (not (consp processor))
+      (format "asset processor %s" processor)
+    (let* ((tool (alist-get 'context_external_tool processor))
+           (name (seq-find (lambda (v) (and (stringp v) (not (string-empty-p v))))
+                           (list (alist-get 'title processor)
+                                 (alist-get 'tool_name processor)
+                                 (and (consp tool) (alist-get 'name tool))
+                                 (alist-get 'text processor))))
+           (id (org-canvas--registry-normalize-remote (alist-get 'id processor))))
+      (cond ((and name id) (format "%s (asset processor %s)" name id))
+            (name name)
+            (id (format "asset processor %s" id))
+            (t "asset processor")))))
+
+(defun org-canvas--assignment-remote-document-processor (item)
+  "Return the document processors attached to ITEM as one string, or nil.
+Canvas's `asset_processors' is the LTI Asset Processor placement —
+Turnitin's document-processing mode, the one that keeps the PDF in
+Canvas and grades in SpeedGrader.  Canvas attaches one only through
+the interactive Deep Linking flow in a browser, never by API token,
+so org-canvas can observe it and protect it but not set it: this
+reader feeds the pull and the drift report, and the payload builder
+never emits the field (issue #184).  Nil when Canvas sends no key, a
+null, or an empty array, which is every assignment on an instance
+without the placement."
+  (let ((processors (org-canvas--registry-normalize-remote
+                     (alist-get 'asset_processors item))))
+    (when (and processors (> (length processors) 0))
+      (mapconcat #'org-canvas--assignment-describe-processor
+                 (append processors nil) ", "))))
+
 (defun org-canvas--assignment-add-optional-fields (data assignment)
   "Add optional fields from DATA to ASSIGNMENT hash-table."
   (dolist (spec org-canvas--assignment-optional-field-specs)
@@ -474,6 +520,11 @@ external-tool assignment would report drift on every run."
   ;; grader_count only applies when moderated_grading is enabled
   (when (and (plist-get data :moderated_grading) (plist-get data :grader_count))
     (puthash "grader_count" (plist-get data :grader_count) assignment))
+  ;; Never `asset_processors': Canvas cannot attach one by API but does
+  ;; honour an empty array as "remove them all", so a heading that is
+  ;; merely silent about its DOCUMENT_PROCESSOR must not strip the one
+  ;; attached in the web UI (issue #184).  The parse never reads the
+  ;; property, and a test holds the payload to that.
   (org-canvas--assignment-add-external-tool data assignment))
 
 (defun org-canvas--assignment-build-payload (data)

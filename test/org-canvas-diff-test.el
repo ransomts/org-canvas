@@ -1810,5 +1810,57 @@ its :children is the Module Items result."
         (expect (org-canvas--diff-known-extras-for "module-items")
                 :to-equal '(("5864661" . "twin")))))))
 
+;;;; A Canvas-Owned Property Is Compared Even When the Heading Is Silent (issue #184)
+
+(describe "org-canvas--diff-compare-fields with a :canvas-owned spec"
+  (let ((specs '((:org-prop "DOCUMENT_PROCESSOR" :data-key :asset_processors
+                  :type string :canvas-owned t
+                  :remote-fn org-canvas--assignment-remote-document-processor))))
+    (it "reports a processor attached in the web UI after the last pull"
+      (with-temp-org-buffer
+       "* Essay\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+       (org-back-to-heading)
+       (expect (org-canvas--diff-compare-fields
+                specs (point)
+                '((asset_processors . [((id . 5) (title . "Turnitin"))])))
+               :to-equal '(("DOCUMENT_PROCESSOR" "(unset)"
+                            "Turnitin (asset processor 5)")))))
+
+    (it "says nothing when neither side has one"
+      (with-temp-org-buffer
+       "* Essay\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+       (org-back-to-heading)
+       (expect (org-canvas--diff-compare-fields specs (point) '((id . 1)))
+               :to-be nil)
+       (expect (org-canvas--diff-compare-fields
+                specs (point) '((asset_processors . [])))
+               :to-be nil)))
+
+    (it "reports a processor detached since the pull"
+      (with-temp-org-buffer
+       "* Essay\n:PROPERTIES:\n:CANVAS_ID: 1\n:DOCUMENT_PROCESSOR: Turnitin (asset processor 5)\n:END:\n"
+       (org-back-to-heading)
+       (expect (org-canvas--diff-compare-fields
+                specs (point) '((asset_processors . [])))
+               :to-equal '(("DOCUMENT_PROCESSOR" "Turnitin (asset processor 5)"
+                            "(unset)")))))
+
+    (it "agrees when the pulled value still matches"
+      (with-temp-org-buffer
+       "* Essay\n:PROPERTIES:\n:CANVAS_ID: 1\n:DOCUMENT_PROCESSOR: Turnitin (asset processor 5)\n:END:\n"
+       (org-back-to-heading)
+       (expect (org-canvas--diff-compare-fields
+                specs (point)
+                '((asset_processors . [((id . 5) (title . "Turnitin"))])))
+               :to-be nil)))
+
+    (it "is how the assignments registry declares DOCUMENT_PROCESSOR"
+      (let ((spec (seq-find (lambda (s)
+                              (equal (plist-get s :org-prop) "DOCUMENT_PROCESSOR"))
+                            (org-canvas-diff-test--specs "assignments"))))
+        (expect (plist-get spec :canvas-owned) :to-be t)
+        (expect (plist-get spec :remote-fn)
+                :to-equal 'org-canvas--assignment-remote-document-processor)))))
+
 (provide 'org-canvas-diff-test)
 ;;; org-canvas-diff-test.el ends here

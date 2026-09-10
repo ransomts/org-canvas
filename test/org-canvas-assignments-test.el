@@ -2033,4 +2033,102 @@ Content.
         (expect (gethash "assignment" (org-canvas--assignment-build-payload data))
                 :to-be-truthy)))))
 
+;;;; A Document Processor Is Canvas's to Set (issue #184)
+
+(describe "org-canvas--assignment-remote-document-processor"
+  (it "names the processor and its id"
+    (expect (org-canvas--assignment-remote-document-processor
+             '((id . 1)
+               (asset_processors . [((id . 12345) (title . "Turnitin"))])))
+            :to-equal "Turnitin (asset processor 12345)"))
+
+  (it "joins several processors"
+    (expect (org-canvas--assignment-remote-document-processor
+             '((asset_processors . [((id . 1) (title . "Turnitin"))
+                                    ((id . 2) (tool_name . "Copyleaks"))])))
+            :to-equal "Turnitin (asset processor 1), Copyleaks (asset processor 2)"))
+
+  (it "falls back to the nested tool's name, the text, then the id alone"
+    ;; The response shape is undocumented and was not observable when
+    ;; this was written, so the reader takes what it finds.
+    (expect (org-canvas--assignment-remote-document-processor
+             '((asset_processors
+                . [((id . 7) (context_external_tool . ((name . "Turnitin"))))])))
+            :to-equal "Turnitin (asset processor 7)")
+    (expect (org-canvas--assignment-remote-document-processor
+             '((asset_processors . [((id . 7))])))
+            :to-equal "asset processor 7")
+    (expect (org-canvas--assignment-remote-document-processor
+             '((asset_processors . [((text . "Similarity report") (id . :null))])))
+            :to-equal "Similarity report")
+    (expect (org-canvas--assignment-remote-document-processor
+             '((asset_processors . [((iframe . t))])))
+            :to-equal "asset processor")
+    (expect (org-canvas--assignment-remote-document-processor
+             '((asset_processors . [99])))
+            :to-equal "asset processor 99"))
+
+  (it "is nil when Canvas sends no key, a null or an empty array"
+    ;; Every assignment on an instance without the placement: the probed
+    ;; course returned no key on any of its 78 assignments.
+    (expect (org-canvas--assignment-remote-document-processor '((id . 1)))
+            :to-be nil)
+    (expect (org-canvas--assignment-remote-document-processor
+             '((asset_processors . :null)))
+            :to-be nil)
+    (expect (org-canvas--assignment-remote-document-processor
+             '((asset_processors . [])))
+            :to-be nil)))
+
+(describe "DOCUMENT_PROCESSOR on pull (issue #184)"
+  (it "is written from the processor Canvas holds"
+    (with-pull-property-test #'org-canvas--assignment-pull-item
+      '((id . 1) (name . "Essay") (description . "")
+        (asset_processors . [((id . 12345) (title . "Turnitin"))]))
+      "DOCUMENT_PROCESSOR" :to-equal "Turnitin (asset processor 12345)"))
+
+  (it "is left off an assignment without one"
+    (with-pull-property-test #'org-canvas--assignment-pull-item
+      '((id . 1) (name . "Essay") (description . ""))
+      "DOCUMENT_PROCESSOR" :to-be nil))
+
+  (it "is dropped when the processor was detached in the web UI"
+    (with-temp-org-buffer
+     "* Essay
+:PROPERTIES:
+:CANVAS_ID: 1
+:DOCUMENT_PROCESSOR: Turnitin (asset processor 12345)
+:END:
+"
+     (org-back-to-heading)
+     (with-html-to-org-identity
+       (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                  (lambda (&rest _) nil)))
+         (org-canvas--assignment-pull-item
+          '((id . 1) (name . "Essay") (description . "")
+            (asset_processors . []))
+          (point))
+         (expect (org-entry-get (point) "DOCUMENT_PROCESSOR") :to-be nil))))))
+
+(describe "DOCUMENT_PROCESSOR on push (issue #184)"
+  (it "never reaches the payload, so a silent heading cannot strip one"
+    ;; Canvas cannot attach a processor by API but honours an empty
+    ;; array as "remove them all".
+    (with-org-canvas-test-config
+      (with-temp-org-buffer
+       "* Essay
+:PROPERTIES:
+:CANVAS_ID: 1
+:SUBMISSION: online_upload
+:DOCUMENT_PROCESSOR: Turnitin (asset processor 12345)
+:END:
+Write it.
+"
+       (org-back-to-heading)
+       (let* ((data (org-canvas--assignment-parse-entry))
+              (json (json-encode (org-canvas--assignment-build-payload data))))
+         (expect (plist-member data :asset_processors) :to-be nil)
+         (expect json :not :to-match "asset_processors")
+         (expect json :not :to-match "[Tt]urnitin"))))))
+
 ;;; org-canvas-assignments-test.el ends here
