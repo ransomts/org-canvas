@@ -17,6 +17,7 @@
 
 (require 'org-canvas-core-config)
 (require 'org-canvas-core-org)
+(require 'org-canvas-core-html)
 
 ;;;; Declarative Payload Builder
 ;;

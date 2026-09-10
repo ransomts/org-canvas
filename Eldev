@@ -21,6 +21,8 @@
                                   "lisp/org-canvas-core-config.el"
                                   "lisp/org-canvas-core-api.el"
                                   "lisp/org-canvas-core-org.el"
+                                  "lisp/org-canvas-core-html.el"
+                                  "lisp/org-canvas-core-pull.el"
                                   "lisp/org-canvas-core-macros.el"
                                   "lisp/org-canvas-core-conflict.el"
                                   "lisp/org-canvas-core-delete.el"
