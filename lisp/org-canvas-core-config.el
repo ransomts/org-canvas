@@ -562,7 +562,7 @@ the sync had already written (issue #97)."
     :total-count :counters :synced-ids :title-key
     :pull-item-fn :conflict-apply-all :duplicate-apply-all :remote-touched
     :module-items-moved :module-items-pending :module-items-adopted
-    :file-changed-ids :file-recreated-ids :prepared)
+    :file-changed-ids :file-recreated-ids :prepared :hash-fn :dry-run-in-push)
   "Every key a sync run context may carry, present from creation.
 Static: :feature-name, :feature-upper, :title-key, the pipeline
 functions, :total-count, :hash-extra-fn.  Snapshot: :baseline (the
@@ -577,7 +577,8 @@ by a finalize post-fn that wrote to Canvas again, issue #124),
 :module-items-moved, :module-items-pending and :module-items-adopted
 \(modules), :file-changed-ids and :file-recreated-ids (files), :prepared
 \(what the spec's :prepare function returned before the first entry; the
-root outcome group id for outcomes).  Every key is
+root outcome group id for outcomes), :hash-fn and :dry-run-in-push (the
+spec's :hash and whether its :dry-run is `push').  Every key is
 present so `plist-put' always mutates the context in place and the
 functions sharing it see one another's writes.")
 

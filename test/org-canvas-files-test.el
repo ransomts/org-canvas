@@ -2702,7 +2702,15 @@
 
 ;;;; Coverage: file-sync-single-entry with usage rights (Line 735)
 
-(describe "org-canvas--file-sync-single-entry with usage rights"
+(defun test-files--sync-at (marker &optional ctx)
+  "Sync the entry at MARKER as the pipeline's push does; return the tier's outcome.
+Parses at point and hands the result to `org-canvas--file-sync-parsed-entry';
+a heading the parser declines answers :skip, as the runner would count it."
+  (org-with-point-at marker
+    (let ((data (org-canvas--file-parse-entry)))
+      (if data (org-canvas--file-sync-parsed-entry data ctx) :skip))))
+
+(describe "org-canvas--file-sync-parsed-entry with usage rights"
   (before-each (test-org-canvas-reset-file-caches))
 
   (it "calls set-usage-rights when USE_JUSTIFICATION is present and push returns id"
@@ -2736,7 +2744,7 @@
                             ((symbol-function 'org-canvas--file-set-usage-rights)
                              (lambda (fid _data)
                                (setq usage-rights-called fid))))
-                    (let ((result (org-canvas--file-sync-single-entry marker)))
+                    (let ((result (test-files--sync-at marker)))
                       (expect result :to-equal :success)
                       (expect usage-rights-called :to-equal 42))))
                 (kill-buffer))))
@@ -2772,7 +2780,7 @@
                             ((symbol-function 'org-canvas--file-set-usage-rights)
                              (lambda (_fid _data)
                                (setq usage-rights-called t))))
-                    (let ((result (org-canvas--file-sync-single-entry marker)))
+                    (let ((result (test-files--sync-at marker)))
                       (expect result :to-equal :success)
                       (expect usage-rights-called :to-be nil))))
                 (kill-buffer))))
@@ -3373,7 +3381,7 @@
               (expect h1 :not :to-equal h2)))
         (delete-file temp-file)))))
 
-(describe "org-canvas--file-sync-single-entry unchanged skip"
+(describe "org-canvas--file-sync-parsed-entry unchanged skip"
   (before-each (test-org-canvas-reset-file-caches))
 
   (it "skips an unchanged file without touching the API"
@@ -3401,7 +3409,7 @@
                   (let ((marker (point-marker)))
                     (cl-letf (((symbol-function 'org-canvas--file-push-to-api)
                                (lambda (_data &optional _ctx) (setq push-called t) '((id . 100)))))
-                      (expect (org-canvas--file-sync-single-entry marker)
+                      (expect (test-files--sync-at marker)
                               :to-equal :skip)
                       (expect push-called :to-be nil))))
                 (kill-buffer))))
@@ -3431,7 +3439,7 @@
                              (lambda (_fid _data) nil))
                             ((symbol-function 'org-canvas--file-finalize)
                              (lambda (_data _resp) nil)))
-                    (expect (org-canvas--file-sync-single-entry marker ctx)
+                    (expect (test-files--sync-at marker ctx)
                             :to-equal :success))
                   (expect (org-entry-get (marker-position marker)
                                          org-canvas--prop-payload-hash)
@@ -3466,7 +3474,7 @@
                              (lambda (_fid _data) nil))
                             ((symbol-function 'org-canvas--file-finalize)
                              (lambda (_data _resp) nil)))
-                    (expect (org-canvas--file-sync-single-entry marker ctx)
+                    (expect (test-files--sync-at marker ctx)
                             :to-equal :success))
                   (expect (plist-get ctx :file-changed-ids)
                           :to-equal '("Test PDF")))
@@ -3498,7 +3506,7 @@
                              (lambda (_fid _data) nil))
                             ((symbol-function 'org-canvas--file-finalize)
                              (lambda (_data _resp) nil)))
-                    (expect (org-canvas--file-sync-single-entry marker ctx)
+                    (expect (test-files--sync-at marker ctx)
                             :to-equal :success))
                   (expect (plist-get ctx :file-changed-ids) :to-be nil))
                 (kill-buffer))))
@@ -3673,10 +3681,10 @@
 "
        (org-back-to-heading)
        (cl-letf (((symbol-function 'org-canvas--confirm) (lambda (_) t))
-                 ((symbol-function 'org-canvas--file-sync-single-entry)
-                  (lambda (_marker &optional _ctx)
+                 ((symbol-function 'org-canvas-sync-file-at-point)
+                  (lambda ()
                     (setq forced-during-run org-canvas--file-force-upload)
-                    :success))
+                    (org-canvas--sync-make-ctx)))
                  ((symbol-function 'message) #'ignore))
          (org-canvas-force-reupload-file-at-point)
          (expect forced-during-run :to-be t)))))
@@ -3691,10 +3699,11 @@
 "
        (org-back-to-heading)
        (cl-letf (((symbol-function 'org-canvas--confirm) (lambda (_) t))
-                 ((symbol-function 'org-canvas--file-sync-single-entry)
-                  (lambda (_marker &optional ctx)
-                    (org-canvas--ctx-push ctx :file-recreated-ids "doc.pdf")
-                    :success))
+                 ((symbol-function 'org-canvas-sync-file-at-point)
+                  (lambda ()
+                    (let ((ctx (org-canvas--sync-make-ctx)))
+                      (org-canvas--ctx-push ctx :file-recreated-ids "doc.pdf")
+                      ctx)))
                  ((symbol-function 'org-canvas--log-warning)
                   (lambda (_l fmt &rest args)
                     (push (apply #'format fmt args) warnings)))
@@ -3708,8 +3717,8 @@
        "* doc.pdf\n:PROPERTIES:\n:CANVAS_ID: 42\n:END:\n"
        (org-back-to-heading)
        (cl-letf (((symbol-function 'org-canvas--confirm) (lambda (_) nil))
-                 ((symbol-function 'org-canvas--file-sync-single-entry)
-                  (lambda (_m &optional _ctx) (setq synced t) :success)))
+                 ((symbol-function 'org-canvas-sync-file-at-point)
+                  (lambda () (setq synced t) (org-canvas--sync-make-ctx))))
          (org-canvas-force-reupload-file-at-point)
          (expect synced :to-be nil))))))
 
@@ -3842,8 +3851,10 @@
             (let ((org-canvas-files-file files-file))
               (with-org-canvas-test-config
                 (with-mock-api
-                  (cl-letf (((symbol-function 'org-canvas--file-sync-single-entry)
-                             (lambda (_marker &optional ctx)
+                  (cl-letf (((symbol-function 'org-canvas--file-parse-entry)
+                             (lambda () (list :display-name "Test PDF" :pom (point))))
+                            ((symbol-function 'org-canvas--file-sync-parsed-entry)
+                             (lambda (_data &optional ctx)
                                (org-canvas--ctx-push ctx :file-changed-ids "Test PDF")
                                :success))
                             ((symbol-function 'org-canvas--log-info)
@@ -4048,7 +4059,7 @@
                    :folder-path ""))
                 :not :to-throw)))))
 
-(describe "org-canvas--file-sync-single-entry dry run"
+(describe "org-canvas--file-sync-parsed-entry dry run"
   (before-each (test-org-canvas-reset-file-caches))
 
   (it "records neither CANVAS_ID nor PAYLOAD_HASH"
@@ -4068,7 +4079,7 @@
                    ((symbol-function 'org-canvas--file-content-hash)
                     (lambda (_data) "hash-of-new-content")))
            (let* ((org-canvas--dry-run t)
-                  (result (org-canvas--file-sync-single-entry marker ctx)))
+                  (result (test-files--sync-at marker ctx)))
              (expect result :to-equal :dry-run)
              ;; Untouched: a preview must not mark the entry as synced.
              (expect (org-entry-get (point) "CANVAS_ID") :to-equal "123")
@@ -4762,11 +4773,13 @@ Returns the symbol naming the path taken."
 
   ;; Every `1+' in the counter dispatch survived being flipped to `1-':
   ;; tests asserted that a sync ran and which requests it made, never the
-  ;; tallies it reports.  The counts are what the user reads.
+  ;; tallies it reports.  The counts are what the user reads.  Files run
+  ;; on the shared pipeline, so this pins the runner's counting of what
+  ;; the files push returns: an outcome per entry, :fail as an error.
   (defun test-files--sync-with (results)
     "Run `org-canvas-sync-files' with one entry per element of RESULTS.
-Each element is what `org-canvas--file-sync-single-entry' should return.
-Returns (COUNTERS . FINAL-MESSAGE)."
+Each element is what `org-canvas--file-sync-parsed-entry' should return,
+or :fail to signal.  Returns (COUNTERS . FINAL-MESSAGE)."
     (let ((dir (make-temp-file "counts-" t))
           (recorded nil)
           (final-message nil)
@@ -4783,8 +4796,13 @@ Returns (COUNTERS . FINAL-MESSAGE)."
                              (lambda (&rest _) nil))
                             ((symbol-function 'org-canvas--file-collect-folder-paths)
                              (lambda (&rest _) nil))
-                            ((symbol-function 'org-canvas--file-sync-single-entry)
-                             (lambda (_marker &optional _ctx) (pop remaining)))
+                            ((symbol-function 'org-canvas--file-parse-entry)
+                             (lambda () (list :display-name (org-get-heading t t t t)
+                                              :pom (point))))
+                            ((symbol-function 'org-canvas--file-sync-parsed-entry)
+                             (lambda (_data &optional _ctx)
+                               (let ((outcome (pop remaining)))
+                                 (if (eq outcome :fail) (error "upload failed") outcome))))
                             ((symbol-function 'org-canvas--sync-record-feature-stats)
                              (lambda (_label counters) (setq recorded counters)))
                             ((symbol-function 'message)
@@ -4809,10 +4827,9 @@ Returns (COUNTERS . FINAL-MESSAGE)."
       (expect (plist-get counters :fail) :to-equal 0)
       (expect (plist-get counters :dry-run) :to-equal 0)))
 
-  (it "mentions would-upload only when a dry run produced some"
-    ;; Guards the `(> dry-run-count 0)' branch that picks the wording.
-    (expect (cdr (test-files--sync-with '(:dry-run))) :to-match "1 would upload")
-    (expect (cdr (test-files--sync-with '(:success))) :not :to-match "would upload")))
+  (it "reports a dry run in the dry-run wording, and only then"
+    (expect (cdr (test-files--sync-with '(:dry-run))) :to-match "1 would sync")
+    (expect (cdr (test-files--sync-with '(:success))) :not :to-match "would sync")))
 
 (describe "org-canvas--file-get-or-create-folder by_path result"
   (before-each (test-org-canvas-reset-file-caches))
@@ -5137,5 +5154,87 @@ Returns (COUNTERS . FINAL-MESSAGE)."
                 (set-buffer-modified-p nil)
                 (kill-buffer))))
         (delete-directory temp-dir t)))))
+
+(describe "files on the sync macro"
+  (before-each (test-org-canvas-reset-file-caches))
+
+  (it "generates the sync and the push at point"
+    (expect (commandp 'org-canvas-sync-files) :to-be t)
+    (expect (commandp 'org-canvas-sync-file-at-point) :to-be t))
+
+  (it "maps the tiers' outcomes onto the runner's push results"
+    (cl-letf (((symbol-function 'org-canvas--file-sync-parsed-entry)
+               (lambda (data &optional _ctx) (plist-get data :outcome))))
+      (expect (org-canvas--file-push (list :outcome :skip) nil) :to-be 'skip)
+      (expect (org-canvas--dry-run-response-p
+               (org-canvas--file-push (list :outcome :dry-run) nil))
+              :to-be-truthy)
+      (expect (org-canvas--file-push (list :outcome :success) nil) :to-be t)))
+
+  (it "pre-creates the manifest's folders in :prepare, or only names them in a dry run"
+    (let ((files-file (make-temp-file "prepare-" nil ".org"))
+          (ensured nil) (logged nil))
+      (unwind-protect
+          (progn
+            (with-temp-file files-file (insert "* Week 1\n** [[file:content/Week 1/a.pdf][a.pdf]]\n"))
+            (let ((org-canvas-files-file files-file))
+              (with-org-canvas-test-config
+                (cl-letf (((symbol-function 'org-canvas-api-request) (lambda (&rest _) nil))
+                          ((symbol-function 'org-canvas--file-ensure-folders-exist)
+                           (lambda (paths) (setq ensured paths)))
+                          ((symbol-function 'org-canvas--log-info)
+                           (lambda (_l fmt &rest args) (push (apply #'format fmt args) logged))))
+                  (org-canvas--file-sync-prepare (org-canvas--sync-make-ctx))
+                  (expect ensured :to-equal '("Week 1"))
+                  (setq ensured nil)
+                  (let ((org-canvas--dry-run t))
+                    (org-canvas--file-sync-prepare (org-canvas--sync-make-ctx)))
+                  (expect ensured :to-be nil)
+                  (expect (cl-some (lambda (l) (string-match-p "Would ensure folder exists: Week 1" l)) logged)
+                          :to-be-truthy)))))
+        (let ((buf (find-buffer-visiting files-file))) (when buf (kill-buffer buf)))
+        (delete-file files-file))))
+
+  (it "keeps going when the course access check fails in :prepare"
+    (let ((files-file (make-temp-file "prepare-" nil ".org"))
+          (warned nil))
+      (unwind-protect
+          (progn
+            (with-temp-file files-file (insert "* a.pdf\n"))
+            (let ((org-canvas-files-file files-file))
+              (with-org-canvas-test-config
+                (cl-letf (((symbol-function 'org-canvas-api-request)
+                           (lambda (&rest _) (signal 'error '("Connection refused"))))
+                          ((symbol-function 'org-canvas--log-warning)
+                           (lambda (_l fmt &rest args) (push (apply #'format fmt args) warned))))
+                  (expect (org-canvas--file-sync-prepare (org-canvas--sync-make-ctx)) :not :to-throw)
+                  (expect (car (last warned)) :to-match "Connection refused")))))
+        (let ((buf (find-buffer-visiting files-file))) (when buf (kill-buffer buf)))
+        (delete-file files-file))))
+
+  (it "reports changed and recreated ids from the context in :after-sync"
+    (let ((ctx (org-canvas--sync-make-ctx)) (infos nil) (warns nil))
+      (org-canvas--ctx-push ctx :file-changed-ids "a.pdf")
+      (org-canvas--ctx-push ctx :file-recreated-ids "b.pdf")
+      (cl-letf (((symbol-function 'org-canvas--log-info)
+                 (lambda (_l fmt &rest args) (push (apply #'format fmt args) infos)))
+                ((symbol-function 'org-canvas--log-warning)
+                 (lambda (_l fmt &rest args) (push (apply #'format fmt args) warns))))
+        (org-canvas--file-sync-after ctx))
+      (expect (car infos) :to-match "'a.pdf'")
+      (expect (car warns) :to-match "'b.pdf'")))
+
+  (it "declares the pipeline options the tiers rely on"
+    (let ((seen nil))
+      (cl-letf (((symbol-function 'org-canvas--sync-run-pipeline)
+                 (lambda (spec) (setq seen spec) nil)))
+        (org-canvas-sync-files))
+      (expect (plist-get seen :hash) :to-be 'push)
+      (expect (plist-get seen :dry-run) :to-be 'push)
+      (expect (plist-get seen :query) :to-equal "LEVEL>0")
+      (expect (plist-get seen :title-key) :to-be :display-name)
+      (expect (plist-get seen :prepare) :to-be #'org-canvas--file-sync-prepare)
+      (expect (plist-get seen :after-sync) :to-be #'org-canvas--file-sync-after))))
+
 
 ;;; org-canvas-files-test.el ends here

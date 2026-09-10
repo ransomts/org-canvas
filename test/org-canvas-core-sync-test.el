@@ -4030,5 +4030,146 @@ Returns the :remote-titles of the run context the push received."
               :to-equal '(("outcome-groups" t) ("outcomes" t))))))
 
 
+(describe "sync spec :hash and :dry-run, and the push results they allow"
+  (defmacro test-sync-hash--with-file (content &rest body)
+    "Run BODY with FILE bound to a temp Org file holding CONTENT, in test config."
+    (declare (indent 1))
+    `(let ((file (make-temp-file "hash-" nil ".org")))
+       (unwind-protect
+           (with-org-canvas-test-config
+             (with-temp-file file (insert ,content))
+             (cl-letf (((symbol-function 'org-canvas--sync-fetch-remote-snapshot) #'ignore))
+               ,@body))
+         (let ((buf (find-buffer-visiting file)))
+           (when buf (with-current-buffer buf (set-buffer-modified-p nil)) (kill-buffer buf)))
+         (delete-file file))))
+
+  (defun test-sync-hash--spec (file &rest keys)
+    "A minimal sync spec over FILE whose push records a call, plus KEYS."
+    (append (list :feature "things" :file file :query "LEVEL=1"
+                  :parse (lambda () (list :title (org-get-heading t t t t)
+                                          :canvas-id (org-entry-get (point) "CANVAS_ID")
+                                          :pom (point-marker)))
+                  :build (lambda (_data) '((name . "x")))
+                  :finalize (lambda (&rest _) nil))
+            keys))
+
+  (it "skips on a stored hash the :hash function reproduces, and stamps its value"
+    (test-sync-hash--with-file "* Same\n:PROPERTIES:\n:CANVAS_ID: 1\n:PAYLOAD_HASH: content-1\n:END:\n* Fresh\n:PROPERTIES:\n:CANVAS_ID: 2\n:END:\n"
+      (let ((pushed nil))
+        (org-canvas--sync-run-pipeline
+         (test-sync-hash--spec file
+                               :push (lambda (data _payload &optional _ctx)
+                                       (push (plist-get data :title) pushed) '((id . 2)))
+                               :hash (lambda (_payload data)
+                                       (format "content-%s" (plist-get data :canvas-id)))))
+        (expect pushed :to-equal '("Fresh"))
+        (with-current-buffer (find-file-noselect file)
+          (goto-char (point-max))
+          (org-back-to-heading t)
+          (expect (org-entry-get (point) "PAYLOAD_HASH") :to-equal "content-2")))))
+
+  (it "never skips and never stamps when the push owns the hash"
+    (test-sync-hash--with-file "* Same\n:PROPERTIES:\n:CANVAS_ID: 1\n:PAYLOAD_HASH: mine\n:END:\n"
+      (let ((pushed 0))
+        (org-canvas--sync-run-pipeline
+         (test-sync-hash--spec file
+                               :push (lambda (&rest _) (cl-incf pushed) t)
+                               :hash 'push))
+        (expect pushed :to-equal 1)
+        (with-current-buffer (find-file-noselect file)
+          (goto-char (point-min))
+          (org-back-to-heading t)
+          (expect (org-entry-get (point) "PAYLOAD_HASH") :to-equal "mine")))))
+
+  (it "counts a push that answers skip as a skip, without finalizing"
+    (test-sync-hash--with-file "* One\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+      (let ((ctx (org-canvas--sync-run-pipeline
+                  (test-sync-hash--spec file
+                                        :push (lambda (&rest _) 'skip)
+                                        :finalize (lambda (&rest _) (error "must not finalize"))
+                                        :hash 'push))))
+        (expect (plist-get (plist-get ctx :counters) :skip) :to-equal 1)
+        (expect (plist-get (plist-get ctx :counters) :success) :to-equal 0))))
+
+  (it "lets a push preview a dry run itself when :dry-run is push, and counts the sentinel"
+    (test-sync-hash--with-file "* One\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+      (let* ((org-canvas--dry-run t)
+             (called nil)
+             (ctx (org-canvas--sync-run-pipeline
+                   (test-sync-hash--spec file
+                                         :push (lambda (&rest _) (setq called t)
+                                                 org-canvas--dry-run-response)
+                                         :dry-run 'push))))
+        (expect called :to-be t)
+        (expect (plist-get (plist-get ctx :counters) :dry-run) :to-equal 1))))
+
+  (it "reports from the snapshot under a dry run when the push does not preview"
+    (test-sync-hash--with-file "* One\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+      (let* ((org-canvas--dry-run t)
+             (called nil)
+             (ctx (org-canvas--sync-run-pipeline
+                   (test-sync-hash--spec file
+                                         :push (lambda (&rest _) (setq called t) t)))))
+        (expect called :to-be nil)
+        (expect (plist-get (plist-get ctx :counters) :dry-run) :to-equal 1))))
+
+  (it "counts a heading the parser declines as a skip, not a failure"
+    (test-sync-hash--with-file "* Folder\n* File\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+      (let* ((pushed nil)
+             (spec (test-sync-hash--spec file :push (lambda (data &rest _)
+                                                      (push (plist-get data :title) pushed) t)
+                                         :hash 'push))
+             (ctx (progn
+                    (plist-put spec :parse
+                               (lambda () (unless (string= (org-get-heading t t t t) "Folder")
+                                            (list :title (org-get-heading t t t t)
+                                                  :canvas-id "1" :pom (point-marker)))))
+                    (org-canvas--sync-run-pipeline spec))))
+        (expect pushed :to-equal '("File"))
+        (expect (plist-get (plist-get ctx :counters) :skip) :to-equal 1)
+        (expect (plist-get (plist-get ctx :counters) :fail) :to-equal 0)
+        (expect (plist-get (plist-get ctx :counters) :success) :to-equal 1))))
+
+  (it "rejects a hash mode the spec keys do not know"
+    (expect (org-canvas--sync-check-spec (list :feature "x" :hashing 'push) '(:feature))
+            :to-throw 'error)))
+
+(describe "push at point with a push-owned hash"
+  (it "calls the push despite a matching stored hash, stamps nothing, and returns the context"
+    (with-temp-org-buffer "* One\n:PROPERTIES:\n:CANVAS_ID: 1\n:PAYLOAD_HASH: mine\n:END:\n"
+      (org-back-to-heading)
+      (let ((pushed nil) ctx)
+        (cl-letf (((symbol-function 'display-buffer) (lambda (&rest _) nil)))
+          (setq ctx (org-canvas--push-at-point-runtime
+                     (list :feature "thing"
+                           :parse (lambda () (list :title "One" :canvas-id "1" :pom (point)))
+                           :build (lambda (_data) '((name . "x")))
+                           :push (lambda (_data _payload &optional ctx)
+                                   (setq pushed t)
+                                   (org-canvas--ctx-push ctx :file-changed-ids "One")
+                                   t)
+                           :finalize (lambda (&rest _) nil)
+                           :hash 'push))))
+        (expect pushed :to-be t)
+        (expect (org-entry-get (point) "PAYLOAD_HASH") :to-equal "mine")
+        (expect (plist-get ctx :file-changed-ids) :to-equal '("One")))))
+
+  (it "reports a push that answers skip as unchanged"
+    (with-temp-org-buffer "* One\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+      (org-back-to-heading)
+      (let ((said nil))
+        (cl-letf (((symbol-function 'display-buffer) (lambda (&rest _) nil))
+                  ((symbol-function 'message) (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+          (org-canvas--push-at-point-runtime
+           (list :feature "thing"
+                 :parse (lambda () (list :title "One" :canvas-id "1" :pom (point)))
+                 :build (lambda (_data) nil)
+                 :push (lambda (&rest _) 'skip)
+                 :finalize (lambda (&rest _) (error "must not finalize"))
+                 :hash 'push)))
+        (expect said :to-match "unchanged")))))
+
+
 (provide 'org-canvas-core-sync-test)
 ;;; org-canvas-core-sync-test.el ends here
