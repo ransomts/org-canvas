@@ -456,20 +456,24 @@ First syncs outcome groups (level-1 headings), then outcomes (level-2 headings).
         (root-group-id (org-canvas--outcome-sync-preflight)))
     ;; Phase 1: Sync outcome groups (level-1 headings)
     (org-canvas--sync-run-pipeline
-     "outcome-groups" (expand-file-name org-canvas-outcomes-file) "LEVEL=1"
-     #'org-canvas--outcome-group-parse-entry
-     #'org-canvas--outcome-group-build-payload
-     (lambda (data _payload &optional _ctx)
-       (org-canvas--outcome-group-push-to-api data root-group-id))
-     #'org-canvas--outcome-group-finalize)
+     (list :feature "outcome-groups"
+           :file (expand-file-name org-canvas-outcomes-file)
+           :query "LEVEL=1"
+           :parse #'org-canvas--outcome-group-parse-entry
+           :build #'org-canvas--outcome-group-build-payload
+           :push (lambda (data _payload &optional _ctx)
+                   (org-canvas--outcome-group-push-to-api data root-group-id))
+           :finalize #'org-canvas--outcome-group-finalize))
     ;; Phase 2: Sync outcomes (level-2 headings)
     (org-canvas--sync-run-pipeline
-     "outcomes" (expand-file-name org-canvas-outcomes-file) "LEVEL=2"
-     #'org-canvas--outcome-parse-entry
-     #'org-canvas--outcome-build-payload
-     (lambda (data _payload &optional _ctx)
-       (org-canvas--outcome-push-to-api data))
-     #'org-canvas--outcome-finalize)))
+     (list :feature "outcomes"
+           :file (expand-file-name org-canvas-outcomes-file)
+           :query "LEVEL=2"
+           :parse #'org-canvas--outcome-parse-entry
+           :build #'org-canvas--outcome-build-payload
+           :push (lambda (data _payload &optional _ctx)
+                   (org-canvas--outcome-push-to-api data))
+           :finalize #'org-canvas--outcome-finalize))))
 
 ;;;; Delete Functions
 

@@ -28,9 +28,9 @@
                    (lambda (items endpoint-fn id-field title-field &optional skip-fn _delete-data)
                      (setq queued-args (list items endpoint-fn id-field title-field skip-fn))
                      (cons 2 '("1" "2")))))
-          (let ((deleted (org-canvas--delete-all-items "items"
-                           :endpoint "items"
-                           :file nil)))
+		 (let ((deleted (org-canvas--delete-all-items (list :feature "items"
+								    :endpoint "items"
+								    :file nil))))
             (expect deleted :to-equal 2)
             ;; Verify queued helper received correct args
             (expect (length (nth 0 queued-args)) :to-equal 2)
@@ -48,10 +48,10 @@
                    (lambda (_items _endpoint-fn _id-field _title-field &optional skip-fn _delete-data)
                      (setq queued-skip-fn skip-fn)
                      (cons 1 '("2")))))
-          (org-canvas--delete-all-items "pages"
-            :endpoint "pages"
-            :file nil
-            :skip-fn (lambda (item) (eq (alist-get 'front_page item) t)))
+		 (org-canvas--delete-all-items (list :feature "pages"
+						     :endpoint "pages"
+						     :file nil
+						     :skip-fn (lambda (item) (eq (alist-get 'front_page item) t))))
           (expect queued-skip-fn :not :to-be nil)))))
 
   (it "uses custom id-field and title-field"
@@ -64,11 +64,11 @@
                    (lambda (items endpoint-fn id-field title-field &optional _skip-fn _delete-data)
                      (setq queued-args (list items endpoint-fn id-field title-field))
                      (cons 1 '("my-page")))))
-          (let ((deleted (org-canvas--delete-all-items "pages"
-                           :endpoint "pages"
-                           :file nil
-                           :id-field 'url
-                           :title-field 'name)))
+		 (let ((deleted (org-canvas--delete-all-items (list :feature "pages"
+								    :endpoint "pages"
+								    :file nil
+								    :id-field 'url
+								    :title-field 'name))))
             (expect deleted :to-equal 1)
             (expect (nth 2 queued-args) :to-equal 'url)
             (expect (nth 3 queued-args) :to-equal 'name))))))
@@ -83,9 +83,9 @@
                    (lambda (_items endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
                      (setq captured-endpoint-fn endpoint-fn)
                      (cons 1 '("42")))))
-          (org-canvas--delete-all-items "items"
-            :endpoint "things"
-            :file nil)
+		 (org-canvas--delete-all-items (list :feature "items"
+						     :endpoint "things"
+						     :file nil))
           ;; Verify endpoint-fn produces correct URL
           (let ((url (funcall captured-endpoint-fn 42)))
             (expect url :to-match "things/42$"))))))
@@ -114,9 +114,9 @@
                         ((symbol-function 'org-canvas--delete-items-queued)
                          (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
                            (cons 1 '("1")))))
-                (org-canvas--delete-all-items "items"
-                  :endpoint "items"
-                  :file temp-file)))
+                       (org-canvas--delete-all-items (list :feature "items"
+							   :endpoint "items"
+							   :file temp-file))))
             ;; Check that both items' properties were cleared
             (with-current-buffer (find-file-noselect temp-file)
               (goto-char (point-min))
@@ -277,10 +277,10 @@
                   ((symbol-function 'org-canvas--delete-items-queued)
                    (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
                      (cons 0 nil))))
-          (org-canvas--delete-all-items "items"
-            :endpoint "items"
-            :file nil
-            :list-params '(("filter" . "active")))
+		 (org-canvas--delete-all-items (list :feature "items"
+						     :endpoint "items"
+						     :file nil
+						     :list-params '(("filter" . "active"))))
           (expect captured-params :to-equal '(("filter" . "active")))))))
 
   (it "returns 0 for empty remote items"
@@ -290,9 +290,9 @@
                 ((symbol-function 'org-canvas--delete-items-queued)
                  (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
                    (cons 0 nil))))
-        (let ((deleted (org-canvas--delete-all-items "items"
-                         :endpoint "items"
-                         :file nil)))
+               (let ((deleted (org-canvas--delete-all-items (list :feature "items"
+								  :endpoint "items"
+								  :file nil))))
           (expect deleted :to-equal 0)))))
 
   (it "does not clean properties when file is nil"
@@ -303,9 +303,9 @@
                 ((symbol-function 'org-canvas--delete-items-queued)
                  (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
                    (cons 1 '("1")))))
-        (let ((deleted (org-canvas--delete-all-items "items"
-                         :endpoint "items"
-                         :file nil)))
+               (let ((deleted (org-canvas--delete-all-items (list :feature "items"
+								  :endpoint "items"
+								  :file nil))))
           (expect deleted :to-equal 1))))))
 
 (describe "org-canvas--delete-item-at-point edge cases (mocked)"
@@ -348,9 +348,9 @@
                 ((symbol-function 'org-canvas--delete-items-queued)
                  (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
                    (cons 0 nil))))
-        (let ((deleted (org-canvas--delete-all-items "items"
-                         :endpoint "items"
-                         :file nil)))
+               (let ((deleted (org-canvas--delete-all-items (list :feature "items"
+								  :endpoint "items"
+								  :file nil))))
           (expect deleted :to-equal 0)))))
 
   (it "cleans all properties even when queued helper reports partial success"
@@ -379,9 +379,9 @@
                          (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
                            ;; Simulate: item 1 deleted, item 2 failed
                            (cons 1 '("1")))))
-                (org-canvas--delete-all-items "items"
-                  :endpoint "items"
-                  :file temp-file)))
+                       (org-canvas--delete-all-items (list :feature "items"
+							   :endpoint "items"
+							   :file temp-file))))
             ;; Both items should be cleaned (delete-all cleans all properties)
             (with-current-buffer (find-file-noselect temp-file)
               (goto-char (point-min))
@@ -400,9 +400,9 @@
                  (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
                    (cons 1 '("1")))))
         ;; Should not error even with nil file
-        (let ((deleted (org-canvas--delete-all-items "items"
-                         :endpoint "items"
-                         :file nil)))
+               (let ((deleted (org-canvas--delete-all-items (list :feature "items"
+								  :endpoint "items"
+								  :file nil))))
           (expect deleted :to-equal 1))))))
 
 (describe "org-canvas--delete-item-at-point additional tests"
@@ -480,8 +480,8 @@
                          (lambda (items &rest _)
                            (setq pruned-items items)
                            (cons (length items) nil))))
-                (expect (org-canvas--prune-runtime "pages"
-                          :endpoint "pages" :file temp-file)
+                       (expect (org-canvas--prune-runtime (list :feature "pages"
+								:endpoint "pages" :file temp-file))
                         :to-equal 2)
                 (expect (mapcar (lambda (i) (alist-get 'id i)) pruned-items)
                         :to-equal '(2 3))))
@@ -505,9 +505,9 @@
                          (lambda (items &rest _)
                            (setq pruned-items items)
                            (cons (length items) nil))))
-                (org-canvas--prune-runtime "pages"
-                  :endpoint "pages" :file temp-file
-                  :skip-fn (lambda (item) (eq (alist-get 'front_page item) t)))
+                       (org-canvas--prune-runtime (list :feature "pages"
+							:endpoint "pages" :file temp-file
+							:skip-fn (lambda (item) (eq (alist-get 'front_page item) t))))
                 (expect (length pruned-items) :to-equal 1)
                 (expect (alist-get 'id (car pruned-items)) :to-equal 2)))
           (let ((buf (find-buffer-visiting temp-file)))
@@ -529,9 +529,9 @@
                         ((symbol-function 'org-canvas--log-info)
                          (lambda (_l fmt &rest args)
                            (push (apply #'format fmt args) logged))))
-                (org-canvas--prune-runtime "pages"
-                  :endpoint "pages" :file temp-file
-                  :skip-fn (lambda (item) (eq (alist-get 'front_page item) t)))
+                       (org-canvas--prune-runtime (list :feature "pages"
+							:endpoint "pages" :file temp-file
+							:skip-fn (lambda (item) (eq (alist-get 'front_page item) t))))
                 ;; Without this the front page is simply missing from the
                 ;; tally, which reads as "there was nothing else there".
                 (expect (car (last logged)) :to-match ", 1 protected")))
@@ -552,8 +552,8 @@
                         ((symbol-function 'org-canvas--log-info)
                          (lambda (_l fmt &rest args)
                            (push (apply #'format fmt args) logged))))
-                (org-canvas--prune-runtime "pages"
-                  :endpoint "pages" :file temp-file)
+                       (org-canvas--prune-runtime (list :feature "pages"
+							:endpoint "pages" :file temp-file))
                 (expect (car (last logged)) :not :to-match "protected")))
           (let ((buf (find-buffer-visiting temp-file)))
             (when buf (kill-buffer buf)))
@@ -571,8 +571,8 @@
                         ((symbol-function 'y-or-n-p) (lambda (_) nil))
                         ((symbol-function 'org-canvas--delete-items-queued)
                          (lambda (&rest _) (setq delete-called t) (cons 0 nil))))
-                (expect (org-canvas--prune-runtime "pages"
-                          :endpoint "pages" :file temp-file)
+                       (expect (org-canvas--prune-runtime (list :feature "pages"
+								:endpoint "pages" :file temp-file))
                         :to-equal 0)
                 (expect delete-called :to-be nil)))
           (let ((buf (find-buffer-visiting temp-file)))
@@ -590,8 +590,8 @@
                          (lambda (&rest _) '(((id . 1) (title . "Kept")))))
                         ((symbol-function 'y-or-n-p)
                          (lambda (_) (error "Must not prompt"))))
-                (expect (org-canvas--prune-runtime "pages"
-                          :endpoint "pages" :file temp-file)
+                       (expect (org-canvas--prune-runtime (list :feature "pages"
+								:endpoint "pages" :file temp-file))
                         :to-equal 0)))
           (let ((buf (find-buffer-visiting temp-file)))
             (when buf (kill-buffer buf)))
@@ -640,15 +640,56 @@
                          (lambda (items del-fn &rest _)
                            (setq delete-url (funcall del-fn (alist-get 'id (car items))))
                            (cons (length items) nil))))
-                (expect (org-canvas--prune-runtime "pages"
-                          :endpoint "pages" :file temp-file
-                          :list-url-fn (lambda () "https://canvas.test/api/v1/custom/pages"))
+                       (expect (org-canvas--prune-runtime (list :feature "pages"
+								:endpoint "pages" :file temp-file
+								:list-url-fn (lambda () "https://canvas.test/api/v1/custom/pages")))
                         :to-equal 1))
               (expect listed-url :to-equal "https://canvas.test/api/v1/custom/pages")
               (expect delete-url :to-match "/pages/2\\'"))
           (let ((buf (find-buffer-visiting temp-file)))
             (when buf (kill-buffer buf)))
           (delete-file temp-file))))))
+
+(describe "org-canvas--delete-spec"
+  (it "fills the id, title and property defaults and leaves the rest"
+    (let ((spec (org-canvas--delete-spec (list :feature "pages" :endpoint "pages"
+                                               :skip-fn #'ignore))))
+      (expect (plist-get spec :id-field) :to-be 'id)
+      (expect (plist-get spec :title-field) :to-be 'title)
+      (expect (plist-get spec :id-property) :to-equal "CANVAS_ID")
+      (expect (plist-get spec :skip-fn) :to-be #'ignore)))
+
+  (it "keeps the fields a module declares"
+    (let ((spec (org-canvas--delete-spec (list :feature "pages" :endpoint "pages"
+                                               :id-field 'url :id-property "CANVAS_URL"))))
+      (expect (plist-get spec :id-field) :to-be 'url)
+      (expect (plist-get spec :id-property) :to-equal "CANVAS_URL")))
+
+  (it "does not modify the spec it was given"
+    (let* ((given (list :feature "pages" :endpoint "pages"))
+           (filled (org-canvas--delete-spec given)))
+      (expect (plist-get filled :id-field) :to-be 'id)
+      (expect (plist-get given :id-field) :to-be nil)))
+
+  (it "names an unknown key and a missing feature or endpoint"
+    (expect (org-canvas--delete-spec (list :feature "pages" :endpoint "pages" :skipfn #'ignore))
+            :to-throw 'error)
+    (expect (org-canvas--delete-spec (list :endpoint "pages")) :to-throw 'error)
+    (expect (org-canvas--delete-spec (list :feature "pages")) :to-throw 'error)))
+
+(describe "org-canvas-define-delete-all builds the spec its runners read"
+  (it "hands the prune runtime the module's options under their own names"
+    (let ((seen nil))
+      (cl-letf (((symbol-function 'org-canvas--prune-runtime)
+                 (lambda (spec) (setq seen spec) 0)))
+        (org-canvas-prune-pages))
+      (expect (plist-get seen :feature) :to-equal "pages")
+      (expect (plist-get seen :endpoint) :to-equal "pages")
+      (expect (plist-get seen :id-field) :to-be 'url)
+      (expect (plist-get seen :id-property) :to-equal "CANVAS_URL")
+      (expect (functionp (plist-get seen :skip-fn)) :to-be t)
+      (expect (org-canvas--delete-spec seen) :not :to-throw))))
+
 
 (provide 'org-canvas-core-delete-test)
 ;;; org-canvas-core-delete-test.el ends here

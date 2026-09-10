@@ -451,6 +451,24 @@ stage functions take it as an optional third argument (=:push=,
 =:finalize=, =:post-fn=, =:after-sync=), and
 =org-canvas--sync-run-pipeline= returns it.
 
+*The sync spec is the other plist.* The context is what a run
+accumulates; the spec is what a module declared. =org-canvas-define-sync=
+builds one plist from its options, keyed the way the module wrote them
+(=:feature=, =:file=, =:query=, =:parse=, =:build=, =:push=, =:finalize=,
+=:pull-item-fn=, =:title-key=, =:hash-extra=, =:after-sync=; the list is
+=org-canvas--sync-spec-keys=), and hands it whole to
+=org-canvas--sync-run-pipeline= and =org-canvas--push-at-point-runtime=.
+They used to take the same values as eleven and eight positional
+arguments, four of them optional, so a caller outside the macro
+(outcomes runs the pipeline twice by hand) had to count commas, and a
+new option meant a new position in every signature.
+=org-canvas--sync-check-spec= rejects a key outside the list, because a
+plist accepts a misspelt option silently. =org-canvas-define-delete-all=
+does the same with =org-canvas--delete-spec-keys=: one spec built once,
+passed through =org-canvas--delete-all-runtime=, =org-canvas--prune-runtime=
+and =org-canvas--delete-all-items=, with =org-canvas--delete-spec= filling
+the id, title and property defaults in one place.
+
 *Why not dynamic binding.* Fifteen =defvar='s used to serve as let-bound
 run flags. The pattern reads well until two runs meet: issue #72 was a
 caller's =let= of =--conflict-apply-all= losing to the pipeline's own
