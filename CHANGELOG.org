@@ -66,6 +66,7 @@ Each entry names the pull request that merged it.
 
 ** Fixed
 
+- #196 A sync no longer warns that every id below its own heading level may be orphaned: the orphan and duplicate-id checks read the headings the sync's query selects, so a modules run stops reporting each module item, a quizzes run each question, and the outcomes passes each other's level
 - #188 A second push at point in one batch buffer no longer refuses its stamp when a sync client restamped the file's modification time after the first push's save: the batch guard now compares the file's content with what the buffer last read or wrote, and treats a moved time over unchanged text as a restamp rather than a dual-buffer clobber
 - #189 The submissions completion rule checks the buffer before it prompts for the points, and its body is instrumented again (a sexp =interactive= form had hidden it from coverage); the rubric criterion outcome warning names the criterion instead of an empty string; a File module item with no title of its own is described by its files.org heading's link description rather than the whole link. Forty-eight specs cover the branches the suite had never reached; =SECURITY.md=, a bug report template and a pull request checklist join the repository
 - #178 The bearer token is no longer an argument on the request path, so a backtrace of an api-error escaping a batch script cannot print it: the headers are resolved inside the transport function, request logging never reads the token, and plz's own frames are unwound before the error reaches a debugger

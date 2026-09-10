@@ -4171,5 +4171,55 @@ Returns the :remote-titles of the run context the push received."
         (expect said :to-match "unchanged")))))
 
 
+(describe "org-canvas--sync-collect-entries scopes ids to the query (issue #196)"
+  (defmacro test-196--with-file (content &rest body)
+    "Run BODY with FILE bound to a temp Org file holding CONTENT."
+    (declare (indent 1))
+    `(let ((file (make-temp-file "orphan-" nil ".org")))
+       (unwind-protect
+           (progn (with-temp-file file (insert ,content))
+                  (cl-letf (((symbol-function 'org-canvas--log-info) #'ignore))
+                    ,@body))
+         (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+         (delete-file file))))
+
+  (it "collects only the ids of the headings the query selects"
+    (test-196--with-file "* Module\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n** Item\n:PROPERTIES:\n:CANVAS_ID: 55\n:END:\n* Stale\n:PROPERTIES:\n:CANVAS_ID: 2\n:END:\n"
+      (let ((entries (org-canvas--sync-collect-entries file "LEVEL=1" "modules")))
+        (expect (plist-get entries :all-ids-before) :to-equal '("1" "2"))
+        (expect (length (plist-get entries :targets)) :to-equal 2)
+        (dolist (m (plist-get entries :targets)) (set-marker m nil)))))
+
+  (it "reads the other level when the query names it"
+    (test-196--with-file "* Group\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n** Outcome\n:PROPERTIES:\n:CANVAS_ID: 55\n:END:\n"
+      (let ((entries (org-canvas--sync-collect-entries file "LEVEL=2" "outcomes")))
+        (expect (plist-get entries :all-ids-before) :to-equal '("55"))
+        (dolist (m (plist-get entries :targets)) (set-marker m nil)))))
+
+  (it "keeps a heading without an id out of the list but among the targets"
+    (test-196--with-file "* New\n* Stamped\n:PROPERTIES:\n:CANVAS_ID: 9\n:END:\n"
+      (let ((entries (org-canvas--sync-collect-entries file "LEVEL=1" "pages")))
+        (expect (plist-get entries :all-ids-before) :to-equal '("9"))
+        (expect (length (plist-get entries :targets)) :to-equal 2)
+        (dolist (m (plist-get entries :targets)) (set-marker m nil)))))
+
+  (it "does not warn about a stamped child of a synced parent, but still about an unreached parent"
+    (test-196--with-file "* Module\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n** Item\n:PROPERTIES:\n:CANVAS_ID: 55\n:END:\n"
+      (let ((warned nil))
+        (with-org-canvas-test-config
+          (cl-letf (((symbol-function 'org-canvas--sync-fetch-remote-snapshot) #'ignore)
+                    ((symbol-function 'org-canvas--log-warning)
+                     (lambda (_l fmt &rest args) (push (apply #'format fmt args) warned))))
+            (org-canvas--sync-run-pipeline
+             (list :feature "modules" :file file :query "LEVEL=1"
+                   :parse (lambda () (list :title (org-get-heading t t t t)
+                                           :canvas-id (org-entry-get (point) "CANVAS_ID")
+                                           :pom (point-marker)))
+                   :build (lambda (_data) '((name . "x")))
+                   :push (lambda (&rest _) '((id . 1)))
+                   :finalize (lambda (&rest _) nil)))))
+        (expect (cl-some (lambda (w) (string-match-p "\\[Orphan\\]" w)) warned) :to-be nil)))))
+
+
 (provide 'org-canvas-core-sync-test)
 ;;; org-canvas-core-sync-test.el ends here
