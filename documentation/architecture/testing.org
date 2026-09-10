@@ -218,7 +218,7 @@ Every feature module test follows this layout:
 
 The suite covers core utilities, all feature modules, and validation; a few specs skip on Emacs 29.x due to org-mode differences (grep for =buttercup-pending= to enumerate them). The pre-push hook blocks pushes below 99% line coverage. Run =eldev test= for the exact current spec count and =eldev test -u "on,codecov,dontsend" -U coverage/coverage.json= for per-file coverage; do not record either number in the documentation, it drifts.
 
-Largest suites: core-sync, core-org, quizzes, modules, files, new-quizzes, validate (one =org-canvas-{name}-test.el= per module; exact sizes drift, don't track them here).
+Largest suites: files, modules, quizzes, core-sync, core-api, core-pull, validate (one =org-canvas-{name}-test.el= per module, the core files included, so =core-sync-test= holds the pipeline and =core-conflict-test= and =core-delete-test= their own modules; exact sizes drift, don't track them here).
 
 *Core tests cover:*
 - Path utilities (=org-canvas--path=)

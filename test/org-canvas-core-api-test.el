@@ -1924,5 +1924,216 @@ which records the frames from the signalling `signal' out to
           (org-canvas-api-request 'GET "https://example.test/api/v1/x"))
         (expect paced :to-be t)))))
 
+(describe "org-canvas--upload-file"
+  (it "performs 3-step upload and returns file alist"
+    (let* ((temp-file (make-temp-file "upload-test" nil ".png"))
+           (step1-called nil)
+           (step2-called nil))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file (insert "PNGDATA"))
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request)
+                         (lambda (method _url &rest _args)
+                           (cond
+                            ((eq method 'POST)
+                             (setq step1-called t)
+                             '((upload_url . "https://upload.example.com/upload")
+                               (upload_params . ((key . "val")))))
+                            (t '((id . 777) (display_name . "test.png"))))))
+                        ((symbol-function 'url-retrieve-synchronously)
+                         (lambda (_url &rest _args)
+                           (setq step2-called t)
+                           (let ((buf (generate-new-buffer " *upload-test*")))
+                             (with-current-buffer buf
+                               (insert "HTTP/1.1 200 OK\r\n\r\n")
+                               (insert (json-encode '((id . 777)
+                                                      (display_name . "test.png")))))
+                             buf))))
+                (let ((result (org-canvas--upload-file temp-file)))
+                  (expect step1-called :to-be t)
+                  (expect step2-called :to-be t)
+                  (expect (alist-get 'id result) :to-equal 777)))))
+        (delete-file temp-file))))
+
+  (it "follows Location header when no JSON id in step 2"
+    (let* ((temp-file (make-temp-file "upload-loc" nil ".jpg")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file (insert "JPGDATA"))
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request)
+                         (lambda (method _url &rest _args)
+                           (cond
+                            ((eq method 'POST)
+                             '((upload_url . "https://upload.example.com/x")
+                               (upload_params . nil)))
+                            ((eq method 'GET)
+                             '((id . 888) (display_name . "photo.jpg"))))))
+                        ((symbol-function 'url-retrieve-synchronously)
+                         (lambda (_url &rest _args)
+                           (let ((buf (generate-new-buffer " *upload-loc*")))
+                             (with-current-buffer buf
+                               (insert "HTTP/1.1 301 Redirect\r\n")
+                               (insert "Location: https://canvas.test/files/888/confirm\r\n")
+                               (insert "\r\n{\"status\":\"pending\"}"))
+                             buf))))
+                (let ((result (org-canvas--upload-file temp-file)))
+                  (expect (alist-get 'id result) :to-equal 888)))))
+        (delete-file temp-file))))
+
+  (it "uses custom notify-url and display-name"
+    (let* ((temp-file (make-temp-file "upload-custom" nil ".gif"))
+           (notify-url-used nil)
+           (name-used nil))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file (insert "GIFDATA"))
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request)
+                         (lambda (_method url &rest args)
+                           (setq notify-url-used url)
+                           (let ((payload (plist-get args :data)))
+                             (setq name-used (alist-get 'name payload)))
+                           '((upload_url . "https://up.test/x")
+                             (upload_params . nil))))
+                        ((symbol-function 'url-retrieve-synchronously)
+                         (lambda (_url &rest _args)
+                           (let ((buf (generate-new-buffer " *upload-custom*")))
+                             (with-current-buffer buf
+                               (insert "HTTP/1.1 200 OK\r\n\r\n")
+                               (insert (json-encode '((id . 999)))))
+                             buf))))
+                (org-canvas--upload-file temp-file
+                                         "https://custom.api/files"
+                                         "renamed.gif")
+                (expect notify-url-used :to-equal "https://custom.api/files")
+                (expect name-used :to-equal "renamed.gif"))))
+        (delete-file temp-file)))))
+
+(describe "org-canvas--upload-file step-2 fallbacks"
+  (it "returns JSON when step-2 has JSON without id but no Location"
+    (let* ((temp-file (make-temp-file "upload-json-" nil ".txt")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file (insert "filedata"))
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request)
+                         (lambda (method url &rest _args)
+                           (cond
+                            ;; Step 1: notify
+                            ((eq method 'POST)
+                             '((upload_url . "https://up.test/x")
+                               (upload_params . nil)))
+                            ;; Step 3: confirm via GET on location
+                            ((eq method 'GET)
+                             '((id . 777))))))
+                        ((symbol-function 'url-retrieve-synchronously)
+                         (lambda (_url &rest _args)
+                           (let ((buf (generate-new-buffer " *upload-json*")))
+                             (with-current-buffer buf
+                               ;; JSON response without 'id, no Location header
+                               (insert "HTTP/1.1 200 OK\r\n\r\n")
+                               (insert (json-encode '((status . "pending")
+                                                      (location . "/files/777/confirm")))))
+                             buf))))
+                (let ((result (org-canvas--upload-file temp-file)))
+                  ;; Should follow the location from the JSON body
+                  (expect (alist-get 'id result) :to-equal 777)))))
+        (delete-file temp-file))))
+
+  (it "errors when step-2 has no JSON and no Location header"
+    (let* ((temp-file (make-temp-file "upload-empty-" nil ".txt")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file (insert "filedata"))
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request)
+                         (lambda (_method _url &rest _args)
+                           '((upload_url . "https://up.test/x")
+                             (upload_params . nil))))
+                        ((symbol-function 'url-retrieve-synchronously)
+                         (lambda (_url &rest _args)
+                           (let ((buf (generate-new-buffer " *upload-empty*")))
+                             (with-current-buffer buf
+                               ;; No valid JSON, no Location
+                               (insert "HTTP/1.1 200 OK\r\n\r\n")
+                               (insert "not json"))
+                             buf))))
+                (expect (org-canvas--upload-file temp-file)
+                        :to-throw 'error))))
+        (delete-file temp-file))))
+
+  (it "prepends base-url to relative location"
+    (let* ((temp-file (make-temp-file "upload-rel-" nil ".txt"))
+           (get-url nil))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file (insert "filedata"))
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request)
+                         (lambda (method url &rest _args)
+                           (cond
+                            ((eq method 'POST)
+                             '((upload_url . "https://up.test/x")
+                               (upload_params . nil)))
+                            ((eq method 'GET)
+                             (setq get-url url)
+                             '((id . 555))))))
+                        ((symbol-function 'url-retrieve-synchronously)
+                         (lambda (_url &rest _args)
+                           (let ((buf (generate-new-buffer " *upload-rel*")))
+                             (with-current-buffer buf
+                               (insert "HTTP/1.1 301 Redirect\r\n")
+                               (insert "Location: /api/v1/files/555/confirm\r\n")
+                               (insert "\r\n"))
+                             buf))))
+                (let ((result (org-canvas--upload-file temp-file)))
+                  (expect (alist-get 'id result) :to-equal 555)
+                  ;; Should have prepended base-url
+                  (expect get-url :to-match "^https://test.canvas.example.com/api/v1/files/555/confirm")))))
+        (delete-file temp-file)))))
+
+(describe "org-canvas--associate-rubric"
+  (it "sends correct payload for Assignment type"
+    (with-org-canvas-test-config
+      (let (sent-method sent-url sent-data)
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest args)
+                     (setq sent-method method
+                           sent-url url
+                           sent-data (plist-get args :data))
+                     '((id . 1)))))
+          (org-canvas--associate-rubric 42 "99" "Assignment")
+          (expect sent-method :to-equal 'POST)
+          (expect sent-url :to-match "rubric_associations")
+          (let ((assoc (gethash "rubric_association" sent-data)))
+            (expect (gethash "rubric_id" assoc) :to-equal 99)
+            (expect (gethash "association_id" assoc) :to-equal 42)
+            (expect (gethash "association_type" assoc) :to-equal "Assignment")
+            (expect (gethash "purpose" assoc) :to-equal "grading"))))))
+
+  (it "sends correct payload for Discussion type"
+    (with-org-canvas-test-config
+      (let (sent-data)
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_method _url &rest args)
+                     (setq sent-data (plist-get args :data))
+                     '((id . 1)))))
+          (org-canvas--associate-rubric 55 "77" "Discussion")
+          (let ((assoc (gethash "rubric_association" sent-data)))
+            (expect (gethash "association_type" assoc) :to-equal "Discussion")
+            (expect (gethash "association_id" assoc) :to-equal 55)
+            (expect (gethash "rubric_id" assoc) :to-equal 77))))))
+
+  (it "handles API errors gracefully"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (_method _url &rest _args)
+                   (error "API failure"))))
+        ;; Should not signal an error
+        (expect (org-canvas--associate-rubric 1 "2" "Assignment")
+                :not :to-throw)))))
+
 (provide 'org-canvas-core-api-test)
 ;;; org-canvas-core-api-test.el ends here

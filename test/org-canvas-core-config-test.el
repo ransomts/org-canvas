@@ -869,5 +869,20 @@
         (org-canvas--require-optional 'org-canvas-credentials "the credentials file"))
       (expect said :not :to-match "HIJACKME"))))
 
+(describe "org-canvas--registry-find-feature"
+  (it "matches a pipeline feature name against the registry label"
+    ;; The pipeline says "assignment-groups", the registry says
+    ;; "Assignment Groups".
+    (expect (plist-get (org-canvas--registry-find-feature "assignment-groups")
+                       :endpoint)
+            :to-equal "assignment_groups"))
+
+  (it "matches a single-word name"
+    (expect (plist-get (org-canvas--registry-find-feature "pages") :id-field)
+            :to-equal 'url))
+
+  (it "returns nil for an unregistered feature"
+    (expect (org-canvas--registry-find-feature "not-a-feature") :to-be nil)))
+
 (provide 'org-canvas-core-config-test)
 ;;; org-canvas-core-config-test.el ends here

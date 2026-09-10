@@ -916,5 +916,17 @@ more
        (expect html :to-match "<h3>Sub</h3>")
        (expect html :to-match "more")))))
 
+(describe "org-canvas--html-to-org"
+  (it "converts simple HTML to Org"
+    (let ((result (org-canvas--html-to-org "<p>Hello <strong>world</strong></p>")))
+      (expect result :to-match "Hello")
+      (expect result :to-match "world")))
+
+  (it "returns raw HTML with warning if pandoc is absent"
+    (cl-letf (((symbol-function 'executable-find) (lambda (_) nil)))
+      (let ((result (org-canvas--html-to-org "<p>Test</p>")))
+        (expect result :to-match "WARNING")
+        (expect result :to-match "<p>Test</p>")))))
+
 (provide 'org-canvas-core-html-test)
 ;;; org-canvas-core-html-test.el ends here

@@ -1668,5 +1668,28 @@ Page content.
     (expect (with-current-buffer "*test-report*" major-mode)
             :to-equal 'fundamental-mode)))
 
+(describe "org-canvas--iso8601-to-org-timestamp"
+  (it "converts ISO8601 to active timestamp"
+    (let ((result (org-canvas--iso8601-to-org-timestamp "2026-01-15T10:00:00Z")))
+      (expect result :to-match "<2026-01-15")))
+
+  (it "returns nil for nil active-timestamp input"
+    (expect (org-canvas--iso8601-to-org-timestamp nil) :to-be nil))
+
+  (it "returns nil for :null"
+    (expect (org-canvas--iso8601-to-org-timestamp :null) :to-be nil))
+
+  (it "returns nil for empty string"
+    (expect (org-canvas--iso8601-to-org-timestamp "") :to-be nil)))
+
+(describe "org-canvas--iso8601-to-org-inactive-timestamp"
+  (it "converts ISO8601 to inactive timestamp"
+    (let ((result (org-canvas--iso8601-to-org-inactive-timestamp
+                   "2026-01-15T10:00:00Z")))
+      (expect result :to-match "\\[2026-01-15")))
+
+  (it "returns nil for nil inactive-timestamp input"
+    (expect (org-canvas--iso8601-to-org-inactive-timestamp nil) :to-be nil)))
+
 (provide 'org-canvas-core-org-test)
 ;;; org-canvas-core-org-test.el ends here

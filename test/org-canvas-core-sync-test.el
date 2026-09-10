@@ -13,8 +13,6 @@
 (require 'org-canvas-rubrics)
 (require 'org-canvas-files)
 
-;;;; 8. Mock API recording helpers
-
 (describe "with-mock-api request recording"
   (it "records :params and :timeout, not just :data"
     (with-mock-api
@@ -35,8 +33,6 @@
       (expect (test-org-canvas-api-call-data 'POST "pages")
               :to-equal '((title . "T")))
       (expect (test-org-canvas-api-call-data 'POST "no-such") :to-be nil))))
-
-;;;; 9. Search Item Helper
 
 (describe "org-canvas--search-item (mocked)"
   (it "returns matching item by title"
@@ -72,8 +68,6 @@
                    (signal 'error '("API error")))))
         (let ((result (org-canvas--search-item "assignments" "Test")))
           (expect result :to-be nil))))))
-
-;;;; 10. Push to API Helper
 
 (describe "org-canvas--push-to-api (mocked)"
   (it "sends POST when no canvas-id (new item)"
@@ -146,8 +140,6 @@
                                    :endpoint "pages"
                                    :id-key :canvas-url)
           (expect-api-called 'PUT "pages/my-page"))))))
-
-;;;; 11. Finalize Item Helper
 
 (describe "org-canvas--finalize-item"
   (it "saves CANVAS_ID from response"
@@ -225,264 +217,6 @@
            (response '((error . "failed"))))
        (expect (org-canvas--finalize-item data response) :to-throw 'error)))))
 
-;;;; 12. Delete All Items Helper
-
-(describe "org-canvas--delete-all-items (mocked)"
-  (it "deletes items from Canvas via queued helper"
-    (with-org-canvas-test-config
-      (let ((queued-args nil))
-        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                   (lambda (_method _url &optional _params)
-                     '(((id . 1) (title . "Item 1"))
-                       ((id . 2) (title . "Item 2")))))
-                  ((symbol-function 'org-canvas--delete-items-queued)
-                   (lambda (items endpoint-fn id-field title-field &optional skip-fn _delete-data)
-                     (setq queued-args (list items endpoint-fn id-field title-field skip-fn))
-                     (cons 2 '("1" "2")))))
-          (let ((deleted (org-canvas--delete-all-items "items"
-                           :endpoint "items"
-                           :file nil)))
-            (expect deleted :to-equal 2)
-            ;; Verify queued helper received correct args
-            (expect (length (nth 0 queued-args)) :to-equal 2)
-            (expect (nth 2 queued-args) :to-equal 'id)
-            (expect (nth 3 queued-args) :to-equal 'title))))))
-
-  (it "passes skip-fn to queued helper"
-    (with-org-canvas-test-config
-      (let ((queued-skip-fn nil))
-        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                   (lambda (_method _url &optional _params)
-                     '(((id . 1) (title . "Keep") (front_page . t))
-                       ((id . 2) (title . "Delete") (front_page . :json-false)))))
-                  ((symbol-function 'org-canvas--delete-items-queued)
-                   (lambda (_items _endpoint-fn _id-field _title-field &optional skip-fn _delete-data)
-                     (setq queued-skip-fn skip-fn)
-                     (cons 1 '("2")))))
-          (org-canvas--delete-all-items "pages"
-            :endpoint "pages"
-            :file nil
-            :skip-fn (lambda (item) (eq (alist-get 'front_page item) t)))
-          (expect queued-skip-fn :not :to-be nil)))))
-
-  (it "uses custom id-field and title-field"
-    (with-org-canvas-test-config
-      (let ((queued-args nil))
-        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                   (lambda (_method _url &optional _params)
-                     '(((url . "my-page") (name . "My Page")))))
-                  ((symbol-function 'org-canvas--delete-items-queued)
-                   (lambda (items endpoint-fn id-field title-field &optional _skip-fn _delete-data)
-                     (setq queued-args (list items endpoint-fn id-field title-field))
-                     (cons 1 '("my-page")))))
-          (let ((deleted (org-canvas--delete-all-items "pages"
-                           :endpoint "pages"
-                           :file nil
-                           :id-field 'url
-                           :title-field 'name)))
-            (expect deleted :to-equal 1)
-            (expect (nth 2 queued-args) :to-equal 'url)
-            (expect (nth 3 queued-args) :to-equal 'name))))))
-
-  (it "constructs correct endpoint-fn"
-    (with-org-canvas-test-config
-      (let ((captured-endpoint-fn nil))
-        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                   (lambda (_method _url &optional _params)
-                     '(((id . 42) (title . "Test")))))
-                  ((symbol-function 'org-canvas--delete-items-queued)
-                   (lambda (_items endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
-                     (setq captured-endpoint-fn endpoint-fn)
-                     (cons 1 '("42")))))
-          (org-canvas--delete-all-items "items"
-            :endpoint "things"
-            :file nil)
-          ;; Verify endpoint-fn produces correct URL
-          (let ((url (funcall captured-endpoint-fn 42)))
-            (expect url :to-match "things/42$"))))))
-
-  (it "cleans local properties from org file"
-    (let ((temp-file (make-temp-file "test-canvas" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert "* Item 1
-:PROPERTIES:
-:CANVAS_ID: 1
-:LAST_SYNCED: [2024-01-01 Mon]
-:END:
-
-* Item 2
-:PROPERTIES:
-:CANVAS_ID: 2
-:LAST_SYNCED: [2024-01-01 Mon]
-:END:
-"))
-            (with-org-canvas-test-config
-              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                         (lambda (_method _url &optional _params)
-                           '(((id . 1) (title . "Item 1")))))
-                        ((symbol-function 'org-canvas--delete-items-queued)
-                         (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
-                           (cons 1 '("1")))))
-                (org-canvas--delete-all-items "items"
-                  :endpoint "items"
-                  :file temp-file)))
-            ;; Check that both items' properties were cleared
-            (with-current-buffer (find-file-noselect temp-file)
-              (goto-char (point-min))
-              (org-back-to-heading)
-              (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)
-              ;; Item 2 should also be cleared (delete-all cleans all properties)
-              (outline-next-heading)
-              (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)))
-        (delete-file temp-file)))))
-
-;;;; 12b. Queued Delete Helper
-
-(describe "org-canvas--delete-items-queued"
-  (it "returns (0 . nil) for empty items list"
-    (let ((result (org-canvas--delete-items-queued
-                   nil
-                   (lambda (id) (format "http://example.com/%s" id))
-                   'id 'title)))
-      (expect (car result) :to-equal 0)
-      (expect (cdr result) :to-be nil)))
-
-  (it "returns (0 . nil) when all items are skipped"
-    (let ((result (org-canvas--delete-items-queued
-                   '(((id . 1) (title . "A")) ((id . 2) (title . "B")))
-                   (lambda (id) (format "http://example.com/%s" id))
-                   'id 'title
-                   (lambda (_item) t))))
-      (expect (car result) :to-equal 0)
-      (expect (cdr result) :to-be nil)))
-
-  (it "deletes items and collects results"
-    (with-org-canvas-test-config
-      (cl-letf (((symbol-function 'org-canvas-api-request)
-                 (lambda (_method _url &rest _args) nil)))
-        (let ((result (org-canvas--delete-items-queued
-                       '(((id . 1) (title . "First"))
-                         ((id . 2) (title . "Second")))
-                       (lambda (id) (format "http://example.com/%s" id))
-                       'id 'title)))
-          (expect (car result) :to-equal 2)
-          (expect (member "1" (cdr result)) :to-be-truthy)
-          (expect (member "2" (cdr result)) :to-be-truthy)))))
-
-  (it "continues on error and only counts successes"
-    (with-org-canvas-test-config
-      (let ((call-count 0))
-        (cl-letf (((symbol-function 'org-canvas-api-request)
-                   (lambda (_method _url &rest _args)
-                     (setq call-count (1+ call-count))
-                     (when (= call-count 1)
-                       (error "Delete failed")))))
-          (let ((result (org-canvas--delete-items-queued
-                         '(((id . 1) (title . "Fail"))
-                           ((id . 2) (title . "Succeed")))
-                         (lambda (id) (format "http://example.com/%s" id))
-                         'id 'title)))
-            (expect (car result) :to-equal 1)
-            (expect (cdr result) :to-equal '("2")))))))
-
-  (it "converts numeric IDs to strings in deleted-ids"
-    (with-org-canvas-test-config
-      (cl-letf (((symbol-function 'org-canvas-api-request)
-                 (lambda (_method _url &rest _args) nil)))
-        (let ((result (org-canvas--delete-items-queued
-                       '(((id . 42) (title . "Numeric")))
-                       (lambda (id) (format "http://example.com/%s" id))
-                       'id 'title)))
-          (expect (car result) :to-equal 1)
-          (expect (car (cdr result)) :to-equal "42")))))
-
-  (it "keeps string IDs as-is in deleted-ids"
-    (with-org-canvas-test-config
-      (cl-letf (((symbol-function 'org-canvas-api-request)
-                 (lambda (_method _url &rest _args) nil)))
-        (let ((result (org-canvas--delete-items-queued
-                       '(((id . "my-page") (title . "String")))
-                       (lambda (id) (format "http://example.com/%s" id))
-                       'id 'title)))
-          (expect (car result) :to-equal 1)
-          (expect (car (cdr result)) :to-equal "my-page")))))
-
-  (it "passes correct URL from endpoint-fn"
-    (with-org-canvas-test-config
-      (let ((captured-url nil))
-        (cl-letf (((symbol-function 'org-canvas-api-request)
-                   (lambda (_method url &rest _args)
-                     (setq captured-url url)
-                     nil)))
-          (org-canvas--delete-items-queued
-           '(((id . 5) (title . "Test")))
-           (lambda (id) (format "http://canvas.example.com/items/%s" id))
-           'id 'title)
-          (expect captured-url :to-equal "http://canvas.example.com/items/5")))))
-
-  (it "skips items with skip-fn and deletes the rest"
-    (with-org-canvas-test-config
-      (cl-letf (((symbol-function 'org-canvas-api-request)
-                 (lambda (_method _url &rest _args) nil)))
-        (let ((result (org-canvas--delete-items-queued
-                       '(((id . 1) (title . "Keep") (front_page . t))
-                         ((id . 2) (title . "Delete") (front_page . :json-false)))
-                       (lambda (id) (format "http://example.com/%s" id))
-                       'id 'title
-                       (lambda (item) (eq (alist-get 'front_page item) t)))))
-          (expect (car result) :to-equal 1))))))
-
-;;;; 13. Delete Item at Point Helper
-
-(describe "org-canvas--delete-item-at-point (mocked)"
-  (it "deletes item and clears properties"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-org-buffer
-         "* Test Item
-:PROPERTIES:
-:CANVAS_ID: 555
-:LAST_SYNCED: [2024-01-01 Mon]
-:END:
-"
-         (org-back-to-heading)
-         (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
-           (org-canvas--delete-item-at-point "item"
-             :endpoint "items/%s")
-           (expect-api-called 'DELETE "items/555")
-           (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)
-           (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil))))))
-
-  (it "errors when no CANVAS_ID present"
-    (with-temp-org-buffer
-     "* New Item
-:PROPERTIES:
-:END:
-"
-     (org-back-to-heading)
-     (expect (org-canvas--delete-item-at-point "item" :endpoint "items/%s")
-             :to-throw 'user-error)))
-
-  (it "uses custom id-property"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-org-buffer
-         "* My Page
-:PROPERTIES:
-:CANVAS_URL: my-page-slug
-:END:
-"
-         (org-back-to-heading)
-         (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
-           (org-canvas--delete-item-at-point "page"
-             :endpoint "pages/%s"
-             :id-property "CANVAS_URL")
-           (expect-api-called 'DELETE "pages/my-page-slug")))))))
-
-;;;; 17. Push to API Edge Cases
-
 (describe "org-canvas--push-to-api edge cases (mocked)"
   (it "uses custom title-key"
     (with-org-canvas-test-config
@@ -525,86 +259,6 @@
               (expect (alist-get 'id result) :to-equal 789)
               (expect asked :to-equal 2))))))))
 
-;;;; 18. Delete All Items Edge Cases
-
-(describe "org-canvas--delete-all-items edge cases (mocked)"
-  (it "passes list-params to GET request"
-    (with-org-canvas-test-config
-      (let ((captured-params nil))
-        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                   (lambda (_method _url &optional params)
-                     (setq captured-params params)
-                     nil))
-                  ((symbol-function 'org-canvas--delete-items-queued)
-                   (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
-                     (cons 0 nil))))
-          (org-canvas--delete-all-items "items"
-            :endpoint "items"
-            :file nil
-            :list-params '(("filter" . "active")))
-          (expect captured-params :to-equal '(("filter" . "active")))))))
-
-  (it "returns 0 for empty remote items"
-    (with-org-canvas-test-config
-      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                 (lambda (_method _url &optional _params) nil))
-                ((symbol-function 'org-canvas--delete-items-queued)
-                 (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
-                   (cons 0 nil))))
-        (let ((deleted (org-canvas--delete-all-items "items"
-                         :endpoint "items"
-                         :file nil)))
-          (expect deleted :to-equal 0)))))
-
-  (it "does not clean properties when file is nil"
-    (with-org-canvas-test-config
-      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                 (lambda (_method _url &optional _params)
-                   '(((id . 1) (title . "Item")))))
-                ((symbol-function 'org-canvas--delete-items-queued)
-                 (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
-                   (cons 1 '("1")))))
-        (let ((deleted (org-canvas--delete-all-items "items"
-                         :endpoint "items"
-                         :file nil)))
-          (expect deleted :to-equal 1))))))
-
-;;;; 19. Delete Item at Point Edge Cases
-
-(describe "org-canvas--delete-item-at-point edge cases (mocked)"
-  (it "handles delete failure gracefully"
-    (with-org-canvas-test-config
-      (cl-letf (((symbol-function 'org-canvas-api-request)
-                 (lambda (_method _url &rest _args)
-                   (signal 'error '("Cannot delete"))))
-                ((symbol-function 'y-or-n-p) (lambda (_) t)))
-        (with-temp-org-buffer
-         "* Item to Delete
-:PROPERTIES:
-:CANVAS_ID: 123
-:END:
-"
-         (org-back-to-heading)
-         ;; Should return nil on failure, not throw
-         (let ((result (org-canvas--delete-item-at-point "item" :endpoint "items/%s")))
-           (expect result :to-be nil))))))
-
-  (it "returns nil when user cancels"
-    (with-org-canvas-test-config
-      (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil)))
-        (with-temp-org-buffer
-         "* Item
-:PROPERTIES:
-:CANVAS_ID: 456
-:END:
-"
-         (org-back-to-heading)
-         ;; Should return nil when user cancels
-         (let ((result (org-canvas--delete-item-at-point "item" :endpoint "items/%s")))
-           (expect result :to-be nil)))))))
-
-;;;; 22. Search Item Edge Cases
-
 (describe "org-canvas--search-item edge cases (mocked)"
   (it "uses custom params when provided"
     (with-org-canvas-test-config
@@ -624,8 +278,6 @@
                             ((id . 3) (title . "Test"))])))  ; Duplicate
         (let ((result (org-canvas--search-item "items" "Test")))
           (expect (alist-get 'id result) :to-equal 2))))))
-
-;;;; 23. Finalize Item Edge Cases
 
 (describe "org-canvas--finalize-item edge cases"
   (it "uses custom title-key for logging"
@@ -801,8 +453,6 @@
             :post-fn (lambda (_d _r ctx) (org-canvas--finalize-note-remote-write ctx))))
          (expect called :to-be nil))))))
 
-;;;; 27. org-canvas--push-to-api nested recovery
-
 (describe "org-canvas--push-to-api nested recovery"
   (it "handles 404→POST→Timeout→find-fn fails"
     (with-org-canvas-test-config
@@ -845,8 +495,6 @@
               (payload '((title . "Lost"))))
           (expect (org-canvas--push-to-api data payload :endpoint "items")
                   :to-throw 'error))))))
-
-;;;; 30. org-canvas-define-sync macro generated functions
 
 (describe "org-canvas-define-sync generated function"
   (it "syncs entries from file successfully"
@@ -990,114 +638,6 @@ Hello world.
       (with-sync-test-env
         (expect (org-canvas-sync-pages) :to-throw 'error)))))
 
-;;;; 31. org-canvas--delete-all-items edge paths
-
-(describe "org-canvas--delete-all-items edge paths"
-  (it "handles empty remote items list"
-    (with-org-canvas-test-config
-      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                 (lambda (_method _url &optional _params) nil))
-                ((symbol-function 'org-canvas--delete-items-queued)
-                 (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
-                   (cons 0 nil))))
-        (let ((deleted (org-canvas--delete-all-items "items"
-                         :endpoint "items"
-                         :file nil)))
-          (expect deleted :to-equal 0)))))
-
-  (it "cleans all properties even when queued helper reports partial success"
-    (let ((temp-file (make-temp-file "test-canvas" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert "* Item A
-:PROPERTIES:
-:CANVAS_ID: 1
-:LAST_SYNCED: [2024-01-01 Mon]
-:END:
-
-* Item B
-:PROPERTIES:
-:CANVAS_ID: 2
-:LAST_SYNCED: [2024-01-01 Mon]
-:END:
-"))
-            (with-org-canvas-test-config
-              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                         (lambda (_method _url &optional _params)
-                           '(((id . 1) (title . "Item A"))
-                             ((id . 2) (title . "Item B")))))
-                        ((symbol-function 'org-canvas--delete-items-queued)
-                         (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
-                           ;; Simulate: item 1 deleted, item 2 failed
-                           (cons 1 '("1")))))
-                (org-canvas--delete-all-items "items"
-                  :endpoint "items"
-                  :file temp-file)))
-            ;; Both items should be cleaned (delete-all cleans all properties)
-            (with-current-buffer (find-file-noselect temp-file)
-              (goto-char (point-min))
-              (org-back-to-heading)
-              (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)
-              (outline-next-heading)
-              (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)))
-        (delete-file temp-file))))
-
-  (it "does not clean properties when file is nil"
-    (with-org-canvas-test-config
-      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                 (lambda (_method _url &optional _params)
-                   '(((id . 1) (title . "Item")))))
-                ((symbol-function 'org-canvas--delete-items-queued)
-                 (lambda (_items _endpoint-fn _id-field _title-field &optional _skip-fn _delete-data)
-                   (cons 1 '("1")))))
-        ;; Should not error even with nil file
-        (let ((deleted (org-canvas--delete-all-items "items"
-                         :endpoint "items"
-                         :file nil)))
-          (expect deleted :to-equal 1))))))
-
-;;;; 32. org-canvas--delete-item-at-point edge paths
-
-(describe "org-canvas--delete-item-at-point additional tests"
-  (it "preserves properties on API error"
-    (with-org-canvas-test-config
-      (cl-letf (((symbol-function 'org-canvas-api-request)
-                 (lambda (_method _url &rest _args)
-                   (signal 'error '("Server error"))))
-                ((symbol-function 'y-or-n-p) (lambda (_) t)))
-        (with-temp-org-buffer
-         "* Test Item
-:PROPERTIES:
-:CANVAS_ID: 999
-:LAST_SYNCED: [2024-01-01 Mon]
-:END:
-"
-         (org-back-to-heading)
-         (org-canvas--delete-item-at-point "item" :endpoint "items/%s")
-         ;; Properties should be preserved on failure
-         (expect (org-entry-get (point) "CANVAS_ID") :to-equal "999")
-         (expect (org-entry-get (point) "LAST_SYNCED") :to-equal "[2024-01-01 Mon]")))))
-
-  (it "succeeds and clears all sync properties"
-    (with-org-canvas-test-config
-      (with-mock-api
-        (with-temp-org-buffer
-         "* Item
-:PROPERTIES:
-:CANVAS_ID: 555
-:CANVAS_URL: my-url
-:LAST_SYNCED: [2024-01-01 Mon]
-:END:
-"
-         (org-back-to-heading)
-         (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
-           (let ((result (org-canvas--delete-item-at-point "item" :endpoint "items/%s")))
-             (expect result :to-be t)
-             (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)
-             (expect (org-entry-get (point) "CANVAS_URL") :to-be nil)
-             (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil))))))))
-
 (describe "org-canvas-define-sync macro validation"
   (it "errors when :file is missing"
     (expect (macroexpand '(org-canvas-define-sync test-bad
@@ -1139,183 +679,6 @@ Hello world.
                             :push #'identity))
             :to-throw 'error '("org-canvas-define-sync: :finalize or :endpoint is required"))))
 
-(describe "org-canvas--prune-collect-local-ids"
-  (it "collects ids from headings at all levels"
-    (let ((temp-file (make-temp-file "prune-" nil ".org")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file
-              (insert "* A\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n** B\n:PROPERTIES:\n:CANVAS_ID: 2\n:END:\n* C\n"))
-            (expect (org-canvas--prune-collect-local-ids temp-file "CANVAS_ID")
-                    :to-equal '("1" "2")))
-        (let ((buf (find-buffer-visiting temp-file)))
-          (when buf (kill-buffer buf)))
-        (delete-file temp-file))))
-
-  (it "signals user-error when the file is missing"
-    (expect (org-canvas--prune-collect-local-ids "/nonexistent/x.org" "CANVAS_ID")
-            :to-throw 'user-error)))
-
-(describe "org-canvas--prune-runtime (mocked)"
-  (it "deletes only remote items absent from the org file"
-    (with-org-canvas-test-config
-      (let ((temp-file (make-temp-file "prune-" nil ".org"))
-            (pruned-items nil))
-        (unwind-protect
-            (progn
-              (with-temp-file temp-file
-                (insert "* Kept\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"))
-              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                         (lambda (&rest _)
-                           '(((id . 1) (title . "Kept"))
-                             ((id . 2) (title . "Orphan A"))
-                             ((id . 3) (title . "Orphan B")))))
-                        ((symbol-function 'y-or-n-p) (lambda (_) t))
-                        ((symbol-function 'org-canvas--delete-items-queued)
-                         (lambda (items &rest _)
-                           (setq pruned-items items)
-                           (cons (length items) nil))))
-                (expect (org-canvas--prune-runtime "pages"
-                          :endpoint "pages" :file temp-file)
-                        :to-equal 2)
-                (expect (mapcar (lambda (i) (alist-get 'id i)) pruned-items)
-                        :to-equal '(2 3))))
-          (let ((buf (find-buffer-visiting temp-file)))
-            (when buf (kill-buffer buf)))
-          (delete-file temp-file)))))
-
-  (it "respects skip-fn (protected items are not orphans)"
-    (with-org-canvas-test-config
-      (let ((temp-file (make-temp-file "prune-" nil ".org"))
-        (pruned-items nil))
-        (unwind-protect
-            (progn
-              (with-temp-file temp-file (insert "* Empty\n"))
-              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                         (lambda (&rest _)
-                           '(((id . 1) (title . "Front") (front_page . t))
-                             ((id . 2) (title . "Orphan")))))
-                        ((symbol-function 'y-or-n-p) (lambda (_) t))
-                        ((symbol-function 'org-canvas--delete-items-queued)
-                         (lambda (items &rest _)
-                           (setq pruned-items items)
-                           (cons (length items) nil))))
-                (org-canvas--prune-runtime "pages"
-                  :endpoint "pages" :file temp-file
-                  :skip-fn (lambda (item) (eq (alist-get 'front_page item) t)))
-                (expect (length pruned-items) :to-equal 1)
-                (expect (alist-get 'id (car pruned-items)) :to-equal 2)))
-          (let ((buf (find-buffer-visiting temp-file)))
-            (when buf (kill-buffer buf)))
-          (delete-file temp-file)))))
-
-  (it "counts protected items in the prune tally (issue #81)"
-    (with-org-canvas-test-config
-      (let ((temp-file (make-temp-file "prune-" nil ".org"))
-            (logged nil))
-        (unwind-protect
-            (progn
-              (with-temp-file temp-file (insert "* Empty\n"))
-              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                         (lambda (&rest _)
-                           '(((id . 1) (title . "Front") (front_page . t))
-                             ((id . 2) (title . "Orphan")))))
-                        ((symbol-function 'y-or-n-p) (lambda (_) nil))
-                        ((symbol-function 'org-canvas--log-info)
-                         (lambda (_l fmt &rest args)
-                           (push (apply #'format fmt args) logged))))
-                (org-canvas--prune-runtime "pages"
-                  :endpoint "pages" :file temp-file
-                  :skip-fn (lambda (item) (eq (alist-get 'front_page item) t)))
-                ;; Without this the front page is simply missing from the
-                ;; tally, which reads as "there was nothing else there".
-                (expect (car (last logged)) :to-match ", 1 protected")))
-          (let ((buf (find-buffer-visiting temp-file)))
-            (when buf (kill-buffer buf)))
-          (delete-file temp-file)))))
-
-  (it "omits the protected count when no skip-fn applies"
-    (with-org-canvas-test-config
-      (let ((temp-file (make-temp-file "prune-" nil ".org"))
-            (logged nil))
-        (unwind-protect
-            (progn
-              (with-temp-file temp-file (insert "* Empty\n"))
-              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                         (lambda (&rest _) '(((id . 2) (title . "Orphan")))))
-                        ((symbol-function 'y-or-n-p) (lambda (_) nil))
-                        ((symbol-function 'org-canvas--log-info)
-                         (lambda (_l fmt &rest args)
-                           (push (apply #'format fmt args) logged))))
-                (org-canvas--prune-runtime "pages"
-                  :endpoint "pages" :file temp-file)
-                (expect (car (last logged)) :not :to-match "protected")))
-          (let ((buf (find-buffer-visiting temp-file)))
-            (when buf (kill-buffer buf)))
-          (delete-file temp-file)))))
-
-  (it "deletes nothing when the user declines"
-    (with-org-canvas-test-config
-      (let ((temp-file (make-temp-file "prune-" nil ".org"))
-            (delete-called nil))
-        (unwind-protect
-            (progn
-              (with-temp-file temp-file (insert "* Empty\n"))
-              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                         (lambda (&rest _) '(((id . 2) (title . "Orphan")))))
-                        ((symbol-function 'y-or-n-p) (lambda (_) nil))
-                        ((symbol-function 'org-canvas--delete-items-queued)
-                         (lambda (&rest _) (setq delete-called t) (cons 0 nil))))
-                (expect (org-canvas--prune-runtime "pages"
-                          :endpoint "pages" :file temp-file)
-                        :to-equal 0)
-                (expect delete-called :to-be nil)))
-          (let ((buf (find-buffer-visiting temp-file)))
-            (when buf (kill-buffer buf)))
-          (delete-file temp-file)))))
-
-  (it "does not prompt when there are no orphans"
-    (with-org-canvas-test-config
-      (let ((temp-file (make-temp-file "prune-" nil ".org")))
-        (unwind-protect
-            (progn
-              (with-temp-file temp-file
-                (insert "* Kept\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"))
-              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                         (lambda (&rest _) '(((id . 1) (title . "Kept")))))
-                        ((symbol-function 'y-or-n-p)
-                         (lambda (_) (error "Must not prompt"))))
-                (expect (org-canvas--prune-runtime "pages"
-                          :endpoint "pages" :file temp-file)
-                        :to-equal 0)))
-          (let ((buf (find-buffer-visiting temp-file)))
-            (when buf (kill-buffer buf)))
-          (delete-file temp-file)))))
-
-  (it "generates prune commands for every delete-all feature"
-    (expect (fboundp 'org-canvas-prune-pages) :to-be-truthy)
-    (expect (fboundp 'org-canvas-prune-assignments) :to-be-truthy)
-    (expect (fboundp 'org-canvas-prune-quizzes) :to-be-truthy)
-    (expect (fboundp 'org-canvas-prune-modules) :to-be-truthy)
-    (expect (fboundp 'org-canvas-prune-calendar-events) :to-be-truthy)
-    (expect (fboundp 'org-canvas-prune-group-categories) :to-be-truthy)))
-
-(describe "org-canvas-define-delete-all macro validation"
-  (it "errors when :endpoint is missing"
-    (expect (macroexpand '(org-canvas-define-delete-all test-bad
-                            :file some-file))
-            :to-throw 'error '("org-canvas-define-delete-all: :endpoint is required")))
-
-  (it "errors when :file is missing"
-    (expect (macroexpand '(org-canvas-define-delete-all test-bad
-                            :endpoint "items"))
-            :to-throw 'error '("org-canvas-define-delete-all: :file is required"))))
-
-(describe "org-canvas-define-delete-at-point macro validation"
-  (it "errors when neither :endpoint nor :delete-url-fn provided"
-    (expect (macroexpand '(org-canvas-define-delete-at-point test-bad))
-            :to-throw 'error '("org-canvas-define-delete-at-point: :endpoint or :delete-url-fn required"))))
-
 (describe "org-canvas--push-to-api 404→POST non-timeout error"
   (it "re-throws non-timeout POST error after 404 retry"
     (with-org-canvas-test-config
@@ -1340,16 +703,12 @@ Hello world.
                                              :find-fn (lambda (_) nil))
                     :to-throw 'error)))))))
 
-;;;; 37. finalize-item pom nil-guard
-
 (describe "org-canvas--finalize-item pom nil-guard"
   (it "errors when :pom is missing from data"
     (let ((data (list :title "No POM"))
           (response '((id . 123))))
       (expect (org-canvas--finalize-item data response)
               :to-throw 'error))))
-
-;;;; Payload Hashing / Skip Logic (via sync macro)
 
 (describe "org-canvas-define-sync payload hashing"
   :var (temp-dir temp-file)
@@ -1401,8 +760,6 @@ Hello world.
      (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil)
      (expect (org-entry-get (point) "PAYLOAD_HASH") :to-be nil))))
 
-;;;; Payload hash computation
-
 (describe "org-canvas--sync-payload-hash"
   (it "matches plain md5 of the encoded payload when no hash-extra fn is given"
     (let ((payload '((name . "X"))))
@@ -1419,8 +776,6 @@ Hello world.
       (org-canvas--sync-payload-hash '((a . 1)) '(:pom 42)
                                      (lambda (d) (setq seen d) ""))
       (expect seen :to-equal '(:pom 42)))))
-
-;;;; Metamorphic relations
 
 (describe "metamorphic relations"
   (it "re-syncing unchanged content is a no-op (push idempotence)"
@@ -1458,8 +813,6 @@ Hello world.
       (expect (plist-get d1 :title) :to-equal "Welcome")
       (expect (plist-get d1 :title) :to-equal (plist-get d2 :title)))))
 
-;;;; Push-at-Point Macro
-
 (describe "org-canvas-define-sync at-point generation"
   (it "generates sync-page-at-point from sync macro"
     (expect (fboundp 'org-canvas-sync-page-at-point) :to-be-truthy))
@@ -1488,8 +841,6 @@ Hello world.
   (it "suppresses at-point with :no-at-point"
     ;; new-quizzes has :no-at-point t, its at-point is hand-written
     (expect (fboundp 'org-canvas-sync-new-quiz-at-point) :to-be-truthy)))
-
-;;;; Conflict Detection
 
 (describe "org-canvas--parse-iso8601-time"
   (it "parses a valid ISO8601 timestamp"
@@ -1816,366 +1167,6 @@ Hello world.
           (when buf (kill-buffer buf)))
         (delete-file temp-file)))))
 
-;;;; Interactive Conflict Resolution
-
-(describe "org-canvas--conflict-format-diff"
-  (it "creates a buffer with conflict details"
-    (let ((data (list :title "My Page" :description "local body text"
-                      :pom nil))
-          (remote '((title . "My Page Remote")
-                    (updated_at . "2026-02-01T10:00:00Z")
-                    (body . "remote body text")))
-)
-      (let ((buf (org-canvas--conflict-format-diff data remote t)))
-        (unwind-protect
-            (with-current-buffer buf
-              (expect (buffer-string) :to-match "Conflict: My Page")
-              (expect (buffer-string) :to-match "Remote updated_at:")
-              (expect (buffer-string) :to-match "Title")
-              (expect (buffer-string) :to-match "My Page Remote"))
-          (when (buffer-live-p buf) (kill-buffer buf))))))
-
-  (it "handles nil body gracefully"
-    (let ((data (list :title "No Body" :pom nil))
-          (remote '((title . "No Body") (updated_at . "2026-02-01T10:00:00Z")))
-)
-      (let ((buf (org-canvas--conflict-format-diff data remote)))
-        (unwind-protect
-            (with-current-buffer buf
-              (expect (buffer-string) :to-match "Conflict: No Body"))
-          (when (buffer-live-p buf) (kill-buffer buf))))))
-
-  (it "shows pull option only when pull-item-fn is set"
-    (let ((data (list :title "Item" :pom nil))
-          (remote '((title . "Item") (updated_at . "2026-02-01T10:00:00Z"))))
-      ;; With pull-item-fn
-      (progn
-        (let ((buf (org-canvas--conflict-format-diff data remote t)))
-          (unwind-protect
-              (with-current-buffer buf
-                (expect (buffer-string) :to-match "l = Pull"))
-            (when (buffer-live-p buf) (kill-buffer buf)))))
-      ;; Without pull-item-fn
-      (progn
-        (let ((buf (org-canvas--conflict-format-diff data remote)))
-          (unwind-protect
-              (with-current-buffer buf
-                (expect (buffer-string) :not :to-match "l = Pull"))
-            (when (buffer-live-p buf) (kill-buffer buf)))))))
-
-  (it "shows P/L/S when pull-item-fn is set, P/S when nil"
-    (let ((data (list :title "Item" :pom nil))
-          (remote '((title . "Item") (updated_at . "2026-02-01T10:00:00Z"))))
-      ;; With pull-item-fn: should show P/L/S
-      (progn
-        (let ((buf (org-canvas--conflict-format-diff data remote t)))
-          (unwind-protect
-              (with-current-buffer buf
-                (expect (buffer-string) :to-match "P/L/S"))
-            (when (buffer-live-p buf) (kill-buffer buf)))))
-      ;; Without pull-item-fn: should show P/S
-      (progn
-        (let ((buf (org-canvas--conflict-format-diff data remote)))
-          (unwind-protect
-              (with-current-buffer buf
-                (expect (buffer-string) :to-match "P/S")
-                (expect (buffer-string) :not :to-match "P/L/S"))
-            (when (buffer-live-p buf) (kill-buffer buf))))))))
-
-(describe "org-canvas--conflict-prompt"
-  (it "returns push for p"
-    ;; These simulate a human at the keyboard; under batch the prompt
-    ;; short-circuits to skip rather than reading a key (issue #72).
-    (let ((noninteractive nil))
-     (cl-letf (((symbol-function 'read-char-choice)
-               (lambda (_prompt _chars) ?p)))
-      (expect (org-canvas--conflict-prompt t) :to-equal 'push))))
-
-  (it "returns pull for l"
-    ;; These simulate a human at the keyboard; under batch the prompt
-    ;; short-circuits to skip rather than reading a key (issue #72).
-    (let ((noninteractive nil))
-     (cl-letf (((symbol-function 'read-char-choice)
-               (lambda (_prompt _chars) ?l)))
-      (expect (org-canvas--conflict-prompt t) :to-equal 'pull))))
-
-  (it "returns skip for s"
-    ;; These simulate a human at the keyboard; under batch the prompt
-    ;; short-circuits to skip rather than reading a key (issue #72).
-    (let ((noninteractive nil))
-     (cl-letf (((symbol-function 'read-char-choice)
-               (lambda (_prompt _chars) ?s)))
-      (expect (org-canvas--conflict-prompt t) :to-equal 'skip))))
-
-  (it "returns push-all for P"
-    ;; These simulate a human at the keyboard; under batch the prompt
-    ;; short-circuits to skip rather than reading a key (issue #72).
-    (let ((noninteractive nil))
-     (cl-letf (((symbol-function 'read-char-choice)
-               (lambda (_prompt _chars) ?P)))
-      (expect (org-canvas--conflict-prompt t) :to-equal 'push-all))))
-
-  (it "returns pull-all for L"
-    ;; These simulate a human at the keyboard; under batch the prompt
-    ;; short-circuits to skip rather than reading a key (issue #72).
-    (let ((noninteractive nil))
-     (cl-letf (((symbol-function 'read-char-choice)
-               (lambda (_prompt _chars) ?L)))
-      (expect (org-canvas--conflict-prompt t) :to-equal 'pull-all))))
-
-  (it "returns skip-all for S"
-    ;; These simulate a human at the keyboard; under batch the prompt
-    ;; short-circuits to skip rather than reading a key (issue #72).
-    (let ((noninteractive nil))
-     (cl-letf (((symbol-function 'read-char-choice)
-               (lambda (_prompt _chars) ?S)))
-      (expect (org-canvas--conflict-prompt t) :to-equal 'skip-all)))))
-
-(describe "org-canvas--resolve-conflict"
-  (it "returns the run's apply-all answer immediately when set"
-    (let ((ctx (org-canvas--sync-make-ctx :conflict-apply-all 'push)))
-      (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")) ctx)
-              :to-equal 'push)))
-
-  (it "returns skip when apply-all is skip"
-    (let ((ctx (org-canvas--sync-make-ctx :conflict-apply-all 'skip)))
-      (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")) ctx)
-              :to-equal 'skip)))
-
-  (it "remembers push-all in the run context"
-    (let ((ctx (org-canvas--sync-make-ctx))
-          (noninteractive nil))
-      (cl-letf (((symbol-function 'org-canvas--conflict-prompt)
-                 (lambda (_has-pull) 'push-all)))
-        (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")) ctx)
-                :to-equal 'push)
-        (expect (plist-get ctx :conflict-apply-all) :to-equal 'push))))
-
-  (it "remembers skip-all in the run context"
-    (let ((ctx (org-canvas--sync-make-ctx))
-          (noninteractive nil))
-      (cl-letf (((symbol-function 'org-canvas--conflict-prompt)
-                 (lambda (_has-pull) 'skip-all)))
-        (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")) ctx)
-                :to-equal 'skip)
-        (expect (plist-get ctx :conflict-apply-all) :to-equal 'skip))))
-
-  (it "remembers pull-all in the run context"
-    (let ((ctx (org-canvas--sync-make-ctx :pull-item-fn #'ignore))
-          (noninteractive nil))
-      (cl-letf (((symbol-function 'org-canvas--conflict-prompt)
-                 (lambda (_has-pull) 'pull-all)))
-        (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")) ctx)
-                :to-equal 'pull)
-        (expect (plist-get ctx :conflict-apply-all) :to-equal 'pull))))
-
-  (it "offers pull only when the run context names a pull function (issue #141)"
-    (let ((seen nil)
-          (noninteractive nil))
-      (cl-letf (((symbol-function 'org-canvas--conflict-prompt)
-                 (lambda (has-pull) (push has-pull seen) 'skip)))
-        (org-canvas--resolve-conflict '(:title "X") '((title . "X"))
-                                      (org-canvas--sync-make-ctx :pull-item-fn #'ignore))
-        (org-canvas--resolve-conflict '(:title "X") '((title . "X"))
-                                      (org-canvas--sync-make-ctx))
-        (org-canvas--resolve-conflict '(:title "X") '((title . "X")) nil))
-      (expect (nreverse seen) :to-equal '(t nil nil))))
-
-  (it "kills the diff buffer after prompting"
-    (let ((ctx (org-canvas--sync-make-ctx))
-          (noninteractive nil))
-      (cl-letf (((symbol-function 'org-canvas--conflict-prompt)
-                 (lambda (_has-pull) 'push)))
-        (org-canvas--resolve-conflict '(:title "X") '((title . "X")) ctx)
-        (expect (get-buffer org-canvas--conflict-buffer-name) :to-be nil)))))
-
-(describe "org-canvas--conflict-unattended-action"
-  ;; Issue #72: a batch sync died reading a keystroke that cannot arrive.
-  (it "takes skip under batch when nothing is configured"
-    (let ((org-canvas-conflict-strategy nil))
-      (cl-letf (((symbol-function 'org-canvas--log-warning) #'ignore))
-        (expect (org-canvas--conflict-unattended-action '(:title "X"))
-                :to-equal 'skip))))
-
-  (it "honours a configured strategy, batch or not"
-    (let ((org-canvas-conflict-strategy 'push))
-      (cl-letf (((symbol-function 'org-canvas--log-warning) #'ignore))
-        (expect (org-canvas--conflict-unattended-action '(:title "X"))
-                :to-equal 'push)
-        (let ((noninteractive nil))
-          (expect (org-canvas--conflict-unattended-action '(:title "X"))
-                  :to-equal 'push)))))
-
-  (it "defers to the prompt when interactive and unconfigured"
-    (let ((org-canvas-conflict-strategy nil)
-          (noninteractive nil))
-      (expect (org-canvas--conflict-unattended-action '(:title "X")) :to-be nil)))
-
-  (it "names the entry and says why it was not asked about"
-    (let ((org-canvas-conflict-strategy nil)
-          (warnings nil))
-      (cl-letf (((symbol-function 'org-canvas--log-warning)
-                 (lambda (_l fmt &rest args)
-                   (push (apply #'format fmt args) warnings))))
-        (org-canvas--conflict-unattended-action '(:title "Lab 1"))
-        (expect (car warnings) :to-match "'Lab 1'")
-        (expect (car warnings) :to-match "batch mode")
-        (expect (car warnings) :to-match "org-canvas-conflict-strategy"))))
-
-  (it "names a file entry by its display name, and an anonymous one plainly"
-    ;; Files carry :display-name rather than :title.
-    (let ((org-canvas-conflict-strategy 'skip)
-          (warnings nil))
-      (cl-letf (((symbol-function 'org-canvas--log-warning)
-                 (lambda (_l fmt &rest args)
-                   (push (apply #'format fmt args) warnings))))
-        (org-canvas--conflict-unattended-action '(:display-name "syllabus.pdf"))
-        (expect (car warnings) :to-match "'syllabus.pdf'")
-        (org-canvas--conflict-unattended-action nil)
-        (expect (car warnings) :to-match "'entry'"))))
-
-  (it "credits the setting when one is configured"
-    (let ((org-canvas-conflict-strategy 'skip)
-          (warnings nil))
-      (cl-letf (((symbol-function 'org-canvas--log-warning)
-                 (lambda (_l fmt &rest args)
-                   (push (apply #'format fmt args) warnings))))
-        (org-canvas--conflict-unattended-action '(:title "Lab 1"))
-        (expect (car warnings) :to-match "(org-canvas-conflict-strategy)")))))
-
-(describe "org-canvas--conflict-prompt under batch"
-  (it "returns skip instead of reading a key that cannot arrive"
-    ;; read-char-choice signals end-of-file in batch, taking the sync with it.
-    (cl-letf (((symbol-function 'read-char-choice)
-               (lambda (&rest _) (error "should not be called"))))
-      (expect (org-canvas--conflict-prompt t) :to-equal 'skip))))
-
-(describe "org-canvas--resolve-conflict unattended"
-  (it "resolves without prompting under batch"
-    (let ((org-canvas-conflict-strategy nil))
-      (cl-letf (((symbol-function 'org-canvas--log-warning) #'ignore)
-                ((symbol-function 'org-canvas--conflict-format-diff)
-                 (lambda (&rest _) (error "should not build a diff"))))
-        (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X"))
-                                              (org-canvas--sync-make-ctx))
-                :to-equal 'skip))))
-
-  (it "follows the configured strategy ahead of the prompt"
-    (let ((org-canvas-conflict-strategy 'push)
-          (noninteractive nil))
-      (cl-letf (((symbol-function 'org-canvas--log-warning) #'ignore)
-                ((symbol-function 'org-canvas--conflict-prompt)
-                 (lambda (&rest _) (error "should not prompt"))))
-        (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X"))
-                                              (org-canvas--sync-make-ctx))
-                :to-equal 'push))))
-
-  (it "still lets a run's apply-all answer win"
-    ;; The per-run choice is more specific than the standing setting.
-    (let ((org-canvas-conflict-strategy 'push))
-      (expect (org-canvas--resolve-conflict
-               '(:title "X") '((title . "X"))
-               (org-canvas--sync-make-ctx :conflict-apply-all 'pull
-                                          :pull-item-fn #'ignore))
-              :to-equal 'pull)))
-
-  (it "is the seam a caller has, since a run's answer dies with its context"
-    ;; The reported dead end (issue #72) was a let of the old apply-all
-    ;; variable losing to the pipeline's rebinding.  The defcustom is
-    ;; read whenever the run context holds no answer of its own.
-    (let ((org-canvas-conflict-strategy 'skip))
-      (cl-letf (((symbol-function 'org-canvas--log-warning) #'ignore))
-        (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X"))
-                                              (org-canvas--sync-make-ctx))
-                :to-equal 'skip)
-        (expect (org-canvas--resolve-conflict '(:title "X") '((title . "X")) nil)
-                :to-equal 'skip)))))
-
-(describe "org-canvas--conflict-pull-local"
-  (it "calls pull-item-fn and refreshes file-level LAST_SYNCED header"
-    (with-temp-org-buffer
-     "#+LAST_SYNCED: [2026-01-01 Thu 10:00]
-* Old Title
-:PROPERTIES:
-:CANVAS_ID: 100
-:PAYLOAD_HASH: abc123
-:END:
-"
-     (re-search-forward "^\\* ")
-     (org-back-to-heading)
-     (let* ((pom (point-marker))
-            (data (list :title "Old Title" :pom pom))
-            (remote '((title . "New Title")
-                      (updated_at . "2026-02-01T12:00:00Z")
-                      (message . "new body")))
-            (pull-called nil))
-       (org-canvas--conflict-pull-local data remote
-         (lambda (_item _pos) (setq pull-called t)))
-       (expect pull-called :to-be-truthy)
-       ;; PAYLOAD_HASH should be deleted
-       (expect (org-entry-get pom "PAYLOAD_HASH") :to-be nil)
-       ;; CANVAS_UPDATED_AT should be set on the heading
-       (expect (org-entry-get pom "CANVAS_UPDATED_AT")
-               :to-equal "2026-02-01T12:00:00Z")
-       ;; Per-entry LAST_SYNCED should not be written
-       (expect (org-entry-get pom "LAST_SYNCED") :to-be nil)
-       ;; File-level header should have been refreshed
-       (let ((new-synced (org-canvas--pull-read-file-header)))
-         (expect new-synced :to-be-truthy)
-         (expect new-synced :not :to-equal "[2026-01-01 Thu 10:00]")))))
-
-  (it "updates heading title when different"
-    (with-temp-org-buffer
-     "* Original Name
-:PROPERTIES:
-:CANVAS_ID: 200
-:END:
-"
-     (org-back-to-heading)
-     (let* ((pom (let ((m (point-marker)))
-                   (set-marker-insertion-type m t)
-                   m))
-            (data (list :title "Original Name" :pom pom))
-            (remote '((title . "Updated Name")
-                      (updated_at . "2026-02-01T12:00:00Z"))))
-       (org-canvas--conflict-pull-local data remote
-         (lambda (_item _pos) nil))
-       ;; pull-write-file-header may have inserted text at the top —
-       ;; navigate by structure rather than by stale position
-       (goto-char (point-min))
-       (re-search-forward "^\\* " nil t)
-       (org-back-to-heading)
-       (expect (org-get-heading t t t t) :to-equal "Updated Name"))))
-
-  (it "handles integer pom (non-marker)"
-    (with-temp-org-buffer
-     "* Integer POM Test
-:PROPERTIES:
-:CANVAS_ID: 300
-:PAYLOAD_HASH: oldhash
-:END:
-"
-     (org-back-to-heading)
-     (let* ((pom (point))
-            (data (list :title "Integer POM Test" :pom pom))
-            (remote '((title . "Renamed via Integer")
-                      (updated_at . "2026-03-01T09:00:00Z")))
-            (pull-called nil))
-       (org-canvas--conflict-pull-local data remote
-         (lambda (_item _pos) (setq pull-called t)))
-       (expect pull-called :to-be-truthy)
-       ;; Re-locate the heading because pull-write-file-header may have
-       ;; shifted positions when inserting the file-level header
-       (goto-char (point-min))
-       (re-search-forward "^\\* " nil t)
-       (org-back-to-heading)
-       (expect (org-get-heading t t t t) :to-equal "Renamed via Integer")
-       (expect (org-entry-get (point) "PAYLOAD_HASH") :to-be nil)
-       (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
-               :to-equal "2026-03-01T09:00:00Z")
-       ;; File-level header gets refreshed
-       (expect (org-canvas--pull-read-file-header) :to-be-truthy)))))
-
 (describe "org-canvas--push-to-api conflict resolution"
   (it "proceeds with PUT when user chooses push"
     (with-org-canvas-test-config
@@ -2295,220 +1286,6 @@ Hello world.
       ;; Pull-item-fn should be passed through
       (expect (format "%S" expanded)
               :to-match "ignore"))))
-
-;;;; Pull Helpers
-
-(describe "org-canvas--html-to-org"
-  (it "converts simple HTML to Org"
-    (let ((result (org-canvas--html-to-org "<p>Hello <strong>world</strong></p>")))
-      (expect result :to-match "Hello")
-      (expect result :to-match "world")))
-
-  (it "returns raw HTML with warning if pandoc is absent"
-    (cl-letf (((symbol-function 'executable-find) (lambda (_) nil)))
-      (let ((result (org-canvas--html-to-org "<p>Test</p>")))
-        (expect result :to-match "WARNING")
-        (expect result :to-match "<p>Test</p>")))))
-
-(describe "org-canvas--pull-insert-body"
-  (it "inserts converted HTML as Org text"
-    (with-temp-org-buffer
-     "* Heading
-:PROPERTIES:
-:CANVAS_ID: 1
-:END:
-Old body text
-"
-     (goto-char (point-min))
-     (org-back-to-heading t)
-     (org-canvas--pull-insert-body "<p>New content</p>")
-     (goto-char (point-min))
-     (expect (buffer-string) :to-match "New content")
-     (expect (buffer-string) :not :to-match "Old body text")))
-
-  (it "does nothing when body is nil"
-    (with-temp-org-buffer
-     "* Heading
-:PROPERTIES:
-:CANVAS_ID: 1
-:END:
-Keep this
-"
-     (goto-char (point-min))
-     (org-back-to-heading t)
-     (org-canvas--pull-insert-body nil)
-     (expect (buffer-string) :to-match "Keep this")))
-
-  (it "does nothing when body is empty string"
-    (with-temp-org-buffer
-     "* Heading
-:PROPERTIES:
-:CANVAS_ID: 1
-:END:
-Keep this too
-"
-     (goto-char (point-min))
-     (org-back-to-heading t)
-     (org-canvas--pull-insert-body "")
-     (expect (buffer-string) :to-match "Keep this too"))))
-
-(describe "org-canvas--pull-upsert-heading"
-  (it "creates new heading when no match exists"
-    (let* ((temp-dir (make-temp-file "upsert-test" t))
-           (test-file (expand-file-name "test.org" temp-dir)))
-      (unwind-protect
-          (progn
-            (with-temp-file test-file (insert ""))
-            (let ((pos (org-canvas--pull-upsert-heading
-                        test-file 999 "New Item")))
-              (with-current-buffer (find-file-noselect test-file)
-                (goto-char pos)
-                (expect (org-get-heading t t t t) :to-equal "New Item"))))
-        (let ((buf (find-buffer-visiting test-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t))))
-
-  (it "finds existing heading by CANVAS_ID"
-    (let* ((temp-dir (make-temp-file "upsert-test" t))
-           (test-file (expand-file-name "test.org" temp-dir)))
-      (unwind-protect
-          (progn
-            (with-temp-file test-file
-              (insert "* Existing\n:PROPERTIES:\n:CANVAS_ID: 42\n:END:\n"))
-            (let ((pos (org-canvas--pull-upsert-heading
-                        test-file 42 "Updated")))
-              (with-current-buffer (find-file-noselect test-file)
-                (goto-char pos)
-                ;; Should find existing, not create new
-                (expect (org-entry-get (point) "CANVAS_ID") :to-equal "42"))))
-        (let ((buf (find-buffer-visiting test-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t))))
-
-  (it "uses custom id-property"
-    (let* ((temp-dir (make-temp-file "upsert-test" t))
-           (test-file (expand-file-name "test.org" temp-dir)))
-      (unwind-protect
-          (progn
-            (with-temp-file test-file
-              (insert "* Page\n:PROPERTIES:\n:CANVAS_URL: my-page\n:END:\n"))
-            (let ((pos (org-canvas--pull-upsert-heading
-                        test-file "my-page" "Updated Page" "CANVAS_URL")))
-              (with-current-buffer (find-file-noselect test-file)
-                (goto-char pos)
-                (expect (org-entry-get (point) "CANVAS_URL")
-                        :to-equal "my-page"))))
-        (let ((buf (find-buffer-visiting test-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t)))))
-
-(describe "org-canvas--iso8601-to-org-timestamp"
-  (it "converts ISO8601 to active timestamp"
-    (let ((result (org-canvas--iso8601-to-org-timestamp "2026-01-15T10:00:00Z")))
-      (expect result :to-match "<2026-01-15")))
-
-  (it "returns nil for nil active-timestamp input"
-    (expect (org-canvas--iso8601-to-org-timestamp nil) :to-be nil))
-
-  (it "returns nil for :null"
-    (expect (org-canvas--iso8601-to-org-timestamp :null) :to-be nil))
-
-  (it "returns nil for empty string"
-    (expect (org-canvas--iso8601-to-org-timestamp "") :to-be nil)))
-
-(describe "org-canvas--iso8601-to-org-inactive-timestamp"
-  (it "converts ISO8601 to inactive timestamp"
-    (let ((result (org-canvas--iso8601-to-org-inactive-timestamp
-                   "2026-01-15T10:00:00Z")))
-      (expect result :to-match "\\[2026-01-15")))
-
-  (it "returns nil for nil inactive-timestamp input"
-    (expect (org-canvas--iso8601-to-org-inactive-timestamp nil) :to-be nil)))
-
-(describe "org-canvas-define-pull"
-  (it "signals error when :file is missing"
-    (expect (macroexpand '(org-canvas-define-pull test-feature
-                            :endpoint "test"
-                            :pull-item-fn #'ignore))
-            :to-throw 'error))
-
-  (it "signals error when :endpoint is missing"
-    (expect (macroexpand '(org-canvas-define-pull test-feature
-                            :file test-file
-                            :pull-item-fn #'ignore))
-            :to-throw 'error))
-
-  (it "signals error when :pull-item-fn is missing"
-    (expect (macroexpand '(org-canvas-define-pull test-feature
-                            :file test-file
-                            :endpoint "test"))
-            :to-throw 'error))
-
-  (it "generates a pull function with correct name"
-    (let ((expansion (macroexpand '(org-canvas-define-pull test-widgets
-                                    :file test-file
-                                    :endpoint "widgets"
-                                    :pull-item-fn #'ignore))))
-      (expect expansion :to-be-truthy)
-      ;; Check that the expansion contains a defun with the right name
-      (expect (format "%S" expansion) :to-match "org-canvas-pull-test-widgets")))
-
-  (it "aborts when user declines overwrite of existing file"
-    (let* ((temp-dir (make-temp-file "pull-confirm-test" t))
-           (test-file (expand-file-name "assignment-groups.org" temp-dir)))
-      (unwind-protect
-          (progn
-            (with-temp-file test-file
-              (insert "* Existing Group\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"))
-            (let ((org-canvas-assignment-groups-file test-file)
-                  ;; Batch mode now skips the prompt (issue #34).
-                  (noninteractive nil))
-              (with-org-canvas-test-config
-                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                           (lambda (_method _url &optional _params) '()))
-                          ((symbol-function 'org-canvas-clear-log) (lambda () nil))
-                          ((symbol-function 'display-buffer) (lambda (_) nil))
-                          ((symbol-function 'y-or-n-p) (lambda (_) nil)))
-                  (expect (org-canvas-pull-assignment-groups)
-                          :to-throw 'user-error)))))
-        (let ((buf (find-buffer-visiting test-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t))))
-
-  (it "proceeds without prompting when file does not exist"
-    (let* ((temp-dir (make-temp-file "pull-confirm-test" t))
-           (test-file (expand-file-name "assignment-groups.org" temp-dir))
-           (prompted nil))
-      (unwind-protect
-          (let ((org-canvas-assignment-groups-file test-file))
-            (with-org-canvas-test-config
-              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                         (lambda (_method _url &optional _params) '()))
-                        ((symbol-function 'org-canvas-clear-log) (lambda () nil))
-                        ((symbol-function 'display-buffer) (lambda (_) nil))
-                        ((symbol-function 'y-or-n-p)
-                         (lambda (_) (setq prompted t) t)))
-                (org-canvas-pull-assignment-groups)
-                (expect prompted :to-be nil))))
-        (let ((buf (find-buffer-visiting test-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t)))))
-
-(describe "org-canvas--pull-upsert-heading at EOF"
-  (it "creates heading when file has no newline at end"
-    (let* ((temp-dir (make-temp-file "upsert-test" t))
-           (test-file (expand-file-name "test.org" temp-dir)))
-      (unwind-protect
-          (progn
-            (with-temp-file test-file (insert "* Existing"))  ;; no trailing newline
-            (let ((pos (org-canvas--pull-upsert-heading
-                        test-file 999 "New Item")))
-              (with-current-buffer (find-file-noselect test-file)
-                (goto-char pos)
-                (expect (org-get-heading t t t t) :to-equal "New Item"))))
-        (let ((buf (find-buffer-visiting test-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t)))))
 
 (describe "org-canvas--sync-collect-entries duplicate warning"
   (it "warns about duplicate CANVAS_IDs"
@@ -2661,8 +1438,6 @@ Keep this too
               #'my-pull-fn))
            (expect captured-pull-fn :to-equal #'my-pull-fn)))))))
 
-;;;; Compile-time form builders
-
 (describe "org-canvas--make-push-fn-form"
   (it "generates a lambda with endpoint only"
     (let ((form (org-canvas--make-push-fn-form "pages" nil nil nil)))
@@ -2717,8 +1492,6 @@ Keep this too
     (let ((form (org-canvas--make-finalize-fn-form nil nil nil nil "pages")))
       (expect (format "%S" form) :not :to-match ":endpoint"))))
 
-;;;; Runtime sync pipeline
-
 (describe "org-canvas--sync-run-pipeline"
   (it "runs the full pipeline for entries in a file"
     (let ((temp-dir (make-temp-file "pipeline-test" t)))
@@ -2772,297 +1545,6 @@ Keep this too
                                                 #'my-pull-fn)))
         (expect (plist-get ctx :pull-item-fn) :to-equal #'my-pull-fn)))))
 
-;;;; Pull Helper Tests
-
-(describe "org-canvas--pull-set-boolean-property"
-  (it "sets true when value is t"
-    (with-temp-org-buffer
-     "* Item
-:PROPERTIES:
-:END:
-"
-     (org-back-to-heading)
-     (org-canvas--pull-set-boolean-property (point) "ALLOW_RATING" t)
-     (expect (org-entry-get (point) "ALLOW_RATING") :to-equal "true")))
-
-  (it "sets false when value is nil and org-canvas-emit-defaults is t"
-    (let ((org-canvas-emit-defaults t))
-      (with-temp-org-buffer
-       "* Item
-:PROPERTIES:
-:END:
-"
-       (org-back-to-heading)
-       (org-canvas--pull-set-boolean-property (point) "ALLOW_RATING" nil)
-       (expect (org-entry-get (point) "ALLOW_RATING") :to-equal "false"))))
-
-  (it "sets false when value is :json-false and org-canvas-emit-defaults is t"
-    (let ((org-canvas-emit-defaults t))
-      (with-temp-org-buffer
-       "* Item
-:PROPERTIES:
-:END:
-"
-       (org-back-to-heading)
-       (org-canvas--pull-set-boolean-property (point) "PINNED" :json-false)
-       (expect (org-entry-get (point) "PINNED") :to-equal "false")))))
-
-(describe "org-canvas--pull-set-timestamp-property"
-  (it "sets Org timestamp from ISO8601"
-    (with-temp-org-buffer
-     "* Item
-:PROPERTIES:
-:END:
-"
-     (org-back-to-heading)
-     (org-canvas--pull-set-timestamp-property (point) "START_AT" "2026-09-01T14:00:00Z")
-     (expect (org-entry-get (point) "START_AT") :to-match "<2026-09-01")))
-
-  (it "does nothing when iso8601 is nil"
-    (with-temp-org-buffer
-     "* Item
-:PROPERTIES:
-:END:
-"
-     (org-back-to-heading)
-     (org-canvas--pull-set-timestamp-property (point) "START_AT" nil)
-     (expect (org-entry-get (point) "START_AT") :to-be nil)))
-
-  (it "does nothing when iso8601 is empty string"
-    (with-temp-org-buffer
-     "* Item
-:PROPERTIES:
-:END:
-"
-     (org-back-to-heading)
-     (org-canvas--pull-set-timestamp-property (point) "START_AT" "")
-     (expect (org-entry-get (point) "START_AT") :to-be nil))))
-
-(describe "org-canvas--pull-process-item"
-  (it "upserts heading and saves sync state"
-    (let* ((temp-dir (make-temp-file "pull-proc" t))
-           (org-file (expand-file-name "test.org" temp-dir)))
-      (unwind-protect
-          (progn
-            (with-temp-file org-file (insert "#+TITLE: Test\n"))
-            (let ((item '((id . 42) (title . "My Item")))
-                  (item-fn-called nil))
-              (with-current-buffer (find-file-noselect org-file)
-                (org-canvas--pull-process-item
-                 item org-file
-                 (list :id-field 'id :title-field 'title
-                       :id-property "CANVAS_ID"
-                       :pull-item-fn (lambda (_item _pos) (setq item-fn-called t))))
-                (goto-char (point-min))
-                (re-search-forward "^\\* " nil t)
-                (org-back-to-heading)
-                (expect (org-entry-get (point) "CANVAS_ID") :to-equal "42")
-                ;; Per-entry LAST_SYNCED is no longer written
-                (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil))
-              (expect item-fn-called :to-be t)))
-        (let ((buf (find-buffer-visiting org-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t))))
-
-  (it "updates existing heading title"
-    (let* ((temp-dir (make-temp-file "pull-proc2" t))
-           (org-file (expand-file-name "test.org" temp-dir)))
-      (unwind-protect
-          (progn
-            (with-temp-file org-file
-              (insert "#+TITLE: Test\n* Old Title\n:PROPERTIES:\n:CANVAS_ID: 42\n:END:\n"))
-            (let ((item '((id . 42) (title . "New Title"))))
-              (with-current-buffer (find-file-noselect org-file)
-                (org-canvas--pull-process-item
-                 item org-file
-                 (list :id-field 'id :title-field 'title
-                       :id-property "CANVAS_ID"
-                       :pull-item-fn (lambda (_item _pos) nil)))
-                (goto-char (point-min))
-                (re-search-forward "^\\* " nil t)
-                (expect (org-get-heading t t t t) :to-equal "New Title"))))
-        (let ((buf (find-buffer-visiting org-file)))
-          (when buf (kill-buffer buf)))
-        (delete-directory temp-dir t)))))
-
-;;;; Upload File Tests
-
-(describe "org-canvas--upload-file"
-  (it "performs 3-step upload and returns file alist"
-    (let* ((temp-file (make-temp-file "upload-test" nil ".png"))
-           (step1-called nil)
-           (step2-called nil))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file (insert "PNGDATA"))
-            (with-org-canvas-test-config
-              (cl-letf (((symbol-function 'org-canvas-api-request)
-                         (lambda (method _url &rest _args)
-                           (cond
-                            ((eq method 'POST)
-                             (setq step1-called t)
-                             '((upload_url . "https://upload.example.com/upload")
-                               (upload_params . ((key . "val")))))
-                            (t '((id . 777) (display_name . "test.png"))))))
-                        ((symbol-function 'url-retrieve-synchronously)
-                         (lambda (_url &rest _args)
-                           (setq step2-called t)
-                           (let ((buf (generate-new-buffer " *upload-test*")))
-                             (with-current-buffer buf
-                               (insert "HTTP/1.1 200 OK\r\n\r\n")
-                               (insert (json-encode '((id . 777)
-                                                      (display_name . "test.png")))))
-                             buf))))
-                (let ((result (org-canvas--upload-file temp-file)))
-                  (expect step1-called :to-be t)
-                  (expect step2-called :to-be t)
-                  (expect (alist-get 'id result) :to-equal 777)))))
-        (delete-file temp-file))))
-
-  (it "follows Location header when no JSON id in step 2"
-    (let* ((temp-file (make-temp-file "upload-loc" nil ".jpg")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file (insert "JPGDATA"))
-            (with-org-canvas-test-config
-              (cl-letf (((symbol-function 'org-canvas-api-request)
-                         (lambda (method _url &rest _args)
-                           (cond
-                            ((eq method 'POST)
-                             '((upload_url . "https://upload.example.com/x")
-                               (upload_params . nil)))
-                            ((eq method 'GET)
-                             '((id . 888) (display_name . "photo.jpg"))))))
-                        ((symbol-function 'url-retrieve-synchronously)
-                         (lambda (_url &rest _args)
-                           (let ((buf (generate-new-buffer " *upload-loc*")))
-                             (with-current-buffer buf
-                               (insert "HTTP/1.1 301 Redirect\r\n")
-                               (insert "Location: https://canvas.test/files/888/confirm\r\n")
-                               (insert "\r\n{\"status\":\"pending\"}"))
-                             buf))))
-                (let ((result (org-canvas--upload-file temp-file)))
-                  (expect (alist-get 'id result) :to-equal 888)))))
-        (delete-file temp-file))))
-
-  (it "uses custom notify-url and display-name"
-    (let* ((temp-file (make-temp-file "upload-custom" nil ".gif"))
-           (notify-url-used nil)
-           (name-used nil))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file (insert "GIFDATA"))
-            (with-org-canvas-test-config
-              (cl-letf (((symbol-function 'org-canvas-api-request)
-                         (lambda (_method url &rest args)
-                           (setq notify-url-used url)
-                           (let ((payload (plist-get args :data)))
-                             (setq name-used (alist-get 'name payload)))
-                           '((upload_url . "https://up.test/x")
-                             (upload_params . nil))))
-                        ((symbol-function 'url-retrieve-synchronously)
-                         (lambda (_url &rest _args)
-                           (let ((buf (generate-new-buffer " *upload-custom*")))
-                             (with-current-buffer buf
-                               (insert "HTTP/1.1 200 OK\r\n\r\n")
-                               (insert (json-encode '((id . 999)))))
-                             buf))))
-                (org-canvas--upload-file temp-file
-                                         "https://custom.api/files"
-                                         "renamed.gif")
-                (expect notify-url-used :to-equal "https://custom.api/files")
-                (expect name-used :to-equal "renamed.gif"))))
-        (delete-file temp-file)))))
-
-;;;; conflict-format-diff with LAST_SYNCED and name-based remote
-
-(describe "org-canvas--conflict-format-diff"
-  (it "reads LAST_SYNCED from file-level header and uses name field for title"
-    (with-org-canvas-test-config
-      (with-temp-org-buffer
-       "#+LAST_SYNCED: [2026-01-15 Thu 14:30]
-* My Item
-:PROPERTIES:
-:CANVAS_ID: 123
-:END:
-
-Local body content.
-"
-       (re-search-forward "^\\* ")
-       (org-back-to-heading)
-       (let ((data (list :title "My Item"
-                         :description "Local body content."
-                         :pom (point-marker)))
-             (remote '((name . "Remote Item Name")
-                       (updated_at . "2026-02-01T10:00:00Z")
-                       (description . "Remote body."))))
-         (let ((buf (org-canvas--conflict-format-diff data remote)))
-           (unwind-protect
-               (with-current-buffer buf
-                 (let ((content (buffer-string)))
-                   ;; Should contain the remote title from 'name field
-                   (expect content :to-match "Remote Item Name")
-                   ;; Should contain timestamps
-                   (expect content :to-match "2026-01-15")
-                   (expect content :to-match "2026-02-01")))
-             (when (buffer-live-p buf)
-               (kill-buffer buf)))))))))
-
-;;;; conflict-pull-local overwrites heading and calls pull-item-fn
-
-(describe "org-canvas--conflict-pull-local"
-  (it "renames heading and invokes pull-item-fn"
-    (with-temp-org-buffer
-     "* Old Title
-:PROPERTIES:
-:CANVAS_ID: 456
-:END:
-
-Old body.
-"
-     (org-back-to-heading)
-     (let* ((pom (point-marker))
-            (pull-called nil)
-            (data (list :title "Old Title" :pom pom))
-            (remote '((title . "New Remote Title")
-                      (updated_at . "2026-02-10T08:00:00Z")
-                      (body . "New body."))))
-       (org-canvas--conflict-pull-local
-        data remote
-        (lambda (_response _pos)
-          (setq pull-called t)))
-       ;; Re-navigate by structure: pull-write-file-header may have
-       ;; inserted text at the top, shifting positions
-       (goto-char (point-min))
-       (re-search-forward "^\\* " nil t)
-       (org-back-to-heading)
-       (expect (org-get-heading t t t t) :to-equal "New Remote Title")
-       ;; pull-item-fn should have been called
-       (expect pull-called :to-be-truthy)
-       ;; Per-entry LAST_SYNCED should not be written
-       (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil)
-       ;; File-level header should have been written
-       (expect (org-canvas--pull-read-file-header) :to-match "^\\[20")
-       (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
-               :to-equal "2026-02-10T08:00:00Z")
-       ;; PAYLOAD_HASH should be deleted
-       (expect (org-entry-get (point) "PAYLOAD_HASH") :to-be nil)))))
-
-;;;; demo-conflict via mocked prompt
-
-(describe "org-canvas-demo-conflict"
-  (it "runs the demo and returns a resolution choice"
-    (let ((demo-message nil))
-      (cl-letf (((symbol-function 'org-canvas--conflict-prompt)
-                 (lambda (_has-pull) 'push))
-                ((symbol-function 'message)
-                 (lambda (fmt &rest args)
-                   (setq demo-message (apply #'format fmt args)))))
-        (org-canvas-demo-conflict)
-        (expect demo-message :to-match "push")))))
-
-;;;; push-at-point payload hash skip
-
 (describe "org-canvas--push-at-point-runtime"
   (it "skips sync when payload hash matches"
     (with-org-canvas-test-config
@@ -3093,8 +1575,6 @@ Body.
             nil))
          ;; API should NOT have been called (skipped)
          (expect api-called :to-be nil))))))
-
-;;;; push-at-point-runtime canvas-url fallback
 
 (describe "org-canvas--push-at-point-runtime"
   (it "uses canvas-url for skip detection when canvas-id absent"
@@ -3127,137 +1607,8 @@ Body.
          ;; Should be skipped because hash matches AND canvas-url is truthy
          (expect api-called :to-be nil))))))
 
-;;;; upload-file step-2 fallback paths
-
-(describe "org-canvas--upload-file step-2 fallbacks"
-  (it "returns JSON when step-2 has JSON without id but no Location"
-    (let* ((temp-file (make-temp-file "upload-json-" nil ".txt")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file (insert "filedata"))
-            (with-org-canvas-test-config
-              (cl-letf (((symbol-function 'org-canvas-api-request)
-                         (lambda (method url &rest _args)
-                           (cond
-                            ;; Step 1: notify
-                            ((eq method 'POST)
-                             '((upload_url . "https://up.test/x")
-                               (upload_params . nil)))
-                            ;; Step 3: confirm via GET on location
-                            ((eq method 'GET)
-                             '((id . 777))))))
-                        ((symbol-function 'url-retrieve-synchronously)
-                         (lambda (_url &rest _args)
-                           (let ((buf (generate-new-buffer " *upload-json*")))
-                             (with-current-buffer buf
-                               ;; JSON response without 'id, no Location header
-                               (insert "HTTP/1.1 200 OK\r\n\r\n")
-                               (insert (json-encode '((status . "pending")
-                                                      (location . "/files/777/confirm")))))
-                             buf))))
-                (let ((result (org-canvas--upload-file temp-file)))
-                  ;; Should follow the location from the JSON body
-                  (expect (alist-get 'id result) :to-equal 777)))))
-        (delete-file temp-file))))
-
-  (it "errors when step-2 has no JSON and no Location header"
-    (let* ((temp-file (make-temp-file "upload-empty-" nil ".txt")))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file (insert "filedata"))
-            (with-org-canvas-test-config
-              (cl-letf (((symbol-function 'org-canvas-api-request)
-                         (lambda (_method _url &rest _args)
-                           '((upload_url . "https://up.test/x")
-                             (upload_params . nil))))
-                        ((symbol-function 'url-retrieve-synchronously)
-                         (lambda (_url &rest _args)
-                           (let ((buf (generate-new-buffer " *upload-empty*")))
-                             (with-current-buffer buf
-                               ;; No valid JSON, no Location
-                               (insert "HTTP/1.1 200 OK\r\n\r\n")
-                               (insert "not json"))
-                             buf))))
-                (expect (org-canvas--upload-file temp-file)
-                        :to-throw 'error))))
-        (delete-file temp-file))))
-
-  (it "prepends base-url to relative location"
-    (let* ((temp-file (make-temp-file "upload-rel-" nil ".txt"))
-           (get-url nil))
-      (unwind-protect
-          (progn
-            (with-temp-file temp-file (insert "filedata"))
-            (with-org-canvas-test-config
-              (cl-letf (((symbol-function 'org-canvas-api-request)
-                         (lambda (method url &rest _args)
-                           (cond
-                            ((eq method 'POST)
-                             '((upload_url . "https://up.test/x")
-                               (upload_params . nil)))
-                            ((eq method 'GET)
-                             (setq get-url url)
-                             '((id . 555))))))
-                        ((symbol-function 'url-retrieve-synchronously)
-                         (lambda (_url &rest _args)
-                           (let ((buf (generate-new-buffer " *upload-rel*")))
-                             (with-current-buffer buf
-                               (insert "HTTP/1.1 301 Redirect\r\n")
-                               (insert "Location: /api/v1/files/555/confirm\r\n")
-                               (insert "\r\n"))
-                             buf))))
-                (let ((result (org-canvas--upload-file temp-file)))
-                  (expect (alist-get 'id result) :to-equal 555)
-                  ;; Should have prepended base-url
-                  (expect get-url :to-match "^https://test.canvas.example.com/api/v1/files/555/confirm")))))
-        (delete-file temp-file)))))
-
-;;;; Shared Rubric Association
-
-(describe "org-canvas--associate-rubric"
-  (it "sends correct payload for Assignment type"
-    (with-org-canvas-test-config
-      (let (sent-method sent-url sent-data)
-        (cl-letf (((symbol-function 'org-canvas-api-request)
-                   (lambda (method url &rest args)
-                     (setq sent-method method
-                           sent-url url
-                           sent-data (plist-get args :data))
-                     '((id . 1)))))
-          (org-canvas--associate-rubric 42 "99" "Assignment")
-          (expect sent-method :to-equal 'POST)
-          (expect sent-url :to-match "rubric_associations")
-          (let ((assoc (gethash "rubric_association" sent-data)))
-            (expect (gethash "rubric_id" assoc) :to-equal 99)
-            (expect (gethash "association_id" assoc) :to-equal 42)
-            (expect (gethash "association_type" assoc) :to-equal "Assignment")
-            (expect (gethash "purpose" assoc) :to-equal "grading"))))))
-
-  (it "sends correct payload for Discussion type"
-    (with-org-canvas-test-config
-      (let (sent-data)
-        (cl-letf (((symbol-function 'org-canvas-api-request)
-                   (lambda (_method _url &rest args)
-                     (setq sent-data (plist-get args :data))
-                     '((id . 1)))))
-          (org-canvas--associate-rubric 55 "77" "Discussion")
-          (let ((assoc (gethash "rubric_association" sent-data)))
-            (expect (gethash "association_type" assoc) :to-equal "Discussion")
-            (expect (gethash "association_id" assoc) :to-equal 55)
-            (expect (gethash "rubric_id" assoc) :to-equal 77))))))
-
-  (it "handles API errors gracefully"
-    (with-org-canvas-test-config
-      (cl-letf (((symbol-function 'org-canvas-api-request)
-                 (lambda (_method _url &rest _args)
-                   (error "API failure"))))
-        ;; Should not signal an error
-        (expect (org-canvas--associate-rubric 1 "2" "Assignment")
-                :not :to-throw)))))
-
 ;;; org-canvas-core-test.el ends here
 
-;;;; Rate-limit retry through push pipeline
 
 (describe "rate-limit retry through push pipeline"
   (it "succeeds after 429 retry on POST"
@@ -3299,129 +1650,6 @@ Body.
               (expect (alist-get 'id result) :to-equal 100)
               (expect call-count :to-equal 2))))))))
 
-;;;; Conflict batch flow integration
-
-(describe "conflict batch flow"
-  (it "auto-pushes second conflict after user chooses Push All on first"
-    (with-org-canvas-test-config
-      (let ((org-canvas-detect-conflicts t)
-            ;; One run context shared by both pushes, as a sync would.
-            (ctx (org-canvas--sync-make-ctx))
-            ;; The flow under test is a human answering the prompt once;
-            ;; batch mode resolves without one (issue #72).
-            (noninteractive nil)
-            (prompt-count 0)
-            (put-count 0))
-        (cl-letf (((symbol-function 'org-canvas-api-request)
-                   (lambda (method _url &rest _args)
-                     (pcase method
-                       ;; GET always returns a "newer" item (conflict)
-                       ('GET '((id . 1) (updated_at . "2026-03-01T10:00:00Z")))
-                       ('PUT (setq put-count (1+ put-count))
-                             '((id . 1))))))
-                  ((symbol-function 'org-canvas--conflict-prompt)
-                   (lambda (_has-pull)
-                     (setq prompt-count (1+ prompt-count))
-                     'push-all)))
-          ;; First push: conflict detected, user prompted, chooses "Push All"
-          (with-temp-org-buffer
-           "#+LAST_SYNCED: [2026-01-01 Thu 10:00]\n* Item 1\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
-           (re-search-forward "^\\* ")
-           (org-back-to-heading)
-           (let ((data1 (list :title "Item 1" :canvas-id "1" :pom (point-marker)))
-                 (payload1 '((title . "Item 1"))))
-             (org-canvas--push-to-api data1 payload1 :endpoint "items" :ctx ctx)
-             ;; User was prompted once
-             (expect prompt-count :to-equal 1)
-             ;; PUT was called (force push)
-             (expect put-count :to-equal 1)))
-          ;; Second push: conflict detected, but apply-all is already 'push
-          (with-temp-org-buffer
-           "#+LAST_SYNCED: [2026-01-01 Thu 10:00]\n* Item 2\n:PROPERTIES:\n:CANVAS_ID: 2\n:END:\n"
-           (re-search-forward "^\\* ")
-           (org-back-to-heading)
-           (let ((data2 (list :title "Item 2" :canvas-id "2" :pom (point-marker)))
-                 (payload2 '((title . "Item 2"))))
-             (org-canvas--push-to-api data2 payload2 :endpoint "items" :ctx ctx)
-             ;; No additional prompt (apply-all active)
-             (expect prompt-count :to-equal 1)
-             ;; PUT was called again
-             (expect put-count :to-equal 2)))))))
-
-  (it "auto-skips second conflict after user chooses Skip All on first"
-    (with-org-canvas-test-config
-      (let ((org-canvas-detect-conflicts t)
-            ;; One run context shared by both pushes, as a sync would.
-            (ctx (org-canvas--sync-make-ctx))
-            ;; The flow under test is a human answering the prompt once;
-            ;; batch mode resolves without one (issue #72).
-            (noninteractive nil)
-            (prompt-count 0)
-            (put-count 0))
-        (cl-letf (((symbol-function 'org-canvas-api-request)
-                   (lambda (method _url &rest _args)
-                     (pcase method
-                       ('GET '((id . 1) (updated_at . "2026-03-01T10:00:00Z")))
-                       ('PUT (setq put-count (1+ put-count))
-                             '((id . 1))))))
-                  ((symbol-function 'org-canvas--conflict-prompt)
-                   (lambda (_has-pull)
-                     (setq prompt-count (1+ prompt-count))
-                     'skip-all)))
-          ;; First push: conflict, user chooses "Skip All"
-          ;; push-to-api returns 'conflict for both skip and skip-all
-          (with-temp-org-buffer
-           "#+LAST_SYNCED: [2026-01-01 Thu 10:00]\n* Item A\n:PROPERTIES:\n:CANVAS_ID: 10\n:END:\n"
-           (re-search-forward "^\\* ")
-           (org-back-to-heading)
-           (let ((data (list :title "Item A" :canvas-id "10" :pom (point-marker)))
-                 (payload '((title . "Item A"))))
-             (let ((result (org-canvas--push-to-api data payload :endpoint "items" :ctx ctx)))
-               (expect result :to-equal 'conflict))))
-          ;; Second push: auto-skipped without prompt
-          (with-temp-org-buffer
-           "#+LAST_SYNCED: [2026-01-01 Thu 10:00]\n* Item B\n:PROPERTIES:\n:CANVAS_ID: 20\n:END:\n"
-           (re-search-forward "^\\* ")
-           (org-back-to-heading)
-           (let ((data (list :title "Item B" :canvas-id "20" :pom (point-marker)))
-                 (payload '((title . "Item B"))))
-             (let ((result (org-canvas--push-to-api data payload :endpoint "items" :ctx ctx)))
-               (expect result :to-equal 'conflict))))
-          ;; Prompt was only shown once
-          (expect prompt-count :to-equal 1)
-          ;; No PUTs were sent
-          (expect put-count :to-equal 0)))))
-
-  (it "forgets a capital answer once its run context is gone (issue #141)"
-    ;; Two pushes at point are two runs.  The old global kept the first
-    ;; run's Push All alive, so every later push at point overwrote
-    ;; conflicts without asking.
-    (with-org-canvas-test-config
-      (let ((org-canvas-detect-conflicts t)
-            (noninteractive nil)
-            (prompt-count 0))
-        (cl-letf (((symbol-function 'org-canvas-api-request)
-                   (lambda (method _url &rest _args)
-                     (pcase method
-                       ('GET '((id . 1) (updated_at . "2026-03-01T10:00:00Z")))
-                       ('PUT '((id . 1))))))
-                  ((symbol-function 'org-canvas--conflict-prompt)
-                   (lambda (_has-pull)
-                     (setq prompt-count (1+ prompt-count))
-                     'push-all)))
-          (dolist (id '("1" "2"))
-            (with-temp-org-buffer
-             (format "#+LAST_SYNCED: [2026-01-01 Thu 10:00]\n* Item\n:PROPERTIES:\n:CANVAS_ID: %s\n:END:\n" id)
-             (re-search-forward "^\\* ")
-             (org-back-to-heading)
-             (org-canvas--push-to-api
-              (list :title "Item" :canvas-id id :pom (point-marker))
-              '((title . "Item")) :endpoint "items"
-              :ctx (org-canvas--sync-make-ctx))))
-          (expect prompt-count :to-equal 2))))))
-
-;;;; Macro helper coverage
-
 (describe "org-canvas--parse-gen-transform-form"
   (it "generates enum form with default value"
     (let ((form (org-canvas--parse-gen-transform-form
@@ -3450,8 +1678,6 @@ Body.
      (org-back-to-heading)
      (let ((raw (org-canvas--test--after-read-cov-read-props (point))))
        (expect (plist-get raw :extra) :to-equal "injected")))))
-
-;;;; Global counter accumulation
 
 (describe "org-canvas--sync-log-summary global counters"
   (it "accumulates counts into org-canvas--sync-global-counters"
@@ -3485,8 +1711,6 @@ Body.
           (when buf (kill-buffer buf)))
         (delete-file temp-file)))))
 
-;;;; Duplicate CANVAS_ID warning
-
 (describe "org-canvas--sync-collect-entries"
   (it "warns in minibuffer about duplicate CANVAS_IDs"
     (let* ((temp-file (make-temp-file "dup-test" nil ".org")))
@@ -3508,8 +1732,6 @@ Body.
         (let ((buf (find-buffer-visiting temp-file)))
           (when buf (kill-buffer buf)))
         (delete-file temp-file)))))
-
-;;;; Heading title in error messages
 
 (describe "org-canvas--sync-process-entry error includes heading title"
   (it "includes heading title when parse-fn errors"
@@ -3570,8 +1792,6 @@ Body.
                (when (string-match-p "Quiz One" formatted)
                  (setq found t)))))
          (expect found :to-be-truthy))))))
-
-;;;; Sync-at-point stage logging
 
 (describe "org-canvas--push-at-point-runtime stage logging"
   (it "logs stage markers during sync"
@@ -3647,8 +1867,6 @@ Content here.
          (expect found-skip :to-be-truthy)
          (expect found-stage-3 :to-be nil))))))
 
-;;;; Duplicate heading title warnings
-
 (describe "org-canvas--sync-warn-duplicate-titles"
   (it "warns when duplicate titles exist"
     (with-temp-org-buffer
@@ -3691,8 +1909,6 @@ Content here.
        (spy-on 'org-canvas--log-warning)
        (org-canvas--sync-warn-duplicate-titles markers (buffer-file-name))
        (expect 'org-canvas--log-warning :not :to-have-been-called)))))
-
-;;;; Dry-run counter
 
 (describe "org-canvas--sync-execute-pipeline dry-run counter"
   (it "increments dry-run counter instead of success"
@@ -3757,18 +1973,6 @@ Content here.
         (let ((buf (find-buffer-visiting temp-file)))
           (when buf (kill-buffer buf)))
         (delete-file temp-file)))))
-
-(describe "org-canvas--resolve-conflict unexpected choice"
-  (it "returns skip for unexpected choice symbol"
-    (spy-on 'org-canvas--log-warning)
-    (let ((ctx (org-canvas--sync-make-ctx)))
-      (cl-letf (((symbol-function 'org-canvas--conflict-format-diff)
-                 (lambda (_data _remote &optional _has-pull) (get-buffer-create "*test-diff*")))
-                ((symbol-function 'org-canvas--conflict-prompt)
-                 (lambda (_has-pull) 'unexpected-value)))
-        (let ((result (org-canvas--resolve-conflict '(:title "Test") '((title . "Test")) ctx)))
-          (expect result :to-equal 'skip)
-          (expect 'org-canvas--log-warning :to-have-been-called))))))
 
 (describe "org-canvas--sync-warn-stale-headings"
   (it "warns and prompts when heading has LAST_SYNCED but no CANVAS_ID"
@@ -3847,121 +2051,6 @@ Content here.
        (expect 'y-or-n-p :to-have-been-called-times 1)
        ;; Both titles logged individually
        (expect 'org-canvas--log-warning :to-have-been-called-times 2)))))
-
-;;;; Pull Sort Helper
-
-(describe "org-canvas--pull-sort-items"
-  (it "sorts items by position ascending"
-    (let ((items '(((id . 3) (position . 30) (title . "C"))
-                   ((id . 1) (position . 10) (title . "A"))
-                   ((id . 2) (position . 20) (title . "B")))))
-      (let ((sorted (org-canvas--pull-sort-items items)))
-        (expect (mapcar (lambda (x) (alist-get 'title x)) sorted)
-                :to-equal '("A" "B" "C")))))
-
-  (it "uses secondary key when positions tie or are absent"
-    (let ((items '(((id . 1) (position . 1) (assignment_group_id . 200) (title . "B"))
-                   ((id . 2) (position . 1) (assignment_group_id . 100) (title . "A")))))
-      (let ((sorted (org-canvas--pull-sort-items items 'assignment_group_id)))
-        (expect (mapcar (lambda (x) (alist-get 'title x)) sorted)
-                :to-equal '("A" "B")))))
-
-  (it "groups by secondary key first, then sorts by position within group"
-    (let ((items '(((id . 1) (name . "B-2") (position . 2) (assignment_group_id . 100))
-                   ((id . 2) (name . "A-3") (position . 3) (assignment_group_id . 50))
-                   ((id . 3) (name . "B-1") (position . 1) (assignment_group_id . 100))
-                   ((id . 4) (name . "A-1") (position . 1) (assignment_group_id . 50)))))
-      (let ((sorted (org-canvas--pull-sort-items items 'assignment_group_id)))
-        (expect (mapcar (lambda (x) (alist-get 'name x)) sorted)
-                :to-equal '("A-1" "A-3" "B-1" "B-2")))))
-
-  (it "falls back to name when position is missing"
-    (let ((items '(((id . 1) (name . "Beta"))
-                   ((id . 2) (name . "Alpha")))))
-      (let ((sorted (org-canvas--pull-sort-items items)))
-        (expect (mapcar (lambda (x) (alist-get 'name x)) sorted)
-                :to-equal '("Alpha" "Beta")))))
-
-  (it "falls back to title when position and name are missing"
-    (let ((items '(((id . 1) (title . "Zebra"))
-                   ((id . 2) (title . "Apple")))))
-      (let ((sorted (org-canvas--pull-sort-items items)))
-        (expect (mapcar (lambda (x) (alist-get 'title x)) sorted)
-                :to-equal '("Apple" "Zebra")))))
-
-  (it "falls back to id when position and name are absent"
-    (let ((items '(((id . 5)) ((id . 3)) ((id . 1)))))
-      (let ((sorted (org-canvas--pull-sort-items items)))
-        (expect (mapcar (lambda (x) (alist-get 'id x)) sorted)
-                :to-equal '(1 3 5)))))
-
-  (it "is stable: items with same key preserve input order"
-    (let ((items '(((id . 1) (position . 1) (title . "first"))
-                   ((id . 2) (position . 1) (title . "second"))
-                   ((id . 3) (position . 1) (title . "third")))))
-      (let ((sorted (org-canvas--pull-sort-items items)))
-        (expect (mapcar (lambda (x) (alist-get 'title x)) sorted)
-                :to-equal '("first" "second" "third")))))
-
-  (it "handles empty list"
-    (expect (org-canvas--pull-sort-items '()) :to-equal nil))
-
-  (it "handles single-item list"
-    (let ((items '(((id . 1) (position . 5) (title . "Only")))))
-      (expect (org-canvas--pull-sort-items items) :to-equal items)))
-
-  (it "treats missing position as greater than any present position"
-    ;; An item without `position' should sort after items with a position,
-    ;; so the explicit ordering wins over the missing-data fallback.
-    (let ((items '(((id . 1) (title . "no-pos"))
-                   ((id . 2) (position . 5) (title . "has-pos")))))
-      (let ((sorted (org-canvas--pull-sort-items items)))
-        (expect (mapcar (lambda (x) (alist-get 'title x)) sorted)
-                :to-equal '("has-pos" "no-pos")))))
-
-  (it "uses tertiary key (string) between secondary and position"
-    ;; Two items in the same assignment_group_id, different due_at.
-    ;; With tertiary-key 'due_at, the earlier-due item sorts first
-    ;; even when Canvas returns them in reverse position order.
-    (let ((items '(((id . 1) (name . "Late") (position . 1)
-                    (assignment_group_id . 100)
-                    (due_at . "2026-03-27T23:59:00Z"))
-                   ((id . 2) (name . "NN")   (position . 2)
-                    (assignment_group_id . 100)
-                    (due_at . "2026-03-06T23:59:00Z"))
-                   ((id . 3) (name . "Early") (position . 3)
-                    (assignment_group_id . 100)
-                    (due_at . "2026-02-06T23:59:00Z")))))
-      (let ((sorted (org-canvas--pull-sort-items
-                     items 'assignment_group_id 'due_at)))
-        (expect (mapcar (lambda (x) (alist-get 'name x)) sorted)
-                :to-equal '("Early" "NN" "Late")))))
-
-  (it "items missing tertiary key sort after those with one"
-    (let ((items '(((id . 1) (name . "B") (position . 1)
-                    (assignment_group_id . 100))
-                   ((id . 2) (name . "A") (position . 2)
-                    (assignment_group_id . 100)
-                    (due_at . "2026-02-06T23:59:00Z")))))
-      (let ((sorted (org-canvas--pull-sort-items
-                     items 'assignment_group_id 'due_at)))
-        (expect (mapcar (lambda (x) (alist-get 'name x)) sorted)
-                :to-equal '("A" "B")))))
-
-  (it "tertiary tier still respects secondary grouping"
-    ;; Group A items (due 2026-04-01, 2026-03-01) and Group B items
-    ;; (due 2026-02-01) — all of group A's items must precede group B's
-    ;; even though group B has the earliest due date.
-    (let ((items '(((id . 1) (name . "A-late") (assignment_group_id . 100)
-                    (due_at . "2026-04-01T23:59:00Z"))
-                   ((id . 2) (name . "B-early") (assignment_group_id . 200)
-                    (due_at . "2026-02-01T23:59:00Z"))
-                   ((id . 3) (name . "A-early") (assignment_group_id . 100)
-                    (due_at . "2026-03-01T23:59:00Z")))))
-      (let ((sorted (org-canvas--pull-sort-items
-                     items 'assignment_group_id 'due_at)))
-        (expect (mapcar (lambda (x) (alist-get 'name x)) sorted)
-                :to-equal '("A-early" "A-late" "B-early"))))))
 
 (describe "org-canvas--sync-deferred-error-p"
   (it "matches Canvas drop-rule rejections"
@@ -4279,8 +2368,6 @@ Content here.
       (expect (cl-find-if (lambda (l) (string-match-p "DRY RUN" l)) logged)
               :to-be nil))))
 
-;;;; :after-sync hook (issue #37)
-
 (describe "org-canvas--sync-run-pipeline :after-sync"
   (it "runs the hook after entries, before the summary"
     ;; Ordering matters: the hook reports on state the sync just produced,
@@ -4324,9 +2411,6 @@ Content here.
                  (lambda (&rest _) (setq hook-ran t))))
         (org-canvas-sync-assignment-groups)
         (expect hook-ran :to-be t)))))
-
-
-;;;; Remote Drift Detection (issue #48)
 
 (describe "org-canvas--conflict-baseline"
   (it "prefers the entry's own CANVAS_UPDATED_AT"
@@ -4383,21 +2467,6 @@ Content here.
 "
      (org-back-to-heading)
      (expect (org-canvas--conflict-baseline (point)) :to-be nil))))
-
-(describe "org-canvas--registry-find-feature"
-  (it "matches a pipeline feature name against the registry label"
-    ;; The pipeline says "assignment-groups", the registry says
-    ;; "Assignment Groups".
-    (expect (plist-get (org-canvas--registry-find-feature "assignment-groups")
-                       :endpoint)
-            :to-equal "assignment_groups"))
-
-  (it "matches a single-word name"
-    (expect (plist-get (org-canvas--registry-find-feature "pages") :id-field)
-            :to-equal 'url))
-
-  (it "returns nil for an unregistered feature"
-    (expect (org-canvas--registry-find-feature "not-a-feature") :to-be nil)))
 
 (describe "org-canvas--sync-fetch-remote-updated"
   (it "maps remote ids to their updated_at"
@@ -4702,8 +2771,6 @@ Returns the list of titles that reached the push stage."
         (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
         (delete-file file)))))
 
-;;;; Issue #86: the conflict line names the baseline it compared
-
 (describe "org-canvas--conflict-baseline-source (issue #86)"
   (it "labels the entry's own CANVAS_UPDATED_AT"
     (with-temp-org-buffer
@@ -4832,61 +2899,6 @@ Returns (RESULT . WARNINGS)."
 :END:
 ")))
       (expect (car (cdr run)) :to-match "\\`\\[Conflict\\] 'assignments/61':"))))
-
-(describe "org-canvas--conflict-format-diff baseline line (issue #86)"
-  (it "shows the CANVAS_UPDATED_AT the check compared"
-    (with-org-canvas-test-config
-      (with-temp-org-buffer
-       "#+LAST_SYNCED: [2026-01-15 Thu 14:30]
-* My Item
-:PROPERTIES:
-:CANVAS_ID: 123
-:CANVAS_UPDATED_AT: 2026-01-20T10:00:00Z
-:END:
-"
-       (re-search-forward "^\\* ")
-       (org-back-to-heading)
-       (let* ((data (list :title "My Item" :description "x" :pom (point-marker)))
-              (remote '((title . "My Item") (updated_at . "2026-02-01T10:00:00Z")
-                        (body . "y")))
-              (buf (org-canvas--conflict-format-diff data remote)))
-         (unwind-protect
-             (with-current-buffer buf
-               (expect (buffer-string)
-                       :to-match "Local baseline: +CANVAS_UPDATED_AT 2026-01-20T10:00:00Z")
-               (expect (buffer-string) :not :to-match "Local LAST_SYNCED"))
-           (when (buffer-live-p buf) (kill-buffer buf)))))))
-
-  (it "says there is no baseline when the entry has none"
-    (with-org-canvas-test-config
-      (with-temp-org-buffer
-       "* My Item
-:PROPERTIES:
-:CANVAS_ID: 123
-:END:
-"
-       (org-back-to-heading)
-       (let* ((data (list :title "My Item" :description "x" :pom (point-marker)))
-              (remote '((title . "My Item") (updated_at . "2026-02-01T10:00:00Z")))
-              (buf (org-canvas--conflict-format-diff data remote)))
-         (unwind-protect
-             (with-current-buffer buf
-               (expect (buffer-string) :to-match "Local baseline: +none (first sync)"))
-           (when (buffer-live-p buf) (kill-buffer buf)))))))
-
-  (it "survives a pom that is not in an Org buffer"
-    (with-org-canvas-test-config
-      (with-temp-buffer
-        (insert "plain text")
-        (let* ((data (list :title "X" :description "x" :pom (point)))
-               (remote '((title . "X") (updated_at . "2026-02-01T10:00:00Z")))
-               (buf (org-canvas--conflict-format-diff data remote)))
-          (unwind-protect
-              (with-current-buffer buf
-                (expect (buffer-string) :to-match "Local baseline: +none"))
-            (when (buffer-live-p buf) (kill-buffer buf))))))))
-
-;;;; Issue #84: a dry run says which entries a real sync would stop at
 
 (describe "org-canvas--dry-run-decision-note (issue #84)"
   (it "names the standing answer when the strategy is set"
@@ -5077,8 +3089,6 @@ Returns (COUNTERS . LOG-LINES)."
          "assignments" (list :skip 0 :dry-run 37)
          (list :baseline (current-time) :remote-updated nil))
         (expect warnings :to-be nil)))))
-
-;;;; Issue #85: an unstamped heading must not create a second item
 
 (describe "org-canvas--sync-fetch-remote-snapshot (issue #85)"
   (it "indexes titles alongside updated_at, keeping every holder of a title"
@@ -5399,92 +3409,6 @@ Returns the :remote-titles of the run context the push received."
       (expect (nth 1 msgs) :to-match "remote item was modified")
       (expect (nth 0 msgs) :to-match "remote version was pulled"))))
 
-(describe "org-canvas--duplicate-prompt (issue #85)"
-  (it "skips without asking in batch"
-    (let ((noninteractive t))
-      (expect (org-canvas--duplicate-prompt "R11" '("1")) :to-equal 'skip)))
-
-  (it "offers adopt only for a single holder"
-    (let ((noninteractive nil) (seen-keys nil) (seen-prompt nil))
-      (cl-letf (((symbol-function 'read-char-choice)
-                 (lambda (prompt keys)
-                   (setq seen-prompt prompt seen-keys keys)
-                   ?a)))
-        (expect (org-canvas--duplicate-prompt "R11" '("1")) :to-equal 'adopt)
-        (expect seen-keys :to-equal '(?a ?A ?s ?S ?c ?C))
-        (expect seen-prompt :to-match "'R11' already exists on Canvas (id 1)\\. \\[a\\]dopt "))
-      (cl-letf (((symbol-function 'read-char-choice)
-                 (lambda (prompt keys)
-                   (setq seen-prompt prompt seen-keys keys)
-                   ?s)))
-        (expect (org-canvas--duplicate-prompt "R11" '("1" "2")) :to-equal 'skip)
-        (expect seen-keys :to-equal '(?s ?S ?c ?C))
-        (expect seen-prompt :to-match "(id 1, 2)\\. \\[s\\]kip")
-        (expect seen-prompt :not :to-match "adopt"))))
-
-  (it "maps every key"
-    (let ((noninteractive nil))
-      (dolist (pair '((?a . adopt) (?A . adopt-all) (?s . skip)
-                      (?S . skip-all) (?c . create) (?C . create-all)))
-        (cl-letf (((symbol-function 'read-char-choice) (lambda (&rest _) (car pair))))
-          (expect (org-canvas--duplicate-prompt "R11" '("1")) :to-equal (cdr pair)))))))
-
-(describe "org-canvas--duplicate-unattended-action (issue #85)"
-  (it "follows the strategy and says so"
-    (let ((org-canvas-duplicate-title-strategy 'adopt) (warnings nil))
-      (cl-letf (((symbol-function 'org-canvas--log-warning)
-                 (lambda (_l fmt &rest args) (push (apply #'format fmt args) warnings))))
-        (expect (org-canvas--duplicate-unattended-action "R11") :to-equal 'adopt))
-      (expect (car warnings)
-              :to-equal "[Duplicate] 'R11' resolved as adopt without prompting (org-canvas-duplicate-title-strategy)")))
-
-  (it "skips in batch and says how to choose"
-    (let ((org-canvas-duplicate-title-strategy nil) (noninteractive t) (warnings nil))
-      (cl-letf (((symbol-function 'org-canvas--log-warning)
-                 (lambda (_l fmt &rest args) (push (apply #'format fmt args) warnings))))
-        (expect (org-canvas--duplicate-unattended-action "R11") :to-equal 'skip))
-      (expect (car warnings) :to-match "batch mode; set org-canvas-duplicate-title-strategy")))
-
-  (it "is nil when someone can be asked"
-    (let ((org-canvas-duplicate-title-strategy nil) (noninteractive nil))
-      (cl-letf (((symbol-function 'org-canvas--log-warning)
-                 (lambda (&rest _) (error "Nothing to say"))))
-        (expect (org-canvas--duplicate-unattended-action "R11") :to-be nil)))))
-
-(describe "org-canvas--resolve-duplicate (issue #85)"
-  (it "honours the run's standing apply-all answer first"
-    (let ((ctx (org-canvas--sync-make-ctx :duplicate-apply-all 'create))
-          (org-canvas-duplicate-title-strategy 'skip))
-      (expect (org-canvas--resolve-duplicate "R11" '("1") ctx) :to-equal 'create)))
-
-  (it "takes the unattended answer before prompting"
-    (let ((org-canvas-duplicate-title-strategy 'adopt))
-      (cl-letf (((symbol-function 'read-char-choice)
-                 (lambda (&rest _) (error "Must not prompt")))
-                ((symbol-function 'org-canvas--log-warning) #'ignore))
-        (expect (org-canvas--resolve-duplicate "R11" '("1") (org-canvas--sync-make-ctx))
-                :to-equal 'adopt)
-        (expect (org-canvas--resolve-duplicate "R11" '("1")) :to-equal 'adopt))))
-
-  (it "remembers a capital answer in the run context for the rest of the run"
-    (let ((org-canvas-duplicate-title-strategy nil)
-          (noninteractive nil))
-      (dolist (pair '((?S . skip) (?A . adopt) (?C . create)))
-        (let ((ctx (org-canvas--sync-make-ctx)))
-          (cl-letf (((symbol-function 'read-char-choice) (lambda (&rest _) (car pair))))
-            (expect (org-canvas--resolve-duplicate "R11" '("1") ctx) :to-equal (cdr pair))
-            (expect (plist-get ctx :duplicate-apply-all) :to-equal (cdr pair)))))))
-
-  (it "passes a lowercase answer through without remembering it"
-    (let ((ctx (org-canvas--sync-make-ctx))
-          (org-canvas-duplicate-title-strategy nil)
-          (noninteractive nil))
-      (cl-letf (((symbol-function 'read-char-choice) (lambda (&rest _) ?c)))
-        (expect (org-canvas--resolve-duplicate "R11" '("1") ctx) :to-equal 'create)
-        (expect (plist-get ctx :duplicate-apply-all) :to-be nil)))))
-
-;;;; Issue #94: file drift is decided from modified_at, not updated_at
-
 (describe "org-canvas--sync-remote-updated-index modified field (issue #94)"
   (it "reads the declared field instead of updated_at"
     (let ((map (org-canvas--sync-remote-updated-index
@@ -5633,8 +3557,6 @@ Returns the :remote-titles of the run context the push received."
       (expect (org-canvas--adopt-stamp (point) "CANVAS_ID" '((title . "x")))
               :to-be nil)
       (expect (org-entry-get (point) "CANVAS_ID") :to-be nil))))
-
-;;;; #+LAST_SYNCED advances on any successful stamp (issue #104)
 
 (describe "org-canvas--sync-advance-file-header (issue #104)"
   (let ((stamp-of (lambda (iso)
@@ -5885,8 +3807,6 @@ Returns the :remote-titles of the run context the push received."
        (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
                :to-equal "2026-08-01T00:00:00Z")))))
 
-;;;; Child twins and the 404 recovery's twin (issue #179)
-
 (describe "org-canvas--child-twins (issue #179)"
   (it "returns the matching items nothing claims, earliest position first"
     (let ((remote [((id . 3) (position . 2) (name . "Q"))
@@ -6009,35 +3929,6 @@ Returns the :remote-titles of the run context the push received."
              (run (test-org-canvas-179-404--push (lambda (_title) (setq asked t) '((id . 789))))))
         (expect asked :to-be nil)
         (expect (cl-some (lambda (r) (eq (car r) 'POST)) (cdr run)) :to-be-truthy)))))
-
-(describe "org-canvas--prune-runtime URL resolution"
-  (it "lists through :list-url-fn and deletes through the default item URL"
-    (with-org-canvas-test-config
-      (let ((temp-file (make-temp-file "prune-" nil ".org"))
-            (listed-url nil)
-            (delete-url nil))
-        (unwind-protect
-            (progn
-              (with-temp-file temp-file (insert "* Empty\n"))
-              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                         (lambda (_method url &rest _)
-                           (setq listed-url url)
-                           '(((id . 2) (title . "Orphan")))))
-                        ((symbol-function 'y-or-n-p) (lambda (_) t))
-                        ((symbol-function 'display-buffer) (lambda (&rest _) nil))
-                        ((symbol-function 'org-canvas--delete-items-queued)
-                         (lambda (items del-fn &rest _)
-                           (setq delete-url (funcall del-fn (alist-get 'id (car items))))
-                           (cons (length items) nil))))
-                (expect (org-canvas--prune-runtime "pages"
-                          :endpoint "pages" :file temp-file
-                          :list-url-fn (lambda () "https://canvas.test/api/v1/custom/pages"))
-                        :to-equal 1))
-              (expect listed-url :to-equal "https://canvas.test/api/v1/custom/pages")
-              (expect delete-url :to-match "/pages/2\\'"))
-          (let ((buf (find-buffer-visiting temp-file)))
-            (when buf (kill-buffer buf)))
-          (delete-file temp-file))))))
 
 (provide 'org-canvas-core-sync-test)
 ;;; org-canvas-core-sync-test.el ends here

@@ -1448,5 +1448,406 @@ text
                 (kill-buffer buf)))
         (delete-file temp)))))
 
+(describe "org-canvas--pull-insert-body"
+  (it "inserts converted HTML as Org text"
+    (with-temp-org-buffer
+     "* Heading
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+Old body text
+"
+     (goto-char (point-min))
+     (org-back-to-heading t)
+     (org-canvas--pull-insert-body "<p>New content</p>")
+     (goto-char (point-min))
+     (expect (buffer-string) :to-match "New content")
+     (expect (buffer-string) :not :to-match "Old body text")))
+
+  (it "does nothing when body is nil"
+    (with-temp-org-buffer
+     "* Heading
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+Keep this
+"
+     (goto-char (point-min))
+     (org-back-to-heading t)
+     (org-canvas--pull-insert-body nil)
+     (expect (buffer-string) :to-match "Keep this")))
+
+  (it "does nothing when body is empty string"
+    (with-temp-org-buffer
+     "* Heading
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+Keep this too
+"
+     (goto-char (point-min))
+     (org-back-to-heading t)
+     (org-canvas--pull-insert-body "")
+     (expect (buffer-string) :to-match "Keep this too"))))
+
+(describe "org-canvas--pull-upsert-heading"
+  (it "creates new heading when no match exists"
+    (let* ((temp-dir (make-temp-file "upsert-test" t))
+           (test-file (expand-file-name "test.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file test-file (insert ""))
+            (let ((pos (org-canvas--pull-upsert-heading
+                        test-file 999 "New Item")))
+              (with-current-buffer (find-file-noselect test-file)
+                (goto-char pos)
+                (expect (org-get-heading t t t t) :to-equal "New Item"))))
+        (let ((buf (find-buffer-visiting test-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "finds existing heading by CANVAS_ID"
+    (let* ((temp-dir (make-temp-file "upsert-test" t))
+           (test-file (expand-file-name "test.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file test-file
+              (insert "* Existing\n:PROPERTIES:\n:CANVAS_ID: 42\n:END:\n"))
+            (let ((pos (org-canvas--pull-upsert-heading
+                        test-file 42 "Updated")))
+              (with-current-buffer (find-file-noselect test-file)
+                (goto-char pos)
+                ;; Should find existing, not create new
+                (expect (org-entry-get (point) "CANVAS_ID") :to-equal "42"))))
+        (let ((buf (find-buffer-visiting test-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "uses custom id-property"
+    (let* ((temp-dir (make-temp-file "upsert-test" t))
+           (test-file (expand-file-name "test.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file test-file
+              (insert "* Page\n:PROPERTIES:\n:CANVAS_URL: my-page\n:END:\n"))
+            (let ((pos (org-canvas--pull-upsert-heading
+                        test-file "my-page" "Updated Page" "CANVAS_URL")))
+              (with-current-buffer (find-file-noselect test-file)
+                (goto-char pos)
+                (expect (org-entry-get (point) "CANVAS_URL")
+                        :to-equal "my-page"))))
+        (let ((buf (find-buffer-visiting test-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
+(describe "org-canvas-define-pull"
+  (it "signals error when :file is missing"
+    (expect (macroexpand '(org-canvas-define-pull test-feature
+                            :endpoint "test"
+                            :pull-item-fn #'ignore))
+            :to-throw 'error))
+
+  (it "signals error when :endpoint is missing"
+    (expect (macroexpand '(org-canvas-define-pull test-feature
+                            :file test-file
+                            :pull-item-fn #'ignore))
+            :to-throw 'error))
+
+  (it "signals error when :pull-item-fn is missing"
+    (expect (macroexpand '(org-canvas-define-pull test-feature
+                            :file test-file
+                            :endpoint "test"))
+            :to-throw 'error))
+
+  (it "generates a pull function with correct name"
+    (let ((expansion (macroexpand '(org-canvas-define-pull test-widgets
+                                    :file test-file
+                                    :endpoint "widgets"
+                                    :pull-item-fn #'ignore))))
+      (expect expansion :to-be-truthy)
+      ;; Check that the expansion contains a defun with the right name
+      (expect (format "%S" expansion) :to-match "org-canvas-pull-test-widgets")))
+
+  (it "aborts when user declines overwrite of existing file"
+    (let* ((temp-dir (make-temp-file "pull-confirm-test" t))
+           (test-file (expand-file-name "assignment-groups.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file test-file
+              (insert "* Existing Group\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"))
+            (let ((org-canvas-assignment-groups-file test-file)
+                  ;; Batch mode now skips the prompt (issue #34).
+                  (noninteractive nil))
+              (with-org-canvas-test-config
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (lambda (_method _url &optional _params) '()))
+                          ((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                          ((symbol-function 'display-buffer) (lambda (_) nil))
+                          ((symbol-function 'y-or-n-p) (lambda (_) nil)))
+                  (expect (org-canvas-pull-assignment-groups)
+                          :to-throw 'user-error)))))
+        (let ((buf (find-buffer-visiting test-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "proceeds without prompting when file does not exist"
+    (let* ((temp-dir (make-temp-file "pull-confirm-test" t))
+           (test-file (expand-file-name "assignment-groups.org" temp-dir))
+           (prompted nil))
+      (unwind-protect
+          (let ((org-canvas-assignment-groups-file test-file))
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                         (lambda (_method _url &optional _params) '()))
+                        ((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                        ((symbol-function 'display-buffer) (lambda (_) nil))
+                        ((symbol-function 'y-or-n-p)
+                         (lambda (_) (setq prompted t) t)))
+                (org-canvas-pull-assignment-groups)
+                (expect prompted :to-be nil))))
+        (let ((buf (find-buffer-visiting test-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
+(describe "org-canvas--pull-upsert-heading at EOF"
+  (it "creates heading when file has no newline at end"
+    (let* ((temp-dir (make-temp-file "upsert-test" t))
+           (test-file (expand-file-name "test.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file test-file (insert "* Existing"))  ;; no trailing newline
+            (let ((pos (org-canvas--pull-upsert-heading
+                        test-file 999 "New Item")))
+              (with-current-buffer (find-file-noselect test-file)
+                (goto-char pos)
+                (expect (org-get-heading t t t t) :to-equal "New Item"))))
+        (let ((buf (find-buffer-visiting test-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
+(describe "org-canvas--pull-set-boolean-property"
+  (it "sets true when value is t"
+    (with-temp-org-buffer
+     "* Item
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (org-canvas--pull-set-boolean-property (point) "ALLOW_RATING" t)
+     (expect (org-entry-get (point) "ALLOW_RATING") :to-equal "true")))
+
+  (it "sets false when value is nil and org-canvas-emit-defaults is t"
+    (let ((org-canvas-emit-defaults t))
+      (with-temp-org-buffer
+       "* Item
+:PROPERTIES:
+:END:
+"
+       (org-back-to-heading)
+       (org-canvas--pull-set-boolean-property (point) "ALLOW_RATING" nil)
+       (expect (org-entry-get (point) "ALLOW_RATING") :to-equal "false"))))
+
+  (it "sets false when value is :json-false and org-canvas-emit-defaults is t"
+    (let ((org-canvas-emit-defaults t))
+      (with-temp-org-buffer
+       "* Item
+:PROPERTIES:
+:END:
+"
+       (org-back-to-heading)
+       (org-canvas--pull-set-boolean-property (point) "PINNED" :json-false)
+       (expect (org-entry-get (point) "PINNED") :to-equal "false")))))
+
+(describe "org-canvas--pull-set-timestamp-property"
+  (it "sets Org timestamp from ISO8601"
+    (with-temp-org-buffer
+     "* Item
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (org-canvas--pull-set-timestamp-property (point) "START_AT" "2026-09-01T14:00:00Z")
+     (expect (org-entry-get (point) "START_AT") :to-match "<2026-09-01")))
+
+  (it "does nothing when iso8601 is nil"
+    (with-temp-org-buffer
+     "* Item
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (org-canvas--pull-set-timestamp-property (point) "START_AT" nil)
+     (expect (org-entry-get (point) "START_AT") :to-be nil)))
+
+  (it "does nothing when iso8601 is empty string"
+    (with-temp-org-buffer
+     "* Item
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading)
+     (org-canvas--pull-set-timestamp-property (point) "START_AT" "")
+     (expect (org-entry-get (point) "START_AT") :to-be nil))))
+
+(describe "org-canvas--pull-process-item"
+  (it "upserts heading and saves sync state"
+    (let* ((temp-dir (make-temp-file "pull-proc" t))
+           (org-file (expand-file-name "test.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file org-file (insert "#+TITLE: Test\n"))
+            (let ((item '((id . 42) (title . "My Item")))
+                  (item-fn-called nil))
+              (with-current-buffer (find-file-noselect org-file)
+                (org-canvas--pull-process-item
+                 item org-file
+                 (list :id-field 'id :title-field 'title
+                       :id-property "CANVAS_ID"
+                       :pull-item-fn (lambda (_item _pos) (setq item-fn-called t))))
+                (goto-char (point-min))
+                (re-search-forward "^\\* " nil t)
+                (org-back-to-heading)
+                (expect (org-entry-get (point) "CANVAS_ID") :to-equal "42")
+                ;; Per-entry LAST_SYNCED is no longer written
+                (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil))
+              (expect item-fn-called :to-be t)))
+        (let ((buf (find-buffer-visiting org-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "updates existing heading title"
+    (let* ((temp-dir (make-temp-file "pull-proc2" t))
+           (org-file (expand-file-name "test.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file org-file
+              (insert "#+TITLE: Test\n* Old Title\n:PROPERTIES:\n:CANVAS_ID: 42\n:END:\n"))
+            (let ((item '((id . 42) (title . "New Title"))))
+              (with-current-buffer (find-file-noselect org-file)
+                (org-canvas--pull-process-item
+                 item org-file
+                 (list :id-field 'id :title-field 'title
+                       :id-property "CANVAS_ID"
+                       :pull-item-fn (lambda (_item _pos) nil)))
+                (goto-char (point-min))
+                (re-search-forward "^\\* " nil t)
+                (expect (org-get-heading t t t t) :to-equal "New Title"))))
+        (let ((buf (find-buffer-visiting org-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
+
+(describe "org-canvas--pull-sort-items"
+  (it "sorts items by position ascending"
+    (let ((items '(((id . 3) (position . 30) (title . "C"))
+                   ((id . 1) (position . 10) (title . "A"))
+                   ((id . 2) (position . 20) (title . "B")))))
+      (let ((sorted (org-canvas--pull-sort-items items)))
+        (expect (mapcar (lambda (x) (alist-get 'title x)) sorted)
+                :to-equal '("A" "B" "C")))))
+
+  (it "uses secondary key when positions tie or are absent"
+    (let ((items '(((id . 1) (position . 1) (assignment_group_id . 200) (title . "B"))
+                   ((id . 2) (position . 1) (assignment_group_id . 100) (title . "A")))))
+      (let ((sorted (org-canvas--pull-sort-items items 'assignment_group_id)))
+        (expect (mapcar (lambda (x) (alist-get 'title x)) sorted)
+                :to-equal '("A" "B")))))
+
+  (it "groups by secondary key first, then sorts by position within group"
+    (let ((items '(((id . 1) (name . "B-2") (position . 2) (assignment_group_id . 100))
+                   ((id . 2) (name . "A-3") (position . 3) (assignment_group_id . 50))
+                   ((id . 3) (name . "B-1") (position . 1) (assignment_group_id . 100))
+                   ((id . 4) (name . "A-1") (position . 1) (assignment_group_id . 50)))))
+      (let ((sorted (org-canvas--pull-sort-items items 'assignment_group_id)))
+        (expect (mapcar (lambda (x) (alist-get 'name x)) sorted)
+                :to-equal '("A-1" "A-3" "B-1" "B-2")))))
+
+  (it "falls back to name when position is missing"
+    (let ((items '(((id . 1) (name . "Beta"))
+                   ((id . 2) (name . "Alpha")))))
+      (let ((sorted (org-canvas--pull-sort-items items)))
+        (expect (mapcar (lambda (x) (alist-get 'name x)) sorted)
+                :to-equal '("Alpha" "Beta")))))
+
+  (it "falls back to title when position and name are missing"
+    (let ((items '(((id . 1) (title . "Zebra"))
+                   ((id . 2) (title . "Apple")))))
+      (let ((sorted (org-canvas--pull-sort-items items)))
+        (expect (mapcar (lambda (x) (alist-get 'title x)) sorted)
+                :to-equal '("Apple" "Zebra")))))
+
+  (it "falls back to id when position and name are absent"
+    (let ((items '(((id . 5)) ((id . 3)) ((id . 1)))))
+      (let ((sorted (org-canvas--pull-sort-items items)))
+        (expect (mapcar (lambda (x) (alist-get 'id x)) sorted)
+                :to-equal '(1 3 5)))))
+
+  (it "is stable: items with same key preserve input order"
+    (let ((items '(((id . 1) (position . 1) (title . "first"))
+                   ((id . 2) (position . 1) (title . "second"))
+                   ((id . 3) (position . 1) (title . "third")))))
+      (let ((sorted (org-canvas--pull-sort-items items)))
+        (expect (mapcar (lambda (x) (alist-get 'title x)) sorted)
+                :to-equal '("first" "second" "third")))))
+
+  (it "handles empty list"
+    (expect (org-canvas--pull-sort-items '()) :to-equal nil))
+
+  (it "handles single-item list"
+    (let ((items '(((id . 1) (position . 5) (title . "Only")))))
+      (expect (org-canvas--pull-sort-items items) :to-equal items)))
+
+  (it "treats missing position as greater than any present position"
+    ;; An item without `position' should sort after items with a position,
+    ;; so the explicit ordering wins over the missing-data fallback.
+    (let ((items '(((id . 1) (title . "no-pos"))
+                   ((id . 2) (position . 5) (title . "has-pos")))))
+      (let ((sorted (org-canvas--pull-sort-items items)))
+        (expect (mapcar (lambda (x) (alist-get 'title x)) sorted)
+                :to-equal '("has-pos" "no-pos")))))
+
+  (it "uses tertiary key (string) between secondary and position"
+    ;; Two items in the same assignment_group_id, different due_at.
+    ;; With tertiary-key 'due_at, the earlier-due item sorts first
+    ;; even when Canvas returns them in reverse position order.
+    (let ((items '(((id . 1) (name . "Late") (position . 1)
+                    (assignment_group_id . 100)
+                    (due_at . "2026-03-27T23:59:00Z"))
+                   ((id . 2) (name . "NN")   (position . 2)
+                    (assignment_group_id . 100)
+                    (due_at . "2026-03-06T23:59:00Z"))
+                   ((id . 3) (name . "Early") (position . 3)
+                    (assignment_group_id . 100)
+                    (due_at . "2026-02-06T23:59:00Z")))))
+      (let ((sorted (org-canvas--pull-sort-items
+                     items 'assignment_group_id 'due_at)))
+        (expect (mapcar (lambda (x) (alist-get 'name x)) sorted)
+                :to-equal '("Early" "NN" "Late")))))
+
+  (it "items missing tertiary key sort after those with one"
+    (let ((items '(((id . 1) (name . "B") (position . 1)
+                    (assignment_group_id . 100))
+                   ((id . 2) (name . "A") (position . 2)
+                    (assignment_group_id . 100)
+                    (due_at . "2026-02-06T23:59:00Z")))))
+      (let ((sorted (org-canvas--pull-sort-items
+                     items 'assignment_group_id 'due_at)))
+        (expect (mapcar (lambda (x) (alist-get 'name x)) sorted)
+                :to-equal '("A" "B")))))
+
+  (it "tertiary tier still respects secondary grouping"
+    ;; Group A items (due 2026-04-01, 2026-03-01) and Group B items
+    ;; (due 2026-02-01) — all of group A's items must precede group B's
+    ;; even though group B has the earliest due date.
+    (let ((items '(((id . 1) (name . "A-late") (assignment_group_id . 100)
+                    (due_at . "2026-04-01T23:59:00Z"))
+                   ((id . 2) (name . "B-early") (assignment_group_id . 200)
+                    (due_at . "2026-02-01T23:59:00Z"))
+                   ((id . 3) (name . "A-early") (assignment_group_id . 100)
+                    (due_at . "2026-03-01T23:59:00Z")))))
+      (let ((sorted (org-canvas--pull-sort-items
+                     items 'assignment_group_id 'due_at)))
+        (expect (mapcar (lambda (x) (alist-get 'name x)) sorted)
+                :to-equal '("A-early" "A-late" "B-early"))))))
+
 (provide 'org-canvas-core-pull-test)
 ;;; org-canvas-core-pull-test.el ends here
