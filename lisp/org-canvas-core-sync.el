@@ -90,14 +90,24 @@ Opens the log buffer and logs a sync header."
   "Collect entry markers and existing CANVAS_IDs from SYNC-FILE.
 QUERY is the `org-map-entries' match string.
 FEATURE-NAME is used for log messages.
-Returns a plist (:targets MARKERS :all-ids-before IDS)."
+Returns a plist (:targets MARKERS :all-ids-before IDS).
+
+The ids come from the same headings QUERY selects, not from every
+level of the file: a module item, a quiz question or an outcome under
+its group is synced by the pass that owns that level, and reporting
+it as orphaned because this pass did not walk it was one warning per
+child on every run (issue #196)."
   (let (targets all-ids-before)
     (with-current-buffer (org-canvas--find-file-noselect sync-file)
-      (setq targets (org-map-entries (lambda () (point-marker)) query 'file))
-      (setq all-ids-before
-            (org-map-entries
-             (lambda () (org-entry-get (point) "CANVAS_ID"))
-             "CANVAS_ID={.}" 'file)))
+      (org-map-entries
+       (lambda ()
+         (push (point-marker) targets)
+         (let ((id (org-entry-get (point) "CANVAS_ID")))
+           (when (and id (not (string-empty-p id)))
+             (push id all-ids-before))))
+       query 'file)
+      (setq targets (nreverse targets)
+            all-ids-before (nreverse all-ids-before)))
     (org-canvas--log-info org-canvas--logger "Found %d %s to sync"
       (length targets) feature-name)
     ;; Warn about duplicate CANVAS_IDs
