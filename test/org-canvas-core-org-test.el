@@ -3582,5 +3582,169 @@ Page content.
     (expect (with-current-buffer "*test-report*" major-mode)
             :to-equal 'fundamental-mode)))
 
+;;;; Body Headings Never Become Headlines (issue #175)
+
+(defun test-org-canvas-pandoc-emitting (org-text)
+  "Return a `call-process-region' stand-in that replaces the region with ORG-TEXT."
+  (lambda (start end _program &optional _delete _buffer &rest _args)
+    (delete-region start end)
+    (insert org-text)
+    0))
+
+(describe "org-canvas--org-body-neutralize-headlines"
+  (it "returns nil for nil and text without a headline as it is"
+    (expect (org-canvas--org-body-neutralize-headlines nil) :to-be nil)
+    (expect (org-canvas--org-body-neutralize-headlines "plain\n*bold* text")
+            :to-equal "plain\n*bold* text"))
+
+  (it "turns a headline and its pandoc drawer into a heading block"
+    (expect (org-canvas--org-body-neutralize-headlines
+             "** Read this\n:PROPERTIES:\n:CLASS: article-title\n:END:\nafter")
+            :to-equal "#+begin_h2\nRead this\n#+end_h2\nafter"))
+
+  (it "keeps the level of a bare headline"
+    (expect (org-canvas--org-body-neutralize-headlines "* Top\nbody")
+            :to-equal "#+begin_h1\nTop\n#+end_h1\nbody"))
+
+  (it "never emits a headline, whatever the depth"
+    (let ((out (org-canvas--org-body-neutralize-headlines
+                "intro\n******** Deep\nmid\n* Top\nend")))
+      (expect out :not :to-match "^\\*+ ")
+      (expect out :to-match "^#\\+begin_h6\nDeep\n#\\+end_h6$")
+      (expect out :to-match "^#\\+begin_h1\nTop\n#\\+end_h1$")
+      (expect out :to-match "^mid$")
+      (expect out :to-match "^end$")))
+
+  (it "carries a referenced CUSTOM_ID as a target and retargets its link"
+    (expect (org-canvas--org-body-neutralize-headlines
+             (concat "see [[#overview][1. Overview]]\n"
+                     "** Overview\n:PROPERTIES:\n:CUSTOM_ID: overview\n:END:\ntext"))
+            :to-equal (concat "see [[overview][1. Overview]]\n"
+                              "#+begin_h2\n<<overview>> Overview\n#+end_h2\ntext")))
+
+  (it "drops a headline with no title"
+    (expect (org-canvas--org-body-neutralize-headlines "before\n** \nafter")
+            :to-equal "before\n\nafter"))
+
+  (it "escapes a title that is itself shaped like a headline"
+    (let ((out (org-canvas--org-body-neutralize-headlines "** * starry\ntail")))
+      (expect out :to-equal "#+begin_h2\n\\ast{} starry\n#+end_h2\ntail")
+      (expect out :not :to-match "^\\*+ "))))
+
+(describe "org-canvas--html-to-org keeps a body free of headlines"
+  (it "turns the headline pandoc emits for <h1> into a block"
+    (cl-letf (((symbol-function 'executable-find) (lambda (_) "pandoc"))
+              ((symbol-function 'call-process-region)
+               (test-org-canvas-pandoc-emitting
+                "* Heading\n:PROPERTIES:\n:CUSTOM_ID: heading\n:END:\n\nafter")))
+      (let ((out (org-canvas--html-to-org "<h1>Heading</h1><p>after</p>")))
+        (expect out :not :to-match "^\\* ")
+        (expect out :to-match "^#\\+begin_h1\nHeading\n#\\+end_h1")
+        (expect out :to-match "^after$"))))
+
+  (it "guards the raw-HTML fallback as well"
+    (cl-letf (((symbol-function 'executable-find) (lambda (_) nil)))
+      (let ((out (org-canvas--html-to-org "<pre>\n* not a heading\n</pre>")))
+        (expect out :to-match "WARNING: pandoc not found")
+        (expect out :not :to-match "^\\* ")
+        (expect out :to-match "not a heading"))))
+
+  (it "collapses a heading block to its text inline"
+    (cl-letf (((symbol-function 'executable-find) (lambda (_) "pandoc"))
+              ((symbol-function 'call-process-region)
+               (test-org-canvas-pandoc-emitting "** Title\nrest")))
+      (expect (org-canvas--html-to-org-inline "<h2>Title</h2>rest")
+              :to-equal "Title rest"))))
+
+(describe "org-canvas--org-to-html-string heading blocks"
+  (it "exports a one-paragraph heading block as the heading it came from"
+    (let ((html (org-canvas--org-to-html-string
+                 (concat "intro\n\n#+begin_h2\n*Read:* [[https://x.example/a][Art]]"
+                         " and answer.\n#+end_h2\n\nafter"))))
+      (expect html :to-match
+              (concat "<h2><b>Read:</b> <a href=\"https://x.example/a\">Art</a>"
+                      " and answer.</h2>"))
+      (expect html :not :to-match "class=\"h2\"")
+      (expect html :to-match "after")))
+
+  (it "keeps a block of several paragraphs a div"
+    (let ((html (org-canvas--org-to-html-string "#+begin_h2\none\n\ntwo\n#+end_h2")))
+      (expect html :to-match "<div class=\"h2\"")
+      (expect html :not :to-match "<h2>")))
+
+  (it "leaves another backend's output alone"
+    (expect (org-canvas--html-heading-block-filter "\\begin{h2}x\\end{h2}" 'latex nil)
+            :to-equal "\\begin{h2}x\\end{h2}"))
+
+  (it "reaches the subtree exporter every registry body goes through"
+    (with-temp-org-buffer
+     "* Page
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+text
+
+#+begin_h3
+Sub
+#+end_h3
+
+more
+"
+     (org-back-to-heading t)
+     (let ((html (org-canvas--export-subtree-body-to-html t)))
+       (expect html :to-match "<h3>Sub</h3>")
+       (expect html :to-match "more")))))
+
+(describe "org-canvas--pull-check-entry-count"
+  (it "warns and records when an id-less level-1 entry appeared"
+    (let ((warnings nil))
+      (org-canvas--pull-summary-reset)
+      (unwind-protect
+          (progn
+            (with-temp-org-buffer
+             "* Real
+:PROPERTIES:
+:CANVAS_ID: 7
+:END:
+* Phantom
+lost text
+"
+             (cl-letf (((symbol-function 'org-canvas--log-warning)
+                        (lambda (_logger fmt &rest args)
+                          (push (apply #'format fmt args) warnings))))
+               (org-canvas--pull-check-entry-count
+                "quizzes" "/x/quizzes.org" "CANVAS_ID" 0 1)))
+            (expect (length warnings) :to-equal 1)
+            (expect (car warnings) :to-match
+                    (concat "quizzes.org: 1 level-1 entry without CANVAS_ID"
+                            " appeared while writing 1 quizzes"))
+            (let ((recs (org-canvas--pull-summary-records-of-kind 'error)))
+              (expect (length recs) :to-equal 1)
+              (expect (plist-get (car recs) :file) :to-equal "quizzes.org")
+              (expect (plist-get (car recs) :error) :to-match "split an entry")))
+        (org-canvas--pull-summary-reset))))
+
+  (it "says nothing when the id-less entries were there before"
+    (let ((warnings nil))
+      (org-canvas--pull-summary-reset)
+      (unwind-protect
+          (progn
+            (with-temp-org-buffer
+             "* Draft
+text
+* Real
+:PROPERTIES:
+:CANVAS_ID: 7
+:END:
+"
+             (cl-letf (((symbol-function 'org-canvas--log-warning)
+                        (lambda (_logger fmt &rest args)
+                          (push (apply #'format fmt args) warnings))))
+               (org-canvas--pull-check-entry-count
+                "pages" "/x/pages.org" "CANVAS_ID" 1 1)))
+            (expect warnings :to-equal nil)
+            (expect (org-canvas--pull-summary-empty-p) :to-be-truthy))
+        (org-canvas--pull-summary-reset)))))
+
 (provide 'org-canvas-core-org-test)
 ;;; org-canvas-core-org-test.el ends here
