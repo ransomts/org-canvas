@@ -511,11 +511,19 @@
                       (t nil)))))
           (let ((data '(:title "Test" :canvas-id "old-id"))
                 (payload '((title . "Test")))
-                (find-fn (lambda (_title) '((id . 789)))))
+                ;; The 404 recovery asks first whether the title lives on
+                ;; under another id (issue #179): nothing yet.  After the
+                ;; POST times out, the same search finds what it made.
+                (asked 0)
+                (find-fn nil))
+            (setq find-fn (lambda (_title)
+                            (setq asked (1+ asked))
+                            (when (> asked 1) '((id . 789)))))
             (let ((result (org-canvas--push-to-api data payload
                                                    :endpoint "items"
                                                    :find-fn find-fn)))
-              (expect (alist-get 'id result) :to-equal 789))))))))
+              (expect (alist-get 'id result) :to-equal 789)
+              (expect asked :to-equal 2))))))))
 
 ;;;; 18. Delete All Items Edge Cases
 
@@ -1325,10 +1333,11 @@ Hello world.
                       (t nil)))))
           (let ((data '(:title "Item" :canvas-id "999"))
                 (payload '((title . "Item"))))
-            ;; Even with find-fn, non-timeout errors should re-throw
+            ;; Even with find-fn, non-timeout errors should re-throw.  The
+            ;; search finds no twin (issue #179), so the recovery POSTs.
             (expect (org-canvas--push-to-api data payload
                                              :endpoint "items"
-                                             :find-fn (lambda (_) '((id . 1))))
+                                             :find-fn (lambda (_) nil))
                     :to-throw 'error)))))))
 
 ;;;; 37. finalize-item pom nil-guard
@@ -5875,6 +5884,131 @@ Returns the :remote-titles of the run context the push received."
        (expect (plist-get counters :skip) :to-equal 1)
        (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
                :to-equal "2026-08-01T00:00:00Z")))))
+
+;;;; Child twins and the 404 recovery's twin (issue #179)
+
+(describe "org-canvas--child-twins (issue #179)"
+  (it "returns the matching items nothing claims, earliest position first"
+    (let ((remote [((id . 3) (position . 2) (name . "Q"))
+                   ((id . 1) (position . 1) (name . "Q"))
+                   ((id . 2) (position . 1) (name . "Other"))
+                   ((id . 4) (position . 3) (name . "Q"))]))
+      (expect (mapcar (lambda (item) (alist-get 'id item))
+                      (org-canvas--child-twins
+                       remote (lambda (item) (equal (alist-get 'name item) "Q")) '("4")))
+              :to-equal '(1 3))))
+
+  (it "orders equal positions by id, and takes a list as well as a vector"
+    (let ((remote '(((id . 7) (position . 1) (name . "Q"))
+                    ((id . 6) (position . 1) (name . "Q")))))
+      (expect (mapcar (lambda (item) (alist-get 'id item))
+                      (org-canvas--child-twins remote (lambda (_) t) nil))
+              :to-equal '(6 7))))
+
+  (it "yields nothing for a list that could not be read"
+    (expect (org-canvas--child-twins 'unknown (lambda (_) t) nil) :to-be nil))
+
+  (it "orders string ids at one position lexically"
+    (let ((remote [((id . "b2") (position . 1)) ((id . "a1") (position . 1))]))
+      (expect (mapcar (lambda (item) (alist-get 'id item))
+                      (org-canvas--child-twins remote (lambda (_) t) nil))
+              :to-equal '("a1" "b2"))))
+
+  (it "ignores an item without an id"
+    (expect (org-canvas--child-twins [((name . "Q"))] (lambda (_) t) nil) :to-be nil)))
+
+(describe "org-canvas--adopt-child-twin (issue #179)"
+  (let ((match (lambda (item) (equal (alist-get 'name item) "Q"))))
+    (it "writes the twin's id into the data and returns it"
+      (let ((data (list :name "Q" :canvas-id nil)))
+        (expect (org-canvas--adopt-child-twin data [((id . 9) (name . "Q"))] match nil "[T]")
+                :to-equal "9")
+        (expect (plist-get data :canvas-id) :to-equal "9")))
+
+    (it "adopts nothing for stamped data, an unknown list, or the create strategy"
+      (let ((remote [((id . 9) (name . "Q"))]))
+        (expect (org-canvas--adopt-child-twin (list :name "Q" :canvas-id "1") remote match nil "[T]")
+                :to-be nil)
+        (expect (org-canvas--adopt-child-twin (list :name "Q" :canvas-id nil) 'unknown match nil "[T]")
+                :to-be nil)
+        (let ((org-canvas-duplicate-title-strategy 'create)
+              (data (list :name "Q" :canvas-id nil)))
+          (expect (org-canvas--adopt-child-twin data remote match nil "[T]") :to-be nil)
+          (expect (plist-get data :canvas-id) :to-be nil))))
+
+    (it "leaves alone a twin a sibling claims"
+      (let ((data (list :name "Q" :canvas-id nil)))
+        (expect (org-canvas--adopt-child-twin data [((id . 9) (name . "Q"))] match '("9") "[T]")
+                :to-be nil)))
+
+    (it "adopts the first twin, names the rest, and deletes nothing"
+      (let ((data (list :name "Q" :canvas-id nil))
+            (warnings nil)
+            (requests nil))
+        (cl-letf (((symbol-function 'org-canvas--log-warning)
+                   (lambda (_logger fmt &rest args)
+                     (push (apply #'format fmt args) warnings)))
+                  ((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest _) (push (list method url) requests) nil)))
+          (expect (org-canvas--adopt-child-twin
+                   data [((id . 5) (position . 2) (name . "Q"))
+                         ((id . 4) (position . 1) (name . "Q"))]
+                   match nil "[T]")
+                  :to-equal "4"))
+        (expect (car warnings) :to-match "1 more item")
+        (expect (car warnings) :to-match "5")
+        (expect requests :to-be nil)))))
+
+(describe "org-canvas--handle-404-retry adopts the title's twin (issue #179)"
+  (defun test-org-canvas-179-404--push (find-fn &optional put-url-fn)
+    "Push a stamped entry whose PUT 404s; return (RESULT . REQUESTS)."
+    (let ((requests nil))
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (method url &rest _)
+                   (push (list method url) requests)
+                   (cond
+                    ((and (eq method 'PUT) (string-match-p "/999$" url))
+                     (signal 'error '("API Request Failed (HTTP 404)")))
+                    ((eq method 'PUT) '((id . 789) (title . "Stale")))
+                    (t '((id . 900) (title . "Stale")))))))
+        (let ((result (org-canvas--push-to-api
+                       '(:title "Stale" :canvas-id "999") '((title . "Stale"))
+                       :endpoint "pages" :find-fn find-fn :put-url-fn put-url-fn)))
+          (cons result requests)))))
+
+  (it "updates the item Canvas holds under the title instead of POSTing"
+    (with-org-canvas-test-config
+      (let* ((run (test-org-canvas-179-404--push (lambda (_title) '((id . 789)))))
+             (requests (cdr run)))
+        (expect (alist-get 'id (car run)) :to-equal 789)
+        (expect (cl-some (lambda (r) (eq (car r) 'POST)) requests) :to-be nil)
+        (expect (cl-some (lambda (r) (and (eq (car r) 'PUT)
+                                          (string-match-p "pages/789$" (cadr r))))
+                         requests)
+                :to-be-truthy))))
+
+  (it "builds the twin's URL with put-url-fn"
+    (with-org-canvas-test-config
+      (let ((requests (cdr (test-org-canvas-179-404--push
+                            (lambda (_title) '((id . 789)))
+                            (lambda (id) (format "https://example.test/x/%s" id))))))
+        (expect (cl-some (lambda (r) (equal r '(PUT "https://example.test/x/789"))) requests)
+                :to-be-truthy))))
+
+  (it "POSTs when nothing on Canvas carries the title"
+    (with-org-canvas-test-config
+      (let* ((run (test-org-canvas-179-404--push (lambda (_title) nil)))
+             (requests (cdr run)))
+        (expect (alist-get 'id (car run)) :to-equal 900)
+        (expect (cl-some (lambda (r) (eq (car r) 'POST)) requests) :to-be-truthy))))
+
+  (it "asks nothing and POSTs under the create strategy"
+    (with-org-canvas-test-config
+      (let* ((org-canvas-duplicate-title-strategy 'create)
+             (asked nil)
+             (run (test-org-canvas-179-404--push (lambda (_title) (setq asked t) '((id . 789))))))
+        (expect asked :to-be nil)
+        (expect (cl-some (lambda (r) (eq (car r) 'POST)) (cdr run)) :to-be-truthy)))))
 
 (provide 'org-canvas-core-sync-test)
 ;;; org-canvas-core-sync-test.el ends here

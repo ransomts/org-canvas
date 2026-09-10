@@ -278,26 +278,66 @@ ID via `string-to-number'.  Pass-through keys: :canvas-id,
      nil)))
 
 (defun org-canvas--outcome-group-push-to-api (data root-group-id)
-  "Send outcome group DATA to Canvas API under ROOT-GROUP-ID."
-  (let* ((id (plist-get data :canvas-id))
-         (title (plist-get data :title))
+  "Send outcome group DATA to Canvas API under ROOT-GROUP-ID.
+An unstamped group adopts the group of its title the parent holds
+\(issue #179); a stamped one is updated, and created again only when
+its id is gone and no twin carries the title."
+  (let* ((title (plist-get data :title))
          (payload (org-canvas--outcome-group-build-payload data)))
 
-    (if id
-        ;; Update existing group
-        (let ((endpoint (org-canvas-api-course-endpoint "outcome_groups/%s" id)))
-          (org-canvas--log-info org-canvas--logger "[Stage 3: Execute] PUT Group '%s'" title)
-          (condition-case err
-              (org-canvas-api-request 'PUT endpoint :data payload)
-            (error
-             ;; 404 -> Create new
-             (if (org-canvas--404-error-p err)
-                 (progn
-                   (org-canvas--log-warning org-canvas--logger "[Stage 3: Recovery] Group not found, creating...")
-                   (org-canvas--outcome-group-create data root-group-id))
-               (signal (car err) (cdr err))))))
-      ;; Create new group
-      (org-canvas--outcome-group-create data root-group-id))))
+    (org-canvas--outcome-update-or-create
+     data "Group"
+     (lambda () (org-canvas--outcome-group-search-by-title title root-group-id))
+     (lambda (group-id)
+       (org-canvas--log-info org-canvas--logger "[Stage 3: Execute] PUT Group '%s'" title)
+       (org-canvas-api-request
+        'PUT (org-canvas-api-course-endpoint "outcome_groups/%s" group-id) :data payload))
+     (lambda () (org-canvas--outcome-group-create data root-group-id)))))
+
+(defun org-canvas--outcome-adopt-twin (data label search-fn)
+  "Give unstamped DATA the id of the item found by SEARCH-FN, if any.
+LABEL names the kind for the log.  Before an outcome or an outcome
+group is created its title is looked up under its parent, so a heading
+whose stamp was lost updates the item it made instead of creating a
+second (issue #179).  Not consulted when
+`org-canvas-duplicate-title-strategy' is `create'.  Returns the
+adopted id as a string, or nil."
+  (unless (eq org-canvas-duplicate-title-strategy 'create)
+    (let ((twin (funcall search-fn)))
+      (when (and twin (alist-get 'id twin))
+        (let ((id (format "%s" (alist-get 'id twin))))
+          (org-canvas--log-info org-canvas--logger
+            "[Duplicate] %s '%s' has no id yet, but Canvas already holds it as %s — adopting it; updating in place instead of creating a second copy"
+            label (plist-get data :title) id)
+          (plist-put data :canvas-id id)
+          id)))))
+
+(defun org-canvas--outcome-update-or-create (data label search-fn put-fn create-fn)
+  "Push DATA: update its item on Canvas, or create it with CREATE-FN.
+An unstamped DATA first adopts the item SEARCH-FN finds under its
+title (`org-canvas--outcome-adopt-twin'); with an id, PUT-FN is called
+with it.  A 404 on that PUT means the stamped id is gone: the title is
+looked up once, and its twin updated, before CREATE-FN makes a new
+item — a recovery must not be the thing that makes the second copy
+\(issue #179).  LABEL names the kind for the log.  Returns the API
+response."
+  (let ((adopted (unless (plist-get data :canvas-id)
+                   (org-canvas--outcome-adopt-twin data label search-fn))))
+    (if (not (plist-get data :canvas-id))
+        (funcall create-fn)
+      (condition-case err
+          (funcall put-fn (plist-get data :canvas-id))
+        (error
+         (unless (org-canvas--404-error-p err)
+           (signal (car err) (cdr err)))
+         (org-canvas--log-warning org-canvas--logger
+           "[Stage 3: Recovery] %s '%s' not found under id %s"
+           label (plist-get data :title) (plist-get data :canvas-id))
+         (plist-put data :canvas-id nil)
+         (if (and (not adopted)
+                  (org-canvas--outcome-adopt-twin data label search-fn))
+             (funcall put-fn (plist-get data :canvas-id))
+           (funcall create-fn)))))))
 
 (defun org-canvas--outcome-group-create (data parent-id)
   "Create a new outcome group from DATA under PARENT-ID."
@@ -333,9 +373,11 @@ ID via `string-to-number'.  Pass-through keys: :canvas-id,
      nil)))
 
 (defun org-canvas--outcome-push-to-api (data)
-  "Send outcome DATA to Canvas API."
-  (let* ((id (plist-get data :canvas-id))
-         (title (plist-get data :title))
+  "Send outcome DATA to Canvas API.
+An unstamped outcome adopts the outcome of its title its group holds
+\(issue #179); a stamped one is updated, and created again only when
+its id is gone and no twin carries the title."
+  (let* ((title (plist-get data :title))
          (parent-group-id (plist-get data :parent-group-id))
          (payload (org-canvas--outcome-build-payload data)))
 
@@ -343,20 +385,14 @@ ID via `string-to-number'.  Pass-through keys: :canvas-id,
       (org-canvas--signal 'org-canvas-validation-error
         "Outcome '%s' has no parent group.  Sync the group first" title))
 
-    (if id
-        ;; Update existing outcome
-        (let ((endpoint (format "%s/api/v1/outcomes/%s" org-canvas-base-url id)))
-          (org-canvas--log-info org-canvas--logger "[Stage 3: Execute] PUT Outcome '%s'" title)
-          (condition-case err
-              (org-canvas-api-request 'PUT endpoint :data payload)
-            (error
-             (if (org-canvas--404-error-p err)
-                 (progn
-                   (org-canvas--log-warning org-canvas--logger "[Stage 3: Recovery] Outcome not found, creating...")
-                   (org-canvas--outcome-create data parent-group-id))
-               (signal (car err) (cdr err))))))
-      ;; Create new outcome
-      (org-canvas--outcome-create data parent-group-id))))
+    (org-canvas--outcome-update-or-create
+     data "Outcome"
+     (lambda () (org-canvas--outcome-search-by-title title parent-group-id))
+     (lambda (outcome-id)
+       (org-canvas--log-info org-canvas--logger "[Stage 3: Execute] PUT Outcome '%s'" title)
+       (org-canvas-api-request
+        'PUT (format "%s/api/v1/outcomes/%s" org-canvas-base-url outcome-id) :data payload))
+     (lambda () (org-canvas--outcome-create data parent-group-id)))))
 
 (defun org-canvas--outcome-create (data group-id)
   "Create a new outcome from DATA in GROUP-ID."

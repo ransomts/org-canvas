@@ -134,6 +134,10 @@ DATA is the parsed plist, PAYLOAD is the alist so far."
   :parse #'org-canvas--announcement-parse-entry
   :build #'org-canvas--announcement-build-payload
   :endpoint "discussion_topics"
+  :find-fn (lambda (title)
+             (org-canvas--search-item "discussion_topics" title
+                                      :params `(("only_announcements" . "true")
+                                                ("search_term" . ,title))))
   :pull-item-fn #'org-canvas--announcement-pull-item)
 
 ;; Generate org-canvas-delete-all-announcements using the delete macro

@@ -665,4 +665,42 @@ Content for everyone.
         (org-canvas--pull-summary-reset)
         (delete-file temp)))))
 
+;;;; The at-point push consults the search (issue #179)
+
+(describe "org-canvas-sync-announcement-at-point duplicate guard (issue #179)"
+  (it "adopts the item Canvas holds under the title instead of creating a second"
+    (with-org-canvas-test-config
+      (let ((requests nil)
+            (errors nil)
+            (org-canvas-duplicate-title-strategy 'adopt)
+            (org-canvas-detect-conflicts nil))
+        (cl-letf (((symbol-function 'org-canvas--log-error)
+                   (lambda (_logger fmt &rest args)
+                     (push (apply #'format fmt args) errors)))
+                  ((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest _)
+                     (push (list method url) requests)
+                     (pcase method
+                       ('GET [((id . 77) (title . "Welcome") (name . "Welcome")
+                               (updated_at . "2026-01-01T00:00:00Z"))])
+                       ('PUT '((id . 77) (title . "Welcome") (name . "Welcome")
+                               (updated_at . "2026-01-02T00:00:00Z")))
+                       (_ '((id . 900) (title . "Welcome") (name . "Welcome"))))))
+                  ((symbol-function 'display-buffer) #'ignore))
+          (with-temp-org-buffer "* Welcome\nHello class.\n"
+            (goto-char (point-min))
+            (search-forward "Welcome")
+            (org-back-to-heading t)
+            (org-canvas-sync-announcement-at-point)
+            (expect errors :to-be nil)
+            (expect (cl-some (lambda (r) (eq (car r) 'POST)) requests) :to-be nil)
+            (expect (cl-some (lambda (r) (and (eq (car r) 'PUT)
+                                              (string-match-p "discussion_topics/77$" (cadr r))))
+                             requests)
+                    :to-be-truthy)
+            (goto-char (point-min))
+            (search-forward "Welcome")
+            (org-back-to-heading t)
+            (expect (org-entry-get (point) "CANVAS_ID") :to-equal "77")))))))
+
 ;;; org-canvas-announcements-test.el ends here

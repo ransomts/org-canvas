@@ -1413,9 +1413,11 @@ Quiz description.
     (with-org-canvas-test-config
       (let ((call-count 0))
         (cl-letf (((symbol-function 'org-canvas-api-request)
-                   (lambda (_method _url &rest _args)
-                     (setq call-count (1+ call-count))
-                     (if (= call-count 1)
+                   (lambda (method _url &rest _args)
+                     ;; The question list is read before the writes
+                     ;; (issue #179); the first write fails.
+                     (unless (eq method 'GET) (setq call-count (1+ call-count)))
+                     (if (and (not (eq method 'GET)) (= call-count 1))
                          (signal 'error '("First question failed"))
                        '((id . 222))))))
           (with-temp-org-buffer
@@ -3994,5 +3996,154 @@ it, and <p> as a paragraph; the rest is left as it is."
         (let ((buf (find-buffer-visiting temp)))
           (when buf (kill-buffer buf)))
         (delete-file temp)))))
+
+;;;; Question adoption (issue #179)
+
+(describe "quiz question adoption (issue #179)"
+  (defmacro test-org-canvas-179-q--with-remote (remote &rest body)
+    "Run BODY with the quiz's question list answering REMOTE.
+`requests' collects (METHOD URL); a PUT answers with the id in its
+URL, a POST with id 900, and the question list GET with REMOTE."
+    (declare (indent 1))
+    `(let ((requests nil))
+       (cl-letf (((symbol-function 'org-canvas-api-request)
+                  (lambda (method url &rest _)
+                    (push (list method url) requests)
+                    (cond
+                     ((and (eq method 'GET) (string-match-p "/questions$" url)) ,remote)
+                     ((and (eq method 'PUT) (string-match "/questions/\\([0-9]+\\)$" url))
+                      `((id . ,(string-to-number (match-string 1 url)))))
+                     (t '((id . 900)))))))
+         ,@body)))
+
+  (defun test-org-canvas-179-q--request (requests method pattern)
+    "Return the request in REQUESTS of METHOD whose URL matches PATTERN."
+    (cl-find-if (lambda (r) (and (eq (car r) method)
+                                 (string-match-p pattern (cadr r))))
+                requests))
+
+  (defconst test-org-canvas-179-q--file
+    "* Quiz
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** Q1
+- [X] Yes
+- [ ] No
+** Q2
+:PROPERTIES:
+:CANVAS_ID: 22
+:END:
+- [X] Yes
+"
+    "A quiz whose first question lost its stamp.")
+
+  (it "adopts the question of its name the quiz already holds: PUT, not POST"
+    (with-org-canvas-test-config
+      (test-org-canvas-179-q--with-remote
+          [((id . 11) (question_name . "Q1") (position . 1))
+           ((id . 22) (question_name . "Q2") (position . 2))]
+        (with-temp-org-buffer test-org-canvas-179-q--file
+          (org-back-to-heading)
+          (org-canvas--sync-quiz-questions (point-marker) "100")
+          (expect (test-org-canvas-179-q--request requests 'PUT "quizzes/100/questions/11$")
+                  :to-be-truthy)
+          (expect (test-org-canvas-179-q--request requests 'POST ".") :to-be nil)
+          (goto-char (point-min))
+          (search-forward "** Q1")
+          (org-back-to-heading t)
+          (expect (org-entry-get (point) "CANVAS_ID") :to-equal "11")))))
+
+  (it "creates the question when the quiz holds none of its name"
+    (with-org-canvas-test-config
+      (test-org-canvas-179-q--with-remote
+          [((id . 22) (question_name . "Q2") (position . 1))]
+        (with-temp-org-buffer test-org-canvas-179-q--file
+          (org-back-to-heading)
+          (org-canvas--sync-quiz-questions (point-marker) "100")
+          (expect (test-org-canvas-179-q--request requests 'POST "quizzes/100/questions$")
+                  :to-be-truthy)))))
+
+  (it "does not adopt the question a sibling heading claims"
+    (with-org-canvas-test-config
+      (test-org-canvas-179-q--with-remote
+          [((id . 22) (question_name . "Q1") (position . 1))]
+        (with-temp-org-buffer test-org-canvas-179-q--file
+          (org-back-to-heading)
+          (org-canvas--sync-quiz-questions (point-marker) "100")
+          (expect (test-org-canvas-179-q--request requests 'POST "quizzes/100/questions$")
+                  :to-be-truthy)))))
+
+  (it "lists nothing when every question is stamped"
+    (with-org-canvas-test-config
+      (test-org-canvas-179-q--with-remote [((id . 22) (question_name . "Q2"))]
+        (with-temp-org-buffer
+            "* Quiz
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** Q2
+:PROPERTIES:
+:CANVAS_ID: 22
+:END:
+- [X] Yes
+"
+          (org-back-to-heading)
+          (org-canvas--sync-quiz-questions (point-marker) "100")
+          (expect (test-org-canvas-179-q--request requests 'GET "/questions") :to-be nil)
+          (expect (test-org-canvas-179-q--request requests 'PUT "questions/22$") :to-be-truthy)))))
+
+  (it "creates rather than adopts when the list cannot be read"
+    (with-org-canvas-test-config
+      (let ((requests nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest _)
+                     (push (list method url) requests)
+                     (if (eq method 'GET)
+                         (signal 'error '("API Request Failed (HTTP 500)"))
+                       '((id . 900))))))
+          (with-temp-org-buffer test-org-canvas-179-q--file
+            (org-back-to-heading)
+            (org-canvas--sync-quiz-questions (point-marker) "100")
+            (expect (test-org-canvas-179-q--request requests 'POST "quizzes/100/questions$")
+                    :to-be-truthy)))))))
+
+;;;; The at-point push consults the search (issue #179)
+
+(describe "org-canvas-sync-quiz-at-point duplicate guard (issue #179)"
+  (it "adopts the item Canvas holds under the title instead of creating a second"
+    (with-org-canvas-test-config
+      (let ((requests nil)
+            (errors nil)
+            (org-canvas-duplicate-title-strategy 'adopt)
+            (org-canvas-detect-conflicts nil))
+        (cl-letf (((symbol-function 'org-canvas--log-error)
+                   (lambda (_logger fmt &rest args)
+                     (push (apply #'format fmt args) errors)))
+                  ((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest _)
+                     (push (list method url) requests)
+                     (pcase method
+                       ('GET [((id . 77) (title . "Quiz 1") (name . "Quiz 1")
+                               (updated_at . "2026-01-01T00:00:00Z"))])
+                       ('PUT '((id . 77) (title . "Quiz 1") (name . "Quiz 1")
+                               (updated_at . "2026-01-02T00:00:00Z")))
+                       (_ '((id . 900) (title . "Quiz 1") (name . "Quiz 1"))))))
+                  ((symbol-function 'display-buffer) #'ignore))
+          (with-temp-org-buffer "* Quiz 1\nA short quiz.\n"
+            (goto-char (point-min))
+            (search-forward "Quiz 1")
+            (org-back-to-heading t)
+            (org-canvas-sync-quiz-at-point)
+            (expect errors :to-be nil)
+            (expect (cl-some (lambda (r) (eq (car r) 'POST)) requests) :to-be nil)
+            (expect (cl-some (lambda (r) (and (eq (car r) 'PUT)
+                                              (string-match-p "quizzes/77$" (cadr r))))
+                             requests)
+                    :to-be-truthy)
+            (goto-char (point-min))
+            (search-forward "Quiz 1")
+            (org-back-to-heading t)
+            (expect (org-entry-get (point) "CANVAS_ID") :to-equal "77")))))))
 
 ;;; org-canvas-quizzes-test.el ends here
