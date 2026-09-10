@@ -3957,5 +3957,78 @@ Returns the :remote-titles of the run context the push received."
       (expect (org-canvas--sync-check-spec seen nil) :not :to-throw))))
 
 
+(describe "sync spec :prepare and :first"
+  (it "runs :prepare once before the first entry and keeps its result in the context"
+    (let ((file (make-temp-file "prepare-" nil ".org"))
+          (seen nil) (prepared 0))
+      (unwind-protect
+          (with-org-canvas-test-config
+            (with-temp-file file
+              (insert "* One\n:PROPERTIES:\n:END:\n* Two\n:PROPERTIES:\n:END:\n"))
+            (cl-letf (((symbol-function 'org-canvas--sync-fetch-remote-snapshot) #'ignore))
+              (org-canvas--sync-run-pipeline
+               (list :feature "things" :file file :query "LEVEL=1"
+                     :parse (lambda () (list :title (org-get-heading t t t t)
+                                             :canvas-id "1" :pom (point-marker)))
+                     :build (lambda (_data) '((name . "x")))
+                     :push (lambda (_data _payload &optional ctx)
+                             (push (plist-get ctx :prepared) seen)
+                             '((id . 1)))
+                     :finalize (lambda (&rest _) nil)
+                     :prepare (lambda (ctx)
+                                (cl-incf prepared)
+                                (format "root-of-%s" (plist-get ctx :feature-name))))))
+            (expect prepared :to-equal 1)
+            (expect seen :to-equal '("root-of-things" "root-of-things")))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file))))
+
+  (it "stops the run before any push when :prepare signals"
+    (let ((file (make-temp-file "prepare-" nil ".org"))
+          (pushed nil))
+      (unwind-protect
+          (with-org-canvas-test-config
+            (with-temp-file file (insert "* One\n"))
+            (cl-letf (((symbol-function 'org-canvas--sync-fetch-remote-snapshot) #'ignore))
+              (expect (org-canvas--sync-run-pipeline
+                       (list :feature "things" :file file :query "LEVEL=1"
+                             :parse (lambda () (list :title "One" :pom (point-marker)))
+                             :build (lambda (_data) nil)
+                             :push (lambda (&rest _) (setq pushed t))
+                             :finalize #'ignore
+                             :prepare (lambda (_ctx) (error "No root"))))
+                      :to-throw 'error))
+            (expect pushed :to-be nil))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file))))
+
+  (it "runs :prepare before the parse of a push at point"
+    (with-temp-org-buffer "* One\n"
+      (org-back-to-heading)
+      (let ((order nil))
+        (cl-letf (((symbol-function 'display-buffer) (lambda (&rest _) nil)))
+          (org-canvas--push-at-point-runtime
+           (list :feature "thing"
+                 :parse (lambda () (push 'parse order) (list :title "One" :canvas-id "1" :pom (point)))
+                 :build (lambda (_data) '((name . "x")))
+                 :push (lambda (_data _payload &optional ctx)
+                         (push (plist-get ctx :prepared) order) '((id . 1)))
+                 :finalize (lambda (&rest _) nil)
+                 :prepare (lambda (_ctx) (push 'prepare order) 'root))))
+        (expect (nreverse order) :to-equal '(prepare parse root)))))
+
+  (it "makes the generated sync run its :first command beforehand, keeping the log"
+    (let ((order nil))
+      (cl-letf (((symbol-function 'org-canvas--sync-run-pipeline)
+                 (lambda (spec)
+                   (push (list (plist-get spec :feature) org-canvas--inhibit-log-clear) order)
+                   nil))
+                ((symbol-function 'org-canvas-sync-outcome-groups)
+                 (lambda () (push (list "outcome-groups" org-canvas--inhibit-log-clear) order))))
+        (org-canvas-sync-outcomes))
+      (expect (nreverse order)
+              :to-equal '(("outcome-groups" t) ("outcomes" t))))))
+
+
 (provide 'org-canvas-core-sync-test)
 ;;; org-canvas-core-sync-test.el ends here

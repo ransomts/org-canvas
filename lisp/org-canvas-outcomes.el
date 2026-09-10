@@ -424,20 +424,13 @@ CTX is the run context."
 CTX is the run context."
   (org-canvas--finalize-item data response :ctx ctx))
 
-;;;; Main Sync Function
+;;;; Sync Commands
 
-(defun org-canvas--outcome-sync-preflight ()
-  "Validate outcomes file and fetch root outcome group.
-Returns the root group ID, or signals an error."
-  (unless (and org-canvas-outcomes-file (file-exists-p org-canvas-outcomes-file))
-    (org-canvas--signal 'org-canvas-config-error
-      "Outcomes file not found: %s" org-canvas-outcomes-file))
-  (display-buffer (get-buffer-create org-canvas--log-buffer-name))
-  (org-canvas--log-info org-canvas--logger "========================================")
-  (org-canvas--log-info org-canvas--logger ">>> STARTING OUTCOME SYNC")
-  (org-canvas--log-info org-canvas--logger "File: %s" org-canvas-outcomes-file)
-  (org-canvas--log-info org-canvas--logger "Course: %s | URL: %s" org-canvas-course-id org-canvas-base-url)
-  (org-canvas--log-info org-canvas--logger "========================================")
+(defun org-canvas--outcome-sync-prepare (_ctx)
+  "Fetch the course root outcome group id, under which new groups are filed.
+The `:prepare' of the outcome-groups sync: runs once before the first
+group, and signals when Canvas returns no root group, so nothing is
+sent.  The result is the run context's `:prepared'."
   (org-canvas--log-info org-canvas--logger "[Pre-flight] Fetching root outcome group...")
   (let ((root-group-id (org-canvas--outcome-get-root-group-id)))
     (unless root-group-id
@@ -446,34 +439,30 @@ Returns the root group ID, or signals an error."
     (org-canvas--log-info org-canvas--logger "[Pre-flight] Root group ID: %s" root-group-id)
     root-group-id))
 
-;;;###autoload
-(defun org-canvas-sync-outcomes ()
-  "Synchronize all outcomes to Canvas.
-First syncs outcome groups (level-1 headings), then outcomes (level-2 headings)."
-  (interactive)
-  (org-canvas-clear-log)
-  (let ((org-canvas--inhibit-log-clear t)
-        (root-group-id (org-canvas--outcome-sync-preflight)))
-    ;; Phase 1: Sync outcome groups (level-1 headings)
-    (org-canvas--sync-run-pipeline
-     (list :feature "outcome-groups"
-           :file (expand-file-name org-canvas-outcomes-file)
-           :query "LEVEL=1"
-           :parse #'org-canvas--outcome-group-parse-entry
-           :build #'org-canvas--outcome-group-build-payload
-           :push (lambda (data _payload &optional _ctx)
-                   (org-canvas--outcome-group-push-to-api data root-group-id))
-           :finalize #'org-canvas--outcome-group-finalize))
-    ;; Phase 2: Sync outcomes (level-2 headings)
-    (org-canvas--sync-run-pipeline
-     (list :feature "outcomes"
-           :file (expand-file-name org-canvas-outcomes-file)
-           :query "LEVEL=2"
-           :parse #'org-canvas--outcome-parse-entry
-           :build #'org-canvas--outcome-build-payload
-           :push (lambda (data _payload &optional _ctx)
-                   (org-canvas--outcome-push-to-api data))
-           :finalize #'org-canvas--outcome-finalize))))
+;; Outcomes are two levels of one file.  A level-1 heading is a group,
+;; filed under the course root group; a level-2 heading is an outcome,
+;; filed under its group, which must therefore carry a CANVAS_ID first.
+;; Each level is a pipeline of its own, and `org-canvas-sync-outcomes'
+;; runs the groups' pipeline before its own through `:first'.
+(org-canvas-define-sync outcome-groups
+  :file org-canvas-outcomes-file
+  :query "LEVEL=1"
+  :parse #'org-canvas--outcome-group-parse-entry
+  :build #'org-canvas--outcome-group-build-payload
+  :prepare #'org-canvas--outcome-sync-prepare
+  :push (lambda (data _payload &optional ctx)
+          (org-canvas--outcome-group-push-to-api data (plist-get ctx :prepared)))
+  :finalize #'org-canvas--outcome-group-finalize)
+
+(org-canvas-define-sync outcomes
+  :file org-canvas-outcomes-file
+  :query "LEVEL=2"
+  :parse #'org-canvas--outcome-parse-entry
+  :build #'org-canvas--outcome-build-payload
+  :push (lambda (data _payload &optional _ctx)
+          (org-canvas--outcome-push-to-api data))
+  :finalize #'org-canvas--outcome-finalize
+  :first #'org-canvas-sync-outcome-groups)
 
 ;;;; Delete Functions
 

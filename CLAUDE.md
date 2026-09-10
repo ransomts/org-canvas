@@ -136,7 +136,7 @@ Option lists, generated names and the reasoning are in `documentation/architectu
 
 Registry keys that bite: `:remote-fn` when Canvas returns a value nested or renamed (without it every item reports drift), `:compare-p` to exclude a property for an entry, `:query` matching the heading level, `:modified-field` for features whose `updated_at` moves on metadata touches (files use `modified_at`) — design.org, "The Property Registry"; api-interaction.org, "Feature Registry URL Resolution".
 
-Modules using `org-canvas-define-parse`: announcements, pages, calendar, group-categories, assignment-groups. Using `org-canvas-define-payload`: group-categories, calendar, pages, announcements. Custom push (non-standard URLs): group-categories, calendar. Custom sync loops (not macro-based): files, outcomes, quizzes, new-quizzes, modules, overrides — see Hard Rule 1. Pull-only: sections.
+Modules using `org-canvas-define-parse`: announcements, pages, calendar, group-categories, assignment-groups. Using `org-canvas-define-payload`: group-categories, calendar, pages, announcements. Custom push (non-standard URLs): group-categories, calendar. Custom sync loops (not macro-based): files, quizzes, new-quizzes, modules, overrides — see Hard Rule 1. Two levels of one file (outcomes): one `org-canvas-define-sync` per level, the second naming the first with `:first`, and `:prepare` for a value the run fetches once (the root group). Pull-only: sections.
 
 ### The Run Context
 

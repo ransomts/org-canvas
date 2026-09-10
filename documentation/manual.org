@@ -2457,7 +2457,8 @@ pulled front page carries =:FRONT_PAGE: true=, so it round-trips.
 | =org-canvas-sync-pages=               | Sync wiki pages                              |
 | =org-canvas-sync-modules=             | Sync course modules                          |
 | =org-canvas-sync-rubrics=             | Sync rubrics                                 |
-| =org-canvas-sync-outcomes=            | Sync learning outcomes                       |
+| =org-canvas-sync-outcomes=            | Sync learning outcomes (groups first)        |
+| =org-canvas-sync-outcome-groups=      | Sync outcome groups only                     |
 | =org-canvas-sync-discussions=         | Sync discussion topics                       |
 | =org-canvas-sync-announcements=       | Sync announcements                           |
 | =org-canvas-sync-files=               | Upload files                                 |
@@ -2535,6 +2536,8 @@ These commands sync just the item at the current cursor position:
 |--------------------------------------------+----------------------------------|
 | =org-canvas-sync-assignment-at-point=        | Sync assignment at point         |
 | =org-canvas-sync-page-at-point=             | Sync page at point               |
+| =org-canvas-sync-outcome-at-point=          | Sync outcome at point            |
+| =org-canvas-sync-outcome-group-at-point=    | Sync outcome group at point      |
 | =org-canvas-sync-discussion-at-point=       | Sync discussion at point         |
 | =org-canvas-sync-announcement-at-point=     | Sync announcement at point       |
 | =org-canvas-sync-module-at-point=           | Sync module at point             |
