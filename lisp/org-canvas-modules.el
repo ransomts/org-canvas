@@ -197,6 +197,16 @@ HEADING.  Used to look up file-typed module items in files.org."
                  (string-match "\\[\\[file:\\([^]]+\\)\\]\\]" heading)))
     (match-string 1 heading)))
 
+(defun org-canvas--module-heading-display-name (heading)
+  "Return the visible text of HEADING: a file link's description, else itself.
+A files.org heading is usually `[[file:PATH][NAME]]'; NAME is what a
+module item without a title of its own should be called, never the
+whole link, which would nest one link inside another."
+  (if (and heading
+           (string-match "\\[\\[file:[^]]+\\]\\[\\([^]]+\\)\\]\\]" heading))
+      (match-string 1 heading)
+    heading))
+
 (defun org-canvas--module-find-file-canvas-id-by-path (files-org rel-path)
   "Find a heading in FILES-ORG whose link target is REL-PATH.
 Returns its CANVAS_ID (string) or nil."
@@ -1647,7 +1657,7 @@ heading is itself a link."
          (rel-path
           (org-link-make-string
            (format "file:%s" rel-path)
-           (or title heading-name (file-name-nondirectory rel-path))))
+           (or title (org-canvas--module-heading-display-name heading-name))))
          (t (or title "Untitled"))))))))
 
 (defun org-canvas--module-resolve-org-item-link (item-type content-id title)

@@ -4341,4 +4341,64 @@ REMOTE is a vector form, or the symbol `fail'.  `requests' collects
       (with-org-canvas-test-config
         (expect (org-canvas-prune-module-items) :to-throw 'user-error)))))
 
+;;;; Module item branches the sync loop does not reach in tests
+
+(describe "org-canvas--module-item-twins without positions"
+  (it "sorts an item lacking a position after the positioned ones"
+    (let ((twins (org-canvas--module-item-twins
+                  '(:type "SubHeader" :title "T")
+                  '(((id . 9) (type . "SubHeader") (title . "T"))
+                    ((id . 20) (type . "SubHeader") (title . "T") (position . 1)))
+                  nil)))
+      (expect (mapcar (lambda (i) (alist-get 'id i)) twins) :to-equal '(20 9)))))
+
+(describe "org-canvas--module-delete-departed-item"
+  (it "sends nothing during a dry run"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (let ((org-canvas--dry-run t)
+              (logged nil))
+          (cl-letf (((symbol-function 'org-canvas--log-info)
+                     (lambda (_l fmt &rest args)
+                       (push (apply #'format fmt args) logged))))
+            (org-canvas--module-delete-departed-item
+             10 '((id . 5) (title . "Reading")) "Week 2"))
+          (expect (car logged)
+                  :to-match "\\[DRY-RUN\\] Would remove item 5 'Reading' from module 10")
+          (expect (test-org-canvas-api-call-count) :to-equal 0))))))
+
+(describe "org-canvas--module-heading-display-name"
+  (it "returns a file link's description and any other heading as is"
+    (expect (org-canvas--module-heading-display-name "[[file:content/a.pdf][A.pdf]]")
+            :to-equal "A.pdf")
+    (expect (org-canvas--module-heading-display-name "Week 1") :to-equal "Week 1")
+    (expect (org-canvas--module-heading-display-name nil) :to-be nil)))
+
+(describe "org-canvas--module-resolve-file-item-link fallbacks"
+  (it "returns the title, or Untitled, when files.org is missing"
+    (let ((org-canvas-directory (make-temp-file "modules-nofiles-" t)))
+      (unwind-protect
+          (progn
+            (expect (org-canvas--module-resolve-file-item-link 5 "Syllabus")
+                    :to-equal "Syllabus")
+            (expect (org-canvas--module-resolve-file-item-link 5 nil)
+                    :to-equal "Untitled"))
+        (delete-directory org-canvas-directory t))))
+
+  (it "links the heading's path, naming it by the link description when the item has no title"
+    (let* ((org-canvas-directory (make-temp-file "modules-files-" t))
+           (files-org (expand-file-name "files.org" org-canvas-directory)))
+      (unwind-protect
+          (progn
+            (with-temp-file files-org
+              (insert "* Week 1\n** [[file:content/a.pdf][A.pdf]]\n"
+                      ":PROPERTIES:\n:CANVAS_ID: 5\n:END:\n"))
+            (expect (org-canvas--module-resolve-file-item-link 5 "Given")
+                    :to-equal "[[file:content/a.pdf][Given]]")
+            (expect (org-canvas--module-resolve-file-item-link 5 nil)
+                    :to-equal "[[file:content/a.pdf][A.pdf]]"))
+        (let ((buf (find-buffer-visiting files-org)))
+          (when buf (kill-buffer buf)))
+        (delete-directory org-canvas-directory t)))))
+
 ;;; org-canvas-modules-test.el ends here

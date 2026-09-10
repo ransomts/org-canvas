@@ -3746,5 +3746,171 @@ text
             (expect (org-canvas--pull-summary-empty-p) :to-be-truthy))
         (org-canvas--pull-summary-reset)))))
 
+;;;; Branches of the pull helpers no module reaches
+
+(describe "org-canvas--pull-set-boolean-property with string values"
+  (it "writes true for the string \"true\""
+    (with-temp-org-buffer "* Item\n"
+      (org-back-to-heading)
+      (org-canvas--pull-set-boolean-property (point) "COVERAGE_FLAG" "true")
+      (expect (org-entry-get (point) "COVERAGE_FLAG") :to-equal "true")))
+
+  (it "writes false for the string \"false\""
+    (let ((org-canvas-emit-defaults t))
+      (with-temp-org-buffer "* Item\n"
+        (org-back-to-heading)
+        (org-canvas--pull-set-boolean-property (point) "COVERAGE_FLAG" "false")
+        (expect (org-entry-get (point) "COVERAGE_FLAG") :to-equal "false"))))
+
+  (it "treats any other string as true"
+    (with-temp-org-buffer "* Item\n"
+      (org-back-to-heading)
+      (org-canvas--pull-set-boolean-property (point) "COVERAGE_FLAG" "yes")
+      (expect (org-entry-get (point) "COVERAGE_FLAG") :to-equal "true")))
+
+  (it "treats a non-string, non-boolean value as true"
+    (with-temp-org-buffer "* Item\n"
+      (org-back-to-heading)
+      (org-canvas--pull-set-boolean-property (point) "COVERAGE_FLAG" 1)
+      (expect (org-entry-get (point) "COVERAGE_FLAG") :to-equal "true"))))
+
+(describe "org-canvas--pull-label-for"
+  (it "returns the registered label"
+    (expect (org-canvas--pull-label-for "pages") :to-equal "Pages"))
+
+  (it "capitalizes an unregistered feature name"
+    (expect (org-canvas--pull-label-for "study-guides") :to-equal "Study Guides")))
+
+(describe "org-canvas--strip-course-files-prefix"
+  (it "returns a name without the course files prefix unchanged"
+    (expect (org-canvas--strip-course-files-prefix "Uploaded Media")
+            :to-equal "Uploaded Media"))
+
+  (it "strips the prefix and empties the root"
+    (expect (org-canvas--strip-course-files-prefix "course files/Week 1")
+            :to-equal "Week 1")
+    (expect (org-canvas--strip-course-files-prefix "course files") :to-equal "")
+    (expect (org-canvas--strip-course-files-prefix nil) :to-equal "")))
+
+(describe "org-canvas--rewrite-fetch-folder-relpath cache"
+  (it "answers from the cache without a request"
+    (let ((org-canvas--rewrite-folder-cache (make-hash-table :test 'eql))
+          (called nil))
+      (puthash 12 "Week 1" org-canvas--rewrite-folder-cache)
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _) (setq called t) nil)))
+        (expect (org-canvas--rewrite-fetch-folder-relpath 12) :to-equal "Week 1"))
+      (expect called :to-be nil))))
+
+(describe "org-canvas--files-org-append-fetched-entry"
+  (defmacro test-org-canvas--with-files-org (initial &rest body)
+    "Run BODY with `org-canvas-files-file' holding INITIAL (nil: absent)."
+    (declare (indent 1))
+    `(let* ((dir (make-temp-file "files-append-" t))
+            (org-canvas-files-file (expand-file-name "files.org" dir)))
+       (unwind-protect
+           (progn
+             (when ,initial
+               (with-temp-file org-canvas-files-file (insert ,initial)))
+             ,@body)
+         (let ((buf (find-buffer-visiting org-canvas-files-file)))
+           (when buf
+             (with-current-buffer buf (set-buffer-modified-p nil))
+             (kill-buffer buf)))
+         (delete-directory dir t))))
+
+  (defun test-org-canvas--files-org-text ()
+    "Return the text of `org-canvas-files-file' as saved on disk."
+    (with-temp-buffer
+      (insert-file-contents org-canvas-files-file)
+      (buffer-string)))
+
+  (it "signals when no files file is configured"
+    (let ((org-canvas-files-file nil))
+      (expect (org-canvas--files-org-append-fetched-entry "a.png" "a.png" 1 nil nil)
+              :to-throw 'error)))
+
+  (it "creates the file and the parent heading, stamping a string id"
+    (test-org-canvas--with-files-org nil
+      (org-canvas--files-org-append-fetched-entry
+       "Uploaded Media/shot.png" "shot.png" "abc-1" "image/png" 10)
+      (let ((text (test-org-canvas--files-org-text)))
+        (expect text :to-match "^\\* Uploaded Media\n")
+        (expect text :to-match
+                "^\\*\\* \\[\\[file:content/Uploaded Media/shot\\.png\\]\\[shot\\.png\\]\\]$")
+        (expect text :to-match ":CANVAS_ID: +abc-1")
+        (expect text :to-match ":CONTENT_TYPE: +image/png")
+        (expect text :to-match ":SIZE: +10"))))
+
+  (it "starts a new parent heading on its own line"
+    (test-org-canvas--with-files-org "* Other\nsome text"
+      (org-canvas--files-org-append-fetched-entry "shot.png" "shot.png" 7 nil nil)
+      (expect (test-org-canvas--files-org-text)
+              :to-match "some text\n\\* Uploaded Media\n\\*\\* \\[\\[file:content/shot\\.png\\]")))
+
+  (it "starts the child on its own line after a parent body"
+    (test-org-canvas--with-files-org "* Uploaded Media\nnotes"
+      (org-canvas--files-org-append-fetched-entry "shot.png" "shot.png" 7 nil nil)
+      (expect (test-org-canvas--files-org-text)
+              :to-match "notes\n\\*\\* \\[\\[file:content/shot\\.png\\]"))))
+
+(describe "org-canvas--rewrite-fetch-unknown-file at the course root"
+  (it "places a root file directly under content/"
+    (with-org-canvas-test-config
+      (let ((cache (make-hash-table :test 'equal))
+            (org-canvas-directory (make-temp-file "rewrite-root-" t))
+            (org-canvas--rewrite-folder-cache (make-hash-table :test 'eql))
+            (appended nil)
+            (downloaded nil))
+        (unwind-protect
+            (progn
+              (puthash 3 "" org-canvas--rewrite-folder-cache)
+              (cl-letf (((symbol-function 'org-canvas-api-request)
+                         (lambda (&rest _)
+                           '((id . 55) (display_name . "root.pdf") (folder_id . 3)
+                             (url . "https://example.com/f")
+                             (content-type . "application/pdf") (size . 9))))
+                        ((symbol-function 'org-canvas--file-pull-download)
+                         (lambda (&rest args) (setq downloaded args)))
+                        ((symbol-function 'org-canvas--files-org-append-fetched-entry)
+                         (lambda (&rest args) (setq appended args))))
+                (expect (org-canvas--rewrite-fetch-unknown-file 55 cache)
+                        :to-equal "content/root.pdf"))
+              (expect (car appended) :to-equal "root.pdf")
+              (expect (nth 2 downloaded)
+                      :to-equal (expand-file-name "content/root.pdf" org-canvas-directory))
+              (expect (gethash 55 cache) :to-equal "content/root.pdf"))
+          (delete-directory org-canvas-directory t))))))
+
+(describe "org-canvas--pull-item-set-property"
+  (it "converts each declared type"
+    (with-temp-org-buffer "* Item\n"
+      (org-back-to-heading)
+      (let ((pos (point))
+            (item '((flag . t) (when . "2026-03-01T12:00:00Z") (count . 4)
+                    (zero . 0) (label . "x") (missing . :null))))
+        (org-canvas--pull-item-set-property pos 'flag "COV_FLAG" 'boolean item)
+        (org-canvas--pull-item-set-property pos 'when "COV_WHEN" 'timestamp item)
+        (org-canvas--pull-item-set-property pos 'count "COV_COUNT" 'number item)
+        (org-canvas--pull-item-set-property pos 'zero "COV_ZERO" 'number item)
+        (org-canvas--pull-item-set-property pos 'label "COV_LABEL" 'non-null item)
+        (org-canvas--pull-item-set-property pos 'missing "COV_MISSING" 'non-null item)
+        (org-canvas--pull-item-set-property pos 'label "COV_STRING" 'string item)
+        (expect (org-entry-get pos "COV_FLAG") :to-equal "true")
+        (expect (org-entry-get pos "COV_WHEN") :to-match "2026-03-0[12]")
+        (expect (org-entry-get pos "COV_COUNT") :to-equal "4")
+        (expect (org-entry-get pos "COV_ZERO") :to-be nil)
+        (expect (org-entry-get pos "COV_LABEL") :to-equal "x")
+        (expect (org-entry-get pos "COV_MISSING") :to-be nil)
+        (expect (org-entry-get pos "COV_STRING") :to-equal "x")))))
+
+(describe "org-canvas--pull-sort-items ties"
+  (it "keeps input order for items equal on every key"
+    (let ((items '(((id . 1) (name . "Same") (position . 1) (tag . "first"))
+                   ((id . 1) (name . "Same") (position . 1) (tag . "second")))))
+      (expect (mapcar (lambda (x) (alist-get 'tag x))
+                      (org-canvas--pull-sort-items items))
+              :to-equal '("first" "second")))))
+
 (provide 'org-canvas-core-org-test)
 ;;; org-canvas-core-org-test.el ends here

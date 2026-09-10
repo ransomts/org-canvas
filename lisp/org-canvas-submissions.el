@@ -1151,21 +1151,28 @@ one or a missing one, nil when there is nothing to grade."
     (and p (string-to-number p))))
 
 ;;;###autoload
-(defun org-canvas-submissions-apply-completion-rule (points &optional overwrite)
+(defun org-canvas-submissions-apply-completion-rule (&optional points overwrite)
   "Score every ungraded student in this grading file by completion.
 A submission within `org-canvas-submissions-late-window-days' of the
 due date gets POINTS, a later or missing one gets 0.  Only headings with
 an empty SCORE are touched, so hand grading is never overwritten, unless
 OVERWRITE (the prefix argument) is given; excused rows are always left
-alone.  Nothing is pushed: review the scores, then press S."
-  (interactive
-   (list (read-number "Full credit points: " (or (org-canvas--submissions-default-points) 0))
-         current-prefix-arg))
+alone.  Nothing is pushed: review the scores, then press S.  When POINTS
+is nil it is read from the minibuffer, after the buffer checks, with
+the file's POINTS_POSSIBLE as the default."
+  ;; Bare `(interactive)' rather than `(interactive (list ...))': a sexp
+  ;; argument to `interactive' makes edebug skip the defun, which blanks
+  ;; undercover's line counts for the whole body (see CLAUDE.md).
+  (interactive)
   (unless org-canvas-submissions-mode
     (user-error "Not in a submissions buffer"))
   (org-canvas--submissions-ensure-context)
   (unless (eq org-canvas-submissions--current-view 'detail)
     (user-error "Switch to detail view first (press v)"))
+  (unless points
+    (setq points (read-number "Full credit points: "
+                              (or (org-canvas--submissions-default-points) 0))
+          overwrite current-prefix-arg))
   (let ((window org-canvas-submissions-late-window-days)
         (full 0) (zero 0) (skipped 0))
     (save-excursion

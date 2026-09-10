@@ -1184,4 +1184,21 @@ Returns the final message string."
          nil nil nil))
       (expect (buffer-string) :to-match "#\\+NAME: overrides"))))
 
+(describe "org-canvas--section-link-by-id with a string id"
+  (it "coerces a non-numeric id to its string when unresolved"
+    (let ((org-canvas-sections-file "/tmp/nonexistent-sections-xyzzy.org"))
+      (expect (org-canvas--section-link-by-id "296338") :to-equal "296338"))))
+
+(describe "org-canvas--override-emit-table lock column"
+  (it "keeps the Lock At column when an override sets lock_at"
+    (with-temp-buffer
+      (let ((org-canvas-sections-file "/tmp/nonexistent-sections-xyzzy.org"))
+        (org-canvas--override-emit-table
+         '(((id . 1) (course_section_id . 1) (lock_at . "2026-03-28T23:59:00Z")))
+         nil nil nil))
+      (expect (buffer-string) :to-match "| Section | Lock At |")
+      (expect (buffer-string) :not :to-match "Due At")
+      (expect (buffer-string) :not :to-match "Unlock At")
+      (expect (buffer-string) :to-match "| 1 | .*2026-03-2[89].* |"))))
+
 ;;; org-canvas-sections-test.el ends here

@@ -5113,4 +5113,29 @@ Returns (COUNTERS . FINAL-MESSAGE)."
      (org-canvas--file-pull-set-properties (point) '((id . 1) (locked . t)))
      (expect (org-entry-get (point) "PUBLISHED") :to-equal "false"))))
 
+(describe "org-canvas--file-pull-emit-fresh-tree without a trailing newline"
+  (before-each (test-org-canvas-reset-file-caches))
+
+  (it "starts the tree on a fresh line"
+    (let* ((temp-dir (make-temp-file "emit-tree-nl-" t))
+           (files-file (expand-file-name "files.org" temp-dir))
+           (content-dir (expand-file-name "content" temp-dir))
+           (folder-map (make-hash-table :test 'eql)))
+      (unwind-protect
+          (let ((org-canvas-files-file files-file))
+            (with-temp-file files-file (insert "#+TITLE: Files"))
+            (puthash 100 "" folder-map)
+            (cl-letf (((symbol-function 'url-copy-file) (lambda (&rest _) nil)))
+              (with-current-buffer (find-file-noselect files-file)
+                (org-canvas--file-pull-emit-fresh-tree
+                 folder-map
+                 '(((id . 1) (display_name . "syllabus.pdf") (folder_id . 100)
+                    (url . "https://example.com/syllabus.pdf")))
+                 content-dir)
+                (expect (buffer-string)
+                        :to-match "#\\+TITLE: Files\n\\* \\[\\[file:content/syllabus\\.pdf\\]")
+                (set-buffer-modified-p nil)
+                (kill-buffer))))
+        (delete-directory temp-dir t)))))
+
 ;;; org-canvas-files-test.el ends here

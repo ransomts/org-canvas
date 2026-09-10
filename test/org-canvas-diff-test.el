@@ -1862,5 +1862,30 @@ its :children is the Module Items result."
         (expect (plist-get spec :remote-fn)
                 :to-equal 'org-canvas--assignment-remote-document-processor)))))
 
+;;;; Report-buffer commands off a row
+
+(describe "org-canvas-diff-mode revert and row lookups"
+  (it "reruns the report on revert-buffer"
+    (with-current-buffer (test-org-canvas--diff-report-buffer
+                          '((:name "Assignments"
+                             :divergences ((:kind missing :title "Lab 2" :id "62")))))
+      (let ((ran nil))
+        (cl-letf (((symbol-function 'org-canvas-diff) (lambda (&rest _) (setq ran t))))
+          (revert-buffer))
+        (expect ran :to-be t))))
+
+  (it "signals for a row naming an unregistered feature"
+    (expect (org-canvas--diff-row-feature '(:feature "Nonesuch"))
+            :to-throw 'user-error))
+
+  (it "moves to the last row from the end of the buffer"
+    (with-current-buffer (test-org-canvas--diff-report-buffer
+                          '((:name "Assignments"
+                             :divergences ((:kind missing :title "Lab 2" :id "62")))))
+      (goto-char (point-max))
+      (expect (get-text-property (point) 'org-canvas-diff-row) :to-be nil)
+      (org-canvas-diff-previous-row)
+      (expect (thing-at-point 'line t) :to-match "MISSING   Lab 2"))))
+
 (provide 'org-canvas-diff-test)
 ;;; org-canvas-diff-test.el ends here
