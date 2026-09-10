@@ -481,6 +481,7 @@ Course assignments with due dates, submission types, and grading options.
 | =EXTERNAL_TOOL_URL=  | string    | LTI launch URL (requires SUBMISSION: external_tool) |
 | =EXTERNAL_TOOL_ID=   | number    | Installed LTI tool id, sent as content_id     |
 | =EXTERNAL_TOOL_NEW_TAB= | boolean | Launch the tool in a new tab                 |
+| =DOCUMENT_PROCESSOR= | string    | Turnitin (or another document processor) attached in the web UI; read-only |
 
 *** Submission Types
 
@@ -548,6 +549,28 @@ the tool.  Gradescope in particular has no supported public API — you
 still create the Gradescope assignment and link it there, and grades
 flow back Gradescope → Canvas over LTI.  Once they are in Canvas, the
 submissions module reads them like any other grades.
+
+**** Turnitin has two modes, and org-canvas can set only one
+
+Turnitin reaches a Canvas assignment two ways.  As an /external tool/
+it takes the submission itself: =SUBMISSION: external_tool= with the
+tool's =EXTERNAL_TOOL_URL= or =EXTERNAL_TOOL_ID=, exactly as above,
+graded in Turnitin's Feedback Studio.  The PDF then lives in Turnitin,
+the Canvas submission has no attachment, and the submissions module
+has nothing to download or grade.
+
+As a /document processor/ (what the web UI calls a "document
+processing app") it rides on an ordinary =online_upload= assignment:
+the PDF stays in Canvas, grading stays in SpeedGrader, and the
+similarity and AI-writing report opens from the score.  Canvas
+attaches a document processor only through an interactive flow in the
+browser — never by API token — so org-canvas cannot set one.  It can
+see one: a pull writes what Canvas holds into =DOCUMENT_PROCESSOR=,
+the drift report shows a processor attached or detached since the last
+pull even when the heading says nothing about it, and a push never
+sends the field, so a heading that is silent cannot strip a processor
+attached by hand.  Do not type the property yourself: sync the
+assignment, attach the processor in the web UI, then pull.
 
 *** Example
 
@@ -3026,6 +3049,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =EXTERNAL_TOOL_URL= | string |  |  | LTI launch URL (requires SUBMISSION: external_tool) |
 | =EXTERNAL_TOOL_ID= | number |  |  | Installed LTI tool id, sent as content_id |
 | =EXTERNAL_TOOL_NEW_TAB= | boolean | true, false |  | Launch the tool in a new tab |
+| =DOCUMENT_PROCESSOR= | string | set by Canvas (read-only) |  | Document processor (Turnitin) attached in the web UI; written by pull, never pushed |
 | =GROUP_CATEGORY_ID= | number |  |  | Group set ID or link to group-categories.org |
 | =POSITION= | number |  |  | Position in assignment list |
 

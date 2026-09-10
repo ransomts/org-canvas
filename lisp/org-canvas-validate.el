@@ -851,11 +851,32 @@ from, not which link came first, so the targets are named once each."
 
 ;;;; 6. Validation Engine
 
+(defun org-canvas--validate-check-canvas-owned (value property loc)
+  "Warn when PROPERTY, which only Canvas may set, is typed before a sync.
+VALUE is the property's text.  A `:canvas-owned' property is written
+by a pull and never sent by a push, so on a heading that has no
+CANVAS_ID yet it can only be a hope: the object it describes has to
+be attached in the web UI once the assignment exists, and then
+pulled.  On a stamped heading the value is what a pull wrote and
+there is nothing to say.  Push-only, since it protects a create.  LOC
+is a (:file :line :heading) plist (issue #184)."
+  (when (and value (not (string-empty-p value))
+             (not (org-entry-get (point) "CANVAS_ID"))
+             (not (org-entry-get (point) "CANVAS_URL")))
+    (org-canvas--validate-push-only
+     (org-canvas--validate-make-issue
+      'warning loc property
+      (format (concat "%s is set by Canvas, never by a push: sync the "
+                      "heading first, attach it in the web UI, then pull")
+              property)))))
+
 (defun org-canvas--validate-entry-properties (props loc)
   "Validate PROPS list for the heading at point.
 LOC is a (:file :line :heading) plist.
 A property's `:read-only-values' join its `:values' as accepted input,
-because they are values a pull wrote down (issue #167).
+because they are values a pull wrote down (issue #167).  A
+`:canvas-owned' property is checked for being typed ahead of the
+sync that could give it meaning (issue #184).
 Returns a list of issues."
   (let ((issues nil))
     (dolist (prop props)
@@ -881,7 +902,10 @@ Returns a list of issues."
                 ('link
                  (org-canvas--validate-check-link value name target-file id-prop loc)))))
         (when issue
-          (push issue issues))))
+          (push issue issues))
+        (when (plist-get prop :canvas-owned)
+          (when-let* ((owned (org-canvas--validate-check-canvas-owned value name loc)))
+            (push owned issues)))))
     (nreverse issues)))
 
 (defun org-canvas--validate-entry-at-marker (props date-order structural-fn file)

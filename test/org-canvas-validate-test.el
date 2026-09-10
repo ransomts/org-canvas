@@ -3424,4 +3424,48 @@ https://test.canvas.example.com/courses/284220/assignments/7
     (expect (plist-get (gethash "module-items" org-canvas--property-registry) :file-fn)
             :to-be #'org-canvas--validate-module-item-ids)))
 
+;;;; A Canvas-Owned Property Typed Ahead of Its Sync (issue #184)
+
+(describe "org-canvas--validate-check-canvas-owned"
+  (let ((loc (list :file "/f" :line 1 :heading "Essay")))
+    (it "warns, push-only, on a heading no push has created"
+      (with-temp-org-buffer
+       "* Essay\n:PROPERTIES:\n:DOCUMENT_PROCESSOR: Turnitin (asset processor 5)\n:END:\n"
+       (org-back-to-heading)
+       (let ((issue (org-canvas--validate-check-canvas-owned
+                     "Turnitin (asset processor 5)" "DOCUMENT_PROCESSOR" loc)))
+         (expect (plist-get issue :severity) :to-equal 'warning)
+         (expect (plist-get issue :property) :to-equal "DOCUMENT_PROCESSOR")
+         (expect (plist-get issue :message) :to-match "set by Canvas")
+         (expect (plist-get issue :push-only) :to-be t))))
+
+    (it "says nothing on a stamped heading, where a pull wrote it"
+      (with-temp-org-buffer
+       "* Essay\n:PROPERTIES:\n:CANVAS_ID: 1\n:DOCUMENT_PROCESSOR: Turnitin (asset processor 5)\n:END:\n"
+       (org-back-to-heading)
+       (expect (org-canvas--validate-check-canvas-owned
+                "Turnitin (asset processor 5)" "DOCUMENT_PROCESSOR" loc)
+               :to-be nil)))
+
+    (it "says nothing when the property is absent or empty"
+      (with-temp-org-buffer
+       "* Essay\n"
+       (org-back-to-heading)
+       (expect (org-canvas--validate-check-canvas-owned nil "DOCUMENT_PROCESSOR" loc)
+               :to-be nil)
+       (expect (org-canvas--validate-check-canvas-owned "" "DOCUMENT_PROCESSOR" loc)
+               :to-be nil)))
+
+    (it "runs from the entry check through the registry's own spec"
+      (with-temp-org-buffer
+       "* Essay\n:PROPERTIES:\n:DOCUMENT_PROCESSOR: Turnitin (asset processor 5)\n:END:\n"
+       (org-back-to-heading)
+       (let* ((props (mapcar #'org-canvas--property-to-validate-prop
+                             (plist-get (gethash "assignments"
+                                                 org-canvas--property-registry)
+                                        :properties)))
+              (issues (org-canvas--validate-entry-properties props loc)))
+         (expect (length issues) :to-equal 1)
+         (expect (plist-get (car issues) :property) :to-equal "DOCUMENT_PROCESSOR"))))))
+
 ;;; org-canvas-validate-test.el ends here

@@ -91,7 +91,19 @@
         (expect (plist-get result :name) :to-equal "GROUP")
         (expect result-type :to-equal 'link)
         (expect (plist-get result :target-file) :to-equal 'org-canvas-assignment-groups-file)
-        (expect (plist-get result :id-property) :to-equal "CANVAS_ID"))))
+        (expect (plist-get result :id-property) :to-equal "CANVAS_ID")))
+
+    (it "threads :canvas-owned through, and only when declared (issue #184)"
+      (expect (plist-get (org-canvas--property-to-validate-prop
+                          '(:org-prop "DOCUMENT_PROCESSOR" :data-key :asset_processors
+                            :type string :canvas-owned t))
+                         :canvas-owned)
+              :to-be t)
+      (expect (plist-member (org-canvas--property-to-validate-prop
+                             '(:org-prop "POINTS" :data-key :points_possible
+                               :type number))
+                            :canvas-owned)
+              :to-be nil)))
 
   (describe "org-canvas--get-validate-specs-from-registry"
     (it "returns correct structure from registry"

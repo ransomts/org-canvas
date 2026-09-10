@@ -237,7 +237,14 @@ Only properties actually present in the Org file are considered — see
 the commentary on why absence is not a value — and a spec's
 `:compare-p' predicate, when it declares one, can rule the property
 out for this entry: ALL_DAY on a multi-day calendar event cannot
-round-trip, so it is no one's opinion to compare (issue #93)."
+round-trip, so it is no one's opinion to compare (issue #93).
+
+The exception is a `:canvas-owned' spec, compared whether or not the
+heading carries it: the file cannot hold an opinion on a field only
+Canvas may set, so its silence is not one, and a document processor
+attached in the web UI after the last pull is exactly what the report
+exists to show (issue #184).  Such a row reads \"(unset)\" on the
+local side."
   (let (diffs)
     (dolist (spec specs)
       (let ((type (plist-get spec :type))
@@ -246,11 +253,14 @@ round-trip, so it is no one's opinion to compare (issue #93)."
         (when (and (memq type org-canvas--diff-comparable-types)
                    (not (plist-get spec :local-only))
                    (or (null compare-p) (funcall compare-p pom item)))
-          (let ((local (org-entry-get pom org-prop)))
-            (when (and local (not (string-empty-p local)))
+          (let* ((written (org-entry-get pom org-prop))
+                 (local (and written (not (string-empty-p written)) written)))
+            (when (or local (plist-get spec :canvas-owned))
               (let ((remote (org-canvas--diff-remote-field spec item)))
-                (unless (org-canvas--diff-values-equal-p type local remote)
-                  (push (list org-prop local
+                (unless (if local
+                            (org-canvas--diff-values-equal-p type local remote)
+                          (null (org-canvas--diff-normalize-remote remote)))
+                  (push (list org-prop (or local "(unset)")
                               (org-canvas--diff-format-remote type remote))
                         diffs))))))))
     (nreverse diffs)))

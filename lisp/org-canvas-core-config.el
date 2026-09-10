@@ -445,6 +445,14 @@ a value only Canvas may set declares those separately as
 them; the module refuses them where a push would be wrong (issue
 #167).
 
+A property Canvas alone can set — an assignment's document processor,
+attached through a browser-only LTI flow — declares `:canvas-owned'
+beside its `:remote-fn'.  The pull writes it, the drift report
+compares it even when the heading is silent (silence is not the
+file's opinion about a field it cannot hold an opinion on), the
+validator warns when it is typed on a heading no push has created
+yet, and the module's payload never carries it (issue #184).
+
 A module whose payload carries the heading's body declares
 `:body-api-key', the Canvas field it lands in (\"description\",
 \"body\", \"message\"), so the drift report can compare it — the
@@ -462,8 +470,9 @@ Does nothing if FEATURE-NAME is already registered (idempotent)."
 (defun org-canvas--property-to-validate-prop (prop)
   "Convert a registry property spec PROP to validate.el format.
 Registry keys: :org-prop :data-key :type :values :read-only-values
-:target-file :link-id-property.  Validate keys: :name :type :values
-:read-only-values :target-file :id-property."
+:canvas-owned :target-file :link-id-property.  Validate keys: :name
+:type :values :read-only-values :canvas-owned :target-file
+:id-property."
   (let ((result (list :name (plist-get prop :org-prop)
                       :type (plist-get prop :type))))
     (when (plist-get prop :values)
@@ -471,6 +480,8 @@ Registry keys: :org-prop :data-key :type :values :read-only-values
     (when (plist-get prop :read-only-values)
       (setq result (plist-put result :read-only-values
                               (plist-get prop :read-only-values))))
+    (when (plist-get prop :canvas-owned)
+      (setq result (plist-put result :canvas-owned t)))
     (when (plist-get prop :target-file)
       (setq result (plist-put result :target-file (plist-get prop :target-file))))
     (when (plist-get prop :link-id-property)
