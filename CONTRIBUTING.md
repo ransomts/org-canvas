@@ -196,8 +196,10 @@ docs: update manual for new quiz properties
    - `eldev lint` has no warnings
    - `eldev complexity` has 0 functions above threshold
    - Coverage stays at 99%+
-3. Open a PR against `main` with a summary and test plan.
-4. CI runs tests on Emacs 29.3 and 30.1, plus lint and complexity checks.
+   - `CHANGELOG.org` has an entry under *Unreleased*
+   - The manual's Property Reference is regenerated if the property registry changed (the pull request template has the command)
+3. Open a PR against `main`; the template's checklist and test plan are the summary.
+4. CI runs tests on Emacs 29.3, 29.4 and 30.1, plus lint, complexity and coverage checks.
 
 ## Pre-push Hook
 
