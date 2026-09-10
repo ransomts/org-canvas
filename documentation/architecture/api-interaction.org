@@ -131,6 +131,32 @@ the summary buffer the user is invited to read is clean whatever the
 recorder passed. The review rule is "no bare =message= with an
 =error-message-string= argument".
 
+** Redaction Cannot Reach a Backtrace (issue #178)
+
+The logger masks, =org-canvas--user-message= masks, and neither is
+consulted when Emacs prints a backtrace: =debug-early= under =--batch=
+prints every frame's arguments verbatim to stderr, which is exactly
+what people paste into an issue. The headers alist used to be an
+argument on the retry path, so any =org-canvas-api-error= that escaped
+a caller's =condition-case= showed
+=org-canvas--api-execute-with-retry(get "/api/v1/..." (("Authorization"
+. "Bearer 1215~...")) ...)= in clear text.
+
+Secrets never reach backtraces either. The rule is that the token is
+never an argument: =org-canvas--api-request-headers= resolves the
+Authorization header inside the function that hands the request to
+the transport — in the =plz= call itself in
+=org-canvas--api-execute-request=, and inside
+=org-canvas--api-curl-patch-config= on the PATCH path — and nothing
+above that frame carries it. The transport function also re-signals
+any error plz raises, so a backtrace of whatever escapes the retry
+loop starts at =org-canvas--api-execute-request= and never shows plz's
+own frames, whose arguments hold the header. Request logging asks for
+the headers with =MASKED= and never reads the token at all. The tests
+in =test/org-canvas-core-api-test.el= capture real backtraces (from a
+mocked transport looking outward, and from a replaced =debugger=
+seeing the escaping error) and assert the token is not in them.
+
 ** A Role Refusal Is a Skip (issue #155)
 
 Pulling a course you were added to as a Designer — adopting or
@@ -622,7 +648,8 @@ synced.
 ** What Gets Logged
 
 Every request logs: method, URL, query params, timeout, and headers
-(with the API token masked to =****...last4=).
+(with the Authorization header already carrying the =***MASKED***=
+placeholder: the log path never reads the token, issue #178).
 
 When =org-canvas-log-request-bodies= is non-nil, also logs:
 - Full JSON payload (pretty-printed)
