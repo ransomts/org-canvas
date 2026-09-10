@@ -137,6 +137,10 @@ This generates =org-canvas-sync-announcements= and
 Without the macro, each module would need ~80 lines of boilerplate
 orchestration code.
 
+** Macro Options for a Hierarchy: :prepare and :first
+
+Outcomes are two levels of one file: a level-1 heading is a group filed under the course root group, a level-2 heading an outcome filed under its group, which must carry a =CANVAS_ID= first. That used to be a hand-written command running the pipeline twice around a preflight that fetched the root group. It is now two =org-canvas-define-sync= forms. The groups' declares =:prepare=, a function of the run context called once after the snapshot and before the first entry (and before the parse of a push at point); its result is the context's =:prepared=, which the group push reads for the parent id. It may signal, and a missing root group does, so nothing is sent. The outcomes' declares =:first=, the sync command the generated =org-canvas-sync-outcomes= runs before its own pipeline, with the log kept between the two. Both levels gain the generated push at point. Neither option is outcomes-specific: =:prepare= is for any value a run fetches once and every push needs, =:first= for any content type whose parents must exist on Canvas before its children can be filed.
+
 ** Macro Options for Child State: :pull-item-fn and :hash-extra
 
 *Sync Pipeline Macro:*
@@ -177,7 +181,7 @@ implement some stages manually rather than using macro-generated code.
 
 *Modules with custom push logic (use =org-canvas-define-sync= but have custom push functions due to non-standard API endpoints):* group-categories (split POST/PUT URLs), calendar (global endpoint, not course-scoped)
 
-*Modules with custom sync logic (not macro-based):* files (3-step upload), outcomes (hierarchical), quizzes (nested questions), new-quizzes (nested items, =/api/quiz/v1/= API), modules (parent-child items), overrides (reconcile-based)
+*Modules with custom sync logic (not macro-based):* files (3-step upload), quizzes (nested questions), new-quizzes (nested items, =/api/quiz/v1/= API), modules (parent-child items), overrides (reconcile-based)
 
 *Pull-only modules:* sections (pulled from Canvas via =org-canvas-pull-sections=, not pushed)
 

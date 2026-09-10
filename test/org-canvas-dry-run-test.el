@@ -46,6 +46,7 @@
     org-canvas-sync-new-quizzes
     org-canvas-sync-modules
     org-canvas-sync-rubrics
+    org-canvas-sync-outcome-groups
     org-canvas-sync-outcomes
     org-canvas-sync-group-categories
     org-canvas-sync-calendar-events

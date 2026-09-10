@@ -614,7 +614,7 @@ the baseline re-read from it (issue #124)."
 
 (defconst org-canvas--sync-spec-keys
   '(:feature :file :query :parse :build :push :finalize
-    :pull-item-fn :title-key :hash-extra :after-sync)
+    :pull-item-fn :title-key :hash-extra :prepare :after-sync)
   "Keys a sync spec may carry.
 A sync spec is the plist `org-canvas-define-sync' builds from its
 options and hands to `org-canvas--sync-run-pipeline' and
@@ -625,8 +625,9 @@ Org file, :query the Org match, :parse, :build, :push and :finalize
 the four stage functions, :pull-item-fn the function that enables the
 pull answer at a conflict prompt, :title-key the plist key of the
 display name, :hash-extra the function whose result is folded into the
-payload hash, and :after-sync the hook run on the context before the
-summary.")
+payload hash, :prepare a function of the context run once before the
+first entry, whose result the context keeps as :prepared, and
+:after-sync the hook run on the context before the summary.")
 
 (defun org-canvas--sync-check-spec (spec required)
   "Signal on a key of SPEC outside the sync spec keys, or a REQUIRED key absent.
@@ -651,6 +652,12 @@ plist key of the display name in logs; :hash-extra, when non-nil, is
 called with the parsed data and its string result is folded into the
 payload hash (see `org-canvas--sync-payload-hash').
 
+:prepare, when non-nil, is called with the run context after the
+snapshot and before the first entry; its result is stored in the
+context as :prepared for the push and finalize functions to read.  It
+may signal, which stops the run before anything is sent: outcomes fetch
+the course root group here.
+
 :after-sync, when non-nil, is called with the run context once every
 entry has been processed, just before the summary.  It is the place for
 checks that need remote state and so cannot live in the offline
@@ -673,6 +680,7 @@ collects the module items left pending — without a global."
          (pull-item-fn (plist-get spec :pull-item-fn))
          (title-key (plist-get spec :title-key))
          (hash-extra-fn (plist-get spec :hash-extra))
+         (prepare-fn (plist-get spec :prepare))
          (after-sync-fn (plist-get spec :after-sync))
          (feature-upper (upcase feature-name)))
     (org-canvas--sync-validate-file feature-upper sync-file)
@@ -712,6 +720,8 @@ collects the module items left pending — without a global."
                  :title-key title-key
                  :hash-extra-fn hash-extra-fn
                  :pull-item-fn pull-item-fn)))
+      (when prepare-fn
+        (plist-put ctx :prepared (funcall prepare-fn ctx)))
       (dolist (marker targets)
         (org-canvas--sync-process-entry marker ctx))
       (dolist (m targets) (set-marker m nil))
@@ -767,10 +777,19 @@ ARGS is a plist with the following keys:
   :hash-extra - Optional function called with the parsed data; its string
                 result is folded into the payload hash so state outside the
                 payload (e.g. module items) participates in change detection
+  :prepare - Optional function of the run context, run once after the
+             snapshot and before the first entry (and before the parse of a
+             push at point); its result is kept in the context as :prepared
+             for :push and :finalize to read.  May signal, which stops the
+             run before anything is sent
   :after-sync - Optional function of the run context, run once after every
                 entry is processed, for reconciliation that needs remote
                 state and so cannot live in the offline validator.  Must
                 not signal.
+  :first - Optional sync command the generated sync runs before its own
+           pipeline, with the log kept between the two; for a content type
+           whose level-1 headings must exist on Canvas before its level-2
+           headings can be filed under them (outcomes)
   :no-at-point - When non-nil, suppress generating the sync-at-point function
 
 When :endpoint is provided but :push is not, a push function is auto-generated
@@ -796,6 +815,8 @@ Example usage:
          (pull-item-fn (plist-get args :pull-item-fn))
          (hash-extra-fn (plist-get args :hash-extra))
          (after-sync-fn (plist-get args :after-sync))
+         (prepare-fn (plist-get args :prepare))
+         (first-fn (plist-get args :first))
          (no-at-point (plist-get args :no-at-point))
          (push-fn (or (plist-get args :push)
                       (when endpoint
@@ -824,16 +845,25 @@ Example usage:
            `((org-canvas-register-pull-item-fn ,feature-name ,pull-item-fn)))
        ;;;###autoload
        (defun ,sync-fn-name ()
-         ,(format "Synchronize %s to Canvas using the 4-stage pipeline." feature-name)
+         ,(format "Synchronize %s to Canvas using the 4-stage pipeline.%s" feature-name
+                  (if first-fn (format "\nRuns `%s' first." (cadr first-fn)) ""))
          (interactive)
-         (org-canvas--sync-run-pipeline
-          (list :feature ,feature-name
-                :file (expand-file-name ,file-expr)
-                :query ,query
-                :parse ,parse-fn :build ,build-fn
-                :push ,push-fn :finalize ,finalize-fn
-                :pull-item-fn ,pull-item-fn :title-key ,title-key
-                :hash-extra ,hash-extra-fn :after-sync ,after-sync-fn)))
+         ,(let ((run `(org-canvas--sync-run-pipeline
+                       (list :feature ,feature-name
+                             :file (expand-file-name ,file-expr)
+                             :query ,query
+                             :parse ,parse-fn :build ,build-fn
+                             :push ,push-fn :finalize ,finalize-fn
+                             :pull-item-fn ,pull-item-fn :title-key ,title-key
+                             :hash-extra ,hash-extra-fn :prepare ,prepare-fn
+                             :after-sync ,after-sync-fn))))
+            (if first-fn
+                `(progn
+                   (org-canvas-clear-log)
+                   (let ((org-canvas--inhibit-log-clear t))
+                     (funcall ,first-fn)
+                     ,run))
+              run)))
        ,@(unless no-at-point
            `(;;;###autoload
              (defun ,at-point-fn-name ()
@@ -845,7 +875,8 @@ Example usage:
                       :push ,push-fn :finalize ,finalize-fn
                       :title-key ,(or title-key :title)
                       :pull-item-fn ,pull-item-fn
-                      :hash-extra ,hash-extra-fn))))))))
+                      :hash-extra ,hash-extra-fn
+                      :prepare ,prepare-fn))))))))
 
 ;;;; 6a. Remote Drift Detection
 ;;
@@ -1769,7 +1800,9 @@ stage functions, all required.  :title-key is the plist key of the
 display name (default :title); :pull-item-fn, when non-nil, enables
 the pull option during conflict resolution; :hash-extra, when
 non-nil, is folded into the payload hash (see
-`org-canvas--sync-payload-hash').  The push runs in a context of its
+`org-canvas--sync-payload-hash'); :prepare, when non-nil, runs on the
+context before the parse and leaves its result as :prepared, as in a
+full run.  The push runs in a context of its
 own, so a capital answer at its conflict prompt is forgotten when it
 returns rather than applied to every later push at point (issue
 #141)."
@@ -1784,12 +1817,16 @@ returns rather than applied to every later push at point (issue
          (title-key (or (plist-get spec :title-key) :title))
          (pull-item-fn (plist-get spec :pull-item-fn))
          (hash-extra-fn (plist-get spec :hash-extra))
+         (prepare-fn (plist-get spec :prepare))
          (ctx (progn
                 (org-canvas--log-info org-canvas--logger
                                       ">>> SYNC-AT-POINT: %s" feature-name)
                 (org-canvas--sync-make-ctx :feature-name feature-name
                                            :pull-item-fn pull-item-fn)))
-         (data (funcall parse-fn))
+         (data (progn
+                 (when prepare-fn
+                   (plist-put ctx :prepared (funcall prepare-fn ctx)))
+                 (funcall parse-fn)))
          (title (plist-get data title-key))
          (payload (funcall build-fn data))
          (payload-hash (org-canvas--sync-payload-hash payload data hash-extra-fn))

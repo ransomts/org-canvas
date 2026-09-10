@@ -1712,4 +1712,40 @@ id is 999 404s, any other PUT answers with its id, a POST with 900."
           (expect (test-org-canvas-179-o--request requests 'POST "outcome_groups/100/outcomes$")
                   :to-be-truthy))))))
 
+(describe "outcomes on the sync macro"
+  (it "defines a sync per level and a push at point for each"
+    (expect (fboundp 'org-canvas-sync-outcome-groups) :to-be t)
+    (expect (fboundp 'org-canvas-sync-outcome-group-at-point) :to-be t)
+    (expect (fboundp 'org-canvas-sync-outcome-at-point) :to-be t)
+    (expect (commandp 'org-canvas-sync-outcome-at-point) :to-be t))
+
+  (it "files a group pushed at point under the root group it fetched first"
+    (with-temp-org-buffer "* Communication Skills\n"
+      (org-back-to-heading)
+      (let ((parents nil))
+        (with-org-canvas-test-config
+          (cl-letf (((symbol-function 'display-buffer) (lambda (&rest _) nil))
+                    ((symbol-function 'org-canvas--outcome-get-root-group-id) (lambda () 1000))
+                    ((symbol-function 'org-canvas--outcome-group-push-to-api)
+                     (lambda (_data root) (push root parents) '((id . 2000))))
+                    ((symbol-function 'org-canvas--outcome-group-finalize) (lambda (&rest _) nil)))
+            (org-canvas-sync-outcome-group-at-point)))
+        (expect parents :to-equal '(1000)))))
+
+  (it "pushes the outcome at point under the group its heading sits in"
+    (with-temp-org-buffer
+        "* Group\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n** Outcome A\nDescription.\n\n- [4] Excellent\n- [1] Poor\n"
+      (re-search-forward "^\\*\\* Outcome A")
+      (org-back-to-heading)
+      (let ((pushed nil))
+        (with-org-canvas-test-config
+          (cl-letf (((symbol-function 'display-buffer) (lambda (&rest _) nil))
+                    ((symbol-function 'org-canvas--outcome-push-to-api)
+                     (lambda (data) (setq pushed data) '((id . 200))))
+                    ((symbol-function 'org-canvas--outcome-finalize) (lambda (&rest _) nil)))
+            (org-canvas-sync-outcome-at-point)))
+        (expect (plist-get pushed :title) :to-equal "Outcome A")
+        (expect (format "%s" (plist-get pushed :parent-group-id)) :to-equal "100")))))
+
+
 ;;; org-canvas-outcomes-test.el ends here
