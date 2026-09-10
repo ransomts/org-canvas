@@ -661,21 +661,32 @@
       (let* ((data '(:type "Assignment" :title "HW1" :completion-requirement "must_submit"))
              (payload (org-canvas--module-item-build-payload data 1))
              (item (gethash "module_item" payload)))
-        (expect (gethash "completion_requirement[type]" item) :to-equal "must_submit")))
+        (expect (gethash "type" (gethash "completion_requirement" item)) :to-equal "must_submit")
+        ;; JSON, not form encoding: the requirement is a nested object
+        ;; (issue #198), and a bracketed key must not be there.
+        (expect (gethash "completion_requirement[type]" item) :to-be nil)
+        (expect (json-encode payload)
+                :to-match "\"completion_requirement\":{\"type\":\"must_submit\"}")))
 
     (it "includes completion_requirement min_score"
       (let* ((data '(:type "Quiz" :title "Quiz 1" :completion-requirement "min_score" :min-score 80))
              (payload (org-canvas--module-item-build-payload data 1))
              (item (gethash "module_item" payload)))
-        (expect (gethash "completion_requirement[type]" item) :to-equal "min_score")
-        (expect (gethash "completion_requirement[min_score]" item) :to-equal 80)))
+        (expect (gethash "type" (gethash "completion_requirement" item)) :to-equal "min_score")
+        (expect (gethash "min_score" (gethash "completion_requirement" item)) :to-equal 80)))
+
+    (it "sends no requirement object when none is declared"
+      (let* ((data '(:type "Assignment" :title "HW1"))
+             (payload (org-canvas--module-item-build-payload data 1))
+             (item (gethash "module_item" payload)))
+        (expect (gethash "completion_requirement" item) :to-be nil)))
 
     (it "excludes min_score when not specified"
       (let* ((data '(:type "Page" :title "Reading" :completion-requirement "must_view"))
              (payload (org-canvas--module-item-build-payload data 1))
              (item (gethash "module_item" payload)))
-        (expect (gethash "completion_requirement[type]" item) :to-equal "must_view")
-        (expect (gethash "completion_requirement[min_score]" item) :to-be nil))))
+        (expect (gethash "type" (gethash "completion_requirement" item)) :to-equal "must_view")
+        (expect (gethash "min_score" (gethash "completion_requirement" item)) :to-be nil))))
 
   (describe "external URL items"
     (it "includes external_url for ExternalUrl type"
@@ -4400,5 +4411,74 @@ REMOTE is a vector form, or the symbol `fail'.  `requests' collects
         (let ((buf (find-buffer-visiting files-org)))
           (when buf (kill-buffer buf)))
         (delete-directory org-canvas-directory t)))))
+
+(describe "org-canvas--module-pull-insert-content-item (issue #199)"
+  (defmacro test-199--in-module (&rest body)
+    "Run BODY with point at the end of a module heading's subtree."
+    `(with-temp-org-buffer "* Module\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+       (org-back-to-heading)
+       (goto-char (save-excursion (org-end-of-subtree t) (point)))
+       ,@body))
+
+  (it "resolves a Page item by its page_url, since it carries no content_id"
+    (test-199--in-module
+     (let ((asked nil))
+       (cl-letf (((symbol-function 'org-canvas--module-resolve-item-link)
+                  (lambda (type cid title) (setq asked (list type cid)) (or title "Untitled"))))
+         (org-canvas--module-pull-insert-content-item
+          '((id . 2) (type . "Page") (title . "Course Home") (page_url . "course-home"))
+          2 t))
+       (expect asked :to-equal '("Page" "course-home")))))
+
+  (it "still resolves every other type by content_id"
+    (test-199--in-module
+     (let ((asked nil))
+       (cl-letf (((symbol-function 'org-canvas--module-resolve-item-link)
+                  (lambda (type cid title) (setq asked (list type cid)) (or title "Untitled"))))
+         (org-canvas--module-pull-insert-content-item
+          '((id . 3) (type . "Assignment") (title . "HW1") (content_id . 77))
+          3 t))
+       (expect asked :to-equal '("Assignment" 77)))))
+
+  (it "links a Page item to the pages.org heading carrying its CANVAS_URL"
+    (let* ((dir (make-temp-file "pull-page-" t))
+           (org-canvas-directory dir))
+      (unwind-protect
+          (progn
+            (with-temp-file (expand-file-name "pages.org" dir)
+              (insert "* Course Home\n:PROPERTIES:\n:CANVAS_URL: course-home\n:END:\n"))
+            (test-199--in-module
+             (org-canvas--module-pull-insert-content-item
+              '((id . 2) (type . "Page") (title . "Course Home") (page_url . "course-home"))
+              2 t)
+             (expect (buffer-string)
+                     :to-match "\\*\\* \\[\\[file:pages.org::\\*Course Home\\]\\[Course Home\\]\\]")))
+        (let ((buf (find-buffer-visiting (expand-file-name "pages.org" dir))))
+          (when buf (kill-buffer buf)))
+        (delete-directory dir t))))
+
+  (it "writes the completion requirement and its minimum score"
+    (test-199--in-module
+     (cl-letf (((symbol-function 'org-canvas--module-resolve-item-link)
+                (lambda (_type _cid title) (or title "Untitled"))))
+       (org-canvas--module-pull-insert-content-item
+        '((id . 4) (type . "Quiz") (title . "Quiz 1") (content_id . 9)
+          (completion_requirement . ((type . "min_score") (min_score . 80))))
+        4 t))
+     (org-back-to-heading t)
+     (expect (org-entry-get (point) "COMPLETION_REQUIREMENT") :to-equal "min_score")
+     (expect (org-entry-get (point) "MIN_SCORE") :to-equal "80")))
+
+  (it "writes nothing for an item without a requirement, or with a null one"
+    (test-199--in-module
+     (cl-letf (((symbol-function 'org-canvas--module-resolve-item-link)
+                (lambda (_type _cid title) (or title "Untitled"))))
+       (org-canvas--module-pull-insert-content-item
+        '((id . 5) (type . "Assignment") (title . "HW2") (content_id . 8)
+          (completion_requirement . :null))
+        5 t))
+     (org-back-to-heading t)
+     (expect (org-entry-get (point) "COMPLETION_REQUIREMENT") :to-be nil)
+     (expect (org-entry-get (point) "MIN_SCORE") :to-be nil))))
 
 ;;; org-canvas-modules-test.el ends here

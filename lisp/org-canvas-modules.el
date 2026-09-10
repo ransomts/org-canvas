@@ -610,11 +610,16 @@ and publishing the item publishes that object.  See
                 (member item-type org-canvas--module-item-self-owned-types))
         (puthash "published" (org-canvas--to-json-boolean (plist-get data :published)) item))
 
-      ;; Completion requirement
+      ;; Completion requirement.  The body goes out as JSON, where the
+      ;; field is a nested object; the bracketed form-encoded spelling the
+      ;; API reference shows was a literal key Canvas ignored without a
+      ;; word, so no requirement ever landed (issue #198).
       (when (plist-get data :completion-requirement)
-        (puthash "completion_requirement[type]" (plist-get data :completion-requirement) item)
-        (when (plist-get data :min-score)
-          (puthash "completion_requirement[min_score]" (plist-get data :min-score) item)))
+        (let ((requirement (make-hash-table :test 'equal)))
+          (puthash "type" (plist-get data :completion-requirement) requirement)
+          (when (plist-get data :min-score)
+            (puthash "min_score" (plist-get data :min-score) requirement))
+          (puthash "completion_requirement" requirement item)))
 
       (org-canvas--log-debug org-canvas--logger "[Stage 2: Transform] Item payload complete")
 
@@ -1753,11 +1758,20 @@ Optional INDENT is emitted as :INDENT: only when nonzero."
     (goto-char (save-excursion (org-end-of-subtree t t) (point)))))
 
 (defun org-canvas--module-pull-insert-content-item (item item-id item-published)
-  "Insert a content-linked heading from ITEM with ITEM-ID and ITEM-PUBLISHED."
-  (let ((item-type (alist-get 'type item))
-        (item-title (alist-get 'title item))
-        (content-id (alist-get 'content_id item))
-        (indent (alist-get 'indent item)))
+  "Insert a content-linked heading from ITEM with ITEM-ID and ITEM-PUBLISHED.
+A Page item carries no `content_id'; Canvas names the page by
+`page_url', which is what pages.org stamps as CANVAS_URL, so that is
+what the resolver is given for a Page (issue #199).  The completion
+requirement is written back as COMPLETION_REQUIREMENT and MIN_SCORE,
+the properties the push reads."
+  (let* ((item-type (alist-get 'type item))
+         (item-title (alist-get 'title item))
+         (content-id (if (equal item-type "Page")
+                         (alist-get 'page_url item)
+                       (alist-get 'content_id item)))
+         (indent (alist-get 'indent item))
+         (requirement (alist-get 'completion_requirement item))
+         (requirement (and (listp requirement) requirement)))
     (let ((link (org-canvas--module-resolve-item-link
                  item-type content-id item-title)))
       (org-canvas--module-pull-insert-heading link)
@@ -1767,6 +1781,12 @@ Optional INDENT is emitted as :INDENT: only when nonzero."
       (when (and indent (numberp indent) (> indent 0))
         (org-canvas-org-set-property (point) "INDENT" (format "%s" indent)))
       (org-canvas--pull-set-boolean-property (point) "PUBLISHED" item-published)
+      (let ((type (alist-get 'type requirement))
+            (min-score (alist-get 'min_score requirement)))
+        (when (stringp type)
+          (org-canvas-org-set-property (point) "COMPLETION_REQUIREMENT" type))
+        (when (numberp min-score)
+          (org-canvas-org-set-property (point) "MIN_SCORE" (format "%s" min-score))))
       (goto-char (save-excursion (org-end-of-subtree t t) (point))))))
 
 (defun org-canvas--module-pull-insert-items (items)
