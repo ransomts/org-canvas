@@ -904,5 +904,9 @@ the discussion is what brings such an assignment into being.")
   '("first" "random")
   "Valid values for AUTO_LEADER.")
 
+(defconst org-canvas--valid-group-join-levels
+  '("parent_context_auto_join" "parent_context_request" "invitation_only")
+  "Valid values for JOIN_LEVEL on a pulled group.")
+
 (provide 'org-canvas-core-config)
 ;;; org-canvas-core-config.el ends here
