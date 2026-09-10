@@ -40,6 +40,7 @@ Each entry names the pull request that merged it.
 
 ** Changed
 
+- =org-canvas-core-org.el= is three files: the Org buffer, batch-file, timestamp and link-resolution helpers stay; HTML export and HTML-to-Org conversion are =org-canvas-core-html.el=; the pull helpers, the file-URL rewriter, =org-canvas-define-pull=, =org-canvas-define-pull-item= and the pull summary are =org-canvas-core-pull.el=. No function changed; =org-canvas-core= still requires everything, and the test suite is split the same way
 - #155 A 403 your Canvas role cannot do anything about is reported as a permission skip, named in the closing line and recorded in the pull summary, instead of counted as a failure; the summary prints to stdout under =--batch=
 - #156 Pagination progress names the resource and speaks only when a fetch really is paging; the first page is logged, not announced
 - #141 Sync run state (batch conflict answers, the module's pull function, the moved/pending/changed id lists) lives in a per-run context instead of dynamically bound globals, so nothing one run decides reaches the next

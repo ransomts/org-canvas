@@ -14,6 +14,7 @@
 (require 'org-canvas-core-config)
 (require 'org-canvas-core-api)
 (require 'org-canvas-core-org)
+(require 'org-canvas-core-pull)
 (require 'org-canvas-core-macros)
 (require 'org-canvas-core-conflict)
 (require 'org-canvas-core-delete)

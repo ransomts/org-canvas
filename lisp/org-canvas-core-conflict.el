@@ -15,6 +15,8 @@
 
 (require 'diff)
 (require 'org-canvas-core-config)
+(require 'org-canvas-core-org)
+(require 'org-canvas-core-pull)
 
 (declare-function org-canvas--conflict-baseline-source "org-canvas-core-sync")
 

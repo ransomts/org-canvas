@@ -43,7 +43,9 @@ lisp/
 ├── org-canvas-core-config.el    # Config, constants, enum values, property and feature registries
 ├── org-canvas-core-log.el       # In-tree logger (org-canvas--log-*), secret redaction
 ├── org-canvas-core-api.el       # API requests, curl PATCH fallback, rate limiting, pacing, uploads
-├── org-canvas-core-org.el       # Org property/buffer helpers, HTML export, pull macros
+├── org-canvas-core-org.el       # Org property/buffer helpers, batch freshness, timestamps, link resolution
+├── org-canvas-core-html.el      # HTML export (links, images) and HTML→Org conversion on pull
+├── org-canvas-core-pull.el      # Pull helpers, file-URL rewriter, pull macros, pull summary
 ├── org-canvas-core-macros.el    # Declarative parse and payload DSL (define-parse, define-payload)
 ├── org-canvas-core-sync.el      # Sync pipeline macro, push/finalize infra, snapshots, duplicate guard
 ├── org-canvas-core-conflict.el  # Interactive conflict resolution UI
@@ -251,7 +253,7 @@ ELDEV_JUNIT=1 JUNIT_REPORT_FILE=test-results.xml eldev test   # JUnit XML for Co
 grep -rn buttercup-pending test/                              # Specs skipped on Emacs 29.x
 ```
 
-Layout: `test/test-helper.el` (fixtures, mocks, macros, network guard); `test/org-canvas-core-{config,api,org,sync,usability}-test.el`; `test/org-canvas-test.el` (orchestration); one `test/org-canvas-{feature}-test.el` per module; `test/org-canvas-validate-test.el`; `test/org-canvas-dry-run-test.el`; `test/org-canvas-doc-reference-test.el` (the manual's generated Property Reference); `test/contract/` (OpenAPI conformance fixture + generator); `test/mutation/` (mutation-testing harness); `test/docgen/` (generates the Property Reference from the registry).
+Layout: `test/test-helper.el` (fixtures, mocks, macros, network guard); `test/org-canvas-core-{config,api,org,html,pull,sync,usability}-test.el`; `test/org-canvas-test.el` (orchestration); one `test/org-canvas-{feature}-test.el` per module; `test/org-canvas-validate-test.el`; `test/org-canvas-dry-run-test.el`; `test/org-canvas-doc-reference-test.el` (the manual's generated Property Reference); `test/contract/` (OpenAPI conformance fixture + generator); `test/mutation/` (mutation-testing harness); `test/docgen/` (generates the Property Reference from the registry).
 
 Utilities (test-helper.el; full reference in testing.org):
 - `with-temp-org-buffer` — file-backed temp Org buffer; org functions misbehave in `with-temp-buffer`

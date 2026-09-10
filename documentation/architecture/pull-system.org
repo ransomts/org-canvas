@@ -24,7 +24,7 @@ There are three contexts where pulling occurs:
 
 * Pull Macro (org-canvas-define-pull)
 
-Located in =lisp/org-canvas-core-org.el=. Generates an interactive
+Located in =lisp/org-canvas-core-pull.el=. Generates an interactive
 =org-canvas-pull-{feature}= function.
 
 ** Parameters
@@ -95,7 +95,7 @@ pair; see decisions.org, "A Body Never Introduces a Headline".
 
 * Pull-Item Macro (org-canvas-define-pull-item)
 
-Located in =lisp/org-canvas-core-org.el=. Generates an internal
+Located in =lisp/org-canvas-core-pull.el=. Generates an internal
 =org-canvas--{feature}-pull-item= function that sets Org properties
 from an API response.
 
@@ -129,7 +129,8 @@ from an API response.
 
 * Core Pull Helpers
 
-All located in =lisp/org-canvas-core-org.el=.
+All located in =lisp/org-canvas-core-pull.el=; the HTML-to-Org
+conversion they call is in =lisp/org-canvas-core-html.el=.
 
 ** org-canvas--pull-upsert-heading
 

@@ -38,7 +38,9 @@ control integration.
     │     │
     │     └── org-canvas-core (meta-require)
     │           ├── org-canvas-core-sync   (pipeline, conflict, delete)
-    │           ├── org-canvas-core-org    (Org property helpers, HTML)
+    │           ├── org-canvas-core-pull   (pull helpers, macros, summary)
+    │           ├── org-canvas-core-html   (HTML export and conversion)
+    │           ├── org-canvas-core-org    (Org property helpers, batch files)
     │           ├── org-canvas-core-api    (HTTP, rate limiting, upload)
     │           └── org-canvas-core-config (defcustoms, logging, constants)
     │
