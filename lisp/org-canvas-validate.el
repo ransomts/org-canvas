@@ -246,7 +246,7 @@ the parent rubric.  Returns a list of issues (typically zero or one)."
     (when (and outcome
                (not (string-empty-p (string-trim outcome)))
                (string-match-p "\\[\\[file:" outcome))
-      (let ((row (list "" "" "" outcome)))
+      (let ((row (list (org-get-heading t t t t) "" "" outcome)))
         (let ((issue (org-canvas--validate-single-outcome-link row file loc)))
           (when issue (push issue issues)))))
     (nreverse issues)))

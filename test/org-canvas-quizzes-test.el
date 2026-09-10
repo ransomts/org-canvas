@@ -4146,4 +4146,16 @@ URL, a POST with id 900, and the question list GET with REMOTE."
             (org-back-to-heading t)
             (expect (org-entry-get (point) "CANVAS_ID") :to-equal "77")))))))
 
+(describe "org-canvas--quiz-questions-digest"
+  (it "changes when a question subtree changes and defaults to point"
+    (let ((d1 (with-temp-org-buffer
+               "* Quiz\n** Q1\n:PROPERTIES:\n:TYPE: multiple_choice_question\n:END:\n- [X] A\n"
+               (org-back-to-heading)
+               (org-canvas--quiz-questions-digest (list :pom (point)))))
+          (d2 (with-temp-org-buffer
+               "* Quiz\n** Q1\n:PROPERTIES:\n:TYPE: multiple_choice_question\n:END:\n- [X] B\n"
+               (org-back-to-heading)
+               (org-canvas--quiz-questions-digest nil))))
+      (expect d1 :not :to-equal d2))))
+
 ;;; org-canvas-quizzes-test.el ends here

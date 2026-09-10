@@ -2006,7 +2006,143 @@
                                  "* C\n:PROPERTIES:\n:USER_ID: 3\n:STATUS: late\n:DAYS_LATE: 4\n:END:\n")
         (org-canvas-submissions-apply-completion-rule 5)
         (org-canvas--submissions-goto-user 3)
-        (expect (org-entry-get (point) "SCORE") :to-equal "5")))))
+        (expect (org-entry-get (point) "SCORE") :to-equal "5"))))
+  (it "reads the points from the minibuffer, after the buffer checks, when none are given"
+    (with-grading-file (concat test-grading-file-header
+                               "#+PROPERTY: POINTS_POSSIBLE 5\n"
+                               "* A\n:PROPERTIES:\n:USER_ID: 1\n:STATUS: submitted\n:END:\n"
+                               "* E\n:PROPERTIES:\n:USER_ID: 5\n:STATUS: submitted\n:SCORE: 3\n:CANVAS_SCORE: 3\n:END:\n")
+      (let ((default nil))
+        (cl-letf (((symbol-function 'read-number)
+                   (lambda (_prompt &optional d) (setq default d) 7)))
+          (let ((current-prefix-arg '(4)))
+            (org-canvas-submissions-apply-completion-rule)))
+        (expect default :to-equal 5)
+        (org-canvas--submissions-goto-user 1)
+        (expect (org-entry-get (point) "SCORE") :to-equal "7")
+        (org-canvas--submissions-goto-user 5)
+        (expect (org-entry-get (point) "SCORE") :to-equal "7"))))
+  (it "checks the buffer before prompting"
+    (with-temp-buffer
+      (let ((prompted nil))
+        (cl-letf (((symbol-function 'read-number)
+                   (lambda (&rest _) (setq prompted t) 1)))
+          (expect (org-canvas-submissions-apply-completion-rule) :to-throw 'user-error))
+        (expect prompted :to-be nil))))
+  (it "refuses in the summary view"
+    (with-grading-file (concat test-grading-file-header
+                               "* A\n:PROPERTIES:\n:USER_ID: 1\n:STATUS: submitted\n:END:\n")
+      (setq-local org-canvas-submissions--current-view 'summary)
+      (expect (org-canvas-submissions-apply-completion-rule 5) :to-throw 'user-error))))
+
+;;;; Helpers and guards only a live grading session reached
+
+(defvar test-org-canvas-subs--rubrics-file "/tmp/org-canvas-test-rubrics.org"
+  "File variable a fake rubrics feature registration points at.")
+
+(describe "org-canvas--submissions-rubrics-file"
+  (it "returns the file the rubrics feature registers"
+    (let ((org-canvas--feature-registry
+           (list (list :name "Rubrics" :endpoint "rubrics"
+                       :file-var 'test-org-canvas-subs--rubrics-file))))
+      (expect (org-canvas--submissions-rubrics-file)
+              :to-equal test-org-canvas-subs--rubrics-file)))
+
+  (it "is nil when no rubrics feature is registered"
+    (let ((org-canvas--feature-registry nil))
+      (expect (org-canvas--submissions-rubrics-file) :to-be nil))))
+
+(describe "org-canvas--submissions-render-rubric-properties"
+  (it "writes the points and no rubric keywords when none is attached"
+    (with-temp-buffer
+      (org-canvas--submissions-render-rubric-properties '((points_possible . 10)))
+      (expect (buffer-string) :to-equal "#+PROPERTY: POINTS_POSSIBLE 10\n")))
+
+  (it "writes the rubric id and title beside the points"
+    (with-temp-buffer
+      (org-canvas--submissions-render-rubric-properties
+       '((points_possible . 12.5)
+         (rubric_settings . ((id . 7) (title . "Essay")))))
+      (expect (buffer-string) :to-match "POINTS_POSSIBLE 12\\.5\n")
+      (expect (buffer-string) :to-match "CANVAS_RUBRIC_ID 7\n")
+      (expect (buffer-string) :to-match "CANVAS_RUBRIC_TITLE Essay\n"))))
+
+(describe "org-canvas--submissions-draft-region"
+  (it "returns the body region under the comment draft heading"
+    (with-temp-buffer
+      (org-mode)
+      (insert "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n\n"
+              "** Comment to post\nGood work.\n\n* Beta, Bob\n")
+      (goto-char (point-min))
+      (let ((region (org-canvas--submissions-draft-region)))
+        (expect region :not :to-be nil)
+        (expect (buffer-substring-no-properties (car region) (cdr region))
+                :to-match "Good work\\."))))
+
+  (it "is nil for a student without a draft heading"
+    (with-temp-buffer
+      (org-mode)
+      (insert "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n")
+      (goto-char (point-min))
+      (expect (org-canvas--submissions-draft-region) :to-be nil))))
+
+(describe "org-canvas-submissions-download-all-attachments guards"
+  (it "refuses outside a submissions buffer"
+    (with-temp-buffer
+      (expect (org-canvas-submissions-download-all-attachments)
+              :to-throw 'user-error)))
+
+  (it "refuses in the summary view"
+    (with-grading-file (concat test-grading-file-header
+                               "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n")
+      (setq-local org-canvas-submissions--current-view 'summary)
+      (expect (org-canvas-submissions-download-all-attachments)
+              :to-throw 'user-error))))
+
+(describe "org-canvas--submissions-grading-buffer"
+  (it "turns on org-mode when the visited buffer is not in it"
+    (let* ((dir (make-temp-file "org-canvas-subs-" t))
+           (org-canvas-submissions-directory dir)
+           (scratch (generate-new-buffer " *grading-plain*")))
+      (unwind-protect
+          (progn
+            (with-current-buffer scratch
+              (insert test-grading-file-header))
+            (cl-letf (((symbol-function 'org-canvas--find-file-noselect)
+                       (lambda (&rest _) scratch)))
+              (let ((buf (org-canvas--submissions-grading-buffer "HW")))
+                (expect buf :to-be scratch)
+                (expect (buffer-local-value 'major-mode buf) :to-be 'org-mode))))
+        (kill-buffer scratch)
+        (delete-directory dir t)))))
+
+(describe "org-canvas-submissions-push-grades guards"
+  (it "refuses when the buffer carries no assignment id"
+    (with-temp-buffer
+      (org-mode)
+      (insert "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:END:\n")
+      (setq-local org-canvas-submissions--current-view 'detail)
+      (setq-local org-canvas-submissions--assignment-id nil)
+      (org-canvas-submissions-mode 1)
+      (expect (org-canvas-submissions-push-grades) :to-throw 'user-error)))
+
+  (it "names the skipped conflicts in the confirmation prompt"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file
+            (concat test-grading-file-header
+                    "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:END:\n\n"
+                    "* Beta, Bob\n:PROPERTIES:\n:USER_ID: 5002\n:SCORE: 80\n:CANVAS_SCORE: 75\n:END:\n")
+          (let ((org-canvas-submissions-check-conflicts t)
+                (prompt nil))
+            (setq-local org-canvas-submissions--current-view 'detail)
+            (cl-letf (((symbol-function 'org-canvas--submissions-live-baselines)
+                       (lambda (_id) '((5001 . ("92" . 1)) (5002 . ("70" . 1)))))
+                      ((symbol-function 'y-or-n-p)
+                       (lambda (p) (setq prompt p) nil)))
+              (org-canvas-submissions-push-grades))
+            (expect prompt :to-match "skipping 1 conflict")
+            (expect (test-org-canvas-api-call-count) :to-equal 0)))))))
 
 (provide 'org-canvas-submissions-test)
 ;;; org-canvas-submissions-test.el ends here

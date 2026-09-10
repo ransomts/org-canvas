@@ -1410,4 +1410,11 @@ Keep this body
       '((id . 1) (title . "R") (free_form_criterion_comments . t) (data . []))
       "FREE_FORM_CRITERION_COMMENTS" :to-equal "true")))
 
+(describe "org-canvas--rubric-format-points"
+  (it "formats nil, non-numbers, whole and fractional numbers"
+    (expect (org-canvas--rubric-format-points nil) :to-equal "0")
+    (expect (org-canvas--rubric-format-points "5") :to-equal "5")
+    (expect (org-canvas--rubric-format-points 5.0) :to-equal "5")
+    (expect (org-canvas--rubric-format-points 2.5) :to-equal "2.5")))
+
 ;;; org-canvas-rubrics-test.el ends here

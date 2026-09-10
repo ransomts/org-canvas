@@ -6010,5 +6010,34 @@ Returns the :remote-titles of the run context the push received."
         (expect asked :to-be nil)
         (expect (cl-some (lambda (r) (eq (car r) 'POST)) (cdr run)) :to-be-truthy)))))
 
+(describe "org-canvas--prune-runtime URL resolution"
+  (it "lists through :list-url-fn and deletes through the default item URL"
+    (with-org-canvas-test-config
+      (let ((temp-file (make-temp-file "prune-" nil ".org"))
+            (listed-url nil)
+            (delete-url nil))
+        (unwind-protect
+            (progn
+              (with-temp-file temp-file (insert "* Empty\n"))
+              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                         (lambda (_method url &rest _)
+                           (setq listed-url url)
+                           '(((id . 2) (title . "Orphan")))))
+                        ((symbol-function 'y-or-n-p) (lambda (_) t))
+                        ((symbol-function 'display-buffer) (lambda (&rest _) nil))
+                        ((symbol-function 'org-canvas--delete-items-queued)
+                         (lambda (items del-fn &rest _)
+                           (setq delete-url (funcall del-fn (alist-get 'id (car items))))
+                           (cons (length items) nil))))
+                (expect (org-canvas--prune-runtime "pages"
+                          :endpoint "pages" :file temp-file
+                          :list-url-fn (lambda () "https://canvas.test/api/v1/custom/pages"))
+                        :to-equal 1))
+              (expect listed-url :to-equal "https://canvas.test/api/v1/custom/pages")
+              (expect delete-url :to-match "/pages/2\\'"))
+          (let ((buf (find-buffer-visiting temp-file)))
+            (when buf (kill-buffer buf)))
+          (delete-file temp-file))))))
+
 (provide 'org-canvas-core-sync-test)
 ;;; org-canvas-core-sync-test.el ends here

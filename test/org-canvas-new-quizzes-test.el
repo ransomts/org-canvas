@@ -2964,4 +2964,10 @@ URL, a POST with 900."
             (org-back-to-heading)
             (expect (org-canvas-sync-new-quiz-at-point) :to-throw 'user-error)))))))
 
+(describe "org-canvas--new-quiz-remote-id"
+  (it "prefers the assignment id and falls back to the quiz id"
+    (expect (org-canvas--new-quiz-remote-id '((id . 3) (assignment_id . 40)))
+            :to-equal "40")
+    (expect (org-canvas--new-quiz-remote-id '((id . 3))) :to-equal "3")))
+
 ;;; org-canvas-new-quizzes-test.el ends here

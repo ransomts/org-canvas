@@ -3389,6 +3389,38 @@ https://test.canvas.example.com/courses/284220/assignments/7
                             (org-canvas--validate-specs))))
       (expect (plist-get spec :duplicate-titles) :to-be-truthy))))
 
+(describe "org-canvas--validate-rubric-criterion-outcome"
+  (it "reports a criterion whose OUTCOME link has no CANVAS_ID"
+    (let* ((temp-dir (make-temp-file "validate-criterion-outcome" t))
+           (outcomes-file (expand-file-name "outcomes.org" temp-dir))
+           (rubrics-file (expand-file-name "rubrics.org" temp-dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file outcomes-file (insert "* Group\n** Python\n"))
+            (let ((org-canvas-outcomes-file outcomes-file)
+                  (loc (list :file rubrics-file :line 1 :heading "Essay")))
+              (with-temp-org-buffer
+                  (format "* Essay\n** Quality\n:PROPERTIES:\n:OUTCOME: [[file:%s::*Python][Python]]\n:END:\n"
+                          outcomes-file)
+                (re-search-forward "^\\*\\* Quality")
+                (org-back-to-heading t)
+                (let ((issues (org-canvas--validate-rubric-criterion-outcome rubrics-file loc)))
+                  (expect (length issues) :to-equal 1)
+                  (expect (plist-get (car issues) :severity) :to-equal 'warning)
+                  (expect (plist-get (car issues) :message)
+                          :to-match "criterion 'Quality' outcome link has no CANVAS_ID")))))
+        (let ((buf (find-buffer-visiting outcomes-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "returns nothing when the criterion has no OUTCOME"
+    (with-temp-org-buffer "* Essay\n** Quality\n"
+      (re-search-forward "^\\*\\* Quality")
+      (org-back-to-heading t)
+      (expect (org-canvas--validate-rubric-criterion-outcome
+               "/tmp/rubrics.org" (list :file "/tmp/rubrics.org" :line 1 :heading "Essay"))
+              :to-be nil))))
+
 (provide 'org-canvas-validate-test)
 (describe "org-canvas--validate-module-item-ids (issue #105)"
   (it "warns once per item id claimed by more than one heading, naming the lines"
