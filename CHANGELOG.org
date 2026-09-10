@@ -8,6 +8,7 @@ Each entry names the pull request that merged it.
 
 ** Added
 
+- =documentation/architecture/coverage.org=: the map of what org-canvas covers in Canvas, what it touches in one direction only, and what it never reads or writes, with the gaps most likely to matter for a course and the grep that refreshes it
 - =org-canvas-sync-file-at-point=: files are on the sync macro, so the file at point can be uploaded alone. The macro gains =:hash= (a function replacing the payload's md5, or =push= when the push owns change detection and answers =skip= for nothing to send) and =:dry-run push= (the push guards its own writes and previews them); a parser that declines a heading marks it a skip
 - =org-canvas-sync-outcome-at-point=, =org-canvas-sync-outcome-group-at-point= and =org-canvas-sync-outcome-groups=: outcomes are on the sync macro, one =org-canvas-define-sync= per heading level, so each level has the push at point every other content type has. The macro gains =:prepare=, a function run once before the first entry whose result the run keeps (the root outcome group), and =:first=, a sync the generated command runs beforehand (groups before outcomes)
 - #184 =DOCUMENT_PROCESSOR= on assignments: the Turnitin document processor attached in the web UI is written by pull, shown by the drift report whether or not the heading carries it, never sent by a push, and flagged by validate when typed ahead of the first sync; Canvas attaches one only in a browser, so org-canvas observes and protects it rather than setting it
