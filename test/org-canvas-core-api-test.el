@@ -1328,6 +1328,17 @@ string and fake a failure."
     (expect done :to-be t)
     (backtrace-to-string (nreverse frames))))
 
+(defun test-org-canvas--skip-when-instrumented ()
+  "Mark the spec pending while the request path is edebug-instrumented.
+A coverage run instruments `lisp/' through edebug, and
+`edebug-default-enter' rebinds `debugger' to edebug's own inside every
+instrumented function, so a debugger this spec installs never runs and
+a batch Emacs waits for keyboard input instead.  The spec runs on every
+plain `eldev test', which is what CI does."
+  (when (get 'org-canvas-api-request 'edebug)
+    (signal 'buttercup-pending
+            "debugger is edebug's inside instrumented code (coverage run)")))
+
 (defmacro test-org-canvas--with-capturing-debugger (var &rest body)
   "Run BODY with the debugger replaced, leaving the backtrace in VAR.
 The first error to escape BODY with no handler calls the debugger,
@@ -1396,6 +1407,7 @@ which records the frames from the signalling `signal' out to
         (expect backtrace :not :to-match "test-token-12345"))))
 
   (it "keeps the token out of the backtrace of an api-error that escapes"
+    (test-org-canvas--skip-when-instrumented)
     ;; The report in #178: a malformed URL (curl error 3) escaping a
     ;; batch script's condition-case, printed by `debug-early'
     (with-org-canvas-test-config
@@ -1414,6 +1426,7 @@ which records the frames from the signalling `signal' out to
         (expect backtrace :not :to-match "test-token-12345"))))
 
   (it "re-signals an error plz raises from the transport frame, not plz's"
+    (test-org-canvas--skip-when-instrumented)
     ;; plz can raise a plain `error' of its own (a missing curl, its
     ;; process-result check); its frames hold the header, so they must
     ;; be unwound before the error reaches a backtrace

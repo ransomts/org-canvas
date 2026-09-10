@@ -60,6 +60,7 @@ Each entry names the pull request that merged it.
 
 ** Fixed
 
+- #178 The bearer token is no longer an argument on the request path, so a backtrace of an api-error escaping a batch script cannot print it: the headers are resolved inside the transport function, request logging never reads the token, and plz's own frames are unwound before the error reaches a debugger
 - #158 A nested =files.org= can be re-pulled: files are matched by Canvas id wherever they sit, a file whose folder changed is moved rather than duplicated, and hand-written content survives; downloads skip a local copy that is already the right size
 - #153 Navigation tabs are pulled again: Canvas sends a JSON array, which =json-read= decodes as a vector, and the formatter walked it with =dolist=
 - #157 An optional require is optional again: a feature that is on =load-path= but raises while loading no longer aborts loading org-canvas, and says what was lost
