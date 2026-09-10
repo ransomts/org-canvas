@@ -141,6 +141,10 @@ orchestration code.
 
 Outcomes are two levels of one file: a level-1 heading is a group filed under the course root group, a level-2 heading an outcome filed under its group, which must carry a =CANVAS_ID= first. That used to be a hand-written command running the pipeline twice around a preflight that fetched the root group. It is now two =org-canvas-define-sync= forms. The groups' declares =:prepare=, a function of the run context called once after the snapshot and before the first entry (and before the parse of a push at point); its result is the context's =:prepared=, which the group push reads for the parent id. It may signal, and a missing root group does, so nothing is sent. The outcomes' declares =:first=, the sync command the generated =org-canvas-sync-outcomes= runs before its own pipeline, with the log kept between the two. Both levels gain the generated push at point. Neither option is outcomes-specific: =:prepare= is for any value a run fetches once and every push needs, =:first= for any content type whose parents must exist on Canvas before its children can be filed.
 
+** Macro Options for a Push That Owns Change Detection: :hash and :dry-run
+
+Files decide what to send by comparing bytes and metadata, not by hashing a payload: their stored =PAYLOAD_HASH= is two halves, and the tiers in =org-canvas--file-sync-parsed-entry= choose between an unchanged skip, a metadata PUT that keeps the file id, a legacy-hash migration (issue #71) and a re-upload (issues #49, #77). That logic is why files ran a loop of their own, with its own counters, summary and fifteen dry-run guards. Two options let the shared runner carry it instead. =:hash= names the owner of change detection: a function of the payload and the parsed data returns the hash the runner compares and stamps in place of the payload's md5; the symbol =push= means the push decides for itself, so the runner never skips on a stored hash, never stamps one, and counts a push that answers =skip= as a skip without finalizing. =:dry-run push= says the push guards every write itself (Hard Rule 1) and previews them — the runner calls it under a dry run instead of reporting from the snapshot, and counts the sentinel it returns, so the tier-specific =[DRY-RUN]= lines a files preview is for still reach the log. A parser that declines a heading (a folder heading in files.org) returns nil, and the runner counts the heading as a skip. =org-canvas--push-at-point-runtime= honours =:hash= and =skip= the same way and returns its context, which is how =org-canvas-force-reupload-file-at-point= learns whether the upload had to recreate the file. What stayed in the module is exactly the tiers: the runner only changed who calls them.
+
 ** Macro Options for Child State: :pull-item-fn and :hash-extra
 
 *Sync Pipeline Macro:*
@@ -181,7 +185,7 @@ implement some stages manually rather than using macro-generated code.
 
 *Modules with custom push logic (use =org-canvas-define-sync= but have custom push functions due to non-standard API endpoints):* group-categories (split POST/PUT URLs), calendar (global endpoint, not course-scoped)
 
-*Modules with custom sync logic (not macro-based):* files (3-step upload), quizzes (nested questions), new-quizzes (nested items, =/api/quiz/v1/= API), modules (parent-child items), overrides (reconcile-based)
+*Modules with custom sync logic (not macro-based):* overrides (reconcile-based), and the child reconcilers inside quizzes (nested questions), new-quizzes (nested items, =/api/quiz/v1/= API) and modules (parent-child items). Files were the last hand-written top-level loop; they run on the macro since the options below
 
 *Pull-only modules:* sections (pulled from Canvas via =org-canvas-pull-sections=, not pushed)
 

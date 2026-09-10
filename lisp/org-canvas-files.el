@@ -1122,8 +1122,9 @@ would offer a pull that silently degraded to a skip."
        (or (alist-get 'display_name item) (plist-get raw :display-name))
        url local-path (alist-get 'size item) t))))
 
-;; Files sync through their own loop rather than `org-canvas-define-sync',
-;; so the macro never registers this for them (issue #67).
+;; `org-canvas-define-sync' below registers this under the feature name
+;; it is given; the registry entry is named "Files", so it is recorded
+;; here by that name as well (issue #67).
 (org-canvas-register-pull-item-fn "Files" #'org-canvas--file-pull-item)
 
 (defun org-canvas--file-check-conflict (data &optional ctx)
@@ -1257,25 +1258,21 @@ looking synced."
           display-name))
       (org-canvas--file-sync-upload data file-hash old-id ctx)))))
 
-(defun org-canvas--file-sync-single-entry (marker &optional ctx)
-  "Process a single file entry at MARKER.
-CTX is the run context.  Returns :success, :skip (folder heading or
-unchanged file), :dry-run, or :fail.  Unchanged files (same content
-hash as the last successful upload) are skipped to keep their Canvas
-file ID stable.  When an upload does replace a file's CANVAS_ID, the
-display name is recorded in CTX's :file-changed-ids."
-  (with-current-buffer (marker-buffer marker)
-    (save-excursion
-      (goto-char (marker-position marker))
-      (condition-case err
-          (let ((data (org-canvas--file-parse-entry)))
-            (if data
-                (org-canvas--file-sync-parsed-entry data ctx)
-              :skip))
-        (error
-         (org-canvas--log-error org-canvas--logger "[FAILED] At point %d: %s"
-           (marker-position marker) (error-message-string err))
-         :fail)))))
+(defun org-canvas--file-push (data _payload &optional ctx)
+  "Sync the file DATA describes; the `:push' of the files pipeline.
+Files own their change detection (`:hash' is `push'): the tiers in
+`org-canvas--file-sync-parsed-entry' compare bytes and metadata, decide
+between a metadata PUT, a legacy-hash migration and a re-upload, and
+record the outcome themselves, hash included.  So the runner sees only
+the outcome: `skip' when nothing was sent, the dry-run sentinel when a
+preview ran (`:dry-run' is `push', so the tiers' own [DRY-RUN] lines
+reach the log), and t for an entry the tiers recorded — there is no
+response to finalize and no hash for the runner to stamp.  CTX is the
+run context, where an id change is noted."
+  (pcase (org-canvas--file-sync-parsed-entry data ctx)
+    (:skip 'skip)
+    (:dry-run org-canvas--dry-run-response)
+    (_ t)))
 
 (defun org-canvas--file-announce-legacy-hashes (targets)
   "Say up front how many TARGETS carry a pre-split PAYLOAD_HASH.
@@ -1324,27 +1321,17 @@ of the same global run); until then those items are missing."
     (length recreated-names)
     (mapconcat (lambda (x) (format "'%s'" x)) recreated-names ", ")))
 
-;;;###autoload
-(defun org-canvas-sync-files ()
-  "Synchronize files to Canvas."
-  (interactive)
-  (org-canvas-clear-log)
-  ;; Clear session caches
+(defun org-canvas--file-sync-prepare (_ctx)
+  "Ready a files run: caches, course access, folders, legacy hashes.
+The `:prepare' of the files pipeline, run once before the first entry
+\(and before a push at point).  Resets the session folder caches,
+checks the course is reachable (a failure is a warning, not a stop),
+pre-creates every folder the manifest names — a POST, so a dry run
+only lists them — and says how many entries carry a pre-split hash
+\(issue #71)."
   (setq org-canvas--file-root-folder-cache nil)
   (setq org-canvas--file-folder-cache (make-hash-table :test 'equal))
-
   (let ((files-file (expand-file-name org-canvas-files-file)))
-    (unless (and files-file (file-exists-p files-file))
-      (org-canvas--signal 'org-canvas-config-error
-        "Files manifest not found: %s" files-file))
-
-    (display-buffer (get-buffer-create org-canvas--log-buffer-name))
-    (org-canvas--log-info org-canvas--logger "========================================")
-    (org-canvas--log-info org-canvas--logger ">>> STARTING FILE SYNC")
-    (org-canvas--log-info org-canvas--logger "File: %s" files-file)
-    (org-canvas--log-info org-canvas--logger "Course: %s | URL: %s" org-canvas-course-id org-canvas-base-url)
-    (org-canvas--log-info org-canvas--logger "========================================")
-
     (org-canvas--log-info org-canvas--logger "[Pre-flight] Verifying course access...")
     (condition-case err
         (progn
@@ -1352,76 +1339,52 @@ of the same global run); until then those items are missing."
           (org-canvas--log-info org-canvas--logger "[Pre-flight] Course accessible"))
       (error
        (org-canvas--log-warning org-canvas--logger "[Pre-flight] Warning: %s" (error-message-string err))))
-
-    ;; Pre-create all necessary folders before uploading any files.
-    ;; Folder creation is a POST, so a dry run only reports the paths.
     (let ((folder-paths (org-canvas--file-collect-folder-paths files-file)))
       (if org-canvas--dry-run
           (dolist (path folder-paths)
             (org-canvas--log-info org-canvas--logger
               "[DRY-RUN] Would ensure folder exists: %s" path))
         (org-canvas--file-ensure-folders-exist folder-paths)))
+    (let ((markers (with-current-buffer (org-canvas--find-file-noselect files-file)
+                     (org-map-entries (lambda () (point-marker)) t 'file))))
+      (org-canvas--file-announce-legacy-hashes markers)
+      (dolist (m markers) (set-marker m nil)))
+    nil))
 
-    (let ((targets nil)
-          (success-count 0)
-          (fail-count 0)
-          (skip-count 0)
-          (dry-run-count 0)
-          ;; The run context: batch conflict decisions (capital P/L/S)
-          ;; apply across the run as in the macro pipeline, and the
-          ;; changed and recreated ids accumulate here (issue #141).
-          (ctx (org-canvas--sync-make-ctx
-                :feature-name "files"
-                :pull-item-fn #'org-canvas--file-pull-item)))
-      ;; Gather all entries (at any level)
-      (with-current-buffer (org-canvas--find-file-noselect files-file)
-        (setq targets (org-map-entries (lambda () (point-marker)) t 'file)))
+(defun org-canvas--file-sync-after (ctx)
+  "Report the file ids a run rotated or recreated, as recorded in CTX.
+The `:after-sync' of the files pipeline."
+  (when (plist-get ctx :file-changed-ids)
+    (org-canvas--file-warn-changed-ids
+     (reverse (plist-get ctx :file-changed-ids))))
+  (when (plist-get ctx :file-recreated-ids)
+    (org-canvas--file-warn-recreated-ids
+     (reverse (plist-get ctx :file-recreated-ids)))))
 
-      (org-canvas--log-info org-canvas--logger "Found %d entries to process" (length targets))
-      (org-canvas--file-announce-legacy-hashes targets)
-
-      (dolist (marker targets)
-        (let ((result (org-canvas--file-sync-single-entry marker ctx)))
-          (pcase result
-            (:success (setq success-count (1+ success-count))
-                      (message "Files [%d/%d] Synced"
-                        (+ success-count skip-count fail-count)
-                        (length targets)))
-            (:skip (setq skip-count (1+ skip-count)))
-            (:dry-run (setq dry-run-count (1+ dry-run-count)))
-            (:fail (setq fail-count (1+ fail-count))
-                   (message "Files [%d/%d] FAILED"
-                     (+ success-count skip-count fail-count)
-                     (length targets))))))
-
-      (dolist (m targets) (set-marker m nil))
-
-      ;; Save the org file after all modifications
-      (with-current-buffer (org-canvas--find-file-noselect files-file)
-        (org-canvas--save-buffer))
-
-      (when (plist-get ctx :file-changed-ids)
-        (org-canvas--file-warn-changed-ids
-         (reverse (plist-get ctx :file-changed-ids))))
-
-      (when (plist-get ctx :file-recreated-ids)
-        (org-canvas--file-warn-recreated-ids
-         (reverse (plist-get ctx :file-recreated-ids))))
-
-      (org-canvas--log-info org-canvas--logger "========================================")
-      (org-canvas--log-info org-canvas--logger ">>> FILE SYNC COMPLETE")
-      (org-canvas--log-info org-canvas--logger
-        "Success: %d | Failed: %d | Skipped (folders/unchanged): %d | Dry-run: %d"
-        success-count fail-count skip-count dry-run-count)
-      (org-canvas--log-info org-canvas--logger "========================================")
-      (org-canvas--sync-record-feature-stats "Files"
-        (list :success success-count :skip skip-count :fail fail-count
-              :dry-run dry-run-count))
-      (message "File Sync: %d success, %d failed, %d skipped%s."
-               success-count fail-count skip-count
-               (if (> dry-run-count 0)
-                   (format ", %d would upload" dry-run-count)
-                 "")))))
+;; Files run on the shared pipeline with two declarations the other
+;; content types do not need.  `:hash push': change detection is theirs —
+;; a stored hash is bytes and metadata in two halves, compared by the
+;; tiers in `org-canvas--file-sync-parsed-entry', so the runner neither
+;; skips on it nor stamps it.  `:dry-run push': every write in the
+;; three-step upload, the metadata PUT and the migration guards itself
+;; (Hard Rule 1) and says which tier it would take, which is what a
+;; files preview is for (issue #71), so the runner lets the push preview
+;; rather than reporting from the snapshot.  Entries sit at any level
+;; under folder headings, which the parser declines and the runner
+;; counts as skips.
+(org-canvas-define-sync files
+  :file org-canvas-files-file
+  :query "LEVEL>0"
+  :parse #'org-canvas--file-parse-entry
+  :build #'ignore
+  :push #'org-canvas--file-push
+  :finalize #'ignore
+  :title-key :display-name
+  :pull-item-fn #'org-canvas--file-pull-item
+  :hash 'push
+  :dry-run 'push
+  :prepare #'org-canvas--file-sync-prepare
+  :after-sync #'org-canvas--file-sync-after)
 
 (defun org-canvas--file-force-confirm (what)
   "Ask before forcing a re-upload of WHAT.  Return non-nil to proceed."
@@ -1460,12 +1423,8 @@ correcting one file rather than a course."
   (org-back-to-heading t)
   (let ((display-name (org-get-heading t t t t)))
     (when (org-canvas--file-force-confirm (format "'%s'" display-name))
-      (let ((org-canvas--file-force-upload t)
-            (ctx (org-canvas--sync-make-ctx
-                  :feature-name "files"
-                  :pull-item-fn #'org-canvas--file-pull-item)))
-        (org-canvas--file-sync-single-entry (point-marker) ctx)
-        (org-canvas--save-buffer)
+      (let* ((org-canvas--file-force-upload t)
+             (ctx (org-canvas-sync-file-at-point)))
         (when (plist-get ctx :file-recreated-ids)
           (org-canvas--file-warn-recreated-ids
            (reverse (plist-get ctx :file-recreated-ids))))

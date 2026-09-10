@@ -162,7 +162,8 @@ Prompts user to continue if stale headings are found."
 
 (defun org-canvas--sync-finalize-push (response data payload-hash ctx)
   "Finalize a successful push RESPONSE for DATA.
-PAYLOAD-HASH is saved to the heading.  CTX is the sync context plist."
+PAYLOAD-HASH is saved to the heading, unless it is nil because the push
+owns the stamp (spec :hash `push').  CTX is the sync context plist."
   (let ((finalize-fn (plist-get ctx :finalize-fn))
         (counters (plist-get ctx :counters))
         (synced-ids (plist-get ctx :synced-ids))
@@ -177,7 +178,8 @@ PAYLOAD-HASH is saved to the heading.  CTX is the sync context plist."
                      1)))
     (funcall finalize-fn data response ctx)
     (org-canvas--sync-note-remote-time response ctx)
-    (org-canvas-org-set-property (point) org-canvas--prop-payload-hash payload-hash)
+    (when payload-hash
+      (org-canvas-org-set-property (point) org-canvas--prop-payload-hash payload-hash))
     (org-canvas--save-buffer)
     (plist-put counters :success (1+ (plist-get counters :success)))
     (message "%s [%d/%d] Synced '%s'"
@@ -207,8 +209,7 @@ CTX is the sync context plist (see `org-canvas--sync-process-entry')."
          (total-count (plist-get ctx :total-count))
          (counters (plist-get ctx :counters))
          (synced-ids (plist-get ctx :synced-ids))
-         (payload-hash (org-canvas--sync-payload-hash
-                        payload data (plist-get ctx :hash-extra-fn)))
+         (payload-hash (org-canvas--sync-entry-hash payload data ctx))
          (stored-hash (org-entry-get (point) org-canvas--prop-payload-hash))
          (canvas-id (or (plist-get data :canvas-id)
                         (plist-get data :canvas-url)))
@@ -221,14 +222,14 @@ CTX is the sync context plist (see `org-canvas--sync-process-entry')."
     (when canvas-id
       (push canvas-id (car synced-ids)))
     (cond
-     ((and stored-hash (string= payload-hash stored-hash) canvas-id
+     ((and payload-hash stored-hash (string= payload-hash stored-hash) canvas-id
            (not (org-canvas--sync-remote-drifted-p canvas-id ctx title)))
       (plist-put counters :skip (1+ (plist-get counters :skip)))
       (org-canvas--log-info org-canvas--logger "[Skip] '%s' unchanged" title)
       (org-canvas--sync-backfill-baseline canvas-id title ctx)
       (message "%s [%d/%d] Skipping '%s' (unchanged)"
         cap-feature progress total-count title))
-     (org-canvas--dry-run
+     ((and org-canvas--dry-run (not (plist-get ctx :dry-run-in-push)))
       (org-canvas--sync-dry-run-entry canvas-id title ctx))
      (t
       (org-canvas--sync-handle-push-response
@@ -239,14 +240,22 @@ CTX is the sync context plist (see `org-canvas--sync-process-entry')."
 A symbol means the push stopped short: `conflict' and `pulled' come
 from the conflict prompt, `duplicate' from the create guard (issue
 #85), which names the entry among the skipped so the summary says
-where it went.  Anything else is the API response, finalized with
-PAYLOAD-HASH.  CTX is the sync context, PROGRESS the 1-based position
-for the echo-area line."
+where it went, and `skip' from a push that owns its change detection
+and found nothing to send.  The dry-run sentinel comes from a push that
+previews its own writes (spec :dry-run `push').  Anything else is the
+API response, finalized with PAYLOAD-HASH (nil when the push owns the
+stamp).  CTX is the sync context, PROGRESS the 1-based position for
+the echo-area line."
   (let* ((counters (plist-get ctx :counters))
          (cap-feature (capitalize (plist-get ctx :feature-name)))
          (total-count (plist-get ctx :total-count))
          (title (plist-get data (or (plist-get ctx :title-key) :title))))
     (pcase response
+      ('skip
+       (plist-put counters :skip (1+ (plist-get counters :skip)))
+       (message "%s [%d/%d] Skipping '%s'" cap-feature progress total-count title))
+      ((pred org-canvas--dry-run-response-p)
+       (plist-put counters :dry-run (1+ (or (plist-get counters :dry-run) 0))))
       ('conflict
        (plist-put counters :conflict (1+ (plist-get counters :conflict)))
        (message "%s [%d/%d] CONFLICT: '%s' (remote modified)"
@@ -347,9 +356,17 @@ pipeline functions, :feature-name and :feature-upper for the log,
         (goto-char (marker-position marker))
         (let ((heading-title (org-get-heading t t t t)))
           (condition-case err
-              (let* ((data (funcall parse-fn))
-                     (payload (funcall build-fn data)))
-                (org-canvas--sync-execute-pipeline data payload ctx))
+              (let ((data (funcall parse-fn)))
+                (if (null data)
+                    ;; A heading the parser declines is not an entry: a
+                    ;; folder heading in files.org.  Counted as a skip so
+                    ;; the tally still adds up to the headings walked.
+                    (progn
+                      (plist-put counters :skip (1+ (plist-get counters :skip)))
+                      (org-canvas--log-info org-canvas--logger
+                        "[Skip] '%s' is not a %s entry" heading-title feature-name))
+                  (org-canvas--sync-execute-pipeline
+                   data (funcall build-fn data) ctx)))
             (error
              (if (org-canvas--sync-deferred-error-p err)
                  (progn
@@ -614,7 +631,7 @@ the baseline re-read from it (issue #124)."
 
 (defconst org-canvas--sync-spec-keys
   '(:feature :file :query :parse :build :push :finalize
-    :pull-item-fn :title-key :hash-extra :prepare :after-sync)
+    :pull-item-fn :title-key :hash-extra :hash :dry-run :prepare :after-sync)
   "Keys a sync spec may carry.
 A sync spec is the plist `org-canvas-define-sync' builds from its
 options and hands to `org-canvas--sync-run-pipeline' and
@@ -625,9 +642,26 @@ Org file, :query the Org match, :parse, :build, :push and :finalize
 the four stage functions, :pull-item-fn the function that enables the
 pull answer at a conflict prompt, :title-key the plist key of the
 display name, :hash-extra the function whose result is folded into the
-payload hash, :prepare a function of the context run once before the
-first entry, whose result the context keeps as :prepared, and
+payload hash, :hash the change-detection hash's owner (a function of
+PAYLOAD and DATA replacing the payload's md5, or the symbol `push' when
+the push decides for itself and the runner neither skips before it nor
+stamps after it), :dry-run the symbol `push' when the push guards its
+own writes and previews them (the runner then does not intercept a dry
+run ahead of it), :prepare a function of the context run once before
+the first entry, whose result the context keeps as :prepared, and
 :after-sync the hook run on the context before the summary.")
+
+(defun org-canvas--sync-entry-hash (payload data ctx)
+  "Return the change-detection hash for PAYLOAD and DATA under CTX, or nil.
+The md5 of the encoded payload (plus :hash-extra-fn) unless the spec
+declared :hash: a function is called with PAYLOAD and DATA; `push'
+means the push owns change detection, and nil is returned so the
+runner neither skips on a stored hash nor stamps one."
+  (let ((hash-fn (plist-get ctx :hash-fn)))
+    (cond ((eq hash-fn 'push) nil)
+          (hash-fn (funcall hash-fn payload data))
+          (t (org-canvas--sync-payload-hash
+              payload data (plist-get ctx :hash-extra-fn))))))
 
 (defun org-canvas--sync-check-spec (spec required)
   "Signal on a key of SPEC outside the sync spec keys, or a REQUIRED key absent.
@@ -680,6 +714,8 @@ collects the module items left pending — without a global."
          (pull-item-fn (plist-get spec :pull-item-fn))
          (title-key (plist-get spec :title-key))
          (hash-extra-fn (plist-get spec :hash-extra))
+         (hash-fn (plist-get spec :hash))
+         (dry-run-in-push (eq (plist-get spec :dry-run) 'push))
          (prepare-fn (plist-get spec :prepare))
          (after-sync-fn (plist-get spec :after-sync))
          (feature-upper (upcase feature-name)))
@@ -719,6 +755,8 @@ collects the module items left pending — without a global."
                  :synced-ids synced-ids
                  :title-key title-key
                  :hash-extra-fn hash-extra-fn
+                 :hash-fn hash-fn
+                 :dry-run-in-push dry-run-in-push
                  :pull-item-fn pull-item-fn)))
       (when prepare-fn
         (plist-put ctx :prepared (funcall prepare-fn ctx)))
@@ -777,6 +815,16 @@ ARGS is a plist with the following keys:
   :hash-extra - Optional function called with the parsed data; its string
                 result is folded into the payload hash so state outside the
                 payload (e.g. module items) participates in change detection
+  :hash - Optional owner of change detection.  A function of (PAYLOAD DATA)
+          returns the hash stored as PAYLOAD_HASH and compared before a push,
+          in place of the payload's md5.  The symbol `push' means the push
+          decides for itself: the runner never skips on a stored hash and
+          never stamps one, and the push returns `skip' when there is
+          nothing to send (files, whose tiers compare bytes and metadata)
+  :dry-run - The symbol `push' when the push guards every write itself and
+             previews them: the runner then calls it under a dry run instead
+             of reporting from the snapshot, and counts the sentinel it
+             returns
   :prepare - Optional function of the run context, run once after the
              snapshot and before the first entry (and before the parse of a
              push at point); its result is kept in the context as :prepared
@@ -815,6 +863,8 @@ Example usage:
          (pull-item-fn (plist-get args :pull-item-fn))
          (hash-extra-fn (plist-get args :hash-extra))
          (after-sync-fn (plist-get args :after-sync))
+         (hash-fn (plist-get args :hash))
+         (dry-run-mode (plist-get args :dry-run))
          (prepare-fn (plist-get args :prepare))
          (first-fn (plist-get args :first))
          (no-at-point (plist-get args :no-at-point))
@@ -855,7 +905,8 @@ Example usage:
                              :parse ,parse-fn :build ,build-fn
                              :push ,push-fn :finalize ,finalize-fn
                              :pull-item-fn ,pull-item-fn :title-key ,title-key
-                             :hash-extra ,hash-extra-fn :prepare ,prepare-fn
+                             :hash-extra ,hash-extra-fn :hash ,hash-fn
+                             :dry-run ,dry-run-mode :prepare ,prepare-fn
                              :after-sync ,after-sync-fn))))
             (if first-fn
                 `(progn
@@ -875,7 +926,7 @@ Example usage:
                       :push ,push-fn :finalize ,finalize-fn
                       :title-key ,(or title-key :title)
                       :pull-item-fn ,pull-item-fn
-                      :hash-extra ,hash-extra-fn
+                      :hash-extra ,hash-extra-fn :hash ,hash-fn
                       :prepare ,prepare-fn))))))))
 
 ;;;; 6a. Remote Drift Detection
@@ -1800,9 +1851,9 @@ stage functions, all required.  :title-key is the plist key of the
 display name (default :title); :pull-item-fn, when non-nil, enables
 the pull option during conflict resolution; :hash-extra, when
 non-nil, is folded into the payload hash (see
-`org-canvas--sync-payload-hash'); :prepare, when non-nil, runs on the
-context before the parse and leaves its result as :prepared, as in a
-full run.  The push runs in a context of its
+`org-canvas--sync-payload-hash'); :hash and :prepare mean what they
+mean in a full run.  Returns the context, so a caller can read what
+the push recorded in it.  The push runs in a context of its
 own, so a capital answer at its conflict prompt is forgotten when it
 returns rather than applied to every later push at point (issue
 #141)."
@@ -1822,19 +1873,22 @@ returns rather than applied to every later push at point (issue
                 (org-canvas--log-info org-canvas--logger
                                       ">>> SYNC-AT-POINT: %s" feature-name)
                 (org-canvas--sync-make-ctx :feature-name feature-name
-                                           :pull-item-fn pull-item-fn)))
+                                           :pull-item-fn pull-item-fn
+                                           :hash-extra-fn hash-extra-fn
+                                           :hash-fn (plist-get spec :hash))))
          (data (progn
                  (when prepare-fn
                    (plist-put ctx :prepared (funcall prepare-fn ctx)))
                  (funcall parse-fn)))
          (title (plist-get data title-key))
          (payload (funcall build-fn data))
-         (payload-hash (org-canvas--sync-payload-hash payload data hash-extra-fn))
+         (payload-hash (org-canvas--sync-entry-hash payload data ctx))
          (stored-hash (org-entry-get (point) org-canvas--prop-payload-hash))
          (canvas-id (or (plist-get data :canvas-id)
                         (plist-get data :canvas-url))))
     (org-canvas--log-info org-canvas--logger "[Stage 2: Build] '%s'" title)
-    (if (and stored-hash
+    (if (and payload-hash
+             stored-hash
              (string= payload-hash stored-hash)
              canvas-id)
         (progn
@@ -1843,13 +1897,19 @@ returns rather than applied to every later push at point (issue
       (org-canvas--log-info org-canvas--logger "[Stage 3: Push] '%s' (%s)"
         title (if canvas-id "UPDATE" "CREATE"))
       (let ((response (funcall push-fn data payload ctx)))
-        (if (memq response '(conflict pulled duplicate))
-            (org-canvas--push-at-point-report-stop feature-name title response)
+        (cond
+         ((memq response '(conflict pulled duplicate))
+          (org-canvas--push-at-point-report-stop feature-name title response))
+         ((eq response 'skip)
+          (org-canvas--log-info org-canvas--logger "[Skip] '%s' nothing to send" title)
+          (message "%s '%s' unchanged — skipped." (capitalize feature-name) title))
+         (t
           (org-canvas--log-info org-canvas--logger "[Stage 4: Finalize] '%s'" title)
           (condition-case err
               (progn
                 (funcall finalize-fn data response ctx)
-                (org-canvas-org-set-property (point) org-canvas--prop-payload-hash payload-hash)
+                (when payload-hash
+                  (org-canvas-org-set-property (point) org-canvas--prop-payload-hash payload-hash))
                 (org-canvas--sync-advance-header-from-entry)
                 (org-canvas--save-buffer))
             (error
@@ -1859,7 +1919,8 @@ returns rather than applied to every later push at point (issue
                title (error-message-string err))
              (signal (car err) (cdr err))))
           (org-canvas--log-info org-canvas--logger "[Sync] '%s' synced successfully" title)
-          (message "%s '%s' synced." (capitalize feature-name) title))))))
+          (message "%s '%s' synced." (capitalize feature-name) title)))))
+    ctx))
 
 (defun org-canvas--push-at-point-report-stop (feature-name title outcome)
   "Say why the single-entry push of TITLE stopped with OUTCOME.

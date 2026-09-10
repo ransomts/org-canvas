@@ -192,8 +192,9 @@ finished."
                   :to-equal (plist-get result :before))))))
 
   ;; The checks above pass trivially for a sync that dies before reaching its
-  ;; push, so pin down that the two hand-written loops -- the ones that
-  ;; bypassed the shared guard -- really did walk their entries.
+  ;; push, so pin down that the two syncs whose guards sit inside their own
+  ;; write paths -- files (`:dry-run push') and the hand-written overrides
+  ;; loop -- really did walk their entries.
   (it "reaches the push path in the files module"
     (org-canvas-dry-run--with-course dir
       (let* ((result (org-canvas-dry-run--exercise 'org-canvas-sync-files dir))

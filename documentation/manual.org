@@ -2536,6 +2536,7 @@ These commands sync just the item at the current cursor position:
 |--------------------------------------------+----------------------------------|
 | =org-canvas-sync-assignment-at-point=        | Sync assignment at point         |
 | =org-canvas-sync-page-at-point=             | Sync page at point               |
+| =org-canvas-sync-file-at-point=             | Upload the file at point         |
 | =org-canvas-sync-outcome-at-point=          | Sync outcome at point            |
 | =org-canvas-sync-outcome-group-at-point=    | Sync outcome group at point      |
 | =org-canvas-sync-discussion-at-point=       | Sync discussion at point         |
