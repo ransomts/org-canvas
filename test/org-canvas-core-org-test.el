@@ -3089,6 +3089,96 @@ Page content.
                 (kill-buffer))))
         (delete-file file))))
 
+  (defun test-fresh-188--restamp (file)
+    "Move FILE's modification time without touching its text."
+    (set-file-times file (time-add (current-time) 5)))
+
+  (it "keeps a modified buffer whose file was only restamped after its own save (issue #188)"
+    (let ((file (make-temp-file "fresh-" nil ".org"))
+          (logged nil))
+      (unwind-protect
+          (progn
+            (with-temp-file file (insert "* Journal 03\n"))
+            (with-current-buffer (find-file-noselect file)
+              (unwind-protect
+                  (let ((noninteractive t))
+                    ;; First push: stamp and save through org-canvas.
+                    (goto-char (point-max))
+                    (insert "* R4: Agency\n")
+                    (org-canvas--save-buffer)
+                    ;; Second push: its stamp lands in the buffer, and then
+                    ;; the sync client restamps the file the first push
+                    ;; wrote, before the save.  (Restamped first, a batch
+                    ;; Emacs clears the stale time itself on the next edit,
+                    ;; and the guard never sees it.)
+                    (goto-char (point-max))
+                    (insert ":PROPERTIES:\n:CANVAS_ID: 7\n:END:\n")
+                    (test-fresh-188--restamp file)
+                    (expect (verify-visited-file-modtime (current-buffer)) :to-be nil)
+                    (cl-letf (((symbol-function 'org-canvas--log-debug)
+                               (lambda (_l fmt &rest args)
+                                 (push (apply #'format fmt args) logged))))
+                      (org-canvas--save-buffer))
+                    (expect (car logged) :to-match "restamped on disk without changing")
+                    (expect (verify-visited-file-modtime (current-buffer)) :to-be-truthy)
+                    (with-temp-buffer
+                      (insert-file-contents file)
+                      (expect (buffer-string) :to-match ":CANVAS_ID: 7")))
+                (set-buffer-modified-p nil)
+                (kill-buffer))))
+        (delete-file file))))
+
+  (it "does not reread an unmodified buffer whose file was only restamped"
+    (let ((file (make-temp-file "fresh-" nil ".org"))
+          (reverted nil))
+      (unwind-protect
+          (progn
+            (with-temp-file file (insert "* Old heading\n"))
+            (with-current-buffer (org-canvas--find-file-noselect file)
+              (unwind-protect
+                  (let ((noninteractive t))
+                    (test-fresh-188--restamp file)
+                    (cl-letf (((symbol-function 'revert-buffer)
+                               (lambda (&rest _) (setq reverted t))))
+                      (org-canvas--ensure-buffer-fresh))
+                    (expect reverted :to-be nil)
+                    (expect (verify-visited-file-modtime (current-buffer)) :to-be-truthy))
+                (kill-buffer))))
+        (delete-file file))))
+
+  (it "still refuses a real rewrite behind a modified buffer it had read"
+    (let ((file (make-temp-file "fresh-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file (insert "* Old heading\n"))
+            (with-current-buffer (org-canvas--find-file-noselect file)
+              (unwind-protect
+                  (let ((noninteractive t))
+                    (goto-char (point-max))
+                    (insert "local edit\n")
+                    (test-fresh-97--make-stale file)
+                    (expect (org-canvas--ensure-buffer-fresh) :to-throw 'error))
+                (set-buffer-modified-p nil)
+                (kill-buffer))))
+        (delete-file file))))
+
+  (it "treats a buffer org-canvas never read or saved as before"
+    (let ((file (make-temp-file "fresh-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file (insert "* Old heading\n"))
+            (with-current-buffer (find-file-noselect file)
+              (unwind-protect
+                  (let ((noninteractive t))
+                    (expect org-canvas--saved-content-hash :to-be nil)
+                    (goto-char (point-max))
+                    (insert "local edit\n")
+                    (test-fresh-188--restamp file)
+                    (expect (org-canvas--ensure-buffer-fresh) :to-throw 'error))
+                (set-buffer-modified-p nil)
+                (kill-buffer))))
+        (delete-file file))))
+
   (it "lets a property write land on the reread content"
     (let ((file (make-temp-file "fresh-" nil ".org")))
       (unwind-protect
