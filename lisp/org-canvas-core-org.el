@@ -145,6 +145,7 @@ the save still happens but no log line is emitted."
   (org-canvas--ensure-buffer-fresh)
   (when (buffer-modified-p)
     (save-buffer)
+    (org-canvas--note-saved-content)
     (when buffer-file-name
       (org-canvas--log-info org-canvas--logger "[Saved] %s" buffer-file-name))))
 
@@ -163,26 +164,64 @@ ID-PROPERTY defaults to \"CANVAS_ID\"."
          (format "%s={.}" id-prop) 'file)
         (org-canvas--save-buffer)))))
 
+(defvar-local org-canvas--saved-content-hash nil
+  "Hash of this buffer's text as last read from, or written to, its file.
+Set by `org-canvas--find-file-noselect' and `org-canvas--save-buffer',
+read by `org-canvas--ensure-buffer-fresh' to tell a file whose
+modification time moved but whose text did not — a sync client's
+restamp after this buffer's own save — from a file another writer
+rewrote (issue #188).  Nil until the buffer has been read or saved
+through org-canvas.")
+
+(defun org-canvas--note-saved-content ()
+  "Record the current buffer's text as the content its file now has."
+  (setq org-canvas--saved-content-hash (buffer-hash)))
+
+(defun org-canvas--file-restamped-p ()
+  "Return non-nil when the visited file's text is what this buffer last saw.
+A true answer means the modification time moved without the content
+changing, so the buffer is not being clobbered and may keep its edits."
+  (let ((file buffer-file-name))
+    (and org-canvas--saved-content-hash
+         file
+         (file-readable-p file)
+         (equal org-canvas--saved-content-hash
+                (with-temp-buffer
+                  (insert-file-contents file)
+                  (buffer-hash))))))
+
 (defun org-canvas--ensure-buffer-fresh ()
   "Under `noninteractive', reconcile the current buffer with its file.
 A course file rewritten on disk behind a buffer trips Emacs's
 \"changed on disk; really edit the buffer?\" protection, and a batch
 Emacs cannot answer it — the run dies reading input, after the API
-call already landed (issue #97).  An unmodified stale buffer is simply
-reread: the writer just saved it.  A modified stale buffer is a
-dual-buffer clobber in progress, so this signals a clear error instead
-of letting the unanswerable prompt kill the run.  Interactive sessions
-keep Emacs's own protection and are left alone."
+call already landed (issue #97).  A file whose modification time moved
+but whose text is what this buffer last read or wrote was merely
+restamped by a sync client after the buffer's own save; the buffer,
+edits and all, is kept and the recorded time refreshed (issue #188).
+Otherwise an unmodified stale buffer is simply reread: the writer just
+saved it.  A modified stale buffer is a dual-buffer clobber in
+progress, so this signals a clear error instead of letting the
+unanswerable prompt kill the run.  Interactive sessions keep Emacs's
+own protection and are left alone."
   (when (and noninteractive
              buffer-file-name
              (not (verify-visited-file-modtime (current-buffer))))
-    (if (buffer-modified-p)
-        (error "%s changed on disk while this buffer holds unsaved edits — refusing to write over either (issue #97: two buffers for one file, usually a symlinked org-canvas-directory)"
-               (file-name-nondirectory buffer-file-name))
+    (cond
+     ((org-canvas--file-restamped-p)
+      (org-canvas--log-debug org-canvas--logger
+        "[Fresh] %s was restamped on disk without changing; keeping the buffer (issue #188)"
+        (file-name-nondirectory buffer-file-name))
+      (set-visited-file-modtime))
+     ((buffer-modified-p)
+      (error "%s changed on disk while this buffer holds unsaved edits — refusing to write over either (issue #97: two buffers for one file, usually a symlinked org-canvas-directory)"
+             (file-name-nondirectory buffer-file-name)))
+     (t
       (org-canvas--log-info org-canvas--logger
         "[Fresh] %s changed on disk; rereading it before writing"
         (file-name-nondirectory buffer-file-name))
-      (revert-buffer t t t))))
+      (revert-buffer t t t)
+      (org-canvas--note-saved-content)))))
 
 (defun org-canvas--find-file-noselect (file)
   "Visit FILE and return its buffer, without the batch supersession prompt.
@@ -198,7 +237,9 @@ buffer is reread, a modified one signals a clear error.  Interactive
 sessions keep Emacs's own prompt."
   (let ((buffer (find-file-noselect file noninteractive)))
     (with-current-buffer buffer
-      (org-canvas--ensure-buffer-fresh))
+      (org-canvas--ensure-buffer-fresh)
+      (unless (buffer-modified-p)
+        (org-canvas--note-saved-content)))
     buffer))
 
 (defun org-canvas-org-set-property (pom property value)
