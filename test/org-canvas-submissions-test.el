@@ -2144,5 +2144,72 @@
             (expect prompt :to-match "skipping 1 conflict")
             (expect (test-org-canvas-api-call-count) :to-equal 0)))))))
 
+(describe "posting grades (issue #202)"
+  (it "records the assignment's effective policy in the file header"
+    (with-temp-buffer
+      (org-canvas--submissions-render-rubric-properties '((points_possible . 10) (post_manually . t)))
+      (expect (buffer-string) :to-match "#\\+PROPERTY: POST_POLICY manual\n"))
+    (with-temp-buffer
+      (org-canvas--submissions-render-rubric-properties '((points_possible . 10)))
+      (expect (buffer-string) :not :to-match "POST_POLICY")))
+
+  (it "renders POSTED_AT for a posted submission and nothing for an unposted one"
+    (with-temp-buffer
+      (org-mode)
+      (org-canvas--submissions-render-detail-entry
+       (test-org-canvas-make-submission '((score . 5) (posted_at . "2026-09-10T15:00:00Z"))) "1001")
+      (expect (buffer-string) :to-match ":POSTED_AT: <2026-09-10"))
+    (with-temp-buffer
+      (org-mode)
+      (org-canvas--submissions-render-detail-entry
+       (test-org-canvas-make-submission '((score . 5) (posted_at . :null))) "1001")
+      (expect (buffer-string) :not :to-match "POSTED_AT")))
+
+  (it "reads the policy from the file, so no request is needed at push time"
+    (with-grading-file (concat test-grading-file-header "#+PROPERTY: POST_POLICY manual\n* A\n:PROPERTIES:\n:USER_ID: 1\n:END:\n")
+      (expect (org-canvas--submissions-post-manually-p) :to-be t))
+    (with-grading-file (concat test-grading-file-header "* A\n:PROPERTIES:\n:USER_ID: 1\n:END:\n")
+      (expect (org-canvas--submissions-post-manually-p) :to-be nil)))
+
+  (it "offers to post after a push only under a manual policy, and posts on yes"
+    (with-grading-file (concat test-grading-file-header "#+PROPERTY: POST_POLICY manual\n* A\n:PROPERTIES:\n:USER_ID: 1\n:END:\n")
+      (let ((asked nil) (posted nil))
+        (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) (setq asked t) t))
+                  ((symbol-function 'org-canvas-submissions-post-grades) (lambda () (setq posted t))))
+          (org-canvas--submissions-offer-to-post '((:user-id 1)))
+          (expect asked :to-be t)
+          (expect posted :to-be t)
+          (setq asked nil posted nil)
+          (org-canvas--submissions-offer-to-post nil)
+          (expect asked :to-be nil))))
+    (with-grading-file (concat test-grading-file-header "* A\n:PROPERTIES:\n:USER_ID: 1\n:END:\n")
+      (let ((asked nil))
+        (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) (setq asked t) t)))
+          (org-canvas--submissions-offer-to-post '((:user-id 1))))
+        (expect asked :to-be nil))))
+
+  (it "posts the assignment's grades through the mutation"
+    (with-grading-file (concat test-grading-file-header "* A\n:PROPERTIES:\n:USER_ID: 1\n:END:\n")
+      (let ((seen nil))
+        (cl-letf (((symbol-function 'org-canvas--graphql-mutate)
+                   (lambda (what doc vars) (setq seen (list what doc vars)) nil)))
+          (org-canvas-submissions-post-grades))
+        (expect (nth 1 seen) :to-match "postAssignmentGrades")
+        (expect (alist-get 'assignmentId (nth 2 seen)) :to-equal "1001"))))
+
+  (it "refuses outside a grading buffer and without an assignment id"
+    (with-temp-buffer
+      (expect (org-canvas-submissions-post-grades) :to-throw 'user-error))
+    (with-temp-buffer
+      (org-mode)
+      (insert "* A\n")
+      (setq-local org-canvas-submissions--assignment-id nil)
+      (org-canvas-submissions-mode 1)
+      (expect (org-canvas-submissions-post-grades) :to-throw 'user-error)))
+
+  (it "binds P in the grading file and lists it in the menu"
+    (expect (lookup-key org-canvas-submissions-mode-map (kbd "P")) :to-be #'org-canvas-submissions-post-grades)))
+
+
 (provide 'org-canvas-submissions-test)
 ;;; org-canvas-submissions-test.el ends here

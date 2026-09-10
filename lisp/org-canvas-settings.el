@@ -67,6 +67,9 @@
     (:org-prop "LICENSE" :data-key :license :type enum
      :values ,org-canvas--valid-licenses
      :doc "Content license")
+    (:org-prop "POST_POLICY" :data-key :post_policy :type enum
+     :values ,org-canvas--valid-post-policies
+     :doc "Grade post policy: manual holds every grade until it is posted, automatic posts as graded; set through GraphQL, since REST only reads it")
     (:org-prop "START_AT" :data-key :start_at :type timestamp
      :doc "Course start date")
     (:org-prop "END_AT" :data-key :end_at :type timestamp
@@ -122,6 +125,7 @@ No transformations are applied; all values are raw `org-entry-get' results."
         :public-syllabus (org-entry-get pom "PUBLIC_SYLLABUS")
         :is-public (org-entry-get pom "IS_PUBLIC")
         :license-raw (org-entry-get pom "LICENSE")
+        :post-policy-raw (org-entry-get pom "POST_POLICY")
         :start-at-raw (org-entry-get pom "START_AT")
         :end-at-raw (org-entry-get pom "END_AT")
         :allow-student-discussion-topics (org-entry-get pom "ALLOW_STUDENT_DISCUSSION_TOPICS")
@@ -158,6 +162,8 @@ Returns a plist with transformed keys (no `-raw' suffixes)."
                   (plist-get raw :license-raw)
                   org-canvas--valid-licenses
                   "LICENSE"))
+        (post-policy (org-canvas--post-policy-from-property
+                      (plist-get raw :post-policy-raw) "POST_POLICY"))
         (start-at (org-canvas-org-parse-timestamp
                    (plist-get raw :start-at-raw)))
         (end-at (org-canvas-org-parse-timestamp
@@ -175,6 +181,7 @@ Returns a plist with transformed keys (no `-raw' suffixes)."
           :public-syllabus (plist-get raw :public-syllabus)
           :is-public (plist-get raw :is-public)
           :license license
+          :post-policy post-policy
           :start-at start-at
           :end-at end-at
           :allow-student-discussion-topics (plist-get raw :allow-student-discussion-topics)
@@ -383,6 +390,21 @@ both the PATCH and the POST fallback."
                (org-canvas--settings-create-late-policy endpoint late-policy-payload))
            (org-canvas--log-error org-canvas--logger "[Execute] Late policy sync failed: %s"
              (error-message-string err))))))))
+
+(defun org-canvas--settings-push-post-policy (data)
+  "Set the course grade post policy from DATA's :post-policy, when given.
+REST only reads the policy, so this is the `setCoursePostPolicy'
+GraphQL mutation (issue #202); the cached course policy is forgotten
+afterwards so the assignments pull and the drift report re-read it.
+A dry run reports and sends nothing."
+  (let ((policy (plist-get data :post-policy)))
+    (when policy
+      (org-canvas--graphql-mutate
+       (format "set the course post policy to %s" policy)
+       "mutation ($courseId: ID!, $manual: Boolean!) { setCoursePostPolicy(input: {courseId: $courseId, postManually: $manual}) { postPolicy { postManually } } }"
+       (list (cons 'courseId (format "%s" org-canvas-course-id))
+             (cons 'manual (equal policy "manual"))))
+      (org-canvas--course-post-policy-forget))))
 
 ;;;; 4. Finalize
 
@@ -593,6 +615,7 @@ and pushes them to Canvas via PUT /courses/:id."
                    (late-policy-payload (org-canvas--settings-build-late-policy-payload data))
                    (response (org-canvas--settings-push data payload)))
               (org-canvas--settings-push-late-policy late-policy-payload)
+              (org-canvas--settings-push-post-policy data)
               (org-canvas--settings-sync-tabs navigation)
               (org-canvas--settings-finalize data response)
               (org-canvas--save-buffer)
@@ -677,6 +700,10 @@ LATE-POLICY is the late policy API response (may be nil)."
      pom "IS_PUBLIC" (alist-get 'is_public response))
     (when license
       (org-canvas-org-set-property pom "LICENSE" license))
+    (let ((policy (org-canvas--post-manually-to-policy
+                   (alist-get 'post_manually response))))
+      (when policy
+        (org-canvas-org-set-property pom "POST_POLICY" policy)))
     (org-canvas--pull-set-timestamp-property pom "START_AT" start-at)
     (org-canvas--pull-set-timestamp-property pom "END_AT" end-at)
     (org-canvas--pull-set-boolean-property
@@ -779,7 +806,8 @@ and heading if they don't exist."
          (response (org-canvas-api-request
                     'GET endpoint
                     :params '(("include[]" . "syllabus_body")
-                              ("include[]" . "course_image"))))
+                              ("include[]" . "course_image")
+                              ("include[]" . "post_manually"))))
          (name (alist-get 'name response))
          (syllabus-body (org-canvas--alist-get-non-null 'syllabus_body response))
          (settings-file (expand-file-name org-canvas-settings-file))

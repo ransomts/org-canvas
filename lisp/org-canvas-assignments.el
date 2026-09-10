@@ -97,6 +97,11 @@ takes effect on the next `org-canvas-pull-assignments' invocation."
      :doc "How the assignment is graded")
     (:org-prop "PUBLISHED" :data-key :published :type boolean :default t
      :doc "Whether item is visible (default: true)")
+    (:org-prop "POST_POLICY" :data-key :post_policy :type enum
+     :values ,org-canvas--valid-post-policies
+     :remote-fn org-canvas--assignment-remote-post-policy
+     :compare-p org-canvas--assignment-post-policy-comparable-p
+     :doc "Grade post policy for this assignment when it differs from the course's (manual or automatic); omit to inherit")
     (:org-prop "SUBMISSION" :data-key :submission_types :type csv-enum
      :values ,org-canvas--valid-submission-types
      :read-only-values ,org-canvas--canvas-owned-submission-types
@@ -268,6 +273,7 @@ here since they require file I/O."
           :external-tool-url-raw (org-entry-get pom "EXTERNAL_TOOL_URL")
           :external-tool-id-raw (org-entry-get pom "EXTERNAL_TOOL_ID")
           :external-tool-new-tab-raw (org-entry-get pom "EXTERNAL_TOOL_NEW_TAB")
+          :post-policy-raw (org-entry-get pom "POST_POLICY")
           ;; Resolved links (I/O)
           :assignment-group-id-raw (org-canvas--assignment-resolve-link-id group-link "CANVAS_ID")
           :rubric-id (org-canvas--assignment-resolve-link-id rubric-link "CANVAS_ID")
@@ -363,7 +369,9 @@ Pure function — no buffer access."
                               (org-canvas--safe-string-to-number
                                tool-id "EXTERNAL_TOOL_ID"))
           :external_tool_new_tab (org-canvas--interpret-boolean
-                                  (plist-get raw :external-tool-new-tab-raw)))))
+                                  (plist-get raw :external-tool-new-tab-raw))
+          :post-policy (org-canvas--post-policy-from-property
+                        (plist-get raw :post-policy-raw) "POST_POLICY"))))
 
 (defun org-canvas--assignment-parse-entry ()
   "Extract assignment data from the Org heading at point."
@@ -510,6 +518,38 @@ without the placement."
       (mapconcat #'org-canvas--assignment-describe-processor
                  (append processors nil) ", "))))
 
+(defun org-canvas--assignment-remote-post-policy (item)
+  "Return ITEM's grade post policy when it differs from the course's, else nil.
+Canvas reports every assignment's effective policy as `post_manually',
+the course default included.  Writing that on every heading would make
+each assignment carry an explicit policy, and a push would then pin it
+so the course policy no longer reaches it; so only a difference is
+reported, which is what an assignment-level policy is.  The course
+policy is read once and cached (`org-canvas--course-post-policy')."
+  (let ((policy (org-canvas--post-manually-to-policy
+                 (alist-get 'post_manually item))))
+    (when (and policy (not (equal policy (org-canvas--course-post-policy))))
+      policy)))
+
+(defun org-canvas--assignment-post-policy-comparable-p (pom _item)
+  "Return non-nil when the heading at POM declares a POST_POLICY.
+A silent heading inherits the course policy and has no opinion for the
+drift report to compare."
+  (org-entry-get pom "POST_POLICY"))
+
+(defun org-canvas--assignment-push-post-policy (data assignment-id)
+  "Set ASSIGNMENT-ID's grade post policy from DATA's :post-policy, when given.
+The `setAssignmentPostPolicy' GraphQL mutation (issue #202).  Returns
+non-nil when a write went out, so the caller can note it on the run."
+  (let ((policy (plist-get data :post-policy)))
+    (when (and policy assignment-id)
+      (org-canvas--graphql-mutate
+       (format "set the post policy of '%s' to %s" (plist-get data :title) policy)
+       "mutation ($assignmentId: ID!, $manual: Boolean!) { setAssignmentPostPolicy(input: {assignmentId: $assignmentId, postManually: $manual}) { postPolicy { postManually } } }"
+       (list (cons 'assignmentId (format "%s" assignment-id))
+             (cons 'manual (equal policy "manual"))))
+      t)))
+
 (defun org-canvas--assignment-add-optional-fields (data assignment)
   "Add optional fields from DATA to ASSIGNMENT hash-table."
   (dolist (spec org-canvas--assignment-optional-field-specs)
@@ -604,6 +644,10 @@ CTX the run context a remote write is declared on."
                 assignment-id rubric-id
                 (list :use-for-grading (plist-get data :rubric-use-for-grading)
                       :hide-score-total (plist-get data :rubric-hide-score-total))))
+      (org-canvas--finalize-note-remote-write ctx))
+    ;; A post policy is GraphQL, not part of the PUT; it touches the
+    ;; assignment too, so it is declared the same way (issue #202).
+    (when (org-canvas--assignment-push-post-policy data assignment-id)
       (org-canvas--finalize-note-remote-write ctx))))
 
 ;;;; Main Sync Function

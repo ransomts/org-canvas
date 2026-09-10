@@ -105,6 +105,8 @@ writing commands greyed rather than only erroring when one is chosen
    ("o" "Open a saved grading file" org-canvas-open-submissions)
    ("a" "Apply the completion rule to this file" org-canvas-submissions-apply-completion-rule)
    ("G" "Push grades" org-canvas-submissions-push-grades
+    :inapt-if-not org-canvas--transient-writable-p)
+   ("P" "Post grades to students" org-canvas-submissions-post-grades
     :inapt-if-not org-canvas--transient-writable-p)]
   ["Tools"
    ("i" "Init (setup wizard)" org-canvas-init)

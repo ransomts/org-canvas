@@ -887,6 +887,12 @@ the discussion is what brings such an assignment into being.")
   '("feed" "wiki" "modules" "syllabus" "assignments")
   "Valid values for DEFAULT_VIEW in settings.")
 
+(defconst org-canvas--valid-post-policies
+  '("automatic" "manual")
+  "Valid values for POST_POLICY, on the course and on an assignment.
+Canvas's own field is `post_manually' (boolean); the property names the
+policy the way the gradebook UI does.")
+
 (defconst org-canvas--valid-licenses
   '("private" "cc_by" "cc_by_sa" "cc_by_nc" "cc_by_nc_sa"
     "cc_by_nd" "cc_by_nc_nd" "public_domain")

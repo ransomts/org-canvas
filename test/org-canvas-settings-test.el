@@ -1790,4 +1790,73 @@ LIST :records LIST)."
       (expect (plist-get (car (plist-get result :records)) :item)
               :to-equal "navigation tabs"))))
 
+(describe "course post policy (issue #202)"
+  (it "parses POST_POLICY and rejects a value outside the enum"
+    (with-temp-org-buffer "* Course\n:PROPERTIES:\n:POST_POLICY: manual\n:END:\n"
+      (org-back-to-heading)
+      (expect (plist-get (org-canvas--settings-parse-entry) :post-policy) :to-equal "manual"))
+    (with-temp-org-buffer "* Course\n:PROPERTIES:\n:POST_POLICY: sometimes\n:END:\n"
+      (org-back-to-heading)
+      (cl-letf (((symbol-function 'org-canvas--log-warning) #'ignore))
+        (expect (plist-get (org-canvas--settings-parse-entry) :post-policy) :to-be nil))))
+
+  (it "sets the course policy through the mutation and forgets the cache"
+    (with-org-canvas-test-config
+      (let ((seen nil) (forgotten nil))
+        (cl-letf (((symbol-function 'org-canvas--graphql-mutate)
+                   (lambda (what doc vars) (setq seen (list what doc vars)) nil))
+                  ((symbol-function 'org-canvas--course-post-policy-forget)
+                   (lambda () (setq forgotten t))))
+          (org-canvas--settings-push-post-policy '(:post-policy "manual")))
+        (expect (nth 0 seen) :to-match "manual")
+        (expect (nth 1 seen) :to-match "setCoursePostPolicy")
+        (expect (alist-get 'courseId (nth 2 seen)) :to-equal (format "%s" org-canvas-course-id))
+        (expect (alist-get 'manual (nth 2 seen)) :to-be t)
+        (expect forgotten :to-be t))))
+
+  (it "sends automatic as postManually false"
+    (with-org-canvas-test-config
+      (let ((vars nil))
+        (cl-letf (((symbol-function 'org-canvas--graphql-mutate) (lambda (_w _d v) (setq vars v) nil))
+                  ((symbol-function 'org-canvas--course-post-policy-forget) #'ignore))
+          (org-canvas--settings-push-post-policy '(:post-policy "automatic")))
+        (expect (alist-get 'manual vars) :to-be nil))))
+
+  (it "sends nothing when the heading declares no policy"
+    (let ((sent nil))
+      (cl-letf (((symbol-function 'org-canvas--graphql-mutate) (lambda (&rest _) (setq sent t))))
+        (org-canvas--settings-push-post-policy '(:title "Course")))
+      (expect sent :to-be nil)))
+
+  (it "runs the policy push inside the settings sync, after the course PUT"
+    (let ((file (make-temp-file "settings-" nil ".org")) (order nil))
+      (unwind-protect
+          (with-org-canvas-test-config
+            (with-temp-file file (insert "* Course\n:PROPERTIES:\n:POST_POLICY: manual\n:END:\n"))
+            (let ((org-canvas-settings-file file))
+              (cl-letf (((symbol-function 'org-canvas--settings-push)
+                         (lambda (&rest _) (push 'put order) '((id . 1))))
+                        ((symbol-function 'org-canvas--settings-push-post-policy)
+                         (lambda (data) (push (list 'policy (plist-get data :post-policy)) order)))
+                        ((symbol-function 'org-canvas--settings-push-late-policy) #'ignore)
+                        ((symbol-function 'org-canvas--settings-sync-tabs) #'ignore)
+                        ((symbol-function 'display-buffer) #'ignore))
+                (org-canvas-sync-settings))
+              (expect (nreverse order) :to-equal '(put (policy "manual")))))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file))))
+
+  (it "pulls the policy from post_manually and asks for the include"
+    (with-temp-org-buffer "* Course\n"
+      (org-back-to-heading)
+      (cl-letf (((symbol-function 'org-canvas--pull-set-timestamp-property) #'ignore))
+        (org-canvas--settings-pull-set-properties (point) '((post_manually . t)) nil))
+      (expect (org-entry-get (point) "POST_POLICY") :to-equal "manual"))
+    (with-temp-org-buffer "* Course\n"
+      (org-back-to-heading)
+      (cl-letf (((symbol-function 'org-canvas--pull-set-timestamp-property) #'ignore))
+        (org-canvas--settings-pull-set-properties (point) '((name . "x")) nil))
+      (expect (org-entry-get (point) "POST_POLICY") :to-be nil))))
+
+
 ;;; org-canvas-settings-test.el ends here

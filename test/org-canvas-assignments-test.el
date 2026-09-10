@@ -2131,4 +2131,57 @@ Write it.
          (expect json :not :to-match "asset_processors")
          (expect json :not :to-match "[Tt]urnitin"))))))
 
+(describe "assignment post policy (issue #202)"
+  (before-each (org-canvas--course-post-policy-forget))
+  (after-each (org-canvas--course-post-policy-forget))
+
+  (it "reports the assignment's policy only when it differs from the course's"
+    (cl-letf (((symbol-function 'org-canvas--course-post-policy) (lambda () "automatic")))
+      (expect (org-canvas--assignment-remote-post-policy '((post_manually . t))) :to-equal "manual")
+      (expect (org-canvas--assignment-remote-post-policy '((post_manually . :json-false))) :to-be nil)
+      (expect (org-canvas--assignment-remote-post-policy '((name . "x"))) :to-be nil))
+    (cl-letf (((symbol-function 'org-canvas--course-post-policy) (lambda () "manual")))
+      (expect (org-canvas--assignment-remote-post-policy '((post_manually . t))) :to-be nil)
+      (expect (org-canvas--assignment-remote-post-policy '((post_manually . :json-false))) :to-equal "automatic")))
+
+  (it "is comparable for the drift report only when the heading declares it"
+    (with-temp-org-buffer "* HW\n:PROPERTIES:\n:POST_POLICY: manual\n:END:\n* Quiet\n"
+      (org-back-to-heading)
+      (expect (org-canvas--assignment-post-policy-comparable-p (point) nil) :to-be-truthy)
+      (org-forward-heading-same-level 1)
+      (expect (org-canvas--assignment-post-policy-comparable-p (point) nil) :to-be nil)))
+
+  (it "parses POST_POLICY into the data"
+    (with-temp-org-buffer "* HW\n:PROPERTIES:\n:POST_POLICY: manual\n:END:\n"
+      (org-back-to-heading)
+      (expect (plist-get (org-canvas--assignment-parse-entry) :post-policy) :to-equal "manual")))
+
+  (it "never carries the policy in the REST payload"
+    (let ((payload (org-canvas--assignment-build-payload
+                    (list :title "HW" :post-policy "manual" :published t
+                          :grading_type "points" :submission_types '("online_upload")))))
+      (expect (json-encode payload) :not :to-match "post")))
+
+  (it "sets the policy through the mutation from finalize and notes the remote write"
+    (with-org-canvas-test-config
+      (let ((seen nil) (ctx (org-canvas--sync-make-ctx)))
+        (cl-letf (((symbol-function 'org-canvas--graphql-mutate)
+                   (lambda (what doc vars) (setq seen (list what doc vars)) nil))
+                  ((symbol-function 'org-canvas--assignment-associate-rubric) #'ignore))
+          (org-canvas--assignment-post-finalize '(:title "HW" :post-policy "manual")
+                                                '((id . 61)) ctx))
+        (expect (nth 1 seen) :to-match "setAssignmentPostPolicy")
+        (expect (alist-get 'assignmentId (nth 2 seen)) :to-equal "61")
+        (expect (alist-get 'manual (nth 2 seen)) :to-be t)
+        (expect (plist-get ctx :remote-touched) :to-be t))))
+
+  (it "sends nothing and notes nothing without a declared policy"
+    (let ((sent nil) (ctx (org-canvas--sync-make-ctx)))
+      (cl-letf (((symbol-function 'org-canvas--graphql-mutate) (lambda (&rest _) (setq sent t)))
+                ((symbol-function 'org-canvas--assignment-associate-rubric) #'ignore))
+        (org-canvas--assignment-post-finalize '(:title "HW") '((id . 61)) ctx))
+      (expect sent :to-be nil)
+      (expect (plist-get ctx :remote-touched) :to-be nil))))
+
+
 ;;; org-canvas-assignments-test.el ends here

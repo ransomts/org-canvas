@@ -179,6 +179,7 @@ What stays dynamically bound is the *caller's* seam, set around a command by who
 - `org-canvas-api-request` decodes with `json-read`, so a JSON array arrives as a **vector**: walk a reply with `cl-find-if`/`seq-*`, or coerce with `(append reply nil)` first. An empty vector is also non-nil, so it passes a `when` guard (#153). A list-returning test stub hides both
 - Booleans: `t` for true, `:json-false` for false (nil is JSON null, which Canvas reads differently). Org properties are strings — compare with `"true"`/`"false"`
 - The codebase passes `'POST`; `org-canvas-api-request` lowercases it for plz (`'post`). Uppercase or keyword methods to plz are a 400
+- GraphQL (post policies, posting grades; #202): a read goes through `org-canvas--graphql-query`, which lifts the read-only guard for that one request and refuses a mutation; a write goes through `org-canvas--graphql-mutate`, which keeps the guard and the dry run. A 200 reply carrying `errors` is an `org-canvas-api-error` — decisions.org, "Post Policies Are GraphQL"
 
 ### Error Handling
 - Wrap API calls in `condition-case`; continue processing other items if one fails
