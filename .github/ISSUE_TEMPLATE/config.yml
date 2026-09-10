@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security problem
+    url: https://github.com/ransomts/org-canvas/security/advisories/new
+    about: A token or cookie leak, or a write that reached Canvas when it should not have. Private; do not open a public issue.
+  - name: How do I ...?
+    url: https://github.com/ransomts/org-canvas/blob/main/documentation/faq.org
+    about: The FAQ and recipes, and the manual beside it, answer most usage questions.

@@ -1,0 +1,77 @@
+name: Bug report
+description: Something org-canvas did, or failed to do, against a course
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. The more of this you can fill in, the more likely the fix
+        lands in one round. **Remove your API token and any session cookies from anything
+        you paste.** The log redacts them, but a backtrace or a curl command may not.
+        If you think you have found a way for a token to leak, use the
+        [private security form](https://github.com/ransomts/org-canvas/security/advisories/new)
+        instead of this template.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you ran, what you saw. Name the command (e.g. `org-canvas-pull-assignments`) and the course file involved.
+      placeholder: Ran M-x org-canvas-sync-assignments on assignments.org; the heading "Lab 3" was created a second time instead of updated.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: org-canvas commit
+      description: "`git rev-parse --short HEAD` in your checkout, or the package version if installed from an archive"
+      placeholder: 61185b4
+    validations:
+      required: true
+  - type: input
+    id: emacs
+    attributes:
+      label: Emacs and Org versions
+      description: "`M-x emacs-version` and `M-x org-version`"
+      placeholder: GNU Emacs 30.1, Org mode 9.7.11
+    validations:
+      required: true
+  - type: dropdown
+    id: how-run
+    attributes:
+      label: How org-canvas was run
+      options:
+        - Interactively (M-x, the transient menu)
+        - Batch (emacs --batch, a script, CI)
+        - Both
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log excerpt
+      description: The relevant lines from `*org-canvas-log*` or the log file (`org-canvas-log-destination`). Redact tokens and cookies by hand before pasting.
+      render: text
+  - type: textarea
+    id: heading
+    attributes:
+      label: The Org heading involved
+      description: The heading and its property drawer, if the bug is about one entry. Trim the body if it is long; keep the drawer intact.
+      render: org
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Smallest reproduction you have
+      description: Steps, or a minimal Org file, that shows it. If it needs a live course, say what the course held before the command ran.
+  - type: checkboxes
+    id: redacted
+    attributes:
+      label: Redaction
+      options:
+        - label: I have removed my API token, session cookies and any student data from everything pasted above.
+          required: true
