@@ -612,20 +612,46 @@ the baseline re-read from it (issue #124)."
        ,@(when (and post-fn endpoint) `(:endpoint ,endpoint))
        ,@(when post-fn `(:post-fn ,post-fn)))))
 
-(defun org-canvas--sync-run-pipeline (feature-name sync-file query
-                                                   parse-fn build-fn push-fn
-                                                   finalize-fn
-                                                   &optional pull-item-fn title-key
-                                                   hash-extra-fn after-sync-fn)
-  "Run the full sync pipeline for FEATURE-NAME.
-SYNC-FILE is the expanded org file path.  QUERY is the org match query.
-PARSE-FN, BUILD-FN, PUSH-FN, FINALIZE-FN are the 4-stage pipeline functions.
-PULL-ITEM-FN enables interactive conflict pull.  TITLE-KEY is the plist key
-for the display name in logs.  HASH-EXTRA-FN, when non-nil, is called with
-the parsed data and its string result is folded into the payload hash
-\(see `org-canvas--sync-payload-hash').
+(defconst org-canvas--sync-spec-keys
+  '(:feature :file :query :parse :build :push :finalize
+    :pull-item-fn :title-key :hash-extra :after-sync)
+  "Keys a sync spec may carry.
+A sync spec is the plist `org-canvas-define-sync' builds from its
+options and hands to `org-canvas--sync-run-pipeline' and
+`org-canvas--push-at-point-runtime': one value, named the way the
+module wrote it, instead of eleven positional arguments.  :feature is
+the module name (the singular for a push at point), :file the expanded
+Org file, :query the Org match, :parse, :build, :push and :finalize
+the four stage functions, :pull-item-fn the function that enables the
+pull answer at a conflict prompt, :title-key the plist key of the
+display name, :hash-extra the function whose result is folded into the
+payload hash, and :after-sync the hook run on the context before the
+summary.")
 
-AFTER-SYNC-FN, when non-nil, is called with the run context once every
+(defun org-canvas--sync-check-spec (spec required)
+  "Signal on a key of SPEC outside the sync spec keys, or a REQUIRED key absent.
+A plist accepts any key silently, so a misspelt option in a module would
+otherwise vanish; this names it instead."
+  (let ((rest spec))
+    (while rest
+      (unless (memq (car rest) org-canvas--sync-spec-keys)
+        (error "Sync spec: unknown key %S (see `org-canvas--sync-spec-keys')"
+               (car rest)))
+      (setq rest (cddr rest))))
+  (dolist (key required)
+    (unless (plist-get spec key)
+      (error "Sync spec: %s is required" key))))
+
+(defun org-canvas--sync-run-pipeline (spec)
+  "Run the full sync pipeline described by SPEC.
+SPEC is a sync spec (`org-canvas--sync-spec-keys'): :feature, :file,
+:query, :parse, :build, :push and :finalize are required.
+:pull-item-fn enables the interactive conflict pull; :title-key is the
+plist key of the display name in logs; :hash-extra, when non-nil, is
+called with the parsed data and its string result is folded into the
+payload hash (see `org-canvas--sync-payload-hash').
+
+:after-sync, when non-nil, is called with the run context once every
 entry has been processed, just before the summary.  It is the place for
 checks that need remote state and so cannot live in the offline
 validator — it must not signal, since a reconciliation problem should
@@ -634,8 +660,21 @@ never fail a sync that otherwise succeeded.
 Returns the run context (`org-canvas--sync-ctx-keys'), so an
 orchestrator can read what the run accumulated — the master sync
 collects the module items left pending — without a global."
+  (org-canvas--sync-check-spec
+   spec '(:feature :file :query :parse :build :push :finalize))
   (org-canvas-clear-log)
-  (let ((feature-upper (upcase feature-name)))
+  (let* ((feature-name (plist-get spec :feature))
+         (sync-file (plist-get spec :file))
+         (query (plist-get spec :query))
+         (parse-fn (plist-get spec :parse))
+         (build-fn (plist-get spec :build))
+         (push-fn (plist-get spec :push))
+         (finalize-fn (plist-get spec :finalize))
+         (pull-item-fn (plist-get spec :pull-item-fn))
+         (title-key (plist-get spec :title-key))
+         (hash-extra-fn (plist-get spec :hash-extra))
+         (after-sync-fn (plist-get spec :after-sync))
+         (feature-upper (upcase feature-name)))
     (org-canvas--sync-validate-file feature-upper sync-file)
     (let* ((entries (org-canvas--sync-collect-entries sync-file query feature-name))
            (targets (plist-get entries :targets))
@@ -788,18 +827,25 @@ Example usage:
          ,(format "Synchronize %s to Canvas using the 4-stage pipeline." feature-name)
          (interactive)
          (org-canvas--sync-run-pipeline
-          ,feature-name (expand-file-name ,file-expr)
-          ,query ,parse-fn ,build-fn ,push-fn ,finalize-fn
-          ,pull-item-fn ,title-key ,hash-extra-fn ,after-sync-fn))
+          (list :feature ,feature-name
+                :file (expand-file-name ,file-expr)
+                :query ,query
+                :parse ,parse-fn :build ,build-fn
+                :push ,push-fn :finalize ,finalize-fn
+                :pull-item-fn ,pull-item-fn :title-key ,title-key
+                :hash-extra ,hash-extra-fn :after-sync ,after-sync-fn)))
        ,@(unless no-at-point
            `(;;;###autoload
              (defun ,at-point-fn-name ()
                ,(format "Sync the %s at point to Canvas." singular)
                (interactive)
                (org-canvas--push-at-point-runtime
-                ,singular
-                ,parse-fn ,build-fn ,push-fn ,finalize-fn
-                ,(or title-key :title) ,pull-item-fn ,hash-extra-fn)))))))
+                (list :feature ,singular
+                      :parse ,parse-fn :build ,build-fn
+                      :push ,push-fn :finalize ,finalize-fn
+                      :title-key ,(or title-key :title)
+                      :pull-item-fn ,pull-item-fn
+                      :hash-extra ,hash-extra-fn))))))))
 
 ;;;; 6a. Remote Drift Detection
 ;;
@@ -1715,25 +1761,34 @@ Save the Canvas ID and LAST_SYNCED timestamp to the Org entry."
 
 ;;;; 9. Push-at-Point Infrastructure
 
-(defun org-canvas--push-at-point-runtime (feature-name parse-fn build-fn
-                                                       push-fn finalize-fn
-                                                       title-key pull-item-fn
-                                                       &optional hash-extra-fn)
+(defun org-canvas--push-at-point-runtime (spec)
   "Runtime body for generated push-at-point functions.
-FEATURE-NAME is the module name string.  PARSE-FN, BUILD-FN,
-PUSH-FN, FINALIZE-FN are the 4-stage pipeline functions.
-TITLE-KEY is the plist key for the display name.
-PULL-ITEM-FN, when non-nil, enables the pull option during conflict resolution.
-HASH-EXTRA-FN, when non-nil, is folded into the payload hash
-\(see `org-canvas--sync-payload-hash').  The push runs in a context of
-its own, so a capital answer at its conflict prompt is forgotten when
-it returns rather than applied to every later push at point (issue
+SPEC is a sync spec (`org-canvas--sync-spec-keys'): :feature is the
+singular module name, :parse, :build, :push and :finalize the four
+stage functions, all required.  :title-key is the plist key of the
+display name (default :title); :pull-item-fn, when non-nil, enables
+the pull option during conflict resolution; :hash-extra, when
+non-nil, is folded into the payload hash (see
+`org-canvas--sync-payload-hash').  The push runs in a context of its
+own, so a capital answer at its conflict prompt is forgotten when it
+returns rather than applied to every later push at point (issue
 #141)."
+  (org-canvas--sync-check-spec spec '(:feature :parse :build :push :finalize))
   (org-back-to-heading t)
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
-  (org-canvas--log-info org-canvas--logger ">>> SYNC-AT-POINT: %s" feature-name)
-  (let* ((ctx (org-canvas--sync-make-ctx :feature-name feature-name
-                                         :pull-item-fn pull-item-fn))
+  (let* ((feature-name (plist-get spec :feature))
+         (parse-fn (plist-get spec :parse))
+         (build-fn (plist-get spec :build))
+         (push-fn (plist-get spec :push))
+         (finalize-fn (plist-get spec :finalize))
+         (title-key (or (plist-get spec :title-key) :title))
+         (pull-item-fn (plist-get spec :pull-item-fn))
+         (hash-extra-fn (plist-get spec :hash-extra))
+         (ctx (progn
+                (org-canvas--log-info org-canvas--logger
+                                      ">>> SYNC-AT-POINT: %s" feature-name)
+                (org-canvas--sync-make-ctx :feature-name feature-name
+                                           :pull-item-fn pull-item-fn)))
          (data (funcall parse-fn))
          (title (plist-get data title-key))
          (payload (funcall build-fn data))

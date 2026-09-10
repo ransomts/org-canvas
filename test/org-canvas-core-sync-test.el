@@ -1426,16 +1426,16 @@ Hello world.
          (org-back-to-heading)
          (let ((captured-pull-fn nil))
            (cl-letf (((symbol-function 'display-buffer) #'ignore))
-             (org-canvas--push-at-point-runtime
-              "test"
-              (lambda () (list :title "Test" :canvas-id "99" :pom (point)))
-              (lambda (_data) '((title . "Test")))
-              (lambda (_data _payload &optional ctx)
-                (setq captured-pull-fn (plist-get ctx :pull-item-fn))
-                '((id . 99)))
-              (lambda (_data _response &optional _ctx) nil)
-              :title
-              #'my-pull-fn))
+		    (org-canvas--push-at-point-runtime (list
+							:feature "test"
+							:parse (lambda () (list :title "Test" :canvas-id "99" :pom (point)))
+							:build (lambda (_data) '((title . "Test")))
+							:push (lambda (_data _payload &optional ctx)
+								(setq captured-pull-fn (plist-get ctx :pull-item-fn))
+								'((id . 99)))
+							:finalize (lambda (_data _response &optional _ctx) nil)
+							:title-key :title
+							:pull-item-fn #'my-pull-fn)))
            (expect captured-pull-fn :to-equal #'my-pull-fn)))))))
 
 (describe "org-canvas--make-push-fn-form"
@@ -1508,15 +1508,14 @@ Hello world.
                            (lambda (_method _url &rest _args)
                              (setq parse-count (1+ parse-count))
                              '((id . 1)))))
-                  (org-canvas--sync-run-pipeline
-                   "test" org-file "LEVEL=1"
-                   #'org-canvas--announcement-parse-entry
-                   #'org-canvas--announcement-build-payload
-                   (lambda (data payload &optional ctx)
-                     (org-canvas--push-to-api data payload :endpoint "test" :ctx ctx))
-                   (lambda (data response &optional ctx)
-                     (org-canvas--finalize-item data response :ctx ctx))
-                   nil nil)
+			 (org-canvas--sync-run-pipeline (list
+							 :feature "test" :file org-file :query "LEVEL=1"
+							 :parse #'org-canvas--announcement-parse-entry
+							 :build #'org-canvas--announcement-build-payload
+							 :push (lambda (data payload &optional ctx)
+								 (org-canvas--push-to-api data payload :endpoint "test" :ctx ctx))
+							 :finalize (lambda (data response &optional ctx)
+								     (org-canvas--finalize-item data response :ctx ctx))))
                   (expect parse-count :to-be-truthy)))))
         (delete-directory temp-dir t))))
 
@@ -1527,8 +1526,8 @@ Hello world.
                (lambda (&rest _) (list :targets nil :all-ids-before nil)))
               ((symbol-function 'org-canvas--sync-warn-orphans) #'ignore)
               ((symbol-function 'org-canvas--sync-log-summary) #'ignore))
-      (let ((ctx (org-canvas--sync-run-pipeline "test" "/tmp/test.org" "LEVEL=1"
-                                                #'ignore #'ignore #'ignore #'ignore)))
+	     (let ((ctx (org-canvas--sync-run-pipeline (list :feature "test" :file "/tmp/test.org" :query "LEVEL=1"
+							     :parse #'ignore :build #'ignore :push #'ignore :finalize #'ignore))))
         (expect (plist-get ctx :conflict-apply-all) :to-be nil)
         (expect (plist-get ctx :duplicate-apply-all) :to-be nil)
         (expect (plist-get ctx :feature-name) :to-equal "test"))))
@@ -1540,9 +1539,9 @@ Hello world.
                (lambda (&rest _) (list :targets nil :all-ids-before nil)))
               ((symbol-function 'org-canvas--sync-warn-orphans) #'ignore)
               ((symbol-function 'org-canvas--sync-log-summary) #'ignore))
-      (let ((ctx (org-canvas--sync-run-pipeline "test" "/tmp/test.org" "LEVEL=1"
-                                                #'ignore #'ignore #'ignore #'ignore
-                                                #'my-pull-fn)))
+	     (let ((ctx (org-canvas--sync-run-pipeline (list :feature "test" :file "/tmp/test.org" :query "LEVEL=1"
+							     :parse #'ignore :build #'ignore :push #'ignore :finalize #'ignore
+							     :pull-item-fn #'my-pull-fn))))
         (expect (plist-get ctx :pull-item-fn) :to-equal #'my-pull-fn)))))
 
 (describe "org-canvas--push-at-point-runtime"
@@ -1565,14 +1564,13 @@ Body.
          (save-buffer)
          (cl-letf (((symbol-function 'org-canvas-clear-log) #'ignore)
                    ((symbol-function 'display-buffer) #'ignore))
-           (org-canvas--push-at-point-runtime
-            "page"
-            (lambda () (list :title "Test Page" :canvas-id "100" :pom (point)))
-            (lambda (_data) payload)
-            (lambda (_data _payload &optional _ctx) (setq api-called t) '((id . 100)))
-            (lambda (_data _response &optional _ctx) nil)
-            :title
-            nil))
+		  (org-canvas--push-at-point-runtime (list
+						      :feature "page"
+						      :parse (lambda () (list :title "Test Page" :canvas-id "100" :pom (point)))
+						      :build (lambda (_data) payload)
+						      :push (lambda (_data _payload &optional _ctx) (setq api-called t) '((id . 100)))
+						      :finalize (lambda (_data _response &optional _ctx) nil)
+						      :title-key :title)))
          ;; API should NOT have been called (skipped)
          (expect api-called :to-be nil))))))
 
@@ -1596,14 +1594,13 @@ Body.
          (save-buffer)
          (cl-letf (((symbol-function 'org-canvas-clear-log) #'ignore)
                    ((symbol-function 'display-buffer) #'ignore))
-           (org-canvas--push-at-point-runtime
-            "page"
-            (lambda () (list :title "Test Page" :canvas-url "my-page-slug" :pom (point)))
-            (lambda (_data) payload)
-            (lambda (_data _payload &optional _ctx) (setq api-called t) '((url . "my-page-slug")))
-            (lambda (_data _response &optional _ctx) nil)
-            :title
-            nil))
+		  (org-canvas--push-at-point-runtime (list
+						      :feature "page"
+						      :parse (lambda () (list :title "Test Page" :canvas-url "my-page-slug" :pom (point)))
+						      :build (lambda (_data) payload)
+						      :push (lambda (_data _payload &optional _ctx) (setq api-called t) '((url . "my-page-slug")))
+						      :finalize (lambda (_data _response &optional _ctx) nil)
+						      :title-key :title)))
          ;; Should be skipped because hash matches AND canvas-url is truthy
          (expect api-called :to-be nil))))))
 
@@ -1806,13 +1803,13 @@ Content here.
      (spy-on 'org-canvas--log-info)
      (cl-letf (((symbol-function 'display-buffer) (lambda (_) nil))
                ((symbol-function 'save-buffer) (lambda () nil)))
-       (org-canvas--push-at-point-runtime
-        "pages"
-        (lambda () (list :title "Test Page" :canvas-id nil :pom (point-marker)))
-        (lambda (_) '((title . "Test Page")))
-        (lambda (_data _payload &optional _ctx) '((url . "test-page")))
-        (lambda (_data _response &optional _ctx) nil)
-        :title nil))
+	      (org-canvas--push-at-point-runtime (list
+						  :feature "pages"
+						  :parse (lambda () (list :title "Test Page" :canvas-id nil :pom (point-marker)))
+						  :build (lambda (_) '((title . "Test Page")))
+						  :push (lambda (_data _payload &optional _ctx) '((url . "test-page")))
+						  :finalize (lambda (_data _response &optional _ctx) nil)
+						  :title-key :title)))
      (let ((found-sync-at-point nil)
            (found-stage-2 nil)
            (found-stage-3 nil)
@@ -1849,13 +1846,13 @@ Content here.
        (save-buffer)
        (spy-on 'org-canvas--log-info)
        (cl-letf (((symbol-function 'display-buffer) (lambda (_) nil)))
-         (org-canvas--push-at-point-runtime
-          "pages"
-          (lambda () data)
-          (lambda (_) payload)
-          (lambda (_data _payload &optional _ctx) (error "Should not be called"))
-          (lambda (_data _response &optional _ctx) (error "Should not be called"))
-          :title nil))
+		(org-canvas--push-at-point-runtime (list
+						    :feature "pages"
+						    :parse (lambda () data)
+						    :build (lambda (_) payload)
+						    :push (lambda (_data _payload &optional _ctx) (error "Should not be called"))
+						    :finalize (lambda (_data _response &optional _ctx) (error "Should not be called"))
+						    :title-key :title)))
        (let ((found-skip nil)
              (found-stage-3 nil))
          (dolist (call (spy-calls-all-args 'org-canvas--log-info))
@@ -2380,10 +2377,9 @@ Content here.
                 ((symbol-function 'org-canvas--sync-warn-orphans) #'ignore)
                 ((symbol-function 'org-canvas--sync-log-summary)
                  (lambda (&rest _) (push 'summary order))))
-        (org-canvas--sync-run-pipeline "test" "/tmp/test.org" "LEVEL=1"
-                                       #'ignore #'ignore #'ignore #'ignore
-                                       nil nil nil
-                                       (lambda (ctx) (push (if (plist-get ctx :feature-name) 'after-sync 'no-ctx) order)))
+               (org-canvas--sync-run-pipeline (list :feature "test" :file "/tmp/test.org" :query "LEVEL=1"
+						    :parse #'ignore :build #'ignore :push #'ignore :finalize #'ignore
+						    :after-sync (lambda (ctx) (push (if (plist-get ctx :feature-name) 'after-sync 'no-ctx) order))))
         (expect (nreverse order) :to-equal '(after-sync summary)))))
 
   (it "is optional"
@@ -2393,8 +2389,8 @@ Content here.
                (lambda (&rest _) (list :targets nil :all-ids-before nil)))
               ((symbol-function 'org-canvas--sync-warn-orphans) #'ignore)
               ((symbol-function 'org-canvas--sync-log-summary) #'ignore))
-      (expect (org-canvas--sync-run-pipeline "test" "/tmp/test.org" "LEVEL=1"
-                                             #'ignore #'ignore #'ignore #'ignore)
+	     (expect (org-canvas--sync-run-pipeline (list :feature "test" :file "/tmp/test.org" :query "LEVEL=1"
+							  :parse #'ignore :build #'ignore :push #'ignore :finalize #'ignore))
               :not :to-throw)))
 
   (it "is wired through org-canvas-define-sync for assignment groups"
@@ -2635,15 +2631,15 @@ Returns the list of titles that reached the push stage."
                 ((symbol-function 'org-canvas--sync-log-summary) #'ignore)
                 ((symbol-function 'org-canvas--sync-warn-orphans) #'ignore)
                 ((symbol-function 'org-canvas--save-buffer) #'ignore))
-        (org-canvas--sync-run-pipeline
-         "assignments" file "LEVEL=1"
-         (lambda () (list :title (org-get-heading t t t t)
-                          :canvas-id (org-entry-get (point) "CANVAS_ID")))
-         (lambda (_data) '((name . "x")))
-         (lambda (data _payload &optional _ctx)
-           (push (plist-get data :title) pushed)
-           '((id . 61) (updated_at . "2026-08-25T00:00:00Z")))
-         #'ignore))
+               (org-canvas--sync-run-pipeline (list
+					       :feature "assignments" :file file :query "LEVEL=1"
+					       :parse (lambda () (list :title (org-get-heading t t t t)
+								       :canvas-id (org-entry-get (point) "CANVAS_ID")))
+					       :build (lambda (_data) '((name . "x")))
+					       :push (lambda (data _payload &optional _ctx)
+						       (push (plist-get data :title) pushed)
+						       '((id . 61) (updated_at . "2026-08-25T00:00:00Z")))
+					       :finalize #'ignore)))
       (nreverse pushed)))
 
   (it "skips an unchanged entry Canvas has not touched"
@@ -2732,14 +2728,14 @@ Returns the list of titles that reached the push stage."
                       ((symbol-function 'org-canvas--sync-fetch-remote-snapshot)
                        (lambda (&rest _) nil))
                       ((symbol-function 'org-canvas--sync-warn-orphans) #'ignore))
-              (org-canvas--sync-run-pipeline
-               "assignments" file "LEVEL=1"
-               (lambda () (list :title (org-get-heading t t t t)
-                                :canvas-id (org-entry-get (point) "CANVAS_ID")))
-               (lambda (_data) '((name . "x")))
-               (lambda (_data _payload &optional _ctx)
-                 '((id . 61) (updated_at . "2026-08-25T10:30:45Z")))
-               #'ignore))
+		     (org-canvas--sync-run-pipeline (list
+						     :feature "assignments" :file file :query "LEVEL=1"
+						     :parse (lambda () (list :title (org-get-heading t t t t)
+									     :canvas-id (org-entry-get (point) "CANVAS_ID")))
+						     :build (lambda (_data) '((name . "x")))
+						     :push (lambda (_data _payload &optional _ctx)
+							     '((id . 61) (updated_at . "2026-08-25T10:30:45Z")))
+						     :finalize #'ignore)))
             (with-current-buffer (find-file-noselect file)
               (expect (org-canvas--pull-read-file-header) :to-be-truthy)
               (kill-buffer)))
@@ -2758,13 +2754,13 @@ Returns the list of titles that reached the push stage."
                       ((symbol-function 'org-canvas--sync-fetch-remote-snapshot)
                        (lambda (&rest _) nil))
                       ((symbol-function 'org-canvas--sync-warn-orphans) #'ignore))
-              (org-canvas--sync-run-pipeline
-               "assignments" file "LEVEL=1"
-               (lambda () (list :title (org-get-heading t t t t)
-                                :canvas-id (org-entry-get (point) "CANVAS_ID")))
-               (lambda (_data) '((name . "x")))
-               (lambda (&rest _) (error "Must not push during a dry run"))
-               #'ignore))
+		     (org-canvas--sync-run-pipeline (list
+						     :feature "assignments" :file file :query "LEVEL=1"
+						     :parse (lambda () (list :title (org-get-heading t t t t)
+									     :canvas-id (org-entry-get (point) "CANVAS_ID")))
+						     :build (lambda (_data) '((name . "x")))
+						     :push (lambda (&rest _) (error "Must not push during a dry run"))
+						     :finalize #'ignore)))
             (with-current-buffer (find-file-noselect file)
               (expect (org-canvas--pull-read-file-header) :to-be nil)
               (kill-buffer)))
@@ -3358,14 +3354,14 @@ Returns the :remote-titles of the run context the push received."
                        (lambda (&rest _) snapshot))
                       ((symbol-function 'org-canvas--sync-warn-orphans) #'ignore)
                       ((symbol-function 'org-canvas--save-buffer) #'ignore))
-              (org-canvas--sync-run-pipeline
-               "assignments" file "LEVEL=1"
-               (lambda () (list :title "R11" :canvas-id nil :pom (point-marker)))
-               (lambda (_data) '((name . "R11")))
-               (lambda (_data _payload &optional ctx)
-                 (setq seen (plist-get ctx :remote-titles))
-                 '((id . 1)))
-               #'ignore))
+		     (org-canvas--sync-run-pipeline (list
+						     :feature "assignments" :file file :query "LEVEL=1"
+						     :parse (lambda () (list :title "R11" :canvas-id nil :pom (point-marker)))
+						     :build (lambda (_data) '((name . "R11")))
+						     :push (lambda (_data _payload &optional ctx)
+							     (setq seen (plist-get ctx :remote-titles))
+							     '((id . 1)))
+						     :finalize #'ignore)))
             seen)
         (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
         (delete-file file))))
@@ -3388,13 +3384,13 @@ Returns the :remote-titles of the run context the push received."
           (cl-letf (((symbol-function 'display-buffer) #'ignore)
                     ((symbol-function 'message)
                      (lambda (fmt &rest args) (push (apply #'format fmt args) msgs))))
-            (org-canvas--push-at-point-runtime
-             "assignment"
-             (lambda () (list :title "R11" :canvas-id nil :pom (point)))
-             (lambda (_data) '((name . "R11")))
-             (lambda (_data _payload &optional _ctx) 'duplicate)
-             (lambda (_data _response &optional _ctx) (setq finalized t))
-             :title nil))
+		   (org-canvas--push-at-point-runtime (list
+						       :feature "assignment"
+						       :parse (lambda () (list :title "R11" :canvas-id nil :pom (point)))
+						       :build (lambda (_data) '((name . "R11")))
+						       :push (lambda (_data _payload &optional _ctx) 'duplicate)
+						       :finalize (lambda (_data _response &optional _ctx) (setq finalized t))
+						       :title-key :title)))
           (expect finalized :to-be nil)
           (expect (car msgs)
                   :to-equal "Assignment 'R11' not pushed — Canvas already holds this title; adopt it with M-x org-canvas-adopt-at-point or rename.")))))
@@ -3509,13 +3505,13 @@ Returns the :remote-titles of the run context the push received."
                      (lambda (_l fmt &rest args) (push (apply #'format fmt args) logged)))
                     ((symbol-function 'message) #'ignore))
             (condition-case nil
-                (org-canvas--push-at-point-runtime
-                 "assignment"
-                 (lambda () (list :title "Lab 1" :canvas-id "61" :pom (point)))
-                 (lambda (_d) '((name . "x")))
-                 (lambda (_d _p &optional _ctx) '((id . 61)))
-                 (lambda (_d _r &optional _ctx) (error "disk full"))
-                 :title nil)
+                (org-canvas--push-at-point-runtime (list
+						    :feature "assignment"
+						    :parse (lambda () (list :title "Lab 1" :canvas-id "61" :pom (point)))
+						    :build (lambda (_d) '((name . "x")))
+						    :push (lambda (_d _p &optional _ctx) '((id . 61)))
+						    :finalize (lambda (_d _r &optional _ctx) (error "disk full"))
+						    :title-key :title))
               (error nil)))
           (expect (car logged) :to-match "\\[Stamp\\].*landed on Canvas"))))))
 
@@ -3667,14 +3663,14 @@ Returns the :remote-titles of the run context the push received."
        (org-back-to-heading t)
        (cl-letf (((symbol-function 'org-canvas-clear-log) #'ignore)
                  ((symbol-function 'display-buffer) #'ignore))
-         (org-canvas--push-at-point-runtime
-          "assignment"
-          (lambda () (list :title "Lab 1" :canvas-id "61" :pom (point-marker)))
-          (lambda (_data) '((name . "Lab 1")))
-          (lambda (_data _payload &optional _ctx)
-            '((id . 61) (updated_at . "2026-09-01T14:10:30Z")))
-          (lambda (data response &optional ctx) (org-canvas--finalize-item data response :ctx ctx))
-          :title nil))
+		(org-canvas--push-at-point-runtime (list
+						    :feature "assignment"
+						    :parse (lambda () (list :title "Lab 1" :canvas-id "61" :pom (point-marker)))
+						    :build (lambda (_data) '((name . "Lab 1")))
+						    :push (lambda (_data _payload &optional _ctx)
+							    '((id . 61) (updated_at . "2026-09-01T14:10:30Z")))
+						    :finalize (lambda (data response &optional ctx) (org-canvas--finalize-item data response :ctx ctx))
+						    :title-key :title)))
        (expect (org-canvas--pull-read-file-header)
                :to-equal (format-time-string
                           "[%Y-%m-%d %a %H:%M]"
@@ -3693,13 +3689,13 @@ Returns the :remote-titles of the run context the push received."
        (org-back-to-heading t)
        (cl-letf (((symbol-function 'org-canvas-clear-log) #'ignore)
                  ((symbol-function 'display-buffer) #'ignore))
-         (org-canvas--push-at-point-runtime
-          "assignment"
-          (lambda () (list :title "Lab 1" :canvas-id "61" :pom (point-marker)))
-          (lambda (_data) '((name . "Lab 1")))
-          (lambda (_data _payload &optional _ctx) 'conflict)
-          (lambda (data response &optional ctx) (org-canvas--finalize-item data response :ctx ctx))
-          :title nil))
+		(org-canvas--push-at-point-runtime (list
+						    :feature "assignment"
+						    :parse (lambda () (list :title "Lab 1" :canvas-id "61" :pom (point-marker)))
+						    :build (lambda (_data) '((name . "Lab 1")))
+						    :push (lambda (_data _payload &optional _ctx) 'conflict)
+						    :finalize (lambda (data response &optional ctx) (org-canvas--finalize-item data response :ctx ctx))
+						    :title-key :title)))
        (expect (org-canvas--pull-read-file-header)
                :to-equal "[2026-08-19 Wed 09:59]")))))
 
@@ -3929,6 +3925,37 @@ Returns the :remote-titles of the run context the push received."
              (run (test-org-canvas-179-404--push (lambda (_title) (setq asked t) '((id . 789))))))
         (expect asked :to-be nil)
         (expect (cl-some (lambda (r) (eq (car r) 'POST)) (cdr run)) :to-be-truthy)))))
+
+(describe "org-canvas--sync-check-spec"
+  (it "accepts a spec made only of known keys holding the required ones"
+    (expect (org-canvas--sync-check-spec
+             (list :feature "pages" :parse #'ignore :hash-extra nil)
+             '(:feature :parse))
+            :not :to-throw))
+
+  (it "names an unknown key, so a misspelt option cannot vanish"
+    (expect (org-canvas--sync-check-spec (list :feature "pages" :parser #'ignore)
+                                         '(:feature))
+            :to-throw 'error))
+
+  (it "names a missing required key"
+    (expect (org-canvas--sync-check-spec (list :feature "pages") '(:feature :parse))
+            :to-throw 'error)))
+
+(describe "org-canvas-define-sync builds the spec its runners read"
+  (it "runs the pipeline with the module's options under their own names"
+    (let ((seen nil))
+      (cl-letf (((symbol-function 'org-canvas--sync-run-pipeline)
+                 (lambda (spec) (setq seen spec) nil)))
+        (org-canvas-sync-announcements))
+      (expect (plist-get seen :feature) :to-equal "announcements")
+      (expect (plist-get seen :query) :to-equal "LEVEL=1")
+      (expect (plist-get seen :parse) :to-be #'org-canvas--announcement-parse-entry)
+      (expect (plist-get seen :pull-item-fn) :to-be #'org-canvas--announcement-pull-item)
+      (expect (functionp (plist-get seen :push)) :to-be t)
+      (expect (functionp (plist-get seen :finalize)) :to-be t)
+      (expect (org-canvas--sync-check-spec seen nil) :not :to-throw))))
+
 
 (provide 'org-canvas-core-sync-test)
 ;;; org-canvas-core-sync-test.el ends here
