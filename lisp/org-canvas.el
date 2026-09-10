@@ -75,6 +75,7 @@
 (require 'org-canvas-quizzes)
 (require 'org-canvas-rubrics)
 (require 'org-canvas-sections)
+(require 'org-canvas-grading-periods)
 (require 'org-canvas-settings)
 (require 'org-canvas-group-categories)
 (require 'org-canvas-calendar)
@@ -226,6 +227,7 @@ of through a global (issue #141)."
      (org-canvas-sync-assignment-groups "Assignment Groups")
      (org-canvas-sync-group-categories "Group Categories")
      (org-canvas-pull-sections "Sections")
+     (org-canvas-pull-grading-periods "Grading Periods")
      (org-canvas-sync-files "Files")
      (org-canvas-sync-pages "Pages")
      (org-canvas-sync-discussions "Discussions")
@@ -511,6 +513,7 @@ count for the operator to chase through the log (issue #155)."
 (defconst org-canvas--pull-tiers
   '(((org-canvas-pull-settings "Settings"))
     ((org-canvas-pull-sections "Sections")
+     (org-canvas-pull-grading-periods "Grading Periods")
      (org-canvas-pull-files "Files")
      (org-canvas-pull-assignment-groups "Assignment Groups")
      (org-canvas-pull-group-categories "Group Categories")

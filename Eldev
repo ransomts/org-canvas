@@ -40,6 +40,7 @@
                                   "lisp/org-canvas-quizzes.el"
                                   "lisp/org-canvas-rubrics.el"
                                   "lisp/org-canvas-sections.el"
+                                  "lisp/org-canvas-grading-periods.el"
                                   "lisp/org-canvas-settings.el"
                                   "lisp/org-canvas-group-categories.el"
                                   "lisp/org-canvas-calendar.el"

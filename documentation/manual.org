@@ -2222,6 +2222,7 @@ Each content type can be pulled individually:
 | =org-canvas-pull-at-point=             | Refresh the heading at point          |
 | =org-canvas-pull-settings=             | Pull course settings and tabs         |
 | =org-canvas-pull-sections=             | Pull course sections                  |
+| =org-canvas-pull-grading-periods=      | Pull grading periods (read-only)      |
 | =org-canvas-pull-assignment-groups=    | Pull assignment groups                |
 | =org-canvas-pull-group-categories=     | Pull group categories                 |
 | =org-canvas-pull-assignments=          | Pull assignments with descriptions    |
@@ -2472,6 +2473,7 @@ pulled front page carries =:FRONT_PAGE: true=, so it round-trips.
 | =org-canvas-pull-all=                  | Import entire Canvas course           |
 | =org-canvas-pull-settings=             | Pull course settings and tabs         |
 | =org-canvas-pull-sections=             | Pull course sections                  |
+| =org-canvas-pull-grading-periods=      | Pull grading periods (read-only)      |
 | =org-canvas-pull-assignment-groups=    | Pull assignment groups                |
 | =org-canvas-pull-group-categories=     | Pull group categories                 |
 | =org-canvas-pull-assignments=          | Pull assignments with descriptions    |
@@ -3098,6 +3100,16 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =USE_JUSTIFICATION= | enum | own_copyright, used_by_permission, fair_use, public_domain, creative_commons |  | How to resolve a name collision on upload (rename vs overwrite) |
 | =USAGE_LICENSE= | string |  |  | Usage-rights license code (for example cc_by, public_domain) |
 | =COPYRIGHT= | string |  |  | Copyright holder recorded with the usage rights |
+
+** Grading Periods
+
+| Property | Type | Allowed values | Default | Description |
+|----------+------+----------------+---------+-------------|
+| =START_DATE= | timestamp |  |  | Period start (set by Canvas; pull-only) |
+| =END_DATE= | timestamp |  |  | Period end (set by Canvas; pull-only) |
+| =CLOSE_DATE= | timestamp |  |  | Date after which the period's grades are locked (pull-only) |
+| =WEIGHT= | number |  |  | Weight of the period when the term weights its periods (pull-only) |
+| =IS_CLOSED= | boolean | true, false |  | Whether the period is closed (pull-only; absent while open) |
 
 ** Group Categories
 
