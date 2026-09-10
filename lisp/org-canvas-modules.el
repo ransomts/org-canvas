@@ -198,7 +198,7 @@ HEADING.  Used to look up file-typed module items in files.org."
     (match-string 1 heading)))
 
 (defun org-canvas--module-heading-display-name (heading)
-  "Return the text HEADING shows: a file link's description, else itself.
+  "Return the visible text of HEADING: a file link's description, else itself.
 A files.org heading is usually `[[file:PATH][NAME]]'; NAME is what a
 module item without a title of its own should be called, never the
 whole link, which would nest one link inside another."
