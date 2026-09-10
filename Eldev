@@ -31,6 +31,7 @@
                                   "lisp/org-canvas-assignment-groups.el"
                                   "lisp/org-canvas-assignments.el"
                                   "lisp/org-canvas-discussions.el"
+                                  "lisp/org-canvas-discussion-replies.el"
                                   "lisp/org-canvas-files.el"
                                   "lisp/org-canvas-modules.el"
                                   "lisp/org-canvas-outcomes.el"

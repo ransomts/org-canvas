@@ -657,6 +657,8 @@
                    (lambda () (push 'files call-order)))
                   ((symbol-function 'org-canvas-pull-discussions)
                    (lambda () (push 'discussions call-order)))
+                  ((symbol-function 'org-canvas-pull-discussion-replies)
+                   (lambda () (push 'discussion-replies call-order)))
                   ((symbol-function 'org-canvas-pull-announcements)
                    (lambda () (push 'announcements call-order)))
                   ((symbol-function 'org-canvas-pull-calendar-events)
@@ -685,8 +687,11 @@
                               assignments quizzes))
             (expect files-pos :to-be-less-than
                     (cl-position consumer call-order))))
-        ;; All 15 functions called
-        (expect (length call-order) :to-equal 15)))))
+        ;; Replies after the topics they hang under
+        (expect (cl-position 'discussions call-order) :to-be-less-than
+                (cl-position 'discussion-replies call-order))
+        ;; All 16 functions called
+        (expect (length call-order) :to-equal 16)))))
 
   (it "handles pull function errors gracefully"
     (with-sync-test-env
@@ -712,6 +717,8 @@
                 ((symbol-function 'org-canvas-pull-files)
                  (lambda () nil))
                 ((symbol-function 'org-canvas-pull-discussions)
+                 (lambda () nil))
+                ((symbol-function 'org-canvas-pull-discussion-replies)
                  (lambda () nil))
                 ((symbol-function 'org-canvas-pull-announcements)
                  (lambda () nil))
@@ -1396,6 +1403,7 @@
                 ((symbol-function 'org-canvas-pull-pages) (lambda () nil))
                 ((symbol-function 'org-canvas-pull-files) (lambda () nil))
                 ((symbol-function 'org-canvas-pull-discussions) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-discussion-replies) (lambda () nil))
                 ((symbol-function 'org-canvas-pull-announcements) (lambda () nil))
                 ((symbol-function 'org-canvas-pull-calendar-events) (lambda () nil))
                 ((symbol-function 'org-canvas-pull-assignments) (lambda () nil))
@@ -1425,6 +1433,7 @@
                 ((symbol-function 'org-canvas-pull-pages) (lambda () nil))
                 ((symbol-function 'org-canvas-pull-files) (lambda () nil))
                 ((symbol-function 'org-canvas-pull-discussions) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-discussion-replies) (lambda () nil))
                 ((symbol-function 'org-canvas-pull-announcements) (lambda () nil))
                 ((symbol-function 'org-canvas-pull-calendar-events) (lambda () nil))
                 ((symbol-function 'org-canvas-pull-assignments) (lambda () nil))
@@ -1456,6 +1465,7 @@
                 ((symbol-function 'org-canvas-pull-pages) (lambda () nil))
                 ((symbol-function 'org-canvas-pull-files) (lambda () nil))
                 ((symbol-function 'org-canvas-pull-discussions) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-discussion-replies) (lambda () nil))
                 ((symbol-function 'org-canvas-pull-announcements) (lambda () nil))
                 ((symbol-function 'org-canvas-pull-calendar-events) (lambda () nil))
                 ((symbol-function 'org-canvas-pull-assignments) (lambda () nil))
