@@ -248,6 +248,7 @@ These files have no outgoing links to other course files:
 | =groups.org=            | Groups             | Pull-only: groups and members per category (student names) |
 | =people.org=            | People             | Pull-only: the roster by role, with sections and state (names) |
 | =gradebook.org=         | Gradebook          | Pull-only: every student's scores and missing work, by student and by section |
+| =rubric-results.org=    | Rubric Results     | Pull-only: how the class scored on each rubric criterion, per assignment |
 | =pages.org=             | Wiki Pages         | Course content pages          |
 | =files.org=             | Files              | Binary file uploads           |
 | =discussions.org=       | Discussions        | Discussion topics             |
@@ -1709,6 +1710,47 @@ are written, never an identifier, but treat =gradebook.org= as you
 treat the submissions directory: keep it out of a course repository
 (add it to =.gitignore=) and out of anything you share.
 
+** rubric-results.org
+
+Pull-only.  =org-canvas-pull-rubric-results= writes, for every
+assignment graded with a rubric, how many submissions were assessed
+and how the class scored on each criterion: the mean, the points
+possible and how the ratings were distributed.  It answers "which
+criterion is the class missing?" without opening SpeedGrader or a
+grading file per student.  Nothing in this file is pushed, and the
+file is derived: every pull rewrites it whole, so anything you write
+in it is gone at the next pull.
+
+*** Structure
+
+- Level 1 headings = Assignments carrying a rubric, in Canvas's
+  assignment order, titled by the assignment name and linked to the
+  assignment's heading in =assignments.org= when that file holds its
+  =CANVAS_ID=
+- Under each: one table with the columns Criterion, Assessed, Mean,
+  Out of and Ratings.  Ratings is the distribution by rating
+  description in the rubric's order (=Excellent 12, Good 5, Poor 1=);
+  a score that matches no rating counts under =other=.  An assignment
+  nobody has been assessed on gets a =No assessments yet= line instead
+
+*** Properties (set by pull)
+
+| Property         | Type   | Description                                              |
+|------------------+--------+----------------------------------------------------------|
+| =ASSIGNMENT_ID=  | number | Canvas id of the assignment                              |
+| =RUBRIC_ID=      | number | Canvas id of the rubric attached to it                   |
+| =SUBMISSIONS=    | number | Submission rows Canvas returned, one per student         |
+| =ASSESSED=       | number | Submissions carrying a rubric assessment                 |
+
+*** Personal Data
+
+Only aggregates are written: no name, no user id, no per-student
+score.  With a small class a row can still identify someone, so treat
+=rubric-results.org= as you treat =gradebook.org=: keep it out of a
+course repository (add it to =.gitignore=) and out of anything you
+share.  Per-student rubric scores are read and pushed in the grading
+file (see [[*Grading Submissions][Grading Submissions]]).
+
 ** calendar.org
 
 Non-assignment calendar events such as office hours, holidays, and review sessions.
@@ -2348,6 +2390,7 @@ Each content type can be pulled individually:
 | =org-canvas-pull-groups=               | Pull groups and their members         |
 | =org-canvas-pull-people=               | Pull the course roster                |
 | =org-canvas-pull-gradebook=            | Pull the grade overview (read-only)   |
+| =org-canvas-pull-rubric-results=       | Pull rubric results per criterion (read-only) |
 | =org-canvas-pull-assignments=          | Pull assignments with descriptions    |
 | =org-canvas-pull-quizzes=              | Pull quizzes with questions           |
 | =org-canvas-pull-pages=               | Pull wiki pages with body content     |
@@ -2603,6 +2646,7 @@ pulled front page carries =:FRONT_PAGE: true=, so it round-trips.
 | =org-canvas-pull-groups=               | Pull groups and their members         |
 | =org-canvas-pull-people=               | Pull the course roster                |
 | =org-canvas-pull-gradebook=            | Pull the grade overview (read-only)   |
+| =org-canvas-pull-rubric-results=       | Pull rubric results per criterion (read-only) |
 | =org-canvas-pull-assignments=          | Pull assignments with descriptions    |
 | =org-canvas-pull-quizzes=              | Pull classic quizzes with questions   |
 | =org-canvas-pull-new-quizzes=          | Pull New Quizzes with items           |
@@ -3374,6 +3418,15 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =ONE_TIME_RESULTS= | boolean | true, false |  | Students can only view results once |
 | =ONLY_VISIBLE_TO_OVERRIDES= | boolean | true, false |  | Only visible to students with overrides |
 | =GROUP= | link | org link |  | Link to assignment-groups.org heading |
+
+** Rubric Results
+
+| Property | Type | Allowed values | Default | Description |
+|----------+------+----------------+---------+-------------|
+| =ASSIGNMENT_ID= | number | set by Canvas (read-only) |  | Canvas id of the assignment the rubric grades |
+| =RUBRIC_ID= | number | set by Canvas (read-only) |  | Canvas id of the rubric attached to the assignment |
+| =SUBMISSIONS= | number | set by Canvas (read-only) |  | Submission rows Canvas returned for the assignment, one per student |
+| =ASSESSED= | number | set by Canvas (read-only) |  | Submissions carrying a rubric assessment |
 
 ** Rubrics
 
