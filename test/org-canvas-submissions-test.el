@@ -1826,8 +1826,10 @@
 (defconst test-rubric-assignment
   '((id . 1001)
     (name . "Global Challenge Essay")
+    (use_rubric_for_grading . t)
     (rubric_settings . ((id . 133477) (title . "Essay Rubric") (points_possible . 100)
-                        (use_for_grading . t)))
+                        (free_form_criterion_comments . :json-false)
+                        (hide_score_total . :json-false) (hide_points . :json-false)))
     (rubric . [((id . "_1") (description . "Thesis") (points . 20.0)
                 (ratings . [((description . "Excellent") (points . 20.0))
                             ((description . "Weak | vague") (points . 5.0))]))
@@ -1877,6 +1879,32 @@
             ;; the Rubric block precedes the students and follows the Assignment line
             (expect (string-match "^Assignment: " content)
                     :to-be-less-than (string-match "^Rubric: " content)))))))
+  (it "reads use_rubric_for_grading from the assignment's top level (issue #253)"
+    (cl-letf (((symbol-function 'org-canvas--submissions-heading-for-assignment) (lambda (_id) nil))
+              ((symbol-function 'org-canvas--submissions-heading-for-rubric) (lambda (_id) nil)))
+      ;; A real Assignment object: the flag beside rubric_settings, not in it.
+      (with-temp-buffer
+        (org-mode)
+        (org-canvas--submissions-render-detail
+         "Essay" "1001" nil
+         '((id . 1001) (use_rubric_for_grading . :json-false)
+           (rubric_settings . ((id . 133477) (title . "Essay Rubric") (points_possible . 100)))))
+        (expect (buffer-string) :to-match "^#\\+PROPERTY: CANVAS_RUBRIC_USE_FOR_GRADING false$"))
+      ;; Absent at the top level, the settings key still counts.
+      (with-temp-buffer
+        (org-mode)
+        (org-canvas--submissions-render-detail
+         "Essay" "1001" nil
+         '((id . 1001) (rubric_settings . ((id . 133477) (title . "Essay Rubric") (use_for_grading . t)))))
+        (expect (buffer-string) :to-match "^#\\+PROPERTY: CANVAS_RUBRIC_USE_FOR_GRADING true$"))
+      ;; And the top level wins over it.
+      (with-temp-buffer
+        (org-mode)
+        (org-canvas--submissions-render-detail
+         "Essay" "1001" nil
+         '((id . 1001) (use_rubric_for_grading . :json-false)
+           (rubric_settings . ((id . 133477) (title . "Essay Rubric") (use_for_grading . t)))))
+        (expect (buffer-string) :to-match "^#\\+PROPERTY: CANVAS_RUBRIC_USE_FOR_GRADING false$"))))
   (it "omits the criteria table when the option is off"
     (let ((org-canvas-submissions-include-rubric-criteria nil))
       (cl-letf (((symbol-function 'org-canvas--submissions-heading-for-assignment) (lambda (_id) nil))
@@ -2536,7 +2564,7 @@ PROPS is a string of property lines; ROWS a list of (ID CRITERION MAX SCORE COMM
               ((symbol-function 'org-canvas--submissions-heading-for-rubric) (lambda (_id) nil)))
       (org-canvas--submissions-display
        "HW" "1001" subs 'detail
-       `((id . 1001) (rubric_settings . ((id . 7) (title . "R") (use_for_grading . t)))
+       `((id . 1001) (use_rubric_for_grading . t) (rubric_settings . ((id . 7) (title . "R")))
          (rubric . ,(vconcat test-rubric-criteria))))))
   (it "keeps typed rows, and marks the heading when Canvas assessed it meanwhile"
     (let* ((dir (make-temp-file "org-canvas-subs-" t))
