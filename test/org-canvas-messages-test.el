@@ -320,6 +320,27 @@ Text.
         (expect (memq 'org-canvas-send-messages names) :to-be nil)
         (expect (memq 'org-canvas-send-message-at-point names) :to-be nil)))))
 
+(describe "org-canvas--message-check-file"
+  (it "refuses a missing file"
+    (test-messages--with-course test-messages--unsent
+      (expect (org-canvas--message-check-file (expand-file-name "absent.org" dir))
+              :to-throw 'user-error)))
+
+  (it "saves an unsaved messages.org when the user agrees, and aborts when they decline"
+    (test-messages--with-course test-messages--unsent
+      (with-current-buffer (org-canvas--find-file-noselect org-canvas-messages-file)
+        (goto-char (point-max))
+        (insert "Edited but not saved.\n"))
+      (cl-letf (((symbol-function 'org-canvas--confirm) (lambda (_prompt) nil)))
+        (expect (org-canvas--message-check-file org-canvas-messages-file)
+                :to-throw 'user-error))
+      (expect (test-messages--file) :not :to-match "Edited but not saved")
+      (cl-letf (((symbol-function 'org-canvas--confirm) (lambda (_prompt) t)))
+        (org-canvas--message-check-file org-canvas-messages-file))
+      (expect (test-messages--file) :to-match "Edited but not saved")
+      (expect (buffer-modified-p (org-canvas--find-file-noselect org-canvas-messages-file))
+              :to-be nil))))
+
 (describe "org-canvas-send-message-at-point"
   (it "sends the heading at point and only that one"
     (test-messages--with-course
