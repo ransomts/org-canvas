@@ -42,6 +42,19 @@ Compares by value, not identity, so a copied or re-consed sentinel
 still reads as a dry run."
   (equal response org-canvas--dry-run-response))
 
+(defun org-canvas--graphql-mutate (what document &optional variables)
+  "Run the GraphQL mutation DOCUMENT with VARIABLES, described by WHAT.
+Under `org-canvas--dry-run' nothing is sent: a [DRY-RUN] line names
+WHAT and the sentinel comes back (Hard Rule 1).  Otherwise the reply's
+`data' alist is returned; a course marked read-only refuses the POST
+at the transport, as it refuses every write (issue #163)."
+  (if org-canvas--dry-run
+      (progn
+        (org-canvas--log-info org-canvas--logger "[DRY-RUN] Would %s" what)
+        org-canvas--dry-run-response)
+    (org-canvas--log-info org-canvas--logger "[Execute] GraphQL: %s" what)
+    (org-canvas--graphql-send document variables)))
+
 (defvar org-canvas--sync-global-feature-stats nil
   "Per-feature stat entries accumulated during `org-canvas-sync'.
 Each entry is a plist (:label STRING :success N :skip N :fail N

@@ -4221,5 +4221,26 @@ Returns the :remote-titles of the run context the push received."
         (expect (cl-some (lambda (w) (string-match-p "\\[Orphan\\]" w)) warned) :to-be nil)))))
 
 
+(describe "org-canvas--graphql-mutate (issue #202)"
+  (it "sends nothing under a dry run and answers the sentinel"
+    (let ((org-canvas--dry-run t) (sent nil) (logged nil))
+      (cl-letf (((symbol-function 'org-canvas--graphql-send) (lambda (&rest _) (setq sent t)))
+                ((symbol-function 'org-canvas--log-info)
+                 (lambda (_l fmt &rest args) (push (apply #'format fmt args) logged))))
+        (expect (org-canvas--dry-run-response-p
+                 (org-canvas--graphql-mutate "set the course post policy to manual" "mutation { x }"))
+                :to-be-truthy))
+      (expect sent :to-be nil)
+      (expect (car logged) :to-match "\\[DRY-RUN\\] Would set the course post policy to manual")))
+
+  (it "sends the mutation with its variables otherwise"
+    (let ((seen nil))
+      (cl-letf (((symbol-function 'org-canvas--graphql-send)
+                 (lambda (doc vars) (setq seen (list doc vars)) '((ok . t))))
+                ((symbol-function 'org-canvas--log-info) #'ignore))
+        (expect (org-canvas--graphql-mutate "do x" "mutation { x }" '((a . 1))) :to-equal '((ok . t)))
+        (expect seen :to-equal '("mutation { x }" ((a . 1))))))))
+
+
 (provide 'org-canvas-core-sync-test)
 ;;; org-canvas-core-sync-test.el ends here

@@ -155,6 +155,7 @@ its baseline in each heading's CANVAS_SCORE property instead.")
     (define-key map (kbd "d") #'org-canvas-submissions-download-attachments)
     (define-key map (kbd "c") #'org-canvas-submissions-add-comment)
     (define-key map (kbd "S") #'org-canvas-submissions-push-grades)
+    (define-key map (kbd "P") #'org-canvas-submissions-post-grades)
     (define-key map (kbd "D") #'org-canvas-submissions-download-all-attachments)
     map)
   "Keymap for `org-canvas-submissions-mode'.")
@@ -388,15 +389,21 @@ does) and the rubric's Canvas page."
             (org-canvas--submissions-rubric-url rubric-id))))
 
 (defun org-canvas--submissions-render-rubric-properties (assignment)
-  "Insert the ASSIGNMENT keywords a reopened file needs: points and rubric.
-POINTS_POSSIBLE feeds the completion rule; CANVAS_RUBRIC_ID and
+  "Insert the ASSIGNMENT keywords a reopened file needs: points, policy, rubric.
+POINTS_POSSIBLE feeds the completion rule; POST_POLICY (manual or
+automatic, the assignment's effective grade post policy) tells the push
+whether to offer posting the grades; CANVAS_RUBRIC_ID and
 CANVAS_RUBRIC_TITLE rebuild the Rubric: line without a request.  Nothing
 rubric-related is inserted when no rubric is attached."
   (let ((points (alist-get 'points_possible assignment))
+        (policy (org-canvas--post-manually-to-policy
+                 (alist-get 'post_manually assignment)))
         (rubric (org-canvas--submissions-rubric-settings assignment)))
     (when (numberp points)
       (insert (format "#+PROPERTY: POINTS_POSSIBLE %s\n"
                       (org-canvas--submissions-format-number points))))
+    (when policy
+      (insert (format "#+PROPERTY: POST_POLICY %s\n" policy)))
     (when rubric
       (insert (format "#+PROPERTY: CANVAS_RUBRIC_ID %s\n" (car rubric)))
       (insert (format "#+PROPERTY: CANVAS_RUBRIC_TITLE %s\n" (cdr rubric))))))
@@ -768,6 +775,10 @@ ASSIGNMENT-NAME attachments already downloaded link to the local copy."
       (insert (format ":ATTEMPT: %s\n" attempt)))
     (when (not (string-empty-p submitted-at))
       (insert (format ":SUBMITTED_AT: %s\n" submitted-at)))
+    (let ((posted-at (org-canvas--alist-get-non-null 'posted_at submission)))
+      (when (stringp posted-at)
+        (insert (format ":POSTED_AT: %s\n"
+                        (or (org-canvas--iso8601-to-org-timestamp posted-at) posted-at)))))
     (insert ":END:\n")
     (when (and user-id assignment-id)
       (insert (format "[[%s][Open in SpeedGrader]]\n"
@@ -1597,8 +1608,47 @@ file are updated."
                 (org-canvas--submissions-send-grades assignment-id changes))
               (setq posted (org-canvas--submissions-post-drafts assignment-id drafts))
               (org-canvas--submissions-record-pushed changes)
-              (message "Pushed %d grade(s) and %d comment(s)" (length changes) posted))
+              (message "Pushed %d grade(s) and %d comment(s)" (length changes) posted)
+              (org-canvas--submissions-offer-to-post changes))
           (error (org-canvas--user-message "Error pushing: %s" (error-message-string err))))))))
+
+;;;; Posting Grades
+
+(defun org-canvas--submissions-post-manually-p ()
+  "Return non-nil when this grading file's grades are held until posted.
+Reads the POST_POLICY keyword the pull wrote from the assignment's
+effective policy; a file without it, pulled before the keyword
+existed, answers nil and nothing is offered."
+  (equal (org-canvas--submissions-file-property "POST_POLICY") "manual"))
+
+(defun org-canvas--submissions-offer-to-post (diffs)
+  "Offer to post the grades just pushed as DIFFS, under a manual policy.
+Under a manual post policy a pushed grade stays hidden from the
+student until it is posted (issue #202)."
+  (when (and diffs
+             (org-canvas--submissions-post-manually-p)
+             (y-or-n-p "This assignment posts grades manually; post them now? "))
+    (org-canvas-submissions-post-grades)))
+
+;;;###autoload
+(defun org-canvas-submissions-post-grades ()
+  "Post this grading file's assignment grades, so students can see them.
+The gradebook's Post Grades for the assignment, as the GraphQL
+mutation `postAssignmentGrades' (issue #202).  Needed only under a
+manual post policy; harmless otherwise.  Press g afterwards to see
+each student's POSTED_AT."
+  (interactive)
+  (unless org-canvas-submissions-mode
+    (user-error "Not in a submissions buffer"))
+  (org-canvas--submissions-ensure-context)
+  (let ((assignment-id org-canvas-submissions--assignment-id))
+    (unless assignment-id
+      (user-error "No CANVAS_ASSIGNMENT_ID in this buffer"))
+    (org-canvas--graphql-mutate
+     (format "post the grades of assignment %s" assignment-id)
+     "mutation ($assignmentId: ID!) { postAssignmentGrades(input: {assignmentId: $assignmentId}) { progress { _id state } } }"
+     (list (cons 'assignmentId (format "%s" assignment-id))))
+    (message "Grades posted for assignment %s." assignment-id)))
 
 (provide 'org-canvas-submissions)
 ;;; org-canvas-submissions.el ends here
