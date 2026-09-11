@@ -15,7 +15,8 @@
 ;; ==============
 ;; In gradebook.org:
 ;;   * Students   one table, sorted by name: Student, Sections, Current,
-;;                Final, Missing, Late, Last activity
+;;                Final, Missing, Late, Last activity, then one column
+;;                per custom gradebook column the course has
 ;;   * Sections   one table: Section, Students, Mean current, Mean final,
 ;;                Missing
 ;;
@@ -26,15 +27,21 @@
 ;; sits low early in the term.  `org-canvas-gradebook-unposted' (default t)
 ;; takes the instructor's unposted scores, hidden grades included; nil
 ;; takes what students see.  No per-assignment columns: that is what
-;; grading files are for.
+;; grading files are for.  Custom gradebook columns (the Notes column,
+;; anything added in the gradebook) follow Last activity in Canvas's
+;; order, titled as in Canvas; a course without any gets the seven
+;; columns and nothing more.  Hidden columns stay out unless
+;; `org-canvas-gradebook-include-hidden-columns' is set.
 ;;
 ;; PERSONAL DATA
 ;; =============
 ;; Scores are more sensitive than names.  Treat gradebook.org as the
 ;; submissions directory is treated: keep it out of a course repository
-;; (add it to .gitignore) and out of anything shared.  Only the name and
-;; the numbers are written, never an identifier.  The module writes
-;; only `org-canvas-gradebook-file' itself.
+;; (add it to .gitignore) and out of anything shared.  Only the name,
+;; the numbers and the custom column text are written, never an
+;; identifier; a Notes column is free text about a student, so it is
+;; the most sensitive cell in the file.  The module writes only
+;; `org-canvas-gradebook-file' itself.
 ;;
 ;; API NOTES
 ;; =========
@@ -48,6 +55,13 @@
 ;;       gated: a 403 leaves the Missing and Late columns blank with a
 ;;       note under the table, and the pull goes on.
 ;;   GET /courses/:id/sections           section names
+;;   GET /courses/:id/custom_gradebook_columns[?include_hidden=true]
+;;       id, title, position, hidden, teacher_notes, read_only; the
+;;       hidden ones only with the parameter.
+;;   GET /courses/:id/custom_gradebook_columns/:id/data
+;;       user_id and content per student who has an entry.  Paginated.
+;;       A refusal of either request logs one warning and leaves the
+;;       custom columns out; the pull goes on.
 
 ;;; Code:
 
@@ -68,6 +82,13 @@ repository."
   "When non-nil, show the instructor's unposted scores, hidden grades included.
 When nil, show the scores students see.  On a course that posts grades
 automatically the two never differ."
+  :type 'boolean
+  :group 'org-canvas)
+
+(defcustom org-canvas-gradebook-include-hidden-columns nil
+  "When non-nil, pull custom gradebook columns hidden in the gradebook too.
+By default only the columns shown in Canvas's gradebook reach the
+Students table."
   :type 'boolean
   :group 'org-canvas)
 
@@ -110,6 +131,39 @@ request costs its column, not the pull)."
        "[Gradebook] Could not read the student summaries (%s); Missing and Late are left blank"
        (error-message-string err))
      'refused)))
+
+(defun org-canvas--gradebook-fetch-column-data (column)
+  "Return an alist of user id to content for the custom gradebook COLUMN.
+COLUMN is Canvas's column object; a student without an entry is absent."
+  (mapcar (lambda (d) (cons (alist-get 'user_id d) (alist-get 'content d)))
+          (append (org-canvas-api-request-all-pages
+                   'GET (org-canvas-api-course-endpoint
+                         "custom_gradebook_columns/%s/data" (alist-get 'id column)))
+                  nil)))
+
+(defun org-canvas--gradebook-fetch-columns ()
+  "Return the course's custom gradebook columns with their data, in position order.
+Each is a plist with :title and :data, the alist from
+`org-canvas--gradebook-fetch-column-data'.  Hidden columns come only
+with `org-canvas-gradebook-include-hidden-columns'.  A refusal is
+logged and answered with nil, so the Students table is written without
+the custom columns rather than not at all (the #171 rule)."
+  (condition-case err
+      (let ((columns (append (org-canvas-api-request-all-pages
+                              'GET (org-canvas-api-course-endpoint "custom_gradebook_columns")
+                              (when org-canvas-gradebook-include-hidden-columns
+                                '(("include_hidden" . "true"))))
+                             nil)))
+        (mapcar (lambda (c) (list :title (alist-get 'title c)
+                                  :data (org-canvas--gradebook-fetch-column-data c)))
+                (sort columns (lambda (a b)
+                                (< (or (alist-get 'position a) 0)
+                                   (or (alist-get 'position b) 0))))))
+    (org-canvas-api-error
+     (org-canvas--log-warning org-canvas--logger
+       "[Gradebook] Could not read the custom gradebook columns (%s); they are left out"
+       (error-message-string err))
+     nil)))
 
 ;;;; Folding Enrollments Into Rows
 
@@ -204,21 +258,46 @@ Nil as well when `org-canvas-people-file' is unset or missing."
   (mapconcat (lambda (sid) (or (alist-get sid names) (format "%s" sid)))
              (plist-get row :section-ids) ", "))
 
-(defun org-canvas--gradebook-insert-students (rows names summaries)
+(defun org-canvas--gradebook-cell-text (text)
+  "Return TEXT fit for one table cell, or an empty string.
+Pipes and line breaks would split the cell, so each run of them, with
+the blanks around it, becomes one space."
+  (if (stringp text)
+      (string-trim (replace-regexp-in-string "[ \t]*[|\n\r]+[ \t]*" " " text))
+    ""))
+
+(defun org-canvas--gradebook-custom-cells (row columns)
+  "Return ROW's cells for the custom COLUMNS as one string of table cells.
+Empty when there are no columns; a student without an entry gets a
+blank cell."
+  (mapconcat (lambda (column)
+               (format " %s |" (org-canvas--gradebook-cell-text
+                                (alist-get (plist-get row :user-id) (plist-get column :data)))))
+             columns ""))
+
+(defun org-canvas--gradebook-insert-students (rows names summaries &optional columns)
   "Insert the Students table for ROWS at point.
 NAMES maps section ids to names; SUMMARIES is `refused' when the
-Missing and Late columns are unavailable."
-  (insert "| Student | Sections | Current | Final | Missing | Late | Last activity |\n")
-  (insert "|---+---+---+---+---+---+---|\n")
+Missing and Late columns are unavailable; COLUMNS are the custom
+gradebook columns from `org-canvas--gradebook-fetch-columns', one
+table column each after Last activity."
+  (insert (format "| Student | Sections | Current | Final | Missing | Late | Last activity |%s\n"
+                  (mapconcat (lambda (column)
+                               (format " %s |" (org-canvas--gradebook-cell-text
+                                                (plist-get column :title))))
+                             columns "")))
+  (insert (format "|---+---+---+---+---+---+---|%s\n"
+                  (mapconcat (lambda (_) "---|") columns "")))
   (dolist (row rows)
-    (insert (format "| %s | %s | %s | %s | %s | %s | %s |\n"
+    (insert (format "| %s | %s | %s | %s | %s | %s | %s |%s\n"
                     (org-canvas--gradebook-student-cell row)
                     (org-canvas--gradebook-sections-cell row names)
                     (org-canvas--gradebook-number (plist-get row :current))
                     (org-canvas--gradebook-number (plist-get row :final))
                     (if (eq summaries 'refused) "" (org-canvas--gradebook-number (plist-get row :missing)))
                     (if (eq summaries 'refused) "" (org-canvas--gradebook-number (plist-get row :late)))
-                    (or (org-canvas--iso8601-to-org-timestamp (plist-get row :last-activity)) "-"))))
+                    (or (org-canvas--iso8601-to-org-timestamp (plist-get row :last-activity)) "-")
+                    (org-canvas--gradebook-custom-cells row columns))))
   (when (eq summaries 'refused)
     (insert "\nMissing and Late are blank: Canvas refused the student summaries for this token.\n")))
 
@@ -270,8 +349,9 @@ on every pull, so nothing under the heading is kept."
 (defun org-canvas-pull-gradebook ()
   "Pull a course-wide grade overview into gradebook.org.
 One table of students with their current and final scores, missing
-and late counts and last activity, and one table of sections with
-their means.  Read-only, and the tables are derived: every pull
+and late counts, last activity and the course's custom gradebook
+columns, and one table of sections with their means.  Read-only, and
+the tables are derived: every pull
 rewrites them.  The file holds every student's scores afterwards;
 keep it out of a course repository."
   (interactive)
@@ -284,12 +364,17 @@ keep it out of a course repository."
         (org-canvas--pull-emit-empty-file file (org-canvas--pull-label-for "gradebook"))
       (let* ((summaries (org-canvas--gradebook-fetch-summaries))
              (names (org-canvas--gradebook-fetch-section-names))
+             (columns (org-canvas--gradebook-fetch-columns))
              (rows (org-canvas--gradebook-rows enrollments summaries)))
+        (when columns
+          (org-canvas--log-info org-canvas--logger
+            "[Gradebook] %d custom column(s): %s" (length columns)
+            (mapconcat (lambda (c) (plist-get c :title)) columns ", ")))
         (unless (file-exists-p file)
           (with-temp-file file (insert "")))
         (with-current-buffer (org-canvas--find-file-noselect file)
           (org-canvas--gradebook-rewrite-body
-           "Students" (lambda () (org-canvas--gradebook-insert-students rows names summaries)))
+           "Students" (lambda () (org-canvas--gradebook-insert-students rows names summaries columns)))
           (org-canvas--gradebook-rewrite-body
            "Sections" (lambda () (org-canvas--gradebook-insert-sections rows names summaries)))
           (org-canvas--pull-write-file-header)
