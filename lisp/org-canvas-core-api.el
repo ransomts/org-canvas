@@ -785,11 +785,31 @@ reads \"subgroups\".  Nil when nothing usable is left."
       (when (and name (not (string-match-p "\\`[0-9.]*\\'" name)))
         (replace-regexp-in-string "_" " " name)))))
 
+(defvar org-canvas--api-unwrap-key nil
+  "Key under which the reply being paged wraps its rows, or nil.
+Most list endpoints answer a bare array; quiz submissions answer
+{quiz_submissions: [...]}.  Bound around a call to
+`org-canvas-api-request-all-pages' by a caller that knows the key, so
+the helper's signature, and every test stub of it, stays as it is.")
+
+(defun org-canvas--api-page-items (reply)
+  "Return the rows of one page REPLY as a list.
+REPLY is a `plz-response' (decoded here) or an already-decoded body
+from a stub; a body wrapped under `org-canvas--api-unwrap-key' is
+unwrapped."
+  (let ((body (if (plz-response-p reply) (org-canvas--api-decode-response reply) reply)))
+    (append (if org-canvas--api-unwrap-key
+                (alist-get org-canvas--api-unwrap-key body)
+              body)
+            nil)))
+
 (defun org-canvas-api-request-all-pages (method url &optional params)
   "Fetch all pages of results from a paginated Canvas API endpoint.
 METHOD is the HTTP method (usually \\='GET).
 URL is the full endpoint URL.
 PARAMS is an alist of additional query parameters.
+A reply that wraps its rows is unwrapped when
+`org-canvas--api-unwrap-key' is bound to the key.
 Asks for per_page=100 and follows the Link header's `next' URL until
 there is none, which is how Canvas asks to be paged: an endpoint
 paginated by bookmark (enrollments) answers a numbered second page
@@ -822,10 +842,7 @@ Returns a flat list of all items across all pages."
                         (org-canvas-api-request method next-url :as 'response)
                       (org-canvas-api-request method url :params page-params :as 'response)))
              (with-headers (plz-response-p reply))
-             (page-items (append (if with-headers
-                                     (org-canvas--api-decode-response reply)
-                                   reply)
-                                 nil)))
+             (page-items (org-canvas--api-page-items reply)))
         (dolist (item page-items)
           (push item all-items))
         (setq next-url (and with-headers (org-canvas--api-next-page-url reply)))

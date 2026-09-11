@@ -732,15 +732,90 @@ Return nil when there are no question subheadings."
 
 (defun org-canvas--validate-quiz-point-total (loc)
   "Check that quiz POINTS matches sum of question points.
-LOC is a (:file :line :heading) plist."
-  (when-let* ((declared-points (org-entry-get (point) "POINTS"))
-              (sum (org-canvas--validate-quiz-sum-question-points))
-              (declared (string-to-number declared-points)))
-    (unless (= declared sum)
-      (list (org-canvas--validate-make-issue
-             'warning loc "POINTS"
-             (format "Quiz POINTS is %s but question total is %s"
-                     declared-points (number-to-string sum)))))))
+LOC is a (:file :line :heading) plist.  The accommodations table
+under the quiz, when there is one, is checked as well (issue #230)."
+  (nconc
+   (when-let* ((declared-points (org-entry-get (point) "POINTS"))
+               (sum (org-canvas--validate-quiz-sum-question-points))
+               (declared (string-to-number declared-points)))
+     (unless (= declared sum)
+       (list (org-canvas--validate-make-issue
+              'warning loc "POINTS"
+              (format "Quiz POINTS is %s but question total is %s"
+                      declared-points (number-to-string sum))))))
+   (org-canvas--validate-quiz-accommodations loc)))
+
+(defun org-canvas--validate-accommodation-cells (line)
+  "Split the table LINE into trimmed cells."
+  (mapcar #'string-trim (split-string (string-trim line "|" "|") "|")))
+
+(defun org-canvas--validate-accommodation-number-columns (header)
+  "Return the indexes of the Extra attempts and Extra time cells in HEADER.
+HEADER is the table's first row, as cells.  A header naming neither
+falls back to positions 1 and 2, as the sync does."
+  (let* ((titles (mapcar #'downcase header))
+         (attempts (cl-position "extra attempts" titles :test #'string=))
+         (time (cl-position "extra time" titles :test #'string=)))
+    (if (or attempts time)
+        (delq nil (list attempts time))
+      (list 1 2))))
+
+(defun org-canvas--validate-accommodation-row (cells columns row-loc)
+  "Check one accommodations row, CELLS, and return its issues.
+The student must be a person heading in people.org or a literal #id
+\(push-only: the sync skips a row it cannot resolve); the cells at
+COLUMNS must be whole numbers (an error, since the sync refuses the
+table).  ROW-LOC locates the row."
+  (let ((student (or (nth 0 cells) ""))
+        (issues nil))
+    (unless (or (string-empty-p student)
+                (string-match-p "\\`#[0-9]+\\'" student)
+                (org-canvas--validate-override-lookup
+                 'org-canvas-people-file student "USER_ID"))
+      (push (org-canvas--validate-push-only
+             (org-canvas--validate-make-issue
+              'warning row-loc nil
+              (format "Accommodation student '%s' is not in people.org (pull people first, or write #id)"
+                      student)))
+            issues))
+    (dolist (col columns)
+      (let ((cell (or (nth col cells) "")))
+        (unless (string-match-p "\\`[0-9]*\\'" cell)
+          (push (org-canvas--validate-make-issue
+                 'error row-loc nil
+                 (format "Accommodation cell '%s' is not a whole number" cell))
+                issues))))
+    (nreverse issues)))
+
+(cl-defun org-canvas--validate-quiz-accommodations (loc)
+  "Check the `#+NAME: accommodations' table under the quiz at point.
+LOC is a (:file :line :heading) plist.  Nil without a table."
+  (let ((end (save-excursion (org-end-of-subtree t) (point)))
+        (issues nil))
+    (save-excursion
+      (unless (re-search-forward "^#\\+NAME:[ \t]+accommodations[ \t]*$" end t)
+        (cl-return-from org-canvas--validate-quiz-accommodations nil))
+      (forward-line 1)
+      (unless (looking-at "^|")
+        (cl-return-from org-canvas--validate-quiz-accommodations nil))
+      (let ((columns (org-canvas--validate-accommodation-number-columns
+                      (org-canvas--validate-accommodation-cells
+                       (buffer-substring-no-properties
+                        (line-beginning-position) (line-end-position))))))
+        (forward-line 1)
+        (when (looking-at "^|-")
+          (forward-line 1))
+        (while (looking-at "^|\\([^-]\\)")
+          (let ((row-loc (list :file (plist-get loc :file)
+                               :line (line-number-at-pos)
+                               :heading (plist-get loc :heading)))
+                (cells (org-canvas--validate-accommodation-cells
+                        (buffer-substring-no-properties
+                         (line-beginning-position) (line-end-position)))))
+            (setq issues (nconc issues (org-canvas--validate-accommodation-row
+                                        cells columns row-loc))))
+          (forward-line 1))))
+    issues))
 
 (defun org-canvas--count-assignments-in-group (group-name assignments-file)
   "Count assignments in GROUP-NAME by scanning ASSIGNMENTS-FILE."
