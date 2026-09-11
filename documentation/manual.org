@@ -2685,6 +2685,26 @@ mean kept score). Every pull rewrites the file; nothing is pushed from
 it. New Quizzes have no such endpoint, so the prompt lists classic
 quizzes only.
 
+** Peer Reviews
+
+An assignment's peer-review settings are pushed from =assignments.org=
+(=PEER_REVIEWS=, =PEER_REVIEW_COUNT=, =PEER_REVIEW_DUE_AT=,
+=AUTOMATIC_PEER_REVIEWS=). Who was then assigned to review whom, and
+who never did, is visible only in SpeedGrader, and an unassigned or
+undone review silently costs a student points.
+=M-x org-canvas-pull-peer-reviews= (transient: Submissions, =w=) picks
+an assignment with peer reviews enabled and writes what Canvas holds
+as two read-only tables under the submissions directory, as
+=<assignment> (peer reviews).org=: one row per review (Reviewer,
+Reviews, State, Completed at, sorted by reviewer; the date is the
+reviewer's newest comment, since the review itself carries none) and
+one row per active student (Reviewers assigned, Reviews received), so
+a student nobody reviews shows a zero. A summary line above counts
+the reviews assigned and completed, the students with no reviewer and
+the students who reviewed nobody. Every pull rewrites the file;
+nothing is pushed from it. Reviewers are assigned in the Canvas web
+UI.
+
 ** Privacy
 
 Grading files are student work. The submissions directory receives a =.gitignore= excluding everything in it when it is first created (=org-canvas-submissions-write-gitignore=), so the files never travel with a course repository. Keep the directory out of any other sharing you would not extend to a gradebook export.
@@ -3122,6 +3142,7 @@ These commands delete the item at the current cursor position:
 |---|---|
 | =org-canvas-pull-submissions= | Pull an assignment into a grading file (or the summary table) |
 | =org-canvas-pull-quiz-submissions= | Pull a classic quiz's attempts into a read-only table (=z=) |
+| =org-canvas-pull-peer-reviews= | Pull who reviews whom on an assignment into read-only tables (=w=) |
 | =org-canvas-open-submissions= | Reopen a saved grading file |
 | =org-canvas-submissions-push-grades= | Push changed scores and drafted comments (=S= in the file) |
 | =org-canvas-submissions-post-grades= | Post the assignment's grades to students, under a manual post policy (=P=) |

@@ -55,6 +55,7 @@
                                   "lisp/org-canvas-validate.el"
                                   "lisp/org-canvas-submissions.el"
                                   "lisp/org-canvas-quiz-submissions.el"
+                                  "lisp/org-canvas-peer-reviews.el"
                                   "lisp/org-canvas-messages.el"
                                   "lisp/org-canvas-setup.el"
                                   "lisp/org-canvas-transient.el"))
