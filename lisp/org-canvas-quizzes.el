@@ -628,7 +628,9 @@ QUIZ-CANVAS-ID is the Canvas ID of the parent quiz.
 Returns a plist of raw string values."
   (list :title-raw (org-get-heading t t t t)
         :canvas-id (org-entry-get pom "CANVAS_ID")
-        :type-raw (org-entry-get pom "TYPE")
+        ;; QUESTION_TYPE is what pulls wrote before issue #239.
+        :type-raw (or (org-entry-get pom "TYPE")
+                      (org-entry-get pom "QUESTION_TYPE"))
         :points-raw (org-entry-get pom "POINTS")
         :quiz-canvas-id quiz-canvas-id
         :text (org-canvas--quiz-parse-question-text)))
@@ -1071,26 +1073,38 @@ Canvas file URLs in answer text/html are rewritten to local file links."
                         text))))))
 
 (defun org-canvas--quiz-pull-insert-question (q)
-  "Insert a single question Q as an L2 heading under the current quiz.
-Point must be at the parent quiz heading."
-  (let ((q-name (or (alist-get 'question_name q) "Question"))
-        (q-text (alist-get 'question_text q))
-        (q-type (alist-get 'question_type q))
-        (q-points (alist-get 'points_possible q))
-        (answers (alist-get 'answers q)))
-    (let ((subtree-end (save-excursion (org-end-of-subtree t) (point))))
-      (goto-char subtree-end)
-      (unless (bolp) (insert "\n"))
-      (insert (format "** %s\n" q-name))
-      (org-back-to-heading t)
-      (let ((qpos (point)))
-        (when q-type
-          (org-canvas-org-set-property qpos "QUESTION_TYPE" q-type))
-        (when q-points
-          (org-canvas-org-set-property qpos "POINTS" (format "%s" q-points)))
-        (goto-char (save-excursion (org-end-of-meta-data t) (point)))
-        (org-canvas--quiz-insert-question-body q-text)
-        (org-canvas--quiz-insert-answers answers)))))
+  "Write question Q as an L2 heading under the quiz at point.
+Point must be at the parent quiz heading and is left there.  A heading
+the quiz already holds for the question, by CANVAS_ID or, unstamped,
+by name, is rewritten in place; otherwise the question is appended
+\(issue #239).  The id is stamped so a later sync updates the question
+rather than creating it again, and the type goes to TYPE, the property
+the sync reads."
+  (let* ((quiz-pos (point))
+         (q-id (alist-get 'id q))
+         (q-name (or (alist-get 'question_name q) "Question"))
+         (q-text (alist-get 'question_text q))
+         (q-type (alist-get 'question_type q))
+         (q-points (alist-get 'points_possible q))
+         (answers (alist-get 'answers q))
+         (at (org-canvas--pull-child-insert-point "CANVAS_ID" q-id q-name))
+         (next (copy-marker at t)))
+    (insert (format "** %s\n" q-name))
+    (goto-char at)
+    (org-back-to-heading t)
+    (let ((qpos (point)))
+      (when q-id
+        (org-canvas-org-save-sync-state qpos q-id))
+      (when q-type
+        (org-canvas-org-set-property qpos "TYPE" q-type))
+      (when q-points
+        (org-canvas-org-set-property qpos "POINTS" (format "%s" q-points)))
+      (goto-char (save-excursion (org-end-of-meta-data t) (point)))
+      (org-canvas--quiz-insert-question-body q-text)
+      (org-canvas--quiz-insert-answers answers))
+    (org-canvas--pull-child-close next)
+    (set-marker next nil)
+    (goto-char quiz-pos)))
 
 (defun org-canvas--quiz-pull-fetch-questions (quiz-id)
   "Fetch question list for QUIZ-ID, returning a list of alists.
@@ -1113,17 +1127,19 @@ Point must be at the parent quiz heading."
       (org-canvas--quiz-pull-insert-question q))))
 
 (defun org-canvas--quiz-pull-insert-description-wrapped (description)
-  "Insert DESCRIPTION HTML inside a `** Description' subheading.
-Point must be at the parent quiz heading.  Leaves point at the
-parent quiz heading after insertion."
-  (let ((quiz-pos (point))
-        (subtree-end (save-excursion (org-end-of-subtree t) (point))))
-    (goto-char subtree-end)
-    (unless (bolp) (insert "\n"))
+  "Write DESCRIPTION HTML inside a `** Description' subheading.
+Point must be at the parent quiz heading and is left there.  An
+existing Description child is rewritten in place (issue #239)."
+  (let* ((quiz-pos (point))
+         (at (org-canvas--pull-child-insert-point "CANVAS_ID" nil "Description"))
+         (next (copy-marker at t)))
     (insert "** Description\n")
+    (goto-char at)
     (org-back-to-heading t)
     (when description
       (org-canvas--pull-insert-body description))
+    (org-canvas--pull-child-close next)
+    (set-marker next nil)
     (goto-char quiz-pos)))
 
 (defun org-canvas--quiz-pull-emit-body (quiz-pos description questions)
@@ -1138,9 +1154,9 @@ parent quiz or under a dedicated subheading."
   (when (and description (not (string-empty-p description)))
     (org-canvas--quiz-pull-insert-description-wrapped description)
     (goto-char quiz-pos))
-  (when questions
-    (dolist (q questions)
-      (org-canvas--quiz-pull-insert-question q))))
+  (dolist (q questions)
+    (org-canvas--quiz-pull-insert-question q)
+    (goto-char quiz-pos)))
 
 ;;;###autoload
 (defun org-canvas-pull-quizzes ()

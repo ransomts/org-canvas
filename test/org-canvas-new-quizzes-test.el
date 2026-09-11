@@ -2196,6 +2196,38 @@ Consider the following expression.
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t))))
 
+  (it "leaves one heading per item after two pulls, rewritten in place (issue #239)"
+    (let* ((temp-dir (make-temp-file "nq-pull-239" t))
+           (test-file (expand-file-name "new-quizzes.org" temp-dir))
+           (body "What is 2+2?"))
+      (unwind-protect
+          (let ((org-canvas-new-quizzes-file test-file))
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                         (lambda (_method url &optional _params)
+                           (if (string-match-p "items" url)
+                               `(((id . 1) (position . 1) (item_body . ,body)
+                                  (interaction_type_slug . "choice") (points_possible . 5))
+                                 ((id . 2) (position . 2) (item_body . "Second")
+                                  (interaction_type_slug . "essay") (points_possible . 2)))
+                             '(((assignment_id . 42) (title . "Quiz"))))))
+                        ((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                        ((symbol-function 'display-buffer) (lambda (_) nil)))
+                (org-canvas-pull-new-quizzes)
+                (setq body "What is 3+3?")
+                (org-canvas-pull-new-quizzes)
+                (let ((content (with-temp-buffer
+                                 (insert-file-contents test-file)
+                                 (buffer-string))))
+                  (expect (test-org-canvas-count-matches "^\\*\\* " content) :to-equal 2)
+                  (expect content :to-match "^\\*\\* What is 3\\+3\\?$")
+                  (expect content :not :to-match "2\\+2")
+                  (expect (string-match "3\\+3" content)
+                          :to-be-less-than (string-match "\\*\\* Second" content))))))
+        (let ((buf (find-buffer-visiting test-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
   (it "uses id fallback when assignment_id absent in pull response"
     (let* ((temp-dir (make-temp-file "nq-pull-id-fb" t))
            (test-file (expand-file-name "new-quizzes.org" temp-dir)))

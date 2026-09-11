@@ -395,6 +395,65 @@ Returns a point in the buffer visiting FILE."
             (org-back-to-heading t)
             (point)))))))
 
+;;;; Children of a Pulled Entry
+
+(defun org-canvas--pull-find-child (id-property id title)
+  "Return the position of the level-2 child of the entry at point for ID or TITLE.
+A child carrying ID in ID-PROPERTY wins; failing that, a child without
+ID-PROPERTY whose title is TITLE, so a heading written before the pull
+stamped ids, or by hand under the same name, is taken over rather
+than duplicated (issue #239).  Nil when there is none.  Point stays."
+  (save-excursion
+    (org-back-to-heading t)
+    (let ((end (save-excursion (org-end-of-subtree t t) (point)))
+          (target (and id (format "%s" id)))
+          (by-id nil) (by-title nil))
+      (while (and (not by-id) (outline-next-heading) (< (point) end))
+        (when (= (org-outline-level) 2)
+          (let ((have (org-entry-get (point) id-property)))
+            (cond ((and target have (equal have target)) (setq by-id (point)))
+                  ((and (not have) (not by-title) title
+                        (equal (org-get-heading t t t t) title))
+                   (setq by-title (point)))))))
+      (or by-id by-title))))
+
+(defun org-canvas--pull-remove-child (pos)
+  "Delete the subtree of the child heading at POS and return POS.
+The pull writes the fresh child there, so the entry keeps its place
+among its siblings.  What follows the child starts at the beginning
+of a line afterwards, as it did before."
+  (save-excursion
+    (goto-char pos)
+    (org-back-to-heading t)
+    (let ((beg (point))
+          (end (save-excursion (org-end-of-subtree t t) (point))))
+      (delete-region beg end)
+      beg)))
+
+(defun org-canvas--pull-child-insert-point (id-property id title)
+  "Return where the pull writes the child ID or TITLE of the entry at point.
+ID is looked up in ID-PROPERTY; TITLE matches an unstamped child.  The
+position of the existing child, emptied, when
+`org-canvas--pull-find-child' finds one; else the end of the entry's
+subtree, with a newline added so the child starts on its own line.
+Point is left there."
+  (let ((existing (org-canvas--pull-find-child id-property id title)))
+    (if existing
+        (goto-char (org-canvas--pull-remove-child existing))
+      (goto-char (save-excursion (org-end-of-subtree t) (point)))
+      (unless (bolp) (insert "\n")))
+    (point)))
+
+(defun org-canvas--pull-child-close (next)
+  "Keep whatever followed a rewritten child at NEXT on its own line.
+NEXT is a marker at the text that followed the child's old subtree; a
+child written in place ends where it ends, so a newline is added when
+the following heading would otherwise share its line."
+  (when (and next (< (marker-position next) (point-max)))
+    (save-excursion
+      (goto-char next)
+      (unless (bolp) (insert "\n")))))
+
 ;;;; Titled Headings
 
 (defun org-canvas--pull-heading-by-title (title)

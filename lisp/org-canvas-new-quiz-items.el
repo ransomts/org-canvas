@@ -634,18 +634,23 @@ into the nested format required by the New Quizzes Items API:
       slug))
 
 (defun org-canvas--new-quiz-pull-insert-item (item)
-  "Insert a single New Quiz ITEM as an L2 heading under the current quiz."
-  (let ((title (or (alist-get 'item_body item) "Question"))
+  "Write New Quiz ITEM as an L2 heading under the quiz at point.
+Point must be at the parent quiz heading and is left there.  A heading
+the quiz already holds for the item, by CANVAS_ITEM_ID or, unstamped,
+by title, is rewritten in place; otherwise the item is appended
+\(issue #239)."
+  (let ((quiz-pos (point))
+        (title (or (alist-get 'item_body item) "Question"))
         (slug (alist-get 'interaction_type_slug item))
         (points (alist-get 'points_possible item))
         (item-id (alist-get 'id item)))
     (setq title (org-canvas--html-to-org-inline title))
     (when (string-empty-p title)
       (setq title "Question"))
-    (let ((subtree-end (save-excursion (org-end-of-subtree t) (point))))
-      (goto-char subtree-end)
-      (unless (bolp) (insert "\n"))
+    (let* ((at (org-canvas--pull-child-insert-point "CANVAS_ITEM_ID" item-id title))
+           (next (copy-marker at t)))
       (insert (format "** %s\n" title))
+      (goto-char at)
       (org-back-to-heading t)
       (let ((qpos (point)))
         (when item-id
@@ -655,7 +660,10 @@ into the nested format required by the New Quizzes Items API:
            qpos "TYPE" (org-canvas--new-quiz-slug-to-type slug)))
         (when points
           (org-canvas-org-set-property
-           qpos "POINTS" (format "%s" points)))))))
+           qpos "POINTS" (format "%s" points))))
+      (org-canvas--pull-child-close next)
+      (set-marker next nil)
+      (goto-char quiz-pos))))
 
 
 (provide 'org-canvas-new-quiz-items)

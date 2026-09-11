@@ -4158,4 +4158,77 @@ URL, a POST with id 900, and the question list GET with REMOTE."
                (org-canvas--quiz-questions-digest nil))))
       (expect d1 :not :to-equal d2))))
 
+(describe "quiz re-pull rewrites children in place (issue #239)"
+  (defun test-quiz-239--pull-twice (initial quiz-data questions)
+    "Pull QUIZ-DATA with QUESTIONS twice over INITIAL and return the file text."
+    (let ((temp (make-temp-file "quiz-239-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp (insert initial))
+            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                       (lambda (_method url &rest _)
+                         (if (string-match-p "quizzes\\'" url) quiz-data questions)))
+                      ((symbol-function 'message) #'ignore))
+              (let ((org-canvas-quizzes-file temp))
+                (with-org-canvas-test-config
+                  (with-sync-test-env
+                    (org-canvas-pull-quizzes)
+                    (org-canvas-pull-quizzes)))))
+            (with-temp-buffer (insert-file-contents temp) (buffer-string)))
+        (let ((buf (find-buffer-visiting temp)))
+          (when buf (with-current-buffer buf (set-buffer-modified-p nil)) (kill-buffer buf)))
+        (delete-file temp))))
+
+  (it "leaves one heading per question after two pulls, stamped and typed"
+    (let ((text (test-quiz-239--pull-twice
+                 ""
+                 '(((id . 100) (title . "Quiz A") (description . "<p>Intro</p>") (published . t)))
+                 '(((id . 1) (question_name . "A1") (question_type . "short_answer_question")
+                    (question_text . "t") (points_possible . 1.0) (answers . []))
+                   ((id . 2) (question_name . "A2") (question_type . "essay_question")
+                    (question_text . "u") (points_possible . 2.0) (answers . []))))))
+      (expect (test-org-canvas-count-matches "^\\* Quiz A$" text) :to-equal 1)
+      (expect (test-org-canvas-count-matches "^\\*\\* Description$" text) :to-equal 1)
+      (expect (test-org-canvas-count-matches "^\\*\\* A1$" text) :to-equal 1)
+      (expect (test-org-canvas-count-matches "^\\*\\* A2$" text) :to-equal 1)
+      (expect text :to-match ":CANVAS_ID: +1\n")
+      (expect text :to-match ":TYPE: +short_answer_question\n")
+      (expect text :not :to-match "QUESTION_TYPE")
+      (expect (string-match "\\*\\* A1" text) :to-be-less-than (string-match "\\*\\* A2" text))))
+
+  (it "takes over an unstamped heading of the same name in place and keeps a hand-written sibling"
+    (let ((text (test-quiz-239--pull-twice
+                 "* Quiz A
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** A1
+:PROPERTIES:
+:QUESTION_TYPE: short_answer_question
+:END:
+old text
+** Mine
+:PROPERTIES:
+:TYPE: essay_question
+:END:
+not on Canvas yet
+"
+                 '(((id . 100) (title . "Quiz A") (description . "") (published . t)))
+                 '(((id . 1) (question_name . "A1") (question_type . "short_answer_question")
+                    (question_text . "new text") (points_possible . 1.0) (answers . []))))))
+      (expect (test-org-canvas-count-matches "^\\*\\* A1$" text) :to-equal 1)
+      (expect (test-org-canvas-count-matches "^\\*\\* Mine$" text) :to-equal 1)
+      (expect text :not :to-match "old text")
+      (expect text :to-match "new text")
+      (expect text :to-match "not on Canvas yet")
+      (expect (string-match "\\*\\* A1" text) :to-be-less-than (string-match "\\*\\* Mine" text)))))
+
+(describe "question type fallback (issue #239)"
+  (it "reads QUESTION_TYPE when a file pulled before the fix carries no TYPE"
+    (with-temp-org-buffer "* Quiz\n:PROPERTIES:\n:CANVAS_ID: 5\n:END:\n** Q\n:PROPERTIES:\n:QUESTION_TYPE: essay_question\n:END:\nbody\n"
+      (goto-char (point-min))
+      (re-search-forward "^\\*\\* Q")
+      (let ((data (org-canvas--question-parse-entry "5")))
+        (expect (plist-get data :question_type) :to-equal "essay_question")))))
+
 ;;; org-canvas-quizzes-test.el ends here
