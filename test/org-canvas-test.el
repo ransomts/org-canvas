@@ -655,6 +655,8 @@
                    (lambda () (push 'assignment-groups call-order)))
                   ((symbol-function 'org-canvas-pull-group-categories)
                    (lambda () (push 'group-categories call-order)))
+                  ((symbol-function 'org-canvas-pull-groups)
+                   (lambda () (push 'groups call-order)))
                   ((symbol-function 'org-canvas-pull-outcomes)
                    (lambda () (push 'outcomes call-order)))
                   ((symbol-function 'org-canvas-pull-rubrics)
@@ -698,6 +700,9 @@
         ;; Replies after the topics they hang under
         (expect (cl-position 'discussions call-order) :to-be-less-than
                 (cl-position 'discussion-replies call-order))
+        ;; Groups are read after the categories that hold them.
+        (expect (cl-position 'group-categories call-order)
+                :to-be-less-than (cl-position 'groups call-order))
         ;; Every pull in the tiers was called, once each
         (expect (length call-order)
                 :to-equal (apply #'+ (mapcar #'length org-canvas--pull-tiers)))))))
@@ -718,6 +723,8 @@
                 ((symbol-function 'org-canvas-pull-assignment-groups)
                  (lambda () nil))
                 ((symbol-function 'org-canvas-pull-group-categories)
+                 (lambda () nil))
+                ((symbol-function 'org-canvas-pull-groups)
                  (lambda () nil))
                 ((symbol-function 'org-canvas-pull-outcomes)
                  (lambda () nil))
@@ -1414,6 +1421,7 @@
                 ((symbol-function 'org-canvas-pull-grading-periods) (lambda () nil))
                 ((symbol-function 'org-canvas-pull-assignment-groups) (lambda () nil))
                 ((symbol-function 'org-canvas-pull-group-categories) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-groups) (lambda () nil))
                 ((symbol-function 'org-canvas-pull-outcomes) (lambda () nil))
                 ((symbol-function 'org-canvas-pull-rubrics) (lambda () nil))
                 ((symbol-function 'org-canvas-pull-pages) (lambda () nil))
@@ -1445,6 +1453,7 @@
                 ((symbol-function 'org-canvas-pull-grading-periods) (lambda () nil))
                 ((symbol-function 'org-canvas-pull-assignment-groups) (lambda () nil))
                 ((symbol-function 'org-canvas-pull-group-categories) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-groups) (lambda () nil))
                 ((symbol-function 'org-canvas-pull-outcomes) (lambda () nil))
                 ((symbol-function 'org-canvas-pull-rubrics) (lambda () nil))
                 ((symbol-function 'org-canvas-pull-pages) (lambda () nil))
@@ -1478,6 +1487,7 @@
                 ((symbol-function 'org-canvas-pull-grading-periods) (lambda () nil))
                 ((symbol-function 'org-canvas-pull-assignment-groups) (lambda () nil))
                 ((symbol-function 'org-canvas-pull-group-categories) (lambda () nil))
+                ((symbol-function 'org-canvas-pull-groups) (lambda () nil))
                 ((symbol-function 'org-canvas-pull-outcomes) (lambda () nil))
                 ((symbol-function 'org-canvas-pull-rubrics) (lambda () nil))
                 ((symbol-function 'org-canvas-pull-pages) (lambda () nil))

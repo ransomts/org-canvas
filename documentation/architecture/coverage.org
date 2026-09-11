@@ -33,7 +33,8 @@ pull-at-point and prune.
 | Discussions       | yes  | yes      | yes  | yes    | yes      | topics; replies are a separate pull-only type below             |
 | Discussion replies| no   | no       | yes  | no     | no       | pull-only archive of entries and replies, in discussion-replies.org |
 | Files             | yes  | yes      | yes  | yes    | yes      | folders, usage rights, visibility; three pull modes             |
-| Group categories  | yes  | yes      | yes  | yes    | yes      | Canvas can auto-create groups; memberships are not managed      |
+| Group categories  | yes  | yes      | yes  | yes    | yes      | Canvas can auto-create groups                                   |
+| Groups            | no   | no       | yes  | no     | no       | pull-only: each category's groups and member names, in groups.org |
 | Modules           | yes  | yes      | yes  | yes    | yes      | items reconciled inside finalize; prerequisites, sequential progress, unlock dates, completion requirements |
 | New Quizzes       | yes  | yes      | yes  | yes    | no       | items sync inside finalize; the feature list keys on the assignment |
 | Outcomes          | yes  | yes      | yes  | yes    | yes      | two levels, groups then outcomes                                |
@@ -64,7 +65,7 @@ Navigation tabs are synced from the settings file.
 | Feature                        | What org-canvas does                                   | What it does not do                          |
 |--------------------------------+--------------------------------------------------------+----------------------------------------------|
 | Grading schemes (standards)    | settings names one by id                               | create, edit or pull a scheme                |
-| Groups                         | a group category can ask Canvas to create N groups      | list groups, name them, or manage members    |
+| Groups                         | a category can ask Canvas to create N groups; groups and their members are pulled | name groups or manage members from Org |
 | Quiz question banks            | a classic quiz may name a bank on create                | create banks or move questions between them  |
 | New Quiz item banks            | nothing                                                | anything; items live inline under the quiz   |
 | Rubric assessments             | read and push for one student in the grading file      | any course-level view                        |
@@ -84,7 +85,6 @@ disturbs them.
   settings.  Grading periods are pulled (see the covered table).
 - *People:* enrollments, users, the roster, and section membership.
   Sections are pulled as objects; who is in them is not.
-- *Group membership:* which students are in which group.
 - *Discussion checkpoints*, the newer graded-discussion feature; replies themselves are pulled (see the covered table).
 - *Mastery Paths* (conditional release), *Blueprint* associations and
   locks, and course-level *feature flags*.
@@ -117,8 +117,6 @@ in order:
 1. *Posting policies.*  A manually posted gradebook is a common default
    and nothing here can see or set it, so grades pushed from a grading
    file may sit hidden until posted in the web UI.
-2. *Group membership*, whenever an assignment or discussion is a group
-   assignment.
 
 The rest are rarely set at the course level or belong to the
 institution.
@@ -129,9 +127,10 @@ Posting policies are the simplest candidate: a flat object with no
 children, so a pull-only module is a registration, a =define-pull=
 and a test file, and a full sync adds parse, build and =define-sync=
 on top (grading periods went exactly that way).  =module-developer-guide.org= is the step by
-step.  Membership is harder, because it hangs under another type's
-heading and needs the child-reconciler pattern modules, quizzes and
-New Quizzes use inside finalize; replies took the pull-only route.
+step.  Managing membership from Org would be harder, because members hang
+under another type's heading and need the child-reconciler pattern
+modules, quizzes and New Quizzes use inside finalize; reading them, as
+replies are read, took the pull-only route.
 
 * Refreshing This Document
 

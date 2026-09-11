@@ -8,6 +8,7 @@ Each entry names the pull request that merged it.
 
 ** Added
 
+- =org-canvas-pull-groups=: the groups inside each group category and the students in each group, pulled into =groups.org= (categories at level 1, linked to =group-categories.org=; groups at level 2 with their member limit, join level and member count; members as a list of names). Pull-only, and the file holds student names, so keep it out of a course repository as the submissions directory is
 - =org-canvas-pull-grading-periods=: the course's grading periods are pulled into =grading-periods.org= (start, end and close dates, weight, closed flag), read-only since periods belong to the term; =org-canvas-validate= then warns when an assignment's =DUE_AT= falls outside every pulled period
 - =org-canvas-pull-discussion-replies=: a pull-only archive of what was written under each discussion topic, into =discussion-replies.org= — one heading per topic with entries, its entries and their replies beneath, matched by =CANVAS_ENTRY_ID= on a re-pull; nothing local is deleted and nothing is written to Canvas
 - =documentation/architecture/coverage.org=: the map of what org-canvas covers in Canvas, what it touches in one direction only, and what it never reads or writes, with the gaps most likely to matter for a course and the grep that refreshes it
