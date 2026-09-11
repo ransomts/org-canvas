@@ -1193,6 +1193,7 @@ divergences found, so a batch caller can act on it; see
 `org-canvas-diff-batch'."
   (interactive)
   (org-canvas--preflight-check)
+  (run-hooks 'org-canvas--operation-start-hook)
   (let (results)
     (dolist (feature org-canvas--feature-registry)
       (let ((name (plist-get feature :name)))

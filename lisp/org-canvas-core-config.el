@@ -460,6 +460,15 @@ file's opinion about a field it cannot hold an opinion on), the
 validator warns when it is typed on a heading no push has created
 yet, and the module's payload never carries it (issue #184).
 
+A `:remote-fn' that answers from a second request — a discussion's
+checkpoints come by GraphQL, not with the topic — may declare
+`:remote-known-p', a predicate of the Canvas item saying whether that
+answer exists at all.  When it says no, because the request was
+refused or the item cannot carry the field, a pull leaves the property
+as it is instead of reading nil as \"Canvas holds nothing\" and
+deleting it; the drift report is ruled out the same way through
+`:compare-p' (issue #216).
+
 A module whose payload carries the heading's body declares
 `:body-api-key', the Canvas field it lands in (\"description\",
 \"body\", \"message\"), so the drift report can compare it — the
@@ -734,12 +743,23 @@ Handles hash-tables, alists, and already-encoded strings."
   "When non-nil, `org-canvas-clear-log' is a no-op.
 Bound to t by `org-canvas-sync' so sub-sync phases preserve each other's logs.")
 
+(defvar org-canvas--operation-start-hook nil
+  "Normal hook run when a command begins, before anything is fetched.
+Every sync, pull and delete command clears the log on entry, and that
+is the one moment they share; a module whose per-run cache must not
+outlive one command forgets it here (the discussions module's
+checkpoint map), so a web-UI edit between two pulls in one session is
+seen by the second.  Runs whether or not the log is inhibited: a
+sub-phase of the master sync is still a command starting.")
+
 (defun org-canvas-clear-log ()
   "Clear the log buffer and log file (when file logging is active).
-Does nothing when `org-canvas--inhibit-log-clear' is non-nil.
-Also refreshes the logger's file path to the current `org-canvas-directory',
-since the logger is initialized at load time when the directory may not
-yet be set."
+Does nothing when `org-canvas--inhibit-log-clear' is non-nil, except
+run `org-canvas--operation-start-hook', which marks a command starting
+whatever the log does.  Also refreshes the logger's file path to the
+current `org-canvas-directory', since the logger is initialized at load
+time when the directory may not yet be set."
+  (run-hooks 'org-canvas--operation-start-hook)
   (unless org-canvas--inhibit-log-clear
     (with-current-buffer (get-buffer-create org-canvas--log-buffer-name)
       (let ((inhibit-read-only t))
