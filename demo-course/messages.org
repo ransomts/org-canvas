@@ -1,0 +1,26 @@
+#+TITLE: Messages
+
+Messages to students, sent through the Canvas Inbox with
+=org-canvas-send-messages=.  The heading is the subject, the body is the
+message, and =TO= says who gets it.  A sent heading is stamped and never
+sent again: add a new heading to send again.  Sending is never part of
+=org-canvas-sync=.
+
+* Welcome to DS 101
+:PROPERTIES:
+:TO: Self
+:END:
+Welcome!  Course materials are in Modules, and office hours are on the
+calendar.  Try a message on yourself first: TO: Self sends it to the
+token's owner, nobody else.
+
+* Reminder: project proposals due Friday
+:PROPERTIES:
+:TO: Section: Section A - MWF 9:00am
+:SENT_AT: <2026-09-08 Tue 09:00>
+:RECIPIENTS: section_320069
+:CONVERSATION_IDS: 550021
+:PAYLOAD_HASH: d24537186c520174201a34882d2fcb45
+:END:
+Proposals are due Friday at 23:59 through the Project Proposal
+assignment.  One page is enough.
