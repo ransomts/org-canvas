@@ -83,10 +83,12 @@
 (require 'org-canvas-groups)
 (require 'org-canvas-people)
 (require 'org-canvas-gradebook)
+(require 'org-canvas-rubric-results)
 (require 'org-canvas-calendar)
 (require 'org-canvas-diff)
 (require 'org-canvas-validate)
 (require 'org-canvas-submissions)
+(require 'org-canvas-quiz-submissions)
 (require 'org-canvas-setup)
 
 ;; Import command files: built on core and the feature modules, never
@@ -522,6 +524,7 @@ count for the operator to chase through the log (issue #155)."
     ((org-canvas-pull-sections "Sections")
      (org-canvas-pull-people "People")
      (org-canvas-pull-gradebook "Gradebook")
+     (org-canvas-pull-rubric-results "Rubric Results")
      (org-canvas-pull-grading-periods "Grading Periods")
      (org-canvas-pull-grading-schemes "Grading Schemes")
      (org-canvas-pull-files "Files")
