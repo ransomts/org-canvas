@@ -162,31 +162,61 @@ ID-PROPERTY defaults to \"CANVAS_ID\"."
          (format "%s={.}" id-prop) 'file)
         (org-canvas--save-buffer)))))
 
-(defvar-local org-canvas--saved-content-hash nil
-  "Hash of this buffer's text as last read from, or written to, its file.
-Set by `org-canvas--find-file-noselect' and `org-canvas--save-buffer',
-read by `org-canvas--ensure-buffer-fresh' to tell a file whose
-modification time moved but whose text did not — a sync client's
-restamp after this buffer's own save — from a file another writer
-rewrote (issue #188).  Nil until the buffer has been read or saved
-through org-canvas.")
+(defvar-local org-canvas--content-hashes nil
+  "Hashes of this buffer's text as read from or written to its file.
+Newest first.  `org-canvas--find-file-noselect' and
+`org-canvas--save-buffer' add to it; `org-canvas--ensure-buffer-fresh'
+reads it to tell a file whose modification time moved but whose text
+did not — a sync client's restamp after this buffer's own save (issue
+#188) — and a file a sync client rolled back to an earlier state of
+this same buffer (issue #249) from a file another writer rewrote.  Nil
+until the buffer has been read or saved through org-canvas.")
 
 (defun org-canvas--note-saved-content ()
   "Record the current buffer's text as the content its file now has."
-  (setq org-canvas--saved-content-hash (buffer-hash)))
+  (let ((hash (buffer-hash)))
+    (unless (equal hash (car org-canvas--content-hashes))
+      (push hash org-canvas--content-hashes))))
+
+(defun org-canvas--disk-content-hash ()
+  "Return the hash of the visited file's text on disk, or nil if unreadable."
+  (let ((file buffer-file-name))
+    (when (and file (file-readable-p file))
+      (with-temp-buffer
+        (insert-file-contents file)
+        (buffer-hash)))))
 
 (defun org-canvas--file-restamped-p ()
   "Return non-nil when the visited file's text is what this buffer last saw.
 A true answer means the modification time moved without the content
 changing, so the buffer is not being clobbered and may keep its edits."
-  (let ((file buffer-file-name))
-    (and org-canvas--saved-content-hash
-         file
-         (file-readable-p file)
-         (equal org-canvas--saved-content-hash
-                (with-temp-buffer
-                  (insert-file-contents file)
-                  (buffer-hash))))))
+  (and org-canvas--content-hashes
+       (equal (car org-canvas--content-hashes)
+              (org-canvas--disk-content-hash))))
+
+(defun org-canvas--file-rolled-back-p ()
+  "Return non-nil when the visited file holds an earlier state of this buffer.
+The text on disk is not this buffer's last save but one of its earlier
+saves, or the text it first read: a sync client wrote an older copy of
+the file back over a newer one (issue #249).  Nothing on disk is news
+to the buffer, so the buffer is the newer side and may keep its edits."
+  (let ((disk (org-canvas--disk-content-hash)))
+    (and disk
+         (member disk (cdr org-canvas--content-hashes))
+         t)))
+
+(defun org-canvas--restore-rolled-back-file ()
+  "Write the current buffer back over a file a sync client rolled back.
+The buffer is the newer side (`org-canvas--file-rolled-back-p'), so
+disk catches up with it: the visited time is refreshed first, since
+`save-buffer' would otherwise ask the batch-fatal \"changed since
+visited\" question, and the write is forced even for an unmodified
+buffer, since its last save is exactly what the client undid."
+  (set-visited-file-modtime)
+  (set-buffer-modified-p t)
+  (save-buffer)
+  (org-canvas--note-saved-content)
+  (org-canvas--log-info org-canvas--logger "[Saved] %s" buffer-file-name))
 
 (defun org-canvas--ensure-buffer-fresh ()
   "Under `noninteractive', reconcile the current buffer with its file.
@@ -197,29 +227,42 @@ call already landed (issue #97).  A file whose modification time moved
 but whose text is what this buffer last read or wrote was merely
 restamped by a sync client after the buffer's own save; the buffer,
 edits and all, is kept and the recorded time refreshed (issue #188).
-Otherwise an unmodified stale buffer is simply reread: the writer just
-saved it.  A modified stale buffer is a dual-buffer clobber in
+A file holding an earlier state of this buffer was rolled back by a
+sync client that wrote an older copy over a newer save; the buffer is
+kept and written again so disk catches up, since rereading would drop
+stamps whose API calls already landed (issue #249).  Otherwise an
+unmodified stale buffer is reread — text this buffer never saw is on
+disk, which mid-run is never routine, so the reread is a warning and a
+batch message.  A modified stale buffer is a dual-buffer clobber in
 progress, so this signals a clear error instead of letting the
 unanswerable prompt kill the run.  Interactive sessions keep Emacs's
 own protection and are left alone."
   (when (and noninteractive
              buffer-file-name
              (not (verify-visited-file-modtime (current-buffer))))
-    (cond
-     ((org-canvas--file-restamped-p)
-      (org-canvas--log-debug org-canvas--logger
-        "[Fresh] %s was restamped on disk without changing; keeping the buffer (issue #188)"
-        (file-name-nondirectory buffer-file-name))
-      (set-visited-file-modtime))
-     ((buffer-modified-p)
-      (error "%s changed on disk while this buffer holds unsaved edits — refusing to write over either (issue #97: two buffers for one file, usually a symlinked org-canvas-directory)"
-             (file-name-nondirectory buffer-file-name)))
-     (t
-      (org-canvas--log-info org-canvas--logger
-        "[Fresh] %s changed on disk; rereading it before writing"
-        (file-name-nondirectory buffer-file-name))
-      (revert-buffer t t t)
-      (org-canvas--note-saved-content)))))
+    (let ((name (file-name-nondirectory buffer-file-name)))
+      (cond
+       ((org-canvas--file-restamped-p)
+        (org-canvas--log-debug org-canvas--logger
+          "[Fresh] %s was restamped on disk without changing; keeping the buffer (issue #188)"
+          name)
+        (set-visited-file-modtime))
+       ((org-canvas--file-rolled-back-p)
+        (org-canvas--log-warning org-canvas--logger
+          "[Fresh] %s was rolled back on disk to an earlier state of this buffer, most likely by a file-sync client; keeping the buffer and saving it again (issue #249)"
+          name)
+        (message "Warning: %s was rolled back on disk during the run; saving the buffer again" name)
+        (org-canvas--restore-rolled-back-file))
+       ((buffer-modified-p)
+        (error "%s changed on disk while this buffer holds unsaved edits — refusing to write over either (issue #97: two buffers for one file, usually a symlinked org-canvas-directory)"
+               name))
+       (t
+        (org-canvas--log-warning org-canvas--logger
+          "[Fresh] %s changed on disk behind this buffer; rereading it before writing"
+          name)
+        (message "Warning: %s changed on disk during the run; rereading it" name)
+        (revert-buffer t t t)
+        (org-canvas--note-saved-content))))))
 
 (defun org-canvas--find-file-noselect (file)
   "Visit FILE and return its buffer, without the batch supersession prompt.

@@ -1448,12 +1448,134 @@ Page content.
             (with-current-buffer (find-file-noselect file)
               (unwind-protect
                   (let ((noninteractive t))
-                    (expect org-canvas--saved-content-hash :to-be nil)
+                    (expect org-canvas--content-hashes :to-be nil)
                     (goto-char (point-max))
                     (insert "local edit\n")
                     (test-fresh-188--restamp file)
                     (expect (org-canvas--ensure-buffer-fresh) :to-throw 'error))
                 (set-buffer-modified-p nil)
+                (kill-buffer))))
+        (delete-file file))))
+
+  (defun test-fresh-249--roll-back (file content)
+    "Write CONTENT, an earlier state of FILE, over it with a later modtime."
+    (with-temp-file file (insert content))
+    (set-file-times file (time-add (current-time) 5)))
+
+  (it "keeps a buffer whose file was rolled back to one of its own earlier saves, and saves it again (issue #249)"
+    (let ((file (make-temp-file "fresh-" nil ".org"))
+          (warned nil)
+          (messaged nil)
+          (after-first-save nil))
+      (unwind-protect
+          (progn
+            (with-temp-file file (insert "* R1\n* R2\n* R3\n"))
+            (with-current-buffer (org-canvas--find-file-noselect file)
+              (unwind-protect
+                  (let ((noninteractive t))
+                    ;; Two creates, each stamped and saved.
+                    (search-forward "* R1")
+                    (org-entry-put (point) "CANVAS_ID" "138472")
+                    (org-canvas--save-buffer)
+                    (setq after-first-save
+                          (with-temp-buffer (insert-file-contents file) (buffer-string)))
+                    (goto-char (point-min))
+                    (search-forward "* R2")
+                    (org-entry-put (point) "CANVAS_ID" "138473")
+                    (org-canvas--save-buffer)
+                    (expect (length org-canvas--content-hashes) :to-equal 3)
+                    ;; The sync client writes the state after save 1 back
+                    ;; over save 2, then the third create stamps its id.
+                    (test-fresh-249--roll-back file after-first-save)
+                    (expect (verify-visited-file-modtime (current-buffer)) :to-be nil)
+                    (goto-char (point-min))
+                    (search-forward "* R3")
+                    (cl-letf (((symbol-function 'org-canvas--log-warning)
+                               (lambda (_l fmt &rest args)
+                                 (push (apply #'format fmt args) warned)))
+                              ((symbol-function 'message)
+                               (lambda (fmt &rest args)
+                                 (push (apply #'format fmt args) messaged))))
+                      (org-canvas-org-set-property (point) "CANVAS_ID" "138474")
+                      (org-canvas--save-buffer))
+                    (expect (car (last warned)) :to-match "rolled back on disk")
+                    (expect (car (last messaged)) :to-match "rolled back on disk")
+                    (expect (verify-visited-file-modtime (current-buffer)) :to-be-truthy)
+                    ;; Nothing was dropped: the file holds all three stamps.
+                    (with-temp-buffer
+                      (insert-file-contents file)
+                      (expect (buffer-string) :to-match ":CANVAS_ID: 138472")
+                      (expect (buffer-string) :to-match ":CANVAS_ID: 138473")
+                      (expect (buffer-string) :to-match ":CANVAS_ID: 138474")))
+                (set-buffer-modified-p nil)
+                (kill-buffer))))
+        (delete-file file))))
+
+  (it "treats a roll-back to the text it first read the same way, even with nothing to stamp"
+    (let ((file (make-temp-file "fresh-" nil ".org"))
+          (reverted nil))
+      (unwind-protect
+          (progn
+            (with-temp-file file (insert "* R1\n"))
+            (with-current-buffer (org-canvas--find-file-noselect file)
+              (unwind-protect
+                  (let ((noninteractive t))
+                    (search-forward "* R1")
+                    (org-entry-put (point) "CANVAS_ID" "1")
+                    (org-canvas--save-buffer)
+                    (test-fresh-249--roll-back file "* R1\n")
+                    (cl-letf (((symbol-function 'revert-buffer)
+                               (lambda (&rest _) (setq reverted t))))
+                      (org-canvas--ensure-buffer-fresh))
+                    (expect reverted :to-be nil)
+                    (expect (buffer-modified-p) :to-be nil)
+                    (with-temp-buffer
+                      (insert-file-contents file)
+                      (expect (buffer-string) :to-match ":CANVAS_ID: 1")))
+                (set-buffer-modified-p nil)
+                (kill-buffer))))
+        (delete-file file))))
+
+  (it "records each distinct save once"
+    (let ((file (make-temp-file "fresh-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file (insert "* R1\n"))
+            (with-current-buffer (org-canvas--find-file-noselect file)
+              (unwind-protect
+                  (progn
+                    (expect (length org-canvas--content-hashes) :to-equal 1)
+                    (org-canvas--note-saved-content)
+                    (expect (length org-canvas--content-hashes) :to-equal 1)
+                    (goto-char (point-max))
+                    (insert "* R2\n")
+                    (org-canvas--note-saved-content)
+                    (expect (length org-canvas--content-hashes) :to-equal 2))
+                (set-buffer-modified-p nil)
+                (kill-buffer))))
+        (delete-file file))))
+
+  (it "warns, in the log and on stderr, when it rereads text this buffer never saw"
+    (let ((file (make-temp-file "fresh-" nil ".org"))
+          (warned nil)
+          (messaged nil))
+      (unwind-protect
+          (progn
+            (with-temp-file file (insert "* Old heading\n"))
+            (with-current-buffer (org-canvas--find-file-noselect file)
+              (unwind-protect
+                  (let ((noninteractive t))
+                    (test-fresh-97--make-stale file)
+                    (cl-letf (((symbol-function 'org-canvas--log-warning)
+                               (lambda (_l fmt &rest args)
+                                 (push (apply #'format fmt args) warned)))
+                              ((symbol-function 'message)
+                               (lambda (fmt &rest args)
+                                 (push (apply #'format fmt args) messaged))))
+                      (org-canvas--ensure-buffer-fresh))
+                    (expect (car warned) :to-match "rereading it before writing")
+                    (expect (car messaged) :to-match "changed on disk during the run")
+                    (expect (buffer-string) :to-equal "* New heading\n"))
                 (kill-buffer))))
         (delete-file file))))
 
