@@ -1950,6 +1950,20 @@ Content.
       (expect (funcall hash '(:title "HW" :rubric-id "789" :rubric-use-for-grading t))
               :not :to-equal (funcall hash '(:title "HW" :rubric-id "789")))
       (expect (funcall hash '(:title "HW" :rubric-id "789" :rubric-hide-score-total :json-false))
+              :not :to-equal (funcall hash '(:title "HW" :rubric-id "789")))))
+  (it "dirties the payload hash when only the post policy changes (issue #242)"
+    (let* ((payload (make-hash-table :test 'equal))
+           (hash (lambda (data)
+                   (org-canvas--sync-payload-hash
+                    payload data #'org-canvas--assignment-rubric-hash-extra))))
+      (expect (org-canvas--assignment-rubric-hash-extra '(:title "HW" :post-policy "manual"))
+              :to-equal "post-policy:manual")
+      (expect (funcall hash '(:title "HW" :post-policy "manual"))
+              :not :to-equal (funcall hash '(:title "HW")))
+      (expect (funcall hash '(:title "HW" :post-policy "manual"))
+              :not :to-equal (funcall hash '(:title "HW" :post-policy "automatic")))
+      ;; Rubric material and the policy are both kept.
+      (expect (funcall hash '(:title "HW" :rubric-id "789" :post-policy "manual"))
               :not :to-equal (funcall hash '(:title "HW" :rubric-id "789"))))))
 
 

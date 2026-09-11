@@ -122,6 +122,11 @@ always on Canvas: its start date is past for the whole term."
                  (const :tag "Never" never))
   :group 'org-canvas)
 
+(defvar org-canvas-grading-periods-file
+  "Declared here so the grading-period date check compiles; the variable
+is defined in org-canvas-grading-periods.el, which validate must not
+require (issue #245).")
+
 (defvar org-canvas--validate-always-on-canvas nil
   "Non-nil while validating a spec whose headings always exist on Canvas.
 Bound by `org-canvas--validate-spec' from the registration's

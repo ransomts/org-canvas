@@ -87,6 +87,9 @@ Each entry names the pull request that merged it.
 
 ** Fixed
 
+- #242 An assignment whose only edit is =POST_POLICY= is pushed: the policy travels by GraphQL outside the REST payload and was missing from the payload hash, so the sync skipped the heading as unchanged
+- #244 The pre-push hook runs lint and complexity one after the other instead of racing on the shared Eldev cache, and a BLOCKED line says whether the linter found something or did not run; testing.org records why a conflicting PR shows no checks and why the codecov patch check needs reading on its own
+- #245 =org-canvas-validate.el= declares =org-canvas-grading-periods-file= before using it, so byte-compiling the file alone no longer warns about a free variable
 - #239 A quiz re-pull no longer duplicates every question: =org-canvas-pull-quizzes= and =org-canvas-pull-new-quizzes= rewrite a Description, question or item heading the quiz already holds in place (by =CANVAS_ID= or =CANVAS_ITEM_ID=, else by name for a heading pulled before ids were stamped) and append only the new ones; a hand-written sibling stays. A pulled classic question is now stamped with its =CANVAS_ID=, so the next sync updates it rather than creating a copy, and its type is written to =TYPE=, the property the sync reads (the pull wrote =QUESTION_TYPE=, which the sync never looked at, so a pulled short-answer question synced back as multiple choice; the parser still reads the old name)
 - #240 The gradebook's roster lookup delegates to the core heading-by-property helper instead of keeping its own walker
 - =org-canvas-api-request-all-pages= no longer walks forever when a reply without headers answers the same full page to every page number (a test stub, or an endpoint that ignores =page=): the repeat stops the walk with one warning, and a walk past =org-canvas--api-max-pages= (a thousand pages) signals an error instead of growing without bound. One such loop took an Emacs to the memory limit during a test run
