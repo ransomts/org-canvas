@@ -164,7 +164,7 @@ What stays dynamically bound is the *caller's* seam, set around a command by who
 | Pull macros and helpers, pull-at-point (#67), single-item pull registration, `:skip-fn` reporting and the front page (#81, #82) | `pull-system.org` |
 | Test helpers and generators, test isolation guards, Emacs 29/30 matrix and skipped tests, JUnit and Codecov, Eldev layout, paren-imbalance debugging | `testing.org` |
 | Adding a module, step by step | `module-developer-guide.org` |
-| What org-canvas covers, touches one way, or never touches in Canvas; which gaps bite; how to refresh the map | `coverage.org` |
+| What org-canvas covers, touches one way, or never touches in Canvas; the ranked list of gaps deliberately left undone (2026-09-11) and the write paths to watch on first live use; how to refresh the map | `coverage.org` |
 | Historical planning documents (2026-03/04) | `plans/`, `specs/` |
 
 ## Code Conventions

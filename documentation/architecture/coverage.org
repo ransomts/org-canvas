@@ -137,15 +137,68 @@ nobody has to probe again:
   it would rotate every stored hash.  design.org, "Why the Formats Are
   Not Converged".
 
-* Which Gaps Bite
+* Which Gaps Bite, and the Decision to Stop
 
 The four absences that ranked here when this map was first written —
 posting policies, group membership, grading periods and discussion
-replies — are closed: policies are managed, the other three are
-pulled.  What remains in "Never Touched" is rarely set at the course
-level or belongs to the institution; nothing there is known to have
-bitten a course run from Org.  When one does, add it back here with
-the incident.
+replies — are closed, and the three rounds of 2026-09-10 and 11 (#210
+to #247) added the roster, the gradebook overview with its assignment
+spread and custom columns, rubric and quiz results, quiz attempts,
+peer reviews, grading schemes, student and group overrides, quiz
+accommodations, checkpoints and messages.
+
+*On 2026-09-11 the decision was to stop chasing parity with the Canvas
+web UI.*  What follows is the list of what was left, ranked, so that
+when one of them bites a course run from Org the scoping is already
+done.  Add the incident beside the item when it happens; do not build
+an item because it is on the list.
+
+** Left Undone, Ranked
+
+1. *Assigning peer reviewers.*  Who reviews whom is read
+   (=org-canvas-pull-peer-reviews=); assigning or removing a reviewer is
+   the web UI's.  The routes exist per submission
+   (=POST/DELETE .../submissions/:id/peer_reviews?user_id=), so a table
+   in the peer-reviews file could be reconciled as the overrides table
+   is.  Matters only for reviews assigned by hand rather than
+   automatically.
+2. *Group management from Org.*  Groups, members, override rows and
+   message targets resolve through groups.org; creating a group or
+   moving a student is the web UI's.  Membership hangs under another
+   type's heading and needs the child-reconciler pattern modules,
+   quizzes and New Quizzes use.  The hardest item here.
+3. *Grade change history.*  Never read.  One read-only endpoint
+   (=courses/:id/gradebook_history/...=); useful in a dispute, rarely
+   otherwise.
+4. *Rubric assessment outside the grading file.*  Per-student rubric
+   scores are typed in the grading file and nowhere else; arguably the
+   right design.
+5. *Planner notes and the to-do list*, beyond a page's student to-do
+   date.
+
+** Closed by Canvas, Not by Us
+
+- Question banks and New Quiz item banks: no API (see "No API").
+- New Quiz attempts and reports: no submissions or statistics endpoint
+  in the public API.
+- A bank-backed quiz group: the pull learns of a group only through
+  the questions that name it, so a group drawing solely from a bank is
+  invisible to the pull.
+- Discussion checkpoints are built but the account flag is off at
+  clemson.instructure.com, so the push has only been exercised by
+  mocks.
+
+** Watch on First Live Use
+
+Three write paths added in these rounds have never been sent to a
+live course, because the course at hand had nothing to exercise them:
+the grading scheme create (#213), the checkpoint mutation (#216), and
+a sync of a quiz with question groups after a pull (#243).  Read the
+log the first time each runs for real.
+
+What remains in "Never Touched" is rarely set at the course level or
+belongs to the institution; nothing there is known to have bitten a
+course run from Org.
 
 * Adding a Type
 
