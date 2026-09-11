@@ -145,10 +145,12 @@ The results and quizzes files live in a temp directory."
 
 (describe "org-canvas--quiz-results-question-row"
   (it "reads the counts, the ratio as a percent, the correct answer's point biserial and the responses"
-    (let ((row (org-canvas--quiz-results-question-row test-quiz-results--q1)))
+    ;; :type is pre-bound: inside `expect' Emacs 29's oclosure shadows it.
+    (let* ((row (org-canvas--quiz-results-question-row test-quiz-results--q1))
+           (row-type (plist-get row :type)))
       (expect (plist-get row :position) :to-equal 1)
       (expect (plist-get row :text) :to-equal "What is ethics ? & why")
-      (expect (plist-get row :type) :to-equal "multiple choice")
+      (expect row-type :to-equal "multiple choice")
       (expect (plist-get row :answered) :to-equal 55)
       (expect (plist-get row :correct) :to-be-close-to 72.72 1)
       (expect (plist-get row :difficulty) :to-equal 0.7272)
@@ -158,12 +160,13 @@ The results and quizzes files live in a temp directory."
   (it "falls back to the first point biserial and leaves an essay's blanks nil"
     (expect (plist-get (org-canvas--quiz-results-question-row test-quiz-results--q2) :discrimination)
             :to-equal 0.1)
-    (let ((row (org-canvas--quiz-results-question-row test-quiz-results--q3)))
+    (let* ((row (org-canvas--quiz-results-question-row test-quiz-results--q3))
+           (row-type (plist-get row :type)))
       (expect (plist-get row :correct) :to-be nil)
       (expect (plist-get row :difficulty) :to-be nil)
       (expect (plist-get row :discrimination) :to-be nil)
       (expect (plist-get row :responses) :to-equal "-")
-      (expect (plist-get row :type) :to-equal "essay")))
+      (expect row-type :to-equal "essay")))
 
   (it "counts an answer with no responses field as zero"
     (let ((row (org-canvas--quiz-results-question-row
