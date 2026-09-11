@@ -977,7 +977,7 @@ links to the local copy first, with the Canvas link beside it."
   (append (alist-get 'rubric assignment) nil))
 
 (defun org-canvas--submissions-rubric-for-grading-p ()
-  "Return non-nil when this grading file's rubric sets the grade.
+  "Return non-nil when the grade of this grading file comes from its rubric.
 Reads the CANVAS_RUBRIC_USE_FOR_GRADING keyword the pull wrote from the
 assignment's rubric settings; a file without it answers nil."
   (equal (org-canvas--submissions-file-property "CANVAS_RUBRIC_USE_FOR_GRADING")
@@ -991,7 +991,7 @@ comments; an unassessed submission carries null or nothing."
     (and (consp ra) ra)))
 
 (defun org-canvas--submissions-assessment-entry (assessment criterion-id)
-  "Return (SCORE . COMMENT) ASSESSMENT holds for CRITERION-ID.
+  "Return (SCORE . COMMENT) from ASSESSMENT for CRITERION-ID.
 Both are strings spelled as the Rubric table shows them, or nil when
 the criterion is unscored or uncommented."
   (let ((entry (alist-get (intern criterion-id) assessment)))
@@ -1146,7 +1146,7 @@ sum), :filled and :of (how many rows carry a score, out of how many)."
               :of (length triples))))))
 
 (defun org-canvas--submissions-rubric-derived-score (rubric old-score new-score name)
-  "Return the score plist a changed RUBRIC sets for NAME, or nil.
+  "Return the score plist due to a changed RUBRIC for NAME, or nil.
 Only when the rubric is used for grading: Canvas then derives the grade
 from the assessment, so the rows' total becomes the score unless
 NEW-SCORE was itself edited away from OLD-SCORE.  An edited score
