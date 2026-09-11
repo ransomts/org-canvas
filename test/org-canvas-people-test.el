@@ -173,6 +173,25 @@
         (expect text :not :to-match "^\\* TAs\n")
         (expect text :to-match "^\\*\\* Beta, Bob\n"))))
 
+  (it "falls back to the section id when the course names no such section"
+    (test-people--with-course
+        (list (test-people--enrollment 1 "Adams, Alice" "StudentEnrollment" 77))
+        '(((id . 10) (name . "Lecture")))
+      (org-canvas-pull-people)
+      (expect (test-people--file) :to-match ":SECTIONS: +77\n")))
+
+  (it "reports progress every twenty-five people"
+    (let ((said nil))
+      (test-people--with-course
+          (cl-loop for i from 1 to 26
+                   collect (test-people--enrollment i (format "Student %02d" i) "StudentEnrollment" 10))
+          '(((id . 10) (name . "Lecture")))
+        (cl-letf (((symbol-function 'message)
+                   (lambda (fmt &rest args) (push (apply #'format fmt args) said))))
+          (org-canvas-pull-people))
+        (expect (cl-some (lambda (m) (string-match-p "People \\[25/26\\]" m)) said) :to-be-truthy)
+        (expect (test-people--count "^\\*\\* Student" (test-people--file)) :to-equal 26))))
+
   (it "writes the empty-file note for a course with no one enrolled"
     (test-people--with-course nil nil
       (org-canvas-pull-people)
