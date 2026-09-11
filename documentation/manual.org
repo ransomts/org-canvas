@@ -2301,6 +2301,22 @@ Before pushing from a saved file, org-canvas re-reads the assignment once and co
 
 Scores compare as entered values: with a late policy of 20% per day, a student graded 5 who was a day late shows =SCORE: 5=, =CANVAS_SCORE: 5=, =FINAL_SCORE: 4=.
 
+** Quiz Attempts
+
+A classic quiz has a grading file too, through its shadow assignment,
+and that is where a quiz score is changed and pushed. What the grading
+file cannot show is the attempt itself: how many a student took, which
+score Canvas kept against the latest one, how long they spent, whether
+an attempt is still open. =M-x org-canvas-pull-quiz-submissions=
+(transient: Submissions, =z=) picks a classic quiz and writes that as
+one read-only table under the submissions directory, as
+=<quiz> (quiz).org=: one row per student, sorted by name, with
+Attempts, Kept, Latest, Out of, Time (=h:mm=), Finished and State, and
+a summary line above (submissions, in progress, more than one attempt,
+mean kept score). Every pull rewrites the file; nothing is pushed from
+it. New Quizzes have no such endpoint, so the prompt lists classic
+quizzes only.
+
 ** Privacy
 
 Grading files are student work. The submissions directory receives a =.gitignore= excluding everything in it when it is first created (=org-canvas-submissions-write-gitignore=), so the files never travel with a course repository. Keep the directory out of any other sharing you would not extend to a gradebook export.
@@ -2711,6 +2727,7 @@ These commands delete the item at the current cursor position:
 | Command | Description |
 |---|---|
 | =org-canvas-pull-submissions= | Pull an assignment into a grading file (or the summary table) |
+| =org-canvas-pull-quiz-submissions= | Pull a classic quiz's attempts into a read-only table (=z=) |
 | =org-canvas-open-submissions= | Reopen a saved grading file |
 | =org-canvas-submissions-push-grades= | Push changed scores and drafted comments (=S= in the file) |
 | =org-canvas-submissions-post-grades= | Post the assignment's grades to students, under a manual post policy (=P=) |
