@@ -130,7 +130,22 @@ The results and assignments files live in a temp directory."
     (let ((row (org-canvas--rubric-results-criterion-row test-rubric-results--clarity nil)))
       (expect (plist-get row :assessed) :to-equal 0)
       (expect (plist-get row :mean) :to-be nil)
-      (expect (plist-get row :ratings) :to-equal "-"))))
+      (expect (plist-get row :ratings) :to-equal "-")))
+
+  (it "falls back to the criterion id when Canvas sends no description"
+    (let ((row (org-canvas--rubric-results-criterion-row
+                '((id . "_30") (points . 2) (ratings . [])) nil)))
+      (expect (plist-get row :description) :to-equal "_30"))))
+
+(describe "org-canvas--rubric-results-entry"
+  (it "names an assignment by its id when Canvas sends no name"
+    (cl-letf (((symbol-function 'org-canvas--rubric-results-fetch-assessments)
+               (lambda (_id) (cons 0 nil))))
+      (let ((entry (org-canvas--rubric-results-entry
+                    '((id . 7) (rubric_settings . ((id . 507))) (rubric . [])))))
+        (expect (plist-get entry :name) :to-equal "Assignment 7")
+        (expect (plist-get entry :rubric-id) :to-equal 507)
+        (expect (plist-get entry :rows) :to-be nil)))))
 
 (describe "org-canvas--rubric-results-number"
   (it "renders a mean with one decimal, a count as an integer, and a dash for nothing"
