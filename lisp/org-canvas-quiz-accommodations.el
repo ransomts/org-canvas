@@ -251,9 +251,12 @@ follows, so a cleared extension disappears on pull."
       (org-canvas--accommodation-delete-table)
       (when rows
         (org-end-of-meta-data t)
-        (org-canvas--accommodation-emit-table rows)
-        (save-excursion
-          (forward-line -1)
+        (let ((start (point)))
+          (org-canvas--accommodation-emit-table rows)
+          ;; Align the table just written: its header is the line
+          ;; after the #+NAME: line at START.
+          (goto-char start)
+          (forward-line 1)
           (when (org-at-table-p) (org-table-align)))))))
 
 ;;;; Pushing

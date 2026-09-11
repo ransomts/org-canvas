@@ -3637,12 +3637,23 @@ history and not a finding at all.")
           (expect (cadr messages) :to-match "'lots' is not a whole number")
           (expect (plist-get (cadr issues) :severity) :to-equal 'error)))))
 
-  (it "says nothing about a quiz without a table"
+  (it "says nothing about a quiz without a table, or with a #+NAME: line and no table"
     (with-temp-org-buffer "* Quiz\n:PROPERTIES:\n:CANVAS_ID: 7\n:END:\nText only.\n"
       (org-back-to-heading t)
       (expect (org-canvas--validate-quiz-accommodations
                (list :file (buffer-file-name) :line 1 :heading "Quiz"))
-              :to-be nil))))
+              :to-be nil))
+    (with-temp-org-buffer "* Quiz\n#+NAME: accommodations\nnot a table\n"
+      (org-back-to-heading t)
+      (expect (org-canvas--validate-quiz-accommodations
+               (list :file (buffer-file-name) :line 1 :heading "Quiz"))
+              :to-be nil)))
+
+  (it "finds the number columns by header, falling back to positions 1 and 2"
+    (expect (org-canvas--validate-accommodation-number-columns
+             '("Student" "Unlocked" "Extra time")) :to-equal '(2))
+    (expect (org-canvas--validate-accommodation-number-columns
+             '("Student" "A" "B")) :to-equal '(1 2))))
 
 (provide 'org-canvas-validate-test)
 (describe "org-canvas--validate-module-item-ids (issue #105)"

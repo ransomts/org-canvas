@@ -108,12 +108,28 @@ Read the syllabus first.
                   :to-equal '((:user-id "2" :extra-attempts 0 :extra-time 20 :unlocked t))))
         (expect (car warned) :to-match "Nobody, Nell"))))
 
+  (it "falls back to positions 1, 2 and 3 when the header names no column"
+    (expect (org-canvas--accommodation-columns '("Who" "A" "B" "C")) :to-equal '(1 2 3))
+    (expect (org-canvas--accommodation-columns '("Student" "Extra time")) :to-equal '(nil 1 nil)))
+
   (it "refuses a cell that is not a whole number"
     (test-accommodations--with-course nil
       (expect (org-canvas--accommodation-parse-table
                '(("Student" "Extra attempts" "Extra time" "Unlocked") hline
                  ("#9" "one" "" "")))
               :to-throw 'org-canvas-config-error))))
+
+(describe "org-canvas--accommodation-fetch"
+  (it "records a failed read on the pull summary and answers nil"
+    (test-accommodations--with-course nil
+      (let ((recorded nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _) (signal 'org-canvas-api-error '("403 Forbidden"))))
+                  ((symbol-function 'org-canvas--pull-summary-record)
+                   (lambda (&rest args) (setq recorded args))))
+          (expect (org-canvas--accommodation-fetch 7) :to-be nil))
+        (expect (plist-get recorded :item) :to-equal "quiz 7 accommodations")
+        (expect (plist-get recorded :file) :to-equal "quizzes.org")))))
 
 (describe "org-canvas--accommodation-payload"
   (it "sends the three values as absolutes, the unlock as a JSON boolean"
@@ -195,6 +211,8 @@ Read the syllabus first.
         (org-canvas-sync-quiz-accommodations-at-point)
         (expect (length test-accommodations--posts) :to-equal 2)
         (search-forward "Bare Quiz")
+        (expect (org-canvas-sync-quiz-accommodations-at-point) :to-throw 'user-error))
+      (with-temp-buffer
         (expect (org-canvas-sync-quiz-accommodations-at-point) :to-throw 'user-error)))))
 
 (describe "the quiz pull writes the accommodations table"
@@ -210,8 +228,13 @@ Read the syllabus first.
         (org-canvas--accommodation-write-table 7)
         (let ((text (buffer-string)))
           (expect text :to-match "^#\\+NAME: accommodations\n| Student +| Extra attempts +| Extra time +| Unlocked +|\n")
-          (expect text :to-match "^| Adams, Alice +| +| 30 +| +|$")
-          (expect text :to-match "^| #9 +| 2 +| +| yes +|$")
+          (expect text :to-match "^| Adams, Alice +| +| +30 +| +|$")
+          (expect text :to-match "^| #9 +| +2 +| +| yes +|$")
+          ;; Aligned: every row is as wide as the header.
+          (let ((widths (mapcar #'length
+                                (cl-remove-if-not (lambda (l) (string-prefix-p "|" l))
+                                                  (split-string text "\n")))))
+            (expect (cl-remove-duplicates widths) :to-equal (list (car widths))))
           (expect text :not :to-match "Beta, Bob")
           (expect (string-match "accommodations" text)
                   :to-be-less-than (string-match "\\*\\* Description" text))))))
@@ -231,7 +254,7 @@ Read the syllabus first.
         (expect (cl-count-if (lambda (l) (string-prefix-p "#+NAME: accommodations" l))
                              (split-string (buffer-string) "\n"))
                 :to-equal 1)
-        (expect (buffer-string) :to-match "^| Beta, Bob +| 10 +|$"))))
+        (expect (buffer-string) :to-match "^| Beta, Bob +| +10 +|$"))))
 
   (it "runs from org-canvas-pull-quizzes and keeps the table out of the description"
     (test-accommodations--with-course
@@ -246,7 +269,7 @@ Read the syllabus first.
                 ((symbol-function 'org-canvas--html-to-org) #'identity))
         (org-canvas-pull-quizzes)
         (with-current-buffer (org-canvas--find-file-noselect org-canvas-quizzes-file)
-          (expect (buffer-string) :to-match "^| #9 +| 20 +|$")
+          (expect (buffer-string) :to-match "^| #9 +| +20 +|$")
           (goto-char (point-min))
           (re-search-forward "^\\* Syllabus Quiz")
           (expect (org-canvas--quiz-parse-body-text) :to-equal ""))))))
