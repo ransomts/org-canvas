@@ -50,6 +50,7 @@
                                   "lisp/org-canvas-gradebook.el"
                                   "lisp/org-canvas-rubric-results.el"
                                   "lisp/org-canvas-quiz-results.el"
+                                  "lisp/org-canvas-quiz-accommodations.el"
                                   "lisp/org-canvas-calendar.el"
                                   "lisp/org-canvas-validate.el"
                                   "lisp/org-canvas-submissions.el"

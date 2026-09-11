@@ -17,6 +17,11 @@
 
 Test your understanding of basic Python concepts from Week 01.
 
+#+NAME: accommodations
+| Student  | Extra attempts | Extra time | Unlocked |
+|----------+----------------+------------+----------|
+| #1000042 |              1 |         15 |          |
+
 ** Question: Immutable Types
 :PROPERTIES:
 :TYPE:     multiple_choice_question

@@ -19,7 +19,7 @@ This directory contains a complete, self-contained demo course that showcases ev
 | =pages.org=             | Pages             | Front page, editing roles, TODO date          |
 | =discussions.org=       | Discussions       | Threaded, graded, ratings, post-first         |
 | =announcements.org=     | Announcements     | Delayed posting, section-specific             |
-| =quizzes.org=           | Quizzes           | All 11 question types, access code, IP filter |
+| =quizzes.org=           | Quizzes           | All 11 question types, access code, IP filter, a per-student accommodations table |
 | =rubrics.org=           | Rubrics           | Simple, multi-level, and mixed criteria       |
 | =outcomes.org=          | Learning outcomes | Multiple calculation methods, rating levels   |
 | =files.org=             | File uploads      | Folder hierarchy, usage rights, date locks    |

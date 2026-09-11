@@ -747,6 +747,51 @@ Question groups randomly select questions from an external question bank at quiz
 - *Bank questions are invisible via API*: Questions from banks are resolved at quiz delivery time and do not appear in the Quiz Questions API response.
 - *Classic Quizzes only*: This feature is for Classic Quizzes.  New Quizzes uses a separate "item banks" system with a different API.
 
+*** Accommodations for One Student
+
+Extra attempts, extra time and a manual unlock for one student on one
+classic quiz (Canvas calls them quiz extensions) live in an optional
+=#+NAME: accommodations= table under the quiz heading, before the
+questions:
+
+#+begin_src org
+,* Quiz 01: Python Fundamentals
+:PROPERTIES:
+:CANVAS_ID: 639491
+:END:
+
+#+NAME: accommodations
+| Student      | Extra attempts | Extra time | Unlocked |
+|--------------+----------------+------------+----------|
+| Adams, Alice |              1 |         30 |          |
+| #1000042     |                |         15 | yes      |
+#+end_src
+
+Student is a person heading in =people.org= (pull people first) or a
+literal =#id=.  Extra time is in minutes.  Unlocked is =yes= for a
+manual unlock (the student may take the quiz while it is locked),
+blank otherwise.  The columns are found by their headers, so a pulled
+table that dropped an empty column still parses; a blank number is 0.
+
+=org-canvas-sync-quiz-accommodations= runs after the quizzes in the
+master sync (=org-canvas-sync-quiz-accommodations-at-point= for the
+quiz at point).  The values are *absolute*: Canvas replaces what it
+holds, so a row is sent only when it differs from Canvas, and a
+student who has an extension on Canvas but no row is sent zeros.  The
+table is the whole set, as the overrides table is: pull the quizzes
+first so it carries every extension Canvas holds, and remove a row
+when you mean to remove the accommodation.  The dry run lists what it
+would send.  =org-canvas-pull-quizzes= writes the table from the
+students who carry an extension and removes it when none do; the table
+never reaches the quiz description.
+
+=org-canvas-validate= warns, push-only, about a student =people.org=
+does not hold and errors on a number cell that is not a whole number.
+
+A student's name in =quizzes.org= travels with the course repository.
+Where the repository is shared, write =#id= instead; a pull writes
+names when =people.org= is there to resolve them, and =#id= otherwise.
+
 *** Example
 
 #+begin_src org
@@ -2957,6 +3002,7 @@ pulled front page carries =:FRONT_PAGE: true=, so it round-trips.
 | =org-canvas-sync-files=               | Upload files                                 |
 | =org-canvas-sync-calendar-events=      | Sync calendar events                         |
 | =org-canvas-sync-overrides=           | Sync the date overrides (section, group, students) |
+| =org-canvas-sync-quiz-accommodations= | Sync the per-student accommodations of every classic quiz |
 
 ** Pull Commands
 
@@ -3050,6 +3096,7 @@ These commands sync just the item at the current cursor position:
 | =org-canvas-sync-group-category-at-point=   | Sync group category at point     |
 | =org-canvas-sync-calendar-event-at-point=   | Sync calendar event at point     |
 | =org-canvas-sync-grading-scheme-at-point=   | Create the grading scheme at point |
+| =org-canvas-sync-quiz-accommodations-at-point= | Sync the accommodations table of the quiz at point |
 
 ** Delete at Point Commands
 

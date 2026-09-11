@@ -624,6 +624,22 @@ HEADING should already be unescaped (no \\=\\[ or \\=\\] escapes)."
               (format "^\\*+ +.*\\[%s\\]" (regexp-quote display-name))
               nil t))))))))
 
+(defun org-canvas--strip-named-tables (text names)
+  "Return TEXT without the `#+NAME:' tables named in NAMES.
+Each is the `#+NAME: <name>' line and the table rows after it: the
+overrides and accommodations tables feed a sync and are not body
+text.  TEXT without any such table is returned unchanged."
+  (with-temp-buffer
+    (insert text)
+    (goto-char (point-min))
+    (while (re-search-forward
+            (format "^#\\+NAME:[ \t]+\\(%s\\)[ \t]*\n" (regexp-opt names)) nil t)
+      (let ((start (match-beginning 0)))
+        (while (looking-at "^|")
+          (forward-line 1))
+        (delete-region start (point))))
+    (buffer-string)))
+
 (defun org-canvas--heading-property-by-title (file title property &optional match)
   "Return PROPERTY of the first heading titled TITLE in FILE, or nil.
 MATCH is an `org-map-entries' match string limiting the search
