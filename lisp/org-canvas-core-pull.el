@@ -395,6 +395,32 @@ Returns a point in the buffer visiting FILE."
             (org-back-to-heading t)
             (point)))))))
 
+;;;; Titled Headings
+
+(defun org-canvas--pull-heading-by-title (title)
+  "Return the position of the level-1 heading TITLE, creating it if absent.
+For files organised by fixed headings rather than by Canvas id — the
+roster's roles, the gradebook's tables.  A new heading is appended
+after the last line of the buffer, so headings created in order stay
+in order."
+  (let ((pos nil))
+    (save-excursion
+      (goto-char (point-min))
+      (org-map-entries
+       (lambda ()
+         (when (and (not pos) (equal (org-get-heading t t t t) title))
+           (setq pos (point))))
+       "LEVEL=1" 'file))
+    (unless pos
+      (goto-char (point-max))
+      (skip-chars-backward " \t\n")
+      (unless (bobp) (insert "\n\n"))
+      (insert (format "* %s\n" title))
+      (forward-line -1)
+      (org-back-to-heading t)
+      (setq pos (point)))
+    pos))
+
 ;;;; Registry-Driven Pull
 
 ;;

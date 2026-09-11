@@ -225,23 +225,7 @@ NAMES maps section ids to the names the course reports."
 A new role heading is appended after the last existing one, so the
 file keeps `org-canvas--people-heading-order' when pulled in that
 order."
-  (let ((pos nil))
-    (save-excursion
-      (goto-char (point-min))
-      (org-map-entries
-       (lambda ()
-         (when (and (not pos) (equal (org-get-heading t t t t) heading))
-           (setq pos (point))))
-       "LEVEL=1" 'file))
-    (unless pos
-      (goto-char (point-max))
-      (skip-chars-backward " \t\n")
-      (unless (bobp) (insert "\n\n"))
-      (insert (format "* %s\n" heading))
-      (forward-line -1)
-      (org-back-to-heading t)
-      (setq pos (point)))
-    pos))
+  (org-canvas--pull-heading-by-title heading))
 
 (defun org-canvas--people-find-person (user-id)
   "Return the position of the heading carrying USER-ID anywhere in the file, or nil."

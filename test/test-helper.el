@@ -275,6 +275,7 @@ Suppresses `org-canvas-clear-log' and `display-buffer' side effects."
          (org-canvas-announcements-file "/tmp/nonexistent/announcements.org")
          (org-canvas-assignment-groups-file "/tmp/nonexistent/assignment-groups.org")
          (org-canvas-people-file "/tmp/nonexistent/people.org")
+         (org-canvas-gradebook-file "/tmp/nonexistent/gradebook.org")
          (org-canvas-sections-file "/tmp/nonexistent/sections.org")
          (org-canvas-grading-periods-file "/tmp/nonexistent/grading-periods.org")
          (org-canvas-new-quizzes-file "/tmp/nonexistent/new-quizzes.org")
