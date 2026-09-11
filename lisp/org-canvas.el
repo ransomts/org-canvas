@@ -453,6 +453,7 @@ Local edits to this heading are discarded, which is the point; you are
 asked to confirm first."
   (interactive)
   (org-back-to-heading t)
+  (run-hooks 'org-canvas--operation-start-hook)
   (let* ((feature (org-canvas--pull-at-point-feature))
          (id-property (or (plist-get feature :id-property) "CANVAS_ID"))
          (id (org-entry-get (point) id-property))

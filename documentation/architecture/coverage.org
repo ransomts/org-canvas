@@ -50,6 +50,7 @@ pull-at-point and prune.
 | Overrides         | yes  | no       | yes  | no     | no       | per-section dates, reconciled from a table under each assignment |
 | Course settings   | yes  | no       | yes  | no     | no       | see the settings list below; the post policy goes by GraphQL    |
 | Post policies     | yes  | no       | yes  | no     | no       | course and per-assignment grade post policy; posting grades from a grading file |
+| Discussion checkpoints | yes | no    | yes  | no     | no       | the five CHECKPOINT_ properties on a discussion, by GraphQL; the flag is account-level, so an instance without it pulls none and refuses the push |
 
 Submission grading (=org-canvas-submissions.el=) is a workflow, not a
 content type: it pulls a grading file per assignment, pushes scores
@@ -92,7 +93,6 @@ disturbs them.
 - *Enrolling and removing people.*  The roster and section
   membership are pulled (see the covered table); changing them is the
   registrar's and the web UI's business.
-- *Discussion checkpoints*, the newer graded-discussion feature; replies themselves are pulled (see the covered table).
 - *Mastery Paths* (conditional release), *Blueprint* associations and
   locks, and course-level *feature flags*.
 - *Collaborations*, *conferences*, *appointment groups* (the scheduler),
@@ -143,7 +143,7 @@ The map came from one loop over API surface names against =lisp/=:
 
 #+begin_src sh
 for pat in grading_period "post_polic|post_manually" enrollments \
-           "api/v1/groups" discussion_entries mastery_path blueprint \
+           "api/v1/groups" discussion_entries setCheckpoints mastery_path blueprint \
            collaboration conference appointment_group feature_flag; do
   printf "%-28s %s\n" "$pat" "$(grep -rlE "$pat" lisp/*.el | tr '\n' ' ')"
 done

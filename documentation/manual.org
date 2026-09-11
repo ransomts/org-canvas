@@ -1316,6 +1316,44 @@ Discussion boards for student interaction.
 | =SORT_BY_RATING=  | boolean   | Sort posts by rating                  |
 | =GROUP_CATEGORY=  | number/link | Group set ID or link to group-categories.org |
 | =SPECIFIC_SECTIONS= | string | Comma-separated section names (resolved to IDs via sections.org) |
+| =CHECKPOINT_TOPIC_POINTS= | number | Points for the reply-to-topic checkpoint (see Checkpoints) |
+| =CHECKPOINT_TOPIC_DUE_AT= | timestamp | Due date of the reply-to-topic checkpoint |
+| =CHECKPOINT_REPLY_POINTS= | number | Points for the reply-to-entry checkpoint |
+| =CHECKPOINT_REPLY_DUE_AT= | timestamp | Due date of the reply-to-entry checkpoint |
+| =CHECKPOINT_REPLIES_REQUIRED= | number | Replies to peers required (default 1) |
+
+*** Checkpoints
+
+A checkpointed discussion grades the first post and the replies to
+peers separately, each with its own points and due date.  Any of the
+five =CHECKPOINT_= properties makes a discussion checkpointed; both
+point values are then required, =DUE_AT= does not apply (each
+checkpoint carries its own date), and =POINTS= may be left out, since
+Canvas grades the discussion out of the two added together
+(=org-canvas-validate= says so when the numbers disagree).
+
+#+begin_src org
+,* Week 3 Debate
+:PROPERTIES:
+:DISCUSSION_TYPE: threaded
+:CHECKPOINT_TOPIC_POINTS: 6
+:CHECKPOINT_TOPIC_DUE_AT: <2026-10-01 Thu 23:59>
+:CHECKPOINT_REPLY_POINTS: 4
+:CHECKPOINT_REPLY_DUE_AT: <2026-10-03 Sat 23:59>
+:CHECKPOINT_REPLIES_REQUIRED: 2
+:END:
+#+end_src
+
+Checkpoints are not in Canvas's REST API.  The push creates or updates
+the topic as before and then sets the checkpoints in a second, GraphQL
+request from the same sync, as an assignment's post policy is set; a
+changed checkpoint date is a change to the entry, so the sync sends
+it.  The pull and =org-canvas-diff= read every topic's checkpoints in
+one course-wide query per command.  Checkpoints are an account-level
+feature flag in Canvas: where an institution has not enabled it,
+the pull finds none and a push that sets them fails with Canvas's
+message for that one entry.  Per-section checkpoint dates are not
+managed; the dates apply to everyone.
 
 *** Example
 
@@ -3380,6 +3418,11 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =GROUP_CATEGORY= | number |  |  | Group set ID or link to group-categories.org |
 | =GROUP= | link | org link |  | Assignment group (for graded) |
 | =RUBRIC_LINK= | link | org link |  | Link to a rubric heading in rubrics.org |
+| =CHECKPOINT_TOPIC_POINTS= | number |  |  | Points for the reply-to-topic checkpoint; any CHECKPOINT_ property makes the discussion checkpointed |
+| =CHECKPOINT_TOPIC_DUE_AT= | timestamp |  |  | Due date of the reply-to-topic checkpoint |
+| =CHECKPOINT_REPLY_POINTS= | number |  |  | Points for the reply-to-entry checkpoint |
+| =CHECKPOINT_REPLY_DUE_AT= | timestamp |  |  | Due date of the reply-to-entry checkpoint |
+| =CHECKPOINT_REPLIES_REQUIRED= | number |  | true | Replies to peers the reply-to-entry checkpoint requires (default 1) |
 
 ** Files
 

@@ -210,6 +210,46 @@ This replaces the former `org-canvas--validate-specs' defconst."
 
 ;;;; 5. Structural Validators
 
+(defconst org-canvas--validate-checkpoint-properties
+  '("CHECKPOINT_TOPIC_POINTS" "CHECKPOINT_TOPIC_DUE_AT"
+    "CHECKPOINT_REPLY_POINTS" "CHECKPOINT_REPLY_DUE_AT"
+    "CHECKPOINT_REPLIES_REQUIRED")
+  "The properties any one of which makes a discussion checkpointed.")
+
+(defun org-canvas--validate-discussion-checkpoints (loc)
+  "Check the CHECKPOINT_ properties of the discussion heading at point.
+LOC is a (:file :line :heading) plist.  Any of the five makes the
+discussion checkpointed (issue #216): both point values are then
+required, DUE_AT does not apply since each checkpoint carries its own
+date, and POINTS, when written, must be their sum, which is what
+Canvas grades the discussion out of."
+  (when (cl-some (lambda (name) (org-entry-get (point) name))
+                 org-canvas--validate-checkpoint-properties)
+    (let ((topic (org-entry-get (point) "CHECKPOINT_TOPIC_POINTS"))
+          (reply (org-entry-get (point) "CHECKPOINT_REPLY_POINTS"))
+          (points (org-entry-get (point) "POINTS"))
+          (issues nil))
+      (dolist (name '("CHECKPOINT_TOPIC_POINTS" "CHECKPOINT_REPLY_POINTS"))
+        (unless (org-entry-get (point) name)
+          (push (org-canvas--validate-make-issue
+                 'error loc name
+                 (format "%s is required on a checkpointed discussion" name))
+                issues)))
+      (when (org-entry-get (point) "DUE_AT")
+        (push (org-canvas--validate-make-issue
+               'error loc "DUE_AT"
+               "DUE_AT does not apply to a checkpointed discussion; each checkpoint carries its own due date")
+              issues))
+      (when (and points topic reply)
+        (let ((sum (+ (string-to-number topic) (string-to-number reply))))
+          (unless (= (string-to-number points) sum)
+            (push (org-canvas--validate-make-issue
+                   'warning loc "POINTS"
+                   (format "POINTS is %s but the checkpoints add up to %s, which is what Canvas grades out of"
+                           points sum))
+                  issues))))
+      (nreverse issues))))
+
 (defun org-canvas--validate-single-outcome-link (row file loc)
   "Validate the outcome link in ROW's 4th column.
 FILE is the rubrics file path.  LOC is a (:file :line :heading) plist.

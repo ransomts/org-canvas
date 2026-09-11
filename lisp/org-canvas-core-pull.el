@@ -470,11 +470,16 @@ nil and reported every such item as drifted."
 
 (defun org-canvas--registry-remote-present-p (spec item)
   "Return non-nil when ITEM carries the field named by SPEC.
-A `:remote-fn' answers for its field; a flat key must be in ITEM.  A
-conflict-check GET can return a partial object, and a field Canvas
-did not send is no reason to touch the local property."
-  (or (and (plist-get spec :remote-fn) t)
-      (and (assq (org-canvas--registry-remote-key spec) item) t)))
+A `:remote-fn' answers for its field, unless the spec's
+`:remote-known-p' says it cannot for this ITEM (issue #216); a flat
+key must be in ITEM.  A conflict-check GET can return a partial
+object, and a field Canvas did not send is no reason to touch the
+local property."
+  (let ((known-p (plist-get spec :remote-known-p)))
+    (or (and (plist-get spec :remote-fn)
+             (or (null known-p) (funcall known-p item))
+             t)
+        (and (assq (org-canvas--registry-remote-key spec) item) t))))
 
 (defvar org-canvas--pull-link-index-cache nil
   "Alist of (FILE ID-PROPERTY TICK) to an id-to-heading hash.
