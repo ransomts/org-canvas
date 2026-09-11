@@ -149,7 +149,14 @@ same row forever.  The loop is also bounded by the number of lines."
       (let ((call (car test-peer--calls)))
         (expect (car call) :to-match "/enrollments\\'")
         (expect (cdr call) :to-equal '(("type[]" . "StudentEnrollment")
-                                       ("state[]" . "active")))))))
+                                       ("state[]" . "active"))))))
+
+  (it "falls back to the plain name, then to the id, when the user object is thin"
+    (test-peer--with-course nil nil
+        (list '((user_id . 5) (user . ((id . 5) (name . "Eve"))))
+              '((user_id . 6)))
+      (expect (org-canvas--peer-reviews-fetch-students)
+              :to-equal '((5 . "Eve") (6 . "User 6"))))))
 
 (describe "org-canvas--peer-reviews-completed-at"
   (it "dates the completion by the reviewer's newest comment and ignores others"
