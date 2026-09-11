@@ -469,7 +469,34 @@
                        (_ (vector))))))
           (let ((result (org-canvas-api-request-all-pages 'GET "https://example.invalid/api/v1/items")))
             (expect (length result) :to-equal 102)
-            (expect calls :to-equal 2)))))))
+            (expect calls :to-equal 2))))))
+
+  (it "stops when a headerless reply answers the same full page again"
+    ;; A stub that ignores the page number used to be walked forever,
+    ;; one copy of the page per turn, until Emacs ran out of memory.
+    (with-org-canvas-test-config
+      (let ((page (vconcat (cl-loop for i from 1 to 100 collect `((id . ,i)))))
+            (calls 0) (warned nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_method _url &rest _args) (cl-incf calls) page))
+                  ((symbol-function 'org-canvas--log-warning)
+                   (lambda (_logger fmt &rest args) (push (apply #'format fmt args) warned))))
+          (let ((result (org-canvas-api-request-all-pages 'GET "https://example.invalid/api/v1/items")))
+            (expect (length result) :to-equal 100)
+            (expect calls :to-equal 2)
+            (expect (car warned) :to-match "repeats page 1"))))))
+
+  (it "gives up with an error past the page cap instead of growing without bound"
+    (with-org-canvas-test-config
+      (let ((calls 0) (org-canvas--api-max-pages 3))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_method _url &rest _args)
+                     (cl-incf calls)
+                     ;; Every page distinct and full, so neither guard above fires.
+                     (vconcat (cl-loop for i from 1 to 100 collect `((id . ,(+ i (* 100 calls)))))))))
+          (expect (org-canvas-api-request-all-pages 'GET "https://example.invalid/api/v1/items")
+                  :to-throw 'org-canvas-api-error)
+          (expect calls :to-equal 3))))))
 
 ;;;; 36. Credential validation in org-canvas-api-request
 
