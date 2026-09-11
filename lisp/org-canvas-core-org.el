@@ -195,7 +195,7 @@ changing, so the buffer is not being clobbered and may keep its edits."
               (org-canvas--disk-content-hash))))
 
 (defun org-canvas--file-rolled-back-p ()
-  "Return non-nil when the visited file holds an earlier state of this buffer.
+  "Return non-nil when the visited file is an earlier state of this buffer.
 The text on disk is not this buffer's last save but one of its earlier
 saves, or the text it first read: a sync client wrote an older copy of
 the file back over a newer one (issue #249).  Nothing on disk is news
