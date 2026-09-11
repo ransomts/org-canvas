@@ -4,7 +4,7 @@
 ;;; Commentary:
 
 ;; Specs for `org-canvas-gradebook': student enrollments and the course
-;; analytics folded into the two tables of gradebook.org.  Every request
+;; analytics folded into the three tables of gradebook.org.  Every request
 ;; is answered by a fake keyed on the URL; nothing here reaches the
 ;; network (Hard Rule 2), and the log is never read from the shared
 ;; buffer (Hard Rule 3).
@@ -28,6 +28,8 @@
 Each column may carry a `data' entry: the rows its data endpoint answers.")
 (defvar test-gradebook--columns-params nil
   "The parameters the last request for the custom columns carried.")
+(defvar test-gradebook--assignments nil
+  "Assignment analytics rows the fake API lists, or `refuse' to answer with a 403.")
 
 (defun test-gradebook--api (_method url &optional _params)
   "Answer URL from the fake tables, as the paginated helper would."
@@ -38,6 +40,10 @@ Each column may carry a `data' entry: the rows its data endpoint answers.")
     (if (eq test-gradebook--summaries 'refuse)
         (signal 'org-canvas-permission-error (list "403 Forbidden"))
       test-gradebook--summaries))
+   ((string-match "/analytics/assignments" url)
+    (if (eq test-gradebook--assignments 'refuse)
+        (signal 'org-canvas-permission-error (list "403 Forbidden"))
+      test-gradebook--assignments))
    ((string-match "/custom_gradebook_columns/\\([0-9]+\\)/data" url)
     (let ((id (string-to-number (match-string 1 url))))
       (alist-get 'data (cl-find-if (lambda (c) (eql (alist-get 'id c) id))
@@ -68,6 +74,21 @@ DATA are (UID . CONTENT) pairs its data endpoint answers."
     (teacher_notes . :json-false) (read_only . :json-false)
     (data . ,(mapcar (lambda (d) `((user_id . ,(car d)) (content . ,(cdr d)))) data))))
 
+(defun test-gradebook--assignment (id title due points &rest stats)
+  "An assignment analytics row ID titled TITLE, due DUE, out of POINTS.
+STATS are (KEY . VALUE) pairs for the score fields and the tardiness
+counts; a score field not given is null, a count not given is 0."
+  `((assignment_id . ,id) (title . ,title) (due_at . ,due) (muted . :json-false)
+    (points_possible . ,points) (non_digital_submission . :json-false)
+    (max_score . ,(alist-get 'max_score stats :null))
+    (min_score . ,(alist-get 'min_score stats :null))
+    (first_quartile . ,(alist-get 'first_quartile stats :null))
+    (median . ,(alist-get 'median stats :null))
+    (third_quartile . ,(alist-get 'third_quartile stats :null))
+    (tardiness_breakdown . ((missing . ,(alist-get 'missing stats 0))
+                            (late . ,(alist-get 'late stats 0))
+                            (on_time . 5) (floating . 0) (total . 5)))))
+
 (defun test-gradebook--summary (uid missing late)
   "A student summary for UID with MISSING and LATE submissions."
   `((id . ,uid) (page_views . 3)
@@ -86,17 +107,20 @@ The gradebook and roster files live in a temp directory."
   `(let* ((dir (make-temp-file "gradebook-" t))
           (org-canvas-gradebook-file (expand-file-name "gradebook.org" dir))
           (org-canvas-people-file (expand-file-name "people.org" dir))
+          (org-canvas-assignments-file (expand-file-name "assignments.org" dir))
           (test-gradebook--enrollments ,enrollments)
           (test-gradebook--sections ,sections)
           (test-gradebook--summaries ,summaries)
           (test-gradebook--columns nil)
-          (test-gradebook--columns-params nil))
+          (test-gradebook--columns-params nil)
+          (test-gradebook--assignments nil))
      (unwind-protect
          (with-org-canvas-test-config
            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages) #'test-gradebook--api)
                      ((symbol-function 'message) #'ignore))
              ,@body))
-       (dolist (f (list org-canvas-gradebook-file org-canvas-people-file))
+       (dolist (f (list org-canvas-gradebook-file org-canvas-people-file
+                        org-canvas-assignments-file))
          (let ((buf (find-buffer-visiting f)))
            (when buf (with-current-buffer buf (set-buffer-modified-p nil)) (kill-buffer buf))))
        (delete-directory dir t))))
@@ -170,6 +194,21 @@ The gradebook and roster files live in a temp directory."
     (expect (org-canvas--gradebook-cell-text "plain") :to-equal "plain")
     (expect (org-canvas--gradebook-cell-text nil) :to-equal "")
     (expect (org-canvas--gradebook-cell-text :null) :to-equal "")))
+
+(describe "org-canvas--gradebook-stat"
+  (it "answers a number and nothing for a null however it was decoded"
+    (expect (org-canvas--gradebook-stat '((median . 7.5)) 'median) :to-equal 7.5)
+    (expect (org-canvas--gradebook-stat '((median . :null)) 'median) :to-be nil)
+    (expect (org-canvas--gradebook-stat '((median . nil)) 'median) :to-be nil)
+    (expect (org-canvas--gradebook-stat nil 'median) :to-be nil)))
+
+(describe "org-canvas--gradebook-assignment-cell"
+  (it "falls back to the id when the analytics row has no title and no file to link"
+    (let ((org-canvas-assignments-file nil))
+      (expect (org-canvas--gradebook-assignment-cell '((assignment_id . 77) (title . nil)))
+              :to-equal "Assignment 77")
+      (expect (org-canvas--gradebook-assignment-cell '((assignment_id . 78) (title . "Essay")))
+              :to-equal "Essay"))))
 
 (describe "org-canvas--gradebook-mean"
   (it "averages the numbers and ignores the blanks"
@@ -297,6 +336,58 @@ The gradebook and roster files live in a temp directory."
         (expect text :to-match "^| Student +| Sections +| Current +| Final +| Missing +| Late +| Last activity +|$")
         (expect (test-gradebook--row "Adams, Alice") :to-equal '("Lecture" "91.5" "88.0" "-" "-" "-"))
         (expect text :to-match "^#\\+LAST_SYNCED:"))))
+
+  (it "writes the assignments table in Canvas order with the spread, links and dashes"
+    (test-gradebook--with-course
+        (list (test-gradebook--enrollment 1 "Adams, Alice" 10 91.5 88.0))
+        '(((id . 10) (name . "Lecture")))
+        nil
+      (with-temp-file org-canvas-assignments-file
+        (insert "* Homework 1\n:PROPERTIES:\n:CANVAS_ID: 501\n:END:\n"))
+      (setq test-gradebook--assignments
+            (list (test-gradebook--assignment 502 "Homework 2" "2026-09-20T23:59:00Z" 10.0)
+                  (test-gradebook--assignment 501 "Homework 1" "2026-09-06T23:59:00Z" 20.0
+                                              '(min_score . 4.0) '(first_quartile . 12.5)
+                                              '(median . 16.0) '(third_quartile . 18.0)
+                                              '(max_score . 20.0) '(missing . 3) '(late . 2))))
+      (org-canvas-pull-gradebook)
+      (let ((text (test-gradebook--file)))
+        (expect text :to-match "^\\* Assignments\n")
+        (expect (string-match "\\* Sections" text) :to-be-less-than (string-match "\\* Assignments" text))
+        (expect text :to-match "^| Assignment +| Due +| Points +| Min +| Q1 +| Median +| Q3 +| Max +| Missing +| Late +|$")
+        (expect (string-match "Homework 2" text) :to-be-less-than (string-match "Homework 1" text))
+        (expect text :to-match "^| \\[\\[file:assignments.org::\\*Homework 1\\]\\[Homework 1\\]\\] +|")
+        (expect (test-gradebook--row "Homework 1")
+                :to-equal '("<2026-09-06 Sun 23:59>" "20.0" "4.0" "12.5" "16.0" "18.0" "20.0" "3" "2"))
+        (expect (test-gradebook--row "Homework 2")
+                :to-equal '("<2026-09-20 Sun 23:59>" "10.0" "-" "-" "-" "-" "-" "0" "0"))
+        (expect text :not :to-match "Homework 2\\]\\]"))))
+
+  (it "leaves a note under Assignments with one warning when Canvas refuses the analytics"
+    (test-gradebook--with-course
+        (list (test-gradebook--enrollment 1 "Adams, Alice" 10 91.5 88.0))
+        '(((id . 10) (name . "Lecture")))
+        nil
+      (setq test-gradebook--assignments 'refuse)
+      (let ((warned nil))
+        (cl-letf (((symbol-function 'org-canvas--log-warning)
+                   (lambda (_logger fmt &rest args) (push (apply #'format fmt args) warned))))
+          (org-canvas-pull-gradebook))
+        (expect (length warned) :to-equal 1)
+        (expect (car warned) :to-match "Could not read the assignment analytics"))
+      (let ((text (test-gradebook--file)))
+        (expect text :to-match "^\\* Assignments\n+Canvas refused the assignment analytics")
+        (expect text :not :to-match "^| Assignment ")
+        (expect (test-gradebook--row "Adams, Alice") :to-equal '("Lecture" "91.5" "88.0" "-" "-" "-"))
+        (expect text :to-match "^#\\+LAST_SYNCED:"))))
+
+  (it "writes a No assignments line when the course has none"
+    (test-gradebook--with-course
+        (list (test-gradebook--enrollment 1 "Adams, Alice" 10 91.5 88.0))
+        '(((id . 10) (name . "Lecture")))
+        nil
+      (org-canvas-pull-gradebook)
+      (expect (test-gradebook--file) :to-match "^\\* Assignments\n+No assignments\n")))
 
   (it "writes the empty-file note for a course with no students"
     (test-gradebook--with-course nil nil nil

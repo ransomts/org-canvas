@@ -5,9 +5,11 @@
 
 ;; This module pulls a course-wide overview of grades into
 ;; gradebook.org: each student's current and final score, how many
-;; submissions are missing or late, and a per-section summary.  It
-;; answers "who is falling behind?" without opening the Canvas gradebook
-;; or pulling one grading file per assignment.  It is pull-only, and its
+;; submissions are missing or late, a per-section summary, and the
+;; score spread of every assignment.  It answers "who is falling
+;; behind?" and "how did the class do on Homework 3?" without opening
+;; the Canvas gradebook or pulling one grading file per assignment.  It
+;; is pull-only, and its
 ;; tables are derived: every pull rewrites them, so nothing written by
 ;; hand under its headings survives.
 ;;
@@ -19,6 +21,8 @@
 ;;                per custom gradebook column the course has
 ;;   * Sections   one table: Section, Students, Mean current, Mean final,
 ;;                Missing
+;;   * Assignments one table, in Canvas order: Assignment, Due, Points,
+;;                Min, Q1, Median, Q3, Max, Missing, Late
 ;;
 ;; A student is one row however many sections they sit in.  The Student
 ;; cell links to the roster heading in people.org when that file holds
@@ -26,8 +30,10 @@
 ;; every ungraded assignment as zero, work not yet due included, so it
 ;; sits low early in the term.  `org-canvas-gradebook-unposted' (default t)
 ;; takes the instructor's unposted scores, hidden grades included; nil
-;; takes what students see.  No per-assignment columns: that is what
-;; grading files are for.  Custom gradebook columns (the Notes column,
+;; takes what students see.  No per-student, per-assignment cells: that
+;; is what grading files are for; the Assignments table is the class's
+;; spread on each assignment, linked to its heading in assignments.org
+;; when that file holds the id.  Custom gradebook columns (the Notes column,
 ;; anything added in the gradebook) follow Last activity in Canvas's
 ;; order, titled as in Canvas; a course without any gets the seven
 ;; columns and nothing more.  Hidden columns stay out unless
@@ -62,6 +68,12 @@
 ;;       user_id and content per student who has an entry.  Paginated.
 ;;       A refusal of either request logs one warning and leaves the
 ;;       custom columns out; the pull goes on.
+;;   GET /courses/:id/analytics/assignments
+;;       per assignment: points_possible, due_at, min_score, max_score,
+;;       first_quartile, median, third_quartile (null until enough work
+;;       is graded) and its own tardiness_breakdown.  Permission gated
+;;       like the summaries: a 403 leaves the Assignments heading with
+;;       a note, and the pull goes on.
 
 ;;; Code:
 
@@ -165,6 +177,22 @@ the custom columns rather than not at all (the #171 rule)."
        (error-message-string err))
      nil)))
 
+(defun org-canvas--gradebook-fetch-assignments ()
+  "Return the course's assignment analytics rows, or the symbol `refused'.
+One alist per assignment in Canvas order, from the analytics
+endpoint, which is permission gated: a refusal is logged and answered
+with `refused' so the Assignments heading carries a note rather than
+costing the pull (the #171 rule)."
+  (condition-case err
+      (append (org-canvas-api-request-all-pages
+               'GET (org-canvas-api-course-endpoint "analytics/assignments"))
+              nil)
+    (org-canvas-api-error
+     (org-canvas--log-warning org-canvas--logger
+       "[Gradebook] Could not read the assignment analytics (%s); the Assignments table is left out"
+       (error-message-string err))
+     'refused)))
+
 ;;;; Folding Enrollments Into Rows
 
 (defun org-canvas--gradebook-score (grades key)
@@ -242,15 +270,21 @@ Nil as well when `org-canvas-people-file' is unset or missing."
              "USER_ID={.}" 'file)))
         heading))))
 
+(defun org-canvas--gradebook-heading-link (file heading text)
+  "Return an Org link to HEADING in the course FILE, shown as TEXT.
+Brackets Org escaped in HEADING are unescaped, so the link target is
+the heading as written."
+  (org-link-make-string
+   (format "file:%s::*%s" (file-name-nondirectory file)
+           (replace-regexp-in-string "\\\\\\([][]\\)" "\\1" heading))
+   text))
+
 (defun org-canvas--gradebook-student-cell (row)
   "Return ROW's Student cell: a link to the roster heading when known, else the name."
   (let ((heading (org-canvas--gradebook-roster-heading (plist-get row :user-id)))
         (name (plist-get row :name)))
     (if heading
-        (org-link-make-string
-         (format "file:%s::*%s" (file-name-nondirectory org-canvas-people-file)
-                 (replace-regexp-in-string "\\\\\\([][]\\)" "\\1" heading))
-         name)
+        (org-canvas--gradebook-heading-link org-canvas-people-file heading name)
       name)))
 
 (defun org-canvas--gradebook-sections-cell (row names)
@@ -324,6 +358,55 @@ SUMMARIES is `refused' when the Missing column is unavailable."
                         (org-canvas--gradebook-number
                          (apply #'+ (mapcar (lambda (r) (or (plist-get r :missing) 0)) members)))))))))
 
+(defun org-canvas--gradebook-stat (row key)
+  "Return the number under KEY in the analytics ROW, or nil.
+Canvas answers null for a quartile until enough work is graded, and
+null decodes as nil or `:null' depending on the reader."
+  (let ((value (alist-get key row)))
+    (and (numberp value) value)))
+
+(defun org-canvas--gradebook-assignment-cell (row)
+  "Return ROW's Assignment cell: a link to its heading, else the title.
+The link goes to the assignments.org heading carrying the assignment id
+as CANVAS_ID, when `org-canvas-assignments-file' is set and holds it."
+  (let* ((title (or (alist-get 'title row)
+                    (format "Assignment %s" (alist-get 'assignment_id row))))
+         (file (and (boundp 'org-canvas-assignments-file) org-canvas-assignments-file))
+         (heading (org-canvas--heading-title-by-property
+                   file "CANVAS_ID" (alist-get 'assignment_id row))))
+    (if heading
+        (org-canvas--gradebook-heading-link file heading title)
+      title)))
+
+(defun org-canvas--gradebook-insert-assignment-row (row)
+  "Insert the Assignments table line for the analytics ROW at point."
+  (let ((tardiness (alist-get 'tardiness_breakdown row)))
+    (insert (format "| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n"
+                    (org-canvas--gradebook-assignment-cell row)
+                    (or (org-canvas--iso8601-to-org-timestamp (alist-get 'due_at row)) "-")
+                    (org-canvas--gradebook-number (org-canvas--gradebook-stat row 'points_possible))
+                    (org-canvas--gradebook-number (org-canvas--gradebook-stat row 'min_score))
+                    (org-canvas--gradebook-number (org-canvas--gradebook-stat row 'first_quartile))
+                    (org-canvas--gradebook-number (org-canvas--gradebook-stat row 'median))
+                    (org-canvas--gradebook-number (org-canvas--gradebook-stat row 'third_quartile))
+                    (org-canvas--gradebook-number (org-canvas--gradebook-stat row 'max_score))
+                    (org-canvas--gradebook-number (org-canvas--gradebook-stat tardiness 'missing))
+                    (org-canvas--gradebook-number (org-canvas--gradebook-stat tardiness 'late))))))
+
+(defun org-canvas--gradebook-insert-assignments (assignments)
+  "Insert the Assignments table for the analytics rows ASSIGNMENTS at point.
+`refused' writes a note instead; an empty list a `No assignments' line."
+  (cond
+   ((eq assignments 'refused)
+    (insert "Canvas refused the assignment analytics for this token.\n"))
+   ((null assignments)
+    (insert "No assignments\n"))
+   (t
+    (insert "| Assignment | Due | Points | Min | Q1 | Median | Q3 | Max | Missing | Late |\n")
+    (insert "|---+---+---+---+---+---+---+---+---+---|\n")
+    (dolist (row assignments)
+      (org-canvas--gradebook-insert-assignment-row row)))))
+
 (defun org-canvas--gradebook-rewrite-body (title insert-fn)
   "Replace the body of the level-1 heading TITLE with INSERT-FN's output.
 The heading is created when absent.  The body is derived from Canvas
@@ -350,10 +433,11 @@ on every pull, so nothing under the heading is kept."
   "Pull a course-wide grade overview into gradebook.org.
 One table of students with their current and final scores, missing
 and late counts, last activity and the course's custom gradebook
-columns, and one table of sections with their means.  Read-only, and
-the tables are derived: every pull
-rewrites them.  The file holds every student's scores afterwards;
-keep it out of a course repository."
+columns; one table of sections with their means; and one table of
+assignments with the class's score spread on each.  Read-only, and
+the tables are derived: every pull rewrites them.  The file holds
+every student's scores afterwards; keep it out of a course
+repository."
   (interactive)
   (org-canvas--start-operation "PULLING GRADEBOOK")
   (let* ((file (expand-file-name org-canvas-gradebook-file))
@@ -365,6 +449,7 @@ keep it out of a course repository."
       (let* ((summaries (org-canvas--gradebook-fetch-summaries))
              (names (org-canvas--gradebook-fetch-section-names))
              (columns (org-canvas--gradebook-fetch-columns))
+             (assignments (org-canvas--gradebook-fetch-assignments))
              (rows (org-canvas--gradebook-rows enrollments summaries)))
         (when columns
           (org-canvas--log-info org-canvas--logger
@@ -377,6 +462,8 @@ keep it out of a course repository."
            "Students" (lambda () (org-canvas--gradebook-insert-students rows names summaries columns)))
           (org-canvas--gradebook-rewrite-body
            "Sections" (lambda () (org-canvas--gradebook-insert-sections rows names summaries)))
+          (org-canvas--gradebook-rewrite-body
+           "Assignments" (lambda () (org-canvas--gradebook-insert-assignments assignments)))
           (org-canvas--pull-write-file-header)
           (org-canvas--save-buffer))
         (org-canvas--pull-kill-fresh-buffer file was-fresh)
@@ -384,8 +471,8 @@ keep it out of a course repository."
                                                      (> (plist-get r :missing) 0)))
                                     rows)))
           (org-canvas--log-info org-canvas--logger
-            "Gradebook pull complete: %d students, %d sections, %d with missing work"
-            (length rows) (length names) missing)
+            "Gradebook pull complete: %d students, %d sections, %d assignments, %d with missing work"
+            (length rows) (length names) (if (listp assignments) (length assignments) 0) missing)
           (message "Gradebook pull complete: %d students, %d sections, %d with missing work."
                    (length rows) (length names) missing))))))
 
