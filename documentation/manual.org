@@ -245,6 +245,7 @@ These files have no outgoing links to other course files:
 | =rubrics.org=           | Rubrics            | Grading rubrics (criteria may link to outcomes) |
 | =assignment-groups.org= | Assignment Groups  | Weight categories             |
 | =group-categories.org=  | Group Categories   | Group sets for group work     |
+| =groups.org=            | Groups             | Pull-only: groups and members per category (student names) |
 | =pages.org=             | Wiki Pages         | Course content pages          |
 | =files.org=             | Files              | Binary file uploads           |
 | =discussions.org=       | Discussions        | Discussion topics             |
@@ -1591,6 +1592,39 @@ Assignments and discussions can reference group categories via Org links instead
 
 The link is resolved to the group category's =CANVAS_ID= during sync.  Raw numeric IDs are still accepted for backward compatibility.
 
+** groups.org
+
+Pull-only.  =org-canvas-pull-groups= writes the groups Canvas holds
+inside each group category and the students in each group.  Groups are
+made by Canvas -- from a category's =CREATE_GROUP_COUNT=, by student
+self-signup, or by hand in the web UI -- and membership is decided
+there, so nothing in this file is pushed and nothing local is deleted
+for being absent on Canvas.
+
+*** Structure
+
+- Level 1 headings = Group Categories, linked to their heading in
+  =group-categories.org= when that file holds the category's =CANVAS_ID=
+- Level 2 headings = Groups
+- Group body = one =- Name= line per member, in Canvas's order
+
+*** Properties (set by pull)
+
+| Property         | Type   | Description                                   |
+|------------------+--------+-----------------------------------------------|
+| =CANVAS_ID=        | number | Category id (level 1) or group id (level 2)   |
+| =MAX_MEMBERSHIP=   | number | Member limit, when the group has one          |
+| =JOIN_LEVEL=       | enum   | parent_context_auto_join, parent_context_request, invitation_only |
+| =MEMBERS_COUNT=    | number | Number of members Canvas reports              |
+
+*** Personal Data
+
+The member lists are student names.  Only the display name is written,
+never an email, SIS id or login id, but a name is personal data all
+the same: treat =groups.org= as you treat the submissions directory
+and keep it out of a course repository (add it to =.gitignore=) and
+out of anything you share.
+
 ** calendar.org
 
 Non-assignment calendar events such as office hours, holidays, and review sessions.
@@ -2224,8 +2258,10 @@ Each content type can be pulled individually:
 | =org-canvas-pull-at-point=             | Refresh the heading at point          |
 | =org-canvas-pull-settings=             | Pull course settings and tabs         |
 | =org-canvas-pull-sections=             | Pull course sections                  |
+| =org-canvas-pull-grading-periods=      | Pull grading periods (read-only)      |
 | =org-canvas-pull-assignment-groups=    | Pull assignment groups                |
 | =org-canvas-pull-group-categories=     | Pull group categories                 |
+| =org-canvas-pull-groups=               | Pull groups and their members         |
 | =org-canvas-pull-assignments=          | Pull assignments with descriptions    |
 | =org-canvas-pull-quizzes=              | Pull quizzes with questions           |
 | =org-canvas-pull-pages=               | Pull wiki pages with body content     |
@@ -2233,6 +2269,7 @@ Each content type can be pulled individually:
 | =org-canvas-pull-rubrics=             | Pull rubrics with criteria tables     |
 | =org-canvas-pull-outcomes=            | Pull outcome groups and outcomes      |
 | =org-canvas-pull-discussions=         | Pull discussion topics                |
+| =org-canvas-pull-discussion-replies=  | Pull entries and replies under topics |
 | =org-canvas-pull-announcements=       | Pull announcements                    |
 | =org-canvas-pull-files=               | Pull file metadata and download files |
 | =org-canvas-pull-calendar-events=      | Pull calendar events                  |
@@ -2474,8 +2511,10 @@ pulled front page carries =:FRONT_PAGE: true=, so it round-trips.
 | =org-canvas-pull-all=                  | Import entire Canvas course           |
 | =org-canvas-pull-settings=             | Pull course settings and tabs         |
 | =org-canvas-pull-sections=             | Pull course sections                  |
+| =org-canvas-pull-grading-periods=      | Pull grading periods (read-only)      |
 | =org-canvas-pull-assignment-groups=    | Pull assignment groups                |
 | =org-canvas-pull-group-categories=     | Pull group categories                 |
+| =org-canvas-pull-groups=               | Pull groups and their members         |
 | =org-canvas-pull-assignments=          | Pull assignments with descriptions    |
 | =org-canvas-pull-quizzes=              | Pull classic quizzes with questions   |
 | =org-canvas-pull-new-quizzes=          | Pull New Quizzes with items           |
@@ -2484,6 +2523,7 @@ pulled front page carries =:FRONT_PAGE: true=, so it round-trips.
 | =org-canvas-pull-rubrics=             | Pull rubrics with criteria tables     |
 | =org-canvas-pull-outcomes=            | Pull outcome groups and outcomes      |
 | =org-canvas-pull-discussions=         | Pull discussion topics                |
+| =org-canvas-pull-discussion-replies=  | Pull entries and replies under topics |
 | =org-canvas-pull-announcements=       | Pull announcements                    |
 | =org-canvas-pull-files=               | Pull file metadata and download files |
 | =org-canvas-pull-calendar-events=      | Pull calendar events                  |
@@ -3071,6 +3111,16 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =LOCATION_NAME= | string |  |  | Location name |
 | =LOCATION_ADDRESS= | string |  |  | Location address |
 
+** Discussion Replies
+
+| Property | Type | Allowed values | Default | Description |
+|----------+------+----------------+---------+-------------|
+| =CANVAS_ENTRY_ID= | string |  |  | Canvas id of the entry or reply (set by pull) |
+| =AUTHOR= | string |  |  | Display name of the entry's author (set by pull) |
+| =AUTHOR_ID= | number |  |  | Canvas user id of the entry's author (set by pull) |
+| =POSTED_AT= | timestamp |  |  | When the entry was posted (set by pull) |
+| =PARENT_ENTRY_ID= | number |  |  | Entry this reply answers, on replies only (set by pull) |
+
 ** Discussions
 
 | Property | Type | Allowed values | Default | Description |
@@ -3103,6 +3153,16 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =USAGE_LICENSE= | string |  |  | Usage-rights license code (for example cc_by, public_domain) |
 | =COPYRIGHT= | string |  |  | Copyright holder recorded with the usage rights |
 
+** Grading Periods
+
+| Property | Type | Allowed values | Default | Description |
+|----------+------+----------------+---------+-------------|
+| =START_DATE= | timestamp |  |  | Period start (set by Canvas; pull-only) |
+| =END_DATE= | timestamp |  |  | Period end (set by Canvas; pull-only) |
+| =CLOSE_DATE= | timestamp |  |  | Date after which the period's grades are locked (pull-only) |
+| =WEIGHT= | number |  |  | Weight of the period when the term weights its periods (pull-only) |
+| =IS_CLOSED= | boolean | true, false |  | Whether the period is closed (pull-only; absent while open) |
+
 ** Group Categories
 
 | Property | Type | Allowed values | Default | Description |
@@ -3111,6 +3171,14 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =GROUP_LIMIT= | number |  |  | Max members per group (requires SELF_SIGNUP) |
 | =AUTO_LEADER= | enum | first, random |  | How to assign group leaders |
 | =CREATE_GROUP_COUNT= | number |  |  | Number of groups to create automatically |
+
+** Groups
+
+| Property | Type | Allowed values | Default | Description |
+|----------+------+----------------+---------+-------------|
+| =MAX_MEMBERSHIP= | number |  |  | Member limit for the group, when Canvas sets one (pull-only) |
+| =JOIN_LEVEL= | enum | parent_context_auto_join, parent_context_request, invitation_only |  | Who may join the group (pull-only) |
+| =MEMBERS_COUNT= | number |  |  | Number of members Canvas reports for the group (pull-only) |
 
 ** Module Items
 
