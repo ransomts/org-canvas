@@ -87,6 +87,7 @@
 (require 'org-canvas-diff)
 (require 'org-canvas-validate)
 (require 'org-canvas-submissions)
+(require 'org-canvas-quiz-submissions)
 (require 'org-canvas-setup)
 
 ;; Import command files: built on core and the feature modules, never

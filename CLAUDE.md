@@ -56,6 +56,7 @@ lisp/
 ├── org-canvas-setup.el          # Setup wizard (org-canvas-init)
 ├── org-canvas-transient.el      # Transient command menu
 ├── org-canvas-submissions.el    # Submission viewer and grading
+├── org-canvas-quiz-submissions.el # Read-only table of a classic quiz's attempts (requires submissions)
 ├── org-canvas-new-quiz-items.el # New Quizzes item/question pipeline (sub-module of new-quizzes)
 ├── org-canvas-{feature}.el      # Feature modules: announcements, assignment-groups, assignments,
 │                                #   calendar, discussion-replies (pull-only), discussions, files,
@@ -74,7 +75,7 @@ lisp/
 - Feature modules must NOT depend on each other. The one sanctioned exception is a sub-module: `org-canvas-new-quizzes` requires `org-canvas-new-quiz-items`, which itself requires only core
 - `org-canvas-core` must NOT import any feature modules (prevents circular deps)
 - `org-canvas.el` orchestrates by requiring all modules
-- Command files (status, publish, adopt, orphans, diff, validate, submissions) sit above the feature modules: they require core and may require the feature module they drive (publish requires modules, adopt requires diff); no feature module may require a command file
+- Command files (status, publish, adopt, orphans, diff, validate, submissions, quiz-submissions) sit above the feature modules: they require core and may require the feature module they drive (publish requires modules, adopt requires diff, quiz-submissions requires submissions); no feature module may require a command file
 - A feature module may name a validate.el function by symbol — `:structural-fn #'org-canvas--validate-drop-rules` on its property registration, resolved when validation runs — and may `declare-function` a function it must call from another module (assignments does this for `org-canvas--override-fetch` in sections.el). Declare; never require another feature
 
 ### 4-Stage Pipeline Pattern

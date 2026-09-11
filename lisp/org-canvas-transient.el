@@ -58,7 +58,8 @@ writing commands greyed rather than only erroring when one is chosen
    ("R" "Rubric results" org-canvas-pull-rubric-results)
    ("y" "Grading periods" org-canvas-pull-grading-periods)
    ("s" "Settings" org-canvas-pull-settings)
-   ("S" "Submissions" org-canvas-pull-submissions)])
+   ("S" "Submissions" org-canvas-pull-submissions)
+   ("z" "Quiz submissions" org-canvas-pull-quiz-submissions)])
 
 ;;;###autoload
 (transient-define-prefix org-canvas-dispatch-delete-at-point ()
@@ -107,6 +108,7 @@ writing commands greyed rather than only erroring when one is chosen
   ["Submissions"
    ("g" "Pull submissions (grading file)" org-canvas-pull-submissions)
    ("o" "Open a saved grading file" org-canvas-open-submissions)
+   ("z" "Pull a quiz's attempts (read-only table)" org-canvas-pull-quiz-submissions)
    ("a" "Apply the completion rule to this file" org-canvas-submissions-apply-completion-rule)
    ("G" "Push grades" org-canvas-submissions-push-grades
     :inapt-if-not org-canvas--transient-writable-p)

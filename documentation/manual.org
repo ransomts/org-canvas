@@ -247,7 +247,7 @@ These files have no outgoing links to other course files:
 | =group-categories.org=  | Group Categories   | Group sets for group work     |
 | =groups.org=            | Groups             | Pull-only: groups and members per category (student names) |
 | =people.org=            | People             | Pull-only: the roster by role, with sections and state (names) |
-| =gradebook.org=         | Gradebook          | Pull-only: every student's scores and missing work, by student and by section |
+| =gradebook.org=         | Gradebook          | Pull-only: every student's scores, missing work and custom columns, by student and by section |
 | =rubric-results.org=    | Rubric Results     | Pull-only: how the class scored on each rubric criterion, per assignment |
 | =pages.org=             | Wiki Pages         | Course content pages          |
 | =files.org=             | Files              | Binary file uploads           |
@@ -1685,10 +1685,13 @@ headings is gone at the next pull.
 *** Structure
 
 - =* Students=: one table, sorted by name, with the columns Student,
-  Sections, Current, Final, Missing, Late and Last activity.  A
-  student is one row however many sections they sit in.  The Student
-  cell links to the person's heading in =people.org= when that file
-  holds their user id (pull the roster first)
+  Sections, Current, Final, Missing, Late and Last activity, then one
+  column per custom gradebook column the course has (the Notes column,
+  anything added in the gradebook), titled as in Canvas and in
+  Canvas's order.  A student is one row however many sections they
+  sit in.  The Student cell links to the person's heading in
+  =people.org= when that file holds their user id (pull the roster
+  first)
 - =* Sections=: one table with Section, Students, Mean current, Mean
   final and Missing (the section's missing submissions added up)
 
@@ -1700,15 +1703,22 @@ instructor's unposted scores, hidden grades included; set it to nil
 for the scores students see.  Missing and Late come from Canvas's
 course analytics, which some tokens may not read: then the two
 columns are blank and a line under the table says so, and the rest of
-the pull goes on.  There are no per-assignment columns; that is what
+the pull goes on.  Custom gradebook columns hidden in the gradebook
+stay out unless =org-canvas-gradebook-include-hidden-columns= is set;
+a course without any gets the seven columns and nothing more, and a
+token that cannot read them gets a warning in the log and the same
+seven.  A cell's text is written on one line, pipes and line breaks
+collapsed.  There are no per-assignment columns; that is what
 grading files are for (see [[*Grading Submissions][Grading Submissions]]).
 
 *** Personal Data
 
-Scores are more sensitive than names.  Only the name and the numbers
-are written, never an identifier, but treat =gradebook.org= as you
-treat the submissions directory: keep it out of a course repository
-(add it to =.gitignore=) and out of anything you share.
+Scores are more sensitive than names.  Only the name, the numbers and
+the custom column text are written, never an identifier, but a Notes
+column is free text about a student, the most sensitive cell in the
+file.  Treat =gradebook.org= as you treat the submissions directory:
+keep it out of a course repository (add it to =.gitignore=) and out
+of anything you share.
 
 ** rubric-results.org
 
@@ -2333,6 +2343,22 @@ Before pushing from a saved file, org-canvas re-reads the assignment once and co
 
 Scores compare as entered values: with a late policy of 20% per day, a student graded 5 who was a day late shows =SCORE: 5=, =CANVAS_SCORE: 5=, =FINAL_SCORE: 4=.
 
+** Quiz Attempts
+
+A classic quiz has a grading file too, through its shadow assignment,
+and that is where a quiz score is changed and pushed. What the grading
+file cannot show is the attempt itself: how many a student took, which
+score Canvas kept against the latest one, how long they spent, whether
+an attempt is still open. =M-x org-canvas-pull-quiz-submissions=
+(transient: Submissions, =z=) picks a classic quiz and writes that as
+one read-only table under the submissions directory, as
+=<quiz> (quiz).org=: one row per student, sorted by name, with
+Attempts, Kept, Latest, Out of, Time (=h:mm=), Finished and State, and
+a summary line above (submissions, in progress, more than one attempt,
+mean kept score). Every pull rewrites the file; nothing is pushed from
+it. New Quizzes have no such endpoint, so the prompt lists classic
+quizzes only.
+
 ** Privacy
 
 Grading files are student work. The submissions directory receives a =.gitignore= excluding everything in it when it is first created (=org-canvas-submissions-write-gitignore=), so the files never travel with a course repository. Keep the directory out of any other sharing you would not extend to a gradebook export.
@@ -2745,6 +2771,7 @@ These commands delete the item at the current cursor position:
 | Command | Description |
 |---|---|
 | =org-canvas-pull-submissions= | Pull an assignment into a grading file (or the summary table) |
+| =org-canvas-pull-quiz-submissions= | Pull a classic quiz's attempts into a read-only table (=z=) |
 | =org-canvas-open-submissions= | Reopen a saved grading file |
 | =org-canvas-submissions-push-grades= | Push changed scores and drafted comments (=S= in the file) |
 | =org-canvas-submissions-post-grades= | Post the assignment's grades to students, under a manual post policy (=P=) |

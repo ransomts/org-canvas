@@ -43,7 +43,7 @@ pull-at-point and prune.
 | Rubrics           | yes  | yes      | yes  | yes    | yes      | criteria, ratings, outcome links; associations via assignments  |
 | Sections          | no   | no       | yes  | no     | no       | pull-only, so overrides can name them                           |
 | People            | no   | no       | yes  | no     | no       | pull-only roster: role, sections, enrollment state, last activity, in people.org |
-| Gradebook         | no   | no       | yes  | no     | no       | pull-only overview: current and final score, missing and late, per student and per section, in gradebook.org |
+| Gradebook         | no   | no       | yes  | no     | no       | pull-only overview: current and final score, missing and late, custom gradebook columns, per student and per section, in gradebook.org |
 | Rubric results    | no   | no       | yes  | no     | no       | pull-only: per assignment, how the class scored on each criterion (assessed, mean, rating distribution), in rubric-results.org |
 | Grading periods   | no   | no       | yes  | no     | no       | pull-only; validate warns when a due date falls outside every period |
 | Overrides         | yes  | no       | yes  | no     | no       | per-section dates, reconciled from a table under each assignment |
@@ -77,7 +77,7 @@ settings file.
 | External tools (LTI)           | list installed tools so an assignment can name one     | install or configure a tool                  |
 | Turnitin document processor    | pull and diff the attachment as a Canvas-owned property | set it; deliberately, see decisions.org      |
 | Planner                        | a page's student to-do date                            | planner notes or the to-do list              |
-| Submissions                    | grades, comments, attachments, posting grades and each student's posted-at, per assignment; the course-wide score overview (gradebook.org) | quiz submissions, peer reviews, moderation   |
+| Submissions                    | grades, comments, attachments, posting grades and each student's posted-at, per assignment; the course-wide score overview (gradebook.org); a classic quiz's attempts, kept and latest scores and time spent, read-only per quiz | New Quiz attempts, peer reviews, moderation  |
 
 * Never Touched
 
@@ -85,9 +85,10 @@ Nothing in =lisp/= reads or writes these.  Where a course needs them,
 they are set in the Canvas web UI and org-canvas neither sees nor
 disturbs them.
 
-- *Gradebook configuration:* custom gradebook columns and the
-  gradebook's own settings.  Grading periods are pulled and post
-  policies are managed (see the covered table).
+- *Gradebook configuration:* the gradebook's own settings.  Custom
+  gradebook columns are pulled into the overview, grading periods are
+  pulled and post policies are managed (see the covered table);
+  creating a custom column is the web UI's business.
 - *Enrolling and removing people.*  The roster and section
   membership are pulled (see the covered table); changing them is the
   registrar's and the web UI's business.
