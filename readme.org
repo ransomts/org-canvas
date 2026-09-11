@@ -226,6 +226,7 @@ In detail view, edit the =:SCORE:= property on any student heading and press =S=
 - [[file:documentation/cheatsheet.org][Quick Reference Card]] -- All properties, commands, and keybindings on one page
 - [[file:documentation/migration.org][Migration Guide]] -- Switching from Canvas web UI to an Org Mode workflow
 - [[file:documentation/pitfalls.org][Pitfalls & Gotchas]] -- Common mistakes and how to avoid them
+- [[file:documentation/architecture/coverage.org][Canvas Coverage Map]] -- What org-canvas manages, what it only reads, and what in Canvas it never touches
 - [[file:demo-course/README.org][Demo Course]] -- Complete example course (DS 101) showcasing all content types
 - [[file:CONTRIBUTING.md][Contributing]] -- Development setup, coding conventions, testing practices, PR process
 

@@ -372,10 +372,49 @@ attributes and takes submissions itself.  LOC is a
              (concat "EXTERNAL_TOOL_URL/EXTERNAL_TOOL_ID is ignored unless "
                      "SUBMISSION includes external_tool")))))))
 
+(defun org-canvas--validate-grading-period-bounds ()
+  "Return the (START . END) ISO pairs of the pulled grading periods, or nil.
+Read from `org-canvas-grading-periods-file' when the variable is bound
+and the file exists with content; a period whose dates do not parse is
+left out."
+  (let ((file (and (boundp 'org-canvas-grading-periods-file)
+                   org-canvas-grading-periods-file)))
+    (when (and file (file-exists-p file)
+               (> (file-attribute-size (file-attributes file)) 0))
+      (with-current-buffer (org-canvas--find-file-noselect file)
+        (delq nil
+              (org-map-entries
+               (lambda ()
+                 (let ((start (org-canvas--validate-safe-parse-timestamp
+                               (org-entry-get (point) "START_DATE")))
+                       (end (org-canvas--validate-safe-parse-timestamp
+                             (org-entry-get (point) "END_DATE"))))
+                   (and start end (cons start end))))
+               "LEVEL=1" 'file))))))
+
+(defun org-canvas--validate-due-in-grading-period (loc)
+  "Warn when the DUE_AT at point falls outside every pulled grading period.
+LOC is a (:file :line :heading) plist.  Says nothing when the heading
+has no DUE_AT, when no grading periods have been pulled, or when the
+date sits inside a period, bounds included."
+  (let* ((raw (org-entry-get (point) "DUE_AT"))
+         (due (org-canvas--validate-safe-parse-timestamp raw))
+         (periods (and due (org-canvas--validate-grading-period-bounds))))
+    (when (and periods
+               (not (cl-some (lambda (period)
+                               (and (not (string< due (car period)))
+                                    (not (string< (cdr period) due))))
+                             periods)))
+      (list (org-canvas--validate-make-issue
+             'warning loc "DUE_AT"
+             (format "DUE_AT %s falls outside every grading period in %s"
+                     raw (file-name-nondirectory org-canvas-grading-periods-file)))))))
+
 (cl-defun org-canvas--validate-assignment-structure (loc)
-  "Check the LTI tool declaration, and the override table if present.
+  "Check the LTI tool declaration, the grading period, and the override table.
 LOC is a (:file :line :heading) plist."
-  (let ((issues (org-canvas--validate-external-tool loc))
+  (let ((issues (nconc (org-canvas--validate-external-tool loc)
+                       (org-canvas--validate-due-in-grading-period loc)))
         (end (save-excursion (org-end-of-subtree t) (point))))
     (save-excursion
       (unless (re-search-forward "^#\\+NAME: overrides" end t)
