@@ -3421,6 +3421,49 @@ https://test.canvas.example.com/courses/284220/assignments/7
                "/tmp/rubrics.org" (list :file "/tmp/rubrics.org" :line 1 :heading "Essay"))
               :to-be nil))))
 
+(describe "pull-only properties and the past-timestamp warning"
+  (it "still warns for an ordinary timestamp in the past"
+    (let ((issue (org-canvas--validate-check-timestamp
+                  "<2020-01-01 Wed 10:00>" "DUE_AT" (list :file "f" :line 1 :heading "H"))))
+      (expect (plist-get issue :message) :to-match "in the past")
+      (expect (plist-get issue :push-only) :to-be t)))
+
+  (it "says nothing about a pull-only timestamp in the past"
+    (expect (org-canvas--validate-check-timestamp
+             "<2020-01-01 Wed 10:00>" "POSTED_AT" (list :file "f" :line 1 :heading "H") t)
+            :to-be nil))
+
+  (it "still reports a pull-only timestamp it cannot parse"
+    (let ((issue (org-canvas--validate-check-timestamp
+                  "yesterday-ish" "POSTED_AT" (list :file "f" :line 1 :heading "H") t)))
+      (expect (plist-get issue :severity) :to-equal 'error)))
+
+  (it "carries the flag from the registry into the validate spec"
+    (expect (plist-get (org-canvas--property-to-validate-prop
+                        '(:org-prop "POSTED_AT" :type timestamp :pull-only t))
+                       :pull-only)
+            :to-be t)
+    (expect (plist-get (org-canvas--property-to-validate-prop
+                        '(:org-prop "DUE_AT" :type timestamp))
+                       :pull-only)
+            :to-be nil))
+
+  (it "leaves a pulled announcement's POSTED_AT out of the findings"
+    (let ((file (make-temp-file "ann-" nil ".org")))
+      (unwind-protect
+          (with-org-canvas-test-config
+            (with-temp-file file
+              (insert "* Old news\n:PROPERTIES:\n:CANVAS_ID: 1\n:POSTED_AT: <2020-01-01 Wed 10:00>\n:AUTHOR: Someone\n:END:\n"))
+            (let* ((org-canvas-announcements-file file)
+                   (spec (cl-find "Announcements" (org-canvas--validate-specs)
+                                  :key (lambda (s) (plist-get s :label)) :test #'equal))
+                   (issues (org-canvas--validate-spec spec)))
+              (expect (cl-some (lambda (i) (equal (plist-get i :property) "POSTED_AT")) issues)
+                      :to-be nil)))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file)))))
+
+
 (provide 'org-canvas-validate-test)
 (describe "org-canvas--validate-module-item-ids (issue #105)"
   (it "warns once per item id claimed by more than one heading, naming the lines"

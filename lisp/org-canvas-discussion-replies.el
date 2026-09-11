@@ -59,7 +59,7 @@
   :properties
   '((:org-prop "CANVAS_ENTRY_ID" :data-key :canvas-entry-id :type string
      :doc "Canvas id of the entry or reply (set by pull)")
-    (:org-prop "AUTHOR" :data-key :author :type string
+    (:org-prop "AUTHOR" :data-key :author :type string :pull-only t
      :doc "Display name of the entry's author (set by pull)")
     (:org-prop "AUTHOR_ID" :data-key :author-id :type number
      :doc "Canvas user id of the entry's author (set by pull)")

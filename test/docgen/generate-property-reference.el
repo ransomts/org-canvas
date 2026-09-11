@@ -44,7 +44,7 @@
 A property's `:read-only-values' are listed too, marked as Canvas's to
 set: they are values a pull writes and validation accepts, not values
 to type by hand (issue #167).  A `:canvas-owned' property is Canvas's
-to set entirely (issue #184)."
+to set entirely (issue #184), and so is a `:pull-only' one."
   (let* ((type (plist-get prop :type))
          (values (plist-get prop :values))
          (read-only (plist-get prop :read-only-values))
@@ -53,7 +53,8 @@ to set entirely (issue #184)."
                              (mapconcat #'identity read-only ", "))
                    "")))
     (cond
-     ((plist-get prop :canvas-owned) "set by Canvas (read-only)")
+     ((or (plist-get prop :canvas-owned) (plist-get prop :pull-only))
+      "set by Canvas (read-only)")
      (values (concat (mapconcat #'identity values ", ") suffix))
      ((eq type 'boolean) (concat "true, false" suffix))
      ((eq type 'link) "org link")
