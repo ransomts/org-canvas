@@ -385,7 +385,7 @@ Not a table row here.
      (let ((issues (org-canvas--validate-assignment-structure
                     (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Assignment 1"))))
        (expect (length issues) :to-be-greater-than 0)
-       (expect (plist-get (car issues) :message) :to-match "not a file link")))))
+       (expect (plist-get (car issues) :message) :to-match "not a section link, Group: or Students:")))))
 
 ;;;; Issue Formatting
 
@@ -3521,6 +3521,78 @@ history and not a finding at all.")
         (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
         (delete-file file)))))
 
+
+
+(describe "override rows for a group or students (issue #224)"
+  (defmacro test-validate-override-target-with-files (&rest body)
+    "Run BODY with groups.org (Team A = 55) and people.org (Adams, Alice = 1)."
+    (declare (indent 0))
+    `(let* ((dir (make-temp-file "ov-validate-" t))
+            (org-canvas-groups-file (expand-file-name "groups.org" dir))
+            (org-canvas-people-file (expand-file-name "people.org" dir))
+            (loc (list :file "assignments.org" :line 3 :heading "HW")))
+       (with-temp-file org-canvas-groups-file
+         (insert "* Teams\n** Team A\n:PROPERTIES:\n:CANVAS_ID: 55\n:END:\n"))
+       (with-temp-file org-canvas-people-file
+         (insert "* Students\n** Adams, Alice\n:PROPERTIES:\n:USER_ID: 1\n:END:\n"))
+       (unwind-protect
+           (progn ,@body)
+         (dolist (f (list org-canvas-groups-file org-canvas-people-file))
+           (let ((buf (find-buffer-visiting f)))
+             (when buf (kill-buffer buf))))
+         (delete-directory dir t))))
+
+  (it "accepts a group that groups.org holds, or a literal #id"
+    (test-validate-override-target-with-files
+      (expect (org-canvas--validate-override-target "Group: Team A" loc) :to-be nil)
+      (expect (org-canvas--validate-override-target "Group: #77" loc) :to-be nil)))
+
+  (it "warns, push-only, about a group groups.org does not hold"
+    (test-validate-override-target-with-files
+      (let ((issue (org-canvas--validate-override-target "Group: Team Z" loc)))
+        (expect (plist-get issue :severity) :to-equal 'warning)
+        (expect (plist-get issue :message) :to-match "group 'Team Z' is not in groups.org")
+        (expect (plist-get issue :push-only) :to-be t))))
+
+  (it "names the students people.org does not hold and passes the rest"
+    (test-validate-override-target-with-files
+      (expect (org-canvas--validate-override-target "Students: Adams, Alice; #4" loc) :to-be nil)
+      (let ((issue (org-canvas--validate-override-target
+                    "Students: Adams, Alice; Nobody, Nell; Other, Otto" loc)))
+        (expect (plist-get issue :message) :to-match "'Nobody, Nell', 'Other, Otto' not in people.org")
+        (expect (plist-get issue :message) :not :to-match "Alice")
+        (expect (plist-get issue :push-only) :to-be t))))
+
+  (it "warns when the lookup file is missing, unless the row carries an id"
+    (let ((org-canvas-groups-file "/tmp/nonexistent-groups-xyzzy.org")
+          (org-canvas-people-file "/tmp/nonexistent-people-xyzzy.org")
+          (loc (list :file "assignments.org" :line 3 :heading "HW")))
+      (expect (org-canvas--validate-override-target "Group: Team A" loc) :not :to-be nil)
+      (expect (org-canvas--validate-override-target "Students: #1; #2" loc) :to-be nil)))
+
+  (it "reports the three kinds through the assignment structure check"
+    (test-validate-override-target-with-files
+      (with-temp-org-buffer
+          "* HW
+:PROPERTIES:
+:POINTS: 10
+:END:
+
+#+NAME: overrides
+| Section                  | Due At           |
+|--------------------------+------------------|
+| Group: Team A            | <2027-02-15 Mon> |
+| Students: Adams, Alice   | <2027-02-16 Tue> |
+| Group: Team Z            | <2027-02-17 Wed> |
+| Plain                    | <2027-02-18 Thu> |
+"
+        (org-back-to-heading t)
+        (let ((messages (mapcar (lambda (i) (plist-get i :message))
+                                (org-canvas--validate-assignment-structure
+                                 (list :file (buffer-file-name) :line 1 :heading "HW")))))
+          (expect (length messages) :to-equal 2)
+          (expect (car messages) :to-match "Team Z")
+          (expect (cadr messages) :to-match "'Plain' is not a section link"))))))
 
 (provide 'org-canvas-validate-test)
 (describe "org-canvas--validate-module-item-ids (issue #105)"
