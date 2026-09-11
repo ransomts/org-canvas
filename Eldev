@@ -42,14 +42,17 @@
                                   "lisp/org-canvas-rubrics.el"
                                   "lisp/org-canvas-sections.el"
                                   "lisp/org-canvas-grading-periods.el"
+                                  "lisp/org-canvas-grading-schemes.el"
                                   "lisp/org-canvas-settings.el"
                                   "lisp/org-canvas-group-categories.el"
                                   "lisp/org-canvas-groups.el"
                                   "lisp/org-canvas-people.el"
                                   "lisp/org-canvas-gradebook.el"
+                                  "lisp/org-canvas-rubric-results.el"
                                   "lisp/org-canvas-calendar.el"
                                   "lisp/org-canvas-validate.el"
                                   "lisp/org-canvas-submissions.el"
+                                  "lisp/org-canvas-quiz-submissions.el"
                                   "lisp/org-canvas-setup.el"
                                   "lisp/org-canvas-transient.el"))
 ;; Use codecov format with local report file (don't auto-send)

@@ -33,7 +33,8 @@ writing commands greyed rather than only erroring when one is chosen
    ("c" "Calendar Event" org-canvas-sync-calendar-event-at-point)
    ("q" "Quiz" org-canvas-sync-quiz-at-point)
    ("Q" "New Quiz" org-canvas-sync-new-quiz-at-point)
-   ("G" "Group Category" org-canvas-sync-group-category-at-point)])
+   ("G" "Group Category" org-canvas-sync-group-category-at-point)
+   ("k" "Grading scheme" org-canvas-sync-grading-scheme-at-point)])
 
 ;;;###autoload
 (transient-define-prefix org-canvas-dispatch-pull-single ()
@@ -55,9 +56,12 @@ writing commands greyed rather than only erroring when one is chosen
    ("e" "Sections" org-canvas-pull-sections)
    ("u" "People (roster)" org-canvas-pull-people)
    ("b" "Gradebook (overview)" org-canvas-pull-gradebook)
+   ("R" "Rubric results" org-canvas-pull-rubric-results)
    ("y" "Grading periods" org-canvas-pull-grading-periods)
+   ("k" "Grading schemes" org-canvas-pull-grading-schemes)
    ("s" "Settings" org-canvas-pull-settings)
-   ("S" "Submissions" org-canvas-pull-submissions)])
+   ("S" "Submissions" org-canvas-pull-submissions)
+   ("z" "Quiz submissions" org-canvas-pull-quiz-submissions)])
 
 ;;;###autoload
 (transient-define-prefix org-canvas-dispatch-delete-at-point ()
@@ -73,6 +77,7 @@ writing commands greyed rather than only erroring when one is chosen
    ("g" "Assignment Group" org-canvas-delete-assignment-group-at-point)
    ("c" "Calendar Event" org-canvas-delete-calendar-event-at-point)
    ("f" "File" org-canvas-delete-file-at-point)
+   ("k" "Grading scheme" org-canvas-delete-grading-scheme-at-point)
    ("G" "Group Category" org-canvas-delete-group-category-at-point)])
 
 ;;;###autoload
@@ -106,6 +111,7 @@ writing commands greyed rather than only erroring when one is chosen
   ["Submissions"
    ("g" "Pull submissions (grading file)" org-canvas-pull-submissions)
    ("o" "Open a saved grading file" org-canvas-open-submissions)
+   ("z" "Pull a quiz's attempts (read-only table)" org-canvas-pull-quiz-submissions)
    ("a" "Apply the completion rule to this file" org-canvas-submissions-apply-completion-rule)
    ("G" "Push grades" org-canvas-submissions-push-grades
     :inapt-if-not org-canvas--transient-writable-p)

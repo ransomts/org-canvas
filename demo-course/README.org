@@ -26,6 +26,7 @@ This directory contains a complete, self-contained demo course that showcases ev
 | =modules.org=           | Modules           | Cross-file links, completion requirements,    |
 |                       |                   | external URLs, prerequisites, SubHeaders      |
 | =sections.org=          | Sections          | Pull-only, date restrictions                  |
+| =grading-schemes.org=   | Grading schemes   | Letter-grade cutoffs; created, never edited in place |
 
 ** Quiz Question Types (all 11)
 

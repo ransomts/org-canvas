@@ -77,15 +77,18 @@
 (require 'org-canvas-rubrics)
 (require 'org-canvas-sections)
 (require 'org-canvas-grading-periods)
+(require 'org-canvas-grading-schemes)
 (require 'org-canvas-settings)
 (require 'org-canvas-group-categories)
 (require 'org-canvas-groups)
 (require 'org-canvas-people)
 (require 'org-canvas-gradebook)
+(require 'org-canvas-rubric-results)
 (require 'org-canvas-calendar)
 (require 'org-canvas-diff)
 (require 'org-canvas-validate)
 (require 'org-canvas-submissions)
+(require 'org-canvas-quiz-submissions)
 (require 'org-canvas-setup)
 
 ;; Import command files: built on core and the feature modules, never
@@ -218,14 +221,15 @@ of through a global (issue #141)."
           tier))
 
 ;; Sync in dependency order (see documentation/manual.org for details):
-;;   Tier -1: Course settings (before any content)
+;;   Tier -1: Grading schemes, then course settings (which name one), before any content
 ;;   Tier 0:  No dependencies — synced in any order
 ;;   Tier 1:  Depends on Tier 0 (quizzes, assignments link to Tier 0 items)
 ;;   Tier 1.5: Re-sync assignment groups to apply drop rules
 ;;   Tier 1.75: Overrides need sections + assignments
 ;;   Tier 2:  Modules reference all content types
 (defconst org-canvas--sync-tiers
-  '(((org-canvas-sync-settings "Settings"))
+  '(((org-canvas-sync-grading-schemes "Grading Schemes")
+     (org-canvas-sync-settings "Settings"))
     ((org-canvas-sync-outcomes "Outcomes")
      (org-canvas-sync-rubrics "Rubrics")
      (org-canvas-sync-assignment-groups "Assignment Groups")
@@ -271,8 +275,9 @@ of through a global (issue #141)."
     (unless org-canvas--dry-run
       (org-canvas-apply-scheduled-releases))
     ;; Tiers -1 and 0
-    (org-canvas--log-info org-canvas--logger "--- Tier -1: Settings ---")
-    (message "Syncing: Settings...")
+    (org-canvas--log-info org-canvas--logger "--- Tier -1: %s ---"
+      (org-canvas--tier-description (nth 0 org-canvas--sync-tiers)))
+    (message "Syncing: %s..." (org-canvas--tier-description (nth 0 org-canvas--sync-tiers)))
     (setq results (org-canvas--run-tier (nth 0 org-canvas--sync-tiers) #'org-canvas--safe-sync))
     (org-canvas--log-info org-canvas--logger "--- Tier 0: %s ---"
       (org-canvas--tier-description (nth 1 org-canvas--sync-tiers)))
@@ -520,7 +525,9 @@ count for the operator to chase through the log (issue #155)."
     ((org-canvas-pull-sections "Sections")
      (org-canvas-pull-people "People")
      (org-canvas-pull-gradebook "Gradebook")
+     (org-canvas-pull-rubric-results "Rubric Results")
      (org-canvas-pull-grading-periods "Grading Periods")
+     (org-canvas-pull-grading-schemes "Grading Schemes")
      (org-canvas-pull-files "Files")
      (org-canvas-pull-assignment-groups "Assignment Groups")
      (org-canvas-pull-group-categories "Group Categories")

@@ -247,13 +247,15 @@ These files have no outgoing links to other course files:
 | =group-categories.org=  | Group Categories   | Group sets for group work     |
 | =groups.org=            | Groups             | Pull-only: groups and members per category (student names) |
 | =people.org=            | People             | Pull-only: the roster by role, with sections and state (names) |
-| =gradebook.org=         | Gradebook          | Pull-only: every student's scores and missing work, by student and by section |
+| =gradebook.org=         | Gradebook          | Pull-only: every student's scores, missing work and custom columns, by student and by section |
+| =rubric-results.org=    | Rubric Results     | Pull-only: how the class scored on each rubric criterion, per assignment |
 | =pages.org=             | Wiki Pages         | Course content pages          |
 | =files.org=             | Files              | Binary file uploads           |
 | =discussions.org=       | Discussions        | Discussion topics             |
 | =announcements.org=     | Announcements      | Course announcements          |
 | =calendar.org=          | Calendar Events    | Office hours, holidays, etc.  |
 | =sections.org=          | Sections           | Course sections               |
+| =grading-schemes.org=   | Grading Schemes    | Letter-grade cutoffs; settings and assignments name one by id |
 
 *** Tier 1: Depends on Tier 0
 
@@ -1722,10 +1724,13 @@ headings is gone at the next pull.
 *** Structure
 
 - =* Students=: one table, sorted by name, with the columns Student,
-  Sections, Current, Final, Missing, Late and Last activity.  A
-  student is one row however many sections they sit in.  The Student
-  cell links to the person's heading in =people.org= when that file
-  holds their user id (pull the roster first)
+  Sections, Current, Final, Missing, Late and Last activity, then one
+  column per custom gradebook column the course has (the Notes column,
+  anything added in the gradebook), titled as in Canvas and in
+  Canvas's order.  A student is one row however many sections they
+  sit in.  The Student cell links to the person's heading in
+  =people.org= when that file holds their user id (pull the roster
+  first)
 - =* Sections=: one table with Section, Students, Mean current, Mean
   final and Missing (the section's missing submissions added up)
 
@@ -1737,15 +1742,138 @@ instructor's unposted scores, hidden grades included; set it to nil
 for the scores students see.  Missing and Late come from Canvas's
 course analytics, which some tokens may not read: then the two
 columns are blank and a line under the table says so, and the rest of
-the pull goes on.  There are no per-assignment columns; that is what
+the pull goes on.  Custom gradebook columns hidden in the gradebook
+stay out unless =org-canvas-gradebook-include-hidden-columns= is set;
+a course without any gets the seven columns and nothing more, and a
+token that cannot read them gets a warning in the log and the same
+seven.  A cell's text is written on one line, pipes and line breaks
+collapsed.  There are no per-assignment columns; that is what
 grading files are for (see [[*Grading Submissions][Grading Submissions]]).
 
 *** Personal Data
 
-Scores are more sensitive than names.  Only the name and the numbers
-are written, never an identifier, but treat =gradebook.org= as you
-treat the submissions directory: keep it out of a course repository
-(add it to =.gitignore=) and out of anything you share.
+Scores are more sensitive than names.  Only the name, the numbers and
+the custom column text are written, never an identifier, but a Notes
+column is free text about a student, the most sensitive cell in the
+file.  Treat =gradebook.org= as you treat the submissions directory:
+keep it out of a course repository (add it to =.gitignore=) and out
+of anything you share.
+
+** grading-schemes.org
+
+Grading schemes (Canvas calls them grading standards): the cutoffs
+that turn a percentage into a letter grade.  A course names one by
+=GRADING_STANDARD_ID= in =settings.org=, and an assignment may name its
+own in =assignments.org=.  With the scheme in Org, a course copied to a
+new term gets its letter grades back with one sync instead of a
+rebuild in the web UI.
+
+*** Structure
+
+- Level 1 headings = Grading Schemes, titled as on Canvas
+- Body = one =#+NAME: scheme= table with a Grade and a Cutoff column
+
+#+begin_example
+,* Letter Grades
+:PROPERTIES:
+:CANVAS_ID: 4321
+:END:
+
+#+NAME: scheme
+| Grade | Cutoff |
+|-------+--------|
+| A     |     93 |
+| B     |     83 |
+| C     |     73 |
+| D     |     60 |
+| F     |      0 |
+#+end_example
+
+The cutoff is a percent (93, not 0.93) and is the minimum for that
+grade; rows descend, and the last row is 0 so every score has a grade.
+A percent sign after the number is allowed.
+
+*** Properties
+
+| Property         | Type    | Description                                                        |
+|------------------+---------+--------------------------------------------------------------------|
+| =CONTEXT=          | enum    | =course= or =account=; set by pull.  An account scheme is listed for reference and never pushed |
+| =POINTS_BASED=     | boolean | A points-based scheme, out of =SCALING_FACTOR= (default: percentage-based) |
+| =SCALING_FACTOR=   | number  | What a points-based scheme is out of, 4.0 say; the cutoffs stay percents of it |
+
+*** Syncing
+
+=org-canvas-sync-grading-schemes= runs before settings in the master
+sync, since settings name a scheme by id.  A heading without a
+=CANVAS_ID= is created on Canvas and stamped; the id is then what to
+write into =GRADING_STANDARD_ID=.  If Canvas already holds a scheme of
+the same title and the same cutoffs, that one is adopted instead of a
+second being created; a same-titled scheme with other cutoffs is
+skipped as a duplicate until you rename the heading or adopt it with
+=org-canvas-adopt-at-point=.
+
+*Canvas has no update for a grading scheme.*  A heading with a
+=CANVAS_ID= is compared with Canvas's copy: the same scheme is
+skipped, and a scheme you have edited is skipped with a warning.  To
+change a scheme: delete it on Canvas (=org-canvas-delete-grading-scheme-at-point=
+on the heading, or the web UI), remove =CANVAS_ID=, sync again to
+create it afresh, then point =GRADING_STANDARD_ID= in =settings.org= or
+=assignments.org= at the new id.  A scheme that Canvas no longer has
+under its stamped id is created afresh without asking.
+
+=org-canvas-pull-grading-schemes= writes every scheme available to
+the course, account-level ones included, and rewrites the table
+under each heading.
+
+*** Validation
+
+=org-canvas-validate= checks that every scheme heading carries a
+table, that every cutoff is a number no higher than 100, that the
+rows descend, and that the last row is 0.  When =grading-schemes.org=
+exists, it also warns where =settings.org= or =assignments.org= carry a
+=GRADING_STANDARD_ID= that matches no =CANVAS_ID= in it: the id is
+stale, or the schemes were never pulled.
+
+** rubric-results.org
+
+Pull-only.  =org-canvas-pull-rubric-results= writes, for every
+assignment graded with a rubric, how many submissions were assessed
+and how the class scored on each criterion: the mean, the points
+possible and how the ratings were distributed.  It answers "which
+criterion is the class missing?" without opening SpeedGrader or a
+grading file per student.  Nothing in this file is pushed, and the
+file is derived: every pull rewrites it whole, so anything you write
+in it is gone at the next pull.
+
+*** Structure
+
+- Level 1 headings = Assignments carrying a rubric, in Canvas's
+  assignment order, titled by the assignment name and linked to the
+  assignment's heading in =assignments.org= when that file holds its
+  =CANVAS_ID=
+- Under each: one table with the columns Criterion, Assessed, Mean,
+  Out of and Ratings.  Ratings is the distribution by rating
+  description in the rubric's order (=Excellent 12, Good 5, Poor 1=);
+  a score that matches no rating counts under =other=.  An assignment
+  nobody has been assessed on gets a =No assessments yet= line instead
+
+*** Properties (set by pull)
+
+| Property         | Type   | Description                                              |
+|------------------+--------+----------------------------------------------------------|
+| =ASSIGNMENT_ID=  | number | Canvas id of the assignment                              |
+| =RUBRIC_ID=      | number | Canvas id of the rubric attached to it                   |
+| =SUBMISSIONS=    | number | Submission rows Canvas returned, one per student         |
+| =ASSESSED=       | number | Submissions carrying a rubric assessment                 |
+
+*** Personal Data
+
+Only aggregates are written: no name, no user id, no per-student
+score.  With a small class a row can still identify someone, so treat
+=rubric-results.org= as you treat =gradebook.org=: keep it out of a
+course repository (add it to =.gitignore=) and out of anything you
+share.  Per-student rubric scores are read and pushed in the grading
+file (see [[*Grading Submissions][Grading Submissions]]).
 
 ** calendar.org
 
@@ -2329,6 +2457,22 @@ Before pushing from a saved file, org-canvas re-reads the assignment once and co
 
 Scores compare as entered values: with a late policy of 20% per day, a student graded 5 who was a day late shows =SCORE: 5=, =CANVAS_SCORE: 5=, =FINAL_SCORE: 4=.
 
+** Quiz Attempts
+
+A classic quiz has a grading file too, through its shadow assignment,
+and that is where a quiz score is changed and pushed. What the grading
+file cannot show is the attempt itself: how many a student took, which
+score Canvas kept against the latest one, how long they spent, whether
+an attempt is still open. =M-x org-canvas-pull-quiz-submissions=
+(transient: Submissions, =z=) picks a classic quiz and writes that as
+one read-only table under the submissions directory, as
+=<quiz> (quiz).org=: one row per student, sorted by name, with
+Attempts, Kept, Latest, Out of, Time (=h:mm=), Finished and State, and
+a summary line above (submissions, in progress, more than one attempt,
+mean kept score). Every pull rewrites the file; nothing is pushed from
+it. New Quizzes have no such endpoint, so the prompt lists classic
+quizzes only.
+
 ** Privacy
 
 Grading files are student work. The submissions directory receives a =.gitignore= excluding everything in it when it is first created (=org-canvas-submissions-write-gitignore=), so the files never travel with a course repository. Keep the directory out of any other sharing you would not extend to a gradebook export.
@@ -2381,11 +2525,13 @@ Each content type can be pulled individually:
 | =org-canvas-pull-settings=             | Pull course settings and tabs         |
 | =org-canvas-pull-sections=             | Pull course sections                  |
 | =org-canvas-pull-grading-periods=      | Pull grading periods (read-only)      |
+| =org-canvas-pull-grading-schemes=      | Pull grading schemes                  |
 | =org-canvas-pull-assignment-groups=    | Pull assignment groups                |
 | =org-canvas-pull-group-categories=     | Pull group categories                 |
 | =org-canvas-pull-groups=               | Pull groups and their members         |
 | =org-canvas-pull-people=               | Pull the course roster                |
 | =org-canvas-pull-gradebook=            | Pull the grade overview (read-only)   |
+| =org-canvas-pull-rubric-results=       | Pull rubric results per criterion (read-only) |
 | =org-canvas-pull-assignments=          | Pull assignments with descriptions    |
 | =org-canvas-pull-quizzes=              | Pull quizzes with questions           |
 | =org-canvas-pull-pages=               | Pull wiki pages with body content     |
@@ -2612,6 +2758,7 @@ pulled front page carries =:FRONT_PAGE: true=, so it round-trips.
 | =org-canvas-sync=                      | Sync all course content (with conflict detection) |
 | =org-canvas-force-push=                | Sync all, bypassing conflict detection       |
 | =org-canvas-sync-settings=             | Sync course settings and navigation tabs     |
+| =org-canvas-sync-grading-schemes=      | Create grading schemes (never edited in place) |
 | =org-canvas-sync-assignments=          | Sync assignments only                        |
 | =org-canvas-sync-assignment-groups=    | Sync assignment groups                       |
 | =org-canvas-sync-group-categories=     | Sync group categories                        |
@@ -2636,11 +2783,13 @@ pulled front page carries =:FRONT_PAGE: true=, so it round-trips.
 | =org-canvas-pull-settings=             | Pull course settings and tabs         |
 | =org-canvas-pull-sections=             | Pull course sections                  |
 | =org-canvas-pull-grading-periods=      | Pull grading periods (read-only)      |
+| =org-canvas-pull-grading-schemes=      | Pull grading schemes                  |
 | =org-canvas-pull-assignment-groups=    | Pull assignment groups                |
 | =org-canvas-pull-group-categories=     | Pull group categories                 |
 | =org-canvas-pull-groups=               | Pull groups and their members         |
 | =org-canvas-pull-people=               | Pull the course roster                |
 | =org-canvas-pull-gradebook=            | Pull the grade overview (read-only)   |
+| =org-canvas-pull-rubric-results=       | Pull rubric results per criterion (read-only) |
 | =org-canvas-pull-assignments=          | Pull assignments with descriptions    |
 | =org-canvas-pull-quizzes=              | Pull classic quizzes with questions   |
 | =org-canvas-pull-new-quizzes=          | Pull New Quizzes with items           |
@@ -2716,6 +2865,7 @@ These commands sync just the item at the current cursor position:
 | =org-canvas-sync-assignment-group-at-point= | Sync assignment group at point   |
 | =org-canvas-sync-group-category-at-point=   | Sync group category at point     |
 | =org-canvas-sync-calendar-event-at-point=   | Sync calendar event at point     |
+| =org-canvas-sync-grading-scheme-at-point=   | Create the grading scheme at point |
 
 ** Delete at Point Commands
 
@@ -2733,12 +2883,14 @@ These commands delete the item at the current cursor position:
 | =org-canvas-delete-assignment-group-at-point= | Delete assignment group at point |
 | =org-canvas-delete-group-category-at-point=  | Delete group category at point   |
 | =org-canvas-delete-calendar-event-at-point=  | Delete calendar event at point   |
+| =org-canvas-delete-grading-scheme-at-point=  | Delete grading scheme at point   |
 
 ** Submission Commands
 
 | Command | Description |
 |---|---|
 | =org-canvas-pull-submissions= | Pull an assignment into a grading file (or the summary table) |
+| =org-canvas-pull-quiz-submissions= | Pull a classic quiz's attempts into a read-only table (=z=) |
 | =org-canvas-open-submissions= | Reopen a saved grading file |
 | =org-canvas-submissions-push-grades= | Push changed scores and drafted comments (=S= in the file) |
 | =org-canvas-submissions-post-grades= | Post the assignment's grades to students, under a manual post policy (=P=) |
@@ -3294,6 +3446,14 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =WEIGHT= | number |  |  | Weight of the period when the term weights its periods (pull-only) |
 | =IS_CLOSED= | boolean | true, false |  | Whether the period is closed (pull-only; absent while open) |
 
+** Grading Schemes
+
+| Property | Type | Allowed values | Default | Description |
+|----------+------+----------------+---------+-------------|
+| =CONTEXT= | enum | set by Canvas (read-only) |  | Where the scheme lives: course, or account (never pushed) |
+| =POINTS_BASED= | boolean | true, false |  | Points-based scheme, out of SCALING_FACTOR (default: percentage-based) |
+| =SCALING_FACTOR= | number |  |  | What a points-based scheme is out of, e.g. 4.0; only with POINTS_BASED |
+
 ** Group Categories
 
 | Property | Type | Allowed values | Default | Description |
@@ -3417,6 +3577,15 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =ONE_TIME_RESULTS= | boolean | true, false |  | Students can only view results once |
 | =ONLY_VISIBLE_TO_OVERRIDES= | boolean | true, false |  | Only visible to students with overrides |
 | =GROUP= | link | org link |  | Link to assignment-groups.org heading |
+
+** Rubric Results
+
+| Property | Type | Allowed values | Default | Description |
+|----------+------+----------------+---------+-------------|
+| =ASSIGNMENT_ID= | number | set by Canvas (read-only) |  | Canvas id of the assignment the rubric grades |
+| =RUBRIC_ID= | number | set by Canvas (read-only) |  | Canvas id of the rubric attached to the assignment |
+| =SUBMISSIONS= | number | set by Canvas (read-only) |  | Submission rows Canvas returned for the assignment, one per student |
+| =ASSESSED= | number | set by Canvas (read-only) |  | Submissions carrying a rubric assessment |
 
 ** Rubrics
 
