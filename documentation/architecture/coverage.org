@@ -72,8 +72,7 @@ settings file.
 | Feature                        | What org-canvas does                                   | What it does not do                          |
 |--------------------------------+--------------------------------------------------------+----------------------------------------------|
 | Groups                         | a category can ask Canvas to create N groups; groups and their members are pulled; an assignment override can name a group | name groups or manage members from Org |
-| Quiz question banks            | a classic quiz may name a bank on create                | create banks or move questions between them  |
-| New Quiz item banks            | nothing                                                | anything; items live inline under the quiz   |
+| Quiz question banks            | a classic quiz group may name a bank on create (PUT ignores it) | create, list or edit a bank: there is no API, see "No API" below |
 | Rubric assessments             | read and push for one student in the grading file; the class's per-criterion results are pulled (see the covered table) | assess from Org outside the grading file    |
 | External tools (LTI)           | list installed tools so an assignment can name one     | install or configure a tool                  |
 | Turnitin document processor    | pull and diff the attachment as a Canvas-owned property | set it; deliberately, see decisions.org      |
@@ -104,6 +103,24 @@ disturbs them.
 - *Media* (Canvas Studio, media objects); a file is a file.
 - *Account-level* objects of every kind: terms, sub-accounts,
   developer keys, SIS.
+
+* No API
+
+Probed read-only on 2026-09-11 against clemson.instructure.com, so
+nobody has to probe again:
+
+- *Classic question banks.*  =GET /api/v1/courses/:id/question_banks=
+  is a 404.  The web UI's =/courses/:id/question_banks= answers a token
+  with the HTML page, and its =.json= form with a 401: it wants a
+  browser session, not an API token.  A bank is created in the web UI
+  or by a QTI import, and a classic quiz group names it by the id in
+  the UI's URL, on create only (Canvas ignores
+  =assessment_question_bank_id= on update).
+- *New Quiz item banks.*  The New Quizzes API (=/api/quiz/v1/=, which
+  answers the course's quiz list) has no bank route:
+  =courses/:id/item_banks=, =courses/:id/banks= and =/banks= are all
+  404.  Items live inline under the quiz in new-quizzes.org, which is
+  the whole of what the API offers.
 
 * Deliberately Excluded
 
@@ -144,7 +161,8 @@ The map came from one loop over API surface names against =lisp/=:
 #+begin_src sh
 for pat in grading_period "post_polic|post_manually" enrollments \
            "api/v1/groups" discussion_entries setCheckpoints mastery_path blueprint \
-           collaboration conference appointment_group feature_flag; do
+           collaboration conference appointment_group feature_flag \
+           question_bank item_bank; do
   printf "%-28s %s\n" "$pat" "$(grep -rlE "$pat" lisp/*.el | tr '\n' ' ')"
 done
 #+end_src
