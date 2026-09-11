@@ -49,8 +49,8 @@ pull-at-point and prune.
 
 Submission grading (=org-canvas-submissions.el=) is a workflow, not a
 content type: it pulls a grading file per assignment, pushes scores
-and comments, downloads attachments, and can read and push rubric
-assessments for a student.
+and comments, posts grades held by a manual policy, downloads
+attachments, and can read and push rubric assessments for a student.
 
 *Course settings synced* (the registry in =org-canvas-settings.el= is
 the authority): the syllabus body, whether it is public, the home page
@@ -74,7 +74,7 @@ settings file.
 | External tools (LTI)           | list installed tools so an assignment can name one     | install or configure a tool                  |
 | Turnitin document processor    | pull and diff the attachment as a Canvas-owned property | set it; deliberately, see decisions.org      |
 | Planner                        | a page's student to-do date                            | planner notes or the to-do list              |
-| Submissions                    | grades, comments, attachments per assignment           | quiz submissions, peer reviews, moderation   |
+| Submissions                    | grades, comments, attachments, posting grades and each student's posted-at, per assignment | quiz submissions, peer reviews, moderation   |
 
 * Never Touched
 
@@ -145,6 +145,8 @@ done
 #+end_src
 
 An empty right-hand column is a "never touched"; a hit is a claim to
-read before moving the line.  When a module lands, move its type into
+read before moving the line.  The names in the loop are the ones this
+map was first drawn against; several now hit, which is the point of
+rerunning it, and a surface that stops hitting has been removed.  When a module lands, move its type into
 the covered table and drop it from wherever it sat.  Counts stay out of
 this file (Hard Rule 21); it names things, it does not tally them.
