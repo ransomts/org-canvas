@@ -466,6 +466,22 @@ ELDEV_JUNIT=1 JUNIT_REPORT_FILE=test-results.xml eldev test
 - =buttercup-junit-inner-reporter= - Secondary reporter for console output (default: =buttercup-reporter-adaptive=)
 - =buttercup-junit--to-stdout= - Whether to also print XML to stdout
 
+** What Gates a Merge, and Two Things GitHub Does Not Say
+
+- A =pull_request= run fires only while the PR merges cleanly with
+  =main=: GitHub builds the merge commit and cannot when the branch
+  conflicts, so a conflicting PR shows no checks at all.  Merge =main=
+  into the branch and push; a =workflow_dispatch= by hand also runs the
+  weekly mutation job, ninety minutes that gate nothing.
+- The =codecov/patch= check judges only the lines the PR changes, so a
+  PR can be green on every job and red there.  Read =gh pr checks N=
+  (every row), not just the run's conclusion, before merging.
+- The pre-push hook runs lint, then complexity, then the Emacs 29 and
+  30 test runs; it used to run the first two in parallel on the shared
+  =.eldev= cache and block pushes on the cache lock with no real warning
+  (issue #244).  A BLOCKED line now says whether the linter found
+  something or did not run.
+
 ** Codecov Integration
 
 Codecov provides two types of reports: *coverage* (line coverage) and *test analytics* (test results, timing, flaky test detection).
