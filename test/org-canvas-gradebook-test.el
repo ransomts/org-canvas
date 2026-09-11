@@ -368,7 +368,7 @@ The gradebook and roster files live in a temp directory."
         (expect (length warned) :to-equal 1)
         (expect (car warned) :to-match "Could not read the assignment analytics"))
       (let ((text (test-gradebook--file)))
-        (expect text :to-match "^\\* Assignments\nCanvas refused the assignment analytics")
+        (expect text :to-match "^\\* Assignments\n+Canvas refused the assignment analytics")
         (expect text :not :to-match "^| Assignment ")
         (expect (test-gradebook--row "Adams, Alice") :to-equal '("Lecture" "91.5" "88.0" "-" "-" "-"))
         (expect text :to-match "^#\\+LAST_SYNCED:"))))
@@ -379,7 +379,7 @@ The gradebook and roster files live in a temp directory."
         '(((id . 10) (name . "Lecture")))
         nil
       (org-canvas-pull-gradebook)
-      (expect (test-gradebook--file) :to-match "^\\* Assignments\nNo assignments\n")))
+      (expect (test-gradebook--file) :to-match "^\\* Assignments\n+No assignments\n")))
 
   (it "writes the empty-file note for a course with no students"
     (test-gradebook--with-course nil nil nil
