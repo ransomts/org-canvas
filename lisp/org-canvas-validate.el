@@ -108,11 +108,56 @@ such heading was an error until the value was let through (issue
                    property (string-join bad ", ")
                    (string-join valid-values ", "))))))))
 
+(defcustom org-canvas-validate-past-timestamps 'unsynced-only
+  "When `org-canvas-validate' warns that a timestamp is in the past.
+`unsynced-only' warns on a heading no push has created yet, where a
+past date is most likely a typo about to be sent; on a heading that
+is on Canvas a past date is the record of something that happened,
+and four weeks into a term every assignment that has run would warn
+\(issue #208).  `always' warns on every heading, as it did before;
+`never' drops the warning.  The course itself, in settings.org, is
+always on Canvas: its start date is past for the whole term."
+  :type '(choice (const :tag "Headings not yet on Canvas" unsynced-only)
+                 (const :tag "Every heading" always)
+                 (const :tag "Never" never))
+  :group 'org-canvas)
+
+(defvar org-canvas--validate-always-on-canvas nil
+  "Non-nil while validating a spec whose headings always exist on Canvas.
+Bound by `org-canvas--validate-spec' from the registration's
+`:always-on-canvas' (settings.org: the course is never created by a
+push), so the past-timestamp rule treats every heading as synced.")
+
+(defun org-canvas--validate-entry-on-canvas-p ()
+  "Return non-nil when the entry at point already exists on Canvas.
+True for a heading stamped with CANVAS_ID or CANVAS_URL, and for every
+heading of a spec registered `:always-on-canvas'.  Nil outside an Org
+entry, so a check run on a bare value behaves as it would for a
+heading no push has created."
+  (or org-canvas--validate-always-on-canvas
+      (and (derived-mode-p 'org-mode)
+           (not (org-before-first-heading-p))
+           (or (org-entry-get (point) "CANVAS_ID")
+               (org-entry-get (point) "CANVAS_URL"))
+           t)))
+
+(defun org-canvas--validate-past-timestamp-matters-p (pull-only)
+  "Return non-nil when a past timestamp on the entry at point deserves a warning.
+Never for a PULL-ONLY property, which is in the past by nature; then
+by `org-canvas-validate-past-timestamps', which under `unsynced-only'
+asks `org-canvas--validate-entry-on-canvas-p'."
+  (and (not pull-only)
+       (pcase org-canvas-validate-past-timestamps
+         ('never nil)
+         ('always t)
+         (_ (not (org-canvas--validate-entry-on-canvas-p))))))
+
 (defun org-canvas--validate-check-timestamp (value property loc &optional pull-only)
   "Check that VALUE is parseable as an Org timestamp.
-Warns if the timestamp is in the past, unless PULL-ONLY: a property
-only a pull writes (when a reply was posted) is in the past by nature,
-and one warning per reply told nobody anything.
+Warns if the timestamp is in the past and that matters here (see
+`org-canvas--validate-past-timestamp-matters-p'): never for a
+PULL-ONLY property, which a pull wrote and is in the past by nature,
+and by default only on a heading no push has created (issue #208).
 PROPERTY names the property.  LOC is a (:file :line :heading) plist."
   (when value
     (condition-case nil
@@ -120,7 +165,8 @@ PROPERTY names the property.  LOC is a (:file :line :heading) plist."
                (encoded (encode-time parsed))
                (iso (format-time-string "%Y-%m-%dT%H:%M:%SZ" encoded t))
                (now (format-time-string "%Y-%m-%dT%H:%M:%SZ" (current-time) t)))
-          (when (and (not pull-only) (string< iso now))
+          (when (and (string< iso now)
+                     (org-canvas--validate-past-timestamp-matters-p pull-only))
             (org-canvas--validate-push-only
              (org-canvas--validate-make-issue
               'warning loc property
@@ -1111,6 +1157,7 @@ headings the query selected (issue #164)."
          (structural-fn (plist-get spec :structural-fn))
          (file-fn (plist-get spec :file-fn))
          (duplicate-titles (plist-get spec :duplicate-titles))
+         (org-canvas--validate-always-on-canvas (plist-get spec :always-on-canvas))
          (file (and (boundp file-var)
                     (expand-file-name (symbol-value file-var))))
          (issues nil))

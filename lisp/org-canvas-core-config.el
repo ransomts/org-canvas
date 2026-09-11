@@ -437,7 +437,10 @@ PLIST has keys :file-var, :query, :properties, and optionally
 :date-order, :structural-fn (run per matched heading), :file-fn
 \(run once per file, for rules about the file as a whole), and
 :duplicate-titles (non-nil to check the file for entries whose titles
-collide once course-copy debris is stripped, issue #164).
+collide once course-copy debris is stripped, issue #164), and
+:always-on-canvas (non-nil when no push creates the file's headings —
+the course itself in settings.org — so a past timestamp on them is
+history, not a typo, issue #208).
 
 An enum or csv-enum property whose Canvas field can come back holding
 a value only Canvas may set declares those separately as
@@ -509,8 +512,8 @@ keys: :name :type :values :read-only-values :canvas-owned :pull-only
 (defun org-canvas--get-validate-specs-from-registry ()
   "Build a list of validation specs from the property registry.
 Each spec has :label, :file, :query, :properties, :date-order,
-:structural-fn, :file-fn and :duplicate-titles, matching the format of
-`org-canvas--validate-specs'."
+:structural-fn, :file-fn, :duplicate-titles and :always-on-canvas,
+matching the format of `org-canvas--validate-specs'."
   (let (specs)
     (maphash
      (lambda (feature-name plist)
@@ -522,7 +525,8 @@ Each spec has :label, :file, :query, :properties, :date-order,
                    :date-order (plist-get plist :date-order)
                    :structural-fn (plist-get plist :structural-fn)
                    :file-fn (plist-get plist :file-fn)
-                   :duplicate-titles (plist-get plist :duplicate-titles))
+                   :duplicate-titles (plist-get plist :duplicate-titles)
+                   :always-on-canvas (plist-get plist :always-on-canvas))
              specs))
      org-canvas--property-registry)
     (nreverse specs)))

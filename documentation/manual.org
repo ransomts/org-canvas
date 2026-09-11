@@ -2621,10 +2621,10 @@ to protect a *push* — and a course marked read-only will never make one:
 With that set, validation reports only what describes the course — title
 collisions and superseded twins, broken cross-file links, malformed
 properties, structural problems — and holds back the advice that only
-matters before a write: timestamps in the past (on a mirror of somebody's
-Fall section, every historical date is *supposed* to be in the past) and
-links whose target has no =CANVAS_ID= yet.  What was held back is named in a
-line of its own rather than dropped silently:
+matters before a write: links whose target has no =CANVAS_ID= yet, and a
+past date on a heading that has none (see [[*Dates Already Past][Dates
+Already Past]]; a pulled mirror has few of either).  What was held back is
+named in a line of its own rather than dropped silently:
 
 #+begin_example
 32 push-only finding(s) suppressed (org-canvas-read-only is set); M-x org-canvas-validate-all shows them
@@ -2658,6 +2658,21 @@ a prerequisite course is occasionally meant — and they are never held back
 on a read-only course, since a dead link is the course's state and not
 advice about a push.  The scan is pure string work over the Org files, so
 it costs no request and runs in =org-canvas-validate-batch= like the rest.
+
+*** Dates Already Past
+
+A past date on a heading that has never been pushed is most likely a typo
+(the wrong month, last year) about to be sent, and validation warns.  On a
+heading that carries a =CANVAS_ID= (or =CANVAS_URL=) the same date is the
+record of something that happened, and validation says nothing: four weeks
+into a term every assignment that has run would otherwise warn, and by
+finals so would every dated heading in the course.  The course's own
+=START_AT= and =END_AT= in =settings.org= never warn, since the course is
+always on Canvas and has usually started.
+
+=org-canvas-validate-past-timestamps= chooses: =unsynced-only= (the
+default), =always= for every heading as before, or =never=.  These warnings
+are push-only advice, so a read-only course holds them back either way.
 
 ** Forcing a Re-upload
 
