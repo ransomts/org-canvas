@@ -411,7 +411,7 @@ rubric is attached."
         (policy (org-canvas--post-manually-to-policy
                  (alist-get 'post_manually assignment)))
         (rubric (org-canvas--submissions-rubric-settings assignment))
-        (grading (alist-get 'use_for_grading (alist-get 'rubric_settings assignment))))
+        (grading (org-canvas--submissions-rubric-for-grading assignment)))
     (when (numberp points)
       (insert (format "#+PROPERTY: POINTS_POSSIBLE %s\n"
                       (org-canvas--submissions-format-number points))))
@@ -975,6 +975,19 @@ links to the local copy first, with the Canvas link beside it."
 (defun org-canvas--submissions-rubric-criteria (assignment)
   "Return ASSIGNMENT's rubric criteria as a list, or nil without a rubric."
   (append (alist-get 'rubric assignment) nil))
+
+(defun org-canvas--submissions-rubric-for-grading (assignment)
+  "Return non-nil when the grade of ASSIGNMENT comes from its rubric.
+The Assignment object carries the flag at its top level as
+`use_rubric_for_grading' — the field the drift report compares for
+RUBRIC_USE_FOR_GRADING — while its `rubric_settings' hold only the
+rubric's id, title, points and display flags; reading
+`use_for_grading' there answered false for every assignment (issue
+#253).  The settings key is still honoured for an object that carries
+it, as a rubric association does."
+  (let ((top (alist-get 'use_rubric_for_grading assignment))
+        (nested (alist-get 'use_for_grading (alist-get 'rubric_settings assignment))))
+    (or (eq top t) (and (null top) (eq nested t)))))
 
 (defun org-canvas--submissions-rubric-for-grading-p ()
   "Return non-nil when the grade of this grading file comes from its rubric.
