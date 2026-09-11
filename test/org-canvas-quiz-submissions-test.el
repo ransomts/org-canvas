@@ -248,6 +248,21 @@ The submissions directory is a temp directory."
         (expect text :to-match "^0 submissions | 0 in progress | 0 with more than one attempt$")
         (expect text :to-match "^| Student +| Attempts"))))
 
+  (it "shows the table in an interactive session and not in batch"
+    (test-quiz-subs--with-course
+        (list (test-quiz-subs--quiz 42 "Week 1 Quiz"))
+        (list (test-quiz-subs--page nil nil) (test-quiz-subs--page nil nil))
+      (let ((shown nil))
+        (cl-letf (((symbol-function 'completing-read) (lambda (&rest _) "Week 1 Quiz"))
+                  ((symbol-function 'pop-to-buffer) (lambda (buf &rest _) (push buf shown))))
+          (let ((noninteractive t))
+            (org-canvas-pull-quiz-submissions))
+          (expect shown :to-be nil)
+          (let ((noninteractive nil))
+            (org-canvas-pull-quiz-submissions))
+          (expect (length shown) :to-equal 1)
+          (expect (buffer-file-name (car shown)) :to-match "Week_1_Quiz (quiz).org\\'")))))
+
   (it "refuses a course with no classic quizzes"
     (test-quiz-subs--with-course nil nil
       (expect (org-canvas-pull-quiz-submissions) :to-throw 'user-error)))
