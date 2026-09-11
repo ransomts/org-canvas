@@ -410,6 +410,89 @@ date sits inside a period, bounds included."
              (format "DUE_AT %s falls outside every grading period in %s"
                      raw (file-name-nondirectory org-canvas-grading-periods-file)))))))
 
+;;;; 5a-2. Grading Schemes
+;;
+;; The table helpers live in the grading-schemes module, which is always
+;; loaded with org-canvas; validate names them rather than requiring a
+;; feature module (the dependency rule in CLAUDE.md).
+
+(declare-function org-canvas--grading-scheme-find-table "org-canvas-grading-schemes" (end))
+(declare-function org-canvas--grading-scheme-table-rows "org-canvas-grading-schemes" (table))
+(declare-function org-canvas--grading-scheme-cutoff-number "org-canvas-grading-schemes" (cell))
+
+(defun org-canvas--validate-grading-scheme-structure (loc)
+  "Check the scheme table under the heading at point.
+LOC is a (:file :line :heading) plist.  The table must exist, every
+cutoff must be a number no higher than 100, the rows must descend, and
+the last row must be 0, or Canvas has no grade for the lowest scores."
+  (let* ((end (save-excursion (org-end-of-subtree t) (point)))
+         (table (org-canvas--grading-scheme-find-table end))
+         (rows (and table (org-canvas--grading-scheme-table-rows table)))
+         (issue (lambda (message)
+                  (list (org-canvas--validate-make-issue 'error loc "scheme" message)))))
+    (cond
+     ((null table)
+      (funcall issue "Grading scheme has no #+NAME: scheme table (| Grade | Cutoff |)"))
+     ((null rows)
+      (funcall issue "Grading scheme table has no grade rows"))
+     (t
+      (let ((cutoffs (mapcar (lambda (row)
+                               (cons (car row)
+                                     (org-canvas--grading-scheme-cutoff-number (cdr row))))
+                             rows))
+            (issues nil))
+        (dolist (row cutoffs)
+          (cond
+           ((null (cdr row))
+            (push (format "Cutoff for '%s' is not a number" (car row)) issues))
+           ((> (cdr row) 100)
+            (push (format "Cutoff for '%s' is above 100" (car row)) issues))))
+        (unless issues
+          (cl-loop for (a b) on cutoffs
+                   while b
+                   unless (> (cdr a) (cdr b))
+                   do (push (format "Cutoffs must descend: '%s' (%s) is not above '%s' (%s)"
+                                    (car a) (cdr a) (car b) (cdr b))
+                            issues)
+                   and return nil)
+          (unless (zerop (cdr (car (last cutoffs))))
+            (push (format "The last row, '%s', should have a cutoff of 0 so every score has a grade"
+                          (car (car (last cutoffs))))
+                  issues)))
+        (mapcan (lambda (message) (funcall issue message)) (nreverse issues)))))))
+
+(defun org-canvas--validate-grading-standard-ids (schemes-file)
+  "Warn where settings.org or assignments.org name a scheme SCHEMES-FILE lacks.
+A GRADING_STANDARD_ID that matches no CANVAS_ID in SCHEMES-FILE is
+either stale or never pulled; the warning sits on the heading that
+names it.  An id of 0 names no scheme and is passed over."
+  (let ((known (with-current-buffer (org-canvas--find-file-noselect schemes-file)
+                 (save-excursion
+                   (delq nil (org-map-entries
+                              (lambda () (org-entry-get (point) "CANVAS_ID"))
+                              "LEVEL=1" 'file)))))
+        (issues nil))
+    (dolist (var '(org-canvas-settings-file org-canvas-assignments-file))
+      (let ((file (and (boundp var) (symbol-value var))))
+        (when (and file (file-exists-p file))
+          (with-current-buffer (org-canvas--find-file-noselect file)
+            (save-excursion
+              (org-map-entries
+               (lambda ()
+                 (let ((id (org-entry-get (point) "GRADING_STANDARD_ID")))
+                   (when (and id (not (member id known))
+                              (not (member id '("0" ""))))
+                     (push (org-canvas--validate-make-issue
+                            'warning
+                            (list :file file :line (line-number-at-pos)
+                                  :heading (org-get-heading t t t t))
+                            "GRADING_STANDARD_ID"
+                            (format "GRADING_STANDARD_ID %s matches no CANVAS_ID in %s; pull the schemes, or check the id"
+                                    id (file-name-nondirectory schemes-file)))
+                           issues))))
+               "LEVEL=1" 'file))))))
+    (nreverse issues)))
+
 (cl-defun org-canvas--validate-assignment-structure (loc)
   "Check the LTI tool declaration, the grading period, and the override table.
 LOC is a (:file :line :heading) plist."

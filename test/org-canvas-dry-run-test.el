@@ -51,6 +51,7 @@
     org-canvas-sync-group-categories
     org-canvas-sync-calendar-events
     org-canvas-sync-settings
+    org-canvas-sync-grading-schemes
     org-canvas-sync-files
     org-canvas-sync-overrides)
   "Every feature sync entry point, macro-generated or hand-written.")
@@ -137,7 +138,8 @@ caught by the checksum comparison instead of dirtying the repo."
                  (org-canvas-group-categories-file (expand-file-name "group-categories.org" ,dir-var))
                  (org-canvas-calendar-events-file (expand-file-name "calendar.org" ,dir-var))
                  (org-canvas-sections-file (expand-file-name "sections.org" ,dir-var))
-                 (org-canvas-settings-file (expand-file-name "settings.org" ,dir-var)))
+                 (org-canvas-settings-file (expand-file-name "settings.org" ,dir-var))
+                 (org-canvas-grading-schemes-file (expand-file-name "grading-schemes.org" ,dir-var)))
              ,@body))
        (org-canvas-dry-run--kill-buffers-under tmp-root)
        (delete-directory tmp-root t))))

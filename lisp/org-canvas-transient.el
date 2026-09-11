@@ -33,7 +33,8 @@ writing commands greyed rather than only erroring when one is chosen
    ("c" "Calendar Event" org-canvas-sync-calendar-event-at-point)
    ("q" "Quiz" org-canvas-sync-quiz-at-point)
    ("Q" "New Quiz" org-canvas-sync-new-quiz-at-point)
-   ("G" "Group Category" org-canvas-sync-group-category-at-point)])
+   ("G" "Group Category" org-canvas-sync-group-category-at-point)
+   ("k" "Grading scheme" org-canvas-sync-grading-scheme-at-point)])
 
 ;;;###autoload
 (transient-define-prefix org-canvas-dispatch-pull-single ()
@@ -57,6 +58,7 @@ writing commands greyed rather than only erroring when one is chosen
    ("b" "Gradebook (overview)" org-canvas-pull-gradebook)
    ("R" "Rubric results" org-canvas-pull-rubric-results)
    ("y" "Grading periods" org-canvas-pull-grading-periods)
+   ("k" "Grading schemes" org-canvas-pull-grading-schemes)
    ("s" "Settings" org-canvas-pull-settings)
    ("S" "Submissions" org-canvas-pull-submissions)
    ("z" "Quiz submissions" org-canvas-pull-quiz-submissions)])
@@ -75,6 +77,7 @@ writing commands greyed rather than only erroring when one is chosen
    ("g" "Assignment Group" org-canvas-delete-assignment-group-at-point)
    ("c" "Calendar Event" org-canvas-delete-calendar-event-at-point)
    ("f" "File" org-canvas-delete-file-at-point)
+   ("k" "Grading scheme" org-canvas-delete-grading-scheme-at-point)
    ("G" "Group Category" org-canvas-delete-group-category-at-point)])
 
 ;;;###autoload

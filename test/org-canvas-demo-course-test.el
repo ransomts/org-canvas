@@ -44,7 +44,8 @@
          (org-canvas-group-categories-file (expand-file-name "group-categories.org" org-canvas-demo--dir))
          (org-canvas-calendar-events-file (expand-file-name "calendar.org" org-canvas-demo--dir))
          (org-canvas-sections-file (expand-file-name "sections.org" org-canvas-demo--dir))
-         (org-canvas-settings-file (expand-file-name "settings.org" org-canvas-demo--dir)))
+         (org-canvas-settings-file (expand-file-name "settings.org" org-canvas-demo--dir))
+         (org-canvas-grading-schemes-file (expand-file-name "grading-schemes.org" org-canvas-demo--dir)))
      (unwind-protect
          (progn ,@body)
        ;; Don't leave demo files open for later tests.  Suppress kill queries

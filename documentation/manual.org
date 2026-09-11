@@ -255,6 +255,7 @@ These files have no outgoing links to other course files:
 | =announcements.org=     | Announcements      | Course announcements          |
 | =calendar.org=          | Calendar Events    | Office hours, holidays, etc.  |
 | =sections.org=          | Sections           | Course sections               |
+| =grading-schemes.org=   | Grading Schemes    | Letter-grade cutoffs; settings and assignments name one by id |
 
 *** Tier 1: Depends on Tier 0
 
@@ -1720,6 +1721,81 @@ file.  Treat =gradebook.org= as you treat the submissions directory:
 keep it out of a course repository (add it to =.gitignore=) and out
 of anything you share.
 
+** grading-schemes.org
+
+Grading schemes (Canvas calls them grading standards): the cutoffs
+that turn a percentage into a letter grade.  A course names one by
+=GRADING_STANDARD_ID= in =settings.org=, and an assignment may name its
+own in =assignments.org=.  With the scheme in Org, a course copied to a
+new term gets its letter grades back with one sync instead of a
+rebuild in the web UI.
+
+*** Structure
+
+- Level 1 headings = Grading Schemes, titled as on Canvas
+- Body = one =#+NAME: scheme= table with a Grade and a Cutoff column
+
+#+begin_example
+,* Letter Grades
+:PROPERTIES:
+:CANVAS_ID: 4321
+:END:
+
+#+NAME: scheme
+| Grade | Cutoff |
+|-------+--------|
+| A     |     93 |
+| B     |     83 |
+| C     |     73 |
+| D     |     60 |
+| F     |      0 |
+#+end_example
+
+The cutoff is a percent (93, not 0.93) and is the minimum for that
+grade; rows descend, and the last row is 0 so every score has a grade.
+A percent sign after the number is allowed.
+
+*** Properties
+
+| Property         | Type    | Description                                                        |
+|------------------+---------+--------------------------------------------------------------------|
+| =CONTEXT=          | enum    | =course= or =account=; set by pull.  An account scheme is listed for reference and never pushed |
+| =POINTS_BASED=     | boolean | A points-based scheme, out of =SCALING_FACTOR= (default: percentage-based) |
+| =SCALING_FACTOR=   | number  | What a points-based scheme is out of, 4.0 say; the cutoffs stay percents of it |
+
+*** Syncing
+
+=org-canvas-sync-grading-schemes= runs before settings in the master
+sync, since settings name a scheme by id.  A heading without a
+=CANVAS_ID= is created on Canvas and stamped; the id is then what to
+write into =GRADING_STANDARD_ID=.  If Canvas already holds a scheme of
+the same title and the same cutoffs, that one is adopted instead of a
+second being created; a same-titled scheme with other cutoffs is
+skipped as a duplicate until you rename the heading or adopt it with
+=org-canvas-adopt-at-point=.
+
+*Canvas has no update for a grading scheme.*  A heading with a
+=CANVAS_ID= is compared with Canvas's copy: the same scheme is
+skipped, and a scheme you have edited is skipped with a warning.  To
+change a scheme: delete it on Canvas (=org-canvas-delete-grading-scheme-at-point=
+on the heading, or the web UI), remove =CANVAS_ID=, sync again to
+create it afresh, then point =GRADING_STANDARD_ID= in =settings.org= or
+=assignments.org= at the new id.  A scheme that Canvas no longer has
+under its stamped id is created afresh without asking.
+
+=org-canvas-pull-grading-schemes= writes every scheme available to
+the course, account-level ones included, and rewrites the table
+under each heading.
+
+*** Validation
+
+=org-canvas-validate= checks that every scheme heading carries a
+table, that every cutoff is a number no higher than 100, that the
+rows descend, and that the last row is 0.  When =grading-schemes.org=
+exists, it also warns where =settings.org= or =assignments.org= carry a
+=GRADING_STANDARD_ID= that matches no =CANVAS_ID= in it: the id is
+stale, or the schemes were never pulled.
+
 ** rubric-results.org
 
 Pull-only.  =org-canvas-pull-rubric-results= writes, for every
@@ -2411,6 +2487,7 @@ Each content type can be pulled individually:
 | =org-canvas-pull-settings=             | Pull course settings and tabs         |
 | =org-canvas-pull-sections=             | Pull course sections                  |
 | =org-canvas-pull-grading-periods=      | Pull grading periods (read-only)      |
+| =org-canvas-pull-grading-schemes=      | Pull grading schemes                  |
 | =org-canvas-pull-assignment-groups=    | Pull assignment groups                |
 | =org-canvas-pull-group-categories=     | Pull group categories                 |
 | =org-canvas-pull-groups=               | Pull groups and their members         |
@@ -2643,6 +2720,7 @@ pulled front page carries =:FRONT_PAGE: true=, so it round-trips.
 | =org-canvas-sync=                      | Sync all course content (with conflict detection) |
 | =org-canvas-force-push=                | Sync all, bypassing conflict detection       |
 | =org-canvas-sync-settings=             | Sync course settings and navigation tabs     |
+| =org-canvas-sync-grading-schemes=      | Create grading schemes (never edited in place) |
 | =org-canvas-sync-assignments=          | Sync assignments only                        |
 | =org-canvas-sync-assignment-groups=    | Sync assignment groups                       |
 | =org-canvas-sync-group-categories=     | Sync group categories                        |
@@ -2667,6 +2745,7 @@ pulled front page carries =:FRONT_PAGE: true=, so it round-trips.
 | =org-canvas-pull-settings=             | Pull course settings and tabs         |
 | =org-canvas-pull-sections=             | Pull course sections                  |
 | =org-canvas-pull-grading-periods=      | Pull grading periods (read-only)      |
+| =org-canvas-pull-grading-schemes=      | Pull grading schemes                  |
 | =org-canvas-pull-assignment-groups=    | Pull assignment groups                |
 | =org-canvas-pull-group-categories=     | Pull group categories                 |
 | =org-canvas-pull-groups=               | Pull groups and their members         |
@@ -2748,6 +2827,7 @@ These commands sync just the item at the current cursor position:
 | =org-canvas-sync-assignment-group-at-point= | Sync assignment group at point   |
 | =org-canvas-sync-group-category-at-point=   | Sync group category at point     |
 | =org-canvas-sync-calendar-event-at-point=   | Sync calendar event at point     |
+| =org-canvas-sync-grading-scheme-at-point=   | Create the grading scheme at point |
 
 ** Delete at Point Commands
 
@@ -2765,6 +2845,7 @@ These commands delete the item at the current cursor position:
 | =org-canvas-delete-assignment-group-at-point= | Delete assignment group at point |
 | =org-canvas-delete-group-category-at-point=  | Delete group category at point   |
 | =org-canvas-delete-calendar-event-at-point=  | Delete calendar event at point   |
+| =org-canvas-delete-grading-scheme-at-point=  | Delete grading scheme at point   |
 
 ** Submission Commands
 
@@ -3321,6 +3402,14 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =CLOSE_DATE= | timestamp |  |  | Date after which the period's grades are locked (pull-only) |
 | =WEIGHT= | number |  |  | Weight of the period when the term weights its periods (pull-only) |
 | =IS_CLOSED= | boolean | true, false |  | Whether the period is closed (pull-only; absent while open) |
+
+** Grading Schemes
+
+| Property | Type | Allowed values | Default | Description |
+|----------+------+----------------+---------+-------------|
+| =CONTEXT= | enum | set by Canvas (read-only) |  | Where the scheme lives: course, or account (never pushed) |
+| =POINTS_BASED= | boolean | true, false |  | Points-based scheme, out of SCALING_FACTOR (default: percentage-based) |
+| =SCALING_FACTOR= | number |  |  | What a points-based scheme is out of, e.g. 4.0; only with POINTS_BASED |
 
 ** Group Categories
 
