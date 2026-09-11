@@ -45,6 +45,7 @@ pull-at-point and prune.
 | People            | no   | no       | yes  | no     | no       | pull-only roster: role, sections, enrollment state, last activity, in people.org |
 | Gradebook         | no   | no       | yes  | no     | no       | pull-only overview: current and final score, missing and late, custom gradebook columns, per student and per section, in gradebook.org |
 | Rubric results    | no   | no       | yes  | no     | no       | pull-only: per assignment, how the class scored on each criterion (assessed, mean, rating distribution), in rubric-results.org |
+| Quiz results      | no   | no       | yes  | no     | no       | pull-only: per classic quiz, the score spread and each question's answered, correct, difficulty, discrimination and response counts, in quiz-results.org |
 | Grading periods   | no   | no       | yes  | no     | no       | pull-only; validate warns when a due date falls outside every period |
 | Grading schemes   | yes  | yes      | yes  | at point | yes    | created and deleted, never edited in place (Canvas has no update); account schemes listed, not pushed; validate checks the table and every GRADING_STANDARD_ID |
 | Overrides         | yes  | no       | yes  | no     | no       | dates for a section, a group or some students, reconciled from a table under each assignment |
@@ -77,7 +78,7 @@ settings file.
 | External tools (LTI)           | list installed tools so an assignment can name one     | install or configure a tool                  |
 | Turnitin document processor    | pull and diff the attachment as a Canvas-owned property | set it; deliberately, see decisions.org      |
 | Planner                        | a page's student to-do date                            | planner notes or the to-do list              |
-| Submissions                    | grades, comments, attachments, posting grades and each student's posted-at, per assignment; the course-wide score overview (gradebook.org); a classic quiz's attempts, kept and latest scores and time spent, read-only per quiz | New Quiz attempts, peer reviews, moderation  |
+| Submissions                    | grades, comments, attachments, posting grades and each student's posted-at, per assignment; the course-wide score overview (gradebook.org); a classic quiz's attempts, kept and latest scores and time spent, read-only per quiz; each classic quiz's item analysis (quiz-results.org) | New Quiz attempts and reports, peer reviews, moderation |
 
 * Never Touched
 

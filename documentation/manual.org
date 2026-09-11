@@ -249,6 +249,7 @@ These files have no outgoing links to other course files:
 | =people.org=            | People             | Pull-only: the roster by role, with sections and state (names) |
 | =gradebook.org=         | Gradebook          | Pull-only: every student's scores, missing work and custom columns, by student and by section |
 | =rubric-results.org=    | Rubric Results     | Pull-only: how the class scored on each rubric criterion, per assignment |
+| =quiz-results.org=      | Quiz Results       | Pull-only: each classic quiz's item analysis, question by question |
 | =pages.org=             | Wiki Pages         | Course content pages          |
 | =files.org=             | Files              | Binary file uploads           |
 | =discussions.org=       | Discussions        | Discussion topics             |
@@ -1904,6 +1905,62 @@ course repository (add it to =.gitignore=) and out of anything you
 share.  Per-student rubric scores are read and pushed in the grading
 file (see [[*Grading Submissions][Grading Submissions]]).
 
+** quiz-results.org
+
+Pull-only.  =org-canvas-pull-quiz-results= writes, for every published
+classic quiz, the score spread and the item analysis: question by
+question, how many students answered, how many were right, how hard
+the question was, how well it told strong students from weak ones,
+and how the distractors were picked.  It answers "which question is
+broken?" without opening the web UI's statistics page.  Nothing in
+this file is pushed, and the file is derived: every pull rewrites it
+whole, so anything you write in it is gone at the next pull.
+
+New Quizzes are not listed: their reports are not in Canvas's public
+API.  Per-student attempts are a separate pull (see
+[[*Quiz Attempts][Quiz Attempts]]).
+
+*** Structure
+
+- Level 1 headings = Published classic quizzes that have an
+  assignment, in Canvas's order, titled by the quiz title and linked
+  to the quiz's heading in =quizzes.org= when that file holds its
+  =CANVAS_ID=
+- Under each: one table with the columns #, Question, Type, Answered,
+  Correct, Difficulty, Discrimination and Responses.  Question is the
+  question text on one line, cut to sixty characters; Correct is the
+  share of students who got it right; Difficulty is Canvas's
+  difficulty index; Discrimination is the point biserial of the
+  correct answer, higher when the students who got it right also did
+  well overall; Responses is the response count per answer in answer
+  order with the correct answer starred (=12, 40*, 3=), so a
+  distractor nobody picks is visible.  A quiz nobody has taken gets a
+  =No attempts yet= line instead
+
+Without =all_versions= Canvas reports each student's latest attempt.
+
+*** Properties (set by pull)
+
+| Property         | Type      | Description                                           |
+|------------------+-----------+-------------------------------------------------------|
+| =QUIZ_ID=        | number    | Canvas id of the quiz                                 |
+| =STUDENTS=       | number    | Students whose latest attempt the statistics cover    |
+| =MEAN=           | number    | Mean score                                            |
+| =HIGH=           | number    | Highest score                                         |
+| =LOW=            | number    | Lowest score                                          |
+| =STDEV=          | number    | Standard deviation of the scores                      |
+| =DURATION=       | string    | Mean time spent, as =h:mm=                            |
+| =GENERATED_AT=   | timestamp | When Canvas generated the statistics                  |
+
+*** Personal Data
+
+Canvas's statistics name the students behind every answer; org-canvas
+never reads those names, and only aggregates are written.  With a
+small class a question everyone else got right can still identify
+someone, so treat =quiz-results.org= as you treat
+=rubric-results.org=: keep it out of a course repository (add it to
+=.gitignore=) and out of anything you share.
+
 ** calendar.org
 
 Non-assignment calendar events such as office hours, holidays, and review sessions.
@@ -2561,6 +2618,7 @@ Each content type can be pulled individually:
 | =org-canvas-pull-people=               | Pull the course roster                |
 | =org-canvas-pull-gradebook=            | Pull the grade overview (read-only)   |
 | =org-canvas-pull-rubric-results=       | Pull rubric results per criterion (read-only) |
+| =org-canvas-pull-quiz-results=         | Pull each quiz's item analysis (read-only) |
 | =org-canvas-pull-assignments=          | Pull assignments with descriptions    |
 | =org-canvas-pull-quizzes=              | Pull quizzes with questions           |
 | =org-canvas-pull-pages=               | Pull wiki pages with body content     |
@@ -2834,6 +2892,7 @@ pulled front page carries =:FRONT_PAGE: true=, so it round-trips.
 | =org-canvas-pull-people=               | Pull the course roster                |
 | =org-canvas-pull-gradebook=            | Pull the grade overview (read-only)   |
 | =org-canvas-pull-rubric-results=       | Pull rubric results per criterion (read-only) |
+| =org-canvas-pull-quiz-results=         | Pull each quiz's item analysis (read-only) |
 | =org-canvas-pull-assignments=          | Pull assignments with descriptions    |
 | =org-canvas-pull-quizzes=              | Pull classic quizzes with questions   |
 | =org-canvas-pull-new-quizzes=          | Pull New Quizzes with items           |
@@ -3606,6 +3665,19 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =PICK_COUNT= | number |  |  | Number of questions to randomly select (default 1) |
 | =QUESTION_POINTS= | number |  |  | Points per selected question (default 1) |
 | =QUESTION_BANK_ID= | number |  |  | Canvas assessment question bank ID (optional) |
+
+** Quiz Results
+
+| Property | Type | Allowed values | Default | Description |
+|----------+------+----------------+---------+-------------|
+| =QUIZ_ID= | number | set by Canvas (read-only) |  | Canvas id of the classic quiz |
+| =STUDENTS= | number | set by Canvas (read-only) |  | Students whose latest attempt the statistics cover |
+| =MEAN= | number | set by Canvas (read-only) |  | Mean score |
+| =HIGH= | number | set by Canvas (read-only) |  | Highest score |
+| =LOW= | number | set by Canvas (read-only) |  | Lowest score |
+| =STDEV= | number | set by Canvas (read-only) |  | Standard deviation of the scores |
+| =DURATION= | string | set by Canvas (read-only) |  | Mean time spent, as h:mm |
+| =GENERATED_AT= | timestamp | set by Canvas (read-only) |  | When Canvas generated the statistics |
 
 ** Quizzes
 
