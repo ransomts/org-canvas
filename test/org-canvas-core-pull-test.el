@@ -1879,5 +1879,22 @@ Keep this too
         (expect at :to-be-greater-than (save-excursion (goto-char (point-min)) (re-search-forward "^\\*\\* Keep") (point)))
         (expect at :to-be-less-than (save-excursion (goto-char (point-min)) (re-search-forward "^\\* Next") (point)))))))
 
+(describe "org-canvas--pull-child-close (issue #239)"
+  (it "puts the text that followed a rewritten child on its own line, and only then"
+    (with-temp-buffer
+      (insert "** New\nbody* Next\n")
+      ;; Insertion type t, as the pulls use: the marker follows the text it marks.
+      (let ((next (copy-marker (save-excursion (goto-char (point-min)) (search-forward "* Next") (match-beginning 0)) t)))
+        (org-canvas--pull-child-close next)
+        (expect (buffer-string) :to-equal "** New\nbody\n* Next\n")
+        ;; Already on its own line: nothing to add.
+        (org-canvas--pull-child-close next)
+        (expect (buffer-string) :to-equal "** New\nbody\n* Next\n")
+        ;; Nothing follows: nothing to add.
+        (org-canvas--pull-child-close (copy-marker (point-max)))
+        (expect (buffer-string) :to-equal "** New\nbody\n* Next\n")
+        (org-canvas--pull-child-close nil)
+        (expect (buffer-string) :to-equal "** New\nbody\n* Next\n")))))
+
 (provide 'org-canvas-core-pull-test)
 ;;; org-canvas-core-pull-test.el ends here
