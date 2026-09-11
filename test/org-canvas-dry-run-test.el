@@ -54,6 +54,7 @@
     org-canvas-sync-grading-schemes
     org-canvas-sync-files
     org-canvas-sync-overrides
+    org-canvas-sync-quiz-accommodations
     org-canvas-send-messages
     org-canvas-send-message-at-point)
   "Every feature sync entry point, macro-generated or hand-written,
@@ -215,6 +216,14 @@ finished."
              (dry-lines (seq-filter (lambda (l) (string-match-p "\\[DRY-RUN\\]" l))
                                     (plist-get result :log))))
         (expect (seq-filter (lambda (l) (string-match-p "Would CREATE override" l)) dry-lines)
+                :not :to-equal nil))))
+
+  (it "reaches the push path in the quiz accommodations sync"
+    (org-canvas-dry-run--with-course dir
+      (let* ((result (org-canvas-dry-run--exercise 'org-canvas-sync-quiz-accommodations dir))
+             (dry-lines (seq-filter (lambda (l) (string-match-p "\\[DRY-RUN\\]" l))
+                                    (plist-get result :log))))
+        (expect (seq-filter (lambda (l) (string-match-p "Would set accommodation" l)) dry-lines)
                 :not :to-equal nil)))))
 
 (provide 'org-canvas-dry-run-test)

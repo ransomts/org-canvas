@@ -60,6 +60,10 @@
 (require 'cl-lib)
 
 (declare-function org-canvas--validate-quiz-point-total "org-canvas-validate")
+;; Per-student accommodations (issue #230) live in their own module,
+;; reached the way assignments reach the override table in sections.el.
+(declare-function org-canvas--accommodation-write-table "org-canvas-quiz-accommodations"
+                  (quiz-id))
 
 ;;;; Configuration
 
@@ -181,7 +185,11 @@ the first subheading."
           (let ((subtree-end (save-excursion (org-end-of-subtree t) (point))))
 	    (when (> end subtree-end)
 	      (setq end subtree-end)))
-          (string-trim (buffer-substring-no-properties start end))))))
+          ;; The accommodations table (issue #230) sits in this body
+          ;; and is a table for the sync, not description text.
+          (string-trim (org-canvas--strip-named-tables
+                        (buffer-substring-no-properties start end)
+                        '("accommodations")))))))
 
 (defun org-canvas--quiz-parse-question-text ()
   "Get the question prompt text, excluding answer lists.
@@ -1159,6 +1167,9 @@ parent quiz or under a dedicated subheading."
             (when title (org-edit-headline title))
             (org-canvas--quiz-pull-set-properties pos quiz file)
             (org-canvas--quiz-pull-emit-body pos description questions)
+            (when (fboundp 'org-canvas--accommodation-write-table)
+              (goto-char pos)
+              (org-canvas--accommodation-write-table id))
             (cl-incf count)))
         (org-canvas--pull-check-entry-count
          "quizzes" file "CANVAS_ID" idless-before count))

@@ -308,9 +308,11 @@ must ask for this; it gets the same text with local link markup."
         (let ((default-directory source-dir))
           (insert content)
           (org-mode)
-          ;; Strip override tables (#+NAME: overrides + following table rows)
+          ;; Strip the override and accommodation tables (a `#+NAME:'
+          ;; line and the table rows after it): they feed a sync, not
+          ;; the description.
           (goto-char (point-min))
-          (while (re-search-forward "^#\\+NAME: overrides\n" nil t)
+          (while (re-search-forward "^#\\+NAME: \\(overrides\\|accommodations\\)\n" nil t)
             (let ((start (match-beginning 0)))
               (while (looking-at "^|")
                 (forward-line 1))

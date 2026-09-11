@@ -74,6 +74,7 @@
 (require 'org-canvas-pages)
 (require 'org-canvas-new-quizzes)
 (require 'org-canvas-quizzes)
+(require 'org-canvas-quiz-accommodations)
 (require 'org-canvas-rubrics)
 (require 'org-canvas-sections)
 (require 'org-canvas-grading-periods)
@@ -248,7 +249,8 @@ of through a global (issue #141)."
      (org-canvas-sync-new-quizzes "New Quizzes")
      (org-canvas-sync-assignments "Assignments"))
     ((org-canvas-sync-assignment-groups "Assignment Groups"))
-    ((org-canvas-sync-overrides "Overrides"))
+    ((org-canvas-sync-overrides "Overrides")
+     (org-canvas-sync-quiz-accommodations "Quiz Accommodations"))
     ((org-canvas-sync-modules "Modules")))
   "Sync tiers in dependency order.  Each tier is a list of (FN LABEL) pairs.")
 

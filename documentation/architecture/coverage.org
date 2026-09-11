@@ -49,6 +49,7 @@ pull-at-point and prune.
 | Grading periods   | no   | no       | yes  | no     | no       | pull-only; validate warns when a due date falls outside every period |
 | Grading schemes   | yes  | yes      | yes  | at point | yes    | created and deleted, never edited in place (Canvas has no update); account schemes listed, not pushed; validate checks the table and every GRADING_STANDARD_ID |
 | Overrides         | yes  | no       | yes  | no     | no       | dates for a section, a group or some students, reconciled from a table under each assignment |
+| Quiz accommodations | yes | yes    | yes  | no     | no       | extra attempts, time and unlock per student, reconciled from a table under each classic quiz; zeros clear |
 | Course settings   | yes  | no       | yes  | no     | no       | see the settings list below; the post policy goes by GraphQL    |
 | Post policies     | yes  | no       | yes  | no     | no       | course and per-assignment grade post policy; posting grades from a grading file |
 | Discussion checkpoints | yes | no    | yes  | no     | no       | the five CHECKPOINT_ properties on a discussion, by GraphQL; the flag is account-level, so an instance without it pulls none and refuses the push |
