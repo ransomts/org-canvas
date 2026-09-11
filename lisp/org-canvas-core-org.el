@@ -624,6 +624,41 @@ HEADING should already be unescaped (no \\=\\[ or \\=\\] escapes)."
               (format "^\\*+ +.*\\[%s\\]" (regexp-quote display-name))
               nil t))))))))
 
+(defun org-canvas--heading-property-by-title (file title property &optional match)
+  "Return PROPERTY of the first heading titled TITLE in FILE, or nil.
+MATCH is an `org-map-entries' match string limiting the search
+\(\"LEVEL=2\", say); nil searches every heading.  Nil when FILE is nil
+or missing, so a caller may pass a file variable guarded only by
+`boundp'.  The inverse of `org-canvas--heading-title-by-property'."
+  (when (and file (file-exists-p file))
+    (let ((found nil))
+      (with-current-buffer (org-canvas--find-file-noselect file)
+        (save-excursion
+          (goto-char (point-min))
+          (org-map-entries
+           (lambda ()
+             (when (and (not found) (equal (org-get-heading t t t t) title))
+               (setq found (or (org-entry-get (point) property) 'missing))))
+           match 'file)))
+      (and (stringp found) found))))
+
+(defun org-canvas--heading-title-by-property (file property value &optional match)
+  "Return the title of the first heading in FILE whose PROPERTY is VALUE, or nil.
+VALUE is compared as a string, so a number matches its digits.  MATCH
+limits the search as in `org-canvas--heading-property-by-title'; nil when
+FILE is nil or missing."
+  (when (and file (file-exists-p file))
+    (let ((target (format "%s" value)) (title nil))
+      (with-current-buffer (org-canvas--find-file-noselect file)
+        (save-excursion
+          (goto-char (point-min))
+          (org-map-entries
+           (lambda ()
+             (when (and (not title) (equal (org-entry-get (point) property) target))
+               (setq title (org-get-heading t t t t))))
+           match 'file)))
+      title)))
+
 ;;;; Diagnostics and Report Output
 
 (defun org-canvas-get-course-name ()

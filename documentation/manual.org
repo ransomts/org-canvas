@@ -1565,9 +1565,9 @@ Course sections and per-section assignment date overrides.
 :END:
 #+end_src
 
-*** Per-Section Date Overrides
+*** Date Overrides for a Section, a Group or Some Students
 
-Assignment headings in =assignments.org= can contain an optional =#+NAME: overrides= table with per-section date overrides:
+Assignment headings in =assignments.org= can contain an optional =#+NAME: overrides= table with date overrides:
 
 #+begin_src org
 ,* Lab 1: Introduction to Python
@@ -1584,9 +1584,38 @@ Assignment description...
 | [[file:sections.org::*Section B][Section B]] | <2026-02-17 Tue 23:59> | <2026-02-03 Mon 00:00> |         |
 #+end_src
 
-Each row links to a section in =sections.org=. The section's =CANVAS_ID= is resolved from that file. Empty date cells are omitted from the override. Overrides are synced after both sections and assignments exist on Canvas.
+The first cell says who the override is for, in one of three forms:
 
-The override sync uses a reconcile approach: it GETs existing overrides, matches by =course_section_id=, then PUTs (update), POSTs (create), or DELETEs (remove) as needed.
+- A link to a section in =sections.org=; the section's =CANVAS_ID= is
+  resolved from that file.
+- =Group: Team A=, a group heading in =groups.org= (pull groups first),
+  for a group's own dates on a group assignment.
+- =Students: Adams, Alice; Beta, Bob=, person headings in =people.org=
+  (pull people first), separated by =;= since sortable names carry
+  commas.  This is an extension for one student, or a few.
+
+In the last two a literal =#id= stands in for a title (=Group: #55=,
+=Students: #1234=), so a row can name someone who is not in the pulled
+files.  A row that resolves to nothing is skipped with a warning and
+=org-canvas-validate= reports it beforehand.  The date columns are
+found by their headers, so a pulled table that dropped an empty column
+still parses; empty date cells are omitted from the override.
+
+Overrides are synced after sections, assignments and the pulled files
+exist.  The sync reconciles the table against Canvas: a section row is
+matched by section, a group row by group, a student row by its exact
+set of students; matched overrides are updated, new rows created, and
+overrides no row matches are deleted, an extension given in the web UI
+included.  Pull the assignments first, so the table carries every
+override Canvas holds, and remove a row when you mean to remove the
+override.  A changed set of students is a new override and the old one
+is deleted.
+
+A student's name in =assignments.org= travels with the course
+repository.  Where the repository is shared, or the course files are
+kept in the open, write the row as =Students: #1234= instead; a pull
+writes names when =people.org= is there to resolve them, and =#id=
+otherwise.
 
 ** group-categories.org
 
@@ -2788,7 +2817,7 @@ pulled front page carries =:FRONT_PAGE: true=, so it round-trips.
 | =org-canvas-sync-announcements=       | Sync announcements                           |
 | =org-canvas-sync-files=               | Upload files                                 |
 | =org-canvas-sync-calendar-events=      | Sync calendar events                         |
-| =org-canvas-sync-overrides=           | Sync per-section overrides                   |
+| =org-canvas-sync-overrides=           | Sync the date overrides (section, group, students) |
 
 ** Pull Commands
 
@@ -3134,6 +3163,15 @@ Setting different due dates for different course sections.
 3. *Sync.*  Run =M-x org-canvas-sync=.  Sections are synced first (Tier 0), then assignments (Tier 1), then overrides (Tier 1.75).
 
 4. *Modify overrides.*  Edit dates in the table, add new rows, or remove rows.  The override sync reconciles against Canvas: new rows are created, changed rows are updated, and removed rows are deleted.
+
+5. *Give one student an extension.*  Pull the roster once (=M-x org-canvas-pull-people=), then add a row naming them; a group's own dates work the same way through =groups.org=:
+
+   #+begin_src org
+   | Students: Adams, Alice                       | <2026-09-20 Sat 23:59> |                        |         |
+   | Group: Team A                                | <2026-09-22 Mon 23:59> |                        |         |
+   #+end_src
+
+   =Students: #1234= names a student by Canvas id instead, which keeps the name out of the course repository.  Pull the assignments before editing a table by hand, so extensions given in the web UI are in it and survive the sync.
 
 ** Pre-Semester Validation Checklist
 

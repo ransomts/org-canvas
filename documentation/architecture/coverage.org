@@ -47,7 +47,7 @@ pull-at-point and prune.
 | Rubric results    | no   | no       | yes  | no     | no       | pull-only: per assignment, how the class scored on each criterion (assessed, mean, rating distribution), in rubric-results.org |
 | Grading periods   | no   | no       | yes  | no     | no       | pull-only; validate warns when a due date falls outside every period |
 | Grading schemes   | yes  | yes      | yes  | at point | yes    | created and deleted, never edited in place (Canvas has no update); account schemes listed, not pushed; validate checks the table and every GRADING_STANDARD_ID |
-| Overrides         | yes  | no       | yes  | no     | no       | per-section dates, reconciled from a table under each assignment |
+| Overrides         | yes  | no       | yes  | no     | no       | dates for a section, a group or some students, reconciled from a table under each assignment |
 | Course settings   | yes  | no       | yes  | no     | no       | see the settings list below; the post policy goes by GraphQL    |
 | Post policies     | yes  | no       | yes  | no     | no       | course and per-assignment grade post policy; posting grades from a grading file |
 | Discussion checkpoints | yes | no    | yes  | no     | no       | the five CHECKPOINT_ properties on a discussion, by GraphQL; the flag is account-level, so an instance without it pulls none and refuses the push |
@@ -71,7 +71,7 @@ settings file.
 
 | Feature                        | What org-canvas does                                   | What it does not do                          |
 |--------------------------------+--------------------------------------------------------+----------------------------------------------|
-| Groups                         | a category can ask Canvas to create N groups; groups and their members are pulled | name groups or manage members from Org |
+| Groups                         | a category can ask Canvas to create N groups; groups and their members are pulled; an assignment override can name a group | name groups or manage members from Org |
 | Quiz question banks            | a classic quiz may name a bank on create                | create banks or move questions between them  |
 | New Quiz item banks            | nothing                                                | anything; items live inline under the quiz   |
 | Rubric assessments             | read and push for one student in the grading file; the class's per-criterion results are pulled (see the covered table) | assess from Org outside the grading file    |

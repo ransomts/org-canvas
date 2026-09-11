@@ -408,8 +408,53 @@ LOC is a (:file :line :heading) plist."
            'warning loc "CANVAS_ID"
            "Section has no CANVAS_ID (run org-canvas-pull-sections first)"))))
 
+(defun org-canvas--validate-override-lookup (var title property)
+  "Return PROPERTY of the level-2 heading TITLE in the file VAR names, or nil.
+Nil as well when VAR is unbound or the file is missing: the groups
+and people files are pulled, and may not exist yet."
+  (let ((file (and (boundp var) (symbol-value var))))
+    (org-canvas--heading-property-by-title file title property "LEVEL=2")))
+
+(defun org-canvas--validate-override-target (target row-loc)
+  "Check TARGET, the first cell of an override row, and return an issue or nil.
+A section link is checked elsewhere; `Group: <title>' must name a
+group heading in groups.org and `Students: <name>; <name>' person
+headings in people.org, unless written as a literal #id (issue #224).
+Push-only: a row that resolves to nothing is skipped by the sync and
+touches nothing on Canvas.  ROW-LOC locates the row."
+  (cond
+   ((string-match "\\`Group:[ \t]*\\(.+?\\)[ \t]*\\'" target)
+    (let ((title (match-string 1 target)))
+      (unless (or (string-match-p "\\`#[0-9]+\\'" title)
+                  (org-canvas--validate-override-lookup
+                   'org-canvas-groups-file title "CANVAS_ID"))
+        (org-canvas--validate-push-only
+         (org-canvas--validate-make-issue
+          'warning row-loc nil
+          (format "Override group '%s' is not in groups.org (pull groups first, or write #id)"
+                  title))))))
+   ((string-match "\\`Students?:[ \t]*\\(.+?\\)[ \t]*\\'" target)
+    (let ((missing (cl-remove-if
+                    (lambda (name)
+                      (or (string-match-p "\\`#[0-9]+\\'" name)
+                          (org-canvas--validate-override-lookup
+                           'org-canvas-people-file name "USER_ID")))
+                    (split-string (match-string 1 target) ";" t "[ \t]+"))))
+      (when missing
+        (org-canvas--validate-push-only
+         (org-canvas--validate-make-issue
+          'warning row-loc nil
+          (format "Override student(s) %s not in people.org (pull people first, or write #id)"
+                  (mapconcat (lambda (n) (format "'%s'" n)) missing ", ")))))))
+   ((not (string-match "\\[\\[file:" target))
+    (org-canvas--validate-make-issue
+     'warning row-loc nil
+     (format "Override row '%s' is not a section link, Group: or Students:" target)))))
+
 (defun org-canvas--validate-override-rows (file heading)
-  "Check each data row in an override table for valid section links.
+  "Check each data row in an override table for who it is for.
+The first cell must be a section link, `Group: <title>' or
+`Students: <name>; <name>' (see `org-canvas--validate-override-target').
 FILE and HEADING identify the location.  Point must be at the first data row."
   (let ((issues nil))
     (while (looking-at "^|\\([^-]\\)")
@@ -417,16 +462,11 @@ FILE and HEADING identify the location.  Point must be at the first data row."
              (row-loc (list :file file :line row-line :heading heading))
              (line-text (buffer-substring-no-properties
                          (line-beginning-position) (line-end-position)))
-             (fields (split-string line-text "|" t "[ \t]+")))
-        (when (and fields (car fields))
-          (let ((section-ref (string-trim (car fields))))
-            (when (and (not (string-empty-p section-ref))
-                       (not (string-match "\\[\\[file:" section-ref)))
-              (push (org-canvas--validate-make-issue
-                     'warning row-loc nil
-                     (format "Override row section '%s' is not a file link"
-                             section-ref))
-                    issues)))))
+             (fields (split-string line-text "|" t "[ \t]+"))
+             (target (and fields (car fields) (string-trim (car fields)))))
+        (when (and target (not (string-empty-p target)))
+          (when-let* ((issue (org-canvas--validate-override-target target row-loc)))
+            (push issue issues))))
       (forward-line 1))
     (nreverse issues)))
 

@@ -7,6 +7,11 @@
 (require 'test-helper)
 (require 'org-canvas-sections)
 
+;; Bound by the group and student override specs; the modules that
+;; define them are not loaded here, so declare them special.
+(defvar org-canvas-groups-file)
+(defvar org-canvas-people-file)
+
 ;;;; ================================================================
 ;;;; Section Pull Tests
 ;;;; ================================================================
@@ -1200,5 +1205,217 @@ Returns the final message string."
       (expect (buffer-string) :not :to-match "Due At")
       (expect (buffer-string) :not :to-match "Unlock At")
       (expect (buffer-string) :to-match "| 1 | .*2026-03-2[89].* |"))))
+
+
+;;;; Student and Group Overrides (issue #224)
+
+(defmacro test-sections--with-lookup-files (&rest body)
+  "Run BODY with a groups.org and a people.org in a temp dir.
+Group `Team A' has CANVAS_ID 55; `Adams, Alice' has USER_ID 1 and
+`Beta, Bob' USER_ID 2.  The sections file holds `Section A' as 100."
+  (declare (indent 0))
+  `(let* ((temp-dir (make-temp-file "override-kinds-" t))
+          (org-canvas-groups-file (expand-file-name "groups.org" temp-dir))
+          (org-canvas-people-file (expand-file-name "people.org" temp-dir))
+          (org-canvas-sections-file (expand-file-name "sections.org" temp-dir)))
+     (with-temp-file org-canvas-groups-file
+       (insert "* Project Teams\n:PROPERTIES:\n:CANVAS_ID: 9\n:END:\n"
+               "** Team A\n:PROPERTIES:\n:CANVAS_ID: 55\n:END:\n"))
+     (with-temp-file org-canvas-people-file
+       (insert "* Students\n** Adams, Alice\n:PROPERTIES:\n:USER_ID: 1\n:END:\n"
+               "** Beta, Bob\n:PROPERTIES:\n:USER_ID: 2\n:END:\n"))
+     (with-temp-file org-canvas-sections-file
+       (insert "* Section A\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n"))
+     (unwind-protect
+         (progn ,@body)
+       (dolist (f (list org-canvas-groups-file org-canvas-people-file org-canvas-sections-file))
+         (let ((buf (find-buffer-visiting f)))
+           (when buf (kill-buffer buf))))
+       (delete-directory temp-dir t))))
+
+(describe "org-canvas--override-parse-target (issue #224)"
+  (it "resolves a group by its groups.org title, or a literal #id"
+    (test-sections--with-lookup-files
+      (expect (org-canvas--override-parse-target "Group: Team A" temp-dir)
+              :to-equal '(:group-id "55"))
+      (expect (org-canvas--override-parse-target "Group: #77" temp-dir)
+              :to-equal '(:group-id "77"))))
+
+  (it "resolves students by their people.org titles, semicolon separated, or #id"
+    (test-sections--with-lookup-files
+      (expect (org-canvas--override-parse-target "Students: Adams, Alice; #9; Beta, Bob" temp-dir)
+              :to-equal '(:student-ids ("1" "9" "2")))
+      (expect (org-canvas--override-parse-target "Student: Beta, Bob" temp-dir)
+              :to-equal '(:student-ids ("2")))))
+
+  (it "still resolves a section link"
+    (test-sections--with-lookup-files
+      (expect (org-canvas--override-parse-target
+               "[[file:sections.org::*Section A][Section A]]" temp-dir)
+              :to-equal '(:section-id "100"))))
+
+  (it "answers nil with one warning naming what did not resolve"
+    (test-sections--with-lookup-files
+      (let ((warned nil))
+        (cl-letf (((symbol-function 'org-canvas--log-warning)
+                   (lambda (_l fmt &rest args) (push (apply #'format fmt args) warned))))
+          (expect (org-canvas--override-parse-target "Group: Team Z" temp-dir) :to-be nil)
+          (expect (org-canvas--override-parse-target "Students: Adams, Alice; Nobody, Nell" temp-dir)
+                  :to-be nil)
+          (expect (org-canvas--override-parse-target "Plain" temp-dir) :to-be nil))
+        (expect (length warned) :to-equal 3)
+        (expect (nth 2 warned) :to-match "group 'Team Z'")
+        (expect (nth 1 warned) :to-match "'Nobody, Nell'")
+        (expect (nth 1 warned) :not :to-match "Alice")
+        (expect (nth 0 warned) :to-match "section ID from: Plain"))))
+
+  (it "resolves nothing but a literal #id when the lookup files are missing"
+    (let ((org-canvas-groups-file "/tmp/nonexistent-groups-xyzzy.org")
+          (org-canvas-people-file "/tmp/nonexistent-people-xyzzy.org"))
+      (cl-letf (((symbol-function 'org-canvas--log-warning) #'ignore))
+        (expect (org-canvas--override-parse-target "Group: Team A" "/tmp") :to-be nil)
+        (expect (org-canvas--override-parse-target "Group: #55" "/tmp")
+                :to-equal '(:group-id "55"))))))
+
+(describe "org-canvas--override-parse-table by header (issue #224)"
+  (it "finds the date columns by their titles, so a pulled two-column table parses"
+    (test-sections--with-lookup-files
+      (let ((overrides (org-canvas--override-parse-table
+                        (list '("Section" "Lock At") 'hline
+                              (list "Group: Team A" "<2026-02-20 Fri>")
+                              (list "Students: Adams, Alice" "<2026-02-21 Sat>"))
+                        temp-dir)))
+        (expect (length overrides) :to-equal 2)
+        (expect (plist-get (nth 0 overrides) :group-id) :to-equal "55")
+        (expect (plist-get (nth 0 overrides) :lock-at) :to-match "^2026-02-20T")
+        (expect (plist-get (nth 0 overrides) :due-at) :to-be nil)
+        (expect (plist-get (nth 0 overrides) :unlock-at) :to-be nil)
+        (expect (plist-get (nth 1 overrides) :student-ids) :to-equal '("1")))))
+
+  (it "falls back to positions when the header does not name the columns"
+    (test-sections--with-lookup-files
+      (let ((overrides (org-canvas--override-parse-table
+                        (list '("Who" "When" "Opens" "Closes") 'hline
+                              (list "Group: #5" "<2026-02-15 Sun>" "" "<2026-02-20 Fri>"))
+                        temp-dir)))
+        (expect (plist-get (car overrides) :due-at) :to-match "^2026-02-15T")
+        (expect (plist-get (car overrides) :unlock-at) :to-be nil)
+        (expect (plist-get (car overrides) :lock-at) :to-match "^2026-02-20T")))))
+
+(describe "org-canvas--override-build-payload by kind (issue #224)"
+  (it "sends group_id for a group row"
+    (let ((inner (alist-get 'assignment_override
+                            (org-canvas--override-build-payload
+                             '(:group-id "55" :due-at "2026-02-15T00:00:00Z")))))
+      (expect (alist-get 'group_id inner) :to-equal 55)
+      (expect (assq 'course_section_id inner) :to-be nil)))
+
+  (it "sends student_ids as a JSON array for a student row"
+    (let* ((payload (org-canvas--override-build-payload '(:student-ids ("1" "2"))))
+           (inner (alist-get 'assignment_override payload)))
+      (expect (alist-get 'student_ids inner) :to-equal [1 2])
+      (expect (json-encode payload) :to-match "\"student_ids\":\\[1,2\\]"))))
+
+(describe "org-canvas--override-find-existing (issue #224)"
+  (let ((existing '(((id . 10) (course_section_id . 100))
+                    ((id . 20) (group_id . 55))
+                    ((id . 30) (student_ids . [2 1])))))
+    (it "matches a section row, a group row and a student row by kind"
+      (expect (alist-get 'id (org-canvas--override-find-existing '(:section-id "100") existing))
+              :to-equal 10)
+      (expect (alist-get 'id (org-canvas--override-find-existing '(:group-id "55") existing))
+              :to-equal 20)
+      (expect (alist-get 'id (org-canvas--override-find-existing '(:student-ids ("1" "2")) existing))
+              :to-equal 30))
+
+    (it "treats a changed set of students as a different override"
+      (expect (org-canvas--override-find-existing '(:student-ids ("1")) existing) :to-be nil)
+      (expect (org-canvas--override-find-existing '(:student-ids ("1" "2" "3")) existing) :to-be nil))))
+
+(describe "org-canvas--override-sync-for-assignment by kind (issue #224)"
+  (defun test-sections--reconcile (existing overrides)
+    "Reconcile OVERRIDES against EXISTING through a fake API.
+Returns (COUNTS . CALLS), CALLS being (METHOD . URL-TAIL) in order."
+    (let ((calls nil))
+      (with-org-canvas-test-config
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest _args)
+                     (push (cons method (car (last (split-string url "/")))) calls)
+                     (cond ((eq method 'GET) (vconcat existing))
+                           ((eq method 'POST) '((id . 99)))
+                           (t nil)))))
+          (cons (org-canvas--override-sync-for-assignment "456" overrides)
+                (nreverse calls))))))
+
+  (it "keeps a student's extension the table carries and deletes only what it dropped"
+    (let* ((result (test-sections--reconcile
+                    '(((id . 10) (course_section_id . 100) (due_at . "2026-02-10T00:00:00Z"))
+                      ((id . 30) (student_ids . [7]) (due_at . "2026-02-20T00:00:00Z"))
+                      ((id . 40) (group_id . 55)))
+                    '((:section-id "100" :due-at "2026-02-15T00:00:00Z")
+                      (:student-ids ("7") :due-at "2026-02-22T00:00:00Z")
+                      (:student-ids ("8") :due-at "2026-02-22T00:00:00Z"))))
+           (counts (car result)) (calls (cdr result)))
+      (expect counts :to-equal '(1 2 1))
+      (expect (member '(PUT . "10") calls) :to-be-truthy)
+      (expect (member '(PUT . "30") calls) :to-be-truthy)
+      (expect (member '(POST . "overrides") calls) :to-be-truthy)
+      (expect (member '(DELETE . "40") calls) :to-be-truthy)
+      (expect (member '(DELETE . "30") calls) :to-be nil)))
+
+  (it "recreates a student override whose set of students changed"
+    (let* ((result (test-sections--reconcile
+                    '(((id . 30) (student_ids . [7 8])))
+                    '((:student-ids ("7") :due-at "2026-02-22T00:00:00Z"))))
+           (counts (car result)) (calls (cdr result)))
+      (expect counts :to-equal '(1 0 1))
+      (expect (member '(POST . "overrides") calls) :to-be-truthy)
+      (expect (member '(DELETE . "30") calls) :to-be-truthy)))
+
+  (it "writes nothing under a dry run and still reports the counts"
+    (let* ((org-canvas--dry-run t)
+           (result (test-sections--reconcile
+                    '(((id . 40) (group_id . 55)))
+                    '((:group-id "55" :due-at "2026-02-22T00:00:00Z")
+                      (:student-ids ("7") :due-at "2026-02-22T00:00:00Z")))))
+      (expect (car result) :to-equal '(1 1 0))
+      (expect (mapcar #'car (cdr result)) :to-equal '(GET)))))
+
+(describe "org-canvas--override-target-cell (issue #224)"
+  (it "renders a group and students by title, #id when unresolved, and everyone otherwise"
+    (test-sections--with-lookup-files
+      (expect (org-canvas--override-target-cell '((id . 1) (group_id . 55)))
+              :to-equal "Group: Team A")
+      (expect (org-canvas--override-target-cell '((id . 1) (group_id . 56)))
+              :to-equal "Group: #56")
+      (expect (org-canvas--override-target-cell '((id . 1) (student_ids . [2 9])))
+              :to-equal "Students: Beta, Bob; #9")
+      (expect (org-canvas--override-target-cell '((id . 1) (course_section_id . 100)))
+              :to-equal "[[file:sections.org::*Section A][Section A]]")
+      (expect (org-canvas--override-target-cell '((id . 1) (student_ids . [])))
+              :to-equal "All Sections")))
+
+  (it "round-trips a pulled table with every kind back into the same overrides"
+    (test-sections--with-lookup-files
+      (with-temp-buffer
+        (org-canvas--override-emit-table
+         '(((id . 1) (group_id . 55) (due_at . "2026-02-20T23:59:00Z"))
+           ((id . 2) (student_ids . [1 2]) (lock_at . "2026-02-21T23:59:00Z")))
+         nil nil nil)
+        (goto-char (point-min))
+        (forward-line 1)
+        (let ((overrides (org-canvas--override-parse-table (org-table-to-lisp) temp-dir)))
+          (expect (plist-get (nth 0 overrides) :group-id) :to-equal "55")
+          (expect (plist-get (nth 0 overrides) :due-at) :to-match "^2026-02-2")
+          (expect (plist-get (nth 1 overrides) :student-ids) :to-equal '("1" "2"))
+          (expect (plist-get (nth 1 overrides) :lock-at) :to-match "^2026-02-2")
+          (expect (plist-get (nth 1 overrides) :unlock-at) :to-be nil))))))
+
+(describe "org-canvas--override-existing-label"
+  (it "names the section, group, students or everyone"
+    (expect (org-canvas--override-existing-label '((course_section_id . 100))) :to-equal "section 100")
+    (expect (org-canvas--override-existing-label '((group_id . 55))) :to-equal "group 55")
+    (expect (org-canvas--override-existing-label '((student_ids . [1 2]))) :to-equal "students 1, 2")
+    (expect (org-canvas--override-existing-label '((id . 3))) :to-equal "everyone")))
 
 ;;; org-canvas-sections-test.el ends here

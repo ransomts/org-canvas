@@ -34,9 +34,16 @@
 ;;   |----------------------------------------------+------------------+------------------+------------------|
 ;;   | [[file:sections.org::*Section A][Section A]] | <2026-02-15 Sun> | <2026-02-01 Sat> |                  |
 ;;
-;; Each row links to a section in sections.org.  The section's CANVAS_ID
-;; is resolved from that file.  Overrides are synced after both sections
-;; and assignments exist on Canvas.
+;; The first cell says who the override is for, in one of three forms:
+;;   - a link to a section heading in sections.org (its CANVAS_ID)
+;;   - `Group: <title>'      a group heading in groups.org (its CANVAS_ID)
+;;   - `Students: <name>; <name>'  person headings in people.org (USER_ID),
+;;                            separated by `;' since sortable names carry
+;;                            commas
+;; A literal `#<id>' stands in for a title in the last two.  Date columns
+;; are found by their header (Due At, Unlock At, Lock At), so a pulled
+;; table that dropped an empty column still parses.  Overrides are synced
+;; after sections, groups, people and assignments exist on Canvas.
 ;;
 ;; API NOTES
 ;; =========
@@ -224,6 +231,77 @@ Returns the CANVAS_ID string, or nil if the link cannot be resolved."
                    (format "^\\*+ +%s" (regexp-quote heading)) nil t)
               (org-entry-get (point) "CANVAS_ID"))))))))
 
+(defconst org-canvas--override-group-regexp "\\`Group:[ \t]*\\(.+?\\)[ \t]*\\'"
+  "Match the first cell of a group override row; group 1 is the title or #id.")
+
+(defconst org-canvas--override-students-regexp "\\`Students?:[ \t]*\\(.+?\\)[ \t]*\\'"
+  "Match the first cell of a student override row; group 1 lists the people.")
+
+(defun org-canvas--override-lookup-file (var)
+  "Return the file VAR names when VAR is bound and the file exists, else nil.
+The groups and people files belong to other feature modules, which
+sections.el must not require; it reads them by name when they exist."
+  (let ((file (and (boundp var) (symbol-value var))))
+    (and file (file-exists-p file) file)))
+
+(defun org-canvas--override-literal-id (text)
+  "Return the digits of TEXT when it is a literal #123, else nil."
+  (and (string-match "\\`#\\([0-9]+\\)\\'" text) (match-string 1 text)))
+
+(defun org-canvas--override-resolve-group-id (text)
+  "Resolve TEXT, a group heading title or #id, to a group's CANVAS_ID string."
+  (or (org-canvas--override-literal-id text)
+      (org-canvas--heading-property-by-title
+       (org-canvas--override-lookup-file 'org-canvas-groups-file)
+       text "CANVAS_ID" "LEVEL=2")))
+
+(defun org-canvas--override-resolve-student-id (text)
+  "Resolve TEXT, a person's heading title or #id, to a USER_ID string."
+  (or (org-canvas--override-literal-id text)
+      (org-canvas--heading-property-by-title
+       (org-canvas--override-lookup-file 'org-canvas-people-file)
+       text "USER_ID" "LEVEL=2")))
+
+(defun org-canvas--override-parse-students (text)
+  "Parse TEXT, names separated by `;', into a list of USER_ID strings.
+Nil, with one warning naming what did not resolve, unless every name
+resolves: an override for half the people named would be a surprise."
+  (let* ((names (split-string text ";" t "[ \t]+"))
+         (unresolved (cl-remove-if #'org-canvas--override-resolve-student-id names)))
+    (cond
+     ((null names) nil)
+     (unresolved
+      (org-canvas--log-warning org-canvas--logger
+        "[Override] Could not resolve student(s) %s (pull people first, or write #id)"
+        (mapconcat (lambda (n) (format "'%s'" n)) unresolved ", "))
+      nil)
+     (t (mapcar #'org-canvas--override-resolve-student-id names)))))
+
+(defun org-canvas--override-parse-target (cell source-dir)
+  "Parse CELL, the first cell of an override row, into who the override is for.
+Returns (:section-id ID), (:group-id ID) or (:student-ids IDS), or
+nil with one warning when the cell resolves to nothing.  SOURCE-DIR
+is the directory of the file holding the table, for section links."
+  (cond
+   ((string-match org-canvas--override-group-regexp cell)
+    (let* ((title (match-string 1 cell))
+           (id (org-canvas--override-resolve-group-id title)))
+      (if id
+          (list :group-id id)
+        (org-canvas--log-warning org-canvas--logger
+          "[Override] Could not resolve group '%s' (pull groups first, or write #id)" title)
+        nil)))
+   ((string-match org-canvas--override-students-regexp cell)
+    (let ((ids (org-canvas--override-parse-students (match-string 1 cell))))
+      (and ids (list :student-ids ids))))
+   (t
+    (let ((id (org-canvas--override-resolve-section-id cell source-dir)))
+      (if id
+          (list :section-id id)
+        (org-canvas--log-warning org-canvas--logger
+          "[Override] Could not resolve section ID from: %s" cell)
+        nil)))))
+
 (defun org-canvas--section-link-by-id (section-id)
   "Return an Org file link to the section heading with CANVAS_ID = SECTION-ID.
 Returns the section's heading wrapped in a
@@ -303,10 +381,40 @@ that say nothing."
          (or (null unlock) (equal unlock parent-unlock))
          (or (null lock)   (equal lock   parent-lock)))))
 
+(defun org-canvas--override-group-cell (group-id)
+  "Render GROUP-ID as a `Group: <title>' cell, `Group: #id' when unresolved."
+  (format "Group: %s"
+          (or (org-canvas--heading-title-by-property
+               (org-canvas--override-lookup-file 'org-canvas-groups-file)
+               "CANVAS_ID" group-id "LEVEL=2")
+              (format "#%s" group-id))))
+
+(defun org-canvas--override-students-cell (student-ids)
+  "Render STUDENT-IDS as a `Students: <name>; <name>' cell, `#id' when unresolved."
+  (let ((file (org-canvas--override-lookup-file 'org-canvas-people-file)))
+    (format "Students: %s"
+            (mapconcat (lambda (id)
+                         (or (org-canvas--heading-title-by-property
+                              file "USER_ID" id "LEVEL=2")
+                             (format "#%s" id)))
+                       student-ids "; "))))
+
+(defun org-canvas--override-target-cell (ov)
+  "Render who override OV is for: a section link, a group, students, or everyone."
+  (let ((students (append (alist-get 'student_ids ov) nil)))
+    (cond
+     ((alist-get 'course_section_id ov)
+      (org-canvas--section-link-by-id (alist-get 'course_section_id ov)))
+     ((alist-get 'group_id ov)
+      (org-canvas--override-group-cell (alist-get 'group_id ov)))
+     (students (org-canvas--override-students-cell students))
+     (t "All Sections"))))
+
 (defun org-canvas--override-build-row (ov)
   "Build a 4-cell display row for override OV.
-Returns a list (SECTION-LINK DUE UNLOCK LOCK) of strings."
-  (list (org-canvas--section-link-by-id (alist-get 'course_section_id ov))
+Returns a list (TARGET DUE UNLOCK LOCK) of strings; TARGET is the
+section link, `Group: ...' or `Students: ...' cell."
+  (list (org-canvas--override-target-cell ov)
         (org-canvas--override-format-cell (alist-get 'due_at    ov))
         (org-canvas--override-format-cell (alist-get 'unlock_at ov))
         (org-canvas--override-format-cell (alist-get 'lock_at   ov))))
@@ -362,37 +470,63 @@ Returns an ISO8601 string or nil for empty/whitespace cells."
                (string-match-p "^<" trimmed))
       (org-canvas-org-parse-timestamp trimmed))))
 
+(defun org-canvas--override-date-columns (header)
+  "Return the column indexes of the due, unlock and lock cells from HEADER.
+HEADER is the table's first row.  When it names any of the three
+\(Due At, Unlock At, Lock At, case aside) each column is found by its
+title and an unnamed one is absent (nil): a pulled table drops a
+column no row fills, so position alone would read a lock date as a
+due date.  A header naming none falls back to positions 1, 2 and 3."
+  (let* ((titles (mapcar (lambda (cell) (downcase (string-trim cell))) header))
+         (specs '(("due at" . 1) ("unlock at" . 2) ("lock at" . 3)))
+         (named (cl-some (lambda (spec) (member (car spec) titles)) specs)))
+    (mapcar (lambda (spec)
+              (if named
+                  (cl-position (car spec) titles :test #'string=)
+                (cdr spec)))
+            specs)))
+
 (defun org-canvas--override-parse-table (table source-dir)
   "Parse an overrides TABLE into a list of override plists.
 TABLE is the result of `org-table-to-lisp'.
 SOURCE-DIR is the directory containing the assignments.org file.
-Returns a list of plists: (:section-id ID :due-at TS :unlock-at TS :lock-at TS)."
-  (let ((rows (cdr table))  ; skip header row
-        (overrides nil))
-    (dolist (row rows)
+Each plist names who the override is for, as :section-id, :group-id
+or :student-ids (see `org-canvas--override-parse-target'), and
+carries :due-at, :unlock-at and :lock-at as ISO8601 strings or nil.
+A row that resolves to nothing is skipped with a warning."
+  (let* ((header (car table))
+         (columns (org-canvas--override-date-columns header))
+         (overrides nil))
+    (dolist (row (cdr table))
       (unless (eq row 'hline)
-        (let* ((section-cell (string-trim (nth 0 row)))
-               (due-cell     (string-trim (nth 1 row)))
-               (unlock-cell  (string-trim (nth 2 row)))
-               (lock-cell    (string-trim (nth 3 row)))
-               (section-id (org-canvas--override-resolve-section-id
-                            section-cell source-dir)))
-          (when section-id
-            (push (list :section-id section-id
-                        :due-at (org-canvas--override-parse-timestamp-cell due-cell)
-                        :unlock-at (org-canvas--override-parse-timestamp-cell unlock-cell)
-                        :lock-at (org-canvas--override-parse-timestamp-cell lock-cell))
-                  overrides))
-          (unless section-id
-            (org-canvas--log-warning org-canvas--logger
-                          "[Override] Could not resolve section ID from: %s" section-cell)))))
+        (let ((target (org-canvas--override-parse-target
+                       (string-trim (or (nth 0 row) "")) source-dir)))
+          (when target
+            (push (append target
+                          (cl-mapcan (lambda (key col)
+                                       (list key (org-canvas--override-parse-timestamp-cell
+                                                  (or (and col (nth col row)) ""))))
+                                     '(:due-at :unlock-at :lock-at) columns))
+                  overrides)))))
     (nreverse overrides)))
+
+(defun org-canvas--override-target-field (override)
+  "Return the alist entry naming who OVERRIDE is for, as Canvas wants it.
+One of `course_section_id', `group_id' or `student_ids' (a vector, so
+it encodes as a JSON array)."
+  (cond
+   ((plist-get override :section-id)
+    (cons 'course_section_id (string-to-number (plist-get override :section-id))))
+   ((plist-get override :group-id)
+    (cons 'group_id (string-to-number (plist-get override :group-id))))
+   (t
+    (cons 'student_ids (vconcat (mapcar #'string-to-number
+                                        (plist-get override :student-ids)))))))
 
 (defun org-canvas--override-build-payload (override)
   "Build a Canvas assignment_override payload from OVERRIDE plist."
   (let ((payload `((assignment_override
-                    . ((course_section_id . ,(string-to-number
-                                             (plist-get override :section-id))))))))
+                    . (,(org-canvas--override-target-field override))))))
     (when (plist-get override :due-at)
       (push `(due_at . ,(plist-get override :due-at))
             (alist-get 'assignment_override payload)))
@@ -404,24 +538,39 @@ Returns a list of plists: (:section-id ID :due-at TS :unlock-at TS :lock-at TS).
             (alist-get 'assignment_override payload)))
     payload))
 
-(defun org-canvas--override-delete-removed (endpoint existing seen-section-ids)
-  "Delete overrides in EXISTING whose section_id is not in SEEN-SECTION-IDS.
-ENDPOINT is the overrides API URL.  Returns the number deleted.
-During a dry run the deletions are logged but never issued."
+(defun org-canvas--override-existing-label (item)
+  "Describe who the Canvas override ITEM is for, for a log line."
+  (cond
+   ((alist-get 'course_section_id item)
+    (format "section %s" (alist-get 'course_section_id item)))
+   ((alist-get 'group_id item) (format "group %s" (alist-get 'group_id item)))
+   ((alist-get 'student_ids item)
+    (format "students %s" (mapconcat (lambda (id) (format "%s" id))
+                                     (append (alist-get 'student_ids item) nil) ", ")))
+   (t "everyone")))
+
+(defun org-canvas--override-delete-removed (endpoint existing matched-ids)
+  "Delete overrides in EXISTING whose id is not in MATCHED-IDS.
+MATCHED-IDS are the ids of the Canvas overrides a table row claimed;
+an override is deleted only when the table no longer matches it by
+kind, never for lacking a section id, which a student's or a group's
+override lacks by nature (issue #224).  ENDPOINT is the overrides API
+URL.  Returns the number deleted.  During a dry run the deletions are
+logged but never issued."
   (let ((deleted 0))
     (dolist (item existing)
-      (let ((item-section-id (alist-get 'course_section_id item))
-            (item-id (alist-get 'id item)))
-        (unless (memq item-section-id seen-section-ids)
+      (let ((item-id (alist-get 'id item))
+            (label (org-canvas--override-existing-label item)))
+        (unless (memq item-id matched-ids)
           (condition-case err
               (progn
                 (org-canvas--log-debug org-canvas--logger
-                            "[Override] Deleting override %s (section %s no longer in table)"
-                            item-id item-section-id)
+                            "[Override] Deleting override %s (%s no longer in table)"
+                            item-id label)
                 (if org-canvas--dry-run
                     (org-canvas--log-info org-canvas--logger
-                      "[DRY-RUN] Would DELETE override %s (section %s no longer in table)"
-                      item-id item-section-id)
+                      "[DRY-RUN] Would DELETE override %s (%s no longer in table)"
+                      item-id label)
                   (org-canvas-api-request 'DELETE
                     (format "%s/%s" endpoint item-id)))
                 (setq deleted (1+ deleted)))
@@ -431,73 +580,107 @@ During a dry run the deletions are logged but never issued."
                          item-id (error-message-string err)))))))
     deleted))
 
+(defun org-canvas--override-label (override)
+  "Describe who the table OVERRIDE is for, for a log line."
+  (cond
+   ((plist-get override :section-id) (format "section %s" (plist-get override :section-id)))
+   ((plist-get override :group-id) (format "group %s" (plist-get override :group-id)))
+   (t (format "students %s" (mapconcat #'identity (plist-get override :student-ids) ", ")))))
+
+(defun org-canvas--override-find-existing (override existing)
+  "Return the Canvas override in EXISTING that the table OVERRIDE claims, or nil.
+A section row matches by `course_section_id', a group row by
+`group_id', and a student row by an identical set of `student_ids':
+a changed set is a new override, and the old one is deleted."
+  (cl-find-if
+   (lambda (item)
+     (cond
+      ((plist-get override :section-id)
+       (equal (alist-get 'course_section_id item)
+              (string-to-number (plist-get override :section-id))))
+      ((plist-get override :group-id)
+       (equal (alist-get 'group_id item)
+              (string-to-number (plist-get override :group-id))))
+      (t
+       (let ((theirs (append (alist-get 'student_ids item) nil))
+             (ours (mapcar #'string-to-number (plist-get override :student-ids))))
+         (and theirs
+              (null (cl-set-exclusive-or theirs ours)))))))
+   existing))
+
+(defun org-canvas--override-push-one (endpoint override existing-override)
+  "PUT OVERRIDE onto EXISTING-OVERRIDE, or POST it, at ENDPOINT.
+Returns `updated' or `created'; an API error is logged and answered
+with nil.  Under `org-canvas--dry-run' the write is logged, not sent."
+  (let ((payload (org-canvas--override-build-payload override))
+        (label (org-canvas--override-label override))
+        (override-id (alist-get 'id existing-override)))
+    (condition-case err
+        (progn
+          (cond
+           ((and existing-override org-canvas--dry-run)
+            (org-canvas--log-info org-canvas--logger
+              "[DRY-RUN] Would UPDATE override %s for %s" override-id label))
+           (existing-override
+            (org-canvas--log-debug org-canvas--logger
+              "[Override] Updating override %s for %s" override-id label)
+            (org-canvas-api-request 'PUT (format "%s/%s" endpoint override-id)
+                                    :data payload))
+           (org-canvas--dry-run
+            (org-canvas--log-info org-canvas--logger
+              "[DRY-RUN] Would CREATE override for %s" label))
+           (t
+            (org-canvas--log-debug org-canvas--logger
+              "[Override] Creating override for %s" label)
+            (org-canvas-api-request 'POST endpoint :data payload)))
+          (if existing-override 'updated 'created))
+      (error
+       (org-canvas--log-error org-canvas--logger
+                              "[Override] Failed for %s: %s"
+                              label (error-message-string err))
+       nil))))
+
+(defun org-canvas--override-fetch-existing (endpoint assignment-id)
+  "Return the overrides on Canvas at ENDPOINT for ASSIGNMENT-ID, as a list.
+A failed read is warned about and answered with nil: without the
+existing overrides, reconcile treats the remote as empty and
+re-creates everything, so the user should know."
+  (condition-case err
+      (append (org-canvas-api-request-all-pages 'GET endpoint) nil)
+    (error
+     (org-canvas--log-warning org-canvas--logger
+       "[Sections] Failed to fetch existing overrides for assignment %s (%s); treating remote as empty"
+       assignment-id (error-message-string err))
+     nil)))
+
 (defun org-canvas--override-sync-for-assignment (assignment-id overrides)
   "Reconcile OVERRIDES for ASSIGNMENT-ID on Canvas.
 OVERRIDES is a list of parsed override plists from
 `org-canvas--override-parse-table'.
 Fetches existing overrides from Canvas, then for each local override:
-  - Updates the existing override if one matches by course_section_id (PUT)
-  - Creates a new override if none matches (POST)
-  - Deletes remote overrides whose section_id is absent from the table (DELETE)
+  - Updates the existing override it claims (PUT); a section row claims
+    by `course_section_id', a group row by `group_id', a student row by
+    an identical set of `student_ids'
+  - Creates a new override when none is claimed (POST)
+  - Deletes the remote overrides no row claimed (DELETE), by id
 Returns a list (CREATED UPDATED DELETED) as integer counts.
 Under `org-canvas--dry-run' the remote is still read but no write is
 issued; the counts then report what would have been done."
   (let* ((endpoint (org-canvas-api-course-endpoint
                     "assignments/%s/overrides" assignment-id))
-         (existing (condition-case err
-                       (org-canvas-api-request-all-pages 'GET endpoint)
-                     (error
-                      ;; Without the existing overrides, reconcile would treat
-                      ;; the remote as empty and re-create everything; warn so
-                      ;; the user knows the fetch failed.
-                      (org-canvas--log-warning org-canvas--logger
-                        "[Sections] Failed to fetch existing overrides for assignment %s (%s); treating remote as empty"
-                        assignment-id (error-message-string err))
-                      nil)))
-         (created 0) (updated 0) (deleted 0)
-         (seen-section-ids nil))
-
-    ;; Process each override from the table
+         (existing (org-canvas--override-fetch-existing endpoint assignment-id))
+         (created 0) (updated 0)
+         (matched-ids nil))
     (dolist (override overrides)
-      (let* ((section-id (string-to-number (plist-get override :section-id)))
-             (payload (org-canvas--override-build-payload override))
-             (existing-override
-              (cl-find-if (lambda (item)
-                            (equal (alist-get 'course_section_id item) section-id))
-                          existing)))
-        (push section-id seen-section-ids)
-
-        (condition-case err
-            (if existing-override
-                ;; Update existing override
-                (let ((override-id (alist-get 'id existing-override)))
-                  (org-canvas--log-debug org-canvas--logger
-                              "[Override] Updating override %s for section %s"
-                              override-id section-id)
-                  (if org-canvas--dry-run
-                      (org-canvas--log-info org-canvas--logger
-                        "[DRY-RUN] Would UPDATE override %s for section %s"
-                        override-id section-id)
-                    (org-canvas-api-request 'PUT
-                      (format "%s/%s" endpoint override-id) :data payload))
-                  (setq updated (1+ updated)))
-              ;; Create new override
-              (org-canvas--log-debug org-canvas--logger
-                          "[Override] Creating override for section %s" section-id)
-              (if org-canvas--dry-run
-                  (org-canvas--log-info org-canvas--logger
-                    "[DRY-RUN] Would CREATE override for section %s" section-id)
-                (org-canvas-api-request 'POST endpoint :data payload))
-              (setq created (1+ created)))
-          (error
-           (org-canvas--log-error org-canvas--logger
-                       "[Override] Failed for section %s: %s"
-                       section-id (error-message-string err))))))
-
-    (setq deleted (org-canvas--override-delete-removed
-                   endpoint existing seen-section-ids))
-
-    (list created updated deleted)))
+      (let* ((existing-override (org-canvas--override-find-existing override existing))
+             (outcome (org-canvas--override-push-one endpoint override existing-override)))
+        (when existing-override
+          (push (alist-get 'id existing-override) matched-ids))
+        (pcase outcome
+          ('created (setq created (1+ created)))
+          ('updated (setq updated (1+ updated))))))
+    (list created updated
+          (org-canvas--override-delete-removed endpoint existing matched-ids))))
 
 (defun org-canvas--override-sync-preflight ()
   "Validate assignments file and log header for override sync.
