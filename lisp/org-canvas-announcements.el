@@ -75,12 +75,12 @@ payload builder), which Canvas reports back as `locked'."
   '((:org-prop "PUBLISHED" :data-key :published :type boolean :default t
      :api-key "published" :boolean-json t
      :doc "Whether the announcement is visible to students (default: true)")
-    (:org-prop "POSTED_AT" :data-key :posted_at :type timestamp
+    (:org-prop "POSTED_AT" :data-key :posted_at :type timestamp :pull-only t
      :doc "When the announcement was posted (read-only, set by Canvas)")
     (:org-prop "DELAYED_POST_AT" :data-key :delayed_post_at :type timestamp
      :api-key "delayed_post_at"
      :doc "Schedule the announcement to publish at this time")
-    (:org-prop "AUTHOR" :data-key :author :type string
+    (:org-prop "AUTHOR" :data-key :author :type string :pull-only t
      :remote-fn org-canvas--announcement-remote-author
      :doc "Announcement author display name (read-only)")
     (:org-prop "ALLOW_COMMENTS" :data-key :allow_discussion_comments :type boolean

@@ -445,6 +445,13 @@ a value only Canvas may set declares those separately as
 them; the module refuses them where a push would be wrong (issue
 #167).
 
+A property a pull writes and no push ever reads — when a reply or an
+announcement was posted, who wrote it — declares `:pull-only'.  The
+validator then keeps its parse check but drops the warning that a
+timestamp lies in the past, which for such a property is the normal
+case rather than a due date nobody updated; the manual marks the
+property as Canvas's to set.
+
 A property Canvas alone can set — an assignment's document processor,
 attached through a browser-only LTI flow — declares `:canvas-owned'
 beside its `:remote-fn'.  The pull writes it, the drift report
@@ -470,9 +477,9 @@ Does nothing if FEATURE-NAME is already registered (idempotent)."
 (defun org-canvas--property-to-validate-prop (prop)
   "Convert a registry property spec PROP to validate.el format.
 Registry keys: :org-prop :data-key :type :values :read-only-values
-:canvas-owned :target-file :link-id-property.  Validate keys: :name
-:type :values :read-only-values :canvas-owned :target-file
-:id-property."
+:canvas-owned :pull-only :target-file :link-id-property.  Validate
+keys: :name :type :values :read-only-values :canvas-owned :pull-only
+:target-file :id-property."
   (let ((result (list :name (plist-get prop :org-prop)
                       :type (plist-get prop :type))))
     (when (plist-get prop :values)
@@ -482,6 +489,8 @@ Registry keys: :org-prop :data-key :type :values :read-only-values
                               (plist-get prop :read-only-values))))
     (when (plist-get prop :canvas-owned)
       (setq result (plist-put result :canvas-owned t)))
+    (when (plist-get prop :pull-only)
+      (setq result (plist-put result :pull-only t)))
     (when (plist-get prop :target-file)
       (setq result (plist-put result :target-file (plist-get prop :target-file))))
     (when (plist-get prop :link-id-property)

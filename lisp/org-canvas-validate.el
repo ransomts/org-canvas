@@ -108,9 +108,11 @@ such heading was an error until the value was let through (issue
                    property (string-join bad ", ")
                    (string-join valid-values ", "))))))))
 
-(defun org-canvas--validate-check-timestamp (value property loc)
+(defun org-canvas--validate-check-timestamp (value property loc &optional pull-only)
   "Check that VALUE is parseable as an Org timestamp.
-Warns if the timestamp is in the past.
+Warns if the timestamp is in the past, unless PULL-ONLY: a property
+only a pull writes (when a reply was posted) is in the past by nature,
+and one warning per reply told nobody anything.
 PROPERTY names the property.  LOC is a (:file :line :heading) plist."
   (when value
     (condition-case nil
@@ -118,7 +120,7 @@ PROPERTY names the property.  LOC is a (:file :line :heading) plist."
                (encoded (encode-time parsed))
                (iso (format-time-string "%Y-%m-%dT%H:%M:%SZ" encoded t))
                (now (format-time-string "%Y-%m-%dT%H:%M:%SZ" (current-time) t)))
-          (when (string< iso now)
+          (when (and (not pull-only) (string< iso now))
             (org-canvas--validate-push-only
              (org-canvas--validate-make-issue
               'warning loc property
@@ -898,7 +900,8 @@ Returns a list of issues."
                 ('csv-enum
                  (org-canvas--validate-check-csv-enum value name values loc))
                 ('timestamp
-                 (org-canvas--validate-check-timestamp value name loc))
+                 (org-canvas--validate-check-timestamp
+                  value name loc (plist-get prop :pull-only)))
                 ('link
                  (org-canvas--validate-check-link value name target-file id-prop loc)))))
         (when issue

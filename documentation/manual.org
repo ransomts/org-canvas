@@ -3005,9 +3005,9 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | Property | Type | Allowed values | Default | Description |
 |----------+------+----------------+---------+-------------|
 | =PUBLISHED= | boolean | true, false | true | Whether the announcement is visible to students (default: true) |
-| =POSTED_AT= | timestamp |  |  | When the announcement was posted (read-only, set by Canvas) |
+| =POSTED_AT= | timestamp | set by Canvas (read-only) |  | When the announcement was posted (read-only, set by Canvas) |
 | =DELAYED_POST_AT= | timestamp |  |  | Schedule the announcement to publish at this time |
-| =AUTHOR= | string |  |  | Announcement author display name (read-only) |
+| =AUTHOR= | string | set by Canvas (read-only) |  | Announcement author display name (read-only) |
 | =ALLOW_COMMENTS= | boolean | true, false |  | Allow student replies |
 
 ** Assignment Groups
