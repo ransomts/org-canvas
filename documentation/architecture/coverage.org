@@ -30,7 +30,8 @@ pull-at-point and prune.
 | Assignment groups | yes  | yes      | yes  | yes    | yes      | weights and drop rules (two-phase)                              |
 | Announcements     | yes  | yes      | yes  | yes    | yes      |                                                                 |
 | Calendar events   | yes  | yes      | yes  | yes    | yes      | course calendar only; no appointment groups                     |
-| Discussions       | yes  | yes      | yes  | yes    | yes      | topics only; replies are never read or written                  |
+| Discussions       | yes  | yes      | yes  | yes    | yes      | topics; replies are a separate pull-only type below             |
+| Discussion replies| no   | no       | yes  | no     | no       | pull-only archive of entries and replies, in discussion-replies.org |
 | Files             | yes  | yes      | yes  | yes    | yes      | folders, usage rights, visibility; three pull modes             |
 | Group categories  | yes  | yes      | yes  | yes    | yes      | Canvas can auto-create groups; memberships are not managed      |
 | Modules           | yes  | yes      | yes  | yes    | yes      | items reconciled inside finalize; prerequisites, sequential progress, unlock dates, completion requirements |
@@ -83,7 +84,7 @@ disturbs them.
 - *People:* enrollments, users, the roster, and section membership.
   Sections are pulled as objects; who is in them is not.
 - *Group membership:* which students are in which group.
-- *Discussion replies* and *discussion checkpoints*.
+- *Discussion checkpoints*, the newer graded-discussion feature; replies themselves are pulled (see the covered table).
 - *Mastery Paths* (conditional release), *Blueprint* associations and
   locks, and course-level *feature flags*.
 - *Collaborations*, *conferences*, *appointment groups* (the scheduler),
@@ -119,8 +120,6 @@ in order:
    assignment.
 3. *Grading periods*, where a term uses them, since assignment dates
    and weights then interact with periods org-canvas cannot see.
-4. *Discussion replies*, for anyone who wants a course's discussion
-   archive in Org.
 
 The rest are rarely set at the course level or belong to the
 institution.
@@ -131,9 +130,9 @@ Grading periods and posting policies are the simplest candidates: flat
 objects with no children, so a pull-only module is a registration, a
 =define-pull= and a test file, and a full sync adds parse, build and
 =define-sync= on top.  =module-developer-guide.org= is the step by
-step.  Membership and replies are harder, because they hang under
-another type's heading and need the child-reconciler pattern modules,
-quizzes and New Quizzes use inside finalize.
+step.  Membership is harder, because it hangs under another type's
+heading and needs the child-reconciler pattern modules, quizzes and
+New Quizzes use inside finalize; replies took the pull-only route.
 
 * Refreshing This Document
 
