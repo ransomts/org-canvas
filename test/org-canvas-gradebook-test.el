@@ -202,6 +202,14 @@ The gradebook and roster files live in a temp directory."
     (expect (org-canvas--gradebook-stat '((median . nil)) 'median) :to-be nil)
     (expect (org-canvas--gradebook-stat nil 'median) :to-be nil)))
 
+(describe "org-canvas--gradebook-assignment-cell"
+  (it "falls back to the id when the analytics row has no title and no file to link"
+    (let ((org-canvas-assignments-file nil))
+      (expect (org-canvas--gradebook-assignment-cell '((assignment_id . 77) (title . nil)))
+              :to-equal "Assignment 77")
+      (expect (org-canvas--gradebook-assignment-cell '((assignment_id . 78) (title . "Essay")))
+              :to-equal "Essay"))))
+
 (describe "org-canvas--gradebook-mean"
   (it "averages the numbers and ignores the blanks"
     (expect (org-canvas--gradebook-mean '(90.0 nil 70.0)) :to-equal 80.0)
