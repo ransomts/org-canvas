@@ -648,7 +648,8 @@ Quizzes with embedded questions.
 *** Structure
 
 - Level 1 headings = Quizzes
-- Level 2 headings = Questions (under each quiz)
+- Level 2 headings = Questions (under each quiz), or question groups
+  (~TYPE: group~) holding their own questions at level 3
 - List items under questions = Answer choices
 
 *** Publishing and Point Totals
@@ -718,9 +719,34 @@ regenerate the totals by hand.
 | =file_upload_question=             | No answers (file submission)             |
 | =text_only_question=               | Body text only (instructions/headers)    |
 
-*** Question Groups (Question Banks)
+*** Question Groups
 
-Question groups randomly select questions from an external question bank at quiz delivery time.  They appear as level 2 headings with ~TYPE: group~.
+A question group picks =PICK_COUNT= questions at random when the quiz is
+taken, each worth =QUESTION_POINTS=.  It appears as a level 2 heading with
+~TYPE: group~, and draws its questions from one of two places:
+
+- *its own questions*, written as level 3 headings under the group, in the
+  same format as any other question.  The sync pushes them into the group
+  (Canvas's ~quiz_group_id~) once the group itself is stamped, and a pull
+  writes each group Canvas holds this way, with its questions beneath it
+  in Canvas's order (see [[*Pulling Groups][Pulling Groups]]);
+- *an external question bank*, named by =QUESTION_BANK_ID=, whose questions
+  never appear in the file (see the workflow below).
+
+Level 3 questions count toward the quiz total through the group
+(=PICK_COUNT= times =QUESTION_POINTS=), not one by one.
+
+**** Pulling Groups
+
+Canvas has no request that lists a quiz's groups, so =org-canvas-pull-quizzes=
+reads the group id each question names and fetches every distinct group
+once.  The group heading is rewritten in place on a re-pull, whole, so a
+question that left the group on Canvas is gone from under it; a question
+that joined a group loses its level 2 heading and reappears at level 3.
+When Canvas refuses a group (a permission the token lacks), one warning
+names it and its questions are written at level 2, ungrouped.
+
+**** Bank-Backed Groups
 
 **** Workflow
 
@@ -743,7 +769,7 @@ Question groups randomly select questions from an external question bank at quiz
 - *Bank ID is create-only*: ~assessment_question_bank_id~ is accepted on POST but ignored on PUT.  To change the bank, delete the group from Canvas and remove ~CANVAS_ID~ from the heading, then re-sync.
 - *Bank ID must be obtained manually*: Canvas has no public API for listing question banks.  Get the ID from the Canvas UI URL after QTI import.
 - *Invalid bank IDs are silently accepted*: Canvas creates the group without linking to a bank.  Verify the bank exists in Canvas before syncing.
-- *Pull does not import groups*: There is no "list all groups" endpoint, so ~org-canvas-pull-quizzes~ cannot discover existing groups.
+- *A group nobody names is not pulled*: a group whose questions all live in a bank names no question in the Quiz Questions API, so a pull cannot discover it; a group holding its own questions is pulled (see above).
 - *Bank questions are invisible via API*: Questions from banks are resolved at quiz delivery time and do not appear in the Quiz Questions API response.
 - *Classic Quizzes only*: This feature is for Classic Quizzes.  New Quizzes uses a separate "item banks" system with a different API.
 

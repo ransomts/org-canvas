@@ -10,7 +10,9 @@
 ;; In quizzes.org:
 ;;   - Level 1 headings = Quizzes (with QUIZ_TYPE, TIME_LIMIT, etc.)
 ;;   - Level 2 headings = Questions (with TYPE, POINTS)
-;;   - Level 2 headings with TYPE=group = Question groups (question banks)
+;;   - Level 2 headings with TYPE=group = Question groups, drawing from a
+;;     question bank (QUESTION_BANK_ID) or holding their own questions
+;;     as level 3 headings, as a pull writes a group Canvas holds inline
 ;;   - List items under questions = Answer choices
 ;;
 ;; QUESTION TYPES
@@ -29,11 +31,17 @@
 ;;
 ;; QUESTION GROUPS (QUESTION BANKS)
 ;; ================================
-;; Level 2 headings with TYPE=group create question groups that pull
-;; random questions from external question banks.  Properties:
+;; Level 2 headings with TYPE=group create question groups that pick
+;; random questions, from an external question bank or from the level 3
+;; question headings under the group (pushed with quiz_group_id once the
+;; group is stamped).  Properties:
 ;;   PICK_COUNT         - Number of questions to randomly select
 ;;   QUESTION_POINTS    - Points per selected question
 ;;   QUESTION_BANK_ID   - Canvas assessment question bank ID (create-only)
+;;
+;; A pull writes each group Canvas holds with its questions at level 3
+;; (issue #243); the questions API has no list of groups, so each group
+;; a question names is fetched once.
 ;;
 ;; The bank must be created externally (e.g., via text2qti QTI import).
 ;; The bank ID is obtained from the Canvas UI URL after import.
@@ -51,7 +59,8 @@
 ;; The sync process:
 ;;   1. Create/update the quiz
 ;;   2. Sync question groups (TYPE=group headings)
-;;   3. Sync questions (all other level-2 headings)
+;;   3. Sync questions (all other level-2 headings, and level-3 ones
+;;      under a group)
 
 ;;; Code:
 
@@ -131,7 +140,7 @@
 (org-canvas-register-properties "quiz-questions"
   :label "Quiz Questions"
   :file-var 'org-canvas-quizzes-file
-  :query "LEVEL=2"
+  :query "LEVEL>1"
   :properties
   `((:org-prop "TYPE" :data-key :type :type enum
      :values ,org-canvas--valid-question-types
@@ -632,8 +641,24 @@ Returns a plist of raw string values."
         :type-raw (or (org-entry-get pom "TYPE")
                       (org-entry-get pom "QUESTION_TYPE"))
         :points-raw (org-entry-get pom "POINTS")
+        :group-id-raw (org-canvas--question-parent-group-id pom)
         :quiz-canvas-id quiz-canvas-id
         :text (org-canvas--quiz-parse-question-text)))
+
+(defun org-canvas--question-parent-group-id (pom)
+  "Return the CANVAS_ID of the question group holding the question at POM.
+Nil for a question directly under the quiz, or under a group Canvas
+has not stamped yet (issue #243)."
+  (org-with-point-at pom
+    (when (and (org-up-heading-safe)
+               (equal (org-entry-get (point) "TYPE") "group"))
+      (org-entry-get (point) "CANVAS_ID"))))
+
+(defun org-canvas--quiz-question-in-group-p ()
+  "Return non-nil when the heading at point sits under a `TYPE: group' heading."
+  (save-excursion
+    (and (org-up-heading-safe)
+         (equal (org-entry-get (point) "TYPE") "group"))))
 
 (defun org-canvas--question-transform-props (props)
   "Transform raw PROPS plist into final question data (pure, no buffer access)."
@@ -653,7 +678,10 @@ Returns a plist of raw string values."
                           "text_only_question")
                         "TYPE" "multiple_choice_question")
         :points_possible (org-canvas--interpret-number
-                          (plist-get props :points-raw) 1)))
+                          (plist-get props :points-raw) 1)
+        :quiz_group_id (and (plist-get props :group-id-raw)
+                            (org-canvas--safe-string-to-number
+                             (plist-get props :group-id-raw) "CANVAS_ID"))))
 
 (defun org-canvas--question-parse-entry (quiz-canvas-id)
   "Extract question data from Org heading at point.
@@ -754,6 +782,8 @@ When CORRECT-ONLY is non-nil, only include correct answers."
 
     (when answers
       (push `(answers . ,(vconcat answers)) question-obj))
+    (when (plist-get data :quiz_group_id)
+      (push `(quiz_group_id . ,(plist-get data :quiz_group_id)) question-obj))
 
     `((question . ,question-obj))))
 
@@ -923,12 +953,25 @@ adopted."
   "Return non-nil when remote question ITEM carries DATA's name."
   (string= (or (alist-get 'question_name item) "") (plist-get data :name)))
 
+(defun org-canvas--quiz-question-heading-p ()
+  "Return non-nil when the heading at point is a question the sync pushes.
+A level-2 heading that is neither a question group nor the Description
+wrapper, or a level-3 heading under a question group, whose members
+Canvas holds inline (issue #243)."
+  (pcase (org-outline-level)
+    (2 (and (not (equal (org-entry-get (point) "TYPE") "group"))
+            (not (org-canvas--quiz-description-heading-p))))
+    (3 (org-canvas--quiz-question-in-group-p))
+    (_ nil)))
+
 (defun org-canvas--sync-quiz-questions (quiz-marker quiz-canvas-id)
   "Sync all questions under the quiz at QUIZ-MARKER.
 QUIZ-CANVAS-ID is the Canvas ID of the quiz.  A question heading
 without a CANVAS_ID adopts the question of its name the quiz already
 holds, when one is unclaimed, instead of creating a second (issue
-#179)."
+#179).  Questions at level 3 under a `TYPE: group' heading are pushed
+into that group, whose id the group sync stamped a moment earlier
+\(issue #243)."
   (let ((question-markers nil)
 	(question-success 0)
 	remote claimed)
@@ -939,9 +982,7 @@ holds, when one is unclaimed, instead of creating a second (issue
 	(let ((subtree-end (save-excursion (org-end-of-subtree t) (point))))
 	  (while (and (outline-next-heading)
 		      (< (point) subtree-end))
-	    (when (and (= (org-outline-level) 2)
-		       (not (equal (org-entry-get (point) "TYPE") "group"))
-		       (not (org-canvas--quiz-description-heading-p)))
+	    (when (org-canvas--quiz-question-heading-p)
 	      (push (point-marker) question-markers)))))
       (setq question-markers (nreverse question-markers)
             claimed (org-canvas--quiz-claimed-ids question-markers)
@@ -1073,14 +1114,15 @@ Canvas file URLs in answer text/html are rewritten to local file links."
                         text))))))
 
 (defun org-canvas--quiz-pull-insert-question (q)
-  "Write question Q as an L2 heading under the quiz at point.
-Point must be at the parent quiz heading and is left there.  A heading
-the quiz already holds for the question, by CANVAS_ID or, unstamped,
-by name, is rewritten in place; otherwise the question is appended
-\(issue #239).  The id is stamped so a later sync updates the question
-rather than creating it again, and the type goes to TYPE, the property
-the sync reads."
+  "Write question Q as a heading one level under the entry at point.
+Point must be at the parent heading, the quiz or one of its question
+groups, and is left there.  A heading the parent already holds for the
+question, by CANVAS_ID or, unstamped, by name, is rewritten in place;
+otherwise the question is appended \(issue #239).  The id is stamped
+so a later sync updates the question rather than creating it again,
+and the type goes to TYPE, the property the sync reads."
   (let* ((quiz-pos (point))
+         (stars (org-canvas--pull-child-stars))
          (q-id (alist-get 'id q))
          (q-name (or (alist-get 'question_name q) "Question"))
          (q-text (alist-get 'question_text q))
@@ -1089,7 +1131,7 @@ the sync reads."
          (answers (alist-get 'answers q))
          (at (org-canvas--pull-child-insert-point "CANVAS_ID" q-id q-name))
          (next (copy-marker at t)))
-    (insert (format "** %s\n" q-name))
+    (insert (format "%s %s\n" stars q-name))
     (goto-char at)
     (org-back-to-heading t)
     (let ((qpos (point)))
@@ -1106,6 +1148,109 @@ the sync reads."
     (set-marker next nil)
     (goto-char quiz-pos)))
 
+(defun org-canvas--quiz-pull-group-of (q)
+  "Return the question group id of question Q, or nil when it is ungrouped."
+  (org-canvas--alist-get-non-null 'quiz_group_id q))
+
+(defun org-canvas--quiz-pull-fetch-group (quiz-id group-id)
+  "Return question group GROUP-ID of QUIZ-ID as an alist, or nil when refused.
+Canvas lists no groups, so the pull fetches each group the questions
+name, once.  A refused request logs one warning and answers nil; the
+group's questions are then written ungrouped (issue #243)."
+  (condition-case err
+      (org-canvas-api-request
+       'GET (org-canvas-api-course-endpoint "quizzes/%s/groups/%s" quiz-id group-id))
+    (org-canvas-api-error
+     (org-canvas--log-warning org-canvas--logger
+       "[Quizzes] Could not read question group %s of quiz %s (%s); its questions are written ungrouped"
+       group-id quiz-id (error-message-string err))
+     nil)))
+
+(defun org-canvas--quiz-pull-set-group-properties (pos group)
+  "Set the group properties of the heading at POS from the GROUP alist."
+  (org-canvas-org-set-property pos "TYPE" "group")
+  (let ((pick (org-canvas--alist-get-non-null 'pick_count group))
+        (points (org-canvas--alist-get-non-null 'question_points group))
+        (bank (org-canvas--alist-get-non-null 'assessment_question_bank_id group)))
+    (when pick
+      (org-canvas-org-set-property pos "PICK_COUNT" (format "%s" pick)))
+    (when points
+      (org-canvas-org-set-property pos "QUESTION_POINTS" (format "%s" points)))
+    (when bank
+      (org-canvas-org-set-property pos "QUESTION_BANK_ID" (format "%s" bank)))))
+
+(defun org-canvas--quiz-pull-insert-group (group questions)
+  "Write question GROUP and its QUESTIONS under the quiz at point.
+Point must be at the quiz heading and is left there.  The group is a
+level-2 `TYPE: group' heading, rewritten whole in place when the quiz
+already holds it, so a question that left the group is gone from it;
+its QUESTIONS follow at level 3 in Canvas's order (issue #243)."
+  (let* ((quiz-pos (point))
+         (g-id (alist-get 'id group))
+         (name (or (org-canvas--alist-get-non-null 'name group)
+                   (format "Group %s" g-id)))
+         (at (org-canvas--pull-child-insert-point "CANVAS_ID" g-id name))
+         (next (copy-marker at t)))
+    (insert (format "** %s\n" name))
+    (goto-char at)
+    (org-back-to-heading t)
+    (let ((gpos (point)))
+      (org-canvas-org-save-sync-state gpos g-id)
+      (org-canvas--quiz-pull-set-group-properties gpos group)
+      (dolist (q questions)
+        (goto-char gpos)
+        (org-canvas--quiz-pull-insert-question q)))
+    (org-canvas--pull-child-close next)
+    (set-marker next nil)
+    (goto-char quiz-pos)))
+
+(defun org-canvas--quiz-pull-drop-stray-question (q)
+  "Remove the level-2 heading of question Q under the quiz at point, if any.
+Q now belongs to a group, so its ungrouped heading from an earlier
+pull would otherwise stay beside the group's copy.  Point is left at
+the quiz heading."
+  (let ((quiz-pos (point))
+        (stray (org-canvas--pull-find-child "CANVAS_ID" (alist-get 'id q) nil)))
+    (when stray
+      (org-canvas--pull-remove-child stray))
+    (goto-char quiz-pos)))
+
+(defun org-canvas--quiz-pull-emit-group (quiz-id group-id questions)
+  "Write group GROUP-ID of QUIZ-ID with its members among QUESTIONS.
+Point must be at the quiz heading and is left there.  When Canvas
+refuses the group, its members are written ungrouped."
+  (let* ((quiz-pos (point))
+         (members (cl-remove-if-not
+                   (lambda (q) (equal (org-canvas--quiz-pull-group-of q) group-id))
+                   questions))
+         (group (org-canvas--quiz-pull-fetch-group quiz-id group-id)))
+    (if (null group)
+        (dolist (q members)
+          (goto-char quiz-pos)
+          (org-canvas--quiz-pull-insert-question q))
+      (dolist (q members)
+        (org-canvas--quiz-pull-drop-stray-question q))
+      (org-canvas--quiz-pull-insert-group group members))
+    (goto-char quiz-pos)))
+
+(defun org-canvas--quiz-pull-emit-questions (quiz-id questions)
+  "Write QUESTIONS of QUIZ-ID under the quiz at point, grouped as on Canvas.
+An ungrouped question is a level-2 heading.  A group is written where
+its first question falls in Canvas's order, with its questions at
+level 3, so the file keeps the quiz's order.  Point is left at the
+quiz heading."
+  (let ((quiz-pos (point))
+        (written nil))
+    (dolist (q questions)
+      (goto-char quiz-pos)
+      (let ((gid (org-canvas--quiz-pull-group-of q)))
+        (cond
+         ((null gid) (org-canvas--quiz-pull-insert-question q))
+         ((member gid written) nil)
+         (t (push gid written)
+            (org-canvas--quiz-pull-emit-group quiz-id gid questions)))))
+    (goto-char quiz-pos)))
+
 (defun org-canvas--quiz-pull-fetch-questions (quiz-id)
   "Fetch question list for QUIZ-ID, returning a list of alists.
 Returns nil on API error."
@@ -1120,11 +1265,11 @@ Returns nil on API error."
      nil)))
 
 (defun org-canvas--quiz-pull-insert-questions (quiz-id)
-  "Fetch and insert questions for QUIZ-ID as L2 headings.
-Point must be at the parent quiz heading."
-  (let ((questions (org-canvas--quiz-pull-fetch-questions quiz-id)))
-    (dolist (q questions)
-      (org-canvas--quiz-pull-insert-question q))))
+  "Fetch and write the questions of QUIZ-ID under the quiz at point.
+Point must be at the parent quiz heading; grouped questions go under
+their group heading (issue #243)."
+  (org-canvas--quiz-pull-emit-questions
+   quiz-id (org-canvas--quiz-pull-fetch-questions quiz-id)))
 
 (defun org-canvas--quiz-pull-insert-description-wrapped (description)
   "Write DESCRIPTION HTML inside a `** Description' subheading.
@@ -1142,8 +1287,8 @@ existing Description child is rewritten in place (issue #239)."
     (set-marker next nil)
     (goto-char quiz-pos)))
 
-(defun org-canvas--quiz-pull-emit-body (quiz-pos description questions)
-  "Emit DESCRIPTION and QUESTIONS under the quiz at QUIZ-POS.
+(defun org-canvas--quiz-pull-emit-body (quiz-pos quiz-id description questions)
+  "Emit DESCRIPTION and QUESTIONS under the quiz QUIZ-ID at QUIZ-POS.
 DESCRIPTION (when non-empty) is always wrapped in a `** Description'
 subheading regardless of whether QUESTIONS follow.  This keeps the
 schema consistent across quizzes — every quiz with text gets a
@@ -1154,9 +1299,8 @@ parent quiz or under a dedicated subheading."
   (when (and description (not (string-empty-p description)))
     (org-canvas--quiz-pull-insert-description-wrapped description)
     (goto-char quiz-pos))
-  (dolist (q questions)
-    (org-canvas--quiz-pull-insert-question q)
-    (goto-char quiz-pos)))
+  (org-canvas--quiz-pull-emit-questions quiz-id questions)
+  (goto-char quiz-pos))
 
 ;;;###autoload
 (defun org-canvas-pull-quizzes ()
@@ -1182,7 +1326,7 @@ parent quiz or under a dedicated subheading."
             (goto-char pos)
             (when title (org-edit-headline title))
             (org-canvas--quiz-pull-set-properties pos quiz file)
-            (org-canvas--quiz-pull-emit-body pos description questions)
+            (org-canvas--quiz-pull-emit-body pos id description questions)
             (when (fboundp 'org-canvas--accommodation-write-table)
               (goto-char pos)
               (org-canvas--accommodation-write-table id))

@@ -87,6 +87,7 @@ Each entry names the pull request that merged it.
 
 ** Fixed
 
+- #243 The classic quiz pull no longer flattens question groups: each group a question names is fetched once and written as a =TYPE: group= heading (=CANVAS_ID=, =PICK_COUNT=, =QUESTION_POINTS=, =QUESTION_BANK_ID= when set) with its questions at level 3 in Canvas's order, rewritten whole in place on a re-pull; a question that joined a group loses its level 2 copy, and a refused group is written ungrouped with one warning. The sync now pushes a level 3 question into its group (=quiz_group_id=), so the pulled file round-trips, and validation covers level 3 questions
 - #242 An assignment whose only edit is =POST_POLICY= is pushed: the policy travels by GraphQL outside the REST payload and was missing from the payload hash, so the sync skipped the heading as unchanged
 - #244 The pre-push hook runs lint and complexity one after the other instead of racing on the shared Eldev cache, and a BLOCKED line says whether the linter found something or did not run; testing.org records why a conflicting PR shows no checks and why the codecov patch check needs reading on its own
 - #245 =org-canvas-validate.el= declares =org-canvas-grading-periods-file= before using it, so byte-compiling the file alone no longer warns about a free variable
