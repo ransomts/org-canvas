@@ -119,6 +119,10 @@ writing commands greyed rather than only erroring when one is chosen
     :inapt-if-not org-canvas--transient-writable-p)
    ("P" "Post grades to students" org-canvas-submissions-post-grades
     :inapt-if-not org-canvas--transient-writable-p)]
+  ["Messages"
+   :inapt-if-not org-canvas--transient-writable-p
+   ("e" "Send unsent messages (messages.org)" org-canvas-send-messages)
+   ("E" "Send message at point" org-canvas-send-message-at-point)]
   ["Tools"
    ("i" "Init (setup wizard)" org-canvas-init)
    ("c" "Switch course" org-canvas-activate-course)

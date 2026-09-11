@@ -803,6 +803,28 @@ unwrapped."
               body)
             nil)))
 
+(defvar org-canvas--api-max-pages 1000
+  "Pages `org-canvas-api-request-all-pages' walks before it gives up.
+A hundred thousand items is more than any course endpoint answers; a
+walk that long is a reply that never comes back short, and the walk
+would otherwise grow without bound.")
+
+(defun org-canvas--api-page-repeats-p (page-items previous)
+  "Return non-nil when PAGE-ITEMS is the same page as PREVIOUS.
+A reply without headers that answers the same full page to every
+page number (a test stub, or an endpoint that ignores `page') would
+otherwise be walked forever, one copy of the page per turn."
+  (and previous (equal page-items previous)))
+
+(defun org-canvas--api-check-page-cap (resource page count)
+  "Signal `org-canvas-api-error' when PAGE of RESOURCE is past the cap.
+COUNT is how many items the walk has gathered so far, for the message.
+The cap is `org-canvas--api-max-pages'."
+  (when (> page org-canvas--api-max-pages)
+    (signal 'org-canvas-api-error
+            (list (format "Pagination of %s did not end after %d pages (%d items); giving up"
+                          resource org-canvas--api-max-pages count)))))
+
 (defun org-canvas-api-request-all-pages (method url &optional params)
   "Fetch all pages of results from a paginated Canvas API endpoint.
 METHOD is the HTTP method (usually \\='GET).
@@ -814,12 +836,15 @@ Asks for per_page=100 and follows the Link header's `next' URL until
 there is none, which is how Canvas asks to be paged: an endpoint
 paginated by bookmark (enrollments) answers a numbered second page
 with a 400.  A reply without headers — a stubbed request in the tests —
-falls back to numbered pages until one comes back short.
+falls back to numbered pages until one comes back short, or repeats
+the page before it; a walk past `org-canvas--api-max-pages' signals
+`org-canvas-api-error' rather than growing without bound.
 Returns a flat list of all items across all pages."
   (let ((page 1)
         (per-page 100)
         (all-items nil)
         (next-url nil)
+        (previous nil)
         (done nil)
         (resource (or (org-canvas--api-resource-name url) "results")))
     (while (not done)
@@ -843,13 +868,19 @@ Returns a flat list of all items across all pages."
                       (org-canvas-api-request method url :params page-params :as 'response)))
              (with-headers (plz-response-p reply))
              (page-items (org-canvas--api-page-items reply)))
+        (when (org-canvas--api-page-repeats-p page-items previous)
+          (org-canvas--log-warning org-canvas--logger
+            "[API] %s page %d repeats page %d; the endpoint ignores paging, stopping here"
+            resource page (1- page))
+          (setq page-items nil))
         (dolist (item page-items)
           (push item all-items))
-        (setq next-url (and with-headers (org-canvas--api-next-page-url reply)))
-        (cond
-         (with-headers (if next-url (setq page (1+ page)) (setq done t)))
-         ((< (length page-items) per-page) (setq done t))
-         (t (setq page (1+ page))))))
+        (setq next-url (and with-headers (org-canvas--api-next-page-url reply))
+              previous page-items
+              done (if with-headers (null next-url) (< (length page-items) per-page)))
+        (unless done
+          (setq page (1+ page))
+          (org-canvas--api-check-page-cap resource page (length all-items)))))
     (nreverse all-items)))
 
 

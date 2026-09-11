@@ -642,6 +642,55 @@ LOC is a (:file :line :heading) plist."
         (let ((id-issues (org-canvas--validate-override-section-ids file heading)))
           (nconc issues row-issues id-issues))))))
 
+;; Messages (issue #232): the resolver lives in the messages module,
+;; named here rather than required, as the grading-scheme helpers are.
+
+(declare-function org-canvas--message-resolve-target "org-canvas-messages" (to &optional offline))
+(declare-function org-canvas--message-unresolved-advice "org-canvas-messages" (kind))
+(declare-function org-canvas--message-body "org-canvas-messages" ())
+
+(defun org-canvas--validate-message-to (to loc)
+  "Check the TO value of the message heading at point.
+LOC is a (:file :line :heading) plist.  TO is required; a value that is
+none of the kinds is an error; a name that resolves to nothing pulled
+is a warning naming what to pull.  Self resolves offline."
+  (let ((target (and to (not (string-empty-p (string-trim to)))
+                     (org-canvas--message-resolve-target to t))))
+    (cond
+     ((null target)
+      (org-canvas--validate-make-issue
+       'error loc "TO" "TO is required: Self, Course, Section: name, Group: name or Students: names"))
+     ((plist-get target :invalid)
+      (org-canvas--validate-make-issue
+       'error loc "TO"
+       (format "TO: '%s' is none of Self, Course, Section: name, Group: name or Students: names" to)))
+     ((plist-get target :unresolved)
+      (org-canvas--validate-make-issue
+       'warning loc "TO"
+       (format "TO: could not resolve %s (%s)"
+               (mapconcat (lambda (n) (format "'%s'" n)) (plist-get target :unresolved) ", ")
+               (org-canvas--message-unresolved-advice (plist-get target :kind))))))))
+
+(defun org-canvas--validate-message-structure (loc)
+  "Check the message heading at point: its TO, its body and its stamp.
+LOC is a (:file :line :heading) plist.  An empty body is an error; a
+heading already sent whose body no longer matches the PAYLOAD_HASH
+stamped at the send warns that editing it sends nothing (issue #232)."
+  (let* ((body (org-canvas--message-body))
+         (sent (org-entry-get (point) "SENT_AT"))
+         (hash (org-entry-get (point) "PAYLOAD_HASH"))
+         (issues (list (org-canvas--validate-message-to (org-entry-get (point) "TO") loc))))
+    (when (string-empty-p body)
+      (push (org-canvas--validate-make-issue
+             'error loc "body" "The message has no body; nothing to send")
+            issues))
+    (when (and sent hash (not (equal hash (md5 body))))
+      (push (org-canvas--validate-make-issue
+             'warning loc "SENT_AT"
+             (format "Already sent %s; the edited text will not go out (add a new heading to send again)" sent))
+            issues))
+    (delq nil (nreverse issues))))
+
 ;;;; 5b. Cross-Module Structural Validators
 
 (defun org-canvas--validate-module-item-target (abs-path clean-heading file-path loc)
