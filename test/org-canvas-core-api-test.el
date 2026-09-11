@@ -2231,5 +2231,94 @@ which records the frames from the signalling `signal' out to
           (expect calls :to-equal 2))))))
 
 
+(describe "org-canvas-api-request-all-pages follows the Link header"
+  (defun test-pages--response (items &optional next)
+    "A `plz-response' whose body is ITEMS as JSON and whose Link names NEXT."
+    (make-plz-response
+     :status 200
+     :headers (when next
+                (list (cons 'link (format "<%s>; rel=\"next\", <https://x/api/v1/e?page=1>; rel=\"first\"" next))))
+     :body (json-encode items)))
+
+  (it "asks for the response and follows next until there is none"
+    (with-org-canvas-test-config
+      (let ((calls nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_method url &rest args)
+                     (push (list url (plist-get args :params) (plist-get args :as)) calls)
+                     (pcase (length calls)
+                       (1 (test-pages--response '(((id . 1))) "https://x/api/v1/e?page=bookmark:abc&per_page=100"))
+                       (2 (test-pages--response '(((id . 2))) "https://x/api/v1/e?page=bookmark:def&per_page=100"))
+                       (_ (test-pages--response '(((id . 3))))))))
+                  ((symbol-function 'message) #'ignore))
+          (let ((items (org-canvas-api-request-all-pages 'GET "https://x/api/v1/e" '(("state[]" . "active")))))
+            (expect (mapcar (lambda (i) (alist-get 'id i)) items) :to-equal '(1 2 3))
+            (setq calls (nreverse calls))
+            ;; First call: the endpoint with params; later calls: the next URL alone
+            (expect (nth 0 (nth 0 calls)) :to-equal "https://x/api/v1/e")
+            (expect (assoc "state[]" (nth 1 (nth 0 calls))) :to-equal '("state[]" . "active"))
+            (expect (nth 2 (nth 0 calls)) :to-be 'response)
+            (expect (nth 0 (nth 1 calls)) :to-match "bookmark:abc")
+            (expect (nth 1 (nth 1 calls)) :to-be nil)
+            (expect (length calls) :to-equal 3))))))
+
+  (it "stops after one full page when the Link header names no next"
+    (with-org-canvas-test-config
+      (let ((calls 0))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _) (cl-incf calls)
+                     (test-pages--response (cl-loop for i from 1 to 100 collect (list (cons 'id i)))))))
+          (expect (length (org-canvas-api-request-all-pages 'GET "https://x/api/v1/e")) :to-equal 100)
+          (expect calls :to-equal 1)))))
+
+  (it "falls back to numbered pages for a reply without headers, as a stub answers"
+    (with-org-canvas-test-config
+      (let ((pages nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_m _u &rest args)
+                     (let ((page (cdr (assoc "page" (plist-get args :params)))))
+                       (push page pages)
+                       (if (equal page "1")
+                           (cl-loop for i from 1 to 100 collect (list (cons 'id i)))
+                         '(((id . 101)))))))
+                  ((symbol-function 'message) #'ignore))
+          (expect (length (org-canvas-api-request-all-pages 'GET "https://x/api/v1/e")) :to-equal 101)
+          (expect (nreverse pages) :to-equal '("1" "2"))))))
+
+  (it "decodes an empty body as no items"
+    (expect (org-canvas--api-decode-response (make-plz-response :status 200 :body "")) :to-be nil)
+    (expect (org-canvas--api-decode-response (make-plz-response :status 200 :body "[1,2]")) :to-equal [1 2]))
+
+  (it "reads only rel=next from the Link header"
+    (expect (org-canvas--api-next-page-url
+             (make-plz-response :headers '((link . "<https://x/e?page=2>; rel=\"current\", <https://x/e?page=3>; rel=\"next\", <https://x/e?page=1>; rel=\"first\""))))
+            :to-equal "https://x/e?page=3")
+    (expect (org-canvas--api-next-page-url
+             (make-plz-response :headers '((link . "<https://x/e?page=1>; rel=\"first\""))))
+            :to-be nil)
+    (expect (org-canvas--api-next-page-url '((id . 1))) :to-be nil))
+
+  (it "hands plz :as response when asked, and json-read otherwise"
+    (with-org-canvas-test-config
+      (let ((seen nil))
+        (cl-letf (((symbol-function 'plz)
+                   (lambda (_m _u &rest args) (push (plist-get args :as) seen) '((id . 1)))))
+          (org-canvas-api-request 'GET "https://x/api" :as 'response)
+          (org-canvas-api-request 'GET "https://x/api"))
+        (expect (nreverse seen) :to-equal (list 'response #'json-read)))))
+
+  (it "logs a response's status without decoding it unless bodies are logged"
+    (let ((logged nil) (org-canvas-log-request-bodies nil))
+      (cl-letf (((symbol-function 'org-canvas--log-debug)
+                 (lambda (_l fmt &rest args) (push (apply #'format fmt args) logged))))
+        (org-canvas--api-log-response (make-plz-response :status 200 :body "[1]")))
+      (expect (car logged) :to-match "HTTP 200"))
+    (let ((logged nil) (org-canvas-log-request-bodies t))
+      (cl-letf (((symbol-function 'org-canvas--log-debug)
+                 (lambda (_l fmt &rest args) (push (apply #'format fmt args) logged))))
+        (org-canvas--api-log-response (make-plz-response :status 200 :body "[1]")))
+      (expect (cl-some (lambda (l) (string-match-p "Response Body" l)) logged) :to-be-truthy))))
+
+
 (provide 'org-canvas-core-api-test)
 ;;; org-canvas-core-api-test.el ends here

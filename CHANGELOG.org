@@ -8,6 +8,8 @@ Each entry names the pull request that merged it.
 
 ** Added
 
+- =org-canvas-pull-people=: the course roster, pulled into =people.org= as one heading per person under Students, Teachers, TAs, Observers and Designers, with role, sections (linked to sections.org), enrollment state and last activity; the SIS and login ids are opt-in and a grade or an email is never written. Canvas's Test Student is skipped, a person in two sections is one heading, and a re-pull matches on the user id wherever the heading sits
+- =org-canvas-api-request-all-pages= follows the Link header: Canvas pages the enrollments endpoint by bookmark and answers a numbered second page with a 400, so a course with more than a hundred enrollments could not be listed at all; every paginated endpoint now walks =rel="next"=, with numbered pages kept only as the fallback for a reply without headers
 - =:pull-only= on a registered property: a value a pull writes and no push reads. =org-canvas-validate= no longer warns that such a timestamp is in the past (announcements' and pulled replies' =POSTED_AT= and =AUTHOR=), and the manual marks it as Canvas's to set
 - #202 Grade post policies and posting grades: =POST_POLICY= on the course heading in settings.org and, when it differs from the course's, on an assignment heading, pulled and pushed through Canvas's GraphQL endpoint; =org-canvas-submissions-post-grades= (=P= in a grading file) posts an assignment's grades, the push offers it under a manual policy, and each student carries =POSTED_AT=. A small GraphQL transport (=org-canvas--graphql-query=, =org-canvas--graphql-mutate=) with the read-only guard and the dry run
 - =org-canvas-pull-groups=: the groups inside each group category and the students in each group, pulled into =groups.org= (categories at level 1, linked to =group-categories.org=; groups at level 2 with their member limit, join level and member count; members as a list of names). Pull-only, and the file holds student names, so keep it out of a course repository as the submissions directory is
@@ -72,6 +74,7 @@ Each entry names the pull request that merged it.
 
 ** Fixed
 
+- The pull menu bound =G= twice, to group categories and to grading periods; grading periods are =y= and the roster is =u=
 - #198 A module item's =COMPLETION_REQUIREMENT= and =MIN_SCORE= reach Canvas: the JSON payload carried them as bracketed form-encoded keys, which Canvas ignored without a word, so no requirement was ever set
 - #199 =org-canvas-pull-modules= links a Page item to its pages.org heading (Canvas names a page by =page_url=, not =content_id=) and writes =COMPLETION_REQUIREMENT= and =MIN_SCORE= back instead of dropping them
 - #196 A sync no longer warns that every id below its own heading level may be orphaned: the orphan and duplicate-id checks read the headings the sync's query selects, so a modules run stops reporting each module item, a quizzes run each question, and the outcomes passes each other's level

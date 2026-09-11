@@ -80,6 +80,7 @@
 (require 'org-canvas-settings)
 (require 'org-canvas-group-categories)
 (require 'org-canvas-groups)
+(require 'org-canvas-people)
 (require 'org-canvas-calendar)
 (require 'org-canvas-diff)
 (require 'org-canvas-validate)
@@ -515,6 +516,7 @@ count for the operator to chase through the log (issue #155)."
 (defconst org-canvas--pull-tiers
   '(((org-canvas-pull-settings "Settings"))
     ((org-canvas-pull-sections "Sections")
+     (org-canvas-pull-people "People")
      (org-canvas-pull-grading-periods "Grading Periods")
      (org-canvas-pull-files "Files")
      (org-canvas-pull-assignment-groups "Assignment Groups")

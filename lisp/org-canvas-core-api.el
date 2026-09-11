@@ -566,8 +566,15 @@ with MASKED); the token itself never enters this function."
                                       (when org-canvas-log-request-bodies json-payload)))))
 
 (defun org-canvas--api-log-response (result)
-  "Log debug info for an API response RESULT."
-  (org-canvas--log-debug org-canvas--logger "[API] <<< RESPONSE: success")
+  "Log debug info for an API response RESULT.
+A `plz-response' (a request made with AS `response') logs its status;
+its body is logged decoded only when bodies are logged at all."
+  (org-canvas--log-debug org-canvas--logger "[API] <<< RESPONSE: success%s"
+    (if (plz-response-p result)
+        (format " (HTTP %s)" (plz-response-status result))
+      ""))
+  (when (and result org-canvas-log-request-bodies (plz-response-p result))
+    (setq result (org-canvas--api-decode-response result)))
   (when (and result org-canvas-log-request-bodies)
     (org-canvas--log-debug org-canvas--logger "[API] Response Body:\n%s"
       (org-canvas--pretty-json result))))
@@ -619,11 +626,14 @@ once the delay list is exhausted."
                                     (status (format "HTTP %s" status))
                                     (t "unknown error")))))))))
 
-(defun org-canvas--api-execute-request (plz-method full-url json-payload actual-timeout)
+(defun org-canvas--api-execute-request (plz-method full-url json-payload actual-timeout
+                                                   &optional as)
   "Send one PLZ-METHOD request to FULL-URL and return the parsed JSON.
 Dispatches PATCH to the direct curl fallback (plz cannot send it);
 everything else goes through plz.  JSON-PAYLOAD and ACTUAL-TIMEOUT
-configure the request.
+configure the request.  AS `response' returns the `plz-response'
+itself, headers and undecoded body, which the paginator needs for the
+Link header; anything else returns the decoded JSON.
 
 This is the transport boundary for the token (issue #178): the
 headers are resolved by `org-canvas--api-request-headers' in the call
@@ -636,15 +646,17 @@ and never shows plz's own, whose arguments hold the header."
         (plz plz-method full-url
           :headers (org-canvas--api-request-headers)
           :body json-payload
-          :as #'json-read
+          :as (if (eq as 'response) 'response #'json-read)
           :timeout actual-timeout)
       (error (signal (car err) (cdr err))))))
 
-(defun org-canvas--api-execute-with-retry (plz-method full-url json-payload actual-timeout)
+(defun org-canvas--api-execute-with-retry (plz-method full-url json-payload actual-timeout
+                                                      &optional as)
   "Execute PLZ-METHOD request to FULL-URL with retry on rate-limit or transient.
-JSON-PAYLOAD and ACTUAL-TIMEOUT configure the request.  The headers
-are not an argument by design: this frame is on the backtrace of every
-error that escapes, and the token must not be (issue #178)."
+JSON-PAYLOAD and ACTUAL-TIMEOUT configure the request; AS is passed to
+`org-canvas--api-execute-request'.  The headers are not an argument by
+design: this frame is on the backtrace of every error that escapes,
+and the token must not be (issue #178)."
   (let ((rate-retry-count 0)
         (transient-retry-index 0)
         (done nil)
@@ -654,7 +666,7 @@ error that escapes, and the token must not be (issue #178)."
           (progn
             (setq result
                   (org-canvas--api-execute-request plz-method full-url
-                                                   json-payload actual-timeout))
+                                                   json-payload actual-timeout as))
             (org-canvas--api-log-response result)
             (setq done t))
         (plz-error
@@ -699,13 +711,16 @@ Only GET is allowed through; everything else signals
             (list (format "This course is marked read-only (org-canvas-read-only is t), so %s was refused.  Pull, status and diff still work; set org-canvas-read-only to nil in org-canvas-credentials.el to allow writes"
                           (or what (format "a %s request" method)))))))
 
-(cl-defun org-canvas-api-request (method url &key params data timeout)
+(cl-defun org-canvas-api-request (method url &key params data timeout as)
   "Perform an HTTP request to the Canvas API synchronously using `plz'.
 METHOD is \\='GET, \\='POST, \\='PUT, or \\='DELETE.
 URL is the full endpoint.
 PARAMS is an alist of query parameters.
 DATA is an alist or hash-table to be sent as JSON body (for POST/PUT).
 TIMEOUT is the request timeout in seconds.
+AS `response' returns the `plz-response' with its headers instead of
+the decoded body; `org-canvas-api-request-all-pages' asks for it to
+follow the Link header.
 A course marked read-only with `org-canvas-read-only' refuses anything
 but GET, before the request is built (issue #163).
 
@@ -732,7 +747,30 @@ silently corrupts unrecognized methods into bodyless GETs."
            :body json-payload :timeout actual-timeout
            :headers (org-canvas--api-request-headers 'masked)))
     (org-canvas--api-pace)
-    (org-canvas--api-execute-with-retry plz-method full-url json-payload actual-timeout)))
+    (org-canvas--api-execute-with-retry plz-method full-url json-payload actual-timeout as)))
+
+(defun org-canvas--api-decode-response (response)
+  "Return the JSON in RESPONSE's body, a `plz-response', or nil when empty."
+  (let ((body (plz-response-body response)))
+    (when (and (stringp body) (not (string-blank-p body)))
+      (with-temp-buffer
+        (insert body)
+        (goto-char (point-min))
+        (json-read)))))
+
+(defun org-canvas--api-next-page-url (response)
+  "Return the URL RESPONSE's Link header names as `next', or nil.
+Canvas paginates some endpoints by bookmark, and answers a numbered
+page beyond the first with 400 \"Invalid page; please restart
+iteration and follow next links\" (the enrollments API does); the Link
+header is the only way through those, and works for the numbered ones
+too."
+  (let ((link (and (plz-response-p response)
+                   (alist-get 'link (plz-response-headers response)))))
+    (when (stringp link)
+      (cl-loop for part in (split-string link ",")
+               when (string-match "<\\([^>]+\\)>[^,]*rel=\"next\"" part)
+               return (match-string 1 part)))))
 
 (defun org-canvas--api-resource-name (url)
   "Return the Canvas resource URL addresses, for a progress message.
@@ -752,12 +790,16 @@ reads \"subgroups\".  Nil when nothing usable is left."
 METHOD is the HTTP method (usually \\='GET).
 URL is the full endpoint URL.
 PARAMS is an alist of additional query parameters.
-Automatically adds per_page=100 and loops until a page returns
-fewer results than per_page.
+Asks for per_page=100 and follows the Link header's `next' URL until
+there is none, which is how Canvas asks to be paged: an endpoint
+paginated by bookmark (enrollments) answers a numbered second page
+with a 400.  A reply without headers — a stubbed request in the tests —
+falls back to numbered pages until one comes back short.
 Returns a flat list of all items across all pages."
   (let ((page 1)
         (per-page 100)
         (all-items nil)
+        (next-url nil)
         (done nil)
         (resource (or (org-canvas--api-resource-name url) "results")))
     (while (not done)
@@ -775,12 +817,22 @@ Returns a flat list of all items across all pages."
       (let* ((page-params (append (or params '())
                                   `(("per_page" . ,(number-to-string per-page))
                                     ("page" . ,(number-to-string page)))))
-             (page-items (append (org-canvas-api-request method url :params page-params) nil)))
+             ;; A `next' URL already carries the query, bookmark included.
+             (reply (if next-url
+                        (org-canvas-api-request method next-url :as 'response)
+                      (org-canvas-api-request method url :params page-params :as 'response)))
+             (with-headers (plz-response-p reply))
+             (page-items (append (if with-headers
+                                     (org-canvas--api-decode-response reply)
+                                   reply)
+                                 nil)))
         (dolist (item page-items)
           (push item all-items))
-        (if (< (length page-items) per-page)
-            (setq done t)
-          (setq page (1+ page)))))
+        (setq next-url (and with-headers (org-canvas--api-next-page-url reply)))
+        (cond
+         (with-headers (if next-url (setq page (1+ page)) (setq done t)))
+         ((< (length page-items) per-page) (setq done t))
+         (t (setq page (1+ page))))))
     (nreverse all-items)))
 
 
