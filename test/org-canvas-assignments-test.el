@@ -2175,6 +2175,13 @@ Write it.
         (expect (alist-get 'manual (nth 2 seen)) :to-be t)
         (expect (plist-get ctx :remote-touched) :to-be t))))
 
+  (it "sends automatic as a JSON false, never as null"
+    (with-org-canvas-test-config
+      (let ((vars nil))
+        (cl-letf (((symbol-function 'org-canvas--graphql-mutate) (lambda (_w _d v) (setq vars v) nil)))
+          (org-canvas--assignment-push-post-policy '(:title "HW" :post-policy "automatic") 61))
+        (expect (json-encode vars) :to-match "\"manual\":false"))))
+
   (it "sends nothing and notes nothing without a declared policy"
     (let ((sent nil) (ctx (org-canvas--sync-make-ctx)))
       (cl-letf (((symbol-function 'org-canvas--graphql-mutate) (lambda (&rest _) (setq sent t)))

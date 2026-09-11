@@ -402,8 +402,10 @@ A dry run reports and sends nothing."
       (org-canvas--graphql-mutate
        (format "set the course post policy to %s" policy)
        "mutation ($courseId: ID!, $manual: Boolean!) { setCoursePostPolicy(input: {courseId: $courseId, postManually: $manual}) { postPolicy { postManually } } }"
+       ;; A GraphQL Boolean! must arrive as true or false; nil would
+       ;; encode as null, which Canvas rejects (the live probe caught it).
        (list (cons 'courseId (format "%s" org-canvas-course-id))
-             (cons 'manual (equal policy "manual"))))
+             (cons 'manual (if (equal policy "manual") t :json-false))))
       (org-canvas--course-post-policy-forget))))
 
 ;;;; 4. Finalize

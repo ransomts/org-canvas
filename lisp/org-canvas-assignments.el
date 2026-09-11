@@ -547,7 +547,7 @@ non-nil when a write went out, so the caller can note it on the run."
        (format "set the post policy of '%s' to %s" (plist-get data :title) policy)
        "mutation ($assignmentId: ID!, $manual: Boolean!) { setAssignmentPostPolicy(input: {assignmentId: $assignmentId, postManually: $manual}) { postPolicy { postManually } } }"
        (list (cons 'assignmentId (format "%s" assignment-id))
-             (cons 'manual (equal policy "manual"))))
+             (cons 'manual (if (equal policy "manual") t :json-false))))
       t)))
 
 (defun org-canvas--assignment-add-optional-fields (data assignment)

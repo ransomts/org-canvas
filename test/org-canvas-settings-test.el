@@ -1814,13 +1814,16 @@ LIST :records LIST)."
         (expect (alist-get 'manual (nth 2 seen)) :to-be t)
         (expect forgotten :to-be t))))
 
-  (it "sends automatic as postManually false"
+  (it "sends automatic as a JSON false, never as null"
+    ;; A GraphQL Boolean! rejects null; the live probe on course 297530
+    ;; failed on exactly this before the encoding was fixed.
     (with-org-canvas-test-config
       (let ((vars nil))
         (cl-letf (((symbol-function 'org-canvas--graphql-mutate) (lambda (_w _d v) (setq vars v) nil))
                   ((symbol-function 'org-canvas--course-post-policy-forget) #'ignore))
           (org-canvas--settings-push-post-policy '(:post-policy "automatic")))
-        (expect (alist-get 'manual vars) :to-be nil))))
+        (expect (alist-get 'manual vars) :to-be :json-false)
+        (expect (json-encode vars) :to-match "\"manual\":false"))))
 
   (it "sends nothing when the heading declares no policy"
     (let ((sent nil))
