@@ -1,0 +1,22 @@
+#+TITLE: Grading Schemes
+
+* DS 101 Letter Grades
+:PROPERTIES:
+:CANVAS_ID: 4321
+:CONTEXT: course
+:END:
+
+#+NAME: scheme
+| Grade | Cutoff |
+|-------+--------|
+| A     |     93 |
+| A-    |     90 |
+| B+    |     87 |
+| B     |     83 |
+| B-    |     80 |
+| C+    |     77 |
+| C     |     73 |
+| C-    |     70 |
+| D     |     60 |
+| F     |      0 |
+
