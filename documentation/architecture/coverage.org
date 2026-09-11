@@ -43,7 +43,7 @@ pull-at-point and prune.
 | Rubrics           | yes  | yes      | yes  | yes    | yes      | criteria, ratings, outcome links; associations via assignments  |
 | Sections          | no   | no       | yes  | no     | no       | pull-only, so overrides can name them                           |
 | People            | no   | no       | yes  | no     | no       | pull-only roster: role, sections, enrollment state, last activity, in people.org |
-| Gradebook         | no   | no       | yes  | no     | no       | pull-only overview: current and final score, missing and late, custom gradebook columns, per student and per section, in gradebook.org |
+| Gradebook         | no   | no       | yes  | no     | no       | pull-only overview: current and final score, missing and late, custom gradebook columns, per student and per section, and each assignment's score spread, in gradebook.org |
 | Rubric results    | no   | no       | yes  | no     | no       | pull-only: per assignment, how the class scored on each criterion (assessed, mean, rating distribution), in rubric-results.org |
 | Quiz results      | no   | no       | yes  | no     | no       | pull-only: per classic quiz, the score spread and each question's answered, correct, difficulty, discrimination and response counts, in quiz-results.org |
 | Grading periods   | no   | no       | yes  | no     | no       | pull-only; validate warns when a due date falls outside every period |

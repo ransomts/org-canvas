@@ -1745,10 +1745,11 @@ directory and keep it out of a course repository (add it to
 
 Pull-only.  =org-canvas-pull-gradebook= writes a course-wide overview
 of grades: each student's current and final score, how many
-submissions are missing or late, when Canvas last saw them, and a
-summary per section.  It answers "who is falling behind?" without
-opening the Canvas gradebook or pulling one grading file per
-assignment.  Nothing in this file is pushed, and the tables are
+submissions are missing or late, when Canvas last saw them, a
+summary per section, and the class's score spread on each
+assignment.  It answers "who is falling behind?" and "how did the
+class do on Homework 3?" without opening the Canvas gradebook or
+pulling one grading file per assignment.  Nothing in this file is pushed, and the tables are
 derived: every pull rewrites them, so anything you write under its
 headings is gone at the next pull.
 
@@ -1764,6 +1765,11 @@ headings is gone at the next pull.
   first)
 - =* Sections=: one table with Section, Students, Mean current, Mean
   final and Missing (the section's missing submissions added up)
+- =* Assignments=: one table in Canvas's order with Assignment, Due,
+  Points, Min, Q1, Median, Q3, Max, Missing and Late, from the
+  course analytics.  The quartiles stay =-= until enough work is
+  graded.  The Assignment cell links to the heading in
+  =assignments.org= when that file holds the id
 
 Current is the score over graded work; Final counts every ungraded
 assignment as zero, work not yet due included, so it sits low early in
@@ -1773,7 +1779,9 @@ instructor's unposted scores, hidden grades included; set it to nil
 for the scores students see.  Missing and Late come from Canvas's
 course analytics, which some tokens may not read: then the two
 columns are blank and a line under the table says so, and the rest of
-the pull goes on.  Custom gradebook columns hidden in the gradebook
+the pull goes on; the same token cannot read the assignment
+analytics either, so the Assignments heading then carries a note and
+no table.  Custom gradebook columns hidden in the gradebook
 stay out unless =org-canvas-gradebook-include-hidden-columns= is set;
 a course without any gets the seven columns and nothing more, and a
 token that cannot read them gets a warning in the log and the same
