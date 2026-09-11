@@ -2829,11 +2829,12 @@ https://test.canvas.example.com/courses/284220/assignments/7
   (defconst test-validate-push-only-course
     "* Homework 1
 :PROPERTIES:
-:CANVAS_ID: 11
 :DUE_AT: <2001-01-05 Fri>
 :END:
 "
-    "One assignment whose only finding is a due date long past.")
+    "One unsynced assignment whose only finding is a due date long past.
+Unsynced, because since issue #208 a stamped heading's past date is
+history and not a finding at all.")
 
   (it "holds push-only findings back on a read-only course"
     (with-validate-test-dir dir
@@ -3420,6 +3421,63 @@ https://test.canvas.example.com/courses/284220/assignments/7
       (expect (org-canvas--validate-rubric-criterion-outcome
                "/tmp/rubrics.org" (list :file "/tmp/rubrics.org" :line 1 :heading "Essay"))
               :to-be nil))))
+
+(describe "past timestamps on headings already on Canvas (issue #208)"
+  (defconst test-validate-208-course
+    "* Homework 1
+:PROPERTIES:
+:CANVAS_ID: 11
+:DUE_AT: <2001-01-05 Fri>
+:END:
+* Homework 2
+:PROPERTIES:
+:DUE_AT: <2001-01-12 Fri>
+:END:
+"
+    "One synced and one unsynced assignment, both with a due date long past.")
+
+  (defun test-validate-208-warnings (setting)
+    "Validate the fixture under SETTING and return the past-date warnings."
+    (with-validate-test-dir dir
+      (with-temp-file (expand-file-name "assignments.org" dir)
+        (insert test-validate-208-course))
+      (test-validate-create-empty-files dir '("assignments.org"))
+      (let ((org-canvas-validate-past-timestamps setting))
+        (cl-remove-if-not
+         (lambda (i) (string-match-p "is in the past" (plist-get i :message)))
+         (plist-get (org-canvas--validate-run-all-specs) :issues)))))
+
+  (it "warns only on the heading no push has created, by default"
+    (let ((warnings (test-validate-208-warnings 'unsynced-only)))
+      (expect (length warnings) :to-equal 1)
+      (expect (plist-get (car warnings) :heading) :to-equal "Homework 2")
+      (expect (plist-get (car warnings) :push-only) :to-be t)))
+
+  (it "warns on every heading under always, and never under never"
+    (expect (length (test-validate-208-warnings 'always)) :to-equal 2)
+    (expect (test-validate-208-warnings 'never) :to-be nil))
+
+  (it "treats a page stamped with CANVAS_URL as on Canvas"
+    (with-temp-org-buffer
+        "* Syllabus\n:PROPERTIES:\n:CANVAS_URL: syllabus\n:TODO_DATE: <2001-01-05 Fri>\n:END:\n"
+      (goto-char (point-min))
+      (expect (org-canvas--validate-entry-on-canvas-p) :to-be t)
+      (expect (org-canvas--validate-check-timestamp
+               "<2001-01-05 Fri>" "TODO_DATE" (list :file "f" :line 1 :heading "Syllabus"))
+              :to-be nil)))
+
+  (it "never warns on the course's own dates in settings.org"
+    (with-validate-test-dir dir
+      (with-temp-file (expand-file-name "settings.org" dir)
+        (insert "* Ethics\n:PROPERTIES:\n:START_AT: <2001-01-05 Fri>\n:END_AT: <2001-05-05 Sat>\n:END:\n"))
+      (test-validate-create-empty-files dir '("settings.org"))
+      (let ((issues (plist-get (org-canvas--validate-run-all-specs) :issues)))
+        (expect (cl-some (lambda (i) (string-match-p "is in the past" (plist-get i :message))) issues)
+                :to-be nil))))
+
+  (it "answers nil outside an Org entry, so a bare check warns as before"
+    (with-temp-buffer
+      (expect (org-canvas--validate-entry-on-canvas-p) :to-be nil))))
 
 (describe "pull-only properties and the past-timestamp warning"
   (it "still warns for an ordinary timestamp in the past"

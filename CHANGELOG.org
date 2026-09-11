@@ -80,6 +80,7 @@ Each entry names the pull request that merged it.
 
 ** Fixed
 
+- #208 =org-canvas-validate= no longer warns that a timestamp is in the past on a heading already on Canvas, or on the course's own dates in settings.org: a past date there is history, and four weeks into a term every assignment that had run was a warning. A heading no push has created still warns, since a past date about to be sent is most likely a typo; =org-canvas-validate-past-timestamps= restores the old behaviour with =always=, or drops the warning with =never=
 - The pull menu bound =G= twice, to group categories and to grading periods; grading periods are =y= and the roster is =u=
 - #198 A module item's =COMPLETION_REQUIREMENT= and =MIN_SCORE= reach Canvas: the JSON payload carried them as bracketed form-encoded keys, which Canvas ignored without a word, so no requirement was ever set
 - #199 =org-canvas-pull-modules= links a Page item to its pages.org heading (Canvas names a page by =page_url=, not =content_id=) and writes =COMPLETION_REQUIREMENT= and =MIN_SCORE= back instead of dropping them

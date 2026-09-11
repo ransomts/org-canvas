@@ -52,6 +52,7 @@
   :label "Settings"
   :file-var 'org-canvas-settings-file
   :query "LEVEL=1"
+  :always-on-canvas t
   :properties
   `((:org-prop "APPLY_WEIGHTS" :data-key :apply_weights :type boolean
      :doc "Weight assignment groups")
