@@ -83,6 +83,7 @@ Each entry names the pull request that merged it.
 
 ** Fixed
 
+- =org-canvas-api-request-all-pages= no longer walks forever when a reply without headers answers the same full page to every page number (a test stub, or an endpoint that ignores =page=): the repeat stops the walk with one warning, and a walk past =org-canvas--api-max-pages= (a thousand pages) signals an error instead of growing without bound. One such loop took an Emacs to the memory limit during a test run
 - #224 The override sync deleted every student or group override on an assignment with an overrides table, since it deleted whatever lacked a section id in the table; an extension given in the web UI vanished at the next sync. Deletion is now by override id, of what the table no longer matches, and the table can carry those overrides
 - #208 =org-canvas-validate= no longer warns that a timestamp is in the past on a heading already on Canvas, or on the course's own dates in settings.org: a past date there is history, and four weeks into a term every assignment that had run was a warning. A heading no push has created still warns, since a past date about to be sent is most likely a typo; =org-canvas-validate-past-timestamps= restores the old behaviour with =always=, or drops the warning with =never=
 - The pull menu bound =G= twice, to group categories and to grading periods; grading periods are =y= and the roster is =u=
