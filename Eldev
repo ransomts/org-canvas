@@ -46,6 +46,7 @@
                                   "lisp/org-canvas-group-categories.el"
                                   "lisp/org-canvas-groups.el"
                                   "lisp/org-canvas-people.el"
+                                  "lisp/org-canvas-gradebook.el"
                                   "lisp/org-canvas-calendar.el"
                                   "lisp/org-canvas-validate.el"
                                   "lisp/org-canvas-submissions.el"

@@ -247,6 +247,7 @@ These files have no outgoing links to other course files:
 | =group-categories.org=  | Group Categories   | Group sets for group work     |
 | =groups.org=            | Groups             | Pull-only: groups and members per category (student names) |
 | =people.org=            | People             | Pull-only: the roster by role, with sections and state (names) |
+| =gradebook.org=         | Gradebook          | Pull-only: every student's scores and missing work, by student and by section |
 | =pages.org=             | Wiki Pages         | Course content pages          |
 | =files.org=             | Files              | Binary file uploads           |
 | =discussions.org=       | Discussions        | Discussion topics             |
@@ -1669,6 +1670,45 @@ all the same: treat =people.org= as you treat the submissions
 directory and keep it out of a course repository (add it to
 =.gitignore=) and out of anything you share.
 
+** gradebook.org
+
+Pull-only.  =org-canvas-pull-gradebook= writes a course-wide overview
+of grades: each student's current and final score, how many
+submissions are missing or late, when Canvas last saw them, and a
+summary per section.  It answers "who is falling behind?" without
+opening the Canvas gradebook or pulling one grading file per
+assignment.  Nothing in this file is pushed, and the tables are
+derived: every pull rewrites them, so anything you write under its
+headings is gone at the next pull.
+
+*** Structure
+
+- =* Students=: one table, sorted by name, with the columns Student,
+  Sections, Current, Final, Missing, Late and Last activity.  A
+  student is one row however many sections they sit in.  The Student
+  cell links to the person's heading in =people.org= when that file
+  holds their user id (pull the roster first)
+- =* Sections=: one table with Section, Students, Mean current, Mean
+  final and Missing (the section's missing submissions added up)
+
+Current is the score over graded work; Final counts every ungraded
+assignment as zero, work not yet due included, so it sits low early in
+the term and only means something near the end.
+=org-canvas-gradebook-unposted= (default =t=) takes the
+instructor's unposted scores, hidden grades included; set it to nil
+for the scores students see.  Missing and Late come from Canvas's
+course analytics, which some tokens may not read: then the two
+columns are blank and a line under the table says so, and the rest of
+the pull goes on.  There are no per-assignment columns; that is what
+grading files are for (see [[*Grading Submissions][Grading Submissions]]).
+
+*** Personal Data
+
+Scores are more sensitive than names.  Only the name and the numbers
+are written, never an identifier, but treat =gradebook.org= as you
+treat the submissions directory: keep it out of a course repository
+(add it to =.gitignore=) and out of anything you share.
+
 ** calendar.org
 
 Non-assignment calendar events such as office hours, holidays, and review sessions.
@@ -2307,6 +2347,7 @@ Each content type can be pulled individually:
 | =org-canvas-pull-group-categories=     | Pull group categories                 |
 | =org-canvas-pull-groups=               | Pull groups and their members         |
 | =org-canvas-pull-people=               | Pull the course roster                |
+| =org-canvas-pull-gradebook=            | Pull the grade overview (read-only)   |
 | =org-canvas-pull-assignments=          | Pull assignments with descriptions    |
 | =org-canvas-pull-quizzes=              | Pull quizzes with questions           |
 | =org-canvas-pull-pages=               | Pull wiki pages with body content     |
@@ -2561,6 +2602,7 @@ pulled front page carries =:FRONT_PAGE: true=, so it round-trips.
 | =org-canvas-pull-group-categories=     | Pull group categories                 |
 | =org-canvas-pull-groups=               | Pull groups and their members         |
 | =org-canvas-pull-people=               | Pull the course roster                |
+| =org-canvas-pull-gradebook=            | Pull the grade overview (read-only)   |
 | =org-canvas-pull-assignments=          | Pull assignments with descriptions    |
 | =org-canvas-pull-quizzes=              | Pull classic quizzes with questions   |
 | =org-canvas-pull-new-quizzes=          | Pull New Quizzes with items           |
