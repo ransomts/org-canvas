@@ -4332,6 +4332,20 @@ old
       (expect (test-org-canvas-count-matches "^\\*\\*\\* A1$" text) :to-equal 1)
       (expect text :not :to-match "^old$")))
 
+  (it "writes the bank id of a bank-backed group and names a nameless group by its id"
+    (with-temp-org-buffer "* Quiz A\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n"
+      (goto-char (point-min))
+      (re-search-forward "^\\* Quiz A")
+      (org-back-to-heading t)
+      (org-canvas--quiz-pull-insert-group
+       '((id . 9) (name . :null) (pick_count . 2) (question_points . 3)
+         (assessment_question_bank_id . 42))
+       nil)
+      (let ((text (buffer-string)))
+        (expect text :to-match "^\\*\\* Group 9$")
+        (expect text :to-match ":QUESTION_BANK_ID: +42\n")
+        (expect text :to-match ":PICK_COUNT: +2\n"))))
+
   (it "round-trips: the sync parses the pulled group and pushes its questions into it"
     (let* ((result (test-quiz-243--pull
                     ""
