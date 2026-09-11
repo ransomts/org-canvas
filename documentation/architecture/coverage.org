@@ -78,7 +78,7 @@ settings file.
 | External tools (LTI)           | list installed tools so an assignment can name one     | install or configure a tool                  |
 | Turnitin document processor    | pull and diff the attachment as a Canvas-owned property | set it; deliberately, see decisions.org      |
 | Planner                        | a page's student to-do date                            | planner notes or the to-do list              |
-| Submissions                    | grades, comments, attachments, posting grades and each student's posted-at, per assignment; the course-wide score overview (gradebook.org); a classic quiz's attempts, kept and latest scores and time spent, read-only per quiz; each classic quiz's item analysis (quiz-results.org) | New Quiz attempts and reports, peer reviews, moderation |
+| Submissions                    | grades, comments, attachments, posting grades and each student's posted-at, per assignment; the course-wide score overview (gradebook.org); a classic quiz's attempts, kept and latest scores and time spent, read-only per quiz; each classic quiz's item analysis (quiz-results.org); who reviews whom on an assignment and which reviews are done, read-only per assignment | New Quiz attempts and reports, assigning peer reviewers, moderation |
 
 * Never Touched
 
