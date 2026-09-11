@@ -8,6 +8,7 @@ Each entry names the pull request that merged it.
 
 ** Added
 
+- =org-canvas-pull-grading-periods=: the course's grading periods are pulled into =grading-periods.org= (start, end and close dates, weight, closed flag), read-only since periods belong to the term; =org-canvas-validate= then warns when an assignment's =DUE_AT= falls outside every pulled period
 - =org-canvas-pull-discussion-replies=: a pull-only archive of what was written under each discussion topic, into =discussion-replies.org= — one heading per topic with entries, its entries and their replies beneath, matched by =CANVAS_ENTRY_ID= on a re-pull; nothing local is deleted and nothing is written to Canvas
 - =documentation/architecture/coverage.org=: the map of what org-canvas covers in Canvas, what it touches in one direction only, and what it never reads or writes, with the gaps most likely to matter for a course and the grep that refreshes it
 - =org-canvas-sync-file-at-point=: files are on the sync macro, so the file at point can be uploaded alone. The macro gains =:hash= (a function replacing the payload's md5, or =push= when the push owns change detection and answers =skip= for nothing to send) and =:dry-run push= (the push guards its own writes and previews them); a parser that declines a heading marks it a skip

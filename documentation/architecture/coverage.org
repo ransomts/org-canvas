@@ -41,6 +41,7 @@ pull-at-point and prune.
 | Quizzes (classic) | yes  | yes      | yes  | yes    | yes      | questions and groups inline; a bank may be named, never managed |
 | Rubrics           | yes  | yes      | yes  | yes    | yes      | criteria, ratings, outcome links; associations via assignments  |
 | Sections          | no   | no       | yes  | no     | no       | pull-only, so overrides can name them                           |
+| Grading periods   | no   | no       | yes  | no     | no       | pull-only; validate warns when a due date falls outside every period |
 | Overrides         | yes  | no       | yes  | no     | no       | per-section dates, reconciled from a table under each assignment |
 | Course settings   | yes  | no       | yes  | no     | no       | see the settings list below                                     |
 
@@ -78,9 +79,9 @@ Nothing in =lisp/= reads or writes these.  Where a course needs them,
 they are set in the Canvas web UI and org-canvas neither sees nor
 disturbs them.
 
-- *Gradebook configuration:* grading periods, grade posting policies
-  (manual or automatic posting), custom gradebook columns, the
-  gradebook's own settings.
+- *Gradebook configuration:* grade posting policies (manual or
+  automatic posting), custom gradebook columns, the gradebook's own
+  settings.  Grading periods are pulled (see the covered table).
 - *People:* enrollments, users, the roster, and section membership.
   Sections are pulled as objects; who is in them is not.
 - *Group membership:* which students are in which group.
@@ -118,18 +119,16 @@ in order:
    file may sit hidden until posted in the web UI.
 2. *Group membership*, whenever an assignment or discussion is a group
    assignment.
-3. *Grading periods*, where a term uses them, since assignment dates
-   and weights then interact with periods org-canvas cannot see.
 
 The rest are rarely set at the course level or belong to the
 institution.
 
 * Adding a Type
 
-Grading periods and posting policies are the simplest candidates: flat
-objects with no children, so a pull-only module is a registration, a
-=define-pull= and a test file, and a full sync adds parse, build and
-=define-sync= on top.  =module-developer-guide.org= is the step by
+Posting policies are the simplest candidate: a flat object with no
+children, so a pull-only module is a registration, a =define-pull=
+and a test file, and a full sync adds parse, build and =define-sync=
+on top (grading periods went exactly that way).  =module-developer-guide.org= is the step by
 step.  Membership is harder, because it hangs under another type's
 heading and needs the child-reconciler pattern modules, quizzes and
 New Quizzes use inside finalize; replies took the pull-only route.
