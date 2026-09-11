@@ -6,6 +6,7 @@
 :LICENSE:  cc_by_nc_sa
 :APPLY_WEIGHTS: true
 :HIDE_FINAL_GRADES: false
+:POST_POLICY: automatic
 :PUBLIC_SYLLABUS: true
 :IS_PUBLIC: false
 :START_AT: <2026-08-24 Mon 08:00>

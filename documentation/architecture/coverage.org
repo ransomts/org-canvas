@@ -44,7 +44,8 @@ pull-at-point and prune.
 | Sections          | no   | no       | yes  | no     | no       | pull-only, so overrides can name them                           |
 | Grading periods   | no   | no       | yes  | no     | no       | pull-only; validate warns when a due date falls outside every period |
 | Overrides         | yes  | no       | yes  | no     | no       | per-section dates, reconciled from a table under each assignment |
-| Course settings   | yes  | no       | yes  | no     | no       | see the settings list below                                     |
+| Course settings   | yes  | no       | yes  | no     | no       | see the settings list below; the post policy goes by GraphQL    |
+| Post policies     | yes  | no       | yes  | no     | no       | course and per-assignment grade post policy; posting grades from a grading file |
 
 Submission grading (=org-canvas-submissions.el=) is a workflow, not a
 content type: it pulls a grading file per assignment, pushes scores
@@ -57,8 +58,9 @@ view, licence, start and end dates, the student discussion and
 announcement permissions, past and future view restrictions, the
 announcements-on-home setting and its limit, distribution graphs,
 final-grade hiding, weighted assignment groups, the grading standard
-by id, the late and missing submission policies, and the course image.
-Navigation tabs are synced from the settings file.
+by id, the late and missing submission policies, the course image,
+and the grade post policy.  Navigation tabs are synced from the
+settings file.
 
 * Touched in One Direction, or by Reference Only
 
@@ -80,9 +82,9 @@ Nothing in =lisp/= reads or writes these.  Where a course needs them,
 they are set in the Canvas web UI and org-canvas neither sees nor
 disturbs them.
 
-- *Gradebook configuration:* grade posting policies (manual or
-  automatic posting), custom gradebook columns, the gradebook's own
-  settings.  Grading periods are pulled (see the covered table).
+- *Gradebook configuration:* custom gradebook columns and the
+  gradebook's own settings.  Grading periods are pulled and post
+  policies are managed (see the covered table).
 - *People:* enrollments, users, the roster, and section membership.
   Sections are pulled as objects; who is in them is not.
 - *Discussion checkpoints*, the newer graded-discussion feature; replies themselves are pulled (see the covered table).
@@ -111,22 +113,20 @@ disturbs them.
 
 * Which Gaps Bite
 
-For a course run from Org files, the absences most likely to matter,
-in order:
-
-1. *Posting policies.*  A manually posted gradebook is a common default
-   and nothing here can see or set it, so grades pushed from a grading
-   file may sit hidden until posted in the web UI.
-
-The rest are rarely set at the course level or belong to the
-institution.
+The four absences that ranked here when this map was first written —
+posting policies, group membership, grading periods and discussion
+replies — are closed: policies are managed, the other three are
+pulled.  What remains in "Never Touched" is rarely set at the course
+level or belongs to the institution; nothing there is known to have
+bitten a course run from Org.  When one does, add it back here with
+the incident.
 
 * Adding a Type
 
-Posting policies are the simplest candidate: a flat object with no
-children, so a pull-only module is a registration, a =define-pull=
-and a test file, and a full sync adds parse, build and =define-sync=
-on top (grading periods went exactly that way).  =module-developer-guide.org= is the step by
+A flat object with no children is the simplest candidate: a pull-only
+module is a registration, a =define-pull= and a test file, and a full
+sync adds parse, build and =define-sync= on top (grading periods went
+exactly that way; post policies needed GraphQL, see decisions.org).  =module-developer-guide.org= is the step by
 step.  Managing membership from Org would be harder, because members hang
 under another type's heading and need the child-reconciler pattern
 modules, quizzes and New Quizzes use inside finalize; reading them, as

@@ -2135,5 +2135,101 @@ which records the frames from the signalling `signal' out to
         (expect (org-canvas--associate-rubric 1 "2" "Assignment")
                 :not :to-throw)))))
 
+(describe "GraphQL transport (issue #202)"
+  (it "posts the document and variables to /api/graphql and returns data"
+    (with-org-canvas-test-config
+      (let ((seen nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest args)
+                     (setq seen (list method url (plist-get args :data)))
+                     '((data . ((course . ((postPolicy . ((postManually . t)))))))))))
+          (let ((data (org-canvas--graphql-send "query ($id: ID!) { course(id: $id) { postPolicy { postManually } } }"
+                                                '((id . "297530")))))
+            (expect (nth 0 seen) :to-be 'POST)
+            (expect (nth 1 seen) :to-match "/api/graphql\\'")
+            (expect (alist-get 'query (nth 2 seen)) :to-match "\\`query ")
+            (expect (alist-get 'variables (nth 2 seen)) :to-equal '((id . "297530")))
+            (expect (alist-get 'postManually (alist-get 'postPolicy (alist-get 'course data)))
+                    :to-be t))))))
+
+  (it "omits variables when none are given"
+    (with-org-canvas-test-config
+      (let ((body nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_m _u &rest args) (setq body (plist-get args :data)) '((data . nil)))))
+          (org-canvas--graphql-send "{ course { _id } }")
+          (expect (assq 'variables body) :to-be nil)))))
+
+  (it "turns a 200 reply carrying errors into an api error naming them"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _)
+                   '((data . nil)
+                     (errors . [((message . "Field 'nope' doesn't exist"))
+                                ((message . "not allowed"))])))))
+        (condition-case err
+            (progn (org-canvas--graphql-send "{ nope }") (expect nil :to-be t))
+          (org-canvas-api-error
+           (expect (error-message-string err) :to-match "doesn't exist; not allowed"))))))
+
+  (it "names an error that carries no message by its whole object"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _) '((errors . [((extensions . ((code . "FORBIDDEN"))))])))))
+        (condition-case err
+            (progn (org-canvas--graphql-send "{ x }") (expect nil :to-be t))
+          (org-canvas-api-error
+           (expect (error-message-string err) :to-match "FORBIDDEN"))))))
+
+  (it "lets a query through on a read-only course, but not a mutation"
+    (with-org-canvas-test-config
+      (let ((org-canvas-read-only t))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method &rest _)
+                     (org-canvas--check-writable method)
+                     '((data . ((ok . t)))))))
+          (expect (alist-get 'ok (org-canvas--graphql-query "{ course { _id } }")) :to-be t)
+          (expect (org-canvas--graphql-send "mutation { x }") :to-throw 'org-canvas-read-only-error)))))
+
+  (it "refuses to run a mutation as a query"
+    (expect (org-canvas--graphql-query "  mutation ($a: ID!) { setCoursePostPolicy(input: {}) { x } }")
+            :to-throw 'org-canvas-api-error)))
+
+(describe "org-canvas--course-post-policy (issue #202)"
+  (before-each (org-canvas--course-post-policy-forget))
+  (after-each (org-canvas--course-post-policy-forget))
+
+  (it "maps post_manually to the policy names"
+    (expect (org-canvas--post-manually-to-policy t) :to-equal "manual")
+    (expect (org-canvas--post-manually-to-policy :json-false) :to-equal "automatic")
+    (expect (org-canvas--post-manually-to-policy nil) :to-be nil)
+    (expect (org-canvas--post-manually-to-policy :null) :to-be nil))
+
+  (it "reads the course once per course id and caches it"
+    (with-org-canvas-test-config
+      (let ((calls 0))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_m _u &rest args)
+                     (cl-incf calls)
+                     (expect (plist-get args :params) :to-equal '(("include[]" . "post_manually")))
+                     '((post_manually . t)))))
+          (expect (org-canvas--course-post-policy) :to-equal "manual")
+          (expect (org-canvas--course-post-policy) :to-equal "manual")
+          (expect calls :to-equal 1)
+          (org-canvas--course-post-policy-forget)
+          (expect (org-canvas--course-post-policy) :to-equal "manual")
+          (expect calls :to-equal 2)))))
+
+  (it "asks again for a different course"
+    (with-org-canvas-test-config
+      (let ((calls 0))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _) (cl-incf calls) '((post_manually . :json-false)))))
+          (expect (org-canvas--course-post-policy) :to-equal "automatic")
+          (let ((org-canvas-course-id "other"))
+            (expect (org-canvas--course-post-policy) :to-equal "automatic"))
+          (expect calls :to-equal 2))))))
+
+
 (provide 'org-canvas-core-api-test)
 ;;; org-canvas-core-api-test.el ends here

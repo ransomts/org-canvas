@@ -783,6 +783,100 @@ Returns a flat list of all items across all pages."
           (setq page (1+ page)))))
     (nreverse all-items)))
 
+
+;;;; GraphQL
+
+;; Canvas keeps a few course-level operations out of its REST API: the
+;; grade post policies and posting grades are GraphQL mutations only
+;; (issue #202).  The endpoint takes the same bearer token, so the
+;; request travels through `org-canvas-api-request' and inherits its
+;; redaction, rate-limit handling and the read-only guard.
+
+(defun org-canvas--graphql-url ()
+  "Return the course instance's GraphQL endpoint."
+  (format "%s/api/graphql" org-canvas-base-url))
+
+(defun org-canvas--graphql-mutation-p (document)
+  "Return non-nil when the GraphQL DOCUMENT is a mutation."
+  (string-match-p "\\`[[:space:]]*mutation\\b" document))
+
+(defun org-canvas--graphql-errors-message (errors)
+  "Join the GraphQL ERRORS (a vector or list of alists) into one line."
+  (mapconcat (lambda (e) (or (alist-get 'message e) (format "%s" e)))
+             (append errors nil) "; "))
+
+(defun org-canvas--graphql-send (document &optional variables)
+  "POST the GraphQL DOCUMENT with VARIABLES and return its `data' alist.
+GraphQL answers 200 with an `errors' array when a field fails, so a
+reply carrying errors signals `org-canvas-api-error' with their
+messages; the transport's own errors pass through as they are."
+  (let* ((body (append (list (cons 'query document))
+                       (when variables (list (cons 'variables variables)))))
+         (reply (org-canvas-api-request 'POST (org-canvas--graphql-url) :data body))
+         (errors (and (listp reply) (alist-get 'errors reply))))
+    (when (and errors (not (eq errors :null)) (> (length errors) 0))
+      (org-canvas--signal 'org-canvas-api-error
+        "GraphQL: %s" (org-canvas--graphql-errors-message errors)))
+    (and (listp reply) (alist-get 'data reply))))
+
+(defun org-canvas--graphql-query (document &optional variables)
+  "Run the GraphQL query DOCUMENT with VARIABLES; return its `data' alist.
+A query is a read, so a course marked `org-canvas-read-only' allows it
+although it travels as a POST: the guard is lifted for this one request
+only, and never for a document that is a mutation, which signals here
+before anything is sent.  Mutations go through
+`org-canvas--graphql-mutate', which keeps the guard and the dry run."
+  (when (org-canvas--graphql-mutation-p document)
+    (org-canvas--signal 'org-canvas-api-error
+      "org-canvas--graphql-query was handed a mutation; use org-canvas--graphql-mutate"))
+  (let ((org-canvas-read-only nil))
+    (org-canvas--graphql-send document variables)))
+
+(defvar org-canvas--course-post-policy-cache nil
+  "Cons of (COURSE-ID . POLICY) from the last course post-policy read.
+POLICY is \"manual\" or \"automatic\".  The assignments pull and the
+drift report ask once per run whether each assignment differs from the
+course; this keeps that to one GET.  Forgotten by
+`org-canvas--course-post-policy-forget' when the settings push changes
+the policy.")
+
+(defun org-canvas--post-manually-to-policy (post-manually)
+  "Return \"manual\" for a true POST-MANUALLY, \"automatic\" for false, else nil."
+  (cond ((eq post-manually t) "manual")
+        ((eq post-manually :json-false) "automatic")
+        (t nil)))
+
+(defun org-canvas--post-policy-from-property (raw property-name)
+  "Return RAW when it names a post policy, else warn and return nil.
+Unlike `org-canvas--validate-property', an unrecognised value falls
+back to nothing rather than to the first allowed value: a typo must not
+quietly flip a gradebook to manual or automatic posting.  PROPERTY-NAME
+is for the warning."
+  (cond ((null raw) nil)
+        ((member raw org-canvas--valid-post-policies) raw)
+        (t (org-canvas--log-warning org-canvas--logger
+             "[Validate] %s: '%s' is not valid (expected: %s); the policy is left as it is"
+             property-name raw (string-join org-canvas--valid-post-policies ", "))
+           nil)))
+
+(defun org-canvas--course-post-policy ()
+  "Return the course's grade post policy, \"manual\" or \"automatic\".
+Read once per course through GET /courses/:id?include[]=post_manually
+and cached; nil when Canvas does not report it."
+  (unless (equal (car org-canvas--course-post-policy-cache) org-canvas-course-id)
+    (let ((course (org-canvas-api-request
+                   'GET (org-canvas-api-course-endpoint "")
+                   :params '(("include[]" . "post_manually")))))
+      (setq org-canvas--course-post-policy-cache
+            (cons org-canvas-course-id
+                  (org-canvas--post-manually-to-policy
+                   (alist-get 'post_manually course))))))
+  (cdr org-canvas--course-post-policy-cache))
+
+(defun org-canvas--course-post-policy-forget ()
+  "Drop the cached course post policy, so the next read asks Canvas."
+  (setq org-canvas--course-post-policy-cache nil))
+
 ;;;; 3b. Rubric Association
 
 (defun org-canvas--associate-rubric (item-id rubric-id association-type &optional flags)
