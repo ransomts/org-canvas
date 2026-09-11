@@ -4231,4 +4231,143 @@ not on Canvas yet
       (let ((data (org-canvas--question-parse-entry "5")))
         (expect (plist-get data :question_type) :to-equal "essay_question")))))
 
+(describe "quiz pull writes question groups (issue #243)"
+  (defconst test-quiz-243--group
+    '((id . 7) (name . "Pool") (pick_count . 1) (question_points . 2)
+      (assessment_question_bank_id . :null) (position . 1))
+    "The group Canvas answers for id 7.")
+
+  (defun test-quiz-243--question (id name &optional group)
+    "A question ID named NAME, in GROUP when given."
+    `((id . ,id) (question_name . ,name) (question_type . "short_answer_question")
+      (question_text . "t") (points_possible . 1.0) (answers . [])
+      (quiz_group_id . ,(or group :null))))
+
+  (defun test-quiz-243--pull (initial questions &optional times refuse-group)
+    "Pull QUESTIONS over INITIAL TIMES times (default 2); return (TEXT . WARNINGS).
+With REFUSE-GROUP the group request signals an API error."
+    (let ((temp (make-temp-file "quiz-243-" nil ".org"))
+          (group-calls 0) (warned nil))
+      (unwind-protect
+          (progn
+            (with-temp-file temp (insert initial))
+            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                       (lambda (_method url &rest _)
+                         (if (string-match-p "quizzes\\'" url)
+                             '(((id . 100) (title . "Quiz A") (description . "") (published . t)))
+                           questions)))
+                      ((symbol-function 'org-canvas-api-request)
+                       (lambda (_method url &rest _)
+                         (cl-incf group-calls)
+                         (if (and (string-match-p "/groups/7\\'" url) (not refuse-group))
+                             test-quiz-243--group
+                           (signal 'org-canvas-api-error (list "403 Forbidden")))))
+                      ((symbol-function 'org-canvas--log-warning)
+                       (lambda (_logger fmt &rest args) (push (apply #'format fmt args) warned)))
+                      ((symbol-function 'message) #'ignore))
+              (let ((org-canvas-quizzes-file temp))
+                (with-org-canvas-test-config
+                  (with-sync-test-env
+                    (dotimes (_ (or times 2))
+                      (org-canvas-pull-quizzes))))))
+            (list (with-temp-buffer (insert-file-contents temp) (buffer-string))
+                  warned group-calls))
+        (let ((buf (find-buffer-visiting temp)))
+          (when buf (with-current-buffer buf (set-buffer-modified-p nil)) (kill-buffer buf)))
+        (delete-file temp))))
+
+  (it "writes one group heading with its questions at level 3, once, after two pulls"
+    (let* ((result (test-quiz-243--pull
+                    ""
+                    (list (test-quiz-243--question 1 "A1" 7)
+                          (test-quiz-243--question 2 "A2" 7)
+                          (test-quiz-243--question 3 "B"))))
+           (text (car result)))
+      (expect (test-org-canvas-count-matches "^\\*\\* Pool$" text) :to-equal 1)
+      (expect (test-org-canvas-count-matches "^\\*\\*\\* A1$" text) :to-equal 1)
+      (expect (test-org-canvas-count-matches "^\\*\\*\\* A2$" text) :to-equal 1)
+      (expect (test-org-canvas-count-matches "^\\*\\* B$" text) :to-equal 1)
+      (expect text :not :to-match "^\\*\\* A1$")
+      (expect text :to-match ":TYPE: +group\n")
+      (expect text :to-match ":CANVAS_ID: +7\n")
+      (expect text :to-match ":PICK_COUNT: +1\n")
+      (expect text :to-match ":QUESTION_POINTS: +2\n")
+      (expect text :not :to-match "QUESTION_BANK_ID")
+      (expect (string-match "\\*\\* Pool" text) :to-be-less-than (string-match "\\*\\*\\* A1" text))
+      (expect (string-match "\\*\\*\\* A1" text) :to-be-less-than (string-match "\\*\\*\\* A2" text))
+      (expect (string-match "\\*\\*\\* A2" text) :to-be-less-than (string-match "\\*\\* B" text))
+      ;; One group request per pull, not one per question.
+      (expect (nth 2 result) :to-equal 2)))
+
+  (it "writes a group's questions ungrouped with one warning when Canvas refuses the group"
+    (let* ((result (test-quiz-243--pull
+                    ""
+                    (list (test-quiz-243--question 1 "A1" 7)
+                          (test-quiz-243--question 2 "A2" 7))
+                    1 t))
+           (text (car result)))
+      (expect (test-org-canvas-count-matches "^\\*\\* A1$" text) :to-equal 1)
+      (expect (test-org-canvas-count-matches "^\\*\\* A2$" text) :to-equal 1)
+      (expect text :not :to-match "Pool\\|TYPE: +group")
+      (expect (length (nth 1 result)) :to-equal 1)
+      (expect (car (nth 1 result)) :to-match "question group 7")))
+
+  (it "moves a question's heading into the group it joined and drops the ungrouped copy"
+    (let* ((result (test-quiz-243--pull
+                    "* Quiz A
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** A1
+:PROPERTIES:
+:CANVAS_ID: 1
+:TYPE: short_answer_question
+:END:
+old
+"
+                    (list (test-quiz-243--question 1 "A1" 7))
+                    1))
+           (text (car result)))
+      (expect (test-org-canvas-count-matches "^\\*\\* A1$" text) :to-equal 0)
+      (expect (test-org-canvas-count-matches "^\\*\\*\\* A1$" text) :to-equal 1)
+      (expect text :not :to-match "^old$")))
+
+  (it "round-trips: the sync parses the pulled group and pushes its questions into it"
+    (let* ((result (test-quiz-243--pull
+                    ""
+                    (list (test-quiz-243--question 1 "A1" 7)
+                          (test-quiz-243--question 3 "B"))
+                    1))
+           (text (car result))
+           (posted nil))
+      (with-temp-org-buffer text
+        (goto-char (point-min))
+        (re-search-forward "^\\*\\* Pool")
+        (let ((group (org-canvas--question-group-parse-entry "100")))
+          (expect (plist-get group :canvas-id) :to-equal "7")
+          (expect (plist-get group :pick-count) :to-equal 1)
+          (expect (plist-get group :question-points) :to-equal 2))
+        (goto-char (point-min))
+        (re-search-forward "^\\*\\*\\* A1")
+        (let* ((data (org-canvas--question-parse-entry "100"))
+               (payload (org-canvas--question-build-payload data)))
+          (expect (plist-get data :quiz_group_id) :to-equal 7)
+          (expect (alist-get 'quiz_group_id (alist-get 'question payload)) :to-equal 7))
+        (goto-char (point-min))
+        (re-search-forward "^\\*\\* B")
+        (let ((data (org-canvas--question-parse-entry "100")))
+          (expect (plist-get data :quiz_group_id) :to-be nil))
+        ;; The sync collects both the grouped and the ungrouped question.
+        (goto-char (point-min))
+        (re-search-forward "^\\* Quiz A")
+        (org-back-to-heading t)
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest args)
+                     (push (list method url (plist-get args :data)) posted)
+                     '((id . 1)))))
+          (org-canvas--sync-quiz-questions (point-marker) "100"))
+        (expect (length posted) :to-equal 2)
+        (let ((grouped (cl-find-if (lambda (p) (string-match-p "questions/1\\'" (nth 1 p))) posted)))
+          (expect (alist-get 'quiz_group_id (alist-get 'question (nth 2 grouped))) :to-equal 7))))))
+
 ;;; org-canvas-quizzes-test.el ends here

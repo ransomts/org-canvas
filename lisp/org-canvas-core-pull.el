@@ -398,18 +398,20 @@ Returns a point in the buffer visiting FILE."
 ;;;; Children of a Pulled Entry
 
 (defun org-canvas--pull-find-child (id-property id title)
-  "Return the position of the level-2 child of the entry at point for ID or TITLE.
-A child carrying ID in ID-PROPERTY wins; failing that, a child without
-ID-PROPERTY whose title is TITLE, so a heading written before the pull
-stamped ids, or by hand under the same name, is taken over rather
-than duplicated (issue #239).  Nil when there is none.  Point stays."
+  "Return the position of the direct child of the entry at point for ID or TITLE.
+A child is a heading one level below the entry.  A child carrying ID
+in ID-PROPERTY wins; failing that, a child without ID-PROPERTY whose
+title is TITLE, so a heading written before the pull stamped ids, or
+by hand under the same name, is taken over rather than duplicated
+\(issue #239).  Nil when there is none.  Point stays."
   (save-excursion
     (org-back-to-heading t)
     (let ((end (save-excursion (org-end-of-subtree t t) (point)))
+          (child-level (1+ (org-outline-level)))
           (target (and id (format "%s" id)))
           (by-id nil) (by-title nil))
       (while (and (not by-id) (outline-next-heading) (< (point) end))
-        (when (= (org-outline-level) 2)
+        (when (= (org-outline-level) child-level)
           (let ((have (org-entry-get (point) id-property)))
             (cond ((and target have (equal have target)) (setq by-id (point)))
                   ((and (not have) (not by-title) title
@@ -436,13 +438,18 @@ ID is looked up in ID-PROPERTY; TITLE matches an unstamped child.  The
 position of the existing child, emptied, when
 `org-canvas--pull-find-child' finds one; else the end of the entry's
 subtree, with a newline added so the child starts on its own line.
-Point is left there."
+Point is left there.  The entry may sit at any level; the child goes
+one level below it (`org-canvas--pull-child-stars' spells the stars)."
   (let ((existing (org-canvas--pull-find-child id-property id title)))
     (if existing
         (goto-char (org-canvas--pull-remove-child existing))
       (goto-char (save-excursion (org-end-of-subtree t) (point)))
       (unless (bolp) (insert "\n")))
     (point)))
+
+(defun org-canvas--pull-child-stars ()
+  "Return the stars of a heading one level below the entry at point."
+  (make-string (1+ (save-excursion (org-back-to-heading t) (org-outline-level))) ?*))
 
 (defun org-canvas--pull-child-close (next)
   "Keep whatever followed a rewritten child at NEXT on its own line.
