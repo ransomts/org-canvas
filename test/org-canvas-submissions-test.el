@@ -381,37 +381,109 @@
            (created_at . "2026-03-01T00:00:00Z"))])
         (expect (buffer-string) :to-match "INLINE:<b>Good</b>")))))
 
+(defconst test-rubric-criteria
+  '(((id . "_7104") (description . "Thesis") (points . 2.0)
+     (ratings . [((id . "r1") (description . "Excellent") (points . 2.0))
+                 ((id . "r2") (description . "Weak") (points . 1.0))]))
+    ((id . "_7105") (description . "Evidence | support") (points . 3))
+    ((id . "_7106") (description . "Style") (points . 1)))
+  "Three rubric criteria as the assignment object lists them.")
+
 (describe "org-canvas--submissions-render-rubric"
-  (it "renders rubric as org table"
+  (it "renders one row per criterion, pre-filled from the assessment"
     (with-temp-buffer
       (org-mode)
       (org-canvas--submissions-render-rubric
-       '((crit_1 . ((points . 18) (rating_description . "Excellent")))
-         (crit_2 . ((points . 15) (rating_description . "Good")))))
-      (expect (buffer-string) :to-match "\\*\\* Rubric Assessment")
-      (expect (buffer-string) :to-match "Excellent")
-      (expect (buffer-string) :to-match "18")))
-
-  (it "skips when nil"
+       test-rubric-criteria
+       '((_7104 . ((points . 2.0) (rating_id . "r1") (comments . "Sharp")))
+         (_7105 . ((points . 1.5) (comments . :null)))))
+      (let ((content (buffer-string)))
+        (expect content :to-match "^\\*\\* Rubric$")
+        (expect content :to-match "| Id *| Criterion *| Max *| Score *| Comment *|")
+        (expect content :to-match "| _7104 *| Thesis *| *2 *| *2 *| Sharp *|")
+        (expect content :to-match "| _7105 *| Evidence support *| *3 *| *1.5 *| *|")
+        (expect content :to-match "| _7106 *| Style *| *1 *| *| *|"))))
+  (it "renders empty cells without an assessment"
     (with-temp-buffer
-      (org-canvas--submissions-render-rubric nil)
-      (expect (buffer-string) :to-equal "")))
+      (org-mode)
+      (org-canvas--submissions-render-rubric test-rubric-criteria nil)
+      (expect (buffer-string) :to-match "| _7104 *| Thesis *| *2 *| *| *|")))
+  (it "renders the assessment alone when the criteria are unknown"
+    (with-temp-buffer
+      (org-mode)
+      (org-canvas--submissions-render-rubric
+       nil '((crit_1 . ((points . 18) (rating_description . "Excellent")))))
+      (expect (buffer-string) :to-match "| crit_1 *| *| *| *18 *| *|")))
+  (it "inserts nothing without a rubric"
+    (with-temp-buffer
+      (org-canvas--submissions-render-rubric nil nil)
+      (expect (buffer-string) :to-equal ""))))
 
-  (it "handles hash-table rubric"
-    (let ((ht (make-hash-table :test 'equal)))
-      (puthash 'crit_1 '((points . 20) (rating_description . "Great")) ht)
+(describe "org-canvas--submissions-rubric-digest"
+  (it "is nil for an empty table and stable across row order"
+    (expect (org-canvas--submissions-rubric-digest nil) :to-be nil)
+    (expect (org-canvas--submissions-rubric-digest '(("_7104" nil nil) ("_7105" nil nil)))
+            :to-be nil)
+    (expect (org-canvas--submissions-rubric-digest '(("_7104" "2" "Sharp") ("_7105" "1.5" nil)))
+            :to-equal (org-canvas--submissions-rubric-digest
+                       '(("_7105" "1.5" nil) ("_7104" "2" "Sharp"))))
+    (expect (org-canvas--submissions-rubric-digest '(("_7104" "2" "Sharp")))
+            :not :to-equal (org-canvas--submissions-rubric-digest '(("_7104" "2" "Sharper")))))
+  (it "agrees between Canvas's assessment and the table as typed"
+    (let ((sub (test-org-canvas-make-submission
+                '((rubric_assessment . ((_7104 . ((points . 2.0) (comments . "Sharp")))
+                                        (_7105 . ((points . 1.5)))))))))
       (with-temp-buffer
         (org-mode)
-        (org-canvas--submissions-render-rubric ht)
-        (expect (buffer-string) :to-match "Great")
-        (expect (buffer-string) :to-match "20"))))
-
-  (it "falls back to rating_id when description is nil"
+        (org-canvas--submissions-render-detail-entry sub "HW" "1001" test-rubric-criteria)
+        (goto-char (point-min))
+        (expect (org-entry-get (point) "CANVAS_RUBRIC")
+                :to-equal (org-canvas--submissions-submission-rubric-digest sub))
+        (expect (org-canvas--submissions-rubric-carryover) :to-be nil))))
+  (it "is absent from a heading whose student has no assessment"
     (with-temp-buffer
       (org-mode)
-      (org-canvas--submissions-render-rubric
-       '((crit_1 . ((points . 10) (rating_id . "rat_42")))))
-      (expect (buffer-string) :to-match "rat_42"))))
+      (org-canvas--submissions-render-detail-entry
+       (test-org-canvas-make-submission) "HW" "1001" test-rubric-criteria)
+      (expect (buffer-string) :not :to-match "CANVAS_RUBRIC")
+      (expect (buffer-string) :to-match "^\\*\\* Rubric$"))))
+
+(describe "org-canvas--submissions-rubric-rows"
+  (it "reads the rows of the entry's table, dropping the header and idless rows"
+    (with-temp-buffer
+      (org-mode)
+      (insert "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n\n** Rubric\n"
+              "| Id | Criterion | Max | Score | Comment |\n|---+---+---+---+---|\n"
+              "| _7104 | Thesis | 2 | 2 | Sharp |\n"
+              "| _7105 | Evidence | 3 |  |  |\n"
+              "|  | stray | | 1 | |\n"
+              "| _7106 | Style | 1 | 0.5\n"
+              "\n** Notes\n")
+      (goto-char (point-min))
+      (expect (org-canvas--submissions-rubric-rows)
+              :to-equal '(("_7104" "Thesis" "2" "2" "Sharp")
+                          ("_7105" "Evidence" "3" nil nil)
+                          ("_7106" "Style" "1" "0.5" nil)))))
+  (it "is nil without a Rubric heading, the old read-only one included"
+    (with-temp-buffer
+      (org-mode)
+      (insert "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n\n** Rubric Assessment\n| crit_1 | Excellent | 18 |\n")
+      (goto-char (point-min))
+      (expect (org-canvas--submissions-rubric-rows) :to-be nil))))
+
+(describe "org-canvas--submissions-rubric-set-row"
+  (it "writes the score and comment cells of one row and keeps the rest"
+    (with-temp-buffer
+      (org-mode)
+      (insert "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n\n** Rubric\n"
+              "| Id | Criterion | Max | Score | Comment |\n|---+---+---+---+---|\n"
+              "| _7104 | Thesis | 2 |  |  |\n| _7105 | Evidence | 3 |  |  |\n")
+      (goto-char (point-min))
+      (expect (org-canvas--submissions-rubric-set-row "_7105" "1.5" "Thin") :to-be-truthy)
+      (expect (org-canvas--submissions-rubric-set-row "_9999" "1" nil) :to-be nil)
+      (expect (org-canvas--submissions-rubric-rows)
+              :to-equal '(("_7104" "Thesis" "2" nil nil)
+                          ("_7105" "Evidence" "3" "1.5" "Thin"))))))
 
 ;;;; View Toggle
 
@@ -667,9 +739,9 @@
           ;; Comments
           (expect content :to-match "Prof. Smith")
           (expect content :to-match "Good work!")
-          ;; Rubric
-          (expect content :to-match "Excellent")
-          (expect content :to-match "18"))))))
+          ;; Rubric: the assessment alone, since no assignment was given
+          (expect content :to-match "^\\*\\* Rubric$")
+          (expect content :to-match "| crit_1 *| *| *| *18 *| *|"))))))
 
 ;;;; Edge Cases
 
@@ -982,12 +1054,33 @@
   (it "sends PUT with correct payload"
     (with-org-canvas-test-config
       (with-mock-api
-        (org-canvas--submissions-push-single-grade "1001" 5001 "95")
+        (org-canvas--submissions-push-single-grade
+         "1001" (list :user-id 5001 :name "A" :old-score "90" :new-score "95"))
         (expect-api-called 'PUT "assignments/1001/submissions/5001")
         (let* ((call (test-org-canvas-last-api-call))
                (data (nth 2 call)))
           (expect (alist-get 'posted_grade (alist-get 'submission data))
-                  :to-equal "95"))))))
+                  :to-equal "95")
+          (expect (assq 'rubric_assessment data) :to-be nil)))))
+  (it "sends the rubric assessment beside the grade, and alone when only it moved"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (org-canvas--submissions-push-single-grade
+         "1001" (list :user-id 5001 :name "A" :old-score "90" :new-score "4"
+                      :score-derived t
+                      :triples '(("_7104" "2" "Sharp") ("_7105" "2" nil) ("_7106" nil nil))))
+        (let ((data (nth 2 (test-org-canvas-last-api-call))))
+          (expect (alist-get 'posted_grade (alist-get 'submission data)) :to-equal "4")
+          (expect (alist-get 'rubric_assessment data)
+                  :to-equal '((_7104 . ((points . 2) (comments . "Sharp")))
+                              (_7105 . ((points . 2))))))
+        (org-canvas--submissions-push-single-grade
+         "1001" (list :user-id 5001 :name "A" :old-score "90" :new-score "90"
+                      :triples '(("_7104" nil "Late but fine"))))
+        (let ((data (nth 2 (test-org-canvas-last-api-call))))
+          (expect (assq 'submission data) :to-be nil)
+          (expect (alist-get 'rubric_assessment data)
+                  :to-equal '((_7104 . ((comments . "Late but fine"))))))))))
 
 (describe "org-canvas--submissions-push-bulk-grades"
   (it "sends POST with grade_data payload"
@@ -1388,7 +1481,7 @@
         (with-grading-file (concat test-grading-file-header
                                    "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:END:\n")
           (cl-letf (((symbol-function 'org-canvas--submissions-live-baselines)
-                     (lambda (_id) '((5001 . ("93" . 1)))))
+                     (lambda (_id) '((5001 . ("93" 1 nil)))))
                     ((symbol-function 'y-or-n-p) (lambda (_) t)))
             (org-canvas-submissions-push-grades))
           (expect (test-org-canvas-api-call-count) :to-equal 0)
@@ -1402,7 +1495,7 @@
         (with-grading-file (concat test-grading-file-header
                                    "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:ATTEMPT: 1\n:END:\n")
           (cl-letf (((symbol-function 'org-canvas--submissions-live-baselines)
-                     (lambda (_id) '((5001 . ("92" . 2)))))
+                     (lambda (_id) '((5001 . ("92" 2 nil)))))
                     ((symbol-function 'y-or-n-p) (lambda (_) t)))
             (org-canvas-submissions-push-grades))
           (expect (test-org-canvas-api-call-count) :to-equal 0)
@@ -1414,7 +1507,7 @@
         (with-grading-file (concat test-grading-file-header
                                    "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:CONFLICT: stale\n:END:\n\n* Beta, Bob\n:PROPERTIES:\n:USER_ID: 5002\n:SCORE: 80\n:CANVAS_SCORE: 75\n:END:\n")
           (cl-letf (((symbol-function 'org-canvas--submissions-live-baselines)
-                     (lambda (_id) '((5001 . ("92" . nil)) (5002 . ("75" . nil)))))
+                     (lambda (_id) '((5001 . ("92" nil nil)) (5002 . ("75" nil nil)))))
                     ((symbol-function 'y-or-n-p) (lambda (_) t)))
             (org-canvas-submissions-push-grades))
           (expect-api-called 'POST "assignments/1001/submissions/update_grades")
@@ -1527,8 +1620,15 @@
                         '((score . nil) (attempt . nil)
                           (user . ((id . 5002) (sortable_name . "Beta, Bob")))))))))
       (let ((live (org-canvas--submissions-live-baselines "1001")))
-        (expect (alist-get 5001 live) :to-equal '("5" . 2))
-        (expect (alist-get 5002 live) :to-equal '(nil . nil))))))
+        (expect (alist-get 5001 live) :to-equal '("5" 2 nil))
+        (expect (alist-get 5002 live) :to-equal '(nil nil nil)))))
+  (it "carries the digest of each student's assessment"
+    (let ((sub (test-org-canvas-make-submission
+                '((rubric_assessment . ((_7104 . ((points . 2)))))))))
+      (cl-letf (((symbol-function 'org-canvas--submissions-fetch-for-assignment)
+                 (lambda (_id) (list sub))))
+        (expect (nth 2 (alist-get 5001 (org-canvas--submissions-live-baselines "1001")))
+                :to-equal (org-canvas--submissions-rubric-digest '(("_7104" "2" nil))))))))
 
 (describe "clearing a grade"
   (it "pushes the empty score and drops the CANVAS_SCORE baseline"
@@ -1726,11 +1826,12 @@
 (defconst test-rubric-assignment
   '((id . 1001)
     (name . "Global Challenge Essay")
-    (rubric_settings . ((id . 133477) (title . "Essay Rubric") (points_possible . 100)))
-    (rubric . [((description . "Thesis") (points . 20.0)
+    (rubric_settings . ((id . 133477) (title . "Essay Rubric") (points_possible . 100)
+                        (use_for_grading . t)))
+    (rubric . [((id . "_1") (description . "Thesis") (points . 20.0)
                 (ratings . [((description . "Excellent") (points . 20.0))
                             ((description . "Weak | vague") (points . 5.0))]))
-               ((description . "Evidence") (points . 30)
+               ((id . "_2") (description . "Evidence") (points . 30)
                 (ratings . [((description . "Strong") (points . 30))]))])))
 
 (describe "org-canvas--submissions-rubric-settings"
@@ -1768,6 +1869,7 @@
           (let ((content (buffer-string)))
             (expect content :to-match "^#\\+PROPERTY: CANVAS_RUBRIC_ID 133477$")
             (expect content :to-match "^#\\+PROPERTY: CANVAS_RUBRIC_TITLE Essay Rubric$")
+            (expect content :to-match "^#\\+PROPERTY: CANVAS_RUBRIC_USE_FOR_GRADING true$")
             (expect content :to-match "^Rubric: \\[\\[file:\\.\\./rubrics\\.org::\\*Essay Rubric\\]\\[in Org\\]\\], \\[\\[https://canvas\\.example\\.edu/courses/42/rubrics/133477\\]\\[on Canvas\\]\\]$")
             (expect content :to-match "| Criterion *| Points *| Ratings *|")
             (expect content :to-match "| Thesis *| *20 *| Excellent (20), Weak vague (5) *|")
@@ -2137,7 +2239,7 @@
                 (prompt nil))
             (setq-local org-canvas-submissions--current-view 'detail)
             (cl-letf (((symbol-function 'org-canvas--submissions-live-baselines)
-                       (lambda (_id) '((5001 . ("92" . 1)) (5002 . ("70" . 1)))))
+                       (lambda (_id) '((5001 . ("92" 1 nil)) (5002 . ("70" 1 nil)))))
                       ((symbol-function 'y-or-n-p)
                        (lambda (p) (setq prompt p) nil)))
               (org-canvas-submissions-push-grades))
@@ -2214,6 +2316,284 @@
 
   (it "binds P in the grading file and lists it in the menu"
     (expect (lookup-key org-canvas-submissions-mode-map (kbd "P")) :to-be #'org-canvas-submissions-post-grades)))
+
+
+;;;; Rubric Assessments From the Grading File (issue #250)
+
+(defconst test-rubric-file-header
+  (concat test-grading-file-header
+          "#+PROPERTY: POINTS_POSSIBLE 6\n"
+          "#+PROPERTY: CANVAS_RUBRIC_ID 133477\n"
+          "#+PROPERTY: CANVAS_RUBRIC_USE_FOR_GRADING true\n\n")
+  "Grading-file header of an assignment whose rubric sets the grade.")
+
+(defun test-rubric-entry (name user-id props rows)
+  "Return a student entry for NAME and USER-ID with PROPS and rubric ROWS.
+PROPS is a string of property lines; ROWS a list of (ID CRITERION MAX SCORE COMMENT)."
+  (concat (format "* %s\n:PROPERTIES:\n:USER_ID: %s\n%s:END:\n\n** Rubric\n" name user-id props)
+          "| Id | Criterion | Max | Score | Comment |\n|---+---+---+---+---|\n"
+          (mapconcat (lambda (r) (apply #'format "| %s | %s | %s | %s | %s |\n"
+                                        (mapcar (lambda (c) (or c "")) r)))
+                     rows "")
+          "\n"))
+
+(defmacro with-rubric-file (content &rest body)
+  "Visit CONTENT as a grading file with its context recovered, then run BODY."
+  (declare (indent 1))
+  `(with-grading-file ,content
+     (org-canvas--submissions-ensure-context)
+     ,@body))
+
+(defconst test-rubric-blank-rows
+  '(("_7104" "Thesis" 2 nil nil) ("_7105" "Evidence" 3 nil nil) ("_7106" "Style" 1 nil nil))
+  "An unassessed rubric table's rows.")
+
+(describe "rubric change detection"
+  (it "sees no change while the rows match the baseline"
+    (with-rubric-file (concat test-rubric-file-header
+                               (test-rubric-entry "Adams, Alice" 5001
+                                                  (format ":SCORE: 4\n:CANVAS_SCORE: 4\n:CANVAS_RUBRIC: %s\n"
+                                                          (org-canvas--submissions-rubric-digest
+                                                           '(("_7104" "2" "Sharp") ("_7105" "2" nil))))
+                                                  '(("_7104" "Thesis" 2 "2.0" "Sharp") ("_7105" "Evidence" 3 2 nil)
+                                                    ("_7106" "Style" 1 nil nil))))
+      (expect (org-canvas--submissions-collect-grade-changes) :to-be nil)
+      (expect (org-canvas--submissions-pending-count) :to-equal 0)))
+  (it "reports edited rows with their digests, total, and how many are scored"
+    (with-rubric-file (concat test-rubric-file-header
+                               (test-rubric-entry "Adams, Alice" 5001 ""
+                                                  '(("_7104" "Thesis" 2 2 "Sharp") ("_7105" "Evidence" 3 1.5 nil)
+                                                    ("_7106" "Style" 1 nil nil))))
+      (let ((change (car (org-canvas--submissions-collect-grade-changes))))
+        (expect (plist-get change :user-id) :to-equal 5001)
+        (expect (plist-get change :triples)
+                :to-equal '(("_7104" "2" "Sharp") ("_7105" "1.5" nil) ("_7106" nil nil)))
+        (expect (plist-get change :old-rubric) :to-be nil)
+        (expect (plist-get change :new-rubric)
+                :to-equal (org-canvas--submissions-rubric-digest '(("_7104" "2" "Sharp") ("_7105" "1.5" nil))))
+        (expect (plist-get change :total) :to-equal "3.5")
+        (expect (plist-get change :filled) :to-equal 2)
+        (expect (plist-get change :of) :to-equal 3))))
+  (it "derives the score from the rows when the rubric is used for grading"
+    (with-rubric-file (concat test-rubric-file-header
+                               (test-rubric-entry "Adams, Alice" 5001 ":SCORE: 3\n:CANVAS_SCORE: 3\n"
+                                                  '(("_7104" "Thesis" 2 2 nil) ("_7105" "Evidence" 3 3 nil)
+                                                    ("_7106" "Style" 1 1 nil))))
+      (let ((change (car (org-canvas--submissions-collect-grade-changes))))
+        (expect (plist-get change :new-score) :to-equal "6")
+        (expect (plist-get change :old-score) :to-equal "3")
+        (expect (plist-get change :score-derived) :to-be t)
+        (expect (org-canvas--submissions-describe-changes (list change))
+                :to-equal "  Adams, Alice: 3 → 6 (rubric 3/3)"))))
+  (it "keeps a score edited to the rows' total, and refuses one that disagrees"
+    (with-rubric-file (concat test-rubric-file-header
+                               (test-rubric-entry "Adams, Alice" 5001 ":SCORE: 5.0\n:CANVAS_SCORE: 3\n"
+                                                  '(("_7104" "Thesis" 2 2 nil) ("_7105" "Evidence" 3 3 nil)
+                                                    ("_7106" "Style" 1 nil nil))))
+      (let ((change (car (org-canvas--submissions-collect-grade-changes))))
+        (expect (plist-get change :new-score) :to-equal "5.0")
+        (expect (plist-get change :score-derived) :to-be nil))
+      (org-canvas--submissions-goto-user 5001)
+      (org-entry-put (point) "SCORE" "4")
+      (expect (org-canvas--submissions-collect-grade-changes) :to-throw 'user-error)))
+  (it "leaves the score alone when the rubric is not used for grading"
+    (with-rubric-file (concat test-grading-file-header
+                               "#+PROPERTY: CANVAS_RUBRIC_USE_FOR_GRADING false\n\n"
+                               (test-rubric-entry "Adams, Alice" 5001 ":SCORE: 3\n:CANVAS_SCORE: 3\n"
+                                                  '(("_7104" "Thesis" 2 2 nil) ("_7105" "Evidence" 3 3 nil))))
+      (let ((change (car (org-canvas--submissions-collect-grade-changes))))
+        (expect (plist-get change :new-score) :to-equal "3")
+        (expect (plist-get change :score-derived) :to-be nil)
+        (expect (org-canvas--submissions-change-sends-grade-p change) :to-be nil)
+        (expect (plist-get change :triples) :to-be-truthy))))
+  (it "refuses a score that is not a number or exceeds the criterion's points"
+    (with-rubric-file (concat test-rubric-file-header
+                               (test-rubric-entry "Adams, Alice" 5001 ""
+                                                  '(("_7104" nil 2 "two" nil))))
+      (expect (org-canvas--submissions-collect-grade-changes)
+              :to-throw 'user-error '("Rubric score \"two\" for Adams, Alice (_7104) is not a number")))
+    (with-rubric-file (concat test-rubric-file-header
+                               (test-rubric-entry "Adams, Alice" 5001 ""
+                                                  '(("_7104" "Thesis" 2 3 nil))))
+      (expect (org-canvas--submissions-collect-grade-changes) :to-throw 'user-error))
+    (with-rubric-file (concat test-rubric-file-header
+                               (test-rubric-entry "Adams, Alice" 5001 ""
+                                                  '(("_7104" "Thesis" 2 "EX" nil))))
+      (expect (org-canvas--submissions-collect-grade-changes) :to-throw 'user-error)))
+  (it "does not count rubric edits, or the score they derive, as edits a re-pull loses"
+    (with-rubric-file (concat test-rubric-file-header
+                               (test-rubric-entry "Adams, Alice" 5001 ":SCORE: 3\n:CANVAS_SCORE: 3\n"
+                                                  '(("_7104" "Thesis" 2 2 nil) ("_7105" "Evidence" 3 3 nil)))
+                               "* Beta, Bob\n:PROPERTIES:\n:USER_ID: 5002\n:SCORE: 4\n:CANVAS_SCORE: 2\n:END:\n")
+      (expect (length (org-canvas--submissions-collect-grade-changes)) :to-equal 2)
+      (expect (org-canvas--submissions-pending-count) :to-equal 1)))
+  (it "does not treat a table emptied by hand as a change"
+    (with-rubric-file (concat test-rubric-file-header
+                               (test-rubric-entry "Adams, Alice" 5001
+                                                  ":SCORE: 2\n:CANVAS_SCORE: 2\n:CANVAS_RUBRIC: abcdef012345\n"
+                                                  test-rubric-blank-rows))
+      (expect (org-canvas--submissions-collect-grade-changes) :to-be nil))))
+
+(describe "pushing rubric assessments with S"
+  (it "sends the rows with the derived grade in one PUT and records the baselines"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-rubric-file (concat test-rubric-file-header
+                                   (test-rubric-entry "Adams, Alice" 5001 ""
+                                                      '(("_7104" "Thesis" 2 2 "Sharp") ("_7105" "Evidence" 3 1.5 nil)
+                                                        ("_7106" "Style" 1 nil nil))))
+          (let ((org-canvas-submissions-check-conflicts nil) (prompt nil))
+            (cl-letf (((symbol-function 'y-or-n-p) (lambda (p) (setq prompt p) t)))
+              (org-canvas-submissions-push-grades))
+            (expect prompt :to-match "1 grade change(s) (1 with rubric, 1 partly scored)"))
+          (expect-api-called 'PUT "assignments/1001/submissions/5001")
+          (let ((data (nth 2 (test-org-canvas-last-api-call))))
+            (expect (alist-get 'posted_grade (alist-get 'submission data)) :to-equal "3.5")
+            (expect (alist-get 'rubric_assessment data)
+                    :to-equal '((_7104 . ((points . 2) (comments . "Sharp")))
+                                (_7105 . ((points . 1.5))))))
+          (org-canvas--submissions-goto-user 5001)
+          (expect (org-entry-get (point) "SCORE") :to-equal "3.5")
+          (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "3.5")
+          (expect (org-entry-get (point) "CANVAS_RUBRIC")
+                  :to-equal (org-canvas--submissions-rubric-digest
+                             '(("_7104" "2" "Sharp") ("_7105" "1.5" nil))))
+          (expect (org-canvas--submissions-collect-grade-changes) :to-be nil)))))
+  (it "sends several students through the bulk endpoint, each with its own fields"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-rubric-file (concat test-rubric-file-header
+                                   (test-rubric-entry "Adams, Alice" 5001 ""
+                                                      '(("_7104" "Thesis" 2 2 nil) ("_7105" "Evidence" 3 3 nil)
+                                                        ("_7106" "Style" 1 1 nil)))
+                                   "* Beta, Bob\n:PROPERTIES:\n:USER_ID: 5002\n:SCORE: 4\n:CANVAS_SCORE: 2\n:END:\n")
+          (let ((org-canvas-submissions-check-conflicts nil))
+            (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+              (org-canvas-submissions-push-grades)))
+          (expect-api-called 'POST "assignments/1001/submissions/update_grades")
+          (let* ((data (nth 2 (test-org-canvas-last-api-call)))
+                 (grade-data (alist-get 'grade_data data))
+                 (alice (alist-get "5001" grade-data nil nil #'equal))
+                 (bob (alist-get "5002" grade-data nil nil #'equal)))
+            (expect (alist-get 'posted_grade alice) :to-equal "6")
+            (expect (length (alist-get 'rubric_assessment alice)) :to-equal 3)
+            (expect (alist-get 'posted_grade bob) :to-equal "4")
+            (expect (assq 'rubric_assessment bob) :to-be nil))))))
+  (it "skips and marks a student whose rubric was assessed on Canvas since the pull"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-rubric-file (concat test-rubric-file-header
+                                   (test-rubric-entry "Adams, Alice" 5001 ":SCORE: 2\n:CANVAS_SCORE: 2\n"
+                                                      '(("_7104" "Thesis" 2 2 nil) ("_7105" "Evidence" 3 3 nil))))
+          (cl-letf (((symbol-function 'org-canvas--submissions-live-baselines)
+                     (lambda (_id) '((5001 . ("2" 1 "canvas-digest")))))
+                    ((symbol-function 'y-or-n-p) (lambda (_) t)))
+            (org-canvas-submissions-push-grades))
+          (expect (test-org-canvas-api-call-count) :to-equal 0)
+          (org-canvas--submissions-goto-user 5001)
+          (expect (org-entry-get (point) "CONFLICT") :to-match "rubric assessed on Canvas since the pull")))))
+  (it "does not hold a score-only change against a rubric that moved"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (concat test-grading-file-header
+                                   "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 5\n:CANVAS_SCORE: 2\n:END:\n")
+          (cl-letf (((symbol-function 'org-canvas--submissions-live-baselines)
+                     (lambda (_id) '((5001 . ("2" 1 "canvas-digest")))))
+                    ((symbol-function 'y-or-n-p) (lambda (_) t)))
+            (org-canvas-submissions-push-grades))
+          (expect-api-called 'PUT "assignments/1001/submissions/5001"))))))
+
+(describe "completion rule on a rubric assignment"
+  (it "fills every row at its Max for full credit and leaves them empty for a 0"
+    (with-rubric-file (concat test-rubric-file-header
+                               (test-rubric-entry "Adams, Alice" 5001 ":STATUS: submitted\n" test-rubric-blank-rows)
+                               (test-rubric-entry "Beta, Bob" 5002 ":STATUS: missing\n" test-rubric-blank-rows)
+                               (test-rubric-entry "Gamma, Gus" 5003 ":STATUS: graded\n:SCORE: 4\n:CANVAS_SCORE: 4\n"
+                                                  test-rubric-blank-rows))
+      (org-canvas-submissions-apply-completion-rule 6)
+      (org-canvas--submissions-goto-user 5001)
+      (expect (org-entry-get (point) "SCORE") :to-equal "6")
+      (expect (mapcar (lambda (r) (nth 3 r)) (org-canvas--submissions-rubric-rows))
+              :to-equal '("2" "3" "1"))
+      (org-canvas--submissions-goto-user 5002)
+      (expect (org-entry-get (point) "SCORE") :to-equal "0")
+      (expect (mapcar (lambda (r) (nth 3 r)) (org-canvas--submissions-rubric-rows))
+              :to-equal '(nil nil nil))
+      (org-canvas--submissions-goto-user 5003)
+      (expect (mapcar (lambda (r) (nth 3 r)) (org-canvas--submissions-rubric-rows))
+              :to-equal '(nil nil nil))
+      ;; The filled rows total the score, so the push derives nothing new.
+      (let ((change (car (org-canvas--submissions-collect-grade-changes))))
+        (expect (plist-get change :user-id) :to-equal 5001)
+        (expect (plist-get change :new-score) :to-equal "6")
+        (expect (plist-get change :filled) :to-equal 3)))))
+
+(describe "rubric rows carry over a re-pull"
+  (defun test-rubric--display (subs shown-cell)
+    "Render SUBS as HW's grading file, storing the buffer in SHOWN-CELL's car."
+    (cl-letf (((symbol-function 'switch-to-buffer) (lambda (b) (setcar shown-cell b) b))
+              ((symbol-function 'org-canvas--submissions-heading-for-assignment) (lambda (_id) nil))
+              ((symbol-function 'org-canvas--submissions-heading-for-rubric) (lambda (_id) nil)))
+      (org-canvas--submissions-display
+       "HW" "1001" subs 'detail
+       `((id . 1001) (rubric_settings . ((id . 7) (title . "R") (use_for_grading . t)))
+         (rubric . ,(vconcat test-rubric-criteria))))))
+  (it "keeps typed rows, and marks the heading when Canvas assessed it meanwhile"
+    (let* ((dir (make-temp-file "org-canvas-subs-" t))
+           (org-canvas-submissions-directory dir)
+           (shown (list nil)))
+      (unwind-protect
+          (progn
+            (test-rubric--display (list (test-org-canvas-make-submission '((score . nil)))) shown)
+            (with-current-buffer (car shown)
+              (org-canvas--submissions-goto-user 5001)
+              (org-canvas--submissions-rubric-set-row "_7104" "2" "Sharp")
+              (org-canvas--submissions-rubric-set-row "_7106" "1" nil)
+              (save-buffer))
+            ;; Nothing moved on Canvas: the rows come back, no conflict.
+            (test-rubric--display (list (test-org-canvas-make-submission '((score . nil)))) shown)
+            (with-current-buffer (car shown)
+              (org-canvas--submissions-goto-user 5001)
+              (expect (mapcar (lambda (r) (list (nth 3 r) (nth 4 r))) (org-canvas--submissions-rubric-rows))
+                      :to-equal '(("2" "Sharp") (nil nil) ("1" nil)))
+              (expect (org-entry-get (point) "CONFLICT") :to-be nil)
+              (expect (count-matches "^\\*\\* Rubric$" (point-min) (point-max)) :to-equal 1))
+            ;; Someone assessed in SpeedGrader: the rows still come back, marked.
+            (test-rubric--display
+             (list (test-org-canvas-make-submission
+                    '((score . 3) (rubric_assessment . ((_7105 . ((points . 3))))))))
+             shown)
+            (with-current-buffer (car shown)
+              (org-canvas--submissions-goto-user 5001)
+              (expect (nth 3 (car (org-canvas--submissions-rubric-rows))) :to-equal "2")
+              (expect (org-entry-get (point) "CONFLICT") :to-match "rubric assessed on Canvas since these rows were typed")
+              (expect (org-entry-get (point) "CANVAS_RUBRIC")
+                      :to-equal (org-canvas--submissions-rubric-digest '(("_7105" "3" nil))))))
+        (when (buffer-live-p (car shown)) (kill-buffer (car shown)))
+        (delete-directory dir t))))
+  (it "does not carry rows that match their baseline, so a fresh pull shows Canvas"
+    (let* ((dir (make-temp-file "org-canvas-subs-" t))
+           (org-canvas-submissions-directory dir)
+           (shown (list nil))
+           (assessed (test-org-canvas-make-submission
+                      '((score . 2) (rubric_assessment . ((_7104 . ((points . 2)))))))))
+      (unwind-protect
+          (progn
+            (test-rubric--display (list assessed) shown)
+            (with-current-buffer (car shown)
+              (org-canvas--submissions-goto-user 5001)
+              (expect (org-canvas--submissions-rubric-carryover) :to-be nil))
+            (test-rubric--display
+             (list (test-org-canvas-make-submission
+                    '((score . 3) (rubric_assessment . ((_7104 . ((points . 1))) (_7105 . ((points . 2))))))))
+             shown)
+            (with-current-buffer (car shown)
+              (org-canvas--submissions-goto-user 5001)
+              (expect (mapcar (lambda (r) (nth 3 r)) (org-canvas--submissions-rubric-rows))
+                      :to-equal '("1" "2" nil))
+              (expect (org-entry-get (point) "CONFLICT") :to-be nil)))
+        (when (buffer-live-p (car shown)) (kill-buffer (car shown)))
+        (delete-directory dir t)))))
 
 
 (provide 'org-canvas-submissions-test)

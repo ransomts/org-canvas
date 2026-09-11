@@ -58,7 +58,8 @@ pull-at-point and prune.
 Submission grading (=org-canvas-submissions.el=) is a workflow, not a
 content type: it pulls a grading file per assignment, pushes scores
 and comments, posts grades held by a manual policy, downloads
-attachments, and can read and push rubric assessments for a student.
+attachments, and reads and pushes each student's rubric assessment
+through the grading file's Rubric table.
 
 *Course settings synced* (the registry in =org-canvas-settings.el= is
 the authority): the syllabus body, whether it is public, the home page
@@ -76,7 +77,7 @@ settings file.
 |--------------------------------+--------------------------------------------------------+----------------------------------------------|
 | Groups                         | a category can ask Canvas to create N groups; groups and their members are pulled; an assignment override can name a group | name groups or manage members from Org |
 | Quiz question banks            | a classic quiz group may name a bank on create (PUT ignores it) | create, list or edit a bank: there is no API, see "No API" below |
-| Rubric assessments             | read and push for one student in the grading file; the class's per-criterion results are pulled (see the covered table) | assess from Org outside the grading file    |
+| Rubric assessments             | read and pushed per student from the grading file's Rubric table, the total setting the grade when the rubric is used for grading; the class's per-criterion results are pulled (see the covered table) | assess from Org outside the grading file; clear an assessment (SpeedGrader's) |
 | External tools (LTI)           | list installed tools so an assignment can name one     | install or configure a tool                  |
 | Turnitin document processor    | pull and diff the attachment as a Canvas-owned property | set it; deliberately, see decisions.org      |
 | Planner                        | a page's student to-do date                            | planner notes or the to-do list              |
