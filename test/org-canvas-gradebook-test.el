@@ -23,6 +23,11 @@
   "Sections the fake API lists for the course.")
 (defvar test-gradebook--summaries nil
   "Student summaries the fake API lists, or `refuse' to answer with a 403.")
+(defvar test-gradebook--columns nil
+  "Custom gradebook columns the fake API lists, or `refuse' to answer with a 403.
+Each column may carry a `data' entry: the rows its data endpoint answers.")
+(defvar test-gradebook--columns-params nil
+  "The parameters the last request for the custom columns carried.")
 
 (defun test-gradebook--api (_method url &optional _params)
   "Answer URL from the fake tables, as the paginated helper would."
@@ -33,6 +38,15 @@
     (if (eq test-gradebook--summaries 'refuse)
         (signal 'org-canvas-permission-error (list "403 Forbidden"))
       test-gradebook--summaries))
+   ((string-match "/custom_gradebook_columns/\\([0-9]+\\)/data" url)
+    (let ((id (string-to-number (match-string 1 url))))
+      (alist-get 'data (cl-find-if (lambda (c) (eql (alist-get 'id c) id))
+                                   test-gradebook--columns))))
+   ((string-match "/custom_gradebook_columns\\'" url)
+    (setq test-gradebook--columns-params _params)
+    (if (eq test-gradebook--columns 'refuse)
+        (signal 'org-canvas-permission-error (list "403 Forbidden"))
+      test-gradebook--columns))
    (t (error "Unexpected request: %s" url))))
 
 (defun test-gradebook--enrollment (uid name section current final &rest extra)
@@ -46,6 +60,13 @@ EXTRA pairs come first, so an explicit value shadows the default."
             (grades . ((current_score . ,current) (final_score . ,final)
                        (unposted_current_score . ,current)
                        (unposted_final_score . ,final))))))
+
+(defun test-gradebook--column (id title position &rest data)
+  "A custom gradebook column ID titled TITLE at POSITION.
+DATA are (UID . CONTENT) pairs its data endpoint answers."
+  `((id . ,id) (title . ,title) (position . ,position) (hidden . :json-false)
+    (teacher_notes . :json-false) (read_only . :json-false)
+    (data . ,(mapcar (lambda (d) `((user_id . ,(car d)) (content . ,(cdr d)))) data))))
 
 (defun test-gradebook--summary (uid missing late)
   "A student summary for UID with MISSING and LATE submissions."
@@ -67,7 +88,9 @@ The gradebook and roster files live in a temp directory."
           (org-canvas-people-file (expand-file-name "people.org" dir))
           (test-gradebook--enrollments ,enrollments)
           (test-gradebook--sections ,sections)
-          (test-gradebook--summaries ,summaries))
+          (test-gradebook--summaries ,summaries)
+          (test-gradebook--columns nil)
+          (test-gradebook--columns-params nil))
      (unwind-protect
          (with-org-canvas-test-config
            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages) #'test-gradebook--api)
@@ -140,6 +163,13 @@ The gradebook and roster files live in a temp directory."
     (expect (org-canvas--gradebook-number 3) :to-equal "3")
     (expect (org-canvas--gradebook-number nil) :to-equal "-")
     (expect (org-canvas--gradebook-number "A") :to-equal "A")))
+
+(describe "org-canvas--gradebook-cell-text"
+  (it "collapses pipes and line breaks with the blanks around them, and blanks a non-string"
+    (expect (org-canvas--gradebook-cell-text "Sees me | Tue\nafternoons\r\n  late ") :to-equal "Sees me Tue afternoons late")
+    (expect (org-canvas--gradebook-cell-text "plain") :to-equal "plain")
+    (expect (org-canvas--gradebook-cell-text nil) :to-equal "")
+    (expect (org-canvas--gradebook-cell-text :null) :to-equal "")))
 
 (describe "org-canvas--gradebook-mean"
   (it "averages the numbers and ignores the blanks"
@@ -220,6 +250,53 @@ The gradebook and roster files live in a temp directory."
         (expect text :not :to-match "Beta, Bob")
         (expect text :not :to-match "A note I wrote")
         (expect (length (split-string text "^\\* Students" t)) :to-equal 2))))
+
+  (it "adds one column per custom column after Last activity, in position order"
+    (test-gradebook--with-course
+        (list (test-gradebook--enrollment 1 "Adams, Alice" 10 91.5 88.0)
+              (test-gradebook--enrollment 2 "Beta, Bob" 10 70.0 65.0))
+        '(((id . 10) (name . "Lecture")))
+        nil
+      (setq test-gradebook--columns
+            (list (test-gradebook--column 5 "Notes" 2 '(1 . "Sees me | Tue\nafternoons"))
+                  (test-gradebook--column 7 "Advisor" 1 '(1 . "Dr. Chen") '(2 . ""))))
+      (org-canvas-pull-gradebook)
+      (let ((text (test-gradebook--file)))
+        (expect text :to-match "^| Student +| Sections +| Current +| Final +| Missing +| Late +| Last activity +| Advisor +| Notes +|$")
+        (expect (test-gradebook--row "Adams, Alice")
+                :to-equal '("Lecture" "91.5" "88.0" "-" "-" "-" "Dr. Chen" "Sees me Tue afternoons"))
+        (expect (test-gradebook--row "Beta, Bob")
+                :to-equal '("Lecture" "70.0" "65.0" "-" "-" "-" "" ""))
+        ;; The separator row has one more cell per custom column.
+        (expect text :to-match "^|-+\\+-+\\+-+\\+-+\\+-+\\+-+\\+-+\\+-+\\+-+|$")
+        (expect (test-gradebook--row "Lecture") :to-equal '("2" "80.8" "76.5" "0"))
+        (expect test-gradebook--columns-params :to-be nil))))
+
+  (it "asks for the hidden columns only when told to"
+    (test-gradebook--with-course
+        (list (test-gradebook--enrollment 1 "Adams, Alice" 10 91.5 88.0))
+        '(((id . 10) (name . "Lecture")))
+        nil
+      (let ((org-canvas-gradebook-include-hidden-columns t))
+        (org-canvas-pull-gradebook))
+      (expect test-gradebook--columns-params :to-equal '(("include_hidden" . "true")))))
+
+  (it "leaves the custom columns out with one warning when Canvas refuses them"
+    (test-gradebook--with-course
+        (list (test-gradebook--enrollment 1 "Adams, Alice" 10 91.5 88.0))
+        '(((id . 10) (name . "Lecture")))
+        nil
+      (setq test-gradebook--columns 'refuse)
+      (let ((warned nil))
+        (cl-letf (((symbol-function 'org-canvas--log-warning)
+                   (lambda (_logger fmt &rest args) (push (apply #'format fmt args) warned))))
+          (org-canvas-pull-gradebook))
+        (expect (length warned) :to-equal 1)
+        (expect (car warned) :to-match "Could not read the custom gradebook columns"))
+      (let ((text (test-gradebook--file)))
+        (expect text :to-match "^| Student +| Sections +| Current +| Final +| Missing +| Late +| Last activity +|$")
+        (expect (test-gradebook--row "Adams, Alice") :to-equal '("Lecture" "91.5" "88.0" "-" "-" "-"))
+        (expect text :to-match "^#\\+LAST_SYNCED:"))))
 
   (it "writes the empty-file note for a course with no students"
     (test-gradebook--with-course nil nil nil
