@@ -53,8 +53,11 @@
     org-canvas-sync-settings
     org-canvas-sync-grading-schemes
     org-canvas-sync-files
-    org-canvas-sync-overrides)
-  "Every feature sync entry point, macro-generated or hand-written.")
+    org-canvas-sync-overrides
+    org-canvas-send-messages
+    org-canvas-send-message-at-point)
+  "Every feature sync entry point, macro-generated or hand-written,
+and the two message senders, which write to Canvas outside any tier.")
 
 (defvar org-canvas-dry-run--calls nil
   "Recorded (METHOD . URL) pairs made during the sync under test.")
@@ -139,7 +142,8 @@ caught by the checksum comparison instead of dirtying the repo."
                  (org-canvas-calendar-events-file (expand-file-name "calendar.org" ,dir-var))
                  (org-canvas-sections-file (expand-file-name "sections.org" ,dir-var))
                  (org-canvas-settings-file (expand-file-name "settings.org" ,dir-var))
-                 (org-canvas-grading-schemes-file (expand-file-name "grading-schemes.org" ,dir-var)))
+                 (org-canvas-grading-schemes-file (expand-file-name "grading-schemes.org" ,dir-var))
+                 (org-canvas-messages-file (expand-file-name "messages.org" ,dir-var)))
              ,@body))
        (org-canvas-dry-run--kill-buffers-under tmp-root)
        (delete-directory tmp-root t))))
