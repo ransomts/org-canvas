@@ -654,17 +654,23 @@ CTX the run context a remote write is declared on."
 
 ;; Generate org-canvas-sync-assignments using the pipeline macro
 (defun org-canvas--assignment-rubric-hash-extra (data)
-  "Return DATA's rubric material for change detection, or \"\".
+  "Return DATA's rubric and post-policy material for change detection, or \"\".
 The rubric id and the association flags travel outside the assignment
 payload, so without this an added or changed RUBRIC_LINK never dirtied
-the entry and its association was never made (issue #120).  Empty when
-the heading carries none of them, so other headings keep their hash."
+the entry and its association was never made (issue #120).  The grade
+post policy travels the same way, by GraphQL from finalize, so a
+POST_POLICY-only edit was skipped as unchanged (issue #242).  Empty
+when the heading carries none of them, so other headings keep their
+hash."
   (let ((rubric-id (plist-get data :rubric-id))
         (use-for-grading (plist-get data :rubric-use-for-grading))
-        (hide-score-total (plist-get data :rubric-hide-score-total)))
-    (if (or rubric-id use-for-grading hide-score-total)
-        (format "rubric:%s:%s:%s" rubric-id use-for-grading hide-score-total)
-      "")))
+        (hide-score-total (plist-get data :rubric-hide-score-total))
+        (policy (plist-get data :post-policy)))
+    (concat
+     (if (or rubric-id use-for-grading hide-score-total)
+         (format "rubric:%s:%s:%s" rubric-id use-for-grading hide-score-total)
+       "")
+     (if policy (format "post-policy:%s" policy) ""))))
 
 (org-canvas-define-sync assignments
   :file org-canvas-assignments-file

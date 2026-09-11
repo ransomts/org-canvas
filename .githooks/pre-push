@@ -7,7 +7,9 @@
 #   3. All tests passing on both Emacs 29 and Emacs 30 (via nix-shell)
 #   4. Code coverage >= 99% (measured on the Emacs 30 run)
 #
-# Gates 1+2 run in parallel, then gates 3+4 run in parallel.
+# Gates 1+2 run one after the other (they share the .eldev cache and
+# raced on its lock when run in parallel, blocking pushes with no real
+# warning; issue #244), then gates 3+4 run in parallel.
 #
 # Emacs versions are pinned to specific nixpkgs archives so results are
 # reproducible regardless of the developer's system Emacs.
@@ -19,48 +21,54 @@ set -euo pipefail
 COVERAGE_TARGET=99
 COMPLEXITY_BUDGET=2  # pre-existing: org-canvas-define-sync, org-canvas-define-push-at-point
 
-# --- Phase 1: Lint + Complexity (parallel) ---
+# --- Phase 1: Lint, then Complexity ---
 
 LINT_LOG=$(mktemp /tmp/org-canvas-lint-XXXXXX.log)
 COMPLEXITY_LOG=$(mktemp /tmp/org-canvas-complexity-XXXXXX.log)
 
-(eldev lint 2>&1 > "$LINT_LOG"; echo $? > "${LINT_LOG}.rc") &
-lint_pid=$!
-
-(eldev complexity 2>&1 > "$COMPLEXITY_LOG"; echo $? > "${COMPLEXITY_LOG}.rc") &
-complexity_pid=$!
-
-wait "$lint_pid" "$complexity_pid" || true
-
-# Check lint
-lint_rc=$(cat "${LINT_LOG}.rc" 2>/dev/null || echo "1")
+echo "Running linter..."
+lint_rc=0
+eldev lint > "$LINT_LOG" 2>&1 || lint_rc=$?
+cat "$LINT_LOG" || true
 if [ "$lint_rc" -ne 0 ]; then
-  echo "Running linter..."
-  cat "$LINT_LOG" || true
-  echo "BLOCKED: eldev lint reported warnings."
-  rm -f "$LINT_LOG" "${LINT_LOG}.rc" "$COMPLEXITY_LOG" "${COMPLEXITY_LOG}.rc"
+  # A linter that never ran (a cache lock, a missing dependency) is not
+  # a finding; say which it was so nobody hunts for a docstring problem
+  # that does not exist.
+  if grep -q "Linting produced warnings" "$LINT_LOG"; then
+    echo "BLOCKED: eldev lint reported warnings."
+  else
+    echo "BLOCKED: eldev lint did not complete (exit $lint_rc); see the log above and push again."
+  fi
+  rm -f "$LINT_LOG" "$COMPLEXITY_LOG"
   exit 1
 fi
-echo "Running linter..."
-cat "$LINT_LOG" || true
 echo ""
+
+eldev complexity > "$COMPLEXITY_LOG" 2>&1 || true
 
 # Check complexity
 complexity_output=$(cat "$COMPLEXITY_LOG")
+if ! echo "$complexity_output" | grep -q "above cognitive threshold"; then
+  echo "Checking cognitive complexity..."
+  echo "$complexity_output"
+  echo "BLOCKED: eldev complexity did not complete; see the log above and push again."
+  rm -f "$LINT_LOG" "$COMPLEXITY_LOG"
+  exit 1
+fi
 violations=$(echo "$complexity_output" | grep -oP '\d+(?= above cognitive threshold)' || echo "0")
 
 if [ "$violations" -gt "$COMPLEXITY_BUDGET" ]; then
   echo "Checking cognitive complexity..."
   echo "$complexity_output" | grep -i "very.high"
   echo "BLOCKED: $violations function(s) above threshold (budget: $COMPLEXITY_BUDGET)."
-  rm -f "$LINT_LOG" "${LINT_LOG}.rc" "$COMPLEXITY_LOG" "${COMPLEXITY_LOG}.rc"
+  rm -f "$LINT_LOG" "$COMPLEXITY_LOG"
   exit 1
 fi
 echo "Checking cognitive complexity..."
 echo "Complexity OK ($violations/$COMPLEXITY_BUDGET budget used)."
 echo ""
 
-rm -f "$LINT_LOG" "${LINT_LOG}.rc" "$COMPLEXITY_LOG" "${COMPLEXITY_LOG}.rc"
+rm -f "$LINT_LOG" "$COMPLEXITY_LOG"
 
 # --- Phase 2: Emacs 29 + Emacs 30 tests (parallel) ---
 
