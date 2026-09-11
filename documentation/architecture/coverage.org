@@ -44,6 +44,7 @@ pull-at-point and prune.
 | Sections          | no   | no       | yes  | no     | no       | pull-only, so overrides can name them                           |
 | People            | no   | no       | yes  | no     | no       | pull-only roster: role, sections, enrollment state, last activity, in people.org |
 | Gradebook         | no   | no       | yes  | no     | no       | pull-only overview: current and final score, missing and late, custom gradebook columns, per student and per section, in gradebook.org |
+| Rubric results    | no   | no       | yes  | no     | no       | pull-only: per assignment, how the class scored on each criterion (assessed, mean, rating distribution), in rubric-results.org |
 | Grading periods   | no   | no       | yes  | no     | no       | pull-only; validate warns when a due date falls outside every period |
 | Overrides         | yes  | no       | yes  | no     | no       | per-section dates, reconciled from a table under each assignment |
 | Course settings   | yes  | no       | yes  | no     | no       | see the settings list below; the post policy goes by GraphQL    |
@@ -72,7 +73,7 @@ settings file.
 | Groups                         | a category can ask Canvas to create N groups; groups and their members are pulled | name groups or manage members from Org |
 | Quiz question banks            | a classic quiz may name a bank on create                | create banks or move questions between them  |
 | New Quiz item banks            | nothing                                                | anything; items live inline under the quiz   |
-| Rubric assessments             | read and push for one student in the grading file      | any course-level view                        |
+| Rubric assessments             | read and push for one student in the grading file; the class's per-criterion results are pulled (see the covered table) | assess from Org outside the grading file    |
 | External tools (LTI)           | list installed tools so an assignment can name one     | install or configure a tool                  |
 | Turnitin document processor    | pull and diff the attachment as a Canvas-owned property | set it; deliberately, see decisions.org      |
 | Planner                        | a page's student to-do date                            | planner notes or the to-do list              |
