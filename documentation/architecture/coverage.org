@@ -1,0 +1,150 @@
+#+TITLE: What org-canvas Covers, and What It Does Not
+#+AUTHOR: org-canvas
+#+STARTUP: showall
+
+This is the map of the gap between Canvas and org-canvas: which parts
+of a Canvas course the package manages, which it only reads, and which
+it never touches.  It exists so the answer to "does org-canvas do X?"
+is a lookup, not an archaeology of =lisp/=.
+
+It was built by grepping =lisp/= for each Canvas API surface a course
+uses and reading what the hit does; it describes the code as of the
+commit that last edited this file, and the last section says how to
+refresh it.  A gap listed here is a fact, not a promise: an item moves
+to the covered table when a module lands, and nothing here is a
+roadmap.
+
+* Covered Content Types
+
+One module per type.  "Push" is =org-canvas-sync-{type}=; "at point"
+is the single-heading push every =org-canvas-define-sync= generates
+unless it opts out; "pull" is =org-canvas-pull-{type}=; "delete" is
+=org-canvas-delete-all-{type}= together with the prune command it
+generates; "registry" means the type is in the feature registry, which
+is what gives it the drift report, the duplicate-title guard,
+pull-at-point and prune.
+
+| Type              | Push | At point | Pull | Delete | Registry | Notes                                                           |
+|-------------------+------+----------+------+--------+----------+-----------------------------------------------------------------|
+| Assignments       | yes  | yes      | yes  | yes    | yes      | includes LTI/external-tool assignments; overrides are separate  |
+| Assignment groups | yes  | yes      | yes  | yes    | yes      | weights and drop rules (two-phase)                              |
+| Announcements     | yes  | yes      | yes  | yes    | yes      |                                                                 |
+| Calendar events   | yes  | yes      | yes  | yes    | yes      | course calendar only; no appointment groups                     |
+| Discussions       | yes  | yes      | yes  | yes    | yes      | topics; replies are a separate pull-only type below             |
+| Discussion replies| no   | no       | yes  | no     | no       | pull-only archive of entries and replies, in discussion-replies.org |
+| Files             | yes  | yes      | yes  | yes    | yes      | folders, usage rights, visibility; three pull modes             |
+| Group categories  | yes  | yes      | yes  | yes    | yes      | Canvas can auto-create groups                                   |
+| Groups            | no   | no       | yes  | no     | no       | pull-only: each category's groups and member names, in groups.org |
+| Modules           | yes  | yes      | yes  | yes    | yes      | items reconciled inside finalize; prerequisites, sequential progress, unlock dates, completion requirements |
+| New Quizzes       | yes  | yes      | yes  | yes    | no       | items sync inside finalize; the feature list keys on the assignment |
+| Outcomes          | yes  | yes      | yes  | yes    | yes      | two levels, groups then outcomes                                |
+| Pages             | yes  | yes      | yes  | yes    | yes      | front page protected; to-do date                                |
+| Quizzes (classic) | yes  | yes      | yes  | yes    | yes      | questions and groups inline; a bank may be named, never managed |
+| Rubrics           | yes  | yes      | yes  | yes    | yes      | criteria, ratings, outcome links; associations via assignments  |
+| Sections          | no   | no       | yes  | no     | no       | pull-only, so overrides can name them                           |
+| Grading periods   | no   | no       | yes  | no     | no       | pull-only; validate warns when a due date falls outside every period |
+| Overrides         | yes  | no       | yes  | no     | no       | per-section dates, reconciled from a table under each assignment |
+| Course settings   | yes  | no       | yes  | no     | no       | see the settings list below                                     |
+
+Submission grading (=org-canvas-submissions.el=) is a workflow, not a
+content type: it pulls a grading file per assignment, pushes scores
+and comments, downloads attachments, and can read and push rubric
+assessments for a student.
+
+*Course settings synced* (the registry in =org-canvas-settings.el= is
+the authority): the syllabus body, whether it is public, the home page
+view, licence, start and end dates, the student discussion and
+announcement permissions, past and future view restrictions, the
+announcements-on-home setting and its limit, distribution graphs,
+final-grade hiding, weighted assignment groups, the grading standard
+by id, the late and missing submission policies, and the course image.
+Navigation tabs are synced from the settings file.
+
+* Touched in One Direction, or by Reference Only
+
+| Feature                        | What org-canvas does                                   | What it does not do                          |
+|--------------------------------+--------------------------------------------------------+----------------------------------------------|
+| Grading schemes (standards)    | settings names one by id                               | create, edit or pull a scheme                |
+| Groups                         | a category can ask Canvas to create N groups; groups and their members are pulled | name groups or manage members from Org |
+| Quiz question banks            | a classic quiz may name a bank on create                | create banks or move questions between them  |
+| New Quiz item banks            | nothing                                                | anything; items live inline under the quiz   |
+| Rubric assessments             | read and push for one student in the grading file      | any course-level view                        |
+| External tools (LTI)           | list installed tools so an assignment can name one     | install or configure a tool                  |
+| Turnitin document processor    | pull and diff the attachment as a Canvas-owned property | set it; deliberately, see decisions.org      |
+| Planner                        | a page's student to-do date                            | planner notes or the to-do list              |
+| Submissions                    | grades, comments, attachments per assignment           | quiz submissions, peer reviews, moderation   |
+
+* Never Touched
+
+Nothing in =lisp/= reads or writes these.  Where a course needs them,
+they are set in the Canvas web UI and org-canvas neither sees nor
+disturbs them.
+
+- *Gradebook configuration:* grade posting policies (manual or
+  automatic posting), custom gradebook columns, the gradebook's own
+  settings.  Grading periods are pulled (see the covered table).
+- *People:* enrollments, users, the roster, and section membership.
+  Sections are pulled as objects; who is in them is not.
+- *Discussion checkpoints*, the newer graded-discussion feature; replies themselves are pulled (see the covered table).
+- *Mastery Paths* (conditional release), *Blueprint* associations and
+  locks, and course-level *feature flags*.
+- *Collaborations*, *conferences*, *appointment groups* (the scheduler),
+  *chat*, *attendance*.
+- *Outcome alignments* as objects and the *learning mastery gradebook*;
+  outcomes themselves are covered.
+- *Content migrations, course copy, exports and ePub.*  org-canvas is the
+  copy mechanism: a course is rebuilt from its Org files.
+- *Media* (Canvas Studio, media objects); a file is a file.
+- *Account-level* objects of every kind: terms, sub-accounts,
+  developer keys, SIS.
+
+* Deliberately Excluded
+
+- *Turnitin* as a plugin (=TURNITIN_ENABLED=) was removed after a live
+  probe found it inert, and the LTI document-processor mode can only
+  be attached in a browser; org-canvas observes and protects it.  Hard
+  Rule 5 and decisions.org, "External-Tool (LTI) Assignments — and No
+  Turnitin".
+- *Payload format convergence* between hash tables and alists, because
+  it would rotate every stored hash.  design.org, "Why the Formats Are
+  Not Converged".
+
+* Which Gaps Bite
+
+For a course run from Org files, the absences most likely to matter,
+in order:
+
+1. *Posting policies.*  A manually posted gradebook is a common default
+   and nothing here can see or set it, so grades pushed from a grading
+   file may sit hidden until posted in the web UI.
+
+The rest are rarely set at the course level or belong to the
+institution.
+
+* Adding a Type
+
+Posting policies are the simplest candidate: a flat object with no
+children, so a pull-only module is a registration, a =define-pull=
+and a test file, and a full sync adds parse, build and =define-sync=
+on top (grading periods went exactly that way).  =module-developer-guide.org= is the step by
+step.  Managing membership from Org would be harder, because members hang
+under another type's heading and need the child-reconciler pattern
+modules, quizzes and New Quizzes use inside finalize; reading them, as
+replies are read, took the pull-only route.
+
+* Refreshing This Document
+
+The map came from one loop over API surface names against =lisp/=:
+
+#+begin_src sh
+for pat in grading_period "post_polic|post_manually" enrollments \
+           "api/v1/groups" discussion_entries mastery_path blueprint \
+           collaboration conference appointment_group feature_flag; do
+  printf "%-28s %s\n" "$pat" "$(grep -rlE "$pat" lisp/*.el | tr '\n' ' ')"
+done
+#+end_src
+
+An empty right-hand column is a "never touched"; a hit is a claim to
+read before moving the line.  When a module lands, move its type into
+the covered table and drop it from wherever it sat.  Counts stay out of
+this file (Hard Rule 21); it names things, it does not tally them.
