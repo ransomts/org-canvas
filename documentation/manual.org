@@ -257,6 +257,7 @@ These files have no outgoing links to other course files:
 | =calendar.org=          | Calendar Events    | Office hours, holidays, etc.  |
 | =sections.org=          | Sections           | Course sections               |
 | =grading-schemes.org=   | Grading Schemes    | Letter-grade cutoffs; settings and assignments name one by id |
+| =messages.org=          | Messages           | Inbox messages to students, sent on command and stamped; never part of a sync |
 
 *** Tier 1: Depends on Tier 0
 
@@ -1961,6 +1962,78 @@ someone, so treat =quiz-results.org= as you treat
 =rubric-results.org=: keep it out of a course repository (add it to
 =.gitignore=) and out of anything you share.
 
+** messages.org
+
+Messages to students through the Canvas Inbox, sent with
+=org-canvas-send-messages= and never as part of a sync.  The moment one
+is wanted is the moment =gradebook.org= shows who has missing work:
+name them in =TO=, write the text, send.  A sent heading is stamped and
+never sent again, so the file is also the record of what went out and
+when.
+
+*** Structure
+
+- Level 1 headings = Messages; the heading is the subject
+- Body = the message, sent as plain text (Canvas renders no markup in
+  a conversation, so write it as prose)
+
+#+begin_example
+,* Reminder: proposals due Friday
+:PROPERTIES:
+:TO: Students: Adams, Alice; Beta, Bob
+:END:
+Proposals are due Friday at 23:59 through the Project Proposal
+assignment.  One page is enough.
+#+end_example
+
+*** Properties
+
+| Property           | Type      | Description                                                        |
+|--------------------+-----------+--------------------------------------------------------------------|
+| =TO=                 | string    | Required.  Who gets it; the kinds are below                        |
+| =BULK=               | boolean   | Default true: one private conversation per recipient.  False sends one group conversation everyone in it can see |
+| =SENT_AT=            | timestamp | Set by the send.  A heading that carries it is never sent again    |
+| =RECIPIENTS=         | string    | Set by the send: the user ids or the Canvas context the message went to |
+| =CONVERSATION_IDS=   | string    | Set by the send, when Canvas answers with the conversations it made |
+| =PAYLOAD_HASH=       | string    | Set by the send, so validation can tell an edited message from the one that went out |
+
+=TO= is one of:
+
+| =Self=                        | The token's owner.  Try a message on yourself first  |
+| =Course=                      | Every student in the course                          |
+| =Section: Lecture 001=        | A section named in =sections.org=                    |
+| =Group: Team A=               | A group named in =groups.org=                        |
+| =Students: Adams, Alice; Beta, Bob= | People named in =people.org=; =;= between them, since a sortable name carries a comma |
+
+A section, group or student may be a literal =#id= instead of a name
+(=Students: #12345; #67890=).  A name that resolves to nothing pulled
+skips the message with a warning naming what to pull; for students it
+is all or nothing, since a message to half the people named would be a
+surprise.
+
+*** Sending
+
+=M-x org-canvas-send-messages= sends every heading without =SENT_AT=,
+after asking once and naming each message and its target.
+=org-canvas-send-message-at-point= sends the one heading at point.
+Both take a prefix argument (=C-u=) as a rehearsal: the recipients are
+resolved and logged, nothing is sent.  =TO: Self= is the other
+rehearsal: the message reaches your own Inbox exactly as students would
+see it.
+
+Sending is deliberately absent from =org-canvas-sync=, =org-canvas-pull-all=
+and every tier: a full sync never mails anyone.  A course marked
+=org-canvas-read-only= refuses the command before anything is resolved.
+To send a message again, add a new heading: editing a stamped one changes
+nothing on Canvas, and =org-canvas-validate= says so when the text no
+longer matches the hash stamped at the send.
+
+*** Personal Data
+
+A name in =TO= travels with the course repository, as does the text of
+what was said to whom.  Write =#id= instead of a name when the
+repository is shared, or keep =messages.org= out of it.
+
 ** calendar.org
 
 Non-assignment calendar events such as office hours, holidays, and review sessions.
@@ -3006,6 +3079,15 @@ These commands delete the item at the current cursor position:
 
 See [[*Grading Submissions]] for the workflow.
 
+** Message Commands
+
+| Command | Description |
+|---|---|
+| =org-canvas-send-messages= | Send every unsent heading in =messages.org= after one confirmation; =C-u= rehearses without sending (=e= in the menu) |
+| =org-canvas-send-message-at-point= | Send the message heading at point; =C-u= rehearses (=E=) |
+
+Never part of a sync; see [[*messages.org][messages.org]].
+
 ** Utility Commands
 
 | Command                         | Description                                   |
@@ -3582,6 +3664,16 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =MAX_MEMBERSHIP= | number |  |  | Member limit for the group, when Canvas sets one (pull-only) |
 | =JOIN_LEVEL= | enum | parent_context_auto_join, parent_context_request, invitation_only |  | Who may join the group (pull-only) |
 | =MEMBERS_COUNT= | number |  |  | Number of members Canvas reports for the group (pull-only) |
+
+** Messages
+
+| Property | Type | Allowed values | Default | Description |
+|----------+------+----------------+---------+-------------|
+| =TO= | string |  |  | Who gets it: Self, Course, Section: name, Group: name, or Students: name; name (a #id in place of any name) |
+| =BULK= | boolean | true, false | true | One private conversation per recipient; false sends one group conversation |
+| =SENT_AT= | timestamp | set by Canvas (read-only) |  | When the message was sent; a heading that carries it is never sent again |
+| =RECIPIENTS= | string | set by Canvas (read-only) |  | The user ids or Canvas context the message was sent to |
+| =CONVERSATION_IDS= | string | set by Canvas (read-only) |  | The conversations Canvas created, when it answered with them |
 
 ** Module Items
 

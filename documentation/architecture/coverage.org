@@ -52,6 +52,7 @@ pull-at-point and prune.
 | Course settings   | yes  | no       | yes  | no     | no       | see the settings list below; the post policy goes by GraphQL    |
 | Post policies     | yes  | no       | yes  | no     | no       | course and per-assignment grade post policy; posting grades from a grading file |
 | Discussion checkpoints | yes | no    | yes  | no     | no       | the five CHECKPOINT_ properties on a discussion, by GraphQL; the flag is account-level, so an instance without it pulls none and refuses the push |
+| Conversations     | yes  | yes      | no   | no     | yes      | push-only, on command and never in a tier: messages.org sends to students, a section, a group, the course or yourself; a sent heading is stamped and never resent; nothing is read back |
 
 Submission grading (=org-canvas-submissions.el=) is a workflow, not a
 content type: it pulls a grading file per assignment, pushes scores
@@ -96,7 +97,8 @@ disturbs them.
 - *Mastery Paths* (conditional release), *Blueprint* associations and
   locks, and course-level *feature flags*.
 - *Collaborations*, *conferences*, *appointment groups* (the scheduler),
-  *chat*, *attendance*.
+  *chat*, *attendance*.  The Inbox is written to (see Conversations in
+  the covered table) but never read: replies stay in the web UI.
 - *Outcome alignments* as objects and the *learning mastery gradebook*;
   outcomes themselves are covered.
 - *Content migrations, course copy, exports and ePub.*  org-canvas is the
@@ -163,7 +165,7 @@ The map came from one loop over API surface names against =lisp/=:
 for pat in grading_period "post_polic|post_manually" enrollments \
            "api/v1/groups" discussion_entries setCheckpoints mastery_path blueprint \
            collaboration conference appointment_group feature_flag \
-           question_bank item_bank; do
+           question_bank item_bank conversations; do
   printf "%-28s %s\n" "$pat" "$(grep -rlE "$pat" lisp/*.el | tr '\n' ' ')"
 done
 #+end_src
