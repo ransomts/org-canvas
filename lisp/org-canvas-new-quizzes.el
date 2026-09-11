@@ -572,8 +572,10 @@ of the quiz payload."
       (let* ((url (org-canvas--new-quiz-api-endpoint
                    "quizzes/%s/items" quiz-assignment-id))
              (items (org-canvas-api-request-all-pages 'GET url)))
-        (dolist (item (org-canvas--pull-sort-items items))
-          (org-canvas--new-quiz-pull-insert-item item)))
+        (let ((quiz-pos (point)))
+          (dolist (item (org-canvas--pull-sort-items items))
+            (org-canvas--new-quiz-pull-insert-item item)
+            (goto-char quiz-pos))))
     (error
      (org-canvas--log-warning org-canvas--logger
        "[New Quizzes] Failed to fetch items for quiz %s (%s); items omitted from pull"

@@ -180,6 +180,13 @@ Use to assert request body structure, not merely that a call happened."
   "Return keyword KEY (e.g. :params, :timeout) from a recorded CALL."
   (plist-get (nth 3 call) key))
 
+(defun test-org-canvas-count-matches (regexp text)
+  "Return how many times REGEXP matches in TEXT."
+  (let ((n 0) (start 0))
+    (while (string-match regexp text start)
+      (setq n (1+ n) start (match-end 0)))
+    n))
+
 (defun test-org-canvas-api-call-count ()
   "Return the number of API calls made."
   (length test-org-canvas-api-calls))

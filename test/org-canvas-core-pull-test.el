@@ -1849,5 +1849,52 @@ Keep this too
         (expect (mapcar (lambda (x) (alist-get 'name x)) sorted)
                 :to-equal '("A-early" "A-late" "B-early"))))))
 
+(describe "org-canvas--pull-find-child (issue #239)"
+  (it "finds a child by id, else an unstamped child by title, else nothing"
+    (with-temp-org-buffer "* Parent\n** One\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n** Two\n** One\n* Other\n** Three\n:PROPERTIES:\n:CANVAS_ID: 3\n:END:\n"
+      (goto-char (point-min))
+      (let ((by-id (org-canvas--pull-find-child "CANVAS_ID" 1 "Zzz"))
+            (by-title (org-canvas--pull-find-child "CANVAS_ID" 9 "Two"))
+            (unstamped-twin (org-canvas--pull-find-child "CANVAS_ID" nil "One"))
+            (elsewhere (org-canvas--pull-find-child "CANVAS_ID" 3 "Three"))
+            (none (org-canvas--pull-find-child "CANVAS_ID" 9 "Nine")))
+        (expect (and by-id (save-excursion (goto-char by-id) (org-get-heading t t t t))) :to-equal "One")
+        (expect (and by-title (save-excursion (goto-char by-title) (org-get-heading t t t t))) :to-equal "Two")
+        ;; The stamped One is not a candidate for an unstamped match; the second One is.
+        (expect unstamped-twin :to-be-greater-than by-title)
+        (expect elsewhere :to-be nil)
+        (expect none :to-be nil)))))
+
+(describe "org-canvas--pull-child-insert-point (issue #239)"
+  (it "empties an existing child and returns its place, else the end of the subtree"
+    (with-temp-org-buffer "* Parent\n** Old\nold body\n** Keep\n* Next\n"
+      (goto-char (point-min))
+      (let ((at (org-canvas--pull-child-insert-point "CANVAS_ID" nil "Old")))
+        (expect (buffer-substring (point-min) (point-max)) :to-equal "* Parent\n** Keep\n* Next\n")
+        (expect at :to-equal (save-excursion (goto-char (point-min)) (re-search-forward "^\\*\\* Keep") (line-beginning-position))))
+      (goto-char (point-min))
+      (let ((at (org-canvas--pull-child-insert-point "CANVAS_ID" nil "New")))
+        ;; The end of Parent's subtree, on a line of its own, before Next.
+        (expect (save-excursion (goto-char at) (bolp)) :to-be t)
+        (expect at :to-be-greater-than (save-excursion (goto-char (point-min)) (re-search-forward "^\\*\\* Keep") (point)))
+        (expect at :to-be-less-than (save-excursion (goto-char (point-min)) (re-search-forward "^\\* Next") (point)))))))
+
+(describe "org-canvas--pull-child-close (issue #239)"
+  (it "puts the text that followed a rewritten child on its own line, and only then"
+    (with-temp-buffer
+      (insert "** New\nbody* Next\n")
+      ;; Insertion type t, as the pulls use: the marker follows the text it marks.
+      (let ((next (copy-marker (save-excursion (goto-char (point-min)) (search-forward "* Next") (match-beginning 0)) t)))
+        (org-canvas--pull-child-close next)
+        (expect (buffer-string) :to-equal "** New\nbody\n* Next\n")
+        ;; Already on its own line: nothing to add.
+        (org-canvas--pull-child-close next)
+        (expect (buffer-string) :to-equal "** New\nbody\n* Next\n")
+        ;; Nothing follows: nothing to add.
+        (org-canvas--pull-child-close (copy-marker (point-max)))
+        (expect (buffer-string) :to-equal "** New\nbody\n* Next\n")
+        (org-canvas--pull-child-close nil)
+        (expect (buffer-string) :to-equal "** New\nbody\n* Next\n")))))
+
 (provide 'org-canvas-core-pull-test)
 ;;; org-canvas-core-pull-test.el ends here

@@ -256,19 +256,9 @@ Each plist has :user-id, :name, :section-ids, :current, :final,
 (defun org-canvas--gradebook-roster-heading (user-id)
   "Return the people.org heading carrying USER-ID, or nil.
 Nil as well when `org-canvas-people-file' is unset or missing."
-  (let ((file (and (boundp 'org-canvas-people-file) org-canvas-people-file)))
-    (when (and file (file-exists-p file))
-      (let ((target (format "%s" user-id)) (heading nil))
-        (with-current-buffer (org-canvas--find-file-noselect file)
-          (save-excursion
-            (goto-char (point-min))
-            (org-map-entries
-             (lambda ()
-               (when (and (not heading)
-                          (equal (org-entry-get (point) "USER_ID") target))
-                 (setq heading (org-get-heading t t t t))))
-             "USER_ID={.}" 'file)))
-        heading))))
+  (org-canvas--heading-title-by-property
+   (and (boundp 'org-canvas-people-file) org-canvas-people-file)
+   "USER_ID" user-id "USER_ID={.}"))
 
 (defun org-canvas--gradebook-heading-link (file heading text)
   "Return an Org link to HEADING in the course FILE, shown as TEXT.
