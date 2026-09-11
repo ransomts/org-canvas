@@ -923,5 +923,9 @@ policy the way the gradebook UI does.")
   '("parent_context_auto_join" "parent_context_request" "invitation_only")
   "Valid values for JOIN_LEVEL on a pulled group.")
 
+(defconst org-canvas--valid-people-roles
+  '("student" "teacher" "ta" "observer" "designer")
+  "Valid values for ROLE on a pulled person.")
+
 (provide 'org-canvas-core-config)
 ;;; org-canvas-core-config.el ends here

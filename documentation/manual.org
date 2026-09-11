@@ -246,6 +246,7 @@ These files have no outgoing links to other course files:
 | =assignment-groups.org= | Assignment Groups  | Weight categories             |
 | =group-categories.org=  | Group Categories   | Group sets for group work     |
 | =groups.org=            | Groups             | Pull-only: groups and members per category (student names) |
+| =people.org=            | People             | Pull-only: the roster by role, with sections and state (names) |
 | =pages.org=             | Wiki Pages         | Course content pages          |
 | =files.org=             | Files              | Binary file uploads           |
 | =discussions.org=       | Discussions        | Discussion topics             |
@@ -1625,6 +1626,49 @@ the same: treat =groups.org= as you treat the submissions directory
 and keep it out of a course repository (add it to =.gitignore=) and
 out of anything you share.
 
+** people.org
+
+Pull-only.  =org-canvas-pull-people= writes the course roster: everyone
+enrolled, in what role, in which sections, and whether their
+enrollment is active.  Enrolling and removing people is the
+registrar's and the web UI's business, so nothing in this file is
+pushed, and nothing local is deleted for being absent on Canvas: a
+heading for someone who has dropped stays until you remove it.
+
+*** Structure
+
+- Level 1 headings = Roles: Students, Teachers, TAs, Observers,
+  Designers, in that order, only those present
+- Level 2 headings = People, titled by sortable name (=Last, First=)
+
+A person enrolled in two sections is one heading with both sections
+listed.  A person with two roles takes the higher (teacher over TA
+over designer over observer over student).  Canvas's Test Student is
+skipped.
+
+*** Properties (set by pull)
+
+| Property           | Type      | Description                                                          |
+|--------------------+-----------+----------------------------------------------------------------------|
+| =USER_ID=            | number    | Canvas user id; a re-pull matches the heading on it, wherever it sits |
+| =ROLE=               | enum      | student, teacher, ta, observer, designer                             |
+| =SECTIONS=           | string    | Sections, comma separated, each a link to =sections.org= when that file holds the id |
+| =ENROLLMENT_STATE=   | string    | active, invited, inactive, completed; several when the enrollments differ |
+| =LAST_ACTIVITY=      | timestamp | When Canvas last saw the person in the course                        |
+| =SIS_USER_ID=        | string    | Only with =org-canvas-people-include-identifiers=                    |
+| =LOGIN_ID=           | string    | Only with =org-canvas-people-include-identifiers=                    |
+
+*** Personal Data
+
+The file is a roster of names.  By default only the name, role,
+sections, state and last activity are written; the SIS id and login
+id are opt-in through =org-canvas-people-include-identifiers=, and an
+email address or a grade is never written, although the enrollment
+object Canvas returns carries current scores.  A name is personal data
+all the same: treat =people.org= as you treat the submissions
+directory and keep it out of a course repository (add it to
+=.gitignore=) and out of anything you share.
+
 ** calendar.org
 
 Non-assignment calendar events such as office hours, holidays, and review sessions.
@@ -2262,6 +2306,7 @@ Each content type can be pulled individually:
 | =org-canvas-pull-assignment-groups=    | Pull assignment groups                |
 | =org-canvas-pull-group-categories=     | Pull group categories                 |
 | =org-canvas-pull-groups=               | Pull groups and their members         |
+| =org-canvas-pull-people=               | Pull the course roster                |
 | =org-canvas-pull-assignments=          | Pull assignments with descriptions    |
 | =org-canvas-pull-quizzes=              | Pull quizzes with questions           |
 | =org-canvas-pull-pages=               | Pull wiki pages with body content     |
@@ -2515,6 +2560,7 @@ pulled front page carries =:FRONT_PAGE: true=, so it round-trips.
 | =org-canvas-pull-assignment-groups=    | Pull assignment groups                |
 | =org-canvas-pull-group-categories=     | Pull group categories                 |
 | =org-canvas-pull-groups=               | Pull groups and their members         |
+| =org-canvas-pull-people=               | Pull the course roster                |
 | =org-canvas-pull-assignments=          | Pull assignments with descriptions    |
 | =org-canvas-pull-quizzes=              | Pull classic quizzes with questions   |
 | =org-canvas-pull-new-quizzes=          | Pull New Quizzes with items           |
@@ -3240,6 +3286,18 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =EDITING_ROLES= | csv-enum | teachers, students, members, public |  | Who can edit (teachers, students) |
 | =TODO_DATE= | timestamp |  |  | Add to student to-do list on date |
 | =NOTIFY_OF_UPDATE= | boolean | true, false |  | Notify students of changes (write-only) |
+
+** People
+
+| Property | Type | Allowed values | Default | Description |
+|----------+------+----------------+---------+-------------|
+| =USER_ID= | number | set by Canvas (read-only) |  | Canvas user id; a re-pull matches the heading on it |
+| =ROLE= | enum | set by Canvas (read-only) |  | The person's role in the course |
+| =SECTIONS= | string | set by Canvas (read-only) |  | Sections the person is enrolled in, comma separated, linked to sections.org when known |
+| =ENROLLMENT_STATE= | string | set by Canvas (read-only) |  | active, invited, inactive or completed; several when the enrollments differ |
+| =LAST_ACTIVITY= | timestamp | set by Canvas (read-only) |  | When Canvas last saw the person in the course |
+| =SIS_USER_ID= | string | set by Canvas (read-only) |  | SIS id, only with org-canvas-people-include-identifiers |
+| =LOGIN_ID= | string | set by Canvas (read-only) |  | Login id, only with org-canvas-people-include-identifiers |
 
 ** Quiz Questions
 

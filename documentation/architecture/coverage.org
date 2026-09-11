@@ -42,6 +42,7 @@ pull-at-point and prune.
 | Quizzes (classic) | yes  | yes      | yes  | yes    | yes      | questions and groups inline; a bank may be named, never managed |
 | Rubrics           | yes  | yes      | yes  | yes    | yes      | criteria, ratings, outcome links; associations via assignments  |
 | Sections          | no   | no       | yes  | no     | no       | pull-only, so overrides can name them                           |
+| People            | no   | no       | yes  | no     | no       | pull-only roster: role, sections, enrollment state, last activity, in people.org |
 | Grading periods   | no   | no       | yes  | no     | no       | pull-only; validate warns when a due date falls outside every period |
 | Overrides         | yes  | no       | yes  | no     | no       | per-section dates, reconciled from a table under each assignment |
 | Course settings   | yes  | no       | yes  | no     | no       | see the settings list below; the post policy goes by GraphQL    |
@@ -85,8 +86,9 @@ disturbs them.
 - *Gradebook configuration:* custom gradebook columns and the
   gradebook's own settings.  Grading periods are pulled and post
   policies are managed (see the covered table).
-- *People:* enrollments, users, the roster, and section membership.
-  Sections are pulled as objects; who is in them is not.
+- *Enrolling and removing people.*  The roster and section
+  membership are pulled (see the covered table); changing them is the
+  registrar's and the web UI's business.
 - *Discussion checkpoints*, the newer graded-discussion feature; replies themselves are pulled (see the covered table).
 - *Mastery Paths* (conditional release), *Blueprint* associations and
   locks, and course-level *feature flags*.

@@ -53,7 +53,8 @@ writing commands greyed rather than only erroring when one is chosen
    ("f" "Files" org-canvas-pull-files)
    ("o" "Outcomes" org-canvas-pull-outcomes)
    ("e" "Sections" org-canvas-pull-sections)
-   ("G" "Grading periods" org-canvas-pull-grading-periods)
+   ("u" "People (roster)" org-canvas-pull-people)
+   ("y" "Grading periods" org-canvas-pull-grading-periods)
    ("s" "Settings" org-canvas-pull-settings)
    ("S" "Submissions" org-canvas-pull-submissions)])
 
