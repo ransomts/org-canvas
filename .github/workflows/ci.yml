@@ -3,11 +3,18 @@ name: CI
 on:
   push:
     branches: [main]
+  # Every pull request, whatever its base: a PR stacked on another
+  # branch got no run at all under `branches: [main]`, and main's
+  # protection requires these checks on the head commit (PR #259).
   pull_request:
-    branches: [main]
   schedule:
     - cron: '0 6 * * 1'   # Mondays 06:00 UTC — weekly mutation ratchet
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      mutation:
+        description: "Also run the mutation ratchet (about 90 minutes)"
+        type: boolean
+        default: false
 
 jobs:
   test:
@@ -166,10 +173,12 @@ jobs:
     #     only on a NEW survivor, never on the (noisy, sampled) score.
     #  2. validate.el + core-sync.el have no baseline yet, so they keep
     #     the crude sampled score floor until someone triages them.
-    # Scheduled weekly (and manually dispatchable); never blocks PRs.
+    # Scheduled weekly, or dispatched by hand with the `mutation` input
+    # set; never blocks PRs.  A plain dispatch — a CI run on a branch
+    # that has no pull request — must not burn the 90 minutes.
     # The timeout covers the full pass: ~195 mutations at --jobs 3, plus
     # six known non-terminating mutants that each burn the 120s timeout.
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mutation)
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
