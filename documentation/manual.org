@@ -2493,7 +2493,9 @@ Per feature:
   =updated_at= is newer than the last sync.  When Canvas is newer but no
   compared field differs, a line says so, so the row is not a puzzle: the
   change is in something the report does not compare (overrides, a rubric
-  association).
+  association).  Such a row has nothing to push or pull; =a= on it adopts
+  the Canvas timestamp as the heading's baseline instead (see
+  [[*Adopting a Stamp][Adopting a Stamp]]).
 - *MISSING* -- a heading carries a Canvas id the course no longer has.
 - *EXTRA* -- an item in the course that no Org heading claims.
 - *UNCLAIMED* -- an EXTRA item whose title an unstamped local heading shares.
@@ -2604,23 +2606,49 @@ something the keys act on:
 | =RET=     | EXTRA                   | Open the Canvas object in a browser, when the API said where it lives |
 | =a=       | EXTRA, UNCLAIMED        | Acknowledge the id in =org-canvas-diff-known-extras=, with an optional note |
 | =a=       | STALE-ACK               | Drop the acknowledgment                                             |
+| =a=       | CHANGED, no compared property differing | Adopt the Canvas timestamp as the heading's baseline (=org-canvas-diff-adopt-stamp=); refused when a property differs |
 | =k=       | EXTRA, UNCLAIMED        | Delete the remote object, after confirming                          |
 | =p=       | CHANGED                 | Pull the Canvas version over the heading (=org-canvas-pull-at-point=, which asks first) |
 | =g=       | anywhere                | Run the report again                                                |
 | =TAB= / =S-TAB= | anywhere          | Move to the next / previous row                                     |
 
-An action rewrites its row in place (=ACK=, =DELETED=, =PULLED=, =DROPPED=)
-rather than re-running every list request; =g= refreshes when you want the
-totals recounted.  Acknowledgments are persisted through
+An action rewrites its row in place (=ACK=, =DELETED=, =PULLED=, =DROPPED=,
+=ADOPTED=) rather than re-running every list request; =g= refreshes when you
+want the totals recounted.  Acknowledgments are persisted through
 =org-canvas-diff-acknowledge-function=, which receives the whole new list.
 The default saves with =customize-save-variable=; a course that keeps its
 configuration in a file of its own can name a function that writes the list
 there instead.  Batch output is unchanged.
 
+** Adopting a Stamp
+
+Some changes Canvas makes on its own move an item's =updated_at= without
+touching anything the report compares: a metadata-only file touch, the
+bump a rubric association leaves on its assignment, and -- course-wide --
+a change to the course post policy in settings.org, which makes Canvas
+rewrite the policy of every assignment (#257).  The next report then lists
+each such entry as =CHANGED= with the line saying no compared property
+differs.  The report is right, and there is nothing in Org to change; a
+push would send the same content again, and a pull would rewrite the same
+text.  What the entry needs is a new baseline.
+
+=a= on such a row adopts it: the live timestamp goes into the heading's
+=CANVAS_UPDATED_AT=, =PAYLOAD_HASH= is left alone (the local side did not
+change, so the next sync still skips it), and nothing is sent to Canvas.
+A =CHANGED= row where a property does differ is refused -- push or pull
+that one.  =org-canvas-diff-adopt-stamps= does the same for every
+qualifying row in one pass: it runs the comparison, names the count and
+asks (not in batch), adopts, and reports what it adopted, what it could
+not find, and how many =CHANGED= rows it left alone because a property
+differs.  A settings push that changes the post policy logs a warning
+naming this command as the follow-up.
+
 ** Cost and Safety
 
-One list request per feature.  Nothing is written, locally or on Canvas, so it
-is safe to run at any time.
+One list request per feature.  The report writes nothing, locally or on
+Canvas, so it is safe to run at any time.  Stamp adoption is the one local
+write in this part of the package, and it happens only when you ask for it
+with =a= or =org-canvas-diff-adopt-stamps=; it still sends nothing.
 
 Calendar events are covered too.  They list from the global calendar endpoint
 with =all_events=true=; without that parameter Canvas returns only the events
@@ -3205,7 +3233,8 @@ Never part of a sync; see [[*messages.org][messages.org]].
 | =org-canvas-apply-scheduled-releases= | Publish modules and items whose =PUBLISH_AT= has passed |
 | =org-canvas-diff=                 | Report how Canvas differs from the Org files (read-only) |
 | =org-canvas-diff-batch=           | As above, exiting non-zero when drift is found |
-| =org-canvas-diff-visit= / =-acknowledge= / =-delete= / =-pull= | Row actions in the report buffer (see [[*Acting on the Report][Acting on the Report]]) |
+| =org-canvas-diff-visit= / =-acknowledge= / =-delete= / =-pull= / =-adopt-stamp= | Row actions in the report buffer (see [[*Acting on the Report][Acting on the Report]]) |
+| =org-canvas-diff-adopt-stamps=    | Adopt the Canvas timestamp of every CHANGED entry with no compared property differing (local write only; see [[*Adopting a Stamp][Adopting a Stamp]]) |
 | =org-canvas-adopt-at-point=       | Stamp the heading at point with the Canvas item of the same title (local write only) |
 | =org-canvas-validate=             | Validate all Org files offline (no API calls) |
 | =org-canvas-validate-batch=       | As above, exiting non-zero when there are errors |

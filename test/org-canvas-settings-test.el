@@ -1831,6 +1831,25 @@ LIST :records LIST)."
         (org-canvas--settings-push-post-policy '(:title "Course")))
       (expect sent :to-be nil)))
 
+  (it "names the stamp adoption that follows a sent policy change, not a dry run (issue #257)"
+    ;; Canvas rewrites every assignment's policy, bumping each
+    ;; updated_at, so the next drift report lists them all as CHANGED.
+    (with-org-canvas-test-config
+      (let ((warnings nil))
+        (cl-letf (((symbol-function 'org-canvas--log-warning)
+                   (lambda (_logger fmt &rest args) (push (apply #'format fmt args) warnings)))
+                  ((symbol-function 'org-canvas--course-post-policy-forget) #'ignore))
+          (cl-letf (((symbol-function 'org-canvas--graphql-mutate)
+                     (lambda (&rest _) '((setCoursePostPolicy . nil)))))
+            (org-canvas--settings-push-post-policy '(:post-policy "manual")))
+          (expect (length warnings) :to-equal 1)
+          (expect (car warnings) :to-match "post policy is now manual")
+          (expect (car warnings) :to-match "org-canvas-diff-adopt-stamps")
+          (cl-letf (((symbol-function 'org-canvas--graphql-mutate)
+                     (lambda (&rest _) org-canvas--dry-run-response)))
+            (org-canvas--settings-push-post-policy '(:post-policy "manual")))
+          (expect (length warnings) :to-equal 1)))))
+
   (it "runs the policy push inside the settings sync, after the course PUT"
     (let ((file (make-temp-file "settings-" nil ".org")) (order nil))
       (unwind-protect

@@ -1204,7 +1204,7 @@ The remote updated_at is always newer than the baseline."
       (expect (lookup-key org-canvas-diff-mode-map (kbd "k")) :to-be #'org-canvas-diff-delete)
       (expect (lookup-key org-canvas-diff-mode-map (kbd "p")) :to-be #'org-canvas-diff-pull)
       (expect (lookup-key org-canvas-diff-mode-map (kbd "g")) :to-be #'org-canvas-diff-refresh)
-      (expect (buffer-string) :to-match "RET visit   a acknowledge")))
+      (expect (buffer-string) :to-match "RET visit   a acknowledge/adopt")))
 
   (it "carries each row's feature and entry as a text property, and none off a row"
     (with-current-buffer (test-org-canvas--diff-report-buffer
@@ -1458,6 +1458,253 @@ The remote updated_at is always newer than the baseline."
                           '((:name "Assignments" :extra ((:kind extra :title "Surprise" :id "99")))))
       (test-org-canvas--diff-goto-row 'extra)
       (expect (org-canvas-diff-pull) :to-throw 'user-error))))
+
+;;;; Stamp adoption (issue #257)
+
+(defmacro test-org-canvas-257--with-assignments-file (content &rest body)
+  "Run BODY with `org-canvas-assignments-file' bound to a file holding CONTENT.
+The file is deleted afterwards, its buffer killed."
+  (declare (indent 1))
+  `(let ((file (make-temp-file "diff-adopt-" nil ".org")))
+     (unwind-protect
+         (progn
+           (with-temp-file file (insert ,content))
+           (let ((org-canvas-assignments-file file))
+             ,@body))
+       (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+       (delete-file file))))
+
+(defun test-org-canvas-257--property (file title property)
+  "Return PROPERTY of the heading TITLE in FILE, read from disk."
+  (with-temp-buffer
+    (insert-file-contents file)
+    (org-mode)
+    (goto-char (point-min))
+    (re-search-forward (concat "^\\* " (regexp-quote title) "$"))
+    (org-entry-get (point) property)))
+
+(defconst test-org-canvas-257--file
+  (concat "* Lab 1\n:PROPERTIES:\n:CANVAS_ID: 60\n:CANVAS_UPDATED_AT: 2026-09-01T00:00:00Z\n:PAYLOAD_HASH: aaa\n:END:\n"
+          "* Lab 2\n:PROPERTIES:\n:CANVAS_ID: 61\n:CANVAS_UPDATED_AT: 2026-09-01T00:00:00Z\n:PAYLOAD_HASH: bbb\n:END:\n"
+          "* Lab 3\n:PROPERTIES:\n:CANVAS_ID: 62\n:CANVAS_UPDATED_AT: 2026-09-01T00:00:00Z\n:PAYLOAD_HASH: ccc\n:END:\n")
+  "Three stamped assignment headings for the adoption specs.")
+
+(describe "org-canvas--diff-adoptable-p (issue #257)"
+  (it "accepts a CHANGED row Canvas holds newer with no compared property differing"
+    (expect (org-canvas--diff-adoptable-p
+             '(:kind modified :title "Lab 2" :id "61" :remote-newer t :fields nil
+               :updated "2026-09-11T20:00:00Z"))
+            :to-be-truthy))
+
+  (it "refuses a row where a compared property differs, one Canvas is not newer on, and other kinds"
+    (expect (org-canvas--diff-adoptable-p
+             '(:kind modified :title "Lab 2" :id "61" :remote-newer t
+               :fields (("POINTS" "10" "12")) :updated "2026-09-11T20:00:00Z"))
+            :to-be nil)
+    (expect (org-canvas--diff-adoptable-p
+             '(:kind modified :title "Lab 2" :id "61" :remote-newer nil :fields nil
+               :updated "2026-09-11T20:00:00Z"))
+            :to-be nil)
+    (expect (org-canvas--diff-adoptable-p
+             '(:kind modified :title "Lab 2" :id "61" :remote-newer t :fields nil))
+            :to-be nil)
+    (expect (org-canvas--diff-adoptable-p '(:kind missing :title "Lab 2" :id "61"))
+            :to-be nil)))
+
+(describe "org-canvas-diff-adopt-stamp (issue #257)"
+  (it "writes the Canvas timestamp into CANVAS_UPDATED_AT, keeps PAYLOAD_HASH, sends nothing, and marks the row"
+    (test-org-canvas-257--with-assignments-file test-org-canvas-257--file
+      (with-mock-api
+        (with-current-buffer (test-org-canvas--diff-report-buffer
+                              '((:name "Assignments"
+                                 :divergences ((:kind modified :title "Lab 2" :id "61"
+                                                :remote-newer t :fields nil
+                                                :updated "2026-09-11T20:00:00Z")))))
+          (test-org-canvas--diff-goto-row 'modified)
+          (org-canvas-diff-adopt-stamp)
+          (expect (thing-at-point 'line t)
+                  :to-match "ADOPTED   Lab 2 (CANVAS_UPDATED_AT set to 2026-09-11T20:00:00Z, nothing sent)")
+          (expect (get-text-property (point) 'org-canvas-diff-row) :to-be-truthy))
+        (expect (test-org-canvas-api-call-count) :to-equal 0))
+      (expect (test-org-canvas-257--property file "Lab 2" "CANVAS_UPDATED_AT")
+              :to-equal "2026-09-11T20:00:00Z")
+      (expect (test-org-canvas-257--property file "Lab 2" "PAYLOAD_HASH") :to-equal "bbb")
+      ;; The neighbours are untouched.
+      (expect (test-org-canvas-257--property file "Lab 1" "CANVAS_UPDATED_AT")
+              :to-equal "2026-09-01T00:00:00Z")
+      (expect (test-org-canvas-257--property file "Lab 3" "CANVAS_UPDATED_AT")
+              :to-equal "2026-09-01T00:00:00Z")))
+
+  (it "is what a on a CHANGED row does"
+    (test-org-canvas-257--with-assignments-file test-org-canvas-257--file
+      (with-current-buffer (test-org-canvas--diff-report-buffer
+                            '((:name "Assignments"
+                               :divergences ((:kind modified :title "Lab 3" :id "62"
+                                              :remote-newer t :fields nil
+                                              :updated "2026-09-11T21:00:00Z")))))
+        (test-org-canvas--diff-goto-row 'modified)
+        (org-canvas-diff-acknowledge)
+        (expect (thing-at-point 'line t) :to-match "ADOPTED   Lab 3"))
+      (expect (test-org-canvas-257--property file "Lab 3" "CANVAS_UPDATED_AT")
+              :to-equal "2026-09-11T21:00:00Z")))
+
+  (it "refuses a CHANGED row where a compared property differs and leaves the file alone"
+    (test-org-canvas-257--with-assignments-file test-org-canvas-257--file
+      (with-current-buffer (test-org-canvas--diff-report-buffer
+                            '((:name "Assignments"
+                               :divergences ((:kind modified :title "Lab 2" :id "61"
+                                              :remote-newer t
+                                              :fields (("POINTS" "10" "12"))
+                                              :updated "2026-09-11T20:00:00Z")))))
+        (test-org-canvas--diff-goto-row 'modified)
+        (expect (org-canvas-diff-adopt-stamp) :to-throw 'user-error)
+        (expect (org-canvas-diff-acknowledge) :to-throw 'user-error)
+        (expect (thing-at-point 'line t) :to-match "CHANGED   Lab 2"))
+      (expect (test-org-canvas-257--property file "Lab 2" "CANVAS_UPDATED_AT")
+              :to-equal "2026-09-01T00:00:00Z")))
+
+  (it "refuses a row that is not CHANGED"
+    (with-current-buffer (test-org-canvas--diff-report-buffer
+                          '((:name "Assignments" :extra ((:kind extra :title "Surprise" :id "99")))))
+      (test-org-canvas--diff-goto-row 'extra)
+      (expect (org-canvas-diff-adopt-stamp) :to-throw 'user-error)))
+
+  (it "signals when no heading carries the row's id"
+    (test-org-canvas-257--with-assignments-file test-org-canvas-257--file
+      (with-current-buffer (test-org-canvas--diff-report-buffer
+                            '((:name "Assignments"
+                               :divergences ((:kind modified :title "Ghost" :id "999"
+                                              :remote-newer t :fields nil
+                                              :updated "2026-09-11T20:00:00Z")))))
+        (test-org-canvas--diff-goto-row 'modified)
+        (expect (org-canvas-diff-adopt-stamp) :to-throw 'user-error)))))
+
+(describe "org-canvas-diff-adopt-stamps (issue #257)"
+  (defun test-org-canvas-257--run (results &optional answer)
+    "Run the batch adoption over RESULTS as if every feature reported them.
+ANSWER `no' declines the confirmation, which otherwise says yes; the
+prompt text and the report text come back as (PROMPT . REPORT)."
+    (let ((prompt nil))
+      (with-org-canvas-test-config
+        (let ((noninteractive nil))
+          (cl-letf (((symbol-function 'org-canvas--preflight-check) #'ignore)
+                    ((symbol-function 'display-buffer) (lambda (&rest _) nil))
+                    ((symbol-function 'org-canvas--diff-syllabus-references) (lambda () nil))
+                    ((symbol-function 'y-or-n-p)
+                     (lambda (q) (setq prompt q) (not (eq answer 'no))))
+                    ((symbol-function 'org-canvas--diff-feature)
+                     (lambda (feature)
+                       (or (cl-find (plist-get feature :name) results
+                                    :key (lambda (r) (plist-get r :name))
+                                    :test #'string=)
+                           (list :name (plist-get feature :name))))))
+            (org-canvas-diff-adopt-stamps))))
+      (cons prompt (with-current-buffer org-canvas--diff-adopt-buffer-name (buffer-string)))))
+
+  (it "adopts every qualifying row after confirming, counts the held-back ones, and sends nothing"
+    (test-org-canvas-257--with-assignments-file test-org-canvas-257--file
+      (let ((out nil))
+        (with-mock-api
+          (setq out (test-org-canvas-257--run
+                     '((:name "Assignments"
+                        :divergences ((:kind modified :title "Lab 1" :id "60"
+                                       :remote-newer t :fields nil
+                                       :updated "2026-09-11T20:00:00Z")
+                                      (:kind modified :title "Lab 2" :id "61"
+                                       :remote-newer t
+                                       :fields (("POINTS" "10" "12"))
+                                       :updated "2026-09-11T20:00:00Z")
+                                      (:kind modified :title "Lab 3" :id "62"
+                                       :remote-newer t :fields nil
+                                       :updated "2026-09-11T22:00:00Z")
+                                      (:kind missing :title "Lab 4" :id "63"))
+                        :extra ((:kind extra :title "Surprise" :id "99"))))))
+          (expect (test-org-canvas-api-call-count) :to-equal 0))
+        (expect (car out) :to-match "Adopt the Canvas timestamp of 2 CHANGED entries")
+        (expect (cdr out) :to-match "ADOPTED   Lab 1 (Assignments; CANVAS_UPDATED_AT set to 2026-09-11T20:00:00Z)")
+        (expect (cdr out) :to-match "ADOPTED   Lab 3 (Assignments; CANVAS_UPDATED_AT set to 2026-09-11T22:00:00Z)")
+        (expect (cdr out) :to-match "2 stamp(s) adopted; PAYLOAD_HASH kept, nothing sent to Canvas")
+        (expect (cdr out) :to-match "1 CHANGED row(s) left alone: a compared property differs")
+        (expect (cdr out) :not :to-match "Lab 2 (Assignments"))
+      (expect (test-org-canvas-257--property file "Lab 1" "CANVAS_UPDATED_AT")
+              :to-equal "2026-09-11T20:00:00Z")
+      (expect (test-org-canvas-257--property file "Lab 1" "PAYLOAD_HASH") :to-equal "aaa")
+      (expect (test-org-canvas-257--property file "Lab 2" "CANVAS_UPDATED_AT")
+              :to-equal "2026-09-01T00:00:00Z")
+      (expect (test-org-canvas-257--property file "Lab 3" "CANVAS_UPDATED_AT")
+              :to-equal "2026-09-11T22:00:00Z")
+      (expect (test-org-canvas-257--property file "Lab 3" "PAYLOAD_HASH") :to-equal "ccc")))
+
+  (it "returns the count adopted and names a heading it could not find"
+    (test-org-canvas-257--with-assignments-file test-org-canvas-257--file
+      (let ((count nil))
+        (cl-letf (((symbol-function 'org-canvas--report-display)
+                   (lambda (_name render) (with-temp-buffer (funcall render) (buffer-string)))))
+          (with-org-canvas-test-config
+            (cl-letf (((symbol-function 'org-canvas--preflight-check) #'ignore)
+                      ((symbol-function 'org-canvas--diff-syllabus-references) (lambda () nil))
+                      ((symbol-function 'org-canvas--diff-feature)
+                       (lambda (feature)
+                         (if (string= (plist-get feature :name) "Assignments")
+                             '(:name "Assignments"
+                               :divergences ((:kind modified :title "Lab 1" :id "60"
+                                              :remote-newer t :fields nil
+                                              :updated "2026-09-11T20:00:00Z")
+                                             (:kind modified :title "Ghost" :id "999"
+                                              :remote-newer t :fields nil
+                                              :updated "2026-09-11T20:00:00Z")))
+                           (list :name (plist-get feature :name))))))
+              ;; Batch: no prompt, `noninteractive' stays t under eldev.
+              (setq count (org-canvas-diff-adopt-stamps)))))
+        (expect count :to-equal 1))
+      (expect (test-org-canvas-257--property file "Lab 1" "CANVAS_UPDATED_AT")
+              :to-equal "2026-09-11T20:00:00Z")))
+
+  (it "renders the heading it could not find"
+    (with-org-canvas-test-config
+      (with-temp-buffer
+        (org-canvas--diff-adopt-render
+         '(("Assignments" "Lab 1" "2026-09-11T20:00:00Z"))
+         '(("Assignments" . "Ghost")) 0)
+        (expect (buffer-string) :to-match "NOT FOUND Ghost (Assignments; no heading carries its id)")
+        (expect (buffer-string) :to-match "1 stamp(s) adopted")
+        (expect (buffer-string) :not :to-match "left alone"))))
+
+  (it "writes nothing and says so when the confirmation is declined"
+    (test-org-canvas-257--with-assignments-file test-org-canvas-257--file
+      (expect (test-org-canvas-257--run
+               '((:name "Assignments"
+                  :divergences ((:kind modified :title "Lab 1" :id "60"
+                                 :remote-newer t :fields nil
+                                 :updated "2026-09-11T20:00:00Z"))))
+               'no)
+              :to-throw 'user-error)
+      (expect (test-org-canvas-257--property file "Lab 1" "CANVAS_UPDATED_AT")
+              :to-equal "2026-09-01T00:00:00Z")))
+
+  (it "asks nothing and reports so when no row qualifies"
+    (let ((out (test-org-canvas-257--run
+                '((:name "Assignments"
+                   :divergences ((:kind modified :title "Lab 2" :id "61"
+                                  :remote-newer t :fields (("POINTS" "10" "12"))
+                                  :updated "2026-09-11T20:00:00Z")))
+                  (:name "Pages" :error "boom")))))
+      (expect (car out) :to-be nil)
+      (expect (cdr out) :to-match "No stamp to adopt")
+      (expect (cdr out) :to-match "1 CHANGED row(s) left alone")))
+
+  (it "skips a row whose feature is not registered, without stopping the rest"
+    (test-org-canvas-257--with-assignments-file test-org-canvas-257--file
+      (let ((outcome (org-canvas--diff-adopt-all
+                      '(("No Such Feature" . (:kind modified :title "X" :id "1"
+                                              :remote-newer t :fields nil
+                                              :updated "2026-09-11T20:00:00Z"))
+                        ("Assignments" . (:kind modified :title "Lab 1" :id "60"
+                                          :remote-newer t :fields nil
+                                          :updated "2026-09-11T20:00:00Z"))))))
+        (expect (car outcome) :to-equal '(("Assignments" "Lab 1" "2026-09-11T20:00:00Z")))
+        (expect (cdr outcome) :to-equal '(("No Such Feature" . "X")))))))
+
 ;;;; Referenced media (issue #102)
 
 (describe "org-canvas--diff-file-references (issue #102)"
