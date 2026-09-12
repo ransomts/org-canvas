@@ -393,7 +393,7 @@ Returns total points across all criteria."
   (org-canvas--search-item "rubrics" title))
 
 (defun org-canvas--rubric-fetch-live (id)
-  "Return rubric ID as Canvas holds it, associations included, or nil.
+  "Return rubric ID as Canvas has it, associations included, or nil.
 A failed read is logged and yields nil: the push then pins criterion
 ids from the file alone and cannot count the associations."
   (condition-case err
@@ -461,7 +461,7 @@ first of that description CLAIMED does not list.  Nil for a new one."
                                        position live claimed))))
 
 (defun org-canvas--rubric-pin-ids (payload criteria live)
-  "Name in PAYLOAD the ids Canvas already holds for CRITERIA (issue #256).
+  "Name in PAYLOAD the ids Canvas already has for CRITERIA (issue #256).
 CRITERIA is the parsed criterion list PAYLOAD's criteria hash was built
 from; LIVE is the rubric as Canvas holds it, or nil when it could not
 be read.  A criterion takes the id of its twin on Canvas, else the one
