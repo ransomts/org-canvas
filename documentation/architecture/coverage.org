@@ -195,7 +195,9 @@ Three write paths added in these rounds have never been sent to a
 live course, because the course at hand had nothing to exercise them:
 the grading scheme create (#213), the checkpoint mutation (#216), and
 a sync of a quiz with question groups after a pull (#243).  Read the
-log the first time each runs for real.
+log the first time each runs for real.  So has the rubric update's
+dissociate–PUT–re-associate sequence (#255): its parts were run by hand
+on the live course, the sequence itself has not been.
 
 What remains in "Never Touched" is rarely set at the course level or
 belongs to the institution; nothing there is known to have bitten a

@@ -16,6 +16,7 @@
 ;; ================
 ;; ** Criterion Name :5pt:
 ;;    :PROPERTIES:
+;;    :CANVAS_CRITERION_ID: _1234
 ;;    :OUTCOME: [[file:outcomes.org::*Python Proficiency][Python Proficiency]]
 ;;    :END:
 ;;    Long description (optional body text before the ratings table).
@@ -28,7 +29,9 @@
 ;; The trailing :Npt: tag holds the criterion's max points (fractional points
 ;; encoded with `_` instead of `.`, e.g. :3_5pt: for 3.5 points -- Org tags
 ;; cannot contain dots).  The :OUTCOME: property is optional and links to
-;; outcomes.org for mastery tracking.
+;; outcomes.org for mastery tracking.  :CANVAS_CRITERION_ID: is the id
+;; Canvas knows the criterion by, stamped by push and pull and sent back
+;; on every update so assessments keyed by it survive (issue #256).
 ;;
 ;; PROPERTIES
 ;; ==========
@@ -39,12 +42,15 @@
 ;; ==================
 ;; Rubrics are associated with assignments via the RUBRIC_LINK property
 ;; in assignments.org.  The association happens during assignment sync,
-;; not during rubric sync.
+;; not during rubric sync — except that an update of a rubric several
+;; assignments grade with takes the surplus associations off for the
+;; duration of the PUT and puts them back, since Canvas would otherwise
+;; answer with a copy (issue #255; see "3. Stage: Execution").
 ;;
-;; CONFLICT HANDLING
-;; =================
-;; If a rubric with the same title already exists, it is deleted first
-;; before creating the new one.  This avoids duplicate rubrics.
+;; UPDATES
+;; =======
+;; A heading with a CANVAS_ID is PUT in place (issue #123); a title
+;; Canvas already holds goes through the duplicate-title guard (#85).
 
 ;;; Code:
 
@@ -83,6 +89,13 @@ The Org property is named after it; the payload key is the shorter
   :structural-fn #'org-canvas--validate-rubric-structure)
 
 ;;;; 1. Stage: Extraction
+
+(defconst org-canvas--rubric-criterion-id-property "CANVAS_CRITERION_ID"
+  "Property on a criterion heading naming the id Canvas gave the criterion.
+Canvas mints a fresh id for every criterion an update does not name,
+which orphans every assessment and grading-file row keyed by the old
+one (issue #256).  The push sends the stored id back, finalize stamps
+it from the response, and a pull writes it.")
 
 (defun org-canvas--rubric-format-points (n)
   "Format N as a number string, dropping .0 for whole numbers.
@@ -125,8 +138,12 @@ Returns nil for separator rows or empty rows."
 
 (defun org-canvas--rubric-parse-criterion-at-point ()
   "Parse the level-2 criterion heading at point + its sub-table.
-Returns a plist (:description :points :long-description :outcome-link :ratings)
-where :ratings is a list of (description points long-description) tuples."
+Returns a plist (:description :points :long-description :outcome-link
+:ratings :canvas-criterion-id :pom) where :ratings is a list of
+\(description points long-description) tuples.  :canvas-criterion-id
+is the criterion's CANVAS_CRITERION_ID, the id Canvas knows it by
+\(issue #256), or nil before the first push; :pom is a marker at the
+heading, which finalize stamps the id through."
   (org-back-to-heading t)
   (let* ((heading (org-get-heading t t t t))
          (tags (org-get-tags))
@@ -136,6 +153,8 @@ where :ratings is a list of (description points long-description) tuples."
                       tags))
          (points (or (org-canvas--rubric-decode-points-tag points-tag) 0))
          (outcome-prop (org-entry-get (point) "OUTCOME"))
+         (criterion-id (org-entry-get (point) org-canvas--rubric-criterion-id-property))
+         (pom (point-marker))
          (subtree-end (save-excursion (org-end-of-subtree t t) (point)))
          (long-desc "")
          (ratings nil))
@@ -171,7 +190,9 @@ where :ratings is a list of (description points long-description) tuples."
           :points points
           :long-description long-desc
           :outcome-link outcome-prop
-          :ratings (nreverse ratings))))
+          :ratings (nreverse ratings)
+          :canvas-criterion-id criterion-id
+          :pom pom)))
 
 (defun org-canvas--rubric-collect-criteria (pom)
   "Walk level-2 child headings under the rubric at POM.
@@ -340,10 +361,226 @@ Returns total points across all criteria."
         payload))))
 
 ;;;; 3. Stage: Execution
+;;
+;; Two things Canvas does to a rubric update, both learned on a live
+;; course (issues #255 and #256):
+;;
+;; - Every criterion and rating the request does not name by id gets a
+;;   fresh one (Rubric#unique_item_id), so an update rotates the ids
+;;   even when the criteria did not change, and every assessment already
+;;   entered and every grading-file Rubric table keyed by the old ids is
+;;   orphaned.  The push reads the live rubric first and sends each id
+;;   back (`org-canvas--rubric-pin-ids'): the heading's stored
+;;   CANVAS_CRITERION_ID, else the live criterion in the same position
+;;   with the same description, else the live criterion of that
+;;   description wherever it sits.  Ratings match by description and
+;;   points within their criterion — Canvas keeps them sorted by points,
+;;   so position means nothing.  What matches nothing is new, and Canvas
+;;   mints its id.
+;;
+;; - A rubric that more than one assignment grades with is not updated
+;;   at all: Canvas answers the PUT with a copy, "Title (1)", and leaves
+;;   the original and its associations untouched, whatever the request
+;;   carries.  #123's update in place holds for a rubric attached to at
+;;   most one place.  So the push takes the surplus associations off
+;;   first — all but one, so the rubric never stands without any and
+;;   cannot be garbage-collected — PUTs, and puts them back on the same
+;;   rubric id with the flags they had, whether or not the PUT succeeded
+;;   (`org-canvas--rubric-push-update').
 
 (defun org-canvas--rubric-find-by-title (title)
   "Return the Canvas rubric titled TITLE, or nil."
   (org-canvas--search-item "rubrics" title))
+
+(defun org-canvas--rubric-fetch-live (id)
+  "Return rubric ID as Canvas has it, associations included, or nil.
+A failed read is logged and yields nil: the push then pins criterion
+ids from the file alone and cannot count the associations."
+  (condition-case err
+      (org-canvas-api-request 'GET
+        (org-canvas-api-course-endpoint "rubrics/%s" id)
+        :params '(("include[]" . "associations")))
+    (error
+     (org-canvas--log-warning org-canvas--logger
+       "[Execute] Could not read rubric %s before updating it (%s): criterion ids come from the file alone, and a rubric several assignments grade with may come back as a copy"
+       id (error-message-string err))
+     nil)))
+
+(defun org-canvas--rubric-live-items (items)
+  "Return ITEMS, a JSON array of criteria or ratings, as a list of alists."
+  (cl-remove-if-not (lambda (item) (and (consp item) (consp (car item))))
+                    (append items nil)))
+
+(defun org-canvas--rubric-match-live (description position live claimed
+                                                  &optional points)
+  "Return the alist in LIVE describing DESCRIPTION, or nil.
+LIVE is a list of criterion or rating alists.  The one at POSITION wins
+when its description matches; otherwise the first whose description
+matches and whose id CLAIMED does not list.  When POINTS is a number,
+an item must also be worth POINTS to match.  Nil when nothing does."
+  (let* ((wanted (string-trim (or description "")))
+         (same-p (lambda (item)
+                   (and (not (member (format "%s" (alist-get 'id item)) claimed))
+                        (string= wanted (string-trim (or (alist-get 'description item) "")))
+                        (or (not (numberp points))
+                            (and (numberp (alist-get 'points item))
+                                 (= points (alist-get 'points item)))))))
+         (at-position (and (numberp position) (nth position live))))
+    (if (and at-position (funcall same-p at-position))
+        at-position
+      (cl-find-if same-p live))))
+
+(defun org-canvas--rubric-pin-rating-ids (ratings-hash live-ratings)
+  "Give each rating in RATINGS-HASH the id of its twin in LIVE-RATINGS.
+RATINGS-HASH maps \"0\", \"1\", ... to rating hash-tables, the default
+Full Marks/No Marks pair included.  A rating matches by description and
+points first, then by description alone; each live id is used once."
+  (let ((claimed nil) (idx 0) rating-hash)
+    (while (setq rating-hash (and (hash-table-p ratings-hash)
+                                  (gethash (format "%d" idx) ratings-hash)))
+      (let* ((description (gethash "description" rating-hash))
+             (twin (or (org-canvas--rubric-match-live description nil live-ratings claimed
+                                                       (gethash "points" rating-hash))
+                       (org-canvas--rubric-match-live description nil live-ratings claimed))))
+        (when twin
+          (puthash "id" (format "%s" (alist-get 'id twin)) rating-hash)
+          (push (format "%s" (alist-get 'id twin)) claimed))
+        (setq idx (1+ idx))))))
+
+(defun org-canvas--rubric-live-criterion (criterion position live claimed)
+  "Return the alist in LIVE that CRITERION, a parsed plist, is on Canvas.
+The heading's CANVAS_CRITERION_ID wins when LIVE still holds it; else
+the criterion at POSITION when its description matches; else the
+first of that description CLAIMED does not list.  Nil for a new one."
+  (let ((stored (plist-get criterion :canvas-criterion-id)))
+    (or (and stored
+             (not (member stored claimed))
+             (cl-find-if (lambda (item) (equal (format "%s" (alist-get 'id item)) stored))
+                         live))
+        (org-canvas--rubric-match-live (plist-get criterion :description)
+                                       position live claimed))))
+
+(defun org-canvas--rubric-pin-ids (payload criteria live)
+  "Name in PAYLOAD the ids Canvas already has for CRITERIA (issue #256).
+CRITERIA is the parsed criterion list PAYLOAD's criteria hash was built
+from; LIVE is the rubric as Canvas holds it, or nil when it could not
+be read.  A criterion takes the id of its twin on Canvas, else the one
+its heading stores — Canvas keeps any id it is handed, so a criterion
+Canvas dropped comes back under the id the grading tables know — and
+one with neither is sent without and Canvas mints it.  Each live id is
+given to one criterion.  Modifies PAYLOAD in place."
+  (let* ((rubric (gethash "rubric" payload))
+         (criteria-hash (and (hash-table-p rubric) (gethash "criteria" rubric)))
+         (live-criteria (org-canvas--rubric-live-items (alist-get 'data live)))
+         (claimed nil)
+         (idx 0))
+    (dolist (criterion criteria)
+      (let* ((crit-hash (and (hash-table-p criteria-hash)
+                             (gethash (format "%d" idx) criteria-hash)))
+             (stored (plist-get criterion :canvas-criterion-id))
+             (twin (org-canvas--rubric-live-criterion criterion idx live-criteria claimed))
+             (id (if twin (format "%s" (alist-get 'id twin)) stored)))
+        (when (and crit-hash id)
+          (puthash "id" id crit-hash)
+          (push id claimed)
+          (org-canvas--rubric-pin-rating-ids
+           (gethash "ratings" crit-hash)
+           (and twin (org-canvas--rubric-live-items (alist-get 'ratings twin)))))
+        (when (and stored (not twin) live-criteria)
+          (org-canvas--log-info org-canvas--logger
+            "[Execute] Criterion '%s' carries CANVAS_CRITERION_ID %s, which the rubric on Canvas does not list; sending it back, so the criterion keeps the id the grading tables know"
+            (plist-get criterion :description) stored)))
+      (setq idx (1+ idx)))
+    (org-canvas--log-debug org-canvas--logger
+      "[Execute] Pinned %d criterion id(s) of %d" (length claimed) idx)))
+
+(defun org-canvas--rubric-assignment-associations (live)
+  "Return the assignment associations of LIVE, a rubric read with them."
+  (cl-remove-if-not
+   (lambda (assoc) (equal (alist-get 'association_type assoc) "Assignment"))
+   (org-canvas--rubric-live-items (alist-get 'associations live))))
+
+(defun org-canvas--rubric-association-name (assoc)
+  "Return what to call ASSOC's assignment in the log."
+  (or (alist-get 'title assoc)
+      (format "assignment %s" (alist-get 'association_id assoc))))
+
+(defun org-canvas--rubric-restore-association (rubric-id assoc)
+  "Put ASSOC back on rubric RUBRIC-ID with the flags it carried.
+RUBRIC-ID is the heading's CANVAS_ID string; ASSOC is the association
+as Canvas listed it before the update took it off.  Returns non-nil
+when the association was written."
+  (let ((payload (make-hash-table :test 'equal))
+        (ra (make-hash-table :test 'equal))
+        (name (org-canvas--rubric-association-name assoc)))
+    (puthash "rubric_id" (string-to-number rubric-id) ra)
+    (puthash "association_id" (alist-get 'association_id assoc) ra)
+    (puthash "association_type" (alist-get 'association_type assoc) ra)
+    (puthash "purpose" (or (alist-get 'purpose assoc) "grading") ra)
+    (dolist (flag '(use_for_grading hide_score_total hide_points hide_outcome_results))
+      (when (memq (alist-get flag assoc) '(t :json-false))
+        (puthash (symbol-name flag) (alist-get flag assoc) ra)))
+    (puthash "rubric_association" ra payload)
+    (condition-case err
+        (progn
+          (org-canvas-api-request 'POST
+            (org-canvas-api-course-endpoint "rubric_associations") :data payload)
+          (org-canvas--log-info org-canvas--logger
+            "[Execute] Put rubric %s back on '%s'" rubric-id name)
+          t)
+      (error
+       (org-canvas--log-error org-canvas--logger
+         "[Execute] Could not put rubric %s back on '%s' (%s) — push that assignment again to re-associate it"
+         rubric-id name (error-message-string err))
+       nil))))
+
+(defun org-canvas--rubric-push-update (data payload live ctx)
+  "PUT DATA's rubric as PAYLOAD, keeping Canvas from copying it (issue #255).
+LIVE is the rubric with its associations.  When more than one
+assignment grades with it, every association but the first is taken
+off before the PUT and put back on the same rubric id afterwards —
+also when the PUT fails — so the assignments never lose the rubric
+for longer than the update takes.  CTX is the run context.  Returns
+what `org-canvas--push-to-api' returns."
+  (let* ((id (plist-get data :canvas-id))
+         (title (plist-get data :title))
+         (assocs (org-canvas--rubric-assignment-associations live))
+         (surplus (cdr assocs))
+         (removed nil))
+    (when surplus
+      (org-canvas--log-info org-canvas--logger
+        "[Execute] %d assignments grade with rubric '%s', and Canvas answers an update of such a rubric with a copy (issue #255): taking %d of them off first, to be put back after the update"
+        (length assocs) title (length surplus))
+      (dolist (assoc surplus)
+        (when (org-canvas--rubric-delete-association
+               (alist-get 'id assoc) (org-canvas--rubric-association-name assoc))
+          (push assoc removed))))
+    (unwind-protect
+        (org-canvas--push-to-api data payload
+          :ctx ctx
+          :endpoint "rubrics"
+          :find-fn #'org-canvas--rubric-find-by-title)
+      (dolist (assoc (nreverse removed))
+        (org-canvas--rubric-restore-association id assoc)))))
+
+(defun org-canvas--rubric-warn-points-moved (data live response)
+  "Warn when the update of DATA's rubric changed its total (issue #255).
+LIVE is the rubric before the update, RESPONSE the push's answer.  A
+`use_for_grading' association sets its assignment's points to the
+rubric's total, so a changed total moves the points of every
+assignment grading with the rubric without any POINTS edit."
+  (let* ((rubric (and (consp response) (or (alist-get 'rubric response) response)))
+         (before (alist-get 'points_possible live))
+         (after (and (consp rubric) (alist-get 'points_possible rubric)))
+         (graded (cl-count-if (lambda (assoc) (eq (alist-get 'use_for_grading assoc) t))
+                              (org-canvas--rubric-assignment-associations live))))
+    (when (and (numberp before) (numberp after) (/= before after) (> graded 0))
+      (org-canvas--log-warning org-canvas--logger
+        "[Execute] Rubric '%s' is now worth %s points, not %s: Canvas sets the points of the %d assignment(s) grading with it to the rubric's total, so their POINTS in assignments.org may no longer match — check them, or the next drift report will say so"
+        (plist-get data :title)
+        (org-canvas--rubric-format-points after)
+        (org-canvas--rubric-format-points before)
+        graded))))
 
 (defun org-canvas--rubric-push-to-api (data payload &optional ctx)
   "Send PAYLOAD (using DATA title) to Canvas, updating in place when known.
@@ -357,35 +594,72 @@ PUT to `rubrics/ID', which keeps the id, its associations and its
 assessments; only a heading without one creates, and a title Canvas
 already holds is offered for adoption by the duplicate-title guard
 rather than deleted (issue #85).  A stale id 404s and retries as a
-POST, as everywhere else."
-  (org-canvas--push-to-api data payload
-    :ctx ctx
-    :endpoint "rubrics"
-    :find-fn #'org-canvas--rubric-find-by-title))
+POST, as everywhere else.
+
+An update first reads the rubric as Canvas holds it, to send every
+criterion and rating back under the id it already has (issue #256)
+and to take surplus assignment associations off for the duration of
+the PUT, since Canvas copies rather than updates a rubric that more
+than one assignment grades with (issue #255).  A dry run does neither
+and reports the PUT alone.  CTX is the run context."
+  (let ((id (plist-get data :canvas-id)))
+    (if (or (not id) org-canvas--dry-run)
+        (org-canvas--push-to-api data payload
+          :ctx ctx
+          :endpoint "rubrics"
+          :find-fn #'org-canvas--rubric-find-by-title)
+      (let ((live (org-canvas--rubric-fetch-live id)))
+        (org-canvas--rubric-pin-ids payload (plist-get data :criteria) live)
+        (let ((response (org-canvas--rubric-push-update data payload live ctx)))
+          (org-canvas--rubric-warn-points-moved data live response)
+          response)))))
 
 ;;;; 4. Stage: Finalization
 
 (defun org-canvas--rubric-warn-recreated (data id)
   "Warn when Canvas answered a rubric update with a different id than ID.
-DATA is the parsed rubric plist.  An update keeps the id; a new one
-means the old rubric is gone, and the assignment associations that
-pointed at it went with it, so the assignments linking this rubric
-have to be pushed again to re-associate (issue #123)."
+DATA is the parsed rubric plist.  An update keeps the id.  A different
+one is either the twin the 404 recovery updated instead, or a copy
+Canvas made rather than updating a rubric several assignments grade
+with (issue #255); either way the previous rubric, where it still
+exists, keeps its associations and their assessments, and only the
+assignments say which rubric they grade with."
   (let ((previous (plist-get data :canvas-id)))
     (when (and previous id (not (equal (format "%s" id) (format "%s" previous))))
       (org-canvas--log-warning org-canvas--logger
-        "[Stage 4: Finalize] Rubric '%s' came back as id %s, not %s: any assignment associated with %s lost it — re-push the assignments whose RUBRIC_LINK names this rubric"
-        (plist-get data :title) id previous previous))))
+        "[Stage 4: Finalize] Rubric '%s' came back as id %s, not %s — rubrics.org now names %s. Any assignment still associated with %s keeps grading with it, assessments included: re-push the assignments whose RUBRIC_LINK names this rubric to move them, or restore CANVAS_ID %s and delete %s in Canvas if it is a copy Canvas made instead of updating (issue #255)"
+        (plist-get data :title) id previous id previous previous id))))
+
+(defun org-canvas--rubric-stamp-criterion-ids (data rubric-data)
+  "Write the criterion ids RUBRIC-DATA reports onto DATA's criterion headings.
+Canvas lists the criteria in the order the payload sent them, so the
+i-th heading gets the i-th id (issue #256).  Nothing is written when
+the counts differ, or when a criterion was parsed without a marker."
+  (let ((remote (org-canvas--rubric-live-items (alist-get 'data rubric-data)))
+        (criteria (plist-get data :criteria)))
+    (if (and remote (= (length remote) (length criteria)))
+        (cl-loop for criterion in criteria
+                 for item in remote
+                 for pom = (plist-get criterion :pom)
+                 for id = (alist-get 'id item)
+                 when (and pom id)
+                 do (org-canvas-org-set-property
+                     pom org-canvas--rubric-criterion-id-property (format "%s" id)))
+      (org-canvas--log-debug org-canvas--logger
+        "[Stage 4: Finalize] Canvas lists %d criteria for the %d headings of '%s'; criterion ids not stamped"
+        (length remote) (length criteria) (plist-get data :title)))))
 
 (defun org-canvas--rubric-finalize (data response &optional ctx)
   "Update local Org file with CANVAS_ID using DATA and RESPONSE.
 CTX is the run context.
 Canvas answers a rubric write with the rubric under a `rubric' key,
-so RESPONSE is unwrapped before the shared finalize sees it."
+so RESPONSE is unwrapped before the shared finalize sees it.  Each
+criterion heading is then stamped with the id Canvas gave it."
   (org-canvas--log-debug org-canvas--logger "[Stage 4: Finalize] Processing response...")
   (let ((rubric-data (or (alist-get 'rubric response) response)))
     (org-canvas--rubric-warn-recreated data (alist-get 'id rubric-data))
-    (org-canvas--finalize-item data rubric-data :ctx ctx)))
+    (org-canvas--finalize-item data rubric-data :ctx ctx)
+    (org-canvas--rubric-stamp-criterion-ids data rubric-data)))
 
 ;;;; Main Sync Functions
 
@@ -663,11 +937,15 @@ C is the API alist for one criterion."
                       (or (alist-get 'long_description c) ""))))
          (ratings (alist-get 'ratings c))
          (outcome-id (alist-get 'learning_outcome_id c))
-         (outcome-link (org-canvas--rubric-pull-outcome-link outcome-id)))
+         (outcome-link (org-canvas--rubric-pull-outcome-link outcome-id))
+         (criterion-id (alist-get 'id c)))
     (insert (format "** %s :%s:\n" desc (org-canvas--rubric-points-tag pts)))
-    (when outcome-link
+    (when (or criterion-id outcome-link)
       (insert ":PROPERTIES:\n")
-      (insert (format ":OUTCOME: %s\n" outcome-link))
+      (when criterion-id
+        (insert (format ":%s: %s\n" org-canvas--rubric-criterion-id-property criterion-id)))
+      (when outcome-link
+        (insert (format ":OUTCOME: %s\n" outcome-link)))
       (insert ":END:\n"))
     (unless (string-empty-p long-desc)
       (insert long-desc "\n"))

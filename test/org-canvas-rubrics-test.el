@@ -467,6 +467,504 @@ This is a longer description of the criterion.
                             :to-equal "99999"))))))
         (delete-directory temp-dir t)))))
 
+;;;; Criterion ids and multi-assignment updates (issues #255, #256)
+
+(defconst test-rubric--live
+  '((id . 138462) (title . "Closer Rubric") (points_possible . 5)
+    (data . [((id . "_100") (description . "Thesis") (points . 3)
+              (ratings . [((id . "_101") (description . "Full Marks") (points . 3))
+                          ((id . "_102") (description . "Partial") (points . 2))
+                          ((id . "_103") (description . "No Marks") (points . 0))]))
+             ((id . "_200") (description . "Clarity") (points . 2)
+              (ratings . [((id . "_201") (description . "Full Marks") (points . 2))
+                          ((id . "_202") (description . "No Marks") (points . 0))]))])
+    (associations . [((id . 900) (rubric_id . 138462) (association_type . "Course")
+                      (association_id . 297530) (purpose . "bookmark"))
+                     ((id . 901) (rubric_id . 138462) (association_type . "Assignment")
+                      (association_id . 5001) (title . "Closer 1") (purpose . "grading")
+                      (use_for_grading . t) (hide_score_total . :json-false))
+                     ((id . 902) (rubric_id . 138462) (association_type . "Assignment")
+                      (association_id . 5002) (title . "Closer 2") (purpose . "grading")
+                      (use_for_grading . t) (hide_points . t))
+                     ((id . 903) (rubric_id . 138462) (association_type . "Assignment")
+                      (association_id . 5003) (purpose . "grading")
+                      (use_for_grading . :json-false))]))
+  "A rubric as Canvas returns it with include[]=associations.")
+
+(defconst test-rubric--closer-org
+  "* Closer Rubric
+:PROPERTIES:
+:CANVAS_ID: 138462
+:END:
+** Thesis :3pt:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Full Marks | 3 | |
+| Partial | 2 | |
+| No Marks | 0 | |
+** Clarity :2pt:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Full Marks | 2 | |
+| No Marks | 0 | |
+"
+  "The rubric of `test-rubric--live' as rubrics.org holds it before the first stamp.")
+
+(defun test-rubric--payload-for (org)
+  "Parse ORG at its first heading and return (DATA . PAYLOAD)."
+  (with-temp-org-buffer org
+    (org-back-to-heading)
+    (let ((data (org-canvas--rubric-parse-entry)))
+      (cons data (org-canvas--rubric-build-payload data)))))
+
+(defun test-rubric--criterion-hash (payload n)
+  "Return criterion N of PAYLOAD's rubric."
+  (gethash (format "%d" n) (gethash "criteria" (gethash "rubric" payload))))
+
+(defun test-rubric--rating-id (crit n)
+  "Return the id pinned on rating N of criterion hash CRIT."
+  (gethash "id" (gethash (format "%d" n) (gethash "ratings" crit))))
+
+(describe "org-canvas--rubric-parse-entry criterion ids (issue #256)"
+  (it "reads CANVAS_CRITERION_ID and leaves a marker on each criterion"
+    (with-temp-org-buffer
+     "* Rubric
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+** Thesis :3pt:
+:PROPERTIES:
+:CANVAS_CRITERION_ID: _100
+:END:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Full Marks | 3 | |
+** Clarity :2pt:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Full Marks | 2 | |
+"
+     (org-back-to-heading)
+     (let ((criteria (plist-get (org-canvas--rubric-parse-entry) :criteria)))
+       (expect (plist-get (nth 0 criteria) :canvas-criterion-id) :to-equal "_100")
+       (expect (plist-get (nth 1 criteria) :canvas-criterion-id) :to-be nil)
+       (expect (markerp (plist-get (nth 0 criteria) :pom)) :to-be t)
+       (expect (markerp (plist-get (nth 1 criteria) :pom)) :to-be t)
+       (goto-char (plist-get (nth 1 criteria) :pom))
+       (expect (org-get-heading t t t t) :to-equal "Clarity")))))
+
+(describe "org-canvas--rubric-pin-ids (issue #256)"
+  (it "pins criterion and rating ids from the live rubric by position and description"
+    (pcase-let ((`(,data . ,payload) (test-rubric--payload-for test-rubric--closer-org)))
+      (org-canvas--rubric-pin-ids payload (plist-get data :criteria) test-rubric--live)
+      (let ((thesis (test-rubric--criterion-hash payload 0))
+            (clarity (test-rubric--criterion-hash payload 1)))
+        (expect (gethash "id" thesis) :to-equal "_100")
+        (expect (gethash "id" clarity) :to-equal "_200")
+        (expect (test-rubric--rating-id thesis 0) :to-equal "_101")
+        (expect (test-rubric--rating-id thesis 1) :to-equal "_102")
+        (expect (test-rubric--rating-id thesis 2) :to-equal "_103")
+        (expect (test-rubric--rating-id clarity 0) :to-equal "_201")
+        (expect (test-rubric--rating-id clarity 1) :to-equal "_202"))))
+
+  (it "follows a criterion that moved to another position by its description"
+    (pcase-let ((`(,data . ,payload)
+                 (test-rubric--payload-for
+                  "* Closer Rubric
+:PROPERTIES:
+:CANVAS_ID: 138462
+:END:
+** Clarity :2pt:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Full Marks | 2 | |
+** Thesis :3pt:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Full Marks | 3 | |
+")))
+      (org-canvas--rubric-pin-ids payload (plist-get data :criteria) test-rubric--live)
+      (expect (gethash "id" (test-rubric--criterion-hash payload 0)) :to-equal "_200")
+      (expect (gethash "id" (test-rubric--criterion-hash payload 1)) :to-equal "_100")))
+
+  (it "lets a stored CANVAS_CRITERION_ID win over the description, so a reworded criterion keeps its id"
+    (pcase-let ((`(,data . ,payload)
+                 (test-rubric--payload-for
+                  "* Closer Rubric
+:PROPERTIES:
+:CANVAS_ID: 138462
+:END:
+** Thesis statement :3pt:
+:PROPERTIES:
+:CANVAS_CRITERION_ID: _100
+:END:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Complete | 3 | |
+| No Marks | 0 | |
+** Clarity :2pt:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Full Marks | 2 | |
+")))
+      (org-canvas--rubric-pin-ids payload (plist-get data :criteria) test-rubric--live)
+      (let ((thesis (test-rubric--criterion-hash payload 0)))
+        (expect (gethash "id" thesis) :to-equal "_100")
+        ;; A renamed rating is new to Canvas; the other keeps its id.
+        (expect (test-rubric--rating-id thesis 0) :to-be nil)
+        (expect (test-rubric--rating-id thesis 1) :to-equal "_103"))))
+
+  (it "sends no id for a criterion Canvas does not have, and the stored id for one it dropped"
+    (pcase-let ((`(,data . ,payload)
+                 (test-rubric--payload-for
+                  "* Closer Rubric
+:PROPERTIES:
+:CANVAS_ID: 138462
+:END:
+** Thesis :3pt:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Full Marks | 3 | |
+** Depth :4pt:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Full Marks | 4 | |
+** Sources :1pt:
+:PROPERTIES:
+:CANVAS_CRITERION_ID: _300
+:END:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Full Marks | 1 | |
+")))
+      (let ((infos nil))
+        (cl-letf (((symbol-function 'org-canvas--log-info)
+                   (lambda (_logger fmt &rest args) (push (apply #'format fmt args) infos))))
+          (org-canvas--rubric-pin-ids payload (plist-get data :criteria) test-rubric--live))
+        (expect (gethash "id" (test-rubric--criterion-hash payload 0)) :to-equal "_100")
+        (expect (gethash "id" (test-rubric--criterion-hash payload 1)) :to-be nil)
+        (expect (gethash "id" (test-rubric--criterion-hash payload 2)) :to-equal "_300")
+        (expect (car infos) :to-match "_300.*does not list"))))
+
+  (it "sends the stored ids alone when the live rubric could not be read"
+    (pcase-let ((`(,data . ,payload)
+                 (test-rubric--payload-for
+                  "* Closer Rubric
+:PROPERTIES:
+:CANVAS_ID: 138462
+:END:
+** Thesis :3pt:
+:PROPERTIES:
+:CANVAS_CRITERION_ID: _100
+:END:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Full Marks | 3 | |
+** Clarity :2pt:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Full Marks | 2 | |
+")))
+      (org-canvas--rubric-pin-ids payload (plist-get data :criteria) nil)
+      (let ((thesis (test-rubric--criterion-hash payload 0)))
+        (expect (gethash "id" thesis) :to-equal "_100")
+        (expect (test-rubric--rating-id thesis 0) :to-be nil)
+        (expect (gethash "id" (test-rubric--criterion-hash payload 1)) :to-be nil))))
+
+  (it "pins the default Full Marks/No Marks ratings of a criterion without a table"
+    (pcase-let ((`(,data . ,payload)
+                 (test-rubric--payload-for
+                  "* Closer Rubric
+:PROPERTIES:
+:CANVAS_ID: 138462
+:END:
+** Clarity :2pt:
+")))
+      (org-canvas--rubric-pin-ids payload (plist-get data :criteria) test-rubric--live)
+      (let ((clarity (test-rubric--criterion-hash payload 0)))
+        (expect (gethash "id" clarity) :to-equal "_200")
+        (expect (test-rubric--rating-id clarity 0) :to-equal "_201")
+        (expect (test-rubric--rating-id clarity 1) :to-equal "_202"))))
+
+  (it "gives two criteria of one description two different live ids"
+    (pcase-let ((`(,data . ,payload)
+                 (test-rubric--payload-for
+                  "* Twins
+:PROPERTIES:
+:CANVAS_ID: 7
+:END:
+** Item :1pt:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Full Marks | 1 | |
+** Item :1pt:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Full Marks | 1 | |
+")))
+      (org-canvas--rubric-pin-ids
+       payload (plist-get data :criteria)
+       '((id . 7) (data . [((id . "a") (description . "Item") (points . 1) (ratings . []))
+                          ((id . "b") (description . "Item") (points . 1) (ratings . []))])))
+      (expect (gethash "id" (test-rubric--criterion-hash payload 0)) :to-equal "a")
+      (expect (gethash "id" (test-rubric--criterion-hash payload 1)) :to-equal "b")))
+
+  (it "leaves a payload without criteria alone"
+    (expect (org-canvas--rubric-pin-ids (make-hash-table :test 'equal) nil test-rubric--live)
+            :not :to-throw)))
+
+(defmacro test-rubric--with-recording-api (responder &rest body)
+  "Run BODY with `org-canvas-api-request' answering through RESPONDER.
+RESPONDER is called with METHOD and URL and returns the reply, or
+signals.  Every call is recorded in `calls' as (METHOD URL DATA), oldest
+first, for BODY to inspect."
+  (declare (indent 1))
+  `(let ((calls nil))
+     (cl-letf (((symbol-function 'org-canvas-api-request)
+                (lambda (method url &rest args)
+                  (setq calls (append calls (list (list method url (plist-get args :data)))))
+                  (funcall ,responder method url))))
+       ,@body)))
+
+(defun test-rubric--live-responder (&optional put-reply)
+  "Return a responder serving `test-rubric--live' on GET and PUT-REPLY on PUT."
+  (lambda (method url)
+    (cond
+     ((and (eq method 'GET) (string-match-p "rubrics/138462" url)) test-rubric--live)
+     ((eq method 'PUT) (or put-reply `((rubric . ,test-rubric--live))))
+     (t '((id . 1))))))
+
+(describe "org-canvas--rubric-push-to-api on a rubric several assignments grade with (issue #255)"
+  (it "reads the rubric with its associations and sends the pinned ids"
+    (with-org-canvas-test-config
+      (test-rubric--with-recording-api (test-rubric--live-responder)
+        (pcase-let ((`(,data . ,payload) (test-rubric--payload-for test-rubric--closer-org))
+                    (org-canvas-detect-conflicts nil))
+          (org-canvas--rubric-push-to-api (plist-put data :pom nil) payload)
+          (let ((put (cl-find 'PUT calls :key #'car)))
+            (expect put :to-be-truthy)
+            (expect (gethash "id" (test-rubric--criterion-hash (nth 2 put) 0))
+                    :to-equal "_100"))))))
+
+  (it "takes all but one assignment off, PUTs, and puts them back with their flags"
+    (with-org-canvas-test-config
+      (test-rubric--with-recording-api (test-rubric--live-responder)
+        (pcase-let ((`(,data . ,payload) (test-rubric--payload-for test-rubric--closer-org))
+                    (org-canvas-detect-conflicts nil))
+          (org-canvas--rubric-push-to-api (plist-put data :pom nil) payload)
+          (expect (mapcar (lambda (c) (list (nth 0 c) (file-name-nondirectory (nth 1 c))))
+                          (cl-remove 'GET calls :key #'car))
+                  :to-equal '((DELETE "902") (DELETE "903") (PUT "138462")
+                              (POST "rubric_associations") (POST "rubric_associations")))
+          (let* ((posts (cl-remove-if-not (lambda (c) (eq (car c) 'POST)) calls))
+                 (first (gethash "rubric_association" (nth 2 (nth 0 posts))))
+                 (second (gethash "rubric_association" (nth 2 (nth 1 posts)))))
+            (expect (gethash "rubric_id" first) :to-equal 138462)
+            (expect (gethash "association_id" first) :to-equal 5002)
+            (expect (gethash "association_type" first) :to-equal "Assignment")
+            (expect (gethash "purpose" first) :to-equal "grading")
+            (expect (gethash "use_for_grading" first) :to-be t)
+            (expect (gethash "hide_points" first) :to-be t)
+            (expect (gethash "hide_score_total" first) :to-be nil)
+            (expect (gethash "association_id" second) :to-equal 5003)
+            (expect (gethash "use_for_grading" second) :to-equal :json-false))))))
+
+  (it "puts the assignments back even when the PUT fails"
+    (with-org-canvas-test-config
+      (test-rubric--with-recording-api
+          (lambda (method url)
+            (cond
+             ((and (eq method 'GET) (string-match-p "rubrics/138462" url)) test-rubric--live)
+             ((eq method 'PUT) (signal 'error '("HTTP 500 Internal Server Error")))
+             (t '((id . 1)))))
+        (pcase-let ((`(,data . ,payload) (test-rubric--payload-for test-rubric--closer-org))
+                    (org-canvas-detect-conflicts nil))
+          (expect (org-canvas--rubric-push-to-api (plist-put data :pom nil) payload)
+                  :to-throw 'error)
+          (expect (cl-count 'POST calls :key #'car) :to-equal 2)))))
+
+  (it "puts back only the associations it managed to take off"
+    (with-org-canvas-test-config
+      (test-rubric--with-recording-api
+          (lambda (method url)
+            (cond
+             ((and (eq method 'GET) (string-match-p "rubrics/138462" url)) test-rubric--live)
+             ((and (eq method 'DELETE) (string-match-p "rubric_associations/903" url))
+              (signal 'error '("HTTP 404 Not Found")))
+             ((eq method 'PUT) `((rubric . ,test-rubric--live)))
+             (t '((id . 1)))))
+        (pcase-let ((`(,data . ,payload) (test-rubric--payload-for test-rubric--closer-org))
+                    (org-canvas-detect-conflicts nil))
+          (org-canvas--rubric-push-to-api (plist-put data :pom nil) payload)
+          (let ((posts (cl-remove-if-not (lambda (c) (eq (car c) 'POST)) calls)))
+            (expect (length posts) :to-equal 1)
+            (expect (gethash "association_id" (gethash "rubric_association" (nth 2 (car posts))))
+                    :to-equal 5002))))))
+
+  (it "names the assignment to push again when an association cannot be put back"
+    (with-org-canvas-test-config
+      (test-rubric--with-recording-api
+          (lambda (method url)
+            (cond
+             ((and (eq method 'GET) (string-match-p "rubrics/138462" url)) test-rubric--live)
+             ((eq method 'POST) (signal 'error '("HTTP 400 Bad Request")))
+             ((eq method 'PUT) `((rubric . ,test-rubric--live)))
+             (t '((id . 1)))))
+        (pcase-let ((`(,data . ,payload) (test-rubric--payload-for test-rubric--closer-org))
+                    (org-canvas-detect-conflicts nil)
+                    (errors nil))
+          (cl-letf (((symbol-function 'org-canvas--log-error)
+                     (lambda (_logger fmt &rest args) (push (apply #'format fmt args) errors))))
+            (org-canvas--rubric-push-to-api (plist-put data :pom nil) payload))
+          (expect (length errors) :to-equal 2)
+          (expect (car errors) :to-match "assignment 5003.*push that assignment again")
+          (expect (cadr errors) :to-match "'Closer 2'")))))
+
+  (it "leaves a rubric one assignment grades with alone (issue #123)"
+    (with-org-canvas-test-config
+      (test-rubric--with-recording-api
+          (lambda (method url)
+            (cond
+             ((and (eq method 'GET) (string-match-p "rubrics/138462" url))
+              `((id . 138462) (points_possible . 5) (data . [])
+                (associations . [((id . 901) (association_type . "Assignment")
+                                  (association_id . 5001))])))
+             ((eq method 'PUT) '((rubric . ((id . 138462) (points_possible . 5)))))
+             (t '((id . 1)))))
+        (pcase-let ((`(,data . ,payload) (test-rubric--payload-for test-rubric--closer-org))
+                    (org-canvas-detect-conflicts nil))
+          (org-canvas--rubric-push-to-api (plist-put data :pom nil) payload)
+          (expect (mapcar #'car calls) :to-equal '(GET PUT))))))
+
+  (it "does nothing but the PUT preview under a dry run"
+    (with-org-canvas-test-config
+      (test-rubric--with-recording-api (test-rubric--live-responder)
+        (pcase-let ((`(,data . ,payload) (test-rubric--payload-for test-rubric--closer-org))
+                    (org-canvas--dry-run t))
+          (expect (org-canvas--dry-run-response-p
+                   (org-canvas--rubric-push-to-api (plist-put data :pom nil) payload))
+                  :to-be-truthy)
+          (expect calls :to-be nil)))))
+
+  (it "still PUTs, with the stored ids, when the rubric cannot be read first"
+    (with-org-canvas-test-config
+      (test-rubric--with-recording-api
+          (lambda (method _url)
+            (cond
+             ((eq method 'GET) (signal 'error '("HTTP 502 Bad Gateway")))
+             (t `((rubric . ,test-rubric--live)))))
+        (pcase-let ((`(,data . ,payload)
+                     (test-rubric--payload-for
+                      "* Closer Rubric
+:PROPERTIES:
+:CANVAS_ID: 138462
+:END:
+** Thesis :3pt:
+:PROPERTIES:
+:CANVAS_CRITERION_ID: _100
+:END:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Full Marks | 3 | |
+"))
+                    (org-canvas-detect-conflicts nil)
+                    (warnings nil))
+          (cl-letf (((symbol-function 'org-canvas--log-warning)
+                     (lambda (_logger fmt &rest args) (push (apply #'format fmt args) warnings))))
+            (org-canvas--rubric-push-to-api (plist-put data :pom nil) payload))
+          (expect (mapcar #'car calls) :to-equal '(GET PUT))
+          (expect (gethash "id" (test-rubric--criterion-hash (nth 2 (nth 1 calls)) 0))
+                  :to-equal "_100")
+          (expect (car (last warnings)) :to-match "Could not read rubric 138462")))))
+
+  (it "creates without reading anything first"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (pcase-let ((`(,data . ,payload)
+                     (test-rubric--payload-for
+                      "* New Rubric
+** Thesis :3pt:
+| Rating | Points | Description |
+|--------+--------+-------------|
+| Full Marks | 3 | |
+")))
+          (org-canvas--rubric-push-to-api (plist-put data :pom nil) payload)
+          (expect (mapcar #'car test-org-canvas-api-calls) :to-equal '(POST)))))))
+
+(describe "org-canvas--rubric-warn-points-moved (issue #255)"
+  (it "warns when the total changed and an assignment grades with the rubric"
+    (let ((warnings nil))
+      (cl-letf (((symbol-function 'org-canvas--log-warning)
+                 (lambda (_logger fmt &rest args) (push (apply #'format fmt args) warnings))))
+        (org-canvas--rubric-warn-points-moved
+         '(:title "Closer Rubric") test-rubric--live
+         '((rubric . ((id . 138462) (points_possible . 6))))))
+      (expect (car warnings) :to-match "worth 6 points, not 5")
+      (expect (car warnings) :to-match "2 assignment")))
+
+  (it "says nothing when the total is unchanged, the push stopped short, or nothing grades with it"
+    (let ((warnings nil))
+      (cl-letf (((symbol-function 'org-canvas--log-warning)
+                 (lambda (_logger fmt &rest args) (push (apply #'format fmt args) warnings))))
+        (org-canvas--rubric-warn-points-moved
+         '(:title "R") test-rubric--live '((rubric . ((points_possible . 5)))))
+        (org-canvas--rubric-warn-points-moved '(:title "R") test-rubric--live 'conflict)
+        (org-canvas--rubric-warn-points-moved
+         '(:title "R") '((points_possible . 5) (associations . []))
+         '((rubric . ((points_possible . 9))))))
+      (expect warnings :to-be nil))))
+
+(describe "org-canvas--rubric-finalize stamps criterion ids (issue #256)"
+  (it "writes CANVAS_CRITERION_ID on each criterion heading, in response order"
+    (with-temp-org-buffer test-rubric--closer-org
+      (org-back-to-heading)
+      (let ((data (org-canvas--rubric-parse-entry)))
+        (org-canvas--rubric-finalize data `((rubric . ,test-rubric--live)))
+        (goto-char (point-min))
+        (re-search-forward "^\\*\\* Thesis")
+        (expect (org-entry-get (point) "CANVAS_CRITERION_ID") :to-equal "_100")
+        (re-search-forward "^\\*\\* Clarity")
+        (expect (org-entry-get (point) "CANVAS_CRITERION_ID") :to-equal "_200")
+        (goto-char (point-min))
+        (expect (org-entry-get (point) "CANVAS_ID") :to-equal "138462"))))
+
+  (it "stamps nothing when Canvas lists a different number of criteria"
+    (with-temp-org-buffer test-rubric--closer-org
+      (org-back-to-heading)
+      (let ((data (org-canvas--rubric-parse-entry)))
+        (org-canvas--rubric-finalize
+         data '((rubric . ((id . 138462) (data . [((id . "_100") (description . "Thesis"))])))))
+        (goto-char (point-min))
+        (re-search-forward "^\\*\\* Thesis")
+        (expect (org-entry-get (point) "CANVAS_CRITERION_ID") :to-be nil)))))
+
+(describe "org-canvas--rubric-pull-item writes criterion ids (issue #256)"
+  (it "puts CANVAS_CRITERION_ID in each criterion's drawer, beside OUTCOME when there is one"
+    (with-temp-org-buffer
+     "* Closer Rubric
+:PROPERTIES:
+:CANVAS_ID: 138462
+:END:
+"
+     (org-back-to-heading)
+     (org-canvas--rubric-pull-item
+      '((id . 138462) (title . "Closer Rubric")
+        (data . [((id . "_100") (description . "Thesis") (points . 3)
+                  (learning_outcome_id . 51479)
+                  (ratings . [((id . "_101") (description . "Full Marks") (points . 3))]))
+                 ((id . "_200") (description . "Clarity") (points . 2)
+                  (ratings . [((id . "_201") (description . "Full Marks") (points . 2))]))]))
+      (point))
+     (expect (buffer-string)
+             :to-match "\\*\\* Thesis :3pt:\n:PROPERTIES:\n:CANVAS_CRITERION_ID: _100\n:OUTCOME: 51479\n:END:\n")
+     (expect (buffer-string)
+             :to-match "\\*\\* Clarity :2pt:\n:PROPERTIES:\n:CANVAS_CRITERION_ID: _200\n:END:\n")
+     ;; What a pull wrote, the next push reads back.
+     (goto-char (point-min))
+     (let ((criteria (plist-get (org-canvas--rubric-parse-entry) :criteria)))
+       (expect (mapcar (lambda (c) (plist-get c :canvas-criterion-id)) criteria)
+               :to-equal '("_100" "_200"))))))
+
 (describe "rubric search (mocked)"
   (it "searches rubrics endpoint"
     (with-org-canvas-test-config
@@ -788,7 +1286,8 @@ This is a longer description of the criterion.
           (list :title "Moved Rubric" :canvas-id "133477" :pom (point-marker))
           '((rubric . ((id . 138234))))))
        (expect (org-entry-get (point) "CANVAS_ID") :to-equal "138234")
-       (expect (car warnings) :to-match "re-push the assignments"))))
+       (expect (car warnings) :to-match "re-push the assignments")
+       (expect (car warnings) :to-match "restore CANVAS_ID 133477 and delete 138234"))))
 
   (it "says nothing when the update kept the id"
     (with-temp-org-buffer
