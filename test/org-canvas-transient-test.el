@@ -37,6 +37,11 @@
   (it "offers the unsuppressed validation beside the ordinary one (issue #168)"
     (expect (test-org-canvas-transient-has-command-p
              'org-canvas-dispatch 'org-canvas-validate-all)
+            :to-be-truthy))
+
+  (it "offers stamp adoption beside the drift report (issue #257)"
+    (expect (test-org-canvas-transient-has-command-p
+             'org-canvas-dispatch 'org-canvas-diff-adopt-stamps)
             :to-be-truthy)))
 
 (describe "org-canvas-dispatch-sync-at-point"

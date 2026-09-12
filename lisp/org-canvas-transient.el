@@ -133,6 +133,7 @@ writing commands greyed rather than only erroring when one is chosen
    ("V" "Validate files (including push-only advice)" org-canvas-validate-all)
    ("S" "Status overview (local)" org-canvas-status)
    ("r" "Drift report (compare with Canvas)" org-canvas-diff)
+   ("j" "Adopt stamps of CHANGED rows with nothing to compare" org-canvas-diff-adopt-stamps)
    ("x" "List external tools (LTI)" org-canvas-list-external-tools)]
   ["Log"
    ("ll" "Set log level" org-canvas-set-log-level)

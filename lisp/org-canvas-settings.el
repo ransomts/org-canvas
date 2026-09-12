@@ -397,17 +397,25 @@ both the PATCH and the POST fallback."
 REST only reads the policy, so this is the `setCoursePostPolicy'
 GraphQL mutation (issue #202); the cached course policy is forgotten
 afterwards so the assignments pull and the drift report re-read it.
-A dry run reports and sends nothing."
+A dry run reports and sends nothing.  A sent mutation is followed by
+a warning naming the chore it creates: Canvas rewrites the policy of
+every assignment, bumping each one's `updated_at', and the next drift
+report lists them all as CHANGED with no compared property differing
+until `org-canvas-diff-adopt-stamps' restamps them (issue #257)."
   (let ((policy (plist-get data :post-policy)))
     (when policy
-      (org-canvas--graphql-mutate
-       (format "set the course post policy to %s" policy)
-       "mutation ($courseId: ID!, $manual: Boolean!) { setCoursePostPolicy(input: {courseId: $courseId, postManually: $manual}) { postPolicy { postManually } } }"
-       ;; A GraphQL Boolean! must arrive as true or false; nil would
-       ;; encode as null, which Canvas rejects (the live probe caught it).
-       (list (cons 'courseId (format "%s" org-canvas-course-id))
-             (cons 'manual (if (equal policy "manual") t :json-false))))
-      (org-canvas--course-post-policy-forget))))
+      (let ((reply (org-canvas--graphql-mutate
+                    (format "set the course post policy to %s" policy)
+                    "mutation ($courseId: ID!, $manual: Boolean!) { setCoursePostPolicy(input: {courseId: $courseId, postManually: $manual}) { postPolicy { postManually } } }"
+                    ;; A GraphQL Boolean! must arrive as true or false; nil would
+                    ;; encode as null, which Canvas rejects (the live probe caught it).
+                    (list (cons 'courseId (format "%s" org-canvas-course-id))
+                          (cons 'manual (if (equal policy "manual") t :json-false))))))
+        (org-canvas--course-post-policy-forget)
+        (unless (org-canvas--dry-run-response-p reply)
+          (org-canvas--log-warning org-canvas--logger
+            "[Execute] The course post policy is now %s; Canvas rewrites every assignment's policy with it, so the next drift report lists each assignment as CHANGED with no compared property differing — run org-canvas-diff-adopt-stamps to restamp them"
+            policy))))))
 
 ;;;; 4. Finalize
 

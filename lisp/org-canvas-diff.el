@@ -65,7 +65,8 @@
 ;; One list request per feature.  Nothing is written, locally or
 ;; remotely, so this is safe to run at any time — from a hook, or from a
 ;; scheduled job via `org-canvas-diff-batch', which exits non-zero when
-;; it finds drift.
+;; it finds drift.  The one local write in this file, stamp adoption
+;; (#257), is a separate key and command the report never runs itself.
 
 ;;; Code:
 
@@ -938,15 +939,18 @@ function that writes the list there instead."
 \\[org-canvas-diff-visit] visits the Org heading of the row at point, or
 opens the Canvas object of an EXTRA row in a browser;
 \\[org-canvas-diff-acknowledge] acknowledges the EXTRA at point (or drops a
-STALE-ACK); \\[org-canvas-diff-delete] deletes the remote object of an EXTRA
-or UNCLAIMED row, after confirming; \\[org-canvas-diff-pull] pulls a CHANGED
-row's item over the heading; \\[org-canvas-diff-refresh] runs the report
-again; \\[org-canvas-diff-next-row] and \\[org-canvas-diff-previous-row]
-move between rows."
+STALE-ACK), or on a CHANGED row with no compared property differing
+adopts the Canvas timestamp as the heading's baseline
+\(`org-canvas-diff-adopt-stamp'); \\[org-canvas-diff-delete] deletes the
+remote object of an EXTRA or UNCLAIMED row, after confirming;
+\\[org-canvas-diff-pull] pulls a CHANGED row's item over the heading;
+\\[org-canvas-diff-refresh] runs the report again;
+\\[org-canvas-diff-next-row] and \\[org-canvas-diff-previous-row] move
+between rows."
   (setq-local revert-buffer-function (lambda (&rest _) (org-canvas-diff))))
 
 (defconst org-canvas--diff-key-legend
-  "RET visit   a acknowledge   k delete   p pull   g refresh   TAB next row\n"
+  "RET visit   a acknowledge/adopt   k delete   p pull   g refresh   TAB next row\n"
   "One line naming the report's keys, shown in the interactive buffer only.")
 
 (defun org-canvas--diff-row-at-point ()
@@ -1045,7 +1049,9 @@ it lives."
   "Acknowledge the EXTRA or UNCLAIMED row at point as deliberately unclaimed.
 Adds it to `org-canvas-diff-known-extras', with a note if you give one,
 and persists the list through `org-canvas-diff-acknowledge-function'.
-On a STALE-ACK row, drops the acknowledgment instead."
+On a STALE-ACK row, drops the acknowledgment instead.  On a CHANGED
+row with no compared property differing, adopts the Canvas timestamp
+as the heading's baseline (`org-canvas-diff-adopt-stamp', issue #257)."
   (interactive)
   (let* ((row (org-canvas--diff-row-at-point))
          (entry (plist-get row :entry))
@@ -1074,6 +1080,9 @@ On a STALE-ACK row, drops the acknowledgment instead."
           (format "  ACK       %s (id %s acknowledged%s)"
                   (plist-get entry :title) id (if note (format ": %s" note) "")))
          (message "Acknowledged %s %s." feature id)))
+      ;; On a CHANGED row, accepting what Canvas holds means adopting
+      ;; its timestamp — when nothing compared differs (issue #257).
+      ('modified (org-canvas-diff-adopt-stamp))
       (kind (user-error "A %s row is not something to acknowledge" (upcase (symbol-name kind)))))))
 
 (defun org-canvas--diff-delete-target (row entry)
@@ -1129,6 +1138,171 @@ Runs `org-canvas-pull-at-point' on the heading, which asks first."
         (org-canvas--diff-rewrite-row
          (format "  PULLED    %s (id %s)" (plist-get entry :title) (plist-get entry :id)))))))
 
+;;;; Adopting a Stamp
+;;
+;; A change Canvas makes on its own moves `updated_at' on entries whose
+;; content did not change: a metadata-only file touch (before #94), the
+;; rubric-association bump (before #131), and a course-wide post policy
+;; change, which rewrote the policy of all 77 assignments in one course
+;; (issue #257).  The report is right to list each as CHANGED with no
+;; compared property differing, and there is nothing in Org to change;
+;; a push would send the same content again.  The only fix is to copy
+;; the live timestamp into CANVAS_UPDATED_AT, which was a one-off script
+;; three times over.  Adoption is that script: the stamp moves,
+;; PAYLOAD_HASH stays (the local side did not change, so the skip must
+;; survive), and nothing is sent.  It is a separate key and command,
+;; never something the report does by itself (issue #83).
+
+(defun org-canvas--diff-adoptable-p (entry)
+  "Return non-nil when ENTRY is a CHANGED row whose stamp can be adopted.
+That is one Canvas holds newer than the baseline with no compared
+property differing: the change is in a field the report does not
+compare, so the heading has nothing to push or pull."
+  (and (eq (plist-get entry :kind) 'modified)
+       (plist-get entry :remote-newer)
+       (null (plist-get entry :fields))
+       (stringp (plist-get entry :updated))))
+
+(defun org-canvas--diff-adopt-entry (feature entry)
+  "Stamp ENTRY's heading with the timestamp Canvas holds, and save the file.
+FEATURE is the registry entry that says which file to look in.  Writes
+CANVAS_UPDATED_AT only: PAYLOAD_HASH is left as it is, since the local
+content did not change.  Returns the timestamp written, or nil when
+the heading could not be found."
+  (let ((where (org-canvas--diff-heading-position feature entry))
+        (updated (plist-get entry :updated)))
+    (when where
+      (with-current-buffer (org-canvas--find-file-noselect (car where))
+        (save-excursion
+          (goto-char (cdr where))
+          (org-back-to-heading t)
+          (org-canvas-org-set-property (point) "CANVAS_UPDATED_AT" updated)
+          (org-canvas--save-buffer)))
+      (org-canvas--log-info org-canvas--logger
+        "[Diff] Adopted the stamp of %s '%s': CANVAS_UPDATED_AT is now %s, PAYLOAD_HASH kept, nothing sent"
+        (plist-get feature :name) (plist-get entry :title) updated)
+      updated)))
+
+(defun org-canvas-diff-adopt-stamp ()
+  "Adopt the Canvas timestamp of the CHANGED row at point as its baseline.
+Only a row with no compared property differing qualifies: Canvas is
+newer, but the change is in a field the report does not compare, so
+there is nothing to push or pull.  Writes CANVAS_UPDATED_AT on the
+heading, keeps PAYLOAD_HASH and sends nothing (issue #257).  A row
+where a property differs is refused; push or pull that one instead.
+`org-canvas-diff-adopt-stamps' does the same for every such row."
+  (interactive)
+  (let* ((row (org-canvas--diff-row-at-point))
+         (entry (plist-get row :entry))
+         (feature (org-canvas--diff-row-feature row))
+         (title (plist-get entry :title)))
+    (unless (eq (plist-get entry :kind) 'modified)
+      (user-error "Only a CHANGED row has a Canvas timestamp to adopt"))
+    (unless (org-canvas--diff-adoptable-p entry)
+      (user-error "A compared property of '%s' differs; push or pull it rather than adopting its stamp"
+                  title))
+    (let ((updated (org-canvas--diff-adopt-entry feature entry)))
+      (unless updated
+        (user-error "Cannot find the heading for '%s' in %s"
+                    title (plist-get feature :name)))
+      (org-canvas--diff-rewrite-row
+       (format "  ADOPTED   %s (CANVAS_UPDATED_AT set to %s, nothing sent)"
+               title updated))
+      (message "Adopted the stamp of %s '%s'." (plist-get feature :name) title))))
+
+(defconst org-canvas--diff-adopt-buffer-name "*canvas-diff-adopt*"
+  "Name of the buffer holding the stamp adoption report.")
+
+(defun org-canvas--diff-adopt-candidates (results)
+  "Sort the CHANGED rows of RESULTS into the adoptable and the held back.
+Returns (ADOPTABLE . HELD): ADOPTABLE lists (FEATURE-NAME . ENTRY) for
+every row with no compared property differing, HELD counts the CHANGED
+rows a differing property keeps out."
+  (let ((adoptable nil) (held 0))
+    (dolist (result results)
+      (dolist (entry (plist-get result :divergences))
+        (cond ((org-canvas--diff-adoptable-p entry)
+               (push (cons (plist-get result :name) entry) adoptable))
+              ((eq (plist-get entry :kind) 'modified)
+               (setq held (1+ held))))))
+    (cons (nreverse adoptable) held)))
+
+(defun org-canvas--diff-adopt-all (candidates)
+  "Adopt the stamp of every (FEATURE-NAME . ENTRY) in CANDIDATES.
+Returns (ADOPTED . MISSED): ADOPTED lists (FEATURE-NAME TITLE
+TIMESTAMP) in order, MISSED lists (FEATURE-NAME . TITLE) for the
+headings that could not be found."
+  (let ((adopted nil) (missed nil))
+    (dolist (candidate candidates)
+      (let* ((name (car candidate))
+             (entry (cdr candidate))
+             (feature (org-canvas--registry-find-feature name))
+             (updated (and feature (org-canvas--diff-adopt-entry feature entry))))
+        (if updated
+            (push (list name (plist-get entry :title) updated) adopted)
+          (push (cons name (plist-get entry :title)) missed))))
+    (cons (nreverse adopted) (nreverse missed))))
+
+(defun org-canvas--diff-adopt-render (adopted missed held)
+  "Insert the stamp adoption report at point.
+ADOPTED and MISSED are the halves `org-canvas--diff-adopt-all'
+returns, HELD the count of CHANGED rows left alone because a compared
+property differs."
+  (insert "org-canvas Stamp Adoption\n")
+  (insert (format "Course: %s | %s\n" org-canvas-course-id org-canvas-base-url))
+  (insert (make-string 60 ?=) "\n\n")
+  (dolist (a adopted)
+    (insert (format "  ADOPTED   %s (%s; CANVAS_UPDATED_AT set to %s)\n"
+                    (nth 1 a) (nth 0 a) (nth 2 a))))
+  (dolist (m missed)
+    (insert (format "  NOT FOUND %s (%s; no heading carries its id)\n" (cdr m) (car m))))
+  (when (or adopted missed) (insert "\n"))
+  (insert (make-string 60 ?=) "\n")
+  (insert (if adopted
+              (format "%d stamp(s) adopted; PAYLOAD_HASH kept, nothing sent to Canvas.\n"
+                      (length adopted))
+            "No stamp to adopt: no CHANGED row has every compared property matching.\n"))
+  (when (> held 0)
+    (insert (format "%d CHANGED row(s) left alone: a compared property differs — push or pull those.\n"
+                    held))))
+
+(defun org-canvas--diff-adopt-confirm (count)
+  "Ask whether to adopt COUNT stamps, or signal a `user-error'.
+Under `noninteractive' there is nobody to ask, and running the command
+was the answer."
+  (unless (or noninteractive
+              (y-or-n-p (format "Adopt the Canvas timestamp of %d CHANGED entr%s with every compared property matching? "
+                                count (if (= count 1) "y" "ies"))))
+    (user-error "Aborted; no stamp adopted")))
+
+;;;###autoload
+(defun org-canvas-diff-adopt-stamps ()
+  "Adopt the Canvas timestamp of every CHANGED entry with nothing to compare.
+Runs the drift comparison (`org-canvas-diff' reads, one list request
+per feature), then, after confirming, copies the live timestamp into
+CANVAS_UPDATED_AT on each heading Canvas holds newer whose compared
+properties all match — the rows the report says have their change in a
+field it does not compare.  PAYLOAD_HASH is kept and nothing is sent.
+A row where a property differs is left alone and counted (issue #257).
+The course-wide case is a post policy change, which rewrites every
+assignment.  Returns the number of stamps adopted."
+  (interactive)
+  (org-canvas--preflight-check)
+  (run-hooks 'org-canvas--operation-start-hook)
+  (let* ((results (org-canvas--diff-collect-results))
+         (candidates (org-canvas--diff-adopt-candidates results))
+         (held (cdr candidates))
+         (outcome (cons nil nil)))
+    (when (car candidates)
+      (org-canvas--diff-adopt-confirm (length (car candidates)))
+      (setq outcome (org-canvas--diff-adopt-all (car candidates))))
+    (org-canvas--report-display
+     org-canvas--diff-adopt-buffer-name
+     (lambda () (org-canvas--diff-adopt-render (car outcome) (cdr outcome) held)))
+    (message "Drift: %d stamp(s) adopted, %d CHANGED row(s) left alone"
+             (length (car outcome)) held)
+    (length (car outcome))))
+
 (defun org-canvas-diff-refresh ()
   "Run the drift report again."
   (interactive)
@@ -1175,7 +1349,26 @@ value; its start is the line the verb is on."
       (user-error "No previous row"))))
 
 ;;;; Commands
-;;;; Commands
+
+(defun org-canvas--diff-collect-results ()
+  "Compare every registered feature against Canvas and return the results.
+One list request per feature (`org-canvas--diff-feature'); an excluded
+feature contributes its visible line, a module's item check follows it
+\(issue #177), and the referenced-media scan is applied at the end
+\(issue #102).  The read behind `org-canvas-diff' and
+`org-canvas-diff-adopt-stamps'."
+  (let (results)
+    (dolist (feature org-canvas--feature-registry)
+      (let ((name (plist-get feature :name)))
+        (if (org-canvas--diff-feature-excluded-p name)
+            (push (org-canvas--diff-excluded-result feature) results)
+          (message "Drift: checking %s..." name)
+          (let ((result (org-canvas--diff-feature feature)))
+            (push result results)
+            ;; Module items report right after their modules (#177).
+            (when-let* ((child (plist-get result :children)))
+              (push child results))))))
+    (org-canvas--diff-apply-references (nreverse results))))
 
 ;;;###autoload
 (defun org-canvas-diff ()
@@ -1194,18 +1387,7 @@ divergences found, so a batch caller can act on it; see
   (interactive)
   (org-canvas--preflight-check)
   (run-hooks 'org-canvas--operation-start-hook)
-  (let (results)
-    (dolist (feature org-canvas--feature-registry)
-      (let ((name (plist-get feature :name)))
-        (if (org-canvas--diff-feature-excluded-p name)
-            (push (org-canvas--diff-excluded-result feature) results)
-          (message "Drift: checking %s..." name)
-          (let ((result (org-canvas--diff-feature feature)))
-            (push result results)
-            ;; Module items report right after their modules (#177).
-            (when-let* ((child (plist-get result :children)))
-              (push child results))))))
-    (setq results (org-canvas--diff-apply-references (nreverse results)))
+  (let ((results (org-canvas--diff-collect-results)))
     (let ((report (org-canvas--diff-render results))
           (total (org-canvas--diff-count results)))
       (if noninteractive
