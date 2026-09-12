@@ -260,7 +260,10 @@ eldev test -u "on,codecov,dontsend" -U coverage/coverage.json # Per-file coverag
 eldev test -u "on,text,dontsend"                              # Text summary (may end in overflow-error; prefer JSON)
 ELDEV_JUNIT=1 JUNIT_REPORT_FILE=test-results.xml eldev test   # JUnit XML for Codecov
 grep -rn buttercup-pending test/                              # Specs skipped on Emacs 29.x
+scripts/test-each-file.sh                                     # Every test file alone (~2 min)
 ```
+
+Every test file must pass on its own (`scripts/test-each-file.sh`, CI's `isolation` job; #260): test-helper loads the whole package, and a spec that sets global state — the log level above all — restores it.
 
 Layout: `test/test-helper.el` (fixtures, mocks, macros, network guard); `test/org-canvas-core-{config,api,org,html,pull,sync,conflict,delete,usability}-test.el`; `test/org-canvas-test.el` (orchestration); one `test/org-canvas-{feature}-test.el` per module; `test/org-canvas-validate-test.el`; `test/org-canvas-dry-run-test.el`; `test/org-canvas-doc-reference-test.el` (the manual's generated Property Reference); `test/contract/` (OpenAPI conformance fixture + generator); `test/mutation/` (mutation-testing harness); `test/docgen/` (generates the Property Reference from the registry).
 

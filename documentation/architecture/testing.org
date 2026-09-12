@@ -325,6 +325,17 @@ test-helper.el advises the network primitives — =plz=, =url-retrieve-synchrono
 
 Integration tests must not assert on =*org-canvas-log*= buffer contents — earlier tests mutate logger state (handlers, buffer names, leftover content), so such assertions pass in isolation but fail in the full run. Instead capture log lines by =cl-letf=-ing =org-canvas--log-info=/=org-canvas--log-warning= into a list and match on that.
 
+** Test Isolation: Every File Passes on Its Own (issue #260)
+
+=eldev test "pattern"= is the documented way to run a subset, and it only means something if a file does not borrow from the files loaded before it.  On 2026-09-12 three rubric specs failed when =test/org-canvas-rubrics-test.el= ran alone; a sweep found 18 of the test files in that state, green in the suite only by load order.  Four causes, each now closed:
+
+- *Modules another file had loaded.*  test-helper.el required =org-canvas-core= alone, so a file run by itself saw a feature registry with only its own module, no sync-at-point or prune command for the others, and =void-function= wherever assignments call into sections through a =declare-function=.  The helper now requires =org-canvas=, the whole package — what the suite ends up with anyway, and what the modules are designed to load as.
+- *A variable another module defines.*  rubrics.el reads =org-canvas-outcomes-file= behind a =boundp= guard and never requires outcomes.  Under lexical binding a =let= on an unbound symbol is lexical, so the guard saw nothing and every outcome title lookup answered nil.  The module now carries =(defvar org-canvas-outcomes-file)=, as assignments.el does for the files it reads (the helper's require also covers it).
+- *A logger a spec had silenced.*  =org-canvas-set-log-level= sets the global level and the logger object; the core-config specs left both at =error=, so from that file on no debug or info line was formatted, which hid a =%d= over a nil file size in a files spec that pointed at a =/tmp/test.pdf= nothing creates.  Those specs restore the level (=test-org-canvas-with-log-level-restored=), and the files spec makes its own temp file.  A spec that changes global state restores it; =let= is enough when the code =setq=s.
+- *No =(require 'buttercup)=.*  Three files had none, so =describe= was void when they loaded first.
+
+=scripts/test-each-file.sh= runs every file alone and lists the ones that fail; CI runs it as the =isolation= job on Emacs 30.1 (about two minutes).  Run it after touching test-helper.el or any spec that sets global state.
+
 * Emacs 29 vs 30 Compatibility
 
 ** Org-mode Versions and File-Backed Buffers

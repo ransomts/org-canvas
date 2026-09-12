@@ -7,6 +7,7 @@
 
 ;;; Code:
 
+(require 'buttercup)
 (require 'test-helper)
 (require 'org-canvas-submissions)
 
