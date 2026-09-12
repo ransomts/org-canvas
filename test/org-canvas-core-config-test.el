@@ -131,18 +131,32 @@
                       (expand-file-name "org-canvas.log" temp-dir))))
         (delete-directory temp-dir t)))))
 
+(defmacro test-org-canvas-with-log-level-restored (&rest body)
+  "Run BODY, then put `org-canvas-log-level' and the logger back.
+`org-canvas-set-log-level' sets both globally; a spec that left the
+logger at `error' silenced every debug and info line for the rest of
+the suite, which hid a format error in a files spec until that file
+ran alone (issue #260)."
+  (declare (indent 0))
+  `(let ((org-canvas-log-level org-canvas-log-level)
+         (org-canvas--logger org-canvas--logger))
+     ,@body))
+
 (describe "org-canvas-set-log-level"
   (it "sets log level to info"
-    (org-canvas-set-log-level 'info)
-    (expect org-canvas-log-level :to-equal 'info))
+    (test-org-canvas-with-log-level-restored
+      (org-canvas-set-log-level 'info)
+      (expect org-canvas-log-level :to-equal 'info)))
 
   (it "sets log level to debug"
-    (org-canvas-set-log-level 'debug)
-    (expect org-canvas-log-level :to-equal 'debug))
+    (test-org-canvas-with-log-level-restored
+      (org-canvas-set-log-level 'debug)
+      (expect org-canvas-log-level :to-equal 'debug)))
 
   (it "sets log level to trace"
-    (org-canvas-set-log-level 'trace)
-    (expect org-canvas-log-level :to-equal 'trace)))
+    (test-org-canvas-with-log-level-restored
+      (org-canvas-set-log-level 'trace)
+      (expect org-canvas-log-level :to-equal 'trace))))
 
 (describe "org-canvas-log-destination"
   (it "exists as a defcustom with correct default"
@@ -400,16 +414,19 @@
 
 (describe "org-canvas-set-log-level interactive"
   (it "maps trace to debug for the underlying logger"
-    (org-canvas-set-log-level 'trace)
-    (expect org-canvas-log-level :to-equal 'trace))
+    (test-org-canvas-with-log-level-restored
+      (org-canvas-set-log-level 'trace)
+      (expect org-canvas-log-level :to-equal 'trace)))
 
   (it "sets warning level"
-    (org-canvas-set-log-level 'warning)
-    (expect org-canvas-log-level :to-equal 'warning))
+    (test-org-canvas-with-log-level-restored
+      (org-canvas-set-log-level 'warning)
+      (expect org-canvas-log-level :to-equal 'warning)))
 
   (it "sets error level"
-    (org-canvas-set-log-level 'error)
-    (expect org-canvas-log-level :to-equal 'error)))
+    (test-org-canvas-with-log-level-restored
+      (org-canvas-set-log-level 'error)
+      (expect org-canvas-log-level :to-equal 'error))))
 
 ;;;; 28. org-canvas--path fallback
 
@@ -441,7 +458,8 @@
 
 (describe "org-canvas-set-log-level coverage"
   (it "maps trace to debug and calls message"
-    (let ((log-level-called nil)
+    (test-org-canvas-with-log-level-restored
+     (let ((log-level-called nil)
           (message-called nil))
       (cl-letf (((symbol-function 'org-canvas--logger-set-level)
                  (lambda (logger level)
@@ -453,20 +471,22 @@
         (org-canvas-set-log-level 'trace)
         (expect org-canvas-log-level :to-equal 'trace)
         (expect log-level-called :to-equal 'debug)
-        (expect message-called :to-be t))))
+        (expect message-called :to-be t)))))
 
   (it "passes non-trace levels directly to the logger"
-    (let ((log-level-called nil))
+    (test-org-canvas-with-log-level-restored
+     (let ((log-level-called nil))
       (cl-letf (((symbol-function 'org-canvas--logger-set-level)
                  (lambda (logger level)
                    (setq log-level-called level)
                    logger))
                 ((symbol-function 'message) #'ignore))
         (org-canvas-set-log-level 'warning)
-        (expect log-level-called :to-equal 'warning))))
+        (expect log-level-called :to-equal 'warning)))))
 
   (it "works when called interactively"
-    (let ((log-level-called nil))
+    (test-org-canvas-with-log-level-restored
+     (let ((log-level-called nil))
       (cl-letf (((symbol-function 'completing-read)
                  (lambda (&rest _) "error"))
                 ((symbol-function 'org-canvas--logger-set-level)
@@ -476,7 +496,7 @@
                 ((symbol-function 'message) #'ignore))
         (call-interactively 'org-canvas-set-log-level)
         (expect org-canvas-log-level :to-equal 'error)
-        (expect log-level-called :to-equal 'error)))))
+        (expect log-level-called :to-equal 'error))))))
 
 (describe "org-canvas-base-url normalization"
   (it "strips trailing slash when assigned via setq"

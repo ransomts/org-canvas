@@ -59,6 +59,9 @@
 (require 'cl-lib)
 
 (declare-function org-canvas--validate-rubric-structure "org-canvas-validate")
+;; Read, never required: outcomes is a sibling feature, and
+;; `org-canvas--rubric-outcome-title' checks `boundp' before using it.
+(defvar org-canvas-outcomes-file)
 
 ;;;; Configuration
 

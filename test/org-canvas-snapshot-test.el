@@ -15,6 +15,7 @@
 
 ;;; Code:
 
+(require 'buttercup)
 (require 'test-helper)
 (require 'json)
 (require 'org-canvas-announcements)
