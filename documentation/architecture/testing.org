@@ -481,6 +481,20 @@ ELDEV_JUNIT=1 JUNIT_REPORT_FILE=test-results.xml eldev test
   =.eldev= cache and block pushes on the cache lock with no real warning
   (issue #244).  A BLOCKED line now says whether the linter found
   something or did not run.
+- The hook lints under the pinned Emacs 30, not the system Emacs.
+  checkdoc on 30.1 rejects a third-person verb anywhere in a
+  docstring's first line ("the timestamp Canvas holds"); a newer Emacs
+  accepts it, so a hook linting locally passed what CI then failed —
+  five PRs' worth of round trips (#89, #90, #189, #258, #259) before
+  the hook was pointed at the same Emacs.
+- CI runs on every pull request whatever its base.  Under
+  =pull_request: branches: [main]= a PR stacked on another branch got
+  no run, and =main='s protection requires the checks on an up-to-date
+  head, so the stacked PR needed a manual =workflow_dispatch= (which
+  also started the mutation job) and then a rebase anyway (#259).  The
+  mutation job now runs on dispatch only when its =mutation= input is
+  set.  Stacking buys nothing under strict protection: open independent
+  PRs and merge them one at a time.
 
 ** Codecov Integration
 
@@ -527,14 +541,15 @@ The =.githooks/pre-push= hook runs four gates:
 
 | Gate | Command                                       | Threshold  |
 |------+-----------------------------------------------+------------|
-|    1 | =eldev lint=                                  | 0 warnings |
+|    1 | =eldev lint= on Emacs 30 (via nix-shell)      | 0 warnings |
 |    2 | =eldev complexity=                            | 0 above 15 |
 |    3 | =eldev test= on Emacs 29 (via nix-shell)      | 0 failures |
 |    4 | =eldev test= with coverage on Emacs 30 (nix)   | >= 99%     |
 
-Gate 3 uses =nix-shell= with a pinned nixpkgs archive for Emacs 29.
-Gate 4 uses a separate pinned archive for Emacs 30. Coverage is parsed
-from the Codecov JSON output.
+Gates 1 and 4 use =nix-shell= with a pinned nixpkgs archive for Emacs
+30, the version CI lints and measures coverage with; gate 3 uses a
+separate pinned archive for Emacs 29.  Coverage is parsed from the
+Codecov JSON output.
 
 * Eldev Test Configuration
 

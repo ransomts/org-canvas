@@ -24,9 +24,9 @@ eldev package        # Create distributable package
 eldev clean all      # Clear the Eldev cache — mandatory after editing a macro
 ```
 
-**Always run `eldev lint` before committing or pushing.** Fix any warnings before proceeding. CI lints on Emacs 30.1, whose checkdoc rejects a third-person verb such as "holds" anywhere in a docstring's first line; a newer local Emacs may accept it, so keep first lines imperative throughout (PRs #89/#90 went red on exactly this).
+**Always run `eldev lint` before committing or pushing.** Fix any warnings before proceeding. CI lints on Emacs 30.1, whose checkdoc rejects a third-person verb such as "holds" anywhere in a docstring's first line; a newer local Emacs accepts it, so keep first lines imperative throughout (PRs #89/#90/#189/#258/#259 went red on exactly this). The pre-push hook lints under the pinned Emacs 30 for that reason; a bare `eldev lint` on a newer Emacs is not the CI check.
 
-`org-canvas.el` at the repository root is a symlink to `lisp/org-canvas.el` so the package linter finds `Package-Requires` while the load path stays in `lisp/` (testing.org, "Eldev Test Configuration"). CI runs the tests on Emacs 29.3, 29.4 and 30.1; the pre-push hook runs 29 and 30 through nix-shell.
+`org-canvas.el` at the repository root is a symlink to `lisp/org-canvas.el` so the package linter finds `Package-Requires` while the load path stays in `lisp/` (testing.org, "Eldev Test Configuration"). CI runs the tests on Emacs 29.3, 29.4 and 30.1; the pre-push hook runs 29 and 30 through nix-shell. CI runs on every pull request whatever its base, and `main` requires the checks on an up-to-date head, so a PR stacked on another branch still needs a rebase once the lower one merges — prefer independent PRs and merge them one at a time.
 
 ## Architecture
 
