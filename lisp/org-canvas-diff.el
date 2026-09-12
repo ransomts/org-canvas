@@ -1164,7 +1164,7 @@ compare, so the heading has nothing to push or pull."
        (stringp (plist-get entry :updated))))
 
 (defun org-canvas--diff-adopt-entry (feature entry)
-  "Stamp ENTRY's heading with the timestamp Canvas holds, and save the file.
+  "Stamp ENTRY's heading with the timestamp Canvas reports, and save the file.
 FEATURE is the registry entry that says which file to look in.  Writes
 CANVAS_UPDATED_AT only: PAYLOAD_HASH is left as it is, since the local
 content did not change.  Returns the timestamp written, or nil when
