@@ -1262,10 +1262,32 @@ A rubric heading that carries a =CANVAS_ID= is *updated in place*: the id, the
 assignment associations that point at it, and the rubric assessments already
 recorded against it all survive the push (#123).  A rubric is created only
 when the heading has no id; if Canvas already holds one under the same title,
-the duplicate-title guard offers to adopt it rather than replacing it.  Should
-Canvas ever answer an update with a different rubric id, the log says so and
-names what to do -- the assignments whose =RUBRIC_LINK= points here need
-another push to re-associate.
+the duplicate-title guard offers to adopt it rather than replacing it.
+
+Two things Canvas does to an update are handled for you:
+
+- Canvas gives a fresh id to every criterion and rating an update does not
+  name, which orphans the assessments already entered and the =** Rubric=
+  tables in a grading file, both keyed by criterion id (#256).  The push reads
+  the rubric from Canvas first and sends each id back.  After the first push
+  (or a pull) every criterion heading carries a =CANVAS_CRITERION_ID=
+  property, which is what keeps a reworded or reordered criterion on its id;
+  leave it in place, as you would =CANVAS_ID=.  A criterion without one is
+  matched by description, and a genuinely new one gets its id from Canvas.
+- Canvas does not update a rubric that more than one assignment grades with:
+  it answers with a copy, "Title (1)", and leaves the original and its
+  assignments as they were (#255).  The push takes all but one of the
+  assignment associations off for the duration of the update and puts them
+  back, flags included, on the same rubric -- also when the update fails --
+  so nothing needs a re-push afterwards.  The log names every step.
+
+Because an association marked =RUBRIC_USE_FOR_GRADING= sets its assignment's
+points to the rubric's total, a push that changes the total moves the points
+of every assignment grading with the rubric; the log warns when that happens
+so you can check =POINTS= in assignments.org.  Should Canvas still answer with
+a different rubric id, the log says what happened and what to do: the
+assignments stay on the rubric they had, so either re-push them to move to
+the new id, or restore the old =CANVAS_ID= and delete the copy in Canvas.
 
 *** Multi-Level Ratings
 
