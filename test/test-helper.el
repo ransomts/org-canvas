@@ -63,7 +63,15 @@
 (require 'auth-source)
 (setq auth-sources nil)
 
-(require 'org-canvas-core)
+;; The whole package, not core alone: a test file run by itself
+;; (`eldev test "pattern"') must see what the full suite sees.  Every
+;; module registers with the feature and property registries, the
+;; sync-at-point and prune commands are generated per module, and
+;; assignments call into sections through a `declare-function'; with
+;; core alone, 18 of the test files failed in isolation and passed in
+;; the suite only because some earlier file had loaded the rest
+;; (issue #260).
+(require 'org-canvas)
 
 ;; Suppress "Non-existent agenda file" prompt in batch mode.
 ;; Org checks agenda files when opening .org buffers; temp files deleted

@@ -7,6 +7,7 @@
 
 ;;; Code:
 
+(require 'buttercup)
 (require 'test-helper)
 (require 'org-canvas-submissions)
 
@@ -371,15 +372,29 @@
       (org-canvas--submissions-render-comments [])
       (expect (buffer-string) :to-equal "")))
 
-  (it "converts HTML comment text via html-to-org-inline"
-    (cl-letf (((symbol-function 'org-canvas--html-to-org-inline)
-               (lambda (html) (concat "INLINE:" html))))
+  (it "keeps a comment's paragraphs under the item, and a one-liner on its line (issue #264)"
+    (cl-letf (((symbol-function 'org-canvas--html-to-org)
+               (lambda (html)
+                 (pcase html
+                   ("<b>Good</b>" "*Good*")
+                   (_ "This upload is your R1 responses.\\\\\n\n#+begin_h2\nNext\n#+end_h2\n\nUpload the R2 arguments and I will regrade it.")))))
       (with-temp-buffer
         (org-canvas--submissions-render-comments
-         [((author_name . "Prof")
-           (comment . "<b>Good</b>")
-           (created_at . "2026-03-01T00:00:00Z"))])
-        (expect (buffer-string) :to-match "INLINE:<b>Good</b>")))))
+         [((author_name . "Prof") (comment . "<b>Good</b>") (created_at . "2026-03-01T00:00:00Z"))
+          ((author_name . "Prof") (comment . "<p>two</p><h2>Next</h2><p>paragraphs</p>")
+           (created_at . "2026-03-02T00:00:00Z"))])
+        (expect (buffer-string)
+                :to-equal (concat "\n** Comments\n"
+                                  "- *Prof* <2026-03-01 Sun 00:00> :: *Good*\n"
+                                  "- *Prof* <2026-03-02 Mon 00:00> ::\n"
+                                  "  This upload is your R1 responses.\n\n"
+                                  "  Next\n\n"
+                                  "  Upload the R2 arguments and I will regrade it.\n")))))
+  (it "renders an empty item for a comment without text"
+    (with-temp-buffer
+      (org-canvas--submissions-render-comments
+       [((author_name . "Prof") (comment . :null) (created_at . "2026-03-01T00:00:00Z"))])
+      (expect (buffer-string) :to-match "^- \\*Prof\\* <2026-03-01 Sun 00:00> ::$"))))
 
 (defconst test-rubric-criteria
   '(((id . "_7104") (description . "Thesis") (points . 2.0)
@@ -390,7 +405,7 @@
   "Three rubric criteria as the assignment object lists them.")
 
 (describe "org-canvas--submissions-render-rubric"
-  (it "renders one row per criterion, pre-filled from the assessment"
+  (it "renders one row and one comment item per criterion, pre-filled from the assessment"
     (with-temp-buffer
       (org-mode)
       (org-canvas--submissions-render-rubric
@@ -399,25 +414,62 @@
          (_7105 . ((points . 1.5) (comments . :null)))))
       (let ((content (buffer-string)))
         (expect content :to-match "^\\*\\* Rubric$")
-        (expect content :to-match "| Id *| Criterion *| Max *| Score *| Comment *|")
-        (expect content :to-match "| _7104 *| Thesis *| *2 *| *2 *| Sharp *|")
-        (expect content :to-match "| _7105 *| Evidence support *| *3 *| *1.5 *| *|")
-        (expect content :to-match "| _7106 *| Style *| *1 *| *| *|"))))
-  (it "renders empty cells without an assessment"
+        (expect content :to-match "| Id *| Criterion *| Max *| Score *|$")
+        (expect content :to-match "| _7104 *| Thesis *| *2 *| *2 *|$")
+        (expect content :to-match "| _7105 *| Evidence support *| *3 *| *1.5 *|$")
+        (expect content :to-match "| _7106 *| Style *| *1 *| *|$")
+        (expect content :not :to-match "Comment")
+        ;; The items follow the table directly, one per row, in its order.
+        (expect content :to-match "| *|\n- _7104 :: Sharp\n- _7105 ::\n- _7106 ::\n"))))
+  (it "keeps a comment's line breaks as the item's continuation lines (issue #263)"
+    (with-temp-buffer
+      (org-mode)
+      (insert "* Adams, Alice\n")
+      (org-canvas--submissions-render-rubric
+       test-rubric-criteria
+       '((_7104 . ((points . 2) (comments . "State the maxim first.\r\n\r\n\r\nWhere to look: deck 02, 'Universalizability'; Quinn 2.6.2.  ")))))
+      (expect (buffer-string)
+              :to-match "- _7104 :: State the maxim first\\.\n\n  Where to look: deck 02, 'Universalizability'; Quinn 2\\.6\\.2\\.\n- _7105 ::\n")
+      (goto-char (point-min))
+      (expect (nth 4 (car (org-canvas--submissions-rubric-rows)))
+              :to-equal "State the maxim first.\n\nWhere to look: deck 02, 'Universalizability'; Quinn 2.6.2.")))
+  (it "renders empty cells and items without an assessment"
     (with-temp-buffer
       (org-mode)
       (org-canvas--submissions-render-rubric test-rubric-criteria nil)
-      (expect (buffer-string) :to-match "| _7104 *| Thesis *| *2 *| *| *|")))
+      (expect (buffer-string) :to-match "| _7104 *| Thesis *| *2 *| *|$")
+      (expect (buffer-string) :to-match "^- _7104 ::$")))
   (it "renders the assessment alone when the criteria are unknown"
     (with-temp-buffer
       (org-mode)
       (org-canvas--submissions-render-rubric
-       nil '((crit_1 . ((points . 18) (rating_description . "Excellent")))))
-      (expect (buffer-string) :to-match "| crit_1 *| *| *| *18 *| *|")))
+       nil '((crit_1 . ((points . 18) (rating_description . "Excellent") (comments . "Fine")))))
+      (expect (buffer-string) :to-match "| crit_1 *| *| *| *18 *|$")
+      (expect (buffer-string) :to-match "^- crit_1 :: Fine$")))
   (it "inserts nothing without a rubric"
     (with-temp-buffer
       (org-canvas--submissions-render-rubric nil nil)
       (expect (buffer-string) :to-equal ""))))
+
+(describe "org-canvas--submissions-comment-text"
+  (it "normalizes line ends, surrounding whitespace and blank runs, and is nil when blank"
+    (expect (org-canvas--submissions-comment-text nil) :to-be nil)
+    (expect (org-canvas--submissions-comment-text :null) :to-be nil)
+    (expect (org-canvas--submissions-comment-text "  \n \t\n") :to-be nil)
+    (expect (org-canvas--submissions-comment-text " Sharp ") :to-equal "Sharp")
+    (expect (org-canvas--submissions-comment-text "a | b") :to-equal "a | b")
+    (expect (org-canvas--submissions-comment-text "\n\na\r\n  b  \n\n\n\nc\n\n")
+            :to-equal "a\nb\n\nc"))
+  (it "agrees between a comment as Canvas returns it and as its item reads back"
+    (let ((canvas "First point.\r\n\r\nSecond point, indented on Canvas.\r\n  - a sub-point"))
+      (with-temp-buffer
+        (org-mode)
+        (insert "* Adams, Alice\n")
+        (org-canvas--submissions-render-rubric
+         test-rubric-criteria `((_7104 . ((points . 2) (comments . ,canvas)))))
+        (goto-char (point-min))
+        (expect (nth 4 (car (org-canvas--submissions-rubric-rows)))
+                :to-equal (org-canvas--submissions-comment-text canvas))))))
 
 (describe "org-canvas--submissions-rubric-digest"
   (it "is nil for an empty table and stable across row order"
@@ -429,9 +481,9 @@
                        '(("_7105" "1.5" nil) ("_7104" "2" "Sharp"))))
     (expect (org-canvas--submissions-rubric-digest '(("_7104" "2" "Sharp")))
             :not :to-equal (org-canvas--submissions-rubric-digest '(("_7104" "2" "Sharper")))))
-  (it "agrees between Canvas's assessment and the table as typed"
+  (it "agrees between Canvas's assessment and the section as typed, line breaks included"
     (let ((sub (test-org-canvas-make-submission
-                '((rubric_assessment . ((_7104 . ((points . 2.0) (comments . "Sharp")))
+                '((rubric_assessment . ((_7104 . ((points . 2.0) (comments . "Sharp.\n\nWhere to look: deck 02.")))
                                         (_7105 . ((points . 1.5)))))))))
       (with-temp-buffer
         (org-mode)
@@ -449,21 +501,54 @@
       (expect (buffer-string) :to-match "^\\*\\* Rubric$"))))
 
 (describe "org-canvas--submissions-rubric-rows"
-  (it "reads the rows of the entry's table, dropping the header and idless rows"
+  (it "reads the table rows and their comment items, dropping the header and idless rows"
+    (with-temp-buffer
+      (org-mode)
+      (insert "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n\n** Rubric\n"
+              "| Id | Criterion | Max | Score |\n|---+---+---+---|\n"
+              "| _7104 | Thesis | 2 | 2 |\n"
+              "| _7105 | Evidence | 3 |  |\n"
+              "|  | stray | | 1 |\n"
+              "| _7106 | Style | 1 | 0.5\n"
+              "- _7104 :: Sharp\n"
+              "- _7105 ::\n"
+              "- _7106 :: Thin, and the second sentence\n  runs on to a second line.\n\n"
+              "  A second paragraph.  \n\n\n"
+              "- _9999 :: no such row\n"
+              "\n** Notes\n")
+      (goto-char (point-min))
+      (expect (org-canvas--submissions-rubric-rows)
+              :to-equal '(("_7104" "Thesis" "2" "2" "Sharp")
+                          ("_7105" "Evidence" "3" nil nil)
+                          ("_7106" "Style" "1" "0.5"
+                           "Thin, and the second sentence\nruns on to a second line.\n\nA second paragraph.")))))
+  (it "reads an item's text from the line after the id, and none from an item left empty"
+    (with-temp-buffer
+      (org-mode)
+      (insert "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n\n** Rubric\n"
+              "| Id | Criterion | Max | Score |\n|---+---+---+---|\n"
+              "| _7104 | Thesis | 2 | 2 |\n| _7105 | Evidence | 3 | 1 |\n"
+              "- _7104 :: \n  Typed under the id.\n"
+              "- _7105 ::   \n\n")
+      (goto-char (point-min))
+      (expect (org-canvas--submissions-rubric-rows)
+              :to-equal '(("_7104" "Thesis" "2" "2" "Typed under the id.")
+                          ("_7105" "Evidence" "3" "1" nil)))))
+  (it "takes a fifth cell as the comment of a row without an item, the shape before issue #263"
     (with-temp-buffer
       (org-mode)
       (insert "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n\n** Rubric\n"
               "| Id | Criterion | Max | Score | Comment |\n|---+---+---+---+---|\n"
               "| _7104 | Thesis | 2 | 2 | Sharp |\n"
               "| _7105 | Evidence | 3 |  |  |\n"
-              "|  | stray | | 1 | |\n"
-              "| _7106 | Style | 1 | 0.5\n"
+              "| _7106 | Style | 1 | 0.5 | In the cell |\n"
+              "- _7106 :: In the item\n"
               "\n** Notes\n")
       (goto-char (point-min))
       (expect (org-canvas--submissions-rubric-rows)
               :to-equal '(("_7104" "Thesis" "2" "2" "Sharp")
                           ("_7105" "Evidence" "3" nil nil)
-                          ("_7106" "Style" "1" "0.5" nil)))))
+                          ("_7106" "Style" "1" "0.5" "In the item")))))
   (it "is nil without a Rubric heading, the old read-only one included"
     (with-temp-buffer
       (org-mode)
@@ -472,18 +557,65 @@
       (expect (org-canvas--submissions-rubric-rows) :to-be nil))))
 
 (describe "org-canvas--submissions-rubric-set-row"
-  (it "writes the score and comment cells of one row and keeps the rest"
+  (it "writes the score into the row and the comment into its item, keeping the rest"
+    (with-temp-buffer
+      (org-mode)
+      (insert "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n\n** Rubric\n"
+              "| Id | Criterion | Max | Score |\n|---+---+---+---|\n"
+              "| _7104 | Thesis | 2 |  |\n| _7105 | Evidence | 3 |  |\n"
+              "- _7104 :: Old\n  comment\n- _7105 ::\n\n** Notes\n")
+      (goto-char (point-min))
+      (expect (org-canvas--submissions-rubric-set-row "_7105" "1.5" "Thin.\nWhere to look: deck 02.")
+              :to-be-truthy)
+      (expect (org-canvas--submissions-rubric-set-row "_7104" "2" nil) :to-be-truthy)
+      (expect (org-canvas--submissions-rubric-set-row "_9999" "1" "stray") :to-be nil)
+      (expect (org-canvas--submissions-rubric-rows)
+              :to-equal '(("_7104" "Thesis" "2" "2" nil)
+                          ("_7105" "Evidence" "3" "1.5" "Thin.\nWhere to look: deck 02.")))
+      (expect (buffer-string)
+              :to-match "|\n- _7104 ::\n- _7105 :: Thin\\.\n  Where to look: deck 02\\.\n\n\\*\\* Notes\n")
+      (expect (buffer-string) :not :to-match "Old\\|stray")))
+  (it "adds the item of a row that lacks one, after the last item or after the table"
+    (with-temp-buffer
+      (org-mode)
+      (insert "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n\n** Rubric\n"
+              "| Id | Criterion | Max | Score |\n|---+---+---+---|\n"
+              "| _7104 | Thesis | 2 |  |\n| _7105 | Evidence | 3 |  |\n\n** Notes\n")
+      (goto-char (point-min))
+      ;; Nil adds nothing: a missing item already reads as no comment.
+      (org-canvas--submissions-rubric-set-row "_7104" "2" nil)
+      (expect (buffer-string) :not :to-match "::")
+      (org-canvas--submissions-rubric-set-row "_7105" "3" "Second")
+      (org-canvas--submissions-rubric-set-row "_7104" "2" "First")
+      (expect (buffer-string)
+              :to-match "|\n- _7105 :: Second\n- _7104 :: First\n\n\\*\\* Notes\n")
+      (expect (org-canvas--submissions-rubric-rows)
+              :to-equal '(("_7104" "Thesis" "2" "2" "First")
+                          ("_7105" "Evidence" "3" "3" "Second")))))
+  (it "moves a comment out of a fifth cell into an item, the shape before issue #263"
     (with-temp-buffer
       (org-mode)
       (insert "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n\n** Rubric\n"
               "| Id | Criterion | Max | Score | Comment |\n|---+---+---+---+---|\n"
-              "| _7104 | Thesis | 2 |  |  |\n| _7105 | Evidence | 3 |  |  |\n")
+              "| _7104 | Thesis | 2 |  | Sharp |\n| _7105 | Evidence | 3 |  |  |\n")
       (goto-char (point-min))
-      (expect (org-canvas--submissions-rubric-set-row "_7105" "1.5" "Thin") :to-be-truthy)
-      (expect (org-canvas--submissions-rubric-set-row "_9999" "1" nil) :to-be nil)
+      (expect (org-canvas--submissions-rubric-set-row "_7104" "2" "Sharper") :to-be-truthy)
+      (expect (buffer-string) :to-match "| _7104 *| Thesis *| *2 *| *2 *| *|\n")
+      (expect (buffer-string) :to-match "^- _7104 :: Sharper$")
       (expect (org-canvas--submissions-rubric-rows)
-              :to-equal '(("_7104" "Thesis" "2" nil nil)
-                          ("_7105" "Evidence" "3" "1.5" "Thin"))))))
+              :to-equal '(("_7104" "Thesis" "2" "2" "Sharper")
+                          ("_7105" "Evidence" "3" nil nil)))))
+  (it "writes the last entry of the file, whose section has no heading after it"
+    (with-temp-buffer
+      (org-mode)
+      (insert "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n\n** Rubric\n"
+              "| Id | Criterion | Max | Score |\n|---+---+---+---|\n"
+              "| _7104 | Thesis | 2 | 2 |\n- _7104 :: Sharp\n  more")
+      (goto-char (point-min))
+      (org-canvas--submissions-rubric-set-row "_7104" "1" "Less")
+      (expect (buffer-string) :to-match "| *1 *|\n- _7104 :: Less\\'")
+      (expect (org-canvas--submissions-rubric-rows)
+              :to-equal '(("_7104" "Thesis" "2" "1" "Less"))))))
 
 ;;;; View Toggle
 
@@ -741,7 +873,33 @@
           (expect content :to-match "Good work!")
           ;; Rubric: the assessment alone, since no assignment was given
           (expect content :to-match "^\\*\\* Rubric$")
-          (expect content :to-match "| crit_1 *| *| *| *18 *| *|"))))))
+          (expect content :to-match "| crit_1 *| *| *| *18 *|$")
+          (expect content :to-match "^- crit_1 ::$"))))))
+
+(describe "org-canvas--submissions-body-text"
+  (it "drops pandoc's hard-break markup and collapses the blank lines it leaves (issue #266)"
+    (cl-letf (((symbol-function 'org-canvas--html-to-org)
+               (lambda (_html)
+                 "I would lean toward pragmatism. \\\\\nI think the hardest is determinism.\\\\\n\\\\\n  \\\\\nLast line.")))
+      (expect (org-canvas--submissions-body-text "<p>x</p>")
+              :to-equal "I would lean toward pragmatism.\nI think the hardest is determinism.\n\nLast line.")))
+  (it "is nil for an empty or blank body"
+    (expect (org-canvas--submissions-body-text nil) :to-be nil)
+    (expect (org-canvas--submissions-body-text "") :to-be nil)
+    (cl-letf (((symbol-function 'org-canvas--html-to-org) (lambda (_html) "\\\\\n")))
+      (expect (org-canvas--submissions-body-text "<br>") :to-be nil)))
+  (it "leaves a backslash pair inside a line alone"
+    (with-html-to-org-identity
+      (expect (org-canvas--submissions-body-text "a \\\\ b") :to-equal "a \\\\ b")))
+  (it "is what the submission body is rendered through"
+    (cl-letf (((symbol-function 'org-canvas--html-to-org)
+               (lambda (_html) "First line.\\\\\nSecond line.")))
+      (with-temp-buffer
+        (org-mode)
+        (org-canvas--submissions-render-detail-entry
+         (test-org-canvas-make-submission '((body . "<p>First line.<br>Second line.</p>"))))
+        (expect (buffer-string) :to-match "\nFirst line\\.\nSecond line\\.\n")
+        (expect (buffer-string) :not :to-match "\\\\\\\\")))))
 
 ;;;; Edge Cases
 
@@ -1487,7 +1645,7 @@
           (expect (test-org-canvas-api-call-count) :to-equal 0)
           (goto-char (point-min))
           (org-canvas--submissions-goto-user 5001)
-          (expect (org-entry-get (point) "CONFLICT") :to-match "Canvas now has 93")
+          (expect (org-entry-get (point) "CONFLICT") :to-equal "score: Canvas has 93")
           (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "92")))))
   (it "skips a student who resubmitted since the pull"
     (with-org-canvas-test-config
@@ -1500,7 +1658,7 @@
             (org-canvas-submissions-push-grades))
           (expect (test-org-canvas-api-call-count) :to-equal 0)
           (org-canvas--submissions-goto-user 5001)
-          (expect (org-entry-get (point) "CONFLICT") :to-match "resubmitted (attempt 2)")))))
+          (expect (org-entry-get (point) "CONFLICT") :to-equal "attempt: Canvas has 2")))))
   (it "pushes the clean changes and clears CONFLICT once resolved"
     (with-org-canvas-test-config
       (with-mock-api
@@ -1858,7 +2016,7 @@
         (delete-file file)))))
 
 (describe "rubric header in the grading file"
-  (it "writes the rubric properties, the Rubric line, and the criteria table"
+  (it "writes the rubric properties, the Rubric line, and the rubric block"
     (let ((org-canvas-base-url "https://canvas.example.edu")
           (org-canvas-course-id "42")
           (org-canvas-submissions-directory "/course/submissions/"))
@@ -1873,9 +2031,7 @@
             (expect content :to-match "^#\\+PROPERTY: CANVAS_RUBRIC_TITLE Essay Rubric$")
             (expect content :to-match "^#\\+PROPERTY: CANVAS_RUBRIC_USE_FOR_GRADING true$")
             (expect content :to-match "^Rubric: \\[\\[file:\\.\\./rubrics\\.org::\\*Essay Rubric\\]\\[in Org\\]\\], \\[\\[https://canvas\\.example\\.edu/courses/42/rubrics/133477\\]\\[on Canvas\\]\\]$")
-            (expect content :to-match "| Criterion *| Points *| Ratings *|")
-            (expect content :to-match "| Thesis *| *20 *| Excellent (20), Weak vague (5) *|")
-            (expect content :to-match "| Evidence *| *30 *| Strong (30) *|")
+            (expect content :to-match "^\\* Rubric\n\n\\*\\* Thesis (20)\n| Rating *| Points *| Description *|\n|[-+]+|\n| Excellent *| *20 *| *|\n| Weak vague *| *5 *| *|\n\n\\*\\* Evidence (30)\n")
             ;; the Rubric block precedes the students and follows the Assignment line
             (expect (string-match "^Assignment: " content)
                     :to-be-less-than (string-match "^Rubric: " content)))))))
@@ -1905,7 +2061,7 @@
          '((id . 1001) (use_rubric_for_grading . :json-false)
            (rubric_settings . ((id . 133477) (title . "Essay Rubric") (use_for_grading . t)))))
         (expect (buffer-string) :to-match "^#\\+PROPERTY: CANVAS_RUBRIC_USE_FOR_GRADING false$"))))
-  (it "omits the criteria table when the option is off"
+  (it "omits the criteria when the option is off"
     (let ((org-canvas-submissions-include-rubric-criteria nil))
       (cl-letf (((symbol-function 'org-canvas--submissions-heading-for-assignment) (lambda (_id) nil))
                 ((symbol-function 'org-canvas--submissions-heading-for-rubric) (lambda (_id) nil)))
@@ -1913,7 +2069,7 @@
           (org-mode)
           (org-canvas--submissions-render-detail "Essay" "1001" nil test-rubric-assignment)
           (expect (buffer-string) :to-match "^Rubric: \\[\\[https://")
-          (expect (buffer-string) :not :to-match "Criterion")))))
+          (expect (buffer-string) :not :to-match "Criterion\\|Rating\\|^\\* Rubric")))))
   (it "writes nothing rubric-related for an assignment without one"
     (cl-letf (((symbol-function 'org-canvas--submissions-heading-for-assignment) (lambda (_id) nil)))
       (with-temp-buffer
@@ -1921,6 +2077,72 @@
         (org-canvas--submissions-render-detail "HW" "1001" nil '((id . 1001) (name . "HW")))
         (expect (buffer-string) :not :to-match "Rubric")
         (expect (buffer-string) :not :to-match "CANVAS_RUBRIC")))))
+
+(defconst test-rubric-assignment-described
+  '((id . 1001)
+    (name . "Closer")
+    (use_rubric_for_grading . t)
+    (rubric_settings . ((id . 138462) (title . "Closer Rubric") (points_possible . 6)))
+    (rubric . [((id . "_1") (description . "The Day&#39;s Idea Does the Work") (points . 2)
+                (long_description . "<p>The answer is built from the session&#39;s material.</p><p>Feed-forward: journal row 2.</p>")
+                (ratings . [((description . "Working") (points . 2)
+                             (long_description . "The day&#39;s idea carries the answer"))
+                            ((description . "Named") (points . 1)
+                             (long_description . "Named, but the answer reads the same without it"))
+                            ((description . "Absent") (points . 0) (long_description . :null))]))
+               ((id . "_2") (description . "Stakes | Named") (points . 4) (long_description . :null)
+                (ratings . [((description . "Yes") (points . 4))]))]))
+  "An assignment whose rubric carries the descriptions Canvas escapes (issue #265).")
+
+(defun test-rubric--decode (html)
+  "Stand in for pandoc: decode the apostrophe and split paragraphs."
+  (replace-regexp-in-string
+   "&#39;" "'"
+   (string-trim (replace-regexp-in-string "</?p>" "" (replace-regexp-in-string "</p><p>" "\n\n" html)))))
+
+(describe "the rubric block in the grading file (issue #265)"
+  (it "writes the rubric in the rubrics file's shape: a heading per criterion, its prose, its ratings"
+    (cl-letf (((symbol-function 'org-canvas--submissions-heading-for-assignment) (lambda (_id) nil))
+              ((symbol-function 'org-canvas--submissions-heading-for-rubric) (lambda (_id) nil))
+              ((symbol-function 'org-canvas--html-to-org) #'test-rubric--decode))
+      (with-temp-buffer
+        (org-mode)
+        (org-canvas--submissions-render-detail
+         "Closer" "1001" (list (test-org-canvas-make-submission)) test-rubric-assignment-described)
+        (let ((content (buffer-string)))
+          (expect content :to-match "^Rubric: \\[\\[https://.*/rubrics/138462\\]\\[on Canvas\\]\\]\n\n\\* Rubric\n\n\\*\\* The Day's Idea Does the Work (2)\nThe answer is built from the session's material\\.\n\nFeed-forward: journal row 2\\.\n| Rating *| Points *| Description *|\n|-+\\+-+\\+-+|\n| Working *| *2 *| The day's idea carries the answer *|\n| Named *| *1 *| Named, but the answer reads the same without it *|\n| Absent *| *0 *| *|\n\n\\*\\* Stakes | Named (4)\n| Rating *| Points *| Description *|\n|-+\\+-+\\+-+|\n| Yes *| *4 *| *|\n\n\\* Adams, Alice\n")
+          (expect content :not :to-match "| Criterion *| Points *| Ratings *|")
+          ;; The student's own table repeats the criterion, decoded once for all of them.
+          (expect content :to-match "| _1 *| The Day's Idea Does the Work *| *2 *| *|")
+          (expect content :not :to-match "&#39;")))))
+  (it "writes the one-line table under `summary', decoded the same way"
+    (let ((org-canvas-submissions-include-rubric-criteria 'summary))
+      (cl-letf (((symbol-function 'org-canvas--submissions-heading-for-assignment) (lambda (_id) nil))
+                ((symbol-function 'org-canvas--submissions-heading-for-rubric) (lambda (_id) nil))
+                ((symbol-function 'org-canvas--html-to-org) #'test-rubric--decode))
+        (with-temp-buffer
+          (org-mode)
+          (org-canvas--submissions-render-detail "Closer" "1001" nil test-rubric-assignment-described)
+          (let ((content (buffer-string)))
+            (expect content :to-match "| Criterion *| Points *| Ratings *|")
+            (expect content :to-match "| The Day's Idea Does the Work *| *2 *| Working (2), Named (1), Absent (0) *|")
+            (expect content :to-match "| Stakes Named *| *4 *| Yes (4) *|")
+            (expect content :not :to-match "^\\* Rubric$"))))))
+  (it "is no student: the summary, the completion rule and the pushes leave it alone"
+    (with-rubric-file (concat test-rubric-file-header
+                               "* Rubric\n\n** Thesis (2)\n| Rating | Points | Description |\n|---+---+---|\n| Full | 2 |  |\n\n"
+                               (test-rubric-entry "Adams, Alice" 5001 ":STATUS: submitted\n" test-rubric-blank-rows))
+      (expect (mapcar #'car (org-canvas--submissions-heading-rows)) :to-equal '("Adams, Alice"))
+      (let ((messages nil))
+        (cl-letf (((symbol-function 'message)
+                   (lambda (fmt &rest args) (push (apply #'format fmt args) messages) nil)))
+          (org-canvas-submissions-apply-completion-rule 6))
+        (expect (car messages) :to-match "1 at 6, 0 at 0 .*, 0 left as they were"))
+      (goto-char (point-min))
+      (re-search-forward "^\\* Rubric$")
+      (expect (org-entry-get (point) "SCORE") :to-be nil)
+      (expect (length (org-canvas--submissions-collect-grade-changes)) :to-equal 1)
+      (expect (org-canvas--submissions-collect-comment-drafts) :to-be nil))))
 
 (describe "refresh-links also rebuilds the Rubric line"
   (it "recomputes it from the CANVAS_RUBRIC_ID property"
@@ -1961,6 +2183,21 @@
         (org-canvas--submissions-render-detail-entry (test-org-canvas-make-submission))
         (expect (buffer-string) :not :to-match "Comment to post")))))
 
+(describe "org-canvas--submissions-section-text"
+  (it "keeps a paragraph break, collapses a run of blank lines, drops # lines and the ends (issue #264)"
+    (with-temp-org-buffer
+     (concat "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n\n** Notes\n"
+             "# template\n\n\nFirst paragraph.\n  \n\n\nSecond paragraph,\nsame one.\n# a note to self\n\n\n"
+             "** Comment to post\n")
+     (org-back-to-heading)
+     (expect (org-canvas--submissions-section-text org-canvas--submissions-notes-heading)
+             :to-equal "First paragraph.\n\nSecond paragraph,\nsame one.")))
+  (it "is nil when only template and blank lines are there"
+    (with-temp-org-buffer
+     "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n\n** Notes\n# template\n\n  \n"
+     (org-back-to-heading)
+     (expect (org-canvas--submissions-section-text org-canvas--submissions-notes-heading) :to-be nil))))
+
 (describe "org-canvas--submissions-comment-draft"
   (it "is nil while only the template is there"
     (with-temp-org-buffer
@@ -1968,13 +2205,13 @@
              org-canvas-submissions-comment-template "\n\n")
      (org-back-to-heading)
      (expect (org-canvas--submissions-comment-draft) :to-be nil)))
-  (it "returns the written text with the template lines dropped and lines joined"
+  (it "returns the written text with the template lines dropped and its paragraph break kept"
     (with-temp-org-buffer
      (concat "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n\n** Comment to post\n"
              org-canvas-submissions-comment-template "\nStrong opening.\n\nName the stakeholders next time.\n")
      (org-back-to-heading)
      (expect (org-canvas--submissions-comment-draft)
-             :to-equal "Strong opening.\nName the stakeholders next time.")))
+             :to-equal "Strong opening.\n\nName the stakeholders next time.")))
   (it "stops at the next heading"
     (with-temp-org-buffer
      "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n\n** Comment to post\nGood.\n\n* Beta, Bob\n:PROPERTIES:\n:USER_ID: 5002\n:END:\n\n** Comment to post\n# only the template\n"
@@ -2272,7 +2509,27 @@
                        (lambda (p) (setq prompt p) nil)))
               (org-canvas-submissions-push-grades))
             (expect prompt :to-match "skipping 1 conflict")
-            (expect (test-org-canvas-api-call-count) :to-equal 0)))))))
+            (expect (test-org-canvas-api-call-count) :to-equal 0)
+            ;; The way out lives in the message, not in the property (issue #264).
+            (org-canvas--submissions-goto-user 5001)
+            (expect (org-entry-get (point) "CONFLICT") :to-be nil)
+            (org-canvas--submissions-goto-user 5002)
+            (expect (org-entry-get (point) "CONFLICT") :to-equal "score: Canvas has 70"))))))
+  (it "says how to clear a marked conflict when there is nothing else to push"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file
+            (concat test-grading-file-header
+                    "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:END:\n")
+          (let ((org-canvas-submissions-check-conflicts t) (messages nil))
+            (setq-local org-canvas-submissions--current-view 'detail)
+            (cl-letf (((symbol-function 'org-canvas--submissions-live-baselines)
+                       (lambda (_id) '((5001 . ("93" 1 nil)))))
+                      ((symbol-function 'message)
+                       (lambda (fmt &rest args) (push (apply #'format fmt args) messages) nil)))
+              (org-canvas-submissions-push-grades))
+            (expect (car messages)
+                    :to-equal "Nothing to push; 1 conflict(s) marked CONFLICT: pull again, or set CANVAS_SCORE to Canvas's value to override")))))))
 
 (describe "posting grades (issue #202)"
   (it "records the assignment's effective policy in the file header"
@@ -2357,11 +2614,18 @@
 
 (defun test-rubric-entry (name user-id props rows)
   "Return a student entry for NAME and USER-ID with PROPS and rubric ROWS.
-PROPS is a string of property lines; ROWS a list of (ID CRITERION MAX SCORE COMMENT)."
+PROPS is a string of property lines; ROWS a list of (ID CRITERION MAX
+SCORE COMMENT), written as the table and the comment items under it."
   (concat (format "* %s\n:PROPERTIES:\n:USER_ID: %s\n%s:END:\n\n** Rubric\n" name user-id props)
-          "| Id | Criterion | Max | Score | Comment |\n|---+---+---+---+---|\n"
-          (mapconcat (lambda (r) (apply #'format "| %s | %s | %s | %s | %s |\n"
-                                        (mapcar (lambda (c) (or c "")) r)))
+          "| Id | Criterion | Max | Score |\n|---+---+---+---|\n"
+          (mapconcat (lambda (r) (apply #'format "| %s | %s | %s | %s |\n"
+                                        (mapcar (lambda (c) (or c "")) (cl-subseq r 0 4))))
+                     rows "")
+          (mapconcat (lambda (r)
+                       (format "- %s ::%s\n" (nth 0 r)
+                               (if (nth 4 r)
+                                   (concat " " (replace-regexp-in-string "\n" "\n  " (nth 4 r)))
+                                 "")))
                      rows "")
           "\n"))
 
@@ -2468,7 +2732,8 @@ PROPS is a string of property lines; ROWS a list of (ID CRITERION MAX SCORE COMM
       (with-mock-api
         (with-rubric-file (concat test-rubric-file-header
                                    (test-rubric-entry "Adams, Alice" 5001 ""
-                                                      '(("_7104" "Thesis" 2 2 "Sharp") ("_7105" "Evidence" 3 1.5 nil)
+                                                      '(("_7104" "Thesis" 2 2 "Sharp.\n\nWhere to look: deck 02.")
+                                                        ("_7105" "Evidence" 3 1.5 nil)
                                                         ("_7106" "Style" 1 nil nil))))
           (let ((org-canvas-submissions-check-conflicts nil) (prompt nil))
             (cl-letf (((symbol-function 'y-or-n-p) (lambda (p) (setq prompt p) t)))
@@ -2478,14 +2743,14 @@ PROPS is a string of property lines; ROWS a list of (ID CRITERION MAX SCORE COMM
           (let ((data (nth 2 (test-org-canvas-last-api-call))))
             (expect (alist-get 'posted_grade (alist-get 'submission data)) :to-equal "3.5")
             (expect (alist-get 'rubric_assessment data)
-                    :to-equal '((_7104 . ((points . 2) (comments . "Sharp")))
+                    :to-equal '((_7104 . ((points . 2) (comments . "Sharp.\n\nWhere to look: deck 02.")))
                                 (_7105 . ((points . 1.5))))))
           (org-canvas--submissions-goto-user 5001)
           (expect (org-entry-get (point) "SCORE") :to-equal "3.5")
           (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "3.5")
           (expect (org-entry-get (point) "CANVAS_RUBRIC")
                   :to-equal (org-canvas--submissions-rubric-digest
-                             '(("_7104" "2" "Sharp") ("_7105" "1.5" nil))))
+                             '(("_7104" "2" "Sharp.\n\nWhere to look: deck 02.") ("_7105" "1.5" nil))))
           (expect (org-canvas--submissions-collect-grade-changes) :to-be nil)))))
   (it "sends several students through the bulk endpoint, each with its own fields"
     (with-org-canvas-test-config
@@ -2519,7 +2784,7 @@ PROPS is a string of property lines; ROWS a list of (ID CRITERION MAX SCORE COMM
             (org-canvas-submissions-push-grades))
           (expect (test-org-canvas-api-call-count) :to-equal 0)
           (org-canvas--submissions-goto-user 5001)
-          (expect (org-entry-get (point) "CONFLICT") :to-match "rubric assessed on Canvas since the pull")))))
+          (expect (org-entry-get (point) "CONFLICT") :to-equal "rubric: assessed on Canvas since the pull")))))
   (it "does not hold a score-only change against a rubric that moved"
     (with-org-canvas-test-config
       (with-mock-api
@@ -2594,7 +2859,7 @@ PROPS is a string of property lines; ROWS a list of (ID CRITERION MAX SCORE COMM
             (with-current-buffer (car shown)
               (org-canvas--submissions-goto-user 5001)
               (expect (nth 3 (car (org-canvas--submissions-rubric-rows))) :to-equal "2")
-              (expect (org-entry-get (point) "CONFLICT") :to-match "rubric assessed on Canvas since these rows were typed")
+              (expect (org-entry-get (point) "CONFLICT") :to-equal "rubric: assessed on Canvas since these rows were typed")
               (expect (org-entry-get (point) "CANVAS_RUBRIC")
                       :to-equal (org-canvas--submissions-rubric-digest '(("_7105" "3" nil))))))
         (when (buffer-live-p (car shown)) (kill-buffer (car shown)))
