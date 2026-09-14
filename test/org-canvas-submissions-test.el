@@ -372,15 +372,29 @@
       (org-canvas--submissions-render-comments [])
       (expect (buffer-string) :to-equal "")))
 
-  (it "converts HTML comment text via html-to-org-inline"
-    (cl-letf (((symbol-function 'org-canvas--html-to-org-inline)
-               (lambda (html) (concat "INLINE:" html))))
+  (it "keeps a comment's paragraphs under the item, and a one-liner on its line (issue #264)"
+    (cl-letf (((symbol-function 'org-canvas--html-to-org)
+               (lambda (html)
+                 (pcase html
+                   ("<b>Good</b>" "*Good*")
+                   (_ "This upload is your R1 responses.\\\\\n\n#+begin_h2\nNext\n#+end_h2\n\nUpload the R2 arguments and I will regrade it.")))))
       (with-temp-buffer
         (org-canvas--submissions-render-comments
-         [((author_name . "Prof")
-           (comment . "<b>Good</b>")
-           (created_at . "2026-03-01T00:00:00Z"))])
-        (expect (buffer-string) :to-match "INLINE:<b>Good</b>")))))
+         [((author_name . "Prof") (comment . "<b>Good</b>") (created_at . "2026-03-01T00:00:00Z"))
+          ((author_name . "Prof") (comment . "<p>two</p><h2>Next</h2><p>paragraphs</p>")
+           (created_at . "2026-03-02T00:00:00Z"))])
+        (expect (buffer-string)
+                :to-equal (concat "\n** Comments\n"
+                                  "- *Prof* <2026-03-01 Sun 00:00> :: *Good*\n"
+                                  "- *Prof* <2026-03-02 Mon 00:00> ::\n"
+                                  "  This upload is your R1 responses.\n\n"
+                                  "  Next\n\n"
+                                  "  Upload the R2 arguments and I will regrade it.\n")))))
+  (it "renders an empty item for a comment without text"
+    (with-temp-buffer
+      (org-canvas--submissions-render-comments
+       [((author_name . "Prof") (comment . :null) (created_at . "2026-03-01T00:00:00Z"))])
+      (expect (buffer-string) :to-match "^- \\*Prof\\* <2026-03-01 Sun 00:00> ::$"))))
 
 (defconst test-rubric-criteria
   '(((id . "_7104") (description . "Thesis") (points . 2.0)
@@ -1631,7 +1645,7 @@
           (expect (test-org-canvas-api-call-count) :to-equal 0)
           (goto-char (point-min))
           (org-canvas--submissions-goto-user 5001)
-          (expect (org-entry-get (point) "CONFLICT") :to-match "Canvas now has 93")
+          (expect (org-entry-get (point) "CONFLICT") :to-equal "score: Canvas has 93")
           (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "92")))))
   (it "skips a student who resubmitted since the pull"
     (with-org-canvas-test-config
@@ -1644,7 +1658,7 @@
             (org-canvas-submissions-push-grades))
           (expect (test-org-canvas-api-call-count) :to-equal 0)
           (org-canvas--submissions-goto-user 5001)
-          (expect (org-entry-get (point) "CONFLICT") :to-match "resubmitted (attempt 2)")))))
+          (expect (org-entry-get (point) "CONFLICT") :to-equal "attempt: Canvas has 2")))))
   (it "pushes the clean changes and clears CONFLICT once resolved"
     (with-org-canvas-test-config
       (with-mock-api
@@ -2105,6 +2119,21 @@
         (org-canvas--submissions-render-detail-entry (test-org-canvas-make-submission))
         (expect (buffer-string) :not :to-match "Comment to post")))))
 
+(describe "org-canvas--submissions-section-text"
+  (it "keeps a paragraph break, collapses a run of blank lines, drops # lines and the ends (issue #264)"
+    (with-temp-org-buffer
+     (concat "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n\n** Notes\n"
+             "# template\n\n\nFirst paragraph.\n  \n\n\nSecond paragraph,\nsame one.\n# a note to self\n\n\n"
+             "** Comment to post\n")
+     (org-back-to-heading)
+     (expect (org-canvas--submissions-section-text org-canvas--submissions-notes-heading)
+             :to-equal "First paragraph.\n\nSecond paragraph,\nsame one.")))
+  (it "is nil when only template and blank lines are there"
+    (with-temp-org-buffer
+     "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n\n** Notes\n# template\n\n  \n"
+     (org-back-to-heading)
+     (expect (org-canvas--submissions-section-text org-canvas--submissions-notes-heading) :to-be nil))))
+
 (describe "org-canvas--submissions-comment-draft"
   (it "is nil while only the template is there"
     (with-temp-org-buffer
@@ -2112,13 +2141,13 @@
              org-canvas-submissions-comment-template "\n\n")
      (org-back-to-heading)
      (expect (org-canvas--submissions-comment-draft) :to-be nil)))
-  (it "returns the written text with the template lines dropped and lines joined"
+  (it "returns the written text with the template lines dropped and its paragraph break kept"
     (with-temp-org-buffer
      (concat "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n\n** Comment to post\n"
              org-canvas-submissions-comment-template "\nStrong opening.\n\nName the stakeholders next time.\n")
      (org-back-to-heading)
      (expect (org-canvas--submissions-comment-draft)
-             :to-equal "Strong opening.\nName the stakeholders next time.")))
+             :to-equal "Strong opening.\n\nName the stakeholders next time.")))
   (it "stops at the next heading"
     (with-temp-org-buffer
      "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n\n** Comment to post\nGood.\n\n* Beta, Bob\n:PROPERTIES:\n:USER_ID: 5002\n:END:\n\n** Comment to post\n# only the template\n"
@@ -2416,7 +2445,27 @@
                        (lambda (p) (setq prompt p) nil)))
               (org-canvas-submissions-push-grades))
             (expect prompt :to-match "skipping 1 conflict")
-            (expect (test-org-canvas-api-call-count) :to-equal 0)))))))
+            (expect (test-org-canvas-api-call-count) :to-equal 0)
+            ;; The way out lives in the message, not in the property (issue #264).
+            (org-canvas--submissions-goto-user 5001)
+            (expect (org-entry-get (point) "CONFLICT") :to-be nil)
+            (org-canvas--submissions-goto-user 5002)
+            (expect (org-entry-get (point) "CONFLICT") :to-equal "score: Canvas has 70"))))))
+  (it "says how to clear a marked conflict when there is nothing else to push"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file
+            (concat test-grading-file-header
+                    "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:END:\n")
+          (let ((org-canvas-submissions-check-conflicts t) (messages nil))
+            (setq-local org-canvas-submissions--current-view 'detail)
+            (cl-letf (((symbol-function 'org-canvas--submissions-live-baselines)
+                       (lambda (_id) '((5001 . ("93" 1 nil)))))
+                      ((symbol-function 'message)
+                       (lambda (fmt &rest args) (push (apply #'format fmt args) messages) nil)))
+              (org-canvas-submissions-push-grades))
+            (expect (car messages)
+                    :to-equal "Nothing to push; 1 conflict(s) marked CONFLICT: pull again, or set CANVAS_SCORE to Canvas's value to override")))))))
 
 (describe "posting grades (issue #202)"
   (it "records the assignment's effective policy in the file header"
@@ -2671,7 +2720,7 @@ SCORE COMMENT), written as the table and the comment items under it."
             (org-canvas-submissions-push-grades))
           (expect (test-org-canvas-api-call-count) :to-equal 0)
           (org-canvas--submissions-goto-user 5001)
-          (expect (org-entry-get (point) "CONFLICT") :to-match "rubric assessed on Canvas since the pull")))))
+          (expect (org-entry-get (point) "CONFLICT") :to-equal "rubric: assessed on Canvas since the pull")))))
   (it "does not hold a score-only change against a rubric that moved"
     (with-org-canvas-test-config
       (with-mock-api
@@ -2746,7 +2795,7 @@ SCORE COMMENT), written as the table and the comment items under it."
             (with-current-buffer (car shown)
               (org-canvas--submissions-goto-user 5001)
               (expect (nth 3 (car (org-canvas--submissions-rubric-rows))) :to-equal "2")
-              (expect (org-entry-get (point) "CONFLICT") :to-match "rubric assessed on Canvas since these rows were typed")
+              (expect (org-entry-get (point) "CONFLICT") :to-equal "rubric: assessed on Canvas since these rows were typed")
               (expect (org-entry-get (point) "CANVAS_RUBRIC")
                       :to-equal (org-canvas--submissions-rubric-digest '(("_7105" "3" nil))))))
         (when (buffer-live-p (car shown)) (kill-buffer (car shown)))
