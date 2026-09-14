@@ -204,9 +204,11 @@ docs: update manual for new quiz properties
 ## Pre-push Hook
 
 The `.githooks/pre-push` hook automatically:
+- Runs `eldev lint` on Emacs 30 (via nix-shell — the Emacs CI lints with; its checkdoc is stricter than a newer one's)
+- Runs `eldev complexity`
 - Runs `eldev test` on Emacs 29 (via nix-shell, no coverage)
 - Runs `eldev test` on Emacs 30 with coverage
-- Blocks the push if coverage drops below 99%
+- Blocks the push if any of those fail or coverage drops below 99%
 
 If you need to bypass it temporarily (not recommended):
 ```bash

@@ -2,12 +2,15 @@
 # pre-push hook: regression test on Emacs 29 + 30 via Nix, enforce coverage
 #
 # This hook runs automatically before every `git push`. It gates pushes on:
-#   1. Lint clean (eldev lint — doc, package, re linters)
+#   1. Lint clean (eldev lint — doc, package, re linters), under the
+#      same Emacs 30 CI lints with: checkdoc on 30.1 rejects a
+#      third-person verb anywhere in a docstring's first line, and a
+#      newer system Emacs lets it through (PRs #89, #90, #189, #258, #259)
 #   2. Cognitive complexity within budget (eldev complexity)
 #   3. All tests passing on both Emacs 29 and Emacs 30 (via nix-shell)
 #   4. Code coverage >= 99% (measured on the Emacs 30 run)
 #
-# Gates 1+2 run one after the other (they share the .eldev cache and
+# Gates 1+2 run one after the other (they shared the .eldev cache and
 # raced on its lock when run in parallel, blocking pushes with no real
 # warning; issue #244), then gates 3+4 run in parallel.
 #
@@ -21,14 +24,29 @@ set -euo pipefail
 COVERAGE_TARGET=99
 COMPLEXITY_BUDGET=2  # pre-existing: org-canvas-define-sync, org-canvas-define-push-at-point
 
-# --- Phase 1: Lint, then Complexity ---
+# Pin each Emacs version to a specific nixpkgs snapshot
+declare -A NIX_ARCHIVES=(
+  [29]="https://github.com/NixOS/nixpkgs/archive/nixos-24.05.tar.gz"
+  [30]="https://github.com/NixOS/nixpkgs/archive/nixos-24.11.tar.gz"
+)
+
+declare -A NIX_PACKAGES=(
+  [29]="emacs29-nox"
+  [30]="emacs30-nox"
+)
+
+# --- Phase 1: Lint (Emacs 30), then Complexity ---
 
 LINT_LOG=$(mktemp /tmp/org-canvas-lint-XXXXXX.log)
 COMPLEXITY_LOG=$(mktemp /tmp/org-canvas-complexity-XXXXXX.log)
 
-echo "Running linter..."
+echo "Running linter (Emacs 30, as CI does)..."
 lint_rc=0
-eldev lint > "$LINT_LOG" 2>&1 || lint_rc=$?
+nix-shell \
+  -I "nixpkgs=${NIX_ARCHIVES[30]}" \
+  -p "${NIX_PACKAGES[30]}" \
+  --keep PATH \
+  --run "emacs --version | head -1 && eldev lint" > "$LINT_LOG" 2>&1 || lint_rc=$?
 cat "$LINT_LOG" || true
 if [ "$lint_rc" -ne 0 ]; then
   # A linter that never ran (a cache lock, a missing dependency) is not
@@ -71,17 +89,6 @@ echo ""
 rm -f "$LINT_LOG" "$COMPLEXITY_LOG"
 
 # --- Phase 2: Emacs 29 + Emacs 30 tests (parallel) ---
-
-# Pin each Emacs version to a specific nixpkgs snapshot
-declare -A NIX_ARCHIVES=(
-  [29]="https://github.com/NixOS/nixpkgs/archive/nixos-24.05.tar.gz"
-  [30]="https://github.com/NixOS/nixpkgs/archive/nixos-24.11.tar.gz"
-)
-
-declare -A NIX_PACKAGES=(
-  [29]="emacs29-nox"
-  [30]="emacs30-nox"
-)
 
 EMACS29_LOG=$(mktemp /tmp/org-canvas-emacs29-XXXXXX.log)
 EMACS30_LOG=$(mktemp /tmp/org-canvas-emacs30-XXXXXX.log)
