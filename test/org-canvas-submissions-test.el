@@ -2016,7 +2016,7 @@
         (delete-file file)))))
 
 (describe "rubric header in the grading file"
-  (it "writes the rubric properties, the Rubric line, and the criteria table"
+  (it "writes the rubric properties, the Rubric line, and the rubric block"
     (let ((org-canvas-base-url "https://canvas.example.edu")
           (org-canvas-course-id "42")
           (org-canvas-submissions-directory "/course/submissions/"))
@@ -2031,9 +2031,7 @@
             (expect content :to-match "^#\\+PROPERTY: CANVAS_RUBRIC_TITLE Essay Rubric$")
             (expect content :to-match "^#\\+PROPERTY: CANVAS_RUBRIC_USE_FOR_GRADING true$")
             (expect content :to-match "^Rubric: \\[\\[file:\\.\\./rubrics\\.org::\\*Essay Rubric\\]\\[in Org\\]\\], \\[\\[https://canvas\\.example\\.edu/courses/42/rubrics/133477\\]\\[on Canvas\\]\\]$")
-            (expect content :to-match "| Criterion *| Points *| Ratings *|")
-            (expect content :to-match "| Thesis *| *20 *| Excellent (20), Weak vague (5) *|")
-            (expect content :to-match "| Evidence *| *30 *| Strong (30) *|")
+            (expect content :to-match "^\\* Rubric\n\n\\*\\* Thesis (20)\n| Rating *| Points *| Description *|\n|[-+]+|\n| Excellent *| *20 *| *|\n| Weak vague *| *5 *| *|\n\n\\*\\* Evidence (30)\n")
             ;; the Rubric block precedes the students and follows the Assignment line
             (expect (string-match "^Assignment: " content)
                     :to-be-less-than (string-match "^Rubric: " content)))))))
@@ -2063,7 +2061,7 @@
          '((id . 1001) (use_rubric_for_grading . :json-false)
            (rubric_settings . ((id . 133477) (title . "Essay Rubric") (use_for_grading . t)))))
         (expect (buffer-string) :to-match "^#\\+PROPERTY: CANVAS_RUBRIC_USE_FOR_GRADING false$"))))
-  (it "omits the criteria table when the option is off"
+  (it "omits the criteria when the option is off"
     (let ((org-canvas-submissions-include-rubric-criteria nil))
       (cl-letf (((symbol-function 'org-canvas--submissions-heading-for-assignment) (lambda (_id) nil))
                 ((symbol-function 'org-canvas--submissions-heading-for-rubric) (lambda (_id) nil)))
@@ -2071,7 +2069,7 @@
           (org-mode)
           (org-canvas--submissions-render-detail "Essay" "1001" nil test-rubric-assignment)
           (expect (buffer-string) :to-match "^Rubric: \\[\\[https://")
-          (expect (buffer-string) :not :to-match "Criterion")))))
+          (expect (buffer-string) :not :to-match "Criterion\\|Rating\\|^\\* Rubric")))))
   (it "writes nothing rubric-related for an assignment without one"
     (cl-letf (((symbol-function 'org-canvas--submissions-heading-for-assignment) (lambda (_id) nil)))
       (with-temp-buffer
@@ -2079,6 +2077,72 @@
         (org-canvas--submissions-render-detail "HW" "1001" nil '((id . 1001) (name . "HW")))
         (expect (buffer-string) :not :to-match "Rubric")
         (expect (buffer-string) :not :to-match "CANVAS_RUBRIC")))))
+
+(defconst test-rubric-assignment-described
+  '((id . 1001)
+    (name . "Closer")
+    (use_rubric_for_grading . t)
+    (rubric_settings . ((id . 138462) (title . "Closer Rubric") (points_possible . 6)))
+    (rubric . [((id . "_1") (description . "The Day&#39;s Idea Does the Work") (points . 2)
+                (long_description . "<p>The answer is built from the session&#39;s material.</p><p>Feed-forward: journal row 2.</p>")
+                (ratings . [((description . "Working") (points . 2)
+                             (long_description . "The day&#39;s idea carries the answer"))
+                            ((description . "Named") (points . 1)
+                             (long_description . "Named, but the answer reads the same without it"))
+                            ((description . "Absent") (points . 0) (long_description . :null))]))
+               ((id . "_2") (description . "Stakes | Named") (points . 4) (long_description . :null)
+                (ratings . [((description . "Yes") (points . 4))]))]))
+  "An assignment whose rubric carries the descriptions Canvas escapes (issue #265).")
+
+(defun test-rubric--decode (html)
+  "Stand in for pandoc: decode the apostrophe and split paragraphs."
+  (replace-regexp-in-string
+   "&#39;" "'"
+   (string-trim (replace-regexp-in-string "</?p>" "" (replace-regexp-in-string "</p><p>" "\n\n" html)))))
+
+(describe "the rubric block in the grading file (issue #265)"
+  (it "writes the rubric in the rubrics file's shape: a heading per criterion, its prose, its ratings"
+    (cl-letf (((symbol-function 'org-canvas--submissions-heading-for-assignment) (lambda (_id) nil))
+              ((symbol-function 'org-canvas--submissions-heading-for-rubric) (lambda (_id) nil))
+              ((symbol-function 'org-canvas--html-to-org) #'test-rubric--decode))
+      (with-temp-buffer
+        (org-mode)
+        (org-canvas--submissions-render-detail
+         "Closer" "1001" (list (test-org-canvas-make-submission)) test-rubric-assignment-described)
+        (let ((content (buffer-string)))
+          (expect content :to-match "^Rubric: \\[\\[https://.*/rubrics/138462\\]\\[on Canvas\\]\\]\n\n\\* Rubric\n\n\\*\\* The Day's Idea Does the Work (2)\nThe answer is built from the session's material\\.\n\nFeed-forward: journal row 2\\.\n| Rating *| Points *| Description *|\n|-+\\+-+\\+-+|\n| Working *| *2 *| The day's idea carries the answer *|\n| Named *| *1 *| Named, but the answer reads the same without it *|\n| Absent *| *0 *| *|\n\n\\*\\* Stakes | Named (4)\n| Rating *| Points *| Description *|\n|-+\\+-+\\+-+|\n| Yes *| *4 *| *|\n\n\\* Adams, Alice\n")
+          (expect content :not :to-match "| Criterion *| Points *| Ratings *|")
+          ;; The student's own table repeats the criterion, decoded once for all of them.
+          (expect content :to-match "| _1 *| The Day's Idea Does the Work *| *2 *| *|")
+          (expect content :not :to-match "&#39;")))))
+  (it "writes the one-line table under `summary', decoded the same way"
+    (let ((org-canvas-submissions-include-rubric-criteria 'summary))
+      (cl-letf (((symbol-function 'org-canvas--submissions-heading-for-assignment) (lambda (_id) nil))
+                ((symbol-function 'org-canvas--submissions-heading-for-rubric) (lambda (_id) nil))
+                ((symbol-function 'org-canvas--html-to-org) #'test-rubric--decode))
+        (with-temp-buffer
+          (org-mode)
+          (org-canvas--submissions-render-detail "Closer" "1001" nil test-rubric-assignment-described)
+          (let ((content (buffer-string)))
+            (expect content :to-match "| Criterion *| Points *| Ratings *|")
+            (expect content :to-match "| The Day's Idea Does the Work *| *2 *| Working (2), Named (1), Absent (0) *|")
+            (expect content :to-match "| Stakes Named *| *4 *| Yes (4) *|")
+            (expect content :not :to-match "^\\* Rubric$"))))))
+  (it "is no student: the summary, the completion rule and the pushes leave it alone"
+    (with-rubric-file (concat test-rubric-file-header
+                               "* Rubric\n\n** Thesis (2)\n| Rating | Points | Description |\n|---+---+---|\n| Full | 2 |  |\n\n"
+                               (test-rubric-entry "Adams, Alice" 5001 ":STATUS: submitted\n" test-rubric-blank-rows))
+      (expect (mapcar #'car (org-canvas--submissions-heading-rows)) :to-equal '("Adams, Alice"))
+      (let ((messages nil))
+        (cl-letf (((symbol-function 'message)
+                   (lambda (fmt &rest args) (push (apply #'format fmt args) messages) nil)))
+          (org-canvas-submissions-apply-completion-rule 6))
+        (expect (car messages) :to-match "1 at 6, 0 at 0 .*, 0 left as they were"))
+      (goto-char (point-min))
+      (re-search-forward "^\\* Rubric$")
+      (expect (org-entry-get (point) "SCORE") :to-be nil)
+      (expect (length (org-canvas--submissions-collect-grade-changes)) :to-equal 1)
+      (expect (org-canvas--submissions-collect-comment-drafts) :to-be nil))))
 
 (describe "refresh-links also rebuilds the Rubric line"
   (it "recomputes it from the CANVAS_RUBRIC_ID property"
