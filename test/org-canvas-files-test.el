@@ -1913,10 +1913,17 @@
                    (lambda () '((id . 1))))
                   ((symbol-function 'org-canvas--file-resolve-folder-by-path)
                    (lambda (_path) '((id . 2)))))
-          (let ((data '(:canvas-id "123" :display-name "test.pdf"
-                        :local-path "/tmp/test.pdf" :folder-path "")))
-            (org-canvas--file-push-to-api data)
-            (expect warning-logged :to-be t)))))))
+          ;; A real file: the upload request logs its size, and a
+          ;; nonexistent path has none.  The old "/tmp/test.pdf" only
+          ;; passed while another file had silenced the logger (#260).
+          (let ((pdf (make-temp-file "org-canvas-delete-warning-" nil ".pdf")))
+            (unwind-protect
+                (let ((data (list :canvas-id "123" :display-name "test.pdf"
+                                  :local-path pdf :folder-path "")))
+                  (with-temp-file pdf (insert "content"))
+                  (org-canvas--file-push-to-api data)
+                  (expect warning-logged :to-be t))
+              (delete-file pdf))))))))
 
 (describe "org-canvas--file-search-by-name folder path log"
   (before-each (test-org-canvas-reset-file-caches))
