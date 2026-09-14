@@ -91,10 +91,17 @@ CONFLICT property instead of being overwritten."
   :group 'org-canvas)
 
 (defcustom org-canvas-submissions-include-rubric-criteria t
-  "Non-nil means a grading file lists the assignment's rubric criteria.
-The table (criterion, points, ratings) follows the Rubric: line, so the
-work can be read against the rubric offline.  Nil keeps just the line."
-  :type 'boolean
+  "Form of the assignment's rubric under a grading file's Rubric: line.
+t writes the rubric in the shape of the rubrics file — a `* Rubric'
+heading with one sub-heading per criterion: its description, points
+and long description, then a `| Rating | Points | Description |'
+table — so the work can be read against the rubric offline, the text
+that separates one rating from the next included (issue #265).
+`summary' writes one `| Criterion | Points | Ratings |' table, a line
+per criterion; nil keeps just the line."
+  :type '(choice (const :tag "The rubric in full" t)
+                 (const :tag "One line per criterion" summary)
+                 (const :tag "Just the Rubric: line" nil))
   :group 'org-canvas)
 
 (defcustom org-canvas-submissions-comment-template
@@ -447,31 +454,77 @@ digest alike (issue #263)."
       (when lines
         (mapconcat #'identity (nreverse lines) "\n")))))
 
+(defun org-canvas--submissions-inline-text (html)
+  "Return HTML, a rubric field, as one line of Org text; empty unless text.
+Canvas escapes the field (`session&#39;s'), so it goes through the
+converter as the rubrics pull's does, not straight into a cell."
+  (org-canvas--html-to-org-inline (and (stringp html) html)))
+
 (defun org-canvas--submissions-render-criteria (criteria)
-  "Insert a table of rubric CRITERIA: criterion, points, and ratings."
+  "Insert a table of rubric CRITERIA, a line each: criterion, points, ratings.
+The compact form, `summary' in
+`org-canvas-submissions-include-rubric-criteria'."
   (when (and criteria (> (length criteria) 0))
     (insert "\n| Criterion | Points | Ratings |\n|---+---+---|\n")
     (dolist (c (append criteria nil))
       (insert (format "| %s | %s | %s |\n"
-                      (org-canvas--submissions-table-cell (alist-get 'description c))
+                      (org-canvas--submissions-table-cell
+                       (org-canvas--submissions-inline-text (alist-get 'description c)))
                       (org-canvas--submissions-format-number (or (alist-get 'points c) 0))
                       (mapconcat
                        (lambda (r)
                          (format "%s (%s)"
-                                 (org-canvas--submissions-table-cell (alist-get 'description r))
+                                 (org-canvas--submissions-table-cell
+                                  (org-canvas--submissions-inline-text (alist-get 'description r)))
                                  (org-canvas--submissions-format-number (or (alist-get 'points r) 0))))
                        (append (alist-get 'ratings c) nil) ", "))))
     (org-table-align)))
 
+(defconst org-canvas--submissions-rubric-block-heading "* Rubric"
+  "Heading the grading file's rubric is written under, before the students.
+A level-1 heading without a USER_ID is no student: every loop over
+the students checks the property, and the summary leaves it out.")
+
+(defun org-canvas--submissions-render-criterion (criterion)
+  "Insert CRITERION as a sub-heading in the shape of the rubrics file.
+The title is its description and points, the body its long
+description as prose, then a `| Rating | Points | Description |'
+table, so the text that separates one rating from the next is in the
+file (issue #265)."
+  (insert (format "\n** %s (%s)\n"
+                  (org-canvas--submissions-inline-text (alist-get 'description criterion))
+                  (org-canvas--submissions-format-number (or (alist-get 'points criterion) 0))))
+  (when-let* ((long (org-canvas--submissions-body-text
+                     (org-canvas--alist-get-non-null 'long_description criterion))))
+    (insert long "\n"))
+  (insert "| Rating | Points | Description |\n|---+---+---|\n")
+  (dolist (r (append (alist-get 'ratings criterion) nil))
+    (insert (format "| %s | %s | %s |\n"
+                    (org-canvas--submissions-table-cell
+                     (org-canvas--submissions-inline-text (alist-get 'description r)))
+                    (org-canvas--submissions-format-number (or (alist-get 'points r) 0))
+                    (org-canvas--submissions-table-cell
+                     (org-canvas--submissions-inline-text (alist-get 'long_description r))))))
+  (save-excursion (forward-line -1) (org-table-align)))
+
+(defun org-canvas--submissions-render-rubric-block (criteria)
+  "Insert the rubric of CRITERIA in full: a heading with one sub-heading each."
+  (when (and criteria (> (length criteria) 0))
+    (insert "\n" org-canvas--submissions-rubric-block-heading "\n")
+    (dolist (c (append criteria nil))
+      (org-canvas--submissions-render-criterion c))))
+
 (defun org-canvas--submissions-render-rubric-header (assignment)
-  "Insert ASSIGNMENT's Rubric: line and, when enabled, its criteria table.
-Nothing is inserted when no rubric is attached; the table follows
+  "Insert ASSIGNMENT's Rubric: line and its criteria, in the form configured.
+Nothing is inserted when no rubric is attached; the criteria follow
 `org-canvas-submissions-include-rubric-criteria'."
   (let ((rubric (org-canvas--submissions-rubric-settings assignment)))
     (when rubric
       (insert (org-canvas--submissions-rubric-line (car rubric)) "\n")
-      (when org-canvas-submissions-include-rubric-criteria
-        (org-canvas--submissions-render-criteria (alist-get 'rubric assignment))))))
+      (pcase org-canvas-submissions-include-rubric-criteria
+        ('nil nil)
+        ('summary (org-canvas--submissions-render-criteria (alist-get 'rubric assignment)))
+        (_ (org-canvas--submissions-render-rubric-block (alist-get 'rubric assignment)))))))
 
 (defun org-canvas--submissions-replace-header-line (regexp fresh)
   "Replace the header line matching REGEXP with FRESH.
@@ -769,6 +822,22 @@ assignment object when at hand, supplies the rubric header."
         (org-canvas--submissions-render-detail-entry
          sub assignment-name assignment-id criteria)))))
 
+(defun org-canvas--submissions-body-text (html)
+  "Return HTML as Org text for a grading file, or nil when it is blank.
+`org-canvas--html-to-org' with the hard-break markup dropped: pandoc
+renders a `<br>' as a line ending in two backslashes, which only means
+something on export, and a grading file is never exported, so the
+marker is noise after a student's sentence and a line of nothing but
+it looks like a blank answer with a stray token (issue #266).  A run
+of the blank lines that leaves collapses to one."
+  (when (and (stringp html) (not (string-empty-p html)))
+    (let* ((org (org-canvas--html-to-org html))
+           (org (replace-regexp-in-string
+                 (concat "[ \t]*" (regexp-quote "\\\\") "[ \t]*$") "" org))
+           (org (string-trim (replace-regexp-in-string
+                              "\n[ \t]*\n\\(?:[ \t]*\n\\)+" "\n\n" org))))
+      (and (not (string-empty-p org)) org))))
+
 (defun org-canvas--submissions-render-detail-entry (submission &optional assignment-name assignment-id criteria)
   "Render a single SUBMISSION as an Org heading with properties.
 SCORE is the editable grade (a number, or EX for excused); CANVAS_SCORE
@@ -825,8 +894,8 @@ CRITERIA, the assignment's rubric criteria, shape the Rubric table."
     (when (and user-id assignment-id)
       (insert (format "[[%s][Open in SpeedGrader]]\n"
                       (org-canvas--submissions-speedgrader-url assignment-id user-id))))
-    (when (and body (stringp body) (not (string-empty-p body)))
-      (insert "\n" (org-canvas--html-to-org body) "\n"))
+    (when-let* ((text (org-canvas--submissions-body-text body)))
+      (insert "\n" text "\n"))
     (org-canvas--submissions-render-attachments attachments assignment-name name)
     (org-canvas--submissions-render-comments comments)
     (org-canvas--submissions-render-rubric criteria rubric)
@@ -867,14 +936,19 @@ student's subtree.  Nil when the entry has no such heading."
 
 (defun org-canvas--submissions-section-text (heading)
   "Return what is written under HEADING in the entry at point, or nil.
-Org comment lines (the templates) and blank lines are dropped."
+Org comment lines (the templates) are dropped, and so are the blank
+lines at either end; a blank line between paragraphs is kept, a run
+of them as one, so a drafted comment reaches Canvas with its
+paragraph breaks (issue #264)."
   (let ((region (org-canvas--submissions-section-region heading)))
     (when region
       (let* ((raw (buffer-substring-no-properties (car region) (cdr region)))
-             (kept (seq-remove (lambda (l) (string-match-p "\\`[ \t]*\\(#\\|\\'\\)" l))
-                               (split-string raw "\n"))))
-        (when kept
-          (string-trim (mapconcat #'identity kept "\n")))))))
+             (kept (seq-remove (lambda (l) (string-match-p "\\`[ \t]*#" l))
+                               (split-string raw "\n")))
+             (text (string-trim
+                    (replace-regexp-in-string "\n[ \t]*\n\\(?:[ \t]*\n\\)+" "\n\n"
+                                              (mapconcat #'identity kept "\n")))))
+        (and (not (string-empty-p text)) text)))))
 
 (defun org-canvas--submissions-set-section (heading template text)
   "Replace the body under HEADING in the entry at point with TEMPLATE and TEXT.
@@ -974,26 +1048,42 @@ links to the local copy first, with the Canvas link beside it."
                    (org-canvas--submissions-local-attachment
                     assignment-name student-name filename))))))))
 
+(defun org-canvas--submissions-comment-item (comment)
+  "Return the Comments item for COMMENT, a submission comment alist.
+The label is the author in bold and the timestamp; a one-line comment
+follows it on the same line, and one with more lines starts under it,
+indented, so its paragraphs survive where the inline conversion
+flattened them to one line (issue #264).  Heading block markers are
+dropped as `org-canvas--html-to-org-inline' drops them."
+  (let* ((text (org-canvas--strip-heading-block-markers
+                (or (org-canvas--submissions-body-text (alist-get 'comment comment)) "")))
+         (text (string-trim text)))
+    (org-canvas--submissions-item
+     (format "*%s* %s"
+             (or (alist-get 'author_name comment) "Unknown")
+             (or (org-canvas--iso8601-to-org-timestamp (alist-get 'created_at comment)) ""))
+     (if (string-match-p "\n" text) (concat "\n" text) text))))
+
 (defun org-canvas--submissions-render-comments (comments)
-  "Render submission COMMENTS as a sub-heading."
+  "Render submission COMMENTS as a sub-heading, one item each."
   (when (and comments (> (length comments) 0))
     (insert "\n** Comments\n")
-    (let ((comment-list (append comments nil)))
-      (dolist (comment comment-list)
-        (let ((author (alist-get 'author_name comment))
-              (text (alist-get 'comment comment))
-              (created (alist-get 'created_at comment)))
-          (insert (format "- *%s* %s :: %s\n"
-                          (or author "Unknown")
-                          (or (org-canvas--iso8601-to-org-timestamp created) "")
-                          (org-canvas--html-to-org-inline (or text "")))))))))
+    (dolist (comment (append comments nil))
+      (insert (org-canvas--submissions-comment-item comment) "\n"))))
 
 (defconst org-canvas--submissions-rubric-heading "** Rubric"
   "Heading under which a student's rubric table lives.")
 
 (defun org-canvas--submissions-rubric-criteria (assignment)
-  "Return ASSIGNMENT's rubric criteria as a list, or nil without a rubric."
-  (append (alist-get 'rubric assignment) nil))
+  "Return ASSIGNMENT's rubric criteria as a list, or nil without a rubric.
+Each criterion's description is decoded to Org text here, once, since
+Canvas escapes it (`session&#39;s') and every student's Rubric table
+repeats it (issue #265)."
+  (mapcar (lambda (c)
+            (cons (cons 'description
+                        (org-canvas--submissions-inline-text (alist-get 'description c)))
+                  c))
+          (append (alist-get 'rubric assignment) nil)))
 
 (defun org-canvas--submissions-rubric-for-grading (assignment)
   "Return non-nil when the grade of ASSIGNMENT comes from its rubric.
@@ -1087,14 +1177,14 @@ Group 1 is the criterion id, group 2 the first line of the comment,
 absent when the item is empty.  The comment's other lines follow,
 indented, up to the next item.")
 
-(defun org-canvas--submissions-rubric-item (id comment)
-  "Return the `- ID :: COMMENT' item a comment is written in under the table.
-The first line of COMMENT follows the id and the rest are indented
-under it, so a comment keeps its line breaks and wraps like any
-paragraph, which a table cell could not do (issue #263).  Nil gives
-an empty item for the grader to fill.  No newline ends the text."
-  (let ((lines (split-string (or comment "") "\n")))
-    (concat (format "- %s ::" id)
+(defun org-canvas--submissions-item (label text)
+  "Return the description item `- LABEL :: TEXT', TEXT's later lines indented.
+The first line of TEXT follows the label and the rest are indented
+two spaces under it, a blank line kept as a paragraph break, so the
+item wraps like any paragraph and keeps its line breaks.  Nil or an
+empty TEXT gives a bare `- LABEL ::'.  No newline ends the result."
+  (let ((lines (split-string (or text "") "\n")))
+    (concat (format "- %s ::" label)
             (if (string-empty-p (car lines)) "" (concat " " (car lines)))
             (mapconcat (lambda (line) (if (string-empty-p line) "\n" (concat "\n  " line)))
                        (cdr lines) ""))))
@@ -1115,7 +1205,7 @@ is inserted without a rubric."
                         (nth 0 row) (or (nth 1 row) "") (or (nth 2 row) "") (or (nth 3 row) ""))))
       (save-excursion (forward-line -1) (org-table-align))
       (dolist (row rows)
-        (insert (org-canvas--submissions-rubric-item (nth 0 row) (nth 4 row)) "\n")))))
+        (insert (org-canvas--submissions-item (nth 0 row) (nth 4 row)) "\n")))))
 
 (defun org-canvas--submissions-table-row-cells (line)
   "Return the cells of table row LINE, trimmed, or nil for a rule or a non-row.
@@ -1312,7 +1402,7 @@ the last item, or after the table when there is none, and only for a
 comment."
   (let* ((items (org-canvas--submissions-rubric-items region))
          (item (assoc id items))
-         (text (org-canvas--submissions-rubric-item id comment)))
+         (text (org-canvas--submissions-item id comment)))
     (save-excursion
       (cond (item
              (delete-region (nth 1 item) (nth 3 item))
@@ -1374,8 +1464,7 @@ holds."
   (dolist (row (plist-get carry :rows))
     (org-canvas--submissions-rubric-set-row (nth 0 row) (nth 1 row) (nth 2 row)))
   (unless (equal (org-entry-get (point) "CANVAS_RUBRIC") (plist-get carry :baseline))
-    (org-entry-put (point) "CONFLICT"
-                   "rubric assessed on Canvas since these rows were typed; the rows shown are yours, so check SpeedGrader before pushing")))
+    (org-entry-put (point) "CONFLICT" "rubric: assessed on Canvas since these rows were typed")))
 
 ;;;; View Toggle
 
@@ -1415,14 +1504,17 @@ buffer derived from the headings, so it reflects unpushed edits, and
       (message "Switched to %s view" new-view))))
 
 (defun org-canvas--submissions-heading-rows ()
-  "Return (name status submitted-at score) for each heading of a grading file."
-  (org-map-entries
-   (lambda ()
-     (list (org-get-heading t t t t)
-           (or (org-entry-get (point) "STATUS") "")
-           (or (org-entry-get (point) "SUBMITTED_AT") "")
-           (or (org-entry-get (point) "SCORE") "")))
-   "LEVEL=1"))
+  "Return (name status submitted-at score) for each student heading in the file.
+A level-1 heading without a USER_ID — the rubric block — is no student."
+  (delq nil
+        (org-map-entries
+         (lambda ()
+           (when (org-entry-get (point) "USER_ID")
+             (list (org-get-heading t t t t)
+                   (or (org-entry-get (point) "STATUS") "")
+                   (or (org-entry-get (point) "SUBMITTED_AT") "")
+                   (or (org-entry-get (point) "SCORE") ""))))
+         "LEVEL=1")))
 
 (defun org-canvas--submissions-show-summary-of-file ()
   "Show a read-only summary table of the current grading file."
@@ -1610,7 +1702,8 @@ POINTS_POSSIBLE as the default."
         (let* ((current (org-entry-get (point) "SCORE"))
                (has (and current (not (string-empty-p (string-trim current)))))
                (score (org-canvas--submissions-completion-score points window)))
-          (cond ((or (equal (and has (org-canvas--submissions-parse-score current)) "EX")
+          (cond ((not (org-entry-get (point) "USER_ID")) nil)
+                ((or (equal (and has (org-canvas--submissions-parse-score current)) "EX")
                      (and has (not overwrite))
                      (null score))
                  (cl-incf skipped))
@@ -1948,18 +2041,22 @@ assessment Canvas holds, or nil."
 (defun org-canvas--submissions-conflict-p (change live)
   "Return why CHANGE conflicts with LIVE Canvas state, or nil.
 LIVE is (score attempt rubric) for the same student, or nil if gone.
-The rubric is compared only when CHANGE sends one."
+The rubric is compared only when CHANGE sends one.  The reason names
+what moved and what Canvas holds — `score: Canvas has 93' — and is
+the CONFLICT value; a property is a slot for a short value, and the
+way out (pull again, or set CANVAS_SCORE to Canvas's value) is the
+push's message and the manual's (issue #264)."
   (let ((live-score (nth 0 live))
         (live-attempt (nth 1 live))
         (live-rubric (nth 2 live))
         (attempt (plist-get change :attempt)))
     (cond ((not (equal live-score (plist-get change :old-score)))
-           (format "Canvas now has %s" (or live-score "no grade")))
+           (format "score: Canvas has %s" (or live-score "no grade")))
           ((and attempt (numberp live-attempt) (/= attempt live-attempt))
-           (format "resubmitted (attempt %s)" live-attempt))
+           (format "attempt: Canvas has %s" live-attempt))
           ((and (plist-get change :triples)
                 (not (equal live-rubric (plist-get change :old-rubric))))
-           "rubric assessed on Canvas since the pull"))))
+           "rubric: assessed on Canvas since the pull"))))
 
 (defun org-canvas--submissions-partition-conflicts (assignment-id diffs)
   "Split DIFFS into (pushable . conflicting) against live Canvas state.
@@ -1985,9 +2082,16 @@ diff is pushable.  A conflicting diff carries a :conflict reason."
   (save-excursion
     (dolist (c conflicts)
       (when (org-canvas--submissions-goto-user (plist-get c :user-id))
-        (org-entry-put (point) "CONFLICT"
-                       (format "%s; pull again, or set CANVAS_SCORE to Canvas's value to override"
-                               (plist-get c :conflict)))))))
+        (org-entry-put (point) "CONFLICT" (plist-get c :conflict))))))
+
+(defun org-canvas--submissions-conflicts-note (conflicts)
+  "Return the note a push message ends with for CONFLICTS, or an empty string.
+It carries the way out of a CONFLICT, which the property value no
+longer does (issue #264)."
+  (if conflicts
+      (format "; %d conflict(s) marked CONFLICT: pull again, or set CANVAS_SCORE to Canvas's value to override"
+              (length conflicts))
+    ""))
 
 (defun org-canvas--submissions-describe-rubric (change)
   "Return the note CHANGE's rubric rows add to its line, or an empty string."
@@ -2094,8 +2198,7 @@ updated."
                   assignment-id (org-canvas--submissions-collect-grade-changes))))
       (org-canvas--submissions-mark-conflicts conflicts)
       (unless (or changes drafts)
-        (message "Nothing to push%s"
-                 (if conflicts (format " (%d conflict(s) marked)" (length conflicts)) ""))
+        (message "Nothing to push%s" (org-canvas--submissions-conflicts-note conflicts))
         (cl-return-from org-canvas-submissions-push-grades))
       (when changes
         (message "Grade changes:\n%s" (org-canvas--submissions-describe-changes changes)))
@@ -2110,7 +2213,8 @@ updated."
                 (org-canvas--submissions-send-grades assignment-id changes))
               (setq posted (org-canvas--submissions-post-drafts assignment-id drafts))
               (org-canvas--submissions-record-pushed changes)
-              (message "Pushed %d grade(s) and %d comment(s)" (length changes) posted)
+              (message "Pushed %d grade(s) and %d comment(s)%s" (length changes) posted
+                       (org-canvas--submissions-conflicts-note conflicts))
               (org-canvas--submissions-offer-to-post changes))
           (error (org-canvas--user-message "Error pushing: %s" (error-message-string err))))))))
 
