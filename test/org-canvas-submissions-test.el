@@ -862,6 +862,31 @@
           (expect content :to-match "| crit_1 *| *| *| *18 *|$")
           (expect content :to-match "^- crit_1 ::$"))))))
 
+(describe "org-canvas--submissions-body-text"
+  (it "drops pandoc's hard-break markup and collapses the blank lines it leaves (issue #266)"
+    (cl-letf (((symbol-function 'org-canvas--html-to-org)
+               (lambda (_html)
+                 "I would lean toward pragmatism. \\\\\nI think the hardest is determinism.\\\\\n\\\\\n  \\\\\nLast line.")))
+      (expect (org-canvas--submissions-body-text "<p>x</p>")
+              :to-equal "I would lean toward pragmatism.\nI think the hardest is determinism.\n\nLast line.")))
+  (it "is nil for an empty or blank body"
+    (expect (org-canvas--submissions-body-text nil) :to-be nil)
+    (expect (org-canvas--submissions-body-text "") :to-be nil)
+    (cl-letf (((symbol-function 'org-canvas--html-to-org) (lambda (_html) "\\\\\n")))
+      (expect (org-canvas--submissions-body-text "<br>") :to-be nil)))
+  (it "leaves a backslash pair inside a line alone"
+    (with-html-to-org-identity
+      (expect (org-canvas--submissions-body-text "a \\\\ b") :to-equal "a \\\\ b")))
+  (it "is what the submission body is rendered through"
+    (cl-letf (((symbol-function 'org-canvas--html-to-org)
+               (lambda (_html) "First line.\\\\\nSecond line.")))
+      (with-temp-buffer
+        (org-mode)
+        (org-canvas--submissions-render-detail-entry
+         (test-org-canvas-make-submission '((body . "<p>First line.<br>Second line.</p>"))))
+        (expect (buffer-string) :to-match "\nFirst line\\.\nSecond line\\.\n")
+        (expect (buffer-string) :not :to-match "\\\\\\\\")))))
+
 ;;;; Edge Cases
 
 (describe "edge cases"

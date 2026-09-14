@@ -769,6 +769,22 @@ assignment object when at hand, supplies the rubric header."
         (org-canvas--submissions-render-detail-entry
          sub assignment-name assignment-id criteria)))))
 
+(defun org-canvas--submissions-body-text (html)
+  "Return HTML as the Org text a grading file shows, or nil when it is blank.
+`org-canvas--html-to-org' with the hard-break markup dropped: pandoc
+renders a `<br>' as a line ending in two backslashes, which only means
+something on export, and a grading file is never exported, so the
+marker is noise after a student's sentence and a line of nothing but
+it looks like a blank answer with a stray token (issue #266).  A run
+of the blank lines that leaves collapses to one."
+  (when (and (stringp html) (not (string-empty-p html)))
+    (let* ((org (org-canvas--html-to-org html))
+           (org (replace-regexp-in-string
+                 (concat "[ \t]*" (regexp-quote "\\\\") "[ \t]*$") "" org))
+           (org (string-trim (replace-regexp-in-string
+                              "\n[ \t]*\n\\(?:[ \t]*\n\\)+" "\n\n" org))))
+      (and (not (string-empty-p org)) org))))
+
 (defun org-canvas--submissions-render-detail-entry (submission &optional assignment-name assignment-id criteria)
   "Render a single SUBMISSION as an Org heading with properties.
 SCORE is the editable grade (a number, or EX for excused); CANVAS_SCORE
@@ -825,8 +841,8 @@ CRITERIA, the assignment's rubric criteria, shape the Rubric table."
     (when (and user-id assignment-id)
       (insert (format "[[%s][Open in SpeedGrader]]\n"
                       (org-canvas--submissions-speedgrader-url assignment-id user-id))))
-    (when (and body (stringp body) (not (string-empty-p body)))
-      (insert "\n" (org-canvas--html-to-org body) "\n"))
+    (when-let* ((text (org-canvas--submissions-body-text body)))
+      (insert "\n" text "\n"))
     (org-canvas--submissions-render-attachments attachments assignment-name name)
     (org-canvas--submissions-render-comments comments)
     (org-canvas--submissions-render-rubric criteria rubric)
