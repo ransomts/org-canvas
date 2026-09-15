@@ -278,7 +278,76 @@ x = 42
       (goto-char (point-min))
       (let ((html (org-canvas--export-subtree-body-to-html)))
         (expect html :to-be-truthy)
-        (expect html :to-match "Some content here")))))
+        (expect html :to-match "Some content here"))))
+
+  (describe "with NO-CHILDREN (issue #275)"
+    (it "ends the body at the first child heading, and Org emits no table of contents"
+      (with-temp-org-buffer
+       "* Course
+:PROPERTIES:
+:END:
+
+Own text.
+
+** Navigation
+1. Home
+
+** Another child
+More text.
+"
+       (goto-char (point-min))
+       (let ((html (org-canvas--export-subtree-body-to-html nil 'no-children)))
+         (expect html :to-match "Own text")
+         (expect html :not :to-match "Navigation")
+         (expect html :not :to-match "Another child")
+         (expect html :not :to-match "More text")
+         (expect html :not :to-match "Table of Contents"))))
+
+    (it "exports the children, with a table of contents, when not asked to drop them"
+      (with-temp-org-buffer
+       "* Course
+:PROPERTIES:
+:END:
+
+Own text.
+
+** Navigation
+1. Home
+"
+       (goto-char (point-min))
+       (let ((html (org-canvas--export-subtree-body-to-html)))
+         (expect html :to-match "Own text")
+         (expect html :to-match "Navigation")
+         (expect html :to-match "Table of Contents"))))
+
+    (it "leaves an entry without children as it is"
+      (with-temp-org-buffer
+       "* Course
+:PROPERTIES:
+:END:
+
+*Welcome!* Own text.
+"
+       (goto-char (point-min))
+       (let ((html (org-canvas--export-subtree-body-to-html nil 'no-children)))
+         (expect html :to-match "<b>Welcome!</b>")
+         (expect html :to-match "Own text"))))
+
+    (it "stops at the child and not at the next sibling"
+      (with-temp-org-buffer
+       "* First
+:PROPERTIES:
+:END:
+
+First text.
+
+* Second
+Second text.
+"
+       (goto-char (point-min))
+       (let ((html (org-canvas--export-subtree-body-to-html nil 'no-children)))
+         (expect html :to-match "First text")
+         (expect html :not :to-match "Second"))))))
 
 ;;;; Body Link Resolution Warnings
 

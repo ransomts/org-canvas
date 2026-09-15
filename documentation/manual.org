@@ -330,7 +330,8 @@ Course-level settings such as timezone, homepage view, grading scheme, license, 
 *** Structure
 
 - Single level-1 heading = Course name
-- Body text = Syllabus content (exported to HTML)
+- Body text above the first sub-heading = Syllabus content (exported to HTML)
+- =** Navigation= sub-heading = the sidebar tab list (see below); it never reaches the syllabus, and =org-canvas-validate= warns about any other sub-heading under the course heading, since the push leaves it behind
 
 *** Properties
 
@@ -406,7 +407,7 @@ Welcome to Data Science 101! This course introduces the fundamentals
 of data analysis with Python.
 #+end_src
 
-The body text is exported as the course syllabus (visible on the Syllabus page in Canvas).
+The body text above the first sub-heading is exported as the course syllabus (visible on the Syllabus page in Canvas).  A sub-heading under the course heading is structure, not syllabus text: =** Navigation= is the tab list below, and anything else is left behind by the push and reported by =org-canvas-validate=.
 
 *** Navigation Tabs
 

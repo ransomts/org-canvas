@@ -3023,6 +3023,72 @@ history and not a finding at all.")
 
 ;;;; Front-Page/Published Rule (issue #5)
 
+(describe "org-canvas--validate-settings-structure (issue #275)"
+  (it "warns, push-only, about a sub-heading the syllabus push leaves behind"
+    (with-temp-org-buffer
+     "* Course
+:PROPERTIES:
+:END:
+
+Syllabus text.
+
+** Navigation
+1. Home
+
+** Office Hours
+Tuesdays.
+"
+     (org-back-to-heading)
+     (let ((issues (org-canvas--validate-settings-structure
+                    '(:file "settings.org" :line 1 :heading "Course"))))
+       (expect (length issues) :to-equal 1)
+       (expect (plist-get (car issues) :severity) :to-equal 'warning)
+       (expect (plist-get (car issues) :push-only) :to-be t)
+       (expect (plist-get (car issues) :file) :to-equal "settings.org")
+       (expect (plist-get (car issues) :line) :to-equal 10)
+       (expect (plist-get (car issues) :heading) :to-equal "Office Hours")
+       (expect (plist-get (car issues) :message)
+               :to-match "`Office Hours' is not syllabus text"))))
+
+  (it "says nothing about Navigation, or about a course heading with no children"
+    (with-temp-org-buffer
+     "* Course
+:PROPERTIES:
+:END:
+
+Syllabus text.
+
+** Navigation
+1. Home
+"
+     (org-back-to-heading)
+     (expect (org-canvas--validate-settings-structure
+              '(:file "settings.org" :line 1 :heading "Course"))
+             :to-be nil))
+    (with-temp-org-buffer
+     "* Course
+:PROPERTIES:
+:END:
+
+Syllabus text.
+"
+     (org-back-to-heading)
+     (expect (org-canvas--validate-settings-structure
+              '(:file "settings.org" :line 1 :heading "Course"))
+             :to-be nil)))
+
+  (it "runs from the settings spec"
+    (with-validate-test-dir dir
+      (with-temp-file (expand-file-name "settings.org" dir)
+        (insert "* My Course\n:PROPERTIES:\n:END:\n\nText.\n\n** Grading\nA table.\n\n** Navigation\n1. Home\n"))
+      (test-validate-create-empty-files dir '("settings.org"))
+      (let* ((spec (cl-find "Settings" (org-canvas--validate-specs)
+                            :key (lambda (s) (plist-get s :label))
+                            :test #'string=))
+             (issues (org-canvas--validate-spec spec)))
+        (expect (length issues) :to-equal 1)
+        (expect (plist-get (car issues) :message) :to-match "`Grading' is not syllabus text")))))
+
 (describe "org-canvas--validate-page-structure"
   (it "errors on FRONT_PAGE: true with PUBLISHED: false"
     (with-temp-org-buffer

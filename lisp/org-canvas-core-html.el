@@ -288,7 +288,7 @@ Canvas as a heading (issue #175)."
   (org-canvas--with-body-export-settings
     (org-export-string-as text 'html t)))
 
-(defun org-canvas--export-subtree-body-to-html (&optional offline)
+(defun org-canvas--export-subtree-body-to-html (&optional offline no-children)
   "Export current Org subtree to HTML, resolving cross-file links.
 Returns the HTML string.  Cross-file links [[file:*.org::*...][...]]
 are resolved to Canvas URLs when the target has a CANVAS_ID.
@@ -296,7 +296,13 @@ are resolved to Canvas URLs when the target has a CANVAS_ID.
 When OFFLINE is non-nil, neither links nor inline images are
 resolved.  Image resolution uploads the images Canvas lacks, so a
 read-only caller — the drift report comparing bodies (issue #83) —
-must ask for this; it gets the same text with local link markup."
+must ask for this; it gets the same text with local link markup.
+
+When NO-CHILDREN is non-nil, the body ends at the entry's first
+child heading: the children are structure the module reads for
+itself, not text.  Without it, settings.org's `** Navigation' tab
+list went to the Canvas syllabus page as a numbered section, with
+Org's table of contents above the body pointing at it (issue #275)."
   (save-excursion
     (org-back-to-heading t)
     (let* ((beg (point))
@@ -308,6 +314,13 @@ must ask for this; it gets the same text with local link markup."
         (let ((default-directory source-dir))
           (insert content)
           (org-mode)
+          ;; Cut the children.  The entry's heading is the first line,
+          ;; so the next heading is its first child; with none,
+          ;; `outline-next-heading' lands at the end and nothing goes.
+          (when no-children
+            (goto-char (point-min))
+            (outline-next-heading)
+            (delete-region (point) (point-max)))
           ;; Strip the override and accommodation tables (a `#+NAME:'
           ;; line and the table rows after it): they feed a sync, not
           ;; the description.

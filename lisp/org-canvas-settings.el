@@ -40,6 +40,7 @@
 
 (declare-function org-canvas--file-pull-download "org-canvas-files"
                   (display-name download-url local-path size))
+(declare-function org-canvas--validate-settings-structure "org-canvas-validate")
 
 ;;;; Configuration
 
@@ -53,6 +54,7 @@
   :file-var 'org-canvas-settings-file
   :query "LEVEL=1"
   :always-on-canvas t
+  :structural-fn #'org-canvas--validate-settings-structure
   :properties
   `((:org-prop "APPLY_WEIGHTS" :data-key :apply_weights :type boolean
      :doc "Weight assignment groups")
@@ -217,12 +219,18 @@ Returns a plist with keys :title, :pom, :time-zone, :default-view,
 :apply-weights, :hide-final-grades, :public-syllabus, :is-public,
 :license, :start-at, :end-at, :syllabus-body, and more.
 Delegates to `org-canvas--settings-read-props' for buffer access
-and `org-canvas--settings-transform-props' for pure transformations."
+and `org-canvas--settings-transform-props' for pure transformations.
+
+The syllabus is the text above the first sub-heading.  The
+`** Navigation' child feeds the tab sync and is never body: exported
+with the subtree, it reached the syllabus page every student reads
+as a numbered \"Navigation\" section under a table of contents
+\(issue #275)."
   (org-back-to-heading t)
   (let* ((pom (point-marker))
          (raw (org-canvas--settings-read-props pom))
          (transformed (org-canvas--settings-transform-props raw))
-         (syllabus-body (org-canvas--export-subtree-body-to-html))
+         (syllabus-body (org-canvas--export-subtree-body-to-html nil 'no-children))
          ;; Resolve course image file path relative to buffer
          (course-image-file-path (plist-get transformed :course-image-file-path))
          (course-image-path (when course-image-file-path

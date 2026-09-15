@@ -245,7 +245,34 @@ Welcome to the course.
 "
      (org-back-to-heading)
      (let ((data (org-canvas--settings-parse-entry)))
-       (expect (plist-get data :syllabus-body) :to-match "Welcome")))))
+       (expect (plist-get data :syllabus-body) :to-match "Welcome"))))
+
+  (it "keeps the Navigation tab list and its table of contents out of the syllabus (issue #275)"
+    (with-temp-org-buffer
+     "* Course
+:PROPERTIES:
+:END:
+
+Welcome to the course.
+
+| Component | Weight |
+|-----------+--------|
+| Labs      |    30% |
+
+** Navigation
+1. Home
+2. Modules
+3. +People+
+"
+     (org-back-to-heading)
+     (let ((body (plist-get (org-canvas--settings-parse-entry) :syllabus-body)))
+       (expect body :to-match "Welcome to the course")
+       (expect body :to-match "Labs")
+       (expect body :not :to-match "Navigation")
+       (expect body :not :to-match "Table of Contents")
+       (expect body :not :to-match "<ul>\\|<ol")
+       (expect body :not :to-match "Modules")
+       (expect body :not :to-match "People")))))
 
 ;;;; Build Payload
 
