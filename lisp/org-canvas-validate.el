@@ -917,6 +917,30 @@ into skipped module items linking the page.  LOC is a
              'error loc "FRONT_PAGE"
              "FRONT_PAGE: true requires PUBLISHED: true — Canvas rejects an unpublished front page (a published page in an unpublished course is still invisible to students)")))))
 
+(defun org-canvas--validate-settings-structure (loc)
+  "Warn about a sub-heading of the course heading that is not `Navigation'.
+The syllabus is the text above the first sub-heading and `** Navigation'
+is the only sub-heading settings.org reads, so anything else under
+the course heading reaches Canvas nowhere (issue #275).  Push-only:
+it is text the push leaves behind, not a fault of the course.  LOC is
+a \(:file :line :heading) plist."
+  (let ((end (save-excursion (org-end-of-subtree t) (point)))
+        (issues nil))
+    (save-excursion
+      (while (and (outline-next-heading) (< (point) end))
+        (let ((heading (org-get-heading t t t t)))
+          (unless (string= (string-trim (or heading "")) "Navigation")
+            (push (org-canvas--validate-push-only
+                   (org-canvas--validate-make-issue
+                    'warning
+                    (list :file (plist-get loc :file)
+                          :line (line-number-at-pos)
+                          :heading heading)
+                    "heading"
+                    (format "`%s' is not syllabus text and is not pushed: the syllabus is the text above the first sub-heading, and Navigation is the only sub-heading settings.org reads" heading)))
+                  issues)))))
+    (nreverse issues)))
+
 (defun org-canvas--validate-drop-rules (loc)
   "Check that drop rules don't exceed assignment count for this group.
 LOC is a (:file :line :heading) plist."
