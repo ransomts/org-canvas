@@ -662,17 +662,29 @@ and pushes them to Canvas via PUT /courses/:id."
            (org-canvas--user-message "Settings sync FAILED: %s" (error-message-string err))))))))
 
 (defun org-canvas--settings-replace-syllabus-body (syllabus-body)
-  "Replace the body under the current heading with SYLLABUS-BODY.
-Point must be at the heading."
+  "Replace the syllabus under the current heading with SYLLABUS-BODY.
+Point must be at the heading.  The syllabus is the text above the
+first sub-heading; the sub-headings stay.  Replacing to the end of
+the subtree took `** Navigation' with it, and when the tab read then
+failed nothing put it back, so one 504 on the tabs endpoint threw the
+hand-ordered list away (issue #277)."
   (let ((body-start (save-excursion
                       (org-end-of-meta-data t)
                       (point)))
         (body-end (save-excursion
-                    (org-end-of-subtree t)
-                    (point))))
+                    (let ((subtree-end (save-excursion (org-end-of-subtree t) (point))))
+                      (outline-next-heading)
+                      (min (point) subtree-end)))))
     (delete-region body-start body-end)
     (goto-char body-start)
-    (insert "\n" syllabus-body "\n")))
+    ;; One blank line on each side: `org-end-of-meta-data' has skipped
+    ;; the blank lines the file already had, and a sub-heading that
+    ;; follows keeps the one it had.
+    (unless (looking-back "\n\n" (max (point-min) (- (point) 2)))
+      (insert "\n"))
+    (insert syllabus-body "\n")
+    (when (looking-at-p org-outline-regexp-bol)
+      (insert "\n"))))
 
 (defconst org-canvas--late-policy-pull-specs
   '(;; (api-key property-name type)  type: value = format as string, boolean = set-boolean
@@ -809,7 +821,7 @@ is noted at INFO and nothing more."
            (org-canvas--log-info org-canvas--logger
              "[Pull] The course has no %s (404)" what)
          (org-canvas--log-warning org-canvas--logger
-           "[Pull] Settings: %s not pulled (%s); settings.org is written without it"
+           "[Pull] Settings: %s not pulled (%s); settings.org keeps what it had"
            what msg)
          (org-canvas--user-message "Settings: %s not pulled (%s)" what msg)
          (org-canvas--pull-summary-record

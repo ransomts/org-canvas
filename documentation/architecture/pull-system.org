@@ -355,6 +355,29 @@ for override management. The pull:
 2. Matches by CANVAS_ID (allows local heading renames)
 3. Warns about stale local headings (CANVAS_ID not on Canvas)
 
+** Custom Pull: Settings (issue #277)
+
+One heading, the course, with two optional pieces read separately: the
+late policy (properties) and the navigation tabs (the =** Navigation=
+child, rebuilt from =GET /tabs= by
+=org-canvas--settings-insert-navigation-heading=, which removes the
+old heading and appends the new one).  Either read may fail —
+=org-canvas--settings-pull-optional= logs it, says so in the echo
+area and records it in the pull summary (#142) — and what the file
+already held for that piece must survive the failure.  The late
+policy always did, since a nil answer sets nothing.  The tab list did
+not: =org-canvas--settings-replace-syllabus-body= wrote the syllabus
+by deleting from the drawer to =org-end-of-subtree=, children
+included, and only a successful tab read put Navigation back, so one
+504 on the tabs endpoint emptied a hand-ordered, hand-hidden list of
+25 tabs.  It now replaces the text above the first sub-heading — the
+mirror of #275, where the push learned the syllabus is that text —
+and leaves the sub-headings alone; the same holds when Canvas lists
+no tabs, which =org-canvas--settings-pull-tabs= answers with nil.
+The warning says the file "keeps what it had" rather than that it was
+"written without" the piece, which was never true of the late policy
+and is no longer true of the tabs.
+
 * Files: Three Pull Modes (issue #158)
 
 =org-canvas--file-pull-mode= reads the buffer and answers =fresh=,
