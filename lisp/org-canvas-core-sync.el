@@ -1259,13 +1259,18 @@ that was fine (issue #86)."
       (cons (encode-time (org-parse-time-string header))
             (format "#+LAST_SYNCED %s (entry has no CANVAS_UPDATED_AT)" header))))))
 
-(cl-defun org-canvas--conflict-check (endpoint id pom &optional title modified-field)
+(cl-defun org-canvas--conflict-check (endpoint id pom &optional title modified-field
+                                               params)
   "Check if the remote item at ENDPOINT/ID was modified after the baseline at POM.
 TITLE names the entry in the log line; without it ENDPOINT/ID does.
 MODIFIED-FIELD names the response field that tracks content
 modification, default `updated_at'; files pass `modified_at', because
 Canvas bumps their `updated_at' on metadata-only touches and comparing
 it re-flagged files whose bytes never changed (issue #94).
+PARAMS are query parameters the read carries — the feature's
+`:item-params', since the response is what the conflict prompt's pull
+writes into the heading, and an assignment read without them carries a
+student's extension as its due date (issue #273).
 Returns (cons \\='conflict REMOTE-RESPONSE) if the remote item is newer,
 nil otherwise.  Returns nil on GET failure (allows push to proceed) or
 when there is no baseline at all (first sync).
@@ -1281,7 +1286,7 @@ the header regardless (issue #86)."
         (let* ((field (or modified-field 'updated_at))
                (full-url (org-canvas-api-course-endpoint
                           (format "%s/%%s" endpoint) id))
-               (response (org-canvas-api-request 'GET full-url))
+               (response (org-canvas-api-request 'GET full-url :params params))
                (updated-at (alist-get field response))
                (remote-time (org-canvas--parse-iso8601-time updated-at)))
           (if (and remote-time (time-less-p local-time remote-time))
@@ -1448,17 +1453,29 @@ pass `:canvas-url') reads from the item."
                (org-canvas--handle-timeout-recovery find-fn title post-err)
              (signal (car post-err) (cdr post-err)))))))))
 
+(defun org-canvas--sync-item-params (ctx)
+  "Return the query parameters for a single-item read in this run.
+CTX is the run context; its :feature-name finds the registry entry,
+whose `:item-params' answer.  Nil for a custom push that passes no
+context, or a feature outside the registry."
+  (let ((name (plist-get ctx :feature-name)))
+    (when name
+      (org-canvas--feature-item-params
+       (org-canvas--registry-find-feature name)))))
+
 (defun org-canvas--push-check-and-resolve-conflict (endpoint id data title
                                                              &optional modified-field ctx)
   "Check for conflicts on ENDPOINT/ID using DATA.
 TITLE is for logging.  MODIFIED-FIELD is passed to
 `org-canvas--conflict-check' — files compare `modified_at' (issue #94).
 CTX is the run context: its :pull-item-fn makes the pull option
-available, and its :conflict-apply-all remembers a capital answer.
+available, its :conflict-apply-all remembers a capital answer, and its
+:feature-name finds the `:item-params' the check reads with, so what
+the pull option writes is the item's own dates (issue #273).
 Returns `push', `skip', or `pulled'."
   (let ((conflict-result (org-canvas--conflict-check
                           endpoint id (plist-get data :pom) title
-                          modified-field)))
+                          modified-field (org-canvas--sync-item-params ctx))))
     (if (not (and conflict-result (eq (car conflict-result) 'conflict)))
         'push
       (let* ((remote-response (cdr conflict-result))

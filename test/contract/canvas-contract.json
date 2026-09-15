@@ -62,6 +62,26 @@
       }
     },
     "operationId": "create_new_discussion_topic_courses",
+    "reads": {
+      "item": {
+        "operationId": "get_single_topic_courses",
+        "params": [
+          "include"
+        ]
+      },
+      "list": {
+        "operationId": "list_discussion_topics_courses",
+        "params": [
+          "exclude_context_module_locked_topics",
+          "filter_by",
+          "include",
+          "only_announcements",
+          "order_by",
+          "scope",
+          "search_term"
+        ]
+      }
+    },
     "required": [],
     "wrapper": null
   },
@@ -87,6 +107,26 @@
       }
     },
     "operationId": "create_assignment_group",
+    "reads": {
+      "item": {
+        "operationId": "get_assignment_group",
+        "params": [
+          "grading_period_id",
+          "include",
+          "override_assignment_dates"
+        ]
+      },
+      "list": {
+        "operationId": "list_assignment_groups",
+        "params": [
+          "exclude_assignment_submission_types",
+          "grading_period_id",
+          "include",
+          "override_assignment_dates",
+          "scope_assignments_to_student"
+        ]
+      }
+    },
     "required": [],
     "response_fields": {
       "assignments": "array",
@@ -202,6 +242,29 @@
       }
     },
     "operationId": "create_assignment",
+    "reads": {
+      "item": {
+        "operationId": "get_single_assignment",
+        "params": [
+          "all_dates",
+          "include",
+          "needs_grading_count_by_section",
+          "override_assignment_dates"
+        ]
+      },
+      "list": {
+        "operationId": "list_assignments",
+        "params": [
+          "assignment_ids",
+          "bucket",
+          "include",
+          "needs_grading_count_by_section",
+          "order_by",
+          "override_assignment_dates",
+          "search_term"
+        ]
+      }
+    },
     "required": [
       "name"
     ],
@@ -312,6 +375,24 @@
       }
     },
     "operationId": "create_calendar_event",
+    "reads": {
+      "item": {
+        "operationId": "get_single_calendar_event_or_assignment",
+        "params": []
+      },
+      "list": {
+        "operationId": "list_calendar_events",
+        "params": [
+          "all_events",
+          "context_codes",
+          "end_date",
+          "excludes",
+          "start_date",
+          "type",
+          "undated"
+        ]
+      }
+    },
     "required": [
       "context_code"
     ],
@@ -380,6 +461,26 @@
       }
     },
     "operationId": "create_new_discussion_topic_courses",
+    "reads": {
+      "item": {
+        "operationId": "get_single_topic_courses",
+        "params": [
+          "include"
+        ]
+      },
+      "list": {
+        "operationId": "list_discussion_topics_courses",
+        "params": [
+          "exclude_context_module_locked_topics",
+          "filter_by",
+          "include",
+          "only_announcements",
+          "order_by",
+          "scope",
+          "search_term"
+        ]
+      }
+    },
     "required": [],
     "wrapper": null
   },
@@ -416,6 +517,16 @@
       }
     },
     "operationId": "create_group_category_courses",
+    "reads": {
+      "item": {
+        "operationId": "get_single_group_category",
+        "params": []
+      },
+      "list": {
+        "operationId": "list_group_categories_for_context_courses",
+        "params": []
+      }
+    },
     "required": [
       "name"
     ],
@@ -443,6 +554,23 @@
       }
     },
     "operationId": "create_module",
+    "reads": {
+      "item": {
+        "operationId": "show_module",
+        "params": [
+          "include",
+          "student_id"
+        ]
+      },
+      "list": {
+        "operationId": "list_modules",
+        "params": [
+          "include",
+          "search_term",
+          "student_id"
+        ]
+      }
+    },
     "required": [
       "name"
     ],
@@ -476,6 +604,21 @@
       }
     },
     "operationId": "create_page_courses",
+    "reads": {
+      "item": {
+        "operationId": "show_page_courses",
+        "params": []
+      },
+      "list": {
+        "operationId": "list_pages_courses",
+        "params": [
+          "order",
+          "published",
+          "search_term",
+          "sort"
+        ]
+      }
+    },
     "required": [
       "title"
     ],
@@ -568,6 +711,18 @@
       }
     },
     "operationId": "create_quiz",
+    "reads": {
+      "item": {
+        "operationId": "get_single_quiz",
+        "params": []
+      },
+      "list": {
+        "operationId": "list_quizzes_in_course",
+        "params": [
+          "search_term"
+        ]
+      }
+    },
     "required": [
       "title"
     ],

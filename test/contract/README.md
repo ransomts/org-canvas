@@ -45,6 +45,22 @@ the generator; currently assignments and assignment-groups). The
 response shape and assert it tolerates every field and reads the ones it
 depends on — the read-path analog of the request-body contract.
 
+## Read-parameter contract (issue #273)
+
+The fixture also captures, per module, the query parameters the spec
+documents on the list and show operations (`MODULE_READ_OPS` in the
+generator, the `reads` key in the fixture). The "Canvas read-parameter
+contract" tests check every registered feature's `:list-params` against
+its list operation, `:item-params` against its show operation, and the
+property registry's `:body-list-params` against the list — a misspelled or
+unsupported query parameter is silently ignored by Canvas, and nothing else
+in the code path would notice. Justified deviations live in
+`org-canvas-contract--read-exceptions` (pages' `include[]=body`, which the
+documented list operation omits but Canvas honors). The test also pins the
+parameter the issue was about: assignments read with
+`override_assignment_dates=false` on both operations, and quizzes declare
+nothing, since neither quiz operation documents it.
+
 # GraphQL contract (issue #269)
 
 Five GraphQL documents travel to Canvas as strings: the post-policy

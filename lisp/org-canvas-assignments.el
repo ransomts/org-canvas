@@ -73,10 +73,26 @@ takes effect on the next `org-canvas-pull-assignments' invocation."
                  (const :tag "Due date ascending" due-at))
   :group 'org-canvas)
 (org-canvas-register-file-var 'org-canvas-assignments-file "assignments.org")
+
+(defconst org-canvas--assignment-read-params
+  '(("override_assignment_dates" . "false"))
+  "Query parameters every read of an assignment carries.
+Canvas applies an assignment's overrides to the dates it returns, and
+for a teacher, who can see every override, it returns the most lenient
+one: an assignment with one student's extension reads as due on the
+extended date.  The drift report then called the base dates changed,
+and a pull wrote the extension into the heading as the assignment's
+own due date, to be pushed to everyone next (issue #273).  The
+overrides table is unaffected, since it reads the overrides endpoint.
+Classic quizzes need no such parameter: their serializer substitutes
+dates only for a reader who has been a student in the course.")
+
 (org-canvas-register-feature
  :name "Assignments" :endpoint "assignments"
  :file-var 'org-canvas-assignments-file
  :id-field 'id :id-property "CANVAS_ID" :title-field 'name
+ :list-params org-canvas--assignment-read-params
+ :item-params org-canvas--assignment-read-params
  ;; A classic quiz drags a shadow assignment behind it; the quiz is the
  ;; thing the Org files manage (issue #98).
  :skip-fn (lambda (item)
@@ -741,6 +757,7 @@ tool attributes — and nothing outside the schema lands in the drawer."
 (org-canvas-define-pull assignments
   :file org-canvas-assignments-file
   :endpoint "assignments"
+  :params org-canvas--assignment-read-params
   :title-field 'name
   :secondary-sort-key 'assignment_group_id
   :tertiary-sort-key (when (eq org-canvas-assignment-sort 'due-at) 'due_at)

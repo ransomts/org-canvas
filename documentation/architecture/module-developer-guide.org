@@ -97,6 +97,12 @@ Key rules:
   declares =:list-url-fn= / =:item-url-fn= and a function-valued
   =:list-params= on =org-canvas-register-feature=; see
   api-interaction.org
+- A feature whose reads need a query parameter to answer what Org
+  holds declares it as =:list-params= and =:item-params= (assignments:
+  =override_assignment_dates=false=, or a student's extension reads as
+  the assignment's own dates, issue #273), and the read-parameter
+  contract test checks the parameter is one the spec documents on
+  the list and show operations
 
 * Step 2: Define the Parse Stage
 

@@ -2204,5 +2204,98 @@ Write it.
       (expect sent :to-be nil)
       (expect (plist-get ctx :remote-touched) :to-be nil))))
 
+(describe "assignment reads ask for the assignment's own dates (issue #273)"
+  ;; Canvas applies overrides to the dates an assignment read returns, and
+  ;; a teacher gets the most lenient one: one student's extension read as
+  ;; the base due date, the report called it CHANGED, and a pull would
+  ;; have written it into the heading.  Every read that writes locally
+  ;; carries override_assignment_dates=false.
+  (defconst test-273--param '("override_assignment_dates" . "false"))
+
+  (it "declares the parameter on the list and the single-item read"
+    (let ((feature (org-canvas--registry-find-feature "assignments")))
+      (expect (org-canvas--feature-list-params feature) :to-contain test-273--param)
+      (expect (org-canvas--feature-item-params feature) :to-contain test-273--param)))
+
+  (it "lists with it on a full pull, and still reads overrides from their own endpoint"
+    (let* ((temp-dir (make-temp-file "assign-273-" t))
+           (test-file (expand-file-name "assignments.org" temp-dir))
+           (seen nil))
+      (unwind-protect
+          (let ((org-canvas-assignments-file test-file)
+                (org-canvas-assignment-groups-file "/tmp/nonexistent-ag.org"))
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                         (lambda (_method url &optional params)
+                           (push (cons url params) seen)
+                           (if (string-match-p "/overrides" url)
+                               nil
+                             '(((id . 2563804) (name . "R4: Agency")
+                                (due_at . "2026-09-15T03:59:00Z")
+                                (assignment_group_id . 100))))))
+                        ((symbol-function 'org-canvas-clear-log) (lambda () nil))
+                        ((symbol-function 'display-buffer) (lambda (_) nil)))
+                (org-canvas-pull-assignments))
+              (let ((list-call (cl-find-if (lambda (c) (string-match-p "/assignments$" (car c)))
+                                           seen))
+                    (override-call (cl-find-if (lambda (c) (string-match-p "/overrides" (car c)))
+                                               seen)))
+                (expect (cdr list-call) :to-contain test-273--param)
+                (expect override-call :to-be-truthy)
+                (expect (cdr override-call) :not :to-contain test-273--param))))
+        (let ((buf (find-buffer-visiting test-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
+  (it "reads the item with it for pull-at-point"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer "* R4: Agency\n:PROPERTIES:\n:CANVAS_ID: 2563804\n:END:\n"
+        (org-back-to-heading)
+        (let ((seen nil))
+          (cl-letf (((symbol-function 'org-canvas-api-request)
+                     (lambda (_method url &rest args)
+                       (setq seen (cons url (plist-get args :params)))
+                       '((id . 2563804) (name . "R4: Agency")
+                         (updated_at . "2026-09-15T01:20:54Z"))))
+                    ((symbol-function 'org-canvas--conflict-pull-local) #'ignore))
+            (org-canvas--pull-at-point-1
+             (org-canvas--registry-find-feature "assignments") "2563804" "R4: Agency"))
+          (expect (car seen) :to-match "/assignments/2563804$")
+          (expect (cdr seen) :to-contain test-273--param)))))
+
+  (it "reads the item with it for the conflict check, whose response the pull option writes"
+    (let* ((temp-dir (make-temp-file "assign-273-sync-" t))
+           (org-file (expand-file-name "assignments.org" temp-dir))
+           (seen nil))
+      (unwind-protect
+          (progn
+            (with-temp-file org-file
+              (insert "* R4: Agency\n:PROPERTIES:\n:CANVAS_ID: 2563804\n"
+                      ":CANVAS_UPDATED_AT: 2026-09-01T00:00:00Z\n:POINTS: 10\n"
+                      ":SUBMISSION: online_upload\n:END:\n\nReflect.\n"))
+            (let ((org-canvas-assignments-file org-file)
+                  (org-canvas-detect-conflicts t))
+              (with-org-canvas-test-config
+                (with-sync-test-env
+                  (cl-letf (((symbol-function 'org-canvas-api-request)
+                             (lambda (method url &rest args)
+                               (push (list method url (plist-get args :params)) seen)
+                               '((id . 2563804) (name . "R4: Agency")
+                                 (updated_at . "2026-09-15T01:20:54Z"))))
+                            ((symbol-function 'org-canvas--sync-fetch-remote-snapshot)
+                             (lambda (_feature) nil))
+                            ((symbol-function 'org-canvas--resolve-conflict)
+                             (lambda (_data _remote &optional _ctx) 'skip)))
+                    (org-canvas-sync-assignments))))
+              (let ((check (cl-find-if (lambda (c) (and (eq (car c) 'GET)
+                                                        (string-match-p "/assignments/2563804$"
+                                                                        (nth 1 c))))
+                                       seen)))
+                (expect check :to-be-truthy)
+                (expect (nth 2 check) :to-contain test-273--param)
+                (expect (cl-find-if (lambda (c) (eq (car c) 'PUT)) seen) :to-be nil))))
+        (let ((buf (find-buffer-visiting org-file)))
+          (when buf (with-current-buffer buf (set-buffer-modified-p nil)) (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
 
 ;;; org-canvas-assignments-test.el ends here

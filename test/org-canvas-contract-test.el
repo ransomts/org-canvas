@@ -253,5 +253,95 @@ timestamp parser into an interactive prompt."
         (org-canvas--assignment-group-pull-item response (point))
         (expect (org-entry-get (point) "WEIGHT") :to-be-truthy)))))
 
+
+;;;; Read-parameter contract (issue #273)
+;;
+;; The query parameters a feature declares on its reads — `:list-params'
+;; on the list operation, `:item-params' on the show operation, and the
+;; property registry's `:body-list-params' the drift report adds to the
+;; list — are strings Canvas silently ignores when misspelled or
+;; undocumented, so nothing else in the code path would notice one
+;; missing or wrong.  This checks each against the operation's documented
+;; parameters, and pins the one parameter whose absence changed what a
+;; pull wrote: assignments read with override_assignment_dates=false, or
+;; a teacher gets a student's extension as the assignment's own dates.
+
+(defconst org-canvas-contract--read-exceptions
+  '(("pages" . ("include")))
+  "Per-module read parameters Canvas honors that the operation omits.
+pages: the list returns bodies with `include[]=body', which the drift
+report needs to compare them (issue #83), though the documented
+list_pages operation does not list `include'.")
+
+(defconst org-canvas-contract--read-features
+  '(("calendar" . "calendar-events"))
+  "Fixture module keys whose feature registry name is spelled otherwise.")
+
+(defun org-canvas-contract--param-name (param)
+  "Return the spec's spelling of query PARAM's name: `include[]' is `include'."
+  (replace-regexp-in-string "\\[\\]\\'" "" (car param)))
+
+(defun org-canvas-contract--read-op (module kind)
+  "Return MODULE's documented read operation of KIND, `list' or `item'."
+  (let* ((entry (alist-get module org-canvas-contract--data nil nil #'string=))
+         (reads (alist-get "reads" entry nil nil #'string=)))
+    (alist-get (symbol-name kind) reads nil nil #'string=)))
+
+(defun org-canvas-contract--check-read-params (module kind params)
+  "Assert every parameter of PARAMS is documented on MODULE's KIND read.
+PARAMS is an alist as `org-canvas-api-request' takes it."
+  (let* ((op (org-canvas-contract--read-op module kind))
+         (allowed (append (alist-get "params" op nil nil #'string=)
+                          (alist-get module org-canvas-contract--read-exceptions
+                                     nil nil #'string=))))
+    (expect op :to-be-truthy)
+    (dolist (param params)
+      (expect (member (org-canvas-contract--param-name param) allowed)
+              :to-be-truthy))))
+
+(describe "Canvas read-parameter contract (issue #273)"
+  (it "sends only documented query parameters on every registered read"
+    (with-org-canvas-test-config
+      (dolist (entry org-canvas-contract--data)
+        (let* ((module (car entry))
+               (feature (org-canvas--registry-find-feature
+                         (or (alist-get module org-canvas-contract--read-features
+                                        nil nil #'string=)
+                             module)))
+               (props (gethash module org-canvas--property-registry)))
+          (when (org-canvas-contract--read-op module 'list)
+            (expect feature :to-be-truthy)
+            (org-canvas-contract--check-read-params
+             module 'list (org-canvas--feature-list-params feature))
+            (org-canvas-contract--check-read-params
+             module 'list (plist-get props :body-list-params))
+            (org-canvas-contract--check-read-params
+             module 'item (org-canvas--feature-item-params feature)))))))
+
+  (it "assignments ask for their own dates on both the index and the show"
+    (let ((feature (org-canvas--registry-find-feature "assignments"))
+          (param '("override_assignment_dates" . "false")))
+      (dolist (kind '(list item))
+        (expect (member "override_assignment_dates"
+                        (alist-get "params" (org-canvas-contract--read-op "assignments" kind)
+                                   nil nil #'string=))
+                :to-be-truthy))
+      (expect (org-canvas--feature-list-params feature) :to-contain param)
+      (expect (org-canvas--feature-item-params feature) :to-contain param)))
+
+  (it "quizzes are left alone: neither quiz read documents the parameter"
+    ;; Canvas's quiz serializer substitutes override dates only for a
+    ;; reader who has been a student in the course, and no request
+    ;; parameter turns it off, so declaring one would be a no-op that
+    ;; reads as a guarantee.
+    (dolist (kind '(list item))
+      (expect (member "override_assignment_dates"
+                      (alist-get "params" (org-canvas-contract--read-op "quizzes" kind)
+                                 nil nil #'string=))
+              :to-be nil))
+    (let ((feature (org-canvas--registry-find-feature "quizzes")))
+      (expect (org-canvas--feature-list-params feature) :to-be nil)
+      (expect (org-canvas--feature-item-params feature) :to-be nil))))
+
 (provide 'org-canvas-contract-test)
 ;;; org-canvas-contract-test.el ends here
