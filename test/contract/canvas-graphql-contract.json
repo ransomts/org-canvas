@@ -7,9 +7,8 @@
  ],
  "provenance": {
   "generated": "2026-09-14",
-  "ref": "318f2ad0495dd4d1e2fd3657497fbf71c91bda13",
-  "repository": "https://github.com/instructure/canvas-lms",
-  "source": "sdl"
+  "instance": "clemson.instructure.com",
+  "source": "introspection"
  },
  "roots": {
   "mutation": "Mutation",
@@ -617,7 +616,10 @@
       "before": "String",
       "first": "Int",
       "id": "ID",
-      "last": "Int"
+      "last": "Int",
+      "searchTerm": "String",
+      "sort": "RubricSortInput",
+      "workflowStates": "[String!]"
      },
      "deprecated": null,
      "type": "RubricConnection"
@@ -1583,6 +1585,13 @@
      "deprecated": null,
      "type": "CreateOutcomeProficiencyPayload"
     },
+    "createStudyNote": {
+     "args": {
+      "input": "CreateStudyNoteInput!"
+     },
+     "deprecated": null,
+     "type": "CreateStudyNotePayload"
+    },
     "createSubmission": {
      "args": {
       "input": "CreateSubmissionInput!"
@@ -1694,6 +1703,13 @@
      },
      "deprecated": null,
      "type": "DeleteOutcomeProficiencyPayload"
+    },
+    "deleteStudyNote": {
+     "args": {
+      "input": "DeleteStudyNoteInput!"
+     },
+     "deprecated": null,
+     "type": "DeleteStudyNotePayload"
     },
     "deleteSubmissionComment": {
      "args": {
@@ -2087,6 +2103,13 @@
      "deprecated": null,
      "type": "UpdateSplitScreenViewDeeplyNestedAlertPayload"
     },
+    "updateStudyNote": {
+     "args": {
+      "input": "UpdateStudyNoteInput!"
+     },
+     "deprecated": null,
+     "type": "UpdateStudyNotePayload"
+    },
     "updateSubmissionGrade": {
      "args": {
       "input": "UpdateSubmissionsGradeInput!"
@@ -2114,6 +2137,13 @@
      },
      "deprecated": null,
      "type": "UpdateSubmissionStudentEnteredScorePayload"
+    },
+    "updateSubmissionsCommentReadState": {
+     "args": {
+      "input": "UpdateSubmissionsCommentReadStateInput!"
+     },
+     "deprecated": null,
+     "type": "UpdateSubmissionsCommentReadStatePayload"
     },
     "updateSubmissionsReadState": {
      "args": {
@@ -2511,6 +2541,18 @@
      },
      "deprecated": null,
      "type": "Rubric"
+    },
+    "studyNotesConnection": {
+     "args": {
+      "after": "String",
+      "before": "String",
+      "courseId": "ID!",
+      "filter": "StudyNoteFilterInput",
+      "first": "Int",
+      "last": "Int"
+     },
+     "deprecated": null,
+     "type": "StudyNoteConnection"
     },
     "submission": {
      "args": {
