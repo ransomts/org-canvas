@@ -537,6 +537,12 @@ A silent heading inherits the course policy and has no opinion for the
 drift report to compare."
   (org-entry-get pom "POST_POLICY"))
 
+(defconst org-canvas--assignment-post-policy-mutation
+  "mutation ($assignmentId: ID!, $manual: Boolean!) { setAssignmentPostPolicy(input: {assignmentId: $assignmentId, postManually: $manual}) { postPolicy { postManually } } }"
+  "The GraphQL mutation that sets one assignment's grade post policy.
+Checked against the Canvas schema by the GraphQL contract test
+\(issue #269), which names it by this symbol.")
+
 (defun org-canvas--assignment-push-post-policy (data assignment-id)
   "Set ASSIGNMENT-ID's grade post policy from DATA's :post-policy, when given.
 The `setAssignmentPostPolicy' GraphQL mutation (issue #202).  Returns
@@ -545,7 +551,7 @@ non-nil when a write went out, so the caller can note it on the run."
     (when (and policy assignment-id)
       (org-canvas--graphql-mutate
        (format "set the post policy of '%s' to %s" (plist-get data :title) policy)
-       "mutation ($assignmentId: ID!, $manual: Boolean!) { setAssignmentPostPolicy(input: {assignmentId: $assignmentId, postManually: $manual}) { postPolicy { postManually } } }"
+       org-canvas--assignment-post-policy-mutation
        (list (cons 'assignmentId (format "%s" assignment-id))
              (cons 'manual (if (equal policy "manual") t :json-false))))
       t)))

@@ -253,6 +253,10 @@ Largest suites: files, modules, quizzes, core-sync, core-api, core-pull, validat
 - User confirmation prompts
 - Cross-file link resolution
 
+*Contract tests (=test/contract/=, see its README) check what leaves for Canvas against Canvas's own description of itself:*
+- =org-canvas-contract-test.el=: each module's =build-payload= against the OpenAPI create operation, from the committed =canvas-contract.json=
+- =org-canvas-graphql-contract-test.el= (issue #269): the five GraphQL documents, named by symbol, and the variables their callers build, against the committed =canvas-graphql-contract.json= — generated from the instance's introspection or the canvas-lms SDL; the test tokenizes the one-line documents itself, since there is no GraphQL parser in Elisp
+
 * Advanced Mock Patterns
 
 ** Direct plz Mocking

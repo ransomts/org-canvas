@@ -2236,6 +2236,12 @@ student until it is posted (issue #202)."
              (y-or-n-p "This assignment posts grades manually; post them now? "))
     (org-canvas-submissions-post-grades)))
 
+(defconst org-canvas--submissions-post-grades-mutation
+  "mutation ($assignmentId: ID!) { postAssignmentGrades(input: {assignmentId: $assignmentId}) { progress { _id state } } }"
+  "The GraphQL mutation that posts an assignment's grades to its students.
+Checked against the Canvas schema by the GraphQL contract test
+\(issue #269), which names it by this symbol.")
+
 ;;;###autoload
 (defun org-canvas-submissions-post-grades ()
   "Post this grading file's assignment grades, so students can see them.
@@ -2252,7 +2258,7 @@ each student's POSTED_AT."
       (user-error "No CANVAS_ASSIGNMENT_ID in this buffer"))
     (org-canvas--graphql-mutate
      (format "post the grades of assignment %s" assignment-id)
-     "mutation ($assignmentId: ID!) { postAssignmentGrades(input: {assignmentId: $assignmentId}) { progress { _id state } } }"
+     org-canvas--submissions-post-grades-mutation
      (list (cons 'assignmentId (format "%s" assignment-id))))
     (message "Grades posted for assignment %s." assignment-id)))
 

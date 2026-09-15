@@ -392,6 +392,12 @@ both the PATCH and the POST fallback."
            (org-canvas--log-error org-canvas--logger "[Execute] Late policy sync failed: %s"
              (error-message-string err))))))))
 
+(defconst org-canvas--settings-post-policy-mutation
+  "mutation ($courseId: ID!, $manual: Boolean!) { setCoursePostPolicy(input: {courseId: $courseId, postManually: $manual}) { postPolicy { postManually } } }"
+  "The GraphQL mutation that sets the course's grade post policy.
+Checked against the Canvas schema by the GraphQL contract test
+\(issue #269), which names it by this symbol.")
+
 (defun org-canvas--settings-push-post-policy (data)
   "Set the course grade post policy from DATA's :post-policy, when given.
 REST only reads the policy, so this is the `setCoursePostPolicy'
@@ -406,7 +412,7 @@ until `org-canvas-diff-adopt-stamps' restamps them (issue #257)."
     (when policy
       (let ((reply (org-canvas--graphql-mutate
                     (format "set the course post policy to %s" policy)
-                    "mutation ($courseId: ID!, $manual: Boolean!) { setCoursePostPolicy(input: {courseId: $courseId, postManually: $manual}) { postPolicy { postManually } } }"
+                    org-canvas--settings-post-policy-mutation
                     ;; A GraphQL Boolean! must arrive as true or false; nil would
                     ;; encode as null, which Canvas rejects (the live probe caught it).
                     (list (cons 'courseId (format "%s" org-canvas-course-id))
