@@ -81,7 +81,12 @@ jobs:
   generated-artifacts:
     # Guards single-source-of-truth: regenerate committed generated files and
     # fail if they drift from their source. The Canvas contract fixture is
-    # derived from the OpenAPI spec; regenerating must be a no-op.
+    # derived from the OpenAPI spec; regenerating must be a no-op.  The
+    # GraphQL fixture (test/contract/canvas-graphql-contract.json, #269) is
+    # not regenerated here: its source is the instance's introspection or a
+    # canvas-lms SDL, neither in the repo.  The GraphQL contract test reads
+    # the committed fixture and fails on a document that names what the
+    # fixture lacks, which is the cue to regenerate (test/contract/README.md).
     runs-on: ubuntu-latest
     timeout-minutes: 5
 

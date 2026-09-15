@@ -159,7 +159,9 @@ one command reads it once and the next reads afresh.")
 
 (defconst org-canvas--discussion-checkpoints-query
   "query ($courseId: ID!, $cursor: String) { course(id: $courseId) { discussionsConnection(first: 100, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { _id replyToEntryRequiredCount checkpoints { tag pointsPossible dueAt } } } } }"
-  "The GraphQL query listing every discussion's checkpoints, one page at a time.")
+  "The GraphQL query listing every discussion's checkpoints, one page at a time.
+Checked against the Canvas schema by the GraphQL contract test
+\(issue #269), which names it by this symbol.")
 
 (defun org-canvas--discussion-checkpoints-forget ()
   "Drop the cached checkpoint map, so the next read asks Canvas."
@@ -457,7 +459,9 @@ Returns an alist for the `assignment' key."
 
 (defconst org-canvas--discussion-checkpoints-mutation
   "mutation ($topicId: ID!, $checkpoints: [DiscussionCheckpoints!]) { updateDiscussionTopic(input: {discussionTopicId: $topicId, setCheckpoints: true, checkpoints: $checkpoints}) { discussionTopic { _id } errors { message } } }"
-  "The GraphQL mutation that sets a discussion's checkpoints.")
+  "The GraphQL mutation that sets a discussion's checkpoints.
+Checked against the Canvas schema by the GraphQL contract test
+\(issue #269), which names it by this symbol.")
 
 (defun org-canvas--discussion-checkpoint-input (label points due-at &optional replies-required)
   "Return one DiscussionCheckpoints input for the checkpoint LABEL.

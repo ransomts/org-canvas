@@ -195,7 +195,14 @@ Three write paths added in these rounds have never been sent to a
 live course, because the course at hand had nothing to exercise them:
 the grading scheme create (#213), the checkpoint mutation (#216), and
 a sync of a quiz with question groups after a pull (#243).  Read the
-log the first time each runs for real.  So has the rubric update's
+log the first time each runs for real.  The checkpoint mutation's
+shape is no longer a guess: the GraphQL contract test (#269) checks
+the document and the input =org-canvas--discussion-checkpoint-input=
+builds against the Canvas schema, so the fields, arguments and input
+types it names are known to exist.  What the schema cannot say is
+whether the account flag is on — the flag is enforced when the field
+resolves, not in the schema — so the first live run is still the only
+answer to that.  So has the rubric update's
 dissociate–PUT–re-associate sequence (#255): its parts were run by hand
 on the live course, the sequence itself has not been.
 
