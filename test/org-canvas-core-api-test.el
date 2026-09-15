@@ -1892,7 +1892,21 @@ which records the frames from the signalling `signal' out to
               :to-equal '(("n" . 1)))
       (expect (org-canvas--feature-list-params '(:list-params (("type" . "event"))))
               :to-equal '(("type" . "event")))
-      (expect (org-canvas--feature-list-params '(:endpoint "pages")) :to-be nil))))
+      (expect (org-canvas--feature-list-params '(:endpoint "pages")) :to-be nil)))
+
+  (it "resolves item-params the same way, apart from list-params (issue #273)"
+    (let ((n 0))
+      (expect (org-canvas--feature-item-params
+               (list :item-params (lambda () (setq n (1+ n)) `(("n" . ,n)))))
+              :to-equal '(("n" . 1)))
+      (expect (org-canvas--feature-item-params
+               '(:list-params (("only_announcements" . "true"))
+                 :item-params (("override_assignment_dates" . "false"))))
+              :to-equal '(("override_assignment_dates" . "false")))
+      (expect (org-canvas--feature-item-params
+               '(:list-params (("only_announcements" . "true"))))
+              :to-be nil)
+      (expect (org-canvas--feature-item-params nil) :to-be nil))))
 
 (describe "org-canvas--feature-modified-field (issue #94)"
   (it "defaults to updated_at and honours a declaration"

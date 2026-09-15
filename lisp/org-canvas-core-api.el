@@ -77,6 +77,19 @@ time: calendar events filter by a context code that embeds
   (let ((params (plist-get feature :list-params)))
     (if (functionp params) (funcall params) params)))
 
+(defun org-canvas--feature-item-params (feature)
+  "Return the query parameters that read one of FEATURE's items, or nil.
+An `:item-params' value may be a function of no arguments, as
+`:list-params' may.  Assignments declare `override_assignment_dates'
+false on both: without it Canvas substitutes a student's extension for
+the assignment's own dates on every read a teacher makes, so the drift
+report called the base dates changed and a pull wrote the extension
+into the heading (issue #273).  The single-item reads that write
+locally — `org-canvas-pull-at-point' and the conflict prompt's pull —
+carry these; the list reads carry `:list-params'."
+  (let ((params (plist-get feature :item-params)))
+    (if (functionp params) (funcall params) params)))
+
 (defun org-canvas--feature-modified-field (feature)
   "Return the field that tracks FEATURE's remote content modification.
 `:modified-field' when the feature declares one, otherwise

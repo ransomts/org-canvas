@@ -1706,6 +1706,13 @@ override Canvas holds, and remove a row when you mean to remove the
 override.  A changed set of students is a new override and the old one
 is deleted.
 
+An extension never reads as the assignment's own date.  Canvas answers
+a teacher's read of an assignment with the most lenient override's
+dates in place of the assignment's, so every read org-canvas makes —
+the drift report, a pull, the conflict check before a push — asks for
+the assignment's own dates instead; the heading keeps the base due
+date and the table the extension.
+
 A student's name in =assignments.org= travels with the course
 repository.  Where the repository is shared, or the course files are
 kept in the open, write the row as =Students: #1234= instead; a pull

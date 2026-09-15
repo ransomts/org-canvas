@@ -44,6 +44,28 @@ MODULE_OPS = {
     "pages": "create_page_courses",
 }
 
+# org-canvas module -> (list operationId, show operationId): the read side.
+# The feature registry's `:list-params' travel on the list operation and
+# its `:item-params' on the show operation, and the contract test checks
+# that every parameter a feature declares is one the spec documents there.
+# Assignments read with override_assignment_dates=false on both, or a
+# teacher gets a student's extension as the assignment's own dates (issue
+# #273); quizzes are deliberately absent from that rule, since their show
+# and list operations document no such parameter and Canvas's quiz
+# serializer substitutes dates only for a reader who has been a student.
+MODULE_READ_OPS = {
+    "announcements": ("list_discussion_topics_courses", "get_single_topic_courses"),
+    "discussions": ("list_discussion_topics_courses", "get_single_topic_courses"),
+    "assignments": ("list_assignments", "get_single_assignment"),
+    "assignment-groups": ("list_assignment_groups", "get_assignment_group"),
+    "group-categories": ("list_group_categories_for_context_courses",
+                         "get_single_group_category"),
+    "calendar": ("list_calendar_events", "get_single_calendar_event_or_assignment"),
+    "modules": ("list_modules", "show_module"),
+    "quizzes": ("list_quizzes_in_course", "get_single_quiz"),
+    "pages": ("list_pages_courses", "show_page_courses"),
+}
+
 # Modules whose read (pull) response object is documented as a component
 # schema.  Used to contract-check that pull tolerates the full documented
 # response shape.  Only modules with a clean property-setter pull-item are
@@ -108,6 +130,16 @@ def extract(op):
     }
 
 
+def extract_query_params(op):
+    """Return the sorted names of OP's documented query parameters.
+
+    The spec names an array parameter without the brackets org-canvas
+    sends (`include`, not `include[]`); the elisp side strips them too.
+    """
+    return sorted(p["name"] for p in op.get("parameters", []) or []
+                  if isinstance(p, dict) and p.get("in") == "query")
+
+
 def extract_response_fields(spec, schema_name):
     """Return {field: type} for a component response schema."""
     schema = spec.get("components", {}).get("schemas", {}).get(schema_name, {})
@@ -125,6 +157,16 @@ def main():
             sys.exit(f"operationId not found: {opid} (module {module})")
         contract = extract(op)
         contract["operationId"] = opid
+        read_ops = MODULE_READ_OPS.get(module)
+        if read_ops:
+            reads = {}
+            for kind, read_opid in zip(("list", "item"), read_ops):
+                read_op = find_op(spec, read_opid)
+                if read_op is None:
+                    sys.exit(f"operationId not found: {read_opid} (module {module})")
+                reads[kind] = {"operationId": read_opid,
+                               "params": extract_query_params(read_op)}
+            contract["reads"] = reads
         schema_name = MODULE_READ_SCHEMAS.get(module)
         if schema_name:
             fields = extract_response_fields(spec, schema_name)

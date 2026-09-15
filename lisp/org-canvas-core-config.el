@@ -329,8 +329,8 @@ Populated at module load time by `org-canvas-register-feature'.")
 (defun org-canvas-register-feature (&rest plist)
   "Register a feature for orphan detection and at-point dispatch.
 PLIST has keys :name :endpoint :file-var :id-field :id-property
-:title-field and optionally :list-params :skip-fn :skip-reason
-:modified-field.
+:title-field and optionally :list-params :item-params :skip-fn
+:skip-reason :modified-field.
 
 A feature that does not list under the course also names a
 `:list-url-fn' (no arguments) and an `:item-url-fn' (one argument,
@@ -339,8 +339,12 @@ a feature may give `:list-params' as a function of no arguments when
 the parameters depend on state not known at load time, and a
 `:delete-data' body for the DELETE the orphan cleanup sends.  These
 are resolved in one place — `org-canvas--feature-list-url',
-`org-canvas--feature-item-url', `org-canvas--feature-list-params' —
-which every consumer of the registry goes through.
+`org-canvas--feature-item-url', `org-canvas--feature-list-params',
+`org-canvas--feature-item-params' — which every consumer of the
+registry goes through.  `:item-params' are the query parameters a read
+of one item carries, as `:list-params' are the list's: assignments ask
+for their own dates rather than a student's extension on both (issue
+#273).
 
 `:modified-field' names the remote timestamp drift is decided from,
 default `updated_at'.  Files declare `modified_at', the content

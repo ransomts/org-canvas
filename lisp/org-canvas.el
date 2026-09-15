@@ -434,9 +434,13 @@ its feature has no pull-item function to refresh a heading with."
 
 (defun org-canvas--pull-at-point-1 (feature id title)
   "Overwrite the heading at point with FEATURE's Canvas item ID.
-TITLE names the heading in the log."
+TITLE names the heading in the log.  The read carries FEATURE's
+`:item-params', so an assignment comes back with its own dates rather
+than a student's extension (issue #273)."
   (let* ((endpoint (org-canvas--feature-item-url feature id))
-         (remote (org-canvas-api-request 'GET endpoint)))
+         (remote (org-canvas-api-request
+                  'GET endpoint
+                  :params (org-canvas--feature-item-params feature))))
     (org-canvas--conflict-pull-local
      (list :pom (point-marker)) remote (plist-get feature :pull-item-fn))
     (org-canvas--log-info org-canvas--logger

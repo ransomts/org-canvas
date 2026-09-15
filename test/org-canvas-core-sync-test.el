@@ -3419,6 +3419,21 @@ Returns the :remote-titles of the run context the push received."
                 'id)))
       (expect (gethash "1" map) :to-equal "2026-09-01T12:12:24Z"))))
 
+(describe "org-canvas--sync-item-params (issue #273)"
+  (it "answers the registered feature's item-params from the run context"
+    (expect (org-canvas--sync-item-params
+             (org-canvas--sync-make-ctx :feature-name "assignments"))
+            :to-contain '("override_assignment_dates" . "false")))
+
+  (it "is nil without a context, and for a feature outside the registry"
+    (expect (org-canvas--sync-item-params nil) :to-be nil)
+    (expect (org-canvas--sync-item-params
+             (org-canvas--sync-make-ctx :feature-name "no-such-feature"))
+            :to-be nil)
+    (expect (org-canvas--sync-item-params
+             (org-canvas--sync-make-ctx :feature-name "pages"))
+            :to-be nil)))
+
 (describe "org-canvas--conflict-check modified field (issue #94)"
   (defconst test-mod-94--entry "* syllabus.pdf
 :PROPERTIES:
