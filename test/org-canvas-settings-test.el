@@ -446,6 +446,75 @@ Welcome to the course.
 
 ;;;; Pull
 
+(describe "org-canvas--settings-replace-syllabus-body (issue #277)"
+  (it "replaces the text above the first sub-heading and keeps the sub-headings"
+    (with-temp-org-buffer
+     "* Course
+:PROPERTIES:
+:TIME_ZONE: UTC
+:END:
+
+Old syllabus.
+
+Two paragraphs of it.
+
+** Navigation
+1. Home
+
+** Notes
+Kept too.
+"
+     (org-back-to-heading)
+     (org-canvas--settings-replace-syllabus-body "New syllabus.")
+     (expect (buffer-string) :to-equal
+             "* Course
+:PROPERTIES:
+:TIME_ZONE: UTC
+:END:
+
+New syllabus.
+
+** Navigation
+1. Home
+
+** Notes
+Kept too.
+")))
+
+  (it "puts the syllabus before a sub-heading that directly follows the drawer"
+    (with-temp-org-buffer
+     "* Course
+:PROPERTIES:
+:END:
+** Navigation
+1. Home
+"
+     (org-back-to-heading)
+     (org-canvas--settings-replace-syllabus-body "New syllabus.")
+     (expect (buffer-string) :to-equal
+             "* Course
+:PROPERTIES:
+:END:
+
+New syllabus.
+
+** Navigation
+1. Home
+")))
+
+  (it "replaces the whole body when there is no sub-heading"
+    (with-temp-org-buffer
+     "* Course
+:PROPERTIES:
+:END:
+
+Old syllabus.
+"
+     (org-back-to-heading)
+     (org-canvas--settings-replace-syllabus-body "New syllabus.")
+     (expect (buffer-string) :to-match "New syllabus")
+     (expect (buffer-string) :not :to-match "Old syllabus"))))
+
 (describe "org-canvas-pull-settings"
   (it "creates file and populates properties"
     (let* ((temp-dir (make-temp-file "pull-settings" t))
@@ -1708,17 +1777,20 @@ Keep this.
 ;; object.  A failure used to be swallowed with (error nil), so a 403
 ;; read as "no late policy".  A skip must say so (issue #81).
 
-(defun test-org-canvas-settings--pull-with (responder)
+(defun test-org-canvas-settings--pull-with (responder &optional initial)
   "Run `org-canvas-pull-settings' against RESPONDER in a temp course dir.
 RESPONDER is called with the request URL and returns the response or
-signals.  Returns a plist (:content FILE-TEXT :warnings LIST :infos
-LIST :records LIST)."
+signals.  INITIAL, when given, is the settings.org the pull starts
+from; without it the pull creates the file.  Returns a plist
+\(:content FILE-TEXT :warnings LIST :infos LIST :records LIST)."
   (let* ((temp-dir (make-temp-file "pull-settings" t))
          (settings-file (expand-file-name "settings.org" temp-dir))
          (warnings nil)
          (infos nil))
     (unwind-protect
         (let ((org-canvas-settings-file settings-file))
+          (when initial
+            (with-temp-file settings-file (insert initial)))
           (org-canvas--pull-summary-reset)
           (with-org-canvas-test-config
             (cl-letf (((symbol-function 'org-canvas-api-request)
@@ -1787,6 +1859,68 @@ LIST :records LIST)."
       (expect (cl-some (lambda (i) (string-match-p "no late policy (404)" i))
                        (plist-get result :infos))
               :to-be-truthy)))
+
+  (it "keeps the Navigation list the file had when the tab read fails (issue #277)"
+    (let ((result (test-org-canvas-settings--pull-with
+                   (lambda (url)
+                     (cond
+                      ((string-match "late_policy" url) nil)
+                      ((string-match "tabs" url)
+                       (signal 'org-canvas-api-error '("Gateway timeout (HTTP 504)")))
+                      (t (append test-org-canvas-settings--course-response
+                                 '((syllabus_body . "<p>New syllabus.</p>"))))))
+                   "#+TITLE: Settings
+* Old Course
+:PROPERTIES:
+:TIME_ZONE: UTC
+:END:
+
+Old syllabus.
+
+** Navigation
+1. Home
+2. Modules
+3. +People+
+")))
+      (let ((content (plist-get result :content)))
+        (expect content :to-match "New syllabus")
+        (expect content :not :to-match "Old syllabus")
+        (expect content :to-match "\\*\\* Navigation\n1\\. Home\n2\\. Modules\n3\\. \\+People\\+")
+        ;; The new syllabus and the list it could not refresh are still
+        ;; separated by a blank line.
+        (expect content :to-match "\n\n\\*\\* Navigation"))
+      (expect (cl-some (lambda (w) (string-match-p "navigation tabs not pulled.*keeps what it had" w))
+                       (plist-get result :warnings))
+              :to-be-truthy)))
+
+  (it "keeps the Navigation list the file had when Canvas lists no tabs (issue #277)"
+    (let ((result (test-org-canvas-settings--pull-with
+                   (lambda (url)
+                     (cond
+                      ((string-match "late_policy" url) nil)
+                      ((string-match "tabs" url) (vector))
+                      (t (append test-org-canvas-settings--course-response
+                                 '((syllabus_body . "<p>New syllabus.</p>"))))))
+                   "* Old Course\n:PROPERTIES:\n:END:\n\nOld syllabus.\n\n** Navigation\n1. Home\n")))
+      (expect (plist-get result :content) :to-match "New syllabus")
+      (expect (plist-get result :content) :to-match "\\*\\* Navigation\n1\\. Home")))
+
+  (it "replaces the Navigation list, once, when the tab read succeeds (issue #277)"
+    (let* ((result (test-org-canvas-settings--pull-with
+                    (lambda (url)
+                      (cond
+                       ((string-match "late_policy" url) nil)
+                       ((string-match "tabs" url)
+                        (vector '((label . "Home") (hidden . :json-false) (position . 1))
+                                '((label . "Grades") (hidden . t) (position . 2))))
+                       (t (append test-org-canvas-settings--course-response
+                                  '((syllabus_body . "<p>New syllabus.</p>"))))))
+                    "* Old Course\n:PROPERTIES:\n:END:\n\nOld syllabus.\n\n** Navigation\n1. Home\n2. Modules\n"))
+           (content (plist-get result :content)))
+      (expect content :to-match "New syllabus")
+      (expect content :to-match "\\*\\* Navigation\n1\\. Home\n2\\. \\+Grades\\+")
+      (expect content :not :to-match "2\\. Modules")
+      (expect (length (split-string content "\\*\\* Navigation")) :to-equal 2)))
 
   (it "warns and records when the navigation tabs cannot be read, and still writes the file"
     (let ((result (test-org-canvas-settings--pull-with

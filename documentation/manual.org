@@ -426,6 +426,8 @@ Control the order and visibility of sidebar navigation tabs using a =** Navigati
 
 Tabs are matched case-insensitively against the Canvas tab labels.  The "Home" and "Settings" tabs cannot be hidden (Canvas does not allow it); a warning is logged if you try.  Only tabs that differ from the current Canvas state are updated.
 
+=org-canvas-pull-settings= rewrites the list from Canvas.  When the tab read fails, the pull warns, records it in the pull summary, and leaves the list the file already had in place.
+
 *** Course Card Image
 
 Set the Dashboard thumbnail for the course using the =COURSE_IMAGE= property:
