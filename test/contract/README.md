@@ -67,14 +67,43 @@ keys, scalar kinds, a `Boolean!` that is never nil, a list that is a vector).
   input fields with nullability and default (inputs), values (enums), plus
   provenance. **Committed**; CI reads it and never touches a schema.
 
+## Standing procedure: regenerate at each semester boundary
+
+Canvas ships every three weeks and the committed fixture is a snapshot,
+so it drifts silently until a document changes or a live run fails.  The
+agreed cadence is once per term, before the first push of the semester:
+
+```bash
+python3 -m venv ~/.local/share/org-canvas-venv && ~/.local/share/org-canvas-venv/bin/pip install graphql-core   # once
+ORG_CANVAS_PYTHON=~/.local/share/org-canvas-venv/bin/python eldev exec -f scripts/graphql-introspect.el
+eldev test test/org-canvas-graphql-contract-test.el
+git add test/contract/canvas-graphql-contract.json && git commit -m "Regenerate the GraphQL contract fixture from the instance"
+```
+
+`scripts/graphql-introspect.el` reads the credentials the way the package
+does — the file `ORG_CANVAS_CREDENTIALS` names, else
+`lisp/org-canvas-credentials.el`, else `auth-source` for the host of
+`org-canvas-base-url` — and hands the token to the extractor through the
+child's process environment only: never a command line, so never the
+shell history, and never the script's output (it prints the token's
+length, nothing more).  A 401 means the token is expired or revoked.
+
+Read the diff before committing.  Types and fields *added* around the five
+documents are Canvas moving on and cost nothing; a field the documents use
+that is *removed* or `@deprecated` fails the test, which names the
+document and the field, and that is a code change to make before pushing
+anything that sends it.
+
 ## Two schema sources
 
 The instance's own introspection is what the code actually talks to, so
-prefer it when regenerating.  The token comes from the environment, never
-the command line, and never reaches the fixture:
+prefer it when regenerating; the procedure above uses it.  To run the
+extractor by hand, the token comes from the environment and never reaches
+the fixture — export it from a file rather than typing it on a command
+line the shell would remember:
 
 ```bash
-CANVAS_API_TOKEN=... python3 test/contract/extract-canvas-graphql-contract.py \
+CANVAS_API_TOKEN=$(cat ~/.canvas-token) python3 test/contract/extract-canvas-graphql-contract.py \
     --introspect https://canvas.example.edu
 ```
 
@@ -93,14 +122,13 @@ Requires graphql-core (`pip install graphql-core`).  The script validates
 each document first and refuses to write a fixture for one that does not
 parse or validate, naming the file and the errors.
 
-## When to re-run
+## When to re-run, besides the semester boundary
 
 - A document changes or a new one is added (add its file to `SOURCES` in
   the script and its symbol to `org-canvas-graphql-contract--documents` in
   the test; a document that names a type the fixture lacks fails the test
   with "is not in the fixture", which is the cue).
 - A live GraphQL run fails with a validation error.
-- A Canvas release lands.
 
 What the check proves and what it cannot: the *shape* — that the fields,
 arguments and input types the documents name exist on the schema they were

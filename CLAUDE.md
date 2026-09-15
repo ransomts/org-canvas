@@ -261,6 +261,7 @@ eldev test -u "on,text,dontsend"                              # Text summary (ma
 ELDEV_JUNIT=1 JUNIT_REPORT_FILE=test-results.xml eldev test   # JUnit XML for Codecov
 grep -rn buttercup-pending test/                              # Specs skipped on Emacs 29.x
 scripts/test-each-file.sh                                     # Every test file alone (~2 min)
+eldev exec -f scripts/graphql-introspect.el                   # Refresh the GraphQL fixture from the live instance, once per semester (test/contract/README.md)
 ```
 
 Every test file must pass on its own (`scripts/test-each-file.sh`, CI's `isolation` job; #260): test-helper loads the whole package, and a spec that sets global state — the log level above all — restores it.

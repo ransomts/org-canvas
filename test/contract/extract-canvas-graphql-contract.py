@@ -34,6 +34,7 @@ import json
 import os
 import re
 import sys
+import urllib.error
 import urllib.request
 
 try:
@@ -103,8 +104,14 @@ def load_schema_introspection(base_url):
         headers={"Authorization": "Bearer " + token,
                  "Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(request) as reply:
-        payload = json.load(reply)
+    try:
+        with urllib.request.urlopen(request) as reply:
+            payload = json.load(reply)
+    except urllib.error.HTTPError as err:
+        sys.exit(f"introspection failed: HTTP {err.code} from {request.full_url}"
+                 + (" (expired or revoked token?)" if err.code == 401 else ""))
+    except urllib.error.URLError as err:
+        sys.exit(f"introspection failed: {err.reason}")
     if "errors" in payload:
         sys.exit("introspection failed: " + json.dumps(payload["errors"]))
     return build_client_schema(payload["data"])
