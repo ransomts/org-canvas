@@ -1797,53 +1797,112 @@ Replaces problematic characters with underscores."
 
 ;;;; Entry Points
 
+;; Each command takes its target as an optional argument and prompts only
+;; when it is nil, so a script, a keyboard macro over several columns or
+;; a tool built on the package can pull, open and refresh without the
+;; minibuffer (issue #280).  The prompts live in the resolvers below
+;; rather than in a sexp `interactive' spec, which blanks undercover's
+;; line counts for the whole body (see CLAUDE.md).
+
+(defun org-canvas--submissions-resolve-assignment (assignment)
+  "Return the Canvas assignment object ASSIGNMENT names.
+An integer, or a string of digits, is an id and costs one request; any
+other string is an exact name, found in the course's assignment list;
+nil asks for the name in the minibuffer.  Signal a `user-error' when
+nothing matches, so a script is told its mistake instead of pulling
+the wrong column."
+  (if (or (integerp assignment)
+          (and (stringp assignment) (string-match-p "\\`[0-9]+\\'" assignment)))
+      (or (org-canvas--submissions-fetch-assignment (format "%s" assignment))
+          (user-error "No assignment with id %s in this course" assignment))
+    (let* ((assignments (org-canvas--submissions-fetch-assignments))
+           (names (mapcar (lambda (a) (alist-get 'name a)) assignments))
+           (name (or assignment (completing-read "Assignment: " names nil t))))
+      (or (cl-find-if (lambda (a) (equal (alist-get 'name a) name)) assignments)
+          (user-error "No assignment named %s in this course" name)))))
+
+(defun org-canvas--submissions-grading-file-path (file)
+  "Return the path of the grading file FILE names, or ask for one.
+FILE is an absolute path, or a name under
+`org-canvas-submissions-directory' with or without its .org: the
+file's own name, or the assignment's, which the pull spelled into a
+file name.  Nil offers the directory's files in the minibuffer.  A
+name that matches no file is a `user-error'."
+  (let ((dir (org-canvas--submissions-dir)))
+    (if file
+        (let* ((given (if (string-suffix-p ".org" file) file (concat file ".org")))
+               (candidates (list (expand-file-name given dir)
+                                 (org-canvas--submissions-file-path file))))
+          (or (cl-find-if #'file-exists-p candidates)
+              (user-error "No grading file %s in %s" file dir)))
+      (let ((files (and (file-directory-p dir)
+                        (directory-files dir nil "\\.org\\'"))))
+        (unless files
+          (user-error "No grading files in %s; pull an assignment first" dir))
+        (expand-file-name (completing-read "Grading file: " files nil t) dir)))))
+
+(defun org-canvas--submissions-visit-grading-file (path)
+  "Return the buffer visiting the grading file PATH, set up for grading.
+Org mode and `org-canvas-submissions-mode' are on and the assignment's
+id, name and view are recovered from the file's header, so any grading
+command can run in the buffer it returns."
+  (let ((buf (org-canvas--find-file-noselect path)))
+    (with-current-buffer buf
+      (unless (derived-mode-p 'org-mode)
+        (org-mode))
+      (org-canvas-submissions-mode 1)
+      (org-canvas--submissions-ensure-context))
+    buf))
+
 ;;;###autoload
-(defun org-canvas-pull-submissions ()
-  "Select an assignment and pull its submissions.
-The detail view is saved as a grading file under
-`org-canvas-submissions-directory' and visited; the summary view is
-an ephemeral table.  Which one opens first is
-`org-canvas-submissions-default-view'."
+(defun org-canvas-pull-submissions (&optional assignment download)
+  "Pull ASSIGNMENT's submissions and return the buffer showing them.
+ASSIGNMENT is a Canvas assignment id (an integer, or a string of
+digits) or an assignment's exact name; interactively, and when it is
+nil, the name is read in the minibuffer.  The detail view is saved as
+a grading file under `org-canvas-submissions-directory' and visited;
+the summary view is an ephemeral table.  Which one opens first is
+`org-canvas-submissions-default-view'.  With DOWNLOAD non-nil (from
+Lisp; there is no prefix argument for it) the grading file is the
+view whatever the default, and every student's attachments are
+downloaded beside it the way D does.  A script that knows the id
+calls (org-canvas-pull-submissions \"2497503\" t) and needs nothing
+interactive (issue #280)."
   (interactive)
-  (let* ((assignments (org-canvas--submissions-fetch-assignments))
-         (names (mapcar (lambda (a) (alist-get 'name a)) assignments))
-         (selected-name (completing-read "Assignment: " names nil t))
-         (selected (cl-find-if (lambda (a)
-                                 (equal (alist-get 'name a) selected-name))
-                               assignments))
+  (let* ((selected (org-canvas--submissions-resolve-assignment assignment))
+         (name (alist-get 'name selected))
          (assignment-id (number-to-string (alist-get 'id selected)))
-         (submissions (org-canvas--submissions-fetch-for-assignment assignment-id)))
-    (org-canvas--submissions-display
-     selected-name assignment-id submissions
-     org-canvas-submissions-default-view selected)))
+         (submissions (org-canvas--submissions-fetch-for-assignment assignment-id))
+         (buf (org-canvas--submissions-display
+               name assignment-id submissions
+               (if download 'detail org-canvas-submissions-default-view)
+               selected)))
+    (when download
+      (with-current-buffer buf
+        (org-canvas-submissions-download-all-attachments)))
+    buf))
 
 ;;;###autoload
-(defun org-canvas-open-submissions ()
-  "Visit a saved grading file and turn on `org-canvas-submissions-mode'.
+(defun org-canvas-open-submissions (&optional file)
+  "Visit the grading file FILE with `org-canvas-submissions-mode' on.
 Grading files are the detail views `org-canvas-pull-submissions' saves
-under `org-canvas-submissions-directory'."
+under `org-canvas-submissions-directory'.  FILE is an absolute path,
+or a name under that directory with or without its .org — the file's
+name or the assignment's; interactively, and when it is nil, one is
+chosen in the minibuffer.  Return the buffer (issue #280)."
   (interactive)
-  (let* ((dir (org-canvas--submissions-dir))
-         (files (and (file-directory-p dir)
-                     (directory-files dir nil "\\.org\\'"))))
-    (unless files
-      (user-error "No grading files in %s; pull an assignment first" dir))
-    (find-file (expand-file-name (completing-read "Grading file: " files nil t) dir))
-    (org-canvas-submissions-mode 1)
-    (org-canvas--submissions-ensure-context)
-    (when (org-canvas--submissions-refresh-links)
-      (save-buffer))))
+  (let ((buf (org-canvas--submissions-visit-grading-file
+              (org-canvas--submissions-grading-file-path file))))
+    (with-current-buffer buf
+      (when (org-canvas--submissions-refresh-links)
+        (save-buffer)))
+    (switch-to-buffer buf)
+    buf))
 
-;;;###autoload
-(defun org-canvas-submissions-refresh ()
-  "Re-fetch and re-render the submissions for the current buffer.
-A grading file keeps what was typed in it — scores, Rubric rows, notes
-and drafted comments — across the re-render.  The summary table does
-not, so there the command asks first when it holds score edits that
-were never pushed."
-  (interactive)
-  (unless org-canvas-submissions-mode
-    (user-error "Not in a submissions buffer"))
+(defun org-canvas--submissions-refresh-buffer ()
+  "Re-fetch and re-render the current buffer's submissions; return the buffer.
+The body of `org-canvas-submissions-refresh', shared with
+`org-canvas-submissions-refresh-file'."
   (org-canvas--submissions-ensure-context)
   (let ((id org-canvas-submissions--assignment-id)
         (name org-canvas-submissions--assignment-name)
@@ -1857,6 +1916,35 @@ were never pushed."
       (org-canvas--submissions-display
        name id submissions view (org-canvas--submissions-fetch-assignment id)))))
 
+;;;###autoload
+(defun org-canvas-submissions-refresh ()
+  "Re-fetch and re-render the submissions for the current buffer.
+A grading file keeps what was typed in it — scores, Rubric rows, notes
+and drafted comments — across the re-render.  The summary table does
+not, so there the command asks first when it holds score edits that
+were never pushed."
+  (interactive)
+  (unless org-canvas-submissions-mode
+    (user-error "Not in a submissions buffer"))
+  (org-canvas--submissions-refresh-buffer))
+
+;;;###autoload
+(defun org-canvas-submissions-refresh-file (&optional file)
+  "Re-pull the grading file FILE from Canvas and return its buffer.
+FILE is what `org-canvas-open-submissions' accepts; nil asks for one.
+The file is visited with the mode and its context set, re-rendered as
+`org-canvas-submissions-refresh' does — what was typed in it carried
+over — and saved, so a script can go on in the buffer:
+
+  (with-current-buffer (org-canvas-submissions-refresh-file \"Journal_02\")
+    (org-canvas-submissions-download-all-attachments))
+
+\(issue #280)."
+  (interactive)
+  (with-current-buffer (org-canvas--submissions-visit-grading-file
+                        (org-canvas--submissions-grading-file-path file))
+    (org-canvas--submissions-refresh-buffer)))
+
 (defun org-canvas--submissions-display (assignment-name assignment-id submissions view &optional assignment)
   "Show SUBMISSIONS for ASSIGNMENT-NAME (ASSIGNMENT-ID) in VIEW.
 The detail view is the grading file under the submissions directory,
@@ -1864,7 +1952,7 @@ rendered and saved; the summary view is an ephemeral buffer.
 ASSIGNMENT, the Canvas assignment object when at hand, supplies the
 rubric header of the detail view.  Notes, drafted comments, Rubric
 rows and typed scores already in the file are carried over to the
-new render."
+new render.  Return the buffer."
   (let ((buf (if (eq view 'detail)
                  (org-canvas--submissions-grading-buffer assignment-name)
                (get-buffer-create (format "*submissions: %s*" assignment-name)))))
@@ -1889,7 +1977,8 @@ new render."
         (org-canvas-submissions-mode 1)
         (when buffer-file-name
           (save-buffer))))
-    (switch-to-buffer buf)))
+    (switch-to-buffer buf)
+    buf))
 
 (defun org-canvas--submissions-grading-buffer (assignment-name)
   "Return the buffer visiting ASSIGNMENT-NAME's grading file.
