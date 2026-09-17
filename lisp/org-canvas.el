@@ -92,6 +92,7 @@
 (require 'org-canvas-submissions)
 (require 'org-canvas-quiz-submissions)
 (require 'org-canvas-peer-reviews)
+(require 'org-canvas-submissions-status)
 (require 'org-canvas-messages)
 (require 'org-canvas-setup)
 
