@@ -251,21 +251,27 @@ Return non-nil when found."
 
 (defun org-canvas--submissions-pending-count ()
   "Return how many typed score edits have not been pushed.
-Drafted comments, notes and Rubric rows are not counted: a re-pull
-carries them over, and a score the rows derive comes back with them."
+Only the summary table asks: a re-pull of the grading file carries
+typed scores, drafted comments, notes and Rubric rows over, and a
+score the rows derive comes back with them (issue #281)."
   (cl-count-if (lambda (ch)
                  (and (not (plist-get ch :score-derived))
                       (not (equal (plist-get ch :new-score) (plist-get ch :old-score)))))
                (org-canvas--submissions-collect-grade-changes)))
 
 (defun org-canvas--submissions-guard-unpushed (verb)
-  "Ask before VERB (a capitalized verb) discards unpushed edits."
+  "Ask before VERB (a capitalized verb) discards unpushed edits.
+Under `noninteractive' there is nobody to ask: the edits are named in
+a message and VERB goes ahead, since a prompt a batch Emacs cannot
+answer would hang it (issue #281)."
   (let ((pending (org-canvas--submissions-pending-count)))
-    (when (and (> pending 0)
-               (not (y-or-n-p
-                     (format "%d unpushed score change(s) will be lost; %s anyway? "
-                             pending verb))))
-      (user-error "%s cancelled" verb))))
+    (when (> pending 0)
+      (cond (noninteractive
+             (message "%d unpushed score change(s) lost by %s" pending verb))
+            ((not (y-or-n-p
+                   (format "%d unpushed score change(s) will be lost; %s anyway? "
+                           pending verb)))
+             (user-error "%s cancelled" verb))))))
 
 (defun org-canvas--submissions-entered-score (submission)
   "Return the grader-entered score of SUBMISSION, or nil.
@@ -977,10 +983,42 @@ Either may be nil.  Does nothing when the entry has no such heading."
 
 ;;;; Carry-over Across Pulls
 
+(defun org-canvas--submissions-score-carryover ()
+  "Return the typed SCORE of the entry at point with its baseline, or nil.
+The value is (:typed SCORE :baseline CANVAS-SCORE): the score as typed
+and the CANVAS_SCORE it was typed against, when the two differ; a 0
+typed on a missing row that never had a CANVAS_SCORE counts.  Nil
+when the score is what Canvas holds, or no SCORE is present at all."
+  (let ((typed (org-entry-get (point) "SCORE"))
+        (baseline (org-entry-get (point) "CANVAS_SCORE")))
+    (when (and typed
+               (not (equal (org-canvas--submissions-parse-score typed)
+                           (org-canvas--submissions-parse-score baseline))))
+      (list :typed typed :baseline baseline))))
+
+(defun org-canvas--submissions-restore-score (carry)
+  "Put CARRY, a `org-canvas--submissions-score-carryover' value, back at point.
+Nothing is written when Canvas now holds the typed score (the same
+grade was pushed meanwhile).  When Canvas's score is no longer the
+baseline the score was typed against — someone graded in SpeedGrader
+since — the heading is marked CONFLICT the way a push does, since the
+SCORE shown is the grader's and not what Canvas holds (issue #281)."
+  (let ((fresh (org-entry-get (point) "CANVAS_SCORE"))
+        (typed (plist-get carry :typed)))
+    (unless (equal (org-canvas--submissions-parse-score fresh)
+                   (org-canvas--submissions-parse-score typed))
+      (org-entry-put (point) "SCORE" typed)
+      (unless (equal fresh (plist-get carry :baseline))
+        (org-entry-put (point) "CONFLICT"
+                       (format "score: Canvas has %s" (or fresh "no grade")))))))
+
 (defun org-canvas--submissions-collect-carryover ()
-  "Return (user-id . (:notes TEXT :draft TEXT :rubric ROWS)) for entries with any.
-Read from the current buffer before a re-render replaces it.  ROWS are
-the unpushed Rubric rows, see `org-canvas--submissions-rubric-carryover'."
+  "Return (user-id . (:notes TEXT :draft TEXT :rubric ROWS :score SCORE)).
+Read from the current buffer before a re-render replaces it, one
+entry per student heading that carries any of them.  ROWS are the
+unpushed Rubric rows, see
+`org-canvas--submissions-rubric-carryover'; SCORE is the typed score
+with its baseline, see `org-canvas--submissions-score-carryover'."
   (let ((carry nil))
     (save-excursion
       (goto-char (point-min))
@@ -989,10 +1027,11 @@ the unpushed Rubric rows, see `org-canvas--submissions-rubric-carryover'."
         (let ((user-id (org-entry-get (point) "USER_ID"))
               (notes (org-canvas--submissions-section-text org-canvas--submissions-notes-heading))
               (draft (org-canvas--submissions-section-text org-canvas--submissions-draft-heading))
-              (rubric (org-canvas--submissions-rubric-carryover)))
-          (when (and user-id (or notes draft rubric))
+              (rubric (org-canvas--submissions-rubric-carryover))
+              (score (org-canvas--submissions-score-carryover)))
+          (when (and user-id (or notes draft rubric score))
             (push (cons (string-to-number user-id)
-                        (list :notes notes :draft draft :rubric rubric))
+                        (list :notes notes :draft draft :rubric rubric :score score))
                   carry)))
         (forward-line 1)))
     carry))
@@ -1000,13 +1039,16 @@ the unpushed Rubric rows, see `org-canvas--submissions-rubric-carryover'."
 (defun org-canvas--submissions-restore-carryover (carry)
   "Write CARRY back under the students it names.
 CARRY is the alist `org-canvas--submissions-collect-carryover' produced
-before the buffer was re-rendered."
+before the buffer was re-rendered.  The score goes last, so a heading
+whose score and rubric both moved on Canvas is marked for the score,
+the way the push's conflict check orders them."
   (save-excursion
     (dolist (entry carry)
       (when (org-canvas--submissions-goto-user (car entry))
         (let ((notes (plist-get (cdr entry) :notes))
               (draft (plist-get (cdr entry) :draft))
-              (rubric (plist-get (cdr entry) :rubric)))
+              (rubric (plist-get (cdr entry) :rubric))
+              (score (plist-get (cdr entry) :score)))
           (when notes
             (org-canvas--submissions-set-section org-canvas--submissions-notes-heading
                                                  org-canvas-submissions-notes-template notes))
@@ -1014,7 +1056,9 @@ before the buffer was re-rendered."
             (org-canvas--submissions-set-section org-canvas--submissions-draft-heading
                                                  org-canvas-submissions-comment-template draft))
           (when rubric
-            (org-canvas--submissions-restore-rubric rubric)))))))
+            (org-canvas--submissions-restore-rubric rubric))
+          (when score
+            (org-canvas--submissions-restore-score score)))))))
 
 (defun org-canvas--submissions-collect-comment-drafts ()
   "Return (:user-id :name :text) for every heading with a drafted comment."
@@ -1793,7 +1837,10 @@ under `org-canvas-submissions-directory'."
 ;;;###autoload
 (defun org-canvas-submissions-refresh ()
   "Re-fetch and re-render the submissions for the current buffer.
-Ask first when the buffer holds score edits that were never pushed."
+A grading file keeps what was typed in it — scores, Rubric rows, notes
+and drafted comments — across the re-render.  The summary table does
+not, so there the command asks first when it holds score edits that
+were never pushed."
   (interactive)
   (unless org-canvas-submissions-mode
     (user-error "Not in a submissions buffer"))
@@ -1803,7 +1850,8 @@ Ask first when the buffer holds score edits that were never pushed."
         (view org-canvas-submissions--current-view))
     (unless id
       (user-error "No assignment ID in this buffer"))
-    (org-canvas--submissions-guard-unpushed "Refresh")
+    (when (eq view 'summary)
+      (org-canvas--submissions-guard-unpushed "Refresh"))
     (message "Refreshing submissions for %s..." name)
     (let ((submissions (org-canvas--submissions-fetch-for-assignment id)))
       (org-canvas--submissions-display
@@ -1814,16 +1862,17 @@ Ask first when the buffer holds score edits that were never pushed."
 The detail view is the grading file under the submissions directory,
 rendered and saved; the summary view is an ephemeral buffer.
 ASSIGNMENT, the Canvas assignment object when at hand, supplies the
-rubric header of the detail view.  Notes and drafted comments already
-in the file are carried over to the new render."
+rubric header of the detail view.  Notes, drafted comments, Rubric
+rows and typed scores already in the file are carried over to the
+new render."
   (let ((buf (if (eq view 'detail)
                  (org-canvas--submissions-grading-buffer assignment-name)
                (get-buffer-create (format "*submissions: %s*" assignment-name)))))
     (with-current-buffer buf
+      (unless (derived-mode-p 'org-mode)
+        (org-mode))
       (let ((inhibit-read-only t)
             (carry (and (eq view 'detail) (org-canvas--submissions-collect-carryover))))
-        (unless (derived-mode-p 'org-mode)
-          (org-mode))
         (if (eq view 'summary)
             (org-canvas--submissions-render-summary
              assignment-name assignment-id submissions)
@@ -1844,16 +1893,11 @@ in the file are carried over to the new render."
 
 (defun org-canvas--submissions-grading-buffer (assignment-name)
   "Return the buffer visiting ASSIGNMENT-NAME's grading file.
-Create the submissions directory as needed, and ask before an existing
-file's unpushed score edits are overwritten."
+Create the submissions directory as needed.  An existing file is not
+guarded: whatever was typed in it is carried over the re-render
+\(`org-canvas--submissions-collect-carryover')."
   (org-canvas--submissions-ensure-directory)
-  (let ((buf (org-canvas--find-file-noselect (org-canvas--submissions-file-path assignment-name))))
-    (with-current-buffer buf
-      (unless (derived-mode-p 'org-mode)
-        (org-mode))
-      (org-canvas--submissions-ensure-context)
-      (org-canvas--submissions-guard-unpushed "Re-pull"))
-    buf))
+  (org-canvas--find-file-noselect (org-canvas--submissions-file-path assignment-name)))
 
 
 ;;;; Grade Writing
