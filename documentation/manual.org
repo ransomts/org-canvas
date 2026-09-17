@@ -2731,6 +2731,8 @@ Pulling an assignment's submissions produces a *grading file*: an Org file with 
 
 =v= shows a read-only summary table derived from the file's headings, so it reflects grades not yet pushed; =v= there returns to the file. =g= re-pulls from Canvas and rewrites the file, but everything you typed in it comes back after the re-pull: scores (a =SCORE= that differs from its =CANVAS_SCORE=, the 0 on a missing row included), drafted comments, notes, and =Rubric= scores and comments. Nothing is asked first. The summary table is the one place a refresh loses an edit, so there =g= still asks when it holds unpushed scores (and goes ahead, saying so, when Emacs runs in batch and cannot ask).
 
+A refresh also says what changed since the file was last written, which is the reason anyone refreshes. The echo area gets the counts — =Refreshed Journal 02: 3 new, 1 resubmitted after grading, 105 posted, 1 left the course (1 kept)= — and the log one line per student. The kinds, one per student: *new* work arrived (a first submission, a later attempt on an ungraded row, a student the file did not have); *resubmitted after grading*, a new attempt on a row that carries a score, whose heading is marked =:CONFLICT: attempt: 2 submitted after grading= so the old score is not mistaken for a grade of the new file; *scored on Canvas since the pull*, the =CANVAS_SCORE= moved (someone graded in SpeedGrader); *posted*, the grade became visible to the student; *left the course*, a student no longer in the pull. When nothing moved the line says so, naming the previous =PULLED_AT=; the first pull of a file says nothing. A departed student's heading is dropped unless it holds work of yours — notes, a draft, =Rubric= rows, a typed score — in which case it stays with =:STATUS: left= and whatever it held, and no push or completion rule ever touches it; delete the heading when you are done with it.
+
 ** Batch Use
 
 The grading workflow repeats every week per column, and the interactive path is right for one column and wrong for six. Every entry point therefore takes its target as an argument and prompts only when it is nil, so a script, a keyboard macro or a tool built on org-canvas can drive it without the minibuffer:
@@ -2752,7 +2754,7 @@ emacs --batch -l ~/.emacs.d/init.el \
 
 ** Conflicts
 
-Before pushing from a saved file, org-canvas re-reads the assignment once and compares. A student whose grade on Canvas no longer matches the file's =CANVAS_SCORE= (someone graded in SpeedGrader since the pull), whose =attempt= changed (a resubmission), or whose rubric assessment on Canvas no longer matches =CANVAS_RUBRIC= when the push carries rubric rows, is skipped and gets a =:CONFLICT:= property naming what moved and what Canvas holds: =score: Canvas has 93=, =attempt: Canvas has 2=, or =rubric: assessed on Canvas since the pull=. Resolve it by pulling again, or by setting =CANVAS_SCORE= to Canvas's value to say the override is intended (the push's closing message says so too); the property is cleared on the next successful push. A re-pull keeps the =SCORE= and the =Rubric= rows you typed and, when Canvas's grade or assessment moved since you typed them, marks the heading =:CONFLICT:= the same way (=score: Canvas has 93=, or =rubric: assessed on Canvas since these rows were typed=), since what is shown is yours and not what Canvas holds; a typed score Canvas now agrees with is simply confirmed. Set =org-canvas-submissions-check-conflicts= to nil to push without the check.
+Before pushing from a saved file, org-canvas re-reads the assignment once and compares. A student whose grade on Canvas no longer matches the file's =CANVAS_SCORE= (someone graded in SpeedGrader since the pull), whose =attempt= changed (a resubmission), or whose rubric assessment on Canvas no longer matches =CANVAS_RUBRIC= when the push carries rubric rows, is skipped and gets a =:CONFLICT:= property naming what moved and what Canvas holds: =score: Canvas has 93=, =attempt: Canvas has 2=, or =rubric: assessed on Canvas since the pull=. Resolve it by pulling again, or by setting =CANVAS_SCORE= to Canvas's value to say the override is intended (the push's closing message says so too); the property is cleared on the next successful push. A re-pull keeps the =SCORE= and the =Rubric= rows you typed and, when Canvas's grade or assessment moved since you typed them, marks the heading =:CONFLICT:= the same way (=score: Canvas has 93=, or =rubric: assessed on Canvas since these rows were typed=), since what is shown is yours and not what Canvas holds; a typed score Canvas now agrees with is simply confirmed. A refresh marks a resubmission the same way (=attempt: 2 submitted after grading=) when the row already carried a grade, so the mark is there while you read, not only when you push. Set =org-canvas-submissions-check-conflicts= to nil to push without the check.
 
 ** Properties in a Grading File
 
@@ -2767,7 +2769,7 @@ Before pushing from a saved file, org-canvas re-reads the assignment once and co
 | =#+PROPERTY: CANVAS_RUBRIC_USE_FOR_GRADING= | Whether the rubric's total sets the grade; the push then derives =SCORE= from the =Rubric= rows |
 | =:USER_ID:= | Canvas user id; the key every push uses |
 | =:SUBMISSION_ID:= | Canvas submission id, used for comments |
-| =:STATUS:= | submitted, late, missing, graded, pending_review, or unsubmitted at pull time |
+| =:STATUS:= | submitted, late, missing, graded, pending_review, or unsubmitted at pull time; =left= on the kept heading of a student no longer in the course, which no push or completion rule touches |
 | =:DAYS_LATE:= | Lateness at pull time, rounded up to whole days; present only when late |
 | =:SCORE:= | The grade you enter (or entered before); =EX= excuses the student |
 | =:CANVAS_SCORE:= | The entered score as last pulled or pushed; the push baseline |
@@ -2775,7 +2777,7 @@ Before pushing from a saved file, org-canvas re-reads the assignment once and co
 | =:FINAL_SCORE:= | Present only when a Canvas late policy made the recorded score differ from the entered one |
 | =:ATTEMPT:= | Submission attempt at pull time; a change flags a resubmission |
 | =:SUBMITTED_AT:= | Submission timestamp |
-| =:CONFLICT:= | Written by a push that skipped this heading; cleared by the next successful push |
+| =:CONFLICT:= | Written by a push that skipped this heading, or by a refresh that found Canvas moved under a typed score or a new attempt on a graded row; cleared by the next successful push |
 
 Scores compare as entered values: with a late policy of 20% per day, a student graded 5 who was a day late shows =SCORE: 5=, =CANVAS_SCORE: 5=, =FINAL_SCORE: 4=.
 

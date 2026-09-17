@@ -1798,6 +1798,160 @@ OVERRIDES adjust `test-org-canvas-make-submission'; a prompt fails."
         (expect fetched :to-be-truthy)
         (expect messages :to-contain "1 unpushed score change(s) lost by Refresh")))))
 
+;;;; What a refresh changed (issue #282)
+
+(defvar test-refresh--messages nil "What the last `test-refresh--run' said.")
+(defvar test-refresh--log nil "What the last `test-refresh--run' logged at INFO.")
+
+(defun test-refresh--run (subs)
+  "Refresh the current grading file as if Canvas held SUBS.
+Messages and INFO log lines are collected in `test-refresh--messages'
+and `test-refresh--log'; a prompt fails."
+  (setq test-refresh--messages nil
+        test-refresh--log nil)
+  (cl-letf (((symbol-function 'org-canvas--submissions-fetch-for-assignment) (lambda (_id) subs))
+            ((symbol-function 'org-canvas--submissions-fetch-assignment) (lambda (_id) '((id . 1001))))
+            ((symbol-function 'org-canvas--submissions-heading-for-assignment) (lambda (_id) nil))
+            ((symbol-function 'switch-to-buffer) (lambda (b) b))
+            ((symbol-function 'y-or-n-p) (lambda (_) (error "must not ask")))
+            ((symbol-function 'message)
+             (lambda (fmt &rest args) (push (apply #'format fmt args) test-refresh--messages)))
+            ((symbol-function 'org-canvas--log-info)
+             (lambda (_logger fmt &rest args) (push (apply #'format fmt args) test-refresh--log))))
+    (org-canvas-submissions-refresh)))
+
+(defun test-refresh--summary ()
+  "Return the Refreshed line of the last `test-refresh--run'."
+  (cl-find-if (lambda (m) (string-prefix-p "Refreshed " m)) test-refresh--messages))
+
+(defun test-refresh--student (name id &rest props)
+  "Return a grading-file heading for NAME with USER_ID ID and PROPS."
+  (concat (format "* %s\n:PROPERTIES:\n:USER_ID: %s\n" name id)
+          (apply #'concat props)
+          ":END:\n"))
+
+(defun test-refresh--bob (&optional overrides)
+  "Return a submission for Beta, Bob (5002), adjusted by OVERRIDES."
+  (test-org-canvas-make-submission
+   (append overrides
+           '((id . 50002) (user_id . 5002)
+             (user . ((id . 5002) (name . "Bob Beta") (sortable_name . "Beta, Bob")))))))
+
+(describe "a refresh says what changed (issue #282)"
+  (it "counts new work, posted rows and scores moved on Canvas, and logs each student"
+    (with-org-canvas-test-config
+      (with-grading-file (concat test-grading-file-header
+                                 (test-refresh--student "Adams, Alice" 5001
+                                                        ":STATUS: unsubmitted\n")
+                                 (test-refresh--student "Beta, Bob" 5002
+                                                        ":STATUS: submitted\n:SCORE: 80\n:CANVAS_SCORE: 80\n:ATTEMPT: 1\n:SUBMITTED_AT: <2026-02-15 Sun 23:45>\n"))
+        (test-refresh--run
+         (list (test-org-canvas-make-submission '((score . nil)))
+               (test-refresh--bob '((score . 85) (posted_at . "2026-02-20T10:00:00Z")))))
+        (expect (test-refresh--summary)
+                :to-equal "Refreshed HW: 1 new, 1 scored on Canvas since the pull")
+        (expect test-refresh--log :to-contain "[Refresh] Adams, Alice: new")
+        (expect test-refresh--log :to-contain "[Refresh] Beta, Bob: scored on Canvas since the pull")
+        (org-canvas--submissions-goto-user 5002)
+        (expect (org-entry-get (point) "CONFLICT") :to-be nil)
+        (expect (org-entry-get (point) "POSTED_AT") :to-be-truthy))))
+  (it "counts a row that was posted, on its own"
+    (with-org-canvas-test-config
+      (with-grading-file (concat test-grading-file-header
+                                 (test-refresh--student "Beta, Bob" 5002
+                                                        ":STATUS: graded\n:SCORE: 92\n:CANVAS_SCORE: 92\n:ATTEMPT: 1\n:SUBMITTED_AT: <2026-02-15 Sun 23:45>\n"))
+        (test-refresh--run (list (test-refresh--bob '((posted_at . "2026-02-20T10:00:00Z")))))
+        (expect (test-refresh--summary) :to-equal "Refreshed HW: 1 posted"))))
+  (it "marks a resubmission on a graded row CONFLICT and a later attempt on an ungraded row new"
+    (with-org-canvas-test-config
+      (with-grading-file (concat test-grading-file-header
+                                 (test-refresh--student "Adams, Alice" 5001
+                                                        ":STATUS: submitted\n:ATTEMPT: 1\n:SUBMITTED_AT: <2026-02-15 Sun 23:45>\n")
+                                 (test-refresh--student "Beta, Bob" 5002
+                                                        ":STATUS: graded\n:SCORE: 3\n:CANVAS_SCORE: 3\n:ATTEMPT: 1\n:SUBMITTED_AT: <2026-02-15 Sun 23:45>\n"))
+        (test-refresh--run
+         (list (test-org-canvas-make-submission '((score . nil) (attempt . 2)))
+               (test-refresh--bob '((score . 3) (attempt . 2) (late . t)))))
+        (expect (test-refresh--summary)
+                :to-equal "Refreshed HW: 1 new, 1 resubmitted after grading")
+        (org-canvas--submissions-goto-user 5002)
+        (expect (org-entry-get (point) "CONFLICT") :to-equal "attempt: 2 submitted after grading")
+        (expect (org-entry-get (point) "ATTEMPT") :to-equal "2")
+        (expect (org-entry-get (point) "SCORE") :to-equal "3")
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "CONFLICT") :to-be nil))))
+  (it "says when nothing changed, naming the last pull"
+    (with-org-canvas-test-config
+      (with-grading-file (concat test-grading-file-header
+                                 "#+PROPERTY: PULLED_AT <2026-02-16 Mon 09:00>\n"
+                                 (test-refresh--student "Adams, Alice" 5001
+                                                        ":STATUS: submitted\n:SCORE: 92\n:CANVAS_SCORE: 92\n:ATTEMPT: 1\n:SUBMITTED_AT: <2026-02-15 Sun 23:45>\n"))
+        (test-refresh--run (list (test-org-canvas-make-submission '((attempt . 1)))))
+        (expect (test-refresh--summary)
+                :to-equal "Refreshed HW: no changes since <2026-02-16 Mon 09:00>")
+        (expect test-refresh--log :not :to-contain "[Refresh] Adams, Alice: new"))))
+  (it "says nothing after the first pull of a file"
+    (with-org-canvas-test-config
+      (with-grading-file test-grading-file-header
+        ;; A file with no student heading yet reads as a summary; this is
+        ;; the grading file being written for the first time.
+        (setq-local org-canvas-submissions--current-view 'detail)
+        (test-refresh--run (list (test-org-canvas-make-submission)))
+        (expect (test-refresh--summary) :to-be nil)
+        (expect (buffer-string) :to-match "^\\* Adams, Alice"))))
+  (it "drops a departed student with nothing under their heading, and says so"
+    (with-org-canvas-test-config
+      (with-grading-file (concat test-grading-file-header
+                                 (test-refresh--student "Adams, Alice" 5001
+                                                        ":STATUS: submitted\n:SCORE: 92\n:CANVAS_SCORE: 92\n:ATTEMPT: 1\n:SUBMITTED_AT: <2026-02-15 Sun 23:45>\n")
+                                 (test-refresh--student "Beta, Bob" 5002 ":STATUS: missing\n"))
+        (test-refresh--run (list (test-org-canvas-make-submission '((attempt . 1)))))
+        (expect (test-refresh--summary) :to-equal "Refreshed HW: 1 left the course (0 kept)")
+        (expect test-refresh--log :to-contain "[Refresh] Beta, Bob: left the course")
+        (expect (org-canvas--submissions-goto-user 5002) :to-be nil))))
+  (it "keeps a departed student's heading for the work under it, marked left, and never pushes it"
+    (with-org-canvas-test-config
+      (with-grading-file (concat test-grading-file-header
+                                 (test-refresh--student "Adams, Alice" 5001
+                                                        ":STATUS: submitted\n:SCORE: 92\n:CANVAS_SCORE: 92\n:ATTEMPT: 1\n:SUBMITTED_AT: <2026-02-15 Sun 23:45>\n")
+                                 (test-refresh--student "Beta, Bob" 5002
+                                                        ":STATUS: submitted\n:SCORE: 0\n:CANVAS_SCORE: 80\n")
+                                 "\n** Notes\nExtension granted to Friday.\n\n** Comment to post\nSee me.\n")
+        (test-refresh--run (list (test-org-canvas-make-submission '((attempt . 1)))))
+        (expect (test-refresh--summary) :to-equal "Refreshed HW: 1 left the course (1 kept)")
+        (expect test-refresh--log :to-contain "[Refresh] Beta, Bob: left the course (heading kept)")
+        (expect (org-canvas--submissions-goto-user 5002) :to-be-truthy)
+        (expect (org-entry-get (point) "STATUS") :to-equal "left")
+        (expect (org-entry-get (point) "SCORE") :to-equal "0")
+        (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "80")
+        (expect (org-entry-get (point) "CONFLICT") :to-be nil)
+        (expect (org-canvas--submissions-section-text org-canvas--submissions-notes-heading)
+                :to-equal "Extension granted to Friday.")
+        (expect (org-canvas--submissions-comment-draft) :to-equal "See me.")
+        ;; Alphabetical order is kept: Adams before Beta.
+        (expect (buffer-string) :to-match "\\* Adams, Alice\\(.\\|\n\\)*\\* Beta, Bob")
+        ;; Nothing is ever pushed for them.
+        (expect (org-canvas--submissions-collect-grade-changes) :to-be nil)
+        (expect (org-canvas--submissions-collect-comment-drafts) :to-be nil)
+        (org-canvas-submissions-apply-completion-rule 10)
+        (org-canvas--submissions-goto-user 5002)
+        (expect (org-entry-get (point) "SCORE") :to-equal "0")
+        ;; A second refresh keeps them without reporting them leaving again.
+        (test-refresh--run (list (test-org-canvas-make-submission '((attempt . 1)))))
+        (expect (test-refresh--summary) :to-match "\\`Refreshed HW: no changes since <")
+        (expect (org-canvas--submissions-goto-user 5002) :to-be-truthy)
+        (expect (org-entry-get (point) "STATUS") :to-equal "left"))))
+  (it "keeps a departed student's excusal and rubric rows too"
+    (with-org-canvas-test-config
+      (with-grading-file (concat test-grading-file-header
+                                 (test-refresh--student "Beta, Bob" 5002
+                                                        ":STATUS: submitted\n:SCORE: EX\n:CANVAS_SCORE: EX\n")
+                                 "\n** Notes\nLeft mid-term.\n")
+        (test-refresh--run nil)
+        (org-canvas--submissions-goto-user 5002)
+        (expect (org-entry-get (point) "SCORE") :to-equal "EX")
+        (expect (org-entry-get (point) "STATUS") :to-equal "left")))))
+
 (describe "refresh over a clean grading file"
   (it "refreshes when nothing is pending"
     (with-org-canvas-test-config

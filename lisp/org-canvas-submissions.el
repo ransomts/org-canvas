@@ -672,11 +672,14 @@ submission, which is how every student rendered as Unknown (#112)."
 
 (defun org-canvas--submissions-normalize-status (submission)
   "Derive a status symbol from SUBMISSION alist.
-Returns one of: submitted, late, missing, graded, pending_review, unsubmitted."
+Returns one of: submitted, late, missing, graded, pending_review,
+unsubmitted, or left for the stand-in a departed student's kept
+heading is rendered from (`org-canvas--submissions-departed-entries')."
   (let ((state (alist-get 'workflow_state submission))
         (late (alist-get 'late submission))
         (missing (alist-get 'missing submission)))
     (cond
+     ((alist-get 'org-canvas-left submission) 'left)
      ((and missing (not (eq missing :json-false))) 'missing)
      ((and late (not (eq late :json-false))) 'late)
      ((equal state "graded") 'graded)
@@ -1036,32 +1039,232 @@ with its baseline, see `org-canvas--submissions-score-carryover'."
         (forward-line 1)))
     carry))
 
+(defun org-canvas--submissions-restore-entry (carried)
+  "Write CARRIED, one student's carry-over plist, back at point.
+The score goes last, so a heading whose score and rubric both moved on
+Canvas is marked for the score, the way the push's conflict check
+orders them."
+  (let ((notes (plist-get carried :notes))
+        (draft (plist-get carried :draft))
+        (rubric (plist-get carried :rubric))
+        (score (plist-get carried :score)))
+    (when notes
+      (org-canvas--submissions-set-section org-canvas--submissions-notes-heading
+                                           org-canvas-submissions-notes-template notes))
+    (when draft
+      (org-canvas--submissions-set-section org-canvas--submissions-draft-heading
+                                           org-canvas-submissions-comment-template draft))
+    (when rubric
+      (org-canvas--submissions-restore-rubric rubric))
+    (when score
+      (org-canvas--submissions-restore-score score))))
+
 (defun org-canvas--submissions-restore-carryover (carry)
   "Write CARRY back under the students it names.
 CARRY is the alist `org-canvas--submissions-collect-carryover' produced
-before the buffer was re-rendered.  The score goes last, so a heading
-whose score and rubric both moved on Canvas is marked for the score,
-the way the push's conflict check orders them."
+before the buffer was re-rendered."
   (save-excursion
     (dolist (entry carry)
       (when (org-canvas--submissions-goto-user (car entry))
-        (let ((notes (plist-get (cdr entry) :notes))
-              (draft (plist-get (cdr entry) :draft))
-              (rubric (plist-get (cdr entry) :rubric))
-              (score (plist-get (cdr entry) :score)))
-          (when notes
-            (org-canvas--submissions-set-section org-canvas--submissions-notes-heading
-                                                 org-canvas-submissions-notes-template notes))
-          (when draft
-            (org-canvas--submissions-set-section org-canvas--submissions-draft-heading
-                                                 org-canvas-submissions-comment-template draft))
-          (when rubric
-            (org-canvas--submissions-restore-rubric rubric))
-          (when score
-            (org-canvas--submissions-restore-score score)))))))
+        (org-canvas--submissions-restore-entry (cdr entry))))))
+
+;;;; What a Refresh Changed (issue #282)
+
+;; A refresh is the grader's "what happened since I last looked".  The
+;; state each heading recorded is read before the re-render, compared
+;; with the submissions just fetched, and the differences are named:
+;; in one message line as counts, in the log per student, and on the
+;; heading where the score no longer describes the file.
+
+(defun org-canvas--submissions-left-p ()
+  "Return non-nil when the heading at point is a student who left the course."
+  (equal (org-entry-get (point) "STATUS") "left"))
+
+(defun org-canvas--submissions-state-at-point ()
+  "Return what the heading at point recorded of its student, as a plist.
+The keys are :name, :attempt (a number), :submitted-at, :score (the
+CANVAS_SCORE baseline), :posted-at and :status, the property values
+as strings, nil where the property is absent."
+  (let ((attempt (org-entry-get (point) "ATTEMPT")))
+    (list :name (org-get-heading t t t t)
+          :attempt (and attempt (string-to-number attempt))
+          :submitted-at (org-entry-get (point) "SUBMITTED_AT")
+          :score (org-entry-get (point) "CANVAS_SCORE")
+          :posted-at (org-entry-get (point) "POSTED_AT")
+          :status (org-entry-get (point) "STATUS"))))
+
+(defun org-canvas--submissions-collect-previous ()
+  "Return what the grading file recorded before a re-render, or nil.
+The value is (:pulled-at TIMESTAMP :students ALIST), ALIST mapping
+each USER_ID to `org-canvas--submissions-state-at-point'; nil when the
+buffer has no student heading yet, the first pull of a file."
+  (let ((students nil))
+    (save-excursion
+      (goto-char (point-min))
+      (while (re-search-forward "^\\* " nil t)
+        (org-back-to-heading t)
+        (when-let* ((user-id (org-entry-get (point) "USER_ID")))
+          (push (cons (string-to-number user-id) (org-canvas--submissions-state-at-point))
+                students))
+        (forward-line 1)))
+    (when students
+      (list :pulled-at (org-canvas--submissions-file-property "PULLED_AT")
+            :students (nreverse students)))))
+
+(defun org-canvas--submissions-state (submission)
+  "Return SUBMISSION's state as the grading file would record it.
+The keys are those of `org-canvas--submissions-state-at-point'."
+  (list :name (org-canvas--submissions-user-sortable-name submission)
+        :attempt (alist-get 'attempt submission)
+        :submitted-at (org-canvas--alist-get-non-null 'submitted_at submission)
+        :score (org-canvas--submissions-shown-score submission)
+        :posted-at (org-canvas--alist-get-non-null 'posted_at submission)))
+
+(defun org-canvas--submissions-resubmitted-p (old new)
+  "Return non-nil when NEW's attempt is later than OLD's.
+OLD and NEW are state plists; a student with no earlier attempt has
+not resubmitted."
+  (let ((before (plist-get old :attempt))
+        (now (plist-get new :attempt)))
+    (and (numberp before) (numberp now) (> now before))))
+
+(defun org-canvas--submissions-classify-change (old new)
+  "Return the kind of change from OLD to NEW for one student, or nil.
+OLD is the heading's state before the refresh, nil for a student the
+file did not have; NEW is the fetched submission's.  One kind per
+student, the one the grader acts on first: `resubmitted' when a new
+attempt arrived on a row that carried a grade, `new' when work
+arrived where there was none (a first submission, a later attempt on
+an ungraded row, a student the file did not have), `regraded' when
+Canvas's score moved, `posted' when the grade became visible."
+  (cond ((and old (org-canvas--submissions-resubmitted-p old new))
+         (if (plist-get old :score) 'resubmitted 'new))
+        ((and (plist-get new :submitted-at)
+              (not (plist-get old :submitted-at)))
+         'new)
+        ((and old (not (equal (plist-get old :score) (plist-get new :score))))
+         'regraded)
+        ((and old (plist-get new :posted-at) (not (plist-get old :posted-at)))
+         'posted)))
+
+(defun org-canvas--submissions-changes-since (previous submissions carry)
+  "Compare PREVIOUS, the file's recorded state, with the fetched SUBMISSIONS.
+Return a plist of lists of (user-id . name): :new, :resubmitted,
+:regraded and :posted as `org-canvas--submissions-classify-change'
+sorts them, :left for the students no longer in the pull, and :kept
+for those of them whose heading stays because CARRY holds work under
+it.  A student already marked left is not reported leaving again."
+  (let ((students (plist-get previous :students))
+        (changes nil)
+        (seen nil))
+    (dolist (sub submissions)
+      (let* ((user-id (org-canvas--submissions-user-id sub))
+             (new (org-canvas--submissions-state sub))
+             (kind (org-canvas--submissions-classify-change
+                    (alist-get user-id students) new)))
+        (push user-id seen)
+        (when kind
+          (push (cons user-id (plist-get new :name))
+                (plist-get changes (intern (format ":%s" kind)))))))
+    (dolist (entry students)
+      (unless (or (memql (car entry) seen)
+                  (equal (plist-get (cdr entry) :status) "left"))
+        (push (cons (car entry) (plist-get (cdr entry) :name)) (plist-get changes :left))
+        (when (assoc (car entry) carry)
+          (push (cons (car entry) (plist-get (cdr entry) :name)) (plist-get changes :kept)))))
+    changes))
+
+(defun org-canvas--submissions-departed-entries (previous carry submissions)
+  "Return stand-in submissions for the students to keep although they left.
+A student in PREVIOUS but not in SUBMISSIONS is kept when CARRY holds
+work under their heading — notes, a draft, Rubric rows, a typed
+score — since dropping the heading would drop that too.  Each stand-in
+renders as a heading with STATUS left and the CANVAS_SCORE it had, so
+the carried score comes back against its own baseline; nothing is
+ever pushed for it (`org-canvas--submissions-left-p')."
+  (let ((present (mapcar #'org-canvas--submissions-user-id submissions))
+        (entries nil))
+    (dolist (entry (plist-get previous :students))
+      (let ((user-id (car entry))
+            (state (cdr entry)))
+        (when (and (not (memql user-id present)) (assoc user-id carry))
+          (push `((user_id . ,user-id)
+                  (user . ((sortable_name . ,(plist-get state :name))))
+                  (org-canvas-left . t)
+                  ,@(let ((score (plist-get state :score)))
+                      (cond ((equal score "EX") '((excused . t)))
+                            (score `((score . ,(string-to-number score)))))))
+                entries))))
+    (nreverse entries)))
+
+(defun org-canvas--submissions-mark-resubmitted (resubmitted submissions)
+  "Mark the headings of RESUBMITTED, (user-id . name) pairs, CONFLICT.
+The value names the attempt SUBMISSIONS carry, in the push's short
+style — `attempt: 2 submitted after grading' — so the grader sees the
+score no longer describes the file; a successful push clears it."
+  (save-excursion
+    (dolist (pair resubmitted)
+      (when (org-canvas--submissions-goto-user (car pair))
+        (let ((sub (cl-find-if (lambda (s) (eql (org-canvas--submissions-user-id s) (car pair)))
+                               submissions)))
+          (org-entry-put (point) "CONFLICT"
+                         (format "attempt: %s submitted after grading"
+                                 (alist-get 'attempt sub))))))))
+
+(defconst org-canvas--submissions-change-labels
+  '((:new . "new") (:resubmitted . "resubmitted after grading")
+    (:regraded . "scored on Canvas since the pull") (:posted . "posted")
+    (:left . "left the course"))
+  "The name of each kind of change a refresh can report, in report order.")
+
+(defun org-canvas--submissions-describe-refresh (name previous found)
+  "Return the one-line summary of what a refresh of NAME FOUND.
+FOUND is the plist of `org-canvas--submissions-changes-since';
+PREVIOUS supplies the PULLED_AT the no-change line names.  Each kind
+present is counted; the students who left say how many headings were
+kept for the work under them."
+  (let ((parts nil))
+    (dolist (label org-canvas--submissions-change-labels)
+      (when-let* ((pairs (plist-get found (car label))))
+        (push (format "%d %s%s" (length pairs) (cdr label)
+                      (if (eq (car label) :left)
+                          (format " (%d kept)" (length (plist-get found :kept)))
+                        ""))
+              parts)))
+    (if parts
+        (format "Refreshed %s: %s" name (string-join (nreverse parts) ", "))
+      (format "Refreshed %s: no changes since %s" name
+              (or (plist-get previous :pulled-at) "the last pull")))))
+
+(defun org-canvas--submissions-log-changes (found)
+  "Log one line per student a refresh FOUND something about.
+FOUND is the plist of `org-canvas--submissions-changes-since'; each
+line carries the label of its kind."
+  (dolist (label org-canvas--submissions-change-labels)
+    (dolist (pair (plist-get found (car label)))
+      (org-canvas--log-info org-canvas--logger "[Refresh] %s: %s%s"
+        (cdr pair) (cdr label)
+        (if (and (eq (car label) :left) (assoc (car pair) (plist-get found :kept)))
+            " (heading kept)"
+          "")))))
+
+(defun org-canvas--submissions-report-changes (name previous submissions carry)
+  "Say what a refresh of NAME changed, once it is rendered.
+PREVIOUS is what the file recorded before (nil on a first pull, which
+reports nothing), SUBMISSIONS the fetched ones and CARRY the work
+carried over.  Resubmissions on graded rows are marked on their
+headings, every change is logged per student, and the counts go to
+the echo area."
+  (when previous
+    (let ((changes (org-canvas--submissions-changes-since previous submissions carry)))
+      (org-canvas--submissions-mark-resubmitted (plist-get changes :resubmitted) submissions)
+      (org-canvas--submissions-log-changes changes)
+      (message "%s" (org-canvas--submissions-describe-refresh name previous changes)))))
 
 (defun org-canvas--submissions-collect-comment-drafts ()
-  "Return (:user-id :name :text) for every heading with a drafted comment."
+  "Return (:user-id :name :text) for every heading with a drafted comment.
+A student who left the course is skipped: their draft stays under the
+kept heading, since Canvas has nowhere to post it (issue #282)."
   (let ((drafts nil))
     (save-excursion
       (goto-char (point-min))
@@ -1069,7 +1272,7 @@ the way the push's conflict check orders them."
         (org-back-to-heading t)
         (let ((text (org-canvas--submissions-comment-draft))
               (user-id (org-entry-get (point) "USER_ID")))
-          (when (and text user-id)
+          (when (and text user-id (not (org-canvas--submissions-left-p)))
             (push (list :user-id (string-to-number user-id)
                         :name (org-get-heading t t t t)
                         :text text)
@@ -1718,7 +1921,9 @@ A submission within `org-canvas-submissions-late-window-days' of the
 due date gets POINTS, a later or missing one gets 0.  Only headings with
 an empty SCORE are touched, so hand grading is never overwritten, unless
 OVERWRITE (the prefix argument) is given; excused rows are always left
-alone.  On an assignment with a rubric, full credit also fills every
+alone, and so is a student who left the course (STATUS left), since
+there is nothing to push for them.  On an assignment with a rubric,
+full credit also fills every
 row of the student's Rubric table with its Max, so the rubric cells the
 student sees are populated too; a 0 leaves the rows empty.  Nothing is
 pushed: review the scores, then press S.  When POINTS is nil it is read
@@ -1746,7 +1951,9 @@ POINTS_POSSIBLE as the default."
         (let* ((current (org-entry-get (point) "SCORE"))
                (has (and current (not (string-empty-p (string-trim current)))))
                (score (org-canvas--submissions-completion-score points window)))
-          (cond ((not (org-entry-get (point) "USER_ID")) nil)
+          (cond ((or (not (org-entry-get (point) "USER_ID"))
+                     (org-canvas--submissions-left-p))
+                 nil)
                 ((or (equal (and has (org-canvas--submissions-parse-score current)) "EX")
                      (and has (not overwrite))
                      (null score))
@@ -1952,21 +2159,29 @@ rendered and saved; the summary view is an ephemeral buffer.
 ASSIGNMENT, the Canvas assignment object when at hand, supplies the
 rubric header of the detail view.  Notes, drafted comments, Rubric
 rows and typed scores already in the file are carried over to the
-new render.  Return the buffer."
+new render, a departed student's heading stays when it holds any of
+them, and what changed since the last render is reported
+\(`org-canvas--submissions-report-changes').  Return the buffer."
   (let ((buf (if (eq view 'detail)
                  (org-canvas--submissions-grading-buffer assignment-name)
                (get-buffer-create (format "*submissions: %s*" assignment-name)))))
     (with-current-buffer buf
       (unless (derived-mode-p 'org-mode)
         (org-mode))
-      (let ((inhibit-read-only t)
-            (carry (and (eq view 'detail) (org-canvas--submissions-collect-carryover))))
-        (if (eq view 'summary)
+      (let* ((inhibit-read-only t)
+             (detail (eq view 'detail))
+             (previous (and detail (org-canvas--submissions-collect-previous)))
+             (carry (and detail (org-canvas--submissions-collect-carryover))))
+        (if (not detail)
             (org-canvas--submissions-render-summary
              assignment-name assignment-id submissions)
           (org-canvas--submissions-render-detail
-           assignment-name assignment-id submissions assignment)
-          (org-canvas--submissions-restore-carryover carry))
+           assignment-name assignment-id
+           (append submissions
+                   (org-canvas--submissions-departed-entries previous carry submissions))
+           assignment)
+          (org-canvas--submissions-restore-carryover carry)
+          (org-canvas--submissions-report-changes assignment-name previous submissions carry))
         (goto-char (point-min))
         (setq-local org-canvas-submissions--assignment-name assignment-name)
         (setq-local org-canvas-submissions--assignment-id assignment-id)
@@ -2027,13 +2242,16 @@ Each element is a plist (:user-id ID :name NAME :old-score OLD :new-score NEW)."
 Each heading's SCORE is compared with its CANVAS_SCORE property, the
 score as last pulled or pushed; a heading without that property falls
 back to the in-memory snapshot taken at render time.  Each heading's
-Rubric table is compared with its CANVAS_RUBRIC the same way."
+Rubric table is compared with its CANVAS_RUBRIC the same way.  A
+student who left the course is never a diff: Canvas has no submission
+of theirs to grade any more (issue #282)."
   (let ((changes nil))
     (save-excursion
       (goto-char (point-min))
       (while (re-search-forward "^\\* " nil t)
         (org-back-to-heading t)
-        (let ((change (org-canvas--submissions-detail-change-at-point)))
+        (let ((change (and (not (org-canvas--submissions-left-p))
+                           (org-canvas--submissions-detail-change-at-point))))
           (when change
             (push change changes)))
         (forward-line 1)))
