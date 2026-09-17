@@ -3002,4 +3002,36 @@ URL, a POST with 900."
             :to-equal "40")
     (expect (org-canvas--new-quiz-remote-id '((id . 3))) :to-equal "3")))
 
+(describe "org-canvas-sync-new-quiz (issue #287)"
+  (it "finds the heading by title or CANVAS_ASSIGNMENT_ID and runs the at-point command there"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer "* Quiz One
+:PROPERTIES:
+:CANVAS_ASSIGNMENT_ID: 41
+:END:
+* Quiz Two
+"
+        (let ((org-canvas-new-quizzes-file buffer-file-name)
+              (synced nil))
+          (cl-letf (((symbol-function 'org-canvas-sync-new-quiz-at-point)
+                     (lambda () (push (org-get-heading t t t t) synced))))
+            (expect (org-canvas-sync-new-quiz "Quiz Two") :to-equal '(:outcome synced))
+            (org-canvas-sync-new-quiz 41 'canvas-id))
+          (expect (nreverse synced) :to-equal '("Quiz Two" "Quiz One"))
+          (expect (org-canvas-sync-new-quiz "Quiz Three") :to-throw 'user-error)
+          (expect (cdr (assoc "new-quiz" org-canvas--sync-heading-fns))
+                  :to-be #'org-canvas-sync-new-quiz)))))
+
+  (it "asks for a title outside batch when none is given"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer "* Quiz One\n"
+        (let ((org-canvas-new-quizzes-file buffer-file-name)
+              (noninteractive nil)
+              (synced nil))
+          (cl-letf (((symbol-function 'completing-read) (lambda (&rest _) "Quiz One"))
+                    ((symbol-function 'org-canvas-sync-new-quiz-at-point)
+                     (lambda () (setq synced (org-get-heading t t t t)))))
+            (org-canvas-sync-new-quiz))
+          (expect synced :to-equal "Quiz One"))))))
+
 ;;; org-canvas-new-quizzes-test.el ends here

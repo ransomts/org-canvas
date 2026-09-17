@@ -4257,5 +4257,357 @@ Returns the :remote-titles of the run context the push received."
         (expect seen :to-equal '("mutation { x }" ((a . 1))))))))
 
 
+;;;; Sync by heading (issue #287)
+
+(defconst test-org-canvas-heading-file-content
+  "#+TITLE: Pages
+* Week 05 objectives
+:PROPERTIES:
+:CANVAS_ID: 501
+:END:
+Body.
+* Week 06 objectives
+:PROPERTIES:
+:CANVAS_ID: 601
+:END:
+* Twice
+* Twice
+* [[file:content/syllabus.pdf][Syllabus.pdf]]
+** A child
+"
+  "A file with a stamped heading, an unstamped one, a repeated title and a link.")
+
+(defun test-org-canvas-heading-spec (&rest overrides)
+  "Return a sync spec whose stages record what they see, with OVERRIDES."
+  (append overrides
+          (list :feature "page" :query "LEVEL=1"
+                :parse (lambda () (list :title (org-get-heading t t t t)
+                                        :canvas-id (org-entry-get (point) "CANVAS_ID")
+                                        :pom (point-marker)))
+                :build (lambda (data) (list (cons 'title (plist-get data :title))))
+                :push (lambda (_data _payload &optional _ctx) '((id . 777) (updated_at . "2026-09-17T10:00:00Z")))
+                :finalize (lambda (data response &optional _ctx)
+                            (org-canvas-org-save-sync-state (plist-get data :pom)
+                                                            (alist-get 'id response)))
+                :title-key :title)))
+
+(describe "org-canvas--sync-find-heading"
+  (it "finds a heading by its exact title"
+    (with-temp-org-buffer test-org-canvas-heading-file-content
+      (let ((m (org-canvas--sync-find-heading buffer-file-name "LEVEL=1"
+                                              "Week 06 objectives" nil "CANVAS_ID" "page")))
+        (expect (markerp m) :to-be-truthy)
+        (expect (marker-buffer m) :to-be (current-buffer))
+        (save-excursion (goto-char m)
+                        (expect (org-entry-get (point) "CANVAS_ID") :to-equal "601")))))
+
+  (it "finds a heading by its stamp, as a string or a number"
+    (with-temp-org-buffer test-org-canvas-heading-file-content
+      (dolist (target '("501" 501))
+        (let ((m (org-canvas--sync-find-heading buffer-file-name "LEVEL=1"
+                                                target 'canvas-id "CANVAS_ID" "page")))
+          (save-excursion (goto-char m)
+                          (expect (org-get-heading t t t t) :to-equal "Week 05 objectives"))))))
+
+  (it "does not let a prefix of a title match (R1 is not R10)"
+    (with-temp-org-buffer "* R1\n* R10\n"
+      (let ((m (org-canvas--sync-find-heading buffer-file-name "LEVEL=1" "R1" nil "CANVAS_ID" "x")))
+        (save-excursion (goto-char m) (expect (org-get-heading t t t t) :to-equal "R1")))))
+
+  (it "matches a heading that is a link by its text as written"
+    (with-temp-org-buffer test-org-canvas-heading-file-content
+      (let ((m (org-canvas--sync-find-heading
+                buffer-file-name "LEVEL=1"
+                "[[file:content/syllabus.pdf][Syllabus.pdf]]" nil "CANVAS_ID" "file")))
+        (expect (markerp m) :to-be-truthy))))
+
+  (it "looks only at the headings the query selects"
+    (with-temp-org-buffer test-org-canvas-heading-file-content
+      (expect (org-canvas--sync-find-heading buffer-file-name "LEVEL=1" "A child" nil "CANVAS_ID" "page")
+              :to-throw 'user-error)
+      (expect (markerp (org-canvas--sync-find-heading buffer-file-name "LEVEL=2" "A child" nil "CANVAS_ID" "page"))
+              :to-be-truthy)))
+
+  (it "is a user-error naming the file when nothing matches"
+    (with-temp-org-buffer test-org-canvas-heading-file-content
+      (condition-case err
+          (progn (org-canvas--sync-find-heading buffer-file-name "LEVEL=1" "Week 07" nil "CANVAS_ID" "page")
+                 (expect nil :to-be-truthy))
+        (user-error (expect (cadr err) :to-match "No page heading titled \"Week 07\" in org-test-")))))
+
+  (it "is a user-error when two headings carry the title"
+    (with-temp-org-buffer test-org-canvas-heading-file-content
+      (condition-case err
+          (progn (org-canvas--sync-find-heading buffer-file-name "LEVEL=1" "Twice" nil "CANVAS_ID" "page")
+                 (expect nil :to-be-truthy))
+        (user-error (expect (cadr err) :to-match "2 page headings titled \"Twice\".*at point")))))
+
+  (it "names the stamp in the error for a by-id lookup"
+    (with-temp-org-buffer test-org-canvas-heading-file-content
+      (condition-case err
+          (progn (org-canvas--sync-find-heading buffer-file-name "LEVEL=1" "9" 'canvas-id "CANVAS_URL" "page")
+                 (expect nil :to-be-truthy))
+        (user-error (expect (cadr err) :to-match "No page heading CANVAS_URL 9")))))
+
+  (it "rejects a BY it does not know"
+    (with-temp-org-buffer test-org-canvas-heading-file-content
+      (expect (org-canvas--sync-find-heading buffer-file-name "LEVEL=1" "x" 'name "CANVAS_ID" "page")
+              :to-throw 'user-error))))
+
+(describe "org-canvas--sync-heading-ask"
+  (it "offers the titles under the query and returns the choice"
+    (with-temp-org-buffer test-org-canvas-heading-file-content
+      (let ((offered nil) (noninteractive nil))
+        (cl-letf (((symbol-function 'completing-read)
+                   (lambda (_prompt collection &rest _) (setq offered collection) (nth 1 collection))))
+          (expect (org-canvas--sync-heading-ask "page" buffer-file-name "LEVEL=1")
+                  :to-equal "Week 06 objectives"))
+        (expect offered :to-equal '("Week 05 objectives" "Week 06 objectives" "Twice" "Twice"
+                                    "[[file:content/syllabus.pdf][Syllabus.pdf]]")))))
+
+  (it "never prompts in batch: a missing target is a user-error"
+    (with-temp-org-buffer test-org-canvas-heading-file-content
+      (let ((noninteractive t))
+        (cl-letf (((symbol-function 'completing-read)
+                   (lambda (&rest _) (error "prompted"))))
+          (expect (org-canvas--sync-heading-ask "page" buffer-file-name "LEVEL=1")
+                  :to-throw 'user-error))))))
+
+(describe "org-canvas--sync-heading-runtime"
+  (it "pushes the named heading at its position, stamps it and reports synced"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer test-org-canvas-heading-file-content
+        (let ((saved nil) ctx)
+          (cl-letf (((symbol-function 'display-buffer) #'ignore)
+                    ((symbol-function 'org-canvas--save-buffer) (lambda (&rest _) (setq saved t))))
+            (setq ctx (org-canvas--sync-heading-runtime
+                       (test-org-canvas-heading-spec :file buffer-file-name)
+                       "Week 06 objectives")))
+          (expect (plist-get ctx :outcome) :to-be 'synced)
+          (expect saved :to-be-truthy)
+          (goto-char (point-min))
+          (re-search-forward "^\\* Week 06")
+          (expect (org-entry-get (point) "CANVAS_ID") :to-equal "777")
+          (re-search-backward "^\\* Week 05")
+          (expect (org-entry-get (point) "CANVAS_ID") :to-equal "501")
+          ;; Point in the file's buffer is where it was.
+          (expect (point) :to-be-less-than (save-excursion (re-search-forward "Week 06")))))))
+
+  (it "finds the heading by stamp with BY canvas-id and the spec's id property"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer test-org-canvas-heading-file-content
+        (let ((pushed nil))
+          (cl-letf (((symbol-function 'display-buffer) #'ignore)
+                    ((symbol-function 'org-canvas--save-buffer) #'ignore))
+            (org-canvas--sync-heading-runtime
+             (test-org-canvas-heading-spec
+              :file buffer-file-name :id-property "CANVAS_ID"
+              :push (lambda (data _payload &optional _ctx)
+                      (setq pushed (plist-get data :title)) '((id . 501))))
+             501 'canvas-id))
+          (expect pushed :to-equal "Week 05 objectives")))))
+
+  (it "asks for the title when none is given, outside batch"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer test-org-canvas-heading-file-content
+        (let ((noninteractive nil) (pushed nil))
+          (cl-letf (((symbol-function 'display-buffer) #'ignore)
+                    ((symbol-function 'org-canvas--save-buffer) #'ignore)
+                    ((symbol-function 'completing-read) (lambda (&rest _) "Week 05 objectives")))
+            (org-canvas--sync-heading-runtime
+             (test-org-canvas-heading-spec
+              :file buffer-file-name
+              :push (lambda (data _payload &optional _ctx)
+                      (setq pushed (plist-get data :title)) '((id . 501))))
+             nil))
+          (expect pushed :to-equal "Week 05 objectives")))))
+
+  (it "leaves the file alone and reports the stop when the push says conflict"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer test-org-canvas-heading-file-content
+        (let ((messages nil) ctx)
+          (cl-letf (((symbol-function 'display-buffer) #'ignore)
+                    ((symbol-function 'message) (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
+            (setq ctx (org-canvas--sync-heading-runtime
+                       (test-org-canvas-heading-spec
+                        :file buffer-file-name
+                        :push (lambda (&rest _) 'conflict))
+                       "Week 06 objectives")))
+          (expect (plist-get ctx :outcome) :to-be 'conflict)
+          (expect (car messages) :to-match "not pushed")
+          (goto-char (point-min))
+          (re-search-forward "^\\* Week 06")
+          (expect (org-entry-get (point) "CANVAS_ID") :to-equal "601"))))))
+
+(describe "org-canvas--push-at-point-runtime outcomes"
+  (it "records unchanged when the stored hash matches"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer "* P\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+        (org-back-to-heading)
+        (let* ((spec (test-org-canvas-heading-spec))
+               (hash (org-canvas--sync-entry-hash '((title . "P")) nil (org-canvas--sync-make-ctx))))
+          (org-entry-put (point) org-canvas--prop-payload-hash hash)
+          (cl-letf (((symbol-function 'display-buffer) #'ignore))
+            (expect (plist-get (org-canvas--push-at-point-runtime spec) :outcome)
+                    :to-be 'unchanged))))))
+
+  (it "records unchanged when the push answers skip"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer "* P\n"
+        (org-back-to-heading)
+        (cl-letf (((symbol-function 'display-buffer) #'ignore))
+          (expect (plist-get (org-canvas--push-at-point-runtime
+                              (test-org-canvas-heading-spec :push (lambda (&rest _) 'skip)))
+                             :outcome)
+                  :to-be 'unchanged)))))
+
+  (it "records a dry run and stamps nothing, instead of writing CANVAS_ID dry-run"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer "* P\n"
+        (org-back-to-heading)
+        (let ((finalized nil) ctx)
+          (cl-letf (((symbol-function 'display-buffer) #'ignore))
+            (setq ctx (org-canvas--push-at-point-runtime
+                       (test-org-canvas-heading-spec
+                        :push (lambda (&rest _) org-canvas--dry-run-response)
+                        :finalize (lambda (&rest _) (setq finalized t))))))
+          (expect (plist-get ctx :outcome) :to-be 'dry-run)
+          (expect finalized :to-be nil)
+          (expect (org-entry-get (point) "CANVAS_ID") :to-be nil))))))
+
+(describe "org-canvas-define-sync sync-by-heading generation"
+  (it "generates org-canvas-sync-page beside the at-point command"
+    (expect (fboundp 'org-canvas-sync-page) :to-be-truthy)
+    (expect (commandp 'org-canvas-sync-page) :to-be-truthy))
+
+  (it "generates one per feature, singularized, and registers it"
+    (dolist (name '("assignment" "announcement" "discussion" "rubric" "module" "file"
+                    "assignment-group" "group-category" "calendar-event" "quiz"
+                    "grading-scheme" "outcome-group" "outcome" "page" "new-quiz"))
+      (let ((fn (intern (format "org-canvas-sync-%s" name))))
+        (expect (list name (fboundp fn)) :to-equal (list name t))
+        (expect (list name (cdr (assoc name org-canvas--sync-heading-fns)))
+                :to-equal (list name fn)))))
+
+  (it "tells the generated command which property the stamp lives in"
+    (expect (documentation 'org-canvas-sync-page) :to-match "CANVAS_URL")
+    (expect (documentation 'org-canvas-sync-assignment) :to-match "CANVAS_ID")
+    (expect (documentation 'org-canvas-sync-assignment) :to-match "org-canvas-assignments-file"))
+
+  (it "runs the page pipeline at the named heading of the pages file"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer "* Week 05 objectives\nBody.\n"
+        (let ((org-canvas-pages-file buffer-file-name)
+              (posted nil))
+          (cl-letf (((symbol-function 'display-buffer) #'ignore)
+                    ((symbol-function 'org-canvas--save-buffer) #'ignore)
+                    ((symbol-function 'org-canvas-api-request)
+                     (lambda (method _url &rest args)
+                       (pcase method
+                         ('POST (setq posted (plist-get args :data))
+                                '((url . "week-05-objectives") (updated_at . "2026-09-17T10:00:00Z")))
+                         (_ [])))))
+            (let ((ctx (org-canvas-sync-page "Week 05 objectives")))
+              (expect (plist-get ctx :outcome) :to-be 'synced)))
+          (expect (gethash "title" (gethash "wiki_page" posted)) :to-equal "Week 05 objectives")
+          (goto-char (point-min))
+          (re-search-forward "^\\* Week 05")
+          (expect (org-entry-get (point) "CANVAS_URL") :to-equal "week-05-objectives")))))
+
+  (it "sends nothing and stamps nothing under a dry run"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer "* Week 05 objectives\nBody.\n"
+        (let ((org-canvas-pages-file buffer-file-name)
+              (org-canvas--dry-run t)
+              (writes nil))
+          (cl-letf (((symbol-function 'display-buffer) #'ignore)
+                    ((symbol-function 'org-canvas--save-buffer) #'ignore)
+                    ((symbol-function 'org-canvas-api-request)
+                     (lambda (method _url &rest _)
+                       (unless (eq method 'GET) (push method writes))
+                       [])))
+            (expect (plist-get (org-canvas-sync-page "Week 05 objectives") :outcome)
+                    :to-be 'dry-run))
+          (expect writes :to-equal nil)
+          (goto-char (point-min))
+          (re-search-forward "^\\* Week 05")
+          (expect (org-entry-get (point) "CANVAS_URL") :to-be nil))))))
+
+(describe "org-canvas--sync-heading-fn-for"
+  (it "resolves a plural or singular feature, as a symbol or a string"
+    (dolist (name '(assignments assignment "assignments" "assignment" quizzes quiz new-quizzes))
+      (expect (list name (org-canvas--sync-heading-fn-for name))
+              :to-equal (list name (if (memq name '(quizzes quiz)) #'org-canvas-sync-quiz
+                                     (if (eq name 'new-quizzes) #'org-canvas-sync-new-quiz
+                                       #'org-canvas-sync-assignment))))))
+
+  (it "is a user-error listing the features for a name nobody registered"
+    (condition-case err
+        (progn (org-canvas--sync-heading-fn-for 'settings) (expect nil :to-be-truthy))
+      (user-error (expect (cadr err) :to-match "No sync by heading for settings; the features are: .*assignment.*page")))))
+
+(describe "org-canvas--sync-headings-entry"
+  (it "reads a dotted pair, a two-list and a three-list"
+    (expect (org-canvas--sync-headings-entry '(assignment . "R5")) :to-equal '(assignment "R5" nil))
+    (expect (org-canvas--sync-headings-entry '(page "W5")) :to-equal '(page "W5" nil))
+    (expect (org-canvas--sync-headings-entry '(assignment "2563805" canvas-id))
+            :to-equal '(assignment "2563805" canvas-id)))
+
+  (it "rejects anything else"
+    (expect (org-canvas--sync-headings-entry "R5") :to-throw 'user-error)
+    (expect (org-canvas--sync-headings-entry '(assignment)) :to-throw 'user-error)))
+
+(describe "org-canvas-sync-headings"
+  (before-each
+    (org-canvas--sync-register-heading-fn "widget" #'ignore))
+  (after-each
+    (setq org-canvas--sync-heading-fns
+          (assoc-delete-all "widget" org-canvas--sync-heading-fns)))
+
+  (it "syncs each entry in order with its target and BY, and returns the outcomes"
+    (let ((calls nil) (messages nil))
+      (org-canvas--sync-register-heading-fn
+       "widget" (lambda (target by) (push (list target by) calls)
+                  (list :outcome (if by 'unchanged 'synced))))
+      (cl-letf (((symbol-function 'message) (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
+        (let ((results (org-canvas-sync-headings '((widget . "A") (widgets "7" canvas-id)))))
+          (expect (nreverse calls) :to-equal '(("A" nil) ("7" canvas-id)))
+          (expect (mapcar (lambda (r) (plist-get r :outcome)) results) :to-equal '(synced unchanged))
+          (expect (plist-get (car results) :target) :to-equal "A")))
+      (expect (car messages) :to-equal "Synced 2 heading(s): 1 synced, 1 unchanged, 0 stopped, 0 failed")
+      (expect (nth 1 messages) :to-match "widgets '7': unchanged")))
+
+  (it "reports a failed heading with its error and pushes the next one"
+    (let ((calls nil) (messages nil) (logged nil))
+      (org-canvas--sync-register-heading-fn
+       "widget" (lambda (target _by)
+                  (push target calls)
+                  (if (equal target "bad") (user-error "No widget heading titled \"bad\"")
+                    (list :outcome 'synced))))
+      (cl-letf (((symbol-function 'message) (lambda (fmt &rest args) (push (apply #'format fmt args) messages)))
+                ((symbol-function 'org-canvas--log-error) (lambda (_l fmt &rest args) (push (apply #'format fmt args) logged))))
+        (let ((results (org-canvas-sync-headings '((widget . "bad") (widget . "good")))))
+          (expect (nreverse calls) :to-equal '("bad" "good"))
+          (expect (plist-get (car results) :outcome) :to-be 'failed)
+          (expect (plist-get (car results) :error) :to-match "No widget heading")
+          (expect (plist-get (cadr results) :outcome) :to-be 'synced)))
+      (expect (car messages) :to-match "1 synced, 0 unchanged, 0 stopped, 1 failed")
+      (expect (car logged) :to-match "widget 'bad' failed")))
+
+  (it "counts a conflict, a pull, a duplicate and a dry run as stopped"
+    (let ((messages nil) (answers (list 'conflict 'pulled 'duplicate 'dry-run)))
+      (org-canvas--sync-register-heading-fn
+       "widget" (lambda (_target _by) (list :outcome (pop answers))))
+      (cl-letf (((symbol-function 'message) (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
+        (org-canvas-sync-headings '((widget . "a") (widget . "b") (widget . "c") (widget . "d"))))
+      (expect (car messages) :to-match "0 synced, 0 unchanged, 4 stopped, 0 failed")))
+
+  (it "stops before anything is sent when a feature is not known"
+    (let ((calls 0))
+      (org-canvas--sync-register-heading-fn "widget" (lambda (&rest _) (cl-incf calls) (list :outcome 'synced)))
+      (expect (org-canvas-sync-headings '((widget . "a") (gizmo . "b"))) :to-throw 'user-error)
+      (expect calls :to-equal 0))))
+
+
 (provide 'org-canvas-core-sync-test)
 ;;; org-canvas-core-sync-test.el ends here

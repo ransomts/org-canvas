@@ -588,7 +588,8 @@ the sync had already written (issue #97)."
     :total-count :counters :synced-ids :title-key
     :pull-item-fn :conflict-apply-all :duplicate-apply-all :remote-touched
     :module-items-moved :module-items-pending :module-items-adopted
-    :file-changed-ids :file-recreated-ids :prepared :hash-fn :dry-run-in-push)
+    :file-changed-ids :file-recreated-ids :prepared :hash-fn :dry-run-in-push
+    :outcome)
   "Every key a sync run context may carry, present from creation.
 Static: :feature-name, :feature-upper, :title-key, the pipeline
 functions, :total-count, :hash-extra-fn.  Snapshot: :baseline (the
@@ -604,9 +605,12 @@ by a finalize post-fn that wrote to Canvas again, issue #124),
 \(modules), :file-changed-ids and :file-recreated-ids (files), :prepared
 \(what the spec's :prepare function returned before the first entry; the
 root outcome group id for outcomes), :hash-fn and :dry-run-in-push (the
-spec's :hash and whether its :dry-run is `push').  Every key is
-present so `plist-put' always mutates the context in place and the
-functions sharing it see one another's writes.")
+spec's :hash and whether its :dry-run is `push'), :outcome (what a
+single-entry push ended as — `synced', `unchanged', `conflict',
+`pulled', `duplicate' or `dry-run' — for a caller that syncs headings
+by name, issue #287).  Every key is present so `plist-put' always
+mutates the context in place and the functions sharing it see one
+another's writes.")
 
 (defun org-canvas--sync-make-ctx (&rest fields)
   "Return a fresh sync run context carrying FIELDS.
