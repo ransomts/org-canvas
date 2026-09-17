@@ -2796,6 +2796,37 @@ the students who reviewed nobody. Every pull rewrites the file;
 nothing is pushed from it. Reviewers are assigned in the Canvas web
 UI.
 
+** The Grading Queue
+
+Every column goes through pull, grade, push and post, and where each
+one stands lives in three places: Canvas, the column's grading file
+and your memory. =gradebook.org= answers how the class did; a grading
+file answers one column. =M-x org-canvas-submissions-status=
+(transient: Submissions, =Q=) answers the weekly question, which
+columns need work right now, with one read-only table in
+=*canvas-submissions-status*=: a row per published, graded assignment
+with Due, Rows (students), Submitted, Graded (scored or excused),
+Posted, Late, Missing, Pulled (the =PULLED_AT= of its grading file,
+when one is on disk), New (submissions handed in since that pull) and
+Next, the one thing to do:
+
+- =pull= — work is in and no grading file exists
+- =refresh (n)= — n submissions arrived after the grading file was pulled; =g= in the file
+- =grade (n)= — n submitted rows carry no score
+- =post (n)= — n scored rows are not yet posted to students
+- =-= — nothing to do; =?= — the token could not read the column (the log says why)
+
+The columns with something to do come first, in that order, and a
+summary line above the table counts them. Nothing is written to disk
+or to Canvas; a course marked read-only reads it the same. The report
+reads every column's submissions, so a course with many columns
+takes a moment. Under =emacs --batch= the table is printed to
+standard output:
+
+#+begin_src sh
+emacs --batch -l ~/.emacs.d/init.el --eval '(org-canvas-submissions-status)'
+#+end_src
+
 ** Privacy
 
 Grading files are student work. The submissions directory receives a =.gitignore= excluding everything in it when it is first created (=org-canvas-submissions-write-gitignore=), so the files never travel with a course repository. Keep the directory out of any other sharing you would not extend to a gradebook export.
@@ -3234,6 +3265,7 @@ These commands delete the item at the current cursor position:
 | =org-canvas-pull-submissions= | Pull an assignment into a grading file (or the summary table) |
 | =org-canvas-pull-quiz-submissions= | Pull a classic quiz's attempts into a read-only table (=z=) |
 | =org-canvas-pull-peer-reviews= | Pull who reviews whom on an assignment into read-only tables (=w=) |
+| =org-canvas-submissions-status= | The grading queue: which columns need pulling, grading or posting, one read-only table (=Q=) |
 | =org-canvas-open-submissions= | Reopen a saved grading file |
 | =org-canvas-submissions-push-grades= | Push changed scores and drafted comments (=S= in the file) |
 | =org-canvas-submissions-post-grades= | Post the assignment's grades to students, under a manual post policy (=P=) |

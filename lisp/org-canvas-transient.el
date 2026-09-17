@@ -113,6 +113,7 @@ writing commands greyed rather than only erroring when one is chosen
    ("R" "Apply scheduled releases (PUBLISH_AT)" org-canvas-apply-scheduled-releases)]
   ["Submissions"
    ("g" "Pull submissions (grading file)" org-canvas-pull-submissions)
+   ("Q" "Grading queue (what needs pulling, grading, posting)" org-canvas-submissions-status)
    ("o" "Open a saved grading file" org-canvas-open-submissions)
    ("z" "Pull a quiz's attempts (read-only table)" org-canvas-pull-quiz-submissions)
    ("w" "Pull an assignment's peer reviews (read-only)" org-canvas-pull-peer-reviews)
