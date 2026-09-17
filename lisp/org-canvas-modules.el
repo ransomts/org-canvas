@@ -667,8 +667,56 @@ Return the matching item alist, or nil if not found."
                   (string-equal (alist-get 'title item) title))
                 items)))
 
+(defun org-canvas--module-item-wanted-published (payload)
+  "Return the published flag PAYLOAD carries, or nil when it has none.
+The value is what went to Canvas: t or `:json-false'."
+  (when-let* ((item (and (hash-table-p payload)
+                         (gethash "module_item" payload))))
+    (gethash "published" item)))
+
+(defun org-canvas--module-item-ensure-published (module-id data payload response)
+  "Send the published flag of PAYLOAD again when RESPONSE disagrees.
+Canvas ignores module_item[published] when it creates a module item,
+so a new SubHeader or ExternalUrl came back unpublished while the
+sync reported success (issue #279); the update endpoint honours it.
+For an item of a self-owned type (DATA's :type, see
+`org-canvas--module-item-self-owned-types') whose RESPONSE carries a
+published flag other than the one PAYLOAD asked for, PUT that flag
+alone to the item under MODULE-ID and return the PUT's reply, so what
+is stamped and logged is the item as it is.  Any other RESPONSE is
+returned as it came: an item of a foreign type has no flag of its own
+to fix, and a reply without a flag or an id says nothing.  A failed
+PUT is one warning, not a failure: the item exists and its id must be
+stamped, and the next sync updates it with the flag."
+  (let ((wanted (org-canvas--module-item-wanted-published payload))
+        (got (and (listp response) (alist-get 'published response)))
+        (id (and (listp response) (alist-get 'id response)))
+        (title (plist-get data :title)))
+    (if (or (not (member (plist-get data :type)
+                         org-canvas--module-item-self-owned-types))
+            (null wanted) (null got) (null id) (eq wanted got))
+        response
+      (org-canvas--log-info org-canvas--logger
+        "[Stage 3: Execute] Canvas created item '%s' with published=%s; sending %s again"
+        title got wanted)
+      (condition-case err
+          (let ((item (make-hash-table :test 'equal))
+                (body (make-hash-table :test 'equal)))
+            (puthash "published" wanted item)
+            (puthash "module_item" item body)
+            (org-canvas-api-request
+             'PUT (org-canvas-api-course-endpoint "modules/%s/items/%s" module-id id)
+             :data body))
+        (error
+         (org-canvas--log-warning org-canvas--logger
+           "[Stage 3: Execute] Item '%s' (id %s) was created but its published flag could not be set: %s"
+           title id (error-message-string err))
+         response)))))
+
 (defun org-canvas--module-item-push-to-api (module-id data payload)
-  "Send module item PAYLOAD to MODULE-ID on Canvas based on DATA."
+  "Send module item PAYLOAD to MODULE-ID on Canvas based on DATA.
+A self-owned item Canvas created with the wrong published flag gets
+the flag PUT after the create (`org-canvas--module-item-ensure-published')."
   (let* ((id (plist-get data :canvas-id))
          (title (plist-get data :title))
          (method (if id 'PUT 'POST))
@@ -689,24 +737,29 @@ Return the matching item alist, or nil if not found."
           (org-canvas--log-info org-canvas--logger "[DRY-RUN] Would %s item '%s' to %s"
             method title endpoint)
           org-canvas--dry-run-response)
-      (condition-case err
-          (let ((response (org-canvas-api-request method endpoint :data payload)))
-            (org-canvas--log-info org-canvas--logger "[Stage 3: Execute] %s successful for item '%s'" method title)
-            response)
-        (error
-         (org-canvas--log-error org-canvas--logger "[Stage 3: Execute] Item failed: %s" (error-message-string err))
+      ;; Whatever created the item — the POST, the re-POST after a 404,
+      ;; or the search after a timeout — Canvas ignored the published
+      ;; flag on creation (issue #279), so the reply is checked once.
+      (org-canvas--module-item-ensure-published
+       module-id data payload
+       (condition-case err
+           (let ((response (org-canvas-api-request method endpoint :data payload)))
+             (org-canvas--log-info org-canvas--logger "[Stage 3: Execute] %s successful for item '%s'" method title)
+             response)
+         (error
+          (org-canvas--log-error org-canvas--logger "[Stage 3: Execute] Item failed: %s" (error-message-string err))
 
-         (cond
-          ;; CASE 1: Timeout -> Search for item in module
-          ((org-canvas--timeout-error-p err)
-           (org-canvas--handle-timeout-recovery find-fn title err))
+          (cond
+           ;; CASE 1: Timeout -> Search for item in module
+           ((org-canvas--timeout-error-p err)
+            (org-canvas--handle-timeout-recovery find-fn title err))
 
-          ;; CASE 2: 404 on PUT -> Retry as POST (stale ID)
-          ((org-canvas--404-on-put-p err method)
-           (org-canvas--handle-404-retry base-endpoint payload find-fn title err))
+           ;; CASE 2: 404 on PUT -> Retry as POST (stale ID)
+           ((org-canvas--404-on-put-p err method)
+            (org-canvas--handle-404-retry base-endpoint payload find-fn title err))
 
-          ;; Default: Re-throw
-          (t (signal (car err) (cdr err)))))))))
+           ;; Default: Re-throw
+           (t (signal (car err) (cdr err))))))))))
 
 ;;;; 4. Stage: Finalization
 
