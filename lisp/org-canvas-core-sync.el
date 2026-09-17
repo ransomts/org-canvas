@@ -654,7 +654,8 @@ the baseline re-read from it (issue #124)."
 
 (defconst org-canvas--sync-spec-keys
   '(:feature :file :query :parse :build :push :finalize
-    :pull-item-fn :title-key :hash-extra :hash :dry-run :prepare :after-sync)
+    :pull-item-fn :title-key :hash-extra :hash :dry-run :prepare :after-sync
+    :id-property)
   "Keys a sync spec may carry.
 A sync spec is the plist `org-canvas-define-sync' builds from its
 options and hands to `org-canvas--sync-run-pipeline' and
@@ -671,8 +672,11 @@ the push decides for itself and the runner neither skips before it nor
 stamps after it), :dry-run the symbol `push' when the push guards its
 own writes and previews them (the runner then does not intercept a dry
 run ahead of it), :prepare a function of the context run once before
-the first entry, whose result the context keeps as :prepared, and
-:after-sync the hook run on the context before the summary.")
+the first entry, whose result the context keeps as :prepared,
+:after-sync the hook run on the context before the summary, and
+:id-property the Org property the stamp lives in (CANVAS_ID unless the
+module says otherwise), which a sync by heading matches an id against
+\(issue #287).")
 
 (defun org-canvas--sync-entry-hash (payload data ctx)
   "Return the change-detection hash for PAYLOAD and DATA under CTX, or nil.
@@ -862,11 +866,18 @@ ARGS is a plist with the following keys:
            whose level-1 headings must exist on Canvas before its level-2
            headings can be filed under them (outcomes)
   :no-at-point - When non-nil, suppress generating the sync-at-point function
+                 and the sync-by-heading function (the module writes both)
 
 When :endpoint is provided but :push is not, a push function is auto-generated
 that calls `org-canvas--push-to-api' with the given endpoint and options.
 When :endpoint is provided but :finalize is not, a finalize function is
 auto-generated that calls `org-canvas--finalize-item'.
+
+Three commands come out: org-canvas-sync-FEATURE (every entry),
+org-canvas-sync-SINGULAR-at-point (the entry at point) and
+org-canvas-sync-SINGULAR (TARGET &optional BY), the entry a title or
+a stamp names, for a caller without a point (issue #287); the last is
+registered for `org-canvas-sync-headings'.
 
 Example usage:
   (org-canvas-define-sync announcements
@@ -904,7 +915,17 @@ Example usage:
                              title-key (plist-get args :post-fn)
                              endpoint))))
          (singular (org-canvas--singularize feature-name))
-         (at-point-fn-name (intern (format "org-canvas-sync-%s-at-point" singular))))
+         (at-point-fn-name (intern (format "org-canvas-sync-%s-at-point" singular)))
+         (heading-fn-name (intern (format "org-canvas-sync-%s" singular)))
+         (id-property (plist-get args :id-property))
+         ;; The spec a push at point and a push by heading share (issue #287).
+         (entry-spec `(list :feature ,singular
+                            :parse ,parse-fn :build ,build-fn
+                            :push ,push-fn :finalize ,finalize-fn
+                            :title-key ,(or title-key :title)
+                            :pull-item-fn ,pull-item-fn
+                            :hash-extra ,hash-extra-fn :hash ,hash-fn
+                            :prepare ,prepare-fn)))
     (unless file-expr (error "org-canvas-define-sync: :file is required"))
     (unless parse-fn (error "org-canvas-define-sync: :parse is required"))
     (unless build-fn (error "org-canvas-define-sync: :build is required"))
@@ -943,14 +964,30 @@ Example usage:
              (defun ,at-point-fn-name ()
                ,(format "Sync the %s at point to Canvas." singular)
                (interactive)
-               (org-canvas--push-at-point-runtime
-                (list :feature ,singular
-                      :parse ,parse-fn :build ,build-fn
-                      :push ,push-fn :finalize ,finalize-fn
-                      :title-key ,(or title-key :title)
-                      :pull-item-fn ,pull-item-fn
-                      :hash-extra ,hash-extra-fn :hash ,hash-fn
-                      :prepare ,prepare-fn))))))))
+               (org-canvas--push-at-point-runtime ,entry-spec))
+             ;;;###autoload
+             (defun ,heading-fn-name (&optional target by)
+               ,(format "Sync the %s heading TARGET names to Canvas (issue #287).
+TARGET is the heading's exact title in %s, or, with BY
+`canvas-id', its %s; an error names a target that matches no
+heading or more than one.  Nil asks for a title (never under
+`noninteractive').  Return the run context; its :outcome is `synced',
+`unchanged', `conflict', `pulled', `duplicate' or `dry-run'.  The
+at-point command does the same at point; this one finds the heading,
+so a script need not (`org-canvas-sync-headings' takes several)."
+                        singular
+                        (if (symbolp file-expr)
+                            (format "the file `%s' names" file-expr)
+                          "the module's file")
+                        (or id-property "CANVAS_ID"))
+               (interactive)
+               (org-canvas--sync-heading-runtime
+                (append ,entry-spec
+                        (list :file (expand-file-name ,file-expr)
+                              :query ,query
+                              :id-property ,id-property))
+                target by))
+             (org-canvas--sync-register-heading-fn ,singular #',heading-fn-name))))))
 
 ;;;; 6a. Remote Drift Detection
 ;;
@@ -1893,10 +1930,11 @@ the pull option during conflict resolution; :hash-extra, when
 non-nil, is folded into the payload hash (see
 `org-canvas--sync-payload-hash'); :hash and :prepare mean what they
 mean in a full run.  Returns the context, so a caller can read what
-the push recorded in it.  The push runs in a context of its
-own, so a capital answer at its conflict prompt is forgotten when it
-returns rather than applied to every later push at point (issue
-#141)."
+the push recorded in it — its :outcome above all: `synced',
+`unchanged', `conflict', `pulled', `duplicate' or `dry-run' (issue
+#287).  The push runs in a context of its own, so a capital answer at
+its conflict prompt is forgotten when it returns rather than applied
+to every later push at point (issue #141)."
   (org-canvas--sync-check-spec spec '(:feature :parse :build :push :finalize))
   (org-back-to-heading t)
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
@@ -1932,6 +1970,7 @@ returns rather than applied to every later push at point (issue
              (string= payload-hash stored-hash)
              canvas-id)
         (progn
+          (plist-put ctx :outcome 'unchanged)
           (org-canvas--log-info org-canvas--logger "[Skip] '%s' unchanged" title)
           (message "%s '%s' unchanged — skipped." (capitalize feature-name) title))
       (org-canvas--log-info org-canvas--logger "[Stage 3: Push] '%s' (%s)"
@@ -1939,10 +1978,18 @@ returns rather than applied to every later push at point (issue
       (let ((response (funcall push-fn data payload ctx)))
         (cond
          ((memq response '(conflict pulled duplicate))
+          (plist-put ctx :outcome response)
           (org-canvas--push-at-point-report-stop feature-name title response))
          ((eq response 'skip)
+          (plist-put ctx :outcome 'unchanged)
           (org-canvas--log-info org-canvas--logger "[Skip] '%s' nothing to send" title)
           (message "%s '%s' unchanged — skipped." (capitalize feature-name) title))
+         ;; A dry run's sentinel is not a response: finalizing it would
+         ;; stamp CANVAS_ID "dry-run" into the heading (Hard Rule 1).
+         ((org-canvas--dry-run-response-p response)
+          (plist-put ctx :outcome 'dry-run)
+          (org-canvas--log-info org-canvas--logger "[DRY-RUN] '%s' not stamped" title)
+          (message "%s '%s' would be pushed (dry run)." (capitalize feature-name) title))
          (t
           (org-canvas--log-info org-canvas--logger "[Stage 4: Finalize] '%s'" title)
           (condition-case err
@@ -1958,6 +2005,7 @@ returns rather than applied to every later push at point (issue
                "[Stamp] The push of '%s' landed on Canvas, but stamping the file failed: %s — the entry still carries its old CANVAS_UPDATED_AT and PAYLOAD_HASH, so the next sync will report drift that is not real"
                title (error-message-string err))
              (signal (car err) (cdr err))))
+          (plist-put ctx :outcome 'synced)
           (org-canvas--log-info org-canvas--logger "[Sync] '%s' synced successfully" title)
           (message "%s '%s' synced." (capitalize feature-name) title)))))
     ctx))
@@ -1974,6 +2022,210 @@ error, which is how a conflict at point used to end in a backtrace."
                (_ "not pushed — Canvas already holds this title; adopt it with M-x org-canvas-adopt-at-point or rename"))))
     (org-canvas--log-warning org-canvas--logger "[Sync] '%s' %s" title why)
     (message "%s '%s' %s." (capitalize feature-name) title why)))
+
+
+;;;; 10. Sync by Heading (issue #287)
+;;
+;; The at-point commands are the only per-entry push, and they are
+;; interactive by design: point, current buffer.  A batch script that
+;; wanted to push two named headings opened the course file itself,
+;; searched for the heading by regexp, called the at-point command and
+;; saved — twelve lines rewritten in every push script, each a place to
+;; get it wrong (a regexp that matches a longer title, a heading found
+;; in the wrong file, a save skipped after the stamp).  The same gap on
+;; the submissions side was issue #280.
+;;
+;; `org-canvas-define-sync' now also generates org-canvas-sync-<singular>
+;; \(TARGET &optional BY): the file comes from the module's :file, the
+;; heading is found by exact title or, with BY `canvas-id', by its stamp
+;; — an error on zero or several matches — and the existing at-point
+;; runtime runs at that position and saves.  `org-canvas-sync-headings'
+;; takes a list of them.
+
+(defvar org-canvas--sync-heading-fns nil
+  "Alist of (SINGULAR . FUNCTION): every feature's sync by heading.
+FUNCTION takes (TARGET &optional BY).  `org-canvas-define-sync' adds an
+entry for each feature it defines; a module with a hand-written
+command adds its own with `org-canvas--sync-register-heading-fn'.
+`org-canvas-sync-headings' resolves its feature names here, plural or
+singular, so a misspelt feature is named before anything is sent.")
+
+(defun org-canvas--sync-register-heading-fn (singular fn)
+  "Record FN as the sync by heading of the feature called SINGULAR.
+A second registration for the same name replaces the first, so a
+reloaded module does not leave a stale function behind."
+  (setf (alist-get singular org-canvas--sync-heading-fns nil nil #'equal) fn))
+
+(defun org-canvas--sync-heading-fn-for (feature)
+  "Return the sync by heading of FEATURE, a symbol or string.
+FEATURE is the module's name, plural or singular (`assignments' or
+`assignment'); a name no module registered is a `user-error' listing
+the ones that exist."
+  (let* ((name (if (symbolp feature) (symbol-name feature) feature))
+         (fn (cdr (assoc (org-canvas--singularize name) org-canvas--sync-heading-fns))))
+    (or fn
+        (user-error "No sync by heading for %s; the features are: %s" name
+                    (mapconcat #'car (reverse org-canvas--sync-heading-fns) ", ")))))
+
+(defun org-canvas--sync-heading-text ()
+  "Return the text of the heading at point as written, or nil.
+The title alone: no stars, TODO keyword, priority, tags or trailing
+blanks, but with its link markup intact — `org-complex-heading-regexp'
+group 4, the way the modules whose headings are links read it, since
+`org-get-heading' strips link syntax on Org 9.7 and keeps it before."
+  (save-excursion
+    (org-back-to-heading t)
+    (when (looking-at org-complex-heading-regexp)
+      (let ((text (match-string-no-properties 4)))
+        (and text (string-trim text))))))
+
+(defun org-canvas--sync-heading-matches-p (target by id-property)
+  "Return non-nil when the heading at point is the one TARGET names.
+With BY nil or `title', TARGET is the heading's exact text, either as
+written or as `org-get-heading' reads it (the two differ only by link
+markup).  With BY `canvas-id', TARGET is the value of ID-PROPERTY, a
+string or an integer.  Any other BY is a `user-error'."
+  (pcase by
+    ((or 'nil 'title)
+     (or (equal target (org-canvas--sync-heading-text))
+         (equal target (string-trim (or (org-get-heading t t t t) "")))))
+    ('canvas-id
+     (equal (format "%s" target) (org-entry-get (point) id-property)))
+    (_ (user-error "Sync by heading: BY must be nil, `title' or `canvas-id', not %S" by))))
+
+(defun org-canvas--sync-heading-markers (file query pred)
+  "Return a marker at each heading of FILE selected by QUERY that PRED accepts.
+QUERY is the module's `org-map-entries' match; PRED is called with
+point at each heading.  FILE is visited through
+`org-canvas--find-file-noselect' (Hard Rule 8)."
+  (let ((found nil))
+    (with-current-buffer (org-canvas--find-file-noselect file)
+      (org-map-entries (lambda () (when (funcall pred) (push (point-marker) found)))
+                       query 'file))
+    (nreverse found)))
+
+(defun org-canvas--sync-find-heading (file query target by id-property feature)
+  "Return a marker at the one heading of FILE that TARGET names.
+QUERY, BY and ID-PROPERTY are as in `org-canvas--sync-heading-matches-p';
+FEATURE names the module in the error.  No match and more than one
+match are both a `user-error': a script must never push the wrong
+heading, and two headings with one title or one stamp are a file to
+fix (or a job for the at-point command) rather than a guess."
+  (let ((markers (org-canvas--sync-heading-markers
+                  file query
+                  (lambda () (org-canvas--sync-heading-matches-p target by id-property))))
+        (what (if (eq by 'canvas-id) (format "%s %s" id-property target)
+                (format "titled %S" target))))
+    (pcase (length markers)
+      (0 (user-error "No %s heading %s in %s" feature what (file-name-nondirectory file)))
+      (1 (car markers))
+      (n (user-error "%d %s headings %s in %s; sync one at point instead"
+                     n feature what (file-name-nondirectory file))))))
+
+(defun org-canvas--sync-heading-titles (file query)
+  "Return the text of every heading of FILE under QUERY, in file order."
+  (mapcar (lambda (m) (with-current-buffer (marker-buffer m)
+                        (save-excursion (goto-char m) (org-canvas--sync-heading-text))))
+          (org-canvas--sync-heading-markers file query (lambda () t))))
+
+(defun org-canvas--sync-heading-ask (feature file query)
+  "Read the title of a FEATURE heading of FILE, among those under QUERY.
+Under `noninteractive' there is nobody to ask, and a script that
+passed no target is told so rather than left reading standard input."
+  (when noninteractive
+    (user-error "No %s heading named, and nothing to ask in batch (org-canvas-sync-%s)" feature feature))
+  (completing-read (format "%s heading: " (capitalize feature))
+                   (org-canvas--sync-heading-titles file query) nil t))
+
+(defun org-canvas--sync-heading-runtime (spec target &optional by)
+  "Sync the heading TARGET names to Canvas and return the run context.
+SPEC is a sync spec (`org-canvas--sync-spec-keys') with :file and
+:query beside the four stage functions; :id-property is the property
+BY `canvas-id' matches TARGET against (default CANVAS_ID).  TARGET nil
+asks for a title.  The heading is found with
+`org-canvas--sync-find-heading' and pushed by
+`org-canvas--push-at-point-runtime' at that position, which stamps
+and saves; the context's :outcome says how it ended."
+  (org-canvas--sync-check-spec spec '(:feature :file :query :parse :build :push :finalize))
+  (let* ((feature (plist-get spec :feature))
+         (file (plist-get spec :file))
+         (query (plist-get spec :query))
+         (target (or target (org-canvas--sync-heading-ask feature file query)))
+         (marker (org-canvas--sync-find-heading
+                  file query target by
+                  (or (plist-get spec :id-property) "CANVAS_ID") feature)))
+    (with-current-buffer (marker-buffer marker)
+      (save-excursion
+        (goto-char marker)
+        (org-canvas--push-at-point-runtime spec)))))
+
+(defun org-canvas--sync-headings-entry (entry)
+  "Return ENTRY of `org-canvas-sync-headings' as a list (FEATURE TARGET BY).
+ENTRY is (FEATURE . TARGET) with a string TARGET, or (FEATURE TARGET)
+or (FEATURE TARGET BY); anything else is a `user-error'."
+  (cond ((and (consp entry) (stringp (cdr entry)))
+         (list (car entry) (cdr entry) nil))
+        ((and (consp entry) (listp (cdr entry)) (nth 1 entry))
+         (list (car entry) (nth 1 entry) (nth 2 entry)))
+        (t (user-error "Sync headings: %S is not (FEATURE . TITLE) or (FEATURE TARGET BY)"
+                       entry))))
+
+(defun org-canvas--sync-headings-run-one (fn feature target by)
+  "Call FN, the sync by heading of FEATURE, on TARGET and BY; return a result.
+The result is a plist (:feature :target :outcome), :outcome the
+context's, or `failed' with :error naming what went wrong: one
+heading's failure is reported and the next one is pushed, as in a full
+run."
+  (condition-case err
+      (list :feature feature :target target
+            :outcome (plist-get (funcall fn target by) :outcome))
+    (error
+     (org-canvas--log-error org-canvas--logger "[Sync headings] %s '%s' failed: %s"
+       feature target (error-message-string err))
+     (list :feature feature :target target :outcome 'failed
+           :error (error-message-string err)))))
+
+(defun org-canvas--sync-headings-report (results)
+  "Say how RESULTS, the list `org-canvas-sync-headings' built, came out.
+One line per heading, redacted since an error's text is not the
+package's own, then one line of counts."
+  (dolist (r results)
+    (org-canvas--user-message "%s '%s': %s%s"
+      (plist-get r :feature) (plist-get r :target) (plist-get r :outcome)
+      (if (plist-get r :error) (format " — %s" (plist-get r :error)) "")))
+  (let ((count (lambda (o) (cl-count o results :key (lambda (r) (plist-get r :outcome))))))
+    (message "Synced %d heading(s): %d synced, %d unchanged, %d stopped, %d failed"
+             (length results)
+             (funcall count 'synced)
+             (funcall count 'unchanged)
+             (+ (funcall count 'conflict) (funcall count 'pulled)
+                (funcall count 'duplicate) (funcall count 'dry-run))
+             (funcall count 'failed))))
+
+;;;###autoload
+(defun org-canvas-sync-headings (entries)
+  "Sync ENTRIES, named headings of several features, one after another.
+Each entry is (FEATURE . TITLE), or (FEATURE TARGET BY) where BY is
+nil, `title' or `canvas-id' (see `org-canvas--sync-heading-matches-p');
+FEATURE is a module's name, plural or singular.  Every feature is
+resolved before the first push, so a misspelt one stops the batch
+with nothing sent; after that a failed heading is reported and the
+next is pushed.  Requests are paced as any sync's are
+\\(`org-canvas-request-min-interval').  Return one plist per entry,
+\\(:feature :target :outcome), with :error on a failure — the same
+words the closing lines print.  For example:
+
+  (org-canvas-sync-headings
+   \\='((assignment . \"R5: Framework Strengths\")
+     (page . \"Week 05 objectives\")
+     (assignment \"2563805\" canvas-id)))"
+  (let* ((parsed (mapcar #'org-canvas--sync-headings-entry entries))
+         (fns (mapcar (lambda (e) (org-canvas--sync-heading-fn-for (car e))) parsed))
+         (results (cl-mapcar (lambda (fn e)
+                               (org-canvas--sync-headings-run-one fn (car e) (nth 1 e) (nth 2 e)))
+                             fns parsed)))
+    (org-canvas--sync-headings-report results)
+    results))
 
 
 (provide 'org-canvas-core-sync)

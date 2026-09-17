@@ -3261,6 +3261,14 @@ These commands sync just the item at the current cursor position:
 | =org-canvas-sync-grading-scheme-at-point=   | Create the grading scheme at point |
 | =org-canvas-sync-quiz-accommodations-at-point= | Sync the accommodations table of the quiz at point |
 
+** Sync by Heading Commands
+
+Each at-point command has a twin that takes its target as an argument, for a script or a tool that has no point (see [[*Pushing a Heading from Lisp][Pushing a Heading from Lisp]]): =(org-canvas-sync-page TARGET &optional BY)=, and the same for every feature in the table above except quiz accommodations — =org-canvas-sync-assignment=, =-file=, =-outcome=, =-outcome-group=, =-discussion=, =-announcement=, =-module=, =-rubric=, =-quiz=, =-new-quiz=, =-assignment-group=, =-group-category=, =-calendar-event=, =-grading-scheme=. TARGET is the heading's exact title in the feature's file, or, with BY =canvas-id=, its stamp (=CANVAS_ID=; =CANVAS_URL= for a page, =CANVAS_ASSIGNMENT_ID= for a New Quiz). Called interactively with no argument, each offers the file's titles for completion.
+
+| Command | Description |
+|---|---|
+| =org-canvas-sync-headings= | Sync a list of =(FEATURE . TITLE)= or =(FEATURE TARGET BY)= entries one after another and report each |
+
 ** Delete at Point Commands
 
 These commands delete the item at the current cursor position:
@@ -3647,6 +3655,33 @@ Set =org-canvas-assume-yes= to =t= to get the same behavior in an interactive Em
 | =org-canvas-assume-yes=    | =nil=     | Answer yes to non-destructive confirmations      |
 
 This covers prompts that merely confirm the operation you already asked for, such as "sections.org already exists, pull will overwrite headings" or "buffer has unsaved changes, save first".  Prompts guarding mass deletion (=org-canvas-delete-all-*=, =org-canvas-prune-*=) still ask.
+
+*** Pushing a Heading from Lisp
+
+The at-point commands take their target from point, which a script does not have.  Every feature therefore has a sync by heading, generated beside its at-point command: =org-canvas-sync-assignment=, =org-canvas-sync-page= and so on (the full list is under [[*Sync by Heading Commands][Sync by Heading Commands]]).  Each takes the heading's exact title in the feature's own file — the file the module's =org-canvas-<feature>-file= names, so nothing has to be opened or searched by hand — or, with =canvas-id= as the second argument, its stamp, finds the one heading that matches, runs the same four stages the at-point command runs at that position, and saves.  A title that matches no heading, or more than one, is an error naming the file: a script never pushes the wrong heading, and =R1= never matches =R10=.  The value is the run context; its =:outcome= is =synced=, =unchanged=, =conflict=, =pulled=, =duplicate= or =dry-run=.
+
+#+begin_src elisp
+(org-canvas-sync-assignment "R5: Framework Strengths")     ; by exact title
+(org-canvas-sync-assignment "2563805" 'canvas-id)          ; by stamp
+(org-canvas-sync-page "Week 05 objectives")
+#+end_src
+
+=org-canvas-sync-headings= takes a list of them and runs them in order, each in its own =condition-case=, so one failure is reported and the next heading is still pushed; a feature name nobody registered stops the batch before anything is sent.  The feature is the module's name, plural or singular:
+
+#+begin_src elisp
+(org-canvas-sync-headings
+ '((assignment . "R5: Framework Strengths")
+   (page . "Week 05 objectives")
+   (assignment "2563805" canvas-id)))
+#+end_src
+
+It prints one line per heading and a closing count, and returns one plist per entry (=:feature=, =:target=, =:outcome=, and =:error= on a failure).  Requests are paced as any sync's are (=org-canvas-request-min-interval=), so the =sleep-for= between pushes that hand-written scripts carried is not needed.  With =org-canvas--dry-run= bound, a push by heading sends nothing and stamps nothing, and its outcome is =dry-run=.  So, from a shell:
+
+#+begin_src sh
+emacs --batch -l ~/.emacs.d/init.el \
+  --eval '(org-canvas-sync-headings (quote ((assignment . "R5: Framework Strengths")
+                                           (page . "Week 05 objectives"))))'
+#+end_src
 
 ** Preflight Check
 

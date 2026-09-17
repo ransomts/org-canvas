@@ -505,6 +505,29 @@ of the quiz payload."
     (org-canvas--save-buffer)
     (message "New Quiz '%s' synced." (plist-get data :title))))
 
+;;;###autoload
+(defun org-canvas-sync-new-quiz (&optional target by)
+  "Sync the New Quiz heading TARGET names to Canvas (issue #287).
+TARGET is the heading's exact title in the file
+`org-canvas-new-quizzes-file' names, or, with BY `canvas-id', its
+CANVAS_ASSIGNMENT_ID; an error names a target that matches no heading
+or more than one.  Nil asks for a title (never under `noninteractive').
+The at-point command does the work, so the value is not a run context
+but a plist whose :outcome is `synced' — the command signals for
+anything else."
+  (interactive)
+  (let* ((file (expand-file-name org-canvas-new-quizzes-file))
+         (target (or target (org-canvas--sync-heading-ask "new-quiz" file "LEVEL=1")))
+         (marker (org-canvas--sync-find-heading
+                  file "LEVEL=1" target by "CANVAS_ASSIGNMENT_ID" "new-quiz")))
+    (with-current-buffer (marker-buffer marker)
+      (save-excursion
+        (goto-char marker)
+        (org-canvas-sync-new-quiz-at-point)))
+    (list :outcome 'synced)))
+
+(org-canvas--sync-register-heading-fn "new-quiz" #'org-canvas-sync-new-quiz)
+
 ;;;; Delete Functions
 
 ;;;###autoload
