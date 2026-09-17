@@ -1840,6 +1840,188 @@ OVERRIDES adjust `test-org-canvas-make-submission'; a prompt fails."
           (expect (org-canvas-open-submissions) :to-throw 'user-error)
         (delete-directory dir t)))))
 
+;;;; Non-interactive entry points (issue #280)
+
+(defmacro with-submissions-dir (&rest body)
+  "Run BODY with `org-canvas-submissions-directory' bound to a fresh DIR.
+Every buffer visiting a file under it is killed afterwards, and no
+prompt may be reached: `completing-read' and `y-or-n-p' both signal."
+  (declare (indent 0))
+  `(let* ((dir (make-temp-file "org-canvas-subs-" t))
+          (org-canvas-submissions-directory dir)
+          (noninteractive t))
+     (unwind-protect
+         (cl-letf (((symbol-function 'completing-read)
+                    (lambda (&rest _) (error "must not prompt")))
+                   ((symbol-function 'y-or-n-p)
+                    (lambda (&rest _) (error "must not ask")))
+                   ((symbol-function 'switch-to-buffer) (lambda (b) b))
+                   ((symbol-function 'org-canvas--submissions-heading-for-assignment)
+                    (lambda (_id) nil)))
+           ,@body)
+       (dolist (b (buffer-list))
+         (when (and (buffer-file-name b)
+                    (string-prefix-p (file-truename dir) (file-truename (buffer-file-name b))))
+           (with-current-buffer b (set-buffer-modified-p nil))
+           (kill-buffer b)))
+       (delete-directory dir t))))
+
+(defun test-entry--canvas (assignment-object &optional listed)
+  "Return an `org-canvas-api-request' stub answering for ASSIGNMENT-OBJECT.
+A single-assignment read answers ASSIGNMENT-OBJECT, or signals when it
+is nil; the list read answers LISTED; a submissions read answers one
+submission.  Every call is pushed onto `test-entry--calls'."
+  (lambda (method url &rest _)
+    (push (cons method url) test-entry--calls)
+    (cond ((string-match-p "/submissions$" url)
+           (vector (test-org-canvas-make-submission)))
+          ((string-match-p "/assignments/[0-9]+$" url)
+           (or assignment-object (signal 'org-canvas-api-error (list "404"))))
+          ((string-match-p "/assignments$" url)
+           (vconcat listed))
+          (t (error "Unexpected request %s" url)))))
+
+(defvar test-entry--calls nil "The requests a stub of `test-entry--canvas' saw.")
+
+(describe "org-canvas-pull-submissions with an argument"
+  (it "takes an id, reads that one assignment and returns the grading buffer"
+    (with-org-canvas-test-config
+      (with-submissions-dir
+        (setq test-entry--calls nil)
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (test-entry--canvas '((id . 1001) (name . "Homework 1")))))
+          (let ((buf (org-canvas-pull-submissions "1001")))
+            (expect (buffer-live-p buf) :to-be-truthy)
+            (with-current-buffer buf
+              (expect buffer-file-name :to-match "Homework_1\\.org$")
+              (expect org-canvas-submissions-mode :to-be-truthy)
+              (expect org-canvas-submissions--assignment-id :to-equal "1001")
+              (expect org-canvas-submissions--current-view :to-equal 'detail)
+              (expect (buffer-string) :to-match "^\\* Adams, Alice")))
+          (expect (cl-count-if (lambda (c) (string-match-p "/assignments$" (cdr c))) test-entry--calls)
+                  :to-equal 0)
+          (expect (cl-count-if (lambda (c) (string-match-p "/assignments/1001$" (cdr c))) test-entry--calls)
+                  :to-equal 1)))))
+  (it "takes an integer id too"
+    (with-org-canvas-test-config
+      (with-submissions-dir
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (test-entry--canvas '((id . 1001) (name . "Homework 1")))))
+          (with-current-buffer (org-canvas-pull-submissions 1001)
+            (expect org-canvas-submissions--assignment-name :to-equal "Homework 1"))))))
+  (it "takes an exact name, resolved against the course's list"
+    (with-org-canvas-test-config
+      (with-submissions-dir
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (test-entry--canvas nil '(((id . 1001) (name . "Homework 1"))
+                                             ((id . 1002) (name . "Homework 2"))))))
+          (with-current-buffer (org-canvas-pull-submissions "Homework 2")
+            (expect org-canvas-submissions--assignment-id :to-equal "1002"))))))
+  (it "names an id or a name that matches nothing"
+    (with-org-canvas-test-config
+      (with-submissions-dir
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (test-entry--canvas nil '(((id . 1001) (name . "Homework 1"))))))
+          (expect (org-canvas-pull-submissions "9999")
+                  :to-throw 'user-error '("No assignment with id 9999 in this course"))
+          (expect (org-canvas-pull-submissions "Homework 7")
+                  :to-throw 'user-error '("No assignment named Homework 7 in this course"))))))
+  (it "downloads every attachment into the grading file when asked, whatever the default view"
+    (with-org-canvas-test-config
+      (with-submissions-dir
+        (let ((org-canvas-submissions-default-view 'summary)
+              (downloaded nil))
+          (cl-letf (((symbol-function 'org-canvas-api-request)
+                     (lambda (method url &rest _)
+                       (push (cons method url) test-entry--calls)
+                       (cond ((string-match-p "/submissions$" url)
+                              (vector (test-org-canvas-make-submission-with-attachment)))
+                             (t '((id . 1001) (name . "Homework 1"))))))
+                    ((symbol-function 'org-canvas--submissions-download-file)
+                     (lambda (_url _dir filename) (push filename downloaded))))
+            (with-current-buffer (org-canvas-pull-submissions "1001" t)
+              (expect org-canvas-submissions--current-view :to-equal 'detail)
+              (expect buffer-file-name :to-be-truthy)))
+          (expect downloaded :to-equal '("homework1.pdf")))))))
+
+(describe "org-canvas-open-submissions with an argument"
+  (defun test-entry--write-grading-file (dir)
+    "Write HW's grading file into DIR and return its path."
+    (let ((file (expand-file-name "HW.org" dir)))
+      (with-temp-file file
+        (insert test-grading-file-header "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n"))
+      file))
+  (it "opens an absolute path and returns the buffer with its context"
+    (with-submissions-dir
+      (let* ((file (test-entry--write-grading-file dir))
+             (buf (org-canvas-open-submissions file)))
+        (expect (buffer-file-name buf) :to-equal file)
+        (with-current-buffer buf
+          (expect org-canvas-submissions-mode :to-be-truthy)
+          (expect org-canvas-submissions--assignment-id :to-equal "1001")
+          (expect org-canvas-submissions--current-view :to-equal 'detail)))))
+  (it "opens a bare name, with or without .org, and an assignment's name"
+    (with-submissions-dir
+      (let ((file (test-entry--write-grading-file dir)))
+        (expect (buffer-file-name (org-canvas-open-submissions "HW")) :to-equal file)
+        (expect (buffer-file-name (org-canvas-open-submissions "HW.org")) :to-equal file)
+        (with-temp-file (expand-file-name "Journal_02.org" dir)
+          (insert test-grading-file-header))
+        (expect (buffer-file-name (org-canvas-open-submissions "Journal 02"))
+                :to-equal (expand-file-name "Journal_02.org" dir)))))
+  (it "names a file that is not there"
+    (with-submissions-dir
+      (test-entry--write-grading-file dir)
+      (expect (org-canvas-open-submissions "Quiz 3") :to-throw 'user-error)
+      (expect (org-canvas-open-submissions (expand-file-name "gone.org" dir))
+              :to-throw 'user-error)))
+  (it "turns on org-mode when the visited buffer is not in it"
+    (with-submissions-dir
+      (let ((file (test-entry--write-grading-file dir))
+            (plain (generate-new-buffer " *grading-plain*")))
+        (unwind-protect
+            (cl-letf (((symbol-function 'org-canvas--find-file-noselect) (lambda (&rest _) plain)))
+              (with-current-buffer plain
+                (insert-file-contents file))
+              (expect (org-canvas-open-submissions file) :to-be plain)
+              (expect (buffer-local-value 'major-mode plain) :to-be 'org-mode)
+              (expect (buffer-local-value 'org-canvas-submissions--assignment-id plain)
+                      :to-equal "1001"))
+          (kill-buffer plain))))))
+
+(describe "org-canvas-submissions-refresh-file"
+  (it "visits, re-pulls and returns a buffer the grading commands can run in"
+    (with-org-canvas-test-config
+      (with-submissions-dir
+        (let ((file (expand-file-name "HW.org" dir))
+              (downloaded nil))
+          (with-temp-file file
+            (insert test-grading-file-header
+                    "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:END:\n"))
+          (cl-letf (((symbol-function 'org-canvas-api-request)
+                     (lambda (_method url &rest _)
+                       (cond ((string-match-p "/submissions$" url)
+                              (vector (test-org-canvas-make-submission-with-attachment)))
+                             (t '((id . 1001) (name . "HW"))))))
+                    ((symbol-function 'org-canvas--submissions-download-file)
+                     (lambda (_url _dir filename) (push filename downloaded))))
+            (let ((buf (org-canvas-submissions-refresh-file "HW")))
+              (expect (buffer-file-name buf) :to-equal file)
+              (with-current-buffer buf
+                (expect org-canvas-submissions-mode :to-be-truthy)
+                (expect (buffer-modified-p) :to-be nil)
+                (expect (buffer-string) :to-match "homework1\\.pdf")
+                (org-canvas--submissions-goto-user 5001)
+                (expect (org-entry-get (point) "SCORE") :to-equal "95")
+                (org-canvas-submissions-download-all-attachments)
+                (expect (length (org-canvas--submissions-collect-grade-changes)) :to-equal 1))))
+          (expect downloaded :to-equal '("homework1.pdf"))))))
+  (it "asks for the file only when none is given"
+    (with-submissions-dir
+      (with-temp-file (expand-file-name "HW.org" dir)
+        (insert test-grading-file-header))
+      (expect (org-canvas-submissions-refresh-file) :to-throw 'error '("must not prompt")))))
+
 (describe "org-canvas-submissions-download-all-attachments"
   (it "downloads for every student with attachments and skips the rest"
     (with-grading-file (concat test-grading-file-header
