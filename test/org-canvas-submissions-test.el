@@ -1687,17 +1687,118 @@
             (org-canvas-submissions-push-grades))
           (expect-api-called 'PUT "assignments/1001/submissions/5001"))))))
 
-(describe "refresh guards unpushed edits"
-  (it "refuses when the grader declines to lose edits"
+(defun test-refresh--from-canvas (overrides)
+  "Refresh the current grading file as if Canvas held one submission.
+OVERRIDES adjust `test-org-canvas-make-submission'; a prompt fails."
+  (cl-letf (((symbol-function 'org-canvas--submissions-fetch-for-assignment)
+             (lambda (_id) (list (test-org-canvas-make-submission overrides))))
+            ((symbol-function 'org-canvas--submissions-fetch-assignment)
+             (lambda (_id) '((id . 1001))))
+            ((symbol-function 'org-canvas--submissions-heading-for-assignment) (lambda (_id) nil))
+            ((symbol-function 'switch-to-buffer) (lambda (b) b))
+            ((symbol-function 'y-or-n-p) (lambda (_) (error "must not ask"))))
+    (org-canvas-submissions-refresh)))
+
+(describe "a re-pull keeps typed scores (issue #281)"
+  (it "keeps the typed SCORE, refreshes CANVAS_SCORE, and asks nothing"
     (with-org-canvas-test-config
       (with-grading-file (concat test-grading-file-header
                                  "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:END:\n")
-        (let ((fetched nil))
-          (cl-letf (((symbol-function 'org-canvas--submissions-fetch-for-assignment)
-                     (lambda (_id) (setq fetched t) nil))
-                    ((symbol-function 'y-or-n-p) (lambda (_) nil)))
-            (expect (org-canvas-submissions-refresh) :to-throw 'user-error))
-          (expect fetched :to-be nil)))))
+        (test-refresh--from-canvas nil)
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "SCORE") :to-equal "95")
+        (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "92")
+        (expect (org-entry-get (point) "CONFLICT") :to-be nil)
+        (expect (buffer-modified-p) :to-be nil))))
+  (it "keeps a 0 typed on a missing row that never had a CANVAS_SCORE"
+    (with-org-canvas-test-config
+      (with-grading-file (concat test-grading-file-header
+                                 "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:STATUS: missing\n:SCORE: 0\n:END:\n")
+        (test-refresh--from-canvas '((score . nil) (submitted_at . nil) (missing . t)))
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "SCORE") :to-equal "0")
+        (expect (org-entry-get (point) "CANVAS_SCORE") :to-be nil)
+        (expect (org-entry-get (point) "CONFLICT") :to-be nil)
+        (expect (length (org-canvas--submissions-collect-grade-changes)) :to-equal 1))))
+  (it "marks the heading when Canvas graded it since the score was typed"
+    (with-org-canvas-test-config
+      (with-grading-file (concat test-grading-file-header
+                                 "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:END:\n")
+        (test-refresh--from-canvas '((score . 93)))
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "SCORE") :to-equal "95")
+        (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "93")
+        (expect (org-entry-get (point) "CONFLICT") :to-equal "score: Canvas has 93"))))
+  (it "names a grade Canvas cleared meanwhile"
+    (with-org-canvas-test-config
+      (with-grading-file (concat test-grading-file-header
+                                 "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:END:\n")
+        (test-refresh--from-canvas '((score . nil)))
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "SCORE") :to-equal "95")
+        (expect (org-entry-get (point) "CONFLICT") :to-equal "score: Canvas has no grade"))))
+  (it "writes nothing when Canvas now holds the typed score"
+    (with-org-canvas-test-config
+      (with-grading-file (concat test-grading-file-header
+                                 "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:END:\n")
+        (test-refresh--from-canvas '((score . 95)))
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "SCORE") :to-equal "95")
+        (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "95")
+        (expect (org-entry-get (point) "CONFLICT") :to-be nil)
+        (expect (org-canvas--submissions-collect-grade-changes) :to-be nil))))
+  (it "does not carry a score that matches its baseline"
+    (with-grading-file (concat test-grading-file-header
+                               "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 92\n:CANVAS_SCORE: 92\n:END:\n"
+                               "* Beta, Bob\n:PROPERTIES:\n:USER_ID: 5002\n:END:\n")
+      (expect (org-canvas--submissions-collect-carryover) :to-be nil))))
+
+(describe "the summary table still guards unpushed edits"
+  (defun test-summary--buffer-with-edit ()
+    "Insert a summary table whose one score was edited, with its context."
+    (insert "#+TITLE: Submissions: HW\n#+PROPERTY: CANVAS_ASSIGNMENT_ID 1001\n\n")
+    (insert "| Student | Status | Submitted At | Score |\n")
+    (insert "|---------+--------+--------------+-------|\n")
+    (insert "| Adams, Alice | submitted | <2026-02-15> | 95 |\n")
+    (org-table-align)
+    (setq-local org-canvas-submissions--assignment-name "HW")
+    (setq-local org-canvas-submissions--assignment-id "1001")
+    (setq-local org-canvas-submissions--current-view 'summary)
+    (setq-local org-canvas-submissions--original-scores '((5001 . "92")))
+    (setq-local org-canvas-submissions--data (list (test-org-canvas-make-submission)))
+    (org-canvas-submissions-mode 1))
+  (it "refuses when the grader declines to lose edits"
+    (with-org-canvas-test-config
+      (let ((fetched nil)
+            (noninteractive nil))
+        (cl-letf (((symbol-function 'org-canvas--submissions-fetch-for-assignment)
+                   (lambda (_id) (setq fetched t) nil))
+                  ((symbol-function 'y-or-n-p) (lambda (_) nil)))
+          (with-temp-buffer
+            (org-mode)
+            (test-summary--buffer-with-edit)
+            (expect (org-canvas-submissions-refresh) :to-throw 'user-error)))
+        (expect fetched :to-be nil))))
+  (it "goes ahead under noninteractive, saying what is lost"
+    (with-org-canvas-test-config
+      (let ((fetched nil)
+            (messages nil)
+            (noninteractive t))
+        (cl-letf (((symbol-function 'org-canvas--submissions-fetch-for-assignment)
+                   (lambda (_id) (setq fetched t) (list (test-org-canvas-make-submission))))
+                  ((symbol-function 'org-canvas--submissions-fetch-assignment) (lambda (_id) nil))
+                  ((symbol-function 'switch-to-buffer) (lambda (b) b))
+                  ((symbol-function 'message)
+                   (lambda (fmt &rest args) (push (apply #'format fmt args) messages)))
+                  ((symbol-function 'y-or-n-p) (lambda (_) (error "must not ask"))))
+          (with-temp-buffer
+            (org-mode)
+            (test-summary--buffer-with-edit)
+            (org-canvas-submissions-refresh)))
+        (expect fetched :to-be-truthy)
+        (expect messages :to-contain "1 unpushed score change(s) lost by Refresh")))))
+
+(describe "refresh over a clean grading file"
   (it "refreshes when nothing is pending"
     (with-org-canvas-test-config
       (with-grading-file (concat test-grading-file-header
@@ -2467,19 +2568,26 @@
               :to-throw 'user-error))))
 
 (describe "org-canvas--submissions-grading-buffer"
-  (it "turns on org-mode when the visited buffer is not in it"
+  (it "returns the visited buffer, and the display turns on org-mode before reading it"
     (let* ((dir (make-temp-file "org-canvas-subs-" t))
            (org-canvas-submissions-directory dir)
            (scratch (generate-new-buffer " *grading-plain*")))
       (unwind-protect
           (progn
             (with-current-buffer scratch
-              (insert test-grading-file-header))
+              (insert test-grading-file-header
+                      "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 95\n:CANVAS_SCORE: 92\n:END:\n"))
             (cl-letf (((symbol-function 'org-canvas--find-file-noselect)
-                       (lambda (&rest _) scratch)))
-              (let ((buf (org-canvas--submissions-grading-buffer "HW")))
-                (expect buf :to-be scratch)
-                (expect (buffer-local-value 'major-mode buf) :to-be 'org-mode))))
+                       (lambda (&rest _) scratch))
+                      ((symbol-function 'org-canvas--submissions-heading-for-assignment) (lambda (_id) nil))
+                      ((symbol-function 'switch-to-buffer) (lambda (b) b)))
+              (expect (org-canvas--submissions-grading-buffer "HW") :to-be scratch)
+              (expect (buffer-local-value 'major-mode scratch) :to-be 'fundamental-mode)
+              (org-canvas--submissions-display "HW" "1001" (list (test-org-canvas-make-submission)) 'detail)
+              (expect (buffer-local-value 'major-mode scratch) :to-be 'org-mode)
+              (with-current-buffer scratch
+                (org-canvas--submissions-goto-user 5001)
+                (expect (org-entry-get (point) "SCORE") :to-equal "95"))))
         (kill-buffer scratch)
         (delete-directory dir t)))))
 
