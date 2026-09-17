@@ -851,6 +851,153 @@
           (expect (org-canvas--module-item-push-to-api 100 data payload)
                   :to-throw 'error))))))
 
+;;;; Publish flag after creation (issue #279)
+
+(defun test-org-canvas-module-item-payload (type published)
+  "Return a module item payload of TYPE carrying PUBLISHED, as the builder does."
+  (let ((item (make-hash-table :test 'equal))
+        (payload (make-hash-table :test 'equal)))
+    (puthash "type" type item)
+    (puthash "title" "Objectives" item)
+    (puthash "published" published item)
+    (puthash "module_item" item payload)
+    payload))
+
+(describe "org-canvas--module-item-push-to-api publish flag after POST (issue #279)"
+  (it "PUTs the flag when a SubHeader comes back unpublished and returns the PUT's reply"
+    (with-org-canvas-test-config
+      (let ((calls nil) result)
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest args)
+                     (push (list method url (plist-get args :data)) calls)
+                     (pcase method
+                       ('POST '((id . 5879973) (title . "Objectives") (published . :json-false)))
+                       ('PUT '((id . 5879973) (title . "Objectives") (published . t)))))))
+          (setq result (org-canvas--module-item-push-to-api
+                        7 '(:title "Objectives" :type "SubHeader" :canvas-id nil)
+                        (test-org-canvas-module-item-payload "SubHeader" t))))
+        (setq calls (nreverse calls))
+        (expect (length calls) :to-equal 2)
+        (expect (nth 0 (nth 1 calls)) :to-equal 'PUT)
+        (expect (nth 1 (nth 1 calls)) :to-match "modules/7/items/5879973$")
+        (let ((sent (gethash "module_item" (nth 2 (nth 1 calls)))))
+          (expect (gethash "published" sent) :to-be t)
+          (expect (hash-table-count sent) :to-equal 1))
+        (expect (alist-get 'published result) :to-be t)
+        (expect (alist-get 'id result) :to-equal 5879973))))
+
+  (it "sends nothing more when the reply already carries the flag asked for"
+    (with-org-canvas-test-config
+      (let ((calls nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest args)
+                     (push (list method url (plist-get args :data)) calls)
+                     '((id . 1) (title . "Objectives") (published . t)))))
+          (org-canvas--module-item-push-to-api
+           7 '(:title "Objectives" :type "ExternalUrl" :canvas-id nil)
+           (test-org-canvas-module-item-payload "ExternalUrl" t)))
+        (expect (length calls) :to-equal 1)
+        (expect (nth 0 (car calls)) :to-equal 'POST))))
+
+  (it "leaves an item of a foreign type alone, whatever its reply says"
+    (with-org-canvas-test-config
+      (let ((calls nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest args)
+                     (push (list method url (plist-get args :data)) calls)
+                     '((id . 2) (title . "Syllabus") (published . :json-false)))))
+          (org-canvas--module-item-push-to-api
+           7 '(:title "Syllabus" :type "Page" :canvas-id nil :page-url "syllabus")
+           (test-org-canvas-module-item-payload "Page" t)))
+        (expect (length calls) :to-equal 1))))
+
+  (it "sends nothing more for a header wanted unpublished that came back unpublished"
+    (with-org-canvas-test-config
+      (let ((calls nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest args)
+                     (push (list method url (plist-get args :data)) calls)
+                     '((id . 3) (title . "Draft") (published . :json-false)))))
+          (org-canvas--module-item-push-to-api
+           7 '(:title "Draft" :type "SubHeader" :canvas-id nil :published nil)
+           (test-org-canvas-module-item-payload "SubHeader" :json-false)))
+        (expect (length calls) :to-equal 1))))
+
+  (it "keeps the created item and warns once when the follow-up PUT fails"
+    (with-org-canvas-test-config
+      (let ((calls nil) (warnings nil) result)
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest args)
+                     (push (list method url (plist-get args :data)) calls)
+                     (pcase method
+                       ('POST '((id . 4) (title . "Objectives") (published . :json-false)))
+                       ('PUT (signal 'error '("Internal Server Error"))))))
+                  ((symbol-function 'org-canvas--log-warning)
+                   (lambda (_logger fmt &rest args)
+                     (push (apply #'format fmt args) warnings))))
+          (setq result (org-canvas--module-item-push-to-api
+                        7 '(:title "Objectives" :type "SubHeader" :canvas-id nil)
+                        (test-org-canvas-module-item-payload "SubHeader" t))))
+        (expect (length calls) :to-equal 2)
+        (expect (alist-get 'id result) :to-equal 4)
+        (expect (alist-get 'published result) :to-be :json-false)
+        (expect (length warnings) :to-equal 1)
+        (expect (car warnings) :to-match "Objectives.*published flag could not be set.*Internal Server Error"))))
+
+  (it "also fixes the flag of a header recreated after a 404"
+    (with-org-canvas-test-config
+      (let ((calls nil) result)
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest args)
+                     (push (list method url (plist-get args :data)) calls)
+                     (pcase (list method (length calls))
+                       ('(PUT 1) (signal 'error '("404 Not Found")))
+                       ('(GET 2) [])
+                       ('(POST 3) '((id . 9) (title . "Objectives") (published . :json-false)))
+                       ('(PUT 4) '((id . 9) (title . "Objectives") (published . t)))))))
+          (setq result (org-canvas--module-item-push-to-api
+                        7 '(:title "Objectives" :type "SubHeader" :canvas-id "8")
+                        (test-org-canvas-module-item-payload "SubHeader" t))))
+        (setq calls (nreverse calls))
+        (expect (mapcar #'car calls) :to-equal '(PUT GET POST PUT))
+        (expect (nth 1 (nth 3 calls)) :to-match "modules/7/items/9$")
+        (expect (alist-get 'published result) :to-be t))))
+
+  (it "sends nothing under a dry run"
+    (with-org-canvas-test-config
+      (let ((calls nil)
+            (org-canvas--dry-run t))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest args)
+                     (push (list method url (plist-get args :data)) calls)
+                     nil)))
+          (expect (org-canvas--module-item-push-to-api
+                   7 '(:title "Objectives" :type "SubHeader" :canvas-id nil)
+                   (test-org-canvas-module-item-payload "SubHeader" t))
+                  :to-be org-canvas--dry-run-response))
+        (expect calls :to-equal nil)))))
+
+(describe "org-canvas--module-item-ensure-published"
+  (it "returns a reply without a flag or an id unchanged"
+    (with-org-canvas-test-config
+      (let ((calls 0))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _) (cl-incf calls) nil)))
+          (let ((payload (test-org-canvas-module-item-payload "SubHeader" t))
+                (data '(:title "Objectives" :type "SubHeader")))
+            (expect (org-canvas--module-item-ensure-published 7 data payload '((id . 1)))
+                    :to-equal '((id . 1)))
+            (expect (org-canvas--module-item-ensure-published
+                     7 data payload '((published . :json-false)))
+                    :to-equal '((published . :json-false)))
+            (expect (org-canvas--module-item-ensure-published 7 data payload nil)
+                    :to-be nil)))
+        (expect calls :to-equal 0))))
+
+  (it "reads no flag from a payload without a module_item"
+    (expect (org-canvas--module-item-wanted-published (make-hash-table)) :to-be nil)
+    (expect (org-canvas--module-item-wanted-published nil) :to-be nil)))
+
 ;;;; Stage 4: Finalize
 
 (describe "org-canvas--module-finalize"

@@ -2439,6 +2439,9 @@ The publish state is written to the object's own heading, never inferred from
 the module at push time.  A module item that has no object behind it -- a
 SubHeader or an external URL -- owns its state, so those are set in place.  See
 [[*Conflict Detection][Conflict Detection]] for why that distinction matters.
+Canvas ignores the flag when it creates such an item, so a new header or
+external URL is published by a second request right after it is created; an
+existing one is updated with its flag in the one request.
 
 Items whose links do not resolve are named in the report rather than silently
 passed over, so a typo in a link surfaces instead of quietly leaving one piece
