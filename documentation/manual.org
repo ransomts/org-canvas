@@ -3287,6 +3287,7 @@ Canvas.  It works in every course file that has a page on Canvas:
 | calendar.org          | level 1       | =calendar_events/CANVAS_ID=             | =…/edit=          |
 | modules.org           | module        | =modules/CANVAS_ID=                     | none            |
 | modules.org           | item          | =modules/items/CANVAS_ID=               | none            |
+| modules.org           | text header   | its module's =modules/CANVAS_ID=        | none            |
 | files.org             | file          | =files/CANVAS_ID=                       | none            |
 | files.org             | folder        | =files/folder/PATH=                     | none            |
 | rubrics.org           | level 1       | =rubrics/CANVAS_ID=                     | none            |
@@ -3300,7 +3301,11 @@ Canvas.  It works in every course file that has a page on Canvas:
 
 Every page is under =BASE/courses/COURSE/=.  "None" means Canvas edits
 the object on its page; asking for the edit page opens that page and
-says so.  A heading with no page of its own -- a quiz question, a New
+says so.  Canvas forwards a module to its place on the Modules page and
+a module item to the page, file, quiz or link it holds; a text header
+holds none, so it opens its module.  A New Quiz's edit page is its
+assignment settings (points, group, dates, assign-to); its questions
+are built from its page, which launches New Quizzes.  A heading with no page of its own -- a quiz question, a New
 Quiz item, a rubric criterion, a sub-heading inside a body -- opens its
 parent's page, and the echo area names the heading you started on.  A
 heading with no id is not on Canvas yet, so the command refuses and

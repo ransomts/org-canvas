@@ -219,7 +219,9 @@ Uses ancestor headings that don't have file links to build the path."
 Nil for a file heading, which is one whose headline holds a link; the
 link is read from the raw headline, since `org-get-heading' strips it
 on Org 9.7.  A folder's page is its path of folder names under the
-course files, each escaped (issue #292)."
+course files, each escaped as Canvas's own folder links escape it: a
+percent sign is first written \"&#37;\", since the Files page decodes
+each name once more and a bare one is a malformed URI (issue #300)."
   (save-excursion
     (org-back-to-heading t)
     (let ((raw (when (looking-at org-complex-heading-regexp)
@@ -230,7 +232,10 @@ course files, each escaped (issue #292)."
         (while (org-up-heading-safe)
           (push (org-canvas--strip-statistics-cookie (org-get-heading t t t t))
                 parts))
-        (concat "files/folder/" (mapconcat #'url-hexify-string parts "/"))))))
+        (concat "files/folder/"
+                (mapconcat (lambda (name)
+                             (url-hexify-string (string-replace "%" "&#37;" name)))
+                           parts "/"))))))
 
 (defalias 'org-canvas--file-guess-content-type #'org-canvas--guess-content-type
   "Alias — canonical definition is in core-api.el.")

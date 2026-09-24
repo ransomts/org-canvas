@@ -206,6 +206,19 @@ answer to that.  So has the rubric update's
 dissociate–PUT–re-associate sequence (#255): its parts were run by hand
 on the live course, the sequence itself has not been.
 
+The browse commands' addresses (#292) were checked against the
+canvas-lms source rather than opened (decisions.org, "Every Address
+Checked Against Canvas's Routes"): the routes and redirects are known,
+what the pages show on this instance is not.  The first time each is
+used, look at where it lands: a New Quiz's edit page (expected: its
+assignment settings form, not the item editor), a group category's
+=groups#tab-ID= (expected: that set's tab selected), an outcome's
+=outcomes/ID= (expected: the outcome's detail page, which the source
+still renders from the older =outcomes/show= view), a
+module item (expected: the content it links; a text header its
+module), a calendar event's page, and a files.org folder, including
+one whose name holds a space or a =%=.
+
 What remains in "Never Touched" is rarely set at the course level or
 belongs to the institution; nothing there is known to have bitten a
 course run from Org.

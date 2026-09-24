@@ -95,12 +95,46 @@ of a `user-error' it signalled; :message, the echo-area line."
 
   (it "opens a module, and a module item by its own id"
     (let ((content (concat "* Week 01\n:PROPERTIES:\n:CANVAS_ID: 751444\n:END:\n"
-                           "** Course Home\n:PROPERTIES:\n:CANVAS_ID: 5440928\n:END:\n")))
+                           "** [[file:pages.org::*Course Home][Course Home]]\n"
+                           ":PROPERTIES:\n:CANVAS_ID: 5440928\n:END:\n")))
       (expect (plist-get (test-org-canvas--browse 'org-canvas-modules-file content nil) :url)
               :to-equal "https://canvas.test/courses/42/modules/751444")
-      (expect (plist-get (test-org-canvas--browse 'org-canvas-modules-file content "Course Home")
+      (expect (plist-get (test-org-canvas--browse 'org-canvas-modules-file content "Course Home\\]")
                          :url)
               :to-equal "https://canvas.test/courses/42/modules/items/5440928")))
+
+  (it "opens a SubHeader's module, since Canvas cannot follow its item (issue #300)"
+    (let ((content (concat "* Week 01\n:PROPERTIES:\n:CANVAS_ID: 751444\n:END:\n"
+                           "** --- Setup ---\n:PROPERTIES:\n:CANVAS_ID: 5440930\n:END:\n"
+                           "** Pulled divider\n:PROPERTIES:\n:ITEM_TYPE: SubHeader\n"
+                           ":CANVAS_ID: 5440931\n:END:\n"
+                           "** [[file:pages.org::*Home][Home]]\n"
+                           ":PROPERTIES:\n:CANVAS_ID: 5440932\n:END:\n"
+                           "** Docs\n:PROPERTIES:\n:EXTERNAL_URL: https://docs.test\n"
+                           ":CANVAS_ID: 5440933\n:END:\n"
+                           "** Unsynced divider\n")))
+      (expect (plist-get (test-org-canvas--browse 'org-canvas-modules-file content "Setup") :url)
+              :to-equal "https://canvas.test/courses/42/modules/751444")
+      (expect (plist-get (test-org-canvas--browse 'org-canvas-modules-file content "Pulled")
+                         :url)
+              :to-equal "https://canvas.test/courses/42/modules/751444")
+      (expect (plist-get (test-org-canvas--browse 'org-canvas-modules-file content "Home\\]")
+                         :url)
+              :to-equal "https://canvas.test/courses/42/modules/items/5440932")
+      (expect (plist-get (test-org-canvas--browse 'org-canvas-modules-file content "Docs") :url)
+              :to-equal "https://canvas.test/courses/42/modules/items/5440933")
+      (expect (plist-get (test-org-canvas--browse 'org-canvas-modules-file content "Unsynced")
+                         :error)
+              :to-match "has no CANVAS_ID yet")))
+
+  (it "opens a SubHeader by its item id when its module has no id"
+    (expect (plist-get (test-org-canvas--browse
+                        'org-canvas-modules-file
+                        (concat "* Week 01\n"
+                                "** Divider\n:PROPERTIES:\n:CANVAS_ID: 5440930\n:END:\n")
+                        "Divider")
+                       :url)
+            :to-equal "https://canvas.test/courses/42/modules/items/5440930"))
 
   (it "says when Canvas has no separate edit page and opens the page itself"
     (let ((r (test-org-canvas--browse
@@ -124,6 +158,13 @@ of a `user-error' it signalled; :message, the echo-area line."
       (expect (plist-get (test-org-canvas--browse 'org-canvas-files-file content "new.pdf\\]")
                          :error)
               :to-match "has no CANVAS_ID yet")))
+
+  (it "writes a folder's percent sign as Canvas's own folder links do (issue #300)"
+    (expect (plist-get (test-org-canvas--browse 'org-canvas-files-file
+                                                "* Grades\n** 50% Rule\n" "Rule")
+                       :url)
+            :to-equal
+            "https://canvas.test/courses/42/files/folder/Grades/50%26%2337%3B%20Rule"))
 
   (it "opens outcomes, and a group at the course's outcomes page"
     (let ((content (concat "* Programming Skills\n:PROPERTIES:\n:CANVAS_ID: 124176\n:END:\n"

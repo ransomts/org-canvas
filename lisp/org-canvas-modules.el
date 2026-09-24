@@ -61,9 +61,12 @@
  :name "Modules" :endpoint "modules"
  :file-var 'org-canvas-modules-file
  :id-field 'id :id-property "CANVAS_ID" :title-field 'name
- ;; Canvas redirects both to the modules page: a module to its anchor,
- ;; an item to the content it links.  Modules are edited in place there.
+ ;; A module's page redirects to its anchor on the Modules page, where
+ ;; modules are edited in place; an item's redirects to the content it
+ ;; links, except a SubHeader's, which Canvas cannot follow, so a
+ ;; SubHeader opens its module (issue #300).
  :web-pages '((:level 1 :id-property "CANVAS_ID" :path "modules/%s")
+              (:level 2 :path-fn org-canvas--module-subheader-web-path)
               (:level 2 :id-property "CANVAS_ID" :path "modules/items/%s")))
 (org-canvas-register-properties "modules"
   :duplicate-titles t
@@ -360,6 +363,37 @@ Pure function — no buffer access."
     data))
 
 ;;;; 1. Stage: Extraction - Module Items
+
+(defun org-canvas--module-subheader-p ()
+  "Return non-nil when the module item heading at point is a SubHeader.
+The parse's rule without its link resolution: ITEM_TYPE says so, or
+the heading is neither an external URL nor a link to a file."
+  (let ((type (org-entry-get (point) "ITEM_TYPE")))
+    (or (equal type "SubHeader")
+        (not (or (org-entry-get (point) "EXTERNAL_URL")
+                 (save-excursion
+                   (org-back-to-heading t)
+                   (and (looking-at org-complex-heading-regexp)
+                        (string-match-p "\\[\\[file:"
+                                        (or (match-string-no-properties 4)
+                                            "")))))))))
+
+(defun org-canvas--module-subheader-web-path ()
+  "Return the page of the SubHeader item at point: its module's, or nil.
+Canvas's module-item address resolves an item to the content it links;
+a SubHeader links none, and Canvas answers \"Didn't recognize the item
+type for this tag\" over the Modules page (`content_tag_redirect',
+issue #300).  So a stamped SubHeader opens the module holding it.  Nil
+for any other item, and for a SubHeader not on Canvas yet, which the
+module-item rule then refuses."
+  (save-excursion
+    (org-back-to-heading t)
+    (when (and (org-canvas--module-subheader-p)
+               (org-canvas--nonempty-string-p (org-entry-get (point) "CANVAS_ID"))
+               (org-up-heading-safe))
+      (let ((module-id (org-entry-get (point) "CANVAS_ID")))
+        (and (org-canvas--nonempty-string-p module-id)
+             (format "modules/%s" module-id))))))
 
 (defun org-canvas--module-item-read-props (pom modules-file-dir)
   "Read raw property strings from the module item heading at POM.

@@ -379,3 +379,35 @@ Attaching a document processor is a browser step by design (#184: the API refuse
 *The assembled address, not a stored =html_url=.* The issue suggested pulls store Canvas's =html_url= on each heading. That is one more property on every heading of every file for an address the registry already determines, and a copied course would carry the old course's addresses. The drift report does prefer =html_url= where it has one, since its rows carry the remote item and it costs nothing: =b= opens it (now kept on CHANGED rows as well as EXTRA and UNCLAIMED), and =B= opens the edit page assembled from the registry through =org-canvas--feature-web-url=, falling back to =html_url= for a row whose feature declares no page (module items).
 
 There is no =org-canvas-mode-map= to bind the command in, so it is on the transient menu (=b=, =B= in the Sync group), and the canvas-owned validate warning names it.
+
+** Every Address Checked Against Canvas's Routes (issue #300)
+
+Several =:web-pages= rules came from memory of Canvas's routes. Web pages need a session login, so they cannot be probed with the API token; every rule was instead read against the canvas-lms source at commit =1c9f0bb8013ed69c4f2efe11fd483025469b7e6c= (the head of master when read on 2026-09-24, committed 2026-04-30; the public mirror lags the hosted instance): =config/routes.rb= inside =resources :courses=, and the controller action each route names. Line numbers are at that commit.
+
+| Rule | Route (=config/routes.rb=) | What the action does | Verdict |
+|---+---+---+---|
+| =assignments/ID=, =…/edit= | 270 =resources :assignments= | =assignments#show=, =#edit= | right |
+| =assignments= (assignment groups) | 270, index | the Assignments page, grouped | right |
+| =quizzes/ID=, =…/edit= | 447 =resources :quizzes … except: :new= | =quizzes/quizzes#show=, =#edit= | right |
+| =pages/URL=, =…/edit= | 169 =resources :wiki_pages, path: :pages= (id =[^/]+=) | show, edit by slug | right |
+| =discussion_topics/ID=, =…/edit= | 159 =only: %i[index new show edit destroy]= | =#edit= finds in =all_discussion_topics=, announcements included | right, for announcements too |
+| =calendar_events/ID=, =…/edit= | 417 =resources :calendar_events= | =#show= renders the event (redirects to the calendar only for =?calendar=1= or a section context); =#edit= renders the form | right |
+| =rubrics/ID= | 485 =resources :rubrics= | =rubrics#show=, the redesign when =enhanced_rubrics= is on | right |
+| =outcomes= | 494 =resources :outcomes= | index | right |
+| =outcomes/ID= | 494 | =#show= looks the id up in =linked_learning_outcomes=, the learning-outcome id org-canvas stamps (pull reads =link.outcome.id=); needs =manage_outcomes=, redirects to the index in a large-roster course | right |
+| =grading_standards= | 380 =only: %i[index …]= | index | right |
+| =sections/ID= | 217 =except: %i[index edit new]= | =sections#show= renders HTML | right |
+| =settings= | 228 =get :settings= | =courses#settings= | right |
+| =modules/ID= | 509 =resources :context_modules, path: :modules= | =#show= redirects to the Modules page at =#module_ID= (=context_modules_controller.rb= 982) | right |
+| =modules/items/ID= | 535 =get "modules/items/:id" => "context_modules#item_redirect"= | =content_tag_redirect= (=application_controller.rb= 2391) sends the item to the page, file, quiz, topic or tool it holds, and frames an external URL; the API's own module-item =html_url= is this address ("the same thing the web UI does", =lib/api/v1/context_module.rb= 105) | right, except a SubHeader |
+| =groups#tab-ID= | 103 =resources :groups, except: :edit= (the =:groups= concern, line 420) | =groups#index= renders =context_manage_groups=; =GroupCategoriesView.loadTabFromUrl= takes the id after the hash's =-= and opens that category's tab (=ui/features/manage_groups/backbone/views/GroupCategoriesView.ts= 178) | right |
+| =files/ID= | 117 =resources :files, except: [:new]= | =files#show= | right |
+| =files/folder/NAMES= | 115 =get "files/folder#{full_path_glob}" => "files#react_files"= | the Files app resolves the path through =folders/by_path=, relative to the course root, the endpoint the sync creates folders with; folder headings mirror that root, the pull stripping =course files/= | right, except a =%= |
+
+*A SubHeader opens its module.* =content_tag_redirect= knows no =ContextModuleSubHeader=, so =modules/items/ID= for a text header lands on the Modules page under "Didn't recognize the item type for this tag" (=application_controller.rb= 2583), and the API gives a SubHeader no =html_url= at all (=lib/api/v1/context_module.rb= 94). The level-2 rules now lead with =org-canvas--module-subheader-web-path=, which opens a stamped SubHeader's module: the parse's own test without its link resolution (=ITEM_TYPE: SubHeader=, or neither =EXTERNAL_URL= nor a =[[file:= link). An unstamped one still refuses, and one under an unstamped module falls through to the item address.
+
+*A percent sign is written =&#37;=.* The Files app's router decodes the path and then =generateFolderByPathUrl= runs =decodeURIComponent= on each name again (=ui/features/files_v2/utils/apiUtils.ts= 48), so a folder named =50% Rule= sent as =50%25%20Rule= reaches the second decode as a bare =%= and throws. Canvas's own folder links replace =%= with =&#37;= before encoding (=folderUtils.ts= 30) and the decode side turns it back; =org-canvas--file-folder-web-path= now does the same.
+
+*A New Quiz's edit page is its assignment settings, not the item editor.* =assignments#edit= renders the assignment form for a =quiz_lti= assignment (points, group, dates, assign-to; the React teacher view under =assignment_edit_enhancements_teacher_view=); it redirects only classic quizzes, graded discussions and pages. This is where Canvas itself sends a teacher from a New Quiz module item (=content_tag_redirect=, =use_edit_url=, adding =?quiz_lti= for the breadcrumb and active tab under =newquizzes_on_quiz_page=). The items are built from =assignments/ID=, whose =#show= launches the New Quizzes tool for an =external_tool= assignment. The rule stays; what the form shows on the instance is a browser check (coverage.org, "Watch on First Live Use").
+
+The source settles routing and redirects; what a page looks like on the instance, behind its feature flags, is still a browser's to see, and those checks are listed in coverage.org.
