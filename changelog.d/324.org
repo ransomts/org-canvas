@@ -1,0 +1,7 @@
+* Fixed
+- #324 A delete-all no longer strips the sync properties of an item it
+  left on Canvas: the front page, an item a =:skip-fn= protected, and
+  an item whose DELETE failed keep their stamps, with the headings
+  below them (a quiz's questions, a group's outcomes).  This holds for
+  the generated delete-alls and for those of files, rubrics, outcomes
+  and New Quizzes.

@@ -605,6 +605,10 @@ returns a plist whose :outcome is `pulled' or `dry-run'."
 
 ;;;; Delete Functions
 
+(defun org-canvas--new-quiz-delete-id (item)
+  "Return the id a DELETE of the New Quiz ITEM names."
+  (or (alist-get 'assignment_id item) (alist-get 'id item)))
+
 ;;;###autoload
 (defun org-canvas-delete-all-new-quizzes ()
   "Delete ALL New Quizzes in the configured course."
@@ -619,25 +623,29 @@ returns a plist whose :outcome is `pulled' or `dry-run'."
   (org-canvas--log-warning org-canvas--logger "========================================")
   (let* ((endpoint (org-canvas--new-quiz-api-endpoint "quizzes"))
          (remote-items (org-canvas-api-request-all-pages 'GET endpoint))
-         (deleted 0))
+         (deleted 0)
+         (deleted-ids nil))
     (org-canvas--log-info org-canvas--logger "Found %d new-quizzes on Canvas"
       (length remote-items))
     (dolist (item remote-items)
-      (let* ((id (or (alist-get 'assignment_id item)
-                     (alist-get 'id item)))
+      (let* ((id (org-canvas--new-quiz-delete-id item))
              (title (alist-get 'title item))
              (del-url (org-canvas--new-quiz-api-endpoint "quizzes/%s" id)))
         (condition-case err
             (progn
               (org-canvas-api-request 'DELETE del-url)
               (org-canvas--log-info org-canvas--logger "[Deleted] '%s' (ID: %s)" title id)
+              (push (org-canvas--normalize-id id) deleted-ids)
               (setq deleted (1+ deleted)))
           (error
            (org-canvas--log-warning org-canvas--logger "[Delete Failed] '%s': %s"
              title (error-message-string err))))))
-    ;; Clean local properties
+    ;; Keep the stamps of the quizzes still on Canvas (#324)
     (org-canvas--clean-local-sync-properties
-     org-canvas-new-quizzes-file "CANVAS_ASSIGNMENT_ID")
+     org-canvas-new-quizzes-file
+     (org-canvas--delete-kept-ids remote-items
+                                  #'org-canvas--new-quiz-delete-id deleted-ids)
+     "CANVAS_ASSIGNMENT_ID")
     (message "New-quizzes deletion complete. %d removed." deleted)))
 
 ;;;; Pull

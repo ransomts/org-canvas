@@ -122,10 +122,117 @@
               (goto-char (point-min))
               (org-back-to-heading)
               (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)
-              ;; Item 2 should also be cleared (delete-all cleans all properties)
+              ;; Item 2 is not on Canvas at all, so its stale stamp goes too
               (outline-next-heading)
               (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)))
         (delete-file temp-file)))))
+
+(defun test-org-canvas-delete--stamps (file prop)
+  "Return the (HEADING . PROP value) pairs of FILE, in order."
+  (with-current-buffer (org-canvas--find-file-noselect file)
+    (revert-buffer t t t)
+    (org-map-entries
+     (lambda () (cons (org-get-heading t t t t) (org-entry-get (point) prop)))
+     nil 'file)))
+
+(describe "org-canvas--delete-all-items clears only what it deleted (#324)"
+  (it "keeps the stamps of a skipped and a failed item, clears the deleted one"
+    (let ((temp-file (make-temp-file "test-canvas" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file
+              (insert "* Kept\n:PROPERTIES:\n:CANVAS_ID: 1\n"
+                      ":PAYLOAD_HASH: aaa\n:END:\n"
+                      "* Failed\n:PROPERTIES:\n:CANVAS_ID: 2\n"
+                      ":PAYLOAD_HASH: bbb\n:END:\n"
+                      "* Gone\n:PROPERTIES:\n:CANVAS_ID: 3\n"
+                      ":PAYLOAD_HASH: ccc\n:END:\n"))
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                         (lambda (&rest _)
+                           '(((id . 1) (title . "Kept") (protect . t))
+                             ((id . 2) (title . "Failed"))
+                             ((id . 3) (title . "Gone")))))
+                        ((symbol-function 'org-canvas-api-request)
+                         (lambda (_method url &rest _)
+                           (when (string-match-p "items/2\\'" url)
+                             (org-canvas--signal 'org-canvas-api-error "nope"))
+                           nil))
+                        ((symbol-function 'message) #'ignore))
+                (expect (org-canvas--delete-all-items
+                         (list :feature "items" :endpoint "items"
+                               :file temp-file
+                               :skip-fn (lambda (item) (alist-get 'protect item))
+                               :skip-reason "protected"))
+                        :to-equal 1)))
+            (expect (test-org-canvas-delete--stamps temp-file "CANVAS_ID")
+                    :to-equal '(("Kept" . "1") ("Failed" . "2") ("Gone" . nil)))
+            (expect (test-org-canvas-delete--stamps temp-file "PAYLOAD_HASH")
+                    :to-equal '(("Kept" . "aaa") ("Failed" . "bbb")
+                                ("Gone" . nil))))
+        (when (get-file-buffer temp-file)
+          (with-current-buffer (get-file-buffer temp-file)
+            (set-buffer-modified-p nil)
+            (kill-buffer)))
+        (delete-file temp-file))))
+
+  (it "keeps the front page's CANVAS_URL"
+    (let ((temp-file (make-temp-file "test-canvas" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file
+              (insert "* Home\n:PROPERTIES:\n:CANVAS_URL: home\n:END:\n"
+                      "* Syllabus\n:PROPERTIES:\n:CANVAS_URL: syllabus\n:END:\n"))
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                         (lambda (&rest _)
+                           '(((url . "home") (title . "Home") (front_page . t))
+                             ((url . "syllabus") (title . "Syllabus")
+                              (front_page . :json-false)))))
+                        ((symbol-function 'org-canvas-api-request)
+                         (lambda (&rest _) nil))
+                        ((symbol-function 'message) #'ignore))
+                (org-canvas--delete-all-items
+                 (list :feature "pages" :endpoint "pages" :file temp-file
+                       :id-field 'url :id-property "CANVAS_URL"
+                       :skip-fn (lambda (item) (eq (alist-get 'front_page item) t))
+                       :skip-reason "front page"))))
+            (expect (test-org-canvas-delete--stamps temp-file "CANVAS_URL")
+                    :to-equal '(("Home" . "home") ("Syllabus" . nil))))
+        (when (get-file-buffer temp-file)
+          (with-current-buffer (get-file-buffer temp-file)
+            (set-buffer-modified-p nil)
+            (kill-buffer)))
+        (delete-file temp-file)))))
+
+(describe "org-canvas--clean-local-sync-properties keeps what Canvas still has (#324)"
+  (it "keeps a kept heading's children and clears a deleted heading's"
+    (let ((temp-file (make-temp-file "test-canvas" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file temp-file
+              (insert "* Failed quiz\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+                      "** Q1\n:PROPERTIES:\n:CANVAS_ID: 11\n:END:\n"
+                      "* Deleted quiz\n:PROPERTIES:\n:CANVAS_ID: 2\n:END:\n"
+                      "** Q2\n:PROPERTIES:\n:CANVAS_ID: 22\n:END:\n"))
+            (with-org-canvas-test-config
+              (org-canvas--clean-local-sync-properties temp-file '("1")))
+            (expect (test-org-canvas-delete--stamps temp-file "CANVAS_ID")
+                    :to-equal '(("Failed quiz" . "1") ("Q1" . "11")
+                                ("Deleted quiz" . nil) ("Q2" . nil))))
+        (when (get-file-buffer temp-file)
+          (with-current-buffer (get-file-buffer temp-file)
+            (set-buffer-modified-p nil)
+            (kill-buffer)))
+        (delete-file temp-file))))
+
+  (it "names kept ids by alist key or function, normalized"
+    (let ((items [((id . 1)) ((id . 2)) ((id . "three")) ((name . "no id"))]))
+      (expect (org-canvas--delete-kept-ids items 'id '("2"))
+              :to-equal '("1" "three"))
+      (expect (org-canvas--delete-kept-ids
+               items (lambda (item) (alist-get 'id item)) nil)
+              :to-equal '("1" "2" "three")))))
 
 (describe "org-canvas--delete-items-queued"
   (it "returns (0 . nil) for empty items list"
@@ -353,7 +460,7 @@
 								  :file nil))))
           (expect deleted :to-equal 0)))))
 
-  (it "cleans all properties even when queued helper reports partial success"
+  (it "keeps the stamp of an item whose delete failed (#324)"
     (let ((temp-file (make-temp-file "test-canvas" nil ".org")))
       (unwind-protect
           (progn
@@ -382,13 +489,13 @@
                        (org-canvas--delete-all-items (list :feature "items"
 							   :endpoint "items"
 							   :file temp-file))))
-            ;; Both items should be cleaned (delete-all cleans all properties)
+            ;; Item A was deleted; item B is still on Canvas and keeps it
             (with-current-buffer (find-file-noselect temp-file)
               (goto-char (point-min))
               (org-back-to-heading)
               (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)
               (outline-next-heading)
-              (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)))
+              (expect (org-entry-get (point) "CANVAS_ID") :to-equal "2")))
         (delete-file temp-file))))
 
   (it "does not clean properties when file is nil"

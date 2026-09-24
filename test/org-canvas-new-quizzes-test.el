@@ -2162,6 +2162,38 @@ Click the heart.
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t))))
 
+  (it "keeps the stamps of a quiz whose delete failed (#324)"
+    (let* ((temp-dir (make-temp-file "nq-delete-keep" t))
+           (test-file (expand-file-name "new-quizzes.org" temp-dir)))
+      (unwind-protect
+          (let ((org-canvas-new-quizzes-file test-file))
+            (with-temp-file test-file
+              (insert "* Kept\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 100\n"
+                      ":PAYLOAD_HASH: aaa\n:END:\n"
+                      "* Gone\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 200\n"
+                      ":PAYLOAD_HASH: bbb\n:END:\n"))
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                         (lambda (&rest _)
+                           '(((assignment_id . 100) (title . "Kept"))
+                             ((assignment_id . 200) (title . "Gone")))))
+                        ((symbol-function 'org-canvas-api-request)
+                         (lambda (_m url &rest _)
+                           (when (string-match-p "quizzes/100" url)
+                             (error "DELETE failed"))
+                           nil))
+                        ((symbol-function 'y-or-n-p) (lambda (_) t)))
+                (with-sync-test-env
+                  (org-canvas-delete-all-new-quizzes))))
+            (with-current-buffer (find-buffer-visiting test-file)
+              (expect (org-map-entries
+                       (lambda () (org-entry-get (point) "PAYLOAD_HASH"))
+                       nil 'file)
+                      :to-equal '("aaa" nil))))
+        (let ((buf (find-buffer-visiting test-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
   (it "uses id fallback when assignment_id absent in delete-all"
     (let* ((temp-dir (make-temp-file "nq-delete-id-fb" t))
            (test-file (expand-file-name "new-quizzes.org" temp-dir)))
