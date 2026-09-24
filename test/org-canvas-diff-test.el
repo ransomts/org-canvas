@@ -2618,6 +2618,160 @@ Returns the result and whether the file's buffer was left modified."
           (expect (org-canvas-diff-delete) :to-throw 'user-error)))
       (expect saved :to-equal '(("Module Items" "501" nil))))))
 
+;;;; Module Items Pair by Content, as the Sync Adopts (issue #299)
+
+(describe "org-canvas--diff-module-items pairs by content, as the sync adopts (issue #299)"
+  (defconst test-org-canvas-299--assignments-org
+    "* Closer: Privacy Pros and Cons
+:PROPERTIES:
+:CANVAS_ID: 2563803
+:END:
+* Why Ethics Part 1
+:PROPERTIES:
+:CANVAS_ID: 2563900
+:END:
+* Draft Essay
+"
+    "Two synced assignments and one the next sync creates.")
+
+  (defconst test-org-canvas-299--modules-org
+    "* Week 5
+:PROPERTIES:
+:CANVAS_ID: 781703
+:END:
+** [[file:assignments.org::*Why Ethics Part 1][Why Ethics Part 1]]
+** [[file:assignments.org::*Draft Essay][Draft Essay]]
+* Week 6
+:PROPERTIES:
+:CANVAS_ID: 781704
+:END:
+** [[file:assignments.org::*Closer: Privacy Pros and Cons][Closer]]
+"
+    "Three unstamped item headings, each linking an assignment.")
+
+  (defconst test-org-canvas-299--remote
+    '(("781703" . [((id . 601) (type . "Assignment") (title . "Why Ethics Part 1")
+                    (content_id . 1111))
+                   ((id . 602) (type . "Assignment") (title . "Draft Essay")
+                    (content_id . 42))
+                   ((id . 603) (type . "Assignment")
+                    (title . "Closer: Privacy Pros and Cons (old)")
+                    (content_id . 2563803))])
+      ("781704" . [((id . 604) (type . "Assignment") (title . "Closer")
+                    (content_id . 9999))]))
+    "Week 5: a same-titled item linking other content, an item whose
+heading's target has no id yet, and the Closer under an old title;
+Week 6: an item titled Closer that links other content.")
+
+  (defun test-org-canvas-299--run ()
+    "Run the Modules diff over the #299 fixture in a directory of its own.
+Returns (CHILD ASSIGNMENTS-MODIFIED ASSIGNMENTS-TEXT)."
+    (let* ((dir (make-temp-file "diff-299-" t))
+           (modules (expand-file-name "modules.org" dir))
+           (assignments (expand-file-name "assignments.org" dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file assignments (insert test-org-canvas-299--assignments-org))
+            (with-temp-file modules (insert test-org-canvas-299--modules-org))
+            (let ((org-canvas-modules-file modules)
+                  (org-canvas-diff-known-extras nil)
+                  (org-canvas-diff-excluded-features nil))
+              (with-org-canvas-test-config
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (lambda (_method url &rest _)
+                             (if (string-match "modules/\\([0-9]+\\)/items" url)
+                                 (cdr (assoc (match-string 1 url)
+                                             test-org-canvas-299--remote))
+                               [((id . 781703) (name . "Week 5"))
+                                ((id . 781704) (name . "Week 6"))])))
+                          ((symbol-function 'org-canvas-api-request)
+                           (lambda (&rest _) (error "The report must not send"))))
+                  (let ((result (org-canvas--diff-feature
+                                 (org-canvas--registry-find-feature "modules")))
+                        (buf (find-buffer-visiting assignments)))
+                    (list (plist-get result :children)
+                          (and buf (buffer-modified-p buf))
+                          (with-temp-buffer
+                            (insert-file-contents assignments)
+                            (buffer-string))))))))
+        (dolist (f (list modules assignments))
+          (let ((buf (find-buffer-visiting f))) (when buf (kill-buffer buf))))
+        (delete-directory dir t))))
+
+  (defun test-org-canvas-299--by-id (child id)
+    "Return the entry of CHILD's :extra whose id is ID."
+    (cl-find id (plist-get child :extra)
+             :key (lambda (e) (plist-get e :id)) :test #'equal))
+
+  (it "leaves a same-titled item that links other content an EXTRA, and the heading pending"
+    (let* ((child (car (test-org-canvas-299--run)))
+           (e (test-org-canvas-299--by-id child "601")))
+      (expect (plist-get e :kind) :to-equal 'extra)
+      (expect (mapcar (lambda (p) (plist-get p :title)) (plist-get child :pending))
+              :to-equal '("Why Ethics Part 1"))))
+
+  (it "pairs a moved item by its content, whatever Canvas now calls it"
+    (let* ((child (car (test-org-canvas-299--run)))
+           (moved (test-org-canvas-299--by-id child "603"))
+           (other (test-org-canvas-299--by-id child "604")))
+      (expect (plist-get moved :kind) :to-equal 'moved)
+      (expect (plist-get moved :to) :to-equal "Week 6")
+      (expect (plist-get moved :by-title) :to-be nil)
+      ;; The same-titled item in the heading's own module links other
+      ;; content, so the sync would not adopt it.
+      (expect (plist-get other :kind) :to-equal 'extra)))
+
+  (it "falls back to the title when the linked target has no Canvas id yet, and says so"
+    (let* ((child (car (test-org-canvas-299--run)))
+           (e (test-org-canvas-299--by-id child "602")))
+      (expect (plist-get e :kind) :to-equal 'unclaimed)
+      (expect (plist-get e :by-title) :to-be t)
+      (with-temp-buffer
+        (org-canvas--diff-insert-entry e)
+        (expect (buffer-string) :to-match "paired by title only"))))
+
+  (it "resolves offline and writes nothing (Hard Rule 19)"
+    (let ((out (test-org-canvas-299--run)))
+      (expect (cadr out) :to-be nil)
+      (expect (nth 2 out) :to-equal test-org-canvas-299--assignments-org)))
+
+  (it "keeps the sync's parser from logging during the report"
+    (let ((logged nil))
+      (cl-letf (((symbol-function 'org-canvas--log-dispatch)
+                 (lambda (logger &rest _) (when logger (push t logged)))))
+        (test-org-canvas-299--run))
+      (expect logged :to-be nil)))
+
+  (it "pairs by title alone when the heading could not be parsed"
+    (let ((extra '(:kind extra :title "Closer " :id "1" :type "Assignment")))
+      (expect (org-canvas--diff-module-item-match
+               extra '(:match-title "Closer" :content nil))
+              :to-equal 'title)
+      (expect (org-canvas--diff-module-item-match
+               extra '(:match-title "Opener" :content nil))
+              :to-be nil)))
+
+  (it "pairs a page by its url"
+    (let ((extra '(:kind extra :title "Old Name" :id "1" :type "Page"
+                   :page-url "office-hours")))
+      (expect (org-canvas--diff-module-item-match
+               extra '(:match-title "Office Hours"
+                       :content (:type "Page" :title "Office Hours"
+                                 :page-url "office-hours")))
+              :to-equal 'content)))
+
+  (it "says so on a MOVED row paired by title only, and not on one paired by content"
+    (with-temp-buffer
+      (org-canvas--diff-insert-entry
+       '(:kind moved :title "Draft" :id "9" :module-id "1" :where "Week 5"
+         :to "Week 6" :by-title t))
+      (org-canvas--diff-insert-entry
+       '(:kind moved :title "Closer" :id "8" :module-id "1" :where "Week 5"
+         :to "Week 6"))
+      (let ((lines (split-string (buffer-string) "\n" t)))
+        (expect (car lines) :to-match "paired by title only")
+        (expect (cadr lines) :not :to-match "paired by title only")))))
+
 ;;;; A Declared Document Processor Held Against Canvas (issue #293)
 
 (describe "org-canvas--diff-compare-fields with an :intent-of spec"

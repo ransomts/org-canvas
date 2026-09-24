@@ -83,6 +83,14 @@
 
 (declare-function org-canvas-pull-at-point "org-canvas")
 (declare-function org-canvas--pull-new-heading "org-canvas" (feature id title))
+;; The Module Items pass asks the sync's own parser what an unstamped
+;; item heading links, and the sync's own predicate whether a Canvas
+;; item holds it (issue #299).  Declared, never required: diff is a
+;; command file above the feature modules, and `org-canvas' loads both.
+(declare-function org-canvas--module-item-parse-entry "org-canvas-modules"
+                  (modules-file-dir))
+(declare-function org-canvas--module-item-same-content-p "org-canvas-modules"
+                  (data item))
 
 (defconst org-canvas--diff-buffer-name "*canvas-diff*"
   "Name of the buffer holding the drift report.")
@@ -808,12 +816,19 @@ accepts."
 ;; own URL.  An item another module's heading claims is a pending move
 ;; the next sync settles (issue #105), not an extra.
 ;;
-;; An unclaimed item is then paired with an unstamped item heading of
-;; the same title (issue #294), one to one.  The item headings are
-;; links — `[[file:assignments.org::*Closer][Closer]]' — so the title
-;; paired on is the link's description, what Canvas calls the item;
-;; this pass never paired at all before, and the generic pairing would
-;; have compared the markup.  A heading in the item's own module makes
+;; An unclaimed item is then paired with an unstamped item heading,
+;; one to one (issue #294), the way the sync would adopt it (issue
+;; #299): the heading is read by the sync's own parser, which resolves
+;; its link offline to a type and a content id — a lookup in the linked
+;; Org file, no request, nothing stamped — and the sync's own predicate
+;; says whether the Canvas item holds that content.  A same-titled item
+;; linking different content is therefore left an EXTRA, and the
+;; heading a PENDING create, which is what the sync does with them.
+;; Only a heading whose link target has no Canvas id yet falls back to
+;; the title — the sync's predicate does too — and its row says it was
+;; paired by title only.  That title is the link's description, what
+;; Canvas calls the item, never the markup.  A heading in the item's
+;; own module makes
 ;; the pair UNCLAIMED (the next sync adopts the twin, #179); one under
 ;; another module makes it MOVED — the item was carried to a new week
 ;; in Org without its stamp, and the next sync creates it there and
@@ -851,7 +866,8 @@ One list request per module."
   "Return the items in LISTS no heading CLAIMED, as `extra' entries.
 LISTS is what `org-canvas--diff-module-item-lists' returned; each
 entry names the module it sits in and carries the module id, which is
-what deleting it needs, and the item's type, which pairing needs."
+what deleting it needs, and the item's type and content, which pairing
+needs."
   (let ((extra nil))
     (dolist (pair lists)
       (dolist (item (cdr pair))
@@ -863,52 +879,106 @@ what deleting it needs, and the item's type, which pairing needs."
                                  (alist-get 'html_url item))
                       :module-id (car (car pair))
                       :where (cdr (car pair))
-                      :type (alist-get 'type item))
+                      :type (alist-get 'type item)
+                      :content-id (alist-get 'content_id item)
+                      :page-url (alist-get 'page_url item))
                 extra))))
     (nreverse extra)))
+
+(defun org-canvas--diff-module-item-content (dir)
+  "Return the sync's reading of the item heading at point, or nil.
+DIR is the directory of modules.org, which the heading's link is
+relative to.  The heading is read by the sync's own parser,
+`org-canvas--module-item-parse-entry': a :type, and a :content-id or
+:page-url when the link resolves — looked up in the linked Org file,
+offline — or neither when its target has no Canvas id yet (issue
+#299).  The parser logs as a sync stage would, so the logger is off
+while it runs; a report is not a sync.  Nil when the parser is not
+loaded or fails, and the pairing then goes by title alone."
+  (let ((org-canvas--logger nil))
+    (save-excursion
+      (ignore-errors (org-canvas--module-item-parse-entry dir)))))
 
 (defun org-canvas--diff-module-item-headings (file)
   "Return the level-2 headings of modules FILE as local entries.
 Each is an `org-canvas--diff-local-entry' plist with the module it sits
-under added: :module-id, that heading's CANVAS_ID, and :where, its
-title.  No markers: nothing here is read again."
+under added: :module-id, that heading's CANVAS_ID, :where, its title,
+and :content, what it links (`org-canvas--diff-module-item-content').
+No markers: nothing here is read again."
   (when (and file (file-exists-p file))
-    (with-current-buffer (org-canvas--find-file-noselect file)
-      (org-map-entries
-       (lambda ()
-         (let ((parent (save-excursion
-                         (when (org-up-heading-safe)
-                           (cons (org-entry-get (point) "CANVAS_ID")
-                                 (org-get-heading t t t t))))))
-           (append (org-canvas--diff-local-entry "CANVAS_ID")
-                   (list :module-id (car parent) :where (cdr parent)))))
-       "LEVEL=2" 'file))))
+    (let ((dir (file-name-directory (expand-file-name file))))
+      (with-current-buffer (org-canvas--find-file-noselect file)
+        (org-map-entries
+         (lambda ()
+           (let ((parent (save-excursion
+                           (when (org-up-heading-safe)
+                             (cons (org-entry-get (point) "CANVAS_ID")
+                                   (org-get-heading t t t t))))))
+             (append (org-canvas--diff-local-entry "CANVAS_ID")
+                     (list :module-id (car parent) :where (cdr parent)
+                           :content (org-canvas--diff-module-item-content dir)))))
+         "LEVEL=2" 'file)))))
+
+(defun org-canvas--diff-module-item-remote (extra)
+  "Return EXTRA, a remote module item entry, as the alist Canvas sent."
+  (list (cons 'type (plist-get extra :type))
+        (cons 'title (plist-get extra :title))
+        (cons 'content_id (plist-get extra :content-id))
+        (cons 'page_url (plist-get extra :page-url))))
+
+(defun org-canvas--diff-module-item-match (extra entry)
+  "Return how the unstamped item heading ENTRY matches EXTRA, or nil.
+`content' when the sync would adopt EXTRA for ENTRY on what it links:
+the same type and content id or page url, or for a SubHeader or an
+external URL, whose title is its content, the same title
+\(`org-canvas--module-item-same-content-p', issue #299).  `title' when
+the two share only a title because ENTRY's link target has no Canvas
+id yet, or ENTRY could not be parsed: the sync's predicate falls back
+to the title there too, but what the target will be is not known."
+  (let ((content (plist-get entry :content)))
+    (cond
+     ((null content)
+      (and (string= (org-canvas--diff-match-title entry)
+                    (string-trim (plist-get extra :title)))
+           'title))
+     ((not (org-canvas--module-item-same-content-p
+            content (org-canvas--diff-module-item-remote extra)))
+      nil)
+     ((or (plist-get content :content-id) (plist-get content :page-url)
+          (member (plist-get content :type) '("SubHeader" "ExternalUrl")))
+      'content)
+     (t 'title))))
 
 (defun org-canvas--diff-module-item-partner (extra unstamped)
-  "Return the entry of UNSTAMPED to pair with EXTRA, a remote module item.
-A heading of the same title in the item's own module first; failing
-that, one under any other module, unless the item is a SubHeader."
-  (let* ((title (string-trim (plist-get extra :title)))
-         (same-title (cl-remove-if-not
-                      (lambda (e) (string= (org-canvas--diff-match-title e) title))
-                      unstamped)))
-    (or (cl-find-if (lambda (e) (equal (plist-get e :module-id)
-                                       (plist-get extra :module-id)))
-                    same-title)
+  "Return (ENTRY . MATCH), the entry of UNSTAMPED to pair with EXTRA.
+EXTRA is a remote module item; MATCH is how they matched
+\(`org-canvas--diff-module-item-match').  A heading in the item's own
+module first; failing that, one under any other module, unless the
+item is a SubHeader.  Nil when no heading matches."
+  (let ((matches (delq nil (mapcar (lambda (e)
+                                     (let ((m (org-canvas--diff-module-item-match
+                                               extra e)))
+                                       (and m (cons e m))))
+                                   unstamped))))
+    (or (cl-find-if (lambda (pair) (equal (plist-get (car pair) :module-id)
+                                          (plist-get extra :module-id)))
+                    matches)
         (and (not (equal (plist-get extra :type) "SubHeader"))
-             (car same-title)))))
+             (car matches)))))
 
 (defun org-canvas--diff-module-item-pair (extra headings)
   "Pair the EXTRA module items with the unstamped entries of HEADINGS.
 Returns (ENTRIES . LEFT): ENTRIES is EXTRA with each paired item
 re-kinded — `unclaimed' when its partner sits in the item's module,
-`moved' (with :to naming the partner's module) when it does not — and
-LEFT the unstamped headings nothing paired, the pending creates.  Each
+`moved' (with :to naming the partner's module) when it does not, and
+:by-title set when only the title paired them (issue #299) — and LEFT
+the unstamped headings nothing paired, the pending creates.  Each
 heading pairs at most once (issue #294)."
   (let ((unstamped (cl-remove-if (lambda (e) (plist-get e :id)) headings)))
     (cons (mapcar
            (lambda (e)
-             (let ((partner (org-canvas--diff-module-item-partner e unstamped)))
+             (let* ((found (org-canvas--diff-module-item-partner e unstamped))
+                    (partner (car found)))
                (if (not partner)
                    e
                  (setq unstamped (delq partner unstamped))
@@ -916,7 +986,8 @@ heading pairs at most once (issue #294)."
                                                 (plist-get e :module-id))
                                          'unclaimed
                                        'moved)
-                               :to (plist-get partner :where))
+                               :to (plist-get partner :where)
+                               :by-title (eq (cdr found) 'title))
                          (cddr e)))))
            extra)
           unstamped)))
@@ -1044,25 +1115,41 @@ after this one (issue #177)."
 
 ;;;; Report
 
+(defconst org-canvas--diff-by-title-note
+  "paired by title only, since the heading's link target has no Canvas id yet"
+  "What a module item row adds when only the title paired it (issue #299).")
+
 (defun org-canvas--diff-unclaimed-line (entry)
   "Return the report line of UNCLAIMED ENTRY.
 A module item's twin is adopted by the sync itself (issue #179), so
-its line says that instead of naming `org-canvas-adopt-at-point'."
-  (if (plist-get entry :module-id)
-      (format "  UNCLAIMED %s (item id %s in module '%s' has this title and no heading claims it; the next sync adopts it if the unstamped heading links the same content)\n"
-              (plist-get entry :title) (plist-get entry :id) (plist-get entry :where))
+its line says that instead of naming `org-canvas-adopt-at-point'.  The
+pairing went by content, as the sync's adoption does, unless ENTRY
+says :by-title (issue #299)."
+  (cond
+   ((plist-get entry :by-title)
+    (format "  UNCLAIMED %s (item id %s in module '%s' has this title and no heading claims it; %s — the next sync adopts it only if that target turns out to be this item's content)\n"
+            (plist-get entry :title) (plist-get entry :id) (plist-get entry :where)
+            org-canvas--diff-by-title-note))
+   ((plist-get entry :module-id)
+    (format "  UNCLAIMED %s (item id %s in module '%s' has the type and content of an unstamped heading there, and no heading claims it; the next sync adopts it)\n"
+            (plist-get entry :title) (plist-get entry :id) (plist-get entry :where)))
+   (t
     (format "  UNCLAIMED %s (Canvas id %s has this title and no heading claims it; adopt it with org-canvas-adopt-at-point, which stamps %s, or rename)\n"
             (plist-get entry :title) (plist-get entry :id)
-            (or (plist-get entry :property) "CANVAS_ID"))))
+            (or (plist-get entry :property) "CANVAS_ID")))))
 
 (defun org-canvas--diff-moved-line (entry)
   "Return the report line of MOVED ENTRY, a module item (issue #294).
 Stamping the item's id on the heading in its new module is what makes
-the next sync move it (issue #105) rather than create a second copy."
-  (format "  MOVED     %s (item id %s sits in module '%s'; an unstamped heading places it in '%s', so the next sync creates it there and leaves this copy — stamp CANVAS_ID %s on that heading to move it instead)\n"
+the next sync move it (issue #105) rather than create a second copy.
+An entry paired by title only says so (issue #299)."
+  (format "  MOVED     %s (item id %s sits in module '%s'; an unstamped heading places it in '%s', so the next sync creates it there and leaves this copy — stamp CANVAS_ID %s on that heading to move it instead%s)\n"
           (plist-get entry :title) (plist-get entry :id)
           (plist-get entry :where) (plist-get entry :to)
-          (plist-get entry :id)))
+          (plist-get entry :id)
+          (if (plist-get entry :by-title)
+              (concat "; " org-canvas--diff-by-title-note)
+            "")))
 
 (defun org-canvas--diff-pending-line (entry)
   "Return the report line of PENDING ENTRY, a create for the next sync."
