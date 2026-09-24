@@ -2113,6 +2113,23 @@ Consider the following expression.
        (expect content :to-match "choice")
        (expect content :to-match "POINTS:.*5"))))
 
+  (it "reads the body and type the Items API nests under entry"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:CANVAS_ASSIGNMENT_ID: 42
+:END:
+"
+     (org-back-to-heading)
+     (org-canvas--new-quiz-pull-insert-item
+      '((id . "7") (points_possible . 2) (entry_type . "Item")
+        (entry . ((item_body . "<p>Which framework?</p>")
+                  (interaction_type_slug . "essay")))))
+     (let ((content (buffer-string)))
+       (expect content :to-match "^\\*\\* Which framework\\?$")
+       (expect content :to-match ":TYPE: +essay")
+       (expect content :to-match "POINTS:.*2"))))
+
   (it "converts HTML title via html-to-org-inline"
     (cl-letf (((symbol-function 'org-canvas--html-to-org-inline)
                (lambda (html) (if (string-empty-p html) "" "Converted Title"))))

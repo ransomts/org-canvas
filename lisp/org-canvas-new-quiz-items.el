@@ -638,12 +638,16 @@ into the nested format required by the New Quizzes Items API:
 Point must be at the parent quiz heading and is left there.  A heading
 the quiz already holds for the item, by CANVAS_ITEM_ID or, unstamped,
 by title, is rewritten in place; otherwise the item is appended
-\(issue #239)."
-  (let ((quiz-pos (point))
-        (title (or (alist-get 'item_body item) "Question"))
-        (slug (alist-get 'interaction_type_slug item))
-        (points (alist-get 'points_possible item))
-        (item-id (alist-get 'id item)))
+\(issue #239).  The Items API nests the body and the type under
+`entry'; older replies carry them at the top level, so both are read."
+  (let* ((quiz-pos (point))
+         (entry (let ((e (alist-get 'entry item))) (and (listp e) e)))
+         (title (or (alist-get 'item_body entry) (alist-get 'item_body item)
+                    "Question"))
+         (slug (or (alist-get 'interaction_type_slug entry)
+                   (alist-get 'interaction_type_slug item)))
+         (points (alist-get 'points_possible item))
+         (item-id (alist-get 'id item)))
     (setq title (org-canvas--html-to-org-inline title))
     (when (string-empty-p title)
       (setq title "Question"))
