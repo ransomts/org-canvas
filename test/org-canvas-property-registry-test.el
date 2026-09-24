@@ -93,6 +93,17 @@
         (expect (plist-get result :target-file) :to-equal 'org-canvas-assignment-groups-file)
         (expect (plist-get result :id-property) :to-equal "CANVAS_ID")))
 
+    (it "threads :intent-of through, and only when declared (issue #293)"
+      (expect (plist-get (org-canvas--property-to-validate-prop
+                          '(:org-prop "WANT_DOCUMENT_PROCESSOR" :type string
+                            :intent-of "DOCUMENT_PROCESSOR"))
+                         :intent-of)
+              :to-equal "DOCUMENT_PROCESSOR")
+      (expect (plist-member (org-canvas--property-to-validate-prop
+                             '(:org-prop "POINTS" :type number))
+                            :intent-of)
+              :to-be nil))
+
     (it "threads :canvas-owned through, and only when declared (issue #184)"
       (expect (plist-get (org-canvas--property-to-validate-prop
                           '(:org-prop "DOCUMENT_PROCESSOR" :data-key :asset_processors
@@ -370,6 +381,37 @@
        (org-canvas--pull-set-boolean-property
         (point) "PUBLISHED" :json-false)
        (expect (org-entry-get (point) "PUBLISHED") :to-equal "false")))))
+
+(describe "org-canvas--intent-satisfied-p (issue #293)"
+  (it "matches the declared name anywhere in the observation, ignoring case"
+    (expect (org-canvas--intent-satisfied-p
+             "Turnitin" "Turnitin (asset processor 12345)")
+            :to-be t)
+    (expect (org-canvas--intent-satisfied-p
+             " turnitin " "Similarity: TURNITIN (asset processor 1)")
+            :to-be t))
+
+  (it "is unmet by nothing, by another tool, and by an empty declaration"
+    (expect (org-canvas--intent-satisfied-p "Turnitin" nil) :to-be nil)
+    (expect (org-canvas--intent-satisfied-p "Turnitin" "Copyleaks (asset processor 9)")
+            :to-be nil)
+    (expect (org-canvas--intent-satisfied-p "" "Turnitin") :to-be nil)
+    (expect (org-canvas--intent-satisfied-p nil "Turnitin") :to-be nil))
+
+  (it "treats the declaration as text, not a pattern"
+    (expect (org-canvas--intent-satisfied-p "T.rnitin" "Turnitin") :to-be nil)))
+
+(describe "WANT_DOCUMENT_PROCESSOR registration (issue #293)"
+  (it "is a declaration held against DOCUMENT_PROCESSOR"
+    ;; :type is bound before `expect', which shadows it on Emacs 29.
+    (let* ((spec (seq-find (lambda (s)
+                             (equal (plist-get s :org-prop) "WANT_DOCUMENT_PROCESSOR"))
+                           (plist-get (gethash "assignments" org-canvas--property-registry)
+                                      :properties)))
+           (spec-type (plist-get spec :type)))
+      (expect (plist-get spec :intent-of) :to-equal "DOCUMENT_PROCESSOR")
+      (expect (plist-get spec :canvas-owned) :to-be nil)
+      (expect spec-type :to-equal 'string))))
 
 (provide 'org-canvas-property-registry-test)
 ;;; org-canvas-property-registry-test.el ends here

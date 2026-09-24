@@ -44,7 +44,9 @@
 A property's `:read-only-values' are listed too, marked as Canvas's to
 set: they are values a pull writes and validation accepts, not values
 to type by hand (issue #167).  A `:canvas-owned' property is Canvas's
-to set entirely (issue #184), and so is a `:pull-only' one."
+to set entirely (issue #184), and so is a `:pull-only' one.  An
+`:intent-of' property is typed by hand and never sent: it names what
+the observed property should hold (issue #293)."
   (let* ((type (plist-get prop :type))
          (values (plist-get prop :values))
          (read-only (plist-get prop :read-only-values))
@@ -55,6 +57,9 @@ to set entirely (issue #184), and so is a `:pull-only' one."
     (cond
      ((or (plist-get prop :canvas-owned) (plist-get prop :pull-only))
       "set by Canvas (read-only)")
+     ((plist-get prop :intent-of)
+      (format "any; checked against =%s=, never sent"
+              (plist-get prop :intent-of)))
      (values (concat (mapconcat #'identity values ", ") suffix))
      ((eq type 'boolean) (concat "true, false" suffix))
      ((eq type 'link) "org link")

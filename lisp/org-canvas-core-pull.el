@@ -631,8 +631,11 @@ that is the property's default is deleted so the drawer stays terse
 is written in its Org spelling; a value with no Org spelling — a link
 whose target heading is missing — is logged and left alone rather than
 erased.  A `:local-only' spec is org-canvas's own bookkeeping, never
-Canvas's opinion, and is skipped."
-  (unless (plist-get spec :local-only)
+Canvas's opinion, and is skipped; so is an `:intent-of' spec, which
+is the file's declaration of what Canvas should hold and would be
+erased by the very observation it exists to be checked against
+\(issue #293)."
+  (unless (or (plist-get spec :local-only) (plist-get spec :intent-of))
     (when (org-canvas--registry-remote-present-p spec item)
       (let* ((org-prop (plist-get spec :org-prop))
              (value (org-canvas--registry-remote-field spec item))
