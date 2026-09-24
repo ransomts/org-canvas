@@ -2570,6 +2570,17 @@ Per feature:
   That pair is what a create that lost its stamp looks like, and the next sync
   would create a second item.  =org-canvas-adopt-at-point= on the heading
   stamps the id (see [[*Claiming an Unclaimed Item][Claiming an Unclaimed Item]]).
+  A heading is matched by the title it shows: a heading that is a link, such
+  as a module item's =[[file:assignments.org::*Lab 1][Lab 1]]= or a files.org
+  heading, pairs on the link's description, which is what Canvas calls the
+  item (#294).
+- *PENDING* -- a heading with no Canvas id, which the next sync would create
+  (#294).  These are listed under their feature but counted apart: they are
+  unpushed Org work, not Canvas drifting from Org, so a course with drafts
+  still reports "No drift", a footer line counts them, and
+  =org-canvas-diff-batch= does not exit non-zero for them.  A files.org folder
+  heading is never one, since only file headings are uploaded; a heading an
+  UNCLAIMED or MOVED row already names is not listed twice.
 
 Module items are compared too, in a section of their own named *Module
 Items* right after *Modules* (#177).  The report lists the items of every
@@ -2582,6 +2593,19 @@ verbs work as elsewhere: =k= deletes the item from its module, and =a=
 acknowledges it under ="module-items"= in =org-canvas-diff-known-extras=;
 =org-canvas-prune-module-items= removes every such item at once, after
 confirming.
+
+An extra item is then paired, one to one, with an unstamped item heading of
+the same title (#294).  A heading in the item's own module makes it
+*UNCLAIMED*: the next sync adopts that twin itself when the heading links the
+same content.  A heading under another module makes it *MOVED*: the item was
+carried to a new week in Org without its stamp, so the next sync would create
+it in the new module and leave this copy in the old one.  To move it instead,
+put the item id the row names on the heading as =CANVAS_ID=; the sync then
+creates it in the new module and removes the old copy (see
+[[*Moving Items Between Modules][Moving Items Between Modules]]).  =k= on a
+MOVED row deletes the old copy.  A SubHeader is paired only within its own
+module, since titles such as "Readings" recur in every week.  The item
+headings left over are PENDING rows naming their module.
 
 Every property a module registers is compared, so this covers =PUBLISHED=,
 points, due dates, group weights, drop rules and the rest without a separate
@@ -2670,13 +2694,13 @@ something the keys act on:
 
 | Key     | On a row                | Effect                                                              |
 |---------+-------------------------+---------------------------------------------------------------------|
-| =RET=     | CHANGED, MISSING, UNCLAIMED | Open the course file with point on the heading                  |
-| =RET=     | EXTRA                   | Open the Canvas object in a browser, when the API said where it lives |
+| =RET=     | CHANGED, MISSING, UNCLAIMED, PENDING | Open the course file with point on the heading      |
+| =RET=     | EXTRA, MOVED            | Open the Canvas object in a browser, when the API said where it lives |
 | =b= / =B= | CHANGED, EXTRA, UNCLAIMED | Open the Canvas object's page / edit page in a browser (see [[*Opening a Heading on Canvas][Opening a Heading on Canvas]]) |
-| =a=       | EXTRA, UNCLAIMED        | Acknowledge the id in =org-canvas-diff-known-extras=, with an optional note |
+| =a=       | EXTRA, UNCLAIMED, MOVED | Acknowledge the id in =org-canvas-diff-known-extras=, with an optional note |
 | =a=       | STALE-ACK               | Drop the acknowledgment                                             |
 | =a=       | CHANGED, no compared property differing | Adopt the Canvas timestamp as the heading's baseline (=org-canvas-diff-adopt-stamp=); refused when a property differs |
-| =k=       | EXTRA, UNCLAIMED        | Delete the remote object, after confirming                          |
+| =k=       | EXTRA, UNCLAIMED, MOVED | Delete the remote object, after confirming                          |
 | =p=       | CHANGED                 | Pull the Canvas version over the heading (=org-canvas-pull-at-point=, which asks first) |
 | =p=       | EXTRA (classic quizzes) | Pull the quiz, questions and all, into a new heading at the end of =quizzes.org=, after confirming |
 | =g=       | anywhere                | Run the report again                                                |
@@ -2728,7 +2752,9 @@ prune and delete-all used to see an empty course (#87).
 ** Scheduled Checking
 
 =org-canvas-diff-batch= exits non-zero when it finds drift, so a course can be
-checked routinely rather than only when something feels wrong:
+checked routinely rather than only when something feels wrong.  Pending creates
+are printed but are not drift: a course with unpushed headings and nothing else
+exits zero (#294).
 
 #+begin_src sh
 emacs --batch -l /path/to/org-canvas.el -f org-canvas-diff-batch
