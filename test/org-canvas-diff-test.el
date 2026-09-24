@@ -2556,6 +2556,21 @@ Returns the result and whether the file's buffer was left modified."
         (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
         (delete-file file))))
 
+  (it "names the file when a PENDING row's heading is gone"
+    (let ((file (make-temp-file "diff-294-gone-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file (insert "* Lab 1\n"))
+            (expect (condition-case e
+                        (org-canvas--diff-goto-heading
+                         nil (list :kind 'pending :title "Why Ethics Part 1"
+                                   :heading "Why Ethics Part 1" :file file :line 1))
+                      (user-error (error-message-string e)))
+                    :to-match (concat "Cannot find the heading for .Why Ethics Part 1. in "
+                                      (regexp-quote file))))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file))))
+
   (it "opens a module item's UNCLAIMED row in a browser"
     (let ((opened nil))
       (cl-letf (((symbol-function 'browse-url) (lambda (url &rest _) (setq opened url))))
