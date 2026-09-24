@@ -421,9 +421,11 @@ No properties are modified and no API requests are sent."
 (defun org-canvas--pull-at-point-feature ()
   "Return the feature entry for the current buffer's file.
 Signals a `user-error' when the buffer is not a course file, or when
-its feature has no pull-item function to refresh a heading with."
+its feature has no pull-item function to refresh a heading with.  A
+file outside the feature registry may still have a pull entry (New
+Quizzes, issue #297); see `org-canvas--pull-feature-for-file'."
   (let* ((file (buffer-file-name))
-         (feature (org-canvas--registry-feature-for-file file)))
+         (feature (org-canvas--pull-feature-for-file file)))
     (unless feature
       (user-error "%s is not one of this course's Canvas files"
                   (if file (file-name-nondirectory file) "This buffer")))

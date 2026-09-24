@@ -3035,8 +3035,8 @@ prompt's "pull" option runs, which until now was reachable only by starting a
 sync.  Local edits to that heading are discarded, so it asks first.
 
 The command works in any course file -- it finds the feature from the file
-you are in.  A content type with no single-item pull (outcomes, new quizzes)
-says so and names the whole-file command instead.
+you are in.  A content type with no single-item pull (outcomes) says so and
+names the whole-file command instead.
 
 A classic quiz pulls whole: its settings, its description and every question
 under it, written the way =org-canvas-pull-quizzes= writes them, while the
@@ -3053,6 +3053,15 @@ Every question of a survey built in the web UI comes back from Canvas named
 with no name, by its place in the quiz -- =** Question 1=, =** Question 2= --
 and the next push sends those names back.
 
+A New Quiz pulls whole the same way: its settings and every item under it,
+written the way =org-canvas-pull-new-quizzes= writes them, from the New
+Quizzes service rather than the course API, with the rest of
+=new-quizzes.org= left as it is.  Point may be on the quiz or on any of its
+items, and the quiz heading needs its =CANVAS_ASSIGNMENT_ID=.  New Quizzes do
+not appear in the drift report, so a New Quiz built in the web UI is taken in
+by writing a stub with its title and running =org-canvas-adopt-at-point= on
+it (below), or by stamping its =CANVAS_ASSIGNMENT_ID= and pulling.
+
 ** Claiming an Unclaimed Item
 
 =org-canvas-diff= reports an *UNCLAIMED* row when a remote item shares its
@@ -3066,7 +3075,8 @@ M-x org-canvas-adopt-at-point
 #+end_src
 
 It lists the feature's items on Canvas and, when exactly one carries the
-heading's title, stamps its id (=CANVAS_ID=, or =CANVAS_URL= for pages) and
+heading's title, stamps its id (=CANVAS_ID=, =CANVAS_URL= for pages,
+=CANVAS_ASSIGNMENT_ID= for New Quizzes) and
 =CANVAS_UPDATED_AT= from the item and drops any =PAYLOAD_HASH=, so the next
 sync updates that item in place and verifies its content rather than taking
 the unchanged skip.  Nothing is sent to Canvas.  Zero or several matches
@@ -3075,9 +3085,9 @@ item to adopt -- and the message names the candidates, including any held
 back because the feature does not manage them (a classic quiz's shadow
 assignment, the front page) or because another heading already claims the id.
 
-A classic quiz heading with nothing under its drawer -- a stub written to
-claim a quiz built in the web UI -- is also filled from the quiz it adopts,
-questions and all, as =org-canvas-pull-at-point= would fill it: pushing the
+A classic quiz or New Quiz heading with nothing under its drawer -- a stub
+written to claim a quiz built in the web UI -- is also filled from the quiz it
+adopts, questions and all, as =org-canvas-pull-at-point= would fill it: pushing the
 empty stub would otherwise send its emptiness over the quiz.  A heading with
 text or questions of its own keeps them.
 

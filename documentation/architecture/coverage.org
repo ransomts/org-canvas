@@ -36,7 +36,7 @@ pull-at-point and prune.
 | Group categories  | yes  | yes      | yes  | yes    | yes      | Canvas can auto-create groups                                   |
 | Groups            | no   | no       | yes  | no     | no       | pull-only: each category's groups and member names, in groups.org |
 | Modules           | yes  | yes      | yes  | yes    | yes      | items reconciled inside finalize; prerequisites, sequential progress, unlock dates, completion requirements |
-| New Quizzes       | yes  | yes      | yes  | yes    | no       | items sync inside finalize; the feature list keys on the assignment |
+| New Quizzes       | yes  | yes      | yes  | yes    | no       | items sync inside finalize; the feature list keys on the assignment; pull-at-point and adopt through a pull-only entry (#297) |
 | Outcomes          | yes  | yes      | yes  | yes    | yes      | two levels, groups then outcomes                                |
 | Pages             | yes  | yes      | yes  | yes    | yes      | front page protected; to-do date                                |
 | Quizzes (classic) | yes  | yes      | yes  | yes    | yes      | questions and groups inline; a bank may be named, never managed |
