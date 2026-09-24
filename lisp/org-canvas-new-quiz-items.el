@@ -108,9 +108,21 @@ Returns the text between the current heading and the first subheading."
           (setq end subtree-end)))
       (string-trim (buffer-substring-no-properties start end)))))
 
-(defun org-canvas--new-quiz-parse-question-text ()
+(defconst org-canvas--new-quiz-prompt-end-regexp "^[ \t]*[-*+] "
+  "Regexp for the first answer line of an item, ending its prompt.")
+
+(defconst org-canvas--new-quiz-ordering-prompt-end-regexp
+  "^[ \t]*\\(?:[-*+] \\|[0-9]+\\.[ \t]\\)"
+  "Regexp for the first answer line of an ordering item.
+An ordering item's answers are a numbered list, in the correct order
+\(`org-canvas--new-quiz-parse-ordering-list'), so a numbered line ends
+its prompt as well as a bullet does (issue #335).  Other types keep a
+numbered list in their prompt.")
+
+(defun org-canvas--new-quiz-parse-question-text (&optional q-type)
   "Get the question prompt text, excluding answer lists.
-Returns only the text before the first list item (- or *)."
+Return only the text before the first list item (- or *), or, when
+Q-TYPE is \"ordering\", before the first numbered item as well."
   (save-excursion
     (org-back-to-heading t)
     (let ((start (save-excursion
@@ -125,7 +137,11 @@ Returns only the text before the first list item (- or *)."
       (if (>= start end)
           ""
         (goto-char start)
-        (when (re-search-forward "^[ \t]*[-*+] " end t)
+        (when (re-search-forward
+               (if (equal q-type "ordering")
+                   org-canvas--new-quiz-ordering-prompt-end-regexp
+                 org-canvas--new-quiz-prompt-end-regexp)
+               end t)
           (setq end (match-beginning 0)))
         (string-trim (buffer-substring-no-properties start end))))))
 
@@ -201,7 +217,7 @@ Returns a plist of raw values with no transformations applied."
          (type-raw (org-entry-get pom "TYPE"))
          (points-raw (org-entry-get pom "POINTS"))
          (outcome (org-entry-get pom "OUTCOME"))
-         (body-text (org-canvas--new-quiz-parse-question-text)))
+         (body-text (org-canvas--new-quiz-parse-question-text type-raw)))
     (list :title-raw title-raw
           :canvas-id canvas-id
           :quiz-assignment-id quiz-assignment-id

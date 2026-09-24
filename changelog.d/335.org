@@ -1,0 +1,9 @@
+* Fixed
+- #335 A New Quiz ordering item's prompt ends at its numbered answer
+  list, so the steps in their correct order no longer reach the
+  question text students see.  A numbered list in any other item
+  type's prompt still belongs to the prompt.  An ordering item pushed
+  before this fix still shows its answers on Canvas until its quiz is
+  pushed again; since the Org text is unchanged, the sync skips that
+  quiz as up to date, so delete the quiz heading's =PAYLOAD_HASH=
+  property first.
