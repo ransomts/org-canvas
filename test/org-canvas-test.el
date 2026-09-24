@@ -2131,12 +2131,12 @@ while Lab 4 in the same module is still scheduled ahead."
       (unwind-protect
           (progn
             (with-temp-file temp
-              (insert "* Quiz 1\n:PROPERTIES:\n:CANVAS_ID: 5\n:END:\n"))
+              (insert "* Outcome 1\n:PROPERTIES:\n:CANVAS_ID: 5\n:END:\n"))
             (let ((org-canvas--feature-registry
-                   (list (list :name "Quizzes" :endpoint "quizzes"
-                               :file-var 'org-canvas-quizzes-file
+                   (list (list :name "Outcomes" :endpoint "outcome_groups"
+                               :file-var 'org-canvas-outcomes-file
                                :id-property "CANVAS_ID")))
-                  (org-canvas-quizzes-file temp))
+                  (org-canvas-outcomes-file temp))
               (with-current-buffer (find-file-noselect temp)
                 (goto-char (point-min))
                 (expect (org-canvas-pull-at-point) :to-throw 'user-error))))

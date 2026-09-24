@@ -85,6 +85,8 @@
  :name "Quizzes" :endpoint "quizzes"
  :file-var 'org-canvas-quizzes-file
  :id-field 'id :id-property "CANVAS_ID" :title-field 'title
+ ;; A quiz pulls whole, questions and all, into one heading (#295).
+ :pull-whole-entry t
  ;; A question has no page of its own; browsing one opens its quiz.
  :web-pages '((:level 1 :id-property "CANVAS_ID" :path "quizzes/%s"
                :edit "quizzes/%s/edit")))
@@ -1236,13 +1238,41 @@ refuses the group, its members are written ungrouped."
       (org-canvas--quiz-pull-insert-group group members))
     (goto-char quiz-pos)))
 
+(defun org-canvas--quiz-pull-question-name (q)
+  "Return the name of question Q, or nil when it has none."
+  (let ((name (org-canvas--alist-get-non-null 'question_name q)))
+    (and (stringp name)
+         (not (string-empty-p (string-trim name)))
+         (string-trim name))))
+
+(defun org-canvas--quiz-pull-name-questions (questions)
+  "Return QUESTIONS with a name each of them can be told apart by.
+A question with no name, or with a name another question of the quiz
+shares, is renamed after its place in Canvas's order: every question
+of a survey built in the web UI comes back as \"Question\", and six
+headings of one name read as one (issue #295).  So the fourth of them
+becomes \"Question 4\".  A unique name is kept as it is.  The alists
+are not modified; a renamed one has the new `question_name' consed on."
+  (let* ((names (mapcar #'org-canvas--quiz-pull-question-name questions))
+         (index 0))
+    (cl-mapcar
+     (lambda (q name)
+       (setq index (1+ index))
+       (if (and name (= (cl-count name names :test #'equal) 1))
+           q
+         (cons (cons 'question_name (format "%s %d" (or name "Question") index))
+               q)))
+     questions names)))
+
 (defun org-canvas--quiz-pull-emit-questions (quiz-id questions)
   "Write QUESTIONS of QUIZ-ID under the quiz at point, grouped as on Canvas.
 An ungrouped question is a level-2 heading.  A group is written where
 its first question falls in Canvas's order, with its questions at
-level 3, so the file keeps the quiz's order.  Point is left at the
-quiz heading."
+level 3, so the file keeps the quiz's order.  Questions without a name
+of their own are named by `org-canvas--quiz-pull-name-questions'.
+Point is left at the quiz heading."
   (let ((quiz-pos (point))
+        (questions (org-canvas--quiz-pull-name-questions (append questions nil)))
         (written nil))
     (dolist (q questions)
       (goto-char quiz-pos)
@@ -1299,11 +1329,92 @@ predictable Description subtree, so downstream tooling and
 human readers don't have to guess whether to find prose under the
 parent quiz or under a dedicated subheading."
   (goto-char quiz-pos)
-  (when (and description (not (string-empty-p description)))
-    (org-canvas--quiz-pull-insert-description-wrapped description)
-    (goto-char quiz-pos))
+  (cond
+   ((org-canvas--quiz-pull-inline-description-p)
+    (org-canvas--quiz-pull-replace-inline-description description))
+   ((and description (not (string-empty-p description)))
+    (org-canvas--quiz-pull-insert-description-wrapped description)))
+  (goto-char quiz-pos)
   (org-canvas--quiz-pull-emit-questions quiz-id questions)
   (goto-char quiz-pos))
+
+(defun org-canvas--quiz-pull-inline-bounds ()
+  "Return (START . END) of the quiz text at point above its children.
+START is the end of the heading's drawer, blank lines skipped back
+over; END is where its first child heading, or its subtree, begins."
+  (save-excursion
+    (org-back-to-heading t)
+    (let* ((end (save-excursion
+                  (min (progn (outline-next-heading) (point))
+                       (save-excursion (org-back-to-heading t)
+                                       (org-end-of-subtree t t) (point)))))
+           (meta-end (save-excursion (org-end-of-meta-data t) (point))))
+      (goto-char (min meta-end end))
+      (skip-chars-backward " \t\n")
+      (cons (point) end))))
+
+(defun org-canvas--quiz-pull-inline-description-p ()
+  "Return non-nil when the description of the quiz at point is inline text.
+That is text under the heading, above its first child, other than the
+accommodations table, and no `** Description' child to shadow it (see
+`org-canvas--quiz-parse-body-text').  A file written that way by hand
+keeps that shape on a pull (issue #295)."
+  (and (not (org-canvas--quiz-parse-description-subheading))
+       (let ((bounds (org-canvas--quiz-pull-inline-bounds)))
+         (not (string-empty-p
+               (string-trim
+                (org-canvas--strip-named-tables
+                 (buffer-substring-no-properties (car bounds) (cdr bounds))
+                 '("accommodations"))))))))
+
+(defun org-canvas--quiz-pull-named-tables (text)
+  "Return the accommodations table in TEXT, as text, or nil."
+  (when (string-match "^#\\+NAME:[ \t]+accommodations[ \t]*\n\\(?:|.*\n?\\)*" text)
+    (string-trim-right (match-string 0 text))))
+
+(defun org-canvas--quiz-pull-replace-inline-description (description)
+  "Replace the inline description of the quiz at point with DESCRIPTION HTML.
+An accommodations table in the same text is kept after it, for
+`org-canvas--accommodation-write-table' to refresh.  Point is left at
+the quiz heading."
+  (let* ((quiz-pos (save-excursion (org-back-to-heading t) (point)))
+         (bounds (org-canvas--quiz-pull-inline-bounds))
+         (table (org-canvas--quiz-pull-named-tables
+                 (buffer-substring-no-properties (car bounds) (cdr bounds))))
+         (text (and (stringp description) (not (string-empty-p description))
+                    (string-trim (org-canvas--html-to-org-with-rewrite description))))
+         (parts (delq nil (list (and text (not (string-empty-p text)) text) table))))
+    (delete-region (car bounds) (cdr bounds))
+    (goto-char (car bounds))
+    (insert "\n")
+    (dolist (part parts)
+      (insert "\n" part "\n"))
+    (when (and (< (point) (point-max)) parts)
+      (insert "\n"))
+    (goto-char quiz-pos)))
+
+(defun org-canvas--quiz-pull-item (quiz pos)
+  "Write QUIZ, one quiz's API alist, over the heading at POS.
+The single-item pull of a classic quiz (issue #295): the properties,
+the description, the questions — fetched here, since the quiz itself
+does not carry them — and the accommodations table, through the same
+writers the whole-file `org-canvas-pull-quizzes' uses, so one quiz is
+written exactly as a full pull would write it and nothing else in the
+file moves.  The caller, `org-canvas--conflict-pull-local', renames the
+heading, stamps CANVAS_UPDATED_AT and drops PAYLOAD_HASH."
+  (save-excursion
+    (let ((id (alist-get 'id quiz)))
+      (goto-char pos)
+      (org-back-to-heading t)
+      (org-canvas--quiz-pull-set-properties (point) quiz org-canvas-quizzes-file)
+      (org-canvas--quiz-pull-emit-body
+       (point) id (org-canvas--alist-get-non-null 'description quiz)
+       (org-canvas--quiz-pull-fetch-questions id))
+      (when (fboundp 'org-canvas--accommodation-write-table)
+        (goto-char pos)
+        (org-canvas--accommodation-write-table id)))))
+
+(org-canvas-register-pull-item-fn "Quizzes" #'org-canvas--quiz-pull-item)
 
 ;;;###autoload
 (defun org-canvas-pull-quizzes ()

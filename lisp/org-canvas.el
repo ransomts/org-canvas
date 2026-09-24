@@ -466,6 +466,9 @@ asked to confirm first."
   (org-back-to-heading t)
   (run-hooks 'org-canvas--operation-start-hook)
   (let* ((feature (org-canvas--pull-at-point-feature))
+         (_ (when (plist-get feature :pull-whole-entry)
+              ;; A quiz's question is part of the quiz: pull the quiz.
+              (while (org-up-heading-safe))))
          (id-property (or (plist-get feature :id-property) "CANVAS_ID"))
          (id (org-entry-get (point) id-property))
          (title (org-get-heading t t t t)))
@@ -475,6 +478,40 @@ asked to confirm first."
     (when (org-canvas--confirm
            (format "Replace '%s' with the version on Canvas? " title))
       (org-canvas--pull-at-point-1 feature id title))))
+
+;;;; Pull One Item Into a New Heading
+;;
+;; An EXTRA row of the drift report is an item no heading claims: a quiz
+;; built in the web UI, say.  For a feature whose pull-item function
+;; writes a whole entry from nothing (`:pull-whole-entry'), the row's
+;; pull verb writes that entry: a heading appended to the file with the
+;; id stamped, then the same single-item pull as above (issue #295).
+
+(defun org-canvas--pull-new-heading (feature id title)
+  "Pull FEATURE's Canvas item ID into a new heading titled TITLE.
+The heading is appended to FEATURE's file, or reused when a level-1
+heading there already claims ID, then filled by
+`org-canvas--pull-at-point-1'.  Asks first.  Returns non-nil when the
+item was pulled."
+  (unless (plist-get feature :pull-whole-entry)
+    (user-error "%s has no pull into a new heading; use M-x org-canvas-pull-%s"
+                (plist-get feature :name)
+                (downcase (replace-regexp-in-string
+                           " " "-" (plist-get feature :name)))))
+  (let* ((file-var (plist-get feature :file-var))
+         (file (symbol-value file-var))
+         (id-property (or (plist-get feature :id-property) "CANVAS_ID")))
+    (when (org-canvas--confirm
+           (format "Pull %s '%s' (id %s) into %s? "
+                   (plist-get feature :name) title id
+                   (file-name-nondirectory file)))
+      (let ((pos (org-canvas--pull-upsert-heading file id title id-property)))
+        (with-current-buffer (org-canvas--find-file-noselect (expand-file-name file))
+          (save-excursion
+            (goto-char pos)
+            (org-canvas-org-save-sync-state pos id id-property)
+            (org-canvas--pull-at-point-1 feature id title))))
+      t)))
 
 ;;;; Pull All (Canvas → Org Migration)
 
