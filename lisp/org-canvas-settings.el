@@ -703,7 +703,8 @@ hand-ordered list away (issue #277)."
 (defun org-canvas--settings-pull-single-late-property (pom prop-name val type)
   "Set a single late policy property PROP-NAME at POM from VAL using TYPE."
   (pcase type
-    ('boolean (org-canvas--pull-set-boolean-property pom prop-name val))
+    ('boolean (org-canvas--pull-set-boolean-property
+               pom prop-name val "settings"))
     ('string (when val (org-canvas-org-set-property pom prop-name val)))
     ('value (when val (org-canvas-org-set-property pom prop-name (format "%s" val))))))
 
@@ -731,13 +732,17 @@ LATE-POLICY is the late policy API response (may be nil)."
     (when default-view
       (org-canvas-org-set-property pom "DEFAULT_VIEW" default-view))
     (org-canvas--pull-set-boolean-property
-     pom "APPLY_WEIGHTS" (alist-get 'apply_assignment_group_weights response))
+     pom "APPLY_WEIGHTS" (alist-get 'apply_assignment_group_weights response)
+     "settings")
     (org-canvas--pull-set-boolean-property
-     pom "HIDE_FINAL_GRADES" (alist-get 'hide_final_grades response))
+     pom "HIDE_FINAL_GRADES" (alist-get 'hide_final_grades response)
+     "settings")
     (org-canvas--pull-set-boolean-property
-     pom "PUBLIC_SYLLABUS" (alist-get 'public_syllabus response))
+     pom "PUBLIC_SYLLABUS" (alist-get 'public_syllabus response)
+     "settings")
     (org-canvas--pull-set-boolean-property
-     pom "IS_PUBLIC" (alist-get 'is_public response))
+     pom "IS_PUBLIC" (alist-get 'is_public response)
+     "settings")
     (when license
       (org-canvas-org-set-property pom "LICENSE" license))
     (let ((policy (org-canvas--post-manually-to-policy
@@ -747,21 +752,29 @@ LATE-POLICY is the late policy API response (may be nil)."
     (org-canvas--pull-set-timestamp-property pom "START_AT" start-at)
     (org-canvas--pull-set-timestamp-property pom "END_AT" end-at)
     (org-canvas--pull-set-boolean-property
-     pom "ALLOW_STUDENT_DISCUSSION_TOPICS" (alist-get 'allow_student_discussion_topics response))
+     pom "ALLOW_STUDENT_DISCUSSION_TOPICS" (alist-get 'allow_student_discussion_topics response)
+     "settings")
     (org-canvas--pull-set-boolean-property
-     pom "ALLOW_STUDENT_DISCUSSION_EDITING" (alist-get 'allow_student_discussion_editing response))
+     pom "ALLOW_STUDENT_DISCUSSION_EDITING" (alist-get 'allow_student_discussion_editing response)
+     "settings")
     (org-canvas--pull-set-boolean-property
-     pom "ALLOW_STUDENT_FORUM_ATTACHMENTS" (alist-get 'allow_student_forum_attachments response))
+     pom "ALLOW_STUDENT_FORUM_ATTACHMENTS" (alist-get 'allow_student_forum_attachments response)
+     "settings")
     (org-canvas--pull-set-boolean-property
-     pom "LOCK_ALL_ANNOUNCEMENTS" (alist-get 'lock_all_announcements response))
+     pom "LOCK_ALL_ANNOUNCEMENTS" (alist-get 'lock_all_announcements response)
+     "settings")
     (org-canvas--pull-set-boolean-property
-     pom "RESTRICT_STUDENT_FUTURE_VIEW" (alist-get 'restrict_student_future_view response))
+     pom "RESTRICT_STUDENT_FUTURE_VIEW" (alist-get 'restrict_student_future_view response)
+     "settings")
     (org-canvas--pull-set-boolean-property
-     pom "RESTRICT_STUDENT_PAST_VIEW" (alist-get 'restrict_student_past_view response))
+     pom "RESTRICT_STUDENT_PAST_VIEW" (alist-get 'restrict_student_past_view response)
+     "settings")
     (org-canvas--pull-set-boolean-property
-     pom "SHOW_ANNOUNCEMENTS_ON_HOME_PAGE" (alist-get 'show_announcements_on_home_page response))
+     pom "SHOW_ANNOUNCEMENTS_ON_HOME_PAGE" (alist-get 'show_announcements_on_home_page response)
+     "settings")
     (org-canvas--pull-set-boolean-property
-     pom "HIDE_DISTRIBUTION_GRAPHS" (alist-get 'hide_distribution_graphs response))
+     pom "HIDE_DISTRIBUTION_GRAPHS" (alist-get 'hide_distribution_graphs response)
+     "settings")
     (let ((limit (alist-get 'home_page_announcement_limit response)))
       (when limit
         (org-canvas-org-set-property pom "HOME_PAGE_ANNOUNCEMENT_LIMIT"

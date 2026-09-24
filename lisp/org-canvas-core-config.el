@@ -581,6 +581,11 @@ as it is instead of reading nil as \"Canvas holds nothing\" and
 deleting it; the drift report is ruled out the same way through
 `:compare-p' (issue #216).
 
+A boolean whose absence is a third state — a module item's PUBLISHED,
+where a silent heading keeps the linked content's own state — declares
+`:absent-inherits'.  Neither value is then a default, so a pull writes
+true and false alike rather than dropping one as implied (issue #323).
+
 A module whose payload carries the heading's body declares
 `:body-api-key', the Canvas field it lands in (\"description\",
 \"body\", \"message\"), so the drift report can compare it — the

@@ -306,18 +306,28 @@ name and value for consistent diffs and easier scripting."
   "Ensure ID is a string.  Convert numbers; pass strings through."
   (if (numberp id) (number-to-string id) id))
 
-(defun org-canvas--registry-find-property (org-prop)
-  "Scan `org-canvas--property-registry' for a spec with :org-prop = ORG-PROP.
-Return the property spec plist, or nil.  First match wins (properties
-registered under multiple feature keys are expected to share defaults)."
-  (catch 'found
-    (maphash
-     (lambda (_feature feature-plist)
-       (dolist (spec (plist-get feature-plist :properties))
-         (when (string= (plist-get spec :org-prop) org-prop)
-           (throw 'found spec))))
-     org-canvas--property-registry)
-    nil))
+(defun org-canvas--registry-find-property (org-prop &optional registry-key)
+  "Return the registry spec whose :org-prop is ORG-PROP, or nil.
+REGISTRY-KEY, when given, names the feature whose registration to
+search, and nothing else is consulted: one name can mean different
+things to different features (PUBLISHED defaults to true for pages
+and modules but has no default on a module item, issue #323).  With
+no key every feature is scanned and the first match wins, which is
+only safe for a property all its registrations agree on."
+  (if registry-key
+      (seq-find (lambda (spec)
+                  (equal (plist-get spec :org-prop) org-prop))
+                (plist-get (gethash registry-key
+                                    org-canvas--property-registry)
+                           :properties))
+    (catch 'found
+      (maphash
+       (lambda (_feature feature-plist)
+         (dolist (spec (plist-get feature-plist :properties))
+           (when (string= (plist-get spec :org-prop) org-prop)
+             (throw 'found spec))))
+       org-canvas--property-registry)
+      nil)))
 
 (defun org-canvas--alist-get-non-null (key alist)
   "Get KEY from ALIST, returning nil for null or :null values."

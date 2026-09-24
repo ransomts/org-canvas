@@ -28,7 +28,8 @@
 
 ;;;; File Header and Pulled Properties
 
-(defun org-canvas--pull-set-boolean-property (pom property value)
+(defun org-canvas--pull-set-boolean-property (pom property value
+                                                 &optional registry-key)
   "Set boolean PROPERTY at POM.
 Convert t to \"true\", :json-false/nil to \"false\".  When the registry
 declares PROPERTY as `:type boolean' and the resolved value matches the
@@ -36,9 +37,15 @@ registered (or implicit nil) default, emission is suppressed unless
 `org-canvas-emit-defaults' is non-nil, and a value the heading already
 carries is deleted: a re-pull finds the existing heading with its
 drawer intact, and a suppressed write alone would leave a stale
-\"true\" standing after Canvas turned the setting off (issue #320)."
-  (let* ((spec (org-canvas--registry-find-property property))
-         (boolean-spec (and spec (eq (plist-get spec :type) 'boolean)))
+\"true\" standing after Canvas turned the setting off (issue #320).
+REGISTRY-KEY names the feature being pulled, whose registration alone
+supplies the spec; without it the first registration of PROPERTY in
+any feature is used (see `org-canvas--registry-find-property').  A
+spec declaring `:absent-inherits' has no default to suppress: both
+values are written, since only absence means \"inherit\" (issue #323)."
+  (let* ((spec (org-canvas--registry-find-property property registry-key))
+         (boolean-spec (and spec (eq (plist-get spec :type) 'boolean)
+                            (not (plist-get spec :absent-inherits))))
          (default (plist-get spec :default))
          (normalized (cond ((eq value t) t)
                            ((eq value :json-false) nil)
@@ -640,11 +647,13 @@ link's target heading does not exist locally."
   "Return non-nil when VALUE is what SPEC's property means when absent.
 A terse drawer leaves such values implicit: the registered `:default'
 for a boolean (nil when none is declared), zero for a number, and
-nothing at all for the rest."
+nothing at all for the rest.  A boolean declaring `:absent-inherits'
+has no default: its absence means something neither value does."
   (let ((value (org-canvas--registry-normalize-remote value))
         (default (plist-get spec :default)))
     (pcase (plist-get spec :type)
-      ('boolean (eq (and value t) (and default t)))
+      ('boolean (and (not (plist-get spec :absent-inherits))
+                     (eq (and value t) (and default t))))
       ('number (or (null value) (equal value default)
                    (and (numberp value) (zerop value))))
       (_ (or (null value) (equal value "") (equal value default)
@@ -692,15 +701,18 @@ express — a body, a child table — through `:after-pull'."
       (org-canvas--pull-apply-spec spec item pos))))
 
 (defun org-canvas--pull-item-set-property (pos api-field property
-                                               type item)
+                                               type item
+                                               &optional registry-key)
   "Set PROPERTY on heading at POS from ITEM's API-FIELD.
 TYPE controls conversion: string, boolean, timestamp, number.  The
 explicit-spec path of `org-canvas-define-pull-item', for a property a
-module keeps outside the registry."
+module keeps outside the registry.  REGISTRY-KEY names the feature
+being pulled, for a boolean's default."
   (let ((value (alist-get api-field item)))
     (pcase type
       ('boolean
-       (org-canvas--pull-set-boolean-property pos property value))
+       (org-canvas--pull-set-boolean-property
+        pos property value registry-key))
       ('timestamp
        (org-canvas--pull-set-timestamp-property pos property value))
       ('number
@@ -757,7 +769,7 @@ ITEM is the API response alist, POS is the heading position."
                   (type (or (plist-get (nthcdr 2 spec) :type)
                             'string)))
               `(org-canvas--pull-item-set-property
-                pos ',api-field ,org-prop ',type item)))
+                pos ',api-field ,org-prop ',type item ,registry-key)))
           properties)
        ,@(when body-field
            `((org-with-point-at pos

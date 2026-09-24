@@ -103,7 +103,8 @@ RESTRICT is the restrict_enrollments_to_section_dates value."
   (org-canvas-org-set-property pom "CANVAS_ID" id)
   (org-canvas--pull-set-timestamp-property pom "START_AT" start-at)
   (org-canvas--pull-set-timestamp-property pom "END_AT" end-at)
-  (org-canvas--pull-set-boolean-property pom "RESTRICT_TO_DATES" restrict))
+  (org-canvas--pull-set-boolean-property
+   pom "RESTRICT_TO_DATES" restrict "sections"))
 
 (defun org-canvas--pull-sections-upsert (section)
   "Update or create a heading for SECTION in the current buffer.

@@ -1,0 +1,7 @@
+* Fixed
+- #323 A module pull writes =:PUBLISHED: true= on a published module
+  item instead of leaving the property out, which read as "inherit the
+  linked content's state".  A pulled boolean now takes its default from
+  the registration of the feature being pulled, not from whichever
+  feature registered the same property name first (pages and modules
+  default =PUBLISHED= to true; module items declare no default).

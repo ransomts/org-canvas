@@ -2660,7 +2660,53 @@
          (goto-char (point-min))
          (re-search-forward "Link")
          (org-back-to-heading)
-         (expect (org-entry-get (point) "PUBLISHED") :to-equal "true"))))))
+         (expect (org-entry-get (point) "PUBLISHED") :to-equal "true")))))
+
+  (it "writes PUBLISHED true for a published item under a terse drawer (issue #323)"
+    ;; Module items register PUBLISHED with no default (absent means
+    ;; "inherit the content's state"), so a published item is not a
+    ;; default to suppress, whatever pages or modules declare.
+    (let ((org-canvas-emit-defaults nil))
+      (with-temp-org-buffer
+       "* Module
+"
+       (goto-char (point-max))
+       (let ((items [((type . "SubHeader") (title . "Section 1")
+                      (id . 1) (published . t))
+                     ((type . "ExternalUrl") (title . "Link")
+                      (id . 2) (external_url . "https://x.com")
+                      (published . t))]))
+         (org-canvas--module-pull-insert-items items)
+         (dolist (title '("Section 1" "Link"))
+           (goto-char (point-min))
+           (re-search-forward title)
+           (org-back-to-heading)
+           (expect (org-entry-get (point) "PUBLISHED") :to-equal "true"))))))
+
+  (it "rewrites an unpublished item as published on a re-pull (issue #323)"
+    (let ((org-canvas-emit-defaults nil))
+      (with-temp-org-buffer
+       "* Week 1
+:PROPERTIES:
+:CANVAS_ID: 10
+:END:
+** Section 1
+:PROPERTIES:
+:CANVAS_ID: 1
+:ITEM_TYPE: SubHeader
+:PUBLISHED: false
+:END:
+"
+       (goto-char (point-min))
+       (org-canvas--module-pull-item
+        '((id . 10) (name . "Week 1") (published . t)
+          (items . [((type . "SubHeader") (title . "Section 1")
+                     (id . 1) (published . t))]))
+        (point))
+       (goto-char (point-min))
+       (re-search-forward "Section 1")
+       (org-back-to-heading)
+       (expect (org-entry-get (point) "PUBLISHED") :to-equal "true")))))
 
 ;;;; Cross-file module link resolution integration
 

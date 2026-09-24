@@ -991,6 +991,14 @@
     (expect (org-canvas--registry-value-default-p '(:type boolean) t)
             :to-be nil))
 
+  (it "finds no default for a boolean whose absence inherits (issue #323)"
+    (expect (org-canvas--registry-value-default-p
+             '(:type boolean :absent-inherits t) :json-false)
+            :to-be nil)
+    (expect (org-canvas--registry-value-default-p
+             '(:type boolean :absent-inherits t) t)
+            :to-be nil))
+
   (it "treats zero and null as a number's default"
     (expect (org-canvas--registry-value-default-p '(:type number) 0) :to-be t)
     (expect (org-canvas--registry-value-default-p '(:type number) :null)
