@@ -102,6 +102,9 @@ which orphans every assessment and grading-file row keyed by the old
 one (issue #256).  The push sends the stored id back, finalize stamps
 it from the response, and a pull writes it.")
 
+;; A deleted rubric's criteria go with it: a delete clears the ids (#331).
+(org-canvas-register-id-property org-canvas--rubric-criterion-id-property)
+
 (defun org-canvas--rubric-format-points (n)
   "Format N as a number string, dropping .0 for whole numbers.
 Used to emit human-readable points in headings, tags, and tables."

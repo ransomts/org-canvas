@@ -37,6 +37,9 @@ New Quizzes use /api/quiz/v1/ instead of /api/v1/."
           org-canvas-course-id
           (apply #'format suffix args)))
 
+;; A deleted New Quiz's items go with it: a delete clears the ids (#331).
+(org-canvas-register-id-property "CANVAS_ITEM_ID")
+
 ;;;; Type Slug Mapping
 
 (defconst org-canvas--new-quiz-type-slugs

@@ -67,6 +67,9 @@
  "New Quizzes" 'org-canvas-new-quizzes-file
  '(:level 1 :id-property "CANVAS_ASSIGNMENT_ID" :path "assignments/%s"
    :edit "assignments/%s/edit"))
+;; New Quizzes stay out of the feature registry (see the pull entry
+;; below), so a delete learns their id stamp here (#331).
+(org-canvas-register-id-property "CANVAS_ASSIGNMENT_ID")
 (org-canvas-register-properties "new-quizzes"
   :duplicate-titles t
   :label "New Quizzes"

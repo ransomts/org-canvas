@@ -347,6 +347,41 @@
            (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)
            (expect (org-entry-get (point) "LAST_SYNCED") :to-be nil))))))
 
+  (it "clears the id stamps of every heading below the deleted one (#331)"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-temp-org-buffer
+         "* Quiz
+:PROPERTIES:
+:CANVAS_ID: 555
+:END:
+** Item
+:PROPERTIES:
+:CANVAS_ITEM_ID: item-1
+:LAST_SYNCED: [2024-01-01 Mon]
+:END:
+*** Criterion
+:PROPERTIES:
+:CANVAS_CRITERION_ID: _1
+:END:
+* Next
+:PROPERTIES:
+:CANVAS_ID: 556
+:END:
+"
+         (goto-char (point-min))
+         (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+           (org-canvas--delete-item-at-point "item" :endpoint "items/%s"))
+         (expect (org-map-entries
+                  (lambda ()
+                    (list (org-entry-get (point) "CANVAS_ID")
+                          (org-entry-get (point) "CANVAS_ITEM_ID")
+                          (org-entry-get (point) "LAST_SYNCED")
+                          (org-entry-get (point) "CANVAS_CRITERION_ID")))
+                  nil 'file)
+                 :to-equal '((nil nil nil nil) (nil nil nil nil)
+                             (nil nil nil nil) ("556" nil nil nil)))))))
+
   (it "errors when no CANVAS_ID present"
     (with-temp-org-buffer
      "* New Item

@@ -465,6 +465,22 @@ A feature registry entry with `:web-pages' first, then an entry of
         feature
       (org-canvas--registry-entry-for-file file org-canvas--web-page-registry))))
 
+(defvar org-canvas--id-property-registry nil
+  "Id properties a module stamps that no feature registry entry names.
+A child's id (a New Quiz item's CANVAS_ITEM_ID, a rubric criterion's
+CANVAS_CRITERION_ID) or the id of a file kept out of the feature
+registry (a New Quiz's CANVAS_ASSIGNMENT_ID).  A delete clears these
+with the rest of a heading's stamps, or the next sync updates an
+object Canvas no longer holds (issue #331).  Populated at load time
+by `org-canvas-register-id-property'.")
+
+(defun org-canvas-register-id-property (property)
+  "Record PROPERTY as an id stamp a delete must clear (issue #331).
+For an id property no `org-canvas-register-feature' entry declares as
+its :id-property; see `org-canvas--id-property-registry'."
+  (unless (member property org-canvas--id-property-registry)
+    (push property org-canvas--id-property-registry)))
+
 (defvar org-canvas--pull-feature-registry nil
   "Single-item pull entries for files the feature registry does not hold.
 Each is a feature plist, populated at load time by

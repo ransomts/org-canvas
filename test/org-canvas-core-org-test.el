@@ -355,7 +355,42 @@
      (org-back-to-heading)
      ;; Should not error
      (org-canvas-clear-sync-properties (point))
-     (expect (org-entry-get (point) "TITLE") :to-equal "Test"))))
+     (expect (org-entry-get (point) "TITLE") :to-equal "Test")))
+
+  (it "removes the id stamps modules register, not only CANVAS_ID (#331)"
+    (with-temp-org-buffer
+     "* Heading
+:PROPERTIES:
+:CANVAS_ASSIGNMENT_ID: 42
+:CANVAS_ITEM_ID: item-1
+:CANVAS_CRITERION_ID: _100
+:OUTCOME: 7
+:END:
+"
+     (org-back-to-heading)
+     (org-canvas-clear-sync-properties (point))
+     (expect (org-entry-get (point) "CANVAS_ASSIGNMENT_ID") :to-be nil)
+     (expect (org-entry-get (point) "CANVAS_ITEM_ID") :to-be nil)
+     (expect (org-entry-get (point) "CANVAS_CRITERION_ID") :to-be nil)
+     (expect (org-entry-get (point) "OUTCOME") :to-equal "7"))))
+
+(describe "org-canvas--delete-cleared-property-names"
+  (it "derives the set from the feature registry and the registered stamps"
+    (let ((org-canvas--feature-registry
+           '((:name "A" :id-property "CANVAS_SLUG")))
+          (org-canvas--id-property-registry '("CANVAS_THING_ID")))
+      (expect (org-canvas--delete-id-property-names)
+              :to-have-same-items-as
+              '("CANVAS_ID" "CANVAS_URL" "CANVAS_SLUG" "CANVAS_THING_ID"))
+      (expect (org-canvas--delete-cleared-property-names)
+              :to-contain "PAYLOAD_HASH")))
+
+  (it "registers a stamp once however often its module loads"
+    (let ((org-canvas--id-property-registry nil))
+      (org-canvas-register-id-property "CANVAS_THING_ID")
+      (org-canvas-register-id-property "CANVAS_THING_ID")
+      (expect org-canvas--id-property-registry
+              :to-equal '("CANVAS_THING_ID")))))
 
 ;;;; 5. Timestamp Functions
 

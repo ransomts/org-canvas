@@ -2194,6 +2194,45 @@ Click the heart.
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t))))
 
+  (it "clears a deleted quiz's CANVAS_ASSIGNMENT_ID and its items' CANVAS_ITEM_ID (#331)"
+    (let* ((temp-dir (make-temp-file "nq-delete-ids" t))
+           (test-file (expand-file-name "new-quizzes.org" temp-dir)))
+      (unwind-protect
+          (let ((org-canvas-new-quizzes-file test-file))
+            (with-temp-file test-file
+              (insert "* Kept\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 100\n:END:\n"
+                      "** Kept item\n:PROPERTIES:\n:CANVAS_ITEM_ID: k-1\n:END:\n"
+                      "* Gone\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 200\n"
+                      ":CANVAS_UPDATED_AT: 2026-01-01T00:00:00Z\n:END:\n"
+                      "** Gone item\n:PROPERTIES:\n:CANVAS_ITEM_ID: g-1\n"
+                      ":POINTS: 2\n:END:\n"))
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                         (lambda (&rest _)
+                           '(((assignment_id . 100) (title . "Kept"))
+                             ((assignment_id . 200) (title . "Gone")))))
+                        ((symbol-function 'org-canvas-api-request)
+                         (lambda (_m url &rest _)
+                           (when (string-match-p "quizzes/100" url)
+                             (error "DELETE failed"))
+                           nil))
+                        ((symbol-function 'y-or-n-p) (lambda (_) t)))
+                (with-sync-test-env
+                  (org-canvas-delete-all-new-quizzes))))
+            (with-current-buffer (find-buffer-visiting test-file)
+              (expect (org-map-entries
+                       (lambda ()
+                         (list (org-entry-get (point) "CANVAS_ASSIGNMENT_ID")
+                               (org-entry-get (point) "CANVAS_ITEM_ID")
+                               (org-entry-get (point) "CANVAS_UPDATED_AT")
+                               (org-entry-get (point) "POINTS")))
+                       nil 'file)
+                      :to-equal '(("100" nil nil nil) (nil "k-1" nil nil)
+                                  (nil nil nil nil) (nil nil nil "2")))))
+        (let ((buf (find-buffer-visiting test-file)))
+          (when buf (kill-buffer buf)))
+        (delete-directory temp-dir t))))
+
   (it "uses id fallback when assignment_id absent in delete-all"
     (let* ((temp-dir (make-temp-file "nq-delete-id-fb" t))
            (test-file (expand-file-name "new-quizzes.org" temp-dir)))
