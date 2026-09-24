@@ -360,6 +360,23 @@ Canvas file URLs in the converted body are rewritten to local
       (goto-char body-start)
       (insert "\n" rewritten "\n"))))
 
+(defun org-canvas--pull-entry-text-bounds ()
+  "Return (START . END) of the text of the heading at point above its children.
+START is the end of the heading's drawer, blank lines skipped back
+over; END is where its first child heading, or its subtree, begins.
+A classic quiz's inline description (issue #295) and a New Quiz's
+instructions (issue #309) are this text."
+  (save-excursion
+    (org-back-to-heading t)
+    (let* ((end (save-excursion
+                  (min (progn (outline-next-heading) (point))
+                       (save-excursion (org-back-to-heading t)
+                                       (org-end-of-subtree t t) (point)))))
+           (meta-end (save-excursion (org-end-of-meta-data t) (point))))
+      (goto-char (min meta-end end))
+      (skip-chars-backward " \t\n")
+      (cons (point) end))))
+
 (defun org-canvas--pull-set-timestamp-property (pos property iso8601)
   "Set PROPERTY at POS from ISO8601 string, converting to Org timestamp.
 Does nothing if ISO8601 is nil or conversion fails."

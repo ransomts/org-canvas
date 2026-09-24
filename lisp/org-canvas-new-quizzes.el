@@ -611,19 +611,54 @@ anything else."
        quiz-assignment-id (error-message-string err))
      nil)))
 
+(defun org-canvas--new-quiz-pull-instructions (quiz)
+  "Write QUIZ's instructions as the text of the quiz heading at point.
+The push sends the text between the heading's drawer and its first
+item as `instructions' (`org-canvas--new-quiz-parse-body-text'), so
+that text is what a pull replaces: never an item, never a second copy
+beside it (issue #309).  The HTML goes through
+`org-canvas--html-to-org-with-rewrite', so a heading in it becomes a
+block, never a headline (Hard Rule 22).  Empty instructions leave the
+text empty; a reply without the field leaves it as it is."
+  (when-let* ((cell (assq 'instructions quiz)))
+    (let* ((html (cdr cell))
+           (text (and (stringp html)
+                      (string-trim (org-canvas--html-to-org-with-rewrite html))))
+           (bounds (org-canvas--pull-entry-text-bounds)))
+      (save-excursion
+        (delete-region (car bounds) (cdr bounds))
+        (goto-char (car bounds))
+        (insert "\n")
+        ;; The blank line after the text stands even at the end of the
+        ;; buffer, so items appended below it later sit where a re-pull
+        ;; would put them.
+        (unless (or (null text) (string-empty-p text))
+          (insert "\n" text "\n\n"))))))
+
+(defun org-canvas--new-quiz-pull-entry (quiz pos)
+  "Write QUIZ, one New Quiz's API alist, into the heading at POS.
+The properties, the items, fetched here, and the instructions: what
+both pull paths write for one quiz.  The instructions go last, above
+the items, so a first pull lays the quiz out as a re-pull would; an
+item appended to a quiz with no items yet would otherwise follow its
+text with no blank line.  Point is left at the heading."
+  (goto-char pos)
+  (org-back-to-heading t)
+  (org-canvas--new-quiz-pull-set-properties (point) quiz)
+  (org-canvas--new-quiz-pull-items (org-canvas--new-quiz-remote-id quiz))
+  (org-canvas--new-quiz-pull-instructions quiz))
+
 (defun org-canvas--new-quiz-pull-item (quiz pos)
   "Write QUIZ, one New Quiz's API alist, over the heading at POS.
-The single-item pull of a New Quiz (issue #297): the properties and
-the items, fetched here, through the same writers the whole-file
+The single-item pull of a New Quiz (issue #297): the properties, the
+instructions (issue #309) and the items, through
+`org-canvas--new-quiz-pull-entry', the writer the whole-file
 `org-canvas-pull-new-quizzes' uses, so one quiz is written exactly as
 a full pull would write it and nothing else in the file moves.  The
 caller, `org-canvas--conflict-pull-local', renames the heading, stamps
 CANVAS_UPDATED_AT and drops PAYLOAD_HASH."
   (save-excursion
-    (goto-char pos)
-    (org-back-to-heading t)
-    (org-canvas--new-quiz-pull-set-properties (point) quiz)
-    (org-canvas--new-quiz-pull-items (org-canvas--new-quiz-remote-id quiz))))
+    (org-canvas--new-quiz-pull-entry quiz pos)))
 
 ;; New Quizzes stay out of the feature registry: the drift report, the
 ;; orphan scan and prune would list them at the course API's endpoint.
@@ -631,9 +666,10 @@ CANVAS_UPDATED_AT and drops PAYLOAD_HASH."
 (org-canvas-register-pull-feature
  :name "New Quizzes"
  :file-var 'org-canvas-new-quizzes-file
- ;; A New Quiz's `id' is its assignment id, the one stamped; adoption
- ;; stamps `id' (`org-canvas--adopt-stamp').
- :id-field 'id :id-property "CANVAS_ASSIGNMENT_ID"
+ ;; Adoption stamps `assignment_id' when the reply carries it, and
+ ;; `id', which the quiz service makes the assignment id, otherwise:
+ ;; the order `org-canvas--new-quiz-remote-id' reads them in (#309).
+ :id-field '(assignment_id id) :id-property "CANVAS_ASSIGNMENT_ID"
  :title-field 'title
  :list-url-fn (lambda () (org-canvas--new-quiz-api-endpoint "quizzes"))
  :item-url-fn (lambda (id) (org-canvas--new-quiz-api-endpoint "quizzes/%s" id))
@@ -667,8 +703,7 @@ CANVAS_UPDATED_AT and drops PAYLOAD_HASH."
                          file assignment-id title "CANVAS_ASSIGNMENT_ID")))
               (goto-char pos)
               (when title (org-edit-headline title))
-              (org-canvas--new-quiz-pull-set-properties pos quiz)
-              (org-canvas--new-quiz-pull-items assignment-id)
+              (org-canvas--new-quiz-pull-entry quiz pos)
               (cl-incf count)))
           (org-canvas--pull-check-entry-count
            "new quizzes" file "CANVAS_ASSIGNMENT_ID" idless-before count))

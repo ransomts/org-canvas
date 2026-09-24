@@ -73,7 +73,7 @@ heading in the file already claims.  One list request."
          (notes nil))
     (dolist (item items)
       (when (equal (alist-get title-field item) title)
-        (let ((id (format "%s" (alist-get id-field item))))
+        (let ((id (format "%s" (org-canvas--item-id-value item id-field))))
           (cond
            ((and skip-fn (funcall skip-fn item))
             (push (format "id %s is %s" id
@@ -98,7 +98,8 @@ CANVAS_UPDATED_AT and drops PAYLOAD_HASH — see `org-canvas--adopt-stamp'
 — then saves.  Nothing is sent to Canvas."
   (let* ((id-property (or (plist-get feature :id-property) "CANVAS_ID"))
          (modified-field (org-canvas--feature-modified-field feature))
-         (id (org-canvas--adopt-stamp (point) id-property item modified-field)))
+         (id (org-canvas--adopt-stamp (point) id-property item modified-field
+                                      (plist-get feature :id-field))))
     (org-canvas--save-buffer)
     (org-canvas--log-info org-canvas--logger
       "[Adopt] '%s' now claims %s %s (%s %s %s); PAYLOAD_HASH dropped so the next sync verifies its content"
@@ -174,7 +175,8 @@ it adopts by the single-item pull (issues #295, #297)."
         (_ (user-error "'%s' is held by %d Canvas items (%s); there is no one item to adopt — stamp %s by hand with the one you mean%s"
                        title (length items)
                        (mapconcat (lambda (item)
-                                    (format "%s" (alist-get id-field item)))
+                                    (format "%s" (org-canvas--item-id-value
+                                                  item id-field)))
                                   items ", ")
                        id-property
                        (org-canvas--adopt-notes-suffix notes)))))))

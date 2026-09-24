@@ -1643,9 +1643,20 @@ checked."
   (let ((id (alist-get (if (eq id-key :canvas-url) 'url 'id) item)))
     (and id (format "%s" id))))
 
-(defun org-canvas--adopt-stamp (pom id-property item &optional modified-field)
+(defun org-canvas--item-id-value (item id-field)
+  "Return ITEM's id from ID-FIELD, a key or a list of keys tried in order.
+A list names the fields a reply may carry the id under, the preferred
+one first: a New Quiz's is `(assignment_id id)' (issue #309)."
+  (if (consp id-field)
+      (cl-some (lambda (field) (alist-get field item)) id-field)
+    (alist-get id-field item)))
+
+(defun org-canvas--adopt-stamp (pom id-property item &optional modified-field
+                                    id-field)
   "Stamp the heading at POM as the owner of Canvas ITEM.
-Writes ID-PROPERTY from ITEM's `url' (pages) or `id', CANVAS_UPDATED_AT
+Writes ID-PROPERTY from ITEM's ID-FIELD (see
+`org-canvas--item-id-value'), by default its `url' for pages and its
+`id' otherwise, CANVAS_UPDATED_AT
 from MODIFIED-FIELD (default `updated_at'; files pass `modified_at')
 so the next comparison is against the item's own clock rather than
 reporting the adoption itself as a conflict, and removes PAYLOAD_HASH
@@ -1653,8 +1664,9 @@ so the next sync verifies content it has never compared instead of
 taking the unchanged-skip.  This is the one spelling of adoption,
 shared by the duplicate-title guard and `org-canvas-adopt-at-point'
 \(issue #101).  Returns the id as a string, or nil when ITEM has none."
-  (let* ((field (if (equal id-property "CANVAS_URL") 'url 'id))
-         (id (alist-get field item))
+  (let* ((field (or id-field
+                    (if (equal id-property "CANVAS_URL") 'url 'id)))
+         (id (org-canvas--item-id-value item field))
          (updated (alist-get (or modified-field 'updated_at) item)))
     (when id
       (setq id (format "%s" id))

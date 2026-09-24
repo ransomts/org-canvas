@@ -473,7 +473,10 @@ Quizzes use it (issue #297): their API is a separate service, and in
 the feature registry every consumer of it — the drift report, the
 orphan scan, prune — would list them at the wrong endpoint.  Only
 `org-canvas--pull-feature-for-file' reads this registry, as only
-`org-canvas--web-pages-for-file' reads the web-page one (#292)."
+`org-canvas--web-pages-for-file' reads the web-page one (#292).
+Here :id-field may be a list of fields, tried in order (see
+`org-canvas--item-id-value'): adoption stamps a New Quiz's
+`assignment_id' before its `id' (#309)."
   (let ((name (plist-get plist :name)))
     (setq org-canvas--pull-feature-registry
           (cons plist (cl-remove name org-canvas--pull-feature-registry

@@ -360,7 +360,9 @@ quiz's single-item pull.
 Similar to quizzes but uses a different API base (=/api/quiz/v1/=
 instead of =/api/v1/=). Items are fetched per-quiz and inserted as L2
 sub-headings.  =org-canvas--new-quiz-pull-item= does the same for one
-quiz, and is the New Quiz's single-item pull (issue #297).
+quiz, and is the New Quiz's single-item pull (issue #297).  Both write
+the quiz's =instructions= over the text above its first item, the text
+the push sends as =instructions= (issue #309).
 
 ** Custom Pull: Modules
 

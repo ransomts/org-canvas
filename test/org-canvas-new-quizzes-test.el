@@ -3239,4 +3239,207 @@ Local instructions.
       (re-search-forward "^\\* Midterm" nil t 2)
       (expect (org-canvas-adopt-at-point) :to-throw 'user-error))))
 
+;;;; Instructions on pull, assignment_id on adoption (issue #309)
+
+(defvar test-nq-309--quiz nil
+  "The New Quiz alist the reads in `test-nq-309--with-file' answer.")
+
+(defconst test-nq-309--instructions
+  "<h2>Before you start</h2><p>Read every question <strong>twice</strong>.</p><ul><li>No notes</li><li>One attempt</li></ul>"
+  "Instructions carrying a heading, a paragraph and a list.")
+
+(defmacro test-nq-309--with-file (content quiz &rest body)
+  "Run BODY in a buffer visiting a new-quizzes file holding CONTENT.
+Every read answers QUIZ, `test-nq-309--quiz' from then on, which
+BODY may rebind; its items are one essay question, 902.  REQUESTS
+collects every request."
+  (declare (indent 2))
+  `(let ((temp (make-temp-file "nq-309-" nil ".org"))
+         (requests nil)
+         (test-nq-309--quiz ,quiz))
+     (unwind-protect
+         (progn
+           (with-temp-file temp (insert ,content))
+           (let ((org-canvas-new-quizzes-file temp)
+                 (org-canvas-files-file "/tmp/nonexistent/files.org")
+                 (org-canvas--file-id-cache nil))
+             (with-org-canvas-test-config
+               (with-sync-test-env
+                 (cl-letf (((symbol-function 'org-canvas-api-request)
+                            (lambda (method url &rest _)
+                              (push (list method url) requests)
+                              (unless (eq method 'GET)
+                                (error "A pull must not write to Canvas"))
+                              test-nq-309--quiz))
+                           ((symbol-function 'org-canvas-api-request-all-pages)
+                            (lambda (method url &rest _)
+                              (push (list method url) requests)
+                              (if (string-match-p "/items\\'" url)
+                                  '(((id . "902") (item_body . "Explain.")
+                                     (interaction_type_slug . "essay")
+                                     (points_possible . 10)))
+                                (list test-nq-309--quiz))))
+                           ((symbol-function 'message) #'ignore))
+                   (with-current-buffer (find-file-noselect temp)
+                     ,@body))))))
+       (let ((buf (find-buffer-visiting temp)))
+         (when buf (with-current-buffer buf (set-buffer-modified-p nil))
+               (kill-buffer buf)))
+       (delete-file temp))))
+
+(defun test-nq-309--midterm (&rest extra)
+  "Return New Quiz 41, \"Midterm\", with the fields in EXTRA added."
+  (append extra '((id . "41") (title . "Midterm")
+                  (updated_at . "2026-09-20T10:00:00Z"))))
+
+(defun test-nq-309--goto-midterm ()
+  "Move point to the Midterm heading of the current buffer."
+  (goto-char (point-min))
+  (re-search-forward "^\\* Midterm")
+  (org-back-to-heading t))
+
+(defun test-nq-309--file-text ()
+  "Return the current buffer's file as it is on disk."
+  (with-temp-buffer
+    (insert-file-contents org-canvas-new-quizzes-file)
+    (buffer-string)))
+
+(describe "A New Quiz pull writes the quiz's instructions (issue #309)"
+  (it "writes them above the items on a whole-file pull, a heading as a block"
+    (test-nq-309--with-file ""
+        (test-nq-309--midterm `(instructions . ,test-nq-309--instructions))
+      (org-canvas-pull-new-quizzes)
+      (let ((text (test-nq-309--file-text)))
+        (expect text :to-match "^#\\+begin_h2")
+        (expect text :to-match "Before you start")
+        (expect text :to-match "\\*twice\\*")
+        (expect text :to-match "^- No notes")
+        (expect text :not :to-match "^\\*\\* Before")
+        ;; The instructions sit between the drawer and the first item.
+        (expect (string-match-p ":END:\n\n#\\+begin_h2" text) :to-be-truthy)
+        (expect (< (string-match "One attempt" text)
+                   (string-match "^\\*\\* Explain" text))
+                :to-be-truthy))))
+
+  (it "replaces the heading's own text on pull-at-point, once, and keeps its items"
+    (test-nq-309--with-file
+        (concat "* Midterm\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 41\n:END:\n\n"
+                "Stale local instructions.\n\n"
+                "** Explain.\n:PROPERTIES:\n:CANVAS_ITEM_ID: 902\n:TYPE: essay\n:END:\n\n"
+                "Local item text.\n"
+                "* Other quiz\n\nOther text.\n")
+        (test-nq-309--midterm '(instructions . "<p>Fresh from Canvas.</p>"))
+      (test-nq-309--goto-midterm)
+      (org-canvas-pull-at-point)
+      (let ((text (buffer-string)))
+        (expect text :not :to-match "Stale local")
+        (expect (test-org-canvas-count-matches "Fresh from Canvas" text) :to-equal 1)
+        (expect (test-org-canvas-count-matches ":CANVAS_ITEM_ID: 902" text) :to-equal 1)
+        (expect text :to-match "Other text\\.")
+        (expect (string-match-p "Fresh from Canvas\\.\n\n\\*\\* Explain" text)
+                :to-be-truthy))
+      ;; A second pull of the same instructions changes nothing.
+      (let ((before (buffer-string)))
+        (test-nq-309--goto-midterm)
+        (org-canvas-pull-at-point)
+        (expect (buffer-string) :to-equal before))))
+
+  (it "empties the text when Canvas holds no instructions"
+    (test-nq-309--with-file
+        (concat "* Midterm\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 41\n:END:\n\n"
+                "Old instructions.\n\n** Explain.\n:PROPERTIES:\n:CANVAS_ITEM_ID: 902\n:END:\n")
+        (test-nq-309--midterm '(instructions . ""))
+      (test-nq-309--goto-midterm)
+      (org-canvas-pull-at-point)
+      (expect (buffer-string) :not :to-match "Old instructions")
+      (test-nq-309--goto-midterm)
+      (expect (org-canvas--new-quiz-parse-body-text) :to-equal "")
+      (expect (buffer-string) :to-match ":END:\n\\*\\* Explain\\.")))
+
+  (it "leaves an empty stub's body empty when the instructions are null"
+    (test-nq-309--with-file "* Midterm\n"
+        (test-nq-309--midterm '(instructions))
+      (goto-char (point-min))
+      (org-canvas-adopt-at-point)
+      (test-nq-309--goto-midterm)
+      (expect (org-canvas--new-quiz-parse-body-text) :to-equal "")
+      (expect (buffer-string) :to-match "^\\*\\* Explain\\.")))
+
+  (it "leaves the text alone when the reply has no instructions field"
+    (test-nq-309--with-file
+        "* Midterm\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 41\n:END:\n\nKept as written.\n"
+        (test-nq-309--midterm)
+      (test-nq-309--goto-midterm)
+      (org-canvas-pull-at-point)
+      (expect (buffer-string) :to-match "Kept as written\\.")))
+
+  (it "round-trips: the push reads back what the pull wrote, and a re-pull of it is a no-op"
+    (test-nq-309--with-file
+        "* Midterm\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 41\n:END:\n"
+        (test-nq-309--midterm `(instructions . ,test-nq-309--instructions))
+      (test-nq-309--goto-midterm)
+      (org-canvas-pull-at-point)
+      (test-nq-309--goto-midterm)
+      (let* ((pulled (buffer-string))
+             (body (org-canvas--new-quiz-parse-body-text))
+             (payload (org-canvas--new-quiz-build-payload
+                       (org-canvas--new-quiz-parse-entry)))
+             (sent (gethash "instructions" payload)))
+        (expect body :to-match "Before you start")
+        (expect body :not :to-match "Explain")
+        (expect sent :to-match "<h2[^>]*>Before you start</h2>")
+        (expect sent :to-match "<b>twice</b>")
+        (expect sent :not :to-match "Explain")
+        ;; Canvas now holds what the push sent; pulling it changes nothing.
+        (setq test-nq-309--quiz
+              (test-nq-309--midterm `(instructions . ,sent)))
+        (test-nq-309--goto-midterm)
+        (org-canvas-pull-at-point)
+        ;; Trailing blank lines aside: an item appended to the end of a
+        ;; file leaves one, which rewriting it in place drops.
+        (expect (string-trim-right (buffer-string))
+                :to-equal (string-trim-right pulled))
+        (test-nq-309--goto-midterm)
+        (expect (org-canvas--new-quiz-parse-body-text) :to-equal body)))))
+
+(describe "Adopting a New Quiz stamps its assignment_id (issue #309)"
+  (it "prefers assignment_id to id when the reply carries both"
+    (test-nq-309--with-file "* Midterm\n\nMy own instructions.\n"
+        '((id . "41") (assignment_id . 7041) (title . "Midterm")
+          (updated_at . "2026-09-20T10:00:00Z"))
+      (goto-char (point-min))
+      (expect (org-canvas-adopt-at-point) :to-equal "7041")
+      (test-nq-309--goto-midterm)
+      (expect (org-entry-get (point) "CANVAS_ASSIGNMENT_ID") :to-equal "7041")))
+
+  (it "fills a stub from the assignment id it stamped"
+    (test-nq-309--with-file "* Midterm\n"
+        '((id . "41") (assignment_id . 7041) (title . "Midterm")
+          (updated_at . "2026-09-20T10:00:00Z"))
+      (goto-char (point-min))
+      (org-canvas-adopt-at-point)
+      (expect (cl-find-if (lambda (r) (string-match-p "quizzes/7041/items\\'" (nth 1 r)))
+                          requests)
+              :to-be-truthy)
+      (expect (cl-find-if (lambda (r) (string-match-p "quizzes/41\\(/\\|\\'\\)" (nth 1 r)))
+                          requests)
+              :to-be nil)))
+
+  (it "refuses an assignment_id another heading already claims"
+    (test-nq-309--with-file
+        "* Midterm\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 7041\n:END:\n* Midterm\n"
+        '((id . "41") (assignment_id . 7041) (title . "Midterm"))
+      (goto-char (point-min))
+      (re-search-forward "^\\* Midterm" nil t 2)
+      (expect (org-canvas-adopt-at-point) :to-throw 'user-error))))
+
+(describe "org-canvas--item-id-value"
+  (it "reads one field, or the first present of several"
+    (let ((item '((id . 41) (assignment_id . nil) (url . "front"))))
+      (expect (org-canvas--item-id-value item 'url) :to-equal "front")
+      (expect (org-canvas--item-id-value item '(assignment_id id)) :to-equal 41)
+      (expect (org-canvas--item-id-value '((assignment_id . 7)) '(assignment_id id))
+              :to-equal 7)
+      (expect (org-canvas--item-id-value item '(missing)) :to-be nil))))
+
 ;;; org-canvas-new-quizzes-test.el ends here
