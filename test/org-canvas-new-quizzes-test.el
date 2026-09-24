@@ -3316,6 +3316,12 @@ collects every request."
   (re-search-forward "^\\* Midterm")
   (org-back-to-heading t))
 
+(defun test-nq-309--sans-stamp (text)
+  "Return TEXT without its #+LAST_SYNCED line.
+Each pull stamps the minute it ran, so two pulls either side of a minute
+boundary differ there and nowhere else."
+  (replace-regexp-in-string "^#\\+LAST_SYNCED: .*\n" "" text))
+
 (defun test-nq-309--file-text ()
   "Return the current buffer's file as it is on disk."
   (with-temp-buffer
@@ -3413,9 +3419,11 @@ collects every request."
               (test-nq-309--midterm `(instructions . ,sent)))
         (test-nq-309--goto-midterm)
         (org-canvas-pull-at-point)
-        ;; Byte for byte: appending the item and rewriting it in place
-        ;; leave the same trailing whitespace (issue #314).
-        (expect (buffer-string) :to-equal pulled)
+        ;; Byte for byte but the minute stamp: appending the item and
+        ;; rewriting it in place leave the same trailing whitespace
+        ;; (issue #314).
+        (expect (test-nq-309--sans-stamp (buffer-string))
+                :to-equal (test-nq-309--sans-stamp pulled))
         (test-nq-309--goto-midterm)
         (expect (org-canvas--new-quiz-parse-body-text) :to-equal body)))))
 
