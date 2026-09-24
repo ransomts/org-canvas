@@ -15,7 +15,7 @@
 ;;
 ;; WHAT IT REPORTS
 ;; ===============
-;; Per feature, four kinds of divergence:
+;; Per feature, five kinds of divergence:
 ;;
 ;;   Modified remotely  the item's `updated_at' is newer than the
 ;;                      baseline recorded at the last push or pull
@@ -24,11 +24,16 @@
 ;;   Only on Canvas     an item in the course that no Org heading claims
 ;;   Unclaimed          such an item whose title an unstamped heading
 ;;                      shares — a create that lost its stamp (#85)
+;;   Moved              a module item whose title an unstamped heading
+;;                      under another module shares (#294)
 ;;
 ;; plus, for every property the module registers, the differing values
 ;; themselves — published, points, due dates, group weights and so on —
 ;; and, for modules that declare a `:body-api-key', the body, compared
 ;; as text (#83).
+;;
+;; And, counted apart because it is not drift, every heading with no
+;; Canvas id that the next sync would create: a PENDING row (#294).
 ;;
 ;; SCOPE OF THE FIELD COMPARISON
 ;; =============================
@@ -65,7 +70,7 @@
 ;; One list request per feature.  Nothing is written, locally or
 ;; remotely, so this is safe to run at any time — from a hook, or from a
 ;; scheduled job via `org-canvas-diff-batch', which exits non-zero when
-;; it finds drift.  The one local write in this file, stamp adoption
+;; it finds drift (pending creates are not drift).  The one local write in this file, stamp adoption
 ;; (#257), is a separate key and command the report never runs itself.
 
 ;;; Code:
@@ -491,21 +496,56 @@ checked.  Returns RESULTS, mutated in place."
     results))
 
 ;;;; Per-Feature Comparison
-;;;; Per-Feature Comparison
+
+(defun org-canvas--diff-display-title (heading)
+  "Return the visible title of HEADING, the name of its Canvas item.
+A heading that is a link — a module item's
+`[[file:assignments.org::*Closer][Closer]]', a files.org heading — is
+named on Canvas by its description, never by the markup; a bare link
+by the heading or file it targets.  Statistics cookies are dropped, as
+the sync drops them.  Comparing raw heading text against a Canvas
+title is why a moved module item never paired (issue #294)."
+  (let ((h (string-trim (or heading ""))))
+    (org-canvas--strip-statistics-cookie
+     (if (string-match "\\`\\[\\[\\([^]]+\\)\\]\\]\\'" h)
+         (let ((target (match-string 1 h)))
+           (cond ((string-match "::\\*\\(.+\\)\\'" target) (match-string 1 target))
+                 ((string-match "\\`file:\\(.+\\)\\'" target)
+                  (file-name-nondirectory (match-string 1 target)))
+                 (t target)))
+       (org-link-display-format h)))))
+
+(defun org-canvas--diff-local-entry (id-property)
+  "Return the drift report's plist for the heading at point.
+ID-PROPERTY names the property holding its Canvas id; an empty value
+is no id, as the sync reads it.  :title is the heading as
+`org-get-heading' gives it, :heading the raw text with any link markup,
+:match-title what Canvas would call it (`org-canvas--diff-display-title')
+and :line where it sits, which is how a PENDING row finds it again."
+  (let* ((id (org-entry-get (point) id-property))
+         (raw (save-excursion
+                (beginning-of-line)
+                (when (looking-at org-complex-heading-regexp)
+                  (match-string-no-properties 4)))))
+    (list :id (and id (not (string-empty-p id)) id)
+          :title (org-get-heading t t t t)
+          :heading raw
+          :match-title (org-canvas--diff-display-title raw)
+          :line (line-number-at-pos))))
 
 (defun org-canvas--diff-collect-local (file query id-property)
   "Collect entries from FILE matching QUERY, keyed by ID-PROPERTY.
-Returns a list of plists (:id ID :title TITLE :pom MARKER).  The
-position is a marker, not an offset: the comparison reads properties
-long after this buffer stops being current, and a bare offset would
-silently be read against whatever buffer happened to be."
+Returns a list of `org-canvas--diff-local-entry' plists, each with a
+:pom marker added.  The position is a marker, not an offset: the
+comparison reads properties long after this buffer stops being
+current, and a bare offset would silently be read against whatever
+buffer happened to be."
   (when (and file (file-exists-p file))
     (with-current-buffer (org-canvas--find-file-noselect file)
       (org-map-entries
        (lambda ()
-         (list :id (org-entry-get (point) id-property)
-               :title (org-get-heading t t t t)
-               :pom (point-marker)))
+         (append (org-canvas--diff-local-entry id-property)
+                 (list :pom (point-marker))))
        (or query "LEVEL=1") 'file))))
 
 (defun org-canvas--diff-remote-index (items id-field)
@@ -578,6 +618,11 @@ is what keeps the report from reading as full coverage (issue #81)."
                 extra))))
     (cons (nreverse extra) suppressed)))
 
+(defun org-canvas--diff-match-title (entry)
+  "Return the title local ENTRY is paired on: what Canvas would call it.
+Falls back to ENTRY's :title when it carries no :match-title."
+  (string-trim (or (plist-get entry :match-title) (plist-get entry :title) "")))
+
 (defun org-canvas--diff-pair-unclaimed (extra local id-property)
   "Pair each EXTRA remote item with an unstamped LOCAL heading of its title.
 A partial create — the POST succeeded, the stamp was never written —
@@ -585,13 +630,15 @@ leaves exactly this pair: a remote item nothing claims and, a few
 lines away, a heading of the same name with no ID-PROPERTY.  Reported
 apart they are a two-line mystery, and the next sync creates a second
 item (issue #85).  Such an entry becomes kind `unclaimed' and names
-the property to stamp; the rest of EXTRA is returned as it was."
+the property to stamp; the rest of EXTRA is returned as it was.
+A heading is matched by the title it shows, not its markup
+\(`org-canvas--diff-match-title', issue #294)."
   (let ((unstamped (delq nil (mapcar (lambda (e)
                                        (and (null (plist-get e :id))
-                                            (plist-get e :title)))
+                                            (org-canvas--diff-match-title e)))
                                      local))))
     (mapcar (lambda (e)
-              (if (member (plist-get e :title) unstamped)
+              (if (member (string-trim (plist-get e :title)) unstamped)
                   (list :kind 'unclaimed :title (plist-get e :title)
                         :id (plist-get e :id) :property id-property
                         :html-url (plist-get e :html-url))
@@ -615,6 +662,62 @@ longer holds, so the acknowledgment list cannot rot (issue #98)."
                            (list :kind 'stale-ack :id (car k) :note (cdr k)))
                          stale))))
 
+;;;; Pending Creates (issue #294)
+;;
+;; The report listed only what Canvas has that Org lacks and what both
+;; hold differently, so a heading with no Canvas id — which the next
+;; sync POSTs — got no row at all.  After a local restructure the report
+;; showed the Canvas half of the change (56 EXTRA module items) and said
+;; nothing of the 57 items, three assignments, two rubrics and one group
+;; the next sync would create.  Each unstamped heading a feature would
+;; push is now a PENDING row.  They are kept apart from the divergences
+;; — `:pending' on the result, never in `org-canvas--diff-count' — since
+;; they are the Org side's unpushed work, not Canvas drifting from it: a
+;; course whose instructor is drafting next week still reports zero, and
+;; `org-canvas-diff-batch' exits zero on it.  A heading an UNCLAIMED or
+;; MOVED row already names is not listed twice.
+
+(defconst org-canvas--diff-pending-p-fns
+  '(("files" . org-canvas--diff-file-heading-p))
+  "Predicates over an unstamped local entry, by normalized feature name.
+A feature named here reports a PENDING row only for an entry its
+predicate accepts: a files.org folder heading carries no id and is
+never uploaded, so it is not a create.")
+
+(defun org-canvas--diff-file-heading-p (entry)
+  "Return non-nil when files.org ENTRY is a file heading, not a folder.
+The sync uploads only a heading that links a file."
+  (string-match-p "\\[\\[file:" (or (plist-get entry :heading) "")))
+
+(defun org-canvas--diff-pending (name local paired file property)
+  "Return a `pending' entry for each LOCAL entry of feature NAME with no id.
+PAIRED lists the match titles an UNCLAIMED or MOVED row already names,
+which are left out; FILE is where the headings live and PROPERTY the id
+property the next sync stamps.  A feature in
+`org-canvas--diff-pending-p-fns' reports only what its predicate
+accepts."
+  (let ((pred (alist-get (org-canvas--diff-normalize-name name)
+                         org-canvas--diff-pending-p-fns nil nil #'string=)))
+    (delq nil
+          (mapcar (lambda (e)
+                    (when (and (null (plist-get e :id))
+                               (not (member (org-canvas--diff-match-title e) paired))
+                               (or (null pred) (funcall pred e)))
+                      (list :kind 'pending
+                            :title (org-canvas--diff-match-title e)
+                            :heading (plist-get e :title)
+                            :file file :line (plist-get e :line)
+                            :property property
+                            :where (plist-get e :where))))
+                  local))))
+
+(defun org-canvas--diff-paired-titles (entries)
+  "Return the trimmed titles of the UNCLAIMED and MOVED rows among ENTRIES."
+  (delq nil (mapcar (lambda (e)
+                      (and (memq (plist-get e :kind) '(unclaimed moved))
+                           (string-trim (plist-get e :title))))
+                    entries)))
+
 ;;;; Module Items (issue #177)
 ;;
 ;; Modules are the one feature with children the report skipped.  A
@@ -630,6 +733,19 @@ longer holds, so the acknowledgment list cannot rot (issue #98)."
 ;; filed under "module-items", and the row's delete goes to the item's
 ;; own URL.  An item another module's heading claims is a pending move
 ;; the next sync settles (issue #105), not an extra.
+;;
+;; An unclaimed item is then paired with an unstamped item heading of
+;; the same title (issue #294), one to one.  The item headings are
+;; links — `[[file:assignments.org::*Closer][Closer]]' — so the title
+;; paired on is the link's description, what Canvas calls the item;
+;; this pass never paired at all before, and the generic pairing would
+;; have compared the markup.  A heading in the item's own module makes
+;; the pair UNCLAIMED (the next sync adopts the twin, #179); one under
+;; another module makes it MOVED — the item was carried to a new week
+;; in Org without its stamp, and the next sync creates it there and
+;; leaves this copy.  A SubHeader is paired only within its module: its
+;; title is all it has, and "Readings" recurs in every week by design.
+;; The unstamped headings left over are PENDING creates.
 
 (defconst org-canvas--diff-children-fns
   '(("modules" . org-canvas--diff-module-items))
@@ -661,7 +777,7 @@ One list request per module."
   "Return the items in LISTS no heading CLAIMED, as `extra' entries.
 LISTS is what `org-canvas--diff-module-item-lists' returned; each
 entry names the module it sits in and carries the module id, which is
-what deleting it needs."
+what deleting it needs, and the item's type, which pairing needs."
   (let ((extra nil))
     (dolist (pair lists)
       (dolist (item (cdr pair))
@@ -672,9 +788,94 @@ what deleting it needs."
                       :html-url (org-canvas--diff-normalize-remote
                                  (alist-get 'html_url item))
                       :module-id (car (car pair))
-                      :where (cdr (car pair)))
+                      :where (cdr (car pair))
+                      :type (alist-get 'type item))
                 extra))))
     (nreverse extra)))
+
+(defun org-canvas--diff-module-item-headings (file)
+  "Return the level-2 headings of modules FILE as local entries.
+Each is an `org-canvas--diff-local-entry' plist with the module it sits
+under added: :module-id, that heading's CANVAS_ID, and :where, its
+title.  No markers: nothing here is read again."
+  (when (and file (file-exists-p file))
+    (with-current-buffer (org-canvas--find-file-noselect file)
+      (org-map-entries
+       (lambda ()
+         (let ((parent (save-excursion
+                         (when (org-up-heading-safe)
+                           (cons (org-entry-get (point) "CANVAS_ID")
+                                 (org-get-heading t t t t))))))
+           (append (org-canvas--diff-local-entry "CANVAS_ID")
+                   (list :module-id (car parent) :where (cdr parent)))))
+       "LEVEL=2" 'file))))
+
+(defun org-canvas--diff-module-item-partner (extra unstamped)
+  "Return the entry of UNSTAMPED to pair with EXTRA, a remote module item.
+A heading of the same title in the item's own module first; failing
+that, one under any other module, unless the item is a SubHeader."
+  (let* ((title (string-trim (plist-get extra :title)))
+         (same-title (cl-remove-if-not
+                      (lambda (e) (string= (org-canvas--diff-match-title e) title))
+                      unstamped)))
+    (or (cl-find-if (lambda (e) (equal (plist-get e :module-id)
+                                       (plist-get extra :module-id)))
+                    same-title)
+        (and (not (equal (plist-get extra :type) "SubHeader"))
+             (car same-title)))))
+
+(defun org-canvas--diff-module-item-pair (extra headings)
+  "Pair the EXTRA module items with the unstamped entries of HEADINGS.
+Returns (ENTRIES . LEFT): ENTRIES is EXTRA with each paired item
+re-kinded — `unclaimed' when its partner sits in the item's module,
+`moved' (with :to naming the partner's module) when it does not — and
+LEFT the unstamped headings nothing paired, the pending creates.  Each
+heading pairs at most once (issue #294)."
+  (let ((unstamped (cl-remove-if (lambda (e) (plist-get e :id)) headings)))
+    (cons (mapcar
+           (lambda (e)
+             (let ((partner (org-canvas--diff-module-item-partner e unstamped)))
+               (if (not partner)
+                   e
+                 (setq unstamped (delq partner unstamped))
+                 (append (list :kind (if (equal (plist-get partner :module-id)
+                                                (plist-get e :module-id))
+                                         'unclaimed
+                                       'moved)
+                               :to (plist-get partner :where))
+                         (cddr e)))))
+           extra)
+          unstamped)))
+
+(defun org-canvas--diff-module-item-synced (modules local)
+  "Return (ID . TITLE) for each LOCAL module entry with an id in MODULES."
+  (let ((index (org-canvas--diff-remote-index modules 'id)))
+    (delq nil (mapcar (lambda (e)
+                        (and (plist-get e :id)
+                             (gethash (plist-get e :id) index)
+                             (cons (plist-get e :id) (plist-get e :title))))
+                      local))))
+
+(defun org-canvas--diff-module-items-result (modules local file)
+  "Compare the items of the modules in LOCAL against Canvas; see the caller.
+MODULES, LOCAL and FILE are `org-canvas--diff-module-items''s."
+  (let* ((headings (org-canvas--diff-module-item-headings file))
+         (lists (org-canvas--diff-module-item-lists
+                 (org-canvas--diff-module-item-synced modules local)))
+         (seen (org-canvas--diff-remote-index
+                (apply #'append (mapcar #'cdr lists)) 'id))
+         (split (org-canvas--diff-split-acknowledged
+                 "Module Items"
+                 (org-canvas--diff-module-item-extras
+                  lists (delq nil (mapcar (lambda (e) (plist-get e :id)) headings)))
+                 seen))
+         (paired (org-canvas--diff-module-item-pair (plist-get split :extra) headings)))
+    (list :name "Module Items"
+          :divergences (plist-get split :stale)
+          :extra (car paired)
+          :acknowledged (plist-get split :acknowledged)
+          :pending (org-canvas--diff-pending "Module Items" (cdr paired) nil
+                                             file "CANVAS_ID"))))
 
 (defun org-canvas--diff-module-items (modules local file)
   "Compare the items of the modules in LOCAL against Canvas.
@@ -685,44 +886,23 @@ level-2 headings are what claims an item.  Returns a result plist named
 level-2 heading in modules.org claims is an extra (issue #177), minus
 the ones `org-canvas-diff-known-extras' acknowledges under
 \"module-items\", with a `stale-ack' divergence for an acknowledged id
-no module holds any more."
+no module holds any more.  An extra that shares its title with an
+unstamped item heading is UNCLAIMED or MOVED, and the unstamped
+headings left are :pending (issue #294)."
   (if (org-canvas--diff-feature-excluded-p "Module Items")
       (list :name "Module Items" :excluded t)
     (condition-case err
-        (let* ((index (org-canvas--diff-remote-index modules 'id))
-               (synced (delq nil
-                             (mapcar (lambda (e)
-                                       (and (plist-get e :id)
-                                            (gethash (plist-get e :id) index)
-                                            (cons (plist-get e :id)
-                                                  (plist-get e :title))))
-                                     local)))
-               (claimed (mapcar (lambda (e)
-                                  (let ((m (plist-get e :pom)))
-                                    (when (markerp m) (set-marker m nil)))
-                                  (plist-get e :id))
-                                (org-canvas--diff-collect-local
-                                 file "LEVEL=2" "CANVAS_ID")))
-               (lists (org-canvas--diff-module-item-lists synced))
-               (seen (org-canvas--diff-remote-index
-                      (apply #'append (mapcar #'cdr lists)) 'id))
-               (split (org-canvas--diff-split-acknowledged
-                       "Module Items"
-                       (org-canvas--diff-module-item-extras lists (delq nil claimed))
-                       seen)))
-          (list :name "Module Items"
-                :divergences (plist-get split :stale)
-                :extra (plist-get split :extra)
-                :acknowledged (plist-get split :acknowledged)))
+        (org-canvas--diff-module-items-result modules local file)
       (error
        (list :name "Module Items" :error (error-message-string err))))))
 
 (defun org-canvas--diff-feature (feature)
   "Compare one FEATURE registry entry against Canvas.
-Returns a plist (:name :divergences :extra :acknowledged :error):
-:extra holds remote items no Org heading claims — minus the ones
-`org-canvas-diff-known-extras' acknowledges, whose count is
-:acknowledged — and :error a message when the list request failed.
+Returns a plist (:name :divergences :extra :acknowledged :pending
+:error): :extra holds remote items no Org heading claims — minus the
+ones `org-canvas-diff-known-extras' acknowledges, whose count is
+:acknowledged — :pending the unstamped headings the next sync would
+create (issue #294), and :error a message when the list request failed.
 An acknowledged id Canvas no longer holds joins :divergences as a
 `stale-ack' entry, so the acknowledgment list cannot rot (issue #98).
 A feature with a child check (`org-canvas--diff-children-fns') carries
@@ -767,6 +947,10 @@ after this one (issue #177)."
                                        (plist-get split :stale))
                   :extra (plist-get split :extra)
                   :acknowledged (plist-get split :acknowledged)
+                  ;; Unstamped headings the next sync creates (#294).
+                  :pending (org-canvas--diff-pending
+                            name local (org-canvas--diff-paired-titles paired)
+                            file id-property)
                   :children (org-canvas--diff-children name items local file)
                   :suppressed (cdr unclaimed)
                   :skip-reason (plist-get feature :skip-reason)
@@ -781,6 +965,34 @@ after this one (issue #177)."
        (list :name name :error (error-message-string err))))))
 
 ;;;; Report
+
+(defun org-canvas--diff-unclaimed-line (entry)
+  "Return the report line of UNCLAIMED ENTRY.
+A module item's twin is adopted by the sync itself (issue #179), so
+its line says that instead of naming `org-canvas-adopt-at-point'."
+  (if (plist-get entry :module-id)
+      (format "  UNCLAIMED %s (item id %s in module '%s' has this title and no heading claims it; the next sync adopts it if the unstamped heading links the same content)\n"
+              (plist-get entry :title) (plist-get entry :id) (plist-get entry :where))
+    (format "  UNCLAIMED %s (Canvas id %s has this title and no heading claims it; adopt it with org-canvas-adopt-at-point, which stamps %s, or rename)\n"
+            (plist-get entry :title) (plist-get entry :id)
+            (or (plist-get entry :property) "CANVAS_ID"))))
+
+(defun org-canvas--diff-moved-line (entry)
+  "Return the report line of MOVED ENTRY, a module item (issue #294).
+Stamping the item's id on the heading in its new module is what makes
+the next sync move it (issue #105) rather than create a second copy."
+  (format "  MOVED     %s (item id %s sits in module '%s'; an unstamped heading places it in '%s', so the next sync creates it there and leaves this copy — stamp CANVAS_ID %s on that heading to move it instead)\n"
+          (plist-get entry :title) (plist-get entry :id)
+          (plist-get entry :where) (plist-get entry :to)
+          (plist-get entry :id)))
+
+(defun org-canvas--diff-pending-line (entry)
+  "Return the report line of PENDING ENTRY, a create for the next sync."
+  (format "  PENDING   %s (no %s%s; the next sync creates it)\n"
+          (plist-get entry :title)
+          (or (plist-get entry :property) "CANVAS_ID")
+          (let ((where (plist-get entry :where)))
+            (if where (format ", in module '%s'" where) ""))))
 
 (defun org-canvas--diff-insert-entry (entry)
   "Insert one ENTRY of a drift report at point."
@@ -799,10 +1011,9 @@ after this one (issue #177)."
                      (plist-get entry :id)
                      (let ((note (plist-get entry :note)))
                        (if note (format " (%s)" note) "")))))
-    ('unclaimed
-     (insert (format "  UNCLAIMED %s (Canvas id %s has this title and no heading claims it; adopt it with org-canvas-adopt-at-point, which stamps %s, or rename)\n"
-                     (plist-get entry :title) (plist-get entry :id)
-                     (or (plist-get entry :property) "CANVAS_ID"))))
+    ('unclaimed (insert (org-canvas--diff-unclaimed-line entry)))
+    ('moved (insert (org-canvas--diff-moved-line entry)))
+    ('pending (insert (org-canvas--diff-pending-line entry)))
     ('modified
      (insert (format "  CHANGED   %s%s\n"
                      (plist-get entry :title)
@@ -852,6 +1063,25 @@ show up as extra, so without this the report reads as full coverage."
     (when parts
       (format "Not checked: %s.\n" (mapconcat #'identity parts ", ")))))
 
+(defun org-canvas--diff-pending-count (results)
+  "Return the count of PENDING rows across RESULTS (issue #294)."
+  (apply #'+ (mapcar (lambda (r) (length (plist-get r :pending))) results)))
+
+(defun org-canvas--diff-render-section (result)
+  "Insert the section of one feature RESULT with rows.
+Divergences and extras come first, under a count of them; the pending
+creates follow, counted apart, since they are not drift (issue #294)."
+  (let* ((rows (append (plist-get result :divergences) (plist-get result :extra)))
+         (pending (plist-get result :pending)))
+    (insert (format "%s: %d divergence(s)%s\n"
+                    (plist-get result :name) (length rows)
+                    (if pending
+                        (format ", %d pending create(s)" (length pending))
+                      "")))
+    (dolist (entry (append rows pending))
+      (org-canvas--diff-insert-row (plist-get result :name) entry))
+    (insert "\n")))
+
 (defun org-canvas--diff-render (results)
   "Render RESULTS into a report string."
   (with-temp-buffer
@@ -859,9 +1089,7 @@ show up as extra, so without this the report reads as full coverage."
     (insert (format "Course: %s | %s\n" org-canvas-course-id org-canvas-base-url))
     (insert (make-string 60 ?=) "\n\n")
     (dolist (result results)
-      (let ((divergences (plist-get result :divergences))
-            (extra (plist-get result :extra))
-            (err (plist-get result :error)))
+      (let ((err (plist-get result :error)))
         (cond
          ((plist-get result :excluded)
           (insert (format "%s: not checked (org-canvas-diff-excluded-features)%s\n\n"
@@ -872,19 +1100,18 @@ show up as extra, so without this the report reads as full coverage."
          (err
           (insert (format "%s: could not check (%s)\n\n"
                           (plist-get result :name) err)))
-         ((and (null divergences) (null extra)))
-         (t
-          (insert (format "%s: %d divergence(s)\n"
-                          (plist-get result :name)
-                          (+ (length divergences) (length extra))))
-          (dolist (entry (append divergences extra))
-            (org-canvas--diff-insert-row (plist-get result :name) entry))
-          (insert "\n")))))
-    (let ((total (org-canvas--diff-count results)))
+         ((or (plist-get result :divergences) (plist-get result :extra)
+              (plist-get result :pending))
+          (org-canvas--diff-render-section result)))))
+    (let ((total (org-canvas--diff-count results))
+          (pending (org-canvas--diff-pending-count results)))
       (insert (make-string 60 ?=) "\n")
       (insert (if (zerop total)
                   "No drift: Canvas matches the Org files.\n"
                 (format "%d divergence(s) found.\n" total)))
+      (when (> pending 0)
+        (insert (format "Pending creates: %d heading%s with no Canvas id, which the next sync creates (not counted as drift).\n"
+                        pending (if (= pending 1) "" "s"))))
       (when-let* ((note (org-canvas--diff-suppressed-note results)))
         (insert note))
       (let ((acked (apply #'+ (mapcar (lambda (r)
@@ -950,7 +1177,7 @@ Canvas still holds, and \\[org-canvas-diff-browse-edit] its edit page;
 STALE-ACK), or on a CHANGED row with no compared property differing
 adopts the Canvas timestamp as the heading's baseline
 \(`org-canvas-diff-adopt-stamp'); \\[org-canvas-diff-delete] deletes the
-remote object of an EXTRA or UNCLAIMED row, after confirming;
+remote object of an EXTRA, UNCLAIMED or MOVED row, after confirming;
 \\[org-canvas-diff-pull] pulls a CHANGED row's item over the heading, or
 an EXTRA quiz into a new heading;
 \\[org-canvas-diff-refresh] runs the report again;
@@ -1001,10 +1228,34 @@ without re-running every list request."
            nil 'file)
           nil)))))
 
+(defun org-canvas--diff-pending-position (entry)
+  "Return (FILE . POSITION) of the heading of PENDING row ENTRY, or nil.
+The row carries the file and line the heading was read from; when the
+heading there is no longer the one named, it is looked up by title."
+  (let ((file (plist-get entry :file))
+        (heading (plist-get entry :heading)))
+    (when (and file (file-exists-p file))
+      (with-current-buffer (org-canvas--find-file-noselect file)
+        (save-excursion
+          (goto-char (point-min))
+          (forward-line (1- (or (plist-get entry :line) 1)))
+          (let ((pos (if (and (org-at-heading-p)
+                              (equal (org-get-heading t t t t) heading))
+                         (point)
+                       (org-canvas--find-heading-in-file file heading))))
+            (and pos (cons file pos))))))))
+
 (defun org-canvas--diff-heading-position (feature entry)
   "Return (FILE . POSITION) of the heading ENTRY of FEATURE describes, or nil.
 MISSING and CHANGED rows are found by their id property; an UNCLAIMED
-row names an unstamped heading, found by title."
+row names an unstamped heading, found by title; a PENDING row names
+its own file and line (issue #294)."
+  (if (eq (plist-get entry :kind) 'pending)
+      (org-canvas--diff-pending-position entry)
+    (org-canvas--diff-feature-heading-position feature entry)))
+
+(defun org-canvas--diff-feature-heading-position (feature entry)
+  "Return (FILE . POSITION) of ENTRY's heading in FEATURE's file, or nil."
   (let* ((file-var (plist-get feature :file-var))
          (file (and file-var (boundp file-var) (symbol-value file-var)))
          (pos (pcase (plist-get entry :kind)
@@ -1023,36 +1274,44 @@ Returns the buffer."
   (let ((where (org-canvas--diff-heading-position feature entry)))
     (unless where
       (user-error "Cannot find the heading for '%s' in %s"
-                  (plist-get entry :title) (plist-get feature :name)))
+                  (plist-get entry :title)
+                  (or (plist-get feature :name) (plist-get entry :file))))
     (set-buffer (org-canvas--find-file-noselect (car where)))
     (goto-char (cdr where))
     (org-back-to-heading t)
     (current-buffer)))
 
+(defun org-canvas--diff-visits-heading-p (entry)
+  "Return non-nil for a report ENTRY with an Org heading to visit.
+A module item's UNCLAIMED row names its Canvas item, whose heading
+has no title of its own to find it by."
+  (pcase (plist-get entry :kind)
+    ((or 'missing 'modified 'pending) t)
+    ('unclaimed (not (plist-get entry :module-id)))))
+
 (defun org-canvas-diff-visit ()
   "Visit what the row at point is about.
-A row with an Org heading (MISSING, CHANGED, UNCLAIMED) opens the
-course file with point on that heading.  An EXTRA row has no heading,
-so its Canvas object is opened in a browser when the API said where
-it lives."
+A row with an Org heading (MISSING, CHANGED, UNCLAIMED, PENDING) opens
+the course file with point on that heading.  An EXTRA or MOVED row, or
+a module item's UNCLAIMED row, names a Canvas object, which is opened
+in a browser when the API said where it lives."
   (interactive)
   (let* ((row (org-canvas--diff-row-at-point))
-         (entry (plist-get row :entry))
-         (feature (org-canvas--diff-row-feature row)))
-    (pcase (plist-get entry :kind)
-      ((or 'missing 'modified 'unclaimed)
-       (let ((buf (save-excursion (org-canvas--diff-goto-heading feature entry)))
-             (pos nil))
-         (with-current-buffer buf (setq pos (point)))
-         (pop-to-buffer buf)
-         (goto-char pos)
-         (when (fboundp 'org-fold-show-context) (org-fold-show-context))))
-      (_
-       (let ((url (plist-get entry :html-url)))
-         (unless url
-           (user-error "Canvas did not say where %s %s lives; look it up by id"
-                       (plist-get feature :name) (plist-get entry :id)))
-         (browse-url url))))))
+         (entry (plist-get row :entry)))
+    (if (org-canvas--diff-visits-heading-p entry)
+        ;; A PENDING row carries its own file (issue #294).
+        (let* ((feature (unless (eq (plist-get entry :kind) 'pending)
+                          (org-canvas--diff-row-feature row)))
+               (buf (save-excursion (org-canvas--diff-goto-heading feature entry)))
+               (pos (with-current-buffer buf (point))))
+          (pop-to-buffer buf)
+          (goto-char pos)
+          (when (fboundp 'org-fold-show-context) (org-fold-show-context)))
+      (let ((url (plist-get entry :html-url)))
+        (unless url
+          (user-error "Canvas did not say where %s %s lives; look it up by id"
+                      (plist-get row :feature) (plist-get entry :id)))
+        (browse-url url)))))
 
 ;; RET on a row with a heading visits the heading, so a row that exists
 ;; on both sides had no way to the Canvas page at all (issue #292).
@@ -1076,15 +1335,19 @@ the page assembled from the registry when it gave none."
 (defun org-canvas-diff-browse (&optional edit)
   "Open the Canvas page of the row at point in a browser.
 With a prefix argument EDIT, open its edit page where Canvas has one.
-A MISSING or STALE-ACK row names an object Canvas no longer holds, so
-there is nothing to open.  Sends nothing to Canvas.  Returns the
-address opened."
+A MISSING or STALE-ACK row names an object Canvas no longer holds,
+and a PENDING row one it does not hold yet, so there is nothing to
+open.  Sends nothing to Canvas.  Returns the address opened."
   (interactive "P")
   (let* ((row (org-canvas--diff-row-at-point))
          (entry (plist-get row :entry)))
-    (when (memq (plist-get entry :kind) '(missing stale-ack))
-      (user-error "'%s' is not on Canvas any more; nothing to open"
-                  (or (plist-get entry :title) (plist-get entry :id))))
+    (pcase (plist-get entry :kind)
+      ((or 'missing 'stale-ack)
+       (user-error "'%s' is not on Canvas any more; nothing to open"
+                   (or (plist-get entry :title) (plist-get entry :id))))
+      ('pending
+       (user-error "'%s' is not on Canvas yet; the next sync creates it"
+                   (plist-get entry :title))))
     (let ((url (org-canvas--diff-row-web-url row edit)))
       (browse-url url)
       url)))
@@ -1095,7 +1358,7 @@ address opened."
   (org-canvas-diff-browse t))
 
 (defun org-canvas-diff-acknowledge ()
-  "Acknowledge the EXTRA or UNCLAIMED row at point as deliberately unclaimed.
+  "Acknowledge the EXTRA, UNCLAIMED or MOVED row at point as deliberate.
 Adds it to `org-canvas-diff-known-extras', with a note if you give one,
 and persists the list through `org-canvas-diff-acknowledge-function'.
 On a STALE-ACK row, drops the acknowledgment instead.  On a CHANGED
@@ -1118,7 +1381,7 @@ as the heading's baseline (`org-canvas-diff-adopt-stamp', issue #257)."
        (org-canvas--diff-rewrite-row
         (format "  DROPPED   acknowledgment of id %s (%s)" id feature))
        (message "Dropped the acknowledgment of %s %s." feature id))
-      ((or 'extra 'unclaimed)
+      ((or 'extra 'unclaimed 'moved)
        (let* ((note (read-string (format "Note for %s '%s' (optional): "
                                          feature (plist-get entry :title))))
               (note (and (not (string-empty-p note)) note)))
@@ -1148,16 +1411,17 @@ orphan cleanup does."
             (plist-get feature :delete-data)))))
 
 (defun org-canvas-diff-delete ()
-  "Delete the EXTRA or UNCLAIMED row's Canvas object, after confirming.
+  "Delete the EXTRA, UNCLAIMED or MOVED row's Canvas object, after confirming.
 Uses the feature's item URL and delete body, as orphan cleanup does;
-a module item's row deletes the item from its module (issue #177)."
+a module item's row deletes the item from its module (issue #177) —
+for a MOVED row, the copy left in the old module (issue #294)."
   (interactive)
   (let* ((row (org-canvas--diff-row-at-point))
          (entry (plist-get row :entry))
          (id (plist-get entry :id))
          (name (plist-get row :feature)))
-    (unless (memq (plist-get entry :kind) '(extra unclaimed))
-      (user-error "Only an EXTRA or UNCLAIMED row names a remote object to delete"))
+    (unless (memq (plist-get entry :kind) '(extra unclaimed moved))
+      (user-error "Only an EXTRA, UNCLAIMED or MOVED row names a remote object to delete"))
     (when (y-or-n-p (format "Delete %s '%s' (id %s) from Canvas? "
                             name (plist-get entry :title) id))
       (let* ((target (org-canvas--diff-delete-target row entry))
@@ -1453,8 +1717,9 @@ line — their bodies are still read for the media they embed (issue
 acknowledged rather than reported (issue #98); with
 `org-canvas-diff-scan-references' on, unclaimed files that course
 content embeds are counted rather than reported too (issue #102).
-Returns the number of
-divergences found, so a batch caller can act on it; see
+Headings with no Canvas id are listed as pending creates, counted
+apart (issue #294).  Returns the number of divergences found, pending
+creates not included, so a batch caller can act on it; see
 `org-canvas-diff-batch'."
   (interactive)
   (org-canvas--preflight-check)
@@ -1472,14 +1737,17 @@ divergences found, so a batch caller can act on it; see
             (goto-char (point-min)))
           (org-canvas-diff-mode)
           (display-buffer (current-buffer)))
-        (message "Drift: %d divergence(s)" total))
+        (message "Drift: %d divergence(s), %d pending create(s)"
+                 total (org-canvas--diff-pending-count results)))
       total)))
 
 ;;;###autoload
 (defun org-canvas-diff-batch ()
   "Run `org-canvas-diff', then exit non-zero if there was any drift.
 Intended for scheduled jobs, invoked from a batch-mode Emacs with
--f org-canvas-diff-batch."
+-f org-canvas-diff-batch.  Pending creates — headings the next sync
+would create — are printed but are not drift, so they alone exit zero
+\(issue #294)."
   (kill-emacs (if (> (org-canvas-diff) 0) 1 0)))
 
 (provide 'org-canvas-diff)

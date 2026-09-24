@@ -1381,6 +1381,17 @@ EDIT is passed on.  A `user-error' comes back as (error MESSAGE)."
               (user-error (error-message-string e)))
             :to-match "Module Items .5."))
 
+  (it "refuses a PENDING row, which Canvas does not hold yet"
+    (let (opened)
+      (cl-letf (((symbol-function 'org-canvas--diff-row-at-point)
+                 (lambda () '(:feature "Assignments"
+                              :entry (:kind pending :title "Why Ethics Part 1"))))
+                ((symbol-function 'browse-url) (lambda (url &rest _) (setq opened url))))
+        (expect (condition-case e (org-canvas-diff-browse)
+                  (user-error (error-message-string e)))
+                :to-match "Why Ethics Part 1. is not on Canvas yet")
+        (expect opened :to-be nil))))
+
   (it "opens the edit page through its own command"
     (let (asked)
       (cl-letf (((symbol-function 'org-canvas-diff-browse)
@@ -2269,6 +2280,343 @@ its :children is the Module Items result."
       (expect (get-text-property (point) 'org-canvas-diff-row) :to-be nil)
       (org-canvas-diff-previous-row)
       (expect (thing-at-point 'line t) :to-match "MISSING   Lab 2"))))
+
+;;;; Pending Creates and Moved Module Items (issue #294)
+
+(describe "org-canvas--diff-display-title (issue #294)"
+  (it "reads a link heading by its description, as Canvas names the item"
+    (expect (org-canvas--diff-display-title
+             "[[file:assignments.org::*Closer: Privacy Pros and Cons][Closer: Privacy Pros and Cons]]")
+            :to-equal "Closer: Privacy Pros and Cons"))
+
+  (it "reads a bare heading link by the heading it targets"
+    (expect (org-canvas--diff-display-title "[[file:assignments.org::*R3: Stakeholders]]")
+            :to-equal "R3: Stakeholders"))
+
+  (it "reads a bare file link by the file's name"
+    (expect (org-canvas--diff-display-title "[[file:content/syllabus.pdf]]")
+            :to-equal "syllabus.pdf"))
+
+  (it "reads any other bare link as its target"
+    (expect (org-canvas--diff-display-title "[[https://x.test/a]]")
+            :to-equal "https://x.test/a"))
+
+  (it "leaves plain text alone, less its statistics cookie and whitespace"
+    (expect (org-canvas--diff-display-title "  Week 6 [2/3] ") :to-equal "Week 6")
+    (expect (org-canvas--diff-display-title nil) :to-equal ""))
+
+  (it "keeps the text around a link inside a heading"
+    (expect (org-canvas--diff-display-title "Read [[https://x.test][the brief]] first")
+            :to-equal "Read the brief first")))
+
+(describe "org-canvas--diff-pair-unclaimed on the shown title (issue #294)"
+  (it "pairs an extra with an unstamped heading that is a link"
+    (let ((paired (org-canvas--diff-pair-unclaimed
+                   '((:kind extra :title "syllabus.pdf" :id "31"))
+                   '((:id nil :title "[[file:content/syllabus.pdf][syllabus.pdf]]"
+                      :match-title "syllabus.pdf"))
+                   "CANVAS_ID")))
+      (expect (plist-get (car paired) :kind) :to-equal 'unclaimed))))
+
+(describe "org-canvas--diff-feature pending creates (issue #294)"
+  (defun test-org-canvas-294--feature-diff (feature-name var content items)
+    "Diff FEATURE-NAME with its file VAR holding CONTENT against ITEMS.
+Returns the result and whether the file's buffer was left modified."
+    (let ((file (make-temp-file "diff-294-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file (insert content))
+            (cl-progv (list var) (list file)
+              (with-org-canvas-test-config
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (lambda (&rest _) items))
+                          ((symbol-function 'org-canvas-api-request)
+                           (lambda (&rest _) (error "The report must not send"))))
+                  (let ((result (org-canvas--diff-feature
+                                 (org-canvas--registry-find-feature feature-name))))
+                    (list result
+                          (buffer-modified-p (find-buffer-visiting file))))))))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file))))
+
+  (it "lists an unstamped heading as pending, apart from the divergences"
+    (let* ((out (test-org-canvas-294--feature-diff
+                 "assignments" 'org-canvas-assignments-file
+                 (concat "* Lab 1\n:PROPERTIES:\n:CANVAS_ID: 61\n:END:\n"
+                         "* Why Ethics Part 1\n:PROPERTIES:\n:POINTS: 20\n:END:\n"
+                         "* R11: The Ethics Email\n")
+                 [((id . 61) (name . "Lab 1"))
+                  ((id . 99) (name . "R11: The Ethics Email"))]))
+           (result (car out))
+           (pending (plist-get result :pending)))
+      (expect (length pending) :to-equal 1)
+      (expect (plist-get (car pending) :kind) :to-equal 'pending)
+      (expect (plist-get (car pending) :title) :to-equal "Why Ethics Part 1")
+      (expect (plist-get (car pending) :property) :to-equal "CANVAS_ID")
+      (expect (plist-get (car pending) :line) :to-equal 5)
+      ;; The heading the UNCLAIMED row already names is not listed twice.
+      (expect (plist-get (car (plist-get result :extra)) :kind) :to-equal 'unclaimed)
+      (expect (org-canvas--diff-count (list result)) :to-equal 1)
+      (expect (org-canvas--diff-pending-count (list result)) :to-equal 1)
+      ;; Nothing was written (Hard Rule 19).
+      (expect (cadr out) :to-be nil)))
+
+  (it "names the id property the feature stamps"
+    (let* ((result (car (test-org-canvas-294--feature-diff
+                         "pages" 'org-canvas-pages-file "* Office Hours\n\nText.\n" []))))
+      (expect (plist-get (car (plist-get result :pending)) :property)
+              :to-equal "CANVAS_URL")))
+
+  (it "reads an empty id property as no id, as the sync does"
+    (let* ((result (car (test-org-canvas-294--feature-diff
+                         "rubrics" 'org-canvas-rubrics-file
+                         "* R6 Rubric\n:PROPERTIES:\n:CANVAS_ID:\n:END:\n" []))))
+      (expect (plist-get result :divergences) :to-be nil)
+      (expect (length (plist-get result :pending)) :to-equal 1)))
+
+  (it "does not call a files.org folder heading a create, and pairs a file heading's link"
+    (let* ((result (car (test-org-canvas-294--feature-diff
+                         "files" 'org-canvas-files-file
+                         (concat "* Readings\n"
+                                 "** [[file:content/week6.pdf][week6.pdf]]\n"
+                                 "** [[file:content/syllabus.pdf][syllabus.pdf]]\n")
+                         [((id . 31) (display_name . "syllabus.pdf"))])))
+           (pending (plist-get result :pending)))
+      (expect (mapcar (lambda (e) (plist-get e :title)) pending)
+              :to-equal '("week6.pdf"))
+      (expect (plist-get (car (plist-get result :extra)) :kind) :to-equal 'unclaimed))))
+
+(describe "org-canvas--diff-module-items pairs moves and lists pending items (issue #294)"
+  (defconst test-org-canvas-294--modules-org
+    "* Week 5
+:PROPERTIES:
+:CANVAS_ID: 781703
+:END:
+** Readings
+* Week 6
+:PROPERTIES:
+:CANVAS_ID: 781704
+:END:
+** [[file:assignments.org::*Closer: Privacy Pros and Cons][Closer: Privacy Pros and Cons]]
+** Readings
+** [[file:assignments.org::*Why Ethics Part 1][Why Ethics Part 1]]
+* Week 7
+** Intro
+"
+    "Week 6 carries an item Canvas holds in Week 5, and some new ones.")
+
+  (defconst test-org-canvas-294--remote
+    '(("781703" . [((id . 501) (type . "Assignment")
+                    (title . "Closer: Privacy Pros and Cons")
+                    (html_url . "https://canvas.example/courses/1/modules/items/501"))
+                   ((id . 502) (type . "SubHeader") (title . "Readings"))])
+      ("781704" . [((id . 503) (type . "SubHeader") (title . "Readings"))]))
+    "Week 5 holds the moved assignment and a Readings header; Week 6 its own.")
+
+  (defun test-org-canvas-294--child (&optional remote)
+    "Return the Module Items result for the #294 fixture against REMOTE."
+    (plist-get (test-org-canvas-177--modules-diff
+                test-org-canvas-294--modules-org
+                (or remote test-org-canvas-294--remote))
+               :children))
+
+  (it "reports an item carried to another module as MOVED, not as a deletion"
+    (let* ((extra (plist-get (test-org-canvas-294--child) :extra))
+           (moved (cl-find "501" extra :key (lambda (e) (plist-get e :id)) :test #'equal)))
+      (expect (plist-get moved :kind) :to-equal 'moved)
+      (expect (plist-get moved :where) :to-equal "Week 5")
+      (expect (plist-get moved :to) :to-equal "Week 6")
+      ;; What k deletes: the copy in the old module.
+      (expect (plist-get moved :module-id) :to-equal "781703")
+      (expect (plist-get moved :html-url) :to-match "items/501$")))
+
+  (it "pairs a heading in the item's own module as UNCLAIMED"
+    (let* ((extra (plist-get (test-org-canvas-294--child) :extra))
+           (week5 (cl-find "502" extra :key (lambda (e) (plist-get e :id)) :test #'equal))
+           (week6 (cl-find "503" extra :key (lambda (e) (plist-get e :id)) :test #'equal)))
+      ;; Each Readings header pairs with its own module's heading.
+      (expect (plist-get week5 :kind) :to-equal 'unclaimed)
+      (expect (plist-get week6 :kind) :to-equal 'unclaimed)))
+
+  (it "never pairs a SubHeader across modules"
+    (let* ((extra (plist-get (test-org-canvas-294--child
+                              '(("781703" . [((id . 502) (type . "SubHeader") (title . "Intro"))])
+                                ("781704" . [])))
+                             :extra)))
+      (expect (plist-get (car extra) :kind) :to-equal 'extra)))
+
+  (it "lists the unstamped item headings nothing paired as pending, with their module"
+    (let* ((child (test-org-canvas-294--child))
+           (pending (plist-get child :pending)))
+      (expect (mapcar (lambda (e) (list (plist-get e :title) (plist-get e :where)))
+                      pending)
+              :to-equal '(("Why Ethics Part 1" "Week 6") ("Intro" "Week 7")))
+      ;; The MOVED row and two UNCLAIMED rows count; pending does not.
+      (expect (org-canvas--diff-count (list child)) :to-equal 3)))
+
+  (it "lists an unsynced module as a pending create of Modules"
+    (let* ((result (test-org-canvas-177--modules-diff
+                    test-org-canvas-294--modules-org test-org-canvas-294--remote)))
+      (expect (mapcar (lambda (e) (plist-get e :title)) (plist-get result :pending))
+              :to-equal '("Week 7")))))
+
+(describe "org-canvas--diff-insert-entry new kinds (issue #294)"
+  (it "renders a moved item with both modules and the id to stamp"
+    (with-temp-buffer
+      (org-canvas--diff-insert-entry
+       '(:kind moved :title "Closer" :id "501" :module-id "781703"
+         :where "Week 5" :to "Week 6"))
+      (expect (buffer-string) :to-match "^  MOVED     Closer (item id 501 sits in module 'Week 5'; an unstamped heading places it in 'Week 6'")
+      (expect (buffer-string) :to-match "stamp CANVAS_ID 501 on that heading")))
+
+  (it "renders a pending create with its property and, for an item, its module"
+    (with-temp-buffer
+      (org-canvas--diff-insert-entry '(:kind pending :title "Why Ethics Part 1" :property "CANVAS_ID"))
+      (org-canvas--diff-insert-entry '(:kind pending :title "Intro" :property "CANVAS_ID" :where "Week 7"))
+      (expect (buffer-string)
+              :to-equal (concat "  PENDING   Why Ethics Part 1 (no CANVAS_ID; the next sync creates it)\n"
+                                "  PENDING   Intro (no CANVAS_ID, in module 'Week 7'; the next sync creates it)\n"))))
+
+  (it "says a module item's twin is adopted by the sync, not by adopt-at-point"
+    (with-temp-buffer
+      (org-canvas--diff-insert-entry
+       '(:kind unclaimed :title "Readings" :id "502" :module-id "781703" :where "Week 5"))
+      (expect (buffer-string) :to-match "item id 502 in module 'Week 5'.*the next sync adopts it")
+      (expect (buffer-string) :not :to-match "adopt-at-point"))))
+
+(describe "org-canvas--diff-render pending creates (issue #294)"
+  (it "lists pending rows under their feature, counted apart, and says no drift"
+    (with-org-canvas-test-config
+      (let ((report (org-canvas--diff-render
+                     '((:name "Assignments"
+                        :pending ((:kind pending :title "Why Ethics Part 1"
+                                   :property "CANVAS_ID")))))))
+        (expect report :to-match "Assignments: 0 divergence(s), 1 pending create(s)")
+        (expect report :to-match "PENDING   Why Ethics Part 1")
+        (expect report :to-match "No drift")
+        (expect report :to-match "Pending creates: 1 heading with no Canvas id"))))
+
+  (it "uses the plural and prints no pending line without pending creates"
+    (with-org-canvas-test-config
+      (expect (org-canvas--diff-render
+               '((:name "A" :pending ((:kind pending :title "x") (:kind pending :title "y")))))
+              :to-match "Pending creates: 2 headings")
+      (expect (org-canvas--diff-render '((:name "A")))
+              :not :to-match "Pending creates"))))
+
+(describe "org-canvas-diff and pending creates (issue #294)"
+  (it "leaves pending creates out of the count the batch exit reads"
+    (let (code)
+      (with-org-canvas-test-config
+        (cl-letf (((symbol-function 'org-canvas--preflight-check) #'ignore)
+                  ((symbol-function 'org-canvas--diff-syllabus-references) (lambda () nil))
+                  ((symbol-function 'org-canvas--diff-feature)
+                   (lambda (feature)
+                     (list :name (plist-get feature :name)
+                           :pending '((:kind pending :title "New" :property "CANVAS_ID")))))
+                  ((symbol-function 'kill-emacs) (lambda (c) (setq code c))))
+          (with-output-to-string
+            (expect (org-canvas-diff) :to-equal 0)
+            (org-canvas-diff-batch))))
+      (expect code :to-equal 0))))
+
+(describe "report verbs on the new rows (issue #294)"
+  (it "visits the heading a PENDING row names, by its line"
+    (let ((file (make-temp-file "diff-294-visit-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "* Readings\n* Lab 1\n:PROPERTIES:\n:CANVAS_ID: 60\n:END:\n* Readings\n"))
+            (let ((shown nil))
+              (cl-letf (((symbol-function 'pop-to-buffer)
+                         (lambda (buf &rest _) (setq shown buf) (set-buffer buf))))
+                (with-current-buffer (test-org-canvas--diff-report-buffer
+                                      `((:name "Modules"
+                                         :children (:name "Module Items"
+                                                    :pending ((:kind pending :title "Readings"
+                                                               :heading "Readings"
+                                                               :file ,file :line 6))))))
+                  (test-org-canvas--diff-goto-row 'pending)
+                  (org-canvas-diff-visit)))
+              ;; The second Readings, not the first of that title.
+              (with-current-buffer shown
+                (expect (line-number-at-pos) :to-equal 6))))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file))))
+
+  (it "falls back to the title when the heading has moved since the report"
+    (let ((file (make-temp-file "diff-294-visit-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file (insert "* Lab 1\n* Why Ethics Part 1\n"))
+            (let ((where (org-canvas--diff-pending-position
+                          (list :kind 'pending :heading "Why Ethics Part 1"
+                                :file file :line 1))))
+              (expect (cdr where) :to-be-greater-than 1)))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file))))
+
+  (it "names the file when a PENDING row's heading is gone"
+    (let ((file (make-temp-file "diff-294-gone-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file (insert "* Lab 1\n"))
+            (expect (condition-case e
+                        (org-canvas--diff-goto-heading
+                         nil (list :kind 'pending :title "Why Ethics Part 1"
+                                   :heading "Why Ethics Part 1" :file file :line 1))
+                      (user-error (error-message-string e)))
+                    :to-match (concat "Cannot find the heading for .Why Ethics Part 1. in "
+                                      (regexp-quote file))))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file))))
+
+  (it "opens a module item's UNCLAIMED row in a browser"
+    (let ((opened nil))
+      (cl-letf (((symbol-function 'browse-url) (lambda (url &rest _) (setq opened url))))
+        (with-current-buffer (test-org-canvas--diff-report-buffer
+                              '((:name "Modules"
+                                 :children (:name "Module Items"
+                                            :extra ((:kind unclaimed :title "Readings" :id "502"
+                                                     :module-id "781703" :where "Week 5"
+                                                     :html-url "https://x.test/items/502"))))))
+          (test-org-canvas--diff-goto-row 'unclaimed)
+          (org-canvas-diff-visit)))
+      (expect opened :to-equal "https://x.test/items/502")))
+
+  (it "deletes the copy a MOVED row leaves in the old module"
+    (let ((requests nil))
+      (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) t))
+                ((symbol-function 'org-canvas-api-request)
+                 (lambda (method url &rest _) (push (list method url) requests) nil)))
+        (with-current-buffer (test-org-canvas--diff-report-buffer
+                              '((:name "Modules"
+                                 :children (:name "Module Items"
+                                            :extra ((:kind moved :title "Closer" :id "501"
+                                                     :module-id "781703" :where "Week 5"
+                                                     :to "Week 6"))))))
+          (test-org-canvas--diff-goto-row 'moved)
+          (org-canvas-diff-delete)))
+      (expect (cadr (car requests)) :to-match "modules/781703/items/501$")))
+
+  (it "acknowledges a MOVED row, and refuses to acknowledge or delete a PENDING one"
+    (let* ((org-canvas-diff-known-extras nil)
+           (saved nil)
+           (org-canvas-diff-acknowledge-function (lambda (extras) (setq saved extras))))
+      (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "")))
+        (with-current-buffer (test-org-canvas--diff-report-buffer
+                              '((:name "Modules"
+                                 :children (:name "Module Items"
+                                            :extra ((:kind moved :title "Closer" :id "501"
+                                                     :module-id "781703" :where "Week 5"
+                                                     :to "Week 6"))
+                                            :pending ((:kind pending :title "New"))))))
+          (test-org-canvas--diff-goto-row 'moved)
+          (org-canvas-diff-acknowledge)
+          (test-org-canvas--diff-goto-row 'pending)
+          (expect (org-canvas-diff-acknowledge) :to-throw 'user-error)
+          (expect (org-canvas-diff-delete) :to-throw 'user-error)))
+      (expect saved :to-equal '(("Module Items" "501" nil))))))
 
 (provide 'org-canvas-diff-test)
 ;;; org-canvas-diff-test.el ends here
