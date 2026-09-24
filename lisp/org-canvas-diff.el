@@ -37,6 +37,9 @@
 ;;
 ;; And, counted apart because it is not drift, every heading with no
 ;; Canvas id that the next sync would create: a PENDING row (#294).
+;; An EXTRA assignment or group says what it is, from the list replies
+;; already held, and a WEIGHTS line under the groups sets Org's weight
+;; total against Canvas's when they differ, uncounted (#296).
 ;;
 ;; SCOPE OF THE FIELD COMPARISON
 ;; =============================
@@ -577,6 +580,138 @@ checked.  Returns RESULTS, mutated in place."
           (plist-put files :referenced (length referenced)))))
     results))
 
+;;;; Extra Details (issue #296)
+;;
+;; An EXTRA row named a title and an id, and saying what the object was
+;; took a hand GET per row.  For the two features where that matters
+;; most — an assignment made in the web UI, a group added to fix the
+;; weights — the list replies the report already holds say enough: an
+;; assignment's group, points, due date, publish state and ungraded
+;; count, a group's weight and how many assignments it holds.  The group
+;; name and the assignment count each need the other feature's list, so
+;; the details are added after every feature is diffed, as the
+;; referenced-media pass is.  No request is added.  The same pass sets
+;; the groups' weight totals, a line under their section.
+
+(defun org-canvas--diff-result-named (results name)
+  "Return the result in RESULTS for feature NAME, when it was read.
+An excluded or failed feature has no list reply, and so no result
+here."
+  (cl-find-if (lambda (r)
+                (and (string= (org-canvas--diff-normalize-name
+                               (plist-get r :name))
+                              (org-canvas--diff-normalize-name name))
+                     (plist-member r :remote-items)))
+              results))
+
+(defun org-canvas--diff-number (n)
+  "Return number N printed without a trailing \".0\"."
+  (if (= n (truncate n)) (format "%d" (truncate n)) (format "%s" n)))
+
+(defun org-canvas--diff-assignment-details (item group-names)
+  "Return the identifying fields of assignment ITEM as one string.
+GROUP-NAMES maps a group id string to its name; a group it lacks is
+named by id."
+  (let ((group (org-canvas--diff-normalize-remote
+                (alist-get 'assignment_group_id item)))
+        (points (org-canvas--diff-normalize-remote
+                 (alist-get 'points_possible item)))
+        (due (let ((iso (org-canvas--diff-normalize-remote
+                         (alist-get 'due_at item))))
+               (and iso (or (org-canvas--iso8601-to-org-timestamp iso) iso))))
+        (grading (alist-get 'needs_grading_count item)))
+    (mapconcat
+     #'identity
+     (delq nil
+           (list
+            (when group
+              (let ((name (gethash (format "%s" group) group-names)))
+                (if name (format "group '%s'" name) (format "group id %s" group))))
+            (when (numberp points)
+              (format "%s pts" (org-canvas--diff-number points)))
+            (if due (format "due %s" due) "no due date")
+            (when (assq 'published item)
+              (if (eq (alist-get 'published item) t) "published" "unpublished"))
+            (when (numberp grading) (format "%d to grade" grading))))
+     ", ")))
+
+(defun org-canvas--diff-group-details (item counts)
+  "Return the identifying fields of assignment group ITEM as one string.
+COUNTS maps a group id string to its assignment count, or is nil when
+the assignments were not read."
+  (let ((weight (org-canvas--diff-normalize-remote
+                 (alist-get 'group_weight item))))
+    (mapconcat
+     #'identity
+     (delq nil
+           (list (format "weight %s%%"
+                         (org-canvas--diff-number (if (numberp weight) weight 0)))
+                 (when counts
+                   (let ((n (gethash (format "%s" (alist-get 'id item)) counts 0)))
+                     (format "%d assignment%s" n (if (= n 1) "" "s"))))))
+     ", ")))
+
+(defun org-canvas--diff-detail-extras (result fn)
+  "Give each EXTRA entry of RESULT a :details line from FN.
+FN takes the entry's remote item and returns a string.  An UNCLAIMED
+entry, also among the result's extras, names its heading instead."
+  (let ((index (org-canvas--diff-remote-index
+                (plist-get result :remote-items) 'id)))
+    (dolist (entry (plist-get result :extra))
+      (when-let* (((eq (plist-get entry :kind) 'extra))
+                  (item (gethash (plist-get entry :id) index)))
+        (plist-put entry :details (funcall fn item))))))
+
+(defun org-canvas--diff-org-weight-total (props)
+  "Return the WEIGHT total of the group headings that PROPS names.
+Nil when the groups file does not exist."
+  (let* ((var (plist-get props :file-var))
+         (file (and var (boundp var) (symbol-value var))))
+    (when (and file (file-exists-p file))
+      (with-current-buffer (org-canvas--find-file-noselect file)
+        (apply #'+ (org-map-entries
+                    (lambda ()
+                      (string-to-number (or (org-entry-get (point) "WEIGHT") "0")))
+                    (plist-get props :query) 'file))))))
+
+(defun org-canvas--diff-weight-totals (groups)
+  "Return (ORG . CANVAS) group weight totals for GROUPS when they differ.
+CANVAS sums every group Canvas holds, the stock group a skip-fn hides
+included, since its weight counts toward the grade all the same."
+  (let ((org (org-canvas--diff-org-weight-total
+              (org-canvas--diff-find-properties (plist-get groups :name))))
+        (canvas (apply #'+ (mapcar
+                            (lambda (item)
+                              (let ((w (org-canvas--diff-normalize-remote
+                                        (alist-get 'group_weight item))))
+                                (if (numberp w) w 0)))
+                            (plist-get groups :remote-items)))))
+    (when (and org (> (abs (- org canvas)) 0.01))
+      (cons org canvas))))
+
+(defun org-canvas--diff-apply-extra-details (results)
+  "Add identifying fields to the assignment and group extras in RESULTS.
+Also sets the groups result's :weight-totals when Org and Canvas
+disagree.  Reads only the list replies already held (issue #296).
+Returns RESULTS, mutated in place."
+  (let* ((assignments (org-canvas--diff-result-named results "Assignments"))
+         (groups (org-canvas--diff-result-named results "Assignment Groups"))
+         (names (org-canvas--diff-remote-index
+                 (plist-get groups :remote-items) 'id))
+         (counts (and assignments (make-hash-table :test 'equal))))
+    (maphash (lambda (id item) (puthash id (alist-get 'name item) names)) names)
+    (dolist (item (plist-get assignments :remote-items))
+      (let ((key (format "%s" (alist-get 'assignment_group_id item))))
+        (puthash key (1+ (gethash key counts 0)) counts)))
+    (when assignments
+      (org-canvas--diff-detail-extras
+       assignments (lambda (item) (org-canvas--diff-assignment-details item names))))
+    (when groups
+      (org-canvas--diff-detail-extras
+       groups (lambda (item) (org-canvas--diff-group-details item counts)))
+      (plist-put groups :weight-totals (org-canvas--diff-weight-totals groups)))
+    results))
+
 ;;;; Per-Feature Comparison
 
 (defun org-canvas--diff-display-title (heading)
@@ -1101,6 +1236,8 @@ after this one (issue #177)."
                             name local (org-canvas--diff-paired-titles paired)
                             file id-property)
                   :children (org-canvas--diff-children name items local file)
+                  ;; The list reply, for the EXTRA details pass (#296).
+                  :remote-items items
                   :suppressed (cdr unclaimed)
                   :skip-reason (plist-get feature :skip-reason)
                   ;; The bodies are in hand; note what media they embed
@@ -1170,7 +1307,10 @@ An entry paired by title only says so (issue #299)."
                      (plist-get entry :title) (plist-get entry :id)
                      ;; A module item says which module it sits in (#177).
                      (let ((where (plist-get entry :where)))
-                       (if where (format " in module '%s'" where) "")))))
+                       (if where (format " in module '%s'" where) ""))))
+     ;; What the object is, from the list reply already read (#296).
+     (when-let* ((details (plist-get entry :details)))
+       (insert (format "              %s\n" details))))
     ('stale-ack
      (insert (format "  STALE-ACK id %s is acknowledged in org-canvas-diff-known-extras but no longer exists on Canvas — remove the entry%s\n"
                      (plist-get entry :id)
@@ -1236,6 +1376,15 @@ show up as extra, so without this the report reads as full coverage."
   "Return the count of PENDING rows across RESULTS (issue #294)."
   (apply #'+ (mapcar (lambda (r) (length (plist-get r :pending))) results)))
 
+(defun org-canvas--diff-weight-totals-line (totals)
+  "Return the report line of the group weight TOTALS, (ORG . CANVAS).
+Printed under the Assignment Groups section and not counted as drift
+\(issue #296): each cause of the difference is a row of its own, or a
+pending create, or the stock group the footer names."
+  (format "  WEIGHTS   Org's groups sum to %s%%, Canvas's to %s%% (a group only on Canvas, a weight not yet pushed, or a group not yet created; matters when the course weights final grades by group — not counted as drift)\n"
+          (org-canvas--diff-number (car totals))
+          (org-canvas--diff-number (cdr totals))))
+
 (defun org-canvas--diff-render-section (result)
   "Insert the section of one feature RESULT with rows.
 Divergences and extras come first, under a count of them; the notes
@@ -1252,6 +1401,8 @@ since they are not drift."
                       "")))
     (dolist (entry (append rows notes pending))
       (org-canvas--diff-insert-row (plist-get result :name) entry))
+    (when-let* ((totals (plist-get result :weight-totals)))
+      (insert (org-canvas--diff-weight-totals-line totals)))
     (insert "\n")))
 
 (defun org-canvas--diff-render (results)
@@ -1273,7 +1424,8 @@ since they are not drift."
           (insert (format "%s: could not check (%s)\n\n"
                           (plist-get result :name) err)))
          ((or (plist-get result :divergences) (plist-get result :extra)
-              (plist-get result :notes) (plist-get result :pending))
+              (plist-get result :notes) (plist-get result :pending)
+              (plist-get result :weight-totals))
           (org-canvas--diff-render-section result)))))
     (let ((total (org-canvas--diff-count results))
           (pending (org-canvas--diff-pending-count results)))
@@ -1876,7 +2028,8 @@ feature contributes its visible line, a module's item check follows it
             ;; Module items report right after their modules (#177).
             (when-let* ((child (plist-get result :children)))
               (push child results))))))
-    (org-canvas--diff-apply-references (nreverse results))))
+    (org-canvas--diff-apply-extra-details
+     (org-canvas--diff-apply-references (nreverse results)))))
 
 ;;;###autoload
 (defun org-canvas-diff ()

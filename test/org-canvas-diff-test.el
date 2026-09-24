@@ -1972,6 +1972,133 @@ prompt text and the report text come back as (PROMPT . REPORT)."
                  (list (list :name "Pages" :referenced-files '("1"))))
                 :not :to-throw)))))
 
+(describe "org-canvas--diff-apply-extra-details (issue #296)"
+  (let ((assignments
+         (lambda ()
+           (list :name "Assignments"
+                 :remote-items
+                 (list '((id . 501) (name . "Pop Quiz") (assignment_group_id . 7)
+                         (points_possible . 20.0) (due_at . "2026-09-25T03:59:00Z")
+                         (published . t) (needs_grading_count . 89))
+                       '((id . 502) (name . "Draft") (assignment_group_id . 7)
+                         (points_possible . 12.5) (due_at . :null)
+                         (published . :json-false))
+                       '((id . 61) (name . "Lab 1") (assignment_group_id . 8)))
+                 :extra (list (list :kind 'extra :title "Pop Quiz" :id "501")
+                              (list :kind 'extra :title "Draft" :id "502")
+                              (list :kind 'unclaimed :title "Lab 1" :id "61")))))
+        (groups
+         (lambda ()
+           (list :name "Assignment Groups"
+                 :remote-items (list '((id . 7) (name . "Extra Credit")
+                                       (group_weight . 10.0))
+                                     '((id . 8) (name . "Labs")
+                                       (group_weight . 100)))
+                 :extra (list (list :kind 'extra :title "Extra Credit" :id "7"))))))
+
+    (it "names what each Canvas-only assignment and group is, from the lists held"
+      (let ((org-canvas-assignment-groups-file "/nonexistent/groups.org"))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _) (error "No request may be made")))
+                  ((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (&rest _) (error "No request may be made"))))
+          (let* ((results (org-canvas--diff-apply-extra-details
+                           (list (funcall assignments) (funcall groups))))
+                 (extra (plist-get (nth 0 results) :extra))
+                 (group (car (plist-get (nth 1 results) :extra))))
+            (expect (plist-get (nth 0 extra) :details)
+                    :to-equal "group 'Extra Credit', 20 pts, due <2026-09-25 Fri 03:59>, published, 89 to grade")
+            (expect (plist-get (nth 1 extra) :details)
+                    :to-equal "group 'Extra Credit', 12.5 pts, no due date, unpublished")
+            ;; An UNCLAIMED row names its heading; it needs no details.
+            (expect (plist-get (nth 2 extra) :details) :to-be nil)
+            (expect (plist-get group :details)
+                    :to-equal "weight 10%, 2 assignments")
+            ;; No groups file, no Org total to set against Canvas's.
+            (expect (plist-get (nth 1 results) :weight-totals) :to-be nil)))))
+
+    (it "names the group by id and leaves the count out when the other list was not read"
+      (let* ((results (org-canvas--diff-apply-extra-details
+                       (list (funcall assignments)
+                             (list :name "Assignment Groups" :excluded t)))))
+        (expect (plist-get (car (plist-get (nth 0 results) :extra)) :details)
+                :to-match "^group id 7, 20 pts"))
+      (let ((org-canvas-assignment-groups-file "/nonexistent/groups.org"))
+        (let* ((results (org-canvas--diff-apply-extra-details
+                         (list (list :name "Assignments" :error "boom")
+                               (funcall groups)))))
+          (expect (plist-get (car (plist-get (nth 1 results) :extra)) :details)
+                  :to-equal "weight 10%"))))
+
+    (it "prints a due date it cannot parse as Canvas sent it"
+      (expect (org-canvas--diff-assignment-details
+               '((due_at . "tomorrow")) (make-hash-table :test 'equal))
+              :to-equal "due tomorrow"))
+
+    (it "gives an assignment in a group of one the singular"
+      (expect (org-canvas--diff-group-details
+               '((id . 8) (group_weight . :null))
+               (let ((h (make-hash-table :test 'equal))) (puthash "8" 1 h) h))
+              :to-equal "weight 0%, 1 assignment"))
+
+    (it "sets the weight totals when Org's groups and Canvas's disagree"
+      (let ((file (make-temp-file "groups-" nil ".org")))
+        (unwind-protect
+            (progn
+              (with-temp-file file
+                (insert "* Groups\n"
+                        "** Labs\n:PROPERTIES:\n:CANVAS_ID: 8\n:WEIGHT: 60\n:END:\n"
+                        "** Exams\n:PROPERTIES:\n:WEIGHT: 40\n:END:\n"
+                        "** Unweighted\n"))
+              (let ((org-canvas-assignment-groups-file file))
+                (let ((results (org-canvas--diff-apply-extra-details
+                                (list (funcall groups)))))
+                  ;; Org says 100; Canvas holds 110 with the extra group.
+                  (expect (plist-get (car results) :weight-totals)
+                          :to-equal '(100 . 110.0)))
+                (let ((agreeing (list :name "Assignment Groups"
+                                      :remote-items
+                                      (list '((id . 8) (group_weight . 60))
+                                            '((id . 9) (group_weight . 40.0))))))
+                  (org-canvas--diff-apply-extra-details (list agreeing))
+                  (expect (plist-get agreeing :weight-totals) :to-be nil))))
+          (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+          (delete-file file))))))
+
+(describe "org-canvas--diff-feature keeps its list reply (issue #296)"
+  (it "records the items it read for the details pass"
+    (with-org-canvas-test-config
+      (let ((org-canvas-assignments-file "/nonexistent/assignments.org"))
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (&rest _) (vector '((id . 99) (name . "Surprise"))))))
+          (let ((result (org-canvas--diff-feature
+                         (org-canvas--registry-find-feature "assignments"))))
+            (expect (plist-get result :remote-items)
+                    :to-equal '(((id . 99) (name . "Surprise"))))))))))
+
+(describe "org-canvas--diff-render extra details and weight totals (issue #296)"
+  (it "prints an EXTRA row's details on the line under it, inside the row"
+    (with-org-canvas-test-config
+      (let ((report (org-canvas--diff-render
+                     '((:name "Assignments"
+                        :extra ((:kind extra :title "Pop Quiz" :id "501"
+                                 :details "group 'Labs', 20 pts")))))))
+        (expect report :to-match
+                "EXTRA     Pop Quiz (id 501, no Org heading claims it)\n +group 'Labs', 20 pts\n")
+        (expect (get-text-property (string-match "group 'Labs'" report)
+                                   'org-canvas-diff-row report)
+                :to-be-truthy))))
+
+  (it "prints the weight totals under the groups, without counting them as drift"
+    (with-org-canvas-test-config
+      (let* ((results '((:name "Assignment Groups" :weight-totals (100 . 110.0))))
+             (report (org-canvas--diff-render results)))
+        (expect report :to-match "Assignment Groups: 0 divergence")
+        (expect report :to-match
+                "WEIGHTS   Org's groups sum to 100%, Canvas's to 110%")
+        (expect report :to-match "No drift")
+        (expect (org-canvas--diff-count results) :to-equal 0)))))
+
 (describe "org-canvas--diff-render referenced media footer (issue #102)"
   (it "counts referenced files in the footer"
     (with-org-canvas-test-config

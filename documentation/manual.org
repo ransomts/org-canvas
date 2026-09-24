@@ -2602,7 +2602,11 @@ Per feature:
   the Canvas timestamp as the heading's baseline instead (see
   [[*Adopting a Stamp][Adopting a Stamp]]).
 - *MISSING* -- a heading carries a Canvas id the course no longer has.
-- *EXTRA* -- an item in the course that no Org heading claims.
+- *EXTRA* -- an item in the course that no Org heading claims.  An extra
+  assignment or assignment group carries a second line saying what it is,
+  read from the list the report already fetched (#296): an assignment's
+  group, points, due date, publish state and how many submissions need
+  grading; a group's weight and how many assignments it holds.
 - *UNCLAIMED* -- an EXTRA item whose title an unstamped local heading shares.
   That pair is what a create that lost its stamp looks like, and the next sync
   would create a second item.  =org-canvas-adopt-at-point= on the heading
@@ -2619,6 +2623,16 @@ Per feature:
   =org-canvas-diff-batch= does not exit non-zero for them.  A files.org folder
   heading is never one, since only file headings are uploaded; a heading an
   UNCLAIMED or MOVED row already names is not listed twice.
+
+Under *Assignment Groups*, a *WEIGHTS* line appears when the =WEIGHT=
+properties in =assignment-groups.org= and the group weights Canvas holds sum
+to different totals (#296) -- the case of a group added in the web UI, which
+leaves Org's groups at 100% and Canvas's at 110%.  Canvas's total counts
+every group, the stock "Assignments" group the report otherwise leaves out
+included.  The line is not counted as drift: whatever makes the totals
+differ is already a row (an EXTRA group, a CHANGED weight) or a pending
+create, so counting the line too would count one change twice.  It matters
+only when the course weights final grades by group.
 
 Module items are compared too, in a section of their own named *Module
 Items* right after *Modules* (#177).  The report lists the items of every
