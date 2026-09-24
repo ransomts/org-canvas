@@ -14,6 +14,8 @@
 (require 'org-canvas-core)
 (require 'org-canvas-diff)
 
+(declare-function org-canvas--pull-at-point-1 "org-canvas" (feature id title))
+
 ;;;; Adopt One Heading
 ;;
 ;; The drift report's UNCLAIMED row names a remote item whose title an
@@ -104,6 +106,32 @@ CANVAS_UPDATED_AT and drops PAYLOAD_HASH — see `org-canvas--adopt-stamp'
              title (plist-get feature :name) id)
     id))
 
+(defun org-canvas--adopt-stub-p (feature)
+  "Return non-nil when the heading at point is a stub FEATURE can fill.
+A stub has nothing under its drawer: no text, no child heading.  Only
+a feature that pulls whole entries (`:pull-whole-entry') can fill one
+from Canvas, and one that is not filled would push its emptiness over
+the item it just adopted on the next sync (issue #295)."
+  (and (plist-get feature :pull-whole-entry)
+       (save-excursion
+         (org-back-to-heading t)
+         (let ((end (save-excursion (org-end-of-subtree t t) (point))))
+           (org-end-of-meta-data t)
+           (string-blank-p
+            (buffer-substring-no-properties (min (point) end) end))))))
+
+(defun org-canvas--adopt-and-fill (feature item title)
+  "Adopt FEATURE's ITEM for the heading at point, titled TITLE.
+A stub heading — a title and a drawer, written to claim a quiz built
+in the web UI — is then filled from Canvas by the single-item pull,
+questions and all, so what the heading adopted is what it holds.  A
+heading with content of its own keeps it, as an adoption always has."
+  (let* ((stub (org-canvas--adopt-stub-p feature))
+         (id (org-canvas--adopt-at-point-1 feature item title)))
+    (when stub
+      (org-canvas--pull-at-point-1 feature id title))
+    id))
+
 ;;;###autoload
 (defun org-canvas-adopt-at-point ()
   "Claim the Canvas item that shares the title of the heading at point.
@@ -117,7 +145,11 @@ its content instead of creating a second copy.  It is the recovery
 
 Zero or several matches refuse and say so; a match the feature holds
 back (a quiz's shadow assignment, the front page) or one another
-heading already claims is named too.  Nothing is sent to Canvas."
+heading already claims is named too.  Nothing is sent to Canvas.
+
+A stub heading of a feature that pulls whole entries (a classic quiz
+with nothing under its drawer) is filled from the item it adopts by
+the single-item pull (issue #295)."
   (interactive)
   (org-back-to-heading t)
   (let* ((feature (org-canvas--adopt-at-point-feature))
@@ -136,7 +168,7 @@ heading already claims is named too.  Nothing is sent to Canvas."
       (pcase (length items)
         (0 (user-error "Nothing on Canvas is titled '%s'%s"
                        title (org-canvas--adopt-notes-suffix notes)))
-        (1 (org-canvas--adopt-at-point-1 feature (car items) title))
+        (1 (org-canvas--adopt-and-fill feature (car items) title))
         (_ (user-error "'%s' is held by %d Canvas items (%s); there is no one item to adopt — stamp %s by hand with the one you mean%s"
                        title (length items)
                        (mapconcat (lambda (item)

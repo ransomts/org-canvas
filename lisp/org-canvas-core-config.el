@@ -331,7 +331,7 @@ Populated at module load time by `org-canvas-register-feature'.")
   "Register a feature for orphan detection and at-point dispatch.
 PLIST has keys :name :endpoint :file-var :id-field :id-property
 :title-field and optionally :list-params :item-params :skip-fn
-:skip-reason :modified-field.
+:skip-reason :modified-field :pull-whole-entry.
 
 A feature that does not list under the course also names a
 `:list-url-fn' (no arguments) and an `:item-url-fn' (one argument,
@@ -360,7 +360,15 @@ pull macros are the ones that know it.
 `:web-pages' lists the rules that say where the feature's headings
 live in the Canvas web interface, for `org-canvas-browse-at-point'
 and the drift report's browse key (issue #292); see
-`org-canvas-register-web-pages' for their shape."
+`org-canvas-register-web-pages' for their shape.
+
+`:pull-whole-entry' non-nil says the feature's pull-item function
+renders a whole level-1 entry — properties, body and child headings —
+from the remote item alone, so a bare stub is enough to pull into.
+`org-canvas-pull-at-point' then works from anywhere in the entry's
+subtree, the drift report's pull verb takes an EXTRA row into a new
+heading, and `org-canvas-adopt-at-point' fills a stub it adopts.
+Classic quizzes declare it (issue #295)."
   (let ((name (plist-get plist :name)))
     (unless (cl-find name org-canvas--feature-registry
                      :key (lambda (f) (plist-get f :name))

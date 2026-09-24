@@ -4384,4 +4384,180 @@ old
         (let ((grouped (cl-find-if (lambda (p) (string-match-p "questions/1\\'" (nth 1 p))) posted)))
           (expect (alist-get 'quiz_group_id (alist-get 'question (nth 2 grouped))) :to-equal 7))))))
 
+;;;; Single-item pull (issue #295)
+
+(describe "org-canvas--quiz-pull-name-questions (issue #295)"
+  (it "numbers the questions of a survey that all came back as \"Question\""
+    (let ((named (org-canvas--quiz-pull-name-questions
+                  (mapcar (lambda (i) `((id . ,i) (question_name . "Question")))
+                          '(1 2 3)))))
+      (expect (mapcar (lambda (q) (alist-get 'question_name q)) named)
+              :to-equal '("Question 1" "Question 2" "Question 3"))))
+
+  (it "keeps a unique name and names one that has none after its place"
+    (let ((named (org-canvas--quiz-pull-name-questions
+                  '(((id . 1) (question_name . "Immutable Types"))
+                    ((id . 2) (question_name . ""))
+                    ((id . 3))
+                    ((id . 4) (question_name . "Dup"))
+                    ((id . 5) (question_name . "Dup"))))))
+      (expect (mapcar (lambda (q) (alist-get 'question_name q)) named)
+              :to-equal '("Immutable Types" "Question 2" "Question 3" "Dup 4" "Dup 5"))))
+
+  (it "leaves the alists it was given as they were"
+    (let* ((q (list (cons 'id 1) (cons 'question_name "Question")))
+           (qs (list q (copy-alist q))))
+      (org-canvas--quiz-pull-name-questions qs)
+      (expect (alist-get 'question_name q) :to-equal "Question"))))
+
+(defmacro test-quiz-295--with-file (content &rest body)
+  "Run BODY in a buffer visiting a quizzes file holding CONTENT.
+The single-item reads answer a survey quiz 77 with two questions both
+named \"Question\"; REQUESTS collects every GET."
+  (declare (indent 1))
+  `(let ((temp (make-temp-file "quiz-295-" nil ".org"))
+         (requests nil))
+     (unwind-protect
+         (progn
+           (with-temp-file temp (insert ,content))
+           (let ((org-canvas-quizzes-file temp))
+             (with-org-canvas-test-config
+               (with-sync-test-env
+                 (with-html-to-org-identity
+                   (cl-letf (((symbol-function 'org-canvas-api-request)
+                              (lambda (method url &rest _)
+                                (push (list method url) requests)
+                                (unless (eq method 'GET)
+                                  (error "A pull must not write to Canvas"))
+                                '((id . 77) (title . "Ethics is worth it survey")
+                                  (quiz_type . "survey")
+                                  (description . "Tell us honestly.")
+                                  (updated_at . "2026-09-20T10:00:00Z"))))
+                             ((symbol-function 'org-canvas-api-request-all-pages)
+                              (lambda (method url &rest _)
+                                (push (list method url) requests)
+                                (cond
+                                 ((string-match-p "quizzes/77/questions" url)
+                                  [((id . 501) (question_name . "Question")
+                                    (question_type . "multiple_choice_question")
+                                    (question_text . "Was it worth it?")
+                                    (points_possible . 0)
+                                    (answers . [((text . "Yes") (weight . 100))
+                                                ((text . "No") (weight . 0))]))
+                                   ((id . 502) (question_name . "Question")
+                                    (question_type . "essay_question")
+                                    (question_text . "Why?")
+                                    (points_possible . 0) (answers . []))])
+                                 ((string-match-p "quizzes\\'" url)
+                                  '(((id . 77) (title . "Ethics is worth it survey")
+                                     (updated_at . "2026-09-20T10:00:00Z"))))
+                                 (t nil))))
+                             ((symbol-function 'message) #'ignore))
+                     (with-current-buffer (find-file-noselect temp)
+                       ,@body)))))))
+       (let ((buf (find-buffer-visiting temp)))
+         (when buf (with-current-buffer buf (set-buffer-modified-p nil))
+               (kill-buffer buf)))
+       (delete-file temp))))
+
+(defconst test-quiz-295--other
+  "* Other quiz
+:PROPERTIES:
+:CANVAS_ID: 5
+:PAYLOAD_HASH: keepme
+:END:
+
+# a hand comment that must survive
+Local edit pending.
+** Question: Local
+:PROPERTIES:
+:TYPE: essay_question
+:CANVAS_ID: 9
+:END:
+Unpushed wording.
+"
+  "A quiz the single-item pull must leave exactly as it is.")
+
+(describe "org-canvas-pull-at-point on a classic quiz (issue #295)"
+  (it "fills a stub with the quiz and its questions and leaves the rest of the file alone"
+    (test-quiz-295--with-file
+        (concat test-quiz-295--other
+                "* Ethics is worth it survey\n:PROPERTIES:\n:QUIZ_TYPE: survey\n:CANVAS_ID: 77\n:END:\n")
+      (goto-char (point-min))
+      (re-search-forward "^\\* Ethics")
+      (org-canvas-pull-at-point)
+      (let ((text (buffer-string)))
+        (expect text :to-match (regexp-quote test-quiz-295--other))
+        (expect text :to-match "^\\*\\* Description\n+Tell us honestly\\.")
+        (expect text :to-match "^\\*\\* Question 1$")
+        (expect text :to-match "^\\*\\* Question 2$")
+        (expect text :to-match "^- \\[X\\] Yes$")
+        (expect text :to-match "Why\\?")
+        (expect (string-match "Question 1" text)
+                :to-be-less-than (string-match "Question 2" text)))
+      (goto-char (point-min))
+      (re-search-forward "^\\* Ethics")
+      (org-back-to-heading t)
+      (expect (org-entry-get (point) "CANVAS_UPDATED_AT") :to-equal "2026-09-20T10:00:00Z")
+      (expect (org-entry-get (point) "PAYLOAD_HASH") :to-be nil)
+      (re-search-forward "^\\*\\* Question 2")
+      (expect (org-entry-get (point) "CANVAS_ID") :to-equal "502")
+      (expect (org-entry-get (point) "TYPE") :to-equal "essay_question")
+      ;; One quiz read and its questions: never the whole quiz list.
+      (expect (cl-find-if (lambda (r) (string-match-p "quizzes\\'" (nth 1 r))) requests)
+              :to-be nil)))
+
+  (it "pulls the quiz when point is on one of its questions"
+    (test-quiz-295--with-file
+        "* Ethics is worth it survey\n:PROPERTIES:\n:CANVAS_ID: 77\n:END:\n** Question 1\n:PROPERTIES:\n:CANVAS_ID: 501\n:END:\nOld.\n"
+      (goto-char (point-min))
+      (re-search-forward "^\\*\\* Question 1")
+      (org-canvas-pull-at-point)
+      (expect (cl-find-if (lambda (r) (string-match-p "quizzes/77\\'" (nth 1 r))) requests)
+              :to-be-truthy)
+      (expect (cl-find-if (lambda (r) (string-match-p "quizzes/501" (nth 1 r))) requests)
+              :to-be nil)
+      (expect (test-org-canvas-count-matches "^\\*\\* Question 1$" (buffer-string))
+              :to-equal 1)
+      (expect (buffer-string) :not :to-match "Old\\.")))
+
+  (it "rewrites a description kept inline, in place, and keeps the accommodations table"
+    (test-quiz-295--with-file
+        "* Ethics is worth it survey\n:PROPERTIES:\n:CANVAS_ID: 77\n:END:\n\nOld intro.\n\n#+NAME: accommodations\n| Student | Extra attempts | Extra time | Unlocked |\n|---------+----------------+------------+----------|\n| #1 | 1 | | |\n\n** Question 1\n:PROPERTIES:\n:CANVAS_ID: 501\n:END:\n"
+      (cl-letf (((symbol-function 'org-canvas--accommodation-write-table) #'ignore))
+        (goto-char (point-min))
+        (org-canvas-pull-at-point))
+      (let ((text (buffer-string)))
+        (expect text :not :to-match "Old intro")
+        (expect text :not :to-match "^\\*\\* Description")
+        (expect text :to-match ":END:\n\nTell us honestly\\.\n\n#\\+NAME: accommodations\n| Student")
+        (expect text :to-match "| #1 | 1 | | |\n\n\\*\\* Question 1\n"))
+      (goto-char (point-min))
+      (re-search-forward "^\\* Ethics")
+      (org-back-to-heading t)
+      (expect (org-canvas--quiz-parse-body-text) :to-equal "Tell us honestly."))))
+
+(describe "org-canvas-adopt-at-point on a classic quiz (issue #295)"
+  (it "fills a stub it adopts from Canvas"
+    (test-quiz-295--with-file "* Ethics is worth it survey\n"
+      (goto-char (point-min))
+      (expect (org-canvas-adopt-at-point) :to-equal "77")
+      (let ((text (buffer-string)))
+        (expect text :to-match "^\\*\\* Question 1$")
+        (expect text :to-match "^\\*\\* Question 2$")
+        (expect text :to-match "Tell us honestly"))
+      (goto-char (point-min))
+      (re-search-forward "^\\* Ethics")
+      (expect (org-entry-get (point) "CANVAS_ID") :to-equal "77")
+      (expect (org-entry-get (point) "QUIZ_TYPE") :to-equal "survey")))
+
+  (it "stamps a heading with content of its own and pulls nothing over it"
+    (test-quiz-295--with-file "* Ethics is worth it survey\n\nMy own intro.\n"
+      (goto-char (point-min))
+      (expect (org-canvas-adopt-at-point) :to-equal "77")
+      (expect (buffer-string) :to-match "My own intro")
+      (expect (buffer-string) :not :to-match "Question 1")
+      (expect (cl-find-if (lambda (r) (string-match-p "questions" (nth 1 r))) requests)
+              :to-be nil))))
+
 ;;; org-canvas-quizzes-test.el ends here

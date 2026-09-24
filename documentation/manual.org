@@ -2678,6 +2678,7 @@ something the keys act on:
 | =a=       | CHANGED, no compared property differing | Adopt the Canvas timestamp as the heading's baseline (=org-canvas-diff-adopt-stamp=); refused when a property differs |
 | =k=       | EXTRA, UNCLAIMED        | Delete the remote object, after confirming                          |
 | =p=       | CHANGED                 | Pull the Canvas version over the heading (=org-canvas-pull-at-point=, which asks first) |
+| =p=       | EXTRA (classic quizzes) | Pull the quiz, questions and all, into a new heading at the end of =quizzes.org=, after confirming |
 | =g=       | anywhere                | Run the report again                                                |
 | =TAB= / =S-TAB= | anywhere          | Move to the next / previous row                                     |
 
@@ -2971,8 +2972,23 @@ prompt's "pull" option runs, which until now was reachable only by starting a
 sync.  Local edits to that heading are discarded, so it asks first.
 
 The command works in any course file -- it finds the feature from the file
-you are in.  A content type with no single-item pull (quizzes, outcomes) says
-so and names the whole-file command instead.
+you are in.  A content type with no single-item pull (outcomes, new quizzes)
+says so and names the whole-file command instead.
+
+A classic quiz pulls whole: its settings, its description and every question
+under it, written the way =org-canvas-pull-quizzes= writes them, while the
+rest of =quizzes.org= -- other quizzes, your comments, edits not yet pushed --
+stays as it is.  Point may be on the quiz or on any of its questions.  A
+description you keep as text under the quiz heading is rewritten there; one
+under a =** Description= heading is rewritten under it.  To take in a quiz built
+in the Canvas web UI, write a stub -- the title, or the title and its
+=CANVAS_ID= -- and pull it, or press =p= on its EXTRA row in the drift report,
+which writes the heading for you.
+
+Every question of a survey built in the web UI comes back from Canvas named
+"Question".  A pull numbers a name that several questions share, or a question
+with no name, by its place in the quiz -- =** Question 1=, =** Question 2= --
+and the next push sends those names back.
 
 ** Claiming an Unclaimed Item
 
@@ -2995,6 +3011,12 @@ refuse -- titles are not unique on Canvas, so with several there is no one
 item to adopt -- and the message names the candidates, including any held
 back because the feature does not manage them (a classic quiz's shadow
 assignment, the front page) or because another heading already claims the id.
+
+A classic quiz heading with nothing under its drawer -- a stub written to
+claim a quiz built in the web UI -- is also filled from the quiz it adopts,
+questions and all, as =org-canvas-pull-at-point= would fill it: pushing the
+empty stub would otherwise send its emptiness over the quiz.  A heading with
+text or questions of its own keeps them.
 
 This is the same act the duplicate-title guard offers at the moment it blocks
 a create (see [[*Duplicate Titles][Duplicate Titles]]); the command is for

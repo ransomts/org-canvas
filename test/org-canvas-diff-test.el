@@ -1539,11 +1539,61 @@ EDIT is passed on.  A `user-error' comes back as (error MESSAGE)."
         (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
         (delete-file file))))
 
-  (it "refuses a row with no Canvas version to pull"
+  (it "refuses an EXTRA row of a feature that cannot pull into a new heading"
     (with-current-buffer (test-org-canvas--diff-report-buffer
                           '((:name "Assignments" :extra ((:kind extra :title "Surprise" :id "99")))))
       (test-org-canvas--diff-goto-row 'extra)
-      (expect (org-canvas-diff-pull) :to-throw 'user-error))))
+      (expect (org-canvas-diff-pull) :to-throw 'user-error)))
+
+  (it "refuses a row with no Canvas version to pull"
+    (with-current-buffer (test-org-canvas--diff-report-buffer
+                          '((:name "Assignments" :divergences ((:kind missing :title "Gone" :id "61")))))
+      (test-org-canvas--diff-goto-row 'missing)
+      (expect (org-canvas-diff-pull) :to-throw 'user-error)))
+
+  (it "pulls an EXTRA quiz into a new heading at the end of quizzes.org (issue #295)"
+    (let ((file (make-temp-file "diff-pull-extra-" nil ".org"))
+          (pulled nil))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "* Quiz 1\n:PROPERTIES:\n:CANVAS_ID: 5\n:END:\n"))
+            (let ((org-canvas-quizzes-file file))
+              (cl-letf (((symbol-function 'org-canvas--pull-at-point-1)
+                         (lambda (feature id title)
+                           (setq pulled (list (plist-get feature :name) id title
+                                              (org-entry-get (point) "CANVAS_ID")
+                                              (org-get-heading t t t t))))))
+                (with-current-buffer (test-org-canvas--diff-report-buffer
+                                      '((:name "Quizzes"
+                                         :extra ((:kind extra :title "Survey" :id "77")))))
+                  (test-org-canvas--diff-goto-row 'extra)
+                  (org-canvas-diff-pull)
+                  (expect (thing-at-point 'line t)
+                          :to-match "PULLED    Survey (id 77, new heading)")))
+              (expect pulled :to-equal '("Quizzes" "77" "Survey" "77" "Survey"))
+              (with-current-buffer (find-buffer-visiting file)
+                (expect (buffer-string) :to-match "^\\* Quiz 1\n\\(?:.*\n\\)*\\* Survey\n"))))
+        (let ((buf (find-buffer-visiting file)))
+          (when buf (with-current-buffer buf (set-buffer-modified-p nil)) (kill-buffer buf)))
+        (delete-file file))))
+
+  (it "sends nothing when the EXTRA pull is declined"
+    (let ((file (make-temp-file "diff-pull-extra-no-" nil ".org")))
+      (unwind-protect
+          (let ((org-canvas-quizzes-file file))
+            (cl-letf (((symbol-function 'org-canvas--confirm) (lambda (_) nil))
+                      ((symbol-function 'org-canvas--pull-at-point-1)
+                       (lambda (&rest _) (error "Declined pull must not fetch"))))
+              (with-current-buffer (test-org-canvas--diff-report-buffer
+                                    '((:name "Quizzes"
+                                       :extra ((:kind extra :title "Survey" :id "77")))))
+                (test-org-canvas--diff-goto-row 'extra)
+                (org-canvas-diff-pull)
+                (expect (thing-at-point 'line t) :to-match "EXTRA     Survey"))))
+        (let ((buf (find-buffer-visiting file)))
+          (when buf (with-current-buffer buf (set-buffer-modified-p nil)) (kill-buffer buf)))
+        (delete-file file)))))
 
 ;;;; Stamp adoption (issue #257)
 

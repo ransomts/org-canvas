@@ -74,6 +74,7 @@
 (require 'cl-lib)
 
 (declare-function org-canvas-pull-at-point "org-canvas")
+(declare-function org-canvas--pull-new-heading "org-canvas" (feature id title))
 
 (defconst org-canvas--diff-buffer-name "*canvas-diff*"
   "Name of the buffer holding the drift report.")
@@ -950,7 +951,8 @@ STALE-ACK), or on a CHANGED row with no compared property differing
 adopts the Canvas timestamp as the heading's baseline
 \(`org-canvas-diff-adopt-stamp'); \\[org-canvas-diff-delete] deletes the
 remote object of an EXTRA or UNCLAIMED row, after confirming;
-\\[org-canvas-diff-pull] pulls a CHANGED row's item over the heading;
+\\[org-canvas-diff-pull] pulls a CHANGED row's item over the heading, or
+an EXTRA quiz into a new heading;
 \\[org-canvas-diff-refresh] runs the report again;
 \\[org-canvas-diff-next-row] and \\[org-canvas-diff-previous-row] move
 between rows."
@@ -1168,22 +1170,45 @@ a module item's row deletes the item from its module (issue #177)."
        (format "  DELETED   %s (id %s)" (plist-get entry :title) id))
       (message "Deleted %s %s." name id))))
 
+(defun org-canvas--diff-pull-extra (feature entry)
+  "Pull the item of EXTRA row ENTRY into a new heading of FEATURE's file.
+Only a feature that pulls whole entries (`:pull-whole-entry', classic
+quizzes) can write one from nothing; a module item belongs under its
+module heading, which a module pull writes.  Returns non-nil when the
+item was pulled."
+  (unless (and (plist-get feature :pull-whole-entry)
+               (not (plist-get entry :module-id)))
+    (user-error "%s cannot pull '%s' into a new heading; use M-x org-canvas-pull-%s"
+                (plist-get feature :name) (plist-get entry :title)
+                (downcase (replace-regexp-in-string
+                           " " "-" (plist-get feature :name)))))
+  (save-excursion
+    (org-canvas--pull-new-heading feature (plist-get entry :id)
+                                  (plist-get entry :title))))
+
 (defun org-canvas-diff-pull ()
-  "Pull the item of the CHANGED row at point over its Org heading.
-Runs `org-canvas-pull-at-point' on the heading, which asks first."
+  "Pull the item of the row at point from Canvas into Org.
+On a CHANGED row, runs `org-canvas-pull-at-point' on the heading.  On
+an EXTRA row of a feature that pulls whole entries (classic quizzes),
+writes the item as a new heading at the end of its file (issue #295).
+Either asks first."
   (interactive)
   (let* ((row (org-canvas--diff-row-at-point))
          (entry (plist-get row :entry))
-         (feature (org-canvas--diff-row-feature row)))
-    (unless (eq (plist-get entry :kind) 'modified)
-      (user-error "Only a CHANGED row has a Canvas version to pull"))
-    (let ((pulled (save-excursion
-                    (with-current-buffer (org-canvas--diff-goto-heading feature entry)
-                      (org-canvas-pull-at-point)
-                      t))))
-      (when pulled
-        (org-canvas--diff-rewrite-row
-         (format "  PULLED    %s (id %s)" (plist-get entry :title) (plist-get entry :id)))))))
+         (feature (org-canvas--diff-row-feature row))
+         (pulled
+          (pcase (plist-get entry :kind)
+            ('modified
+             (save-excursion
+               (with-current-buffer (org-canvas--diff-goto-heading feature entry)
+                 (org-canvas-pull-at-point)
+                 t)))
+            ('extra (org-canvas--diff-pull-extra feature entry))
+            (_ (user-error "Only a CHANGED or EXTRA row has a Canvas version to pull")))))
+    (when pulled
+      (org-canvas--diff-rewrite-row
+       (format "  PULLED    %s (id %s%s)" (plist-get entry :title) (plist-get entry :id)
+               (if (eq (plist-get entry :kind) 'extra) ", new heading" ""))))))
 
 ;;;; Adopting a Stamp
 ;;

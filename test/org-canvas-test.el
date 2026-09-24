@@ -2131,12 +2131,12 @@ while Lab 4 in the same module is still scheduled ahead."
       (unwind-protect
           (progn
             (with-temp-file temp
-              (insert "* Quiz 1\n:PROPERTIES:\n:CANVAS_ID: 5\n:END:\n"))
+              (insert "* Outcome 1\n:PROPERTIES:\n:CANVAS_ID: 5\n:END:\n"))
             (let ((org-canvas--feature-registry
-                   (list (list :name "Quizzes" :endpoint "quizzes"
-                               :file-var 'org-canvas-quizzes-file
+                   (list (list :name "Outcomes" :endpoint "outcome_groups"
+                               :file-var 'org-canvas-outcomes-file
                                :id-property "CANVAS_ID")))
-                  (org-canvas-quizzes-file temp))
+                  (org-canvas-outcomes-file temp))
               (with-current-buffer (find-file-noselect temp)
                 (goto-char (point-min))
                 (expect (org-canvas-pull-at-point) :to-throw 'user-error))))
@@ -2144,6 +2144,17 @@ while Lab 4 in the same module is still scheduled ahead."
           (when buf (with-current-buffer buf (set-buffer-modified-p nil))
                 (kill-buffer buf)))
         (delete-file temp))))
+
+  (it "refuses a new-heading pull for a feature that cannot write a whole entry (issue #295)"
+    (let (asked)
+      (cl-letf (((symbol-function 'org-canvas--confirm) (lambda (_) (setq asked t))))
+        (expect (condition-case e
+                    (org-canvas--pull-new-heading
+                     (list :name "Group Categories" :file-var 'org-canvas-outcomes-file)
+                     "5" "Teams")
+                  (user-error (error-message-string e)))
+                :to-match "Group Categories has no pull into a new heading; use M-x org-canvas-pull-group-categories"))
+      (expect asked :to-be nil)))
 
   (it "makes no request when the confirmation is declined"
     (let ((temp (make-temp-file "pull-at-point-no-" nil ".org"))
