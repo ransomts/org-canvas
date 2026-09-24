@@ -1342,21 +1342,6 @@ parent quiz or under a dedicated subheading."
   (org-canvas--quiz-pull-emit-questions quiz-id questions)
   (goto-char quiz-pos))
 
-(defun org-canvas--quiz-pull-inline-bounds ()
-  "Return (START . END) of the quiz text at point above its children.
-START is the end of the heading's drawer, blank lines skipped back
-over; END is where its first child heading, or its subtree, begins."
-  (save-excursion
-    (org-back-to-heading t)
-    (let* ((end (save-excursion
-                  (min (progn (outline-next-heading) (point))
-                       (save-excursion (org-back-to-heading t)
-                                       (org-end-of-subtree t t) (point)))))
-           (meta-end (save-excursion (org-end-of-meta-data t) (point))))
-      (goto-char (min meta-end end))
-      (skip-chars-backward " \t\n")
-      (cons (point) end))))
-
 (defun org-canvas--quiz-pull-inline-description-p ()
   "Return non-nil when the description of the quiz at point is inline text.
 That is text under the heading, above its first child, other than the
@@ -1364,7 +1349,7 @@ accommodations table, and no `** Description' child to shadow it (see
 `org-canvas--quiz-parse-body-text').  A file written that way by hand
 keeps that shape on a pull (issue #295)."
   (and (not (org-canvas--quiz-parse-description-subheading))
-       (let ((bounds (org-canvas--quiz-pull-inline-bounds)))
+       (let ((bounds (org-canvas--pull-entry-text-bounds)))
          (not (string-empty-p
                (string-trim
                 (org-canvas--strip-named-tables
@@ -1382,7 +1367,7 @@ An accommodations table in the same text is kept after it, for
 `org-canvas--accommodation-write-table' to refresh.  Point is left at
 the quiz heading."
   (let* ((quiz-pos (save-excursion (org-back-to-heading t) (point)))
-         (bounds (org-canvas--quiz-pull-inline-bounds))
+         (bounds (org-canvas--pull-entry-text-bounds))
          (table (org-canvas--quiz-pull-named-tables
                  (buffer-substring-no-properties (car bounds) (cdr bounds))))
          (text (and (stringp description) (not (string-empty-p description))

@@ -948,6 +948,11 @@ Use *Classic Quizzes* (=quizzes.org=) when:
 - Level 2 headings = Questions (items) under each quiz
 - List items under questions = Answer choices
 
+The text under a quiz heading, above its first question, is the quiz's
+instructions: a push sends it as =instructions= (only when there is some), and
+a pull writes Canvas's instructions back in the same place, replacing that
+text and leaving the questions under it alone.
+
 *** Quiz Properties
 
 | Property           | Type    | Description                                              |
@@ -3082,7 +3087,8 @@ Every question of a survey built in the web UI comes back from Canvas named
 with no name, by its place in the quiz -- =** Question 1=, =** Question 2= --
 and the next push sends those names back.
 
-A New Quiz pulls whole the same way: its settings and every item under it,
+A New Quiz pulls whole the same way: its settings, its instructions (the text
+above its first item) and every item under it,
 written the way =org-canvas-pull-new-quizzes= writes them, from the New
 Quizzes service rather than the course API, with the rest of
 =new-quizzes.org= left as it is.  Point may be on the quiz or on any of its
@@ -3105,7 +3111,8 @@ M-x org-canvas-adopt-at-point
 
 It lists the feature's items on Canvas and, when exactly one carries the
 heading's title, stamps its id (=CANVAS_ID=, =CANVAS_URL= for pages,
-=CANVAS_ASSIGNMENT_ID= for New Quizzes) and
+=CANVAS_ASSIGNMENT_ID= for New Quizzes, from the quiz's =assignment_id=
+when Canvas sends one and its =id= otherwise) and
 =CANVAS_UPDATED_AT= from the item and drops any =PAYLOAD_HASH=, so the next
 sync updates that item in place and verifies its content rather than taking
 the unchanged skip.  Nothing is sent to Canvas.  Zero or several matches

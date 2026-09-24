@@ -193,6 +193,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 
 - a classic quiz pulls whole into one heading — pull-at-point, the diff's `p` on an EXTRA row, adopt filling a stub, `:pull-whole-entry` — and numbers a question name it cannot tell apart (#295)
 - a heading opens its Canvas page from `:web-pages` rules its module declares (#292)
+- a New Quiz pull writes its instructions where the push reads them, and adoption stamps `assignment_id` first (#309)
 - a New Quiz pulls whole through a pull-only entry (`org-canvas-register-pull-feature`) kept out of the feature registry (#297)
 - a push takes its heading by name and the at-point runtime records its outcome (#287)
 - a refresh reports what changed and keeps a departed student's heading for the work under it (#282)
