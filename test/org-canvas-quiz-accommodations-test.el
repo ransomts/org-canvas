@@ -289,5 +289,139 @@ Read the syllabus first.
     (expect (commandp 'org-canvas-sync-quiz-accommodations) :to-be-truthy)
     (expect (commandp 'org-canvas-sync-quiz-accommodations-at-point) :to-be-truthy)))
 
+;;;; Placement beside an inline description (issue #298)
+
+(defconst test-accommodations-298--table
+  "#+NAME: accommodations
+| Student | Extra attempts | Extra time | Unlocked |
+|---------+----------------+------------+----------|
+| #4      |              1 |            |          |
+"
+  "A stale table a pull must replace, not add to.")
+
+(defconst test-accommodations-298--question
+  "** Question 1
+:PROPERTIES:
+:CANVAS_ID: 501
+:END:
+Why?
+"
+  "A question child the table must stay above.")
+
+(defun test-accommodations-298--quiz (body)
+  "The quiz 7 heading and drawer, then BODY, then one question."
+  (concat "* Syllabus Quiz\n:PROPERTIES:\n:CANVAS_ID: 7\n:END:\n\n"
+          body test-accommodations-298--question))
+
+(defconst test-accommodations-298--remote
+  '((id . 7) (title . "Syllabus Quiz") (quiz_type . "assignment")
+    (description . "Fresh intro."))
+  "Quiz 7 as Canvas answers it.")
+
+(defmacro test-accommodations-298--pulling (content &rest body)
+  "Run BODY after pulling quiz 7 over CONTENT through each pull path.
+Canvas's description is \"Fresh intro.\"; the questions read empty, so
+the question child in CONTENT stays as it is.  BODY runs once per path
+with TEXT bound to the file, PATH to `whole' or `single', and point
+on the quiz heading."
+  (declare (indent 1))
+  `(dolist (path '(whole single))
+     (test-accommodations--with-course test-accommodations--submissions
+       (with-temp-file org-canvas-quizzes-file (insert ,content))
+       (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                  (lambda (_method url &optional _params)
+                    (cond ((string-match "/submissions" url) test-accommodations--submissions)
+                          ((string-match "/questions" url) nil)
+                          (t (list test-accommodations-298--remote)))))
+                 ((symbol-function 'org-canvas--html-to-org) #'identity))
+         (with-current-buffer (org-canvas--find-file-noselect org-canvas-quizzes-file)
+           (if (eq path 'whole)
+               (org-canvas-pull-quizzes)
+             (goto-char (point-min))
+             (org-canvas--quiz-pull-item test-accommodations-298--remote
+                                         (point-min)))
+           (let ((text (buffer-string)))
+             (goto-char (point-min))
+             (re-search-forward "^\\* Syllabus Quiz")
+             ,@body))))))
+
+(defun test-accommodations-298--table-count (text)
+  "Count the accommodations tables in TEXT."
+  (cl-count-if (lambda (l) (string-prefix-p "#+NAME: accommodations" l))
+               (split-string text "\n")))
+
+(describe "the accommodations table beside an inline description (issue #298)"
+  (it "goes below the inline text on both pulls, replacing a stale table above it"
+    (let ((test-accommodations--submissions
+           (list (test-accommodations--submission 9 0 20 nil))))
+      (test-accommodations-298--pulling
+          (test-accommodations-298--quiz
+           (concat test-accommodations-298--table "\nOld intro.\n\n"))
+        (expect text :to-match
+                ":END:\n\nFresh intro\\.\n\n#\\+NAME: accommodations\n| Student +| Extra time +|\n")
+        (expect text :to-match "^| #9 +| +20 +|\n\n\\*\\* Question 1\n")
+        (expect text :not :to-match "Old intro\\|#4")
+        (expect text :not :to-match "^\\*\\* Description")
+        (expect (test-accommodations-298--table-count text) :to-equal 1)
+        (expect (org-canvas--quiz-parse-body-text) :to-equal "Fresh intro."))))
+
+  (it "leaves no table and the text alone when nobody has an extension"
+    (let ((test-accommodations--submissions nil))
+      (test-accommodations-298--pulling
+          (test-accommodations-298--quiz
+           (concat "Old intro.\n\n" test-accommodations-298--table "\n"))
+        (expect text :to-match ":END:\n\nFresh intro\\.\n\n\\*\\* Question 1\n")
+        (expect (test-accommodations-298--table-count text) :to-equal 0))))
+
+  (it "keeps the table between the drawer and a Description child"
+    (let ((test-accommodations--submissions
+           (list (test-accommodations--submission 9 0 20 nil))))
+      (test-accommodations-298--pulling
+          (test-accommodations-298--quiz "** Description\nOld intro.\n\n")
+        (expect text :to-match
+                ":END:\n\n#\\+NAME: accommodations\n| Student +| Extra time +|\n|-+\\+-+|\n| #9 +| +20 +|\n\n\\*\\* Description\n")
+        (expect text :to-match "Fresh intro\\.")
+        (expect (test-accommodations-298--table-count text) :to-equal 1)
+        (expect (org-canvas--quiz-parse-body-text) :to-equal "Fresh intro."))))
+
+  (it "writes a table below the text when the entry had none"
+    (test-accommodations--with-course
+        (list (test-accommodations--submission 1 0 30 nil))
+      (with-temp-file org-canvas-quizzes-file
+        (insert (test-accommodations-298--quiz "Intro.\n\n\n")))
+      (with-current-buffer (org-canvas--find-file-noselect org-canvas-quizzes-file)
+        (goto-char (point-min))
+        (org-canvas--accommodation-write-table 7)
+        (expect (buffer-string) :to-match
+                ":END:\n\nIntro\\.\n\n#\\+NAME: accommodations\n| Student +| Extra time +|\n|-+\\+-+|\n| Adams, Alice +| +30 +|\n\n\\*\\* Question 1\n"))))
+
+  (it "replaces a table written under the Description child in place"
+    (test-accommodations--with-course
+        (list (test-accommodations--submission 1 0 30 nil))
+      (with-temp-file org-canvas-quizzes-file
+        (insert (test-accommodations-298--quiz
+                 (concat "** Description\nIntro.\n\n" test-accommodations-298--table "\n"))))
+      (with-current-buffer (org-canvas--find-file-noselect org-canvas-quizzes-file)
+        (goto-char (point-min))
+        (org-canvas--accommodation-write-table 7)
+        (let ((text (buffer-string)))
+          (expect (test-accommodations-298--table-count text) :to-equal 1)
+          (expect text :to-match "^\\*\\* Description\nIntro\\.\n\n#\\+NAME: accommodations\n")
+          (expect text :to-match "^| Adams, Alice +| +30 +|$"))))))
+
+(describe "a quiz push leaves the accommodations table out of the description (issue #298)"
+  (dolist (layout
+           `(("above the inline text" . ,(concat test-accommodations-298--table "\nIntro text.\n\n"))
+             ("below the inline text" . ,(concat "Intro text.\n\n" test-accommodations-298--table "\n"))
+             ("inside the Description child"
+              . ,(concat "** Description\nIntro text.\n\n" test-accommodations-298--table "\n"))))
+    (it (format "sends only the text with the table %s" (car layout))
+      (with-temp-org-buffer (test-accommodations-298--quiz (cdr layout))
+        (goto-char (point-min))
+        (let* ((payload (org-canvas--quiz-build-payload (org-canvas--quiz-parse-entry)))
+               (description (alist-get 'description (alist-get 'quiz payload))))
+          (expect description :to-match "Intro text\\.")
+          (expect description :not :to-match "Student\\|#4\\|accommodations\\|<table"))))))
+
 (provide 'org-canvas-quiz-accommodations-test)
 ;;; org-canvas-quiz-accommodations-test.el ends here

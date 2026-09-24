@@ -164,7 +164,9 @@
 (defun org-canvas--quiz-parse-description-subheading ()
   "Return the body of a `** Description' subheading under the quiz at point.
 Point must be at the parent quiz heading.  Returns nil if no
-`** Description' subheading exists."
+`** Description' subheading exists.  An accommodations table written
+there is left out: the sync reads it anywhere under the quiz, so it is
+never description text (issue #298)."
   (save-excursion
     (org-back-to-heading t)
     (let ((subtree-end (save-excursion (org-end-of-subtree t t) (point))))
@@ -179,7 +181,9 @@ Point must be at the parent quiz heading.  Returns nil if no
                                 (org-end-of-subtree t t)
                                 (point))))
           (string-trim
-           (buffer-substring-no-properties desc-body-start desc-body-end)))))))
+           (org-canvas--strip-named-tables
+            (buffer-substring-no-properties desc-body-start desc-body-end)
+            '("accommodations"))))))))
 
 (defun org-canvas--quiz-parse-body-text ()
   "Get the body text of current heading, excluding subheadings.

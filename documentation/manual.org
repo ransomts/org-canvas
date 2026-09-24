@@ -845,9 +845,13 @@ student who has an extension on Canvas but no row is sent zeros.  The
 table is the whole set, as the overrides table is: pull the quizzes
 first so it carries every extension Canvas holds, and remove a row
 when you mean to remove the accommodation.  The dry run lists what it
-would send.  =org-canvas-pull-quizzes= writes the table from the
-students who carry an extension and removes it when none do; the table
-never reaches the quiz description.
+would send.  =org-canvas-pull-quizzes= (or a pull at point on one
+quiz) writes the table from the students who carry an extension and
+removes it when none do.  It replaces an existing table where it
+stands, and puts a new one below a description written directly under
+the heading, never between the drawer and that text.  The table never
+reaches the quiz description, wherever it sits: above or below inline
+text, or inside a =** Description= child.
 
 =org-canvas-validate= warns, push-only, about a student =people.org=
 does not hold and errors on a number cell that is not a whole number.
