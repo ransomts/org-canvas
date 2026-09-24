@@ -1,0 +1,11 @@
+* Fixed
+- #337 An essay, file-upload or hot-spot New Quiz item's prompt is all
+  the text under its heading, so a bulleted list in it reaches the
+  question students see instead of being cut off at the first bullet.
+  This changes what such an item pushes: a quiz whose prompt-only item
+  holds a list is pushed again by the next sync, with nothing to do by
+  hand, and a quiz with no such item is skipped as before.
+- #337 =TYPE: fill-in-the-blank= is no longer accepted on a New Quiz
+  item.  It had no Canvas mapping and was pushed with an invalid type
+  and no answers; validation now reports it as an invalid TYPE and a
+  sync refuses the item, naming =short-answer=, which covers it.

@@ -481,6 +481,31 @@ sync pushes it again.  A quiz with no ordering item keeps its hash.")
       (and (< (point) end)
            (re-search-forward "^[ \t]*:TYPE:[ \t]+ordering[ \t]*$" end t)))))
 
+(defconst org-canvas--new-quiz-listed-prompt-digest-salt "|listed-prompt=337"
+  "Suffix for the items digest of a quiz whose prompt-only item has a list.
+Before issue #337 the prompt of an essay, file-upload or hot-spot item
+was cut at its first bulleted line.  As with
+`org-canvas--new-quiz-ordering-digest-salt', the fix changes the
+payload and not the Org text, so this salt makes such a quiz's stored
+hash stop matching, once, and the next sync pushes the whole prompt.")
+
+(defun org-canvas--new-quiz-has-listed-prompt-p (pom)
+  "Return non-nil when a prompt-only item of the quiz at POM has a list.
+A prompt-only item is one whose TYPE is in
+`org-canvas--new-quiz-prompt-only-types'."
+  (save-excursion
+    (goto-char pom)
+    (org-back-to-heading t)
+    (let ((end (save-excursion (org-end-of-subtree t t) (point)))
+          (found nil))
+      (while (and (not found) (outline-next-heading) (< (point) end))
+        (setq found
+              (and (member (org-entry-get (point) "TYPE")
+                           org-canvas--new-quiz-prompt-only-types)
+                   (string-match-p org-canvas--new-quiz-prompt-end-regexp
+                                   (org-canvas--new-quiz-parse-body-text)))))
+      found)))
+
 (defun org-canvas--new-quiz-items-digest (data)
   "Digest the item subtrees and rubric link of the new quiz in DATA.
 Folded into the quiz payload hash via `:hash-extra': items sync inside
@@ -489,12 +514,16 @@ edit would never reach Canvas once the quiz's own attributes stopped
 changing (same bug class as issue #26).  The rubric id is included
 because rubric association also happens in finalize and is not part
 of the quiz payload.  A quiz holding an ordering item adds
-`org-canvas--new-quiz-ordering-digest-salt' (issue #335)."
+`org-canvas--new-quiz-ordering-digest-salt' (issue #335), and one
+whose prompt-only item has a list adds
+`org-canvas--new-quiz-listed-prompt-digest-salt' (issue #337)."
   (let ((pom (or (plist-get data :pom) (point))))
     (concat (org-canvas--org-children-digest pom)
             (format "|rubric=%s" (plist-get data :rubric-id))
             (when (org-canvas--new-quiz-has-ordering-item-p pom)
-              org-canvas--new-quiz-ordering-digest-salt))))
+              org-canvas--new-quiz-ordering-digest-salt)
+            (when (org-canvas--new-quiz-has-listed-prompt-p pom)
+              org-canvas--new-quiz-listed-prompt-digest-salt))))
 
 (org-canvas-define-sync new-quizzes
   :file org-canvas-new-quizzes-file

@@ -857,6 +857,69 @@ Put these in order.
      (expect (org-canvas--new-quiz-parse-question-text "ordering")
              :to-equal "Put these in order."))))
 
+;;;; Every accepted TYPE has a mapping (issue #337)
+
+(describe "the New Quiz item type tables (issue #337)"
+  (dolist (q-type org-canvas--valid-new-quiz-types)
+    (it (format "map %s to a slug, a scoring algorithm and its answers" q-type)
+      (expect (assoc q-type org-canvas--new-quiz-type-slugs) :to-be-truthy)
+      (expect (assoc q-type org-canvas--new-quiz-scoring-algorithms)
+              :to-be-truthy)
+      (expect (or (assoc q-type org-canvas--new-quiz-interaction-dispatch)
+                  (member q-type org-canvas--new-quiz-prompt-only-types))
+              :to-be-truthy)))
+
+  (it "no longer accept fill-in-the-blank"
+    (expect (member "fill-in-the-blank" org-canvas--valid-new-quiz-types)
+            :to-be nil))
+
+  (it "report fill-in-the-blank as an invalid TYPE when validating"
+    (with-temp-org-buffer
+     "* Quiz\n** Blank\n:PROPERTIES:\n:TYPE: fill-in-the-blank\n:END:\n"
+     (search-forward "Blank")
+     (org-back-to-heading t)
+     (let* ((spec (cl-find "New Quiz Items" (org-canvas--validate-specs)
+                           :key (lambda (s) (plist-get s :label))
+                           :test #'string=))
+            (issues (org-canvas--validate-entry-properties
+                     (plist-get spec :properties)
+                     (list :file (buffer-file-name) :line 2 :heading "Blank")))
+            (issue (car issues)))
+       (expect (length issues) :to-equal 1)
+       (expect (plist-get issue :severity) :to-equal 'error)
+       (expect (plist-get issue :message) :to-match "fill-in-the-blank"))))
+
+  (it "refuse to push a fill-in-the-blank item, naming short-answer"
+    (with-temp-org-buffer
+     "* Quiz\n** Blank\n:PROPERTIES:\n:TYPE: fill-in-the-blank\n:END:\n\nThe capital is ___.\n"
+     (search-forward "Blank")
+     (org-back-to-heading t)
+     (let ((err (condition-case e
+                    (progn (org-canvas--new-quiz-item-parse-entry "42") nil)
+                  (org-canvas-validation-error e))))
+       (expect err :to-be-truthy)
+       (expect (error-message-string err) :to-match "short-answer")))))
+
+;;;; A prompt-only item keeps its lists (issue #337)
+
+(describe "the prompt of an item with no answer list (issue #337)"
+  (dolist (q-type org-canvas--new-quiz-prompt-only-types)
+    (it (format "keeps the bulleted list of a %s prompt in item_body" q-type)
+      (let ((body (test-org-canvas-new-quiz-item-body
+                   q-type "- first point\n- second point\n\nClosing line.\n")))
+        (expect body :to-match "A prompt")
+        (expect body :to-match "first point")
+        (expect body :to-match "second point")
+        (expect body :to-match "Closing line"))))
+
+  (it "stops a prompt-only item's text at its first child heading"
+    (with-temp-org-buffer
+     "* Quiz\n** Essay\n:PROPERTIES:\n:TYPE: essay\n:END:\n\nWrite.\n- a point\n*** Grader notes\nhidden\n"
+     (search-forward "Essay")
+     (org-back-to-heading t)
+     (expect (org-canvas--new-quiz-parse-question-text "essay")
+             :to-equal "Write.\n- a point"))))
+
 ;;;; Interaction Data Building
 
 (describe "org-canvas--new-quiz-item-build-choice-data"
@@ -2459,7 +2522,7 @@ Put these in order.
 
 (describe "org-canvas--valid-new-quiz-types"
   (it "contains all expected types"
-    (expect (length org-canvas--valid-new-quiz-types) :to-equal 12)
+    (expect (length org-canvas--valid-new-quiz-types) :to-equal 11)
     (expect (member "choice" org-canvas--valid-new-quiz-types) :to-be-truthy)
     (expect (member "true-false" org-canvas--valid-new-quiz-types) :to-be-truthy)
     (expect (member "essay" org-canvas--valid-new-quiz-types) :to-be-truthy)
@@ -2888,6 +2951,69 @@ runner pushes it rather than skipping it."
      "* Quiz\nOrder: none.\n"
      (goto-char (point-min))
      (expect (org-canvas--new-quiz-has-ordering-item-p (point)) :to-be nil))))
+
+;;;; A quiz whose prompt-only item held a list is pushed again (#337)
+
+(defun test-org-canvas-337--pushed-p (item-type body &optional restamped)
+  "Run the skip check on a quiz whose one ITEM-TYPE item holds BODY.
+The quiz carries the PAYLOAD_HASH the digest gave before issue #337,
+or, when RESTAMPED, the one it gives now.  Return non-nil when the
+runner pushes it rather than skipping it."
+  (let ((pushed nil))
+    (with-temp-org-buffer
+     (format "* Quiz\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 41\n:END:\n** Item\n:PROPERTIES:\n:TYPE: %s\n:END:\n\nA prompt.\n%s"
+             item-type body)
+     (goto-char (point-min))
+     (org-back-to-heading)
+     (let* ((pom (point))
+            (payload '((title . "Quiz")))
+            (data (list :pom pom :canvas-id "41" :title "Quiz"))
+            (old-hash (md5 (concat (json-encode payload)
+                                   (org-canvas--org-children-digest pom)
+                                   "|rubric=nil")))
+            (ctx (list :push-fn (lambda (&rest _) (setq pushed t) 'skip)
+                       :hash-extra-fn #'org-canvas--new-quiz-items-digest
+                       :feature-name "new-quizzes" :total-count 1
+                       :counters (list :success 0 :skip 0 :fail 0
+                                       :dry-run 0 :dry-run-conflict 0)
+                       :synced-ids (list nil))))
+       (org-entry-put pom "PAYLOAD_HASH"
+                      (if restamped
+                          (org-canvas--sync-payload-hash
+                           payload data #'org-canvas--new-quiz-items-digest)
+                        old-hash))
+       (cl-letf (((symbol-function 'org-canvas--log-info) #'ignore)
+                 ((symbol-function 'org-canvas--sync-remote-drifted-p) #'ignore)
+                 ((symbol-function 'org-canvas--sync-backfill-baseline) #'ignore)
+                 ((symbol-function 'message) #'ignore))
+         (org-canvas--sync-execute-pipeline data payload ctx))))
+    pushed))
+
+(describe "a New Quiz stamped before issue #337"
+  (it "is pushed again when an essay prompt holds a bulleted list"
+    (expect (test-org-canvas-337--pushed-p "essay" "- one\n- two\n")
+            :to-be-truthy))
+
+  (it "is pushed again when a file-upload prompt holds a bulleted list"
+    (expect (test-org-canvas-337--pushed-p "file-upload" "  + one\n")
+            :to-be-truthy))
+
+  (it "is still skipped when the essay prompt holds no list"
+    (expect (test-org-canvas-337--pushed-p "essay" "More prose.\n")
+            :to-be nil))
+
+  (it "is still skipped when only an answer-list item holds bullets"
+    (expect (test-org-canvas-337--pushed-p "choice" "- [X] Yes\n- [ ] No\n")
+            :to-be nil))
+
+  (it "is skipped once restamped with the new digest"
+    (expect (test-org-canvas-337--pushed-p "essay" "- one\n" t) :to-be nil))
+
+  (it "looks at items only, never at the quiz's own text"
+    (with-temp-org-buffer
+     "* Quiz\n:PROPERTIES:\n:TYPE: essay\n:END:\n- a quiz-level bullet\n** Item\n:PROPERTIES:\n:TYPE: essay\n:END:\nProse.\n"
+     (goto-char (point-min))
+     (expect (org-canvas--new-quiz-has-listed-prompt-p (point)) :to-be nil))))
 
 ;;;; Duplicate guard and twin adoption (issue #179)
 

@@ -948,6 +948,9 @@ Use *Classic Quizzes* (=quizzes.org=) when:
 - Level 2 headings = Questions (items) under each quiz
 - List items under questions = Answer choices
 
+An =essay=, =file-upload= or =hot-spot= question has no answer list, so
+everything under its heading, bulleted lists included, is its prompt.
+
 The text under a quiz heading, above its first question, is the quiz's
 instructions: a push sends it as =instructions= (only when there is some), and
 a pull writes Canvas's instructions back in the same place, replacing that
@@ -991,7 +994,7 @@ text and leaving the questions under it alone.
 | =categorization=       | =categorization=       | =Category: item1, item2=                   |
 | =hot-spot=             | =hot_spot=             | Coordinate data (advanced)                |
 
-*Unsupported:* =fill-in-the-blank= is not supported.  The Canvas New Quizzes API accepts the question data but the Build editor requires an internal =working_item_body= field (with backtick-delimited blanks) that cannot be set reliably via the API --- POST requests with this field return 502 Bad Gateway when multiple correct answers are present.  Use =short-answer= instead, which provides equivalent auto-graded free-response functionality without the editor limitation.
+*Unsupported:* =fill-in-the-blank= is not supported.  The Canvas New Quizzes API accepts the question data but the Build editor requires an internal =working_item_body= field (with backtick-delimited blanks) that cannot be set reliably via the API --- POST requests with this field return 502 Bad Gateway when multiple correct answers are present.  Use =short-answer= instead, which provides equivalent auto-graded free-response functionality without the editor limitation.  Validation reports =TYPE: fill-in-the-blank= as an invalid value, and a sync refuses such a question rather than pushing it as another type.
 
 *** Outcome Alignment
 
@@ -4190,7 +4193,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | Property | Type | Allowed values | Default | Description |
 |----------+------+----------------+---------+-------------|
 | =POINTS= | number |  |  | Points for this question |
-| =TYPE= | enum | choice, true-false, multi-answer, short-answer, essay, file-upload, numerical, matching, ordering, categorization, fill-in-the-blank, hot-spot |  | Question type (see below) |
+| =TYPE= | enum | choice, true-false, multi-answer, short-answer, essay, file-upload, numerical, matching, ordering, categorization, hot-spot |  | Question type (see below) |
 | =OUTCOME= | link | org link |  | Link to outcome in outcomes.org (local-only) |
 
 ** New Quizzes
