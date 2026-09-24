@@ -2902,7 +2902,10 @@
         (cl-letf (((symbol-function 'org-canvas--module-resolve-link)
                    (lambda (_link _dir)
                      '(:type "Page" :title "Course Home"
-                       :content-id nil :page-url "course-home"))))
+                       :content-id nil :page-url "course-home")))
+                  ;; The module holds no item yet: nothing to adopt (#308).
+                  ((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (&rest _) [])))
           (with-temp-org-buffer
            "* Module
 :PROPERTIES:
@@ -2931,7 +2934,10 @@
         (cl-letf (((symbol-function 'org-canvas--module-resolve-link)
                    (lambda (_link _dir)
                      '(:type "Page" :title "Course Home"
-                       :content-id nil :page-url "course-home"))))
+                       :content-id nil :page-url "course-home")))
+                  ;; The module holds no item yet: nothing to adopt (#308).
+                  ((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (&rest _) [])))
           (with-temp-org-buffer
            "* Module
 :PROPERTIES:
@@ -3057,7 +3063,7 @@
                              :title "Healed" :dir default-directory)))
                 (warnings nil))
            (cl-letf (((symbol-function 'org-canvas--module-retry-single-pending)
-                      (lambda (entry)
+                      (lambda (entry &optional _cache)
                         (when (equal (plist-get entry :title) "Healed")
                           "Healed")))
                      ((symbol-function 'org-canvas--log-warning)
@@ -4403,6 +4409,169 @@ POST with id 900."
                     ((id . 5) (type . "SubHeader") (title . "Other") (position . 1)))
                   nil)))
       (expect (mapcar (lambda (i) (alist-get 'id i)) twins) :to-equal '(20 10 30)))))
+
+
+(describe "the retry pass adopts a twin before it POSTs (issue #308)"
+  (defmacro test-org-canvas-308--with-closer (&rest body)
+    "Run BODY in a module 781703 holding an unstamped \"Closer\" heading.
+`target-id' is the Canvas id the heading's link target resolves to;
+nil until the test sets it, as when the target syncs later in the run.
+`closer' is a marker on the item heading, `module' on the module
+heading."
+    (declare (indent 0))
+    `(let ((target-id nil))
+       (cl-letf (((symbol-function 'org-canvas--module-resolve-link)
+                  (lambda (_link _dir)
+                    (list :type "Assignment" :title "Closer" :content-id target-id))))
+         (with-temp-org-buffer
+          "* Week 3
+:PROPERTIES:
+:CANVAS_ID: 781703
+:PAYLOAD_HASH: stale
+:END:
+** [[file:assignments.org::*Closer][Closer]]
+"
+          (let ((org-canvas-modules-file (buffer-file-name))
+                (module (progn (goto-char (point-min)) (point-marker)))
+                (closer (progn (search-forward "** ") (org-back-to-heading t)
+                               (point-marker))))
+            ,@body)))))
+
+  (defconst test-org-canvas-308--remote
+    [((id . 5864661) (type . "Assignment") (title . "Closer")
+      (content_id . 10) (position . 1))]
+    "Module 781703 already holds \"Closer\", linked to assignment 10.")
+
+  (defun test-org-canvas-308--entry (marker)
+    "Return a pending entry for the item heading at MARKER."
+    (list :module-id 781703 :marker (copy-marker marker)
+          :title "Closer" :dir default-directory))
+
+  (it "PUTs the item the module already holds when the target gains its id this run"
+    (with-org-canvas-test-config
+      (test-org-canvas-179--with-remote test-org-canvas-308--remote
+        (test-org-canvas-308--with-closer
+          ;; The module pass: the target has no id, so the heading is
+          ;; skipped and left for the retry pass.
+          (org-canvas--module-sync-items 781703 module default-directory ctx)
+          (expect requests :to-be nil)
+          (expect (length (plist-get ctx :module-items-pending)) :to-equal 1)
+          ;; The target syncs later in the run.
+          (setq target-id "10")
+          (org-canvas--module-retry-pending-items (plist-get ctx :module-items-pending))
+          (expect (test-org-canvas-179--request requests 'PUT "modules/781703/items/5864661$")
+                  :to-be-truthy)
+          (expect (test-org-canvas-179--request requests 'POST ".") :to-be nil)
+          (expect (org-entry-get closer "CANVAS_ID") :to-equal "5864661")))))
+
+  (it "still creates the item when the module holds nothing with its content"
+    (with-org-canvas-test-config
+      (test-org-canvas-179--with-remote
+          [((id . 5864661) (type . "Assignment") (title . "Closer")
+            (content_id . 99))]
+        (test-org-canvas-308--with-closer
+          (setq target-id "10")
+          (expect (org-canvas--module-retry-single-pending
+                   (test-org-canvas-308--entry closer))
+                  :to-equal "Closer")
+          (expect (test-org-canvas-179--request requests 'POST "modules/781703/items$")
+                  :to-be-truthy)
+          (expect (org-entry-get closer "CANVAS_ID") :to-equal "900")))))
+
+  (it "reads each module's item list once across the pass"
+    (with-org-canvas-test-config
+      (let ((reads 0))
+        (test-org-canvas-179--with-remote
+            (progn (cl-incf reads) [])
+          (test-org-canvas-308--with-closer
+            (setq target-id "10")
+            (let ((cache (make-hash-table :test #'equal)))
+              (org-canvas--module-retry-module-state 781703 cache)
+              (org-canvas--module-retry-module-state 781703 cache))
+            (expect reads :to-equal 1))))))
+
+  (it "leaves an unstamped item pending, and POSTs nothing, when the list cannot be read"
+    (with-org-canvas-test-config
+      (test-org-canvas-179--with-remote (error "listing failed")
+        (test-org-canvas-308--with-closer
+          (setq target-id "10")
+          (expect (org-canvas--module-retry-single-pending
+                   (test-org-canvas-308--entry closer))
+                  :to-be nil)
+          (expect requests :to-be nil)
+          (expect (cl-find-if (lambda (w) (string-match-p "'Closer' stays pending" w))
+                              warnings)
+                  :to-be-truthy)))))
+
+  (it "PUTs a stamped item without reading the list"
+    (with-org-canvas-test-config
+      (test-org-canvas-179--with-remote (error "must not be read")
+        (test-org-canvas-308--with-closer
+          (setq target-id "10")
+          (org-entry-put closer "CANVAS_ID" "777")
+          (expect (org-canvas--module-retry-single-pending
+                   (test-org-canvas-308--entry closer))
+                  :to-equal "Closer")
+          (expect (test-org-canvas-179--request requests 'PUT "items/777$")
+                  :to-be-truthy)))))
+
+  (it "does not adopt the twin a sibling heading claims"
+    (with-org-canvas-test-config
+      (test-org-canvas-179--with-remote test-org-canvas-308--remote
+        (test-org-canvas-308--with-closer
+          (setq target-id "10")
+          (save-excursion
+            (goto-char (point-max))
+            (insert "** Sibling\n:PROPERTIES:\n:CANVAS_ID: 5864661\n:END:\n"))
+          (org-canvas--module-retry-single-pending (test-org-canvas-308--entry closer))
+          (expect (test-org-canvas-179--request requests 'POST "modules/781703/items$")
+                  :to-be-truthy)
+          (expect (test-org-canvas-179--request requests 'PUT ".") :to-be nil)))))
+
+  (it "adopts one twin for one heading only, within a dry run too"
+    (with-org-canvas-test-config
+      (test-org-canvas-179--with-remote test-org-canvas-308--remote
+        (test-org-canvas-308--with-closer
+          (setq target-id "10")
+          (let ((org-canvas--dry-run t)
+                (cache (make-hash-table :test #'equal))
+                (lines nil))
+            (cl-letf (((symbol-function 'org-canvas--log-info)
+                       (lambda (_logger fmt &rest args)
+                         (push (apply #'format fmt args) lines))))
+              (org-canvas--module-retry-single-pending
+               (test-org-canvas-308--entry closer) cache)
+              (org-canvas--module-retry-single-pending
+               (test-org-canvas-308--entry closer) cache))
+            (expect (cl-find-if (lambda (l) (string-match-p "Would PUT item 'Closer'" l)) lines)
+                    :to-be-truthy)
+            ;; The second heading finds the twin taken and would create.
+            (expect (cl-find-if (lambda (l) (string-match-p "Would POST item 'Closer'" l)) lines)
+                    :to-be-truthy))))))
+
+  (it "writes nothing during a dry run and counts the item as would-sync"
+    (with-org-canvas-test-config
+      (test-org-canvas-179--with-remote test-org-canvas-308--remote
+        (test-org-canvas-308--with-closer
+          (setq target-id "10")
+          (let ((org-canvas--dry-run t)
+                (org-canvas--sync-global-counters
+                 (list :success 0 :skip 1 :fail 0 :dry-run 0 :deferred 0))
+                (org-canvas--sync-global-feature-stats
+                 (list (list :label "Module Items" :success 0 :skip 1 :fail 0
+                             :dry-run 0 :deferred 0 :failed-titles nil
+                             :skipped-titles '("Closer (no linked content synced)")))))
+            (org-canvas--module-retry-pending-items
+             (list (test-org-canvas-308--entry closer)))
+            (expect requests :to-be nil)
+            (expect (org-entry-get closer "CANVAS_ID") :to-be nil)
+            (expect (org-entry-get module "PAYLOAD_HASH") :to-equal "stale")
+            (expect (buffer-modified-p) :to-be nil)
+            (expect (plist-get org-canvas--sync-global-counters :dry-run) :to-equal 1)
+            (expect (plist-get org-canvas--sync-global-counters :success) :to-equal 0)
+            (let ((entry (car org-canvas--sync-global-feature-stats)))
+              (expect (plist-get entry :dry-run) :to-equal 1)
+              (expect (plist-get entry :skip) :to-equal 0))))))))
 
 
 (describe "org-canvas-prune-module-items (issues #177, #179)"

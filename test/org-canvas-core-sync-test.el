@@ -2268,6 +2268,20 @@ Content here.
       (expect (plist-get (car org-canvas--sync-global-feature-stats) :skip)
               :to-equal 1)))
 
+  (it "credits the counter it is given, as a dry run does (issue #308)"
+    (let ((org-canvas--sync-global-counters
+           (list :success 0 :skip 1 :fail 0 :dry-run 0 :deferred 0))
+          (org-canvas--sync-global-feature-stats
+           (list (list :label "Module Items" :success 0 :skip 1 :fail 0
+                       :deferred 0 :failed-titles nil :skipped-titles '("A")))))
+      (org-canvas--sync-reclassify-skip-as-success "Module Items" "A" :dry-run)
+      (expect (plist-get org-canvas--sync-global-counters :dry-run) :to-equal 1)
+      (expect (plist-get org-canvas--sync-global-counters :success) :to-equal 0)
+      (let ((entry (car org-canvas--sync-global-feature-stats)))
+        (expect (plist-get entry :dry-run) :to-equal 1)
+        (expect (plist-get entry :success) :to-equal 0)
+        (expect (plist-get entry :skip) :to-equal 0))))
+
   (it "tolerates a label with no recorded entry"
     (let ((org-canvas--sync-global-counters
            (list :success 0 :skip 1 :fail 0 :dry-run 0 :deferred 0))

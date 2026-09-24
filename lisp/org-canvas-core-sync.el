@@ -518,27 +518,32 @@ including :failed-titles and :skipped-titles name lists."
                      :skipped-titles (reverse (plist-get counters :skipped-titles))))
               org-canvas--sync-global-feature-stats)))))
 
-(defun org-canvas--sync-reclassify-skip-as-success (label title-match)
+(defun org-canvas--sync-reclassify-skip-as-success (label title-match
+                                                          &optional key)
   "Move one skip to success in LABEL's stats entry and the aggregates.
 Removes the first :skipped-titles entry containing TITLE-MATCH.  Used
 by the end-of-run retry pass when a previously skipped item syncs
-after all.  No-op unless a global sync is active."
-  (when org-canvas--sync-global-counters
-    (plist-put org-canvas--sync-global-counters :skip
-               (max 0 (1- (or (plist-get org-canvas--sync-global-counters :skip) 0))))
-    (plist-put org-canvas--sync-global-counters :success
-               (1+ (or (plist-get org-canvas--sync-global-counters :success) 0)))
-    (let ((entry (cl-find label org-canvas--sync-global-feature-stats
-                          :key (lambda (e) (plist-get e :label))
-                          :test #'equal)))
-      (when entry
-        (plist-put entry :skip (max 0 (1- (plist-get entry :skip))))
-        (plist-put entry :success (1+ (plist-get entry :success)))
-        (plist-put entry :skipped-titles
-                   (cl-remove-if (lambda (x)
-                                   (string-match-p (regexp-quote title-match) x))
-                                 (plist-get entry :skipped-titles)
-                                 :count 1))))))
+after all.  KEY is the counter credited, `:success' when nil; a dry
+run passes `:dry-run' (Hard Rule 15).  No-op unless a global sync is
+active."
+  (let ((key (or key :success)))
+    (when org-canvas--sync-global-counters
+      (plist-put org-canvas--sync-global-counters :skip
+                 (max 0 (1- (or (plist-get org-canvas--sync-global-counters :skip) 0))))
+      (setq org-canvas--sync-global-counters
+            (plist-put org-canvas--sync-global-counters key
+                       (1+ (or (plist-get org-canvas--sync-global-counters key) 0))))
+      (let ((entry (cl-find label org-canvas--sync-global-feature-stats
+                            :key (lambda (e) (plist-get e :label))
+                            :test #'equal)))
+        (when entry
+          (plist-put entry :skip (max 0 (1- (plist-get entry :skip))))
+          (plist-put entry key (1+ (or (plist-get entry key) 0)))
+          (plist-put entry :skipped-titles
+                     (cl-remove-if (lambda (x)
+                                     (string-match-p (regexp-quote title-match) x))
+                                   (plist-get entry :skipped-titles)
+                                   :count 1)))))))
 
 (defun org-canvas--sync-stat-total (stats key)
   "Return the sum of KEY across STATS."

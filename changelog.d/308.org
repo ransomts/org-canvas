@@ -1,0 +1,2 @@
+* Fixed
+- #308 The end-of-run retry pass of a full sync looks for a module item's twin before it creates one, as every other create path does: a heading skipped because its link target had no Canvas id yet, and healed once the target was created in the same run, now updates the item its module already holds instead of posting a second copy. When the module's item list cannot be read, the item stays pending rather than being posted blind. Under a dry run the retry pass no longer rewrites the module's =PAYLOAD_HASH= or saves the file, and counts the item as a dry run
