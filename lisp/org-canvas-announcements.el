@@ -47,6 +47,9 @@
  :name "Announcements" :endpoint "discussion_topics"
  :file-var 'org-canvas-announcements-file
  :id-field 'id :id-property "CANVAS_ID" :title-field 'title
+ ;; Canvas serves an announcement at its discussion topic's address.
+ :web-pages '((:level 1 :id-property "CANVAS_ID" :path "discussion_topics/%s"
+               :edit "discussion_topics/%s/edit"))
  :list-params '(("only_announcements" . "true")))
 ;; The two properties Canvas does not hold under a flat key of their own.
 ;; A `:remote-fn' is what the drift report and the registry-driven pull

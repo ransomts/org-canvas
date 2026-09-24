@@ -103,6 +103,10 @@ Key rules:
   the assignment's own dates, issue #273), and the read-parameter
   contract test checks the parameter is one the spec documents on
   the list and show operations
+- Declare =:web-pages= on =org-canvas-register-feature= so
+  =org-canvas-browse-at-point= and the drift report's =b= can open
+  the heading's Canvas page; a file with no feature entry calls
+  =org-canvas-register-web-pages= instead (issue #292, decisions.org)
 
 * Step 2: Define the Parse Stage
 

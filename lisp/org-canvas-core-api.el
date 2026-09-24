@@ -99,6 +99,47 @@ module-item relink — none of which change what a student downloads, so
 drift decided from it re-flagged unchanged files forever (issue #94)."
   (or (plist-get feature :modified-field) 'updated_at))
 
+;;;; Web Pages
+;;
+;; Where an object lives in the Canvas web interface, as opposed to the
+;; API.  Some settings exist only there — a document processor is
+;; attached through a browser-only LTI flow (issue #184) — and getting
+;; the instructor to the page is the package's part of that step (issue
+;; #292).  Nothing here sends a request.
+
+(defun org-canvas--web-url (path)
+  "Return the Canvas web address of PATH under the course.
+Signals a `user-error' when no course is configured, rather than
+opening an address that names none."
+  (when (or (null org-canvas-course-id)
+            (string-empty-p (format "%s" org-canvas-course-id)))
+    (user-error "No course configured; set `org-canvas-course-id' first"))
+  (format "%s/courses/%s/%s"
+          (replace-regexp-in-string "/+\\'" "" org-canvas-base-url)
+          org-canvas-course-id path))
+
+(defun org-canvas--web-rule-path (rule id &optional edit)
+  "Return RULE's page for ID, relative to the course.
+With EDIT, the rule's `:edit' page when it has one.  RULE is one entry
+of a `:web-pages' list (see `org-canvas-register-web-pages')."
+  (let ((template (or (and edit (plist-get rule :edit))
+                      (plist-get rule :path))))
+    (if (plist-get rule :id-property)
+        (format template id)
+      template)))
+
+(defun org-canvas--feature-web-url (feature id &optional edit)
+  "Return the Canvas web address of FEATURE's item ID, or nil.
+FEATURE is a registry entry; its first `:web-pages' rule for a
+top-level heading that names a path decides.  With EDIT, the edit
+page where the rule has one.  Nil when FEATURE declares no page."
+  (let ((rule (cl-find-if (lambda (r)
+                            (and (memq (plist-get r :level) '(nil 1))
+                                 (plist-get r :path)))
+                          (plist-get feature :web-pages))))
+    (when rule
+      (org-canvas--web-url (org-canvas--web-rule-path rule id edit)))))
+
 (defun org-canvas--build-curl-command (method full-url json-payload)
   "Build a curl command string for debugging.
 METHOD is the HTTP method, FULL-URL is the complete URL with query

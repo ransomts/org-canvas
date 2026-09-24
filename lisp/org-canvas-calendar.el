@@ -89,6 +89,8 @@ the same state at validation time."
  :name "Calendar Events" :endpoint "calendar_events"
  :file-var 'org-canvas-calendar-events-file
  :id-field 'id :id-property "CANVAS_ID" :title-field 'title
+ :web-pages '((:level 1 :id-property "CANVAS_ID" :path "calendar_events/%s"
+               :edit "calendar_events/%s/edit"))
  :list-url-fn #'org-canvas--calendar-event-list-url
  :item-url-fn #'org-canvas--calendar-event-item-url
  :list-params #'org-canvas--calendar-event-list-params

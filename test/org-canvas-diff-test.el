@@ -1204,7 +1204,7 @@ The remote updated_at is always newer than the baseline."
       (expect (lookup-key org-canvas-diff-mode-map (kbd "k")) :to-be #'org-canvas-diff-delete)
       (expect (lookup-key org-canvas-diff-mode-map (kbd "p")) :to-be #'org-canvas-diff-pull)
       (expect (lookup-key org-canvas-diff-mode-map (kbd "g")) :to-be #'org-canvas-diff-refresh)
-      (expect (buffer-string) :to-match "RET visit   a acknowledge/adopt")))
+      (expect (buffer-string) :to-match "RET visit   b/B browse/edit on Canvas   a acknowledge/adopt")))
 
   (it "carries each row's feature and entry as a text property, and none off a row"
     (with-current-buffer (test-org-canvas--diff-report-buffer
@@ -1314,6 +1314,92 @@ The remote updated_at is always newer than the baseline."
                 (expect (org-canvas-diff-visit) :to-throw 'user-error))))
         (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
         (delete-file file)))))
+
+(describe "org-canvas-diff-browse (issue #292)"
+  (defun test-org-canvas--diff-browse (results kind &optional edit)
+    "Browse the first KIND row of a report of RESULTS; return the URL opened.
+EDIT is passed on.  A `user-error' comes back as (error MESSAGE)."
+    (let ((opened nil)
+          (org-canvas-base-url "https://canvas.test")
+          (org-canvas-course-id "42"))
+      (cl-letf (((symbol-function 'browse-url) (lambda (url &rest _) (setq opened url))))
+        (with-current-buffer (test-org-canvas--diff-report-buffer results)
+          (test-org-canvas--diff-goto-row kind)
+          (condition-case e
+              (progn (org-canvas-diff-browse edit) opened)
+            (user-error (list 'error (error-message-string e))))))))
+
+  (it "binds b and B in the report"
+    (expect (lookup-key org-canvas-diff-mode-map (kbd "b")) :to-be #'org-canvas-diff-browse)
+    (expect (lookup-key org-canvas-diff-mode-map (kbd "B")) :to-be #'org-canvas-diff-browse-edit))
+
+  (it "opens a CHANGED row's html_url, and assembles its edit page"
+    (let ((results '((:name "Assignments"
+                      :divergences ((:kind modified :title "Essay" :id "61"
+                                     :html-url "https://canvas.test/courses/42/assignments/61"
+                                     :fields (("POINTS" "10" "25"))))))))
+      (expect (test-org-canvas--diff-browse results 'modified)
+              :to-equal "https://canvas.test/courses/42/assignments/61")
+      (expect (test-org-canvas--diff-browse results 'modified t)
+              :to-equal "https://canvas.test/courses/42/assignments/61/edit")))
+
+  (it "assembles a CHANGED row's page when Canvas gave no address"
+    (expect (test-org-canvas--diff-browse
+             '((:name "Pages"
+                :divergences ((:kind modified :title "Home" :id "home" :fields nil))))
+             'modified)
+            :to-equal "https://canvas.test/courses/42/pages/home"))
+
+  (it "opens an EXTRA row's address, even for the edit page, when nothing else is known"
+    (expect (org-canvas--diff-row-web-url
+             '(:feature "Module Items"
+               :entry (:kind extra :title "Link" :id "5"
+                       :html-url "https://canvas.test/courses/42/modules/items/5"))
+             t)
+            :to-equal "https://canvas.test/courses/42/modules/items/5"))
+
+  (it "refuses a MISSING row, and a row with no known page"
+    (let ((r (test-org-canvas--diff-browse
+              '((:name "Assignments" :divergences ((:kind missing :title "Gone" :id "61"))))
+              'missing)))
+      (expect (car r) :to-be 'error)
+      (expect (cadr r) :to-match "not on Canvas any more"))
+    (expect (org-canvas--diff-row-web-url
+             '(:feature "Module Items" :entry (:kind extra :title "Link" :id "5"))
+             nil)
+            :to-throw 'user-error))
+
+  (it "names an untitled row by its id when refusing"
+    (cl-letf (((symbol-function 'org-canvas--diff-row-at-point)
+               (lambda () '(:feature "Assignments" :entry (:kind stale-ack :id "77")))))
+      (expect (condition-case e (org-canvas-diff-browse)
+                (user-error (error-message-string e)))
+              :to-match "77. is not on Canvas any more"))
+    (expect (condition-case e
+                (org-canvas--diff-row-web-url
+                 '(:feature "Module Items" :entry (:kind extra :id "5")) nil)
+              (user-error (error-message-string e)))
+            :to-match "Module Items .5."))
+
+  (it "opens the edit page through its own command"
+    (let (asked)
+      (cl-letf (((symbol-function 'org-canvas-diff-browse)
+                 (lambda (&optional edit) (setq asked edit))))
+        (org-canvas-diff-browse-edit))
+      (expect asked :to-be t))))
+
+(describe "org-canvas--diff-entry carries the web address (issue #292)"
+  (it "keeps html_url on a CHANGED entry"
+    (with-temp-org-buffer "* Essay\n:PROPERTIES:\n:CANVAS_ID: 61\n:CANVAS_UPDATED_AT: 2026-01-01T00:00:00Z\n:END:\n"
+      (let* ((index (org-canvas--diff-remote-index
+                     '(((id . 61) (updated_at . "2026-02-01T00:00:00Z")
+                        (html_url . "https://canvas.test/courses/42/assignments/61")))
+                     'id))
+             (entry (org-canvas--diff-entry
+                     (list :id "61" :title "Essay" :pom (point-marker)) index nil)))
+        (expect (plist-get entry :kind) :to-be 'modified)
+        (expect (plist-get entry :html-url)
+                :to-equal "https://canvas.test/courses/42/assignments/61")))))
 
 (describe "org-canvas-diff-unclaimed carries the web address (issue #103)"
   (it "keeps html_url on extra and unclaimed entries"

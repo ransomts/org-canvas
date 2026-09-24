@@ -62,7 +62,9 @@
 (org-canvas-register-feature
  :name "Grading Schemes" :endpoint "grading_standards"
  :file-var 'org-canvas-grading-schemes-file
- :id-field 'id :id-property "CANVAS_ID" :title-field 'title)
+ :id-field 'id :id-property "CANVAS_ID" :title-field 'title
+ ;; No page per scheme; the course's list of them.
+ :web-pages '((:level 1 :path "grading_standards")))
 
 (defun org-canvas--grading-scheme-remote-context (item)
   "Return where the grading standard ITEM lives: \"course\" or \"account\".

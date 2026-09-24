@@ -61,6 +61,12 @@
   :type 'file
   :group 'org-canvas)
 (org-canvas-register-file-var 'org-canvas-new-quizzes-file "new-quizzes.org")
+;; A New Quiz is an assignment to the web interface: its page launches
+;; the quiz, its edit page the settings.  An item opens its quiz (#292).
+(org-canvas-register-web-pages
+ "New Quizzes" 'org-canvas-new-quizzes-file
+ '(:level 1 :id-property "CANVAS_ASSIGNMENT_ID" :path "assignments/%s"
+   :edit "assignments/%s/edit"))
 (org-canvas-register-properties "new-quizzes"
   :duplicate-titles t
   :label "New Quizzes"

@@ -3798,6 +3798,9 @@ Syllabus text.
          (expect (plist-get issue :severity) :to-equal 'warning)
          (expect (plist-get issue :property) :to-equal "DOCUMENT_PROCESSOR")
          (expect (plist-get issue :message) :to-match "set by Canvas")
+         ;; The warning names the command that opens the page (#292).
+         (expect (plist-get issue :message)
+                 :to-match "org-canvas-browse-edit-at-point")
          (expect (plist-get issue :push-only) :to-be t))))
 
     (it "says nothing on a stamped heading, where a pull wrote it"

@@ -49,6 +49,9 @@
   :type 'file
   :group 'org-canvas)
 (org-canvas-register-file-var 'org-canvas-settings-file "settings.org")
+;; Every heading of settings.org is the course itself (issue #292).
+(org-canvas-register-web-pages
+ "Settings" 'org-canvas-settings-file '(:path "settings"))
 (org-canvas-register-properties "settings"
   :label "Settings"
   :file-var 'org-canvas-settings-file

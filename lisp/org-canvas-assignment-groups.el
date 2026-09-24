@@ -56,6 +56,8 @@
  :name "Assignment Groups" :endpoint "assignment_groups"
  :file-var 'org-canvas-assignment-groups-file
  :id-field 'id :id-property "CANVAS_ID" :title-field 'name
+ ;; Groups are shown and edited on the assignments index.
+ :web-pages '((:level 1 :path "assignments"))
  ;; The stock group every new course ships with.  A skip-fn only holds
  ;; back items no heading claims, so a managed group that happens to be
  ;; named Assignments is still compared (issue #98); an unmanaged one

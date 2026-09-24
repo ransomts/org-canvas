@@ -1320,7 +1320,8 @@ is a (:file :line :heading) plist (issue #184)."
      (org-canvas--validate-make-issue
       'warning loc property
       (format (concat "%s is set by Canvas, never by a push: sync the "
-                      "heading first, attach it in the web UI, then pull")
+                      "heading first, attach it in the web UI "
+                      "(M-x org-canvas-browse-edit-at-point), then pull")
               property)))))
 
 (defun org-canvas--validate-entry-properties (props loc)

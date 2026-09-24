@@ -60,7 +60,11 @@
 (org-canvas-register-feature
  :name "Modules" :endpoint "modules"
  :file-var 'org-canvas-modules-file
- :id-field 'id :id-property "CANVAS_ID" :title-field 'name)
+ :id-field 'id :id-property "CANVAS_ID" :title-field 'name
+ ;; Canvas redirects both to the modules page: a module to its anchor,
+ ;; an item to the content it links.  Modules are edited in place there.
+ :web-pages '((:level 1 :id-property "CANVAS_ID" :path "modules/%s")
+              (:level 2 :id-property "CANVAS_ID" :path "modules/items/%s")))
 (org-canvas-register-properties "modules"
   :duplicate-titles t
   :label "Modules"

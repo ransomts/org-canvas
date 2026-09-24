@@ -539,7 +539,10 @@ agree."
           (list :kind 'modified :title (plist-get entry :title) :id id
                 :updated (alist-get (or modified-field 'updated_at) item)
                 :remote-newer drifted :fields fields
-                :body-compared (and body t))))))))
+                :body-compared (and body t)
+                ;; Where `b' on the row can take a reader (#292).
+                :html-url (org-canvas--diff-normalize-remote
+                           (alist-get 'html_url item)))))))))
 
 (defun org-canvas--diff-modified-p (pom item &optional modified-field)
   "Return non-nil when ITEM was modified after POM's baseline.
@@ -924,6 +927,8 @@ function that writes the list there instead."
 (defvar org-canvas-diff-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "RET") #'org-canvas-diff-visit)
+    (define-key map (kbd "b") #'org-canvas-diff-browse)
+    (define-key map (kbd "B") #'org-canvas-diff-browse-edit)
     (define-key map (kbd "a") #'org-canvas-diff-acknowledge)
     (define-key map (kbd "k") #'org-canvas-diff-delete)
     (define-key map (kbd "p") #'org-canvas-diff-pull)
@@ -938,6 +943,8 @@ function that writes the list there instead."
 \\<org-canvas-diff-mode-map>
 \\[org-canvas-diff-visit] visits the Org heading of the row at point, or
 opens the Canvas object of an EXTRA row in a browser;
+\\[org-canvas-diff-browse] opens the Canvas page of any row whose object
+Canvas still holds, and \\[org-canvas-diff-browse-edit] its edit page;
 \\[org-canvas-diff-acknowledge] acknowledges the EXTRA at point (or drops a
 STALE-ACK), or on a CHANGED row with no compared property differing
 adopts the Canvas timestamp as the heading's baseline
@@ -950,7 +957,7 @@ between rows."
   (setq-local revert-buffer-function (lambda (&rest _) (org-canvas-diff))))
 
 (defconst org-canvas--diff-key-legend
-  "RET visit   a acknowledge/adopt   k delete   p pull   g refresh   TAB next row\n"
+  "RET visit   b/B browse/edit on Canvas   a acknowledge/adopt   k delete   p pull   g refresh   TAB next row\n"
   "One line naming the report's keys, shown in the interactive buffer only.")
 
 (defun org-canvas--diff-row-at-point ()
@@ -1044,6 +1051,46 @@ it lives."
            (user-error "Canvas did not say where %s %s lives; look it up by id"
                        (plist-get feature :name) (plist-get entry :id)))
          (browse-url url))))))
+
+;; RET on a row with a heading visits the heading, so a row that exists
+;; on both sides had no way to the Canvas page at all (issue #292).
+
+(defun org-canvas--diff-row-web-url (row edit)
+  "Return the Canvas web address of ROW's object, or signal.
+With EDIT, the edit page the feature's `:web-pages' names, falling
+back to the object's page; otherwise the `html_url' Canvas gave, or
+the page assembled from the registry when it gave none."
+  (let* ((entry (plist-get row :entry))
+         (feature (org-canvas--registry-find-feature (plist-get row :feature)))
+         (id (plist-get entry :id))
+         (html (plist-get entry :html-url))
+         (assembled (and feature id
+                         (org-canvas--feature-web-url feature id edit))))
+    (or (if edit (or assembled html) (or html assembled))
+        (user-error "No Canvas page is known for %s '%s'"
+                    (plist-get row :feature)
+                    (or (plist-get entry :title) id)))))
+
+(defun org-canvas-diff-browse (&optional edit)
+  "Open the Canvas page of the row at point in a browser.
+With a prefix argument EDIT, open its edit page where Canvas has one.
+A MISSING or STALE-ACK row names an object Canvas no longer holds, so
+there is nothing to open.  Sends nothing to Canvas.  Returns the
+address opened."
+  (interactive "P")
+  (let* ((row (org-canvas--diff-row-at-point))
+         (entry (plist-get row :entry)))
+    (when (memq (plist-get entry :kind) '(missing stale-ack))
+      (user-error "'%s' is not on Canvas any more; nothing to open"
+                  (or (plist-get entry :title) (plist-get entry :id))))
+    (let ((url (org-canvas--diff-row-web-url row edit)))
+      (browse-url url)
+      url)))
+
+(defun org-canvas-diff-browse-edit ()
+  "Open the Canvas edit page of the row at point in a browser."
+  (interactive)
+  (org-canvas-diff-browse t))
 
 (defun org-canvas-diff-acknowledge ()
   "Acknowledge the EXTRA or UNCLAIMED row at point as deliberately unclaimed.

@@ -91,6 +91,8 @@ dates only for a reader who has been a student in the course.")
  :name "Assignments" :endpoint "assignments"
  :file-var 'org-canvas-assignments-file
  :id-field 'id :id-property "CANVAS_ID" :title-field 'name
+ :web-pages '((:level 1 :id-property "CANVAS_ID" :path "assignments/%s"
+               :edit "assignments/%s/edit"))
  :list-params org-canvas--assignment-read-params
  :item-params org-canvas--assignment-read-params
  ;; A classic quiz drags a shadow assignment behind it; the quiz is the

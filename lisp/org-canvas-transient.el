@@ -91,7 +91,9 @@ writing commands greyed rather than only erroring when one is chosen
    ("s" "Sync all" org-canvas-sync)
    ("d" "Dry-run preview" org-canvas-sync-dry-run)
    ("f" "Force push (skip conflicts)" org-canvas-force-push)
-   ("@" "Sync at point..." org-canvas-dispatch-sync-at-point)]
+   ("@" "Sync at point..." org-canvas-dispatch-sync-at-point)
+   ("b" "Open heading at point on Canvas" org-canvas-browse-at-point)
+   ("B" "Open heading's edit page on Canvas" org-canvas-browse-edit-at-point)]
   ["Files"
    :inapt-if-not org-canvas--transient-writable-p
    ("F" "Force re-upload (all files)" org-canvas-files-force-reupload)

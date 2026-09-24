@@ -355,7 +355,12 @@ timestamp: Canvas bumps their `updated_at' on metadata-only touches
 back; the drift report and the orphan scan print it so a suppressed
 item is not silently absent (issue #81).  `:pull-item-fn' is filled in
 separately by `org-canvas-register-pull-item-fn', since the sync and
-pull macros are the ones that know it."
+pull macros are the ones that know it.
+
+`:web-pages' lists the rules that say where the feature's headings
+live in the Canvas web interface, for `org-canvas-browse-at-point'
+and the drift report's browse key (issue #292); see
+`org-canvas-register-web-pages' for their shape."
   (let ((name (plist-get plist :name)))
     (unless (cl-find name org-canvas--feature-registry
                      :key (lambda (f) (plist-get f :name))
@@ -384,12 +389,10 @@ labels them \"Assignment Groups\"."
                            (funcall norm feature-name)))
                 org-canvas--feature-registry)))
 
-(defun org-canvas--registry-feature-for-file (file)
-  "Return the feature registry entry whose file is FILE, or nil.
-Matches on the truename of the feature's `:file-var', so a command run
-in a course buffer can tell which feature it is looking at without
-being told — whichever spelling of a symlinked directory either side
-uses (issue #97)."
+(defun org-canvas--registry-entry-for-file (file entries)
+  "Return the first of ENTRIES whose `:file-var' names FILE, or nil.
+Compares truenames, so either spelling of a symlinked directory
+matches (issue #97)."
   (when file
     (let ((file (file-truename (expand-file-name file))))
       (cl-find-if (lambda (f)
@@ -397,7 +400,56 @@ uses (issue #97)."
                       (and var (boundp var) (symbol-value var)
                           (string= file (file-truename
                                          (expand-file-name (symbol-value var)))))))
-                  org-canvas--feature-registry))))
+                  entries))))
+
+(defun org-canvas--registry-feature-for-file (file)
+  "Return the feature registry entry whose file is FILE, or nil.
+Matches on the truename of the feature's `:file-var', so a command run
+in a course buffer can tell which feature it is looking at without
+being told — whichever spelling of a symlinked directory either side
+uses (issue #97)."
+  (org-canvas--registry-entry-for-file file org-canvas--feature-registry))
+
+(defvar org-canvas--web-page-registry nil
+  "Web-page entries for course files the feature registry does not hold.
+Each is a plist (:name :file-var :web-pages), populated at load time
+by `org-canvas-register-web-pages'.")
+
+(defun org-canvas-register-web-pages (name file-var &rest rules)
+  "Say where the headings of FILE-VAR's file live on the Canvas website.
+NAME labels the file in messages.  Use this for a file the feature
+registry does not hold — New Quizzes, sections, course settings; a
+registered feature declares the same RULES as its `:web-pages'.
+
+Each rule is a plist, tried in order for the heading at point:
+
+  :level        the heading level it applies to; nil for any level
+  :id-property  the property holding the id the page is named by;
+                nil when the page needs none
+  :path         the page under /courses/COURSE/, with %s for the id
+  :edit         the edit page, the same way; nil when Canvas edits the
+                object on its page or has no edit page for it
+  :path-fn      instead of :id-property and :path, a function of no
+                arguments called on the heading, returning the path or
+                nil when the rule does not apply
+
+A heading whose level no rule names takes its parent's page: a quiz
+question has none of its own, so browsing it opens the quiz (issue
+#292)."
+  (let ((entry (list :name name :file-var file-var :web-pages rules)))
+    (setq org-canvas--web-page-registry
+          (cons entry (cl-remove name org-canvas--web-page-registry
+                                 :key (lambda (e) (plist-get e :name))
+                                 :test #'equal)))))
+
+(defun org-canvas--web-pages-for-file (file)
+  "Return the entry naming where FILE's headings live on Canvas, or nil.
+A feature registry entry with `:web-pages' first, then an entry of
+`org-canvas--web-page-registry'."
+  (let ((feature (org-canvas--registry-feature-for-file file)))
+    (if (plist-get feature :web-pages)
+        feature
+      (org-canvas--registry-entry-for-file file org-canvas--web-page-registry))))
 
 (defun org-canvas--recompute-file-paths ()
   "Recompute all file-path variables from `org-canvas-directory'."
