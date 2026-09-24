@@ -39,7 +39,9 @@
 (org-canvas-register-feature
  :name "Group Categories" :endpoint "group_categories"
  :file-var 'org-canvas-group-categories-file
- :id-field 'id :id-property "CANVAS_ID" :title-field 'name)
+ :id-field 'id :id-property "CANVAS_ID" :title-field 'name
+ ;; One tab per group set on the course's groups page.
+ :web-pages '((:level 1 :id-property "CANVAS_ID" :path "groups#tab-%s")))
 (org-canvas-register-properties "group-categories"
   :label "Group Categories"
   :file-var 'org-canvas-group-categories-file

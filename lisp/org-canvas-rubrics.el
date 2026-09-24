@@ -73,7 +73,9 @@
 (org-canvas-register-feature
  :name "Rubrics" :endpoint "rubrics"
  :file-var 'org-canvas-rubrics-file
- :id-field 'id :id-property "CANVAS_ID" :title-field 'title)
+ :id-field 'id :id-property "CANVAS_ID" :title-field 'title
+ ;; Edited on its own page; a criterion opens its rubric.
+ :web-pages '((:level 1 :id-property "CANVAS_ID" :path "rubrics/%s")))
 (defun org-canvas--rubric-remote-free-form (item)
   "Return ITEM's `free_form_criterion_comments' flag.
 The Org property is named after it; the payload key is the shorter

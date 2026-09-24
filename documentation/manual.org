@@ -581,6 +581,8 @@ pull even when the heading says nothing about it, and a push never
 sends the field, so a heading that is silent cannot strip a processor
 attached by hand.  Do not type the property yourself: sync the
 assignment, attach the processor in the web UI, then pull.
+=org-canvas-browse-edit-at-point= on the heading opens the page to
+attach it on (see [[*Opening a Heading on Canvas][Opening a Heading on Canvas]]).
 
 *** Example
 
@@ -2670,6 +2672,7 @@ something the keys act on:
 |---------+-------------------------+---------------------------------------------------------------------|
 | =RET=     | CHANGED, MISSING, UNCLAIMED | Open the course file with point on the heading                  |
 | =RET=     | EXTRA                   | Open the Canvas object in a browser, when the API said where it lives |
+| =b= / =B= | CHANGED, EXTRA, UNCLAIMED | Open the Canvas object's page / edit page in a browser (see [[*Opening a Heading on Canvas][Opening a Heading on Canvas]]) |
 | =a=       | EXTRA, UNCLAIMED        | Acknowledge the id in =org-canvas-diff-known-extras=, with an optional note |
 | =a=       | STALE-ACK               | Drop the acknowledgment                                             |
 | =a=       | CHANGED, no compared property differing | Adopt the Canvas timestamp as the heading's baseline (=org-canvas-diff-adopt-stamp=); refused when a property differs |
@@ -3171,6 +3174,63 @@ pulling only writes local files, and excluding it there left the one
 page students land on as the one page missing from the Org copy.  A
 pulled front page carries =:FRONT_PAGE: true=, so it round-trips.
 
+* Opening a Heading on Canvas
+
+Some settings exist only in the Canvas web interface.  A document
+processor is attached through a browser-only LTI flow (see
+[[*Turnitin has two modes, and org-canvas can set only one][Turnitin has two modes]]),
+and so is anything else Canvas gates behind deep linking.  To get there
+from the heading, put point on it and run:
+
+#+begin_src
+M-x org-canvas-browse-at-point        ; the object's page
+M-x org-canvas-browse-edit-at-point   ; its edit page (or C-u before the first)
+#+end_src
+
+The address is built from =org-canvas-base-url=, =org-canvas-course-id=
+and the heading's id, and handed to =browse-url=; nothing is sent to
+Canvas.  It works in every course file that has a page on Canvas:
+
+| File                  | Heading       | Page                                  | Edit page       |
+|-----------------------+---------------+---------------------------------------+-----------------|
+| assignments.org       | level 1       | =assignments/CANVAS_ID=                 | =…/edit=          |
+| quizzes.org           | level 1       | =quizzes/CANVAS_ID=                     | =…/edit=          |
+| new-quizzes.org       | level 1       | =assignments/CANVAS_ASSIGNMENT_ID=      | =…/edit=          |
+| pages.org             | level 1       | =pages/CANVAS_URL=                      | =…/edit=          |
+| discussions.org       | level 1       | =discussion_topics/CANVAS_ID=           | =…/edit=          |
+| announcements.org     | level 1       | =discussion_topics/CANVAS_ID=           | =…/edit=          |
+| calendar.org          | level 1       | =calendar_events/CANVAS_ID=             | =…/edit=          |
+| modules.org           | module        | =modules/CANVAS_ID=                     | none            |
+| modules.org           | item          | =modules/items/CANVAS_ID=               | none            |
+| files.org             | file          | =files/CANVAS_ID=                       | none            |
+| files.org             | folder        | =files/folder/PATH=                     | none            |
+| rubrics.org           | level 1       | =rubrics/CANVAS_ID=                     | none            |
+| outcomes.org          | group         | =outcomes=                              | none            |
+| outcomes.org          | outcome       | =outcomes/CANVAS_ID=                    | none            |
+| assignment-groups.org | level 1       | =assignments= (the index lists groups)  | none            |
+| group-categories.org  | level 1       | =groups#tab-CANVAS_ID=                  | none            |
+| grading-schemes.org   | level 1       | =grading_standards=                     | none            |
+| sections.org          | level 1       | =sections/CANVAS_ID=                    | none            |
+| settings.org          | any           | =settings=                              | none            |
+
+Every page is under =BASE/courses/COURSE/=.  "None" means Canvas edits
+the object on its page; asking for the edit page opens that page and
+says so.  A heading with no page of its own -- a quiz question, a New
+Quiz item, a rubric criterion, a sub-heading inside a body -- opens its
+parent's page, and the echo area names the heading you started on.  A
+heading with no id is not on Canvas yet, so the command refuses and
+names the property a sync would stamp.
+
+The drift report has the same verbs on its rows: =b= opens the Canvas
+page of a CHANGED, EXTRA or UNCLAIMED row, =B= its edit page (see
+[[*Acting on the Report][Acting on the Report]]).
+
+A module declares where its headings live beside its feature
+registration, as =:web-pages= rules; a file the feature registry does
+not hold (New Quizzes, sections, settings) uses
+=org-canvas-register-web-pages=.  See =org-canvas-register-web-pages=
+for the rule format.
+
 * Commands Reference
 
 ** Sync Commands
@@ -3361,7 +3421,9 @@ Never part of a sync; see [[*messages.org][messages.org]].
 | =org-canvas-apply-scheduled-releases= | Publish modules and items whose =PUBLISH_AT= has passed |
 | =org-canvas-diff=                 | Report how Canvas differs from the Org files (read-only) |
 | =org-canvas-diff-batch=           | As above, exiting non-zero when drift is found |
-| =org-canvas-diff-visit= / =-acknowledge= / =-delete= / =-pull= / =-adopt-stamp= | Row actions in the report buffer (see [[*Acting on the Report][Acting on the Report]]) |
+| =org-canvas-browse-at-point=      | Open the heading at point on Canvas in a browser; =C-u= for the edit page (no API calls) |
+| =org-canvas-browse-edit-at-point= | Open the heading's edit page on Canvas         |
+| =org-canvas-diff-visit= / =-browse= / =-browse-edit= / =-acknowledge= / =-delete= / =-pull= / =-adopt-stamp= | Row actions in the report buffer (see [[*Acting on the Report][Acting on the Report]]) |
 | =org-canvas-diff-adopt-stamps=    | Adopt the Canvas timestamp of every CHANGED entry with no compared property differing (local write only; see [[*Adopting a Stamp][Adopting a Stamp]]) |
 | =org-canvas-adopt-at-point=       | Stamp the heading at point with the Canvas item of the same title (local write only) |
 | =org-canvas-validate=             | Validate all Org files offline (no API calls) |
@@ -3386,7 +3448,7 @@ The menu is organized into groups:
 
 | Group       | Key | Description                                      |
 |-------------+-----+--------------------------------------------------|
-| Sync        | =s=   | Sync all, dry-run, force push, sync-at-point...  |
+| Sync        | =s=   | Sync all, dry-run, force push, sync-at-point, open the heading on Canvas (=b=, =B=) |
 | Pull        | =p=   | Pull all, pull single content type...            |
 | Delete      | =D=   | Delete all, cleanup orphans, delete-at-point...  |
 | Submissions | =g=   | Pull submissions, push grades                    |

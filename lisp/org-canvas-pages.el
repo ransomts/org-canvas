@@ -52,6 +52,8 @@
  :name "Pages" :endpoint "pages"
  :file-var 'org-canvas-pages-file
  :id-field 'url :id-property "CANVAS_URL" :title-field 'title
+ :web-pages '((:level 1 :id-property "CANVAS_URL" :path "pages/%s"
+               :edit "pages/%s/edit"))
  :skip-fn (lambda (item) (eq (alist-get 'front_page item) t))
  :skip-reason "front page")
 (org-canvas-register-properties "pages"

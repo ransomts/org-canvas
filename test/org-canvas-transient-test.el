@@ -39,6 +39,14 @@
              'org-canvas-dispatch 'org-canvas-validate-all)
             :to-be-truthy))
 
+  (it "offers the heading's Canvas page and its edit page (issue #292)"
+    (expect (test-org-canvas-transient-has-command-p
+             'org-canvas-dispatch 'org-canvas-browse-at-point)
+            :to-be-truthy)
+    (expect (test-org-canvas-transient-has-command-p
+             'org-canvas-dispatch 'org-canvas-browse-edit-at-point)
+            :to-be-truthy))
+
   (it "offers stamp adoption beside the drift report (issue #257)"
     (expect (test-org-canvas-transient-has-command-p
              'org-canvas-dispatch 'org-canvas-diff-adopt-stamps)

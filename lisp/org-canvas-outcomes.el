@@ -56,6 +56,9 @@
  :name "Outcomes" :endpoint "outcome_groups"
  :file-var 'org-canvas-outcomes-file
  :id-field 'id :id-property "CANVAS_ID" :title-field 'title
+ ;; A group has no page of its own; the course's outcomes page shows it.
+ :web-pages '((:level 1 :path "outcomes")
+              (:level 2 :id-property "CANVAS_ID" :path "outcomes/%s"))
  ;; Every course has exactly one root group; it cannot be claimed and
  ;; is not drift (issue #98).
  :skip-fn (lambda (item)

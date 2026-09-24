@@ -71,6 +71,8 @@
  :name "Discussions" :endpoint "discussion_topics"
  :file-var 'org-canvas-discussions-file
  :id-field 'id :id-property "CANVAS_ID" :title-field 'title
+ :web-pages '((:level 1 :id-property "CANVAS_ID" :path "discussion_topics/%s"
+               :edit "discussion_topics/%s/edit"))
  :skip-fn (lambda (item) (eq (alist-get 'is_announcement item) t))
  :skip-reason "announcement, pulled by the announcements module")
 (org-canvas-register-properties "discussions"

@@ -84,7 +84,10 @@
 (org-canvas-register-feature
  :name "Quizzes" :endpoint "quizzes"
  :file-var 'org-canvas-quizzes-file
- :id-field 'id :id-property "CANVAS_ID" :title-field 'title)
+ :id-field 'id :id-property "CANVAS_ID" :title-field 'title
+ ;; A question has no page of its own; browsing one opens its quiz.
+ :web-pages '((:level 1 :id-property "CANVAS_ID" :path "quizzes/%s"
+               :edit "quizzes/%s/edit")))
 (org-canvas-register-properties "quizzes"
   :duplicate-titles t
   :label "Quizzes"

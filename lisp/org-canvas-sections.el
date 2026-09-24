@@ -70,6 +70,9 @@
   :type 'file
   :group 'org-canvas)
 (org-canvas-register-file-var 'org-canvas-sections-file "sections.org")
+(org-canvas-register-web-pages
+ "Sections" 'org-canvas-sections-file
+ '(:level 1 :id-property "CANVAS_ID" :path "sections/%s"))
 (org-canvas-register-properties "sections"
   :label "Sections"
   :file-var 'org-canvas-sections-file
