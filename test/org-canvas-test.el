@@ -2145,6 +2145,17 @@ while Lab 4 in the same module is still scheduled ahead."
                 (kill-buffer buf)))
         (delete-file temp))))
 
+  (it "refuses a new-heading pull for a feature that cannot write a whole entry (issue #295)"
+    (let (asked)
+      (cl-letf (((symbol-function 'org-canvas--confirm) (lambda (_) (setq asked t))))
+        (expect (condition-case e
+                    (org-canvas--pull-new-heading
+                     (list :name "Group Categories" :file-var 'org-canvas-outcomes-file)
+                     "5" "Teams")
+                  (user-error (error-message-string e)))
+                :to-match "Group Categories has no pull into a new heading; use M-x org-canvas-pull-group-categories"))
+      (expect asked :to-be nil)))
+
   (it "makes no request when the confirmation is declined"
     (let ((temp (make-temp-file "pull-at-point-no-" nil ".org"))
           (requested nil))
