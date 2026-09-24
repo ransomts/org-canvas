@@ -9,7 +9,12 @@
 ;; people is the registrar's and the web UI's business, so org-canvas
 ;; reads the roster for reference and never writes it back.  Nothing
 ;; local is deleted for being absent on Canvas: a heading for someone
-;; who has dropped stays until you remove it.
+;; who has dropped stays until you remove it, and a pull marks it (issue
+;; #290).  Each heading the roster read did not return is looked up on
+;; its own, in every enrollment state, and gets the state Canvas gives
+;; (deleted, say) or `absent' when Canvas has no enrollment at all, with
+;; DEPARTED saying when.  One the lookup still finds enrolled, or cannot
+;; read, is left as it was: a misread roster must never mark anyone.
 ;;
 ;; The module reads the enrollments API itself and does not depend on
 ;; `org-canvas-sections'; when sections.org exists and holds a section's
@@ -29,7 +34,12 @@
 ;; SECTIONS         - the sections the person is enrolled in, comma
 ;;                    separated, each a link to sections.org when known
 ;; ENROLLMENT_STATE - active, invited, inactive or completed; several,
-;;                    comma separated, when the person's enrollments differ
+;;                    comma separated, when the person's enrollments differ;
+;;                    deleted, rejected or absent once Canvas stops listing
+;;                    the person
+;; DEPARTED         - when a person Canvas stopped listing left: the
+;;                    enrollment's last change, or the pull that first
+;;                    found no enrollment at all
 ;; LAST_ACTIVITY    - when Canvas last saw the person in the course
 ;; SIS_USER_ID      - only with `org-canvas-people-include-identifiers'
 ;; LOGIN_ID         - only with `org-canvas-people-include-identifiers'
@@ -50,6 +60,8 @@
 ;;   GET /courses/:id/enrollments?state[]=...   - one row per enrollment;
 ;;       a person in two sections has two rows.  Paginated by bookmark,
 ;;       so the Link header is followed (`org-canvas-api-request-all-pages')
+;;   GET /courses/:id/enrollments?user_id=N&state[]=...  - one request per
+;;       heading the roster read did not return, every state asked for
 ;;   GET /courses/:id/sections                  - section names for SECTIONS
 ;;   StudentViewEnrollment is Canvas's "Test Student" and is skipped.
 
@@ -57,6 +69,7 @@
 
 (require 'org-canvas-core)
 (require 'cl-lib)
+(require 'seq)
 
 ;;;; Configuration
 
@@ -87,7 +100,9 @@ the ones an institution treats as sensitive."
     (:org-prop "SECTIONS" :data-key :sections :type string :pull-only t
      :doc "Sections the person is enrolled in, comma separated, linked to sections.org when known")
     (:org-prop "ENROLLMENT_STATE" :data-key :enrollment_state :type string :pull-only t
-     :doc "active, invited, inactive or completed; several when the enrollments differ")
+     :doc "active, invited, inactive or completed; several when the enrollments differ; deleted, rejected or absent for a heading Canvas no longer lists")
+    (:org-prop "DEPARTED" :data-key :departed :type timestamp :pull-only t
+     :doc "When a person Canvas no longer lists left; removed if they come back")
     (:org-prop "LAST_ACTIVITY" :data-key :last_activity_at :type timestamp :pull-only t
      :doc "When Canvas last saw the person in the course")
     (:org-prop "SIS_USER_ID" :data-key :sis_user_id :type string :pull-only t
@@ -267,6 +282,8 @@ NAMES maps section ids to names."
      pos "ENROLLMENT_STATE" (mapconcat #'identity (plist-get person :states) ", ")))
   (org-canvas--pull-set-timestamp-property
    pos "LAST_ACTIVITY" (plist-get person :last-activity))
+  ;; Listed again, so back: a departure a previous pull wrote is over.
+  (org-entry-delete pos "DEPARTED")
   (when org-canvas-people-include-identifiers
     (when (plist-get person :sis-user-id)
       (org-canvas-org-set-property pos "SIS_USER_ID" (plist-get person :sis-user-id)))
@@ -290,13 +307,168 @@ maps section ids to names."
 
 ;;;; Pull
 
+(defconst org-canvas--people-roster-states
+  '("active" "invited" "inactive" "completed")
+  "Enrollment states the roster read asks for.")
+
+(defconst org-canvas--people-roster-params
+  (mapcar (lambda (state) (cons "state[]" state)) org-canvas--people-roster-states)
+  "Query parameters of the roster read, one `state[]' per listed state.")
+
+(defconst org-canvas--people-departure-params
+  (mapcar (lambda (state) (cons "state[]" state))
+          '("active" "invited" "creation_pending" "deleted" "rejected"
+            "completed" "inactive"))
+  "Query parameters of one person's departure read: every state Canvas has.
+Without `state[]' Canvas lists only current enrollments, which is the
+question the roster read already answered; the roster's own states are
+asked for too, so a person the roster read missed is seen to be
+enrolled rather than called departed.  The read adds `user_id'.")
+
 (defun org-canvas--people-fetch-enrollments ()
-  "Return every enrollment of the course, in every state, as a list."
+  "Return the course's enrollments in the roster's states, as a list."
   (append (org-canvas-api-request-all-pages
            'GET (org-canvas-api-course-endpoint "enrollments")
-           '(("state[]" . "active") ("state[]" . "invited")
-             ("state[]" . "inactive") ("state[]" . "completed")))
+           org-canvas--people-roster-params)
           nil))
+
+;;;; Departures (issue #290)
+
+(defun org-canvas--people-fetch-user-enrollments (user-id)
+  "Return USER-ID's enrollments in the course, in every state, as a list."
+  (append (org-canvas-api-request-all-pages
+           'GET (org-canvas-api-course-endpoint "enrollments")
+           (append org-canvas--people-departure-params
+                   (list (cons "user_id" (format "%s" user-id)))))
+          nil))
+
+(defun org-canvas--people-latest (field rows)
+  "Return the latest string value of FIELD across ROWS, or nil."
+  (let (latest)
+    (dolist (row rows latest)
+      (let ((v (org-canvas--alist-get-non-null field row)))
+        (when (and (stringp v) (or (null latest) (string> v latest)))
+          (setq latest v))))))
+
+(defun org-canvas--people-departure (user-id rows)
+  "Classify USER-ID's heading from ROWS, their enrollments in every state.
+Only rows for USER-ID in a role the roster lists count, whatever else
+Canvas returned.  Returns (:status absent) when there is none;
+\(:status unverified) when one is in a state the roster read asks for,
+since that read then missed the person and nothing may be written; and
+otherwise (:status departed :states STATES :at TIME), STATES as Canvas
+gives them and TIME the latest `updated_at'."
+  (let* ((uid (format "%s" user-id))
+         (mine (cl-remove-if-not
+                (lambda (e)
+                  (and (equal (format "%s" (alist-get 'user_id e)) uid)
+                       (org-canvas--people-role-rank (alist-get 'type e))))
+                rows))
+         (states (delete-dups
+                  (cl-remove-if-not #'stringp
+                                    (mapcar (lambda (e) (alist-get 'enrollment_state e))
+                                            mine)))))
+    (cond
+     ((null mine) (list :status 'absent))
+     ((or (null states)
+          (seq-intersection states org-canvas--people-roster-states)
+          ;; An enrollment whose user has no account yet is pending, not gone.
+          (member "creation_pending" states))
+      (list :status 'unverified))
+     (t (list :status 'departed :states states
+              :at (org-canvas--people-latest 'updated_at mine))))))
+
+(defun org-canvas--people-check-departure (user-id)
+  "Read USER-ID's enrollments and classify them for a departure.
+A read that fails is `unverified', never `absent': an error is not an
+answer, and a heading is only marked on one."
+  (condition-case err
+      (org-canvas--people-departure
+       user-id (org-canvas--people-fetch-user-enrollments user-id))
+    (error
+     (org-canvas--log-warning org-canvas--logger
+       "[People] Could not read the enrollments of user %s: %s"
+       user-id (error-message-string err))
+     (list :status 'unverified))))
+
+(defun org-canvas--people-absent-headings (people)
+  "Return (USER-ID . MARKER) for each heading whose USER_ID PEOPLE lacks.
+Markers, since marking one heading moves the text after it."
+  (let ((listed (make-hash-table :test 'equal)) (absent nil))
+    (dolist (p people)
+      (puthash (format "%s" (plist-get p :user-id)) t listed))
+    (save-excursion
+      (goto-char (point-min))
+      (org-map-entries
+       (lambda ()
+         (let ((uid (org-entry-get (point) "USER_ID")))
+           (unless (gethash uid listed)
+             (push (cons uid (point-marker)) absent))))
+       "USER_ID={.}" 'file))
+    (nreverse absent)))
+
+(defun org-canvas--people-absent-since (pos)
+  "Return the ISO time the `absent' heading at POS was first found so.
+The DEPARTED it already carries when it was absent before, so the
+date stays the first pull's; now otherwise."
+  (let ((known (and (equal (org-entry-get pos "ENROLLMENT_STATE") "absent")
+                    (org-entry-get pos "DEPARTED"))))
+    (format-time-string "%FT%TZ" (and known (org-time-string-to-time known)) t)))
+
+(defun org-canvas--people-mark-departure (marker verdict)
+  "Write VERDICT, departed or absent, on the heading at MARKER.
+Returns (NAME STATE DATE) for the summary, DATE a YYYY-MM-DD string,
+or nil when Canvas gave no time."
+  (let* ((pos (marker-position marker))
+         (absent (eq (plist-get verdict :status) 'absent))
+         (state (if absent "absent"
+                  (mapconcat #'identity (plist-get verdict :states) ", ")))
+         (at (if absent (org-canvas--people-absent-since pos) (plist-get verdict :at))))
+    (org-canvas-org-set-property pos "ENROLLMENT_STATE" state)
+    (org-canvas--pull-set-timestamp-property pos "DEPARTED" at)
+    (let ((stamp (org-entry-get pos "DEPARTED")))
+      (list (save-excursion (goto-char pos) (org-get-heading t t t t))
+            state
+            (and stamp
+                 (string-match "[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}" stamp)
+                 (match-string 0 stamp))))))
+
+(defun org-canvas--people-mark-departures (people)
+  "Look up each heading of the current buffer that PEOPLE lacks, and mark it.
+Returns (:departed ENTRIES :unverified NAMES): ENTRIES as
+`org-canvas--people-mark-departure' returns them, NAMES the headings
+left as they were because Canvas still lists them or could not say."
+  (let ((departed nil) (unverified nil))
+    (dolist (entry (org-canvas--people-absent-headings people))
+      (let ((verdict (org-canvas--people-check-departure (car entry))))
+        (if (eq (plist-get verdict :status) 'unverified)
+            (push (save-excursion (goto-char (cdr entry)) (org-get-heading t t t t))
+                  unverified)
+          (push (org-canvas--people-mark-departure (cdr entry) verdict) departed)))
+      (set-marker (cdr entry) nil))
+    (list :departed (nreverse departed) :unverified (nreverse unverified))))
+
+(defun org-canvas--people-count-phrase (items)
+  "Return \"N heading\" or \"N headings\" for the list ITEMS."
+  (format "%d %s" (length items) (if (cdr items) "headings" "heading")))
+
+(defun org-canvas--people-departure-summary (result)
+  "Return the closing line's tail for RESULT, the departures a pull found.
+Empty when there were none."
+  (let ((departed (plist-get result :departed))
+        (unverified (plist-get result :unverified)))
+    (concat
+     (when departed
+       (format "; %s no longer on Canvas: %s"
+               (org-canvas--people-count-phrase departed)
+               (mapconcat (lambda (d)
+                            (format "%s (%s)" (nth 0 d)
+                                    (string-join (delq nil (list (nth 1 d) (nth 2 d))) " ")))
+                          departed "; ")))
+     (when unverified
+       (format "; %s not in the roster left unchanged, still enrolled or unreadable: %s"
+               (org-canvas--people-count-phrase unverified)
+               (string-join unverified "; "))))))
 
 (defun org-canvas--people-summary (people)
   "Return a count-per-role string for PEOPLE, in heading order."
@@ -315,35 +487,69 @@ maps section ids to names."
 Roles become level-1 headings and each person a level-2 heading with
 their role, sections, enrollment state and last activity.  Read-only:
 nothing is pushed, and nothing local is deleted for being absent on
-Canvas.  The file holds a roster of names afterwards; keep it out of a
-course repository."
+Canvas: a heading the roster no longer lists is looked up in every
+enrollment state and marked with the state Canvas gives, or `absent',
+and DEPARTED, and the closing line names it.  A roster read that comes
+back empty leaves an existing file alone.  The file holds a roster
+of names afterwards; keep it out of a course repository."
   (interactive)
   (org-canvas--start-operation "PULLING PEOPLE")
   (let* ((file (expand-file-name org-canvas-people-file))
          (people (org-canvas--people-group (org-canvas--people-fetch-enrollments)))
-         (was-fresh (org-canvas--pull-was-fresh-p file)))
+         (was-fresh (org-canvas--pull-was-fresh-p file))
+         (departures nil))
     (org-canvas--pull-confirm-unsaved file "people")
-    (if (null people)
-        (org-canvas--pull-emit-empty-file file (org-canvas--pull-label-for "people"))
-      (let ((names (org-canvas--people-fetch-section-names))
-            (count 0))
-        (unless (file-exists-p file)
-          (with-temp-file file (insert "")))
-        (with-current-buffer (org-canvas--find-file-noselect file)
-          ;; A role heading appears when its first person is placed, so
-          ;; a person who kept an old heading leaves no empty new one.
-          (dolist (person people)
-            (cl-incf count)
-            (when (zerop (% count 25))
-              (message "People [%d/%d]..." count (length people)))
-            (org-canvas--people-pull-one person names))
-          (org-canvas--pull-write-file-header)
-          (org-canvas--save-buffer))))
+    (cond
+     (people (setq departures (org-canvas--people-write file people)))
+     ((org-canvas--people-file-has-people-p file)
+      ;; A course always has its teacher, so an empty roster is a
+      ;; misread, and emptying the file would lose every note in it.
+      (setq departures 'refused))
+     (t (org-canvas--pull-emit-empty-file file (org-canvas--pull-label-for "people"))))
     (org-canvas--pull-kill-fresh-buffer file was-fresh)
-    (let ((summary (org-canvas--people-summary people)))
+    (org-canvas--people-report people departures)))
+
+(defun org-canvas--people-write (file people)
+  "Upsert PEOPLE into FILE and mark the headings Canvas no longer lists.
+Returns the departures, as `org-canvas--people-mark-departures' does."
+  (let ((names (org-canvas--people-fetch-section-names))
+        (count 0)
+        (departures nil))
+    (unless (file-exists-p file)
+      (with-temp-file file (insert "")))
+    (with-current-buffer (org-canvas--find-file-noselect file)
+      ;; A role heading appears when its first person is placed, so
+      ;; a person who kept an old heading leaves no empty new one.
+      (dolist (person people)
+        (cl-incf count)
+        (when (zerop (% count 25))
+          (message "People [%d/%d]..." count (length people)))
+        (org-canvas--people-pull-one person names))
+      (setq departures (org-canvas--people-mark-departures people))
+      (org-canvas--pull-write-file-header)
+      (org-canvas--save-buffer))
+    departures))
+
+(defun org-canvas--people-file-has-people-p (file)
+  "Return non-nil when FILE exists with a USER_ID heading in it."
+  (and (file-exists-p file)
+       (with-temp-buffer
+         (insert-file-contents file)
+         (re-search-forward "^[ \t]*:USER_ID:[ \t]*[^ \t\n]" nil t))))
+
+(defun org-canvas--people-report (people departures)
+  "Log and show the pull's closing line for PEOPLE and DEPARTURES.
+DEPARTURES is `refused' when an empty roster read left the file alone."
+  (if (eq departures 'refused)
+      (progn
+        (org-canvas--log-warning org-canvas--logger
+          "People pull: Canvas listed no one; people.org left as it was")
+        (message "People pull: Canvas listed no one; people.org left as it was."))
+    (let ((summary (org-canvas--people-summary people))
+          (tail (org-canvas--people-departure-summary departures)))
       (org-canvas--log-info org-canvas--logger
-        "People pull complete: %d people (%s)" (length people) summary)
-      (message "People pull complete: %d people (%s)." (length people) summary))))
+        "People pull complete: %d people (%s)%s" (length people) summary tail)
+      (message "People pull complete: %d people (%s)%s." (length people) summary tail))))
 
 (provide 'org-canvas-people)
 ;;; org-canvas-people.el ends here

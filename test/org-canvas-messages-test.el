@@ -384,6 +384,15 @@ Text.
     (expect (test-messages--issues "* A\n:PROPERTIES:\n:TO: Self\n:END:\n")
             :to-equal '("The message has no body; nothing to send")))
 
+  (it "warns about a student people.org marks as gone (issue #290)"
+    (let ((test-messages--people
+           (concat test-messages--people
+                   "** Gone, Gil\n:PROPERTIES:\n:USER_ID: 99\n:ENROLLMENT_STATE: deleted\n:END:\n")))
+      (expect (test-messages--issues "* A\n:PROPERTIES:\n:TO: Students: Adams, Alice; Gone, Gil\n:END:\nText.\n")
+              :to-equal '("TO: 'Gone, Gil' no longer enrolled according to people.org"))
+      (expect (test-messages--issues "* A\n:PROPERTIES:\n:TO: Course\n:END:\nText.\n")
+              :to-equal nil)))
+
   (it "accepts a resolvable heading and a stamped one whose text still matches"
     (expect (test-messages--issues "* A\n:PROPERTIES:\n:TO: Students: Adams, Alice\n:END:\nText.\n")
             :to-equal nil)

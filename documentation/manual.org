@@ -1808,7 +1808,8 @@ enrolled, in what role, in which sections, and whether their
 enrollment is active.  Enrolling and removing people is the
 registrar's and the web UI's business, so nothing in this file is
 pushed, and nothing local is deleted for being absent on Canvas: a
-heading for someone who has dropped stays until you remove it.
+heading for someone who has dropped stays until you remove it, and the
+pull marks it (see Departures below).
 
 *** Structure
 
@@ -1828,10 +1829,40 @@ skipped.
 | =USER_ID=            | number    | Canvas user id; a re-pull matches the heading on it, wherever it sits |
 | =ROLE=               | enum      | student, teacher, ta, observer, designer                             |
 | =SECTIONS=           | string    | Sections, comma separated, each a link to =sections.org= when that file holds the id |
-| =ENROLLMENT_STATE=   | string    | active, invited, inactive, completed; several when the enrollments differ |
+| =ENROLLMENT_STATE=   | string    | active, invited, inactive, completed; several when the enrollments differ; deleted, rejected or absent once Canvas no longer lists the person |
+| =DEPARTED=           | timestamp | When a person Canvas no longer lists left; removed if they come back |
 | =LAST_ACTIVITY=      | timestamp | When Canvas last saw the person in the course                        |
 | =SIS_USER_ID=        | string    | Only with =org-canvas-people-include-identifiers=                    |
 | =LOGIN_ID=           | string    | Only with =org-canvas-people-include-identifiers=                    |
+
+*** Departures
+
+A student whose enrollment is deleted drops out of the roster Canvas
+lists, so a re-pull never reaches their heading.  The pull notices:
+for each heading whose =USER_ID= the roster did not return, it reads
+that person's enrollments in every state (one request each) and writes
+the state Canvas gives, =deleted= say, with =DEPARTED= set to when the
+enrollment last changed.  When Canvas has no enrollment for them at
+all, the state is =absent= and =DEPARTED= is the pull that first found
+it so, kept on later pulls.  The heading stays, notes and all, and the
+closing line names it:
+
+#+begin_example
+People pull complete: 108 people (104 students, 1 teachers, 3 tas); 1 heading no longer on Canvas: Serviss, Sam (deleted 2026-09-14).
+#+end_example
+
+A person listed again (re-enrolled) gets their state back and loses
+=DEPARTED=.  A misread roster must never mark anyone: a heading whose
+own read still finds an enrollment the roster should have listed, or
+whose read fails, is left as it was and named in the closing line as
+unchanged; and a roster read that comes back empty leaves an existing
+=people.org= untouched, since a course always has its teacher.
+
+=org-canvas-validate= warns when an override row, an accommodations
+row or a message's =TO= names a student whose =ENROLLMENT_STATE= says
+they are no longer enrolled (none of its states is =active= or
+=invited=).  Nothing else changes: a departed heading still resolves
+to its user id, so the name works as before.
 
 *** Personal Data
 
@@ -4000,7 +4031,8 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =USER_ID= | number | set by Canvas (read-only) |  | Canvas user id; a re-pull matches the heading on it |
 | =ROLE= | enum | set by Canvas (read-only) |  | The person's role in the course |
 | =SECTIONS= | string | set by Canvas (read-only) |  | Sections the person is enrolled in, comma separated, linked to sections.org when known |
-| =ENROLLMENT_STATE= | string | set by Canvas (read-only) |  | active, invited, inactive or completed; several when the enrollments differ |
+| =ENROLLMENT_STATE= | string | set by Canvas (read-only) |  | active, invited, inactive or completed; several when the enrollments differ; deleted, rejected or absent for a heading Canvas no longer lists |
+| =DEPARTED= | timestamp | set by Canvas (read-only) |  | When a person Canvas no longer lists left; removed if they come back |
 | =LAST_ACTIVITY= | timestamp | set by Canvas (read-only) |  | When Canvas last saw the person in the course |
 | =SIS_USER_ID= | string | set by Canvas (read-only) |  | SIS id, only with org-canvas-people-include-identifiers |
 | =LOGIN_ID= | string | set by Canvas (read-only) |  | Login id, only with org-canvas-people-include-identifiers |

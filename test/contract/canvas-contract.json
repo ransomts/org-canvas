@@ -624,6 +624,29 @@
     ],
     "wrapper": "wiki_page"
   },
+  "people": {
+    "pull_only": true,
+    "reads": {
+      "list": {
+        "operationId": "list_enrollments_courses",
+        "params": [
+          "enrollment_term_id",
+          "grading_period_id",
+          "include",
+          "page",
+          "per_page",
+          "role",
+          "sis_account_id",
+          "sis_course_id",
+          "sis_section_id",
+          "sis_user_id",
+          "state",
+          "type",
+          "user_id"
+        ]
+      }
+    }
+  },
   "quizzes": {
     "fields": {
       "access_code": {

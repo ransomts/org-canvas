@@ -3629,6 +3629,23 @@ Syllabus text.
         (expect (plist-get issue :message) :not :to-match "Alice")
         (expect (plist-get issue :push-only) :to-be t))))
 
+  (it "warns, push-only, about a student people.org marks as gone (issue #290)"
+    (test-validate-override-target-with-files
+      (with-temp-file org-canvas-people-file
+        (insert "* Students\n** Adams, Alice\n:PROPERTIES:\n:USER_ID: 1\n"
+                ":ENROLLMENT_STATE: active\n:END:\n"
+                "** Beta, Bob\n:PROPERTIES:\n:USER_ID: 2\n"
+                ":ENROLLMENT_STATE: deleted\n:DEPARTED: <2026-09-14 Mon 19:19>\n:END:\n"))
+      (expect (org-canvas--validate-override-target "Students: Adams, Alice" loc) :to-be nil)
+      (let ((issue (org-canvas--validate-override-target "Students: Adams, Alice; Beta, Bob" loc)))
+        (expect (plist-get issue :message)
+                :to-equal "Override student(s) 'Beta, Bob' no longer enrolled according to people.org")
+        (expect (plist-get issue :push-only) :to-be t))
+      ;; A name people.org does not hold is the first thing to fix.
+      (expect (plist-get (org-canvas--validate-override-target "Students: Beta, Bob; Nobody" loc)
+                         :message)
+              :to-match "'Nobody' not in people.org")))
+
   (it "warns when the lookup file is missing, unless the row carries an id"
     (let ((org-canvas-groups-file "/tmp/nonexistent-groups-xyzzy.org")
           (org-canvas-people-file "/tmp/nonexistent-people-xyzzy.org")
@@ -3702,6 +3719,18 @@ Syllabus text.
           (expect (plist-get (car issues) :line) :to-equal 11)
           (expect (cadr messages) :to-match "'lots' is not a whole number")
           (expect (plist-get (cadr issues) :severity) :to-equal 'error)))))
+
+  (it "warns, push-only, about a student people.org marks as gone (issue #290)"
+    (test-validate-accommodations-with-people
+      (with-temp-file org-canvas-people-file
+        (insert "* Students\n** Beta, Bob\n:PROPERTIES:\n:USER_ID: 2\n"
+                ":ENROLLMENT_STATE: absent\n:END:\n"))
+      (let ((issues (org-canvas--validate-accommodation-row
+                     '("Beta, Bob" "30" "") '(1 2) (list :file "quizzes.org" :line 9 :heading "Quiz"))))
+        (expect (length issues) :to-equal 1)
+        (expect (plist-get (car issues) :message)
+                :to-equal "Accommodation student 'Beta, Bob' is no longer enrolled according to people.org")
+        (expect (plist-get (car issues) :push-only) :to-be t))))
 
   (it "says nothing about a quiz without a table, or with a #+NAME: line and no table"
     (with-temp-org-buffer "* Quiz\n:PROPERTIES:\n:CANVAS_ID: 7\n:END:\nText only.\n"

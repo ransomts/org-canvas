@@ -309,7 +309,10 @@ PARAMS is an alist as `org-canvas-api-request' takes it."
                                         nil nil #'string=)
                              module)))
                (props (gethash module org-canvas--property-registry)))
-          (when (org-canvas-contract--read-op module 'list)
+          ;; A pull-only module has no registered feature; its reads
+          ;; are checked by their own spec below.
+          (when (and (org-canvas-contract--read-op module 'list)
+                     (not (alist-get "pull_only" (cdr entry) nil nil #'string=)))
             (expect feature :to-be-truthy)
             (org-canvas-contract--check-read-params
              module 'list (org-canvas--feature-list-params feature))
@@ -317,6 +320,15 @@ PARAMS is an alist as `org-canvas-api-request' takes it."
              module 'list (plist-get props :body-list-params))
             (org-canvas-contract--check-read-params
              module 'item (org-canvas--feature-item-params feature)))))))
+
+  (it "the people pull sends only documented parameters on both its reads (issue #290)"
+    ;; The roster read and the per-person departure read are the module's
+    ;; own constants, not a feature registry entry: people is pull-only
+    ;; and must stay out of the drift report, the orphan scan and prune.
+    (org-canvas-contract--check-read-params "people" 'list org-canvas--people-roster-params)
+    (org-canvas-contract--check-read-params
+     "people" 'list (append org-canvas--people-departure-params '(("user_id" . "1"))))
+    (expect org-canvas--people-departure-params :to-contain '("state[]" . "deleted")))
 
   (it "assignments ask for their own dates on both the index and the show"
     (let ((feature (org-canvas--registry-find-feature "assignments"))
