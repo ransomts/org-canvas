@@ -528,6 +528,18 @@ file's opinion about a field it cannot hold an opinion on), the
 validator warns when it is typed on a heading no push has created
 yet, and the module's payload never carries it (issue #184).
 
+A property that records what the course /should/ hold of a
+`:canvas-owned' one — Turnitin wanted on an essay column — declares
+`:intent-of', naming the observed property it is held against
+\(\"DOCUMENT_PROCESSOR\").  It is a declaration, compared and never
+sent: the pull never writes it, the module never reads it into a
+payload (and so never into the payload hash), the validator warns on
+a stamped heading whose last pulled observation does not satisfy it,
+and the drift report compares it with what Canvas says now, reporting
+the reverse — Canvas holds one, the file declares none — as an
+uncounted note (issue #293).  `org-canvas--intent-satisfied-p' is the
+match both use.
+
 A `:remote-fn' that answers from a second request — a discussion's
 checkpoints come by GraphQL, not with the topic — may declare
 `:remote-known-p', a predicate of the Canvas item saying whether that
@@ -554,9 +566,9 @@ Does nothing if FEATURE-NAME is already registered (idempotent)."
 (defun org-canvas--property-to-validate-prop (prop)
   "Convert a registry property spec PROP to validate.el format.
 Registry keys: :org-prop :data-key :type :values :read-only-values
-:canvas-owned :pull-only :target-file :link-id-property.  Validate
-keys: :name :type :values :read-only-values :canvas-owned :pull-only
-:target-file :id-property."
+:canvas-owned :pull-only :intent-of :target-file :link-id-property.
+Validate keys: :name :type :values :read-only-values :canvas-owned
+:pull-only :intent-of :target-file :id-property."
   (let ((result (list :name (plist-get prop :org-prop)
                       :type (plist-get prop :type))))
     (when (plist-get prop :values)
@@ -568,11 +580,27 @@ keys: :name :type :values :read-only-values :canvas-owned :pull-only
       (setq result (plist-put result :canvas-owned t)))
     (when (plist-get prop :pull-only)
       (setq result (plist-put result :pull-only t)))
+    (when (plist-get prop :intent-of)
+      (setq result (plist-put result :intent-of (plist-get prop :intent-of))))
     (when (plist-get prop :target-file)
       (setq result (plist-put result :target-file (plist-get prop :target-file))))
     (when (plist-get prop :link-id-property)
       (setq result (plist-put result :id-property (plist-get prop :link-id-property))))
     result))
+
+(defun org-canvas--intent-satisfied-p (want observed)
+  "Return non-nil when OBSERVED satisfies the declared intent WANT.
+WANT is what an `:intent-of' property says the course should hold
+\(\"Turnitin\"); OBSERVED is what Canvas holds, as its observed
+property spells it (\"Turnitin (asset processor 12345)\"), or nil.
+The match is a case-insensitive substring, since the observed side
+carries an id and whatever name the tool gives itself, and the
+declaration is the name a person would type (issue #293)."
+  (let ((want (and want (string-trim want))))
+    (and (stringp observed)
+         want (not (string-empty-p want))
+         (string-match-p (regexp-quote (downcase want)) (downcase observed))
+         t)))
 
 (defun org-canvas--get-validate-specs-from-registry ()
   "Build a list of validation specs from the property registry.

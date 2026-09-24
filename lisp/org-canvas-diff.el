@@ -30,7 +30,10 @@
 ;; plus, for every property the module registers, the differing values
 ;; themselves — published, points, due dates, group weights and so on —
 ;; and, for modules that declare a `:body-api-key', the body, compared
-;; as text (#83).
+;; as text (#83).  A declared intent (`:intent-of', e.g.
+;; WANT_DOCUMENT_PROCESSOR) is held against what Canvas holds, and the
+;; reverse — Canvas holds one, the file declares none — is a NOTE row,
+;; shown but not counted as drift (#293).
 ;;
 ;; And, counted apart because it is not drift, every heading with no
 ;; Canvas id that the next sync would create: a PENDING row (#294).
@@ -237,6 +240,61 @@ but a push could clear (issue #176)."
       ('csv-enum (mapconcat #'identity (org-canvas--diff-remote-list remote) ","))
       (_ (if remote (format "%s" remote) "(unset)")))))
 
+(defun org-canvas--diff-observed-spec (spec specs)
+  "Return the spec in SPECS that intent SPEC's `:intent-of' names, or nil."
+  (let ((observed (plist-get spec :intent-of)))
+    (seq-find (lambda (s) (equal (plist-get s :org-prop) observed)) specs)))
+
+(defun org-canvas--diff-intent-remote-text (observed-spec item)
+  "Return how the drift report spells the value Canvas ITEM gives OBSERVED-SPEC.
+The observed value when there is one; otherwise whether Canvas said
+\"none\" or said nothing at all.  An instance can omit the field from
+every read — one course's assignment GET carried no `asset_processors'
+key with or without an `include[]' (issue #293) — and a row reading
+\"(none)\" there would claim more than the API told us."
+  (let ((remote (org-canvas--diff-normalize-remote
+                 (org-canvas--diff-remote-field observed-spec item))))
+    (cond (remote (format "%s" remote))
+          ((assq (org-canvas--registry-remote-key observed-spec) item)
+           "(none; attach it in the web UI, then pull)")
+          (t "(not reported by Canvas)"))))
+
+(defun org-canvas--diff-compare-intent (spec specs pom item)
+  "Compare the intent SPEC declares at POM with the value in Canvas ITEM.
+SPECS is the feature's spec list, where the observed property named
+by SPEC's `:intent-of' is found.  Returns (ORG-PROP LOCAL REMOTE) when
+the heading declares an intent Canvas does not satisfy, else nil:
+silence declares nothing, and Canvas holding a processor nobody asked
+for is a note, not drift (`org-canvas--diff-entry-notes')."
+  (let* ((local (org-entry-get pom (plist-get spec :org-prop)))
+         (observed-spec (org-canvas--diff-observed-spec spec specs)))
+    (when (and observed-spec local (not (string-empty-p (string-trim local))))
+      (let ((remote (org-canvas--diff-normalize-remote
+                     (org-canvas--diff-remote-field observed-spec item))))
+        (unless (org-canvas--intent-satisfied-p local remote)
+          (list (plist-get spec :org-prop) (string-trim local)
+                (org-canvas--diff-intent-remote-text observed-spec item)))))))
+
+(defun org-canvas--diff-compare-field (spec pom item)
+  "Compare one ordinary property SPEC at POM against Canvas ITEM.
+Returns (ORG-PROP LOCAL REMOTE) when they differ, else nil.  See
+`org-canvas--diff-compare-fields' for which specs take part."
+  (let ((type (plist-get spec :type))
+        (compare-p (plist-get spec :compare-p))
+        (org-prop (plist-get spec :org-prop)))
+    (when (and (memq type org-canvas--diff-comparable-types)
+               (not (plist-get spec :local-only))
+               (or (null compare-p) (funcall compare-p pom item)))
+      (let* ((written (org-entry-get pom org-prop))
+             (local (and written (not (string-empty-p written)) written)))
+        (when (or local (plist-get spec :canvas-owned))
+          (let ((remote (org-canvas--diff-remote-field spec item)))
+            (unless (if local
+                        (org-canvas--diff-values-equal-p type local remote)
+                      (null (org-canvas--diff-normalize-remote remote)))
+              (list org-prop (or local "(unset)")
+                    (org-canvas--diff-format-remote type remote)))))))))
+
 (defun org-canvas--diff-compare-fields (specs pom item)
   "Compare the properties at POM against Canvas ITEM using SPECS.
 Returns a list of (ORG-PROP LOCAL REMOTE) for the ones that differ.
@@ -251,26 +309,42 @@ heading carries it: the file cannot hold an opinion on a field only
 Canvas may set, so its silence is not one, and a document processor
 attached in the web UI after the last pull is exactly what the report
 exists to show (issue #184).  Such a row reads \"(unset)\" on the
-local side."
-  (let (diffs)
-    (dolist (spec specs)
-      (let ((type (plist-get spec :type))
-            (compare-p (plist-get spec :compare-p))
-            (org-prop (plist-get spec :org-prop)))
-        (when (and (memq type org-canvas--diff-comparable-types)
-                   (not (plist-get spec :local-only))
-                   (or (null compare-p) (funcall compare-p pom item)))
-          (let* ((written (org-entry-get pom org-prop))
-                 (local (and written (not (string-empty-p written)) written)))
-            (when (or local (plist-get spec :canvas-owned))
-              (let ((remote (org-canvas--diff-remote-field spec item)))
-                (unless (if local
-                            (org-canvas--diff-values-equal-p type local remote)
-                          (null (org-canvas--diff-normalize-remote remote)))
-                  (push (list org-prop (or local "(unset)")
-                              (org-canvas--diff-format-remote type remote))
-                        diffs))))))))
-    (nreverse diffs)))
+local side.
+
+An `:intent-of' spec is compared against the observed property it
+names, not against a field of its own: WANT_DOCUMENT_PROCESSOR differs
+when Canvas holds no processor its text matches (issue #293)."
+  (delq nil
+        (mapcar (lambda (spec)
+                  (if (plist-get spec :intent-of)
+                      (org-canvas--diff-compare-intent spec specs pom item)
+                    (org-canvas--diff-compare-field spec pom item)))
+                specs)))
+
+(defun org-canvas--diff-entry-notes (entry index specs)
+  "Return the uncounted NOTE rows for local ENTRY against the remote INDEX.
+SPECS is the feature's spec list.  A note is an `:intent-of' property
+the heading leaves unset while Canvas holds the observation it would
+declare — Turnitin attached to a column no WANT_DOCUMENT_PROCESSOR
+asks for.  That is a legitimate state the file has simply not adopted,
+so it is shown and not counted as drift (issue #293)."
+  (let* ((id (plist-get entry :id))
+         (pom (plist-get entry :pom))
+         (item (and id (gethash id index)))
+         notes)
+    (when item
+      (dolist (spec specs)
+        (when-let* ((observed-spec (and (plist-get spec :intent-of)
+                                        (org-canvas--diff-observed-spec spec specs)))
+                    ((not (org-entry-get pom (plist-get spec :org-prop))))
+                    (remote (org-canvas--diff-normalize-remote
+                             (org-canvas--diff-remote-field observed-spec item))))
+          (push (list :kind 'note :title (plist-get entry :title) :id id
+                      :property (plist-get spec :org-prop)
+                      :observed (plist-get observed-spec :org-prop)
+                      :remote (format "%s" remote))
+                notes))))
+    (nreverse notes)))
 
 ;;;; Body Comparison
 ;;
@@ -898,11 +972,12 @@ headings left are :pending (issue #294)."
 
 (defun org-canvas--diff-feature (feature)
   "Compare one FEATURE registry entry against Canvas.
-Returns a plist (:name :divergences :extra :acknowledged :pending
-:error): :extra holds remote items no Org heading claims — minus the
-ones `org-canvas-diff-known-extras' acknowledges, whose count is
-:acknowledged — :pending the unstamped headings the next sync would
-create (issue #294), and :error a message when the list request failed.
+Returns a plist (:name :divergences :extra :notes :acknowledged
+:pending :error): :extra holds remote items no Org heading claims —
+minus the ones `org-canvas-diff-known-extras' acknowledges, whose count
+is :acknowledged — :notes informational rows that are not drift (issue
+#293), :pending the unstamped headings the next sync would create
+\(issue #294), and :error a message when the list request failed.
 An acknowledged id Canvas no longer holds joins :divergences as a
 `stale-ack' entry, so the acknowledgment list cannot rot (issue #98).
 A feature with a child check (`org-canvas--diff-children-fns') carries
@@ -930,11 +1005,13 @@ after this one (issue #177)."
                (local (org-canvas--diff-collect-local
                        file (plist-get props :query) id-property))
                (claimed (delq nil (mapcar (lambda (e) (plist-get e :id)) local)))
-               divergences)
+               divergences notes)
           (dolist (entry local)
             (let ((d (org-canvas--diff-entry entry index specs props
                                              modified-field)))
               (when d (push d divergences)))
+            (setq notes (nconc notes (org-canvas--diff-entry-notes
+                                      entry index specs)))
             (let ((m (plist-get entry :pom)))
               (when (markerp m) (set-marker m nil))))
           (let* ((unclaimed (org-canvas--diff-unclaimed
@@ -946,6 +1023,7 @@ after this one (issue #177)."
                   :divergences (append (nreverse divergences)
                                        (plist-get split :stale))
                   :extra (plist-get split :extra)
+                  :notes notes
                   :acknowledged (plist-get split :acknowledged)
                   ;; Unstamped headings the next sync creates (#294).
                   :pending (org-canvas--diff-pending
@@ -1014,6 +1092,10 @@ the next sync move it (issue #105) rather than create a second copy."
     ('unclaimed (insert (org-canvas--diff-unclaimed-line entry)))
     ('moved (insert (org-canvas--diff-moved-line entry)))
     ('pending (insert (org-canvas--diff-pending-line entry)))
+    ('note
+     (insert (format "  NOTE      %s (%s on Canvas is %s; no %s declares it — informational, not drift)\n"
+                     (plist-get entry :title) (plist-get entry :observed)
+                     (plist-get entry :remote) (plist-get entry :property))))
     ('modified
      (insert (format "  CHANGED   %s%s\n"
                      (plist-get entry :title)
@@ -1069,16 +1151,19 @@ show up as extra, so without this the report reads as full coverage."
 
 (defun org-canvas--diff-render-section (result)
   "Insert the section of one feature RESULT with rows.
-Divergences and extras come first, under a count of them; the pending
-creates follow, counted apart, since they are not drift (issue #294)."
+Divergences and extras come first, under a count of them; the notes
+\(issue #293) and pending creates (issue #294) follow, counted apart,
+since they are not drift."
   (let* ((rows (append (plist-get result :divergences) (plist-get result :extra)))
+         (notes (plist-get result :notes))
          (pending (plist-get result :pending)))
-    (insert (format "%s: %d divergence(s)%s\n"
+    (insert (format "%s: %d divergence(s)%s%s\n"
                     (plist-get result :name) (length rows)
+                    (if notes (format ", %d note(s)" (length notes)) "")
                     (if pending
                         (format ", %d pending create(s)" (length pending))
                       "")))
-    (dolist (entry (append rows pending))
+    (dolist (entry (append rows notes pending))
       (org-canvas--diff-insert-row (plist-get result :name) entry))
     (insert "\n")))
 
@@ -1101,7 +1186,7 @@ creates follow, counted apart, since they are not drift (issue #294)."
           (insert (format "%s: could not check (%s)\n\n"
                           (plist-get result :name) err)))
          ((or (plist-get result :divergences) (plist-get result :extra)
-              (plist-get result :pending))
+              (plist-get result :notes) (plist-get result :pending))
           (org-canvas--diff-render-section result)))))
     (let ((total (org-canvas--diff-count results))
           (pending (org-canvas--diff-pending-count results)))
@@ -1247,7 +1332,7 @@ heading there is no longer the one named, it is looked up by title."
 
 (defun org-canvas--diff-heading-position (feature entry)
   "Return (FILE . POSITION) of the heading ENTRY of FEATURE describes, or nil.
-MISSING and CHANGED rows are found by their id property; an UNCLAIMED
+MISSING, CHANGED and NOTE rows are found by their id property; an UNCLAIMED
 row names an unstamped heading, found by title; a PENDING row names
 its own file and line (issue #294)."
   (if (eq (plist-get entry :kind) 'pending)
@@ -1261,7 +1346,7 @@ its own file and line (issue #294)."
          (pos (pcase (plist-get entry :kind)
                 ('unclaimed
                  (org-canvas--find-heading-in-file file (plist-get entry :title)))
-                ((or 'missing 'modified)
+                ((or 'missing 'modified 'note)
                  (org-canvas--diff-find-heading-by-id
                   file (or (plist-get feature :id-property) "CANVAS_ID")
                   (plist-get entry :id))))))
@@ -1286,15 +1371,15 @@ Returns the buffer."
 A module item's UNCLAIMED row names its Canvas item, whose heading
 has no title of its own to find it by."
   (pcase (plist-get entry :kind)
-    ((or 'missing 'modified 'pending) t)
+    ((or 'missing 'modified 'note 'pending) t)
     ('unclaimed (not (plist-get entry :module-id)))))
 
 (defun org-canvas-diff-visit ()
   "Visit what the row at point is about.
-A row with an Org heading (MISSING, CHANGED, UNCLAIMED, PENDING) opens
-the course file with point on that heading.  An EXTRA or MOVED row, or
-a module item's UNCLAIMED row, names a Canvas object, which is opened
-in a browser when the API said where it lives."
+A row with an Org heading (MISSING, CHANGED, UNCLAIMED, NOTE, PENDING)
+opens the course file with point on that heading.  An EXTRA or MOVED
+row, or a module item's UNCLAIMED row, names a Canvas object, which is
+opened in a browser when the API said where it lives."
   (interactive)
   (let* ((row (org-canvas--diff-row-at-point))
          (entry (plist-get row :entry)))

@@ -3832,4 +3832,70 @@ Syllabus text.
          (expect (length issues) :to-equal 1)
          (expect (plist-get (car issues) :property) :to-equal "DOCUMENT_PROCESSOR"))))))
 
+;;;; A Declared Document Processor Held Against the Pulled One (issue #293)
+
+(describe "org-canvas--validate-check-intent"
+  (let ((loc (list :file "/f" :line 1 :heading "Global Challenge Essay")))
+    (it "warns on a stamped column the last pull found without a processor"
+      (with-temp-org-buffer
+       "* Global Challenge Essay\n:PROPERTIES:\n:CANVAS_ID: 2497349\n:WANT_DOCUMENT_PROCESSOR: Turnitin\n:END:\n"
+       (org-back-to-heading)
+       (let ((issue (org-canvas--validate-check-intent
+                     "Turnitin" "WANT_DOCUMENT_PROCESSOR" "DOCUMENT_PROCESSOR" loc)))
+         (expect (plist-get issue :severity) :to-equal 'warning)
+         (expect (plist-get issue :property) :to-equal "WANT_DOCUMENT_PROCESSOR")
+         (expect (plist-get issue :heading) :to-equal "Global Challenge Essay")
+         (expect (plist-get issue :message)
+                 :to-match "Turnitin wanted but the last pull recorded no DOCUMENT_PROCESSOR")
+         (expect (plist-get issue :message) :to-match "web UI.*then pull")
+         ;; True of the course whatever you do next (#168).
+         (expect (plist-get issue :push-only) :to-be nil))))
+
+    (it "is satisfied by the pulled name, case-insensitively"
+      (with-temp-org-buffer
+       "* Essay\n:PROPERTIES:\n:CANVAS_ID: 1\n:WANT_DOCUMENT_PROCESSOR: turnitin\n:DOCUMENT_PROCESSOR: Turnitin (asset processor 12345)\n:END:\n"
+       (org-back-to-heading)
+       (expect (org-canvas--validate-check-intent
+                "turnitin" "WANT_DOCUMENT_PROCESSOR" "DOCUMENT_PROCESSOR" loc)
+               :to-be nil)))
+
+    (it "names the processor Canvas has when it is a different one"
+      (with-temp-org-buffer
+       "* Essay\n:PROPERTIES:\n:CANVAS_ID: 1\n:DOCUMENT_PROCESSOR: Copyleaks (asset processor 9)\n:END:\n"
+       (org-back-to-heading)
+       (expect (plist-get (org-canvas--validate-check-intent
+                           "Turnitin" "WANT_DOCUMENT_PROCESSOR" "DOCUMENT_PROCESSOR" loc)
+                          :message)
+               :to-match "recorded DOCUMENT_PROCESSOR: Copyleaks")))
+
+    (it "says nothing before the column exists, or with nothing declared"
+      (with-temp-org-buffer
+       "* Essay\n:PROPERTIES:\n:WANT_DOCUMENT_PROCESSOR: Turnitin\n:END:\n"
+       (org-back-to-heading)
+       (expect (org-canvas--validate-check-intent
+                "Turnitin" "WANT_DOCUMENT_PROCESSOR" "DOCUMENT_PROCESSOR" loc)
+               :to-be nil))
+      (with-temp-org-buffer
+       "* Essay\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+       (org-back-to-heading)
+       (expect (org-canvas--validate-check-intent
+                nil "WANT_DOCUMENT_PROCESSOR" "DOCUMENT_PROCESSOR" loc)
+               :to-be nil)
+       (expect (org-canvas--validate-check-intent
+                "  " "WANT_DOCUMENT_PROCESSOR" "DOCUMENT_PROCESSOR" loc)
+               :to-be nil)))
+
+    (it "runs from the entry check through the registry's own spec"
+      (with-temp-org-buffer
+       "* Essay\n:PROPERTIES:\n:CANVAS_ID: 1\n:WANT_DOCUMENT_PROCESSOR: Turnitin\n:END:\n"
+       (org-back-to-heading)
+       (let* ((props (mapcar #'org-canvas--property-to-validate-prop
+                             (plist-get (gethash "assignments"
+                                                 org-canvas--property-registry)
+                                        :properties)))
+              (issues (org-canvas--validate-entry-properties props loc)))
+         (expect (length issues) :to-equal 1)
+         (expect (plist-get (car issues) :property)
+                 :to-equal "WANT_DOCUMENT_PROCESSOR"))))))
+
 ;;; org-canvas-validate-test.el ends here

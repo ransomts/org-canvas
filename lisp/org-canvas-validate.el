@@ -1324,13 +1324,40 @@ is a (:file :line :heading) plist (issue #184)."
                       "(M-x org-canvas-browse-edit-at-point), then pull")
               property)))))
 
+(defun org-canvas--validate-check-intent (value property observed loc)
+  "Warn when the intent VALUE of PROPERTY is not met by OBSERVED.
+PROPERTY declares `:intent-of' OBSERVED, the `:canvas-owned' property
+a pull writes: WANT_DOCUMENT_PROCESSOR against DOCUMENT_PROCESSOR.  On
+a stamped heading whose last pull recorded nothing that satisfies the
+declaration (`org-canvas--intent-satisfied-p'), the column exists and
+lacks what the file says it should carry — a syllabus promise resting
+on a browser step nobody took, or one a course copy dropped.  Not
+push-only: it is true of the course whatever you do next.  Silent on
+an unstamped heading, where there is no column yet to attach to.  LOC
+is a (:file :line :heading) plist (issue #293)."
+  (when (and value (not (string-empty-p (string-trim value)))
+             (or (org-entry-get (point) "CANVAS_ID")
+                 (org-entry-get (point) "CANVAS_URL")))
+    (let ((have (org-entry-get (point) observed)))
+      (unless (org-canvas--intent-satisfied-p value have)
+        (org-canvas--validate-make-issue
+         'warning loc property
+         (format (concat "%s wanted but %s: attach it on the item's edit "
+                         "page in the web UI (Canvas allows no other way), "
+                         "then pull")
+                 (string-trim value)
+                 (if (and have (not (string-empty-p have)))
+                     (format "the last pull recorded %s: %s" observed have)
+                   (format "the last pull recorded no %s" observed))))))))
+
 (defun org-canvas--validate-entry-properties (props loc)
   "Validate PROPS list for the heading at point.
 LOC is a (:file :line :heading) plist.
 A property's `:read-only-values' join its `:values' as accepted input,
 because they are values a pull wrote down (issue #167).  A
 `:canvas-owned' property is checked for being typed ahead of the
-sync that could give it meaning (issue #184).
+sync that could give it meaning (issue #184), and an `:intent-of'
+property against the observation it names (issue #293).
 Returns a list of issues."
   (let ((issues nil))
     (dolist (prop props)
@@ -1360,7 +1387,11 @@ Returns a list of issues."
           (push issue issues))
         (when (plist-get prop :canvas-owned)
           (when-let* ((owned (org-canvas--validate-check-canvas-owned value name loc)))
-            (push owned issues)))))
+            (push owned issues)))
+        (when-let* ((observed (plist-get prop :intent-of))
+                    (unmet (org-canvas--validate-check-intent
+                            value name observed loc)))
+          (push unmet issues))))
     (nreverse issues)))
 
 (defun org-canvas--validate-entry-at-marker (props date-order structural-fn file)

@@ -2124,6 +2124,60 @@ Content.
           (point))
          (expect (org-entry-get (point) "DOCUMENT_PROCESSOR") :to-be nil))))))
 
+(describe "WANT_DOCUMENT_PROCESSOR on pull (issue #293)"
+  (it "is left as typed whether or not Canvas holds a processor"
+    (dolist (processors '([] [((id . 12345) (title . "Turnitin"))]))
+      (with-temp-org-buffer
+       "* Essay
+:PROPERTIES:
+:CANVAS_ID: 1
+:WANT_DOCUMENT_PROCESSOR: Turnitin
+:END:
+"
+       (org-back-to-heading)
+       (with-html-to-org-identity
+         (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                    (lambda (&rest _) nil)))
+           (org-canvas--assignment-pull-item
+            `((id . 1) (name . "Essay") (description . "")
+              (asset_processors . ,processors))
+            (point))
+           (expect (org-entry-get (point) "WANT_DOCUMENT_PROCESSOR")
+                   :to-equal "Turnitin"))))))
+
+  (it "is never written onto a heading that does not declare it"
+    (with-pull-property-test #'org-canvas--assignment-pull-item
+      '((id . 1) (name . "Essay") (description . "")
+        (asset_processors . [((id . 12345) (title . "Turnitin"))]))
+      "WANT_DOCUMENT_PROCESSOR" :to-be nil)))
+
+(describe "WANT_DOCUMENT_PROCESSOR on push (issue #293)"
+  (it "reaches neither the payload nor the payload hash"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer
+       "* Essay
+:PROPERTIES:
+:CANVAS_ID: 1
+:SUBMISSION: online_upload
+:END:
+Write it.
+"
+       (org-back-to-heading)
+       (cl-flet ((snapshot ()
+                   (let* ((data (org-canvas--assignment-parse-entry))
+                          (payload (org-canvas--assignment-build-payload data)))
+                     (cons (json-encode payload)
+                           (org-canvas--sync-payload-hash
+                            payload data #'org-canvas--assignment-rubric-hash-extra)))))
+         (let ((before (snapshot)))
+           (org-back-to-heading t)
+           (org-entry-put (point) "WANT_DOCUMENT_PROCESSOR" "Turnitin")
+           (let ((after (snapshot)))
+             (expect (cdr after) :to-equal (cdr before))
+             (expect (car after) :to-equal (car before))
+             (expect (car after) :not :to-match "asset_processors")
+             (expect (car after) :not :to-match "[Tt]urnitin"))))))))
+
 (describe "DOCUMENT_PROCESSOR on push (issue #184)"
   (it "never reaches the payload, so a silent heading cannot strip one"
     ;; Canvas cannot attach a processor by API but honours an empty

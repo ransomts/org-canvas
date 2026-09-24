@@ -108,7 +108,8 @@ so no pull-item reaches the network guard."
 ;; spec for it.  A property whose Canvas field is nested (a `:remote-fn'
 ;; spec) needs a `:fields' builder in the table below; one whose parse
 ;; key is not the registry's `:data-key' in either spelling needs a
-;; `:parsed' accessor.  Links and `:local-only' bookkeeping are skipped,
+;; `:parsed' accessor.  Links, `:local-only' bookkeeping and
+;; `:intent-of' declarations (never pulled, #293) are skipped,
 ;; and each feature must still check at least one property so a registry
 ;; entry cannot go quiet.
 
@@ -156,6 +157,9 @@ names the Canvas field, so both are tried."
 (defun org-canvas-roundtrip--checkable-p (spec override)
   "Return non-nil when SPEC can be round-tripped, given its table OVERRIDE."
   (and (not (plist-get spec :local-only))
+       ;; A declared intent is never pulled, so there is nothing to
+       ;; round-trip (issue #293).
+       (not (plist-get spec :intent-of))
        (memq (plist-get spec :type)
              '(boolean number timestamp enum csv-enum string))
        (or (null (plist-get spec :remote-fn))

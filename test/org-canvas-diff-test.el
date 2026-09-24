@@ -2618,5 +2618,179 @@ Returns the result and whether the file's buffer was left modified."
           (expect (org-canvas-diff-delete) :to-throw 'user-error)))
       (expect saved :to-equal '(("Module Items" "501" nil))))))
 
+;;;; A Declared Document Processor Held Against Canvas (issue #293)
+
+(describe "org-canvas--diff-compare-fields with an :intent-of spec"
+  (let ((specs '((:org-prop "DOCUMENT_PROCESSOR" :data-key :asset_processors
+                  :type string :canvas-owned t
+                  :remote-fn org-canvas--assignment-remote-document-processor)
+                 (:org-prop "WANT_DOCUMENT_PROCESSOR" :data-key :want_document_processor
+                  :type string :intent-of "DOCUMENT_PROCESSOR"))))
+    (it "reports a column Canvas says carries no processor"
+      (with-temp-org-buffer
+       "* Essay\n:PROPERTIES:\n:CANVAS_ID: 1\n:WANT_DOCUMENT_PROCESSOR: Turnitin\n:END:\n"
+       (org-back-to-heading)
+       (let ((diffs (org-canvas--diff-compare-fields
+                     specs (point) '((id . 1) (asset_processors . [])))))
+         (expect (length diffs) :to-equal 1)
+         (expect (nth 0 (car diffs)) :to-equal "WANT_DOCUMENT_PROCESSOR")
+         (expect (nth 1 (car diffs)) :to-equal "Turnitin")
+         (expect (nth 2 (car diffs)) :to-match "(none; attach it in the web UI"))))
+
+    (it "says Canvas did not report the field when the key is absent"
+      (with-temp-org-buffer
+       "* Essay\n:PROPERTIES:\n:CANVAS_ID: 1\n:WANT_DOCUMENT_PROCESSOR: Turnitin\n:END:\n"
+       (org-back-to-heading)
+       (expect (org-canvas--diff-compare-fields specs (point) '((id . 1)))
+               :to-equal '(("WANT_DOCUMENT_PROCESSOR" "Turnitin"
+                            "(not reported by Canvas)")))))
+
+    (it "names the processor Canvas holds when it is another tool"
+      (with-temp-org-buffer
+       "* Essay\n:PROPERTIES:\n:CANVAS_ID: 1\n:WANT_DOCUMENT_PROCESSOR: Turnitin\n:DOCUMENT_PROCESSOR: Copyleaks (asset processor 9)\n:END:\n"
+       (org-back-to-heading)
+       (expect (org-canvas--diff-compare-fields
+                specs (point)
+                '((asset_processors . [((id . 9) (title . "Copyleaks"))])))
+               :to-equal '(("WANT_DOCUMENT_PROCESSOR" "Turnitin"
+                            "Copyleaks (asset processor 9)")))))
+
+    (it "agrees when Canvas holds the declared processor"
+      (with-temp-org-buffer
+       "* Essay\n:PROPERTIES:\n:CANVAS_ID: 1\n:WANT_DOCUMENT_PROCESSOR: turnitin\n:DOCUMENT_PROCESSOR: Turnitin (asset processor 5)\n:END:\n"
+       (org-back-to-heading)
+       (expect (org-canvas--diff-compare-fields
+                specs (point)
+                '((asset_processors . [((id . 5) (title . "Turnitin"))])))
+               :to-be nil)))
+
+    (it "leaves a processor attached since the pull to the observed row"
+      (with-temp-org-buffer
+       "* Essay\n:PROPERTIES:\n:CANVAS_ID: 1\n:WANT_DOCUMENT_PROCESSOR: Turnitin\n:END:\n"
+       (org-back-to-heading)
+       (expect (org-canvas--diff-compare-fields
+                specs (point)
+                '((asset_processors . [((id . 5) (title . "Turnitin"))])))
+               :to-equal '(("DOCUMENT_PROCESSOR" "(unset)"
+                            "Turnitin (asset processor 5)")))))
+
+    (it "says nothing for a heading that declares nothing"
+      (with-temp-org-buffer
+       "* Essay\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+       (org-back-to-heading)
+       (expect (org-canvas--diff-compare-fields
+                specs (point) '((asset_processors . [])))
+               :to-be nil)))
+
+    (it "ignores an intent whose observed property is not registered"
+      (with-temp-org-buffer
+       "* Essay\n:PROPERTIES:\n:CANVAS_ID: 1\n:WANT_DOCUMENT_PROCESSOR: Turnitin\n:END:\n"
+       (org-back-to-heading)
+       (expect (org-canvas--diff-compare-fields
+                (last specs) (point) '((asset_processors . [])))
+               :to-be nil)))))
+
+(describe "org-canvas--diff-entry-notes"
+  (let ((specs (org-canvas-diff-test--specs "assignments"))
+        (index (make-hash-table :test 'equal)))
+    (puthash "1" '((id . 1) (asset_processors . [((id . 5) (title . "Turnitin"))]))
+             index)
+    (puthash "2" '((id . 2) (asset_processors . [])) index)
+    (it "notes a processor Canvas holds that no declaration asks for"
+      (with-temp-org-buffer
+       "* Essay\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+       (org-back-to-heading)
+       (let ((notes (org-canvas--diff-entry-notes
+                     (list :id "1" :title "Essay" :pom (point)) index specs)))
+         (expect (length notes) :to-equal 1)
+         (expect (plist-get (car notes) :kind) :to-equal 'note)
+         (expect (plist-get (car notes) :property) :to-equal "WANT_DOCUMENT_PROCESSOR")
+         (expect (plist-get (car notes) :observed) :to-equal "DOCUMENT_PROCESSOR")
+         (expect (plist-get (car notes) :remote)
+                 :to-equal "Turnitin (asset processor 5)"))))
+
+    (it "has nothing to note once declared, without a processor, or without an item"
+      (with-temp-org-buffer
+       "* Essay\n:PROPERTIES:\n:CANVAS_ID: 1\n:WANT_DOCUMENT_PROCESSOR: Turnitin\n:END:\n"
+       (org-back-to-heading)
+       (expect (org-canvas--diff-entry-notes
+                (list :id "1" :title "Essay" :pom (point)) index specs)
+               :to-be nil)
+       (expect (org-canvas--diff-entry-notes
+                (list :id "2" :title "Essay" :pom (point)) index specs)
+               :to-be nil)
+       (expect (org-canvas--diff-entry-notes
+                (list :id "3" :title "Essay" :pom (point)) index specs)
+               :to-be nil)
+       (expect (org-canvas--diff-entry-notes
+                (list :id nil :title "Essay" :pom (point)) index specs)
+               :to-be nil)))))
+
+(describe "org-canvas--diff-feature with a declared document processor"
+  (it "counts an unmet declaration as drift and a surplus processor as a note"
+    (let ((file (make-temp-file "diff-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "* Global Challenge Essay\n:PROPERTIES:\n:CANVAS_ID: 2497349\n"
+                      ":WANT_DOCUMENT_PROCESSOR: Turnitin\n:END:\n"
+                      "* Reflection\n:PROPERTIES:\n:CANVAS_ID: 7\n"
+                      ":DOCUMENT_PROCESSOR: Turnitin (asset processor 5)\n:END:\n"))
+            (let ((org-canvas-assignments-file file))
+              (with-org-canvas-test-config
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (lambda (&rest _)
+                             '(((id . 2497349) (name . "Global Challenge Essay")
+                                (asset_processors . []))
+                               ((id . 7) (name . "Reflection")
+                                (asset_processors . [((id . 5) (title . "Turnitin"))]))))))
+                  (let* ((result (org-canvas--diff-feature
+                                  (org-canvas--registry-find-feature "assignments")))
+                         (divergences (plist-get result :divergences))
+                         (notes (plist-get result :notes))
+                         (report (org-canvas--diff-render (list result))))
+                    (expect (length divergences) :to-equal 1)
+                    (expect (car (car (plist-get (car divergences) :fields)))
+                            :to-equal "WANT_DOCUMENT_PROCESSOR")
+                    (expect (length notes) :to-equal 1)
+                    (expect (plist-get (car notes) :title) :to-equal "Reflection")
+                    (expect (org-canvas--diff-count (list result)) :to-equal 1)
+                    (expect report :to-match "Assignments: 1 divergence(s), 1 note(s)")
+                    (expect report :to-match "CHANGED   Global Challenge Essay")
+                    (expect report :to-match
+                            "WANT_DOCUMENT_PROCESSOR org: Turnitin")
+                    (expect report :to-match
+                            "NOTE      Reflection (DOCUMENT_PROCESSOR on Canvas is Turnitin (asset processor 5); no WANT_DOCUMENT_PROCESSOR declares it")
+                    (expect report :to-match "1 divergence(s) found"))))))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file))))
+
+  (it "renders a feature holding only notes and still reports no drift"
+    (with-org-canvas-test-config
+      (let ((report (org-canvas--diff-render
+                     '((:name "Assignments"
+                        :notes ((:kind note :title "Reflection" :id "7"
+                                 :property "WANT_DOCUMENT_PROCESSOR"
+                                 :observed "DOCUMENT_PROCESSOR"
+                                 :remote "Turnitin")))))))
+        (expect report :to-match "Assignments: 0 divergence(s), 1 note(s)")
+        (expect report :to-match "NOTE      Reflection")
+        (expect report :to-match "No drift"))))
+
+  (it "finds a NOTE row's heading by its id"
+    (let ((file (make-temp-file "diff-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "* Other\n* Reflection\n:PROPERTIES:\n:CANVAS_ID: 7\n:END:\n"))
+            (let ((org-canvas-assignments-file file))
+              (let ((where (org-canvas--diff-heading-position
+                            (org-canvas--registry-find-feature "assignments")
+                            '(:kind note :title "Reflection" :id "7"))))
+                (expect (car where) :to-equal file)
+                (expect (cdr where) :to-be-greater-than 1))))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file)))))
+
 (provide 'org-canvas-diff-test)
 ;;; org-canvas-diff-test.el ends here

@@ -18,6 +18,9 @@
 ;;   SUBMISSION       - Submission type(s): online_upload, online_text_entry, etc.
 ;;   DOCUMENT_PROCESSOR - Turnitin (or another LTI asset processor) attached in
 ;;                      the web UI; pull reads it, push never sends it (#184)
+;;   WANT_DOCUMENT_PROCESSOR - the processor the column should carry; validate
+;;                      and the drift report hold DOCUMENT_PROCESSOR to it,
+;;                      nothing sends it (#293)
 ;;   GROUP            - Link to assignment-groups.org heading
 ;;   RUBRIC_LINK      - Link to rubrics.org heading
 ;;   RUBRIC_USE_FOR_GRADING - true: the rubric total becomes the grade
@@ -185,6 +188,9 @@ dates only for a reader who has been a student in the course.")
      :canvas-owned t
      :remote-fn org-canvas--assignment-remote-document-processor
      :doc "Document processor (Turnitin) attached in the web UI; written by pull, never pushed")
+    (:org-prop "WANT_DOCUMENT_PROCESSOR" :data-key :want_document_processor :type string
+     :intent-of "DOCUMENT_PROCESSOR"
+     :doc "Document processor the column should carry (e.g. Turnitin); checked against DOCUMENT_PROCESSOR by validate and the drift report, never pushed")
     (:org-prop "GROUP_CATEGORY_ID" :data-key :group_category_id :type number
      :doc "Group set ID or link to group-categories.org")
     (:org-prop "POSITION" :data-key :position :type number
@@ -588,7 +594,8 @@ non-nil when a write went out, so the caller can note it on the run."
   ;; honour an empty array as "remove them all", so a heading that is
   ;; merely silent about its DOCUMENT_PROCESSOR must not strip the one
   ;; attached in the web UI (issue #184).  The parse never reads the
-  ;; property, and a test holds the payload to that.
+  ;; property, nor WANT_DOCUMENT_PROCESSOR, the declared intent it is
+  ;; checked against (#293), and a test holds the payload to that.
   (org-canvas--assignment-add-external-tool data assignment))
 
 (defun org-canvas--assignment-build-payload (data)

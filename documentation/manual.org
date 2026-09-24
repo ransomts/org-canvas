@@ -492,6 +492,7 @@ Course assignments with due dates, submission types, and grading options.
 | =EXTERNAL_TOOL_ID=   | number    | Installed LTI tool id, sent as content_id     |
 | =EXTERNAL_TOOL_NEW_TAB= | boolean | Launch the tool in a new tab                 |
 | =DOCUMENT_PROCESSOR= | string    | Turnitin (or another document processor) attached in the web UI; read-only |
+| =WANT_DOCUMENT_PROCESSOR= | string | The processor the column should carry; checked, never sent |
 
 *** Submission Types
 
@@ -583,6 +584,38 @@ attached by hand.  Do not type the property yourself: sync the
 assignment, attach the processor in the web UI, then pull.
 =org-canvas-browse-edit-at-point= on the heading opens the page to
 attach it on (see [[*Opening a Heading on Canvas][Opening a Heading on Canvas]]).
+
+What you /can/ type is the intent.  =WANT_DOCUMENT_PROCESSOR: Turnitin=
+on a heading says the column should carry Turnitin — the promise your
+syllabus makes — and is never sent anywhere: the pull does not touch
+it, the payload never carries it, and editing it does not dirty the
+payload hash.  Two checks hold =DOCUMENT_PROCESSOR= to it, matching
+the name case-insensitively anywhere in the observed value, so
+=Turnitin= is met by =Turnitin (asset processor 12345)=:
+
+- =org-canvas-validate= warns on a synced heading whose last pull
+  recorded no matching processor.  It reads the file only, so pull
+  after attaching before you expect it to go quiet.
+- =org-canvas-diff= compares the intent with what Canvas says now: a
+  column without the processor is a =CHANGED= row naming
+  =WANT_DOCUMENT_PROCESSOR=, and counts as drift.  The Canvas side
+  reads =(none; ...)= when Canvas answered with no processor and
+  =(not reported by Canvas)= when the reply carried no
+  =asset_processors= field at all, which some instances do on every
+  assignment.  The reverse — a processor on Canvas that no
+  =WANT_DOCUMENT_PROCESSOR= asks for — is a =NOTE= row: shown, not
+  counted, since a processor nobody declared is a legitimate state.
+
+Either warning has the same fix, the browser step: open the
+assignment's edit page, attach the processor, save, and pull.
+
+#+begin_src org
+,* Global Challenge Essay
+:PROPERTIES:
+:SUBMISSION: online_upload
+:WANT_DOCUMENT_PROCESSOR: Turnitin
+:END:
+#+end_src
 
 *** Example
 
@@ -3968,6 +4001,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =EXTERNAL_TOOL_ID= | number |  |  | Installed LTI tool id, sent as content_id |
 | =EXTERNAL_TOOL_NEW_TAB= | boolean | true, false |  | Launch the tool in a new tab |
 | =DOCUMENT_PROCESSOR= | string | set by Canvas (read-only) |  | Document processor (Turnitin) attached in the web UI; written by pull, never pushed |
+| =WANT_DOCUMENT_PROCESSOR= | string | any; checked against =DOCUMENT_PROCESSOR=, never sent |  | Document processor the column should carry (e.g. Turnitin); checked against DOCUMENT_PROCESSOR by validate and the drift report, never pushed |
 | =GROUP_CATEGORY_ID= | number |  |  | Group set ID or link to group-categories.org |
 | =POSITION= | number |  |  | Position in assignment list |
 
