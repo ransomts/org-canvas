@@ -1335,15 +1335,19 @@ the page assembled from the registry when it gave none."
 (defun org-canvas-diff-browse (&optional edit)
   "Open the Canvas page of the row at point in a browser.
 With a prefix argument EDIT, open its edit page where Canvas has one.
-A MISSING or STALE-ACK row names an object Canvas no longer holds, so
-there is nothing to open.  Sends nothing to Canvas.  Returns the
-address opened."
+A MISSING or STALE-ACK row names an object Canvas no longer holds,
+and a PENDING row one it does not hold yet, so there is nothing to
+open.  Sends nothing to Canvas.  Returns the address opened."
   (interactive "P")
   (let* ((row (org-canvas--diff-row-at-point))
          (entry (plist-get row :entry)))
-    (when (memq (plist-get entry :kind) '(missing stale-ack))
-      (user-error "'%s' is not on Canvas any more; nothing to open"
-                  (or (plist-get entry :title) (plist-get entry :id))))
+    (pcase (plist-get entry :kind)
+      ((or 'missing 'stale-ack)
+       (user-error "'%s' is not on Canvas any more; nothing to open"
+                   (or (plist-get entry :title) (plist-get entry :id))))
+      ('pending
+       (user-error "'%s' is not on Canvas yet; the next sync creates it"
+                   (plist-get entry :title))))
     (let ((url (org-canvas--diff-row-web-url row edit)))
       (browse-url url)
       url)))

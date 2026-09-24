@@ -1381,6 +1381,17 @@ EDIT is passed on.  A `user-error' comes back as (error MESSAGE)."
               (user-error (error-message-string e)))
             :to-match "Module Items .5."))
 
+  (it "refuses a PENDING row, which Canvas does not hold yet"
+    (let (opened)
+      (cl-letf (((symbol-function 'org-canvas--diff-row-at-point)
+                 (lambda () '(:feature "Assignments"
+                              :entry (:kind pending :title "Why Ethics Part 1"))))
+                ((symbol-function 'browse-url) (lambda (url &rest _) (setq opened url))))
+        (expect (condition-case e (org-canvas-diff-browse)
+                  (user-error (error-message-string e)))
+                :to-match "Why Ethics Part 1. is not on Canvas yet")
+        (expect opened :to-be nil))))
+
   (it "opens the edit page through its own command"
     (let (asked)
       (cl-letf (((symbol-function 'org-canvas-diff-browse)
