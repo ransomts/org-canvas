@@ -1504,39 +1504,114 @@ reason."
                   payload data #'org-canvas--module-items-digest)))
       (org-canvas-org-set-property (point) org-canvas--prop-payload-hash hash))))
 
-(defun org-canvas--module-retry-single-pending (entry)
+(defun org-canvas--module-retry-module-state (module-id cache)
+  "Return the retry pass's state for module MODULE-ID, kept in CACHE.
+CACHE is a hash table the pass shares across its entries, so each
+module's item list is read once (issue #308).  The state is a cons
+\(REMOTE . ADOPTED): the list from `org-canvas--module-remote-items',
+`unknown' when it could not be read, and the ids adopted this pass."
+  (or (gethash module-id cache)
+      (puthash module-id (cons (org-canvas--module-remote-items module-id) nil)
+               cache)))
+
+(defun org-canvas--module-retry-claimed (marker)
+  "Return the item ids the headings in MARKER's module carry."
+  (save-excursion
+    (goto-char marker)
+    (when (org-up-heading-safe)
+      (let* ((markers (org-canvas--module-collect-item-markers (point)))
+             (ids (delq nil (mapcar (lambda (m) (org-entry-get m "CANVAS_ID"))
+                                    markers))))
+        (dolist (m markers) (set-marker m nil))
+        ids))))
+
+(defun org-canvas--module-retry-adopt (data module-id marker cache)
+  "Adopt for unstamped DATA at MARKER its twin in module MODULE-ID.
+The retry pass's twin lookup before any POST (Hard Rule 20, issue
+#308).  DATA with a CANVAS_ID is left alone and needs no list.  An
+unstamped DATA looks in the module's item list, read once per pass
+through CACHE, for an item of its content that no heading of the
+module and no earlier entry of this pass claims.  Returns non-nil when
+the push may go ahead; nil, with a warning, when the list could not be
+read, since a POST then could create a second copy."
+  (or (plist-get data :canvas-id)
+      (let* ((state (org-canvas--module-retry-module-state module-id cache))
+             (remote (car state)))
+        (if (eq remote 'unknown)
+            (progn
+              (org-canvas--log-warning org-canvas--logger
+                "[Retry] Module item '%s' stays pending: module %s's items could not be read, and creating it blind could duplicate one"
+                (plist-get data :title) module-id)
+              nil)
+          (let ((id (org-canvas--module-item-adopt-twin
+                     data module-id remote
+                     (append (org-canvas--module-retry-claimed marker) (cdr state)))))
+            (when id (setcdr state (cons id (cdr state))))
+            t)))))
+
+(defun org-canvas--module-retry-push (data module-id marker)
+  "Push the healed item DATA at MARKER to module MODULE-ID and finalize it.
+Outside a dry run the parent module's PAYLOAD_HASH is refreshed and
+the buffer saved; a dry run writes nothing, to Canvas or to the file."
+  (let* ((position (org-canvas--module-item-position (point)))
+         (payload (org-canvas--module-item-build-payload data position))
+         (response (org-canvas--module-item-push-to-api module-id data payload)))
+    (org-canvas--module-item-finalize data response)
+    (unless (org-canvas--dry-run-response-p response)
+      (save-excursion
+        (goto-char marker)
+        (when (org-up-heading-safe)
+          (org-canvas--module-refresh-payload-hash)))
+      (org-canvas--save-buffer))))
+
+(defun org-canvas--module-retry-single-pending (entry &optional cache)
   "Retry the pending module item described by ENTRY.
-Returns the item title when it synced, nil when it is still pending
-\(target still has no CANVAS_ID, or the push failed).  On success the
-parent module's PAYLOAD_HASH is refreshed so the healed state counts
-as already-synced on the next run."
+Returns the item title when it synced (or would, in a dry run), nil
+when it is still pending \(target still has no CANVAS_ID, the module's
+item list could not be read for an unstamped item, or the push
+failed).  An unstamped item adopts the item its module already holds
+before any POST (`org-canvas--module-retry-adopt', issue #308); CACHE
+is the pass's per-module state, fresh when nil.  On success the parent
+module's PAYLOAD_HASH is refreshed so the healed state counts as
+already-synced on the next run."
   (let ((marker (plist-get entry :marker))
         (module-id (plist-get entry :module-id))
-        (dir (plist-get entry :dir))
-        (title (plist-get entry :title)))
+        (title (plist-get entry :title))
+        (cache (or cache (make-hash-table :test #'equal))))
     (when (and (markerp marker) (marker-buffer marker))
       (with-current-buffer (marker-buffer marker)
         (save-excursion
           (goto-char marker)
           (condition-case err
-              (let ((data (org-canvas--module-item-parse-entry dir)))
-                (when (or (plist-get data :content-id)
-                          (plist-get data :page-url))
-                  (let* ((position (org-canvas--module-item-position (point)))
-                         (payload (org-canvas--module-item-build-payload data position))
-                         (response (org-canvas--module-item-push-to-api module-id data payload)))
-                    (org-canvas--module-item-finalize data response)
-                    (save-excursion
-                      (goto-char marker)
-                      (when (org-up-heading-safe)
-                        (org-canvas--module-refresh-payload-hash)))
-                    (org-canvas--save-buffer)
-                    title)))
+              (let ((data (org-canvas--module-item-parse-entry (plist-get entry :dir))))
+                (when (and (or (plist-get data :content-id)
+                               (plist-get data :page-url))
+                           (org-canvas--module-retry-adopt data module-id marker cache))
+                  (org-canvas--module-retry-push data module-id marker)
+                  title))
             (error
              (org-canvas--log-warning org-canvas--logger
                "[Retry] Module item '%s' failed: %s"
                title (error-message-string err))
              nil)))))))
+
+(defun org-canvas--module-retry-entry (entry cache)
+  "Retry pending ENTRY with the pass's CACHE and release its marker.
+A healed item is logged and moved from skip to success in the global
+summary, or to `:dry-run' in a dry run.  Returns nil when it synced,
+and its title when it is still pending."
+  (let ((synced-title (org-canvas--module-retry-single-pending entry cache))
+        (marker (plist-get entry :marker)))
+    (when (markerp marker) (set-marker marker nil))
+    (if (not synced-title)
+        (plist-get entry :title)
+      (org-canvas--log-info org-canvas--logger
+        "[Retry] %s module item '%s'"
+        (if org-canvas--dry-run "Would sync" "Synced") synced-title)
+      (org-canvas--sync-reclassify-skip-as-success
+       "Module Items" synced-title
+       (if org-canvas--dry-run :dry-run :success))
+      nil)))
 
 (defun org-canvas--module-retry-pending-items (pending)
   "Retry the module items PENDING, skipped because their target lacked a CANVAS_ID.
@@ -1544,30 +1619,24 @@ PENDING is the :module-items-pending of the modules run's context,
 newest first.  Called at the end of `org-canvas-sync': items whose
 target gained an ID during the run are synced now (healing same-run
 ordering casualties) and reclassified from skip to success in the
-global summary; the rest produce a closing hint naming them.  Releases
-the markers."
+global summary — to `:dry-run' in a dry run; the rest produce a
+closing hint naming them.  Each module's item list is read once for
+the pass, for the twin lookup before a POST.  Releases the markers."
   (when pending
     (org-canvas--log-info org-canvas--logger
       "--- Retry pass: %d module item(s) skipped earlier ---"
       (length pending))
-    (let ((still-pending nil))
-      (dolist (entry (reverse pending))
-        (let ((synced-title (org-canvas--module-retry-single-pending entry)))
-          (if synced-title
-              (progn
-                (org-canvas--log-info org-canvas--logger
-                  "[Retry] Synced module item '%s'" synced-title)
-                (org-canvas--sync-reclassify-skip-as-success
-                 "Module Items" synced-title))
-            (push (plist-get entry :title) still-pending)))
-        (let ((m (plist-get entry :marker)))
-          (when (markerp m) (set-marker m nil))))
+    (let* ((cache (make-hash-table :test #'equal))
+           (still-pending
+            (delq nil (mapcar (lambda (entry)
+                                (org-canvas--module-retry-entry entry cache))
+                              (reverse pending)))))
       (when still-pending
         (org-canvas--log-warning org-canvas--logger
           "%d module item(s) still pending: %s — sync their targets, then re-run M-x org-canvas-sync-modules"
           (length still-pending)
           (mapconcat (lambda (x) (format "'%s'" x))
-                     (nreverse still-pending) ", "))))))
+                     still-pending ", "))))))
 
 (org-canvas-define-sync modules
   :file org-canvas-modules-file

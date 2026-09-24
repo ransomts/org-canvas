@@ -1191,7 +1191,11 @@ delete-and-create, and owns the bookkeeping (#105):
   in place.  This is what a reverted =modules.org= or a run that died between
   the create and the stamp needs.  If the module already holds two such
   items, the first by position is adopted and the log names the rest; the
-  drift report lists them as EXTRA under *Module Items* (#177).
+  drift report lists them as EXTRA under *Module Items* (#177).  The same
+  holds for an item skipped because its link target had no Canvas id yet and
+  retried at the end of =org-canvas-sync= once the target has one (#308); if
+  the module's items cannot be read then, the item stays pending rather than
+  being created blind.
 
 Dropping the =:CANVAS_ID:= drawer by hand before the move still works -- it is
 what the reconcile does for you -- and a same-module reorder keeps the id and

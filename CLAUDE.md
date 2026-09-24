@@ -212,7 +212,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 - EXTRA assignments and groups described from the lists already read and a group weight total line that is not drift (#296)
 - hard-break markup dropped from bodies (#266)
 - LTI assignments and no Turnitin, the Turnitin document processor as a Canvas-owned property (#184)
-- module items adopt a twin before POST and the drift report lists item twins (#177, #179)
+- module items adopt a twin before POST and the drift report lists item twins (#177, #179), the end-of-run retry pass included (#308)
 - module items reconcile moves (#105)
 - pending creates counted apart from drift and moved module items paired on the link's description (#294)
 - quiz publish sequencing (#59)
