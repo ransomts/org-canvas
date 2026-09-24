@@ -1343,8 +1343,8 @@ is a (:file :line :heading) plist (issue #293)."
         (org-canvas--validate-make-issue
          'warning loc property
          (format (concat "%s wanted but %s: attach it on the item's edit "
-                         "page in the web UI (Canvas allows no other way), "
-                         "then pull")
+                         "page in the web UI (M-x org-canvas-browse-edit-at-point; "
+                         "Canvas allows no other way), then pull")
                  (string-trim value)
                  (if (and have (not (string-empty-p have)))
                      (format "the last pull recorded %s: %s" observed have)

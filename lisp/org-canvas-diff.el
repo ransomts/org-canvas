@@ -256,7 +256,7 @@ key with or without an `include[]' (issue #293) — and a row reading
                  (org-canvas--diff-remote-field observed-spec item))))
     (cond (remote (format "%s" remote))
           ((assq (org-canvas--registry-remote-key observed-spec) item)
-           "(none; attach it in the web UI, then pull)")
+           "(none; attach it in the web UI, B opens the edit page, then pull)")
           (t "(not reported by Canvas)"))))
 
 (defun org-canvas--diff-compare-intent (spec specs pom item)
