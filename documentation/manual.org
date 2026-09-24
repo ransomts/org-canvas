@@ -2610,7 +2610,8 @@ Per feature:
   A heading is matched by the title it shows: a heading that is a link, such
   as a module item's =[[file:assignments.org::*Lab 1][Lab 1]]= or a files.org
   heading, pairs on the link's description, which is what Canvas calls the
-  item (#294).
+  item (#294).  Module items pair on the content the link names instead (see
+  below).
 - *PENDING* -- a heading with no Canvas id, which the next sync would create
   (#294).  These are listed under their feature but counted apart: they are
   unpushed Org work, not Canvas drifting from Org, so a course with drafts
@@ -2631,10 +2632,20 @@ acknowledges it under ="module-items"= in =org-canvas-diff-known-extras=;
 =org-canvas-prune-module-items= removes every such item at once, after
 confirming.
 
-An extra item is then paired, one to one, with an unstamped item heading of
-the same title (#294).  A heading in the item's own module makes it
-*UNCLAIMED*: the next sync adopts that twin itself when the heading links the
-same content.  A heading under another module makes it *MOVED*: the item was
+An extra item is then paired, one to one, with an unstamped item heading,
+the way the sync would adopt it (#294, #299): the heading's link is resolved
+offline, as the sync resolves it -- the linked heading's =CANVAS_ID= or
+=CANVAS_URL= in the linked Org file, no request -- and the pair needs the
+same type and the same content.  An item that shares the heading's title but
+links other content stays an EXTRA row, and the heading a PENDING one, since
+the sync would create a new item rather than adopt that one; an item Canvas
+now calls something else still pairs when it links the heading's content.  A
+SubHeader or an external URL has no content beyond its title, so it pairs by
+title, as the sync adopts it.  So does a heading whose link target has no
+Canvas id yet, and its row says it was "paired by title only": what content
+the target will get is not known until it is synced.  A heading in the
+item's own module makes it *UNCLAIMED*: the next sync adopts that twin
+itself.  A heading under another module makes it *MOVED*: the item was
 carried to a new week in Org without its stamp, so the next sync would create
 it in the new module and leave this copy in the old one.  To move it instead,
 put the item id the row names on the heading as =CANVAS_ID=; the sync then
