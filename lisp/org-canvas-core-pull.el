@@ -454,13 +454,19 @@ of a line afterwards, as it did before."
 ID is looked up in ID-PROPERTY; TITLE matches an unstamped child.  The
 position of the existing child, emptied, when
 `org-canvas--pull-find-child' finds one; else the end of the entry's
-subtree, with a newline added so the child starts on its own line.
+subtree past its trailing blank lines, the next heading or the end of
+the buffer, with a newline added so the child starts on its own line.
 Point is left there.  The entry may sit at any level; the child goes
-one level below it (`org-canvas--pull-child-stars' spells the stars)."
+one level below it (`org-canvas--pull-child-stars' spells the stars).
+
+Either way a heading or the end of the buffer follows the child, so a
+child appended and then rewritten in place leaves the same bytes: an
+append before the blank lines left one of them after the child, which
+the rewrite, deleting to the next heading, dropped (issue #314)."
   (let ((existing (org-canvas--pull-find-child id-property id title)))
     (if existing
         (goto-char (org-canvas--pull-remove-child existing))
-      (goto-char (save-excursion (org-end-of-subtree t) (point)))
+      (goto-char (save-excursion (org-end-of-subtree t t) (point)))
       (unless (bolp) (insert "\n")))
     (point)))
 
