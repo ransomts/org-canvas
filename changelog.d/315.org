@@ -1,0 +1,5 @@
+* Changed
+- #315 A pull request records its changelog entry as =changelog.d/<issue>.org= instead of
+  editing =CHANGELOG.org=; =scripts/changelog-collect.py= validates the fragments and folds
+  them in at release time. CI runs the Emacs 29.x suites and the isolation check in three
+  shards each, so a run takes about as long as its setup plus a third of the slowest suite

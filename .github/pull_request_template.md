@@ -10,7 +10,7 @@ Closes #
 - [ ] `eldev lint` has no warnings. CI lints on Emacs 30.1, whose checkdoc rejects a third-person verb ("holds") in a docstring's first line even when a newer local Emacs accepts it
 - [ ] `eldev complexity` reports 0 functions above 15
 - [ ] Coverage stays at 99% or above (`eldev test -u "on,codecov,dontsend" -U coverage/coverage.json`)
-- [ ] `CHANGELOG.org` has an entry under *Unreleased* naming the issue
+- [ ] A changelog fragment `changelog.d/<issue>.org` names the issue (`changelog.d/README.org`); `CHANGELOG.org` itself is not edited
 - [ ] If the property registry changed: the manual's Property Reference was regenerated with
       `eldev emacs --batch -l test/docgen/generate-property-reference.el --eval '(org-canvas-docgen-write "documentation/manual.org")'`
 - [ ] If behaviour changed: `documentation/manual.org` and the relevant `documentation/architecture/` narrative say so

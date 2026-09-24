@@ -1,0 +1,57 @@
+name: Set up Emacs, Eldev and pandoc
+description: >-
+  The setup every Emacs job repeats: Emacs at a version, Eldev, the
+  cached .eldev dependencies and, when asked, pandoc (the HTML to Org
+  converter the pull specs exercise).  Run after actions/checkout.
+
+inputs:
+  emacs-version:
+    description: Emacs version for jcs090218/setup-emacs
+    required: true
+  pandoc:
+    description: Install pandoc ("true" or "false")
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Emacs
+      uses: jcs090218/setup-emacs@a5b1cbb1af335d2e7bef99c0aa6e02cdad229182
+      with:
+        version: ${{ inputs.emacs-version }}
+
+    - name: Setup Eldev
+      uses: emacs-eldev/setup-eldev@v1.5
+
+    - name: Cache Eldev dependencies
+      uses: actions/cache@v5
+      with:
+        path: .eldev
+        key: eldev-${{ inputs.emacs-version }}-${{ hashFiles('Eldev') }}
+
+    # pandoc's release binary, cached: apt-get took 8-11 s in every job.
+    # 3.1.3 is the version ubuntu-24.04's apt carried, so the specs see
+    # the same converter they always did.
+    - name: Cache pandoc
+      if: inputs.pandoc == 'true'
+      id: pandoc-cache
+      uses: actions/cache@v5
+      with:
+        path: ~/.local/pandoc
+        key: pandoc-3.1.3-linux-amd64
+
+    - name: Download pandoc
+      if: inputs.pandoc == 'true' && steps.pandoc-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        mkdir -p ~/.local/pandoc
+        curl -fsSL https://github.com/jgm/pandoc/releases/download/3.1.3/pandoc-3.1.3-linux-amd64.tar.gz \
+          | tar -xz -C ~/.local/pandoc --strip-components=1
+
+    - name: Put pandoc on PATH
+      if: inputs.pandoc == 'true'
+      shell: bash
+      run: |
+        echo "$HOME/.local/pandoc/bin" >> "$GITHUB_PATH"
+        "$HOME/.local/pandoc/bin/pandoc" --version | head -1

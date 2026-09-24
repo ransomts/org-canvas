@@ -1,0 +1,32 @@
+#+TITLE: Changelog fragments
+
+A pull request records its change here, in a file of its own, and
+never edits =CHANGELOG.org=: when every PR wrote to the top of the same
+section, each merge conflicted with the next.
+
+* Writing one
+
+Name the file after the issue the PR closes, =<issue>.org=; use
+=<issue>-<slug>.org= when one issue ships in several PRs.  Inside, one
+or more =* Section= headings, each followed by list items that start
+with the issue number:
+
+#+begin_example
+,* Fixed
+- #298 A quiz pull keeps the accommodations table below the quiz's own
+  text.  Continuation lines are indented two spaces.
+#+end_example
+
+Sections are Added, Changed, Deprecated, Removed, Fixed and Security.
+Write the entry the way =CHANGELOG.org='s existing ones read: what a
+user of the package sees, in present tense.
+
+=python3 scripts/changelog-collect.py --check= validates every fragment;
+CI runs it in the =generated-artifacts= job.
+
+* At release time
+
+=python3 scripts/changelog-collect.py= folds every fragment into
+=CHANGELOG.org= under =* Unreleased=, at the top of its section, newest
+(highest number) first, creating a section that is missing, and deletes
+the fragments.  =--dry-run= prints the result without writing.

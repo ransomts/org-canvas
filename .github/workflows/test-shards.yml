@@ -1,0 +1,57 @@
+name: Test shards
+
+# Called by ci.yml, never run on its own: the test files split across
+# runners by scripts/test-shard.sh, every file in exactly one shard.
+# The caller's aggregator job carries the check name branch protection
+# requires ("test (29.3)", "isolation", ...), and fails unless every
+# shard here passed.
+
+on:
+  workflow_call:
+    inputs:
+      emacs-version:
+        type: string
+        required: true
+      shards:
+        description: Shard numbers as a JSON array, e.g. "[1, 2, 3]"
+        type: string
+        default: "[1, 2, 3]"
+      each-file:
+        description: Run each file alone (the isolation check) instead of the shard's files together
+        type: boolean
+        default: false
+
+jobs:
+  shard:
+    name: ${{ inputs.each-file && 'alone' || 'suite' }} ${{ matrix.shard }}/${{ strategy.job-total }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(inputs.shards) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Emacs, Eldev and pandoc
+        uses: ./.github/actions/setup-emacs-env
+        with:
+          emacs-version: ${{ inputs.emacs-version }}
+          pandoc: "true"
+
+      - name: Run the shard's files together
+        if: ${{ !inputs.each-file }}
+        run: |
+          # Captured first: a failing script inside < <(...) would be lost.
+          list=$(scripts/test-shard.sh "${{ matrix.shard }}/${{ strategy.job-total }}")
+          [ -n "$list" ] || { echo "::error::shard ${{ matrix.shard }} has no test files"; exit 1; }
+          mapfile -t files <<<"$list"
+          printf '%s\n' "${files[@]}"
+          eldev test "${files[@]}"
+
+      - name: Run each of the shard's files alone
+        if: ${{ inputs.each-file }}
+        run: scripts/test-each-file.sh --shard "${{ matrix.shard }}/${{ strategy.job-total }}"

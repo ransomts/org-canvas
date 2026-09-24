@@ -1,0 +1,58 @@
+# Seconds each test file takes when run alone (eldev test FILE), measured
+# 2026-09-24 on a local machine.  scripts/test-shard.sh balances CI shards
+# with these; a file missing here counts as 3.  Refresh with:
+#   scripts/test-each-file.sh --timings > test/shard-weights.txt
+# Stale numbers only unbalance the shards; they never drop a file.
+8.9 test/org-canvas-announcements-test.el
+2.0 test/org-canvas-assignment-groups-test.el
+2.6 test/org-canvas-assignments-test.el
+2.0 test/org-canvas-browse-test.el
+2.2 test/org-canvas-calendar-test.el
+2.0 test/org-canvas-contract-test.el
+2.0 test/org-canvas-core-api-test.el
+1.9 test/org-canvas-core-config-test.el
+2.1 test/org-canvas-core-conflict-test.el
+1.9 test/org-canvas-core-delete-test.el
+2.1 test/org-canvas-core-html-test.el
+2.4 test/org-canvas-core-org-test.el
+2.2 test/org-canvas-core-pull-test.el
+3.3 test/org-canvas-core-sync-test.el
+2.5 test/org-canvas-core-usability-test.el
+3.5 test/org-canvas-demo-course-test.el
+4.3 test/org-canvas-diff-test.el
+3.2 test/org-canvas-discussion-replies-test.el
+4.2 test/org-canvas-discussions-test.el
+2.8 test/org-canvas-doc-reference-test.el
+5.6 test/org-canvas-dry-run-test.el
+5.7 test/org-canvas-files-test.el
+11.1 test/org-canvas-fuzz-test.el
+2.2 test/org-canvas-gradebook-test.el
+2.1 test/org-canvas-grading-periods-test.el
+2.2 test/org-canvas-grading-schemes-test.el
+1.9 test/org-canvas-graphql-contract-test.el
+2.2 test/org-canvas-group-categories-test.el
+2.3 test/org-canvas-groups-test.el
+2.6 test/org-canvas-messages-test.el
+3.8 test/org-canvas-modules-test.el
+1.4 test/org-canvas-multicourse-test.el
+3.2 test/org-canvas-new-quizzes-test.el
+2.8 test/org-canvas-outcomes-test.el
+2.5 test/org-canvas-pages-test.el
+2.6 test/org-canvas-peer-reviews-test.el
+2.6 test/org-canvas-people-test.el
+2.0 test/org-canvas-property-registry-test.el
+3.0 test/org-canvas-quiz-accommodations-test.el
+2.3 test/org-canvas-quiz-results-test.el
+2.1 test/org-canvas-quiz-submissions-test.el
+5.0 test/org-canvas-quizzes-test.el
+3.1 test/org-canvas-roundtrip-test.el
+1.9 test/org-canvas-rubric-results-test.el
+3.1 test/org-canvas-rubrics-test.el
+3.3 test/org-canvas-sections-test.el
+2.9 test/org-canvas-settings-test.el
+1.4 test/org-canvas-snapshot-test.el
+1.8 test/org-canvas-submissions-status-test.el
+4.9 test/org-canvas-submissions-test.el
+1.4 test/org-canvas-transient-test.el
+7.2 test/org-canvas-validate-test.el
+2.9 test/org-canvas-test.el
