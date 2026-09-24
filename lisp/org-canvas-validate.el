@@ -420,6 +420,49 @@ and people files are pulled, and may not exist yet."
   (let ((file (and (boundp var) (symbol-value var))))
     (org-canvas--heading-property-by-title file title property "LEVEL=2")))
 
+(defun org-canvas--validate-departed-people (names)
+  "Return those of NAMES marked in people.org as having left the course.
+A people pull marks a heading Canvas no longer lists with the state
+Canvas gives, or absent (issue #290); a name people.org does not hold
+is not departed, only unresolved, and is reported as that."
+  (cl-remove-if-not
+   (lambda (name)
+     (org-canvas--people-departed-state-p
+      (org-canvas--validate-override-lookup 'org-canvas-people-file name "ENROLLMENT_STATE")))
+   names))
+
+(defun org-canvas--validate-name-list (names)
+  "Return NAMES quoted and comma separated, for a warning."
+  (mapconcat (lambda (n) (format "'%s'" n)) names ", "))
+
+(defun org-canvas--validate-override-students (text row-loc)
+  "Check TEXT, the names in a `Students:' override row; return an issue or nil.
+A name people.org does not hold is reported first; otherwise a name
+whose heading says the student left the course, since Canvas refuses
+or ignores an override for someone no longer enrolled.  Both
+push-only.  ROW-LOC locates the row."
+  (let* ((names (split-string text ";" t "[ \t]+"))
+         (missing (cl-remove-if
+                   (lambda (name)
+                     (or (string-match-p "\\`#[0-9]+\\'" name)
+                         (org-canvas--validate-override-lookup
+                          'org-canvas-people-file name "USER_ID")))
+                   names))
+         (departed (and (null missing) (org-canvas--validate-departed-people names))))
+    (cond
+     (missing
+      (org-canvas--validate-push-only
+       (org-canvas--validate-make-issue
+        'warning row-loc nil
+        (format "Override student(s) %s not in people.org (pull people first, or write #id)"
+                (org-canvas--validate-name-list missing)))))
+     (departed
+      (org-canvas--validate-push-only
+       (org-canvas--validate-make-issue
+        'warning row-loc nil
+        (format "Override student(s) %s no longer enrolled according to people.org"
+                (org-canvas--validate-name-list departed))))))))
+
 (defun org-canvas--validate-override-target (target row-loc)
   "Check TARGET, the first cell of an override row, and return an issue or nil.
 A section link is checked elsewhere; `Group: <title>' must name a
@@ -439,18 +482,7 @@ touches nothing on Canvas.  ROW-LOC locates the row."
           (format "Override group '%s' is not in groups.org (pull groups first, or write #id)"
                   title))))))
    ((string-match "\\`Students?:[ \t]*\\(.+?\\)[ \t]*\\'" target)
-    (let ((missing (cl-remove-if
-                    (lambda (name)
-                      (or (string-match-p "\\`#[0-9]+\\'" name)
-                          (org-canvas--validate-override-lookup
-                           'org-canvas-people-file name "USER_ID")))
-                    (split-string (match-string 1 target) ";" t "[ \t]+"))))
-      (when missing
-        (org-canvas--validate-push-only
-         (org-canvas--validate-make-issue
-          'warning row-loc nil
-          (format "Override student(s) %s not in people.org (pull people first, or write #id)"
-                  (mapconcat (lambda (n) (format "'%s'" n)) missing ", ")))))))
+    (org-canvas--validate-override-students (match-string 1 target) row-loc))
    ((not (string-match "\\[\\[file:" target))
     (org-canvas--validate-make-issue
      'warning row-loc nil
@@ -653,6 +685,13 @@ LOC is a (:file :line :heading) plist."
 (declare-function org-canvas--message-resolve-target "org-canvas-messages" (to &optional offline))
 (declare-function org-canvas--message-unresolved-advice "org-canvas-messages" (kind))
 (declare-function org-canvas--message-body "org-canvas-messages" ())
+(declare-function org-canvas--message-target-kind "org-canvas-messages" (to))
+
+(defun org-canvas--validate-message-departed (to)
+  "Return the students named in TO with a departed people.org heading."
+  (pcase (org-canvas--message-target-kind to)
+    (`(students . ,rest)
+     (org-canvas--validate-departed-people (split-string rest ";" t "[ \t]+")))))
 
 (defun org-canvas--validate-message-to (to loc)
   "Check the TO value of the message heading at point.
@@ -674,7 +713,12 @@ is a warning naming what to pull.  Self resolves offline."
        'warning loc "TO"
        (format "TO: could not resolve %s (%s)"
                (mapconcat (lambda (n) (format "'%s'" n)) (plist-get target :unresolved) ", ")
-               (org-canvas--message-unresolved-advice (plist-get target :kind))))))))
+               (org-canvas--message-unresolved-advice (plist-get target :kind)))))
+     ((org-canvas--validate-message-departed to)
+      (org-canvas--validate-make-issue
+       'warning loc "TO"
+       (format "TO: %s no longer enrolled according to people.org"
+               (org-canvas--validate-name-list (org-canvas--validate-message-departed to))))))))
 
 (defun org-canvas--validate-message-structure (loc)
   "Check the message heading at point: its TO, its body and its stamp.
@@ -831,6 +875,12 @@ table).  ROW-LOC locates the row."
               'warning row-loc nil
               (format "Accommodation student '%s' is not in people.org (pull people first, or write #id)"
                       student)))
+            issues))
+    (when (org-canvas--validate-departed-people (list student))
+      (push (org-canvas--validate-push-only
+             (org-canvas--validate-make-issue
+              'warning row-loc nil
+              (format "Accommodation student '%s' is no longer enrolled according to people.org" student)))
             issues))
     (dolist (col columns)
       (let ((cell (or (nth col cells) "")))

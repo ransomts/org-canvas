@@ -9,6 +9,7 @@
 ;;; Code:
 
 (require 'json)
+(require 'seq)
 (require 'org-canvas-core-log)
 
 ;;;; 1. Configuration Layer
@@ -958,6 +959,21 @@ policy the way the gradebook UI does.")
 (defconst org-canvas--valid-people-roles
   '("student" "teacher" "ta" "observer" "designer")
   "Valid values for ROLE on a pulled person.")
+
+(defconst org-canvas--people-current-states '("active" "invited" "creation_pending")
+  "ENROLLMENT_STATE values that mean a person is in the course now.
+Any other state on a people.org heading — inactive, completed, or the
+deleted, rejected or absent a people pull writes on a heading Canvas no
+longer lists (issue #290) — marks someone who has left or not yet come.")
+
+(defun org-canvas--people-departed-state-p (state)
+  "Return non-nil when STATE, an ENROLLMENT_STATE, names no current enrollment.
+STATE may list several states, comma separated; it is departed when
+none of them is in `org-canvas--people-current-states'.  Nil for a nil
+or empty STATE: a heading that says nothing is not called departed."
+  (let ((parts (and (stringp state) (split-string state "," t "[ \t]+"))))
+    (and parts
+         (not (seq-intersection parts org-canvas--people-current-states)))))
 
 (provide 'org-canvas-core-config)
 ;;; org-canvas-core-config.el ends here

@@ -22,9 +22,25 @@
 (defvar test-people--sections nil
   "Sections the fake API lists for the course.")
 
-(defun test-people--api (_method url &optional _params)
-  "Answer URL from the fake tables, as the paginated helper would."
+(defvar test-people--history nil
+  "Enrollments only a read asking for every state sees: deleted, rejected.")
+(defvar test-people--user-reads nil
+  "User ids the fake answered a departure read for, most recent first.")
+
+(defun test-people--user-read (uid)
+  "Answer the departure read for UID as Canvas does: that user's rows only.
+A function in `test-people--history' answers instead, for a failing read."
+  (push uid test-people--user-reads)
+  (if (functionp test-people--history)
+      (funcall test-people--history uid)
+    (cl-remove-if-not (lambda (e) (equal (format "%s" (alist-get 'user_id e)) uid))
+                      (append test-people--enrollments test-people--history))))
+
+(defun test-people--api (_method url &optional params)
+  "Answer URL with PARAMS from the fake tables, as the paginated helper would."
   (cond
+   ((and (string-match "/enrollments" url) (assoc "user_id" params))
+    (test-people--user-read (cdr (assoc "user_id" params))))
    ((string-match "/enrollments" url) test-people--enrollments)
    ((string-match "/sections\\'" url) test-people--sections)
    (t (error "Unexpected request: %s" url))))
@@ -54,7 +70,9 @@
           (org-canvas-people-file (expand-file-name "people.org" dir))
           (org-canvas-sections-file (expand-file-name "sections.org" dir))
           (test-people--enrollments ,enrollments)
-          (test-people--sections ,sections))
+          (test-people--sections ,sections)
+          (test-people--history nil)
+          (test-people--user-reads nil))
      (unwind-protect
          (with-org-canvas-test-config
            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages) #'test-people--api)
@@ -201,6 +219,172 @@
     (let ((names (mapcar #'car (apply #'append org-canvas--pull-tiers))))
       (expect (cl-position 'org-canvas-pull-sections names)
               :to-be-less-than (cl-position 'org-canvas-pull-people names)))))
+
+(defun test-people--said (thunk)
+  "Call THUNK and return every message it showed, oldest first."
+  (let ((said nil))
+    (cl-letf (((symbol-function 'message)
+               (lambda (fmt &rest args) (push (apply #'format fmt args) said))))
+      (funcall thunk))
+    (nreverse said)))
+
+(defun test-people--entry (uid property)
+  "Return PROPERTY of the people.org heading carrying USER_ID UID."
+  (with-current-buffer (org-canvas--find-file-noselect org-canvas-people-file)
+    (let ((pos (org-canvas--people-find-person uid)))
+      (and pos (org-entry-get pos property)))))
+
+(defconst test-people--two
+  (list (test-people--enrollment 1 "Adams, Alice" "StudentEnrollment" 10)
+        (test-people--enrollment 2 "Beta, Bob" "StudentEnrollment" 10))
+  "Two students in one section.")
+
+(describe "org-canvas-pull-people departures (issue #290)"
+  (it "marks a heading Canvas no longer lists with the state Canvas gives and when"
+    (test-people--with-course test-people--two '(((id . 10) (name . "Lecture")))
+      (org-canvas-pull-people)
+      (setq test-people--enrollments (list (car test-people--two))
+            test-people--history
+            (list (test-people--enrollment 2 "Beta, Bob" "StudentEnrollment" 10
+                                           '(enrollment_state . "deleted")
+                                           '(updated_at . "2026-09-14T19:19:00Z"))
+                  (test-people--enrollment 2 "Beta, Bob" "StudentEnrollment" 20
+                                           '(enrollment_state . "deleted")
+                                           '(updated_at . "2026-09-14T19:18:00Z"))))
+      (let ((said (test-people--said #'org-canvas-pull-people)))
+        (expect (test-people--entry 2 "ENROLLMENT_STATE") :to-equal "deleted")
+        (expect (test-people--entry 2 "DEPARTED") :to-match "\\`<2026-09-14")
+        (expect (test-people--entry 1 "ENROLLMENT_STATE") :to-equal "active")
+        (expect (test-people--entry 1 "DEPARTED") :to-be nil)
+        ;; Only the missing heading is looked up.
+        (expect test-people--user-reads :to-equal '("2"))
+        (expect (car (last said))
+                :to-match "1 people (1 students); 1 heading no longer on Canvas: Beta, Bob (deleted 2026-09-14)\\.\\'")
+        (expect (test-people--file) :to-match "^\\*\\* Beta, Bob\n"))))
+
+  (it "asks the departure read for the user in every state Canvas has"
+    (let ((seen nil))
+      (test-people--with-course test-people--two nil
+        (org-canvas-pull-people)
+        (setq test-people--enrollments (list (car test-people--two)))
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (method url &optional params)
+                     (when (assoc "user_id" params) (setq seen params))
+                     (test-people--api method url params))))
+          (org-canvas-pull-people))
+        (expect seen :to-contain '("user_id" . "2"))
+        (dolist (state '("deleted" "rejected" "completed" "inactive" "active" "invited"))
+          (expect seen :to-contain (cons "state[]" state))))))
+
+  (it "marks a heading absent when Canvas has no enrollment at all, and keeps the first date"
+    (test-people--with-course test-people--two nil
+      (org-canvas-pull-people)
+      (setq test-people--enrollments (list (car test-people--two)))
+      (let ((said (test-people--said #'org-canvas-pull-people)))
+        (expect (test-people--entry 2 "ENROLLMENT_STATE") :to-equal "absent")
+        (expect (test-people--entry 2 "DEPARTED")
+                :to-match (concat "\\`" (substring (org-canvas--iso8601-to-org-timestamp
+                                                     (format-time-string "%FT%TZ" nil t))
+                                                    0 11)))
+        (expect (car (last said)) :to-match "no longer on Canvas: Beta, Bob (absent [0-9-]+)"))
+      ;; A later pull keeps the date the absence was first seen.
+      (with-current-buffer (org-canvas--find-file-noselect org-canvas-people-file)
+        (org-entry-put (org-canvas--people-find-person 2) "DEPARTED" "<2026-09-01 Tue 08:00>")
+        (save-buffer))
+      (org-canvas-pull-people)
+      (expect (test-people--entry 2 "DEPARTED") :to-match "\\`<2026-09-01")))
+
+  (it "leaves a heading alone when the departure read still finds it enrolled"
+    (test-people--with-course test-people--two nil
+      (org-canvas-pull-people)
+      ;; The roster read misses Bob; his own read says he is active.
+      (setq test-people--history (lambda (_uid) (list (cadr test-people--two)))
+            test-people--enrollments (list (car test-people--two)))
+      (let ((said (test-people--said #'org-canvas-pull-people)))
+        (expect (test-people--entry 2 "ENROLLMENT_STATE") :to-equal "active")
+        (expect (test-people--entry 2 "DEPARTED") :to-be nil)
+        (expect (car (last said)) :to-match "1 heading not in the roster left unchanged, still enrolled or unreadable: Beta, Bob\\.\\'")
+        (expect (car (last said)) :not :to-match "no longer on Canvas"))))
+
+  (it "leaves a heading alone when its departure read fails"
+    (let ((warned nil))
+      (test-people--with-course test-people--two nil
+        (org-canvas-pull-people)
+        (setq test-people--history (lambda (_uid) (signal 'org-canvas-api-error '("HTTP 500")))
+              test-people--enrollments (list (car test-people--two)))
+        (cl-letf (((symbol-function 'org-canvas--log-warning)
+                   (lambda (_logger fmt &rest args) (push (apply #'format fmt args) warned))))
+          (org-canvas-pull-people))
+        (expect (test-people--entry 2 "ENROLLMENT_STATE") :to-equal "active")
+        (expect (cl-some (lambda (w) (string-match-p "Could not read the enrollments of user 2" w)) warned)
+                :to-be-truthy))))
+
+  (it "clears the departure when the person is listed again"
+    (test-people--with-course test-people--two nil
+      (org-canvas-pull-people)
+      (setq test-people--enrollments (list (car test-people--two)))
+      (org-canvas-pull-people)
+      (expect (test-people--entry 2 "DEPARTED") :to-be-truthy)
+      (setq test-people--enrollments test-people--two)
+      (let ((said (test-people--said #'org-canvas-pull-people)))
+        (expect (test-people--entry 2 "ENROLLMENT_STATE") :to-equal "active")
+        (expect (test-people--entry 2 "DEPARTED") :to-be nil)
+        (expect (car (last said)) :to-match "2 people (2 students)\\.\\'"))))
+
+  (it "leaves an existing file alone when the roster read comes back empty"
+    (test-people--with-course test-people--two nil
+      (org-canvas-pull-people)
+      (let ((before (test-people--file)))
+        (setq test-people--enrollments [])
+        (let ((said (test-people--said #'org-canvas-pull-people)))
+          (expect (test-people--file) :to-equal before)
+          (expect test-people--user-reads :to-be nil)
+          (expect (car (last said)) :to-match "Canvas listed no one; people.org left as it was"))))))
+
+(describe "org-canvas--people-departure"
+  (it "counts only the user's own rows in a role the roster lists"
+    (let ((verdict (org-canvas--people-departure
+                    2 (list (test-people--enrollment 3 "Other" "StudentEnrollment" 10)
+                            (test-people--enrollment 2 "Beta, Bob" "StudentViewEnrollment" 10)))))
+      (expect (plist-get verdict :status) :to-be 'absent)))
+
+  (it "gives no time when Canvas gave none, and the summary shows the state alone"
+    (let ((verdict (org-canvas--people-departure
+                    "2" (list (test-people--enrollment 2 "B" "TaEnrollment" 10
+                                                       '(enrollment_state . "rejected")
+                                                       '(updated_at . nil))))))
+      (expect (plist-get verdict :states) :to-equal '("rejected"))
+      (expect (plist-get verdict :at) :to-be nil)
+      (expect (org-canvas--people-departure-summary
+               (list :departed '(("B" "rejected" nil) ("C" "deleted" "2026-09-14"))))
+              :to-equal "; 2 headings no longer on Canvas: B (rejected); C (deleted 2026-09-14)")))
+
+  (it "is unverified when a row carries no state to go on"
+    (let ((verdict (org-canvas--people-departure
+                    2 (list `((user_id . 2) (type . "StudentEnrollment"))))))
+      (expect (plist-get verdict :status) :to-be 'unverified)))
+
+  (it "is unverified when an enrollment is pending account creation"
+    (let ((verdict (org-canvas--people-departure
+                    2 (list (test-people--enrollment 2 "B" "StudentEnrollment" 10
+                                                     '(enrollment_state . "creation_pending"))
+                            (test-people--enrollment 2 "B" "StudentEnrollment" 11
+                                                     '(enrollment_state . "deleted"))))))
+      (expect (plist-get verdict :status) :to-be 'unverified)
+      (expect (org-canvas--people-departed-state-p "creation_pending") :to-be nil)))
+
+  (it "says nothing when there were no departures"
+    (expect (org-canvas--people-departure-summary nil) :to-equal "")))
+
+(describe "org-canvas--people-departed-state-p"
+  (it "calls a state departed only when none of its parts is current"
+    (expect (org-canvas--people-departed-state-p "deleted") :to-be-truthy)
+    (expect (org-canvas--people-departed-state-p "absent") :to-be-truthy)
+    (expect (org-canvas--people-departed-state-p "completed, inactive") :to-be-truthy)
+    (expect (org-canvas--people-departed-state-p "active") :to-be nil)
+    (expect (org-canvas--people-departed-state-p "inactive, active") :to-be nil)
+    (expect (org-canvas--people-departed-state-p "") :to-be nil)
+    (expect (org-canvas--people-departed-state-p nil) :to-be nil)))
 
 (provide 'org-canvas-people-test)
 ;;; org-canvas-people-test.el ends here

@@ -66,6 +66,14 @@ MODULE_READ_OPS = {
     "pages": ("list_pages_courses", "show_page_courses"),
 }
 
+# Pull-only modules -> (list operationId,): reads with no feature registry
+# entry, whose query parameters the module keeps in its own constants.
+# people: the roster read and the per-person departure read (issue #290)
+# both go to the course enrollments index with `state[]' and `user_id'.
+PULL_ONLY_READ_OPS = {
+    "people": ("list_enrollments_courses",),
+}
+
 # Modules whose read (pull) response object is documented as a component
 # schema.  Used to contract-check that pull tolerates the full documented
 # response shape.  Only modules with a clean property-setter pull-item are
@@ -175,6 +183,16 @@ def main():
             contract["response_schema"] = schema_name
             contract["response_fields"] = fields
         out[module] = contract
+
+    for module, read_ops in PULL_ONLY_READ_OPS.items():
+        reads = {}
+        for kind, read_opid in zip(("list", "item"), read_ops):
+            read_op = find_op(spec, read_opid)
+            if read_op is None:
+                sys.exit(f"operationId not found: {read_opid} (module {module})")
+            reads[kind] = {"operationId": read_opid,
+                           "params": extract_query_params(read_op)}
+        out[module] = {"pull_only": True, "reads": reads}
 
     with open(OUT, "w") as fh:
         json.dump(out, fh, indent=2, sort_keys=True)

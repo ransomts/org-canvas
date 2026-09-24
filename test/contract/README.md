@@ -61,6 +61,12 @@ parameter the issue was about: assignments read with
 `override_assignment_dates=false` on both operations, and quizzes declare
 nothing, since neither quiz operation documents it.
 
+A pull-only module with no feature registry entry lists its read in
+`PULL_ONLY_READ_OPS`; the fixture marks it `"pull_only": true` and the
+generic loop skips it, leaving a spec of its own to check the module's
+parameter constants. Currently only people (issue #290): the roster read
+and the per-person departure read, both on `list_enrollments_courses`.
+
 # GraphQL contract (issue #269)
 
 Five GraphQL documents travel to Canvas as strings: the post-policy
