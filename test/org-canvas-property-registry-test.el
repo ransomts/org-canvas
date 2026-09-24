@@ -403,13 +403,15 @@
 
 (describe "WANT_DOCUMENT_PROCESSOR registration (issue #293)"
   (it "is a declaration held against DOCUMENT_PROCESSOR"
-    (let ((spec (seq-find (lambda (s)
-                            (equal (plist-get s :org-prop) "WANT_DOCUMENT_PROCESSOR"))
-                          (plist-get (gethash "assignments" org-canvas--property-registry)
-                                     :properties))))
+    ;; :type is bound before `expect', which shadows it on Emacs 29.
+    (let* ((spec (seq-find (lambda (s)
+                             (equal (plist-get s :org-prop) "WANT_DOCUMENT_PROCESSOR"))
+                           (plist-get (gethash "assignments" org-canvas--property-registry)
+                                      :properties)))
+           (spec-type (plist-get spec :type)))
       (expect (plist-get spec :intent-of) :to-equal "DOCUMENT_PROCESSOR")
       (expect (plist-get spec :canvas-owned) :to-be nil)
-      (expect (plist-get spec :type) :to-equal 'string))))
+      (expect spec-type :to-equal 'string))))
 
 (provide 'org-canvas-property-registry-test)
 ;;; org-canvas-property-registry-test.el ends here
