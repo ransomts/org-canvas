@@ -3897,8 +3897,10 @@ compared.")
                    (missing-kind (plist-get missing :kind))
                    (extra (plist-get result :extra))
                    (pending (plist-get result :pending)))
-              (expect urls :to-equal
-                      (list (org-canvas--new-quiz-api-endpoint "quizzes")))
+              ;; The quiz list, then Midterm's items (issue #322).
+              (expect (reverse urls) :to-equal
+                      (list (org-canvas--new-quiz-api-endpoint "quizzes")
+                            (org-canvas--new-quiz-api-endpoint "quizzes/41/items")))
               (expect (plist-get result :error) :to-be nil)
               (expect changed-kind :to-be 'modified)
               (expect (plist-get changed :title) :to-equal "Midterm")
@@ -4058,6 +4060,328 @@ compared.")
 
   (it "answers nil for no feature"
     (expect (org-canvas--diff-web-entry nil) :to-be nil)))
+
+;;;; New Quiz items in the drift report (issue #322)
+
+(defconst test-nq-322--file
+  (concat "* Midterm\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 41\n:END:\n"
+          "Read carefully.\n\n"
+          "** Q1\n:PROPERTIES:\n:CANVAS_ITEM_ID: 9\n:TYPE: essay\n:POINTS: 2\n:END:\n"
+          "Explain.\n\n"
+          "** Q2\n:PROPERTIES:\n:CANVAS_ITEM_ID: 10\n:END:\n"
+          "** Q3\n"
+          "** Q4\n"
+          "* Final\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 42\n:END:\n"
+          "* Draft\n"
+          "** D1\n")
+  "A new-quizzes.org whose items drifted every way an item can.
+Q1 differs in points and prompt, Q2 was deleted on Canvas, Q3 lost its
+stamp, Q4 and D1 are not pushed yet.")
+
+(defconst test-nq-322--quizzes
+  '(((id . "41") (assignment_id . "41") (title . "Midterm")
+     (instructions . "<p>Read carefully.</p>"))
+    ((id . "42") (assignment_id . "42") (title . "Final")))
+  "The quiz service's quiz list for `test-nq-322--file'.")
+
+(defconst test-nq-322--items
+  '(("41" . [((id . "9") (points_possible . 5) (position . 1)
+              (entry (item_body . "<p>Q1</p>\n<p>Explain more.</p>")
+                     (interaction_type_slug . "essay")))
+             ((id . "11") (points_possible . 1) (position . 2)
+              (entry (item_body . "<p>Web item</p>")))
+             ((id . "12") (position . 3)
+              (entry (item_body . "<p>Q3</p>")))])
+    ("42" . [((id . "20") (entry (item_body . "<p>Q4</p>")))]))
+  "Each quiz's item list, by quiz id.
+Final holds an item titled Q4, which Midterm's unstamped Q4 does not
+claim: items pair only within their quiz.")
+
+(defun test-nq-322--child (items &optional known excluded)
+  "Run the New Quizzes diff over `file', with ITEMS as the item lists.
+ITEMS maps a quiz id to its reply, or to `fail'.  KNOWN and EXCLUDED
+bind the acknowledgment and exclusion lists.  Returns the New Quiz
+Items result.  Must run inside `test-nq-313--with-file'."
+  (let ((org-canvas-diff-known-extras known)
+        (org-canvas-diff-excluded-features excluded))
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                 (lambda (_method url &rest _)
+                   (if (string-match "quizzes/\\([0-9]+\\)/items" url)
+                       (let ((reply (cdr (assoc (match-string 1 url) items))))
+                         (if (eq reply 'fail) (error "Items failed") reply))
+                     test-nq-322--quizzes)))
+                ((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _) (error "The report must not write"))))
+        (plist-get (org-canvas--diff-feature
+                    (org-canvas--diff-find-feature "New Quizzes"))
+                   :children)))))
+
+(defun test-nq-322--by-id (entries id)
+  "Return the entry of ENTRIES whose :id is ID."
+  (cl-find id entries :key (lambda (e) (plist-get e :id)) :test #'equal))
+
+(describe "org-canvas--diff-new-quiz-items (issue #322)"
+  (it "reports CHANGED, MISSING, EXTRA, UNCLAIMED and PENDING items per quiz"
+    (test-nq-313--with-file test-nq-322--file
+      (let* ((child (test-nq-322--child test-nq-322--items))
+             (divergences (plist-get child :divergences))
+             (q1 (test-nq-322--by-id divergences "9"))
+             (q2 (test-nq-322--by-id divergences "10"))
+             (q1-kind (plist-get q1 :kind))
+             (q2-kind (plist-get q2 :kind))
+             (extra (plist-get child :extra))
+             (web (test-nq-322--by-id extra "11"))
+             (web-kind (plist-get web :kind))
+             (q3 (test-nq-322--by-id extra "12"))
+             (q3-kind (plist-get q3 :kind))
+             (final (test-nq-322--by-id extra "20"))
+             (final-kind (plist-get final :kind))
+             (pending (plist-get child :pending)))
+        (expect (plist-get child :name) :to-equal "New Quiz Items")
+        (expect (plist-get child :error) :to-be nil)
+        (expect (length divergences) :to-equal 2)
+        (expect q1-kind :to-be 'modified)
+        (expect (plist-get q1 :fields)
+                :to-equal '(("POINTS" "2" "5")
+                            ("ITEM_BODY" "Q1 Explain." "Q1 Explain more.")))
+        (expect (plist-get q1 :quiz-id) :to-equal "41")
+        (expect (plist-get q1 :where) :to-equal "Midterm")
+        (expect (plist-get q1 :remote-newer) :to-be nil)
+        (expect q2-kind :to-be 'missing)
+        (expect (plist-get q2 :title) :to-equal "Q2")
+        (expect web-kind :to-be 'extra)
+        (expect (plist-get web :title) :to-equal "Web item")
+        (expect (plist-get web :quiz-id) :to-equal "41")
+        (expect q3-kind :to-be 'unclaimed)
+        (expect (plist-get q3 :heading) :to-equal "Q3")
+        (expect (plist-get q3 :file) :to-equal file)
+        (expect final-kind :to-be 'extra)
+        (expect (plist-get final :where) :to-equal "Final")
+        (expect (mapcar (lambda (e) (list (plist-get e :title) (plist-get e :where)))
+                        pending)
+                :to-equal '(("Q4" "Midterm") ("D1" "Draft")))
+        (expect (plist-get (car pending) :property) :to-equal "CANVAS_ITEM_ID")
+        (expect (org-canvas--diff-count (list child)) :to-equal 5)
+        (expect (buffer-modified-p (find-buffer-visiting file)) :to-be nil))))
+
+  (it "agrees when points, type and body match, reading the slug as Org spells it"
+    (test-nq-313--with-file
+        (concat "* Midterm\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 41\n:END:\n"
+                "** Blank [1/2]\n:PROPERTIES:\n:CANVAS_ITEM_ID: 9\n"
+                ":TYPE: short-answer\n:POINTS: 3\n:END:\nFill it in.\n"
+                "- [X] yes\n"
+                "** Bare\n:PROPERTIES:\n:CANVAS_ITEM_ID: 10\n:TYPE: essay\n"
+                ":POINTS: 7\n:END:\n")
+      (let ((child (test-nq-322--child
+                    ;; Older replies carry the body and slug at the top;
+                    ;; Bare's reply holds neither points nor a slug.
+                    '(("41" . [((id . "9") (points_possible . 3)
+                                (item_body . "<p>Blank</p><p>Fill it in.</p>")
+                                (interaction_type_slug . "rich-fill-blank"))
+                               ((id . "10")
+                                (entry (item_body . "<p>Bare</p>")))])))))
+        (expect (plist-get child :divergences) :to-be nil)
+        (expect (plist-get child :extra) :to-be nil)
+        (expect (plist-get child :pending) :to-be nil))))
+
+  (it "reads a failed item list as unchecked, never as an empty quiz"
+    (test-nq-313--with-file test-nq-322--file
+      (let ((child (test-nq-322--child '(("41" . fail) ("42" . [])))))
+        (expect (plist-get child :error) :to-match "Items failed")
+        (expect (plist-get child :divergences) :to-be nil))))
+
+  (it "refuses a reply that is not a list of items"
+    (test-nq-313--with-file test-nq-322--file
+      (let ((child (test-nq-322--child
+                    '(("41" . ((errors . [((message . "no"))]))) ("42" . [])))))
+        (expect (plist-get child :error) :to-match "item list of quiz 41"))))
+
+  (it "files acknowledgments under new-quiz-items and flags a stale one"
+    (test-nq-313--with-file test-nq-322--file
+      (let* ((child (test-nq-322--child
+                     test-nq-322--items
+                     '(("new-quiz-items" "11" "web-built on purpose")
+                       ("new-quiz-items" "99" "gone"))))
+             (stale (test-nq-322--by-id (plist-get child :divergences) "99"))
+             (stale-kind (plist-get stale :kind)))
+        (expect (test-nq-322--by-id (plist-get child :extra) "11") :to-be nil)
+        (expect (plist-get child :acknowledged) :to-equal 1)
+        (expect stale-kind :to-be 'stale-ack))))
+
+  (it "skips the pass when new-quiz-items is excluded, visibly"
+    (test-nq-313--with-file test-nq-322--file
+      (let ((child (test-nq-322--child test-nq-322--items nil '("new-quiz-items"))))
+        (expect (plist-get child :excluded) :to-be t))))
+
+  (it "has nothing to report without the file"
+    (let ((org-canvas-new-quizzes-file "/nonexistent/new-quizzes.org"))
+      (expect (org-canvas--diff-new-quiz-item-headings org-canvas-new-quizzes-file)
+              :to-be nil))))
+
+(describe "New Quiz item rows (issue #322)"
+  (defun test-nq-322--report (child)
+    "Return the report buffer of a New Quizzes result carrying CHILD."
+    (test-org-canvas--diff-report-buffer
+     (list (list :name "New Quizzes" :children child))))
+
+  (it "names each item's quiz in its row"
+    (test-nq-313--with-file test-nq-322--file
+      (let ((child (test-nq-322--child test-nq-322--items)))
+        (with-current-buffer (test-nq-322--report child)
+          (let ((text (buffer-string)))
+            (expect text :to-match "New Quiz Items: 5 divergence(s), 2 pending create(s)")
+            (expect text :to-match "CHANGED   Q1 in quiz 'Midterm'")
+            (expect text :to-match "ITEM_BODY")
+            (expect text :to-match "MISSING   Q2 (id 10 is not in quiz 'Midterm')")
+            (expect text :to-match "EXTRA     Web item (id 11 in quiz 'Midterm', no Org heading")
+            (expect text :to-match "EXTRA     Q4 (id 20 in quiz 'Final'")
+            (expect text :to-match "UNCLAIMED Q3 (item id 12 in quiz 'Midterm' opens with the title")
+            (expect text :to-match "PENDING   Q4 (no CANVAS_ITEM_ID, in quiz 'Midterm'; ")
+            (expect text :to-match "PENDING   D1 (no CANVAS_ITEM_ID, in quiz 'Draft'; "))))))
+
+  (it "visits the heading of a CHANGED, MISSING or UNCLAIMED item row"
+    (test-nq-313--with-file test-nq-322--file
+      (let ((child (test-nq-322--child test-nq-322--items))
+            (shown nil))
+        (cl-letf (((symbol-function 'pop-to-buffer)
+                   (lambda (buf &rest _) (setq shown buf) (set-buffer buf))))
+          (dolist (pair '((modified . "Q1") (missing . "Q2") (unclaimed . "Q3")))
+            (with-current-buffer (test-nq-322--report child)
+              (test-org-canvas--diff-goto-row (car pair))
+              (org-canvas-diff-visit))
+            (with-current-buffer shown
+              (expect (org-get-heading t t t t) :to-equal (cdr pair))))))))
+
+  (it "opens the quiz's page for an item row, which has none of its own"
+    (test-nq-313--with-file test-nq-322--file
+      (let ((results (list (list :name "New Quizzes"
+                                 :children (test-nq-322--child test-nq-322--items)))))
+        (expect (test-org-canvas--diff-browse results 'extra)
+                :to-equal "https://canvas.test/courses/42/assignments/41")
+        (expect (test-org-canvas--diff-browse results 'modified t)
+                :to-equal "https://canvas.test/courses/42/assignments/41/edit"))))
+
+  (it "reads, snapshots and deletes an EXTRA item at the quiz service, under its quiz"
+    (test-nq-313--with-file test-nq-322--file
+      (test-org-canvas--with-snapshot-dir
+        (let ((child (test-nq-322--child test-nq-322--items))
+              (requests nil))
+          (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) t))
+                    ((symbol-function 'org-canvas-api-request)
+                     (lambda (method url &rest args)
+                       (push (list method url (plist-get args :params)) requests)
+                       (and (eq method 'GET) '((id . "11"))))))
+            (with-current-buffer (test-nq-322--report child)
+              (test-org-canvas--diff-goto-row 'extra)
+              (org-canvas-diff-delete)))
+          (setq requests (nreverse requests))
+          (expect (mapcar #'car requests) :to-equal '(GET DELETE))
+          ;; An item is no feature's own: read with no parameters (#345).
+          (expect (nth 2 (car requests)) :to-be nil)
+          (dolist (r requests)
+            (expect (nth 1 r)
+                    :to-match "/api/quiz/v1/courses/[^/]+/quizzes/41/items/11$"))
+          (expect (length (directory-files snapshot-dir nil "\\.json\\'"))
+                  :to-equal 1)))))
+
+  (it "deletes an EXTRA item through org-canvas-diff-delete-rows (#345)"
+    (test-org-canvas--with-batch-delete
+      (let* ((results '((:name "New Quiz Items"
+                         :extra ((:kind extra :title "Web question" :id "11"
+                                  :quiz-id "41" :where "Midterm" :container "quiz")))))
+             (outcomes (org-canvas-diff-delete-rows
+                        '((:feature "New Quiz Items" :all t)) :results results)))
+        (expect (mapcar (lambda (o) (plist-get o :outcome)) outcomes)
+                :to-equal '(deleted))
+        (expect (test-org-canvas--diff-deleted-urls)
+                :to-equal (list (org-canvas--new-quiz-api-endpoint "quizzes/41/items/11"))))))
+
+  (it "pulls the quiz an item row sits in, on CHANGED and EXTRA rows alike"
+    (test-nq-313--with-file test-nq-322--file
+      (let ((child (test-nq-322--child test-nq-322--items))
+            (pulled nil))
+        (cl-letf (((symbol-function 'org-canvas-pull-at-point)
+                   (lambda ()
+                     (push (list (org-get-heading t t t t)
+                                 (org-entry-get (point) "CANVAS_ASSIGNMENT_ID"))
+                           pulled))))
+          (dolist (kind '(modified extra))
+            (with-current-buffer (test-nq-322--report child)
+              (test-org-canvas--diff-goto-row kind)
+              (org-canvas-diff-pull)
+              (expect (thing-at-point 'line t)
+                      :to-match "PULLED    .* (id [0-9]+, with quiz 'Midterm')")))
+          (expect pulled :to-equal '(("Midterm" "41") ("Midterm" "41")))))))
+
+  (it "refuses to pull a MISSING item row, and to adopt an item's stamp"
+    (test-nq-313--with-file test-nq-322--file
+      (let ((child (test-nq-322--child test-nq-322--items)))
+        (with-current-buffer (test-nq-322--report child)
+          (test-org-canvas--diff-goto-row 'missing)
+          (expect (org-canvas-diff-pull) :to-throw 'user-error)
+          (test-org-canvas--diff-goto-row 'modified)
+          (expect (org-canvas-diff-adopt-stamp) :to-throw 'user-error))))))
+
+(describe "New Quiz item readers (issue #322)"
+  (it "reads an item's body under entry, at the top level, or not at all"
+    (expect (org-canvas--new-quiz-item-remote-body
+             '((entry (item_body . "<p>A</p>")) (item_body . "<p>B</p>")))
+            :to-equal "<p>A</p>")
+    (expect (org-canvas--new-quiz-item-remote-body '((item_body . "<p>B</p>")))
+            :to-equal "<p>B</p>")
+    (expect (org-canvas--new-quiz-item-remote-body '((entry . "x") (id . 1)))
+            :to-be nil))
+
+  (it "reads an item's type the way the Org TYPE spells it"
+    (expect (org-canvas--new-quiz-item-remote-type
+             '((entry (interaction_type_slug . "numeric"))))
+            :to-equal "numerical")
+    (expect (org-canvas--new-quiz-item-remote-type
+             '((interaction_type_slug . "choice")))
+            :to-equal "choice")
+    (expect (org-canvas--new-quiz-item-remote-type '((id . 1))) :to-be nil))
+
+  (it "exports the heading and prompt an item pushes, without the answers"
+    (test-nq-313--with-file "* Quiz\n** Pick one [0/1]\nWhich?\n- [X] This\n- [ ] That\n"
+      (with-current-buffer (org-canvas--find-file-noselect file)
+        (goto-char (point-min))
+        (re-search-forward "^\\*\\* ")
+        (let ((html (org-canvas--new-quiz-item-body-html)))
+          (expect html :to-match "Pick one")
+          (expect html :to-match "Which\\?")
+          (expect html :not :to-match "\\[")
+          (expect html :not :to-match "This")))))
+
+  (it "ends the prompt where the item's TYPE says its answers begin (#335, #337)"
+    (test-nq-313--with-file
+        (concat "* Quiz\n"
+                "** Put in order\n:PROPERTIES:\n:TYPE: ordering\n:END:\nOldest first.\n1. Alpha\n2. Beta\n"
+                "** Discuss\n:PROPERTIES:\n:TYPE: essay\n:END:\nConsider:\n- privacy\n- consent\n"
+                "** Hot\n:PROPERTIES:\n:TYPE: hot-spot\n:END:\nClick the heart.\n")
+      (with-current-buffer (org-canvas--find-file-noselect file)
+        (let ((html (lambda (title)
+                      (goto-char (point-min))
+                      (re-search-forward (concat "^\\*\\* " title))
+                      (org-canvas--new-quiz-item-body-html))))
+          (let ((ordering (funcall html "Put in order"))
+                (essay (funcall html "Discuss"))
+                (hot (funcall html "Hot")))
+            (expect ordering :to-match "Oldest first")
+            (expect ordering :not :to-match "Alpha")
+            (expect essay :to-match "privacy")
+            ;; A pull-only type is compared all the same (#340).
+            (expect hot :to-match "Click the heart"))))))
+
+  (it "answers no remote body when the reader finds none"
+    (expect (org-canvas--diff-remote-body
+             '(:body-api-key "item_body" :body-remote-fn ignore) '((id . 1)))
+            :to-be nil)
+    (expect (org-canvas--diff-remote-body
+             '(:body-api-key "item_body"
+               :body-remote-fn org-canvas--new-quiz-item-remote-body)
+             '((entry (item_body . "<p>A</p>"))))
+            :to-equal '(item_body . "<p>A</p>"))))
 
 (provide 'org-canvas-diff-test)
 ;;; org-canvas-diff-test.el ends here

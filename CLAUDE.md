@@ -222,6 +222,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 - LTI assignments and no Turnitin, the Turnitin document processor as a Canvas-owned property (#184)
 - module items adopt a twin before POST and the drift report lists item twins (#177, #179), the end-of-run retry pass included (#308)
 - module items reconcile moves (#105)
+- New Quiz items join the drift report as a child pass paired within their quiz as the sync adopts them, with rows whose verbs know the quiz (#322)
 - New Quizzes join the drift report through their pull-only entry's `:drift-report`, compare a setting only where the reply carries it, and leave the Assignments extras (#313)
 - pending creates counted apart from drift and moved module items paired on the link's description (#294)
 - quiz publish sequencing (#59)

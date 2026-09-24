@@ -622,8 +622,11 @@ field is set directly on the payload, outside the property specs, and
 was invisible to the report until it was named here (issue #83).
 `:body-fn' optionally names the module's own extractor (a function of
 no arguments, called with point on the heading) where the shared
-subtree export is not what gets pushed; `:body-list-params' adds
-request parameters the list endpoint needs before it returns bodies.
+subtree export is not what gets pushed; `:body-remote-fn' a function
+of the Canvas item returning its body where the reply nests it (a New
+Quiz item's `item_body' under `entry', issue #322); `:body-list-params'
+adds request parameters the list endpoint needs before it returns
+bodies.
 
 Does nothing if FEATURE-NAME is already registered (idempotent)."
   (unless (gethash feature-name org-canvas--property-registry)

@@ -234,6 +234,32 @@ Supports: exact value, or [min, max] range."
 
 ;;;; Item/Question Parsing (Level 2)
 
+(defun org-canvas--new-quiz-item-question-text (title body)
+  "Return the Org text of an item's pushed body: TITLE, then BODY.
+The heading is the body's first paragraph, which is what an unstamped
+heading is paired on (`org-canvas--new-quiz-item-twin-p'); BODY, the
+prompt above the answer list, follows when there is one."
+  (let ((body (or body "")))
+    (if (string-empty-p body)
+        title
+      (concat title "\n\n" body))))
+
+(defun org-canvas--new-quiz-item-body-html ()
+  "Return the HTML the item heading at point would push as its body.
+The drift report's body extractor, named by the item registration's
+`:body-fn' (issue #322): the heading and the prompt, exported as
+`org-canvas--new-quiz-item-parse-entry' exports them, with no answer
+list and nothing uploaded.  The prompt ends where the item's TYPE says
+its answers begin, as the parse reads it: an ordering item's at a
+numbered line (issue #335), an essay's nowhere (issue #337).  The TYPE
+is read raw, not checked, so an item a push would refuse (issue #340)
+is still compared."
+  (org-back-to-heading t)
+  (org-canvas--org-to-html-string
+   (org-canvas--new-quiz-item-question-text
+    (org-canvas--strip-statistics-cookie (org-get-heading t t t t))
+    (org-canvas--new-quiz-parse-question-text (org-entry-get nil "TYPE")))))
+
 (defun org-canvas--new-quiz-item-read-props (quiz-assignment-id)
   "Read raw property strings from the quiz item heading at point.
 QUIZ-ASSIGNMENT-ID is the assignment ID of the parent quiz.
@@ -306,11 +332,9 @@ Reads raw properties and transforms them."
          (data (org-canvas--new-quiz-item-transform-props raw))
          (title (plist-get data :title))
          (q-type (plist-get data :type))
-         (question-text (let ((body (or (plist-get data :text) "")))
-                          (if (string-empty-p body)
-                              title
-                            (concat title "\n\n" body))))
-         (text-html (org-canvas--org-to-html-string question-text))
+         (text-html (org-canvas--org-to-html-string
+                     (org-canvas--new-quiz-item-question-text
+                      title (plist-get data :text))))
          (interaction-data (org-canvas--new-quiz-item-build-interaction-data q-type)))
 
     (org-canvas--log-debug org-canvas--logger "[New Quiz Item Parse] '%s' type=%s" title q-type)
@@ -588,15 +612,29 @@ list that could not be read is `unknown', which adopts nothing."
          quiz-id (error-message-string err))
        'unknown))))
 
+(defun org-canvas--new-quiz-item-remote-body (item)
+  "Return remote ITEM's body HTML, or nil for a reply without one.
+The body sits under `entry' in the Items API and at the top level in
+older replies; both are read.  The drift report's `:body-remote-fn'
+for items (issue #322)."
+  (let ((entry (alist-get 'entry item)))
+    (or (and (listp entry) (alist-get 'item_body entry))
+        (alist-get 'item_body item))))
+
+(defun org-canvas--new-quiz-item-remote-type (item)
+  "Return remote ITEM's question type in the Org TYPE spelling, or nil.
+The Items API nests `interaction_type_slug' under `entry'; older
+replies carry it at the top level (issue #322)."
+  (let* ((entry (alist-get 'entry item))
+         (slug (or (and (listp entry) (alist-get 'interaction_type_slug entry))
+                   (alist-get 'interaction_type_slug item))))
+    (and (stringp slug) (org-canvas--new-quiz-slug-to-type slug))))
+
 (defun org-canvas--new-quiz-item-remote-title (item)
   "Return the text of remote ITEM's first paragraph, tags stripped.
 A push sends the heading as the item body's first paragraph, so this
-is what a heading compares against.  The body sits under `entry' in
-the Items API and at the top level in older replies; both are read."
-  (let* ((entry (alist-get 'entry item))
-         (body (or (and (listp entry) (alist-get 'item_body entry))
-                   (alist-get 'item_body item)
-                   ""))
+is what a heading compares against."
+  (let* ((body (or (org-canvas--new-quiz-item-remote-body item) ""))
          (first (if (string-match "<p[^>]*>\\(\\(?:.\\|\n\\)*?\\)</p>" body)
                     (match-string 1 body)
                   body)))
