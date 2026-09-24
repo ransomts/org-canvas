@@ -348,6 +348,7 @@ Non-negotiable. Each was learned on a live course; the pointer holds the full st
 eldev test                                                    # All tests; the last line is the spec count
 eldev test "core"                                             # Tests matching a pattern (no -p flag)
 eldev test -u "on,codecov,dontsend" -U coverage/coverage.json # Per-file coverage; pre-push gate is 99%
+python3 scripts/patch-coverage.py                            # After the line above: lisp/ lines added since origin/main that no test runs (codecov/patch)
 eldev test -u "on,text,dontsend"                              # Text summary (may end in overflow-error; prefer JSON)
 ELDEV_JUNIT=1 JUNIT_REPORT_FILE=test-results.xml eldev test   # JUnit XML for Codecov
 grep -rn buttercup-pending test/                              # Specs skipped on Emacs 29.x

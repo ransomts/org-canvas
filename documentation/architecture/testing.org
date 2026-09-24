@@ -527,7 +527,11 @@ ELDEV_JUNIT=1 JUNIT_REPORT_FILE=test-results.xml eldev test
   weekly mutation job, ninety minutes that gate nothing.
 - The =codecov/patch= check judges only the lines the PR changes, so a
   PR can be green on every job and red there.  Read =gh pr checks N=
-  (every row), not just the run's conclusion, before merging.
+  (every row), not just the run's conclusion, before merging.  To know
+  before pushing, run the coverage report and then
+  =python3 scripts/patch-coverage.py= (base =origin/main= by default):
+  it prints each added =lisp/= line no spec runs and exits non-zero
+  when there is one.
 - The pre-push hook runs lint, then complexity, then the Emacs 29 and
   30 test runs; it used to run the first two in parallel on the shared
   =.eldev= cache and block pushes on the cache lock with no real warning
