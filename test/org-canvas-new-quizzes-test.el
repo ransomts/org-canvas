@@ -3298,6 +3298,12 @@ collects every request."
   (re-search-forward "^\\* Midterm")
   (org-back-to-heading t))
 
+(defun test-nq-309--sans-stamp (text)
+  "Return TEXT without its #+LAST_SYNCED line.
+Each pull stamps the minute it ran, so two pulls either side of a minute
+boundary differ there and nowhere else."
+  (replace-regexp-in-string "^#\\+LAST_SYNCED: .*\n" "" text))
+
 (defun test-nq-309--file-text ()
   "Return the current buffer's file as it is on disk."
   (with-temp-buffer
@@ -3339,10 +3345,11 @@ collects every request."
         (expect (string-match-p "Fresh from Canvas\\.\n\n\\*\\* Explain" text)
                 :to-be-truthy))
       ;; A second pull of the same instructions changes nothing.
-      (let ((before (buffer-string)))
+      (let ((before (test-nq-309--sans-stamp (buffer-string))))
         (test-nq-309--goto-midterm)
         (org-canvas-pull-at-point)
-        (expect (buffer-string) :to-equal before))))
+        (expect (test-nq-309--sans-stamp (buffer-string))
+                :to-equal before))))
 
   (it "empties the text when Canvas holds no instructions"
     (test-nq-309--with-file
