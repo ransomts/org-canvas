@@ -2829,6 +2829,66 @@ Body text
        (expect (org-canvas--new-quiz-items-digest data)
                :to-equal before)))))
 
+;;;; A quiz pushed before #335 is pushed again
+
+(defun test-org-canvas-335--pushed-p (item-type &optional restamped)
+  "Run the skip check on a quiz whose one item is of ITEM-TYPE.
+The quiz carries the PAYLOAD_HASH the digest gave before issue #335,
+or, when RESTAMPED, the one it gives now.  Return non-nil when the
+runner pushes it rather than skipping it."
+  (let ((pushed nil))
+    (with-temp-org-buffer
+     (format "* Quiz\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 41\n:END:\n** Step\n:PROPERTIES:\n:TYPE: %s\n:END:\n\n1. One\n2. Two\n"
+             item-type)
+     (goto-char (point-min))
+     (org-back-to-heading)
+     (let* ((pom (point))
+            (payload '((title . "Quiz")))
+            (data (list :pom pom :canvas-id "41" :title "Quiz"))
+            (old-hash (md5 (concat (json-encode payload)
+                                   (org-canvas--org-children-digest pom)
+                                   "|rubric=nil")))
+            (ctx (list :push-fn (lambda (&rest _) (setq pushed t) 'skip)
+                       :hash-extra-fn #'org-canvas--new-quiz-items-digest
+                       :feature-name "new-quizzes" :total-count 1
+                       :counters (list :success 0 :skip 0 :fail 0
+                                       :dry-run 0 :dry-run-conflict 0)
+                       :synced-ids (list nil))))
+       (org-entry-put pom "PAYLOAD_HASH"
+                      (if restamped
+                          (org-canvas--sync-payload-hash
+                           payload data #'org-canvas--new-quiz-items-digest)
+                        old-hash))
+       (cl-letf (((symbol-function 'org-canvas--log-info) #'ignore)
+                 ((symbol-function 'org-canvas--sync-remote-drifted-p) #'ignore)
+                 ((symbol-function 'org-canvas--sync-backfill-baseline) #'ignore)
+                 ((symbol-function 'message) #'ignore))
+         (org-canvas--sync-execute-pipeline data payload ctx))))
+    pushed))
+
+(describe "a New Quiz stamped before issue #335"
+  (it "is pushed again when it holds an ordering item"
+    (expect (test-org-canvas-335--pushed-p "ordering") :to-be-truthy))
+
+  (it "is still skipped when it holds no ordering item"
+    (expect (test-org-canvas-335--pushed-p "essay") :to-be nil))
+
+  (it "is skipped once restamped with the new digest"
+    (expect (test-org-canvas-335--pushed-p "ordering" t) :to-be nil))
+
+  (it "reads the quiz at point when DATA names no position"
+    (with-temp-org-buffer
+     "* Quiz\n** Step\n:PROPERTIES:\n:TYPE: ordering\n:END:\n1. One\n"
+     (goto-char (point-min))
+     (expect (org-canvas--new-quiz-items-digest nil)
+             :to-match "|ordering-prompt=335\\'")))
+
+  (it "finds no ordering item in a quiz with no items"
+    (with-temp-org-buffer
+     "* Quiz\nOrder: none.\n"
+     (goto-char (point-min))
+     (expect (org-canvas--new-quiz-has-ordering-item-p (point)) :to-be nil))))
+
 ;;;; Duplicate guard and twin adoption (issue #179)
 
 (describe "New Quiz duplicate guard (issue #179)"
