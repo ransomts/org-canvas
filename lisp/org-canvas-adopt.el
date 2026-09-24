@@ -31,9 +31,11 @@
 
 (defun org-canvas--adopt-at-point-feature ()
   "Return the feature entry for the current buffer's file.
-Signals a `user-error' when the buffer is not a course file."
+Signals a `user-error' when the buffer is not a course file.  New
+Quizzes, which the feature registry does not hold, are found through
+their pull entry (issue #297)."
   (let* ((file (buffer-file-name))
-         (feature (org-canvas--registry-feature-for-file file)))
+         (feature (org-canvas--pull-feature-for-file file)))
     (unless feature
       (user-error "%s is not one of this course's Canvas files"
                   (if file (file-name-nondirectory file) "This buffer")))
@@ -148,8 +150,8 @@ back (a quiz's shadow assignment, the front page) or one another
 heading already claims is named too.  Nothing is sent to Canvas.
 
 A stub heading of a feature that pulls whole entries (a classic quiz
-with nothing under its drawer) is filled from the item it adopts by
-the single-item pull (issue #295)."
+or a New Quiz with nothing under its drawer) is filled from the item
+it adopts by the single-item pull (issues #295, #297)."
   (interactive)
   (org-back-to-heading t)
   (let* ((feature (org-canvas--adopt-at-point-feature))

@@ -276,9 +276,11 @@ events, and modules (whose pull-item also replaces the child item
 headings from the remote list).  Files have a custom sync loop and
 register theirs directly with =org-canvas-register-pull-item-fn=, as do
 classic quizzes (issue #295), whose pull-at-point is registered but whose
-sync does not offer pull at the conflict prompt.
+sync does not offer pull at the conflict prompt.  New Quizzes are not in
+the feature registry at all; their pull entry is registered with
+=org-canvas-register-pull-feature= (issue #297, below).
 
-Modules without (no single-item pull): outcomes, new-quizzes.
+Modules without (no single-item pull): outcomes.
 
 * Pull at Point
 
@@ -287,7 +289,7 @@ point from Canvas -- no conflict prompt, and none of the whole-file
 pull's overwriting of every other heading.  It is how a change that
 =org-canvas-diff= names gets accepted.
 
-Dispatch is generic.  =org-canvas--registry-feature-for-file= maps the
+Dispatch is generic.  =org-canvas--pull-feature-for-file= maps the
 current buffer's file to its feature registry entry, whose
 =:pull-item-fn= was recorded by =org-canvas-register-pull-item-fn= from
 whichever of =org-canvas-define-sync= or =org-canvas-define-pull= the
@@ -304,10 +306,22 @@ same path the conflict prompt's pull option takes, which stamps
 by hand gets the entry re-flagged as drifted on every later sync while
 looking clean.
 
-A module with no pull-item function (outcomes, new quizzes) gets a
-=user-error= naming the whole-file command to use instead.
+A module with no pull-item function (outcomes) gets a =user-error=
+naming the whole-file command to use instead.
 
-A feature that registers =:pull-whole-entry= (classic quizzes) has a
+A file the feature registry does not hold can still have a single-item
+pull: =org-canvas-register-pull-feature= records an entry of the same
+shape (=:file-var=, =:id-property=, =:id-field=, =:title-field=,
+=:list-url-fn=, =:item-url-fn=, =:pull-item-fn=, =:pull-whole-entry=)
+in =org-canvas--pull-feature-registry=, which only
+=org-canvas--pull-feature-for-file= reads -- so pull-at-point and
+adopt-at-point find it, and the drift report, the orphan scan and prune
+never do.  New Quizzes use it (issue #297), since their API is a
+separate service; see decisions.org, "A New Quiz Pulls Whole Through a
+Pull-Only Entry".
+
+A feature that registers =:pull-whole-entry= (classic quizzes, New
+Quizzes) has a
 pull-item function that writes a whole level-1 entry, children
 included, from the remote item alone.  For such a feature the command
 climbs from a child heading to its level-1 entry first, the drift
@@ -345,7 +359,8 @@ quiz's single-item pull.
 
 Similar to quizzes but uses a different API base (=/api/quiz/v1/=
 instead of =/api/v1/=). Items are fetched per-quiz and inserted as L2
-sub-headings.
+sub-headings.  =org-canvas--new-quiz-pull-item= does the same for one
+quiz, and is the New Quiz's single-item pull (issue #297).
 
 ** Custom Pull: Modules
 
@@ -471,7 +486,7 @@ pulling, the next sync will compute a fresh hash.
 
 * Single-Item Pull: Registration Rules
 
-=org-canvas-pull-at-point= refreshes the heading at point from Canvas by handing one fetched item to =org-canvas--conflict-pull-local= — the same function the conflict prompt's pull option uses, which stamps =CANVAS_UPDATED_AT= and drops the stale =PAYLOAD_HASH= (get those wrong by hand and the entry re-triggers drift forever while looking clean). Dispatch is generic: the feature registry carries =:pull-item-fn=, written by =org-canvas-register-pull-item-fn= from whichever of =org-canvas-define-sync= or =org-canvas-define-pull= the module uses, and =org-canvas--registry-feature-for-file= maps the current buffer to its feature. *A module with a custom sync /and/ a custom pull registers its own* (files.el and quizzes.el do; outcomes and new quizzes have no pull-item fn at all and the command says which whole-file command to use instead). Generated =org-canvas-pull-<feature>= commands also take a prefix arg that restricts the pull to ids the file already claims (issue #67).
+=org-canvas-pull-at-point= refreshes the heading at point from Canvas by handing one fetched item to =org-canvas--conflict-pull-local= — the same function the conflict prompt's pull option uses, which stamps =CANVAS_UPDATED_AT= and drops the stale =PAYLOAD_HASH= (get those wrong by hand and the entry re-triggers drift forever while looking clean). Dispatch is generic: the feature registry carries =:pull-item-fn=, written by =org-canvas-register-pull-item-fn= from whichever of =org-canvas-define-sync= or =org-canvas-define-pull= the module uses, and =org-canvas--registry-feature-for-file= maps the current buffer to its feature. *A module with a custom sync /and/ a custom pull registers its own* (files.el and quizzes.el do; new-quizzes.el, outside the feature registry, registers a pull entry with =org-canvas-register-pull-feature=; outcomes have no pull-item fn at all and the command says which whole-file command to use instead). Generated =org-canvas-pull-<feature>= commands also take a prefix arg that restricts the pull to ids the file already claims (issue #67).
 
 * A :skip-fn Must Say So (issues #81, #82)
 

@@ -459,6 +459,35 @@ A feature registry entry with `:web-pages' first, then an entry of
         feature
       (org-canvas--registry-entry-for-file file org-canvas--web-page-registry))))
 
+(defvar org-canvas--pull-feature-registry nil
+  "Single-item pull entries for files the feature registry does not hold.
+Each is a feature plist, populated at load time by
+`org-canvas-register-pull-feature'.")
+
+(defun org-canvas-register-pull-feature (&rest plist)
+  "Register the single-item pull of a file the feature registry lacks.
+PLIST has the keys of a feature registry entry that the at-point pull
+and adoption read: :name :file-var :id-field :id-property :title-field
+:list-url-fn :item-url-fn :pull-item-fn and :pull-whole-entry.  New
+Quizzes use it (issue #297): their API is a separate service, and in
+the feature registry every consumer of it — the drift report, the
+orphan scan, prune — would list them at the wrong endpoint.  Only
+`org-canvas--pull-feature-for-file' reads this registry, as only
+`org-canvas--web-pages-for-file' reads the web-page one (#292)."
+  (let ((name (plist-get plist :name)))
+    (setq org-canvas--pull-feature-registry
+          (cons plist (cl-remove name org-canvas--pull-feature-registry
+                                 :key (lambda (e) (plist-get e :name))
+                                 :test #'equal)))))
+
+(defun org-canvas--pull-feature-for-file (file)
+  "Return the entry a single-item pull or adoption of FILE works from.
+The feature registry's entry for FILE, or else an entry of
+`org-canvas--pull-feature-registry'; nil when neither holds it."
+  (or (org-canvas--registry-feature-for-file file)
+      (org-canvas--registry-entry-for-file
+       file org-canvas--pull-feature-registry)))
+
 (defun org-canvas--recompute-file-paths ()
   "Recompute all file-path variables from `org-canvas-directory'."
   (dolist (entry org-canvas--file-var-registry)

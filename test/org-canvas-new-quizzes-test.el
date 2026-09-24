@@ -3034,4 +3034,192 @@ URL, a POST with 900."
             (org-canvas-sync-new-quiz))
           (expect synced :to-equal "Quiz One"))))))
 
+;;;; Single-item pull (issue #297)
+
+(defmacro test-nq-297--with-file (content &rest body)
+  "Run BODY in a buffer visiting a new-quizzes file holding CONTENT.
+The reads answer New Quiz 41, \"Midterm\", with two items; REQUESTS
+collects every request."
+  (declare (indent 1))
+  `(let ((temp (make-temp-file "nq-297-" nil ".org"))
+         (requests nil))
+     (unwind-protect
+         (progn
+           (with-temp-file temp (insert ,content))
+           (let ((org-canvas-new-quizzes-file temp))
+             (with-org-canvas-test-config
+               (with-sync-test-env
+                 (cl-letf (((symbol-function 'org-canvas-api-request)
+                            (lambda (method url &rest _)
+                              (push (list method url) requests)
+                              (unless (eq method 'GET)
+                                (error "A pull must not write to Canvas"))
+                              '((id . "41") (title . "Midterm")
+                                (time_limit . 60) (allowed_attempts . 2)
+                                (updated_at . "2026-09-20T10:00:00Z"))))
+                           ((symbol-function 'org-canvas-api-request-all-pages)
+                            (lambda (method url &rest _)
+                              (push (list method url) requests)
+                              (cond
+                               ((string-match-p "quizzes/41/items" url)
+;; A flat list: all-pages joins the pages.
+                                '(((id . "901") (item_body . "What is 2+2?")
+                                   (interaction_type_slug . "choice")
+                                   (points_possible . 5))
+                                  ((id . "902") (item_body . "Explain.")
+                                   (interaction_type_slug . "essay")
+                                   (points_possible . 10))))
+                               ((string-match-p "quizzes\\'" url)
+                                '(((id . "41") (title . "Midterm")
+                                   (updated_at . "2026-09-20T10:00:00Z"))))
+                               (t nil))))
+                           ((symbol-function 'message) #'ignore))
+                   (with-current-buffer (find-file-noselect temp)
+                     ,@body))))))
+       (let ((buf (find-buffer-visiting temp)))
+         (when buf (with-current-buffer buf (set-buffer-modified-p nil))
+               (kill-buffer buf)))
+       (delete-file temp))))
+
+(defconst test-nq-297--other
+  "* Other quiz
+:PROPERTIES:
+:CANVAS_ASSIGNMENT_ID: 5
+:PAYLOAD_HASH: keepme
+:END:
+
+# a hand comment that must survive
+Local instructions.
+** Local item
+:PROPERTIES:
+:TYPE: essay
+:CANVAS_ITEM_ID: 9
+:END:
+"
+  "A New Quiz the single-item pull must leave exactly as it is.")
+
+(defvar test-nq-297--file nil
+  "A file variable for the pull-entry lookup specs.")
+
+(describe "The New Quizzes pull entry (issue #297)"
+  (it "stays out of the feature registry the drift report and prune read"
+    (expect (org-canvas--registry-find-feature "New Quizzes") :to-be nil)
+    (let ((entry (cl-find "New Quizzes" org-canvas--pull-feature-registry
+                          :key (lambda (e) (plist-get e :name)) :test #'equal)))
+      (expect (plist-get entry :pull-item-fn) :to-be #'org-canvas--new-quiz-pull-item)
+      (expect (plist-get entry :pull-whole-entry) :to-be-truthy)
+      (with-org-canvas-test-config
+        (expect (org-canvas--feature-item-url entry "41")
+                :to-match "/api/quiz/v1/courses/[^/]+/quizzes/41\\'")
+        (expect (org-canvas--feature-list-url entry)
+                :to-match "/api/quiz/v1/courses/[^/]+/quizzes\\'"))))
+
+  (it "registers a name once, the later registration winning"
+    (let ((org-canvas--pull-feature-registry nil))
+      (org-canvas-register-pull-feature :name "X" :file-var 'x-file :id-property "A")
+      (org-canvas-register-pull-feature :name "X" :file-var 'x-file :id-property "B")
+      (expect (length org-canvas--pull-feature-registry) :to-equal 1)
+      (expect (plist-get (car org-canvas--pull-feature-registry) :id-property)
+              :to-equal "B")))
+
+  (it "is found for a file only when the feature registry has no entry for it"
+    (let* ((file (make-temp-file "nq-297-reg-" nil ".org"))
+           (test-nq-297--file file)
+           (org-canvas--pull-feature-registry
+            (list (list :name "Side" :file-var 'test-nq-297--file)))
+           (org-canvas--feature-registry nil))
+      (unwind-protect
+          (progn
+            (expect (plist-get (org-canvas--pull-feature-for-file file) :name)
+                    :to-equal "Side")
+            (let ((org-canvas--feature-registry
+                   (list (list :name "Main" :file-var 'test-nq-297--file))))
+              (expect (plist-get (org-canvas--pull-feature-for-file file) :name)
+                      :to-equal "Main"))
+            (expect (org-canvas--pull-feature-for-file nil) :to-be nil))
+        (delete-file file)))))
+
+(describe "org-canvas-pull-at-point on a New Quiz (issue #297)"
+  (it "fills a stub with the quiz and its items and leaves the rest of the file alone"
+    (test-nq-297--with-file
+        (concat test-nq-297--other
+                "* Midterm\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 41\n:PAYLOAD_HASH: stale\n:END:\n")
+      (goto-char (point-min))
+      (re-search-forward "^\\* Midterm")
+      (org-canvas-pull-at-point)
+      (let ((text (buffer-string)))
+        (expect text :to-match (regexp-quote test-nq-297--other))
+        (expect text :to-match "^\\*\\* What is 2\\+2\\?$")
+        (expect text :to-match "^\\*\\* Explain\\.$"))
+      (goto-char (point-min))
+      (re-search-forward "^\\* Midterm")
+      (org-back-to-heading t)
+      (expect (org-entry-get (point) "TIME_LIMIT") :to-equal "60")
+      (expect (org-entry-get (point) "ALLOWED_ATTEMPTS") :to-equal "2")
+      (expect (org-entry-get (point) "CANVAS_UPDATED_AT") :to-equal "2026-09-20T10:00:00Z")
+      (expect (org-entry-get (point) "PAYLOAD_HASH") :to-be nil)
+      (re-search-forward "^\\*\\* Explain")
+      (expect (org-entry-get (point) "CANVAS_ITEM_ID") :to-equal "902")
+      (expect (org-entry-get (point) "TYPE") :to-equal "essay")
+      ;; The quiz service, one quiz and its items: never the quiz list,
+      ;; never the course API's quizzes.
+      (expect (cl-find-if (lambda (r) (string-match-p "/api/quiz/v1/courses/[^/]+/quizzes/41\\'"
+                                                      (nth 1 r)))
+                          requests)
+              :to-be-truthy)
+      (expect (cl-find-if (lambda (r) (string-match-p "quizzes\\'" (nth 1 r))) requests)
+              :to-be nil)
+      (expect (cl-find-if (lambda (r) (string-match-p "/api/v1/" (nth 1 r))) requests)
+              :to-be nil)))
+
+  (it "pulls the quiz when point is on one of its items, rewriting the item in place"
+    (test-nq-297--with-file
+        "* Midterm\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 41\n:END:\n** Old wording\n:PROPERTIES:\n:CANVAS_ITEM_ID: 902\n:END:\n"
+      (goto-char (point-min))
+      (re-search-forward "^\\*\\* Old wording")
+      (org-canvas-pull-at-point)
+      (expect (cl-find-if (lambda (r) (string-match-p "quizzes/902" (nth 1 r))) requests)
+              :to-be nil)
+      (let ((text (buffer-string)))
+        (expect text :not :to-match "Old wording")
+        (expect (test-org-canvas-count-matches ":CANVAS_ITEM_ID: 902" text)
+                :to-equal 1))))
+
+  (it "refuses a heading with no CANVAS_ASSIGNMENT_ID"
+    (test-nq-297--with-file "* Midterm\n"
+      (goto-char (point-min))
+      (expect (org-canvas-pull-at-point) :to-throw 'user-error)
+      (expect requests :to-be nil))))
+
+(describe "org-canvas-adopt-at-point on a New Quiz (issue #297)"
+  (it "fills a stub it adopts from the quiz service"
+    (test-nq-297--with-file "* Midterm\n"
+      (goto-char (point-min))
+      (expect (org-canvas-adopt-at-point) :to-equal "41")
+      (expect (buffer-string) :to-match "^\\*\\* What is 2\\+2\\?$")
+      (goto-char (point-min))
+      (re-search-forward "^\\* Midterm")
+      (expect (org-entry-get (point) "CANVAS_ASSIGNMENT_ID") :to-equal "41")
+      (expect (org-entry-get (point) "TIME_LIMIT") :to-equal "60")
+      (expect (cl-find-if (lambda (r) (string-match-p "/api/quiz/v1/courses/[^/]+/quizzes\\'"
+                                                      (nth 1 r)))
+                          requests)
+              :to-be-truthy)))
+
+  (it "stamps a heading with content of its own and pulls nothing over it"
+    (test-nq-297--with-file "* Midterm\n\nMy own instructions.\n"
+      (goto-char (point-min))
+      (expect (org-canvas-adopt-at-point) :to-equal "41")
+      (expect (buffer-string) :to-match "My own instructions")
+      (expect (buffer-string) :not :to-match "What is 2")
+      (expect (cl-find-if (lambda (r) (string-match-p "items" (nth 1 r))) requests)
+              :to-be nil)))
+
+  (it "does not adopt an id another heading already claims"
+    (test-nq-297--with-file
+        "* Midterm\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 41\n:END:\n* Midterm\n"
+      (goto-char (point-min))
+      (re-search-forward "^\\* Midterm" nil t 2)
+      (expect (org-canvas-adopt-at-point) :to-throw 'user-error))))
+
 ;;; org-canvas-new-quizzes-test.el ends here

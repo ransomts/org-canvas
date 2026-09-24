@@ -611,6 +611,35 @@ anything else."
        quiz-assignment-id (error-message-string err))
      nil)))
 
+(defun org-canvas--new-quiz-pull-item (quiz pos)
+  "Write QUIZ, one New Quiz's API alist, over the heading at POS.
+The single-item pull of a New Quiz (issue #297): the properties and
+the items, fetched here, through the same writers the whole-file
+`org-canvas-pull-new-quizzes' uses, so one quiz is written exactly as
+a full pull would write it and nothing else in the file moves.  The
+caller, `org-canvas--conflict-pull-local', renames the heading, stamps
+CANVAS_UPDATED_AT and drops PAYLOAD_HASH."
+  (save-excursion
+    (goto-char pos)
+    (org-back-to-heading t)
+    (org-canvas--new-quiz-pull-set-properties (point) quiz)
+    (org-canvas--new-quiz-pull-items (org-canvas--new-quiz-remote-id quiz))))
+
+;; New Quizzes stay out of the feature registry: the drift report, the
+;; orphan scan and prune would list them at the course API's endpoint.
+;; This entry is read only by pull-at-point and adopt-at-point (#297).
+(org-canvas-register-pull-feature
+ :name "New Quizzes"
+ :file-var 'org-canvas-new-quizzes-file
+ ;; A New Quiz's `id' is its assignment id, the one stamped; adoption
+ ;; stamps `id' (`org-canvas--adopt-stamp').
+ :id-field 'id :id-property "CANVAS_ASSIGNMENT_ID"
+ :title-field 'title
+ :list-url-fn (lambda () (org-canvas--new-quiz-api-endpoint "quizzes"))
+ :item-url-fn (lambda (id) (org-canvas--new-quiz-api-endpoint "quizzes/%s" id))
+ :pull-item-fn #'org-canvas--new-quiz-pull-item
+ :pull-whole-entry t)
+
 ;;;###autoload
 (defun org-canvas-pull-new-quizzes ()
   "Pull New Quizzes from Canvas into new-quizzes.org."

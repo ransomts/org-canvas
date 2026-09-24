@@ -1737,6 +1737,12 @@ Keep this too
         (delete-directory temp-dir t)))))
 
 (describe "org-canvas--pull-sort-items"
+  (it "reads string ids as numbers, as the New Quizzes service sends them (issue #297)"
+    (let ((items '(((id . "10") (item_body . "B")) ((id . "9") (item_body . "A")))))
+      (expect (mapcar (lambda (x) (alist-get 'item_body x))
+                      (org-canvas--pull-sort-items items))
+              :to-equal '("A" "B"))))
+
   (it "sorts items by position ascending"
     (let ((items '(((id . 3) (position . 30) (title . "C"))
                    ((id . 1) (position . 10) (title . "A"))

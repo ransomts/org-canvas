@@ -801,7 +801,12 @@ in buffer lists."
 (defun org-canvas--pull-sort-cmp-numeric (a b)
   "Compare numeric keys A and B from items.
 Return `lt'/`gt'/`eq' for ordering, or `none' when either is nil.
-A nil key sorts AFTER any present key (so partial data falls to the end)."
+A nil key sorts AFTER any present key (so partial data falls to the end).
+A string key is read as a number: the New Quizzes service answers its
+ids as strings, and comparing them with `<' signalled, so a New Quiz
+pull wrote no items (issue #297)."
+  (when (stringp a) (setq a (string-to-number a)))
+  (when (stringp b) (setq b (string-to-number b)))
   (cond
    ((and (null a) (null b)) 'eq)
    ((null a) 'gt)
