@@ -17,51 +17,34 @@ on:
         default: false
 
 jobs:
-  test:
+  # Emacs 30.1 runs the whole suite in one job: it is the fast one
+  # (about 50 s) and the one Codecov's coverage and test results come
+  # from, which a single report keeps simple.
+  test-30:
+    name: test (30.1)
     runs-on: ubuntu-latest
     timeout-minutes: 10
-
-    strategy:
-      fail-fast: false
-      matrix:
-        emacs-version: ['29.3', '29.4', '30.1']
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Setup Emacs
-        uses: jcs090218/setup-emacs@a5b1cbb1af335d2e7bef99c0aa6e02cdad229182
+      - name: Set up Emacs, Eldev and pandoc
+        uses: ./.github/actions/setup-emacs-env
         with:
-          version: ${{ matrix.emacs-version }}
-
-      - name: Setup Eldev
-        uses: emacs-eldev/setup-eldev@v1.5
-
-      - name: Install pandoc
-        run: sudo apt-get install -y pandoc
-
-      - name: Cache Eldev dependencies
-        uses: actions/cache@v5
-        with:
-          path: .eldev
-          key: eldev-${{ matrix.emacs-version }}-${{ hashFiles('Eldev') }}
+          emacs-version: '30.1'
+          pandoc: "true"
 
       - name: Run tests with coverage
         run: |
-          if [ "${{ matrix.emacs-version }}" = "30.1" ]; then
-            mkdir -p coverage
-            eldev test -u "on,codecov,dontsend" -U coverage/coverage.json
-          else
-            eldev test
-          fi
+          mkdir -p coverage
+          eldev test -u "on,codecov,dontsend" -U coverage/coverage.json
         env:
           ELDEV_JUNIT: 1
           JUNIT_REPORT_FILE: test-results.xml
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v6
-        if: matrix.emacs-version == '30.1'
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage/coverage.json
@@ -70,13 +53,52 @@ jobs:
 
       - name: Upload test results to Codecov
         uses: codecov/codecov-action@v6
-        if: ${{ !cancelled() && matrix.emacs-version == '30.1' }}
+        if: ${{ !cancelled() }}
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: test-results.xml
           report_type: test_results
           fail_ci_if_error: false
           verbose: true
+
+  # Emacs 29.x took 100-160 s for the suite alone, so it runs in three
+  # shards per version (.github/workflows/test-shards.yml); the
+  # aggregator below reports under the check names branch protection
+  # requires.
+  shards-293:
+    uses: ./.github/workflows/test-shards.yml
+    with:
+      emacs-version: '29.3'
+
+  shards-294:
+    uses: ./.github/workflows/test-shards.yml
+    with:
+      emacs-version: '29.4'
+
+  test-29:
+    name: test (${{ matrix.emacs-version }})
+    needs: [shards-293, shards-294]
+    # Always, so a failed or cancelled shard reports as a failed check
+    # rather than a skipped one, which branch protection counts as passed.
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - emacs-version: '29.3'
+            shards: shards-293
+          - emacs-version: '29.4'
+            shards: shards-294
+
+    steps:
+      - name: Every shard passed
+        run: |
+          result='${{ needs[matrix.shards].result }}'
+          echo "Emacs ${{ matrix.emacs-version }} shards: $result"
+          [ "$result" = success ]
 
   generated-artifacts:
     # Guards single-source-of-truth: regenerate committed generated files and
@@ -114,36 +136,31 @@ jobs:
             exit 1
           fi
 
-  isolation:
+      - name: Check changelog fragments
+        # Each PR adds changelog.d/<issue>.org instead of editing
+        # CHANGELOG.org; a malformed one would only fail at release.
+        run: python3 scripts/changelog-collect.py --check
+
+  isolation-shards:
     # Every test file must pass on its own: `eldev test "pattern"` is
     # the documented way to run a subset, and the full suite hides what
     # a file borrows from the files loaded before it (issue #260).
+    uses: ./.github/workflows/test-shards.yml
+    with:
+      emacs-version: '30.1'
+      each-file: true
+
+  isolation:
+    needs: isolation-shards
+    if: ${{ always() }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 2
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Emacs
-        uses: jcs090218/setup-emacs@a5b1cbb1af335d2e7bef99c0aa6e02cdad229182
-        with:
-          version: '30.1'
-
-      - name: Setup Eldev
-        uses: emacs-eldev/setup-eldev@v1.5
-
-      - name: Install pandoc
-        run: sudo apt-get install -y pandoc
-
-      - name: Cache Eldev dependencies
-        uses: actions/cache@v5
-        with:
-          path: .eldev
-          key: eldev-30.1-${{ hashFiles('Eldev') }}
-
-      - name: Run each test file alone
-        run: scripts/test-each-file.sh
+      - name: Every shard passed
+        run: |
+          echo "Isolation shards: ${{ needs.isolation-shards.result }}"
+          [ "${{ needs.isolation-shards.result }}" = success ]
 
   lint:
     runs-on: ubuntu-latest
@@ -153,19 +170,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Setup Emacs
-        uses: jcs090218/setup-emacs@a5b1cbb1af335d2e7bef99c0aa6e02cdad229182
+      - name: Set up Emacs and Eldev
+        uses: ./.github/actions/setup-emacs-env
         with:
-          version: '30.1'
-
-      - name: Setup Eldev
-        uses: emacs-eldev/setup-eldev@v1.5
-
-      - name: Cache Eldev dependencies
-        uses: actions/cache@v5
-        with:
-          path: .eldev
-          key: eldev-30.1-${{ hashFiles('Eldev') }}
+          emacs-version: '30.1'
 
       - name: Run linter
         run: eldev lint
@@ -178,19 +186,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Setup Emacs
-        uses: jcs090218/setup-emacs@a5b1cbb1af335d2e7bef99c0aa6e02cdad229182
+      - name: Set up Emacs and Eldev
+        uses: ./.github/actions/setup-emacs-env
         with:
-          version: '30.1'
-
-      - name: Setup Eldev
-        uses: emacs-eldev/setup-eldev@v1.5
-
-      - name: Cache Eldev dependencies
-        uses: actions/cache@v5
-        with:
-          path: .eldev
-          key: eldev-30.1-${{ hashFiles('Eldev') }}
+          emacs-version: '30.1'
 
       - name: Check cognitive complexity
         run: |
@@ -222,24 +221,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Setup Emacs
-        uses: jcs090218/setup-emacs@a5b1cbb1af335d2e7bef99c0aa6e02cdad229182
+      - name: Set up Emacs and Eldev
+        uses: ./.github/actions/setup-emacs-env
         with:
-          version: '30.1'
-
-      - name: Setup Eldev
-        uses: emacs-eldev/setup-eldev@v1.5
+          emacs-version: '30.1'
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.x'
-
-      - name: Cache Eldev dependencies
-        uses: actions/cache@v5
-        with:
-          path: .eldev
-          key: eldev-30.1-${{ hashFiles('Eldev') }}
 
       - name: Full pass gated on the accepted-survivors baseline
         # Fails only on a survivor absent from the baseline.  Stale

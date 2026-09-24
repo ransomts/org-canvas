@@ -12,7 +12,7 @@ writing tests.
 - Coverage: undercover plugin; the pre-push hook gates at 99% (run
   =eldev test -u "on,codecov,dontsend" -U coverage/coverage.json= for
   the current figure)
-- CI: GitHub Actions matrix (Emacs 29.3, 29.4, 30.1)
+- CI: GitHub Actions, Emacs 29.3, 29.4 (three shards each) and 30.1, plus a sharded isolation check
 - Local gate: pre-push hook (lint + complexity + both Emacs versions)
 - Reports: JUnit XML (Codecov test analytics), Codecov JSON (coverage)
 
@@ -338,7 +338,7 @@ Integration tests must not assert on =*org-canvas-log*= buffer contents — earl
 - *A logger a spec had silenced.*  =org-canvas-set-log-level= sets the global level and the logger object; the core-config specs left both at =error=, so from that file on no debug or info line was formatted, which hid a =%d= over a nil file size in a files spec that pointed at a =/tmp/test.pdf= nothing creates.  Those specs restore the level (=test-org-canvas-with-log-level-restored=), and the files spec makes its own temp file.  A spec that changes global state restores it; =let= is enough when the code =setq=s.
 - *No =(require 'buttercup)=.*  Three files had none, so =describe= was void when they loaded first.
 
-=scripts/test-each-file.sh= runs every file alone and lists the ones that fail; CI runs it as the =isolation= job on Emacs 30.1 (about two minutes).  Run it after touching test-helper.el or any spec that sets global state.
+=scripts/test-each-file.sh= runs every file alone and lists the ones that fail; CI runs it as the =isolation= check on Emacs 30.1, in three shards (=--shard K/N=), each about a minute.  Run it after touching test-helper.el or any spec that sets global state.
 
 * Emacs 29 vs 30 Compatibility
 
@@ -430,25 +430,62 @@ Only =:type= is affected; other keywords work fine.
 
 * CI Pipeline
 
-** GitHub Actions Matrix
+** Jobs and Shards
 
 #+begin_example
-  Test job:
-    Matrix: Emacs 29.3, 29.4, 30.1
-    ├─ Emacs 29.x: eldev test (no coverage, fast)
-    └─ Emacs 30.1: eldev test -u "on,codecov,dontsend" (with coverage)
-
-  Coverage upload (30.1 only):
-    codecov/codecov-action@v5 → coverage/coverage.json
-
-  Test results upload (30.1 only):
-    codecov/codecov-action@v5 → test-results.xml (report_type: test_results)
-    Condition: !cancelled() (uploads even if tests failed)
-
-  Lint job: eldev lint (30.1 only)
-
-  Complexity job: eldev complexity (30.1 only)
+  test (30.1)       the whole suite with coverage, one job (~50 s of tests)
+                    → Codecov: coverage/coverage.json and test-results.xml
+  shards-293 / shards-294
+                    Emacs 29.3 / 29.4, three shards each
+                    (.github/workflows/test-shards.yml)
+  test (29.3), test (29.4)
+                    aggregators: pass only when every shard of that
+                    version passed
+  isolation-shards  every test file alone, Emacs 30.1, three shards
+  isolation         aggregator for the isolation shards
+  lint, complexity  Emacs 30.1
+  generated-artifacts
+                    the contract fixture regenerates to itself; the
+                    changelog fragments validate
+  mutation          weekly, or dispatched with the mutation input
 #+end_example
+
+The Emacs setup every job repeats (Emacs, Eldev, the cached =.eldev=,
+and pandoc for the test jobs) is one composite action,
+=.github/actions/setup-emacs-env=.  pandoc comes from its release
+tarball (3.1.3, the version ubuntu-24.04's apt carried), cached; the
+=apt-get install= it replaced cost 8-11 s per job.
+
+*Why shards.*  Before this, a run's wall time was its slowest job:
+=test (29.4)= at 162 s of tests and =isolation= at 129 s, while
+=test (30.1)= needed 49 s.  Every job also pays about 25 s of setup, so
+three shards is where the split stops paying.
+
+*How files are split.*  =scripts/test-shard.sh K/N= lists shard K's
+files: every =test/org-canvas-test.el= and =test/org-canvas-*-test.el=
+lands in exactly one shard, heaviest first on the lightest, weighted by
+=test/shard-weights.txt= (seconds per file alone; a missing file counts
+as 3).  The weights only balance the shards, so a stale file never
+drops a test; refresh it with
+=scripts/test-each-file.sh --timings > test/shard-weights.txt= when one
+shard runs much longer than the others.  Before the split,
+=scripts/test-each-file.sh= globbed =test/org-canvas-*-test.el= and so
+never ran =test/org-canvas-test.el= on its own; the shard list includes
+it.
+
+*Why aggregators.*  Branch protection requires checks by name:
+=test (29.3)=, =test (29.4)=, =test (30.1)=, =lint=, =complexity=.  A
+sharded job reports as =shards-293 / suite 1/3=, so a small job per
+version carries the old name, =needs= the shards, runs under
+=if: always()= and fails unless their result is =success=.  Without
+=always()= a failed shard would leave the aggregator skipped, and a
+skipped required check counts as passed.  Renaming any of these jobs
+means changing the protection rule in the same breath.
+
+*Coverage stays on one job.*  Emacs 30.1 is the fastest suite and the
+only one measured, so its run is not split: one =coverage.json= and one
+=test-results.xml= keep Codecov's patch and project checks as they
+were.
 
 ** JUnit XML Output with buttercup-junit
 

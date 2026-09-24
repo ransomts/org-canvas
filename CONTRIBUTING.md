@@ -196,10 +196,10 @@ docs: update manual for new quiz properties
    - `eldev lint` has no warnings
    - `eldev complexity` has 0 functions above threshold
    - Coverage stays at 99%+
-   - `CHANGELOG.org` has an entry under *Unreleased*
+   - A changelog fragment, `changelog.d/<issue>.org`, says what changed (see `changelog.d/README.org`; `python3 scripts/changelog-collect.py --check` validates it). Do not edit `CHANGELOG.org`: the fragments are folded into it at release time with `python3 scripts/changelog-collect.py`, so parallel PRs never conflict there
    - The manual's Property Reference is regenerated if the property registry changed (the pull request template has the command)
 3. Open a PR against `main`; the template's checklist and test plan are the summary.
-4. CI runs tests on Emacs 29.3, 29.4 and 30.1, plus lint, complexity and coverage checks.
+4. CI runs tests on Emacs 29.3, 29.4 and 30.1 (the 29.x suites and the run-each-file-alone isolation check in three parallel shards each), plus lint, complexity, coverage and the changelog-fragment check.
 
 ## Pre-push Hook
 

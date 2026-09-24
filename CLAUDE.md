@@ -28,6 +28,10 @@ eldev clean all      # Clear the Eldev cache — mandatory after editing a macro
 
 `org-canvas.el` at the repository root is a symlink to `lisp/org-canvas.el` so the package linter finds `Package-Requires` while the load path stays in `lisp/` (testing.org, "Eldev Test Configuration"). CI runs the tests on Emacs 29.3, 29.4 and 30.1; the pre-push hook runs 29 and 30 through nix-shell. CI runs on every pull request whatever its base, and `main` requires the checks on an up-to-date head, so a PR stacked on another branch still needs a rebase once the lower one merges — prefer independent PRs and merge them one at a time.
 
+CI (`.github/workflows/ci.yml`) runs Emacs 30.1's suite in one job, with coverage for Codecov; Emacs 29.3 and 29.4 each run in three shards (`.github/workflows/test-shards.yml`, files split by `scripts/test-shard.sh` using `test/shard-weights.txt`), and the isolation check runs in three shards too. An aggregator job per version reports under the check names branch protection requires (`test (29.3)`, `test (29.4)`, `isolation`), failing unless every shard passed; rename a job only together with the protection rule. testing.org, "CI Pipeline".
+
+**Changelog: one fragment per PR, never CHANGELOG.org.** A PR adds `changelog.d/<issue>.org` (a `* Added`/`* Changed`/`* Fixed` heading, then `- #<issue> ...` items; `changelog.d/README.org`), which CI validates with `scripts/changelog-collect.py --check`; at release time `scripts/changelog-collect.py` folds them into CHANGELOG.org and deletes them. When every PR wrote the top of the same section, each merge conflicted with the next.
+
 ## Architecture
 
 ### Module Structure
@@ -159,16 +163,98 @@ What stays dynamically bound is the *caller's* seam, set around a command by who
 
 ### Where the Narratives Live
 
-| Topic (issue numbers) | Document under `documentation/architecture/` |
-|---|---|
-| Pipeline macros, `:hash-extra`, payload builder, property registry (`:remote-fn` #61/#62, `:compare-p` #93), drop-rules two-phase sync, global sync summary (#66), complexity patterns, key lessons (markers, `save-excursion`, upload nulls, unibyte, property drawers, question body text) | `design.org` |
-| plz and the PATCH fallback (#13), error-handling rules, conflict baseline and strategy rules (#48, #72, #86, #104, #124), duplicate-title guard and adopt-at-point (#85, #101), dry-run rules (#34, #84), file re-upload tiers (#49, #70, #71, #77), feature registry URLs and `:modified-field` (#87, #94), quiz questions API, upload quirks, copy-pasteable curl commands for debugging | `api-interaction.org` |
-| LTI assignments and no Turnitin, the Turnitin document processor as a Canvas-owned property (#184) and a wanted one declared, compared and never sent (#293), quiz publish sequencing (#59), rubrics update in place (#123) and keep their criterion ids and assignments (#255, #256), bulk publish (#47) and a new header's flag PUT after its POST (#279), module items reconcile moves (#105), module items adopt a twin before POST and the drift report lists item twins (#177, #179), the drift report pairs module items by content as the sync adopts them, declaring the modules.el parser rather than requiring it (#299), drift report bodies (#83), by-design extras (#98, #102, #111), drift report verbs (#103), stamp adoption for a CHANGED row with nothing to compare (#257), pending creates counted apart from drift and moved module items paired on the link's description (#294), EXTRA assignments and groups described from the lists already read and a group weight total line that is not drift (#296), batch-mode file handling (#97, #121, #188, #249), rubric assessments from the grading file (#250) and their comments as items under the table (#263), comments and drafts as paragraphs and short CONFLICT values (#264), the rubric in full in the grading file (#265), hard-break markup dropped from bodies (#266), a re-pull keeps typed scores and the summary table alone still asks (#281), submission commands take their target as an argument and prompt only on nil (#280), a refresh reports what changed and keeps a departed student's heading for the work under it (#282), the roster marks who left on Canvas's word and never on a misread list (#290), the grading queue counts rows, never columns (#283), Canvas-owned submission types (#167), read-only validation (#168), batch reports (#155, #169), timestamp precision (#176), body headings and the pull entry-count guard (#175), the syllabus is the text above the first sub-heading and `** Navigation` never reaches it (#275), assignment reads ask for their own dates and quizzes do not need to (#273), a push takes its heading by name and the at-point runtime records its outcome (#287), a heading opens its Canvas page from `:web-pages` rules its module declares (#292), every one checked against canvas-lms's routes, a module SubHeader opening its module (#300), a classic quiz pulls whole into one heading — pull-at-point, the diff's `p` on an EXTRA row, adopt filling a stub, `:pull-whole-entry` — and numbers a question name it cannot tell apart (#295), the accommodations table sits below a quiz's own text and never reaches the description from any layout (#298), a New Quiz pulls whole through a pull-only entry (`org-canvas-register-pull-feature`) kept out of the feature registry (#297) | `decisions.org` |
-| Pull macros and helpers, pull-at-point (#67), single-item pull registration, `:skip-fn` reporting and the front page (#81, #82), the settings pull keeps the tab list a failed read cannot refresh (#277) | `pull-system.org` |
-| Test helpers and generators, test isolation guards, Emacs 29/30 matrix and skipped tests, JUnit and Codecov, Eldev layout, paren-imbalance debugging | `testing.org` |
-| Adding a module, step by step | `module-developer-guide.org` |
-| What org-canvas covers, touches one way, or never touches in Canvas; the ranked list of gaps deliberately left undone (2026-09-11) and the write paths to watch on first live use; how to refresh the map | `coverage.org` |
-| Historical planning documents (2026-03/04) | `plans/`, `specs/` |
+Each document under `documentation/architecture/`, then the topics it holds, one per line and in alphabetical order, so a pull request that adds a topic touches a line of its own. Issue numbers are in parentheses.
+
+**`design.org`**
+
+- complexity patterns
+- drop-rules two-phase sync
+- global sync summary (#66)
+- `:hash-extra`
+- key lessons (markers, `save-excursion`, upload nulls, unibyte, property drawers, question body text)
+- payload builder
+- Pipeline macros
+- property registry (`:remote-fn` #61/#62, `:compare-p` #93)
+
+**`api-interaction.org`**
+
+- conflict baseline and strategy rules (#48, #72, #86, #104, #124)
+- copy-pasteable curl commands for debugging
+- dry-run rules (#34, #84)
+- duplicate-title guard and adopt-at-point (#85, #101)
+- error-handling rules
+- feature registry URLs and `:modified-field` (#87, #94)
+- file re-upload tiers (#49, #70, #71, #77)
+- plz and the PATCH fallback (#13)
+- quiz questions API
+- upload quirks
+
+**`decisions.org`**
+
+- a classic quiz pulls whole into one heading — pull-at-point, the diff's `p` on an EXTRA row, adopt filling a stub, `:pull-whole-entry` — and numbers a question name it cannot tell apart (#295)
+- a heading opens its Canvas page from `:web-pages` rules its module declares (#292)
+- a New Quiz pulls whole through a pull-only entry (`org-canvas-register-pull-feature`) kept out of the feature registry (#297)
+- a push takes its heading by name and the at-point runtime records its outcome (#287)
+- a refresh reports what changed and keeps a departed student's heading for the work under it (#282)
+- a re-pull keeps typed scores and the summary table alone still asks (#281)
+- a wanted document processor declared, compared and never sent (#293)
+- assignment reads ask for their own dates and quizzes do not need to (#273)
+- batch reports (#155, #169)
+- batch-mode file handling (#97, #121, #188, #249)
+- body headings and the pull entry-count guard (#175)
+- bulk publish (#47) and a new header's flag PUT after its POST (#279)
+- by-design extras (#98, #102, #111)
+- Canvas-owned submission types (#167)
+- comments and drafts as paragraphs and short CONFLICT values (#264)
+- drift report bodies (#83)
+- drift report verbs (#103)
+- every browse address checked against canvas-lms's routes, and a module SubHeader opening its module (#300)
+- EXTRA assignments and groups described from the lists already read and a group weight total line that is not drift (#296)
+- hard-break markup dropped from bodies (#266)
+- LTI assignments and no Turnitin, the Turnitin document processor as a Canvas-owned property (#184)
+- module items adopt a twin before POST and the drift report lists item twins (#177, #179)
+- module items reconcile moves (#105)
+- pending creates counted apart from drift and moved module items paired on the link's description (#294)
+- quiz publish sequencing (#59)
+- read-only validation (#168)
+- rubric assessments from the grading file (#250) and their comments as items under the table (#263)
+- rubrics update in place (#123) and keep their criterion ids and assignments (#255, #256)
+- stamp adoption for a CHANGED row with nothing to compare (#257)
+- submission commands take their target as an argument and prompt only on nil (#280)
+- the accommodations table sits below a quiz's own text and never reaches the description from any layout (#298)
+- the drift report pairs module items by content as the sync adopts them, declaring the modules.el parser rather than requiring it (#299)
+- the grading queue counts rows, never columns (#283)
+- the roster marks who left on Canvas's word and never on a misread list (#290)
+- the rubric in full in the grading file (#265)
+- the syllabus is the text above the first sub-heading and `** Navigation` never reaches it (#275)
+- timestamp precision (#176)
+
+**`pull-system.org`**
+
+- Pull macros and helpers
+- pull-at-point (#67)
+- single-item pull registration
+- `:skip-fn` reporting and the front page (#81, #82)
+- the settings pull keeps the tab list a failed read cannot refresh (#277)
+
+**`testing.org`**
+
+- Test helpers and generators, test isolation guards, Emacs 29/30 matrix and skipped tests, JUnit and Codecov, Eldev layout, paren-imbalance debugging
+
+**`module-developer-guide.org`**
+
+- Adding a module, step by step
+
+**`coverage.org`**
+
+- how to refresh the map
+- the ranked list of gaps deliberately left undone (2026-09-11)
+- what org-canvas covers, touches one way, or never touches in Canvas
+- the write paths to watch on first live use
+
+**`plans/`, `specs/`**
+
+- Historical planning documents (2026-03/04)
 
 ## Code Conventions
 
@@ -264,11 +350,13 @@ eldev test -u "on,codecov,dontsend" -U coverage/coverage.json # Per-file coverag
 eldev test -u "on,text,dontsend"                              # Text summary (may end in overflow-error; prefer JSON)
 ELDEV_JUNIT=1 JUNIT_REPORT_FILE=test-results.xml eldev test   # JUnit XML for Codecov
 grep -rn buttercup-pending test/                              # Specs skipped on Emacs 29.x
-scripts/test-each-file.sh                                     # Every test file alone (~2 min)
+scripts/test-each-file.sh                                     # Every test file alone (~2.5 min); --shard K/N for one CI shard
+scripts/test-shard.sh 2/3                                     # The files of CI shard 2 of 3 (eldev test $(scripts/test-shard.sh 2/3))
+scripts/test-each-file.sh --timings > test/shard-weights.txt  # Refresh the shard weights when shards drift apart
 eldev exec -f scripts/graphql-introspect.el                   # Refresh the GraphQL fixture from the live instance, once per semester (test/contract/README.md)
 ```
 
-Every test file must pass on its own (`scripts/test-each-file.sh`, CI's `isolation` job; #260): test-helper loads the whole package, and a spec that sets global state — the log level above all — restores it.
+Every test file must pass on its own (`scripts/test-each-file.sh`, CI's sharded `isolation` job; #260): test-helper loads the whole package, and a spec that sets global state — the log level above all — restores it.
 
 Layout: `test/test-helper.el` (fixtures, mocks, macros, network guard); `test/org-canvas-core-{config,api,org,html,pull,sync,conflict,delete,usability}-test.el`; `test/org-canvas-test.el` (orchestration); one `test/org-canvas-{feature}-test.el` per module; `test/org-canvas-validate-test.el`; `test/org-canvas-dry-run-test.el`; `test/org-canvas-doc-reference-test.el` (the manual's generated Property Reference); `test/org-canvas-contract-test.el` and `test/org-canvas-graphql-contract-test.el` (REST payloads and every registered read's query parameters against the OpenAPI spec, #273; the five GraphQL documents and their variables against the Canvas GraphQL schema, #269); `test/contract/` (both fixtures and their generators; the GraphQL one regenerates from the instance's introspection or the canvas-lms SDL, see its README); `test/mutation/` (mutation-testing harness); `test/docgen/` (generates the Property Reference from the registry).
 
