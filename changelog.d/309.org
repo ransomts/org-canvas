@@ -1,0 +1,2 @@
+* Fixed
+- #309 A New Quiz pull, of the whole file or of one quiz, writes the quiz's instructions as the text under its heading, where the push reads them back, so a pull and a push round-trip without drift; an HTML heading inside them becomes a =#+begin_hN= block. Adopting a New Quiz stamps =CANVAS_ASSIGNMENT_ID= from the reply's =assignment_id= when it carries one, falling back to =id=
