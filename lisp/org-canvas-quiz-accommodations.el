@@ -38,7 +38,9 @@
 ;; ====
 ;; The quiz pull emits the table from the submissions that carry any
 ;; extension, naming students through people.org (#id when unknown),
-;; and removes a stale table when none do.  quizzes.el reaches the two
+;; and removes a stale table when none do.  A table already under the
+;; quiz is replaced where it stands; a new one goes below the quiz's
+;; own text, so it never splits a description kept inline (#298).  quizzes.el reaches the two
 ;; functions through `declare-function'; it never requires this file.
 ;;
 ;; PERSONAL DATA
@@ -199,11 +201,13 @@ cannot be read still pulls."
 ;;;; Emitting
 
 (defun org-canvas--accommodation-delete-table ()
-  "Delete the accommodations table in the body of the entry at point, if any.
-Only the entry's own body is searched, up to its first child heading."
+  "Delete the accommodations table under the entry at point, if any.
+The whole subtree is searched, as `org-canvas--accommodation-sync-entry'
+reads it, so the table the sync would read is the one removed wherever
+it sits (issue #298).  Return the position it stood at, or nil."
   (save-excursion
     (org-back-to-heading t)
-    (let ((end (save-excursion (outline-next-heading) (point))))
+    (let ((end (save-excursion (org-end-of-subtree t) (point))))
       (when (re-search-forward org-canvas--accommodation-table-regexp end t)
         (let ((start (line-beginning-position)))
           (forward-line 1)
@@ -211,7 +215,8 @@ Only the entry's own body is searched, up to its first child heading."
             (forward-line 1))
           (while (and (< (point) end) (looking-at "^[ \t]*$"))
             (forward-line 1))
-          (delete-region start (point)))))))
+          (delete-region start (point))
+          start)))))
 
 (defun org-canvas--accommodation-build-row (row)
   "Render the accommodation plist ROW as four table cells."
@@ -221,6 +226,22 @@ Only the entry's own body is searched, up to its first child heading."
         (if (> (plist-get row :extra-time) 0)
             (number-to-string (plist-get row :extra-time)) "")
         (if (plist-get row :unlocked) "yes" "")))
+
+(defun org-canvas--accommodation-table-home ()
+  "Move point to the place for a new accommodations table under the entry.
+That is below the entry's own text, above its first child: after a
+description kept inline, so a pull never puts the table between the
+drawer and the text (issue #298).  The blank lines between the text
+and the child are replaced by one, and point is left after it."
+  (org-back-to-heading t)
+  (let* ((end (save-excursion (outline-next-heading) (point)))
+         (meta-end (min end (save-excursion (org-end-of-meta-data t) (point)))))
+    (goto-char end)
+    (skip-chars-backward " \t\n" meta-end)
+    (if (<= (point) meta-end)
+        (goto-char meta-end)
+      (delete-region (point) end)
+      (insert "\n\n"))))
 
 (defun org-canvas--accommodation-emit-table (rows)
   "Insert a `#+NAME: accommodations' table for ROWS at point.
@@ -244,20 +265,22 @@ no row fills is dropped, as the overrides table does."
 (defun org-canvas--accommodation-write-table (quiz-id)
   "Replace the accommodations table under the quiz at point with Canvas's.
 QUIZ-ID names the quiz.  The old table goes whether or not a new one
-follows, so a cleared extension disappears on pull."
+follows, so a cleared extension disappears on pull.  A new table takes
+the old one's place, or goes below the entry's own text when there was
+none (`org-canvas--accommodation-table-home')."
   (let ((rows (org-canvas--accommodation-fetch quiz-id)))
     (save-excursion
       (org-back-to-heading t)
-      (org-canvas--accommodation-delete-table)
-      (when rows
-        (org-end-of-meta-data t)
-        (let ((start (point)))
-          (org-canvas--accommodation-emit-table rows)
-          ;; Align the table just written: its header is the line
-          ;; after the #+NAME: line at START.
-          (goto-char start)
-          (forward-line 1)
-          (when (org-at-table-p) (org-table-align)))))))
+      (let ((at (org-canvas--accommodation-delete-table)))
+        (when rows
+          (if at (goto-char at) (org-canvas--accommodation-table-home))
+          (let ((start (point)))
+            (org-canvas--accommodation-emit-table rows)
+            ;; Align the table just written: its header is the line
+            ;; after the #+NAME: line at START.
+            (goto-char start)
+            (forward-line 1)
+            (when (org-at-table-p) (org-table-align))))))))
 
 ;;;; Pushing
 
