@@ -331,7 +331,8 @@ Populated at module load time by `org-canvas-register-feature'.")
   "Register a feature for orphan detection and at-point dispatch.
 PLIST has keys :name :endpoint :file-var :id-field :id-property
 :title-field and optionally :list-params :item-params :skip-fn
-:skip-reason :modified-field :pull-whole-entry.
+:skip-reason :delete-skip-fn :delete-skip-reason :modified-field
+:pull-whole-entry.
 
 A feature that does not list under the course also names a
 `:list-url-fn' (no arguments) and an `:item-url-fn' (one argument,
@@ -356,6 +357,11 @@ back; the drift report and the orphan scan print it so a suppressed
 item is not silently absent (issue #81).  `:pull-item-fn' is filled in
 separately by `org-canvas-register-pull-item-fn', since the sync and
 pull macros are the ones that know it.
+
+`:delete-skip-fn' and `:delete-skip-reason' widen `:skip-fn' for the
+orphan scan alone: an item the drift report still lists but no cleanup
+may delete, such as the assignment behind a New Quiz (issue #319).
+See `org-canvas--feature-delete-skip'.
 
 `:web-pages' lists the rules that say where the feature's headings
 live in the Canvas web interface, for `org-canvas-browse-at-point'

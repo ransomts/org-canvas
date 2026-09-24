@@ -90,6 +90,54 @@ overrides table is unaffected, since it reads the overrides endpoint.
 Classic quizzes need no such parameter: their serializer substitutes
 dates only for a reader who has been a student in the course.")
 
+;; A quiz or a graded discussion is backed by an assignment, which the
+;; assignments list returns and assignments.org holds only after a full
+;; pull.  Deleting that assignment deletes the quiz or the discussion
+;; with it, so prune, delete-all and the orphan scan leave it to the
+;; file that owns it (issue #319).
+
+(defconst org-canvas--assignment-owned-submission-owners
+  '(("online_quiz" . "a classic quiz, in quizzes.org")
+    ("discussion_topic" . "a graded discussion, in discussions.org"))
+  "Where the object behind a Canvas-owned submission type is authored.")
+
+(defconst org-canvas--assignment-owned-reason
+  "a New Quiz's, a classic quiz's or a graded discussion's assignment, \
+deleted through new-quizzes.org, quizzes.org or discussions.org"
+  "Why prune, delete-all and the orphan scan leave an owned assignment.")
+
+(defun org-canvas--assignment-submission-type-p (item type)
+  "Return non-nil when ITEM's `submission_types' include TYPE.
+The list arrives as a vector from `json-read' and as a list from a stub."
+  (seq-contains-p (alist-get 'submission_types item) type))
+
+(defun org-canvas--assignment-new-quiz-p (item)
+  "Return non-nil when the assignment ITEM is a New Quiz.
+Canvas flags one with `is_quiz_lti_assignment'; an instance that omits
+the flag still launches the quiz from a quiz-lti host."
+  (or (eq (alist-get 'is_quiz_lti_assignment item) t)
+      (let ((url (alist-get 'url (org-canvas--assignment-remote-tool-attrs item))))
+        (and (stringp url) (string-match-p "quiz-lti" url)))))
+
+(defun org-canvas--assignment-owner (item)
+  "Return where the object behind assignment ITEM is authored, or nil.
+A New Quiz, a classic quiz and a graded discussion each own their
+assignment; an ordinary assignment answers nil."
+  (let ((quiz-id (alist-get 'quiz_id item)))
+    (cond
+     ((org-canvas--assignment-new-quiz-p item) "a New Quiz, in new-quizzes.org")
+     ((or (and quiz-id (not (eq quiz-id :null)))
+          (org-canvas--assignment-submission-type-p item "online_quiz"))
+      (cdr (assoc "online_quiz" org-canvas--assignment-owned-submission-owners)))
+     ((org-canvas--assignment-submission-type-p item "discussion_topic")
+      (cdr (assoc "discussion_topic"
+                  org-canvas--assignment-owned-submission-owners))))))
+
+(defun org-canvas--assignment-owned-p (item)
+  "Return non-nil when no assignment delete may remove ITEM.
+See `org-canvas--assignment-owner'."
+  (and (org-canvas--assignment-owner item) t))
+
 (org-canvas-register-feature
  :name "Assignments" :endpoint "assignments"
  :file-var 'org-canvas-assignments-file
@@ -103,7 +151,11 @@ dates only for a reader who has been a student in the course.")
  :skip-fn (lambda (item)
             (let ((quiz-id (alist-get 'quiz_id item)))
               (and quiz-id (not (eq quiz-id :null)))))
- :skip-reason "a classic quiz's shadow assignment, managed via quizzes.org")
+ :skip-reason "a classic quiz's shadow assignment, managed via quizzes.org"
+ ;; The drift report still lists a New Quiz's and a graded discussion's
+ ;; assignment; the orphan scan must not offer to delete one (#319).
+ :delete-skip-fn #'org-canvas--assignment-owned-p
+ :delete-skip-reason org-canvas--assignment-owned-reason)
 (org-canvas-register-properties "assignments"
   :duplicate-titles t
   :label "Assignments"
@@ -235,11 +287,6 @@ and only where a push would be wrong."
             (message "Warning: SUBMISSION '%s' is not valid" t-val)))
         types)
     '("none")))
-
-(defconst org-canvas--assignment-owned-submission-owners
-  '(("online_quiz" . "a classic quiz, in quizzes.org")
-    ("discussion_topic" . "a graded discussion, in discussions.org"))
-  "Where the object behind a Canvas-owned submission type is authored.")
 
 (defun org-canvas--assignment-check-owned-submission (data)
   "Refuse a create whose SUBMISSION names an object Canvas owns.
@@ -859,7 +906,9 @@ hash."
 (org-canvas-define-delete-all assignments
   :endpoint "assignments"
   :file org-canvas-assignments-file
-  :title-field 'name)
+  :title-field 'name
+  :skip-fn #'org-canvas--assignment-owned-p
+  :skip-reason org-canvas--assignment-owned-reason)
 
 ;; Generate org-canvas-delete-assignment-at-point using the delete macro
 (org-canvas-define-delete-at-point assignment

@@ -21,13 +21,16 @@
 (require 'org-canvas-core-api)
 (require 'org-canvas-core-org)
 
-(defun org-canvas--delete-log-skipped (items skip-fn title-field)
+(defun org-canvas--delete-log-skipped (items skip-fn title-field
+                                             &optional reason)
   "Log skipped items from ITEMS using SKIP-FN.
-TITLE-FIELD is the alist key for item display names."
+TITLE-FIELD is the alist key for item display names.  REASON, the
+`:skip-reason' of the spec, follows each title when non-nil."
   (dolist (item items)
     (when (funcall skip-fn item)
-      (org-canvas--log-info org-canvas--logger "Skipping: '%s'"
-        (alist-get title-field item)))))
+      (org-canvas--log-info org-canvas--logger "Skipping: '%s'%s"
+        (alist-get title-field item)
+        (if reason (format " (%s)" reason) "")))))
 
 (defun org-canvas--delete-items-queued (items endpoint-fn id-field
                                        title-field &optional skip-fn
@@ -81,7 +84,8 @@ Returns (DELETED-COUNT . DELETED-IDS)."
 
 (defconst org-canvas--delete-spec-keys
   '(:feature :endpoint :file :id-field :title-field :id-property
-    :list-params :skip-fn :list-url-fn :delete-url-fn :delete-data)
+    :list-params :skip-fn :skip-reason :list-url-fn :delete-url-fn
+    :delete-data)
   "Keys a delete spec may carry.
 A delete spec is the plist `org-canvas-define-delete-all' builds from
 its options and hands to `org-canvas--delete-all-runtime' and
@@ -92,7 +96,8 @@ place of eleven keyword arguments threaded through three functions.
 :title-field the alist keys of an item's id and title (default id and
 title); :id-property the Org property holding the id (default
 CANVAS_ID); :list-params extra GET parameters; :skip-fn a predicate
-naming items never to delete; :list-url-fn and :delete-url-fn
+naming items never to delete, and :skip-reason the short phrase saying
+why, logged with each item held back; :list-url-fn and :delete-url-fn
 override the URLs built from :endpoint; :delete-data an alist sent
 with each DELETE.")
 
@@ -147,7 +152,10 @@ items."
          (remote-items (org-canvas-api-request-all-pages
                         'GET full-endpoint (plist-get spec :list-params))))
 
-    (org-canvas--log-info org-canvas--logger "Found %d %s on Canvas" (length remote-items) feature-name)
+    (org-canvas--log-info org-canvas--logger "Found %d %s on Canvas%s"
+      (length remote-items) feature-name
+      (org-canvas--prune-protected-note
+       remote-items skip-fn (plist-get spec :skip-reason)))
 
     (let* ((del-fn (org-canvas--delete-spec-item-url-fn spec))
            (result (org-canvas--delete-items-queued
@@ -258,6 +266,16 @@ file would classify every remote item as an orphan."
                (when id (org-canvas--normalize-id id))))
            t 'file))))
 
+(defun org-canvas--prune-protected-note (items skip-fn reason)
+  "Return the \", N protected: REASON\" tail of a delete tally, or \"\".
+ITEMS are the remote items and SKIP-FN the spec's predicate; REASON is
+its `:skip-reason' or nil."
+  (let ((protected (if skip-fn (cl-count-if skip-fn items) 0)))
+    (if (> protected 0)
+        (format ", %d protected%s" protected
+                (if reason (format ": %s" reason) ""))
+      "")))
+
 (defun org-canvas--prune-runtime (spec)
   "Delete the Canvas items of SPEC's feature whose ID is absent from its file.
 SPEC is a delete spec (`org-canvas--delete-spec-keys').  Lists the
@@ -270,6 +288,7 @@ number of deleted items."
          (id-field (plist-get spec :id-field))
          (title-field (plist-get spec :title-field))
          (skip-fn (plist-get spec :skip-fn))
+         (skip-reason (plist-get spec :skip-reason))
          (local-ids (org-canvas--prune-collect-local-ids
                      (expand-file-name file) (plist-get spec :id-property)))
          (full-endpoint (org-canvas--delete-spec-list-url spec))
@@ -290,8 +309,10 @@ number of deleted items."
       (file-name-nondirectory file) (length orphans)
       ;; Items SKIP-FN protects are not orphans and not deleted; say so
       ;; rather than leaving them uncounted in the tally (issue #81).
-      (let ((protected (if skip-fn (cl-count-if skip-fn remote-items) 0)))
-        (if (> protected 0) (format ", %d protected" protected) "")))
+      (org-canvas--prune-protected-note remote-items skip-fn skip-reason))
+    (when skip-fn
+      (org-canvas--delete-log-skipped remote-items skip-fn title-field
+                                      skip-reason))
     (if (null orphans)
         (progn
           (message "No orphaned %s on Canvas." feature-name)
@@ -324,8 +345,9 @@ number of deleted items."
   "Define delete-all and prune functions for FEATURE.
 FEATURE is a symbol like \\='pages.  ARGS is a plist with keys:
   :endpoint, :file (required), :id-field, :title-field,
-  :id-property, :list-params, :skip-fn, :list-url-fn,
-  :delete-url-fn, :delete-data.
+  :id-property, :list-params, :skip-fn, :skip-reason, :list-url-fn,
+  :delete-url-fn, :delete-data.  A :skip-fn must come with a
+:skip-reason (issue #81), or the expansion signals.
 
 Generates `org-canvas-delete-all-FEATURE' and, from the same spec,
 `org-canvas-prune-FEATURE' — which deletes only the Canvas items whose
@@ -342,11 +364,14 @@ explicit confirmation."
          (id-property (or (plist-get args :id-property) "CANVAS_ID"))
          (list-params (plist-get args :list-params))
          (skip-fn (plist-get args :skip-fn))
+         (skip-reason (plist-get args :skip-reason))
          (list-url-fn (plist-get args :list-url-fn))
          (delete-url-fn (plist-get args :delete-url-fn))
          (delete-data (plist-get args :delete-data)))
     (unless endpoint (error "org-canvas-define-delete-all: :endpoint is required"))
     (unless file-expr (error "org-canvas-define-delete-all: :file is required"))
+    (when (and skip-fn (not skip-reason))
+      (error "org-canvas-define-delete-all: :skip-fn needs a :skip-reason"))
     `(progn
        ;;;###autoload
        (defun ,fn-name ()
@@ -360,7 +385,8 @@ explicit confirmation."
                 :endpoint ,endpoint :file ,file-expr
                 :id-field ,id-field :title-field ,title-field
                 :id-property ,id-property :list-params ,list-params
-                :skip-fn ,skip-fn :list-url-fn ,list-url-fn
+                :skip-fn ,skip-fn :skip-reason ,skip-reason
+                :list-url-fn ,list-url-fn
                 :delete-url-fn ,delete-url-fn :delete-data ,delete-data)))
        ;;;###autoload
        (defun ,prune-fn-name ()
@@ -374,7 +400,8 @@ never touched." feature-name)
                 :endpoint ,endpoint :file ,file-expr
                 :id-field ,id-field :title-field ,title-field
                 :id-property ,id-property :list-params ,list-params
-                :skip-fn ,skip-fn :list-url-fn ,list-url-fn
+                :skip-fn ,skip-fn :skip-reason ,skip-reason
+                :list-url-fn ,list-url-fn
                 :delete-url-fn ,delete-url-fn :delete-data ,delete-data))))))
 
 (defmacro org-canvas-define-delete-at-point (feature &rest args)

@@ -2583,4 +2583,119 @@ order, and forgets the processor cache before and after."
                :to-equal '(("WANT_DOCUMENT_PROCESSOR" "Turnitin"
                             "(not reported by Canvas)")))))))
 
+;;;; Prune and orphan scan leave owned assignments alone (issue #319)
+
+(defvar test-319--remote
+  '(((id . 1) (name . "Essay") (submission_types . ["online_upload"]))
+    ((id . 2) (name . "Midterm (New Quiz)") (is_quiz_lti_assignment . t)
+     (submission_types . ["external_tool"]))
+    ((id . 3) (name . "Unit Quiz") (quiz_id . 77)
+     (submission_types . ["online_quiz"]))
+    ((id . 4) (name . "Forum") (submission_types . ["discussion_topic"])))
+  "An assignments list holding one of each kind another file owns.")
+
+(defmacro test-319--with-course (&rest body)
+  "Run BODY with an empty assignments.org and `test-319--remote' listed.
+Binds `deleted' to the DELETE URLs sent, `prompts' to the questions
+asked and `logged' to the log lines written."
+  (declare (indent 0))
+  `(let* ((temp-dir (make-temp-file "assign-319-" t))
+          (org-file (expand-file-name "assignments.org" temp-dir))
+          (deleted nil) (prompts nil) (logged nil))
+     (unwind-protect
+         (progn
+           (with-temp-file org-file (insert "#+TITLE: Assignments\n"))
+           (let ((org-canvas-assignments-file org-file))
+             (with-org-canvas-test-config
+               (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                          (lambda (&rest _) test-319--remote))
+                         ((symbol-function 'org-canvas-api-request)
+                          (lambda (method url &rest _)
+                            (when (eq method 'DELETE) (push url deleted))
+                            nil))
+                         ((symbol-function 'y-or-n-p)
+                          (lambda (q) (push q prompts) t))
+                         ((symbol-function 'display-buffer) #'ignore)
+                         ((symbol-function 'org-canvas--log-info)
+                          (lambda (_l fmt &rest args)
+                            (push (apply #'format fmt args) logged)))
+                         ((symbol-function 'org-canvas--log-warning)
+                          (lambda (_l fmt &rest args)
+                            (push (apply #'format fmt args) logged))))
+                 ,@body))))
+       (let ((buf (find-buffer-visiting org-file)))
+         (when buf (kill-buffer buf)))
+       (delete-directory temp-dir t))))
+
+(describe "org-canvas--assignment-owner (issue #319)"
+  (it "names the file that owns a quiz's or a discussion's assignment"
+    (expect (org-canvas--assignment-owner (nth 1 test-319--remote))
+            :to-match "new-quizzes.org")
+    (expect (org-canvas--assignment-owner (nth 2 test-319--remote))
+            :to-match "quizzes.org")
+    (expect (org-canvas--assignment-owner (nth 3 test-319--remote))
+            :to-match "discussions.org"))
+
+  (it "claims nothing for an ordinary assignment"
+    (expect (org-canvas--assignment-owner (car test-319--remote)) :to-be nil)
+    (expect (org-canvas--assignment-owner
+             '((id . 5) (quiz_id . :null) (is_quiz_lti_assignment . :json-false)
+               (submission_types . ["online_text_entry"])))
+            :to-be nil))
+
+  (it "knows a New Quiz by its launch URL when the flag is absent"
+    (expect (org-canvas--assignment-owner
+             '((id . 6) (submission_types . ["external_tool"])
+               (external_tool_tag_attributes
+                (url . "https://x.quiz-lti-iad-prod.instructure.com/lti/launch"))))
+            :to-match "new-quizzes.org")
+    (expect (org-canvas--assignment-owner
+             '((id . 7) (submission_types . ["external_tool"])
+               (external_tool_tag_attributes
+                (url . "https://www.gradescope.com/auth/lti1p3/login"))))
+            :to-be nil)))
+
+(describe "org-canvas-prune-assignments (issue #319)"
+  (it "deletes only the unclaimed ordinary assignment"
+    (test-319--with-course
+      (expect (org-canvas-prune-assignments) :to-equal 1)
+      (expect (length deleted) :to-equal 1)
+      (expect (car deleted) :to-match "/assignments/1\\'")
+      (expect (car prompts) :to-match "'Essay'")
+      (expect (car prompts) :not :to-match "Quiz\\|Forum")))
+
+  (it "deletes nothing over a list holding only a New Quiz, and says why"
+    (let ((test-319--remote (list (nth 1 test-319--remote))))
+      (test-319--with-course
+        (expect (org-canvas-prune-assignments) :to-equal 0)
+        (expect deleted :to-be nil)
+        (expect prompts :to-be nil)
+        (expect (cl-find-if (lambda (l) (string-match-p "1 protected: .*New Quiz" l))
+                            logged)
+                :to-be-truthy)
+        (expect (cl-find-if (lambda (l) (string-match-p "Midterm (New Quiz)" l))
+                            logged)
+                :to-be-truthy)))))
+
+(describe "org-canvas-delete-all-assignments (issue #319)"
+  (it "leaves a quiz's and a discussion's assignment to their own delete"
+    (test-319--with-course
+      (let ((org-canvas--inhibit-log-clear t))
+        (org-canvas-delete-all-assignments))
+      (expect (length deleted) :to-equal 1)
+      (expect (car deleted) :to-match "/assignments/1\\'")
+      (expect (cl-find-if (lambda (l) (string-match-p "Found 4 .*3 protected: .*New Quiz" l))
+                          logged)
+              :to-be-truthy))))
+
+(describe "the orphan scan over assignments (issue #319)"
+  (it "agrees with prune on what is protected"
+    (test-319--with-course
+      (let ((orphans (org-canvas--find-orphans-for-feature
+                      (org-canvas--registry-find-feature "assignments"))))
+        (expect (mapcar (lambda (i) (alist-get 'id i)) orphans) :to-equal '(1))
+        (expect (cl-find-if (lambda (l) (string-match-p "3 item(s) never considered" l))
+                            logged)
+                :to-be-truthy)))))
+
 ;;; org-canvas-assignments-test.el ends here
