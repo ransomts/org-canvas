@@ -3959,4 +3959,172 @@ boundary differ there and nowhere else."
               :to-equal 7)
       (expect (org-canvas--item-id-value item '(missing)) :to-be nil))))
 
+;;;; An item pulls into a heading and the text under it (issue #333)
+
+(defconst test-nq-333--quiz
+  "* Quiz\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 42\n:END:\n"
+  "A quiz heading with no items, for the item pull to write under.")
+
+(defun test-nq-333--item (html &optional id slug)
+  "Return a Items API reply for item ID (default 7) whose body is HTML.
+SLUG is its interaction_type_slug, \"choice\" by default."
+  `((id . ,(or id "7")) (points_possible . 2) (entry_type . "Item")
+    (entry . ((item_body . ,html) (interaction_type_slug . ,(or slug "choice"))))))
+
+(defun test-nq-333--pull (item)
+  "Pull ITEM under the quiz heading of the current buffer."
+  (goto-char (point-min))
+  (org-back-to-heading t)
+  (org-canvas--new-quiz-pull-insert-item item))
+
+(defun test-nq-333--goto-item ()
+  "Move point to the first item heading of the current buffer."
+  (goto-char (point-min))
+  (re-search-forward "^\\*\\* ")
+  (org-back-to-heading t))
+
+(defun test-nq-333--pushed-html ()
+  "Return the item body the item heading at point would push."
+  (test-nq-333--goto-item)
+  (plist-get (org-canvas--new-quiz-item-parse-entry "42") :text-html))
+
+(describe "A New Quiz item pulls into a heading and a body (issue #333)"
+  (it "writes the first paragraph as the heading and the rest under it"
+    (with-temp-org-buffer test-nq-333--quiz
+      (test-nq-333--pull
+       (test-nq-333--item "<p>Read the passage.</p><p>Which claim is <strong>weakest</strong>?</p>"))
+      (let ((text (buffer-string)))
+        (expect text :to-match "^\\*\\* Read the passage\\.$")
+        (expect text :to-match ":END:\n\nWhich claim is \\*weakest\\*\\?\n")
+        (expect text :not :to-match "\\*\\* Read the passage\\. Which"))))
+
+  (it "pulls a one-paragraph item into a heading alone, as before"
+    (with-temp-org-buffer test-nq-333--quiz
+      (test-nq-333--pull (test-nq-333--item "<p>Which framework?</p>"))
+      (expect (buffer-string)
+              :to-equal (concat test-nq-333--quiz
+                                "** Which framework?\n:PROPERTIES:\n"
+                                ":CANVAS_ITEM_ID: 7\n:TYPE: choice\n"
+                                ":POINTS: 2\n:END:\n\n"))))
+
+  (it "pushes back what it pulled, and a pull of that changes nothing"
+    (with-temp-org-buffer test-nq-333--quiz
+      (let ((canvas "<p>Read the passage.</p><p>Which claim is <strong>weakest</strong>?</p>"))
+        (test-nq-333--pull (test-nq-333--item canvas))
+        (let* ((before (buffer-string))
+               (pushed (test-nq-333--pushed-html)))
+          ;; The drift report compares as text: a pulled item reads clean.
+          (expect (org-canvas--diff-html-to-text pushed)
+                  :to-equal (org-canvas--diff-html-to-text canvas))
+          (test-nq-333--goto-item)
+          (expect (org-canvas--new-quiz-item-body-html) :to-equal pushed)
+          ;; Canvas now holds what the push sent; pulling it is a no-op,
+          ;; and pushing again sends the same HTML.
+          (test-nq-333--pull (test-nq-333--item pushed))
+          (expect (buffer-string) :to-equal before)
+          (expect (test-nq-333--pushed-html) :to-equal pushed)))))
+
+  (it "is byte-identical on a re-pull"
+    (with-temp-org-buffer test-nq-333--quiz
+      (let ((item (test-nq-333--item "<p>First.</p><p>Second.</p><p>Third.</p>")))
+        (test-nq-333--pull item)
+        (let ((before (buffer-string)))
+          (test-nq-333--pull item)
+          (expect (buffer-string) :to-equal before)))))
+
+  (it "keeps a list in the body inside an export block the push sends whole"
+    (with-temp-org-buffer test-nq-333--quiz
+      (let ((canvas "<p>Consider:</p><ul><li>one</li><li>two</li></ul>"))
+        (test-nq-333--pull (test-nq-333--item canvas))
+        (expect (buffer-string) :to-match "^#\\+begin_export html\n<ul>")
+        (let ((pushed (test-nq-333--pushed-html))
+              (before (buffer-string)))
+          (expect pushed :to-match "<ul><li>one</li><li>two</li></ul>")
+          (test-nq-333--goto-item)
+          (expect (org-canvas--new-quiz-parse-checkbox-list) :to-equal nil)
+          (test-nq-333--pull (test-nq-333--item pushed))
+          (expect (buffer-string) :to-equal before)))))
+
+  (it "ends an ordering item's prompt at a numbered line too, as its parse does (#335)"
+    (with-temp-org-buffer test-nq-333--quiz
+      (let ((canvas "<p>Order these.</p><ol><li>one</li><li>two</li></ol>"))
+        (test-nq-333--pull (test-nq-333--item canvas nil "ordering"))
+        (expect (buffer-string) :to-match ":TYPE: ordering")
+        (expect (buffer-string) :to-match "^#\\+begin_export html\n<ol>")
+        (let ((pushed (test-nq-333--pushed-html))
+              (before (buffer-string)))
+          (expect pushed :to-match "<ol><li>one</li><li>two</li></ol>")
+          (test-nq-333--pull (test-nq-333--item pushed nil "ordering"))
+          (expect (buffer-string) :to-equal before)))))
+
+  (it "writes an essay's list as Org, since its prompt ends at no line (#337)"
+    (with-temp-org-buffer test-nq-333--quiz
+      (let ((canvas "<p>Consider:</p><ul><li>one</li><li>two</li></ul>"))
+        (test-nq-333--pull (test-nq-333--item canvas nil "essay"))
+        (expect (buffer-string) :not :to-match "begin_export")
+        (expect (buffer-string) :to-match "^- one\n- two")
+        (let ((before (buffer-string)))
+          (expect (org-canvas--diff-html-to-text (test-nq-333--pushed-html))
+                  :to-equal (org-canvas--diff-html-to-text canvas))
+          (test-nq-333--pull (test-nq-333--item canvas nil "essay"))
+          (expect (buffer-string) :to-equal before)))))
+
+  (it "ends the prompt by the heading's own TYPE when the reply names none"
+    (with-temp-org-buffer
+        (concat test-nq-333--quiz
+                "** Discuss\n:PROPERTIES:\n:CANVAS_ITEM_ID: 7\n:TYPE: essay\n:END:\n\n"
+                "Old prompt.\n\n- old point\n")
+      (test-nq-333--pull '((id . "7") (entry . ((item_body . "<p>Discuss</p><p>New prompt.</p>")))))
+      (let ((text (buffer-string)))
+        (expect text :to-match ":TYPE: essay")
+        (expect text :to-match "New prompt\\.")
+        ;; The essay's whole text was its prompt, the list included.
+        (expect text :not :to-match "old point"))))
+
+  (it "takes over an unstamped heading named by the first paragraph, keeping its answers"
+    (with-temp-org-buffer
+        (concat test-nq-333--quiz
+                "** Read the passage.\n\nOld prompt.\n\n- [X] Alpha\n- [ ] Beta\n")
+      (let ((item (test-nq-333--item "<p>Read the passage.</p><p>New prompt.</p>")))
+        (test-nq-333--goto-item)
+        (expect (org-canvas--new-quiz-item-twin-p
+                 (org-canvas--new-quiz-item-parse-entry "42") item)
+                :to-be-truthy)
+        (test-nq-333--pull item)
+        (let ((text (buffer-string)))
+          (expect (test-org-canvas-count-matches "^\\*\\* " text) :to-equal 1)
+          (expect text :not :to-match "Old prompt")
+          (expect text :to-match "New prompt\\.\n\n- \\[X\\] Alpha\n- \\[ \\] Beta\n"))
+        (test-nq-333--goto-item)
+        (expect (org-entry-get (point) "CANVAS_ITEM_ID") :to-equal "7")
+        (expect (org-canvas--new-quiz-parse-checkbox-list)
+                :to-equal '(("Alpha" . t) ("Beta"))))))
+
+  (it "rewrites a stamped heading in place, its answers kept"
+    (with-temp-org-buffer
+        (concat test-nq-333--quiz
+                "** Old wording\n:PROPERTIES:\n:CANVAS_ITEM_ID: 7\n:END:\n\n"
+                "Old prompt.\n\n- [X] Alpha\n** Next\n")
+      (test-nq-333--pull (test-nq-333--item "<p>New wording.</p>"))
+      (let ((text (buffer-string)))
+        (expect text :to-match "^\\*\\* New wording\\.$")
+        (expect text :not :to-match "Old")
+        (expect text :to-match ":END:\n- \\[X\\] Alpha\n\\*\\* Next\n"))))
+
+  (it "titles the item by its whole body when the body opens with no paragraph"
+    (with-temp-org-buffer test-nq-333--quiz
+      (test-nq-333--pull (test-nq-333--item "<p></p><p>Only this.</p>"))
+      (expect (buffer-string) :to-match "^\\*\\* Only this\\.$")
+      (expect (test-org-canvas-count-matches "Only this" (buffer-string))
+              :to-equal 1)))
+
+  (it "pairs a twin on the paragraph the body opens with, not a later one"
+    (let ((data '(:title "Second")))
+      (expect (org-canvas--new-quiz-item-twin-p
+               data (test-nq-333--item "<div>First</div><p>Second</p>"))
+              :not :to-be-truthy)
+      (expect (org-canvas--new-quiz-item-remote-title
+               (test-nq-333--item "<pre>x</pre>"))
+              :to-equal "x"))))
+
 ;;; org-canvas-new-quizzes-test.el ends here

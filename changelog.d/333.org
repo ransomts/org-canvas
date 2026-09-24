@@ -1,0 +1,9 @@
+* Fixed
+- #333 A New Quiz item pulls into a heading and the text under it: the
+  first paragraph of its body is the heading and the rest the prompt,
+  where a push reads it back, instead of the whole body flattened into
+  one heading line.  A list in the prompt is kept as an HTML block the
+  push sends whole, except in an essay or file-upload item, whose
+  prompt is all its text; an ordering item's numbered list goes in the
+  block too.  Pulling over an existing item heading rewrites it
+  in place and keeps its answer list, which the pull used to delete.
