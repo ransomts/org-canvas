@@ -1,0 +1,6 @@
+* Added
+- #352 The grading queue (=org-canvas-submissions-status=) shows each
+  column's mean and median score from Canvas beside its counts, read
+  for the whole course in one GraphQL query per hundred columns; a
+  column with nothing graded shows a dash, and a failed read leaves
+  the two columns out after one warning (section 5 of the issue).

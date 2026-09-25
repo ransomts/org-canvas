@@ -65,7 +65,8 @@
     org-canvas--discussion-checkpoints-query
     org-canvas--discussion-checkpoints-mutation
     org-canvas--assignment-processors-query
-    org-canvas--submissions-reports-query)
+    org-canvas--submissions-reports-query
+    org-canvas--submissions-status-statistics-query)
   "The documents, by symbol.  A new one is added here and to the
 extractor's SOURCES when its file is new.")
 
@@ -506,7 +507,9 @@ page of discussions."
       (expect (gethash "generated" provenance) :to-match "\\`[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}\\'"))
     (expect (gethash "documents" org-canvas-graphql-contract--data)
             :to-equal '("lisp/org-canvas-assignments.el" "lisp/org-canvas-discussions.el"
-                        "lisp/org-canvas-settings.el" "lisp/org-canvas-submissions.el"))
+                        "lisp/org-canvas-settings.el"
+                        "lisp/org-canvas-submissions-status.el"
+                        "lisp/org-canvas-submissions.el"))
     (expect (gethash "query" (gethash "roots" org-canvas-graphql-contract--data)) :to-equal "Query")
     (expect (gethash "mutation" (gethash "roots" org-canvas-graphql-contract--data)) :to-equal "Mutation")))
 
@@ -676,6 +679,28 @@ page of discussions."
           (expect (org-canvas-graphql-contract--check-variables (car call) (cdr call)) :to-equal nil))
         (expect (alist-get 'assignmentId (cdar sent)) :to-equal "1001")
         (expect (alist-get 'cursor (cdar sent)) :to-equal "Mg"))))
+  (it "org-canvas--submissions-status-fetch-statistics sends what its query declares, with and without a cursor"
+    (with-org-canvas-test-config
+      (let ((pages 0) (sent nil))
+        (cl-letf (((symbol-function 'org-canvas--graphql-query)
+                   (lambda (document &optional variables)
+                     (push (cons document variables) sent)
+                     (cl-incf pages)
+                     `((course . ((assignmentsConnection
+                                   . ((pageInfo . ((hasNextPage . ,(if (= pages 1) t :json-false))
+                                                   (endCursor . ,(if (= pages 1) "Mg" :null))))
+                                      (nodes . [])))))))))
+          (org-canvas--submissions-status-fetch-statistics))
+        (expect (length sent) :to-equal 2)
+        (dolist (call sent)
+          (expect (car call) :to-be org-canvas--submissions-status-statistics-query)
+          (expect (org-canvas-graphql-contract--check-variables (car call) (cdr call)) :to-equal nil))
+        (expect (assq 'cursor (cdr (car (last sent)))) :to-be nil)
+        (expect (alist-get 'cursor (cdar sent)) :to-equal "Mg")
+        ;; The grading period goes as an explicit null: absent, Canvas
+        ;; answers the current grading period's assignments only.
+        (expect (json-encode (alist-get 'filter (cdar sent)))
+                :to-equal "{\"gradingPeriodId\":null}"))))
   (it "org-canvas--discussion-push-checkpoints sends what its mutation declares"
     (with-org-canvas-test-config
       (let ((sent (org-canvas-graphql-contract--capturing

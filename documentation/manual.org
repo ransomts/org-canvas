@@ -3137,9 +3137,10 @@ file answers one column. =M-x org-canvas-submissions-status=
 columns need work right now, with one read-only table in
 =*canvas-submissions-status*=: a row per published, graded assignment
 with Due, Rows (students), Submitted, Graded (scored or excused),
-Posted, Late, Missing, Pulled (the =PULLED_AT= of its grading file,
-when one is on disk), New (submissions handed in since that pull) and
-Next, the one thing to do:
+Posted, Late, Missing, Mean and Median (Canvas's score statistics
+for the column), Pulled (the =PULLED_AT= of its grading file, when one
+is on disk), New (submissions handed in since that pull) and Next, the
+one thing to do:
 
 - =pull= — work is in and no grading file exists
 - =refresh (n)= — n submissions arrived after the grading file was pulled; =g= in the file
@@ -3154,7 +3155,18 @@ follows, the students counted the way a grading file counts them and
 summed over the columns, naming the columns where a report failed:
 =Reports: 36 processed, 7 failed, 0 pending; failed in R6 (7)=. It
 costs one GraphQL query per such column; a column with no report
-adds nothing to it. Nothing is written to disk
+adds nothing to it.
+
+Mean and Median come from one GraphQL read for the whole course
+(a request per hundred columns). Canvas fills them as soon as
+anything in the column is graded, whether or not the grades are
+posted; a column with nothing graded shows =-=. They are Canvas's
+figures over the scores it holds, which can include a student who
+has left the course and no longer has a row, so they need not agree
+with a mean worked out from Graded: the counts are the rows, and the
+statistics sit beside them. If the read fails, the log has one
+warning and the table is shown without the two columns. Nothing is
+written to disk
 or to Canvas; a course marked read-only reads it the same. The report
 reads every column's submissions, so a course with many columns
 takes a moment. Under =emacs --batch= the table is printed to
