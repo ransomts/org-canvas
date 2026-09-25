@@ -115,6 +115,11 @@
                   (data item))
 (declare-function org-canvas--new-quiz-item-remote-title "org-canvas-new-quiz-items"
                   (item))
+;; A delete names the object that owns an assignment the way prune and
+;; the orphan scan find it owned (issue #366); `org-canvas' loads the
+;; assignments module.
+(declare-function org-canvas--assignment-owner "org-canvas-assignments"
+                  (item))
 
 (defconst org-canvas--diff-buffer-name "*canvas-diff*"
   "Name of the buffer holding the drift report.")
@@ -2315,6 +2320,42 @@ in and those carrying a score or grade; Canvas's own
           ((eq (alist-get 'has_submitted_submissions object) t)
            "Canvas says the assignment has submissions"))))
 
+(defun org-canvas--diff-assignment-owner-label (object)
+  "Return a name for the object that owns the assignment OBJECT, or nil.
+A graded discussion by its title, a classic quiz by its id; a New
+Quiz's assignment is the quiz, so it has no separate name."
+  (let ((topic (alist-get 'discussion_topic object))
+        (quiz-id (alist-get 'quiz_id object)))
+    (cond ((and (consp topic) (alist-get 'title topic))
+           (format "discussion '%s'" (alist-get 'title topic)))
+          ((and quiz-id (not (eq quiz-id :null)))
+           (format "quiz %s" quiz-id)))))
+
+(defun org-canvas--diff-delete-owner-guard (object)
+  "Return why the assignment OBJECT belongs to another object, or nil.
+Asks the assignments feature's `:delete-skip-fn', the predicate prune
+and the orphan scan leave an owned assignment by (issue #319): deleting
+a quiz's or a graded discussion's assignment deletes or breaks its
+owner (issue #366)."
+  (let* ((skip (org-canvas--feature-delete-skip
+                (org-canvas--registry-find-feature "Assignments")))
+         (owned (and (car skip) (funcall (car skip) object))))
+    (when owned
+      (let ((label (org-canvas--diff-assignment-owner-label object))
+            (owner (or (org-canvas--assignment-owner object) (cdr skip))))
+        (if label
+            (format "the assignment belongs to %s (%s)" label owner)
+          (format "the assignment belongs to %s" owner))))))
+
+(defun org-canvas--diff-delete-assignments-guard (entry object)
+  "Return why the Assignments row ENTRY must not be deleted, or nil.
+OBJECT is the assignment as Canvas holds it.  An assignment another
+object owns is named first (issue #366), without reading its
+submissions; otherwise `org-canvas--diff-delete-assignment-guard'
+counts them."
+  (or (org-canvas--diff-delete-owner-guard object)
+      (org-canvas--diff-delete-assignment-guard entry object)))
+
 (defun org-canvas--diff-delete-rubric-guard (_entry object)
   "Return why the rubric OBJECT must not be deleted, or nil.
 OBJECT was read with its associations; an Assignment association means
@@ -2331,13 +2372,16 @@ an assignment grades with the rubric, and its assessments would go."
               (mapconcat #'identity ids ", ")))))
 
 (defconst org-canvas--diff-delete-guards
-  '(("assignments" . org-canvas--diff-delete-assignment-guard)
+  '(("assignments" . org-canvas--diff-delete-assignments-guard)
     ("newquizzes" . org-canvas--diff-delete-assignment-guard)
     ("rubrics" . org-canvas--diff-delete-rubric-guard))
   "Safety checks before a delete, by normalized feature name.
 Each a function of (ENTRY OBJECT) returning why the object must stay,
-or nil (issue #345).  A New Quiz row's id is its assignment's (issue
-#313), so the assignment's check counts the quiz's submissions.")
+or nil (issue #345).  An Assignments row is also held back when a quiz
+or a graded discussion owns the assignment (issue #366).  A New Quiz
+row's id is its assignment's (issue #313), so the assignment's check
+counts the quiz's submissions; its object is the quiz itself, which
+the ownership check does not apply to.")
 
 (defun org-canvas--diff-delete-inspect (row entry)
   "Read the object ENTRY of ROW names; return (OBJECT . REASON).

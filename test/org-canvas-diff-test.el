@@ -3436,6 +3436,179 @@ Preflight is stubbed; `snapshot-dir' names the directory."
                 "Delete Assignments 'Session 87' (id 701) from Canvas, although the assignment has 1 submission(s) and 0 score(s)? ")
         (expect (test-org-canvas--diff-deletes) :to-be nil)))))
 
+;;;; Deleting an Owned Assignment (issue #366)
+
+(defconst test-org-canvas-366--discussion
+  '((id . 701) (name . "Week 3 forum")
+    (submission_types . ["discussion_topic"])
+    (discussion_topic . ((id . 55) (title . "Week 3 forum"))))
+  "A graded discussion's assignment nobody has posted to yet.")
+
+(defconst test-org-canvas-366--classic-quiz
+  '((id . 701) (name . "Quiz 2") (quiz_id . 620)
+    (submission_types . ["online_quiz"]))
+  "A classic quiz's shadow assignment.")
+
+(defconst test-org-canvas-366--new-quiz
+  '((id . 701) (name . "Midterm") (is_quiz_lti_assignment . t)
+    (submission_types . ["external_tool"]))
+  "A New Quiz's assignment, read as an assignment.")
+
+(defconst test-org-canvas-366--new-quiz-by-url
+  '((id . 701) (name . "Midterm") (submission_types . ["external_tool"])
+    (external_tool_tag_attributes
+     . ((url . "https://school.quiz-lti-iad-prod.instructure.com/lti/launch"))))
+  "A New Quiz's assignment from an instance that omits the flag.")
+
+(defconst test-org-canvas-366--ordinary
+  '((id . 701) (name . "Session 87") (submission_types . ["online_upload"]))
+  "An assignment nothing else owns.")
+
+(defconst test-org-canvas-366--results
+  '((:name "Assignments"
+     :extra ((:kind extra :title "Session 87" :id "701"))))
+  "An Assignments EXTRA row, the New Quizzes section excluded.")
+
+(defun test-org-canvas-366--respond (object)
+  "Answer the assignment read with OBJECT and its submissions with none."
+  (setq test-org-canvas-api-responses
+        `(("assignments/701/submissions" . [])
+          ("assignments/701" . ,object))))
+
+(defun test-org-canvas-366--delete-rows (object &optional force)
+  "Delete the Assignments row whose read returns OBJECT; return its outcome.
+FORCE is passed on as :force."
+  (test-org-canvas-366--respond object)
+  (car (org-canvas-diff-delete-rows '((:feature "Assignments" :id "701"))
+                                    :force force
+                                    :results test-org-canvas-366--results)))
+
+(defun test-org-canvas-366--k (object answer)
+  "Press `k' on the Assignments row whose read returns OBJECT.
+ANSWER is what the question gets; return the question asked."
+  (test-org-canvas-366--respond object)
+  (let ((asked nil))
+    (cl-letf (((symbol-function 'y-or-n-p)
+               (lambda (q) (setq asked q) answer)))
+      (with-current-buffer (test-org-canvas--diff-report-buffer
+                            test-org-canvas-366--results)
+        (test-org-canvas--diff-goto-row 'extra)
+        (org-canvas-diff-delete)))
+    asked))
+
+(describe "org-canvas-diff-delete-rows on an owned assignment (issue #366)"
+  (it "refuses a graded discussion's assignment nobody posted to, naming it"
+    (test-org-canvas--with-batch-delete
+      (let ((outcome (test-org-canvas-366--delete-rows
+                      test-org-canvas-366--discussion)))
+        (expect (plist-get outcome :outcome) :to-be 'refused)
+        (expect (plist-get outcome :reason)
+                :to-equal "the assignment belongs to discussion 'Week 3 forum' (a graded discussion, in discussions.org)")
+        ;; Named from the object read; its submissions are not listed.
+        (expect (test-org-canvas-api-called-p 'GET "submissions") :to-be nil)
+        (expect (test-org-canvas--diff-deleted-urls) :to-be nil)
+        (expect (directory-files snapshot-dir nil "\\.json\\'") :to-be nil))))
+
+  (it "refuses a classic quiz's assignment, naming the quiz"
+    (test-org-canvas--with-batch-delete
+      (let ((outcome (test-org-canvas-366--delete-rows
+                      test-org-canvas-366--classic-quiz)))
+        (expect (plist-get outcome :outcome) :to-be 'refused)
+        (expect (plist-get outcome :reason)
+                :to-equal "the assignment belongs to quiz 620 (a classic quiz, in quizzes.org)")
+        (expect (test-org-canvas--diff-deleted-urls) :to-be nil))))
+
+  (it "refuses a New Quiz's assignment with the New Quizzes section off"
+    (test-org-canvas--with-batch-delete
+      (let ((outcome (test-org-canvas-366--delete-rows
+                      test-org-canvas-366--new-quiz)))
+        (expect (plist-get outcome :outcome) :to-be 'refused)
+        (expect (plist-get outcome :reason)
+                :to-equal "the assignment belongs to a New Quiz, in new-quizzes.org")
+        (expect (test-org-canvas--diff-deleted-urls) :to-be nil))))
+
+  (it "refuses a New Quiz's assignment known only by its launch URL"
+    (test-org-canvas--with-batch-delete
+      (let ((outcome (test-org-canvas-366--delete-rows
+                      test-org-canvas-366--new-quiz-by-url)))
+        (expect (plist-get outcome :outcome) :to-be 'refused)
+        (expect (plist-get outcome :reason) :to-match "a New Quiz"))))
+
+  (it "asks the predicate prune and the orphan scan use (#319)"
+    (test-org-canvas--with-batch-delete
+      (let ((seen nil))
+        (cl-letf (((symbol-function 'org-canvas--assignment-owned-p)
+                   (lambda (item) (push (alist-get 'id item) seen) nil)))
+          (let ((outcome (test-org-canvas-366--delete-rows
+                          test-org-canvas-366--discussion)))
+            (expect seen :to-equal '(701))
+            (expect (plist-get outcome :outcome) :to-be 'deleted))))))
+
+  (it "falls back to the feature's delete-skip reason for an owner it cannot name"
+    (test-org-canvas--with-batch-delete
+      (cl-letf (((symbol-function 'org-canvas--assignment-owned-p)
+                 (lambda (_item) t)))
+        (let ((outcome (test-org-canvas-366--delete-rows
+                        test-org-canvas-366--ordinary)))
+          (expect (plist-get outcome :outcome) :to-be 'refused)
+          (expect (plist-get outcome :reason)
+                  :to-equal (concat "the assignment belongs to "
+                                    org-canvas--assignment-owned-reason))))))
+
+  (it "deletes an owned assignment under :force, keeping the reason"
+    (test-org-canvas--with-batch-delete
+      (let ((outcome (test-org-canvas-366--delete-rows
+                      test-org-canvas-366--discussion t)))
+        (expect (plist-get outcome :outcome) :to-be 'deleted)
+        (expect (plist-get outcome :reason) :to-match "Week 3 forum")
+        (expect (test-org-canvas--diff-deleted-urls)
+                :to-equal (list (org-canvas-api-course-endpoint "assignments/701")))
+        (expect (length (directory-files snapshot-dir nil "\\.json\\'"))
+                :to-equal 1))))
+
+  (it "still deletes an ordinary assignment with no submissions"
+    (test-org-canvas--with-batch-delete
+      (let ((outcome (test-org-canvas-366--delete-rows
+                      test-org-canvas-366--ordinary)))
+        (expect (plist-get outcome :outcome) :to-be 'deleted)
+        (expect (plist-get outcome :reason) :to-be nil)
+        (expect (test-org-canvas-api-called-p 'GET "assignments/701/submissions")
+                :to-be-truthy)
+        (expect (test-org-canvas--diff-deleted-urls)
+                :to-equal (list (org-canvas-api-course-endpoint "assignments/701")))))))
+
+(describe "k on an owned assignment (issue #366)"
+  (it "names a graded discussion in its question and deletes nothing on no"
+    (test-org-canvas--with-batch-delete
+      (expect (test-org-canvas-366--k test-org-canvas-366--discussion nil)
+              :to-equal "Delete Assignments 'Session 87' (id 701) from Canvas, although the assignment belongs to discussion 'Week 3 forum' (a graded discussion, in discussions.org)? ")
+      (expect (test-org-canvas--diff-deleted-urls) :to-be nil)))
+
+  (it "names a classic quiz in its question"
+    (test-org-canvas--with-batch-delete
+      (expect (test-org-canvas-366--k test-org-canvas-366--classic-quiz nil)
+              :to-match "although the assignment belongs to quiz 620 (a classic quiz, in quizzes.org)\\? \\'")
+      (expect (test-org-canvas--diff-deleted-urls) :to-be nil)))
+
+  (it "names a New Quiz in its question with the New Quizzes section off"
+    (test-org-canvas--with-batch-delete
+      (expect (test-org-canvas-366--k test-org-canvas-366--new-quiz nil)
+              :to-match "although the assignment belongs to a New Quiz, in new-quizzes.org\\? \\'")
+      (expect (test-org-canvas--diff-deleted-urls) :to-be nil)))
+
+  (it "deletes the owned assignment when the operator answers yes"
+    (test-org-canvas--with-batch-delete
+      (test-org-canvas-366--k test-org-canvas-366--discussion t)
+      (expect (test-org-canvas--diff-deleted-urls)
+              :to-equal (list (org-canvas-api-course-endpoint "assignments/701")))))
+
+  (it "asks plainly about an ordinary assignment and deletes it"
+    (test-org-canvas--with-batch-delete
+      (expect (test-org-canvas-366--k test-org-canvas-366--ordinary t)
+              :to-equal "Delete Assignments 'Session 87' (id 701) from Canvas? ")
+      (expect (test-org-canvas--diff-deleted-urls)
+              :to-equal (list (org-canvas-api-course-endpoint "assignments/701"))))))
+
 (describe "org-canvas--diff-snapshot-dir (issue #345)"
   (it "defaults to canvas-snapshots/ under the course directory, resolved when used"
     (let* ((dir (make-temp-file "diff-course-" t))

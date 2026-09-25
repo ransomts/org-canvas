@@ -1,0 +1,2 @@
+* Fixed
+- #366 The drift report's delete verbs no longer remove an assignment another object owns. On an Assignments EXTRA row, =org-canvas-diff-delete-rows= refuses a graded discussion's, a classic quiz's or a New Quiz's assignment (the New Quizzes section excluded or unread) even before anyone has submitted, naming the owner in the reason, and =k= names it in its question. The check is the one prune and the orphan scan use (#319); =:force= still deletes one
