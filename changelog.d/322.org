@@ -1,0 +1,10 @@
+* Added
+- #322 The drift report compares the items under each New Quiz, in a
+  New Quiz Items section: an item whose points, type or text differ
+  from its heading is CHANGED, one deleted on Canvas is MISSING, one
+  added in the web UI is EXTRA, one that lost its stamp is UNCLAIMED,
+  and an unpushed item heading is PENDING.  Each row names its quiz;
+  =k= deletes the item from its quiz, =b=/=B= open the quiz's page
+  and =p= pulls the whole quiz.  An item list that cannot be read
+  leaves the section unchecked rather than reporting every item
+  missing.

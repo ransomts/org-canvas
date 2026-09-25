@@ -41,7 +41,8 @@
 ;; another module, which the next sync recreates under a new id and
 ;; deletes from the old one: a RELOCATE row (#343).
 ;; New Quizzes, which list from the quiz service and so stay out of the
-;; feature registry, take part through their pull-only entry (#313).
+;; feature registry, take part through their pull-only entry (#313),
+;; and their items in a section of their own (#322).
 ;; An EXTRA assignment or group says what it is, from the list replies
 ;; already held, and a WEIGHTS line under the groups sets Org's weight
 ;; total against Canvas's when they differ, uncounted (#296).
@@ -104,6 +105,16 @@
                   (modules-file-dir))
 (declare-function org-canvas--module-item-same-content-p "org-canvas-modules"
                   (data item))
+;; The New Quiz Items pass lists a quiz's items at the quiz service, and
+;; pairs an unstamped item heading as the sync's twin adoption does
+;; (issue #322).  Declared for the same reason: the sub-module is New
+;; Quizzes' own, and `org-canvas' loads it.
+(declare-function org-canvas--new-quiz-api-endpoint "org-canvas-new-quiz-items"
+                  (suffix &rest args))
+(declare-function org-canvas--new-quiz-item-twin-p "org-canvas-new-quiz-items"
+                  (data item))
+(declare-function org-canvas--new-quiz-item-remote-title "org-canvas-new-quiz-items"
+                  (item))
 
 (defconst org-canvas--diff-buffer-name "*canvas-diff*"
   "Name of the buffer holding the drift report.")
@@ -480,17 +491,30 @@ fails, so a broken body is reported as unchecked rather than changed."
        "[Diff] Could not export the body at %s: %s" pom (error-message-string err))
      nil)))
 
+(defun org-canvas--diff-remote-body (props item)
+  "Return (FIELD . HTML), the body of Canvas ITEM, or nil.
+PROPS is the property registry entry: its `:body-remote-fn', when it
+names one, reads a body the reply nests (a New Quiz item's, issue
+#322); otherwise the `:body-api-key' field sits at the top level."
+  (let ((key (intern (plist-get props :body-api-key)))
+        (fn (plist-get props :body-remote-fn)))
+    (if fn
+        (let ((html (funcall fn item)))
+          (and html (cons key html)))
+      (assq key item))))
+
 (defun org-canvas--diff-compare-body (props pom item)
   "Compare the body at POM against Canvas ITEM, as text.
 PROPS is the feature's property registry entry: `:body-api-key' names
-the Canvas field (description, body, message) and the optional
-`:body-fn' the local extractor.  Returns nil when the feature has no
-body, ITEM does not carry the field, or the local export failed —
-none of which is drift — and otherwise (t . ROW), where ROW is nil
-when the two agree and (LABEL LOCAL REMOTE), with excerpts around the
-first difference, when they do not."
+the Canvas field (description, body, message), the optional
+`:body-fn' the local extractor and `:body-remote-fn' the remote one.
+Returns nil when the feature has no body, ITEM does not carry the
+field, or the local export failed — none of which is drift — and
+otherwise (t . ROW), where ROW is nil when the two agree and (LABEL
+LOCAL REMOTE), with excerpts around the first difference, when they
+do not."
   (let* ((api-key (plist-get props :body-api-key))
-         (cell (and api-key (assq (intern api-key) item)))
+         (cell (and api-key (org-canvas--diff-remote-body props item)))
          (html (and cell (org-canvas--diff-local-body-html
                           pom (plist-get props :body-fn)))))
     (when html
@@ -994,7 +1018,8 @@ accepts."
                             :heading (plist-get e :title)
                             :file file :line (plist-get e :line)
                             :property property
-                            :where (plist-get e :where))))
+                            :where (plist-get e :where)
+                            :container (plist-get e :container))))
                   local))))
 
 (defun org-canvas--diff-paired-titles (entries)
@@ -1049,7 +1074,8 @@ accepts."
 ;; changes (issue #343).
 
 (defconst org-canvas--diff-children-fns
-  '(("modules" . org-canvas--diff-module-items))
+  '(("modules" . org-canvas--diff-module-items)
+    ("newquizzes" . org-canvas--diff-new-quiz-items))
   "Child checks, by normalized feature name.
 Each a function of (ITEMS LOCAL FILE) — the feature's remote list,
 the local entries `org-canvas--diff-feature' collected, and the file
@@ -1310,6 +1336,230 @@ Canvas holds in another module is :relocate (issue #343)."
       (error
        (list :name "Module Items" :error (error-message-string err))))))
 
+;;;; New Quiz Items (issue #322)
+;;
+;; New Quizzes joined the report in #313 with their own settings and
+;; instructions compared, and nothing below them: an item edited or added
+;; in the web UI, or deleted there, left the quiz reading clean.  The
+;; pass below is the module items' shape (#177) under a quiz.  For every
+;; quiz heading whose CANVAS_ASSIGNMENT_ID the quiz service still lists,
+;; one request lists its items (`quizzes/:id/items'), and the level-2
+;; headings under that quiz are held against them: a heading whose
+;; CANVAS_ITEM_ID the quiz no longer holds is MISSING; one whose
+;; registered properties (POINTS, TYPE) or body differ is CHANGED; an
+;; item no heading of its quiz claims is EXTRA.  Items belong to one
+;; quiz, so a claim counts only within it, and an unstamped heading is
+;; paired only with an item of its own quiz, by the predicate the sync
+;; adopts a twin with (`org-canvas--new-quiz-item-twin-p', #179): the
+;; item's first paragraph is the heading.  Such a pair is UNCLAIMED, and
+;; the unstamped headings left are PENDING.  The body is the heading and
+;; the prompt above the answer list, exported offline as a push would
+;; send it, compared as text (#83); the answers themselves live in
+;; `interaction_data', whose ids are minted afresh by every push, and
+;; are not compared.  No item carries a conflict baseline of its own,
+;; so an item row is never "modified remotely" and never adoptable.
+;;
+;; A list that cannot be read is not an empty quiz (Hard Rule 16): the
+;; section reads "could not check" rather than reporting every heading
+;; MISSING.  Every row names its quiz (:quiz-id, :where), which is what
+;; its verbs need: `k' deletes the item at the quiz service, `b' opens
+;; the quiz's page (an item has none), and `p' pulls the quiz, which
+;; writes its items whole.  Acknowledgments are filed under
+;; "new-quiz-items".  Read-only, as the rest of the report.
+
+(defconst org-canvas--diff-new-quiz-items-name "New Quiz Items"
+  "The section New Quiz item rows report in (issue #322).")
+
+(defun org-canvas--diff-new-quiz-item-list (quiz-id)
+  "Return the items of the New Quiz QUIZ-ID as a list, or signal.
+One request to the quiz service.  A reply that is not a list of item
+objects is a misread, never an empty quiz, so it signals (Hard Rule
+16)."
+  (let ((reply (org-canvas-api-request-all-pages
+                'GET (org-canvas--new-quiz-api-endpoint
+                      "quizzes/%s/items" quiz-id))))
+    (unless (and (or (vectorp reply) (listp reply))
+                 (seq-every-p (lambda (i) (and (consp i) (consp (car i)))) reply))
+      (error "Could not read the item list of quiz %s" quiz-id))
+    (append reply nil)))
+
+(defun org-canvas--diff-new-quiz-item-lists (quizzes local)
+  "Return (QUIZ-ID TITLE . ITEMS) for each LOCAL quiz found in QUIZZES.
+QUIZZES is the quiz service's reply, LOCAL the quiz headings
+`org-canvas--diff-feature' collected; one request per stamped quiz."
+  (let ((index (org-canvas--diff-remote-index quizzes '(assignment_id id))))
+    (delq nil
+          (mapcar (lambda (e)
+                    (let ((id (plist-get e :id)))
+                      (when (and id (gethash id index))
+                        (cons id (cons (plist-get e :title)
+                                       (org-canvas--diff-new-quiz-item-list id))))))
+                  local))))
+
+(defun org-canvas--diff-new-quiz-item-headings (file)
+  "Return the item headings of New Quizzes FILE as local entries.
+Each is an `org-canvas--diff-local-entry' plist keyed by CANVAS_ITEM_ID,
+with the quiz it sits under added: :quiz-id, that heading's
+CANVAS_ASSIGNMENT_ID, and :where, its title; and :pom, a marker the
+caller releases."
+  (when (and file (file-exists-p file))
+    (with-current-buffer (org-canvas--find-file-noselect file)
+      (org-map-entries
+       (lambda ()
+         (let ((quiz (save-excursion
+                       (when (org-up-heading-safe)
+                         (cons (org-entry-get (point) "CANVAS_ASSIGNMENT_ID")
+                               (org-get-heading t t t t))))))
+           (append (org-canvas--diff-local-entry "CANVAS_ITEM_ID")
+                   (list :quiz-id (car quiz) :where (cdr quiz)
+                         :container "quiz" :pom (point-marker)))))
+       "LEVEL=2" 'file))))
+
+(defun org-canvas--diff-new-quiz-item-base (heading file)
+  "Return the fields common to every item row about HEADING in FILE.
+The quiz it sits in, for the verbs, and where the heading is, for RET."
+  (list :title (plist-get heading :title) :id (plist-get heading :id)
+        :quiz-id (plist-get heading :quiz-id) :where (plist-get heading :where)
+        :container "quiz" :file file :line (plist-get heading :line)
+        :heading (plist-get heading :title) :property "CANVAS_ITEM_ID"))
+
+(defun org-canvas--diff-new-quiz-item-entry (heading items props file)
+  "Compare the stamped item HEADING with ITEMS, its quiz's list.
+PROPS is the \"new-quiz-items\" property registration; FILE is where
+HEADING lives.  Returns a `missing' entry when the quiz holds no item
+of its id, a `modified' one when a property or the body differs, and
+nil when they agree."
+  (let* ((id (plist-get heading :id))
+         (pom (plist-get heading :pom))
+         (item (cl-find id items :test #'equal
+                        :key (lambda (i) (format "%s" (alist-get 'id i)))))
+         (base (org-canvas--diff-new-quiz-item-base heading file)))
+    (if (null item)
+        (cons :kind (cons 'missing base))
+      (let* ((body (org-canvas--diff-compare-body props pom item))
+             (fields (append (org-canvas--diff-compare-fields
+                              (plist-get props :properties) pom item)
+                             (and (cdr body) (list (cdr body))))))
+        (when fields
+          (append (list :kind 'modified :fields fields
+                        :body-compared (and body t))
+                  base))))))
+
+(defun org-canvas--diff-new-quiz-item-title (item)
+  "Return the report's name for remote ITEM: its first paragraph, or ?."
+  (let ((title (org-canvas--new-quiz-item-remote-title item)))
+    (if (string-empty-p title) "?" title)))
+
+(defun org-canvas--diff-new-quiz-item-extras (lists claimed)
+  "Return the items in LISTS no heading of their quiz CLAIMED, as extras.
+LISTS is what `org-canvas--diff-new-quiz-item-lists' returned; CLAIMED
+holds a (QUIZ-ID . ITEM-ID) pair per stamped item heading.  Each entry
+keeps the item, which pairing reads."
+  (let (extra)
+    (dolist (quiz lists)
+      (dolist (item (cddr quiz))
+        (let ((id (format "%s" (alist-get 'id item))))
+          (unless (member (cons (car quiz) id) claimed)
+            (push (list :kind 'extra
+                        :title (org-canvas--diff-new-quiz-item-title item)
+                        :id id :quiz-id (car quiz) :where (cadr quiz)
+                        :container "quiz" :item item)
+                  extra)))))
+    (nreverse extra)))
+
+(defun org-canvas--diff-new-quiz-item-twin (heading extra taken)
+  "Return the entry of EXTRA the sync would adopt for unstamped HEADING.
+One in HEADING's quiz, not in TAKEN, whose item opens with HEADING's
+title (`org-canvas--new-quiz-item-twin-p'); nil when there is none."
+  (let ((data (list :title (org-canvas--strip-statistics-cookie
+                            (plist-get heading :title)))))
+    (cl-find-if (lambda (e)
+                  (and (equal (plist-get e :quiz-id) (plist-get heading :quiz-id))
+                       (not (memq e taken))
+                       (org-canvas--new-quiz-item-twin-p data (plist-get e :item))))
+                extra)))
+
+(defun org-canvas--diff-new-quiz-item-pair (extra headings file)
+  "Pair the EXTRA items with the unstamped entries of HEADINGS in FILE.
+Returns (ENTRIES . LEFT): ENTRIES is EXTRA with each paired item made
+`unclaimed', naming its heading's place, and LEFT the unstamped
+headings nothing paired, the pending creates.  Headings are taken in
+file order, each pairing at most once, as the sync adopts them."
+  (let (pairs left)
+    (dolist (h headings)
+      (unless (plist-get h :id)
+        (let ((twin (org-canvas--diff-new-quiz-item-twin
+                     h extra (mapcar #'car pairs))))
+          (if twin (push (cons twin h) pairs) (push h left)))))
+    (cons (mapcar (lambda (e)
+                    (let ((h (cdr (assq e pairs))))
+                      (if h
+                          (append (list :kind 'unclaimed :file file
+                                        :line (plist-get h :line)
+                                        :heading (plist-get h :title))
+                                  (cddr e))
+                        e)))
+                  extra)
+          (nreverse left))))
+
+(defun org-canvas--diff-new-quiz-item-claims (headings)
+  "Return a (QUIZ-ID . ITEM-ID) pair for each stamped entry of HEADINGS."
+  (delq nil (mapcar (lambda (h)
+                      (and (plist-get h :id)
+                           (cons (plist-get h :quiz-id) (plist-get h :id))))
+                    headings)))
+
+(defun org-canvas--diff-new-quiz-item-divergences (headings lists file)
+  "Return the MISSING and CHANGED entries of the stamped HEADINGS.
+Only a heading under a quiz LISTS holds is compared; FILE is theirs."
+  (let ((props (org-canvas--diff-find-properties "new-quiz-items")))
+    (delq nil (mapcar (lambda (h)
+                        (let ((quiz (assoc (plist-get h :quiz-id) lists)))
+                          (and quiz (plist-get h :id)
+                               (org-canvas--diff-new-quiz-item-entry
+                                h (cddr quiz) props file))))
+                      headings))))
+
+(defun org-canvas--diff-new-quiz-items-result (quizzes local file)
+  "Compare the items of the quizzes in LOCAL against Canvas; see the caller.
+QUIZZES, LOCAL and FILE are `org-canvas--diff-new-quiz-items''s."
+  (let ((name org-canvas--diff-new-quiz-items-name)
+        (headings (org-canvas--diff-new-quiz-item-headings file)))
+    (unwind-protect
+        (let* ((lists (org-canvas--diff-new-quiz-item-lists quizzes local))
+               (split (org-canvas--diff-split-acknowledged
+                       name
+                       (org-canvas--diff-new-quiz-item-extras
+                        lists (org-canvas--diff-new-quiz-item-claims headings))
+                       (org-canvas--diff-remote-index
+                        (apply #'append (mapcar #'cddr lists)) 'id)))
+               (paired (org-canvas--diff-new-quiz-item-pair
+                        (plist-get split :extra) headings file)))
+          (list :name name
+                :divergences (append (org-canvas--diff-new-quiz-item-divergences
+                                      headings lists file)
+                                     (plist-get split :stale))
+                :extra (car paired)
+                :acknowledged (plist-get split :acknowledged)
+                :pending (org-canvas--diff-pending name (cdr paired) nil
+                                                   file "CANVAS_ITEM_ID")))
+      (dolist (h headings) (set-marker (plist-get h :pom) nil)))))
+
+(defun org-canvas--diff-new-quiz-items (quizzes local file)
+  "Compare the items of the New Quizzes in LOCAL against Canvas.
+QUIZZES is the quiz service's list; only a LOCAL quiz whose id it holds
+is looked into, one request each.  FILE is new-quizzes.org, whose
+level-2 headings are the items.  Returns a result plist named \"New
+Quiz Items\", shaped like `org-canvas--diff-feature''s (issue #322);
+a list that cannot be read makes it an :error, never an empty quiz."
+  (let ((name org-canvas--diff-new-quiz-items-name))
+    (if (org-canvas--diff-feature-excluded-p name)
+        (list :name name :excluded t)
+      (condition-case err
+          (org-canvas--diff-new-quiz-items-result quizzes local file)
+        (error
+         (list :name name :error (error-message-string err)))))))
+
 (defun org-canvas--diff-feature (feature)
   "Compare one FEATURE registry entry against Canvas.
 Returns a plist (:name :divergences :extra :notes :acknowledged
@@ -1404,6 +1654,9 @@ says :by-title (issue #299)."
    ((plist-get entry :module-id)
     (format "  UNCLAIMED %s (item id %s in module '%s' has the type and content of an unstamped heading there, and no heading claims it; the next sync adopts it)\n"
             (plist-get entry :title) (plist-get entry :id) (plist-get entry :where)))
+   ((plist-get entry :quiz-id)
+    (format "  UNCLAIMED %s (item id %s in quiz '%s' opens with the title of an unstamped heading there, and no heading claims it; the next sync adopts it)\n"
+            (plist-get entry :title) (plist-get entry :id) (plist-get entry :where)))
    (t
     (format "  UNCLAIMED %s (Canvas id %s has this title and no heading claims it; adopt it with org-canvas-adopt-at-point, which stamps %s, or rename)\n"
             (plist-get entry :title) (plist-get entry :id)
@@ -1441,26 +1694,39 @@ paired by title only says so (issue #299)."
           (plist-get entry :title) (plist-get entry :id)
           (plist-get entry :where) (plist-get entry :to)))
 
+(defun org-canvas--diff-container (entry)
+  "Return the container of ENTRY, for the text of its row, or nil.
+A module item's row names its module (issue #177), a New Quiz item's
+its quiz (issue #322), each by kind and title; an entry of its own is
+in no container."
+  (when-let* ((where (plist-get entry :where)))
+    (format "%s '%s'" (or (plist-get entry :container) "module") where)))
+
+(defun org-canvas--diff-where (entry prefix)
+  "Return PREFIX, a space and ENTRY's container, or \"\" for none."
+  (let ((container (org-canvas--diff-container entry)))
+    (if container (concat prefix " " container) "")))
+
 (defun org-canvas--diff-pending-line (entry)
   "Return the report line of PENDING ENTRY, a create for the next sync."
   (format "  PENDING   %s (no %s%s; the next sync creates it)\n"
           (plist-get entry :title)
           (or (plist-get entry :property) "CANVAS_ID")
-          (let ((where (plist-get entry :where)))
-            (if where (format ", in module '%s'" where) ""))))
+          (org-canvas--diff-where entry ", in")))
 
 (defun org-canvas--diff-insert-entry (entry)
   "Insert one ENTRY of a drift report at point."
   (pcase (plist-get entry :kind)
     ('missing
-     (insert (format "  MISSING   %s (id %s is not in this course)\n"
-                     (plist-get entry :title) (plist-get entry :id))))
+     (insert (format "  MISSING   %s (id %s is not in %s)\n"
+                     (plist-get entry :title) (plist-get entry :id)
+                     ;; An item is missing from its quiz (#322).
+                     (or (org-canvas--diff-container entry) "this course"))))
     ('extra
      (insert (format "  EXTRA     %s (id %s%s, no Org heading claims it)\n"
                      (plist-get entry :title) (plist-get entry :id)
                      ;; A module item says which module it sits in (#177).
-                     (let ((where (plist-get entry :where)))
-                       (if where (format " in module '%s'" where) ""))))
+                     (org-canvas--diff-where entry " in")))
      ;; What the object is, from the list reply already read (#296).
      (when-let* ((details (plist-get entry :details)))
        (insert (format "              %s\n" details))))
@@ -1478,8 +1744,9 @@ paired by title only says so (issue #299)."
                      (plist-get entry :title) (plist-get entry :observed)
                      (plist-get entry :remote) (plist-get entry :property))))
     ('modified
-     (insert (format "  CHANGED   %s%s\n"
+     (insert (format "  CHANGED   %s%s%s\n"
                      (plist-get entry :title)
+                     (org-canvas--diff-where entry " in")
                      (if (plist-get entry :remote-newer)
                          (format " (Canvas updated %s)" (plist-get entry :updated))
                        "")))
@@ -1765,12 +2032,14 @@ The heading carries the row's item id (issue #343)."
   "Return (FILE . POSITION) of the heading ENTRY of FEATURE describes, or nil.
 MISSING, CHANGED and NOTE rows are found by their id property; an UNCLAIMED
 row names an unstamped heading, found by title; a PENDING row names
-its own file and line (issue #294), and a RELOCATE row its own file
-and id (issue #343)."
-  (pcase (plist-get entry :kind)
-    ('pending (org-canvas--diff-pending-position entry))
-    ('relocate (org-canvas--diff-relocate-position entry))
-    (_ (org-canvas--diff-feature-heading-position feature entry))))
+its own file and line (issue #294), as every New Quiz item row does
+\(issue #322): an item heading is no feature's own; a RELOCATE row
+names its own file and id (issue #343)."
+  (cond ((eq (plist-get entry :kind) 'relocate)
+         (org-canvas--diff-relocate-position entry))
+        ((or (eq (plist-get entry :kind) 'pending) (plist-get entry :file))
+         (org-canvas--diff-pending-position entry))
+        (t (org-canvas--diff-feature-heading-position feature entry))))
 
 (defun org-canvas--diff-feature-heading-position (feature entry)
   "Return (FILE . POSITION) of ENTRY's heading in FEATURE's file, or nil."
@@ -1818,9 +2087,11 @@ the feature's registered rules name (issue #313)."
   (let* ((row (org-canvas--diff-row-at-point))
          (entry (plist-get row :entry)))
     (if (org-canvas--diff-visits-heading-p entry)
-        ;; A PENDING or RELOCATE row carries its own file (#294, #343).
-        (let* ((feature (unless (memq (plist-get entry :kind)
-                                      '(pending relocate))
+        ;; A PENDING or RELOCATE row carries its own file (#294, #343),
+        ;; as a New Quiz item's row does (issue #322).
+        (let* ((feature (unless (or (memq (plist-get entry :kind)
+                                          '(pending relocate))
+                                    (plist-get entry :file))
                           (org-canvas--diff-row-feature row)))
                (buf (save-excursion (org-canvas--diff-goto-heading feature entry)))
                (pos (with-current-buffer buf (point))))
@@ -1851,11 +2122,14 @@ nothing; nil for no FEATURE."
   "Return the Canvas web address of ROW's object, or signal.
 With EDIT, the edit page the feature's `:web-pages' names, falling
 back to the object's page; otherwise the `html_url' Canvas gave, or
-the page assembled from the registry when it gave none."
+the page assembled from the registry when it gave none.  A New Quiz
+item has no page of its own, so its row opens its quiz's (issue #322)."
   (let* ((entry (plist-get row :entry))
+         (quiz-id (plist-get entry :quiz-id))
          (feature (org-canvas--diff-web-entry
-                   (org-canvas--diff-find-feature (plist-get row :feature))))
-         (id (plist-get entry :id))
+                   (org-canvas--diff-find-feature
+                    (if quiz-id "New Quizzes" (plist-get row :feature)))))
+         (id (or quiz-id (plist-get entry :id)))
          (html (plist-get entry :html-url))
          (assembled (and feature id
                          (org-canvas--feature-web-url feature id edit))))
@@ -1980,21 +2254,31 @@ just before the DELETE (issue #345)."
 (defun org-canvas--diff-delete-target (row entry)
   "Return (URL . DELETE-DATA) for the remote object ENTRY of ROW names.
 A module item lives under its module, not at a feature URL (issue
-#177); anything else uses the feature's item URL and delete body, as
+#177), and a New Quiz item under its quiz at the quiz service (issue
+#322); anything else uses the feature's item URL and delete body, as
 orphan cleanup does."
-  (if-let* ((module-id (plist-get entry :module-id)))
+  (let ((id (plist-get entry :id)))
+    (cond
+     ((plist-get entry :module-id)
       (cons (org-canvas-api-course-endpoint "modules/%s/items/%s"
-                                            module-id (plist-get entry :id))
-            nil)
-    (let ((feature (org-canvas--diff-row-feature row)))
-      (cons (org-canvas--feature-item-url feature (plist-get entry :id))
-            (plist-get feature :delete-data)))))
+                                            (plist-get entry :module-id) id)
+            nil))
+     ((plist-get entry :quiz-id)
+      (cons (org-canvas--new-quiz-api-endpoint "quizzes/%s/items/%s"
+                                               (plist-get entry :quiz-id) id)
+            nil))
+     (t
+      (let ((feature (org-canvas--diff-row-feature row)))
+        (cons (org-canvas--feature-item-url feature id)
+              (plist-get feature :delete-data)))))))
 
 (defun org-canvas--diff-delete-read-params (row entry)
   "Return the query parameters that read ENTRY of ROW before its delete.
 A rubric is read with its associations, which its guard counts; any
-other feature with the parameters it reads one item with."
-  (unless (plist-get entry :module-id)
+other feature with the parameters it reads one item with.  A module
+item or a New Quiz item (issue #322) is read with none: neither is a
+feature's own."
+  (unless (or (plist-get entry :module-id) (plist-get entry :quiz-id))
     (if (string= (org-canvas--diff-normalize-name (plist-get row :feature))
                  "rubrics")
         '(("include[]" . "associations"))
@@ -2293,29 +2577,54 @@ item was pulled."
     (org-canvas--pull-new-heading feature (plist-get entry :id)
                                   (plist-get entry :title))))
 
+(defun org-canvas--diff-pull-quiz-of (entry)
+  "Pull the New Quiz of item row ENTRY over its quiz heading.
+An item is part of its quiz, and the quiz pulls whole, its items
+included (issue #322), so the quiz heading of CANVAS_ASSIGNMENT_ID
+:quiz-id is what `org-canvas-pull-at-point' runs on.  Asks first."
+  (let ((feature (org-canvas--diff-find-feature "New Quizzes")))
+    (save-excursion
+      (with-current-buffer (org-canvas--diff-goto-heading
+                            feature (list :kind 'modified
+                                          :id (plist-get entry :quiz-id)
+                                          :title (plist-get entry :where)))
+        (org-canvas-pull-at-point)
+        t))))
+
+(defun org-canvas--diff-pulled-line (entry)
+  "Return the text to put in place of ENTRY's row once it is pulled."
+  (format "  PULLED    %s (id %s%s)" (plist-get entry :title) (plist-get entry :id)
+          (cond ((plist-get entry :quiz-id)
+                 (format ", with %s" (org-canvas--diff-container entry)))
+                ((eq (plist-get entry :kind) 'extra) ", new heading")
+                (t ""))))
+
 (defun org-canvas-diff-pull ()
   "Pull the item of the row at point from Canvas into Org.
 On a CHANGED row, runs `org-canvas-pull-at-point' on the heading.  On
 an EXTRA row of a feature that pulls whole entries (classic and New
 Quizzes), writes the item as a new heading at the end of its file
-\(issues #295, #313).  Either asks first."
+\(issues #295, #313).  On a New Quiz item's CHANGED or EXTRA row,
+pulls the quiz it sits in (issue #322).  Each asks first."
   (interactive)
   (let* ((row (org-canvas--diff-row-at-point))
          (entry (plist-get row :entry))
-         (feature (org-canvas--diff-row-feature row))
+         (kind (plist-get entry :kind))
          (pulled
-          (pcase (plist-get entry :kind)
-            ('modified
-             (save-excursion
-               (with-current-buffer (org-canvas--diff-goto-heading feature entry)
-                 (org-canvas-pull-at-point)
-                 t)))
-            ('extra (org-canvas--diff-pull-extra feature entry))
-            (_ (user-error "Only a CHANGED or EXTRA row has a Canvas version to pull")))))
+          (cond
+           ((not (memq kind '(modified extra)))
+            (user-error "Only a CHANGED or EXTRA row has a Canvas version to pull"))
+           ((plist-get entry :quiz-id) (org-canvas--diff-pull-quiz-of entry))
+           ((eq kind 'modified)
+            (save-excursion
+              (with-current-buffer (org-canvas--diff-goto-heading
+                                    (org-canvas--diff-row-feature row) entry)
+                (org-canvas-pull-at-point)
+                t)))
+           (t (org-canvas--diff-pull-extra (org-canvas--diff-row-feature row)
+                                           entry)))))
     (when pulled
-      (org-canvas--diff-rewrite-row
-       (format "  PULLED    %s (id %s%s)" (plist-get entry :title) (plist-get entry :id)
-               (if (eq (plist-get entry :kind) 'extra) ", new heading" ""))))))
+      (org-canvas--diff-rewrite-row (org-canvas--diff-pulled-line entry)))))
 
 ;;;; Adopting a Stamp
 ;;
@@ -2373,14 +2682,16 @@ where a property differs is refused; push or pull that one instead.
   (interactive)
   (let* ((row (org-canvas--diff-row-at-point))
          (entry (plist-get row :entry))
-         (feature (org-canvas--diff-row-feature row))
          (title (plist-get entry :title)))
     (unless (eq (plist-get entry :kind) 'modified)
       (user-error "Only a CHANGED row has a Canvas timestamp to adopt"))
+    ;; Refused before the feature is looked up: a New Quiz item's row
+    ;; is never adoptable and names no feature of its own (#322).
     (unless (org-canvas--diff-adoptable-p entry)
       (user-error "A compared property of '%s' differs; push or pull it rather than adopting its stamp"
                   title))
-    (let ((updated (org-canvas--diff-adopt-entry feature entry)))
+    (let* ((feature (org-canvas--diff-row-feature row))
+           (updated (org-canvas--diff-adopt-entry feature entry)))
       (unless updated
         (user-error "Cannot find the heading for '%s' in %s"
                     title (plist-get feature :name)))

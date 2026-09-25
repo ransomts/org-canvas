@@ -2745,13 +2745,30 @@ item) that differ, MISSING, EXTRA for a quiz built in the web UI, UNCLAIMED,
 and PENDING for an unpushed heading.  A setting is compared only when the
 service's reply carries it: which of them it reports has not been checked on
 a live course, and a setting it files elsewhere would otherwise read as unset
-on every quiz.  The items under a quiz are not compared yet.  Every New Quiz
+on every quiz.  Every New Quiz
 is also an assignment, which =assignments.org= does not claim, so the
 Assignments section leaves out the assignments the New Quizzes list holds
 and counts them in the "Not checked" footer line; when New Quizzes could not
 be listed they stay EXTRA rows under Assignments, as before.  Excluding
 ="new quizzes"= in =org-canvas-diff-excluded-features= leaves the section
 out.  The orphan scan and prune still do not list New Quizzes.
+
+The items under each quiz Canvas still lists are compared in a section of
+their own, *New Quiz Items*, one request per quiz (#322).  An item heading is
+paired with the quiz's item of its =CANVAS_ITEM_ID=: MISSING when the quiz no
+longer holds it, CHANGED when =POINTS=, =TYPE= or its body differ.  The body
+is the heading and the prompt above the answer list, what a push sends as
+the item's text, compared as text and reported as =ITEM_BODY=; the answers
+are not compared.  =POINTS= and =TYPE= are compared only when the service's
+reply carries them.  An item no heading of its quiz claims is EXTRA; one
+that opens with the title of an unstamped heading in the same quiz is
+UNCLAIMED, since the next sync adopts it rather than creating a second copy;
+the unstamped headings left over are PENDING.  Every row names its quiz.  An
+item list that cannot be read makes the section "could not check" rather
+than calling every item MISSING.  An item is acknowledged under
+="new-quiz-items"=, and excluding that name leaves the section out.  On an
+item row, =k= deletes the item from its quiz, =b= and =B= open the quiz's
+page, and =p= pulls the whole quiz, items included, over its heading.
 
 Every property a module registers is compared, so this covers =PUBLISHED=,
 points, due dates, group weights, drop rules and the rest without a separate
@@ -2848,6 +2865,7 @@ something the keys act on:
 | =a=       | CHANGED, no compared property differing | Adopt the Canvas timestamp as the heading's baseline (=org-canvas-diff-adopt-stamp=); refused when a property differs |
 | =k=       | EXTRA, UNCLAIMED, MOVED | Delete the remote object, after confirming; the question names an assignment's submissions and scores or a rubric's assignments, and the object's JSON is saved first (see [[*Deleting Rows in Batch][Deleting Rows in Batch]]) |
 | =p=       | CHANGED                 | Pull the Canvas version over the heading (=org-canvas-pull-at-point=, which asks first) |
+| =p=       | CHANGED, EXTRA (New Quiz items) | Pull the quiz the item sits in over its heading, items included, after confirming |
 | =p=       | EXTRA (classic and New Quizzes) | Pull the quiz, questions or items and all, into a new heading at the end of =quizzes.org= or =new-quizzes.org=, after confirming |
 | =s=       | MOVED                   | Stamp the item id on the heading the row paired (=org-canvas-diff-stamp-move=); sends nothing |
 | =S=       | anywhere                | Stamp every MOVED row paired by content (=org-canvas-diff-stamp-moves=), after confirming |

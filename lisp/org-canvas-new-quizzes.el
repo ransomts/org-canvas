@@ -116,12 +116,22 @@ read as unset and flag every quiz on every run (Hard Rule 18)."
   :file-var 'org-canvas-new-quizzes-file
   :query "LEVEL=2"
   :structural-fn #'org-canvas--validate-new-quiz-item-type
+  ;; The drift report compares an item's body as text: the heading and
+  ;; its prompt, against `item_body' wherever the reply nests it (#322).
+  :body-api-key "item_body"
+  :body-fn 'org-canvas--new-quiz-item-body-html
+  :body-remote-fn 'org-canvas--new-quiz-item-remote-body
   :properties
   `((:org-prop "POINTS" :data-key :points :type number
+     :api-key "points_possible"
+     :compare-p ,(org-canvas--new-quiz-remote-carries 'points_possible)
      :doc "Points for this question")
     (:org-prop "TYPE" :data-key :type :type enum
      :values ,org-canvas--valid-new-quiz-types
      :read-only-values ,org-canvas--new-quiz-pull-only-types
+     ;; The slug sits under `entry' and is spelled Canvas's way.
+     :remote-fn org-canvas--new-quiz-item-remote-type
+     :compare-p ,(lambda (_pom item) (org-canvas--new-quiz-item-remote-type item))
      :doc "Question type (see below)")
     (:org-prop "OUTCOME" :data-key :outcome :type link
      :target-file org-canvas-outcomes-file :link-id-property "CANVAS_ID"
