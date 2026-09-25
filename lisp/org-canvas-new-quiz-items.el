@@ -68,8 +68,10 @@ New Quizzes use /api/quiz/v1/ instead of /api/v1/."
     ("short-answer"        . "MultipleMethods")
     ("essay"               . "None")
     ("file-upload"         . "None")
-    ("hot-spot"            . "None"))
-  "Map from Org TYPE property values to New Quizzes scoring_algorithm.")
+    ("hot-spot"            . "HotSpot"))
+  "Map from Org TYPE property values to New Quizzes scoring_algorithm.
+Hot-spot is Canvas's \"HotSpot\", as a live item reads (issue #365),
+though a push still refuses the type (issue #340).")
 
 (defun org-canvas--new-quiz-item-scoring-algorithm (q-type)
   "Return the scoring_algorithm string for Q-TYPE."
@@ -139,9 +141,10 @@ edit the item in Canvas"))
 Canvas's editor needs a `working_item_body' with backtick-delimited
 blanks that the API cannot set reliably (see the manual's New Quizzes
 section), so fill-in-the-blank has no mapping (issue #337).  A
-hot-spot item's regions live in an interaction_data and scoring_data
-whose shape was never probed, so pushing its prompt alone would strip
-them (issue #340).")
+hot-spot item's image lives in the quiz service's media store, whose
+upload was never probed, so the push cannot build one, and pushing its
+prompt alone would strip the regions Canvas holds (issue #340).  A
+pull writes the regions read-only (issue #365).")
 
 (defun org-canvas--new-quiz-prompt-end-regexp-for (q-type)
   "Return the regexp of the line an item of Q-TYPE ends its prompt at.
@@ -639,6 +642,108 @@ replies carry it at the top level (issue #322)."
                    (alist-get 'interaction_type_slug item))))
     (and (stringp slug) (org-canvas--new-quiz-slug-to-type slug))))
 
+;;;; Hot-Spot Regions (issue #365)
+;;
+;; A hot-spot item's answer is a list of regions of an image, held in
+;; the item's `scoring_data' ({"value": [{"id": 1, "type": "square",
+;; "coordinates": [{"x": 0.3156, "y": 0.1956}, ...]}]}), with the
+;; image and the region count in `interaction_data'.  The pull writes
+;; the regions as HOTSPOTS and the count as HOTSPOTS_COUNT, both
+;; Canvas-owned: the push never reads them, and refuses the type.  The
+;; image URL is not written: it points into the quiz service's media
+;; store and may be signed.  Only `square' (two corners) was observed
+;; on a live item; `oval' and `polygon' are written by the same rule,
+;; one x,y pair per coordinate Canvas sends, unverified.
+
+(defconst org-canvas--new-quiz-hotspot-decimals 4
+  "Decimal places a hot-spot coordinate is written and compared at.
+Coordinates are fractions of the image, 0 to 1; four places is what
+the web editor stored on the live item (issue #365), and rounding the
+reply to them keeps float noise out of the drift report.")
+
+(defun org-canvas--new-quiz-item-entry-field (item field)
+  "Return FIELD of remote ITEM, read under `entry' or at the top level."
+  (let ((entry (alist-get 'entry item)))
+    (or (and (listp entry) (alist-get field entry))
+        (alist-get field item))))
+
+(defun org-canvas--new-quiz-item-hot-spot-p (item)
+  "Return non-nil when remote ITEM is a hot-spot item."
+  (equal (org-canvas--new-quiz-item-remote-type item) "hot-spot"))
+
+(defun org-canvas--new-quiz-hotspot-number (n)
+  "Return coordinate N as HOTSPOTS writes it.
+N is rounded to `org-canvas--new-quiz-hotspot-decimals' places and
+written without trailing zeros; a string is read as a number first."
+  (let* ((n (if (stringp n) (string-to-number n) (or n 0)))
+         (text (replace-regexp-in-string
+                "\\.?0+\\'" ""
+                (format (format "%%.%df" org-canvas--new-quiz-hotspot-decimals)
+                        n))))
+    (if (member text '("" "-0" "-")) "0" text)))
+
+(defun org-canvas--new-quiz-hotspot-format-region (region)
+  "Return hot-spot REGION as HOTSPOTS writes it: SHAPE X,Y X,Y ...
+REGION is one element of a hot-spot item's `scoring_data' value."
+  (string-join
+   (cons (format "%s" (or (alist-get 'type region) "?"))
+         (mapcar (lambda (point)
+                   (format "%s,%s"
+                           (org-canvas--new-quiz-hotspot-number
+                            (alist-get 'x point))
+                           (org-canvas--new-quiz-hotspot-number
+                            (alist-get 'y point))))
+                 (append (alist-get 'coordinates region) nil)))
+   " "))
+
+(defun org-canvas--new-quiz-hotspot-format (regions)
+  "Return REGIONS as the HOTSPOTS value, or nil when there are none.
+REGIONS is a hot-spot item's `scoring_data' value, a vector or list of
+region objects; each is written by
+`org-canvas--new-quiz-hotspot-format-region', in Canvas's order,
+separated by \"; \"."
+  (let ((regions (and (or (vectorp regions) (consp regions))
+                      (cl-remove-if-not #'consp (append regions nil)))))
+    (when regions
+      (mapconcat #'org-canvas--new-quiz-hotspot-format-region regions "; "))))
+
+(defun org-canvas--new-quiz-item-remote-hotspots (item)
+  "Return remote hot-spot ITEM's regions as HOTSPOTS spells them, or nil.
+The `:remote-fn' of HOTSPOTS: the regions sit in `scoring_data' under
+`entry' (Hard Rule 18).  Nil for any other type of item."
+  (when (org-canvas--new-quiz-item-hot-spot-p item)
+    (let ((scoring (org-canvas--new-quiz-item-entry-field item 'scoring_data)))
+      (and (consp scoring)
+           (org-canvas--new-quiz-hotspot-format (alist-get 'value scoring))))))
+
+(defun org-canvas--new-quiz-item-remote-hotspots-count (item)
+  "Return remote hot-spot ITEM's `hotspots_count', or nil.
+The `:remote-fn' of HOTSPOTS_COUNT; nil for any other type of item."
+  (when (org-canvas--new-quiz-item-hot-spot-p item)
+    (let ((data (org-canvas--new-quiz-item-entry-field
+                 item 'interaction_data)))
+      (and (consp data) (alist-get 'hotspots_count data)))))
+
+(defun org-canvas--new-quiz-item-carries (field)
+  "Return a `:compare-p' predicate true of a hot-spot item reply with FIELD.
+FIELD is `scoring_data' or `interaction_data'.  A reply that lacks it
+says nothing about the regions, and must not read as their removal
+\(Hard Rule 18); any other type of item has none to compare."
+  (lambda (_pom item)
+    (and (org-canvas--new-quiz-item-hot-spot-p item)
+         (consp (org-canvas--new-quiz-item-entry-field item field)))))
+
+(defun org-canvas--new-quiz-pull-hotspots (pom item)
+  "Write hot-spot ITEM's region count and regions at POM.
+A value the reply does not carry leaves the property as it is: an
+unread field is unknown, not empty."
+  (dolist (spec '(("HOTSPOTS_COUNT"
+                   . org-canvas--new-quiz-item-remote-hotspots-count)
+                  ("HOTSPOTS" . org-canvas--new-quiz-item-remote-hotspots)))
+    (let ((value (funcall (cdr spec) item)))
+      (when value
+        (org-canvas-org-set-property pom (car spec) (format "%s" value))))))
+
 (defun org-canvas--new-quiz-item-split-body (html)
   "Return (FIRST . REST) of item body HTML, split after its first paragraph.
 FIRST is the text inside the <p> the body opens with and REST what
@@ -848,6 +953,8 @@ that title, is rewritten in place; otherwise the item is appended
     (when points
       (org-canvas-org-set-property
        qpos "POINTS" (format "%s" points)))
+    (when (equal q-type "hot-spot")
+      (org-canvas--new-quiz-pull-hotspots qpos item))
     (goto-char qpos)
     (org-canvas--new-quiz-pull-write-prompt
      (cdr layout) (or q-type (org-entry-get qpos "TYPE")))

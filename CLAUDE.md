@@ -193,6 +193,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 
 - a classic quiz pulls whole into one heading — pull-at-point, the diff's `p` on an EXTRA row, adopt filling a stub, `:pull-whole-entry` — and numbers a question name it cannot tell apart (#295)
 - a heading opens its Canvas page from `:web-pages` rules its module declares (#292)
+- a hot-spot item's regions pull into the Canvas-owned `HOTSPOTS` and `HOTSPOTS_COUNT`, never pushed, compared by the drift report, the image URL never stored (#365)
 - a MOVED row stamps the item id on the heading it paired (`s`, `org-canvas-diff-stamp-moves`), and a stamped move is an uncounted RELOCATE row saying the sync recreates the item with a new id (#342, #343)
 - a New Quiz item is pushed only as a type it can build: fill-in-the-blank invalid, hot-spot pull-only, an unknown TYPE a failed item (#337, #340)
 - a New Quiz pull writes its instructions where the push reads them, and adoption stamps `assignment_id` first (#309)

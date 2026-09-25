@@ -988,6 +988,8 @@ drift report compares them (issue #321).
 | =TYPE=             | enum   | Question type (see below)                |
 | =POINTS=           | number | Points for this question                 |
 | =OUTCOME=          | link   | Link to outcome in outcomes.org (local-only) |
+| =HOTSPOTS=         | string | Hot-spot regions (written by pull, never pushed) |
+| =HOTSPOTS_COUNT=   | number | Hot-spot region count (written by pull, never pushed) |
 
 *** Question Types
 
@@ -1003,18 +1005,48 @@ drift report compares them (issue #321).
 | =matching=             | =matching=             | =Left = Right= pairs                       |
 | =ordering=             | =ordering=             | Numbered list =1. item=                     |
 | =categorization=       | =categorization=       | =Category: item1, item2=                   |
-| =hot-spot=             | =hot_spot=             | Not pushed: pulled only (see below)       |
+| =hot-spot=             | =hot-spot=             | Pulled only: regions in =HOTSPOTS= (see below) |
 
 *Unsupported:* =fill-in-the-blank= is not supported.  The Canvas New Quizzes API accepts the question data but the Build editor requires an internal =working_item_body= field (with backtick-delimited blanks) that cannot be set reliably via the API --- POST requests with this field return 502 Bad Gateway when multiple correct answers are present.  Use =short-answer= instead, which provides equivalent auto-graded free-response functionality without the editor limitation.  Validation reports =TYPE: fill-in-the-blank= as an invalid value, and a sync refuses such a question rather than pushing it as another type.
 
 *Pulled only:* =hot-spot= questions are not built from Org.  A hot-spot
-question's answer is a region of an image, and org-canvas has no way to
-write one: the shape of the regions Canvas stores has not been worked
-out.  A pull still writes =TYPE: hot-spot= for a hot-spot question made
-in Canvas, and validation accepts it with a warning, but a sync refuses
-the question (the rest of the quiz's questions still sync), since
-sending its prompt alone would strip the regions.  Edit hot-spot
-questions in Canvas.
+question's answer is a region of an image, and the image lives in the
+quiz service's own media store, whose upload org-canvas has never
+exercised.  A pull still writes =TYPE: hot-spot= for a hot-spot
+question made in Canvas, with its regions, and validation accepts it
+with a warning, but a sync refuses the question (the rest of the
+quiz's questions still sync), since sending its prompt alone would
+strip the regions.  Edit hot-spot questions in Canvas.
+
+The pull records a hot-spot question's regions in two properties
+Canvas alone sets:
+
+#+begin_src org
+,** Click the heart.
+:PROPERTIES:
+:CANVAS_ITEM_ID: 9
+:TYPE: hot-spot
+:POINTS: 1
+:HOTSPOTS_COUNT: 1
+:HOTSPOTS: square 0.3156,0.1956 0.7407,0.8362
+:END:
+#+end_src
+
+=HOTSPOTS= lists each region as its shape followed by its points, =x,y=
+fractions of the image's width and height (0 to 1), rounded to four
+places; several regions are joined by
+=; =.  A =square= is its two opposite corners.  Canvas's =oval= and
+=polygon= shapes are written the same way, one point per coordinate
+Canvas holds, but no live question of either shape has been seen, so
+treat their reading as unverified.  =HOTSPOTS_COUNT= is Canvas's own
+count.  The image's address is not written: it is a quiz-service link
+that may be signed and expire.
+
+Neither property is ever sent, and a re-pull rewrites them unchanged.
+=org-canvas-diff= compares them, so a region moved, added or removed
+in the web interface shows as a CHANGED row; pull the quiz to take
+the new regions in.  A hot-spot question pulled before org-canvas
+wrote these properties shows the same row until its next pull.
 
 A =TYPE= that is not in the table, such as a typo like
 =mutliple-choice=, is an error: validation reports it, and a sync
@@ -4434,6 +4466,8 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 |----------+------+----------------+---------+-------------|
 | =POINTS= | number |  |  | Points for this question |
 | =TYPE= | enum | choice, true-false, multi-answer, short-answer, essay, file-upload, numerical, matching, ordering, categorization (set by Canvas: hot-spot) |  | Question type (see below) |
+| =HOTSPOTS_COUNT= | number | set by Canvas (read-only) |  | Hot-spot region count; written by pull, never pushed |
+| =HOTSPOTS= | string | set by Canvas (read-only) |  | Hot-spot regions, SHAPE X,Y X,Y; ...; written by pull, never pushed |
 | =OUTCOME= | link | org link |  | Link to outcome in outcomes.org (local-only) |
 
 ** New Quizzes
