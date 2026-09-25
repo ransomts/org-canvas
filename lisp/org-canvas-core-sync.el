@@ -1302,7 +1302,7 @@ that was fine (issue #86)."
             (format "#+LAST_SYNCED %s (entry has no CANVAS_UPDATED_AT)" header))))))
 
 (cl-defun org-canvas--conflict-check (endpoint id pom &optional title modified-field
-                                               params)
+                                               params url)
   "Check if the remote item at ENDPOINT/ID was modified after the baseline at POM.
 TITLE names the entry in the log line; without it ENDPOINT/ID does.
 MODIFIED-FIELD names the response field that tracks content
@@ -1313,6 +1313,11 @@ PARAMS are query parameters the read carries — the feature's
 `:item-params', since the response is what the conflict prompt's pull
 writes into the heading, and an assignment read without them carries a
 student's extension as its due date (issue #273).
+URL, when non-nil, is the item's address, as
+`org-canvas--sync-item-url' resolves it; without it ENDPOINT/ID is read
+under the course, which 404s for a feature that does not live there —
+calendar events are global, and every one of them used to push
+unguarded (issue #344).
 Returns (cons \\='conflict REMOTE-RESPONSE) if the remote item is newer,
 nil otherwise.  Returns nil on GET failure (allows push to proceed) or
 when there is no baseline at all (first sync).
@@ -1326,8 +1331,8 @@ the header regardless (issue #86)."
       (cl-return-from org-canvas--conflict-check nil))
     (condition-case err
         (let* ((field (or modified-field 'updated_at))
-               (full-url (org-canvas-api-course-endpoint
-                          (format "%s/%%s" endpoint) id))
+               (full-url (or url (org-canvas-api-course-endpoint
+                                  (format "%s/%%s" endpoint) id)))
                (response (org-canvas-api-request 'GET full-url :params params))
                (updated-at (alist-get field response))
                (remote-time (org-canvas--parse-iso8601-time updated-at)))
@@ -1505,8 +1510,26 @@ context, or a feature outside the registry."
       (org-canvas--feature-item-params
        (org-canvas--registry-find-feature name)))))
 
+(defun org-canvas--sync-item-url (endpoint id &optional ctx put-url-fn)
+  "Return the URL of item ID under ENDPOINT for a read in this run.
+PUT-URL-FN, the push's own item-URL function, wins when given.
+Otherwise CTX's :feature-name finds the registry entry, and its
+`:item-url-fn' answers through `org-canvas--feature-item-url'.  Only
+then is ID appended to ENDPOINT under the course: calendar events live
+at the global /calendar_events/:id, and a course-scoped read of one
+404s (issue #344)."
+  (let ((feature (and (plist-get ctx :feature-name)
+                      (org-canvas--registry-find-feature
+                       (plist-get ctx :feature-name)))))
+    (cond
+     (put-url-fn (funcall put-url-fn id))
+     ((plist-get feature :item-url-fn)
+      (org-canvas--feature-item-url feature id))
+     (t (org-canvas-api-course-endpoint (format "%s/%%s" endpoint) id)))))
+
 (defun org-canvas--push-check-and-resolve-conflict (endpoint id data title
-                                                             &optional modified-field ctx)
+                                                             &optional modified-field ctx
+                                                             put-url-fn)
   "Check for conflicts on ENDPOINT/ID using DATA.
 TITLE is for logging.  MODIFIED-FIELD is passed to
 `org-canvas--conflict-check' — files compare `modified_at' (issue #94).
@@ -1514,10 +1537,14 @@ CTX is the run context: its :pull-item-fn makes the pull option
 available, its :conflict-apply-all remembers a capital answer, and its
 :feature-name finds the `:item-params' the check reads with, so what
 the pull option writes is the item's own dates (issue #273).
+PUT-URL-FN and CTX resolve the address read, through
+`org-canvas--sync-item-url' (issue #344).
 Returns `push', `skip', or `pulled'."
   (let ((conflict-result (org-canvas--conflict-check
                           endpoint id (plist-get data :pom) title
-                          modified-field (org-canvas--sync-item-params ctx))))
+                          modified-field (org-canvas--sync-item-params ctx)
+                          (org-canvas--sync-item-url
+                           endpoint id ctx put-url-fn))))
     (if (not (and conflict-result (eq (car conflict-result) 'conflict)))
         'push
       (let* ((remote-response (cdr conflict-result))
@@ -1792,7 +1819,7 @@ Returns the API response alist, or one of the symbols `conflict',
                (eq method 'PUT)
                (plist-get data :pom))
       (let ((decision (org-canvas--push-check-and-resolve-conflict
-                       endpoint id data title nil ctx)))
+                       endpoint id data title nil ctx put-url-fn)))
         (unless (eq decision 'push)
           (cl-return-from org-canvas--push-to-api
             (if (eq decision 'pulled) 'pulled 'conflict)))))
@@ -1829,7 +1856,8 @@ The push response's timestamp is no longer what Canvas holds, so
 baseline from it (issue #124)."
   (plist-put ctx :remote-touched t))
 
-(defun org-canvas--finalize-restamp-updated (pom endpoint id field title)
+(defun org-canvas--finalize-restamp-updated (pom endpoint id field title
+                                                  &optional ctx)
   "Re-read ENDPOINT/ID and stamp its FIELD into CANVAS_UPDATED_AT at POM.
 A post-fn that writes to Canvas again — the rubric association is the
 one that started this — moves the item's timestamp past the stamp
@@ -1840,10 +1868,11 @@ push walks into the conflict check, both over the sync's own doing
 \(issue #124).  One GET, spent only when a post-fn reported a write,
 leaves the heading's baseline equal to what Canvas holds.  A failed
 read is logged and leaves the stamp alone.  TITLE names the entry in
-the log."
+the log.  CTX is the run context, whose feature says where the item
+lives (`org-canvas--sync-item-url', issue #344)."
   (when (and endpoint id (not org-canvas--dry-run))
     (condition-case err
-        (let* ((url (org-canvas-api-course-endpoint (format "%s/%%s" endpoint) id))
+        (let* ((url (org-canvas--sync-item-url endpoint id ctx))
                (updated (alist-get (or field 'updated_at)
                                    (org-canvas-api-request 'GET url))))
           (if (not (stringp updated))
@@ -1862,7 +1891,7 @@ the log."
 (defun org-canvas--finalize-run-post-fn (post-fn data response pom endpoint id
                                                  field title ctx)
   "Call POST-FN with DATA, RESPONSE and CTX, then restamp if it wrote to Canvas.
-POM, ENDPOINT, ID, FIELD and TITLE are passed on to
+POM, ENDPOINT, ID, FIELD, TITLE and CTX are passed on to
 `org-canvas--finalize-restamp-updated', which runs only when POST-FN
 called `org-canvas--finalize-note-remote-write' on CTX.  The flag is
 cleared before and after the call, so it means this post-fn and no
@@ -1870,7 +1899,7 @@ other."
   (plist-put ctx :remote-touched nil)
   (funcall post-fn data response ctx)
   (when (plist-get ctx :remote-touched)
-    (org-canvas--finalize-restamp-updated pom endpoint id field title))
+    (org-canvas--finalize-restamp-updated pom endpoint id field title ctx))
   (plist-put ctx :remote-touched nil))
 
 (cl-defun org-canvas--finalize-item (data response
