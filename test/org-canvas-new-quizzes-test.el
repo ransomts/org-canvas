@@ -3729,10 +3729,11 @@ boundary differ there and nowhere else."
         (expect (string-match-p "Fresh from Canvas\\.\n\n\\*\\* Explain" text)
                 :to-be-truthy))
       ;; A second pull of the same instructions changes nothing.
-      (let ((before (buffer-string)))
+      (let ((before (test-nq-309--sans-stamp (buffer-string))))
         (test-nq-309--goto-midterm)
         (org-canvas-pull-at-point)
-        (expect (buffer-string) :to-equal before))))
+        (expect (test-nq-309--sans-stamp (buffer-string))
+                :to-equal before))))
 
   (it "empties the text when Canvas holds no instructions"
     (test-nq-309--with-file
