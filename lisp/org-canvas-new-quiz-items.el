@@ -120,18 +120,25 @@ its prompt as well as a bullet does (issue #335).  Other types keep a
 numbered list in their prompt.")
 
 (defconst org-canvas--new-quiz-prompt-only-types
-  '("essay" "file-upload" "hot-spot")
+  '("essay" "file-upload")
   "TYPE values whose items have no answer list after the prompt.
 Such an item's prompt is all the text under its heading, bulleted
-lists included (issue #337).")
+lists included (issue #337).  Hot-spot is not here: a push refuses
+it (issue #340), so how its prompt ends is decided with its regions.")
 
 (defconst org-canvas--new-quiz-unsupported-types
   '(("fill-in-the-blank"
-     . "is not supported for New Quiz items; use short-answer"))
+     . "is not supported for New Quiz items; use short-answer")
+    ("hot-spot"
+     . "is not pushed: its image regions cannot be built from Org; \
+edit the item in Canvas"))
   "TYPE values refused at the push, each with the reason given.
 Canvas's editor needs a `working_item_body' with backtick-delimited
 blanks that the API cannot set reliably (see the manual's New Quizzes
-section), so fill-in-the-blank has no mapping (issue #337).")
+section), so fill-in-the-blank has no mapping (issue #337).  A
+hot-spot item's regions live in an interaction_data and scoring_data
+whose shape was never probed, so pushing its prompt alone would strip
+them (issue #340).")
 
 (defun org-canvas--new-quiz-parse-question-text (&optional q-type)
   "Get the question prompt text, excluding answer lists.
@@ -245,25 +252,34 @@ Returns a plist of raw values with no transformations applied."
           :pom pom)))
 
 (defun org-canvas--new-quiz-item-check-supported (type-raw)
-  "Return TYPE-RAW, or signal when it names an unsupported type.
-The types are in `org-canvas--new-quiz-unsupported-types'; falling
-back to the default type would push an item with no answers."
-  (when-let* ((reason (cdr (assoc type-raw
-                                  org-canvas--new-quiz-unsupported-types))))
-    (org-canvas--signal 'org-canvas-validation-error
-      "TYPE %s %s" type-raw reason))
-  type-raw)
+  "Return the item type TYPE-RAW names, or signal when it names none.
+Nil TYPE-RAW is the default type, choice.  A type in
+`org-canvas--new-quiz-unsupported-types' signals with its reason, and
+any other value outside `org-canvas--valid-new-quiz-types' (a typo
+such as mutliple-choice) signals naming the valid ones: falling back
+to choice would push an item with no answers (issue #340).  The
+signal is an `org-canvas-validation-error', so the item fails and the
+rest of the quiz's items still sync."
+  (let ((reason (cdr (assoc type-raw
+                            org-canvas--new-quiz-unsupported-types))))
+    (cond
+     ((null type-raw) "choice")
+     (reason
+      (org-canvas--signal 'org-canvas-validation-error
+        "TYPE %s %s" type-raw reason))
+     ((member type-raw org-canvas--valid-new-quiz-types) type-raw)
+     (t
+      (org-canvas--signal 'org-canvas-validation-error
+        "TYPE %s is not a New Quiz item type (expected: %s)"
+        type-raw (string-join org-canvas--valid-new-quiz-types ", "))))))
 
 (defun org-canvas--new-quiz-item-transform-props (props)
   "Apply pure transformations to raw item PROPS plist.
 No buffer access — only string/number/boolean conversions."
   (let* ((title (org-canvas--strip-statistics-cookie
                  (plist-get props :title-raw)))
-         (q-type (org-canvas--validate-property
-                  (org-canvas--new-quiz-item-check-supported
-                   (plist-get props :type-raw))
-                  org-canvas--valid-new-quiz-types
-                  "TYPE" "choice"))
+         (q-type (org-canvas--new-quiz-item-check-supported
+                  (plist-get props :type-raw)))
          (points-raw (plist-get props :points-raw))
          (points (if (and points-raw (not (string-empty-p points-raw)))
                      (org-canvas--safe-string-to-number points-raw "POINTS")
@@ -500,7 +516,7 @@ avoid duplication in the API payload."
                            interaction-data))
        (cons `((value . ,(vconcat (nreverse cat-scoring)))) interaction-data)))
 
-    ;; Essay, file-upload, hot-spot, unknown
+    ;; Essay, file-upload
     (_
      (cons `((value . "")) interaction-data))))
 

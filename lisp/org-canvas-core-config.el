@@ -1038,10 +1038,21 @@ the discussion is what brings such an assignment into being.")
 (defconst org-canvas--valid-new-quiz-types
   '("choice" "true-false" "multi-answer" "short-answer"
     "essay" "file-upload" "numerical" "matching"
-    "ordering" "categorization" "hot-spot")
+    "ordering" "categorization")
   "Valid TYPE values for New Quiz items.
 Fill-in-the-blank is left out: its Canvas item cannot be built through
-the API (issue #337), and short-answer covers it.")
+the API (issue #337), and short-answer covers it.  Hot-spot is left
+out too; see `org-canvas--new-quiz-pull-only-types'.")
+
+(defconst org-canvas--new-quiz-pull-only-types
+  '("hot-spot")
+  "TYPE values a pull writes for a New Quiz item that a push refuses.
+A hot-spot item's answer is a region of an image, held in its
+interaction_data and scoring_data, whose shape was never probed, so
+the push cannot build one (issue #340).  A pull still writes the TYPE
+of a hot-spot item made in Canvas, so validation accepts the value and
+warns that the item is not pushed; a push refuses it, since sending
+the prompt alone would strip the regions Canvas holds.")
 
 (defconst org-canvas--valid-new-quiz-scoring-policies
   '("keep_highest" "keep_latest" "keep_average")
