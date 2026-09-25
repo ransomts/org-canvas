@@ -668,6 +668,229 @@ submission, which is how every student rendered as Unknown (#112)."
      ("include[]" . "rubric_assessment")
      ("include[]" . "user"))))
 
+;;;; Document Processor Reports (issue #351)
+
+;; A document processor (Turnitin as an LTI 1.3 asset processor, #184)
+;; files a Similarity and an AI Writing report on each upload.  REST
+;; does not carry them; GraphQL does, as each submission's
+;; `ltiAssetReportsConnection'.  Two look-alikes answer something else:
+;; `Assignment.hasPlagiarismTool' is the legacy plagiarism framework
+;; (false on a column with a processor attached) and
+;; `Submission.turnitinData' the legacy plugin's.  One query per column
+;; reads them all; each row gets a property per report type, and the
+;; header a count line.  A column without a processor answers no
+;; reports, and then nothing is written.
+
+(defconst org-canvas--submissions-reports-query
+  "query ($assignmentId: ID!, $cursor: String) { assignment(id: $assignmentId) { submissionsConnection(first: 100, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { userId ltiAssetReportsConnection { nodes { reportType processingProgress result } } } } } }"
+  "The GraphQL query that reads a column's document processor reports.
+One page of submissions per request, each with its user id and its
+reports.  Checked against the Canvas schema by the GraphQL contract
+test (issue #269), which names it by this symbol.")
+
+(defconst org-canvas--submissions-report-properties
+  '(("originality" . "SIMILARITY")
+    ("turnitin_aiwriting" . "AI_WRITING"))
+  "The property each known `reportType' is written to on a row.
+Any other type is written to REPORT_ and its name, upcased.")
+
+(defconst org-canvas--submissions-report-progress
+  '(("Processed" . processed) ("Failed" . failed)
+    ("NotProcessed" . not-processed)
+    ("Pending" . pending) ("Processing" . pending)
+    ("PendingManual" . pending) ("NotReady" . pending))
+  "The LTI Asset Processor `processingProgress' values, by what they mean.
+A value not listed here reads as pending: the report exists and has
+nothing final to say.")
+
+(defun org-canvas--submissions-report-property (type)
+  "Return the row property the report type TYPE is written to, or nil.
+Nil for a missing or blank type.  An unknown type becomes REPORT_ and
+its name upcased, every run of other characters one underscore, so a
+second processor's report still lands somewhere a grader can see."
+  (when (and (stringp type) (string-match-p "[[:alnum:]]" type))
+    (or (cdr (assoc type org-canvas--submissions-report-properties))
+        (concat "REPORT_"
+                (upcase (string-trim
+                         (replace-regexp-in-string "[^[:alnum:]]+" "_" type)
+                         "_+" "_+"))))))
+
+(defun org-canvas--submissions-report-value (report)
+  "Return the value one REPORT, a GraphQL report node, is written as.
+A processed report gives its result (\"33%\"), or processed when it has
+none; a failed one failed; one the tool declined, not processed; any
+other, pending."
+  (let ((result (org-canvas--alist-get-non-null 'result report)))
+    (pcase (cdr (assoc (alist-get 'processingProgress report)
+                       org-canvas--submissions-report-progress))
+      ('processed (if (and (stringp result) (not (string-empty-p result)))
+                      result
+                    "processed"))
+      ('failed "failed")
+      ('not-processed "not processed")
+      (_ "pending"))))
+
+(defun org-canvas--submissions-report-alist (reports)
+  "Return REPORTS as ((PROPERTY . VALUES) ...), in the order they came.
+REPORTS are one submission's report nodes; a type reported twice (a
+report per uploaded file) keeps both values, oldest first."
+  (let ((alist nil))
+    (dolist (report (append reports nil))
+      (when-let* ((property (org-canvas--submissions-report-property
+                             (alist-get 'reportType report))))
+        (let ((cell (assoc property alist))
+              (value (org-canvas--submissions-report-value report)))
+          (if cell
+              (setcdr cell (append (cdr cell) (list value)))
+            (push (list property value) alist)))))
+    (nreverse alist)))
+
+(defun org-canvas--submissions-reports-page (assignment-id cursor map)
+  "Read one page of ASSIGNMENT-ID's reports after CURSOR into MAP.
+MAP is a hash from user id (a string) to the report alist of
+`org-canvas--submissions-report-alist'; a submission with no report is
+left out.  Return the next page's cursor, or nil after the last."
+  (let* ((data (org-canvas--graphql-query
+                org-canvas--submissions-reports-query
+                (append (list (cons 'assignmentId (format "%s" assignment-id)))
+                        (when cursor (list (cons 'cursor cursor))))))
+         (connection (alist-get 'submissionsConnection
+                                (alist-get 'assignment data)))
+         (info (alist-get 'pageInfo connection)))
+    (dolist (node (append (alist-get 'nodes connection) nil))
+      (let ((user-id (org-canvas--alist-get-non-null 'userId node))
+            (reports (org-canvas--submissions-report-alist
+                      (alist-get 'nodes (alist-get 'ltiAssetReportsConnection
+                                                   node)))))
+        (when (and user-id reports)
+          (puthash (format "%s" user-id) reports map))))
+    (and (eq (alist-get 'hasNextPage info) t)
+         (org-canvas--alist-get-non-null 'endCursor info))))
+
+(defun org-canvas--submissions-fetch-reports (assignment-id)
+  "Return ASSIGNMENT-ID's document processor reports by user id, or nil.
+The value is a hash from user id (a string) to the report alist of
+`org-canvas--submissions-report-alist', followed page by page.  A
+failed read is one warning and nil, the same as a column with no
+processor: the pull goes on without the reports."
+  (condition-case err
+      (let ((map (make-hash-table :test 'equal))
+            (cursor nil))
+        (while (setq cursor (org-canvas--submissions-reports-page
+                             assignment-id cursor map)))
+        map)
+    (error
+     (org-canvas--log-warning org-canvas--logger
+       (concat "[Submissions] Could not read the document processor reports"
+               " of assignment %s (%s); pulled without them")
+       assignment-id (error-message-string err))
+     nil)))
+
+(defun org-canvas--submissions-submitted-any-p (submissions)
+  "Return non-nil when any of SUBMISSIONS was handed in."
+  (cl-some (lambda (s)
+             (stringp (org-canvas--alist-get-non-null 'submitted_at s)))
+           submissions))
+
+(defun org-canvas--submissions-with-reports (assignment-id submissions)
+  "Return SUBMISSIONS with ASSIGNMENT-ID's reports attached to their rows.
+Each row with a report gains an `org-canvas-reports' entry, the alist
+of `org-canvas--submissions-report-alist'.  A column where nothing
+was handed in has no report to read, and is returned without a
+request."
+  (let ((map (and (org-canvas--submissions-submitted-any-p submissions)
+                  (org-canvas--submissions-fetch-reports assignment-id))))
+    (if (not (and map (> (hash-table-count map) 0)))
+        submissions
+      (org-canvas--log-info org-canvas--logger "[Submissions] %s"
+        (org-canvas--submissions-map-reports-line map))
+      (mapcar (lambda (sub)
+                (let* ((uid (org-canvas--submissions-user-id sub))
+                       (reports (and uid (gethash (format "%s" uid) map))))
+                  (if reports
+                      (cons (cons 'org-canvas-reports reports) sub)
+                    sub)))
+              submissions))))
+
+(defun org-canvas--submissions-fetch-with-reports (assignment-id)
+  "Fetch ASSIGNMENT-ID's submissions with their reports attached.
+The pull's and the refresh's one read of the column: the REST
+submissions, then the GraphQL reports keyed onto them."
+  (org-canvas--submissions-with-reports
+   assignment-id (org-canvas--submissions-fetch-for-assignment assignment-id)))
+
+(defun org-canvas--submissions-insert-report-properties (submission)
+  "Insert one property line per report type SUBMISSION carries.
+Several reports of one type are joined with a comma."
+  (dolist (cell (alist-get 'org-canvas-reports submission))
+    (insert (format ":%s: %s\n" (car cell) (string-join (cdr cell) ", ")))))
+
+(defun org-canvas--submissions-report-bucket (values)
+  "Return the count a row with report VALUES falls in, or nil.
+Failed when any report failed or was not processed, else pending when
+any is pending, else processed; nil when VALUES is empty."
+  (cond ((null values) nil)
+        ((cl-some (lambda (v) (member v '("failed" "not processed"))) values)
+         :failed)
+        ((member "pending" values) :pending)
+        (t :processed)))
+
+(defun org-canvas--submissions-report-counts (rows)
+  "Return (:processed N :failed N :pending N) for ROWS, or nil.
+ROWS holds each row's report values, a list of strings; a row counts
+once, in the bucket of `org-canvas--submissions-report-bucket'.  Nil
+when no row has a report, so a column without a processor says
+nothing."
+  (let ((counts (list :processed 0 :failed 0 :pending 0))
+        (any nil))
+    (dolist (values rows)
+      (when-let* ((bucket (org-canvas--submissions-report-bucket values)))
+        (setq any t)
+        (plist-put counts bucket (1+ (plist-get counts bucket)))))
+    (and any counts)))
+
+(defun org-canvas--submissions-format-report-counts (counts)
+  "Return the Reports: line for COUNTS, without its newline, or nil."
+  (when counts
+    (format "Reports: %d processed, %d failed, %d pending"
+            (plist-get counts :processed) (plist-get counts :failed)
+            (plist-get counts :pending))))
+
+(defun org-canvas--submissions-map-report-counts (map)
+  "Return the report counts of MAP, the hash of the reports fetch, or nil."
+  (let ((rows nil))
+    (when map
+      (maphash (lambda (_uid reports)
+                 (push (apply #'append (mapcar #'cdr reports)) rows))
+               map))
+    (org-canvas--submissions-report-counts rows)))
+
+(defun org-canvas--submissions-map-reports-line (map)
+  "Return the Reports: line for MAP, the hash of the reports fetch, or nil."
+  (org-canvas--submissions-format-report-counts
+   (org-canvas--submissions-map-report-counts map)))
+
+(defun org-canvas--submissions-report-values (submission)
+  "Return every report value SUBMISSION carries, as one list."
+  (apply #'append (mapcar #'cdr (alist-get 'org-canvas-reports submission))))
+
+(defun org-canvas--submissions-reports-line (submissions)
+  "Return the Reports: line for SUBMISSIONS, or nil when none has one."
+  (org-canvas--submissions-format-report-counts
+   (org-canvas--submissions-report-counts
+    (mapcar #'org-canvas--submissions-report-values submissions))))
+
+(defun org-canvas--submissions-report-values-at-point ()
+  "Return the report values the heading at point records, as one list.
+Read from SIMILARITY, AI_WRITING and every REPORT_ property; a value
+holding several reports is split at its commas."
+  (let ((values nil))
+    (dolist (prop (org-entry-properties (point) 'standard))
+      (when (or (rassoc (car prop) org-canvas--submissions-report-properties)
+                (string-prefix-p "REPORT_" (car prop)))
+        (setq values (append values (split-string (cdr prop) ", *" t)))))
+    values))
+
 ;;;; Status Normalization
 
 (defun org-canvas--submissions-normalize-status (submission)
@@ -789,6 +1012,8 @@ SUBMISSIONS is the list of submission alists."
     (insert (format "#+TITLE: Submissions: %s\n" assignment-name))
     (insert (format "#+PROPERTY: CANVAS_ASSIGNMENT_ID %s\n\n" assignment-id))
     (insert (org-canvas--submissions-format-stats stats))
+    (when-let* ((reports (org-canvas--submissions-reports-line submissions)))
+      (insert "\n" reports))
     (insert "\n\n")
     (insert "| Student | Status | Submitted At | Score |\n")
     (insert "|---------+--------+--------------+-------|\n")
@@ -824,6 +1049,8 @@ assignment object when at hand, supplies the rubric header."
                     (format-time-string "<%Y-%m-%d %a %H:%M>")))
     (org-canvas--submissions-render-rubric-properties assignment)
     (org-canvas--submissions-render-links assignment-id)
+    (when-let* ((reports (org-canvas--submissions-reports-line submissions)))
+      (insert reports "\n"))
     (org-canvas--submissions-render-rubric-header assignment)
     (insert "\n")
     (let ((criteria (org-canvas--submissions-rubric-criteria assignment)))
@@ -899,6 +1126,7 @@ CRITERIA, the assignment's rubric criteria, shape the Rubric table."
       (when (stringp posted-at)
         (insert (format ":POSTED_AT: %s\n"
                         (or (org-canvas--iso8601-to-org-timestamp posted-at) posted-at)))))
+    (org-canvas--submissions-insert-report-properties submission)
     (insert ":END:\n")
     (when (and user-id assignment-id)
       (insert (format "[[%s][Open in SpeedGrader]]\n"
@@ -1763,12 +1991,23 @@ A level-1 heading without a USER_ID — the rubric block — is no student."
                    (or (org-entry-get (point) "SCORE") ""))))
          "LEVEL=1")))
 
+(defun org-canvas--submissions-heading-reports-line ()
+  "Return the Reports: line the file's student headings add up to, or nil."
+  (org-canvas--submissions-format-report-counts
+   (org-canvas--submissions-report-counts
+    (org-map-entries
+     (lambda ()
+       (and (org-entry-get (point) "USER_ID")
+            (org-canvas--submissions-report-values-at-point)))
+     "LEVEL=1"))))
+
 (defun org-canvas--submissions-show-summary-of-file ()
   "Show a read-only summary table of the current grading file."
   (let* ((name org-canvas-submissions--assignment-name)
          (id org-canvas-submissions--assignment-id)
          (file buffer-file-name)
          (rows (org-canvas--submissions-heading-rows))
+         (reports (org-canvas--submissions-heading-reports-line))
          (buf (get-buffer-create (format "*submissions summary: %s*" name))))
     (with-current-buffer buf
       (let ((inhibit-read-only t))
@@ -1777,6 +2016,8 @@ A level-1 heading without a USER_ID — the rubric block — is no student."
         (insert (format "#+TITLE: Submissions: %s\n" name))
         (insert (format "#+PROPERTY: CANVAS_ASSIGNMENT_ID %s\n\n" id))
         (insert "Read-only overview of the grading file; edit scores there (press v).\n\n")
+        (when reports
+          (insert reports "\n\n"))
         (insert "| Student | Status | Submitted At | Score |\n")
         (insert "|---------+--------+--------------+-------|\n")
         (dolist (row rows)
@@ -2079,7 +2320,8 @@ interactive (issue #280)."
   (let* ((selected (org-canvas--submissions-resolve-assignment assignment))
          (name (alist-get 'name selected))
          (assignment-id (number-to-string (alist-get 'id selected)))
-         (submissions (org-canvas--submissions-fetch-for-assignment assignment-id))
+         (submissions
+          (org-canvas--submissions-fetch-with-reports assignment-id))
          (buf (org-canvas--submissions-display
                name assignment-id submissions
                (if download 'detail org-canvas-submissions-default-view)
@@ -2119,7 +2361,7 @@ The body of `org-canvas-submissions-refresh', shared with
     (when (eq view 'summary)
       (org-canvas--submissions-guard-unpushed "Refresh"))
     (message "Refreshing submissions for %s..." name)
-    (let ((submissions (org-canvas--submissions-fetch-for-assignment id)))
+    (let ((submissions (org-canvas--submissions-fetch-with-reports id)))
       (org-canvas--submissions-display
        name id submissions view (org-canvas--submissions-fetch-assignment id)))))
 

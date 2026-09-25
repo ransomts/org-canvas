@@ -23,6 +23,11 @@
 A value of `forbidden' answers the read with a 403.")
 (defvar test-sstatus--calls nil
   "Requests the fake API answered, newest first, as (URL . PARAMS).")
+(defvar test-sstatus--graphql-calls nil
+  "Assignment ids the fake GraphQL was asked about, newest first.")
+(defvar test-sstatus--reports nil
+  "Report nodes the fake GraphQL answers, an alist of assignment id to rows.
+Each row is (USER-ID . REPORT-NODES); a value of `refused' signals.")
 
 (defun test-sstatus--assignment (id name &rest extra)
   "A published, points-graded assignment ID named NAME, plus EXTRA pairs.
@@ -52,6 +57,23 @@ EXTRA comes first, so an explicit `published', `grading_type' or
    ((string-match-p "/assignments\\'" url) (vconcat test-sstatus--assignments))
    (t (error "Unexpected request: %s" url))))
 
+(defun test-sstatus--graphql (_document &optional variables)
+  "Answer the reports query for the assignment VARIABLES name, in one page."
+  (let* ((id (string-to-number (alist-get 'assignmentId variables)))
+         (rows (alist-get id test-sstatus--reports)))
+    (push id test-sstatus--graphql-calls)
+    (if (eq rows 'refused)
+        (signal 'org-canvas-api-error (list "GraphQL: refused"))
+      `((assignment
+         . ((submissionsConnection
+             . ((pageInfo . ((hasNextPage . :json-false) (endCursor . :null)))
+                (nodes . ,(vconcat
+                           (mapcar (lambda (row)
+                                     `((userId . ,(format "%s" (car row)))
+                                       (ltiAssetReportsConnection
+                                        . ((nodes . ,(vconcat (cdr row)))))))
+                                   rows)))))))))))
+
 (defmacro test-sstatus--with-course (assignments submissions &rest body)
   "Run BODY with the fake API serving ASSIGNMENTS and SUBMISSIONS.
 The submissions directory is a temp directory, so a grading file
@@ -62,11 +84,14 @@ written there is the only one the report can find."
           (org-canvas-time-zone "UTC")
           (test-sstatus--assignments ,assignments)
           (test-sstatus--submissions ,submissions)
-          (test-sstatus--calls nil))
+          (test-sstatus--calls nil)
+          (test-sstatus--graphql-calls nil))
      (unwind-protect
          (with-org-canvas-test-config
            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
                       #'test-sstatus--api)
+                     ((symbol-function 'org-canvas--graphql-query)
+                      #'test-sstatus--graphql)
                      ((symbol-function 'message) #'ignore)
                      ((symbol-function 'princ) #'ignore))
              ,@body))
@@ -407,6 +432,87 @@ Bounded by the number of lines; the match's end is read before
       (org-canvas-submissions-status)
       (expect (directory-files org-canvas-submissions-directory nil "\\.org\\'")
               :to-equal nil))))
+
+;;;; Document processor reports (issue #351)
+
+(defun test-sstatus--report (type progress &optional result)
+  "Return a GraphQL report node of TYPE at PROGRESS with RESULT."
+  `((reportType . ,type) (processingProgress . ,progress)
+    (result . ,(or result :null))))
+
+(describe "the grading queue's Reports line (issue #351)"
+  (it "sums the rows' reports over the columns and names where one failed"
+    (test-sstatus--with-course
+        (list (test-sstatus--assignment 1 "R6")
+              (test-sstatus--assignment 2 "R7")
+              (test-sstatus--assignment 3 "Quiz")
+              (test-sstatus--assignment 4 "Nobody"))
+        (list (cons 1 (list (test-sstatus--submission '(submitted_at . "2026-09-01T00:00:00Z"))))
+              (cons 2 (list (test-sstatus--submission '(submitted_at . "2026-09-01T00:00:00Z"))))
+              (cons 3 (list (test-sstatus--submission '(submitted_at . "2026-09-01T00:00:00Z"))))
+              (cons 4 (list (test-sstatus--submission))))
+      (let* ((test-sstatus--reports
+              `((1 . ((101 ,(test-sstatus--report "originality" "Processed" "33%")
+                           ,(test-sstatus--report "turnitin_aiwriting" "Processed" "0%"))
+                      (102 ,(test-sstatus--report "originality" "Failed"))
+                      (103 ,(test-sstatus--report "originality" "Pending"))))
+                (2 . ((201 ,(test-sstatus--report "originality" "Failed"))))))
+             (logged nil)
+             (columns (cl-letf (((symbol-function 'org-canvas--log-info)
+                                 (lambda (_logger fmt &rest args)
+                                   (push (apply #'format fmt args) logged))))
+                        (org-canvas-submissions-status)))
+             (text (with-current-buffer org-canvas--submissions-status-buffer-name
+                     (buffer-string))))
+        (expect (plist-get (cl-find "R6" columns :key (lambda (c) (plist-get c :name))
+                                    :test #'equal)
+                           :reports)
+                :to-equal '(:processed 1 :failed 1 :pending 1))
+        (expect (plist-get (cl-find "Quiz" columns :key (lambda (c) (plist-get c :name))
+                                    :test #'equal)
+                           :reports)
+                :to-be nil)
+        (expect text :to-match
+                "unreadable\nReports: 1 processed, 2 failed, 1 pending; failed in R6 (1), R7 (1)\n\n|")
+        (expect logged :to-contain
+                "[Submissions status] Reports: 1 processed, 2 failed, 1 pending; failed in R6 (1), R7 (1)")
+        ;; Nothing was handed in on Nobody, so it was not asked.
+        (expect (sort (copy-sequence test-sstatus--graphql-calls) #'<) :to-equal '(1 2 3)))))
+
+  (it "has no Reports line when no column has a report"
+    (test-sstatus--with-course
+        (list (test-sstatus--assignment 1 "Journal"))
+        (list (cons 1 (list (test-sstatus--submission '(submitted_at . "2026-09-01T00:00:00Z")))))
+      (org-canvas-submissions-status)
+      (expect (with-current-buffer org-canvas--submissions-status-buffer-name (buffer-string))
+              :not :to-match "Reports:")))
+
+  (it "leaves out a column whose reports cannot be read, after one warning"
+    (let ((warnings nil))
+      (test-sstatus--with-course
+          (list (test-sstatus--assignment 1 "Open") (test-sstatus--assignment 2 "Refused"))
+          (list (cons 1 (list (test-sstatus--submission '(submitted_at . "2026-09-01T00:00:00Z"))))
+                (cons 2 (list (test-sstatus--submission '(submitted_at . "2026-09-01T00:00:00Z")))))
+        (let ((test-sstatus--reports
+               `((1 . ((101 ,(test-sstatus--report "originality" "Processed" "5%"))))
+                 (2 . refused))))
+          (cl-letf (((symbol-function 'org-canvas--log-warning)
+                     (lambda (_logger fmt &rest args) (push (apply #'format fmt args) warnings))))
+            (let ((columns (org-canvas--submissions-status-columns
+                            (org-canvas--submissions-status-fetch-assignments))))
+              (expect (org-canvas--submissions-status-reports-line columns)
+                      :to-equal "Reports: 1 processed, 0 failed, 0 pending")
+              (expect (length warnings) :to-equal 1)
+              (expect (car warnings) :to-match "assignment 2")))))))
+
+  (it "does not ask about a column it could not read at all"
+    (test-sstatus--with-course
+        (list (test-sstatus--assignment 2 "Locked"))
+        (list (cons 2 'forbidden))
+      (cl-letf (((symbol-function 'org-canvas--log-warning) #'ignore))
+        (org-canvas--submissions-status-columns
+         (org-canvas--submissions-status-fetch-assignments)))
+      (expect test-sstatus--graphql-calls :to-be nil))))
 
 (provide 'org-canvas-submissions-status-test)
 ;;; org-canvas-submissions-status-test.el ends here

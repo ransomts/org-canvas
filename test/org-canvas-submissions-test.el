@@ -779,7 +779,8 @@
       (let ((assignments-fetched nil)
             (submissions-fetched nil)
             (org-canvas-submissions-default-view 'summary))
-        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+        (cl-letf (((symbol-function 'org-canvas--submissions-fetch-reports) #'ignore)
+                  ((symbol-function 'org-canvas-api-request-all-pages)
                    (lambda (_method url &optional _params)
                      (cond
                       ((string-match-p "assignments$" url)
@@ -802,7 +803,8 @@
   (it "re-fetches and re-renders"
     (with-org-canvas-test-config
       (let ((fetch-count 0))
-        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+        (cl-letf (((symbol-function 'org-canvas--submissions-fetch-reports) #'ignore)
+                  ((symbol-function 'org-canvas-api-request-all-pages)
                    (lambda (_method _url &optional _params)
                      (cl-incf fetch-count)
                      (list (test-org-canvas-make-submission))))
@@ -1401,7 +1403,8 @@
     (with-org-canvas-test-config
       (let ((target-buf nil)
             (org-canvas-submissions-directory (make-temp-file "org-canvas-subs-" t)))
-        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+        (cl-letf (((symbol-function 'org-canvas--submissions-fetch-reports) #'ignore)
+                  ((symbol-function 'org-canvas-api-request-all-pages)
                    (lambda (_method _url &optional _params)
                      (list (test-org-canvas-make-submission '((score . 99))))))
                   ((symbol-function 'org-canvas--submissions-fetch-assignment)
@@ -1453,7 +1456,10 @@
            (with-current-buffer buf
              (org-mode)
              (org-canvas-submissions-mode 1)
-             ,@body))
+             ;; A refresh reads the column's reports over GraphQL
+             ;; (#351); here the column has none.
+             (cl-letf (((symbol-function 'org-canvas--graphql-query) #'ignore))
+               ,@body)))
        (when (buffer-live-p buf)
          (with-current-buffer buf (set-buffer-modified-p nil))
          (kill-buffer buf))
@@ -1784,7 +1790,8 @@ OVERRIDES adjust `test-org-canvas-make-submission'; a prompt fails."
       (let ((fetched nil)
             (messages nil)
             (noninteractive t))
-        (cl-letf (((symbol-function 'org-canvas--submissions-fetch-for-assignment)
+        (cl-letf (((symbol-function 'org-canvas--submissions-fetch-reports) #'ignore)
+                  ((symbol-function 'org-canvas--submissions-fetch-for-assignment)
                    (lambda (_id) (setq fetched t) (list (test-org-canvas-make-submission))))
                   ((symbol-function 'org-canvas--submissions-fetch-assignment) (lambda (_id) nil))
                   ((symbol-function 'switch-to-buffer) (lambda (b) b))
@@ -2011,7 +2018,8 @@ prompt may be reached: `completing-read' and `y-or-n-p' both signal."
                     (lambda (&rest _) (error "must not ask")))
                    ((symbol-function 'switch-to-buffer) (lambda (b) b))
                    ((symbol-function 'org-canvas--submissions-heading-for-assignment)
-                    (lambda (_id) nil)))
+                    (lambda (_id) nil))
+                   ((symbol-function 'org-canvas--graphql-query) #'ignore))
            ,@body)
        (dolist (b (buffer-list))
          (when (and (buffer-file-name b)
@@ -3332,6 +3340,266 @@ SCORE COMMENT), written as the table and the comment items under it."
         (when (buffer-live-p (car shown)) (kill-buffer (car shown)))
         (delete-directory dir t)))))
 
+
+;;;; Document processor reports (issue #351)
+
+(defun test-reports--node (type progress &optional result)
+  "Return a GraphQL report node of TYPE at PROGRESS with RESULT."
+  `((reportType . ,type) (processingProgress . ,progress)
+    (result . ,(or result :null))))
+
+(defun test-reports--reply (rows &optional cursor)
+  "Return a reports query reply for ROWS, a list of (USER-ID . NODES).
+With CURSOR the reply says another page follows after it."
+  `((assignment
+     . ((submissionsConnection
+         . ((pageInfo . ((hasNextPage . ,(if cursor t :json-false))
+                         (endCursor . ,(or cursor :null))))
+            (nodes . ,(vconcat
+                       (mapcar (lambda (row)
+                                 `((userId . ,(car row))
+                                   (ltiAssetReportsConnection
+                                    . ((nodes . ,(vconcat (cdr row)))))))
+                               rows)))))))))
+
+(defun test-reports--graphql (rows)
+  "Return a `org-canvas--graphql-query' stub answering ROWS in one page."
+  (lambda (_document &optional _variables) (test-reports--reply rows)))
+
+(defconst test-reports--alice
+  (list "5001"
+        (test-reports--node "originality" "Processed" "33%")
+        (test-reports--node "turnitin_aiwriting" "Processed" "0%"))
+  "Alice's two processed reports.")
+
+(describe "org-canvas--submissions-report-property"
+  (it "names Turnitin's two report types and derives a name for any other"
+    (expect (org-canvas--submissions-report-property "originality") :to-equal "SIMILARITY")
+    (expect (org-canvas--submissions-report-property "turnitin_aiwriting") :to-equal "AI_WRITING")
+    (expect (org-canvas--submissions-report-property "code-similarity v2")
+            :to-equal "REPORT_CODE_SIMILARITY_V2")
+    (expect (org-canvas--submissions-report-property "_grammar_") :to-equal "REPORT_GRAMMAR"))
+  (it "answers nil for a missing or blank type"
+    (expect (org-canvas--submissions-report-property nil) :to-be nil)
+    (expect (org-canvas--submissions-report-property :null) :to-be nil)
+    (expect (org-canvas--submissions-report-property " - ") :to-be nil)))
+
+(describe "org-canvas--submissions-report-value"
+  (it "writes a processed report's result, or processed when it has none"
+    (expect (org-canvas--submissions-report-value
+             (test-reports--node "originality" "Processed" "33%"))
+            :to-equal "33%")
+    (expect (org-canvas--submissions-report-value
+             (test-reports--node "originality" "Processed"))
+            :to-equal "processed")
+    (expect (org-canvas--submissions-report-value
+             (test-reports--node "originality" "Processed" ""))
+            :to-equal "processed"))
+  (it "writes failed, not processed and pending for the rest"
+    (expect (org-canvas--submissions-report-value
+             (test-reports--node "originality" "Failed" "0%"))
+            :to-equal "failed")
+    (expect (org-canvas--submissions-report-value
+             (test-reports--node "originality" "NotProcessed"))
+            :to-equal "not processed")
+    (dolist (progress '("Pending" "Processing" "PendingManual" "NotReady" "SomethingNew"))
+      (expect (org-canvas--submissions-report-value
+               (test-reports--node "originality" progress))
+              :to-equal "pending"))))
+
+(describe "org-canvas--submissions-report-alist"
+  (it "keeps both values of a type reported twice and drops an untyped report"
+    (expect (org-canvas--submissions-report-alist
+             (vector (test-reports--node "originality" "Processed" "33%")
+                     (test-reports--node nil "Processed" "1%")
+                     (test-reports--node "turnitin_aiwriting" "Pending")
+                     (test-reports--node "originality" "Failed")))
+            :to-equal '(("SIMILARITY" "33%" "failed") ("AI_WRITING" "pending")))))
+
+(describe "org-canvas--submissions-report-counts"
+  (it "counts each row once, failed before pending before processed"
+    (expect (org-canvas--submissions-report-counts
+             '(("33%" "0%") ("failed" "0%") ("not processed") ("pending" "5%") nil))
+            :to-equal '(:processed 1 :failed 2 :pending 1)))
+  (it "is nil when no row has a report"
+    (expect (org-canvas--submissions-report-counts '(nil nil)) :to-be nil)
+    (expect (org-canvas--submissions-format-report-counts nil) :to-be nil)))
+
+(describe "org-canvas--submissions-fetch-reports"
+  (it "follows the pages and keys each submission's reports by user id"
+    (with-org-canvas-test-config
+      (let ((sent nil))
+        (cl-letf (((symbol-function 'org-canvas--graphql-query)
+                   (lambda (_document &optional variables)
+                     (push variables sent)
+                     (if (alist-get 'cursor variables)
+                         (test-reports--reply
+                          (list (list "5002" (test-reports--node "originality" "Failed"))))
+                       (test-reports--reply
+                        (list test-reports--alice (list "5003")) "Mg")))))
+          (let ((map (org-canvas--submissions-fetch-reports "1001")))
+            (expect (hash-table-count map) :to-equal 2)
+            (expect (gethash "5001" map)
+                    :to-equal '(("SIMILARITY" "33%") ("AI_WRITING" "0%")))
+            (expect (gethash "5002" map) :to-equal '(("SIMILARITY" "failed")))
+            (expect (gethash "5003" map) :to-be nil)
+            (expect (length sent) :to-equal 2)
+            (expect (alist-get 'cursor (car sent)) :to-equal "Mg"))))))
+  (it "answers nil after one warning when the query fails"
+    (with-org-canvas-test-config
+      (let ((warnings nil))
+        (cl-letf (((symbol-function 'org-canvas--graphql-query)
+                   (lambda (&rest _) (signal 'org-canvas-api-error (list "GraphQL: nope"))))
+                  ((symbol-function 'org-canvas--log-warning)
+                   (lambda (_logger fmt &rest args) (push (apply #'format fmt args) warnings))))
+          (expect (org-canvas--submissions-fetch-reports "1001") :to-be nil)
+          (expect (length warnings) :to-equal 1)
+          (expect (car warnings) :to-match "document processor reports of assignment 1001"))))))
+
+(describe "org-canvas--submissions-with-reports"
+  (it "does not ask when nothing was handed in"
+    (let ((asked nil))
+      (cl-letf (((symbol-function 'org-canvas--graphql-query)
+                 (lambda (&rest _) (setq asked t) nil)))
+        (let ((subs (list (test-org-canvas-make-submission '((submitted_at . nil))))))
+          (expect (org-canvas--submissions-with-reports "1001" subs) :to-be subs)
+          (expect asked :to-be nil)))))
+  (it "returns the rows untouched when the column has no report"
+    (cl-letf (((symbol-function 'org-canvas--graphql-query) (test-reports--graphql nil)))
+      (let ((subs (list (test-org-canvas-make-submission))))
+        (expect (org-canvas--submissions-with-reports "1001" subs) :to-be subs))))
+  (it "attaches the reports to the row whose user they are and logs the count"
+    (let ((logged nil))
+      (cl-letf (((symbol-function 'org-canvas--graphql-query)
+                 (test-reports--graphql (list test-reports--alice)))
+                ((symbol-function 'org-canvas--log-info)
+                 (lambda (_logger fmt &rest args) (push (apply #'format fmt args) logged))))
+        (let ((subs (org-canvas--submissions-with-reports
+                     "1001" (list (test-org-canvas-make-submission) (test-refresh--bob)))))
+          (expect (alist-get 'org-canvas-reports (car subs))
+                  :to-equal '(("SIMILARITY" "33%") ("AI_WRITING" "0%")))
+          (expect (assq 'org-canvas-reports (cadr subs)) :to-be nil)
+          (expect logged :to-equal
+                  '("[Submissions] Reports: 1 processed, 0 failed, 0 pending")))))))
+
+(defun test-reports--run (rows subs)
+  "Refresh the current grading file as if Canvas held SUBS and report ROWS.
+ROWS is what the reports query answers; nil answers no report."
+  (cl-letf (((symbol-function 'org-canvas--submissions-fetch-for-assignment) (lambda (_id) subs))
+            ((symbol-function 'org-canvas--submissions-fetch-assignment) (lambda (_id) '((id . 1001))))
+            ((symbol-function 'org-canvas--submissions-heading-for-assignment) (lambda (_id) nil))
+            ((symbol-function 'org-canvas--graphql-query) (test-reports--graphql rows))
+            ((symbol-function 'switch-to-buffer) (lambda (b) b))
+            ((symbol-function 'y-or-n-p) (lambda (_) (error "must not ask")))
+            ((symbol-function 'message) #'ignore))
+    ;; A file with no student heading yet reads as a summary; this is
+    ;; the grading file, whatever it holds.
+    (setq-local org-canvas-submissions--current-view 'detail)
+    (org-canvas-submissions-refresh)))
+
+(describe "a grading file carries the document processor reports (issue #351)"
+  (it "writes SIMILARITY and AI_WRITING on the row and the counts in the header"
+    (with-org-canvas-test-config
+      (with-grading-file test-grading-file-header
+        (test-reports--run
+         (list test-reports--alice
+               (list "5002" (test-reports--node "originality" "Failed")))
+         (list (test-org-canvas-make-submission) (test-refresh--bob)))
+        (expect (buffer-string)
+                :to-match "^Reports: 1 processed, 1 failed, 0 pending$")
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "SIMILARITY") :to-equal "33%")
+        (expect (org-entry-get (point) "AI_WRITING") :to-equal "0%")
+        (org-canvas--submissions-goto-user 5002)
+        (expect (org-entry-get (point) "SIMILARITY") :to-equal "failed")
+        (expect (org-entry-get (point) "AI_WRITING") :to-be nil))))
+  (it "writes nothing when the column has no report"
+    (with-org-canvas-test-config
+      (with-grading-file test-grading-file-header
+        (test-reports--run nil (list (test-org-canvas-make-submission)))
+        (expect (buffer-string) :not :to-match "^Reports:")
+        (expect (buffer-string) :not :to-match "SIMILARITY\\|AI_WRITING"))))
+  (it "joins two reports of one type and names an unknown type"
+    (with-org-canvas-test-config
+      (with-grading-file test-grading-file-header
+        (test-reports--run
+         (list (list "5001"
+                     (test-reports--node "originality" "Processed" "33%")
+                     (test-reports--node "originality" "Processing")
+                     (test-reports--node "grammar_check" "Processed" "12 issues")))
+         (list (test-org-canvas-make-submission)))
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "SIMILARITY") :to-equal "33%, pending")
+        (expect (org-entry-get (point) "REPORT_GRAMMAR_CHECK") :to-equal "12 issues")
+        (expect (buffer-string) :to-match "^Reports: 0 processed, 0 failed, 1 pending$"))))
+  (it "refreshes the reports and keeps the typed score, notes and drafted comment (#281)"
+    (with-org-canvas-test-config
+      (with-grading-file (concat test-grading-file-header
+                                 "Reports: 0 processed, 0 failed, 1 pending\n\n"
+                                 "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n"
+                                 ":SCORE: 95\n:CANVAS_SCORE: 92\n:ATTEMPT: 1\n"
+                                 ":SIMILARITY: pending\n:REPORT_OLD: 5%\n:END:\n"
+                                 "\n** Notes\nCheck the sources.\n\n** Comment to post\nSee me.\n")
+        (test-reports--run (list test-reports--alice)
+                           (list (test-org-canvas-make-submission '((attempt . 1)))))
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "SIMILARITY") :to-equal "33%")
+        (expect (org-entry-get (point) "AI_WRITING") :to-equal "0%")
+        (expect (org-entry-get (point) "REPORT_OLD") :to-be nil)
+        (expect (org-entry-get (point) "SCORE") :to-equal "95")
+        (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "92")
+        (expect (buffer-string) :to-match "Check the sources\\.")
+        (expect (buffer-string) :to-match "never sent\\.  c posts a one-off comment now\\.\nSee me\\.")
+        (expect (buffer-string) :to-match "^Reports: 1 processed, 0 failed, 0 pending$")
+        (expect (buffer-string) :not :to-match "1 pending"))))
+  (it "pulls without the reports when the query fails, after one warning"
+    (with-org-canvas-test-config
+      (with-submissions-dir
+        (let ((warnings nil))
+          (cl-letf (((symbol-function 'org-canvas-api-request)
+                     (test-entry--canvas '((id . 1001) (name . "Homework 1"))))
+                    ((symbol-function 'org-canvas--graphql-query)
+                     (lambda (&rest _) (signal 'org-canvas-api-error (list "GraphQL: timeout"))))
+                    ((symbol-function 'org-canvas--log-warning)
+                     (lambda (_logger fmt &rest args) (push (apply #'format fmt args) warnings))))
+            (with-current-buffer (org-canvas-pull-submissions "1001")
+              (expect (buffer-string) :to-match "^\\* Adams, Alice")
+              (expect (buffer-string) :not :to-match "SIMILARITY\\|^Reports:")))
+          (expect (length warnings) :to-equal 1)
+          (expect (car warnings) :to-match "pulled without them")))))
+  (it "puts the counts under the summary table's statistics"
+    (with-temp-buffer
+      (org-mode)
+      (org-canvas--submissions-render-summary
+       "HW" "1001"
+       (list (cons '(org-canvas-reports ("SIMILARITY" "failed"))
+                   (test-org-canvas-make-submission))))
+      (expect (buffer-string) :to-match "submitted.*\nReports: 0 processed, 1 failed, 0 pending\n")))
+  (it "adds the headings' reports up in the summary of a grading file"
+    (with-org-canvas-test-config
+      (with-grading-file (concat test-grading-file-header
+                                 "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n"
+                                 ":SIMILARITY: 33%, failed\n:AI_WRITING: 0%\n:END:\n"
+                                 "* Beta, Bob\n:PROPERTIES:\n:USER_ID: 5002\n"
+                                 ":REPORT_GRAMMAR: pending\n:END:\n"
+                                 "* Gamma, Gil\n:PROPERTIES:\n:USER_ID: 5003\n:END:\n")
+        (org-canvas--submissions-ensure-context)
+        (cl-letf (((symbol-function 'switch-to-buffer) (lambda (b) b)))
+          (with-current-buffer (org-canvas--submissions-show-summary-of-file)
+            (unwind-protect
+                (expect (buffer-string)
+                        :to-match "^Reports: 0 processed, 1 failed, 1 pending$")
+              (kill-buffer)))))))
+  (it "leaves the summary of a grading file without reports alone"
+    (with-org-canvas-test-config
+      (with-grading-file (concat test-grading-file-header
+                                 "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n")
+        (org-canvas--submissions-ensure-context)
+        (cl-letf (((symbol-function 'switch-to-buffer) (lambda (b) b)))
+          (with-current-buffer (org-canvas--submissions-show-summary-of-file)
+            (unwind-protect
+                (expect (buffer-string) :not :to-match "^Reports:")
+              (kill-buffer))))))))
 
 (provide 'org-canvas-submissions-test)
 ;;; org-canvas-submissions-test.el ends here
