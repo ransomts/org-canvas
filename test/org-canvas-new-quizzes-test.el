@@ -2400,6 +2400,24 @@ Click the heart.
         (points_possible . 10)))
      (expect (buffer-string) :to-match "Question"))))
 
+(describe "A New Quiz item pull leaves the file as a re-pull does (issue #314)"
+  (dolist (layout '(("* Quiz\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 42\n:END:\n"
+                     . "the last heading of the file")
+                    ("* Quiz\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 42\n:END:\n\nText.\n\n"
+                     . "the last heading, its text ending in a blank line")
+                    ("* Quiz\n\nText.\n\n* Other\n"
+                     . "followed by another heading after a blank line")))
+    (it (format "appends the first item as it rewrites it, the quiz %s" (cdr layout))
+      (let ((item '((id . "item-1") (item_body . "What is 2+2?")
+                    (interaction_type_slug . "choice") (points_possible . 5))))
+        (with-temp-org-buffer (car layout)
+          (goto-char (point-min))
+          (org-canvas--new-quiz-pull-insert-item item)
+          (let ((appended (buffer-string)))
+            (goto-char (point-min))
+            (org-canvas--new-quiz-pull-insert-item item)
+            (expect (buffer-string) :to-equal appended)))))))
+
 (describe "org-canvas-pull-new-quizzes"
   (it "creates quiz headings from API response"
     (let* ((temp-dir (make-temp-file "nq-pull-test" t))
@@ -3664,6 +3682,12 @@ collects every request."
   (re-search-forward "^\\* Midterm")
   (org-back-to-heading t))
 
+(defun test-nq-309--sans-stamp (text)
+  "Return TEXT without its #+LAST_SYNCED line.
+Each pull stamps the minute it ran, so two pulls either side of a minute
+boundary differ there and nowhere else."
+  (replace-regexp-in-string "^#\\+LAST_SYNCED: .*\n" "" text))
+
 (defun test-nq-309--file-text ()
   "Return the current buffer's file as it is on disk."
   (with-temp-buffer
@@ -3761,10 +3785,11 @@ collects every request."
               (test-nq-309--midterm `(instructions . ,sent)))
         (test-nq-309--goto-midterm)
         (org-canvas-pull-at-point)
-        ;; Trailing blank lines aside: an item appended to the end of a
-        ;; file leaves one, which rewriting it in place drops.
-        (expect (string-trim-right (buffer-string))
-                :to-equal (string-trim-right pulled))
+        ;; Byte for byte but the minute stamp: appending the item and
+        ;; rewriting it in place leave the same trailing whitespace
+        ;; (issue #314).
+        (expect (test-nq-309--sans-stamp (buffer-string))
+                :to-equal (test-nq-309--sans-stamp pulled))
         (test-nq-309--goto-midterm)
         (expect (org-canvas--new-quiz-parse-body-text) :to-equal body)))))
 

@@ -1,0 +1,5 @@
+* Fixed
+- #314 A pull that adds the first question under a classic quiz, or the
+  first item under a New Quiz, leaves the file as a re-pull does: an
+  appended child no longer carries a trailing blank line the next pull
+  removes.
