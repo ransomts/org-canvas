@@ -1,0 +1,6 @@
+* Fixed
+- #348 An override sync that creates, updates or deletes an override
+  restamps the assignment heading's =CANVAS_UPDATED_AT=, so the next
+  push of that heading no longer calls the override writes a conflict.
+  A heading that had already drifted from Canvas before the override
+  sync keeps its stamp, so a web-UI edit still reports.

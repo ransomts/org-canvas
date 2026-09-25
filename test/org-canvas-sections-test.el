@@ -1418,4 +1418,156 @@ Returns (COUNTS . CALLS), CALLS being (METHOD . URL-TAIL) in order."
     (expect (org-canvas--override-existing-label '((student_ids . [1 2]))) :to-equal "students 1, 2")
     (expect (org-canvas--override-existing-label '((id . 3))) :to-equal "everyone")))
 
+;;;; The Assignment's Baseline After Override Writes (issue #348)
+
+(defconst test-ovr348-row
+  "| [[file:sections.org::*Section A][Section A]] | <2026-02-15 Sun> | | |\n"
+  "An overrides row for Section A, whose section id is 777.")
+
+(defun test-ovr348-run (stamp before after rows &optional dry-run)
+  "Run `org-canvas-sync-overrides' on one heading stamped STAMP.
+The assignment's `updated_at' is BEFORE until an override write
+lands and AFTER from then on.  ROWS is the table's body.  DRY-RUN
+binds `org-canvas--dry-run'.  Return (FILE-TEXT . API-CALLS)."
+  (let ((dir (make-temp-file "ovr348-" t)))
+    (unwind-protect
+        (let ((file (expand-file-name "assignments.org" dir)))
+          (with-temp-file (expand-file-name "sections.org" dir)
+            (insert "* Section A\n:PROPERTIES:\n:CANVAS_ID: 777\n:END:\n"))
+          (with-temp-file file
+            (insert "* Assignment 1\n:PROPERTIES:\n:CANVAS_ID: 456\n"
+                    (format ":CANVAS_UPDATED_AT: %s\n" stamp)
+                    ":PAYLOAD_HASH: abc123\n:END:\n\n#+NAME: overrides\n"
+                    "| Section | Due At | Unlock At | Lock At |\n"
+                    "|---------+--------+-----------+---------|\n"
+                    rows))
+          (let ((org-canvas-assignments-file file)
+                (org-canvas--dry-run dry-run))
+            (with-org-canvas-test-config
+              (with-sync-test-env
+                (with-mock-api
+                  (setq test-org-canvas-api-responses
+                        `(("assignments/456/overrides" . [])
+                          ("assignments/456\\'"
+                           . ((id . 456) (updated_at . ,before)))))
+                  (cl-letf (((symbol-function 'org-canvas-api-request)
+                             (lambda (method url &rest args)
+                               (prog1 (apply #'test-org-canvas-mock-api-request
+                                             method url args)
+                                 (unless (eq method 'GET)
+                                   (push `("assignments/456\\'"
+                                           . ((id . 456)
+                                              (updated_at . ,after)))
+                                         test-org-canvas-api-responses))))))
+                    (org-canvas-sync-overrides))
+                  (let ((buf (find-buffer-visiting file)))
+                    (when buf
+                      (with-current-buffer buf (set-buffer-modified-p nil))
+                      (kill-buffer buf)))
+                  (cons (with-temp-buffer
+                          (insert-file-contents file)
+                          (buffer-string))
+                        test-org-canvas-api-calls))))))
+      (delete-directory dir t))))
+
+(defun test-ovr348-assignment-reads (calls)
+  "Return the GETs of the assignment itself among CALLS."
+  (cl-remove-if-not (lambda (call)
+                      (and (eq (car call) 'GET)
+                           (string-match-p "assignments/456\\'" (cadr call))))
+                    calls))
+
+(describe "org-canvas-sync-overrides restamps the assignment (issue #348)"
+  (it "restamps a clean heading after an override write and keeps the hash"
+    (let* ((result (test-ovr348-run "2026-09-25T02:19:07Z"
+                                    "2026-09-25T02:19:07Z"
+                                    "2026-09-25T02:44:10Z"
+                                    test-ovr348-row))
+           (reads (test-ovr348-assignment-reads (cdr result))))
+      (expect (car result)
+              :to-match ":CANVAS_UPDATED_AT: 2026-09-25T02:44:10Z")
+      (expect (car result) :to-match ":PAYLOAD_HASH: abc123")
+      (expect (length reads) :to-equal 2)
+      ;; Both reads carry the registry's item params (issue #273).
+      (dolist (call reads)
+        (expect (plist-get (nth 3 call) :params)
+                :to-equal '(("override_assignment_dates" . "false"))))))
+
+  (it "neither restamps nor re-reads when nothing was written"
+    (let* ((result (test-ovr348-run "2026-09-25T02:19:07Z"
+                                    "2026-09-25T02:19:07Z"
+                                    "2026-09-25T02:44:10Z"
+                                    ""))
+           (reads (test-ovr348-assignment-reads (cdr result))))
+      (expect (car result)
+              :to-match ":CANVAS_UPDATED_AT: 2026-09-25T02:19:07Z")
+      (expect (length reads) :to-equal 1)
+      (expect (cl-remove-if (lambda (call) (eq (car call) 'GET)) (cdr result))
+              :to-equal nil)))
+
+  (it "keeps the stamp of a heading that had drifted before the writes"
+    (let ((result (test-ovr348-run "2026-09-25T02:19:07Z"
+                                   "2026-09-25T02:30:00Z"
+                                   "2026-09-25T02:44:10Z"
+                                   test-ovr348-row)))
+      (expect (car result)
+              :to-match ":CANVAS_UPDATED_AT: 2026-09-25T02:19:07Z")
+      (expect (length (test-ovr348-assignment-reads (cdr result)))
+              :to-equal 1)
+      (expect (cl-find-if (lambda (call) (eq (car call) 'POST)) (cdr result))
+              :not :to-be nil)))
+
+  (it "reads and writes nothing about the assignment under a dry run"
+    (let ((result (test-ovr348-run "2026-09-25T02:19:07Z"
+                                   "2026-09-25T02:19:07Z"
+                                   "2026-09-25T02:44:10Z"
+                                   test-ovr348-row t)))
+      (expect (car result)
+              :to-match ":CANVAS_UPDATED_AT: 2026-09-25T02:19:07Z")
+      (expect (test-ovr348-assignment-reads (cdr result)) :to-equal nil)
+      (expect (cl-remove-if (lambda (call) (eq (car call) 'GET)) (cdr result))
+              :to-equal nil)))
+
+  (it "leaves a heading with no stamp of its own unread and unstamped"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-temp-org-buffer "* A\n:PROPERTIES:\n:CANVAS_ID: 456\n:END:\n"
+          (expect (org-canvas--override-baseline-clean-p (point) "456")
+                  :to-be nil)
+          (expect test-org-canvas-api-calls :to-equal nil)))))
+
+  (it "answers nil and warns when the assignment read fails"
+    (let ((warned nil))
+      (with-org-canvas-test-config
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _) (error "Boom")))
+                  ((symbol-function 'org-canvas--log-warning)
+                   (lambda (&rest _) (setq warned t))))
+          (expect (org-canvas--override-read-assignment "456") :to-be nil)
+          (expect warned :to-be t)))))
+
+  (it "reads the course endpoint when no assignments feature is registered"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (cl-letf (((symbol-function 'org-canvas--registry-find-feature)
+                   (lambda (_) nil)))
+          (setq test-org-canvas-api-responses
+                '(("assignments/456" . ((updated_at . "2026-01-01T00:00:00Z")))))
+          (expect (org-canvas--override-read-assignment "456")
+                  :to-equal "2026-01-01T00:00:00Z")
+          (expect (plist-get (nth 3 (car test-org-canvas-api-calls)) :params)
+                  :to-be nil)))))
+
+  (it "warns instead of signalling when the stamp cannot be written"
+    (let ((warned nil))
+      (with-org-canvas-test-config
+        (cl-letf (((symbol-function 'org-canvas--override-read-assignment)
+                   (lambda (_) "2026-01-01T00:00:00Z"))
+                  ((symbol-function 'org-canvas-org-set-property)
+                   (lambda (&rest _) (error "Buffer is stale")))
+                  ((symbol-function 'org-canvas--log-warning)
+                   (lambda (&rest _) (setq warned t))))
+          (org-canvas--override-restamp (point-min) "456" "A")
+          (expect warned :to-be t))))))
+
 ;;; org-canvas-sections-test.el ends here

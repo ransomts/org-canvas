@@ -685,6 +685,92 @@ issued; the counts then report what would have been done."
     (list created updated
           (org-canvas--override-delete-removed endpoint existing matched-ids))))
 
+;;;; Keeping the Assignment's Baseline (issue #348)
+;;
+;; Every override written bumps the parent assignment's `updated_at',
+;; which is the heading's conflict baseline.  Left alone, the next push
+;; of the heading sees the package's own override write as remote drift
+;; and refuses.  The heading is restamped after a reconcile that wrote
+;; anything, but only when it agreed with Canvas before the first write:
+;; a web-UI edit made since the last push must stay visible as drift.
+
+(defun org-canvas--override-read-assignment (assignment-id)
+  "GET ASSIGNMENT-ID through the feature registry; return its `updated_at'.
+The read carries the registry's `:item-params', as every single
+assignment read does (issue #273).  Answer nil when the read fails or
+names no timestamp; a failure is logged, never signalled."
+  (let ((feature (org-canvas--registry-find-feature "Assignments")))
+    (condition-case err
+        (let* ((url (if feature
+                        (org-canvas--feature-item-url feature assignment-id)
+                      (org-canvas-api-course-endpoint
+                       "assignments/%s" assignment-id)))
+               (params (and feature
+                            (org-canvas--feature-item-params feature)))
+               (reply (org-canvas-api-request 'GET url :params params))
+               (updated (and (listp reply) (alist-get 'updated_at reply))))
+          (and (stringp updated) updated))
+      (error
+       (org-canvas--log-warning org-canvas--logger
+         (concat "[Override] Could not read assignment %s (%s); "
+                 "its baseline is left alone")
+         assignment-id (error-message-string err))
+       nil))))
+
+(defun org-canvas--override-baseline-clean-p (pom assignment-id)
+  "Return non-nil when the heading at POM agrees with Canvas's ASSIGNMENT-ID.
+Agreement means the heading's own CANVAS_UPDATED_AT is no earlier
+than the assignment's remote `updated_at', which is what the push's
+conflict check asks.  A heading with no stamp of its own, and every
+heading under a dry run, answers nil without a read: there is then
+no baseline to keep, or nothing will be written that moves it."
+  (let ((stamp (org-canvas--parse-iso8601-time
+                (org-entry-get pom "CANVAS_UPDATED_AT"))))
+    (when (and stamp (not org-canvas--dry-run))
+      (let ((remote (org-canvas--parse-iso8601-time
+                     (org-canvas--override-read-assignment assignment-id))))
+        (and remote (not (time-less-p stamp remote)))))))
+
+(defun org-canvas--override-restamp (pom assignment-id title)
+  "Restamp CANVAS_UPDATED_AT at POM from ASSIGNMENT-ID's `updated_at'.
+TITLE names the heading in the log.  PAYLOAD_HASH is kept: the
+assignment's own payload did not change, only its overrides."
+  (let ((updated (org-canvas--override-read-assignment assignment-id)))
+    (when updated
+      (condition-case err
+          (progn
+            (org-canvas-org-set-property pom "CANVAS_UPDATED_AT" updated)
+            (org-canvas--log-info org-canvas--logger
+              (concat "[Override] Baseline for '%s' restamped to %s "
+                      "after its override writes")
+              title updated))
+        (error
+         (org-canvas--log-warning org-canvas--logger
+           (concat "[Override] Could not restamp '%s' (%s); "
+                   "its next push may report a conflict")
+           title (error-message-string err)))))))
+
+(defun org-canvas--override-sync-heading (pom assignment-id overrides title)
+  "Reconcile OVERRIDES for ASSIGNMENT-ID and keep the heading's baseline.
+POM is the assignment heading and TITLE its name for the log.  When
+the heading agreed with Canvas before the reconcile and the reconcile
+wrote anything, CANVAS_UPDATED_AT is restamped from a fresh read, so
+the next push does not take the override writes for a web-UI edit
+\(issue #348).  A heading that had already drifted keeps its stamp:
+restamping it would hide the edit.  Return the reconcile's counts."
+  (let* ((clean (org-canvas--override-baseline-clean-p pom assignment-id))
+         (counts (org-canvas--override-sync-for-assignment
+                  assignment-id overrides)))
+    (cond
+     ((zerop (apply #'+ counts)))
+     (clean (org-canvas--override-restamp pom assignment-id title))
+     ((not org-canvas--dry-run)
+      (org-canvas--log-debug org-canvas--logger
+        (concat "[Override] '%s' had drifted from Canvas before its "
+                "override writes; stamp left alone")
+        title)))
+    counts))
+
 (defun org-canvas--override-sync-preflight ()
   "Validate assignments file and log header for override sync.
 Returns the expanded assignments file path."
@@ -727,12 +813,14 @@ reconciles them with Canvas assignment overrides."
                            "[Override] Processing overrides for '%s' (ID: %s)"
                            title canvas-id)
                 (let* ((overrides (org-canvas--override-parse-table table source-dir))
-                       (counts (org-canvas--override-sync-for-assignment canvas-id overrides)))
+                       (counts (org-canvas--override-sync-heading
+                                marker canvas-id overrides title)))
                   (setq total-created (+ total-created (nth 0 counts)))
                   (setq total-updated (+ total-updated (nth 1 counts)))
                   (setq total-deleted (+ total-deleted (nth 2 counts)))
                   (setq assignments-processed (1+ assignments-processed))))))
-          (dolist (m markers) (set-marker m nil))))
+          (dolist (m markers) (set-marker m nil))
+          (org-canvas--save-buffer)))
 
       (org-canvas--log-info org-canvas--logger "========================================")
       (org-canvas--log-info org-canvas--logger ">>> OVERRIDE SYNC COMPLETE")
