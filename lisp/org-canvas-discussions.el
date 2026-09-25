@@ -569,7 +569,8 @@ The `:prepare' of the discussions sync; its result is unused."
 (org-canvas-define-delete-all discussions
   :endpoint "discussion_topics"
   :file org-canvas-discussions-file
-  :skip-fn (lambda (item) (eq (alist-get 'is_announcement item) t)))
+  :skip-fn (lambda (item) (eq (alist-get 'is_announcement item) t))
+  :skip-reason "announcement, deleted by the announcements module")
 
 (org-canvas-define-delete-at-point discussion
   :endpoint "discussion_topics/%s")

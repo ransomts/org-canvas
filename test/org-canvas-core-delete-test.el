@@ -614,7 +614,39 @@
   (it "errors when :file is missing"
     (expect (macroexpand '(org-canvas-define-delete-all test-bad
                             :endpoint "items"))
-            :to-throw 'error '("org-canvas-define-delete-all: :file is required"))))
+            :to-throw 'error '("org-canvas-define-delete-all: :file is required")))
+
+  (it "errors when :skip-fn comes without a :skip-reason (issue #319)"
+    (expect (macroexpand '(org-canvas-define-delete-all test-bad
+                            :endpoint "items" :file some-file
+                            :skip-fn #'ignore))
+            :to-throw 'error
+            '("org-canvas-define-delete-all: :skip-fn needs a :skip-reason"))))
+
+(describe "org-canvas--delete-log-skipped (issue #319)"
+  (it "names the reason beside each skipped title"
+    (let ((logged nil))
+      (cl-letf (((symbol-function 'org-canvas--log-info)
+                 (lambda (_l fmt &rest args)
+                   (push (apply #'format fmt args) logged))))
+        (org-canvas--delete-log-skipped
+         '(((title . "Front") (front_page . t)) ((title . "Other")))
+         (lambda (item) (alist-get 'front_page item)) 'title "front page")
+        (org-canvas--delete-log-skipped
+         '(((title . "Front") (front_page . t)))
+         (lambda (item) (alist-get 'front_page item)) 'title))
+      (expect (reverse logged)
+              :to-equal '("Skipping: 'Front' (front page)" "Skipping: 'Front'")))))
+
+(describe "org-canvas--feature-delete-skip (issue #319)"
+  (it "prefers the delete pair and falls back on the skip pair"
+    (expect (org-canvas--feature-delete-skip
+             '(:skip-fn a :skip-reason "ra" :delete-skip-fn b :delete-skip-reason "rb"))
+            :to-equal '(b . "rb"))
+    (expect (org-canvas--feature-delete-skip '(:skip-fn a :skip-reason "ra"))
+            :to-equal '(a . "ra"))
+    (expect (org-canvas--feature-delete-skip '(:name "X"))
+            :to-equal '(nil))))
 
 (describe "org-canvas-define-delete-at-point macro validation"
   (it "errors when neither :endpoint nor :delete-url-fn provided"

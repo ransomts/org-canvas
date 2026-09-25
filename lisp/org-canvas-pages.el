@@ -152,7 +152,8 @@ Logs warnings for invalid roles.  Returns RAW unchanged."
   :file org-canvas-pages-file
   :id-field 'url
   :id-property "CANVAS_URL"
-  :skip-fn (lambda (item) (eq (alist-get 'front_page item) t)))
+  :skip-fn (lambda (item) (eq (alist-get 'front_page item) t))
+  :skip-reason "front page")
 
 (org-canvas-define-delete-at-point page
   :endpoint "pages/%s"

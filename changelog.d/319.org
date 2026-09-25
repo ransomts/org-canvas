@@ -1,0 +1,7 @@
+* Fixed
+- #319 =org-canvas-prune-assignments=, =org-canvas-delete-all-assignments=
+  and the orphan scan leave the assignment behind a New Quiz, a classic
+  quiz or a graded discussion alone, since deleting it deletes the quiz
+  or the discussion; the prune tally counts them as protected and says
+  why.  A delete-all that skips items now names its reason beside each
+  one it holds back.

@@ -6,8 +6,9 @@
 ;; `org-canvas-cleanup-orphans' walks the feature registry, lists each
 ;; feature's remote items, and reports the ones no local heading claims
 ;; by id — what a heading deleted from an Org file leaves behind on
-;; Canvas.  Items a feature's `:skip-fn' holds back are counted and
-;; named, never silently absent (issue #81).  Deletion asks first.
+;; Canvas.  Items a feature's `:skip-fn' (or `:delete-skip-fn', issue
+;; #319) holds back are counted and named, never silently absent (issue
+;; #81).  Deletion asks first.
 
 ;;; Code:
 
@@ -35,9 +36,9 @@ Returns nil if file does not exist."
 
 (defun org-canvas--log-protected-items (name items skip-fn reason)
   "Log the number of ITEMS that SKIP-FN will keep out of cleanup for NAME.
-REASON is the `:skip-reason' of the feature, or nil.  A protected item
-is simply absent from the orphan list otherwise, which reads the same
-as nothing being there (issue #81)."
+REASON is the reason `org-canvas--feature-delete-skip' names, or nil.
+A protected item is simply absent from the orphan list otherwise,
+which reads the same as nothing being there (issue #81)."
   (when skip-fn
     (let ((protected (cl-count-if skip-fn items)))
       (when (> protected 0)
@@ -66,7 +67,8 @@ or nil if no orphans found."
          (file-var (plist-get feature :file-var))
          (id-field (plist-get feature :id-field))
          (id-property (plist-get feature :id-property))
-         (skip-fn (plist-get feature :skip-fn))
+         (skip (org-canvas--feature-delete-skip feature))
+         (skip-fn (car skip))
          (file (and (boundp file-var) (symbol-value file-var))))
     (unless file
       (org-canvas--log-info org-canvas--logger "[Orphan] %s: file var not set, skipping" name)
@@ -77,7 +79,7 @@ or nil if no orphans found."
                  (remote-items (org-canvas-api-request-all-pages
                                 'GET url (org-canvas--feature-list-params feature))))
             (org-canvas--log-protected-items
-             name remote-items skip-fn (plist-get feature :skip-reason))
+             name remote-items skip-fn (cdr skip))
             (org-canvas--filter-orphans remote-items local-ids id-field skip-fn))
         (error
          (org-canvas--log-warning org-canvas--logger

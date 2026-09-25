@@ -99,6 +99,20 @@ module-item relink — none of which change what a student downloads, so
 drift decided from it re-flagged unchanged files forever (issue #94)."
   (or (plist-get feature :modified-field) 'updated_at))
 
+(defun org-canvas--feature-delete-skip (feature)
+  "Return (SKIP-FN . REASON) for the items no delete of FEATURE may remove.
+`:delete-skip-fn' and `:delete-skip-reason' when FEATURE declares them,
+otherwise its `:skip-fn' and `:skip-reason'.  The delete pair is for an
+item the drift report still lists but a cleanup must never touch: a New
+Quiz or a graded discussion is an assignment, and deleting that
+assignment deletes the quiz or the discussion with it (issue #319).  It
+covers everything `:skip-fn' does, since whatever a feature never
+compares it also never deletes."
+  (if (plist-get feature :delete-skip-fn)
+      (cons (plist-get feature :delete-skip-fn)
+            (plist-get feature :delete-skip-reason))
+    (cons (plist-get feature :skip-fn) (plist-get feature :skip-reason))))
+
 ;;;; Web Pages
 ;;
 ;; Where an object lives in the Canvas web interface, as opposed to the
