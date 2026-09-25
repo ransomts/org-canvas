@@ -2802,7 +2802,7 @@ something the keys act on:
 | =a=       | EXTRA, UNCLAIMED, MOVED | Acknowledge the id in =org-canvas-diff-known-extras=, with an optional note |
 | =a=       | STALE-ACK               | Drop the acknowledgment                                             |
 | =a=       | CHANGED, no compared property differing | Adopt the Canvas timestamp as the heading's baseline (=org-canvas-diff-adopt-stamp=); refused when a property differs |
-| =k=       | EXTRA, UNCLAIMED, MOVED | Delete the remote object, after confirming                          |
+| =k=       | EXTRA, UNCLAIMED, MOVED | Delete the remote object, after confirming; the question names an assignment's submissions and scores or a rubric's assignments, and the object's JSON is saved first (see [[*Deleting Rows in Batch][Deleting Rows in Batch]]) |
 | =p=       | CHANGED                 | Pull the Canvas version over the heading (=org-canvas-pull-at-point=, which asks first) |
 | =p=       | EXTRA (classic quizzes) | Pull the quiz, questions and all, into a new heading at the end of =quizzes.org=, after confirming |
 | =g=       | anywhere                | Run the report again                                                |
@@ -2839,12 +2839,55 @@ not find, and how many =CHANGED= rows it left alone because a property
 differs.  A settings push that changes the post policy logs a warning
 naming this command as the follow-up.
 
+** Deleting Rows in Batch
+
+Cleaning up after a reshuffle -- a week of sessions dropped, their module
+items, an assignment and a rubric left behind as EXTRA rows -- is routine,
+and =k= asks once per row.  =org-canvas-diff-delete-rows= deletes the
+objects of the rows it is given without asking (#345):
+
+#+begin_src emacs-lisp
+(org-canvas-diff-delete-rows
+ '((:feature "Module Items" :all t)          ; every EXTRA module item
+   (:feature "Assignments" :id "2563811")
+   (:feature "Rubrics" :id "88213")))
+#+end_src
+
+A selector is =(:feature NAME :id ID)= for one row or =(:feature NAME :all
+t)= for every EXTRA row of a section; names match the way the report's
+sections do.  The rows come from the report's own comparison, and each
+object is deleted at the URL =k= would use.  The rules:
+
+- *Only EXTRA rows.*  An UNCLAIMED or MOVED row has a heading the next
+  sync pairs with, so its selector comes back =not-extra=; one that names
+  no row comes back =not-found=.
+- *Refused when it would take work with it.*  The object is read first.
+  An assignment with a submission or a score, and a rubric an assignment
+  grades with (read with =include[]=associations=), are =refused=, naming
+  why.  =:force t= deletes them anyway.  =k= runs the same checks and names
+  what they find in its question instead of refusing.
+- *Snapshot first.*  Before each DELETE the object's JSON, as Canvas
+  returned it, is written to =<time>-<feature>-<id>.json= under
+  =org-canvas-diff-delete-snapshot-directory= (default
+  =canvas-snapshots/= in the course directory), so a mistaken delete can
+  be rebuilt.  =k= writes one too.
+- *Dry run and read-only.*  Under a dry run the objects are read and
+  checked, and nothing is written or sent (=dry-run=); a course marked
+  =org-canvas-read-only= refuses each delete before its snapshot
+  (=failed=).
+
+It returns one plist per row -- =:feature=, =:id=, =:title=, =:outcome=
+(=deleted=, =refused=, =dry-run=, =failed=, =not-extra= or =not-found=),
+=:reason=, and =:snapshot= once deleted -- and logs each.
+
 ** Cost and Safety
 
 One list request per feature.  The report writes nothing, locally or on
 Canvas, so it is safe to run at any time.  Stamp adoption is the one local
 write in this part of the package, and it happens only when you ask for it
 with =a= or =org-canvas-diff-adopt-stamps=; it still sends nothing.
+Deleting is a separate verb too -- =k= or =org-canvas-diff-delete-rows= --
+and each delete reads the object and saves it before it sends the DELETE.
 
 Calendar events are covered too.  They list from the global calendar endpoint
 with =all_events=true=; without that parameter Canvas returns only the events
@@ -3592,6 +3635,7 @@ Never part of a sync; see [[*messages.org][messages.org]].
 | =org-canvas-browse-edit-at-point= | Open the heading's edit page on Canvas         |
 | =org-canvas-diff-visit= / =-browse= / =-browse-edit= / =-acknowledge= / =-delete= / =-pull= / =-adopt-stamp= | Row actions in the report buffer (see [[*Acting on the Report][Acting on the Report]]) |
 | =org-canvas-diff-adopt-stamps=    | Adopt the Canvas timestamp of every CHANGED entry with no compared property differing (local write only; see [[*Adopting a Stamp][Adopting a Stamp]]) |
+| =org-canvas-diff-delete-rows=     | Delete the Canvas objects of the EXTRA rows named, without asking, after safety checks and a JSON snapshot (see [[*Deleting Rows in Batch][Deleting Rows in Batch]]) |
 | =org-canvas-adopt-at-point=       | Stamp the heading at point with the Canvas item of the same title (local write only) |
 | =org-canvas-validate=             | Validate all Org files offline (no API calls) |
 | =org-canvas-validate-batch=       | As above, exiting non-zero when there are errors |

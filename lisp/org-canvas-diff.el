@@ -78,6 +78,9 @@
 ;; scheduled job via `org-canvas-diff-batch', which exits non-zero when
 ;; it finds drift (pending creates are not drift).  The one local write in this file, stamp adoption
 ;; (#257), is a separate key and command the report never runs itself.
+;; So is deleting a row's Canvas object: `k' one row at a time, and
+;; `org-canvas-diff-delete-rows' for a batch (#345), both after safety
+;; checks and a JSON snapshot of the object.
 
 ;;; Code:
 
@@ -1725,6 +1728,54 @@ as the heading's baseline (`org-canvas-diff-adopt-stamp', issue #257)."
       ('modified (org-canvas-diff-adopt-stamp))
       (kind (user-error "A %s row is not something to acknowledge" (upcase (symbol-name kind)))))))
 
+;;;; Deleting Remote Objects (issues #103, #345)
+;;
+;; `k' deleted a row's Canvas object behind one `y-or-n-p', and nothing
+;; else could: a batch caller cleaning up after a calendar reshuffle
+;; (nine EXTRA rows, issue #345) rebuilt the delete target by hand and
+;; wrote its own safety checks and snapshots.  Both paths now share
+;; them.  Before any DELETE the object is read — at the URL the delete
+;; goes to, with `include[]=associations' for a rubric — and two kinds
+;; of object are held back, naming why: an assignment with a submission
+;; or a score (its gradebook column goes with it), and a rubric an
+;; assignment grades with (its assessments go with it).  `k' shows the
+;; reason in its question; `org-canvas-diff-delete-rows' refuses unless
+;; asked with :force.  The object's JSON is then written to a snapshot
+;; file, so a mistaken delete can be rebuilt, and only then is the
+;; DELETE sent.  The report itself still never writes (Hard Rule 19):
+;; these are separate, explicit verbs.
+
+(defcustom org-canvas-diff-delete-snapshot-directory nil
+  "Directory for the JSON of each object a drift-report delete removes.
+Nil means canvas-snapshots/ under `org-canvas-directory', resolved
+when used rather than when the package loads.  Each file is named
+<time>-<feature>-<id>.json and holds the object as Canvas returned it
+just before the DELETE (issue #345)."
+  :type '(choice (const :tag "canvas-snapshots/ under org-canvas-directory" nil)
+                 directory)
+  :group 'org-canvas)
+
+(defun org-canvas--diff-snapshot-dir ()
+  "Return the snapshot directory as an absolute path."
+  (expand-file-name (or org-canvas-diff-delete-snapshot-directory
+                        (org-canvas--path "canvas-snapshots/"))))
+
+(defun org-canvas--diff-snapshot-write (feature-name id object)
+  "Write OBJECT, FEATURE-NAME's item ID, to a snapshot file; return its path."
+  (let* ((dir (org-canvas--diff-snapshot-dir))
+         (file (expand-file-name
+                (format "%s-%s-%s.json"
+                        (format-time-string "%Y%m%dT%H%M%S")
+                        (replace-regexp-in-string
+                         "[^[:alnum:]]+" "-" (downcase feature-name))
+                        (replace-regexp-in-string "[^[:alnum:]_.-]+" "-" id))
+                dir)))
+    (make-directory dir t)
+    (let ((coding-system-for-write 'utf-8)
+          (json-encoding-pretty-print t))
+      (write-region (concat (json-encode object) "\n") nil file nil 'silent))
+    file))
+
 (defun org-canvas--diff-delete-target (row entry)
   "Return (URL . DELETE-DATA) for the remote object ENTRY of ROW names.
 A module item lives under its module, not at a feature URL (issue
@@ -1738,11 +1789,122 @@ orphan cleanup does."
       (cons (org-canvas--feature-item-url feature (plist-get entry :id))
             (plist-get feature :delete-data)))))
 
+(defun org-canvas--diff-delete-read-params (row entry)
+  "Return the query parameters that read ENTRY of ROW before its delete.
+A rubric is read with its associations, which its guard counts; any
+other feature with the parameters it reads one item with."
+  (unless (plist-get entry :module-id)
+    (if (string= (org-canvas--diff-normalize-name (plist-get row :feature))
+                 "rubrics")
+        '(("include[]" . "associations"))
+      (org-canvas--feature-item-params (org-canvas--diff-row-feature row)))))
+
+(defun org-canvas--diff-submitted-p (submission)
+  "Return non-nil when a student turned in work on SUBMISSION."
+  (or (alist-get 'submitted_at submission)
+      (member (alist-get 'workflow_state submission)
+              '("submitted" "pending_review"))))
+
+(defun org-canvas--diff-scored-p (submission)
+  "Return non-nil when SUBMISSION carries a score or a grade."
+  (or (alist-get 'score submission) (alist-get 'grade submission)))
+
+(defun org-canvas--diff-delete-assignment-guard (entry object)
+  "Return why assignment ENTRY must not be deleted, or nil.
+OBJECT is the assignment as Canvas holds it.  Lists the assignment's
+submissions — one request, paged — and counts those a student turned
+in and those carrying a score or grade; Canvas's own
+`has_submitted_submissions' flag counts too."
+  (let* ((subs (cl-remove-if-not
+                #'consp
+                (append (org-canvas-api-request-all-pages
+                         'GET (org-canvas-api-course-endpoint
+                               "assignments/%s/submissions"
+                               (plist-get entry :id)))
+                        nil)))
+         (submitted (cl-count-if #'org-canvas--diff-submitted-p subs))
+         (scored (cl-count-if #'org-canvas--diff-scored-p subs)))
+    (cond ((or (> submitted 0) (> scored 0))
+           (format "the assignment has %d submission(s) and %d score(s)"
+                   submitted scored))
+          ((eq (alist-get 'has_submitted_submissions object) t)
+           "Canvas says the assignment has submissions"))))
+
+(defun org-canvas--diff-delete-rubric-guard (_entry object)
+  "Return why the rubric OBJECT must not be deleted, or nil.
+OBJECT was read with its associations; an Assignment association means
+an assignment grades with the rubric, and its assessments would go."
+  (let ((ids (delq nil
+                   (mapcar (lambda (a)
+                             (and (consp a)
+                                  (equal (alist-get 'association_type a)
+                                         "Assignment")
+                                  (format "%s" (alist-get 'association_id a))))
+                           (append (alist-get 'associations object) nil)))))
+    (when ids
+      (format "the rubric grades assignment(s) %s"
+              (mapconcat #'identity ids ", ")))))
+
+(defconst org-canvas--diff-delete-guards
+  '(("assignments" . org-canvas--diff-delete-assignment-guard)
+    ("rubrics" . org-canvas--diff-delete-rubric-guard))
+  "Safety checks before a delete, by normalized feature name.
+Each a function of (ENTRY OBJECT) returning why the object must stay,
+or nil (issue #345).")
+
+(defun org-canvas--diff-delete-inspect (row entry)
+  "Read the object ENTRY of ROW names; return (OBJECT . REASON).
+REASON says why the object should not be deleted, or is nil: the
+feature's guard (`org-canvas--diff-delete-guards'), or an empty reply,
+which leaves nothing to snapshot.  A module item has no guard."
+  (let* ((params (org-canvas--diff-delete-read-params row entry))
+         (object (apply #'org-canvas-api-request 'GET
+                        (car (org-canvas--diff-delete-target row entry))
+                        (and params (list :params params))))
+         (guard (and (not (plist-get entry :module-id))
+                     (alist-get (org-canvas--diff-normalize-name
+                                 (plist-get row :feature))
+                                org-canvas--diff-delete-guards
+                                nil nil #'string=))))
+    (cons object
+          (if (null object)
+              "Canvas returned nothing to snapshot"
+            (and guard (funcall guard entry object))))))
+
+(defun org-canvas--diff-delete-execute (row entry object)
+  "Snapshot OBJECT, then delete the object ENTRY of ROW names.
+Returns the snapshot's path.  A course marked read-only is refused
+before the snapshot is written, as the transport would refuse the
+DELETE (issue #163)."
+  (org-canvas--check-writable 'DELETE "a drift-report delete")
+  (let* ((target (org-canvas--diff-delete-target row entry))
+         (delete-data (cdr target))
+         (file (org-canvas--diff-snapshot-write
+                (plist-get row :feature) (plist-get entry :id) object)))
+    (apply #'org-canvas-api-request 'DELETE (car target)
+           (and delete-data (list :data delete-data)))
+    (org-canvas--log-info org-canvas--logger
+      "[Diff] Deleted %s #%s '%s'; its JSON is in %s"
+      (plist-get row :feature) (plist-get entry :id)
+      (plist-get entry :title) file)
+    file))
+
+(defun org-canvas--diff-delete-question (name entry reason)
+  "Return the question `k' asks before deleting ENTRY of feature NAME.
+REASON, when non-nil, is what the safety check found."
+  (format "Delete %s '%s' (id %s) from Canvas%s? "
+          name (plist-get entry :title) (plist-get entry :id)
+          (if reason (format ", although %s" reason) "")))
+
 (defun org-canvas-diff-delete ()
   "Delete the EXTRA, UNCLAIMED or MOVED row's Canvas object, after confirming.
 Uses the feature's item URL and delete body, as orphan cleanup does;
 a module item's row deletes the item from its module (issue #177) —
-for a MOVED row, the copy left in the old module (issue #294)."
+for a MOVED row, the copy left in the old module (issue #294).  The
+object is read first: the question names an assignment's submissions
+and scores or a rubric's assignments, and the object's JSON is saved
+under `org-canvas-diff-delete-snapshot-directory' before the DELETE
+\(issue #345)."
   (interactive)
   (let* ((row (org-canvas--diff-row-at-point))
          (entry (plist-get row :entry))
@@ -1750,17 +1912,164 @@ for a MOVED row, the copy left in the old module (issue #294)."
          (name (plist-get row :feature)))
     (unless (memq (plist-get entry :kind) '(extra unclaimed moved))
       (user-error "Only an EXTRA, UNCLAIMED or MOVED row names a remote object to delete"))
-    (when (y-or-n-p (format "Delete %s '%s' (id %s) from Canvas? "
-                            name (plist-get entry :title) id))
-      (let* ((target (org-canvas--diff-delete-target row entry))
-             (delete-data (cdr target)))
-        (apply #'org-canvas-api-request 'DELETE (car target)
-               (and delete-data (list :data delete-data))))
-      (org-canvas--log-info org-canvas--logger
-        "[Diff] Deleted %s #%s '%s' from the report" name id (plist-get entry :title))
-      (org-canvas--diff-rewrite-row
-       (format "  DELETED   %s (id %s)" (plist-get entry :title) id))
-      (message "Deleted %s %s." name id))))
+    (let ((inspect (org-canvas--diff-delete-inspect row entry)))
+      (when (y-or-n-p (org-canvas--diff-delete-question
+                       name entry (cdr inspect)))
+        (let ((file (org-canvas--diff-delete-execute row entry (car inspect))))
+          (org-canvas--diff-rewrite-row
+           (format "  DELETED   %s (id %s)" (plist-get entry :title) id))
+          (message "Deleted %s %s; its JSON is in %s." name id file))))))
+
+;;;;; Deleting Rows Without Asking (issue #345)
+
+(defun org-canvas--diff-result-entries (result)
+  "Return every entry RESULT reports: rows, notes and pending-create rows."
+  (append (plist-get result :divergences) (plist-get result :extra)
+          (plist-get result :notes) (plist-get result :pending)))
+
+(defun org-canvas--diff-selector-outcome (feature id outcome reason)
+  "Return the outcome plist of a selector that named no deletable row.
+FEATURE and ID are what the selector named, OUTCOME the symbol and
+REASON the sentence."
+  (list :feature feature :id id :outcome outcome :reason reason))
+
+(defun org-canvas--diff-select-by-id (result feature id)
+  "Return the row of RESULT whose entry carries ID, or an outcome plist.
+FEATURE is the selector's feature name.  Only an EXTRA row is
+returned as a row, (:feature NAME :entry ENTRY); any other kind comes
+back as a `not-extra' outcome, no row at all as `not-found'."
+  (let ((entry (cl-find-if (lambda (e) (equal (plist-get e :id) id))
+                           (org-canvas--diff-result-entries result))))
+    (cond ((null entry)
+           (org-canvas--diff-selector-outcome
+            feature id 'not-found "the report has no row with this id"))
+          ((eq (plist-get entry :kind) 'extra)
+           (list :feature (plist-get result :name) :entry entry))
+          (t
+           (org-canvas--diff-selector-outcome
+            feature id 'not-extra
+            (format "a %s row, and only an EXTRA row is deleted"
+                    (upcase (symbol-name (plist-get entry :kind)))))))))
+
+(defun org-canvas--diff-select (results selector)
+  "Return what SELECTOR names in RESULTS, a list of rows and outcomes.
+SELECTOR is (:feature NAME :id ID), one row, or (:feature NAME :all t),
+every EXTRA row of the feature.  A row is (:feature NAME :entry ENTRY);
+a selector that names no deletable row yields an outcome plist."
+  (let* ((feature (plist-get selector :feature))
+         (id (and (plist-get selector :id)
+                  (format "%s" (plist-get selector :id))))
+         (result (and feature
+                      (cl-find-if (lambda (r)
+                                    (string= (org-canvas--diff-normalize-name
+                                              (plist-get r :name))
+                                             (org-canvas--diff-normalize-name
+                                              feature)))
+                                  results))))
+    (cond ((null result)
+           (list (org-canvas--diff-selector-outcome
+                  feature id 'not-found "the report has no such feature")))
+          ((plist-get selector :all)
+           (mapcar (lambda (e)
+                     (list :feature (plist-get result :name) :entry e))
+                   (cl-remove-if-not
+                    (lambda (e) (eq (plist-get e :kind) 'extra))
+                    (plist-get result :extra))))
+          (t (list (org-canvas--diff-select-by-id result feature id))))))
+
+(defun org-canvas--diff-delete-row (row force)
+  "Delete ROW's Canvas object without asking; return its outcome plist.
+The outcome is `deleted' (with :snapshot, the JSON's path), `refused'
+when a safety check held it back and FORCE is nil, `dry-run' under
+`org-canvas--dry-run', which sends and writes nothing, or `failed'
+when a request did.  :reason names what the check found, forced or
+not."
+  (let* ((entry (plist-get row :entry))
+         (out (list :feature (plist-get row :feature) :id (plist-get entry :id)
+                    :title (plist-get entry :title))))
+    (condition-case err
+        (let* ((inspect (org-canvas--diff-delete-inspect row entry))
+               (reason (cdr inspect)))
+          (cond
+           ((and reason (not force))
+            (append out (list :outcome 'refused :reason reason)))
+           (org-canvas--dry-run
+            (org-canvas--log-info org-canvas--logger
+              "[DRY-RUN] Would delete %s #%s '%s'" (plist-get row :feature)
+              (plist-get entry :id) (plist-get entry :title))
+            (append out (list :outcome 'dry-run :reason reason)))
+           (t
+            (append out (list :outcome 'deleted :reason reason
+                              :snapshot (org-canvas--diff-delete-execute
+                                         row entry (car inspect)))))))
+      (error
+       (org-canvas--log-error org-canvas--logger
+         "[Diff] Could not delete %s #%s: %s" (plist-get row :feature)
+         (plist-get entry :id) (error-message-string err))
+       (append out (list :outcome 'failed
+                         :reason (error-message-string err)))))))
+
+(defun org-canvas--diff-delete-log-outcome (outcome)
+  "Log one OUTCOME plist of `org-canvas-diff-delete-rows'."
+  (org-canvas--log-info org-canvas--logger
+    "[Diff] %s %s #%s%s%s"
+    (upcase (symbol-name (plist-get outcome :outcome)))
+    (plist-get outcome :feature) (plist-get outcome :id)
+    (if (plist-get outcome :title)
+        (format " '%s'" (plist-get outcome :title))
+      "")
+    (if (plist-get outcome :reason)
+        (format ": %s" (plist-get outcome :reason))
+      "")))
+
+(defun org-canvas--diff-outcome-count (outcomes &rest kinds)
+  "Return how many of OUTCOMES have an :outcome among KINDS."
+  (cl-count-if (lambda (o) (memq (plist-get o :outcome) kinds)) outcomes))
+
+;;;###autoload
+(cl-defun org-canvas-diff-delete-rows (selectors &key force results)
+  "Delete the Canvas objects of the drift report's EXTRA rows SELECTORS names.
+Never asks.  Each selector is (:feature NAME :id ID), one row, or
+\(:feature NAME :all t), every EXTRA row of the feature; NAME matches
+the way the report's sections do (\"Module Items\", \"assignments\").
+The rows come from the report's own comparison — RESULTS when given,
+as `org-canvas--diff-collect-results' returns them, else read afresh —
+and each object is deleted at the URL `k' would use.
+
+Only an EXTRA row is deleted: an UNCLAIMED or MOVED row has a heading
+the next sync would pair with it.  Before each DELETE the object is
+read, and an assignment with a submission or score, or a rubric an
+assignment grades with, is refused, naming why, unless FORCE is
+non-nil; the object's JSON is then written under
+`org-canvas-diff-delete-snapshot-directory'.  A dry run
+\(`org-canvas--dry-run') reads and checks but writes and sends
+nothing; a course marked read-only refuses every delete.
+
+Returns one plist per row or unmatched selector: :feature, :id,
+:title, :outcome — `deleted', `refused', `dry-run', `failed',
+`not-extra' or `not-found' — :reason and, once deleted, :snapshot
+\(issue #345)."
+  (org-canvas--preflight-check)
+  (run-hooks 'org-canvas--operation-start-hook)
+  (let ((results (or results (org-canvas--diff-collect-results)))
+        (seen nil)
+        (outcomes nil))
+    (dolist (selector selectors)
+      (dolist (row (org-canvas--diff-select results selector))
+        (let ((key (cons (plist-get row :feature)
+                         (plist-get (plist-get row :entry) :id))))
+          (cond ((not (plist-get row :entry)) (push row outcomes))
+                ((member key seen))
+                (t (push key seen)
+                   (push (org-canvas--diff-delete-row row force) outcomes))))))
+    (setq outcomes (nreverse outcomes))
+    (mapc #'org-canvas--diff-delete-log-outcome outcomes)
+    (message "Drift delete: %d deleted, %d refused, %d left for another reason"
+             (org-canvas--diff-outcome-count outcomes 'deleted)
+             (org-canvas--diff-outcome-count outcomes 'refused)
+             (org-canvas--diff-outcome-count
+              outcomes 'dry-run 'failed 'not-extra 'not-found))
+    outcomes))
 
 (defun org-canvas--diff-pull-extra (feature entry)
   "Pull the item of EXTRA row ENTRY into a new heading of FEATURE's file.

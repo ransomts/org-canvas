@@ -1,0 +1,4 @@
+* Added
+- #345 =org-canvas-diff-delete-rows= deletes the Canvas objects of the drift report's EXTRA rows without asking, given selectors that name one row by feature and id or every EXTRA row of a feature. It refuses an assignment with a submission or a score, and a rubric an assignment grades with, naming why, unless called with =:force=; writes each object's JSON to a snapshot file under =org-canvas-diff-delete-snapshot-directory= before the DELETE; respects a dry run and a read-only course; and returns one outcome plist per row.
+* Changed
+- #345 =k= in the drift report reads the object before deleting it: its question names an assignment's submissions and scores or a rubric's assignments, and the object's JSON is saved to a snapshot file before the DELETE.
