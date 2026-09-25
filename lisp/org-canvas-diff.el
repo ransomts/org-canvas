@@ -36,7 +36,10 @@
 ;; shown but not counted as drift (#293).
 ;;
 ;; And, counted apart because it is not drift, every heading with no
-;; Canvas id that the next sync would create: a PENDING row (#294).
+;; Canvas id that the next sync would create: a PENDING row (#294);
+;; and every stamped module item heading whose id Canvas holds in
+;; another module, which the next sync recreates under a new id and
+;; deletes from the old one: a RELOCATE row (#343).
 ;; An EXTRA assignment or group says what it is, from the list replies
 ;; already held, and a WEIGHTS line under the groups sets Org's weight
 ;; total against Canvas's when they differ, uncounted (#296).
@@ -76,8 +79,10 @@
 ;; One list request per feature.  Nothing is written, locally or
 ;; remotely, so this is safe to run at any time — from a hook, or from a
 ;; scheduled job via `org-canvas-diff-batch', which exits non-zero when
-;; it finds drift (pending creates are not drift).  The one local write in this file, stamp adoption
-;; (#257), is a separate key and command the report never runs itself.
+;; it finds drift (pending creates are not drift).  The two local writes
+;; in this file, stamp adoption (#257) and stamping a MOVED row's item
+;; id on its heading (#342), are separate keys and commands the report
+;; never runs itself, and neither sends anything to Canvas.
 ;; So is deleting a row's Canvas object: `k' one row at a time, and
 ;; `org-canvas-diff-delete-rows' for a batch (#345), both after safety
 ;; checks and a JSON snapshot of the object.
@@ -977,6 +982,14 @@ accepts."
 ;; leaves this copy.  A SubHeader is paired only within its module: its
 ;; title is all it has, and "Readings" recurs in every week by design.
 ;; The unstamped headings left over are PENDING creates.
+;;
+;; A MOVED row names the heading it paired with, and `s' stamps the
+;; item's id there (issue #342).  The sync cannot move an item: once
+;; stamped, the heading's id is not in its module, so the next sync
+;; creates the item there with a new id and deletes the old copy (issue
+;; #105).  That stamped heading is a RELOCATE row, counted apart like a
+;; PENDING one, since the report is the only warning that the id
+;; changes (issue #343).
 
 (defconst org-canvas--diff-children-fns
   '(("modules" . org-canvas--diff-module-items))
@@ -1108,29 +1121,41 @@ item is a SubHeader.  Nil when no heading matches."
         (and (not (equal (plist-get extra :type) "SubHeader"))
              (car matches)))))
 
-(defun org-canvas--diff-module-item-pair (extra headings)
+(defun org-canvas--diff-module-item-paired (extra found file)
+  "Return EXTRA re-kinded for FOUND, its (PARTNER . MATCH), from FILE.
+`unclaimed' when PARTNER sits in the item's module, `moved' when it
+does not.  :to names PARTNER's module and :by-title says only the
+title paired them (issue #299).  :file, :line, :partner-heading (the
+raw heading text) and :partner-title (what it shows) name the heading
+itself, which is how a MOVED row says which heading it paired with,
+a renamed one included, and how `s' finds it to stamp (issue #342)."
+  (let ((partner (car found)))
+    (append (list :kind (if (equal (plist-get partner :module-id)
+                                   (plist-get extra :module-id))
+                            'unclaimed
+                          'moved)
+                  :to (plist-get partner :where)
+                  :by-title (eq (cdr found) 'title)
+                  :file file :line (plist-get partner :line)
+                  :partner-heading (plist-get partner :heading)
+                  :partner-title (org-canvas--diff-match-title partner))
+            (cddr extra))))
+
+(defun org-canvas--diff-module-item-pair (extra headings &optional file)
   "Pair the EXTRA module items with the unstamped entries of HEADINGS.
 Returns (ENTRIES . LEFT): ENTRIES is EXTRA with each paired item
-re-kinded — `unclaimed' when its partner sits in the item's module,
-`moved' (with :to naming the partner's module) when it does not, and
-:by-title set when only the title paired them (issue #299) — and LEFT
-the unstamped headings nothing paired, the pending creates.  Each
-heading pairs at most once (issue #294)."
+re-kinded by `org-canvas--diff-module-item-paired', FILE being the
+modules file HEADINGS came from, and LEFT the unstamped headings
+nothing paired, the pending creates.  Each heading pairs at most once
+\(issue #294)."
   (let ((unstamped (cl-remove-if (lambda (e) (plist-get e :id)) headings)))
     (cons (mapcar
            (lambda (e)
-             (let* ((found (org-canvas--diff-module-item-partner e unstamped))
-                    (partner (car found)))
-               (if (not partner)
+             (let ((found (org-canvas--diff-module-item-partner e unstamped)))
+               (if (not found)
                    e
-                 (setq unstamped (delq partner unstamped))
-                 (append (list :kind (if (equal (plist-get partner :module-id)
-                                                (plist-get e :module-id))
-                                         'unclaimed
-                                       'moved)
-                               :to (plist-get partner :where)
-                               :by-title (eq (cdr found) 'title))
-                         (cddr e)))))
+                 (setq unstamped (delq (car found) unstamped))
+                 (org-canvas--diff-module-item-paired e found file))))
            extra)
           unstamped)))
 
@@ -1142,6 +1167,46 @@ heading pairs at most once (issue #294)."
                              (gethash (plist-get e :id) index)
                              (cons (plist-get e :id) (plist-get e :title))))
                       local))))
+
+(defun org-canvas--diff-module-item-homes (lists)
+  "Return a hash of the item ids in LISTS to (MODULE . ITEM).
+MODULE is the (ID . NAME) pair of the module Canvas holds the item in."
+  (let ((homes (make-hash-table :test 'equal)))
+    (dolist (pair lists)
+      (dolist (item (cdr pair))
+        (puthash (format "%s" (alist-get 'id item))
+                 (cons (car pair) item) homes)))
+    homes))
+
+(defun org-canvas--diff-module-item-relocation (entry home file)
+  "Return the `relocate' entry of heading ENTRY, whose item is at HOME.
+HOME is the (MODULE . ITEM) the item sits at, FILE the modules file."
+  (list :kind 'relocate :title (org-canvas--diff-match-title entry)
+        :id (plist-get entry :id) :where (cdr (car home))
+        :to (plist-get entry :where)
+        :file file :line (plist-get entry :line)
+        :html-url (org-canvas--diff-normalize-remote
+                   (alist-get 'html_url (cdr home)))))
+
+(defun org-canvas--diff-module-item-relocations (lists headings file)
+  "Return a `relocate' entry per stamped heading of HEADINGS in another module.
+LISTS is what `org-canvas--diff-module-item-lists' returned and FILE
+the modules file.  A heading stamped with an item id that Canvas holds
+under a module other than the heading's own is not drift, and no row
+of the report named it: the next sync finds the id missing from the
+heading's module (`org-canvas--module-item-disown-foreign-id'),
+creates the item there with a new id and deletes the old copy, since
+Canvas cannot move an item between modules (issue #343)."
+  (let ((homes (org-canvas--diff-module-item-homes lists)))
+    (delq nil
+          (mapcar
+           (lambda (e)
+             (let ((home (and (plist-get e :id)
+                              (gethash (plist-get e :id) homes))))
+               (when (and home (not (equal (car (car home))
+                                           (plist-get e :module-id))))
+                 (org-canvas--diff-module-item-relocation e home file))))
+           headings))))
 
 (defun org-canvas--diff-module-items-result (modules local file)
   "Compare the items of the modules in LOCAL against Canvas; see the caller.
@@ -1156,13 +1221,17 @@ MODULES, LOCAL and FILE are `org-canvas--diff-module-items''s."
                  (org-canvas--diff-module-item-extras
                   lists (delq nil (mapcar (lambda (e) (plist-get e :id)) headings)))
                  seen))
-         (paired (org-canvas--diff-module-item-pair (plist-get split :extra) headings)))
+         (paired (org-canvas--diff-module-item-pair (plist-get split :extra)
+                                                    headings file)))
     (list :name "Module Items"
           :divergences (plist-get split :stale)
           :extra (car paired)
           :acknowledged (plist-get split :acknowledged)
           :pending (org-canvas--diff-pending "Module Items" (cdr paired) nil
-                                             file "CANVAS_ID"))))
+                                             file "CANVAS_ID")
+          ;; Stamped headings whose item sits in another module (#343).
+          :relocate (org-canvas--diff-module-item-relocations
+                     lists headings file))))
 
 (defun org-canvas--diff-module-items (modules local file)
   "Compare the items of the modules in LOCAL against Canvas.
@@ -1175,7 +1244,8 @@ the ones `org-canvas-diff-known-extras' acknowledges under
 \"module-items\", with a `stale-ack' divergence for an acknowledged id
 no module holds any more.  An extra that shares its title with an
 unstamped item heading is UNCLAIMED or MOVED, and the unstamped
-headings left are :pending (issue #294)."
+headings left are :pending (issue #294).  A stamped heading whose item
+Canvas holds in another module is :relocate (issue #343)."
   (if (org-canvas--diff-feature-excluded-p "Module Items")
       (list :name "Module Items" :excluded t)
     (condition-case err
@@ -1282,18 +1352,37 @@ says :by-title (issue #299)."
             (plist-get entry :title) (plist-get entry :id)
             (or (plist-get entry :property) "CANVAS_ID")))))
 
+(defun org-canvas--diff-partner-text (entry)
+  "Return how a MOVED row names ENTRY's paired heading (issue #342).
+The heading's shown title and line, so a pair whose titles differ —
+a column renumbered in Org, an item renamed on Canvas — is legible."
+  (let ((title (plist-get entry :partner-title))
+        (line (plist-get entry :line)))
+    (cond ((and title line)
+           (format "the unstamped heading '%s' (line %d)" title line))
+          (title (format "the unstamped heading '%s'" title))
+          (t "an unstamped heading"))))
+
 (defun org-canvas--diff-moved-line (entry)
   "Return the report line of MOVED ENTRY, a module item (issue #294).
-Stamping the item's id on the heading in its new module is what makes
-the next sync move it (issue #105) rather than create a second copy.
-An entry paired by title only says so (issue #299)."
-  (format "  MOVED     %s (item id %s sits in module '%s'; an unstamped heading places it in '%s', so the next sync creates it there and leaves this copy — stamp CANVAS_ID %s on that heading to move it instead%s)\n"
+Stamping the item's id on the heading in its new module, which `s'
+does (issue #342), makes the next sync recreate the item there with a
+new id and delete this copy, rather than leave it behind: Canvas
+cannot move an item between modules (issues #105, #343).  An entry
+paired by title only says so (issue #299)."
+  (format "  MOVED     %s (item id %s sits in module '%s'; %s places it in '%s', so the next sync creates it there and leaves this copy — stamp CANVAS_ID %s on that heading and the next sync instead recreates it there with a new id and deletes this copy%s)\n"
           (plist-get entry :title) (plist-get entry :id)
-          (plist-get entry :where) (plist-get entry :to)
-          (plist-get entry :id)
+          (plist-get entry :where) (org-canvas--diff-partner-text entry)
+          (plist-get entry :to) (plist-get entry :id)
           (if (plist-get entry :by-title)
               (concat "; " org-canvas--diff-by-title-note)
             "")))
+
+(defun org-canvas--diff-relocate-line (entry)
+  "Return the report line of RELOCATE ENTRY, a module item (issue #343)."
+  (format "  RELOCATE  %s (item id %s sits in module '%s'; its heading, stamped with that id, is under '%s', so the next sync recreates it there with a new id and deletes this copy)\n"
+          (plist-get entry :title) (plist-get entry :id)
+          (plist-get entry :where) (plist-get entry :to)))
 
 (defun org-canvas--diff-pending-line (entry)
   "Return the report line of PENDING ENTRY, a create for the next sync."
@@ -1325,6 +1414,7 @@ An entry paired by title only says so (issue #299)."
                        (if note (format " (%s)" note) "")))))
     ('unclaimed (insert (org-canvas--diff-unclaimed-line entry)))
     ('moved (insert (org-canvas--diff-moved-line entry)))
+    ('relocate (insert (org-canvas--diff-relocate-line entry)))
     ('pending (insert (org-canvas--diff-pending-line entry)))
     ('note
      (insert (format "  NOTE      %s (%s on Canvas is %s; no %s declares it — informational, not drift)\n"
@@ -1383,6 +1473,17 @@ show up as extra, so without this the report reads as full coverage."
   "Return the count of PENDING rows across RESULTS (issue #294)."
   (apply #'+ (mapcar (lambda (r) (length (plist-get r :pending))) results)))
 
+(defun org-canvas--diff-relocate-count (results)
+  "Return the count of RELOCATE rows across RESULTS (issue #343)."
+  (apply #'+ (mapcar (lambda (r) (length (plist-get r :relocate))) results)))
+
+(defun org-canvas--diff-apart-text (notes pending relocate)
+  "Return the section header's counts of rows that are not drift.
+NOTES, PENDING and RELOCATE are the section's lists of each."
+  (concat (if notes (format ", %d note(s)" (length notes)) "")
+          (if pending (format ", %d pending create(s)" (length pending)) "")
+          (if relocate (format ", %d relocation(s)" (length relocate)) "")))
+
 (defun org-canvas--diff-weight-totals-line (totals)
   "Return the report line of the group weight TOTALS, (ORG . CANVAS).
 Printed under the Assignment Groups section and not counted as drift
@@ -1395,22 +1496,27 @@ pending create, or the stock group the footer names."
 (defun org-canvas--diff-render-section (result)
   "Insert the section of one feature RESULT with rows.
 Divergences and extras come first, under a count of them; the notes
-\(issue #293) and pending creates (issue #294) follow, counted apart,
-since they are not drift."
+\(issue #293), pending creates (issue #294) and relocations (issue
+#343) follow, counted apart, since they are not drift."
   (let* ((rows (append (plist-get result :divergences) (plist-get result :extra)))
          (notes (plist-get result :notes))
-         (pending (plist-get result :pending)))
-    (insert (format "%s: %d divergence(s)%s%s\n"
+         (pending (plist-get result :pending))
+         (relocate (plist-get result :relocate)))
+    (insert (format "%s: %d divergence(s)%s\n"
                     (plist-get result :name) (length rows)
-                    (if notes (format ", %d note(s)" (length notes)) "")
-                    (if pending
-                        (format ", %d pending create(s)" (length pending))
-                      "")))
-    (dolist (entry (append rows notes pending))
+                    (org-canvas--diff-apart-text notes pending relocate)))
+    (dolist (entry (append rows notes pending relocate))
       (org-canvas--diff-insert-row (plist-get result :name) entry))
     (when-let* ((totals (plist-get result :weight-totals)))
       (insert (org-canvas--diff-weight-totals-line totals)))
     (insert "\n")))
+
+(defun org-canvas--diff-insert-relocate-footer (results)
+  "Insert the footer line counting the RELOCATE rows of RESULTS, if any."
+  (let ((n (org-canvas--diff-relocate-count results)))
+    (when (> n 0)
+      (insert (format "Relocations: %d module item%s the next sync recreates in %s heading's module with a new id, deleting the old copy (not counted as drift).\n"
+                      n (if (= n 1) "" "s") (if (= n 1) "its" "their"))))))
 
 (defun org-canvas--diff-render (results)
   "Render RESULTS into a report string."
@@ -1432,7 +1538,7 @@ since they are not drift."
                           (plist-get result :name) err)))
          ((or (plist-get result :divergences) (plist-get result :extra)
               (plist-get result :notes) (plist-get result :pending)
-              (plist-get result :weight-totals))
+              (plist-get result :relocate) (plist-get result :weight-totals))
           (org-canvas--diff-render-section result)))))
     (let ((total (org-canvas--diff-count results))
           (pending (org-canvas--diff-pending-count results)))
@@ -1443,6 +1549,7 @@ since they are not drift."
       (when (> pending 0)
         (insert (format "Pending creates: %d heading%s with no Canvas id, which the next sync creates (not counted as drift).\n"
                         pending (if (= pending 1) "" "s"))))
+      (org-canvas--diff-insert-relocate-footer results)
       (when-let* ((note (org-canvas--diff-suppressed-note results)))
         (insert note))
       (let ((acked (apply #'+ (mapcar (lambda (r)
@@ -1491,6 +1598,8 @@ function that writes the list there instead."
     (define-key map (kbd "a") #'org-canvas-diff-acknowledge)
     (define-key map (kbd "k") #'org-canvas-diff-delete)
     (define-key map (kbd "p") #'org-canvas-diff-pull)
+    (define-key map (kbd "s") #'org-canvas-diff-stamp-move)
+    (define-key map (kbd "S") #'org-canvas-diff-stamp-moves)
     (define-key map (kbd "g") #'org-canvas-diff-refresh)
     (define-key map (kbd "TAB") #'org-canvas-diff-next-row)
     (define-key map (kbd "<backtab>") #'org-canvas-diff-previous-row)
@@ -1511,13 +1620,16 @@ adopts the Canvas timestamp as the heading's baseline
 remote object of an EXTRA, UNCLAIMED or MOVED row, after confirming;
 \\[org-canvas-diff-pull] pulls a CHANGED row's item over the heading, or
 an EXTRA quiz into a new heading;
+\\[org-canvas-diff-stamp-move] stamps a MOVED row's item id on the heading it
+was paired with, and \\[org-canvas-diff-stamp-moves] every MOVED row's,
+sending nothing;
 \\[org-canvas-diff-refresh] runs the report again;
 \\[org-canvas-diff-next-row] and \\[org-canvas-diff-previous-row] move
 between rows."
   (setq-local revert-buffer-function (lambda (&rest _) (org-canvas-diff))))
 
 (defconst org-canvas--diff-key-legend
-  "RET visit   b/B browse/edit on Canvas   a acknowledge/adopt   k delete   p pull   g refresh   TAB next row\n"
+  "RET visit   b/B browse/edit on Canvas   a acknowledge/adopt   k delete   p pull   s/S stamp moved   g refresh   TAB next row\n"
   "One line naming the report's keys, shown in the interactive buffer only.")
 
 (defun org-canvas--diff-row-at-point ()
@@ -1576,14 +1688,24 @@ heading there is no longer the one named, it is looked up by title."
                        (org-canvas--find-heading-in-file file heading))))
             (and pos (cons file pos))))))))
 
+(defun org-canvas--diff-relocate-position (entry)
+  "Return (FILE . POSITION) of the heading of RELOCATE row ENTRY, or nil.
+The heading carries the row's item id (issue #343)."
+  (let* ((file (plist-get entry :file))
+         (pos (org-canvas--diff-find-heading-by-id file "CANVAS_ID"
+                                                   (plist-get entry :id))))
+    (and pos (cons file pos))))
+
 (defun org-canvas--diff-heading-position (feature entry)
   "Return (FILE . POSITION) of the heading ENTRY of FEATURE describes, or nil.
 MISSING, CHANGED and NOTE rows are found by their id property; an UNCLAIMED
 row names an unstamped heading, found by title; a PENDING row names
-its own file and line (issue #294)."
-  (if (eq (plist-get entry :kind) 'pending)
-      (org-canvas--diff-pending-position entry)
-    (org-canvas--diff-feature-heading-position feature entry)))
+its own file and line (issue #294), and a RELOCATE row its own file
+and id (issue #343)."
+  (pcase (plist-get entry :kind)
+    ('pending (org-canvas--diff-pending-position entry))
+    ('relocate (org-canvas--diff-relocate-position entry))
+    (_ (org-canvas--diff-feature-heading-position feature entry))))
 
 (defun org-canvas--diff-feature-heading-position (feature entry)
   "Return (FILE . POSITION) of ENTRY's heading in FEATURE's file, or nil."
@@ -1617,21 +1739,22 @@ Returns the buffer."
 A module item's UNCLAIMED row names its Canvas item, whose heading
 has no title of its own to find it by."
   (pcase (plist-get entry :kind)
-    ((or 'missing 'modified 'note 'pending) t)
+    ((or 'missing 'modified 'note 'pending 'relocate) t)
     ('unclaimed (not (plist-get entry :module-id)))))
 
 (defun org-canvas-diff-visit ()
   "Visit what the row at point is about.
-A row with an Org heading (MISSING, CHANGED, UNCLAIMED, NOTE, PENDING)
-opens the course file with point on that heading.  An EXTRA or MOVED
+A row with an Org heading (MISSING, CHANGED, UNCLAIMED, NOTE, PENDING,
+RELOCATE) opens the course file with point on that heading.  An EXTRA or MOVED
 row, or a module item's UNCLAIMED row, names a Canvas object, which is
 opened in a browser when the API said where it lives."
   (interactive)
   (let* ((row (org-canvas--diff-row-at-point))
          (entry (plist-get row :entry)))
     (if (org-canvas--diff-visits-heading-p entry)
-        ;; A PENDING row carries its own file (issue #294).
-        (let* ((feature (unless (eq (plist-get entry :kind) 'pending)
+        ;; A PENDING or RELOCATE row carries its own file (#294, #343).
+        (let* ((feature (unless (memq (plist-get entry :kind)
+                                      '(pending relocate))
                           (org-canvas--diff-row-feature row)))
                (buf (save-excursion (org-canvas--diff-goto-heading feature entry)))
                (pos (with-current-buffer buf (point))))
@@ -1923,9 +2046,12 @@ under `org-canvas-diff-delete-snapshot-directory' before the DELETE
 ;;;;; Deleting Rows Without Asking (issue #345)
 
 (defun org-canvas--diff-result-entries (result)
-  "Return every entry RESULT reports: rows, notes and pending-create rows."
+  "Return every entry RESULT reports: rows, notes, pending and relocations.
+A RELOCATE row (issue #343) is among them so a selector naming one is
+told it is not an EXTRA row, rather than that the report has no row."
   (append (plist-get result :divergences) (plist-get result :extra)
-          (plist-get result :notes) (plist-get result :pending)))
+          (plist-get result :notes) (plist-get result :pending)
+          (plist-get result :relocate)))
 
 (defun org-canvas--diff-selector-outcome (feature id outcome reason)
   "Return the outcome plist of a selector that named no deletable row.
@@ -2276,6 +2402,224 @@ assignment.  Returns the number of stamps adopted."
              (length (car outcome)) held)
     (length (car outcome))))
 
+;;;; Stamping a Moved Item (issue #342)
+;;
+;; A MOVED row named the id to stamp and the heading to stamp it on,
+;; and nothing did the stamping: after a course-wide reshuffle that
+;; was 48 hand edits, done by a script parsing the report's text, and
+;; the renamed pairs — the ones the report had paired by content, not
+;; by title — were the ones a title search missed.  The report knows
+;; the heading it paired, so `s' stamps the item's id there and `S'
+;; (`org-canvas-diff-stamp-moves') every MOVED row's.  CANVAS_ID is the
+;; only property written, and nothing is sent: the next sync is what
+;; recreates the item in its new module and deletes the old copy, and
+;; the report shows each stamped heading as a RELOCATE row until then
+;; (issue #343).  Like stamp adoption, it is a verb the report never
+;; runs itself (Hard Rule 19).
+
+(defun org-canvas--diff-moved-heading-p (entry)
+  "Return non-nil when the heading at point is MOVED ENTRY's partner.
+That is an item heading with ENTRY's :partner-heading text and no
+CANVAS_ID: a heading stamped since the report is no longer the one it
+paired."
+  (and (org-at-heading-p)
+       (let ((local (org-canvas--diff-local-entry "CANVAS_ID")))
+         (and (null (plist-get local :id))
+              (equal (plist-get local :heading)
+                     (plist-get entry :partner-heading))))))
+
+(defun org-canvas--diff-moved-search (entry)
+  "Return the position of MOVED ENTRY's partner under its module, or nil.
+The fallback when the heading is no longer on the line the report
+read it from: an unstamped level-2 heading of the same text under the
+module ENTRY's :to names."
+  (catch 'found
+    (org-map-entries
+     (lambda ()
+       (when (and (org-canvas--diff-moved-heading-p entry)
+                  (equal (save-excursion
+                           (and (org-up-heading-safe)
+                                (org-get-heading t t t t)))
+                         (plist-get entry :to)))
+         (throw 'found (point))))
+     "LEVEL=2" 'file)
+    nil))
+
+(defun org-canvas--diff-moved-position (entry)
+  "Return (FILE . POSITION) of the heading MOVED ENTRY was paired with, or nil.
+The row carries the file and line it was read from; when the heading
+there is not the one paired, it is looked up under its module
+\(`org-canvas--diff-moved-search')."
+  (let ((file (plist-get entry :file)))
+    (when (and file (file-exists-p file))
+      (with-current-buffer (org-canvas--find-file-noselect file)
+        (save-excursion
+          (goto-char (point-min))
+          (forward-line (1- (or (plist-get entry :line) 1)))
+          (let ((pos (if (org-canvas--diff-moved-heading-p entry)
+                         (point)
+                       (org-canvas--diff-moved-search entry))))
+            (and pos (cons file pos))))))))
+
+(defun org-canvas--diff-stamp-at (where entry)
+  "Write MOVED ENTRY's item id as CANVAS_ID on the heading at WHERE.
+WHERE is (FILE . POSITION).  Saves the file and sends nothing."
+  (with-current-buffer (org-canvas--find-file-noselect (car where))
+    (save-excursion
+      (goto-char (cdr where))
+      (org-back-to-heading t)
+      (org-canvas-org-set-property (point) "CANVAS_ID" (plist-get entry :id))
+      (org-canvas--save-buffer)))
+  (org-canvas--log-info org-canvas--logger
+    "[Diff] Stamped item id %s on '%s' in '%s'; nothing sent — the next sync recreates it there with a new id and deletes the copy in '%s'"
+    (plist-get entry :id) (plist-get entry :partner-title)
+    (plist-get entry :to) (plist-get entry :where)))
+
+(defun org-canvas--diff-stamp-entry (entry)
+  "Stamp MOVED ENTRY's item id on the heading it was paired with, and save.
+Writes CANVAS_ID only and sends nothing.  Returns `stamped'; `claimed'
+when a heading of the file already carries the id, so a second stamp
+would make two headings claim one item; or `not-found' when the paired
+heading cannot be found unstamped."
+  (if (org-canvas--diff-find-heading-by-id
+       (plist-get entry :file) "CANVAS_ID" (plist-get entry :id))
+      'claimed
+    (let ((where (org-canvas--diff-moved-position entry)))
+      (if (null where)
+          'not-found
+        (org-canvas--diff-stamp-at where entry)
+        'stamped))))
+
+(defun org-canvas--diff-stamp-refusal (entry outcome)
+  "Signal a `user-error' naming why MOVED ENTRY's OUTCOME is no stamp."
+  (if (eq outcome 'claimed)
+      (user-error "Item id %s is already on a heading; run the report again (g)"
+                  (plist-get entry :id))
+    (user-error "Cannot find the unstamped heading '%s' under '%s'; run the report again (g)"
+                (or (plist-get entry :partner-title) (plist-get entry :title))
+                (plist-get entry :to))))
+
+(defun org-canvas-diff-stamp-move ()
+  "Stamp the item id of the MOVED row at point on the heading it paired.
+The heading is the one the row names, found by line and text, however
+its title differs from the item's (issue #342).  Writes CANVAS_ID and
+sends nothing; the next sync then recreates the item in the heading's
+module with a new id and deletes the copy in the old one, which the
+report shows as a RELOCATE row until it does (issue #343).  A row
+paired by title only asks first, since the heading's link target has
+no Canvas id to prove the pair.  `org-canvas-diff-stamp-moves' does
+the same for every MOVED row."
+  (interactive)
+  (let* ((row (org-canvas--diff-row-at-point))
+         (entry (plist-get row :entry)))
+    (unless (eq (plist-get entry :kind) 'moved)
+      (user-error "Only a MOVED row names a heading to stamp"))
+    (when (and (plist-get entry :by-title)
+               (not (y-or-n-p
+                     (format "'%s' was paired by title only; stamp item id %s on it anyway? "
+                             (plist-get entry :title) (plist-get entry :id)))))
+      (user-error "Aborted; nothing stamped"))
+    (let ((outcome (org-canvas--diff-stamp-entry entry)))
+      (unless (eq outcome 'stamped)
+        (org-canvas--diff-stamp-refusal entry outcome))
+      (org-canvas--diff-rewrite-row
+       (format "  STAMPED   %s (CANVAS_ID %s on '%s' in '%s', nothing sent; the next sync recreates it there with a new id and deletes the copy in '%s')"
+               (plist-get entry :title) (plist-get entry :id)
+               (plist-get entry :partner-title) (plist-get entry :to)
+               (plist-get entry :where)))
+      (message "Stamped item id %s; the next sync recreates it in '%s'."
+               (plist-get entry :id) (plist-get entry :to)))))
+
+(defconst org-canvas--diff-stamp-buffer-name "*canvas-diff-stamp*"
+  "Name of the buffer holding the report of stamped MOVED rows.")
+
+(defun org-canvas--diff-stamp-candidates (results)
+  "Sort the MOVED rows of RESULTS into the stampable and the held back.
+Returns (STAMPABLE . HELD): STAMPABLE lists the entries paired by
+content, HELD those paired by title only, which only `s' on the row
+stamps, after asking."
+  (let ((stampable nil) (held nil))
+    (dolist (result results)
+      (dolist (entry (plist-get result :extra))
+        (when (eq (plist-get entry :kind) 'moved)
+          (if (plist-get entry :by-title)
+              (push entry held)
+            (push entry stampable)))))
+    (cons (nreverse stampable) (nreverse held))))
+
+(defun org-canvas--diff-stamp-outcome-line (entry outcome)
+  "Return the stamp report's line for ENTRY, stamped with OUTCOME."
+  (pcase outcome
+    ('stamped (format "  STAMPED   %s (CANVAS_ID %s on '%s' in '%s')\n"
+                      (plist-get entry :title) (plist-get entry :id)
+                      (plist-get entry :partner-title) (plist-get entry :to)))
+    ('claimed (format "  CLAIMED   %s (item id %s is already on a heading)\n"
+                      (plist-get entry :title) (plist-get entry :id)))
+    (_ (format "  NOT FOUND %s (no unstamped heading '%s' under '%s')\n"
+               (plist-get entry :title) (plist-get entry :partner-title)
+               (plist-get entry :to)))))
+
+(defun org-canvas--diff-stamp-render (outcomes held)
+  "Insert the report of stamped MOVED rows at point.
+OUTCOMES lists (ENTRY . OUTCOME) from `org-canvas--diff-stamp-entry';
+HELD the rows left alone because only their title paired them."
+  (insert "org-canvas Moved Item Stamps\n")
+  (insert (format "Course: %s | %s\n" org-canvas-course-id org-canvas-base-url))
+  (insert (make-string 60 ?=) "\n\n")
+  (dolist (o outcomes)
+    (insert (org-canvas--diff-stamp-outcome-line (car o) (cdr o))))
+  (dolist (e held)
+    (insert (format "  HELD      %s (item id %s; %s — stamp it with s on its row)\n"
+                    (plist-get e :title) (plist-get e :id)
+                    org-canvas--diff-by-title-note)))
+  (when (or outcomes held) (insert "\n"))
+  (insert (make-string 60 ?=) "\n")
+  (let ((n (cl-count 'stamped outcomes :key #'cdr)))
+    (insert (if (> n 0)
+                (format "%d item id(s) stamped, nothing sent to Canvas; the next sync recreates each in its heading's module with a new id and deletes the old copy.\n" n)
+              "No item id stamped.\n"))))
+
+(defun org-canvas--diff-stamp-confirm (count)
+  "Ask whether to stamp COUNT MOVED rows, or signal a `user-error'.
+Under `noninteractive' there is nobody to ask, and running the command
+was the answer."
+  (unless (or noninteractive
+              (let ((s (if (= count 1) "" "s")))
+                (y-or-n-p
+                 (format "Stamp the item id of %d MOVED row%s on the heading%s it was paired with? "
+                         count s s))))
+    (user-error "Aborted; nothing stamped")))
+
+;;;###autoload
+(defun org-canvas-diff-stamp-moves ()
+  "Stamp the item id of every MOVED row on the heading it was paired with.
+Runs the drift comparison (`org-canvas-diff' reads, one list request
+per feature), then, after confirming, writes each MOVED item's id as
+CANVAS_ID on the heading the report paired it with by content (issue
+#342).  Nothing is sent: the next sync recreates each item in its
+heading's module with a new id and deletes the old copy (issue #343).
+A row paired by title only is held back and listed; `s' on its row
+stamps it after asking.  Works from a batch Emacs, without asking.
+Returns the number of ids stamped."
+  (interactive)
+  (org-canvas--preflight-check)
+  (run-hooks 'org-canvas--operation-start-hook)
+  (let* ((candidates (org-canvas--diff-stamp-candidates
+                      (org-canvas--diff-collect-results)))
+         (outcomes nil))
+    (when (car candidates)
+      (org-canvas--diff-stamp-confirm (length (car candidates)))
+      (setq outcomes
+            (mapcar (lambda (e) (cons e (org-canvas--diff-stamp-entry e)))
+                    (car candidates))))
+    (org-canvas--report-display
+     org-canvas--diff-stamp-buffer-name
+     (lambda () (org-canvas--diff-stamp-render outcomes (cdr candidates))))
+    (let ((n (cl-count 'stamped outcomes :key #'cdr)))
+      (message "Drift: %d item id(s) stamped, %d MOVED row(s) held back"
+               n (length (cdr candidates)))
+      n)))
+
 (defun org-canvas-diff-refresh ()
   "Run the drift report again."
   (interactive)
@@ -2328,8 +2672,8 @@ value; its start is the line the verb is on."
 One list request per feature (`org-canvas--diff-feature'); an excluded
 feature contributes its visible line, a module's item check follows it
 \(issue #177), and the referenced-media scan is applied at the end
-\(issue #102).  The read behind `org-canvas-diff' and
-`org-canvas-diff-adopt-stamps'."
+\(issue #102).  The read behind `org-canvas-diff',
+`org-canvas-diff-adopt-stamps' and `org-canvas-diff-stamp-moves'."
   (let (results)
     (dolist (feature org-canvas--feature-registry)
       (let ((name (plist-get feature :name)))
