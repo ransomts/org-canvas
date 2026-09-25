@@ -1522,7 +1522,7 @@ correcting one file rather than a course."
           (condition-case err
               (progn
                 (org-canvas-api-request 'DELETE (format "%s/api/v1/files/%s" org-canvas-base-url id))
-                (push (number-to-string id) deleted-ids)
+                (push (org-canvas--normalize-id id) deleted-ids)
                 (setq deleted-file-count (1+ deleted-file-count))
                 (org-canvas--log-info org-canvas--logger "  -> Deleted successfully"))
             (error
@@ -1534,7 +1534,8 @@ correcting one file rather than a course."
       (setq deleted-folder-count (org-canvas--file-delete-all-folders))
 
       ;; Clean local properties
-      (org-canvas--clean-local-sync-properties files-file)
+      (org-canvas--clean-local-sync-properties
+       files-file (org-canvas--delete-kept-ids remote-items 'id deleted-ids))
 
       (org-canvas--log-info org-canvas--logger "========================================")
       (org-canvas--log-info org-canvas--logger ">>> MASS DELETION COMPLETE: %d files, %d folders removed"

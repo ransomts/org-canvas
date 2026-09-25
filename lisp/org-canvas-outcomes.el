@@ -497,8 +497,10 @@ Warning: This will remove all learning outcomes from the course."
                     'id 'title)))
          (deleted-groups (car result)))
 
-    ;; Cleanup local properties
-    (org-canvas--clean-local-sync-properties org-canvas-outcomes-file)
+    ;; Keep the stamps of a group still on Canvas and its outcomes (#324)
+    (org-canvas--clean-local-sync-properties
+     org-canvas-outcomes-file
+     (org-canvas--delete-kept-ids subgroups 'id (cdr result)))
 
     (org-canvas--log-info org-canvas--logger "========================================")
     (org-canvas--log-info org-canvas--logger ">>> MASS DELETION COMPLETE: %d groups removed" deleted-groups)

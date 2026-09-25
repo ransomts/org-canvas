@@ -147,19 +147,58 @@ the save still happens but no log line is emitted."
     (when buffer-file-name
       (org-canvas--log-info org-canvas--logger "[Saved] %s" buffer-file-name))))
 
-(defun org-canvas--clean-local-sync-properties (file &optional id-property)
-  "Remove sync properties from all headings with IDs in FILE.
-ID-PROPERTY defaults to \"CANVAS_ID\"."
+(defun org-canvas--delete-kept-ids (items id-fn deleted-ids)
+  "Return the normalized ids of ITEMS a delete-all left on Canvas.
+ID-FN maps an item to its id: a function, or a symbol naming the
+alist key.  DELETED-IDS holds the normalized ids the delete removed.
+What remains is every item a :skip-fn protected or whose DELETE
+failed, whose stamps must survive (#324)."
+  (let (kept)
+    (dolist (item (append items nil))
+      (let ((id (org-canvas--normalize-id
+                 (if (functionp id-fn) (funcall id-fn item)
+                   (alist-get id-fn item)))))
+        (unless (or (null id) (member id deleted-ids))
+          (push id kept))))
+    (nreverse kept)))
+
+(defun org-canvas--clean-local-kept-p (id-prop kept-ids)
+  "Return non-nil when the heading at point or an ancestor is kept.
+A heading is kept when its ID-PROP value, trimmed, is in KEPT-IDS."
+  (save-excursion
+    (let ((kept nil) (more t))
+      (while (and more (not kept))
+        (let ((id (org-entry-get (point) id-prop)))
+          (setq kept (and id (member (string-trim id) kept-ids))
+                more (org-up-heading-safe))))
+      kept)))
+
+(defun org-canvas--clean-local-sync-properties (file kept-ids
+                                                     &optional id-property)
+  "Remove sync properties from the headings of FILE not on Canvas.
+KEPT-IDS holds the normalized ids (`org-canvas--normalize-id') of the
+items a delete-all left on Canvas: a :skip-fn protected them or their
+DELETE failed.  A heading whose ID-PROPERTY value is in KEPT-IDS keeps
+its stamps, and so does every heading below it (a quiz's questions, a
+group's outcomes), since its Canvas object still exists (#324).  Every
+other heading carrying ID-PROPERTY is cleared.  ID-PROPERTY names the
+property holding the id, \"CANVAS_ID\" by default."
   (let ((id-prop (or id-property "CANVAS_ID")))
     (when (and file (file-exists-p file))
       (org-canvas--log-info org-canvas--logger "Cleaning local properties...")
       (with-current-buffer (org-canvas--find-file-noselect file)
-        (org-map-entries
-         (lambda ()
-           (org-canvas--log-debug org-canvas--logger "Removing properties for: %s"
-                       (org-entry-get (point) id-prop))
-           (org-canvas-clear-sync-properties (point)))
-         (format "%s={.}" id-prop) 'file)
+        (org-with-wide-buffer
+         (dolist (marker (org-map-entries
+                          (lambda ()
+                            (unless (org-canvas--clean-local-kept-p
+                                     id-prop kept-ids)
+                              (point-marker)))
+                          (format "%s={.}" id-prop) 'file))
+           (when marker
+             (org-canvas--log-debug org-canvas--logger
+               "Removing properties for: %s" (org-entry-get marker id-prop))
+             (org-canvas-clear-sync-properties marker)
+             (set-marker marker nil))))
         (org-canvas--save-buffer)))))
 
 (defvar-local org-canvas--content-hashes nil

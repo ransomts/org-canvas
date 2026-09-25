@@ -866,7 +866,9 @@ On failure, fetches detailed rubric info for diagnostics."
           (setq deleted-count (1+ deleted-count)))))
 
     ;; Cleanup local properties
-    (org-canvas--clean-local-sync-properties org-canvas-rubrics-file)
+    (org-canvas--clean-local-sync-properties
+     org-canvas-rubrics-file
+     (org-canvas--delete-kept-ids remote-items 'id deleted-ids))
 
     (org-canvas--log-info org-canvas--logger "========================================")
     (org-canvas--log-info org-canvas--logger ">>> MASS DELETION COMPLETE: %d removed" deleted-count)

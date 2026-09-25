@@ -6,7 +6,8 @@
 ;; Two types of delete operations:
 ;;
 ;;   - delete-all: Fetches all items from Canvas and deletes them,
-;;     then cleans up local CANVAS_ID properties from the Org file.
+;;     then clears the local sync properties from the Org file,
+;;     except where a skipped or failed item still lives on Canvas.
 ;;
 ;;   - delete-at-point: Deletes the single item at the current cursor
 ;;     position (requires confirmation).
@@ -137,9 +138,9 @@ Signals on a key outside `org-canvas--delete-spec-keys' and when
 (defun org-canvas--delete-all-items (spec)
   "Delete every Canvas item of the feature SPEC describes.
 SPEC is a delete spec (`org-canvas--delete-spec-keys').  Lists the
-items, deletes those :skip-fn does not protect, and cleans the sync
-properties from :file.  Returns the count of successfully deleted
-items."
+items, deletes those :skip-fn does not protect, and clears the sync
+properties from :file, keeping those of the items still on Canvas.
+Returns the count of successfully deleted items."
   (let* ((spec (org-canvas--delete-spec spec))
          (feature-name (plist-get spec :feature))
          (file (plist-get spec :file))
@@ -163,8 +164,11 @@ items."
                     id-field title-field skip-fn delete-data))
            (deleted-count (car result)))
 
-      ;; Cleanup local properties
-      (org-canvas--clean-local-sync-properties file id-property)
+      ;; Clear every stamp but those of the items still on Canvas (#324)
+      (org-canvas--clean-local-sync-properties
+       file
+       (org-canvas--delete-kept-ids remote-items id-field (cdr result))
+       id-property)
 
       (org-canvas--log-info org-canvas--logger "========================================")
       (org-canvas--log-info org-canvas--logger ">>> MASS DELETION COMPLETE: %d removed" deleted-count)
