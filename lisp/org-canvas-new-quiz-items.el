@@ -143,34 +143,43 @@ hot-spot item's regions live in an interaction_data and scoring_data
 whose shape was never probed, so pushing its prompt alone would strip
 them (issue #340).")
 
+(defun org-canvas--new-quiz-prompt-end-regexp-for (q-type)
+  "Return the regexp of the line an item of Q-TYPE ends its prompt at.
+Nil for a type in `org-canvas--new-quiz-prompt-only-types', whose
+prompt is all its text (issue #337); an ordering item's numbered
+answers end it as well as a bullet (issue #335)."
+  (cond ((member q-type org-canvas--new-quiz-prompt-only-types) nil)
+        ((equal q-type "ordering")
+         org-canvas--new-quiz-ordering-prompt-end-regexp)
+        (t org-canvas--new-quiz-prompt-end-regexp)))
+
+(defun org-canvas--new-quiz-item-prompt-bounds (&optional q-type)
+  "Return (START . END) of the prompt of the item heading at point.
+START is the end of the heading's drawer, as
+`org-canvas--pull-entry-text-bounds' finds it; END is the first line
+of the answer list, as Q-TYPE ends it
+\(`org-canvas--new-quiz-prompt-end-regexp-for'), else the first child
+heading or the end of the subtree.  The push reads this region as the
+prompt and the pull writes it (issue #333)."
+  (let* ((bounds (org-canvas--pull-entry-text-bounds))
+         (start (car bounds))
+         (end (cdr bounds))
+         (re (org-canvas--new-quiz-prompt-end-regexp-for q-type)))
+    (save-excursion
+      (goto-char start)
+      (cons start
+            (if (and re (re-search-forward re end t))
+                (match-beginning 0)
+              end)))))
+
 (defun org-canvas--new-quiz-parse-question-text (&optional q-type)
   "Get the question prompt text, excluding answer lists.
 Return only the text before the first list item (- or *), or, when
 Q-TYPE is \"ordering\", before the first numbered item as well.  A
 Q-TYPE in `org-canvas--new-quiz-prompt-only-types' has no answer
 list, so its prompt is all the text before the first child heading."
-  (save-excursion
-    (org-back-to-heading t)
-    (let ((start (save-excursion
-                   (org-end-of-meta-data t)
-                   (point)))
-          (end (save-excursion
-                 (outline-next-heading)
-                 (point))))
-      (let ((subtree-end (save-excursion (org-end-of-subtree t) (point))))
-        (when (> end subtree-end)
-          (setq end subtree-end)))
-      (if (>= start end)
-          ""
-        (goto-char start)
-        (when (and (not (member q-type org-canvas--new-quiz-prompt-only-types))
-                   (re-search-forward
-               (if (equal q-type "ordering")
-                   org-canvas--new-quiz-ordering-prompt-end-regexp
-                 org-canvas--new-quiz-prompt-end-regexp)
-               end t))
-          (setq end (match-beginning 0)))
-        (string-trim (buffer-substring-no-properties start end))))))
+  (let ((bounds (org-canvas--new-quiz-item-prompt-bounds q-type)))
+    (string-trim (buffer-substring-no-properties (car bounds) (cdr bounds)))))
 
 (defun org-canvas--new-quiz-parse-checkbox-list ()
   "Parse a checkbox list under point, returning answer data.
@@ -630,14 +639,26 @@ replies carry it at the top level (issue #322)."
                    (alist-get 'interaction_type_slug item))))
     (and (stringp slug) (org-canvas--new-quiz-slug-to-type slug))))
 
+(defun org-canvas--new-quiz-item-split-body (html)
+  "Return (FIRST . REST) of item body HTML, split after its first paragraph.
+FIRST is the text inside the <p> the body opens with and REST what
+follows it, trimmed.  A body that opens with anything else is all
+FIRST, with REST \"\".  A push sends the heading as the body's first
+paragraph, so FIRST is what a heading pairs with (issue #333)."
+  (let ((html (or html "")))
+    (if (string-match
+         "\\`[ \t\n\r]*<p\\(?:[ \t\n][^>]*\\)?>\\(\\(?:.\\|\n\\)*?\\)</p>"
+         html)
+        (cons (match-string 1 html) (string-trim (substring html (match-end 0))))
+      (cons html ""))))
+
 (defun org-canvas--new-quiz-item-remote-title (item)
   "Return the text of remote ITEM's first paragraph, tags stripped.
 A push sends the heading as the item body's first paragraph, so this
-is what a heading compares against."
-  (let* ((body (or (org-canvas--new-quiz-item-remote-body item) ""))
-         (first (if (string-match "<p[^>]*>\\(\\(?:.\\|\n\\)*?\\)</p>" body)
-                    (match-string 1 body)
-                  body)))
+is what a heading compares against.  A body that opens with no
+paragraph is taken whole, as the pull titles it."
+  (let ((first (car (org-canvas--new-quiz-item-split-body
+                     (org-canvas--new-quiz-item-remote-body item)))))
     (string-trim
      (replace-regexp-in-string
       "[ \t\n\r]+" " "
@@ -734,42 +755,103 @@ into the nested format required by the New Quizzes Items API:
   (or (car (cl-rassoc slug org-canvas--new-quiz-type-slugs :test #'string=))
       slug))
 
+(defun org-canvas--new-quiz-item-pull-prompt (html &optional q-type)
+  "Return the Org text a pull writes as an item's prompt, from HTML.
+HTML is what follows the body's first paragraph.  Text that would
+hold a line the parse ends a Q-TYPE item's prompt at, a list above
+all, goes in an HTML export block instead, which the push sends as it
+stands, so the round trip keeps the whole body (issue #333).  An
+essay's prompt ends at no line (issue #337); an ordering item's at a
+numbered one too (issue #335)."
+  (let ((text (string-trim (org-canvas--html-to-org-with-rewrite html)))
+        (re (org-canvas--new-quiz-prompt-end-regexp-for q-type)))
+    (if (and re (string-match-p re text))
+        (format "#+begin_export html\n%s\n#+end_export" html)
+      text)))
+
+(defun org-canvas--new-quiz-item-pull-layout (html &optional q-type)
+  "Return (TITLE . PROMPT), the Org layout a pull writes item body HTML as.
+TITLE is the body's first paragraph on one line; PROMPT, the rest,
+goes under the heading, where the parse of a Q-TYPE item reads it
+back (`org-canvas--new-quiz-item-pull-prompt').  A body
+whose first paragraph is empty, or that opens with none, is all
+title, as every body was before issue #333."
+  (let* ((split (org-canvas--new-quiz-item-split-body html))
+         (title (org-canvas--html-to-org-inline (car split))))
+    (if (and (not (string-empty-p title))
+             (not (string-empty-p (cdr split))))
+        (cons title (org-canvas--new-quiz-item-pull-prompt (cdr split) q-type))
+      (let ((whole (if (string-empty-p (cdr split))
+                       title
+                     (org-canvas--html-to-org-inline html))))
+        (cons (if (string-empty-p whole) "Question" whole) "")))))
+
+(defun org-canvas--new-quiz-pull-item-heading (item-id title)
+  "Return the item heading for ITEM-ID or TITLE under the quiz at point.
+A heading the quiz holds for the item, by CANVAS_ITEM_ID or, unstamped,
+by TITLE, is renamed to TITLE in place, so what it holds besides its
+prompt, the answer list above all, stays (issue #239); otherwise a
+heading is appended at the end of the quiz."
+  (let ((existing (org-canvas--pull-find-child "CANVAS_ITEM_ID" item-id title)))
+    (if existing
+        (progn
+          (goto-char existing)
+          (unless (equal (org-get-heading t t t t) title)
+            (org-edit-headline title)))
+      (goto-char (save-excursion (org-end-of-subtree t) (point)))
+      (unless (bolp) (insert "\n"))
+      (insert (format "** %s\n" title))
+      (forward-line -1))
+    (org-back-to-heading t)
+    (point)))
+
+(defun org-canvas--new-quiz-pull-write-prompt (text &optional q-type)
+  "Write TEXT as the prompt of the item heading at point, a Q-TYPE item.
+The region the parse reads as the prompt is replaced, and nothing
+else: the answer list below it stays.  Empty TEXT empties a region
+holding text and leaves a blank one alone, so a one-paragraph item
+pulls as it always did and a re-pull changes nothing."
+  (let* ((bounds (org-canvas--new-quiz-item-prompt-bounds q-type))
+         (old (buffer-substring-no-properties (car bounds) (cdr bounds))))
+    (unless (and (string-empty-p text) (string-blank-p old))
+      (save-excursion
+        (delete-region (car bounds) (cdr bounds))
+        (goto-char (car bounds))
+        (insert "\n")
+        (unless (string-empty-p text)
+          (insert "\n" text "\n\n"))))))
+
 (defun org-canvas--new-quiz-pull-insert-item (item)
   "Write New Quiz ITEM as an L2 heading under the quiz at point.
-Point must be at the parent quiz heading and is left there.  A heading
-the quiz already holds for the item, by CANVAS_ITEM_ID or, unstamped,
-by title, is rewritten in place; otherwise the item is appended
+Point must be at the parent quiz heading and is left there.  The
+body's first paragraph is the heading and the rest the prompt under
+it (issue #333), the layout the item parse reads back.  A heading the
+quiz already holds for the item, by CANVAS_ITEM_ID or, unstamped, by
+that title, is rewritten in place; otherwise the item is appended
 \(issue #239).  The Items API nests the body and the type under
 `entry'; older replies carry them at the top level, so both are read."
   (let* ((quiz-pos (point))
          (entry (let ((e (alist-get 'entry item))) (and (listp e) e)))
-         (title (or (alist-get 'item_body entry) (alist-get 'item_body item)
-                    "Question"))
          (slug (or (alist-get 'interaction_type_slug entry)
                    (alist-get 'interaction_type_slug item)))
+         (q-type (and slug (org-canvas--new-quiz-slug-to-type slug)))
+         (layout (org-canvas--new-quiz-item-pull-layout
+                  (or (alist-get 'item_body entry) (alist-get 'item_body item))
+                  q-type))
          (points (alist-get 'points_possible item))
-         (item-id (alist-get 'id item)))
-    (setq title (org-canvas--html-to-org-inline title))
-    (when (string-empty-p title)
-      (setq title "Question"))
-    (let* ((at (org-canvas--pull-child-insert-point "CANVAS_ITEM_ID" item-id title))
-           (next (copy-marker at t)))
-      (insert (format "** %s\n" title))
-      (goto-char at)
-      (org-back-to-heading t)
-      (let ((qpos (point)))
-        (when item-id
-          (org-canvas-org-save-sync-state qpos (format "%s" item-id) "CANVAS_ITEM_ID"))
-        (when slug
-          (org-canvas-org-set-property
-           qpos "TYPE" (org-canvas--new-quiz-slug-to-type slug)))
-        (when points
-          (org-canvas-org-set-property
-           qpos "POINTS" (format "%s" points))))
-      (org-canvas--pull-child-close next)
-      (set-marker next nil)
-      (goto-char quiz-pos))))
-
+         (item-id (alist-get 'id item))
+         (qpos (org-canvas--new-quiz-pull-item-heading item-id (car layout))))
+    (when item-id
+      (org-canvas-org-save-sync-state qpos (format "%s" item-id) "CANVAS_ITEM_ID"))
+    (when q-type
+      (org-canvas-org-set-property qpos "TYPE" q-type))
+    (when points
+      (org-canvas-org-set-property
+       qpos "POINTS" (format "%s" points)))
+    (goto-char qpos)
+    (org-canvas--new-quiz-pull-write-prompt
+     (cdr layout) (or q-type (org-entry-get qpos "TYPE")))
+    (goto-char quiz-pos)))
 
 (provide 'org-canvas-new-quiz-items)
 ;;; org-canvas-new-quiz-items.el ends here
