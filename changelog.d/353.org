@@ -1,0 +1,5 @@
+* Fixed
+- #353 The test suite no longer leaves a read-only course behind: the
+  =org-canvas-init= specs run inside =with-org-canvas-course-globals=,
+  which binds the course settings and file paths the wizard sets, and
+  test-helper.el fails any spec that leaves one of them changed.
