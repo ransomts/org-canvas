@@ -105,7 +105,10 @@
      :doc "Required score for min_score completion")
     (:org-prop "NEW_TAB" :data-key :new_tab :type boolean
      :doc "Open external URL in new tab")
+    ;; Absent means "keep the content's own state", so true and false
+    ;; are both statements a pull must write (issue #323).
     (:org-prop "PUBLISHED" :data-key :published :type boolean
+     :absent-inherits t
      :doc "Publish state for this item; omit to keep the linked content's own state")
     (:org-prop "PUBLISH_AT" :data-key :publish_at :type timestamp :local-only t
      :doc "Release date for this item; overrides the module's own PUBLISH_AT"))
@@ -1896,7 +1899,8 @@ Optional INDENT is emitted as :INDENT: only when nonzero."
   (org-canvas-org-set-property (point) "ITEM_TYPE" "SubHeader")
   (when (and indent (numberp indent) (> indent 0))
     (org-canvas-org-set-property (point) "INDENT" (format "%s" indent)))
-  (org-canvas--pull-set-boolean-property (point) "PUBLISHED" item-published)
+  (org-canvas--pull-set-boolean-property
+   (point) "PUBLISHED" item-published "module-items")
   (goto-char (save-excursion (org-end-of-subtree t t) (point))))
 
 (defun org-canvas--module-pull-insert-external-url (item item-id item-published)
@@ -1914,7 +1918,8 @@ Optional INDENT is emitted as :INDENT: only when nonzero."
       (org-canvas-org-set-property (point) "NEW_TAB" "true"))
     (when (and indent (numberp indent) (> indent 0))
       (org-canvas-org-set-property (point) "INDENT" (format "%s" indent)))
-    (org-canvas--pull-set-boolean-property (point) "PUBLISHED" item-published)
+    (org-canvas--pull-set-boolean-property
+   (point) "PUBLISHED" item-published "module-items")
     (goto-char (save-excursion (org-end-of-subtree t t) (point)))))
 
 (defun org-canvas--module-pull-insert-content-item (item item-id item-published)
@@ -1940,7 +1945,8 @@ the properties the push reads."
         (org-canvas-org-set-property (point) "ITEM_TYPE" item-type))
       (when (and indent (numberp indent) (> indent 0))
         (org-canvas-org-set-property (point) "INDENT" (format "%s" indent)))
-      (org-canvas--pull-set-boolean-property (point) "PUBLISHED" item-published)
+      (org-canvas--pull-set-boolean-property
+   (point) "PUBLISHED" item-published "module-items")
       (let ((type (alist-get 'type requirement))
             (min-score (alist-get 'min_score requirement)))
         (when (stringp type)

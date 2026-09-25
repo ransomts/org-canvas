@@ -397,7 +397,47 @@
        "* Heading\n:PROPERTIES:\n:PUBLISHED: false\n:END:\n"
        (org-back-to-heading t)
        (org-canvas--pull-set-boolean-property (point) "PUBLISHED" t)
-       (expect (org-entry-get (point) "PUBLISHED") :to-be nil)))))
+       (expect (org-entry-get (point) "PUBLISHED") :to-be nil))))
+
+  (it "reads the default of the feature a registry key names (issue #323)"
+    (let ((org-canvas-emit-defaults nil))
+      (with-temp-org-buffer
+       "* Heading\n"
+       (org-canvas--pull-set-boolean-property
+        (point) "PUBLISHED" t "module-items")
+       (expect (org-entry-get (point) "PUBLISHED") :to-equal "true")
+       (org-canvas--pull-set-boolean-property
+        (point) "PUBLISHED" t "pages")
+       (expect (org-entry-get (point) "PUBLISHED") :to-be nil))))
+
+  (it "writes both values of a boolean whose absence inherits (issue #323)"
+    (let ((org-canvas-emit-defaults nil))
+      (with-temp-org-buffer
+       "* Heading\n"
+       (org-canvas--pull-set-boolean-property
+        (point) "PUBLISHED" :json-false "module-items")
+       (expect (org-entry-get (point) "PUBLISHED") :to-equal "false")
+       (org-canvas--pull-set-boolean-property
+        (point) "PUBLISHED" t "module-items")
+       (expect (org-entry-get (point) "PUBLISHED") :to-equal "true")))))
+
+(describe "org-canvas--registry-find-property with a registry key (issue #323)"
+  (it "returns the spec registered under that key"
+    (let ((spec (org-canvas--registry-find-property
+                 "PUBLISHED" "module-items")))
+      (expect spec :not :to-be nil)
+      (expect (plist-member spec :default) :to-be nil)))
+
+  (it "returns nil when the key does not register the property"
+    (expect (org-canvas--registry-find-property "PUBLISHED" "grading-periods")
+            :to-be nil))
+
+  (it "returns nil for a key nothing registered"
+    (expect (org-canvas--registry-find-property "PUBLISHED" "no-such-feature")
+            :to-be nil))
+
+  (it "scans every feature when no key is given"
+    (expect (org-canvas--registry-find-property "PUBLISHED") :not :to-be nil)))
 
 (describe "org-canvas--intent-satisfied-p (issue #293)"
   (it "matches the declared name anywhere in the observation, ignoring case"

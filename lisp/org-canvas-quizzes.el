@@ -1114,17 +1114,20 @@ next push would quietly change it (issue #349)."
     (if (org-entry-get pos prop-name)
         (org-canvas-org-set-property pos prop-name
                                      (if (eq val t) "true" "false"))
-      (org-canvas--pull-set-boolean-property pos prop-name val))))
+      (org-canvas--pull-set-boolean-property
+       pos prop-name val "quizzes"))))
 
 (defun org-canvas--quiz-pull-set-single-property (pos prop-name val type)
   "Set a single quiz property PROP-NAME at POS from VAL using TYPE."
   (pcase type
     ('string (when val (org-canvas-org-set-property pos prop-name val)))
     ('format (when val (org-canvas-org-set-property pos prop-name (format "%s" val))))
-    ('boolean (when val (org-canvas--pull-set-boolean-property pos prop-name val)))
+    ('boolean (when val (org-canvas--pull-set-boolean-property
+                        pos prop-name val "quizzes")))
     ('boolean-nonnull
      (when (not (eq val :null))
-       (org-canvas--pull-set-boolean-property pos prop-name val)))
+       (org-canvas--pull-set-boolean-property
+        pos prop-name val "quizzes")))
     ('boolean-kept (org-canvas--quiz-pull-set-kept-boolean pos prop-name val))
     ('timestamp (org-canvas--pull-set-timestamp-property pos prop-name val))
     ('string-nonnull (when val (org-canvas-org-set-property pos prop-name val)))))

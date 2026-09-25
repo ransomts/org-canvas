@@ -84,7 +84,8 @@ dates, the weight when Canvas reports one, and the closed flag."
   (let ((weight (alist-get 'weight item)))
     (when (numberp weight)
       (org-canvas-org-set-property pos "WEIGHT" (format "%s" weight))))
-  (org-canvas--pull-set-boolean-property pos "IS_CLOSED" (alist-get 'is_closed item)))
+  (org-canvas--pull-set-boolean-property
+   pos "IS_CLOSED" (alist-get 'is_closed item) "grading-periods"))
 
 (defconst org-canvas--grading-periods-pull-config
   (list :id-field 'id :title-field 'title :id-property "CANVAS_ID"
