@@ -278,6 +278,17 @@ never resets what Canvas holds (issue #321)."
      :remote-fn org-canvas--new-quiz-item-remote-type
      :compare-p ,(lambda (_pom item) (org-canvas--new-quiz-item-remote-type item))
      :doc "Question type (see below)")
+    ;; A hot-spot item's regions, written by pull and never pushed (#365).
+    (:org-prop "HOTSPOTS_COUNT" :data-key :hotspots_count :type number
+     :canvas-owned t :pull-only t
+     :remote-fn org-canvas--new-quiz-item-remote-hotspots-count
+     :compare-p ,(org-canvas--new-quiz-item-carries 'interaction_data)
+     :doc "Hot-spot region count; written by pull, never pushed")
+    (:org-prop "HOTSPOTS" :data-key :hotspots :type string
+     :canvas-owned t :pull-only t
+     :remote-fn org-canvas--new-quiz-item-remote-hotspots
+     :compare-p ,(org-canvas--new-quiz-item-carries 'scoring_data)
+     :doc "Hot-spot regions, SHAPE X,Y X,Y; ...; written by pull, never pushed")
     (:org-prop "OUTCOME" :data-key :outcome :type link
      :target-file org-canvas-outcomes-file :link-id-property "CANVAS_ID"
      :doc "Link to outcome in outcomes.org (local-only)")))

@@ -1084,12 +1084,13 @@ out too; see `org-canvas--new-quiz-pull-only-types'.")
 (defconst org-canvas--new-quiz-pull-only-types
   '("hot-spot")
   "TYPE values a pull writes for a New Quiz item that a push refuses.
-A hot-spot item's answer is a region of an image, held in its
-interaction_data and scoring_data, whose shape was never probed, so
-the push cannot build one (issue #340).  A pull still writes the TYPE
-of a hot-spot item made in Canvas, so validation accepts the value and
-warns that the item is not pushed; a push refuses it, since sending
-the prompt alone would strip the regions Canvas holds.")
+A hot-spot item's answer is a region of an image the quiz service
+hosts, whose upload was never probed, so the push cannot build one
+\(issue #340).  A pull still writes the TYPE of a hot-spot item made in
+Canvas, and its regions as the Canvas-owned HOTSPOTS (issue #365), so
+validation accepts the value and warns that the item is not pushed; a
+push refuses it, since sending the prompt alone would strip the
+regions Canvas holds.")
 
 (defconst org-canvas--valid-new-quiz-scoring-policies
   '("keep_highest" "keep_latest" "keep_average")

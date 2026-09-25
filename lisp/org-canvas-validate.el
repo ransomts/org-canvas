@@ -1351,11 +1351,12 @@ by a pull and never sent by a push, so on a heading that has no
 CANVAS_ID yet it can only be a hope: the object it describes has to
 be attached in the web UI once the assignment exists, and then
 pulled.  On a stamped heading the value is what a pull wrote and
-there is nothing to say.  Push-only, since it protects a create.  LOC
-is a (:file :line :heading) plist (issue #184)."
+there is nothing to say; any id stamp counts, a New Quiz item's
+CANVAS_ITEM_ID included (issue #365).  Push-only, since it protects a
+create.  LOC is a (:file :line :heading) plist (issue #184)."
   (when (and value (not (string-empty-p value))
-             (not (org-entry-get (point) "CANVAS_ID"))
-             (not (org-entry-get (point) "CANVAS_URL")))
+             (not (cl-some (lambda (id-prop) (org-entry-get (point) id-prop))
+                           (org-canvas--delete-id-property-names))))
     (org-canvas--validate-push-only
      (org-canvas--validate-make-issue
       'warning loc property

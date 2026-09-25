@@ -1,0 +1,7 @@
+* Added
+- #365 A pull writes a hot-spot New Quiz question's regions under it,
+  as the read-only =HOTSPOTS= (each region's shape and its points, as
+  fractions of the image) and =HOTSPOTS_COUNT=.  A push never sends
+  them and still refuses the question; =org-canvas-diff= compares them,
+  so a region moved in the web interface shows as a CHANGED row.  The
+  image's address is not written.

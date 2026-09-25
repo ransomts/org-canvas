@@ -4277,4 +4277,195 @@ SLUG is its interaction_type_slug, \"choice\" by default."
                (test-nq-333--item "<pre>x</pre>"))
               :to-equal "x"))))
 
+;;;; A hot-spot item's regions are pulled read-only (issue #365)
+
+(defun test-nq-365--region (id shape &rest xys)
+  "Return hot-spot region ID of SHAPE through the points XYS (x y ...)."
+  `((id . ,id) (type . ,shape)
+    (coordinates . ,(vconcat (cl-loop for (x y) on xys by #'cddr
+                                      collect `((x . ,x) (y . ,y)))))))
+
+(defun test-nq-365--item (regions &optional count)
+  "Return the Items API reply for hot-spot item 9 holding REGIONS.
+COUNT is its `hotspots_count', the number of REGIONS by default."
+  `((id . "9") (points_possible . 1) (entry_type . "Item")
+    (entry . ((item_body . "<p>Click the heart.</p>")
+              (interaction_type_slug . "hot-spot")
+              (interaction_data
+               . ((image_url
+                   . "https://s3.test/item_media/u1/u2?X-Amz-Signature=secret")
+                  (hotspots_count . ,(or count (length regions)))))
+              (scoring_algorithm . "HotSpot")
+              (scoring_data . ((value . ,(vconcat regions))))))))
+
+(defconst test-nq-365--square
+  (test-nq-365--region 1 "square" 0.3156 0.1956 0.7407 0.8362)
+  "The region captured live from a hot-spot item (issue #340).")
+
+(defconst test-nq-365--quiz
+  "* Quiz\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 42\n:END:\n"
+  "A quiz heading to pull hot-spot items under.")
+
+(describe "the pull of a hot-spot item's regions (issue #365)"
+  (it "writes a square region and the region count, Canvas's to set"
+    (with-temp-org-buffer test-nq-365--quiz
+      (test-nq-333--pull (test-nq-365--item (list test-nq-365--square)))
+      (test-nq-333--goto-item)
+      (expect (org-entry-get nil "TYPE") :to-equal "hot-spot")
+      (expect (org-entry-get nil "HOTSPOTS")
+              :to-equal "square 0.3156,0.1956 0.7407,0.8362")
+      (expect (org-entry-get nil "HOTSPOTS_COUNT") :to-equal "1")))
+
+  (it "never writes the image's address"
+    (with-temp-org-buffer test-nq-365--quiz
+      (test-nq-333--pull (test-nq-365--item (list test-nq-365--square)))
+      (expect (buffer-string) :not :to-match "s3\\.test")
+      (expect (buffer-string) :not :to-match "Signature")
+      (expect (buffer-string) :not :to-match "IMAGE")))
+
+  (it "writes several regions in Canvas's order, of any shape"
+    (with-temp-org-buffer test-nq-365--quiz
+      (test-nq-333--pull
+       (test-nq-365--item
+        (list test-nq-365--square
+              (test-nq-365--region 2 "oval" 0.1 0.2 0.3 0.4)
+              (test-nq-365--region 3 "polygon" 0.5 0.5 0.9 0.5 0.7 1))))
+      (test-nq-333--goto-item)
+      (expect (org-entry-get nil "HOTSPOTS")
+              :to-equal (concat "square 0.3156,0.1956 0.7407,0.8362; "
+                                "oval 0.1,0.2 0.3,0.4; "
+                                "polygon 0.5,0.5 0.9,0.5 0.7,1"))
+      (expect (org-entry-get nil "HOTSPOTS_COUNT") :to-equal "3")))
+
+  (it "changes nothing on a re-pull, float noise included"
+    (with-temp-org-buffer test-nq-365--quiz
+      (test-nq-333--pull (test-nq-365--item (list test-nq-365--square)))
+      (let ((first (buffer-string)))
+        (test-nq-333--pull (test-nq-365--item (list test-nq-365--square)))
+        (expect (buffer-string) :to-equal first)
+        (test-nq-333--pull
+         (test-nq-365--item
+          (list (test-nq-365--region 1 "square" 0.31560000000004 0.1956
+                                     0.74069999999 0.8362))))
+        (expect (buffer-string) :to-equal first))))
+
+  (it "keeps what the file holds when the reply carries no regions"
+    (with-temp-org-buffer test-nq-365--quiz
+      (test-nq-333--pull (test-nq-365--item (list test-nq-365--square)))
+      (let ((first (buffer-string)))
+        (test-nq-333--pull
+         '((id . "9") (points_possible . 1)
+           (entry . ((item_body . "<p>Click the heart.</p>")
+                     (interaction_type_slug . "hot-spot")))))
+        (expect (buffer-string) :to-equal first))))
+
+  (it "writes no regions for an item of another type"
+    (with-temp-org-buffer test-nq-365--quiz
+      (test-nq-333--pull
+       '((id . "9") (entry . ((item_body . "<p>Pick.</p>")
+                              (interaction_type_slug . "choice")
+                              (scoring_data . ((value . "a")))))))
+      (expect (buffer-string) :not :to-match "HOTSPOTS"))))
+
+(describe "the HOTSPOTS spelling (issue #365)"
+  (it "rounds a coordinate to four places and drops trailing zeros"
+    (expect (org-canvas--new-quiz-hotspot-number 0.31564) :to-equal "0.3156")
+    (expect (org-canvas--new-quiz-hotspot-number 0.5) :to-equal "0.5")
+    (expect (org-canvas--new-quiz-hotspot-number 1) :to-equal "1")
+    (expect (org-canvas--new-quiz-hotspot-number 0) :to-equal "0")
+    (expect (org-canvas--new-quiz-hotspot-number -0.00001) :to-equal "0")
+    (expect (org-canvas--new-quiz-hotspot-number "0.25") :to-equal "0.25")
+    (expect (org-canvas--new-quiz-hotspot-number nil) :to-equal "0"))
+
+  (it "writes nothing for no regions, or a value that is not a list"
+    (expect (org-canvas--new-quiz-hotspot-format []) :to-be nil)
+    (expect (org-canvas--new-quiz-hotspot-format "") :to-be nil)
+    (expect (org-canvas--new-quiz-hotspot-format nil) :to-be nil))
+
+  (it "writes a region with no shape or coordinates as far as it can"
+    (expect (org-canvas--new-quiz-hotspot-format '(((id . 1))))
+            :to-equal "?"))
+
+  (it "reads the regions and count at the top level of an older reply"
+    (let ((item '((interaction_type_slug . "hot-spot")
+                  (interaction_data . ((hotspots_count . 1)))
+                  (scoring_data . ((value . [((type . "square")
+                                              (coordinates
+                                               . [((x . 0) (y . 0))
+                                                  ((x . 1) (y . 1))]))]))))))
+      (expect (org-canvas--new-quiz-item-remote-hotspots item)
+              :to-equal "square 0,0 1,1")
+      (expect (org-canvas--new-quiz-item-remote-hotspots-count item)
+              :to-equal 1)))
+
+  (it "maps hot-spot to Canvas's HotSpot scoring algorithm"
+    (expect (org-canvas--new-quiz-item-scoring-algorithm "hot-spot")
+            :to-equal "HotSpot")))
+
+(describe "the push of a pulled hot-spot item (issue #365)"
+  (it "refuses the item and sends nothing, so Canvas keeps it untouched"
+    (with-temp-org-buffer test-nq-365--quiz
+      (test-nq-333--pull (test-nq-365--item (list test-nq-365--square)))
+      (goto-char (point-min))
+      (org-back-to-heading t)
+      (with-org-canvas-test-config
+        (let ((writes nil))
+          (cl-letf (((symbol-function 'org-canvas-api-request)
+                     (lambda (method url &rest _)
+                       (unless (eq method 'GET) (push (cons method url) writes))
+                       [])))
+            (let ((results (org-canvas--sync-new-quiz-items
+                            (point-marker) "42")))
+              (expect (car results) :to-equal 0)
+              (expect (cdr results) :to-equal 1)
+              (expect writes :to-be nil)))))))
+
+  (it "never reads HOTSPOTS into an item's payload"
+    (with-temp-org-buffer
+     (concat test-nq-365--quiz
+             "** Pick\n:PROPERTIES:\n:TYPE: choice\n:HOTSPOTS_COUNT: 1\n"
+             ":HOTSPOTS: square 0.3156,0.1956 0.7407,0.8362\n:END:\n\n"
+             "- [X] Yes\n- [ ] No\n")
+     (test-nq-333--goto-item)
+     (let* ((data (org-canvas--new-quiz-item-parse-entry "42"))
+            (json (json-encode
+                   (org-canvas--new-quiz-item-wrap-payload
+                    (org-canvas--new-quiz-item-build-payload data)))))
+       (expect json :not :to-match "0\\.3156")
+       (expect json :not :to-match "hotspot")
+       (expect (plist-member data :hotspots) :to-be nil)))))
+
+(describe "validation of a hot-spot item's regions (issue #365)"
+  (it "has nothing to say about regions a pull wrote on a stamped item"
+    (with-temp-org-buffer test-nq-365--quiz
+      (test-nq-333--pull (test-nq-365--item (list test-nq-365--square)))
+      (test-nq-333--goto-item)
+      (let* ((spec (cl-find "New Quiz Items" (org-canvas--validate-specs)
+                            :key (lambda (s) (plist-get s :label))
+                            :test #'string=))
+             (issues (org-canvas--validate-entry-at-marker
+                      (plist-get spec :properties) nil
+                      (plist-get spec :structural-fn) (buffer-file-name))))
+        ;; Only the #340 warning that a hot-spot item is not pushed.
+        (expect (mapcar (lambda (i) (plist-get i :property)) issues)
+                :to-equal '("TYPE")))))
+
+  (it "warns, push-only, about regions typed on an item never synced"
+    (with-temp-org-buffer
+     (concat test-nq-365--quiz
+             "** Typed\n:PROPERTIES:\n:TYPE: choice\n"
+             ":HOTSPOTS: square 0,0 1,1\n:END:\n")
+     (test-nq-333--goto-item)
+     (let* ((spec (cl-find "New Quiz Items" (org-canvas--validate-specs)
+                           :key (lambda (s) (plist-get s :label))
+                           :test #'string=))
+            (issues (org-canvas--validate-entry-properties
+                     (plist-get spec :properties)
+                     (list :file (buffer-file-name) :line 5 :heading "Typed")))
+            (issue (car issues)))
+       (expect (length issues) :to-equal 1)
+       (expect (plist-get issue :property) :to-equal "HOTSPOTS")
+       (expect (plist-get issue :push-only) :to-be t)
+       (expect (plist-get issue :message) :to-match "set by Canvas")))))
+
 ;;; org-canvas-new-quizzes-test.el ends here

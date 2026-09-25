@@ -4619,5 +4619,92 @@ Items result.  Must run inside `test-nq-313--with-file'."
              '((entry (item_body . "<p>A</p>"))))
             :to-equal '(item_body . "<p>A</p>"))))
 
+;;;; Hot-spot regions in the item drift report (issue #365)
+
+(defun test-nq-365-diff--item (regions &optional count)
+  "Return a hot-spot item 9 reply holding REGIONS, COUNT of them.
+Each of REGIONS is (SHAPE X1 Y1 X2 Y2)."
+  `((id . "9") (points_possible . 1)
+    (entry (item_body . "<p>Click the heart.</p>")
+           (interaction_type_slug . "hot-spot")
+           (interaction_data (image_url . "https://s3.test/item_media/a/b")
+                             (hotspots_count . ,(or count (length regions))))
+           (scoring_algorithm . "HotSpot")
+           (scoring_data
+            (value . ,(vconcat
+                       (cl-loop for (shape x1 y1 x2 y2) in regions
+                                for id from 1
+                                collect `((id . ,id) (type . ,shape)
+                                          (coordinates
+                                           . [((x . ,x1) (y . ,y1))
+                                              ((x . ,x2) (y . ,y2))])))))))))
+
+(defconst test-nq-365-diff--file
+  (concat "* Midterm\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 41\n:END:\n"
+          "** Click the heart.\n:PROPERTIES:\n:CANVAS_ITEM_ID: 9\n"
+          ":TYPE: hot-spot\n:POINTS: 1\n:HOTSPOTS_COUNT: 1\n"
+          ":HOTSPOTS: square 0.3156,0.1956 0.7407,0.8362\n:END:\n")
+  "A new-quizzes.org holding one pulled hot-spot item.")
+
+(defun test-nq-365-diff--fields (item &optional content)
+  "Return the CHANGED fields of item 9 in CONTENT against remote ITEM.
+CONTENT defaults to `test-nq-365-diff--file'."
+  (test-nq-313--with-file (or content test-nq-365-diff--file)
+    (let ((child (test-nq-322--child (list (cons "41" (vector item))))))
+      (plist-get (test-nq-322--by-id (plist-get child :divergences) "9")
+                 :fields))))
+
+(describe "hot-spot regions in the drift report (issue #365)"
+  (it "agrees when Canvas holds the regions the file records"
+    (expect (test-nq-365-diff--fields
+             (test-nq-365-diff--item '(("square" 0.3156 0.1956 0.7407 0.8362))))
+            :to-be nil))
+
+  (it "reads float noise in a coordinate as no change"
+    (expect (test-nq-365-diff--fields
+             (test-nq-365-diff--item
+              '(("square" 0.31560000000001 0.19559999999 0.7407 0.8362))))
+            :to-be nil))
+
+  (it "reports a region moved in the web UI as a CHANGED field"
+    (expect (test-nq-365-diff--fields
+             (test-nq-365-diff--item '(("square" 0.25 0.1956 0.7407 0.8362))))
+            :to-equal '(("HOTSPOTS" "square 0.3156,0.1956 0.7407,0.8362"
+                         "square 0.25,0.1956 0.7407,0.8362"))))
+
+  (it "reports a region added in the web UI in the count and the regions"
+    (expect (test-nq-365-diff--fields
+             (test-nq-365-diff--item '(("square" 0.3156 0.1956 0.7407 0.8362)
+                                       ("oval" 0.1 0.1 0.2 0.2))))
+            :to-equal '(("HOTSPOTS_COUNT" "1" "2")
+                        ("HOTSPOTS" "square 0.3156,0.1956 0.7407,0.8362"
+                         "square 0.3156,0.1956 0.7407,0.8362; oval 0.1,0.1 0.2,0.2"))))
+
+  (it "reports regions a heading pulled before #365 does not record yet"
+    (expect (test-nq-365-diff--fields
+             (test-nq-365-diff--item '(("square" 0.3156 0.1956 0.7407 0.8362)))
+             (concat "* Midterm\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 41\n:END:\n"
+                     "** Click the heart.\n:PROPERTIES:\n:CANVAS_ITEM_ID: 9\n"
+                     ":TYPE: hot-spot\n:POINTS: 1\n:END:\n"))
+            :to-equal '(("HOTSPOTS_COUNT" "(unset)" "1")
+                        ("HOTSPOTS" "(unset)"
+                         "square 0.3156,0.1956 0.7407,0.8362"))))
+
+  (it "compares nothing a reply without the regions cannot say"
+    (let ((item (test-nq-365-diff--item '(("square" 0.25 0.25 0.5 0.5)))))
+      (setf (alist-get 'entry item)
+            (assq-delete-all 'interaction_data
+                             (assq-delete-all 'scoring_data
+                                              (copy-alist (alist-get 'entry item)))))
+      (expect (test-nq-365-diff--fields item) :to-be nil)))
+
+  (it "compares no regions on an item of another type"
+    (expect (test-nq-365-diff--fields
+             '((id . "9") (points_possible . 1)
+               (entry (item_body . "<p>Click the heart.</p>")
+                      (interaction_type_slug . "choice")
+                      (scoring_data (value . "x")))))
+            :to-equal '(("TYPE" "hot-spot" "choice")))))
+
 (provide 'org-canvas-diff-test)
 ;;; org-canvas-diff-test.el ends here
