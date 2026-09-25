@@ -129,6 +129,70 @@ KIND names the blocked primitive; DETAIL is safe-to-print context
                 (apply orig program args)))
             '((name . test-org-canvas-network-guard)))
 
+;;;; Course Globals Guard
+;;
+;; `org-canvas-init' and `org-canvas-activate-course' `setq' the course
+;; settings, and the directory watcher then `set's every registered
+;; file-path variable from the new directory.  The `org-canvas-init'
+;; specs used to leave all of it behind: two answered every
+;; `y-or-n-p' with yes, "adopted course?" included, so every spec that
+;; ran after them started read-only and a write outside
+;; `with-org-canvas-test-config' was refused only in the full suite
+;; (issue #353).  A spec that runs such a command wraps it in
+;; `with-org-canvas-course-globals'; the check below fails any spec
+;; that leaves one of these variables changed, and restores it so the
+;; next spec starts clean.
+
+(require 'buttercup)
+
+(defconst test-org-canvas-course-globals
+  '(org-canvas-directory org-canvas-base-url org-canvas-api-token
+    org-canvas-course-id org-canvas-read-only
+    org-canvas--active-course-name)
+  "Course settings a spec must leave as it found them.")
+
+(defun test-org-canvas-course-global-vars ()
+  "Return the course globals and every registered file-path variable."
+  (append test-org-canvas-course-globals
+          (mapcar #'car org-canvas--file-var-registry)))
+
+(defmacro with-org-canvas-course-globals (&rest body)
+  "Run BODY with the course globals bound to their current values.
+A `setq' in BODY, such as `org-canvas-init' makes, then changes only
+this binding, and the file-path variables the directory watcher
+recomputes are bound too, so nothing survives BODY."
+  (declare (indent 0))
+  (let ((vars (make-symbol "vars")))
+    `(let ((,vars (test-org-canvas-course-global-vars)))
+       (cl-progv ,vars (mapcar #'symbol-value ,vars)
+         ,@body))))
+
+(defvar test-org-canvas--course-globals-baseline
+  (mapcar (lambda (var) (cons var (default-value var)))
+          (test-org-canvas-course-global-vars))
+  "Each course global's value when the suite started, as (VAR . VALUE).")
+
+(defun test-org-canvas--check-course-globals ()
+  "Fail the current spec when it left a course global changed.
+The value is put back first, so one leaking spec fails alone rather
+than every spec that runs after it."
+  (let (changed)
+    (pcase-dolist (`(,var . ,value) test-org-canvas--course-globals-baseline)
+      (unless (equal (default-value var) value)
+        (push (list var (default-value var)) changed)
+        (set-default var value)))
+    (when changed
+      (buttercup-fail "Spec left course globals changed: %S (issue #353)"
+                      (nreverse changed)))))
+
+;; Buttercup has no suite-wide `after-each'; its runner appends each
+;; suite's own to this variable's top-level value, so a function here
+;; runs after every spec's own cleanup.
+(unless (boundp 'buttercup--after-each)
+  (error "Buttercup no longer has `buttercup--after-each'; move the guard"))
+(add-to-list 'buttercup--after-each #'test-org-canvas--check-course-globals
+             t)
+
 ;;;; Test Configuration
 
 (defvar test-org-canvas-emacs-30-p (>= emacs-major-version 30)
@@ -207,9 +271,9 @@ Use to assert request body structure, not merely that a call happened."
 
 (defmacro with-org-canvas-test-config (&rest body)
   "Execute BODY with test Canvas configuration.
-`org-canvas-read-only' is bound to nil so a spec that exercises writing
-is never refused by a value another spec left behind — `org-canvas-init'
-sets it globally, as it does the course id beside it (issue #163)."
+The course is writable (`org-canvas-read-only' nil) whatever the
+caller has bound, since the specs written under this macro exercise
+pushes (issue #163)."
   (declare (indent 0))
   `(let ((org-canvas-base-url test-org-canvas-base-url)
          (org-canvas-api-token test-org-canvas-api-token)

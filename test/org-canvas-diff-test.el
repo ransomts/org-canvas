@@ -1495,12 +1495,10 @@ EDIT is passed on.  A `user-error' comes back as (error MESSAGE)."
 
 (defmacro test-org-canvas--with-snapshot-dir (&rest body)
   "Run BODY with the delete snapshots going to a fresh temporary directory.
-The directory is bound to `snapshot-dir' and removed afterwards.  The
-course is writable whatever an earlier spec left behind (issue #163)."
+The directory is bound to `snapshot-dir' and removed afterwards."
   (declare (indent 0))
   `(let* ((snapshot-dir (make-temp-file "diff-snapshots-" t))
           (org-canvas-diff-delete-snapshot-directory snapshot-dir)
-          (org-canvas-read-only nil)
           (test-org-canvas--diff-delete-requests nil))
      (ignore snapshot-dir)
      (unwind-protect (progn ,@body)

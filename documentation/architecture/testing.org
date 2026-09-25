@@ -72,7 +72,17 @@ function that captures calls and returns canned responses.
 ** with-org-canvas-test-config
 
 Binds all Canvas configuration variables (base URL, token, course ID,
-timeout) for the duration of the body.
+timeout) for the duration of the body, and makes the course writable
+(=org-canvas-read-only= nil).
+
+** with-org-canvas-course-globals
+
+Binds the course settings =org-canvas-init= and
+=org-canvas-activate-course= =setq= (directory, base URL, token, course
+ID, read-only flag, active course name) and every registered file-path
+variable to their current values, so the command's assignments land on
+the spec's binding.  Wrap any spec that runs either command in it; see
+"Test Isolation: Specs Leave the Course Settings Alone".
 
 ** with-mock-api
 
@@ -339,6 +349,40 @@ Integration tests must not assert on =*org-canvas-log*= buffer contents — earl
 - *No =(require 'buttercup)=.*  Three files had none, so =describe= was void when they loaded first.
 
 =scripts/test-each-file.sh= runs every file alone and lists the ones that fail; CI runs it as the =isolation= check on Emacs 30.1, in three shards (=--shard K/N=), each about a minute.  Run it after touching test-helper.el or any spec that sets global state.
+
+** Test Isolation: Specs Leave the Course Settings Alone (issue #353)
+
+The =org-canvas-init= specs ran the real wizard, which =setq=s the
+directory, base URL, token, course id and =org-canvas-read-only=, and
+the directory watcher then =set=s every registered file-path variable.
+Nothing put them back.  Two of the specs answered every =y-or-n-p= with
+yes, "is this a course you own?" among them, so each spec after them
+started on a read-only course: a write outside
+=with-org-canvas-test-config= was refused only in the full suite, and
+whether a spec failed depended on file order and sharding.
+
+The init specs now run inside =with-org-canvas-course-globals=, which
+binds all of those with =cl-progv=, so a =setq= lands on the binding.
+The directory watcher reacts to that =set= too, but its recompute
+writes the file-path variables, which are bound as well, so nothing
+survives the spec.
+
+test-helper.el also guards it.  At load it records the default value of
+each variable =test-org-canvas-course-global-vars= names (the course
+settings above plus the file-path registry), and
+=test-org-canvas--check-course-globals= runs after every spec: a
+variable whose default value differs fails the spec, naming the
+variable and the value left, and is put back so the failure stays with
+the spec that leaked.  Buttercup has no suite-wide =after-each=, so the
+function sits on the top-level value of =buttercup--after-each=, behind
+which the runner puts each suite's own hooks; a spec's own =after-each=
+therefore runs first and may restore what its =before-each= set.
+test-helper.el signals at load if buttercup ever drops that variable,
+rather than let the guard go quiet.
+
+The guard's first run found the init specs and one files describe that
+=setq=d =org-canvas-files-file= in a =before-each=; the describe now
+saves and restores it.
 
 * Emacs 29 vs 30 Compatibility
 

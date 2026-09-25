@@ -342,10 +342,15 @@
 ;;;; Stage 1: Parse Entry
 
 (describe "org-canvas--file-parse-entry"
+  :var (saved-files-file)
   (before-each (test-org-canvas-reset-file-caches))
 
   (before-each
-    (setq org-canvas-files-file "/tmp/test-files.org"))
+    (setq saved-files-file org-canvas-files-file
+          org-canvas-files-file "/tmp/test-files.org"))
+
+  (after-each
+    (setq org-canvas-files-file saved-files-file))
 
   (it "returns nil for folder-only headings"
     (with-temp-org-buffer

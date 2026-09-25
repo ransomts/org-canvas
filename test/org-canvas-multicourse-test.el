@@ -190,30 +190,31 @@
 
 (describe "org-canvas-init course registration"
   (it "registers course when user provides a name"
-    (let* ((temp-dir (make-temp-file "init-register-" t))
-           (org-canvas-courses nil)
-           (org-canvas--active-course-name nil))
-      (unwind-protect
-          (cl-letf (((symbol-function 'read-directory-name)
-                     (lambda (&rest _) temp-dir))
-                    ((symbol-function 'read-string)
-                     (lambda (prompt &rest _)
-                       (cond
-                        ((string-match-p "^Canvas base" prompt) "https://canvas.example.com")
-                        ((string-match-p "^Course ID" prompt) "12345")
-                        ((string-match-p "Register" prompt) "My Course")
-                        (t ""))))
-                    ((symbol-function 'read-passwd)
-                     (lambda (&rest _) "valid-token"))
-                    ((symbol-function 'org-canvas-api-request)
-                     (lambda (&rest _) '((name . "Test Course"))))
-                    ((symbol-function 'y-or-n-p) (lambda (_) nil))
-                    ((symbol-function 'customize-save-variable)
-                     (lambda (_sym val) (setq org-canvas-courses val))))
-            (org-canvas-init)
-            (expect org-canvas--active-course-name :to-equal "My Course")
-            (expect (assoc "My Course" org-canvas-courses) :to-be-truthy))
-        (delete-directory temp-dir t)))))
+      (with-org-canvas-course-globals
+        (let* ((temp-dir (make-temp-file "init-register-" t))
+               (org-canvas-courses nil)
+               (org-canvas--active-course-name nil))
+          (unwind-protect
+              (cl-letf (((symbol-function 'read-directory-name)
+                         (lambda (&rest _) temp-dir))
+                        ((symbol-function 'read-string)
+                         (lambda (prompt &rest _)
+                           (cond
+                            ((string-match-p "^Canvas base" prompt) "https://canvas.example.com")
+                            ((string-match-p "^Course ID" prompt) "12345")
+                            ((string-match-p "Register" prompt) "My Course")
+                            (t ""))))
+                        ((symbol-function 'read-passwd)
+                         (lambda (&rest _) "valid-token"))
+                        ((symbol-function 'org-canvas-api-request)
+                         (lambda (&rest _) '((name . "Test Course"))))
+                        ((symbol-function 'y-or-n-p) (lambda (_) nil))
+                        ((symbol-function 'customize-save-variable)
+                         (lambda (_sym val) (setq org-canvas-courses val))))
+                (org-canvas-init)
+                (expect org-canvas--active-course-name :to-equal "My Course")
+                (expect (assoc "My Course" org-canvas-courses) :to-be-truthy))
+            (delete-directory temp-dir t))))))
 
 ;;;; org-canvas-status active course display
 
