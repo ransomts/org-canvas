@@ -1,0 +1,8 @@
+* Added
+- #346 A pull takes its heading by name, as a push does since #287:
+  =org-canvas-pull-assignment=, =org-canvas-pull-page= and the rest, one
+  for every feature with a single-item pull, replace the heading a title
+  or (with ='canvas-id=) a stamp names with Canvas's version, never ask
+  to confirm, and save the file; =org-canvas-pull-headings= takes a list
+  and returns each heading's =:outcome=.  A batch script no longer
+  redefines =org-canvas--confirm= to accept one Canvas-side edit.

@@ -14,8 +14,6 @@
 (require 'org-canvas-core)
 (require 'org-canvas-diff)
 
-(declare-function org-canvas--pull-at-point-1 "org-canvas" (feature id title))
-
 ;;;; Adopt One Heading
 ;;
 ;; The drift report's UNCLAIMED row names a remote item whose title an

@@ -3103,6 +3103,7 @@ Each content type can be pulled individually:
 |--------------------------------------+---------------------------------------|
 | =org-canvas-pull-all=                  | Pull entire course                    |
 | =org-canvas-pull-at-point=             | Refresh the heading at point          |
+| =org-canvas-pull-headings=             | Refresh a list of named headings, without asking |
 | =org-canvas-pull-settings=             | Pull course settings and tabs         |
 | =org-canvas-pull-sections=             | Pull course sections                  |
 | =org-canvas-pull-grading-periods=      | Pull grading periods (read-only)      |
@@ -3141,6 +3142,37 @@ remote, and the now-stale =PAYLOAD_HASH= dropped so the next sync does not
 report drift that is no longer there.  It is the same code the conflict
 prompt's "pull" option runs, which until now was reachable only by starting a
 sync.  Local edits to that heading are discarded, so it asks first.
+
+From Lisp or a batch Emacs, name the heading instead: every feature with a
+single-item pull has a pull by heading, the twin of its sync by heading (see
+[[*Pushing a Heading from Lisp][Pushing a Heading from Lisp]]):
+=org-canvas-pull-assignment=, =-page=, =-file=, =-discussion=, =-announcement=,
+=-module=, =-rubric=, =-quiz=, =-new-quiz=, =-assignment-group=,
+=-group-category=, =-calendar-event= and =-grading-scheme= (outcomes have no
+single-item pull).  Each takes the heading's exact title in the feature's file,
+or, with =canvas-id= as the second argument, its stamp; finds the one heading
+that matches; replaces it with Canvas's version exactly as
+=org-canvas-pull-at-point= does, without asking, since naming the heading is
+the answer; and saves the file.  A title that matches no heading or several,
+or a heading with no stamp, is an error before anything is read.  The value is
+a plist whose =:outcome= is =pulled=, or =dry-run= with =org-canvas--dry-run=
+bound, when nothing is read or written.  These singular names never meet the
+whole-file pulls, which are plural (=org-canvas-pull-assignments=).
+
+#+begin_src elisp
+(org-canvas-pull-assignment "Attendance 01")          ; by exact title
+(org-canvas-pull-page "week-05-objectives" 'canvas-id) ; by stamp
+#+end_src
+
+=org-canvas-pull-headings= takes a list written as =org-canvas-sync-headings=
+takes one, resolves every feature before the first pull, reports each heading
+and a closing count, and returns one plist per entry (=:feature=, =:target=,
+=:outcome=, and =:error= on a failure):
+
+#+begin_src sh
+emacs --batch -l ~/.emacs.d/init.el \
+  --eval '(org-canvas-pull-headings (quote ((assignment . "Attendance 01"))))'
+#+end_src
 
 The command works in any course file -- it finds the feature from the file
 you are in.  A content type with no single-item pull (outcomes) says so and

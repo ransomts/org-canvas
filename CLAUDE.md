@@ -195,6 +195,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 - a heading opens its Canvas page from `:web-pages` rules its module declares (#292)
 - a New Quiz pull writes its instructions where the push reads them, and adoption stamps `assignment_id` first (#309)
 - a New Quiz pulls whole through a pull-only entry (`org-canvas-register-pull-feature`) kept out of the feature registry (#297)
+- a pull takes its heading by name too, with no prompt, through the at-point pull's own pieces (#346)
 - a push takes its heading by name and the at-point runtime records its outcome (#287)
 - a refresh reports what changed and keeps a departed student's heading for the work under it (#282)
 - a re-pull keeps typed scores and the summary table alone still asks (#281)
@@ -264,7 +265,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 
 ### Naming
 - Private functions: `org-canvas--function-name` (double dash); public: `org-canvas-function-name`
-- Entry points: `org-canvas-sync-{feature}` (push), `org-canvas-pull-{feature}` (pull), `org-canvas-sync-{singular}-at-point`, `org-canvas-sync-{singular}` (one heading by exact title or, with `'canvas-id`, by stamp — the at-point runtime at that position; `org-canvas-sync-headings` takes a list, #287), `org-canvas-delete-all-{feature}`, `org-canvas-delete-{feature}-at-point`, `org-canvas-prune-{feature}` (generated with delete-all: deletes Canvas items whose ID is absent from the org file, after confirmation)
+- Entry points: `org-canvas-sync-{feature}` (push), `org-canvas-pull-{feature}` (pull), `org-canvas-sync-{singular}-at-point`, `org-canvas-sync-{singular}` (one heading by exact title or, with `'canvas-id`, by stamp — the at-point runtime at that position; `org-canvas-sync-headings` takes a list, #287), `org-canvas-pull-{singular}` (its pull twin: Canvas's version of one named heading, no prompt, file saved; `org-canvas-pull-headings` takes a list, #346), `org-canvas-delete-all-{feature}`, `org-canvas-delete-{feature}-at-point`, `org-canvas-prune-{feature}` (generated with delete-all: deletes Canvas items whose ID is absent from the org file, after confirmation)
 
 ### Logging
 - Use the in-tree logger in `lisp/org-canvas-core-log.el`: `org-canvas--log-{trace,debug,info,warning,error}`, `org-canvas--logger-{set-level,set-file,set-handlers}`; levels trace, debug, info, warning, error, fatal
