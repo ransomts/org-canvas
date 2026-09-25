@@ -340,14 +340,12 @@ What would happen?
                      :outcome nil :text "" :pom nil))))
       (expect (plist-get result :title) :to-equal "Question")))
 
-  (it "validates type with fallback to choice"
-    (spy-on 'org-canvas--log-warning)
-    (let* ((result (org-canvas--new-quiz-item-transform-props
-                    '(:title-raw "Q" :canvas-id nil
-                      :quiz-assignment-id "42" :type-raw "invalid_type"
-                      :points-raw nil :outcome nil :text "" :pom nil)))
-           (result-type (plist-get result :type)))
-      (expect result-type :to-equal "choice")))
+  (it "refuses an unknown type instead of falling back to choice (#340)"
+    (expect (org-canvas--new-quiz-item-transform-props
+             '(:title-raw "Q" :canvas-id nil
+               :quiz-assignment-id "42" :type-raw "invalid_type"
+               :points-raw nil :outcome nil :text "" :pom nil))
+            :to-throw 'org-canvas-validation-error))
 
   (it "defaults type to choice when absent"
     (let* ((result (org-canvas--new-quiz-item-transform-props
@@ -788,11 +786,13 @@ Consider the following expression.
 "
      (search-forward "Question")
      (org-back-to-heading)
-     (spy-on 'org-canvas--log-warning)
-     (let* ((data (org-canvas--new-quiz-item-parse-entry "42"))
-            (result-type (plist-get data :type)))
-       ;; Should fall back to default "choice"
-       (expect result-type :to-equal "choice")))))
+     ;; An unknown TYPE fails the item rather than pushing a choice
+     ;; item with no answers (issue #340).
+     (let ((err (condition-case e
+                    (progn (org-canvas--new-quiz-item-parse-entry "42") nil)
+                  (org-canvas-validation-error e))))
+       (expect err :to-be-truthy)
+       (expect (error-message-string err) :to-match "invalid_type")))))
 
 ;;;; Answers Stay Out of the Prompt (issue #335)
 
@@ -899,6 +899,119 @@ Put these in order.
                   (org-canvas-validation-error e))))
        (expect err :to-be-truthy)
        (expect (error-message-string err) :to-match "short-answer")))))
+
+;;;; An unknown or pull-only TYPE fails its item (issue #340)
+
+(defun test-org-canvas-new-quiz-item-error (q-type)
+  "Return the error parsing an item of Q-TYPE signals, or nil."
+  (with-temp-org-buffer
+   (format "* Quiz\n** Item\n:PROPERTIES:\n:TYPE: %s\n:END:\n\nA prompt.\n"
+           q-type)
+   (search-forward "Item")
+   (org-back-to-heading t)
+   (condition-case e
+       (progn (org-canvas--new-quiz-item-parse-entry "42") nil)
+     (org-canvas-validation-error e))))
+
+(defun test-org-canvas-new-quiz-item-issues (q-type)
+  "Return the validation issues of a New Quiz item of Q-TYPE."
+  (with-temp-org-buffer
+   (format "* Quiz\n** Item\n:PROPERTIES:\n:TYPE: %s\n:END:\n" q-type)
+   (search-forward "Item")
+   (org-back-to-heading t)
+   (let ((spec (cl-find "New Quiz Items" (org-canvas--validate-specs)
+                        :key (lambda (s) (plist-get s :label))
+                        :test #'string=)))
+     (org-canvas--validate-entry-at-marker
+      (plist-get spec :properties) nil (plist-get spec :structural-fn)
+      (buffer-file-name)))))
+
+(describe "a New Quiz item whose TYPE a push cannot build (issue #340)"
+  (it "refuses a mistyped TYPE, naming the valid ones"
+    (let ((err (test-org-canvas-new-quiz-item-error "mutliple-choice")))
+      (expect err :to-be-truthy)
+      (expect (error-message-string err) :to-match "mutliple-choice")
+      (expect (error-message-string err) :to-match "multi-answer")))
+
+  (it "refuses a hot-spot item, pointing at Canvas"
+    (let ((err (test-org-canvas-new-quiz-item-error "hot-spot")))
+      (expect err :to-be-truthy)
+      (expect (error-message-string err) :to-match "edit the item in Canvas")))
+
+  (it "still reads an item with no TYPE as a choice item"
+    (with-temp-org-buffer
+     "* Quiz\n** Item\n\nA prompt.\n\n- [X] Yes\n- [ ] No\n"
+     (search-forward "Item")
+     (org-back-to-heading t)
+     (let* ((data (org-canvas--new-quiz-item-parse-entry "42"))
+            (result-type (plist-get data :type)))
+       (expect result-type :to-equal "choice"))))
+
+  (it "reports a mistyped TYPE as an error when validating"
+    (let* ((issues (test-org-canvas-new-quiz-item-issues "mutliple-choice"))
+           (issue (car issues)))
+      (expect (length issues) :to-equal 1)
+      (expect (plist-get issue :severity) :to-equal 'error)))
+
+  (it "warns, push-only, that a pulled hot-spot item is not pushed"
+    (let* ((issues (test-org-canvas-new-quiz-item-issues "hot-spot"))
+           (issue (car issues)))
+      (expect (length issues) :to-equal 1)
+      (expect (plist-get issue :severity) :to-equal 'warning)
+      (expect (plist-get issue :push-only) :to-be t)
+      (expect (plist-get issue :message) :to-match "not pushed")))
+
+  (it "has nothing to say about a supported TYPE"
+    (expect (test-org-canvas-new-quiz-item-issues "choice") :to-be nil))
+
+  (it "pulls a hot-spot item's TYPE as hot-spot"
+    (expect (org-canvas--new-quiz-slug-to-type "hot-spot")
+            :to-equal "hot-spot"))
+
+  (it "fails only the refused items and syncs the rest of the quiz"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:CANVAS_ASSIGNMENT_ID: 42
+:END:
+
+** Good
+:PROPERTIES:
+:TYPE: choice
+:END:
+
+- [X] Yes
+- [ ] No
+
+** Typo
+:PROPERTIES:
+:TYPE: mutliple-choice
+:END:
+
+- [X] Yes
+
+** Region
+:PROPERTIES:
+:TYPE: hot-spot
+:CANVAS_ITEM_ID: 9
+:END:
+
+Click the heart.
+"
+     (org-back-to-heading)
+     (with-org-canvas-test-config
+       (let ((writes 0))
+         (cl-letf (((symbol-function 'org-canvas-api-request)
+                    (lambda (method _u &rest _)
+                      (if (eq method 'GET)
+                          []
+                        (setq writes (1+ writes))
+                        '((id . "item-1"))))))
+           (let ((results (org-canvas--sync-new-quiz-items
+                           (point-marker) "42")))
+             (expect (car results) :to-equal 1)
+             (expect (cdr results) :to-equal 2)
+             (expect writes :to-equal 1))))))))
 
 ;;;; A prompt-only item keeps its lists (issue #337)
 
@@ -2522,11 +2635,15 @@ Put these in order.
 
 (describe "org-canvas--valid-new-quiz-types"
   (it "contains all expected types"
-    (expect (length org-canvas--valid-new-quiz-types) :to-equal 11)
+    (expect (length org-canvas--valid-new-quiz-types) :to-equal 10)
     (expect (member "choice" org-canvas--valid-new-quiz-types) :to-be-truthy)
     (expect (member "true-false" org-canvas--valid-new-quiz-types) :to-be-truthy)
-    (expect (member "essay" org-canvas--valid-new-quiz-types) :to-be-truthy)
-    (expect (member "hot-spot" org-canvas--valid-new-quiz-types) :to-be-truthy)))
+    (expect (member "essay" org-canvas--valid-new-quiz-types) :to-be-truthy))
+
+  (it "leave hot-spot out, as a type only a pull writes (#340)"
+    (expect (member "hot-spot" org-canvas--valid-new-quiz-types) :to-be nil)
+    (expect (member "hot-spot" org-canvas--new-quiz-pull-only-types)
+            :to-be-truthy)))
 
 (describe "org-canvas--valid-new-quiz-scoring-policies"
   (it "contains valid scoring policies"

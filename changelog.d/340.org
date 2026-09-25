@@ -1,0 +1,12 @@
+* Fixed
+- #340 A New Quiz item whose =TYPE= is misspelt or unknown, such as
+  =mutliple-choice=, is refused by a sync with a message naming the
+  valid types, instead of being pushed as a choice question with no
+  answers.  The rest of the quiz's items still sync.  An item with no
+  =TYPE= is still a choice question.
+- #340 A =hot-spot= New Quiz item is no longer pushed.  Its answer
+  regions cannot be written in Org, and a push sent the prompt alone,
+  which would strip the regions of an item made in Canvas.  A pull
+  still writes =TYPE: hot-spot=; validation accepts it and warns that
+  the item is not pushed, and a sync refuses it.  Edit hot-spot items
+  in Canvas.  The manual no longer claims coordinate support.

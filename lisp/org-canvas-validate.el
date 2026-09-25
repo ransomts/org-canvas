@@ -967,6 +967,23 @@ into skipped module items linking the page.  LOC is a
              'error loc "FRONT_PAGE"
              "FRONT_PAGE: true requires PUBLISHED: true — Canvas rejects an unpublished front page (a published page in an unpublished course is still invisible to students)")))))
 
+(defun org-canvas--validate-new-quiz-item-type (loc)
+  "Warn when the New Quiz item at point has a TYPE a push refuses.
+Such a type is in `org-canvas--new-quiz-pull-only-types': a pull
+writes it for an item made in Canvas, so the enum check accepts it,
+but the push cannot build the item and refuses it (issue #340).
+Push-only, since a read-only course never makes that push.  LOC is a
+\(:file :line :heading) plist."
+  (let ((q-type (org-entry-get (point) "TYPE")))
+    (when (member q-type org-canvas--new-quiz-pull-only-types)
+      (list (org-canvas--validate-push-only
+             (org-canvas--validate-make-issue
+              'warning loc "TYPE"
+              (format (concat "TYPE %s is not pushed: its image regions "
+                              "cannot be built from Org, so a sync refuses "
+                              "the item; edit it in Canvas")
+                      q-type)))))))
+
 (defun org-canvas--validate-settings-structure (loc)
   "Warn about a sub-heading of the course heading that is not `Navigation'.
 The syllabus is the text above the first sub-heading and `** Navigation'

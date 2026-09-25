@@ -38,8 +38,8 @@
 ;;   matching         - left = right pairs
 ;;   ordering         - Numbered list: 1. item
 ;;   categorization   - Category: item1, item2
-;;   fill_in_the_blank - [X] for each blank answer
-;;   hot_spot         - Coordinate data (advanced)
+;;   fill_in_the_blank - Not supported; use short_answer (issue #337)
+;;   hot_spot         - Pulled only; a push refuses it (issue #340)
 ;;
 ;; API NOTES
 ;; =========
@@ -94,11 +94,13 @@
   :label "New Quiz Items"
   :file-var 'org-canvas-new-quizzes-file
   :query "LEVEL=2"
+  :structural-fn #'org-canvas--validate-new-quiz-item-type
   :properties
   `((:org-prop "POINTS" :data-key :points :type number
      :doc "Points for this question")
     (:org-prop "TYPE" :data-key :type :type enum
      :values ,org-canvas--valid-new-quiz-types
+     :read-only-values ,org-canvas--new-quiz-pull-only-types
      :doc "Question type (see below)")
     (:org-prop "OUTCOME" :data-key :outcome :type link
      :target-file org-canvas-outcomes-file :link-id-property "CANVAS_ID"
