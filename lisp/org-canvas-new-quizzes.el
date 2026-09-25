@@ -70,22 +70,40 @@
 ;; New Quizzes stay out of the feature registry (see the pull entry
 ;; below), so a delete learns their id stamp here (#331).
 (org-canvas-register-id-property "CANVAS_ASSIGNMENT_ID")
+(defun org-canvas--new-quiz-remote-carries (field)
+  "Return a `:compare-p' predicate true of a New Quiz reply holding FIELD.
+The drift report compares a New Quiz setting only where the quiz
+service's reply holds it under the key the push sends and the pull
+reads (issue #313).  That shape has not been checked against a live
+reply, and a reply that files the setting elsewhere would otherwise
+read as unset and flag every quiz on every run (Hard Rule 18)."
+  (lambda (_pom item) (assq field item)))
+
 (org-canvas-register-properties "new-quizzes"
   :duplicate-titles t
   :label "New Quizzes"
   :file-var 'org-canvas-new-quizzes-file
   :query "LEVEL=1"
+  ;; The instructions are the text above the first item (#309); the
+  ;; drift report compares them as text (#313).
+  :body-api-key "instructions"
+  :body-fn 'org-canvas--new-quiz-body-html
   :properties
   `((:org-prop "TIME_LIMIT" :data-key :time_limit :type number
+     :compare-p ,(org-canvas--new-quiz-remote-carries 'time_limit)
      :doc "Time limit in minutes")
     (:org-prop "SHUFFLE_ANSWERS" :data-key :shuffle_answers :type boolean
+     :compare-p ,(org-canvas--new-quiz-remote-carries 'shuffle_answers)
      :doc "Randomize answer order")
     (:org-prop "ONE_AT_A_TIME" :data-key :one_at_a_time :type boolean
+     :compare-p ,(org-canvas--new-quiz-remote-carries 'one_at_a_time)
      :doc "Show one question per page")
     (:org-prop "ALLOWED_ATTEMPTS" :data-key :allowed_attempts :type number
+     :compare-p ,(org-canvas--new-quiz-remote-carries 'allowed_attempts)
      :doc "Max attempts")
     (:org-prop "SCORING_POLICY" :data-key :scoring_policy :type enum
      :values ,org-canvas--valid-new-quiz-scoring-policies
+     :compare-p ,(org-canvas--new-quiz-remote-carries 'scoring_policy)
      :doc "Which attempt's score to keep across multiple attempts")
     (:org-prop "GROUP" :data-key :assignment_group_id :type link
      :target-file org-canvas-assignment-groups-file :link-id-property "CANVAS_ID"
@@ -210,6 +228,17 @@ Reads raw properties, transforms them, and exports description to HTML."
                  (org-canvas--org-to-html-string body-text)))
     (plist-put data :body-text nil)
     data))
+
+(defun org-canvas--new-quiz-body-html ()
+  "Return the HTML the New Quiz at point would push as its instructions.
+The drift report's body extractor, named by the registry's `:body-fn'
+\(issue #313): the text above the first item, exported as
+`org-canvas--new-quiz-parse-entry' exports it, so the report compares
+what a push would send.  Returns \"\" for a quiz with no text."
+  (let ((text (org-canvas--new-quiz-parse-body-text)))
+    (if (string-empty-p text)
+        ""
+      (org-canvas--org-to-html-string text))))
 
 ;;;; Quiz Build Payload
 
@@ -741,9 +770,10 @@ CANVAS_UPDATED_AT and drops PAYLOAD_HASH."
   (save-excursion
     (org-canvas--new-quiz-pull-entry quiz pos)))
 
-;; New Quizzes stay out of the feature registry: the drift report, the
-;; orphan scan and prune would list them at the course API's endpoint.
-;; This entry is read only by pull-at-point and adopt-at-point (#297).
+;; New Quizzes stay out of the feature registry: the orphan scan and
+;; prune would list them at the course API's endpoint.  This entry is
+;; read by pull-at-point and adopt-at-point (#297), and, through
+;; `:drift-report', by the drift report, which lists it here (#313).
 (org-canvas-register-pull-feature
  :name "New Quizzes"
  :file-var 'org-canvas-new-quizzes-file
@@ -755,7 +785,8 @@ CANVAS_UPDATED_AT and drops PAYLOAD_HASH."
  :list-url-fn (lambda () (org-canvas--new-quiz-api-endpoint "quizzes"))
  :item-url-fn (lambda (id) (org-canvas--new-quiz-api-endpoint "quizzes/%s" id))
  :pull-item-fn #'org-canvas--new-quiz-pull-item
- :pull-whole-entry t)
+ :pull-whole-entry t
+ :drift-report t)
 
 ;;;###autoload
 (defun org-canvas-pull-new-quizzes ()

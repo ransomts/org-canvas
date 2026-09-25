@@ -2737,14 +2737,30 @@ section header and a footer line, and do not make =org-canvas-diff-batch=
 exit non-zero.  They are listed because anything that stores the old item id
 (a completion requirement, a link to the item) loses it on the next sync.
 
+New Quizzes are compared in a section of their own, *New Quizzes*, listed
+from the New Quizzes service rather than the course API (#313).  A quiz is
+paired by its =CANVAS_ASSIGNMENT_ID=, so the section has the same rows as any
+other: CHANGED for a setting or the instructions (the text above the first
+item) that differ, MISSING, EXTRA for a quiz built in the web UI, UNCLAIMED,
+and PENDING for an unpushed heading.  A setting is compared only when the
+service's reply carries it: which of them it reports has not been checked on
+a live course, and a setting it files elsewhere would otherwise read as unset
+on every quiz.  The items under a quiz are not compared yet.  Every New Quiz
+is also an assignment, which =assignments.org= does not claim, so the
+Assignments section leaves out the assignments the New Quizzes list holds
+and counts them in the "Not checked" footer line; when New Quizzes could not
+be listed they stay EXTRA rows under Assignments, as before.  Excluding
+="new quizzes"= in =org-canvas-diff-excluded-features= leaves the section
+out.  The orphan scan and prune still do not list New Quizzes.
+
 Every property a module registers is compared, so this covers =PUBLISHED=,
 points, due dates, group weights, drop rules and the rest without a separate
 list to maintain.  The body is compared too, for the modules that push one
-(assignments, pages, announcements, discussions, quizzes).  Canvas does not
+(assignments, pages, announcements, discussions, quizzes, New Quizzes).  Canvas does not
 hand back the HTML it was given -- it prepends a stylesheet link and
 normalizes whitespace and entities -- so the two sides are compared as the
 text a reader sees, tags dropped and entities decoded, and a difference is
-reported as =DESCRIPTION= (or =BODY=, =MESSAGE=) with a short excerpt of each
+reported as =DESCRIPTION= (or =BODY=, =MESSAGE=, =INSTRUCTIONS=) with a short excerpt of each
 side around the point where they part.  A change in markup alone is invisible
 here, which is the price of never reporting one a student cannot see.  The
 comparison exports the local body without resolving links or images, so it
@@ -2825,14 +2841,14 @@ something the keys act on:
 | Key     | On a row                | Effect                                                              |
 |---------+-------------------------+---------------------------------------------------------------------|
 | =RET=     | CHANGED, MISSING, UNCLAIMED, PENDING, RELOCATE | Open the course file with point on the heading |
-| =RET=     | EXTRA, MOVED            | Open the Canvas object in a browser, when the API said where it lives |
+| =RET=     | EXTRA, MOVED            | Open the Canvas object in a browser: where the API said it lives, or else the page its module names |
 | =b= / =B= | CHANGED, EXTRA, UNCLAIMED | Open the Canvas object's page / edit page in a browser (see [[*Opening a Heading on Canvas][Opening a Heading on Canvas]]) |
 | =a=       | EXTRA, UNCLAIMED, MOVED | Acknowledge the id in =org-canvas-diff-known-extras=, with an optional note |
 | =a=       | STALE-ACK               | Drop the acknowledgment                                             |
 | =a=       | CHANGED, no compared property differing | Adopt the Canvas timestamp as the heading's baseline (=org-canvas-diff-adopt-stamp=); refused when a property differs |
 | =k=       | EXTRA, UNCLAIMED, MOVED | Delete the remote object, after confirming; the question names an assignment's submissions and scores or a rubric's assignments, and the object's JSON is saved first (see [[*Deleting Rows in Batch][Deleting Rows in Batch]]) |
 | =p=       | CHANGED                 | Pull the Canvas version over the heading (=org-canvas-pull-at-point=, which asks first) |
-| =p=       | EXTRA (classic quizzes) | Pull the quiz, questions and all, into a new heading at the end of =quizzes.org=, after confirming |
+| =p=       | EXTRA (classic and New Quizzes) | Pull the quiz, questions or items and all, into a new heading at the end of =quizzes.org= or =new-quizzes.org=, after confirming |
 | =s=       | MOVED                   | Stamp the item id on the heading the row paired (=org-canvas-diff-stamp-move=); sends nothing |
 | =S=       | anywhere                | Stamp every MOVED row paired by content (=org-canvas-diff-stamp-moves=), after confirming |
 | =g=       | anywhere                | Run the report again                                                |
@@ -2892,9 +2908,9 @@ object is deleted at the URL =k= would use.  The rules:
   sync pairs with, so its selector comes back =not-extra=; one that names
   no row comes back =not-found=.
 - *Refused when it would take work with it.*  The object is read first.
-  An assignment with a submission or a score, and a rubric an assignment
-  grades with (read with =include[]=associations=), are =refused=, naming
-  why.  =:force t= deletes them anyway.  =k= runs the same checks and names
+  An assignment with a submission or a score (a New Quiz is checked as
+  its assignment), and a rubric an assignment grades with (read with
+  =include[]=associations=), are =refused=, naming why.  =:force t= deletes them anyway.  =k= runs the same checks and names
   what they find in its question instead of refusing.
 - *Snapshot first.*  Before each DELETE the object's JSON, as Canvas
   returned it, is written to =<time>-<feature>-<id>.json= under
@@ -3274,10 +3290,10 @@ above its first item) and every item under it,
 written the way =org-canvas-pull-new-quizzes= writes them, from the New
 Quizzes service rather than the course API, with the rest of
 =new-quizzes.org= left as it is.  Point may be on the quiz or on any of its
-items, and the quiz heading needs its =CANVAS_ASSIGNMENT_ID=.  New Quizzes do
-not appear in the drift report, so a New Quiz built in the web UI is taken in
-by writing a stub with its title and running =org-canvas-adopt-at-point= on
-it (below), or by stamping its =CANVAS_ASSIGNMENT_ID= and pulling.
+items, and the quiz heading needs its =CANVAS_ASSIGNMENT_ID=.  A New Quiz
+built in the web UI is an EXTRA row in the drift report's New Quizzes section
+(#313), and =p= on it writes the heading for you; a stub with its title and
+=org-canvas-adopt-at-point= on it (below) does the same from the file.
 
 ** Claiming an Unclaimed Item
 

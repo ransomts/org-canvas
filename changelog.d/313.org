@@ -1,0 +1,12 @@
+* Added
+- #313 The drift report has a New Quizzes section, listed from the New
+  Quizzes service: a quiz whose settings or instructions differ from
+  its heading is CHANGED, one built in the web UI is EXTRA (and =p= on
+  it pulls it into a new heading), and the MISSING, UNCLAIMED and
+  PENDING rows work as for any other content type.  A New Quiz's
+  assignment is no longer also reported as an extra assignment.
+  =RET= on an EXTRA row whose reply named no web address opens the
+  page the content type registers instead of refusing.
+  Deleting a New Quiz from its EXTRA row (=k=, or
+  =org-canvas-diff-delete-rows=) refuses one with a submission or a
+  score, as for an assignment, unless forced.

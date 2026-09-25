@@ -484,7 +484,9 @@ its :id-property; see `org-canvas--id-property-registry'."
 (defvar org-canvas--pull-feature-registry nil
   "Single-item pull entries for files the feature registry does not hold.
 Each is a feature plist, populated at load time by
-`org-canvas-register-pull-feature'.")
+`org-canvas-register-pull-feature'.  Read by the single-item pull and
+adoption, and by the drift report for an entry declaring
+`:drift-report' (issue #313).")
 
 (defun org-canvas-register-pull-feature (&rest plist)
   "Register the single-item pull of a file the feature registry lacks.
@@ -498,7 +500,12 @@ orphan scan, prune — would list them at the wrong endpoint.  Only
 `org-canvas--web-pages-for-file' reads the web-page one (#292).
 Here :id-field may be a list of fields, tried in order (see
 `org-canvas--item-id-value'): adoption stamps a New Quiz's
-`assignment_id' before its `id' (#309)."
+`assignment_id' before its `id' (#309).
+
+`:drift-report' non-nil puts the entry in `org-canvas-diff' as well,
+listed through its `:list-url-fn' and compared like a registered
+feature (issue #313).  The orphan scan and prune still never see it:
+they read only the feature registry."
   (let ((name (plist-get plist :name)))
     (setq org-canvas--pull-feature-registry
           (cons plist (cl-remove name org-canvas--pull-feature-registry

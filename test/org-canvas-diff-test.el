@@ -520,7 +520,7 @@
                 ((symbol-function 'org-canvas-api-request-all-pages)
                  (lambda (&rest _) (error "The report must not write"))))
         (expect (org-canvas-diff)
-                :to-equal (length org-canvas--feature-registry))))))
+                :to-equal (length (org-canvas--diff-features)))))))
 
 (describe "org-canvas--diff-values-equal-p string-shaped numbers"
   (it "compares a Canvas number returned as a string"
@@ -1017,7 +1017,7 @@ The remote updated_at is always newer than the baseline."
           (expect (org-canvas-diff) :to-equal 0)
           (expect checked :not :to-contain "Announcements")
           (expect (length checked)
-                  :to-equal (1- (length org-canvas--feature-registry)))))))
+                  :to-equal (1- (length (org-canvas--diff-features))))))))
 
   (it "renders the exclusion as its own visible line"
     (with-org-canvas-test-config
@@ -1297,11 +1297,25 @@ The remote updated_at is always newer than the baseline."
           (org-canvas-diff-visit)))
       (expect opened :to-equal "https://x.test/courses/1/assignments/99")))
 
+  (it "opens the registered page of an EXTRA row Canvas gave no address (issue #313)"
+    (let ((opened nil)
+          (org-canvas-base-url "https://canvas.test")
+          (org-canvas-course-id "42"))
+      (cl-letf (((symbol-function 'browse-url) (lambda (url &rest _) (setq opened url))))
+        (with-current-buffer (test-org-canvas--diff-report-buffer
+                              '((:name "Modules" :extra ((:kind extra :title "Week 9" :id "7")))))
+          (test-org-canvas--diff-goto-row 'extra)
+          (org-canvas-diff-visit)))
+      (expect opened :to-match "/courses/42/modules")))
+
   (it "says so when an EXTRA row has no web address"
-    (with-current-buffer (test-org-canvas--diff-report-buffer
-                          '((:name "Modules" :extra ((:kind extra :title "Week 9" :id "7")))))
-      (test-org-canvas--diff-goto-row 'extra)
-      (expect (org-canvas-diff-visit) :to-throw 'user-error)))
+    (cl-letf (((symbol-function 'browse-url)
+               (lambda (&rest _) (error "Nothing to open"))))
+      (with-temp-buffer
+        (org-canvas--diff-insert-row
+         "Module Items" '(:kind extra :title "Link" :id "5"))
+        (goto-char (point-min))
+        (expect (org-canvas-diff-visit) :to-throw 'user-error))))
 
   (it "signals when the heading cannot be found"
     (let ((file (make-temp-file "diff-visit-" nil ".org")))
@@ -3227,6 +3241,25 @@ Preflight is stubbed; `snapshot-dir' names the directory."
         (expect (plist-get outcome :outcome) :to-be 'refused)
         (expect (plist-get outcome :reason) :to-match "Canvas says"))))
 
+  (it "checks a New Quiz's submissions as its assignment's, deleting at the quiz service (#313)"
+    (test-org-canvas--with-batch-delete
+      (setq test-org-canvas-api-responses
+            '(("assignments/41/submissions"
+               . [((user_id . 1) (submitted_at . "2026-09-01T10:00:00Z") (workflow_state . "submitted"))])
+              ("assignments/42/submissions" . [])
+              ("quizzes/4[12]" . ((id . "41") (assignment_id . "41") (title . "Midterm")))))
+      (let* ((results '((:name "New Quizzes"
+                         :extra ((:kind extra :title "Midterm" :id "41")
+                                 (:kind extra :title "Final" :id "42")))))
+             (outcomes (org-canvas-diff-delete-rows
+                        '((:feature "New Quizzes" :all t)) :results results)))
+        (expect (mapcar (lambda (o) (plist-get o :outcome)) outcomes)
+                :to-equal '(refused deleted))
+        (expect (plist-get (car outcomes) :reason)
+                :to-equal "the assignment has 1 submission(s) and 0 score(s)")
+        (expect (test-org-canvas--diff-deleted-urls)
+                :to-equal (list (org-canvas--new-quiz-api-endpoint "quizzes/42"))))))
+
   (it "refuses a rubric an assignment grades with, read with its associations"
     (test-org-canvas--with-batch-delete
       (setq test-org-canvas-api-responses
@@ -3787,6 +3820,244 @@ ANSWER `no' declines the confirmation.  Returns (PROMPT REPORT COUNT)."
         (with-current-buffer shown
           (expect (line-number-at-pos) :to-equal 10))
         (expect opened :to-equal "https://x.test/items/5707155")))))
+
+;;;; New Quizzes in the drift report (issue #313)
+
+(defconst test-nq-313--file
+  (concat "* Midterm\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 41\n:TIME_LIMIT: 30\n:SCORING_POLICY: keep_highest\n:END:\n"
+          "Read carefully.\n\n"
+          "** Q1\n:PROPERTIES:\n:CANVAS_ITEM_ID: 9\n:TYPE: essay\n:END:\n"
+          "* Final\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 42\n:END:\n"
+          "* Draft\n")
+  "A new-quizzes.org with a drifted quiz, a deleted one and an unpushed one.")
+
+(defconst test-nq-313--remote
+  '(((id . "41") (assignment_id . "41") (title . "Midterm")
+     (instructions . "<p>Read slowly.</p>") (time_limit . 45))
+    ((id . "43") (assignment_id . "43") (title . "Web Quiz")))
+  "The quiz service's list for `test-nq-313--file'.
+Midterm's reply carries no `scoring_policy', so SCORING_POLICY is not
+compared.")
+
+(defmacro test-nq-313--with-file (content &rest body)
+  "Run BODY with `org-canvas-new-quizzes-file' holding CONTENT."
+  (declare (indent 1))
+  `(let ((file (make-temp-file "diff-nq-" nil ".org")))
+     (unwind-protect
+         (progn
+           (with-temp-file file (insert ,content))
+           (let ((org-canvas-new-quizzes-file file))
+             ,@body))
+       (let ((buf (find-buffer-visiting file)))
+         (when buf
+           (with-current-buffer buf (set-buffer-modified-p nil))
+           (kill-buffer buf)))
+       (delete-file file))))
+
+(describe "org-canvas--diff-features (issue #313)"
+  (it "adds the New Quizzes pull entry after the feature registry"
+    (let ((features (org-canvas--diff-features)))
+      (expect (length features)
+              :to-equal (1+ (length org-canvas--feature-registry)))
+      (expect (plist-get (car (last features)) :name) :to-equal "New Quizzes")))
+
+  (it "leaves out a pull-only entry that does not ask for the report"
+    (let ((org-canvas--pull-feature-registry
+           (list (list :name "Side" :file-var 'x))))
+      (expect (length (org-canvas--diff-features))
+              :to-equal (length org-canvas--feature-registry))))
+
+  (it "keeps New Quizzes out of the registry the orphan scan and prune read"
+    (expect (org-canvas--registry-find-feature "New Quizzes") :to-be nil))
+
+  (it "finds either kind of entry by any spelling of its name"
+    (expect (plist-get (org-canvas--diff-find-feature "new-quizzes") :id-property)
+            :to-equal "CANVAS_ASSIGNMENT_ID")
+    (expect (plist-get (org-canvas--diff-find-feature "assignments") :name)
+            :to-equal "Assignments")
+    (expect (org-canvas--diff-find-feature "Nonexistent") :to-be nil)))
+
+(describe "org-canvas--diff-feature on New Quizzes (issue #313)"
+  (it "lists the quiz service and reports CHANGED, MISSING, EXTRA and PENDING"
+    (test-nq-313--with-file test-nq-313--file
+      (with-org-canvas-test-config
+        (let ((urls nil))
+          (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                     (lambda (_method url &rest _)
+                       (push url urls)
+                       test-nq-313--remote))
+                    ((symbol-function 'org-canvas-api-request)
+                     (lambda (&rest _) (error "The report must not write"))))
+            (let* ((result (org-canvas--diff-feature
+                            (org-canvas--diff-find-feature "New Quizzes")))
+                   (divergences (plist-get result :divergences))
+                   (changed (nth 0 divergences))
+                   (missing (nth 1 divergences))
+                   (changed-kind (plist-get changed :kind))
+                   (missing-kind (plist-get missing :kind))
+                   (extra (plist-get result :extra))
+                   (pending (plist-get result :pending)))
+              (expect urls :to-equal
+                      (list (org-canvas--new-quiz-api-endpoint "quizzes")))
+              (expect (plist-get result :error) :to-be nil)
+              (expect changed-kind :to-be 'modified)
+              (expect (plist-get changed :title) :to-equal "Midterm")
+              (expect (plist-get changed :fields)
+                      :to-equal '(("TIME_LIMIT" "30" "45")
+                                  ("INSTRUCTIONS" "Read carefully." "Read slowly.")))
+              (expect missing-kind :to-be 'missing)
+              (expect (plist-get missing :id) :to-equal "42")
+              (expect (mapcar (lambda (e) (plist-get e :id)) extra)
+                      :to-equal '("43"))
+              (expect (mapcar (lambda (e) (plist-get e :title)) pending)
+                      :to-equal '("Draft"))
+              (expect (plist-get (car pending) :property)
+                      :to-equal "CANVAS_ASSIGNMENT_ID")))))))
+
+  (it "agrees when the instructions and every reported setting match"
+    (test-nq-313--with-file test-nq-313--file
+      (with-org-canvas-test-config
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (&rest _)
+                     ;; Only `id', as older replies carry it.
+                     '(((id . "41") (title . "Midterm")
+                        (instructions . "<p>Read carefully.</p>")
+                        (time_limit . 30) (scoring_policy . "keep_highest"))
+                       ((id . "42") (title . "Final") (instructions . :null))))))
+          (let ((result (org-canvas--diff-feature
+                         (org-canvas--diff-find-feature "New Quizzes"))))
+            (expect (plist-get result :divergences) :to-be nil)
+            (expect (plist-get result :extra) :to-be nil))))))
+
+  (it "pairs a web-UI quiz with an unstamped heading of its title"
+    (test-nq-313--with-file "* Web Quiz\n"
+      (with-org-canvas-test-config
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (&rest _) test-nq-313--remote)))
+          (let* ((result (org-canvas--diff-feature
+                          (org-canvas--diff-find-feature "New Quizzes")))
+                 (web (cl-find "43" (plist-get result :extra)
+                               :key (lambda (e) (plist-get e :id)) :test #'equal))
+                 (web-kind (plist-get web :kind)))
+            (expect web-kind :to-be 'unclaimed)
+            (expect (plist-get web :property) :to-equal "CANVAS_ASSIGNMENT_ID")
+            (expect (plist-get result :pending) :to-be nil)))))))
+
+(describe "org-canvas--new-quiz-body-html (issue #313)"
+  (it "exports the text above the first item, as the push does"
+    (test-nq-313--with-file test-nq-313--file
+      (with-current-buffer (org-canvas--find-file-noselect file)
+        (goto-char (point-min))
+        (let ((html (org-canvas--new-quiz-body-html)))
+          (expect html :to-match "Read carefully")
+          (expect html :not :to-match "Q1")))))
+
+  (it "answers the empty string for a quiz with no text"
+    (test-nq-313--with-file "* Empty\n** Q1\n"
+      (with-current-buffer (org-canvas--find-file-noselect file)
+        (goto-char (point-min))
+        (expect (org-canvas--new-quiz-body-html) :to-equal "")))))
+
+(describe "org-canvas--new-quiz-remote-carries (issue #313)"
+  (it "compares a setting only when the reply carries its key"
+    (let ((pred (org-canvas--new-quiz-remote-carries 'time_limit)))
+      (expect (funcall pred nil '((time_limit . 30))) :to-be-truthy)
+      (expect (funcall pred nil '((time_limit . :null))) :to-be-truthy)
+      (expect (funcall pred nil '((title . "Q"))) :to-be nil))))
+
+(describe "org-canvas--diff-apply-new-quiz-assignments (issue #313)"
+  (it "takes a New Quiz's assignment out of the Assignments extras and counts it"
+    (let* ((assignments (list :name "Assignments" :remote-items nil
+                              :extra (list '(:kind extra :title "Web Quiz" :id "43")
+                                           '(:kind extra :title "Essay" :id "99"))))
+           (quizzes (list :name "New Quizzes"
+                          :remote-items '(((assignment_id . "43") (id . "7")))))
+           (results (list assignments quizzes)))
+      (org-canvas--diff-apply-new-quiz-assignments results)
+      (expect (mapcar (lambda (e) (plist-get e :id)) (plist-get assignments :extra))
+              :to-equal '("99"))
+      (expect (plist-get assignments :covered) :to-equal 1)
+      (expect (org-canvas--diff-suppressed-note results)
+              :to-equal "Not checked: 1 Assignments (a New Quiz's assignment, checked under New Quizzes).\n")))
+
+  (it "leaves the Assignments extras alone when New Quizzes were not read"
+    (let* ((assignments (list :name "Assignments" :remote-items nil
+                              :extra (list '(:kind extra :title "Web Quiz" :id "43"))))
+           (results (list assignments
+                          (list :name "New Quizzes" :error "Connection refused"))))
+      (org-canvas--diff-apply-new-quiz-assignments results)
+      (expect (length (plist-get assignments :extra)) :to-equal 1)
+      (expect (plist-get assignments :covered) :to-be nil)))
+
+  (it "runs as part of the report"
+    (with-org-canvas-test-config
+      (let ((org-canvas-diff-scan-references nil))
+        (cl-letf (((symbol-function 'org-canvas--diff-feature)
+                   (lambda (feature)
+                     (pcase (plist-get feature :name)
+                       ("Assignments"
+                        (list :name "Assignments" :remote-items nil
+                              :extra (list (list :kind 'extra :title "Web Quiz"
+                                                 :id "43"))))
+                       ("New Quizzes"
+                        (list :name "New Quizzes"
+                              :remote-items '(((assignment_id . "43")))
+                              :extra (list (list :kind 'extra :title "Web Quiz"
+                                                 :id "43"))))
+                       (name (list :name name))))))
+          (let* ((results (org-canvas--diff-collect-results))
+                 (assignments (org-canvas--diff-result-named results "Assignments")))
+            (expect (plist-get assignments :extra) :to-be nil)
+            (expect (org-canvas--diff-count results) :to-equal 1)))))))
+
+(describe "report verbs on New Quiz rows (issue #313)"
+  (it "pulls an EXTRA New Quiz into a new heading through its pull-only entry"
+    (test-nq-313--with-file "* Midterm\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 41\n:END:\n"
+      (let ((pulled nil))
+        (cl-letf (((symbol-function 'org-canvas--pull-at-point-1)
+                   (lambda (feature id title)
+                     (setq pulled (list (plist-get feature :name) id title
+                                        (org-entry-get (point) "CANVAS_ASSIGNMENT_ID"))))))
+          (with-current-buffer (test-org-canvas--diff-report-buffer
+                                '((:name "New Quizzes"
+                                   :extra ((:kind extra :title "Web Quiz" :id "43")))))
+            (test-org-canvas--diff-goto-row 'extra)
+            (org-canvas-diff-pull)
+            (expect (thing-at-point 'line t)
+                    :to-match "PULLED    Web Quiz (id 43, new heading)")))
+        (expect pulled :to-equal '("New Quizzes" "43" "Web Quiz" "43")))))
+
+  (it "browses an EXTRA New Quiz at its assignment page, which the quiz service does not give"
+    (let ((results '((:name "New Quizzes"
+                      :extra ((:kind extra :title "Web Quiz" :id "43"))))))
+      (expect (test-org-canvas--diff-browse results 'extra)
+              :to-equal "https://canvas.test/courses/42/assignments/43")
+      (expect (test-org-canvas--diff-browse results 'extra t)
+              :to-equal "https://canvas.test/courses/42/assignments/43/edit")))
+
+  (it "visits an EXTRA New Quiz at its assignment page"
+    (let ((opened nil)
+          (org-canvas-base-url "https://canvas.test")
+          (org-canvas-course-id "42"))
+      (cl-letf (((symbol-function 'browse-url) (lambda (url &rest _) (setq opened url))))
+        (with-current-buffer (test-org-canvas--diff-report-buffer
+                              '((:name "New Quizzes"
+                                 :extra ((:kind extra :title "Web Quiz" :id "43")))))
+          (test-org-canvas--diff-goto-row 'extra)
+          (org-canvas-diff-visit)))
+      (expect opened :to-equal "https://canvas.test/courses/42/assignments/43"))))
+
+(describe "org-canvas--diff-web-entry (issue #313)"
+  (it "keeps a feature that declares its own pages"
+    (let ((feature (org-canvas--registry-find-feature "assignments")))
+      (expect (org-canvas--diff-web-entry feature) :to-be feature)))
+
+  (it "falls back to the feature itself when its file registered no pages"
+    (let ((feature (list :name "Side" :file-var 'test-nq-313--no-such-var)))
+      (expect (org-canvas--diff-web-entry feature) :to-be feature)))
+
+  (it "answers nil for no feature"
+    (expect (org-canvas--diff-web-entry nil) :to-be nil)))
 
 (provide 'org-canvas-diff-test)
 ;;; org-canvas-diff-test.el ends here

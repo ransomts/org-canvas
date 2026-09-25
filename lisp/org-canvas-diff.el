@@ -40,6 +40,8 @@
 ;; and every stamped module item heading whose id Canvas holds in
 ;; another module, which the next sync recreates under a new id and
 ;; deletes from the old one: a RELOCATE row (#343).
+;; New Quizzes, which list from the quiz service and so stay out of the
+;; feature registry, take part through their pull-only entry (#313).
 ;; An EXTRA assignment or group says what it is, from the list replies
 ;; already held, and a WEIGHTS line under the groups sets Org's weight
 ;; total against Canvas's when they differ, uncounted (#296).
@@ -204,6 +206,25 @@ Each as (ID . NOTE), the id as a string (issue #98)."
                                          (nth 0 entry)))
                       (cons (format "%s" (nth 1 entry)) (nth 2 entry))))
                   org-canvas-diff-known-extras))))
+
+(defun org-canvas--diff-features ()
+  "Return the entries the drift report compares, in report order.
+Every feature registry entry, then each pull-only entry that declares
+`:drift-report' (`org-canvas-register-pull-feature'): New Quizzes list
+from the quiz service, so they stay out of the registry the orphan
+scan and prune read, and join the report here instead (issue #313)."
+  (append org-canvas--feature-registry
+          (cl-remove-if-not (lambda (f) (plist-get f :drift-report))
+                            org-canvas--pull-feature-registry)))
+
+(defun org-canvas--diff-find-feature (name)
+  "Return the entry of `org-canvas--diff-features' named NAME, or nil.
+Names match the way the registry matches them."
+  (let ((norm (org-canvas--diff-normalize-name name)))
+    (cl-find-if (lambda (f)
+                  (string= norm (org-canvas--diff-normalize-name
+                                 (plist-get f :name))))
+                (org-canvas--diff-features))))
 
 ;;;; Value Comparison
 
@@ -724,6 +745,38 @@ Returns RESULTS, mutated in place."
       (plist-put groups :weight-totals (org-canvas--diff-weight-totals groups)))
     results))
 
+;;;; New Quiz Assignments (issue #313)
+;;
+;; A New Quiz is an assignment, so the Assignments list holds every one,
+;; and assignments.org claims none of them: each was an Assignments EXTRA
+;; row, a web-UI quiz and a synced one alike.  With a New Quizzes
+;; section of its own, that row reports the same object twice, the
+;; second time wrongly.  When the New Quizzes list was read, an
+;; Assignments extra whose id it holds is taken out and counted in the
+;; footer's "Not checked" line, as a `:skip-fn' is.  Nothing is fetched,
+;; and the orphan scan and prune are not touched.
+
+(defconst org-canvas--diff-new-quiz-covered-reason
+  "a New Quiz's assignment, checked under New Quizzes"
+  "The reason for leaving a New Quiz's assignment out of Assignments.")
+
+(defun org-canvas--diff-apply-new-quiz-assignments (results)
+  "Take the New Quizzes' own assignments out of the Assignments extras.
+RESULTS is the whole report.  Only when both lists were read; the
+count goes to the Assignments result as :covered.  Returns RESULTS,
+mutated in place."
+  (let ((assignments (org-canvas--diff-result-named results "Assignments"))
+        (quizzes (org-canvas--diff-result-named results "New Quizzes")))
+    (when (and assignments quizzes)
+      (let* ((ids (org-canvas--diff-remote-index
+                   (plist-get quizzes :remote-items) '(assignment_id id)))
+             (extra (plist-get assignments :extra))
+             (covered (cl-remove-if-not
+                       (lambda (e) (gethash (plist-get e :id) ids)) extra)))
+        (plist-put assignments :extra (cl-set-difference extra covered))
+        (plist-put assignments :covered (length covered))))
+    results))
+
 ;;;; Per-Feature Comparison
 
 (defun org-canvas--diff-display-title (heading)
@@ -778,10 +831,12 @@ buffer happened to be."
        (or query "LEVEL=1") 'file))))
 
 (defun org-canvas--diff-remote-index (items id-field)
-  "Return a hash of ITEMS keyed by their ID-FIELD, as strings."
+  "Return a hash of ITEMS keyed by their ID-FIELD, as strings.
+ID-FIELD may be a list of fields tried in order, as a New Quiz's
+`(assignment_id id)' is (`org-canvas--item-id-value', issue #313)."
   (let ((index (make-hash-table :test 'equal)))
     (dolist (item items)
-      (let ((id (alist-get id-field item)))
+      (let ((id (org-canvas--item-id-value item id-field)))
         (when id (puthash (format "%s" id) item index))))
     index))
 
@@ -827,7 +882,8 @@ their `updated_at' on metadata-only touches, which is not drift
 
 (defun org-canvas--diff-unclaimed (items claimed id-field title-field skip-fn)
   "Sort remote ITEMS no local heading CLAIMED into extras and suppressions.
-ID-FIELD and TITLE-FIELD name the item alist keys.  SKIP-FN, when
+ID-FIELD and TITLE-FIELD name the item alist keys; ID-FIELD may be a
+list, as `org-canvas--item-id-value' reads it.  SKIP-FN, when
 non-nil, marks an item the feature never compares.  Returns a cons of
 the extra entry list and the count SKIP-FN held back — a skipped item
 is neither drift nor extra, but it is also not checked, and saying so
@@ -835,12 +891,13 @@ is what keeps the report from reading as full coverage (issue #81)."
   (let ((extra nil)
         (suppressed 0))
     (dolist (item items)
-      (unless (member (format "%s" (alist-get id-field item)) claimed)
+      (unless (member (format "%s" (org-canvas--item-id-value item id-field))
+                      claimed)
         (if (and skip-fn (funcall skip-fn item))
             (cl-incf suppressed)
           (push (list :kind 'extra
                       :title (format "%s" (or (alist-get title-field item) "?"))
-                      :id (format "%s" (alist-get id-field item))
+                      :id (format "%s" (org-canvas--item-id-value item id-field))
                       ;; Where RET on the row can take a reader (#103).
                       :html-url (org-canvas--diff-normalize-remote
                                  (alist-get 'html_url item)))
@@ -1453,19 +1510,26 @@ Batch output prints the same text, properties and all invisible."
                                     (length (plist-get r :extra))))
                      results)))
 
+(defun org-canvas--diff-suppressed-parts (result)
+  "Return the \"Not checked\" phrases of one feature RESULT, nils included.
+What its `:skip-fn' held back, and the New Quizzes' assignments taken
+out of the Assignments extras (:covered, issue #313)."
+  (let ((name (plist-get result :name)))
+    (mapcar (lambda (pair)
+              (let ((n (car pair)))
+                (when (and n (> n 0))
+                  (format "%d %s (%s)" n name (cdr pair)))))
+            (list (cons (plist-get result :suppressed)
+                        (or (plist-get result :skip-reason)
+                            "excluded by this module"))
+                  (cons (plist-get result :covered)
+                        org-canvas--diff-new-quiz-covered-reason)))))
+
 (defun org-canvas--diff-suppressed-note (results)
   "Return a line naming remote items no check in RESULTS covered, or nil.
 Items a `:skip-fn' holds back are not compared and cannot
 show up as extra, so without this the report reads as full coverage."
-  (let ((parts (delq nil
-                     (mapcar
-                      (lambda (r)
-                        (let ((n (plist-get r :suppressed)))
-                          (when (and n (> n 0))
-                            (format "%d %s (%s)" n (plist-get r :name)
-                                    (or (plist-get r :skip-reason)
-                                        "excluded by this module")))))
-                      results))))
+  (let ((parts (delq nil (mapcan #'org-canvas--diff-suppressed-parts results))))
     (when parts
       (format "Not checked: %s.\n" (mapconcat #'identity parts ", ")))))
 
@@ -1619,7 +1683,7 @@ adopts the Canvas timestamp as the heading's baseline
 \(`org-canvas-diff-adopt-stamp'); \\[org-canvas-diff-delete] deletes the
 remote object of an EXTRA, UNCLAIMED or MOVED row, after confirming;
 \\[org-canvas-diff-pull] pulls a CHANGED row's item over the heading, or
-an EXTRA quiz into a new heading;
+an EXTRA quiz or New Quiz into a new heading;
 \\[org-canvas-diff-stamp-move] stamps a MOVED row's item id on the heading it
 was paired with, and \\[org-canvas-diff-stamp-moves] every MOVED row's,
 sending nothing;
@@ -1639,8 +1703,9 @@ Signals a `user-error' off any row."
       (user-error "No report row at point")))
 
 (defun org-canvas--diff-row-feature (row)
-  "Return the feature registry entry for ROW, or signal."
-  (or (org-canvas--registry-find-feature (plist-get row :feature))
+  "Return the feature registry entry for ROW, or signal.
+A New Quiz row's entry is its pull-only one (issue #313)."
+  (or (org-canvas--diff-find-feature (plist-get row :feature))
       (user-error "%s is not a registered feature" (plist-get row :feature))))
 
 (defun org-canvas--diff-rewrite-row (text)
@@ -1747,7 +1812,8 @@ has no title of its own to find it by."
 A row with an Org heading (MISSING, CHANGED, UNCLAIMED, NOTE, PENDING,
 RELOCATE) opens the course file with point on that heading.  An EXTRA or MOVED
 row, or a module item's UNCLAIMED row, names a Canvas object, which is
-opened in a browser when the API said where it lives."
+opened in a browser: where the API said it lives, or else the page
+the feature's registered rules name (issue #313)."
   (interactive)
   (let* ((row (org-canvas--diff-row-at-point))
          (entry (plist-get row :entry)))
@@ -1761,14 +1827,25 @@ opened in a browser when the API said where it lives."
           (pop-to-buffer buf)
           (goto-char pos)
           (when (fboundp 'org-fold-show-context) (org-fold-show-context)))
-      (let ((url (plist-get entry :html-url)))
-        (unless url
-          (user-error "Canvas did not say where %s %s lives; look it up by id"
-                      (plist-get row :feature) (plist-get entry :id)))
-        (browse-url url)))))
+      ;; The quiz service gives a New Quiz no `html_url'; the page its
+      ;; registered rules name serves instead (issue #313).
+      (browse-url (org-canvas--diff-row-web-url row nil)))))
 
 ;; RET on a row with a heading visits the heading, so a row that exists
 ;; on both sides had no way to the Canvas page at all (issue #292).
+
+(defun org-canvas--diff-web-entry (feature)
+  "Return the entry naming where FEATURE's items live on the Canvas site.
+FEATURE itself when it declares `:web-pages'; otherwise what its file
+registered through `org-canvas-register-web-pages', as a New Quiz's
+pull-only entry does (issues #292, #313), or FEATURE when there is
+nothing; nil for no FEATURE."
+  (when feature
+    (if (plist-get feature :web-pages)
+        feature
+      (let* ((var (plist-get feature :file-var))
+             (file (and var (boundp var) (symbol-value var))))
+        (or (org-canvas--web-pages-for-file file) feature)))))
 
 (defun org-canvas--diff-row-web-url (row edit)
   "Return the Canvas web address of ROW's object, or signal.
@@ -1776,7 +1853,8 @@ With EDIT, the edit page the feature's `:web-pages' names, falling
 back to the object's page; otherwise the `html_url' Canvas gave, or
 the page assembled from the registry when it gave none."
   (let* ((entry (plist-get row :entry))
-         (feature (org-canvas--registry-find-feature (plist-get row :feature)))
+         (feature (org-canvas--diff-web-entry
+                   (org-canvas--diff-find-feature (plist-get row :feature))))
          (id (plist-get entry :id))
          (html (plist-get entry :html-url))
          (assembled (and feature id
@@ -1970,10 +2048,12 @@ an assignment grades with the rubric, and its assessments would go."
 
 (defconst org-canvas--diff-delete-guards
   '(("assignments" . org-canvas--diff-delete-assignment-guard)
+    ("newquizzes" . org-canvas--diff-delete-assignment-guard)
     ("rubrics" . org-canvas--diff-delete-rubric-guard))
   "Safety checks before a delete, by normalized feature name.
 Each a function of (ENTRY OBJECT) returning why the object must stay,
-or nil (issue #345).")
+or nil (issue #345).  A New Quiz row's id is its assignment's (issue
+#313), so the assignment's check counts the quiz's submissions.")
 
 (defun org-canvas--diff-delete-inspect (row entry)
   "Read the object ENTRY of ROW names; return (OBJECT . REASON).
@@ -2216,9 +2296,9 @@ item was pulled."
 (defun org-canvas-diff-pull ()
   "Pull the item of the row at point from Canvas into Org.
 On a CHANGED row, runs `org-canvas-pull-at-point' on the heading.  On
-an EXTRA row of a feature that pulls whole entries (classic quizzes),
-writes the item as a new heading at the end of its file (issue #295).
-Either asks first."
+an EXTRA row of a feature that pulls whole entries (classic and New
+Quizzes), writes the item as a new heading at the end of its file
+\(issues #295, #313).  Either asks first."
   (interactive)
   (let* ((row (org-canvas--diff-row-at-point))
          (entry (plist-get row :entry))
@@ -2335,7 +2415,7 @@ headings that could not be found."
     (dolist (candidate candidates)
       (let* ((name (car candidate))
              (entry (cdr candidate))
-             (feature (org-canvas--registry-find-feature name))
+             (feature (org-canvas--diff-find-feature name))
              (updated (and feature (org-canvas--diff-adopt-entry feature entry))))
         (if updated
             (push (list name (plist-get entry :title) updated) adopted)
@@ -2669,13 +2749,15 @@ value; its start is the line the verb is on."
 
 (defun org-canvas--diff-collect-results ()
   "Compare every registered feature against Canvas and return the results.
-One list request per feature (`org-canvas--diff-feature'); an excluded
+One list request per feature (`org-canvas--diff-feature'), New Quizzes
+included (`org-canvas--diff-features', issue #313); an excluded
 feature contributes its visible line, a module's item check follows it
 \(issue #177), and the referenced-media scan is applied at the end
-\(issue #102).  The read behind `org-canvas-diff',
+\(issue #102), as is the move of the New Quizzes' assignments out of
+the Assignments extras.  The read behind `org-canvas-diff',
 `org-canvas-diff-adopt-stamps' and `org-canvas-diff-stamp-moves'."
   (let (results)
-    (dolist (feature org-canvas--feature-registry)
+    (dolist (feature (org-canvas--diff-features))
       (let ((name (plist-get feature :name)))
         (if (org-canvas--diff-feature-excluded-p name)
             (push (org-canvas--diff-excluded-result feature) results)
@@ -2685,8 +2767,9 @@ feature contributes its visible line, a module's item check follows it
             ;; Module items report right after their modules (#177).
             (when-let* ((child (plist-get result :children)))
               (push child results))))))
-    (org-canvas--diff-apply-extra-details
-     (org-canvas--diff-apply-references (nreverse results)))))
+    (org-canvas--diff-apply-new-quiz-assignments
+     (org-canvas--diff-apply-extra-details
+      (org-canvas--diff-apply-references (nreverse results))))))
 
 ;;;###autoload
 (defun org-canvas-diff ()
