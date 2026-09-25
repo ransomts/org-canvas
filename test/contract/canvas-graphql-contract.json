@@ -3,6 +3,7 @@
   "lisp/org-canvas-assignments.el",
   "lisp/org-canvas-discussions.el",
   "lisp/org-canvas-settings.el",
+  "lisp/org-canvas-submissions-status.el",
   "lisp/org-canvas-submissions.el"
  ],
  "provenance": {
@@ -34,6 +35,17 @@
      "Submission",
      "SubmissionConnection",
      "TotalCountPageInfo"
+    ]
+   },
+   {
+    "generated": "2026-09-25",
+    "ref": "318f2ad0495dd4d1e2fd3657497fbf71c91bda13",
+    "repository": "https://github.com/instructure/canvas-lms",
+    "source": "sdl",
+    "types": [
+     "AssignmentFilter",
+     "AssignmentScoreStatistic",
+     "SubmissionType"
     ]
    }
   ]
@@ -704,6 +716,31 @@
    },
    "kind": "OBJECT"
   },
+  "AssignmentFilter": {
+   "fields": {
+    "gradingPeriodId": {
+     "deprecated": null,
+     "hasDefault": false,
+     "type": "ID"
+    },
+    "searchTerm": {
+     "deprecated": null,
+     "hasDefault": false,
+     "type": "String"
+    },
+    "submissionTypes": {
+     "deprecated": null,
+     "hasDefault": false,
+     "type": "[SubmissionType!]"
+    },
+    "userId": {
+     "deprecated": null,
+     "hasDefault": false,
+     "type": "ID"
+    }
+   },
+   "kind": "INPUT_OBJECT"
+  },
   "AssignmentOverrideCreateOrUpdate": {
    "fields": {
     "courseId": {
@@ -808,6 +845,46 @@
     }
    },
    "kind": "INPUT_OBJECT"
+  },
+  "AssignmentScoreStatistic": {
+   "fields": {
+    "count": {
+     "args": {},
+     "deprecated": null,
+     "type": "Int"
+    },
+    "lowerQ": {
+     "args": {},
+     "deprecated": null,
+     "type": "Float"
+    },
+    "maximum": {
+     "args": {},
+     "deprecated": null,
+     "type": "Float"
+    },
+    "mean": {
+     "args": {},
+     "deprecated": null,
+     "type": "Float"
+    },
+    "median": {
+     "args": {},
+     "deprecated": null,
+     "type": "Float"
+    },
+    "minimum": {
+     "args": {},
+     "deprecated": null,
+     "type": "Float"
+    },
+    "upperQ": {
+     "args": {},
+     "deprecated": null,
+     "type": "Float"
+    }
+   },
+   "kind": "OBJECT"
   },
   "AssignmentUpdate": {
    "fields": {
@@ -4112,6 +4189,27 @@
     }
    },
    "kind": "OBJECT"
+  },
+  "SubmissionType": {
+   "kind": "ENUM",
+   "values": {
+    "ams": null,
+    "attendance": null,
+    "basic_lti_launch": null,
+    "discussion_topic": null,
+    "external_tool": null,
+    "media_recording": null,
+    "none": null,
+    "not_graded": null,
+    "on_paper": null,
+    "online_quiz": null,
+    "online_text_entry": null,
+    "online_upload": null,
+    "online_url": null,
+    "peer_review": null,
+    "student_annotation": null,
+    "wiki_page": null
+   }
   },
   "TotalCountPageInfo": {
    "fields": {

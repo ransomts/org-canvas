@@ -300,6 +300,15 @@ The weekly question, "which columns need pulling, grading or posting?", was answ
 - An unreadable column (a 403 on one endpoint, issue #171's shape) is one warning and a row of =?=, and the rest of the report goes on. Unpublished and =not_graded= assignments stay out: nothing can be submitted to the one or graded on the other.
 - Nothing is written, not even a file under the submissions directory, and no name, score or user id reaches the report: it is counts, so it is safe to leave on screen.
 
+** A Mean and a Median Beside the Counts (issue #352)
+
+Each column also shows Canvas's mean and median score, read from GraphQL's =Assignment.scoreStatistic=. The statistic is a column fact placed beside the row counts, never one of them: nothing in Next, the summary line or the sort reads it.
+
+- *One read for the course.* The course's =assignmentsConnection= carries every column's statistic, a hundred per page, so the queue asks once per page and never once per column. The query sends =filter: {gradingPeriodId: null}= as a variable; without the explicit null, Canvas answers only the current grading period's assignments, and a course with grading periods would lose most of its columns.
+- *Null means none graded.* A live check on 2026-09-25 found the statistic filled on every column with a graded submission, posted or hidden, and null on exactly the columns with =gradedSubmissionsExist: false=. So a null is a dash, never an error, and so is a column the read did not name.
+- *Canvas's =count= is not asked for.* It was up to three higher than the graded rows a teacher's =submissionsConnection= lists (R1: 102 against 100), probably the scores of departed students, whose rows no longer come back. Showing it next to Graded would give two graded counts that disagree, and the row count is the one a grader can act on. The mean and median are over Canvas's set, and the footer says so.
+- *A failed read is one warning.* The queue then renders with no Mean and Median columns at all rather than a column of =?=, since the counts do not need the statistics. Mean and median carry no student's name or score, so the report is still safe to leave on screen.
+
 * A Re-Pull Keeps Typed Scores (issue #281)
 
 A refresh of a grading file carried notes, drafted comments and unpushed Rubric rows over the re-render and dropped typed =SCORE= values, behind a =y-or-n-p= — "N unpushed score change(s) will be lost; Re-pull anyway?" — that a batch Emacs cannot answer and an interactive grader has to answer yes to in order to see the late rows. The one kind of unpushed grading the refresh did not keep was the one the guard existed to protect; on one column that was fifteen zeros typed on missing rows, re-applied from a backup.

@@ -235,7 +235,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 - submission commands take their target as an argument and prompt only on nil (#280)
 - the accommodations table sits below a quiz's own text and never reaches the description from any layout (#298)
 - the drift report pairs module items by content as the sync adopts them, declaring the modules.el parser rather than requiring it (#299)
-- the grading queue counts rows, never columns (#283)
+- the grading queue counts rows, never columns (#283), and shows Canvas's mean and median beside the counts, one read for the course (#352)
 - the roster marks who left on Canvas's word and never on a misread list (#290)
 - the rubric in full in the grading file (#265)
 - the syllabus is the text above the first sub-heading and `** Navigation` never reaches it (#275)

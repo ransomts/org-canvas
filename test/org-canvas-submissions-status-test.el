@@ -25,6 +25,12 @@ A value of `forbidden' answers the read with a 403.")
   "Requests the fake API answered, newest first, as (URL . PARAMS).")
 (defvar test-sstatus--graphql-calls nil
   "Assignment ids the fake GraphQL was asked about, newest first.")
+(defvar test-sstatus--statistics nil
+  "Score statistics the fake GraphQL answers, an alist of id to statistic.
+A statistic is an alist of `mean' and `median', or nil for Canvas's
+null; the symbol `refused' makes the read signal.")
+(defvar test-sstatus--statistics-calls nil
+  "Variables the fake GraphQL's statistics query was sent, newest first.")
 (defvar test-sstatus--reports nil
   "Report nodes the fake GraphQL answers, an alist of assignment id to rows.
 Each row is (USER-ID . REPORT-NODES); a value of `refused' signals.")
@@ -57,7 +63,27 @@ EXTRA comes first, so an explicit `published', `grading_type' or
    ((string-match-p "/assignments\\'" url) (vconcat test-sstatus--assignments))
    (t (error "Unexpected request: %s" url))))
 
-(defun test-sstatus--graphql (_document &optional variables)
+(defun test-sstatus--statistics-reply (variables)
+  "Answer the statistics query sent VARIABLES from the fake table, in one page."
+  (push variables test-sstatus--statistics-calls)
+  (if (eq test-sstatus--statistics 'refused)
+      (signal 'org-canvas-api-error (list "GraphQL: refused"))
+    `((course
+       . ((assignmentsConnection
+           . ((pageInfo . ((hasNextPage . :json-false) (endCursor . :null)))
+              (nodes . ,(vconcat
+                         (mapcar (lambda (row)
+                                   `((_id . ,(format "%s" (car row)))
+                                     (scoreStatistic . ,(or (cdr row) :null))))
+                                 test-sstatus--statistics))))))))))
+
+(defun test-sstatus--graphql (document &optional variables)
+  "Answer DOCUMENT sent VARIABLES: the statistics or the reports query."
+  (if (eq document org-canvas--submissions-status-statistics-query)
+      (test-sstatus--statistics-reply variables)
+    (test-sstatus--reports-reply variables)))
+
+(defun test-sstatus--reports-reply (variables)
   "Answer the reports query for the assignment VARIABLES name, in one page."
   (let* ((id (string-to-number (alist-get 'assignmentId variables)))
          (rows (alist-get id test-sstatus--reports)))
@@ -85,7 +111,9 @@ written there is the only one the report can find."
           (test-sstatus--assignments ,assignments)
           (test-sstatus--submissions ,submissions)
           (test-sstatus--calls nil)
-          (test-sstatus--graphql-calls nil))
+          (test-sstatus--graphql-calls nil)
+          (test-sstatus--statistics nil)
+          (test-sstatus--statistics-calls nil))
      (unwind-protect
          (with-org-canvas-test-config
            (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
@@ -418,9 +446,9 @@ Bounded by the number of lines; the match's end is read before
         (expect text :to-match "2 columns | 0 to pull | 1 to refresh | 0 to grade | 0 to post | 0 unreadable")
         (expect (car rows)
                 :to-equal '("Journal 02" "<2026-09-10 Thu 03:59>" "2" "1" "1" "0" "0" "1"
-                            "<2026-09-12 Sat 10:30>" "1" "refresh (1)"))
+                            "-" "-" "<2026-09-12 Sat 10:30>" "1" "refresh (1)"))
         (expect (cadr rows)
-                :to-equal '("R4: Agency" "-" "1" "0" "0" "0" "0" "0" "-" "-" "-"))
+                :to-equal '("R4: Agency" "-" "1" "0" "0" "0" "0" "0" "-" "-" "-" "-" "-"))
         (expect (with-current-buffer org-canvas--submissions-status-buffer-name
                   (derived-mode-p 'org-mode))
                 :to-be-truthy))))
@@ -513,6 +541,91 @@ Bounded by the number of lines; the match's end is read before
         (org-canvas--submissions-status-columns
          (org-canvas--submissions-status-fetch-assignments)))
       (expect test-sstatus--graphql-calls :to-be nil))))
+
+;;;; Score statistics (issue #352)
+
+(describe "the grading queue's score statistics (issue #352)"
+  (it "reads every column in one course-level query and keys it by id"
+    (test-sstatus--with-course nil nil
+      (let* ((test-sstatus--statistics
+              '((1 . ((mean . 8.43) (median . 9.0)))
+                (2 . nil)))
+             (map (org-canvas--submissions-status-fetch-statistics)))
+        (expect (length test-sstatus--statistics-calls) :to-equal 1)
+        (expect (alist-get 'courseId (car test-sstatus--statistics-calls))
+                :to-equal test-org-canvas-course-id)
+        (expect (gethash "1" map) :to-equal '((mean . 8.43) (median . 9.0)))
+        (expect (gethash "2" map) :to-be 'none))))
+
+  (it "shows a filled statistic beside the counts, and a dash for none graded"
+    (test-sstatus--with-course
+        (list (test-sstatus--assignment 1 "R4")
+              (test-sstatus--assignment 2 "R6")
+              (test-sstatus--assignment 3 "Unlisted"))
+        (list (cons 1 (list (test-sstatus--submission
+                             '(submitted_at . "2026-09-01T00:00:00Z") '(score . 8)
+                             '(posted_at . "2026-09-02T00:00:00Z"))))
+              (cons 2 (list (test-sstatus--submission)))
+              (cons 3 (list (test-sstatus--submission))))
+      (let* ((test-sstatus--statistics
+              '((1 . ((mean . 8.425) (median . 8.5))) (2 . nil)))
+             (columns (org-canvas-submissions-status))
+             (text (with-current-buffer org-canvas--submissions-status-buffer-name
+                     (buffer-string)))
+             (rows (test-sstatus--rows text)))
+        (expect (length test-sstatus--statistics-calls) :to-equal 1)
+        (expect (plist-get (car columns) :statistic)
+                :to-equal '((mean . 8.425) (median . 8.5)))
+        (expect (plist-get (nth 1 columns) :statistic) :to-be 'none)
+        ;; A column the read did not name counts as nothing graded.
+        (expect (plist-get (nth 2 columns) :statistic) :to-be 'none)
+        (expect text :to-match "| Missing | Mean | Median | Pulled |")
+        (expect (cl-subseq (assoc "R4" rows) 7 11)
+                :to-equal '("0" "8.43" "8.5" "-"))
+        (expect (cl-subseq (assoc "R6" rows) 7 11)
+                :to-equal '("0" "-" "-" "-"))
+        (expect (cl-subseq (assoc "Unlisted" rows) 8 10) :to-equal '("-" "-"))
+        ;; The counts are the rows' own, whatever Canvas counted.
+        (expect (nth 4 (assoc "R4" rows)) :to-equal "1")
+        (expect text :to-match "departed student"))))
+
+  (it "renders the queue without the statistics after one warning when the read fails"
+    (let ((warnings nil))
+      (test-sstatus--with-course
+          (list (test-sstatus--assignment 1 "R4"))
+          (list (cons 1 (list (test-sstatus--submission))))
+        (let ((test-sstatus--statistics 'refused))
+          (cl-letf (((symbol-function 'org-canvas--log-warning)
+                     (lambda (_logger fmt &rest args)
+                       (push (apply #'format fmt args) warnings))))
+            (let* ((columns (org-canvas-submissions-status))
+                   (text (with-current-buffer
+                             org-canvas--submissions-status-buffer-name
+                           (buffer-string))))
+              (expect (plist-get (car columns) :statistic) :to-be nil)
+              (expect (length warnings) :to-equal 1)
+              (expect (car warnings) :to-match "score statistics")
+              (expect text :not :to-match "Mean")
+              (expect (assoc "R4" (test-sstatus--rows text))
+                      :to-equal '("R4" "<2026-09-10 Thu 03:59>" "1" "0" "0" "0"
+                                  "0" "0" "-" "-" "-"))))))))
+
+  (it "does not ask for statistics when there is no column"
+    (test-sstatus--with-course nil nil
+      (org-canvas-submissions-status)
+      (expect test-sstatus--statistics-calls :to-be nil)))
+
+  (it "spells a score to two decimals at most and a null mean as a dash"
+    (expect (org-canvas--submissions-status-score-cell '((mean . 10.0)) 'mean)
+            :to-equal "10")
+    (expect (org-canvas--submissions-status-score-cell '((mean . 0.0)) 'mean)
+            :to-equal "0")
+    (expect (org-canvas--submissions-status-score-cell '((mean . 7.5)) 'mean)
+            :to-equal "7.5")
+    (expect (org-canvas--submissions-status-score-cell '((mean . :null)) 'mean)
+            :to-equal "-")
+    (expect (org-canvas--submissions-status-score-cell 'none 'median)
+            :to-equal "-")))
 
 (provide 'org-canvas-submissions-status-test)
 ;;; org-canvas-submissions-status-test.el ends here
