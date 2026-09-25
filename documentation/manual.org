@@ -2927,8 +2927,11 @@ object is deleted at the URL =k= would use.  The rules:
   no row comes back =not-found=.
 - *Refused when it would take work with it.*  The object is read first.
   An assignment with a submission or a score (a New Quiz is checked as
-  its assignment), and a rubric an assignment grades with (read with
-  =include[]=associations=), are =refused=, naming why.  =:force t= deletes them anyway.  =k= runs the same checks and names
+  its assignment), an assignment a quiz or a graded discussion owns
+  (deleting it deletes or breaks the owner, which the reason names, so
+  it is refused even before anyone submits -- #366), and a rubric an
+  assignment grades with (read with =include[]=associations=), are
+  =refused=, naming why.  =:force t= deletes them anyway.  =k= runs the same checks and names
   what they find in its question instead of refusing.
 - *Snapshot first.*  Before each DELETE the object's JSON, as Canvas
   returned it, is written to =<time>-<feature>-<id>.json= under
