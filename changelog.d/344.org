@@ -1,0 +1,6 @@
+* Fixed
+- #344 A calendar event's conflict check reads the event where it lives,
+  at the global =calendar_events/ID=, so an event edited in the Canvas web
+  UI is caught before a push overwrites it; the check used to 404 on a
+  course-scoped address and push every event unguarded.  The restamp
+  after a post-sync write reads the same address.

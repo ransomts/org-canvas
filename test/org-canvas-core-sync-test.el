@@ -967,6 +967,44 @@ Hello world.
                (setq warned t)))
            (expect warned :to-be t)))))))
 
+(describe "org-canvas--sync-item-url (issue #344)"
+  (it "asks the push's own item-URL function first"
+    (with-org-canvas-test-config
+      (expect (org-canvas--sync-item-url
+               "items" 7 (org-canvas--sync-make-ctx :feature-name "assignments")
+               (lambda (id) (format "https://global/items/%s" id)))
+              :to-equal "https://global/items/7")))
+
+  (it "falls back to the course endpoint when the feature has no item-URL fn"
+    (with-org-canvas-test-config
+      (expect (org-canvas--sync-item-url
+               "assignments" 7
+               (org-canvas--sync-make-ctx :feature-name "assignments"))
+              :to-equal (org-canvas-api-course-endpoint "assignments/7"))))
+
+  (it "falls back to the course endpoint without a run context"
+    (with-org-canvas-test-config
+      (expect (org-canvas--sync-item-url "items" 7)
+              :to-equal (org-canvas-api-course-endpoint "items/7")))))
+
+(describe "org-canvas--conflict-check with an item URL (issue #344)"
+  (it "reads the URL it is handed instead of the course endpoint"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer
+       "#+LAST_SYNCED: [2026-01-01 Thu 10:00]
+* Item
+:PROPERTIES:
+:CANVAS_ID: 123
+:END:
+"
+       (re-search-forward "^\\* ")
+       (org-back-to-heading)
+       (with-mock-api
+         (org-canvas--conflict-check "items" "123" (point-marker) nil nil nil
+                                     "https://global/items/123")
+         (expect (cadr (car test-org-canvas-api-calls))
+                 :to-equal "https://global/items/123"))))))
+
 (describe "org-canvas--push-to-api conflict detection"
   (it "returns conflict when user chooses skip"
     (with-org-canvas-test-config

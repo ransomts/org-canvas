@@ -905,4 +905,83 @@ Drop by.
         (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
         (delete-file file)))))
 
+;;;; Conflict check reads the global item URL (issue #344)
+
+(defconst test-org-canvas-calendar-344-heading
+  "#+LAST_SYNCED: [2026-01-01 Thu 10:00]
+* No Class: Thanksgiving Break
+:PROPERTIES:
+:CANVAS_ID: 1477911
+:END:
+"
+  "A stamped calendar event with a file baseline, so the check runs.")
+
+(describe "calendar event conflict check (issue #344)"
+  (it "reads the global calendar_events/ID, never the course-scoped one"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer test-org-canvas-calendar-344-heading
+        (re-search-forward "^\\* ")
+        (org-back-to-heading t)
+        (with-mock-api
+          (let ((org-canvas-detect-conflicts t)
+                (data (list :title "No Class: Thanksgiving Break"
+                            :canvas-id "1477911" :pom (point-marker))))
+            (setq test-org-canvas-api-responses
+                  '(("calendar_events/1477911"
+                     . ((id . 1477911) (updated_at . "2025-12-01T10:00:00Z")))))
+            (org-canvas--calendar-event-push-to-api
+             data (make-hash-table)
+             (org-canvas--sync-make-ctx :feature-name "calendar-events"))
+            (let ((get (test-org-canvas-find-api-call
+                        'GET "calendar_events/1477911")))
+              (expect get :not :to-be nil)
+              (expect (cadr get) :to-equal
+                      (concat org-canvas-base-url
+                              "/api/v1/calendar_events/1477911")))
+            (expect (test-org-canvas-api-called-p
+                     'GET "courses/.*/calendar_events")
+                    :to-be nil)
+            (expect (test-org-canvas-api-called-p
+                     'PUT "calendar_events/1477911")
+                    :to-be-truthy))))))
+
+  (it "offers the conflict when Canvas edited the event since the baseline"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer test-org-canvas-calendar-344-heading
+        (re-search-forward "^\\* ")
+        (org-back-to-heading t)
+        (with-mock-api
+          (let ((org-canvas-detect-conflicts t)
+                (data (list :title "No Class: Thanksgiving Break"
+                            :canvas-id "1477911" :pom (point-marker))))
+            (setq test-org-canvas-api-responses
+                  '(("calendar_events/1477911"
+                     . ((id . 1477911) (updated_at . "2026-02-01T10:00:00Z")))))
+            (cl-letf (((symbol-function 'org-canvas--resolve-conflict)
+                       (lambda (&rest _) 'skip)))
+              (expect (org-canvas--calendar-event-push-to-api
+                       data (make-hash-table))
+                      :to-equal 'conflict))
+            (expect (test-org-canvas-api-called-p 'PUT "calendar_events")
+                    :to-be nil))))))
+
+  (it "restamps a post-sync write from the global item URL"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer test-org-canvas-calendar-344-heading
+        (re-search-forward "^\\* ")
+        (org-back-to-heading t)
+        (with-mock-api
+          (setq test-org-canvas-api-responses
+                '(("calendar_events/1477911" . ((id . 1477911)
+                                                 (updated_at
+                                                  . "2026-09-02T14:07:34Z")))))
+          (org-canvas--finalize-restamp-updated
+           (point-marker) "calendar_events" "1477911" nil "Break"
+           (org-canvas--sync-make-ctx :feature-name "Calendar Events"))
+          (expect (cadr (car test-org-canvas-api-calls)) :to-equal
+                  (concat org-canvas-base-url
+                          "/api/v1/calendar_events/1477911"))
+          (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
+                  :to-equal "2026-09-02T14:07:34Z"))))))
+
 ;;; org-canvas-calendar-test.el ends here
