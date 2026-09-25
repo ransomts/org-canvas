@@ -3306,6 +3306,21 @@ Preflight is stubbed; `snapshot-dir' names the directory."
         (expect (plist-get (nth 4 outcomes) :reason) :to-match "no such feature")
         (expect test-org-canvas-api-calls :to-be nil))))
 
+  (it "calls a RELOCATE row not EXTRA, and :all leaves it alone (issue #343)"
+    (test-org-canvas--with-batch-delete
+      (let* ((results '((:name "Module Items"
+                         :relocate ((:kind relocate :title "Journal 05"
+                                     :id "5707155" :where "Week 06"
+                                     :to "Week 07")))))
+             (outcomes (org-canvas-diff-delete-rows
+                        '((:feature "Module Items" :id "5707155")
+                          (:feature "Module Items" :all t))
+                        :results results)))
+        (expect (mapcar (lambda (o) (plist-get o :outcome)) outcomes)
+                :to-equal '(not-extra))
+        (expect (plist-get (car outcomes) :reason) :to-match "RELOCATE row")
+        (expect test-org-canvas-api-calls :to-be nil))))
+
   (it "refuses an object Canvas returned nothing for, with nothing to snapshot"
     (test-org-canvas--with-batch-delete
       (setq test-org-canvas-api-responses '(("modules/781715/items/5787192" . nil)))
@@ -3399,6 +3414,381 @@ Preflight is stubbed; `snapshot-dir' names the directory."
           (expect (org-canvas--diff-snapshot-dir)
                   :to-equal (expand-file-name "canvas-snapshots/" (file-truename dir)))
         (delete-directory dir t)))))
+
+;;;; Stamping a MOVED Row and the RELOCATE Row (issues #342, #343)
+
+(defconst test-org-canvas-342--modules-org
+  "* Week 5
+:PROPERTIES:
+:CANVAS_ID: 781703
+:END:
+** Readings
+* Week 6
+:PROPERTIES:
+:CANVAS_ID: 781704
+:END:
+** [[file:assignments.org::*R7: Arguing Both Sides][R7: Arguing Both Sides]]
+** Readings
+"
+  "Week 6 holds a renumbered item heading and a Readings header, both unstamped.")
+
+(defconst test-org-canvas-342--r7
+  "[[file:assignments.org::*R7: Arguing Both Sides][R7: Arguing Both Sides]]"
+  "The raw text of the renumbered heading, as the report records it.")
+
+(defmacro test-org-canvas-342--with-modules-file (var &rest body)
+  "Bind VAR to a temporary modules file holding the #342 fixture, run BODY."
+  (declare (indent 1))
+  `(let ((,var (make-temp-file "diff-342-" nil ".org")))
+     (unwind-protect
+         (progn
+           (with-temp-file ,var (insert test-org-canvas-342--modules-org))
+           ,@body)
+       (let ((buf (find-buffer-visiting ,var))) (when buf (kill-buffer buf)))
+       (delete-file ,var))))
+
+(defun test-org-canvas-342--ids (file)
+  "Return (HEADING CANVAS_ID) for each level-2 heading of FILE.
+HEADING is the shown text, the same on Emacs 29 and 30."
+  (with-temp-buffer
+    (insert-file-contents file)
+    (org-mode)
+    (org-map-entries
+     (lambda ()
+       (list (org-link-display-format (org-get-heading t t t t))
+             (org-entry-get (point) "CANVAS_ID")))
+     "LEVEL=2")))
+
+(defun test-org-canvas-342--moved (file &rest overrides)
+  "Return the MOVED entry naming the R7 heading of FILE, with OVERRIDES."
+  (let ((entry (list :kind 'moved :title "R6: Arguing Both Sides" :id "5707155"
+                     :module-id "781703" :where "Week 5" :to "Week 6"
+                     :file file :line 10
+                     :partner-heading test-org-canvas-342--r7
+                     :partner-title "R7: Arguing Both Sides")))
+    (while overrides
+      (setq entry (plist-put entry (pop overrides) (pop overrides))))
+    entry))
+
+(defun test-org-canvas-342--row-buffer (entry)
+  "Return a report buffer whose Module Items section holds ENTRY."
+  (test-org-canvas--diff-report-buffer
+   `((:name "Modules" :children (:name "Module Items" :extra (,entry))))))
+
+(describe "a MOVED row names the heading it paired (issue #342)"
+  (it "carries the partner's file, line and title from the pairing"
+    (let* ((child (car (test-org-canvas-299--run)))
+           (moved (test-org-canvas-299--by-id child "603")))
+      (expect (plist-get moved :partner-title) :to-equal "Closer")
+      (expect (plist-get moved :partner-heading)
+              :to-equal "[[file:assignments.org::*Closer: Privacy Pros and Cons][Closer]]")
+      (expect (plist-get moved :line) :to-equal 11)
+      (expect (file-name-nondirectory (plist-get moved :file)) :to-equal "modules.org")))
+
+  (it "prints the paired heading and says the sync recreates the item with a new id"
+    (with-temp-buffer
+      (org-canvas--diff-insert-entry
+       '(:kind moved :title "R6: Arguing Both Sides" :id "5707155" :module-id "1"
+         :where "Week 5" :to "Week 6" :line 10
+         :partner-title "R7: Arguing Both Sides"))
+      (expect (buffer-string)
+              :to-match "the unstamped heading 'R7: Arguing Both Sides' (line 10) places it in 'Week 6'")
+      (expect (buffer-string)
+              :to-match "stamp CANVAS_ID 5707155 on that heading and the next sync instead recreates it there with a new id and deletes this copy")
+      (expect (buffer-string) :not :to-match "to move it instead")))
+
+  (it "names the heading without a line, or says an unstamped heading, when that is all it has"
+    (expect (org-canvas--diff-partner-text '(:partner-title "Closer"))
+            :to-equal "the unstamped heading 'Closer'")
+    (expect (org-canvas--diff-partner-text '(:line 4))
+            :to-equal "an unstamped heading")))
+
+(describe "org-canvas-diff-stamp-move (issue #342)"
+  (it "stamps the item id on the paired heading, sends nothing, and marks the row"
+    (test-org-canvas-342--with-modules-file file
+      (with-mock-api
+        (with-current-buffer (test-org-canvas-342--row-buffer
+                              (test-org-canvas-342--moved file))
+          (test-org-canvas--diff-goto-row 'moved)
+          (org-canvas-diff-stamp-move)
+          (expect (thing-at-point 'line t)
+                  :to-match "STAMPED   R6: Arguing Both Sides (CANVAS_ID 5707155 on 'R7: Arguing Both Sides' in 'Week 6', nothing sent; the next sync recreates it there with a new id and deletes the copy in 'Week 5')")
+          (expect (get-text-property (point) 'org-canvas-diff-row) :to-be-truthy))
+        (expect (test-org-canvas-api-call-count) :to-equal 0))
+      (expect (test-org-canvas-342--ids file)
+              :to-equal '(("Readings" nil)
+                          ("R7: Arguing Both Sides" "5707155")
+                          ("Readings" nil)))))
+
+  (it "is what s does, and S stamps them all"
+    (expect (lookup-key org-canvas-diff-mode-map (kbd "s"))
+            :to-be #'org-canvas-diff-stamp-move)
+    (expect (lookup-key org-canvas-diff-mode-map (kbd "S"))
+            :to-be #'org-canvas-diff-stamp-moves)
+    (with-current-buffer (test-org-canvas--diff-report-buffer nil)
+      (expect (buffer-string) :to-match "s/S stamp moved")))
+
+  (it "finds the heading under its module when it is no longer on the recorded line"
+    (test-org-canvas-342--with-modules-file file
+      (with-current-buffer (test-org-canvas-342--row-buffer
+                            (test-org-canvas-342--moved
+                             file :title "Readings" :partner-heading "Readings"
+                             :partner-title "Readings" :line 1))
+        (test-org-canvas--diff-goto-row 'moved)
+        (org-canvas-diff-stamp-move))
+      ;; The Readings under Week 6, not the one under Week 5.
+      (expect (test-org-canvas-342--ids file)
+              :to-equal '(("Readings" nil)
+                          ("R7: Arguing Both Sides" nil)
+                          ("Readings" "5707155")))))
+
+  (it "refuses when a heading already carries the id, and writes nothing"
+    (test-org-canvas-342--with-modules-file file
+      (let ((entry (test-org-canvas-342--moved file :id "781703")))
+        (with-current-buffer (test-org-canvas-342--row-buffer entry)
+          (test-org-canvas--diff-goto-row 'moved)
+          (expect (condition-case e (org-canvas-diff-stamp-move)
+                    (user-error (error-message-string e)))
+                  :to-match "Item id 781703 is already on a heading")
+          (expect (thing-at-point 'line t) :to-match "MOVED")))
+      (expect (mapcar #'cadr (test-org-canvas-342--ids file)) :to-equal '(nil nil nil))))
+
+  (it "refuses when the paired heading is gone or already stamped"
+    (test-org-canvas-342--with-modules-file file
+      (with-current-buffer (test-org-canvas-342--row-buffer
+                            (test-org-canvas-342--moved
+                             file :partner-heading "Nowhere" :partner-title "Nowhere"))
+        (test-org-canvas--diff-goto-row 'moved)
+        (expect (condition-case e (org-canvas-diff-stamp-move)
+                  (user-error (error-message-string e)))
+                :to-match "Cannot find the unstamped heading .Nowhere. under .Week 6."))
+      (expect (org-canvas--diff-stamp-entry
+               (test-org-canvas-342--moved (concat file ".missing")))
+              :to-equal 'not-found)
+      ;; A row with no partner title names the item instead.
+      (expect (condition-case e
+                  (org-canvas--diff-stamp-refusal
+                   '(:title "Closer" :to "Week 6") 'not-found)
+                (user-error (error-message-string e)))
+              :to-match "unstamped heading .Closer. under .Week 6.")))
+
+  (it "asks first on a row paired by title only, and writes nothing when declined"
+    (test-org-canvas-342--with-modules-file file
+      (let ((answer nil) (asked nil))
+        (cl-letf (((symbol-function 'y-or-n-p)
+                   (lambda (q) (setq asked q) answer)))
+          (with-current-buffer (test-org-canvas-342--row-buffer
+                                (test-org-canvas-342--moved file :by-title t))
+            (test-org-canvas--diff-goto-row 'moved)
+            (expect (org-canvas-diff-stamp-move) :to-throw 'user-error)
+            (expect asked :to-match "paired by title only")
+            (expect (cadr (nth 1 (test-org-canvas-342--ids file))) :to-be nil)
+            (setq answer t)
+            (org-canvas-diff-stamp-move)))
+        (expect (cadr (nth 1 (test-org-canvas-342--ids file))) :to-equal "5707155"))))
+
+  (it "refuses a row that is not MOVED"
+    (with-current-buffer (test-org-canvas--diff-report-buffer
+                          '((:name "Assignments" :extra ((:kind extra :title "Surprise" :id "99")))))
+      (test-org-canvas--diff-goto-row 'extra)
+      (expect (org-canvas-diff-stamp-move) :to-throw 'user-error))))
+
+(describe "org-canvas-diff-stamp-moves (issue #342)"
+  (defun test-org-canvas-342--run (results &optional answer)
+    "Run the bulk stamp over RESULTS as if every feature reported them.
+ANSWER `no' declines the confirmation.  Returns (PROMPT REPORT COUNT)."
+    (let ((prompt nil) (count nil))
+      (with-org-canvas-test-config
+        (let ((noninteractive nil))
+          (cl-letf (((symbol-function 'org-canvas--preflight-check) #'ignore)
+                    ((symbol-function 'display-buffer) (lambda (&rest _) nil))
+                    ((symbol-function 'org-canvas--diff-syllabus-references) (lambda () nil))
+                    ((symbol-function 'y-or-n-p)
+                     (lambda (q) (setq prompt q) (not (eq answer 'no))))
+                    ((symbol-function 'org-canvas--diff-feature)
+                     (lambda (feature)
+                       (or (cl-find (plist-get feature :name) results
+                                    :key (lambda (r) (plist-get r :name))
+                                    :test #'string=)
+                           (list :name (plist-get feature :name))))))
+            (setq count (org-canvas-diff-stamp-moves)))))
+      (list prompt
+            (with-current-buffer org-canvas--diff-stamp-buffer-name (buffer-string))
+            count)))
+
+  (it "stamps every MOVED row paired by content after confirming, lists the rest, and sends nothing"
+    (test-org-canvas-342--with-modules-file file
+      (let ((out nil))
+        (with-mock-api
+          (setq out (test-org-canvas-342--run
+                     `((:name "Modules"
+                        :children
+                        (:name "Module Items"
+                         :extra (,(test-org-canvas-342--moved file)
+                                 ,(test-org-canvas-342--moved
+                                   file :title "Readings" :id "502"
+                                   :partner-heading "Readings" :partner-title "Readings"
+                                   :line 11 :by-title t)
+                                 ,(test-org-canvas-342--moved
+                                   file :title "Gone" :id "503"
+                                   :partner-heading "Gone" :partner-title "Gone")
+                                 ,(test-org-canvas-342--moved
+                                   file :title "Twice" :id "781704")
+                                 (:kind extra :title "Stray" :id "504")))))))
+          (expect (test-org-canvas-api-call-count) :to-equal 0))
+        (expect (nth 0 out) :to-match "Stamp the item id of 3 MOVED rows")
+        (expect (nth 1 out) :to-match "STAMPED   R6: Arguing Both Sides (CANVAS_ID 5707155 on 'R7: Arguing Both Sides' in 'Week 6')")
+        (expect (nth 1 out) :to-match "NOT FOUND Gone (no unstamped heading 'Gone' under 'Week 6')")
+        (expect (nth 1 out) :to-match "CLAIMED   Twice (item id 781704 is already on a heading)")
+        (expect (nth 1 out) :to-match "HELD      Readings (item id 502; paired by title only")
+        (expect (nth 1 out) :to-match "1 item id(s) stamped, nothing sent to Canvas")
+        (expect (nth 1 out) :not :to-match "Stray")
+        (expect (nth 2 out) :to-equal 1))
+      (expect (test-org-canvas-342--ids file)
+              :to-equal '(("Readings" nil)
+                          ("R7: Arguing Both Sides" "5707155")
+                          ("Readings" nil)))))
+
+  (it "writes nothing when the confirmation is declined"
+    (test-org-canvas-342--with-modules-file file
+      (expect (test-org-canvas-342--run
+               `((:name "Modules"
+                  :children (:name "Module Items"
+                             :extra (,(test-org-canvas-342--moved file)))))
+               'no)
+              :to-throw 'user-error)
+      (expect (mapcar #'cadr (test-org-canvas-342--ids file)) :to-equal '(nil nil nil))))
+
+  (it "asks nothing and says so when no row qualifies"
+    (let ((out (test-org-canvas-342--run nil)))
+      (expect (nth 0 out) :to-be nil)
+      (expect (nth 1 out) :to-match "No item id stamped")
+      (expect (nth 2 out) :to-equal 0)))
+
+  (it "runs from a batch Emacs without asking"
+    (test-org-canvas-342--with-modules-file file
+      (let ((count nil))
+        (cl-letf (((symbol-function 'org-canvas--report-display)
+                   (lambda (_name render) (with-temp-buffer (funcall render))))
+                  ((symbol-function 'y-or-n-p) (lambda (&rest _) (error "Asked"))))
+          (with-org-canvas-test-config
+            (cl-letf (((symbol-function 'org-canvas--preflight-check) #'ignore)
+                      ((symbol-function 'org-canvas--diff-syllabus-references) (lambda () nil))
+                      ((symbol-function 'org-canvas--diff-feature)
+                       (lambda (feature)
+                         (list :name (plist-get feature :name)
+                               :extra (and (string= (plist-get feature :name) "Modules")
+                                           (list (test-org-canvas-342--moved file)))))))
+              (setq count (org-canvas-diff-stamp-moves)))))
+        (expect count :to-equal 1))
+      (expect (cadr (nth 1 (test-org-canvas-342--ids file))) :to-equal "5707155"))))
+
+(describe "the RELOCATE row (issue #343)"
+  (it "reports a stamped heading whose item sits in another module, counted apart"
+    (let* ((result (test-org-canvas-177--modules-diff
+                    test-org-canvas-177--modules-org test-org-canvas-177--remote))
+           (child (plist-get result :children))
+           (relocate (plist-get child :relocate)))
+      (expect (length relocate) :to-equal 1)
+      (expect (plist-get (car relocate) :kind) :to-equal 'relocate)
+      (expect (plist-get (car relocate) :title) :to-equal "Moved here")
+      (expect (plist-get (car relocate) :id) :to-equal "77")
+      (expect (plist-get (car relocate) :where) :to-equal "Week 3")
+      (expect (plist-get (car relocate) :to) :to-equal "Week 4")
+      (expect (plist-get (car relocate) :line) :to-equal 13)
+      ;; Only the twin counts; the relocation does not.
+      (expect (org-canvas--diff-count (list child)) :to-equal 1)))
+
+  (it "reports an item whose heading sits under a module not yet on Canvas"
+    (let* ((result (test-org-canvas-177--modules-diff
+                    (concat test-org-canvas-177--modules-org
+                            "* Week 9\n** Carried\n:PROPERTIES:\n:CANVAS_ID: 5864661\n:END:\n")
+                    test-org-canvas-177--remote))
+           (relocate (plist-get (plist-get result :children) :relocate)))
+      (expect (mapcar (lambda (e) (list (plist-get e :id) (plist-get e :where)
+                                        (plist-get e :to)))
+                      relocate)
+              :to-equal '(("77" "Week 3" "Week 4")
+                          ("5864661" "Week 3" "Week 9")))
+      (expect (plist-get (cadr relocate) :html-url) :to-match "items/5864661$")))
+
+  (it "follows a stamped MOVED row: the next report names it RELOCATE, not MOVED"
+    (let* ((dir (make-temp-file "diff-343-" t))
+           (modules (expand-file-name "modules.org" dir))
+           (assignments (expand-file-name "assignments.org" dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file assignments (insert test-org-canvas-299--assignments-org))
+            (with-temp-file modules (insert test-org-canvas-299--modules-org))
+            (let ((org-canvas-modules-file modules)
+                  (org-canvas-diff-known-extras nil)
+                  (org-canvas-diff-excluded-features nil))
+              (with-org-canvas-test-config
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                           (lambda (_method url &rest _)
+                             (if (string-match "modules/\\([0-9]+\\)/items" url)
+                                 (cdr (assoc (match-string 1 url)
+                                             test-org-canvas-299--remote))
+                               [((id . 781703) (name . "Week 5"))
+                                ((id . 781704) (name . "Week 6"))])))
+                          ((symbol-function 'org-canvas-api-request)
+                           (lambda (&rest _) (error "Stamping must not send"))))
+                  (let* ((run (lambda ()
+                                (plist-get (org-canvas--diff-feature
+                                            (org-canvas--registry-find-feature "modules"))
+                                           :children)))
+                         (moved (test-org-canvas-299--by-id (funcall run) "603")))
+                    (expect (org-canvas--diff-stamp-entry moved) :to-equal 'stamped)
+                    (let* ((after (funcall run))
+                           (relocate (plist-get after :relocate)))
+                      (expect (test-org-canvas-299--by-id after "603") :to-be nil)
+                      (expect (mapcar (lambda (e) (list (plist-get e :id) (plist-get e :title)
+                                                        (plist-get e :where) (plist-get e :to)))
+                                      relocate)
+                              :to-equal '(("603" "Closer" "Week 5" "Week 6")))))))))
+        (dolist (f (list modules assignments))
+          (let ((buf (find-buffer-visiting f))) (when buf (kill-buffer buf))))
+        (delete-directory dir t))))
+
+  (it "renders the row, the section count and a footer, and still says no drift"
+    (with-org-canvas-test-config
+      (let ((report (org-canvas--diff-render
+                     '((:name "Module Items"
+                        :relocate ((:kind relocate :title "Journal 05" :id "5707155"
+                                    :where "Week 06" :to "Week 07")))))))
+        (expect report :to-match "Module Items: 0 divergence(s), 1 relocation(s)")
+        (expect report :to-match "  RELOCATE  Journal 05 (item id 5707155 sits in module 'Week 06'; its heading, stamped with that id, is under 'Week 07', so the next sync recreates it there with a new id and deletes this copy)")
+        (expect report :to-match "No drift")
+        (expect report :to-match "Relocations: 1 module item the next sync recreates in its heading's module with a new id"))
+      (expect (org-canvas--diff-render
+               '((:name "Module Items"
+                  :relocate ((:kind relocate :title "a" :id "1" :where "x" :to "y")
+                             (:kind relocate :title "b" :id "2" :where "x" :to "y")))))
+              :to-match "Relocations: 2 module items the next sync recreates in their heading's module")
+      (expect (org-canvas--diff-render '((:name "A"))) :not :to-match "Relocations")))
+
+  (it "visits the stamped heading, opens the Canvas item, and refuses to acknowledge, delete or stamp it"
+    (test-org-canvas-342--with-modules-file file
+      (org-canvas--diff-stamp-entry (test-org-canvas-342--moved file))
+      (let ((shown nil) (opened nil)
+            (entry `(:kind relocate :title "R6: Arguing Both Sides" :id "5707155"
+                     :where "Week 5" :to "Week 6" :file ,file :line 10
+                     :html-url "https://x.test/items/5707155")))
+        (cl-letf (((symbol-function 'pop-to-buffer)
+                   (lambda (buf &rest _) (setq shown buf) (set-buffer buf)))
+                  ((symbol-function 'browse-url) (lambda (url &rest _) (setq opened url))))
+          (with-current-buffer (test-org-canvas--diff-report-buffer
+                                `((:name "Modules"
+                                   :children (:name "Module Items" :relocate (,entry)))))
+            (test-org-canvas--diff-goto-row 'relocate)
+            (save-excursion (org-canvas-diff-visit))
+            (org-canvas-diff-browse)
+            (expect (org-canvas-diff-acknowledge) :to-throw 'user-error)
+            (expect (org-canvas-diff-delete) :to-throw 'user-error)
+            (expect (org-canvas-diff-stamp-move) :to-throw 'user-error)))
+        (with-current-buffer shown
+          (expect (line-number-at-pos) :to-equal 10))
+        (expect opened :to-equal "https://x.test/items/5707155")))))
 
 (provide 'org-canvas-diff-test)
 ;;; org-canvas-diff-test.el ends here

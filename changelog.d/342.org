@@ -1,0 +1,5 @@
+* Added
+- #342 A MOVED row in the drift report names the heading it paired and that heading's line, so a pair whose titles differ is legible. =s= on the row stamps the item id as =CANVAS_ID= on that heading, and =S= or =org-canvas-diff-stamp-moves= (=J= in the transient menu) stamps every MOVED row paired by content, batch included. Both write the id only and send nothing to Canvas.
+- #343 A stamped module item heading whose id Canvas holds in another module is a RELOCATE row: the next sync recreates the item in the heading's module with a new id and deletes the old copy. RELOCATE rows are counted apart from drift, like PENDING rows, so =org-canvas-diff-batch= still exits zero on them.
+* Changed
+- #343 A MOVED row now says what stamping leads to: the next sync recreates the item in the new module with a new id and deletes the old copy, where it used to read as a move that keeps the id.

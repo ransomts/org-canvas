@@ -1198,7 +1198,9 @@ delete-and-create, and owns the bookkeeping (#105):
 
 - When a module syncs, its items on Canvas are listed once.  An item heading
   whose =CANVAS_ID= the module does not hold has arrived from another module:
-  it is created here and the heading is restamped with the new id.
+  it is created here and the heading is restamped with the new id.  Until
+  that sync, the drift report lists such a heading as a RELOCATE row, so
+  the id change is visible beforehand (#343).
 - An item the module holds on Canvas that none of its headings claim is
   removed *when it has moved*: another module's heading claims the id, or it
   was recreated under its new module earlier in the same run.  Either sync
@@ -2715,13 +2717,25 @@ the target will get is not known until it is synced.  A heading in the
 item's own module makes it *UNCLAIMED*: the next sync adopts that twin
 itself.  A heading under another module makes it *MOVED*: the item was
 carried to a new week in Org without its stamp, so the next sync would create
-it in the new module and leave this copy in the old one.  To move it instead,
-put the item id the row names on the heading as =CANVAS_ID=; the sync then
-creates it in the new module and removes the old copy (see
+it in the new module and leave this copy in the old one.  The row names the
+heading it paired and its line, which matters when the two titles differ (a
+column renumbered in Org, an item renamed on Canvas).  To have the old copy
+removed, put the item id the row names on that heading as =CANVAS_ID=: =s=
+on the row does it (see [[*Stamping a Moved Item][Stamping a Moved Item]]).
+Canvas cannot move an item between modules, so the next sync then creates
+the item in the new module with a new id and deletes the old copy (see
 [[*Moving Items Between Modules][Moving Items Between Modules]]).  =k= on a
 MOVED row deletes the old copy.  A SubHeader is paired only within its own
 module, since titles such as "Readings" recur in every week.  The item
 headings left over are PENDING rows naming their module.
+
+A stamped item heading whose id Canvas holds in another module is a
+*RELOCATE* row (#343): the next sync creates the item in the heading's module
+with a new id and deletes the copy in the old one.  This is what a stamped
+MOVED row becomes.  RELOCATE rows are counted apart, like PENDING rows, in the
+section header and a footer line, and do not make =org-canvas-diff-batch=
+exit non-zero.  They are listed because anything that stores the old item id
+(a completion requirement, a link to the item) loses it on the next sync.
 
 Every property a module registers is compared, so this covers =PUBLISHED=,
 points, due dates, group weights, drop rules and the rest without a separate
@@ -2810,7 +2824,7 @@ something the keys act on:
 
 | Key     | On a row                | Effect                                                              |
 |---------+-------------------------+---------------------------------------------------------------------|
-| =RET=     | CHANGED, MISSING, UNCLAIMED, PENDING | Open the course file with point on the heading      |
+| =RET=     | CHANGED, MISSING, UNCLAIMED, PENDING, RELOCATE | Open the course file with point on the heading |
 | =RET=     | EXTRA, MOVED            | Open the Canvas object in a browser, when the API said where it lives |
 | =b= / =B= | CHANGED, EXTRA, UNCLAIMED | Open the Canvas object's page / edit page in a browser (see [[*Opening a Heading on Canvas][Opening a Heading on Canvas]]) |
 | =a=       | EXTRA, UNCLAIMED, MOVED | Acknowledge the id in =org-canvas-diff-known-extras=, with an optional note |
@@ -2819,11 +2833,13 @@ something the keys act on:
 | =k=       | EXTRA, UNCLAIMED, MOVED | Delete the remote object, after confirming; the question names an assignment's submissions and scores or a rubric's assignments, and the object's JSON is saved first (see [[*Deleting Rows in Batch][Deleting Rows in Batch]]) |
 | =p=       | CHANGED                 | Pull the Canvas version over the heading (=org-canvas-pull-at-point=, which asks first) |
 | =p=       | EXTRA (classic quizzes) | Pull the quiz, questions and all, into a new heading at the end of =quizzes.org=, after confirming |
+| =s=       | MOVED                   | Stamp the item id on the heading the row paired (=org-canvas-diff-stamp-move=); sends nothing |
+| =S=       | anywhere                | Stamp every MOVED row paired by content (=org-canvas-diff-stamp-moves=), after confirming |
 | =g=       | anywhere                | Run the report again                                                |
 | =TAB= / =S-TAB= | anywhere          | Move to the next / previous row                                     |
 
 An action rewrites its row in place (=ACK=, =DELETED=, =PULLED=, =DROPPED=,
-=ADOPTED=) rather than re-running every list request; =g= refreshes when you
+=ADOPTED=, =STAMPED=) rather than re-running every list request; =g= refreshes when you
 want the totals recounted.  Acknowledgments are persisted through
 =org-canvas-diff-acknowledge-function=, which receives the whole new list.
 The default saves with =customize-save-variable=; a course that keeps its
@@ -2872,7 +2888,7 @@ t)= for every EXTRA row of a section; names match the way the report's
 sections do.  The rows come from the report's own comparison, and each
 object is deleted at the URL =k= would use.  The rules:
 
-- *Only EXTRA rows.*  An UNCLAIMED or MOVED row has a heading the next
+- *Only EXTRA rows.*  An UNCLAIMED, MOVED or RELOCATE row has a heading the next
   sync pairs with, so its selector comes back =not-extra=; one that names
   no row comes back =not-found=.
 - *Refused when it would take work with it.*  The object is read first.
@@ -2894,12 +2910,37 @@ It returns one plist per row -- =:feature=, =:id=, =:title=, =:outcome=
 (=deleted=, =refused=, =dry-run=, =failed=, =not-extra= or =not-found=),
 =:reason=, and =:snapshot= once deleted -- and logs each.
 
+** Stamping a Moved Item
+
+A MOVED row names an item id and the unstamped heading it paired with in
+another module (#342).  =s= on the row writes that id as =CANVAS_ID= on
+that heading and saves the file.  Nothing else is written and nothing is
+sent.  The heading is the one the report paired, by content where it
+could: the row's recorded line if the heading there is unchanged and still
+unstamped, otherwise the unstamped heading with the same text under the
+module the row names.  It is never looked up by the item's title, so a
+renamed pair is stamped correctly.  =s= refuses when a heading in the file
+already carries the id, and asks first on a row paired by title only.
+
+=S=, or =M-x org-canvas-diff-stamp-moves= (=J= in the transient menu),
+does the same for every MOVED row in one pass.  It runs the comparison,
+names the count and asks (not in batch), then stamps and reports what it
+stamped, what it could not find, what was already claimed, and the rows it
+held back because only their title paired them.  Stamp those with =s= on
+their row.
+
+After stamping, the next report shows each item as a RELOCATE row, and the
+next sync recreates it in its new module with a new id and deletes the old
+copy.
+
 ** Cost and Safety
 
 One list request per feature.  The report writes nothing, locally or on
-Canvas, so it is safe to run at any time.  Stamp adoption is the one local
-write in this part of the package, and it happens only when you ask for it
-with =a= or =org-canvas-diff-adopt-stamps=; it still sends nothing.
+Canvas, so it is safe to run at any time.  Stamp adoption and stamping a
+moved item are the only local writes in this part of the package.  They
+happen only when you ask for them, with =a= or
+=org-canvas-diff-adopt-stamps= and with =s=, =S= or
+=org-canvas-diff-stamp-moves=, and neither sends anything.
 Deleting is a separate verb too -- =k= or =org-canvas-diff-delete-rows= --
 and each delete reads the object and saves it before it sends the DELETE.
 
@@ -3700,9 +3741,10 @@ Never part of a sync; see [[*messages.org][messages.org]].
 | =org-canvas-diff-batch=           | As above, exiting non-zero when drift is found |
 | =org-canvas-browse-at-point=      | Open the heading at point on Canvas in a browser; =C-u= for the edit page (no API calls) |
 | =org-canvas-browse-edit-at-point= | Open the heading's edit page on Canvas         |
-| =org-canvas-diff-visit= / =-browse= / =-browse-edit= / =-acknowledge= / =-delete= / =-pull= / =-adopt-stamp= | Row actions in the report buffer (see [[*Acting on the Report][Acting on the Report]]) |
+| =org-canvas-diff-visit= / =-browse= / =-browse-edit= / =-acknowledge= / =-delete= / =-pull= / =-adopt-stamp= / =-stamp-move= | Row actions in the report buffer (see [[*Acting on the Report][Acting on the Report]]) |
 | =org-canvas-diff-adopt-stamps=    | Adopt the Canvas timestamp of every CHANGED entry with no compared property differing (local write only; see [[*Adopting a Stamp][Adopting a Stamp]]) |
 | =org-canvas-diff-delete-rows=     | Delete the Canvas objects of the EXTRA rows named, without asking, after safety checks and a JSON snapshot (see [[*Deleting Rows in Batch][Deleting Rows in Batch]]) |
+| =org-canvas-diff-stamp-moves=     | Stamp the item id of every MOVED row on the heading it paired (local write only; see [[*Stamping a Moved Item][Stamping a Moved Item]]) |
 | =org-canvas-adopt-at-point=       | Stamp the heading at point with the Canvas item of the same title (local write only) |
 | =org-canvas-validate=             | Validate all Org files offline (no API calls) |
 | =org-canvas-validate-batch=       | As above, exiting non-zero when there are errors |
