@@ -1,0 +1,8 @@
+* Fixed
+- #320 A re-pull removes a boolean setting Canvas turned off instead of
+  leaving the heading's stale =true=: a value equal to the property's
+  default is now deleted from a heading that carries one, on every pull
+  that writes booleans (New Quizzes, settings, sections, grading
+  periods, module items).  A New Quiz re-pull likewise removes a time
+  limit, attempt count or scoring policy Canvas cleared, and no longer
+  writes =:null= for a quiz with no time limit.

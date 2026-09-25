@@ -642,26 +642,27 @@ returns a plist whose :outcome is `pulled' or `dry-run'."
 
 ;;;; Pull
 
+(defconst org-canvas--new-quiz-pulled-properties
+  '("TIME_LIMIT" "SHUFFLE_ANSWERS" "ONE_AT_A_TIME"
+    "ALLOWED_ATTEMPTS" "SCORING_POLICY")
+  "Registered New Quiz properties a pull writes from the quiz itself.")
+
 (defun org-canvas--new-quiz-pull-set-properties (pos quiz)
-  "Set all properties on heading at POS from New Quiz API response QUIZ."
+  "Set all properties on heading at POS from New Quiz API response QUIZ.
+Each setting is written through `org-canvas--pull-apply-spec', so a
+value Canvas cleared or turned off is deleted from a heading a
+re-pull found rather than left standing (issue #320), while a field
+QUIZ does not carry leaves the property alone."
   (let ((assignment-id (or (alist-get 'assignment_id quiz)
-                          (alist-get 'id quiz)))
-        (time-limit (alist-get 'time_limit quiz))
-        (shuffle (alist-get 'shuffle_answers quiz))
-        (one-at-a-time (alist-get 'one_at_a_time quiz))
-        (attempts (alist-get 'allowed_attempts quiz))
-        (scoring (alist-get 'scoring_policy quiz)))
+                           (alist-get 'id quiz)))
+        (specs (plist-get (gethash "new-quizzes"
+                                   org-canvas--property-registry)
+                          :properties)))
     (org-canvas-org-save-sync-state pos assignment-id "CANVAS_ASSIGNMENT_ID")
-    (when time-limit
-      (org-canvas-org-set-property pos "TIME_LIMIT" (format "%s" time-limit)))
-    (when shuffle
-      (org-canvas--pull-set-boolean-property pos "SHUFFLE_ANSWERS" shuffle))
-    (when one-at-a-time
-      (org-canvas--pull-set-boolean-property pos "ONE_AT_A_TIME" one-at-a-time))
-    (when attempts
-      (org-canvas-org-set-property pos "ALLOWED_ATTEMPTS" (format "%s" attempts)))
-    (when scoring
-      (org-canvas-org-set-property pos "SCORING_POLICY" scoring))))
+    (dolist (spec specs)
+      (when (member (plist-get spec :org-prop)
+                    org-canvas--new-quiz-pulled-properties)
+        (org-canvas--pull-apply-spec spec quiz pos)))))
 
 
 (defun org-canvas--new-quiz-pull-items (quiz-assignment-id)

@@ -33,7 +33,10 @@
 Convert t to \"true\", :json-false/nil to \"false\".  When the registry
 declares PROPERTY as `:type boolean' and the resolved value matches the
 registered (or implicit nil) default, emission is suppressed unless
-`org-canvas-emit-defaults' is non-nil."
+`org-canvas-emit-defaults' is non-nil, and a value the heading already
+carries is deleted: a re-pull finds the existing heading with its
+drawer intact, and a suppressed write alone would leave a stale
+\"true\" standing after Canvas turned the setting off (issue #320)."
   (let* ((spec (org-canvas--registry-find-property property))
          (boolean-spec (and spec (eq (plist-get spec :type) 'boolean)))
          (default (plist-get spec :default))
@@ -45,11 +48,12 @@ registered (or implicit nil) default, emission is suppressed unless
                                   ((string= value "false") nil)
                                   (t value)))
                            (t value))))
-    (when (or org-canvas-emit-defaults
-              (not boolean-spec)
-              (not (eq (and normalized t) (and default t))))
-      (org-canvas-org-set-property
-       pom property (if normalized "true" "false")))))
+    (if (or org-canvas-emit-defaults
+            (not boolean-spec)
+            (not (eq (and normalized t) (and default t))))
+        (org-canvas-org-set-property
+         pom property (if normalized "true" "false"))
+      (org-entry-delete pom property))))
 
 (defun org-canvas--pull-write-file-header (&optional time)
   "Write or replace the #+LAST_SYNCED header in the current buffer.

@@ -2332,6 +2332,60 @@ Click the heart.
        (expect (org-entry-get pos "CANVAS_ASSIGNMENT_ID") :to-equal "77")
        (expect (org-entry-get pos "TIME_LIMIT") :to-equal "30")))))
 
+;; Issue #320: a re-pull finds the existing heading with its drawer
+;; intact, so a setting Canvas turned off or cleared must be removed,
+;; not merely left unwritten.
+(describe "org-canvas--new-quiz-pull-set-properties re-pull (issue #320)"
+  (it "removes SHUFFLE_ANSWERS and ONE_AT_A_TIME Canvas turned off"
+    (let ((org-canvas-emit-defaults nil))
+      (with-temp-org-buffer
+       "* Re-pulled Quiz
+:PROPERTIES:
+:SHUFFLE_ANSWERS: true
+:ONE_AT_A_TIME: true
+:END:
+"
+       (org-back-to-heading)
+       (let ((pos (point)))
+         (org-canvas--new-quiz-pull-set-properties
+          pos '((assignment_id . 42)
+                (shuffle_answers . :json-false)
+                (one_at_a_time . :json-false)))
+         (expect (org-entry-get pos "SHUFFLE_ANSWERS") :to-be nil)
+         (expect (org-entry-get pos "ONE_AT_A_TIME") :to-be nil)))))
+
+  (it "removes a TIME_LIMIT and SCORING_POLICY Canvas cleared"
+    (let ((org-canvas-emit-defaults nil))
+      (with-temp-org-buffer
+       "* Re-pulled Quiz
+:PROPERTIES:
+:TIME_LIMIT: 60
+:SCORING_POLICY: keep_highest
+:END:
+"
+       (org-back-to-heading)
+       (let ((pos (point)))
+         (org-canvas--new-quiz-pull-set-properties
+          pos '((assignment_id . 42)
+                (time_limit . :null)
+                (scoring_policy)))
+         (expect (org-entry-get pos "TIME_LIMIT") :to-be nil)
+         (expect (org-entry-get pos "SCORING_POLICY") :to-be nil)))))
+
+  (it "leaves a property alone when the reply does not carry its field"
+    (with-temp-org-buffer
+     "* Re-pulled Quiz
+:PROPERTIES:
+:TIME_LIMIT: 60
+:SHUFFLE_ANSWERS: true
+:END:
+"
+     (org-back-to-heading)
+     (let ((pos (point)))
+       (org-canvas--new-quiz-pull-set-properties pos '((assignment_id . 42)))
+       (expect (org-entry-get pos "TIME_LIMIT") :to-equal "60")
+       (expect (org-entry-get pos "SHUFFLE_ANSWERS") :to-equal "true")))))
+
 (describe "org-canvas--new-quiz-pull-insert-item"
   (it "inserts item as L2 heading with properties"
     (with-temp-org-buffer

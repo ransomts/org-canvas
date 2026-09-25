@@ -380,7 +380,24 @@
        "* Heading\n"
        (org-canvas--pull-set-boolean-property
         (point) "PUBLISHED" :json-false)
-       (expect (org-entry-get (point) "PUBLISHED") :to-equal "false")))))
+       (expect (org-entry-get (point) "PUBLISHED") :to-equal "false"))))
+
+  (it "deletes a stale value a suppressed default would leave (issue #320)"
+    (let ((org-canvas-emit-defaults nil))
+      (with-temp-org-buffer
+       "* Heading\n:PROPERTIES:\n:PEER_REVIEWS: true\n:END:\n"
+       (org-back-to-heading t)
+       (org-canvas--pull-set-boolean-property
+        (point) "PEER_REVIEWS" :json-false)
+       (expect (org-entry-get (point) "PEER_REVIEWS") :to-be nil))))
+
+  (it "deletes a stale false when Canvas holds the :default t (issue #320)"
+    (let ((org-canvas-emit-defaults nil))
+      (with-temp-org-buffer
+       "* Heading\n:PROPERTIES:\n:PUBLISHED: false\n:END:\n"
+       (org-back-to-heading t)
+       (org-canvas--pull-set-boolean-property (point) "PUBLISHED" t)
+       (expect (org-entry-get (point) "PUBLISHED") :to-be nil)))))
 
 (describe "org-canvas--intent-satisfied-p (issue #293)"
   (it "matches the declared name anywhere in the observation, ignoring case"
