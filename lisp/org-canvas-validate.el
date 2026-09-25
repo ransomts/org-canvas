@@ -828,11 +828,34 @@ Return nil when there are no question subheadings."
         (dolist (m ordered) (set-marker m nil))
         sum))))
 
+(defconst org-canvas--validate-survey-quiz-types '("survey" "graded_survey")
+  "QUIZ_TYPE values whose responses can be collected anonymously.")
+
+(defun org-canvas--validate-quiz-anonymity (loc)
+  "Warn when the unstamped survey at point does not say who responds.
+LOC is a (:file :line :heading) plist.  A push creates the survey,
+and Canvas creates it named unless it is told otherwise; a response
+cannot be made anonymous after it is submitted, so a survey copied
+from an anonymous one must say so (issue #349).  A stamped survey is
+left alone: its push sends nothing about anonymity and changes
+nothing."
+  (when (and (member (org-entry-get (point) "QUIZ_TYPE")
+                     org-canvas--validate-survey-quiz-types)
+             (not (org-entry-get (point) "CANVAS_ID"))
+             (not (org-entry-get (point) "ANONYMOUS_SUBMISSIONS")))
+    (list (org-canvas--validate-push-only
+           (org-canvas--validate-make-issue
+            'warning loc "ANONYMOUS_SUBMISSIONS"
+            (concat "Survey sets no ANONYMOUS_SUBMISSIONS; a push creates"
+                    " it named (set true or false)"))))))
+
 (defun org-canvas--validate-quiz-point-total (loc)
   "Check that quiz POINTS matches sum of question points.
 LOC is a (:file :line :heading) plist.  The accommodations table
-under the quiz, when there is one, is checked as well (issue #230)."
+under the quiz, when there is one, is checked as well (issue #230),
+and so is whether a new survey says it is anonymous (issue #349)."
   (nconc
+   (org-canvas--validate-quiz-anonymity loc)
    (when-let* ((declared-points (org-entry-get (point) "POINTS"))
                (sum (org-canvas--validate-quiz-sum-question-points))
                (declared (string-to-number declared-points)))

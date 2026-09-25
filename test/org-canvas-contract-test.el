@@ -52,7 +52,8 @@
 (defconst org-canvas-contract--exceptions
   ;; Fields a module legitimately emits that the documented create operation
   ;; omits.  Each must be justified — these are not free passes.
-  '(("modules" . ("published" "skip_content_tags")))
+  '(("modules" . ("published" "skip_content_tags"))
+    ("quizzes" . ("anonymous_submissions")))
   "Per-module allowed-but-undocumented payload fields.
 modules: Canvas honors `module[published]' on create even though the
 documented create_module operation does not list it; org-canvas relies on
@@ -60,7 +61,11 @@ this to publish modules in a single request.  `module[skip_content_tags]'
 is likewise undocumented but read straight from the params in
 ContextModulesApiController#update, where it suppresses the
 publish_items!/unpublish_items! cascade that would otherwise rewrite the
-publish state of every piece of content the module lists (issue #47).")
+publish state of every piece of content the module lists (issue #47).
+quizzes: `quiz[anonymous_submissions]' is absent from the documented
+create_quiz and edit_quiz operations, but the Quiz object carries it
+and the quizzes API accepts it on both: a PUT of it made a copied
+survey anonymous on a live course (issue #349).")
 
 ;;;; Helpers
 
@@ -156,6 +161,13 @@ stage-1/2 functions."
     (org-canvas-contract--check
      "quizzes"
      "* Quiz 1\n:PROPERTIES:\n:QUIZ_TYPE: practice_quiz\n:PUBLISHED: true\n:END:\n\nIntro text.\n"
+     #'org-canvas--quiz-parse-entry #'org-canvas--quiz-build-payload))
+
+  (it "an anonymous survey's build-payload conforms to create_quiz"
+    (org-canvas-contract--check
+     "quizzes"
+     (concat "* Survey\n:PROPERTIES:\n:QUIZ_TYPE: survey\n"
+             ":ANONYMOUS_SUBMISSIONS: true\n:END:\n\nTell us.\n")
      #'org-canvas--quiz-parse-entry #'org-canvas--quiz-build-payload))
 
   (it "modules build-payload conforms to create_module"

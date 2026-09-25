@@ -1953,6 +1953,105 @@ other."
     (org-canvas--finalize-restamp-updated pom endpoint id field title ctx))
   (plist-put ctx :remote-touched nil))
 
+;;;; Push Echo Check
+;;
+;; Canvas answers a create or update with the object as it stored it,
+;; and it does not always store what it was sent: a classic quiz sent
+;; `scoring_policy: keep_latest' came back `keep_highest', and the push
+;; reported it synced; only the next drift report showed the difference
+;; (issue #349).  The check below reads the registry the way the drift
+;; report does — a spec's `:remote-fn' answers for the stored side, so a
+;; nested or renamed field is no false alarm — and compares each field
+;; the payload carried.  It warns and never fails the push.
+
+(defconst org-canvas--registry-echo-types
+  '(boolean number timestamp enum csv-enum string)
+  "Property types the push echo check compares.
+`link' is left out: the payload holds an id the module resolves and
+checks itself, as quizzes do for their assignment group.")
+
+(defun org-canvas--registry-echo-checked-p (spec)
+  "Return non-nil when the push echo check compares property SPEC.
+A property the push never sends — Canvas's own, a declared intent,
+org-canvas's bookkeeping, a pull-only record — has nothing to echo."
+  (and (memq (plist-get spec :type) org-canvas--registry-echo-types)
+       (not (or (plist-get spec :canvas-owned) (plist-get spec :intent-of)
+                (plist-get spec :local-only) (plist-get spec :pull-only)))))
+
+(defun org-canvas--registry-sent-cell (sent key)
+  "Return (KEY . VALUE) when the payload object SENT carries KEY, else nil.
+SENT is an alist or a hash table keyed by symbols or strings, the two
+shapes payload builders produce."
+  (if (hash-table-p sent)
+      (let* ((missing (make-symbol "missing"))
+             (value (gethash key sent missing)))
+        (when (eq value missing)
+          (setq value (gethash (symbol-name key) sent missing)))
+        (unless (eq value missing) (cons key value)))
+    (assq key sent)))
+
+(defun org-canvas--registry-echo-number (value)
+  "Return VALUE, a number or its string spelling, as a float, or nil."
+  (cond ((numberp value) (float value))
+        ((stringp value) (float (string-to-number value)))))
+
+(defun org-canvas--registry-echo-equal-p (spec sent stored)
+  "Return non-nil when STORED is the value SENT for property SPEC.
+Numbers compare by value (10 and 10.0 agree), CSV lists as sets, and
+everything else in its Org spelling, so a boolean's false and null
+agree and two timestamps agree when they name the same minute."
+  (let ((sent (org-canvas--registry-normalize-remote sent))
+        (stored (org-canvas--registry-normalize-remote stored)))
+    (pcase (plist-get spec :type)
+      ('number (equal (org-canvas--registry-echo-number sent)
+                      (org-canvas--registry-echo-number stored)))
+      ('csv-enum (equal (sort (org-canvas--registry-remote-list sent) #'string<)
+                        (sort (org-canvas--registry-remote-list stored)
+                              #'string<)))
+      (_ (equal (org-canvas--registry-remote-as-org spec sent)
+                (org-canvas--registry-remote-as-org spec stored))))))
+
+(defun org-canvas--registry-echo-field (spec sent response)
+  "Compare property SPEC as the payload object SENT had it with RESPONSE.
+Returns (ORG-PROP SENT STORED), the values in their Org spelling, when
+Canvas stored something else; nil when they agree, when the payload
+did not carry the field, or when RESPONSE does not report it."
+  (when (org-canvas--registry-echo-checked-p spec)
+    (let ((cell (org-canvas--registry-sent-cell
+                 sent (org-canvas--registry-remote-key spec))))
+      (when (and cell (org-canvas--registry-remote-present-p spec response))
+        (let ((stored (org-canvas--registry-remote-field spec response)))
+          (unless (org-canvas--registry-echo-equal-p spec (cdr cell) stored)
+            (list (plist-get spec :org-prop)
+                  (or (org-canvas--registry-remote-as-org spec (cdr cell))
+                      "(unset)")
+                  (or (org-canvas--registry-remote-as-org spec stored)
+                      "(unset)"))))))))
+
+(defun org-canvas--registry-echo-mismatches (feature sent response)
+  "Return FEATURE's registered properties Canvas stored otherwise than SENT.
+FEATURE names a property registry entry (\"quizzes\"); SENT is the
+payload's object, inside any wrapper key; RESPONSE is Canvas's reply
+to the create or update.  Each element is (ORG-PROP SENT STORED)."
+  (let ((props (gethash feature org-canvas--property-registry)))
+    (delq nil (mapcar (lambda (spec)
+                        (org-canvas--registry-echo-field spec sent response))
+                      (plist-get props :properties)))))
+
+(defun org-canvas--registry-warn-echo (feature title sent response)
+  "Warn about each property of FEATURE Canvas did not store as SENT.
+TITLE names the item in the log.  SENT and RESPONSE are as for
+`org-canvas--registry-echo-mismatches', whose list is returned.  A
+module's finalize calls this so a value Canvas quietly replaced shows
+at push time, not at the next drift report (issue #349)."
+  (let ((mismatches (org-canvas--registry-echo-mismatches
+                     feature sent response)))
+    (dolist (m mismatches)
+      (org-canvas--log-warning org-canvas--logger
+        "[Verify] '%s': sent %s %s, Canvas stored %s"
+        title (nth 0 m) (nth 1 m) (nth 2 m)))
+    mismatches))
+
 (cl-defun org-canvas--finalize-item (data response
 					  &key
 					  id-field

@@ -137,6 +137,11 @@
      :doc "Students can only view results once")
     (:org-prop "ONLY_VISIBLE_TO_OVERRIDES" :data-key :only_visible_to_overrides :type boolean
      :doc "Only visible to students with overrides")
+    ;; Sent whenever the heading sets it, false included: a survey's
+    ;; anonymity is a promise to its respondents (issue #349).
+    (:org-prop "ANONYMOUS_SUBMISSIONS" :data-key :anonymous_submissions
+     :type boolean :api-key "anonymous_submissions"
+     :doc "Survey responses are anonymous (set it on every survey)")
     (:org-prop "GROUP" :data-key :assignment_group_id :type link
      :target-file org-canvas-assignment-groups-file :link-id-property "CANVAS_ID"
      :doc "Link to assignment-groups.org heading"))
@@ -334,7 +339,15 @@ Returns a plist of raw string values."
 	:show-correct-last-raw (org-entry-get pom "SHOW_CORRECT_ANSWERS_LAST_ATTEMPT")
 	:one-time-results-raw (org-entry-get pom "ONE_TIME_RESULTS")
 	:only-visible-raw (org-entry-get pom "ONLY_VISIBLE_TO_OVERRIDES")
+	:anonymous-raw (org-entry-get pom "ANONYMOUS_SUBMISSIONS")
 	:body-text (org-canvas--quiz-parse-body-text)))
+
+(defun org-canvas--quiz-explicit-boolean (raw)
+  "Return RAW, an Org boolean property, as t, `:json-false' or nil.
+Nil means the heading does not set it, so the payload leaves the
+field alone; a written false is sent as false (issue #349)."
+  (when raw
+    (org-canvas--to-json-boolean (org-canvas--interpret-boolean raw))))
 
 (defun org-canvas--quiz-transform-props (props)
   "Transform raw PROPS plist into final quiz data (pure, no buffer access)."
@@ -386,6 +399,8 @@ Returns a plist of raw string values."
 			     (plist-get props :one-time-results-raw))
 	  :only_visible_to_overrides (org-canvas--interpret-boolean
 				      (plist-get props :only-visible-raw))
+	  :anonymous_submissions (org-canvas--quiz-explicit-boolean
+				  (plist-get props :anonymous-raw))
 	  :assignment_group_id (when group-id-raw (string-to-number group-id-raw)))))
 
 (defun org-canvas--quiz-body-text-to-html (text)
@@ -496,6 +511,9 @@ Returns \"\" for a quiz with none."
     (when (plist-get data :only_visible_to_overrides)
       (push '(only_visible_to_overrides . t) quiz-obj))
 
+    (when-let* ((anonymous (plist-get data :anonymous_submissions)))
+      (push `(anonymous_submissions . ,anonymous) quiz-obj))
+
     `((quiz . ,quiz-obj))))
 
 (defun org-canvas--quiz-push-to-api (data payload &optional ctx)
@@ -507,14 +525,20 @@ duplicate guard of a push outside a sync's snapshot, and recovery."
                                       (org-canvas--search-item "quizzes" title))))
 
 (defun org-canvas--quiz-verify-response (data response)
-  "Verify quiz properties in RESPONSE match DATA."
+  "Verify quiz properties in RESPONSE match DATA.
+Every registered property the payload carried is compared with what
+Canvas stored, one warning per difference (issue #349): a
+SCORING_POLICY Canvas replaced was otherwise reported synced."
   (let ((expected-group (plist-get data :assignment_group_id))
         (actual-group (alist-get 'assignment_group_id response)))
     (when (and expected-group actual-group
                (not (equal expected-group actual-group)))
       (org-canvas--log-warning org-canvas--logger
         "[Verify] '%s': assignment_group_id mismatch! Expected %s, got %s"
-        (plist-get data :title) expected-group actual-group))))
+        (plist-get data :title) expected-group actual-group)))
+  (org-canvas--registry-warn-echo
+   "quizzes" (plist-get data :title)
+   (alist-get 'quiz (org-canvas--quiz-build-payload data)) response))
 
 (defun org-canvas--quiz-sync-children (data response)
   "Sync question groups and questions for the quiz in DATA/RESPONSE.
@@ -1056,7 +1080,9 @@ as issue #26."
   '(;; (api-key property-name type)
     ;; Types: string = set if non-nil, format = format as string,
     ;;        boolean = set-boolean, boolean-nonnull = set-boolean if not :null,
-    ;;        timestamp = set-timestamp, string-nonnull = set if non-null
+    ;;        timestamp = set-timestamp, string-nonnull = set if non-null,
+;;        boolean-kept = boolean-nonnull, but a drawer that already
+;;        carries the property is always rewritten (issue #349)
     (quiz_type "QUIZ_TYPE" string)
     (time_limit "TIME_LIMIT" format)
     (shuffle_answers "SHUFFLE_ANSWERS" boolean)
@@ -1074,8 +1100,21 @@ as issue #26."
     (ip_filter "IP_FILTER" string-nonnull)
     (show_correct_answers_last_attempt "SHOW_CORRECT_ANSWERS_LAST_ATTEMPT" boolean)
     (one_time_results "ONE_TIME_RESULTS" boolean)
-    (only_visible_to_overrides "ONLY_VISIBLE_TO_OVERRIDES" boolean))
+    (only_visible_to_overrides "ONLY_VISIBLE_TO_OVERRIDES" boolean)
+    (anonymous_submissions "ANONYMOUS_SUBMISSIONS" boolean-kept))
   "Specs for pulling quiz properties: (api-key property-name type).")
+
+(defun org-canvas--quiz-pull-set-kept-boolean (pos prop-name val)
+  "Set boolean PROP-NAME at POS from VAL, Canvas's t or `:json-false'.
+A false value is the default and stays implicit in a drawer without
+the property, but a drawer that says true is corrected to false: a
+survey Canvas holds named must not keep reading anonymous, or the
+next push would quietly change it (issue #349)."
+  (when (memq val '(t :json-false))
+    (if (org-entry-get pos prop-name)
+        (org-canvas-org-set-property pos prop-name
+                                     (if (eq val t) "true" "false"))
+      (org-canvas--pull-set-boolean-property pos prop-name val))))
 
 (defun org-canvas--quiz-pull-set-single-property (pos prop-name val type)
   "Set a single quiz property PROP-NAME at POS from VAL using TYPE."
@@ -1086,6 +1125,7 @@ as issue #26."
     ('boolean-nonnull
      (when (not (eq val :null))
        (org-canvas--pull-set-boolean-property pos prop-name val)))
+    ('boolean-kept (org-canvas--quiz-pull-set-kept-boolean pos prop-name val))
     ('timestamp (org-canvas--pull-set-timestamp-property pos prop-name val))
     ('string-nonnull (when val (org-canvas-org-set-property pos prop-name val)))))
 

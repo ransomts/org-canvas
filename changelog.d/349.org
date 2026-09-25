@@ -1,0 +1,3 @@
+* Added
+- #349 Classic quizzes take an =ANONYMOUS_SUBMISSIONS= property: it is sent (false included), pulled and compared by the drift report, and validate warns on a new survey that does not set it, since a push creates it named.
+- #349 After a classic quiz create or update, every registered property Canvas stored otherwise than it was sent (a =SCORING_POLICY= of =keep_latest= kept as =keep_highest=) is named in a =[Verify]= warning at push time, not first seen at the next diff.
