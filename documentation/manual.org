@@ -2953,6 +2953,18 @@ Pulling an assignment's submissions produces a *grading file*: an Org file with 
 
 A refresh also says what changed since the file was last written, which is the reason anyone refreshes. The echo area gets the counts — =Refreshed Journal 02: 3 new, 1 resubmitted after grading, 105 posted, 1 left the course (1 kept)= — and the log one line per student. The kinds, one per student: *new* work arrived (a first submission, a later attempt on an ungraded row, a student the file did not have); *resubmitted after grading*, a new attempt on a row that carries a score, whose heading is marked =:CONFLICT: attempt: 2 submitted after grading= so the old score is not mistaken for a grade of the new file; *scored on Canvas since the pull*, the =CANVAS_SCORE= moved (someone graded in SpeedGrader); *posted*, the grade became visible to the student; *left the course*, a student no longer in the pull. When nothing moved the line says so, naming the previous =PULLED_AT=; the first pull of a file says nothing. A departed student's heading is dropped unless it holds work of yours — notes, a draft, =Rubric= rows, a typed score — in which case it stays with =:STATUS: left= and whatever it held, and no push or completion rule ever touches it; delete the heading when you are done with it.
 
+** Similarity and AI Writing Reports
+
+When the assignment has a document processor attached (Turnitin as an LTI asset processor; see =DOCUMENT_PROCESSOR= in [[*External Tool Assignments (Gradescope, and other LTI tools)][External Tool Assignments]]), the pull and every refresh also read each submission's reports, in one GraphQL query per column, and write them on the student's heading:
+
+- =:SIMILARITY:= — Turnitin's Similarity report (=reportType= =originality=): its score, such as =33%=
+- =:AI_WRITING:= — Turnitin's AI Writing report (=turnitin_aiwriting=): its score, such as =0%=
+- =:REPORT_<TYPE>:= — any other report type, its name upcased (=REPORT_GRAMMAR_CHECK=), so a second processor still shows up
+
+A report that has not finished reads =pending=, one that failed =failed= (for an uploaded PDF that is usually an image-only scan, worth knowing before you grade), and one the tool declined =not processed=. Two reports of one type, one per uploaded file, are joined with a comma. A =Reports:= line under the =Assignment:= line counts the students: =Reports: 36 processed, 7 failed, 0 pending=, where a student is failed when any report failed, else pending when any is pending. The same line appears in the summary table.
+
+The values are Canvas's: every refresh rewrites them, and a report gone from Canvas disappears from the heading, while typed scores, notes and drafts come back as always. When the column has no processor, nothing is written, not even the line. When the reports cannot be read, the log says so in one warning and the file is pulled without them. SpeedGrader still shows the reports themselves; the file says which students to open it for. Two GraphQL fields look like the answer and are not: =Assignment.hasPlagiarismTool= describes the legacy plagiarism framework (it reads false on a column with a processor attached) and =Submission.turnitinData= the legacy plugin; the reports are read from =ltiAssetReportsConnection=.
+
 ** Batch Use
 
 The grading workflow repeats every week per column, and the interactive path is right for one column and wrong for six. Every entry point therefore takes its target as an argument and prompts only when it is nil, so a script, a keyboard macro or a tool built on org-canvas can drive it without the minibuffer:
@@ -2997,6 +3009,9 @@ Before pushing from a saved file, org-canvas re-reads the assignment once and co
 | =:FINAL_SCORE:= | Present only when a Canvas late policy made the recorded score differ from the entered one |
 | =:ATTEMPT:= | Submission attempt at pull time; a change flags a resubmission |
 | =:SUBMITTED_AT:= | Submission timestamp |
+| =:SIMILARITY:= | The document processor's Similarity report: a score, =pending=, =failed= or =not processed=; present only when Canvas holds one (see [[*Similarity and AI Writing Reports][Similarity and AI Writing Reports]]) |
+| =:AI_WRITING:= | The AI Writing report, read the same way |
+| =:REPORT_<TYPE>:= | Any other report type, read the same way |
 | =:CONFLICT:= | Written by a push that skipped this heading, or by a refresh that found Canvas moved under a typed score or a new attempt on a graded row; cleared by the next successful push |
 
 Scores compare as entered values: with a late policy of 20% per day, a student graded 5 who was a day late shows =SCORE: 5=, =CANVAS_SCORE: 5=, =FINAL_SCORE: 4=.
@@ -3058,7 +3073,13 @@ Next, the one thing to do:
 - =-= — nothing to do; =?= — the token could not read the column (the log says why)
 
 The columns with something to do come first, in that order, and a
-summary line above the table counts them. Nothing is written to disk
+summary line above the table counts them. When a column someone
+submitted to has similarity or AI writing reports, a =Reports:= line
+follows, the students counted the way a grading file counts them and
+summed over the columns, naming the columns where a report failed:
+=Reports: 36 processed, 7 failed, 0 pending; failed in R6 (7)=. It
+costs one GraphQL query per such column; a column with no report
+adds nothing to it. Nothing is written to disk
 or to Canvas; a course marked read-only reads it the same. The report
 reads every column's submissions, so a course with many columns
 takes a moment. Under =emacs --batch= the table is printed to

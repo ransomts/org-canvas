@@ -43,11 +43,15 @@
 ;;       `missing'.  The counts come from these rows rather than the
 ;;       assignment's `needs_grading_count', which says nothing about
 ;;       posting or about what arrived since a pull.
+;;   POST /api/graphql (a read, `org-canvas--graphql-query')
+;;       the document processor reports of a column someone submitted
+;;       to, one query per column (issue #351), summed into a
+;;       Reports: line that names the columns where a report failed.
 ;;
 ;; PRIVACY
 ;; =======
 ;; The report holds counts only: no name, score or user id is
-;; written.
+;; written.  The Reports: line names columns, never students.
 
 ;;; Code:
 
@@ -198,13 +202,24 @@ logged once and reported as such; the rest of the report goes on."
        (alist-get 'name assignment) (error-message-string err))
      'unreadable)))
 
+(defun org-canvas--submissions-status-reports (assignment counts)
+  "Return ASSIGNMENT's document processor report counts, or nil.
+COUNTS are the column's; a column nobody submitted to, or one that
+could not be read, is not asked (issue #351).  The value is the plist
+of `org-canvas--submissions-report-counts', nil when the column has
+no report or the read failed."
+  (when (and counts (> (plist-get counts :submitted) 0))
+    (org-canvas--submissions-map-report-counts
+     (org-canvas--submissions-fetch-reports (alist-get 'id assignment)))))
+
 (defun org-canvas--submissions-status-column (assignment)
   "Return the report row for ASSIGNMENT as a plist.
 The keys are :name, :due (an ISO timestamp or nil), :pulled-at (the
 grading file's PULLED_AT string or nil), :counts (see
-`org-canvas--submissions-status-counts', nil when unreadable) and
+`org-canvas--submissions-status-counts', nil when unreadable),
 :next (see `org-canvas--submissions-status-next'; (\"?\") when
-unreadable)."
+unreadable) and :reports (see
+`org-canvas--submissions-status-reports')."
   (let* ((name (or (alist-get 'name assignment) ""))
          (pulled-at (org-canvas--submissions-status-pulled-at name))
          (submissions (org-canvas--submissions-status-read-column assignment))
@@ -216,6 +231,7 @@ unreadable)."
           :due (org-canvas--alist-get-non-null 'due_at assignment)
           :pulled-at pulled-at
           :counts counts
+          :reports (org-canvas--submissions-status-reports assignment counts)
           :next (if counts
                     (org-canvas--submissions-status-next counts pulled-at)
                   (list "?")))))
@@ -278,6 +294,28 @@ they keep Canvas's order, since `sort' is stable."
             (cl-count "post" verbs :test #'equal)
             (cl-count-if (lambda (c) (null (plist-get c :counts))) columns))))
 
+(defun org-canvas--submissions-status-reports-line (columns)
+  "Return the Reports: line summed over COLUMNS, or nil when none has one.
+Rows are counted once each, as in a grading file; the columns where a
+report failed are named with their count, since that is the one a
+grader acts on before grading."
+  (let ((total (list :processed 0 :failed 0 :pending 0))
+        (failing nil))
+    (dolist (column columns)
+      (when-let* ((reports (plist-get column :reports)))
+        (dolist (key '(:processed :failed :pending))
+          (plist-put total key
+                     (+ (plist-get total key) (plist-get reports key))))
+        (when (> (plist-get reports :failed) 0)
+          (push (format "%s (%d)" (plist-get column :name)
+                        (plist-get reports :failed))
+                failing))))
+    (when (cl-some (lambda (c) (plist-get c :reports)) columns)
+      (concat (org-canvas--submissions-format-report-counts total)
+              (if failing
+                  (concat "; failed in " (string-join (nreverse failing) ", "))
+                "")))))
+
 (defun org-canvas--submissions-status-insert-table (columns)
   "Insert the report table for COLUMNS at point and align it."
   (let ((header '("Assignment" "Due" "Rows" "Submitted" "Graded" "Posted"
@@ -299,7 +337,10 @@ they keep Canvas's order, since `sort' is stable."
   (org-mode)
   (insert (format "Grading queue for course %s, read %s\n\n" org-canvas-course-id
                   (format-time-string "<%Y-%m-%d %a %H:%M>")))
-  (insert (org-canvas--submissions-status-summary columns) "\n\n")
+  (insert (org-canvas--submissions-status-summary columns) "\n")
+  (when-let* ((reports (org-canvas--submissions-status-reports-line columns)))
+    (insert reports "\n"))
+  (insert "\n")
   (org-canvas--submissions-status-insert-table columns)
   (insert "\nNext: pull = work is in and no grading file exists;"
           " refresh = submitted since the grading file's PULLED_AT;"
@@ -325,6 +366,9 @@ to standard output."
      org-canvas--submissions-status-buffer-name
      (lambda () (org-canvas--submissions-status-render columns)))
     (org-canvas--log-info org-canvas--logger "[Submissions status] %s" summary)
+    (when-let* ((reports (org-canvas--submissions-status-reports-line columns)))
+      (org-canvas--log-info org-canvas--logger
+        "[Submissions status] %s" reports))
     (message "Grading queue: %s" summary)
     columns))
 

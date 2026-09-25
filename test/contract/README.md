@@ -69,10 +69,11 @@ and the per-person departure read, both on `list_enrollments_courses`.
 
 # GraphQL contract (issue #269)
 
-Six GraphQL documents travel to Canvas as strings: the post-policy
-mutations (assignments, settings), `postAssignmentGrades` (submissions),
-the checkpoints query and `updateDiscussionTopic` mutation (discussions),
-and the document-processor query (assignments, issue #350).
+The GraphQL documents travel to Canvas as strings: the post-policy
+mutations (assignments, settings), `postAssignmentGrades` and the document
+processor reports query (submissions, issue #351), the checkpoints query
+and `updateDiscussionTopic` mutation (discussions), and the
+document-processor query (assignments, issue #350).
 `org-canvas-graphql-contract-test.el` checks each — every selected field
 exists on its parent type and is not deprecated, every argument exists and
 a variable's declared type fits it, every non-null input field is supplied,
@@ -111,7 +112,7 @@ child's process environment only: never a command line, so never the
 shell history, and never the script's output (it prints the token's
 length, nothing more).  A 401 means the token is expired or revoked.
 
-Read the diff before committing.  Types and fields *added* around the five
+Read the diff before committing.  Types and fields *added* around the
 documents are Canvas moving on and cost nothing; a field the documents use
 that is *removed* or `@deprecated` fails the test, which names the
 document and the field, and that is a code change to make before pushing
@@ -148,7 +149,10 @@ the missing ones come from the SDL, and the provenance lists them under
 `supplements` with the ref.  The next introspection replaces them.  The
 document-processor query's `Assignment`, `AssignmentConnection`,
 `ExternalTool`, `LtiAssetProcessor` and `LtiAssetProcessorConnection`
-came in this way (canvas-lms `1c9f0bb8`):
+came in this way (canvas-lms `1c9f0bb8`), and so did the similarity
+reports query's `Submission`, `SubmissionConnection`, `LtiAssetReport`,
+`LtiAssetReportConnection` and `TotalCountPageInfo` (issue #351;
+canvas-lms `318f2ad0`, whose `schema.graphql` is the same file):
 
 ```bash
 python3 test/contract/extract-canvas-graphql-contract.py --supplement \

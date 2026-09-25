@@ -226,6 +226,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 - read-only validation (#168)
 - rubric assessments from the grading file (#250) and their comments as items under the table (#263)
 - rubrics update in place (#123) and keep their criterion ids and assignments (#255, #256)
+- similarity reports read per column from GraphQL's `ltiAssetReportsConnection`, never `hasPlagiarismTool` or `turnitinData`, and counted per row (#351)
 - stamp adoption for a CHANGED row with nothing to compare (#257)
 - submission commands take their target as an argument and prompt only on nil (#280)
 - the accommodations table sits below a quiz's own text and never reaches the description from any layout (#298)
@@ -366,7 +367,7 @@ eldev exec -f scripts/graphql-introspect.el                   # Refresh the Grap
 
 Every test file must pass on its own (`scripts/test-each-file.sh`, CI's sharded `isolation` job; #260): test-helper loads the whole package, and a spec that sets global state — the log level above all — restores it.
 
-Layout: `test/test-helper.el` (fixtures, mocks, macros, network guard); `test/org-canvas-core-{config,api,org,html,pull,sync,conflict,delete,usability}-test.el`; `test/org-canvas-test.el` (orchestration); one `test/org-canvas-{feature}-test.el` per module; `test/org-canvas-validate-test.el`; `test/org-canvas-dry-run-test.el`; `test/org-canvas-doc-reference-test.el` (the manual's generated Property Reference); `test/org-canvas-contract-test.el` and `test/org-canvas-graphql-contract-test.el` (REST payloads and every registered read's query parameters against the OpenAPI spec, #273; the five GraphQL documents and their variables against the Canvas GraphQL schema, #269); `test/contract/` (both fixtures and their generators; the GraphQL one regenerates from the instance's introspection or the canvas-lms SDL, see its README); `test/mutation/` (mutation-testing harness); `test/docgen/` (generates the Property Reference from the registry).
+Layout: `test/test-helper.el` (fixtures, mocks, macros, network guard); `test/org-canvas-core-{config,api,org,html,pull,sync,conflict,delete,usability}-test.el`; `test/org-canvas-test.el` (orchestration); one `test/org-canvas-{feature}-test.el` per module; `test/org-canvas-validate-test.el`; `test/org-canvas-dry-run-test.el`; `test/org-canvas-doc-reference-test.el` (the manual's generated Property Reference); `test/org-canvas-contract-test.el` and `test/org-canvas-graphql-contract-test.el` (REST payloads and every registered read's query parameters against the OpenAPI spec, #273; the GraphQL documents and their variables against the Canvas GraphQL schema, #269); `test/contract/` (both fixtures and their generators; the GraphQL one regenerates from the instance's introspection or the canvas-lms SDL, see its README); `test/mutation/` (mutation-testing harness); `test/docgen/` (generates the Property Reference from the registry).
 
 Utilities (test-helper.el; full reference in testing.org):
 - `with-temp-org-buffer` — file-backed temp Org buffer; org functions misbehave in `with-temp-buffer`
