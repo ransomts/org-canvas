@@ -219,6 +219,15 @@ module item (expected: the content it links; a text header its
 module), a calendar event's page, and a files.org folder, including
 one whose name holds a space or a =%=.
 
+A New Quiz's settings (#321) were probed live and move under
+=quiz_settings= (decisions.org, "New Quiz Settings Live Under
+quiz_settings"), but only a limited attempt count with =highest= kept
+was read back.  The first time each runs for real, check the quiz's
+settings page after a push of: a single attempt, unlimited attempts
+(=ALLOWED_ATTEMPTS: -1=), =keep_latest= and =keep_average=, and a
+=SCORING_POLICY= set on a heading without =ALLOWED_ATTEMPTS= (a
+=multiple_attempts= object carrying only =score_to_keep=).
+
 What remains in "Never Touched" is rarely set at the course level or
 belongs to the institution; nothing there is known to have bitten a
 course run from Org.

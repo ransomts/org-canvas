@@ -965,10 +965,20 @@ text and leaving the questions under it alone.
 | =TIME_LIMIT=         | number  | Time limit in minutes                                    |
 | =SHUFFLE_ANSWERS=    | boolean | Randomize answer order                                   |
 | =ONE_AT_A_TIME=      | boolean | Show one question per page                               |
-| =ALLOWED_ATTEMPTS=   | number  | Max attempts                                             |
+| =ALLOWED_ATTEMPTS=   | number  | Max attempts (-1 = unlimited)                            |
 | =SCORING_POLICY=     | enum    | =keep_highest=, =keep_latest=, or =keep_average=            |
 | =GROUP=              | link    | Link to assignment group in assignment-groups.org         |
 | =RUBRIC_LINK=        | link    | Link to rubric in rubrics.org (uses backing assignment)   |
+
+The five settings travel under the quiz's =quiz_settings= object, which is
+where Canvas keeps them; a push sends only the ones the heading sets, so a
+setting left out keeps whatever Canvas holds.  =TIME_LIMIT= is in minutes in
+Org and in seconds on Canvas (=0= turns the limit off).  =ONE_AT_A_TIME= is
+=one_at_a_time_type= (=question= or =none=).  =ALLOWED_ATTEMPTS= of 1 is a
+single attempt, a larger number that many, and -1 unlimited; a pull writes
+nothing for a single attempt.  =SCORING_POLICY= is sent as =score_to_keep=
+(=highest=, =latest=, =average=).  A pull reads the same fields back, and the
+drift report compares them (issue #321).
 
 *** Question Properties
 
@@ -4321,7 +4331,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =CHECKPOINT_TOPIC_DUE_AT= | timestamp |  |  | Due date of the reply-to-topic checkpoint |
 | =CHECKPOINT_REPLY_POINTS= | number |  |  | Points for the reply-to-entry checkpoint |
 | =CHECKPOINT_REPLY_DUE_AT= | timestamp |  |  | Due date of the reply-to-entry checkpoint |
-| =CHECKPOINT_REPLIES_REQUIRED= | number |  | true | Replies to peers the reply-to-entry checkpoint requires (default 1) |
+| =CHECKPOINT_REPLIES_REQUIRED= | number |  | 1 | Replies to peers the reply-to-entry checkpoint requires (default 1) |
 
 ** Files
 
@@ -4418,7 +4428,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =TIME_LIMIT= | number |  |  | Time limit in minutes |
 | =SHUFFLE_ANSWERS= | boolean | true, false |  | Randomize answer order |
 | =ONE_AT_A_TIME= | boolean | true, false |  | Show one question per page |
-| =ALLOWED_ATTEMPTS= | number |  |  | Max attempts |
+| =ALLOWED_ATTEMPTS= | number |  | 1 | Max attempts (-1 = unlimited) |
 | =SCORING_POLICY= | enum | keep_highest, keep_latest, keep_average |  | Which attempt's score to keep across multiple attempts |
 | =GROUP= | link | org link |  | Link to assignment group in assignment-groups.org |
 | =RUBRIC_LINK= | link | org link |  | Link to rubric in rubrics.org (uses backing assignment) |

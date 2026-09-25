@@ -66,10 +66,12 @@ the observed property should hold (issue #293)."
      (t (string-trim-left suffix)))))
 
 (defun org-canvas-docgen--default (prop)
-  "Return the default-value cell text for property spec PROP."
-  (if (plist-member prop :default)
-      (if (plist-get prop :default) "true" "false")
-    ""))
+  "Return the default-value cell text for property spec PROP.
+A boolean's default reads true or false; any other type's, as written."
+  (let ((default (plist-get prop :default)))
+    (cond ((not (plist-member prop :default)) "")
+          ((eq (plist-get prop :type) 'boolean) (if default "true" "false"))
+          (t (format "%s" default)))))
 
 (defun org-canvas-docgen--feature-table (plist)
   "Return the Org table rows (a string) for registry PLIST, or nil if empty."

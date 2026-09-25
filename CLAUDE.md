@@ -224,6 +224,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 - module items reconcile moves (#105)
 - New Quiz items join the drift report as a child pass paired within their quiz as the sync adopts them, with rows whose verbs know the quiz (#322)
 - New Quiz items pull into a heading (the body's first paragraph) and the prompt under it, rewritten in place with their answer list kept (#333)
+- New Quiz settings live under `quiz_settings`, found by a live probe: minutes as seconds, attempts and scoring as `multiple_attempts`, sent only when set and compared wherever the reply carries the object (#321)
 - New Quizzes join the drift report through their pull-only entry's `:drift-report`, compare a setting only where the reply carries it, and leave the Assignments extras (#313)
 - pending creates counted apart from drift and moved module items paired on the link's description (#294)
 - quiz publish sequencing (#59)

@@ -3833,11 +3833,15 @@ ANSWER `no' declines the confirmation.  Returns (PROMPT REPORT COUNT)."
 
 (defconst test-nq-313--remote
   '(((id . "41") (assignment_id . "41") (title . "Midterm")
-     (instructions . "<p>Read slowly.</p>") (time_limit . 45))
+     (instructions . "<p>Read slowly.</p>")
+     (quiz_settings (has_time_limit . t)
+                    (session_time_limit_in_seconds . 2700)
+                    (multiple_attempts (multiple_attempts_enabled . :json-false)
+                                       (score_to_keep . "highest"))))
     ((id . "43") (assignment_id . "43") (title . "Web Quiz")))
   "The quiz service's list for `test-nq-313--file'.
-Midterm's reply carries no `scoring_policy', so SCORING_POLICY is not
-compared.")
+Midterm's settings sit under `quiz_settings' as Canvas keeps them
+\(issue #321): its time limit differs, its SCORING_POLICY agrees.")
 
 (defmacro test-nq-313--with-file (content &rest body)
   "Run BODY with `org-canvas-new-quizzes-file' holding CONTENT."
@@ -3924,7 +3928,10 @@ compared.")
                      ;; Only `id', as older replies carry it.
                      '(((id . "41") (title . "Midterm")
                         (instructions . "<p>Read carefully.</p>")
-                        (time_limit . 30) (scoring_policy . "keep_highest"))
+                        (quiz_settings
+                         (has_time_limit . t)
+                         (session_time_limit_in_seconds . 1800)
+                         (multiple_attempts (score_to_keep . "highest"))))
                        ((id . "42") (title . "Final") (instructions . :null))))))
           (let ((result (org-canvas--diff-feature
                          (org-canvas--diff-find-feature "New Quizzes"))))
@@ -3959,6 +3966,62 @@ compared.")
       (with-current-buffer (org-canvas--find-file-noselect file)
         (goto-char (point-min))
         (expect (org-canvas--new-quiz-body-html) :to-equal "")))))
+
+(describe "New Quiz settings in the drift report (issue #321)"
+  (it "compares every setting a heading sets against quiz_settings"
+    (test-nq-313--with-file
+        (concat "* Midterm\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 41\n"
+                ":TIME_LIMIT: 30\n:SHUFFLE_ANSWERS: true\n"
+                ":ONE_AT_A_TIME: false\n"
+                ":ALLOWED_ATTEMPTS: 2\n:SCORING_POLICY: keep_latest\n:END:\n")
+      (with-org-canvas-test-config
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (_method url &rest _)
+                     (unless (string-match-p "items" url)
+                       '(((id . "41") (title . "Midterm")
+                          (quiz_settings
+                           (has_time_limit . :json-false)
+                           (session_time_limit_in_seconds . 0)
+                           (shuffle_answers . :json-false)
+                           (one_at_a_time_type . "question")
+                           (multiple_attempts
+                            (multiple_attempts_enabled . t)
+                            (attempt_limit . :json-false)
+                            (score_to_keep . "highest")))))))))
+          (let* ((result (org-canvas--diff-feature
+                          (org-canvas--diff-find-feature "New Quizzes")))
+                 (changed (car (plist-get result :divergences))))
+            (expect (plist-get changed :fields)
+                    :to-equal '(("TIME_LIMIT" "30" "0")
+                                ("SHUFFLE_ANSWERS" "true" "false")
+                                ("ONE_AT_A_TIME" "false" "true")
+                                ("ALLOWED_ATTEMPTS" "2" "-1")
+                                ("SCORING_POLICY" "keep_latest"
+                                 "keep_highest"))))))))
+
+  (it "compares no setting when the reply has no quiz_settings"
+    (test-nq-313--with-file
+        (concat "* Midterm\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 41\n"
+                ":TIME_LIMIT: 30\n:ALLOWED_ATTEMPTS: 2\n:END:\n")
+      (with-org-canvas-test-config
+        (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                   (lambda (_method url &rest _)
+                     (unless (string-match-p "items" url)
+                       '(((id . "41") (title . "Midterm")
+                          (time_limit . 45) (allowed_attempts . 5)))))))
+          (let ((result (org-canvas--diff-feature
+                         (org-canvas--diff-find-feature "New Quizzes"))))
+            (expect (plist-get result :divergences) :to-be nil))))))
+
+  (it "reads a limit in seconds back as minutes"
+    (expect (org-canvas--new-quiz-remote-time-limit
+             '((quiz_settings (has_time_limit . t)
+                              (session_time_limit_in_seconds . 1380))))
+            :to-equal 23)
+    (expect (org-canvas--new-quiz-remote-time-limit
+             '((quiz_settings (has_time_limit . t)
+                              (session_time_limit_in_seconds . 90))))
+            :to-equal 1.5)))
 
 (describe "org-canvas--new-quiz-remote-carries (issue #313)"
   (it "compares a setting only when the reply carries its key"

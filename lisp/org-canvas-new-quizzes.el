@@ -72,12 +72,144 @@
 (org-canvas-register-id-property "CANVAS_ASSIGNMENT_ID")
 (defun org-canvas--new-quiz-remote-carries (field)
   "Return a `:compare-p' predicate true of a New Quiz reply holding FIELD.
-The drift report compares a New Quiz setting only where the quiz
-service's reply holds it under the key the push sends and the pull
-reads (issue #313).  That shape has not been checked against a live
-reply, and a reply that files the setting elsewhere would otherwise
-read as unset and flag every quiz on every run (Hard Rule 18)."
+The drift report compares such a field only where the quiz service's
+reply holds it under the key the push sends and the pull reads (issue
+#313): a reply that files it elsewhere would otherwise read as unset
+and flag every entry on every run (Hard Rule 18).  The quiz's own
+settings no longer need it; they are read from `quiz_settings'
+\(issue #321)."
   (lambda (_pom item) (assq field item)))
+
+;;;; Quiz Settings (issue #321)
+;;
+;; Canvas keeps a New Quiz's settings under `quiz_settings' and ignores
+;; the same names at the top level of the quiz: a live POST of them came
+;; back with every setting at its default.  The functions below convert
+;; between the Org properties and that object, both ways.
+
+(defconst org-canvas--new-quiz-score-to-keep
+  '(("keep_highest" . "highest")
+    ("keep_latest" . "latest")
+    ("keep_average" . "average"))
+  "SCORING_POLICY values and the `score_to_keep' Canvas spells them as.
+Only \"highest\" was read back from a live course (issue #321); the
+other two follow its pattern and are unverified.")
+
+(defun org-canvas--new-quiz-settings (item)
+  "Return the `quiz_settings' object of the Canvas New Quiz ITEM, or nil."
+  (let ((settings (alist-get 'quiz_settings item)))
+    (and (consp settings) settings)))
+
+(defun org-canvas--new-quiz-settings-known-p (item)
+  "Return non-nil when the Canvas ITEM carries its `quiz_settings'.
+A reply without the object says nothing about any setting, so a pull
+leaves the properties as they are (the #216 rule)."
+  (and (org-canvas--new-quiz-settings item) t))
+
+(defun org-canvas--new-quiz-settings-comparable-p (_pom item)
+  "Return non-nil when ITEM's settings can be compared, for the drift report."
+  (org-canvas--new-quiz-settings-known-p item))
+
+(defun org-canvas--new-quiz-remote-time-limit (item)
+  "Return ITEM's time limit in minutes, 0 when it has none."
+  (let* ((settings (org-canvas--new-quiz-settings item))
+         (seconds (alist-get 'session_time_limit_in_seconds settings)))
+    (if (and (eq (alist-get 'has_time_limit settings) t) (numberp seconds))
+        (let ((minutes (/ seconds 60.0)))
+          (if (= minutes (ffloor minutes)) (truncate minutes) minutes))
+      0)))
+
+(defun org-canvas--new-quiz-remote-shuffle (item)
+  "Return ITEM's `shuffle_answers' setting."
+  (alist-get 'shuffle_answers (org-canvas--new-quiz-settings item)))
+
+(defun org-canvas--new-quiz-remote-one-at-a-time (item)
+  "Return t when ITEM is set to one question at a time."
+  (equal (alist-get 'one_at_a_time_type (org-canvas--new-quiz-settings item))
+         "question"))
+
+(defun org-canvas--new-quiz-remote-multiple-attempts (item)
+  "Return ITEM's `multiple_attempts' object, or nil when it has none."
+  (let ((attempts (alist-get 'multiple_attempts
+                             (org-canvas--new-quiz-settings item))))
+    (and (consp attempts) attempts)))
+
+(defun org-canvas--new-quiz-remote-attempts (item)
+  "Return ITEM's allowed attempts: 1, a limit, or -1 for unlimited.
+Multiple attempts off, or no `multiple_attempts' object at all, is a
+single attempt; on without `attempt_limit' is unlimited."
+  (let ((attempts (org-canvas--new-quiz-remote-multiple-attempts item)))
+    (cond ((not (eq (alist-get 'multiple_attempts_enabled attempts) t)) 1)
+          ((eq (alist-get 'attempt_limit attempts) t)
+           (alist-get 'max_attempts attempts))
+          (t -1))))
+
+(defun org-canvas--new-quiz-remote-scoring (item)
+  "Return ITEM's `score_to_keep' as a SCORING_POLICY value, or nil.
+A value with no Org spelling is returned as Canvas wrote it, so the
+drift report and the validator can name it."
+  (let ((keep (alist-get 'score_to_keep
+                         (org-canvas--new-quiz-remote-multiple-attempts item))))
+    (when (stringp keep)
+      (or (car (rassoc keep org-canvas--new-quiz-score-to-keep)) keep))))
+
+(defun org-canvas--new-quiz-put-time-limit (minutes settings)
+  "Put the time limit of MINUTES into the hash SETTINGS.
+A positive limit sets `has_time_limit' and the limit in seconds; zero
+or less turns the limit off."
+  (let ((limited (> minutes 0)))
+    (puthash "has_time_limit" (if limited t :json-false) settings)
+    (puthash "session_time_limit_in_seconds"
+             (if limited (round (* minutes 60)) 0) settings)))
+
+(defun org-canvas--new-quiz-put-attempts (attempts payload)
+  "Put the attempt count ATTEMPTS into the `multiple_attempts' hash PAYLOAD.
+Negative is unlimited, 1 or less a single attempt, more a limit."
+  (let ((unlimited (< attempts 0)))
+    (puthash "multiple_attempts_enabled"
+             (if (or unlimited (> attempts 1)) t :json-false) payload)
+    (puthash "attempt_limit" (if unlimited :json-false t) payload)
+    (unless unlimited
+      (puthash "max_attempts" (max attempts 1) payload))))
+
+(defun org-canvas--new-quiz-attempts-payload (attempts scoring)
+  "Return the `multiple_attempts' hash ATTEMPTS and SCORING set, or nil.
+ATTEMPTS is ALLOWED_ATTEMPTS as a number: negative for unlimited, 1 or
+less for a single attempt, more for a limit.  SCORING is a
+SCORING_POLICY value, sent as `score_to_keep'.  Either may be nil,
+and is then left out."
+  (when (or attempts scoring)
+    (let ((payload (make-hash-table :test 'equal)))
+      (when attempts
+        (org-canvas--new-quiz-put-attempts attempts payload))
+      (when scoring
+        (puthash "score_to_keep"
+                 (or (cdr (assoc scoring org-canvas--new-quiz-score-to-keep))
+                     scoring)
+                 payload))
+      payload)))
+
+(defun org-canvas--new-quiz-settings-payload (data)
+  "Return the `quiz_settings' hash for the New Quiz DATA, or nil.
+Only the settings the heading sets are sent, so a property left out
+never resets what Canvas holds (issue #321)."
+  (let ((settings (make-hash-table :test 'equal))
+        (shuffle (plist-get data :shuffle_answers))
+        (one-at-a-time (plist-get data :one_at_a_time))
+        (attempts (org-canvas--new-quiz-attempts-payload
+                   (plist-get data :allowed_attempts)
+                   (plist-get data :scoring_policy))))
+    (when-let* ((minutes (plist-get data :time_limit)))
+      (org-canvas--new-quiz-put-time-limit minutes settings))
+    (when shuffle
+      (puthash "shuffle_answers" shuffle settings))
+    (when one-at-a-time
+      (puthash "one_at_a_time_type"
+               (if (eq one-at-a-time t) "question" "none") settings))
+    (when attempts
+      (puthash "multiple_attempts" attempts settings))
+    (unless (zerop (hash-table-count settings))
+      settings)))
 
 (org-canvas-register-properties "new-quizzes"
   :duplicate-titles t
@@ -89,21 +221,34 @@ read as unset and flag every quiz on every run (Hard Rule 18)."
   :body-api-key "instructions"
   :body-fn 'org-canvas--new-quiz-body-html
   :properties
+  ;; The five settings live under the reply's `quiz_settings', spelled
+  ;; Canvas's way (#321); a reply without that object answers for none.
   `((:org-prop "TIME_LIMIT" :data-key :time_limit :type number
-     :compare-p ,(org-canvas--new-quiz-remote-carries 'time_limit)
+     :remote-fn org-canvas--new-quiz-remote-time-limit
+     :remote-known-p org-canvas--new-quiz-settings-known-p
+     :compare-p org-canvas--new-quiz-settings-comparable-p
      :doc "Time limit in minutes")
     (:org-prop "SHUFFLE_ANSWERS" :data-key :shuffle_answers :type boolean
-     :compare-p ,(org-canvas--new-quiz-remote-carries 'shuffle_answers)
+     :remote-fn org-canvas--new-quiz-remote-shuffle
+     :remote-known-p org-canvas--new-quiz-settings-known-p
+     :compare-p org-canvas--new-quiz-settings-comparable-p
      :doc "Randomize answer order")
     (:org-prop "ONE_AT_A_TIME" :data-key :one_at_a_time :type boolean
-     :compare-p ,(org-canvas--new-quiz-remote-carries 'one_at_a_time)
+     :remote-fn org-canvas--new-quiz-remote-one-at-a-time
+     :remote-known-p org-canvas--new-quiz-settings-known-p
+     :compare-p org-canvas--new-quiz-settings-comparable-p
      :doc "Show one question per page")
     (:org-prop "ALLOWED_ATTEMPTS" :data-key :allowed_attempts :type number
-     :compare-p ,(org-canvas--new-quiz-remote-carries 'allowed_attempts)
-     :doc "Max attempts")
+     :default 1
+     :remote-fn org-canvas--new-quiz-remote-attempts
+     :remote-known-p org-canvas--new-quiz-settings-known-p
+     :compare-p org-canvas--new-quiz-settings-comparable-p
+     :doc "Max attempts (-1 = unlimited)")
     (:org-prop "SCORING_POLICY" :data-key :scoring_policy :type enum
      :values ,org-canvas--valid-new-quiz-scoring-policies
-     :compare-p ,(org-canvas--new-quiz-remote-carries 'scoring_policy)
+     :remote-fn org-canvas--new-quiz-remote-scoring
+     :remote-known-p org-canvas--new-quiz-settings-known-p
+     :compare-p org-canvas--new-quiz-settings-comparable-p
      :doc "Which attempt's score to keep across multiple attempts")
     (:org-prop "GROUP" :data-key :assignment_group_id :type link
      :target-file org-canvas-assignment-groups-file :link-id-property "CANVAS_ID"
@@ -181,15 +326,24 @@ Returns a plist of raw values with no transformations applied."
           :body-text body-text
           :pom pom)))
 
+(defun org-canvas--new-quiz-setting-boolean (raw)
+  "Return the JSON boolean for the property string RAW, or nil.
+\"true\" is t and \"false\" `:json-false', which the payload sends; any
+other value, absence included, is nil and is left out, so a heading
+that does not set a setting never resets it on Canvas (issue #321)."
+  (pcase raw
+    ("true" t)
+    ("false" :json-false)))
+
 (defun org-canvas--new-quiz-transform-props (props)
   "Apply pure transformations to raw PROPS plist.
 No buffer access — only string/number/boolean conversions."
   (let* ((title (org-canvas--strip-statistics-cookie
                  (plist-get props :title-raw)))
          (time-limit-raw (plist-get props :time-limit-raw))
-         (shuffle (org-canvas--interpret-boolean
+         (shuffle (org-canvas--new-quiz-setting-boolean
                    (plist-get props :shuffle-raw)))
-         (one-at-a-time (org-canvas--interpret-boolean
+         (one-at-a-time (org-canvas--new-quiz-setting-boolean
                          (plist-get props :one-at-a-time-raw)))
          (attempts-raw (plist-get props :attempts-raw))
          (scoring-policy (org-canvas--validate-property
@@ -260,20 +414,8 @@ what a push would send.  Returns \"\" for a quiz with no text."
     (when-let* ((desc (plist-get data :description)))
       (puthash "instructions" desc payload))
 
-    (when-let* ((limit (plist-get data :time_limit)))
-      (puthash "time_limit" limit payload))
-
-    (when (plist-get data :shuffle_answers)
-      (puthash "shuffle_answers" t payload))
-
-    (when (plist-get data :one_at_a_time)
-      (puthash "one_at_a_time" t payload))
-
-    (when-let* ((attempts (plist-get data :allowed_attempts)))
-      (puthash "allowed_attempts" attempts payload))
-
-    (when-let* ((scoring (plist-get data :scoring_policy)))
-      (puthash "scoring_policy" scoring payload))
+    (when-let* ((settings (org-canvas--new-quiz-settings-payload data)))
+      (puthash "quiz_settings" settings payload))
 
     (when-let* ((group-id (plist-get data :assignment_group_id)))
       (puthash "assignment_group_id" group-id payload))
