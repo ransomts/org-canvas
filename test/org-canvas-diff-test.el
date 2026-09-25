@@ -440,6 +440,8 @@
                :to-be nil)))))
 
 (describe "org-canvas--diff-feature"
+  (before-each (test-org-canvas-stub-processors))
+  (after-each (org-canvas--assignment-processors-forget))
   (it "finds field drift, missing items and orphans in one pass"
     (let ((file (make-temp-file "diff-" nil ".org")))
       (unwind-protect
@@ -2334,9 +2336,12 @@ its :children is the Module Items result."
 ;;;; A Canvas-Owned Property Is Compared Even When the Heading Is Silent (issue #184)
 
 (describe "org-canvas--diff-compare-fields with a :canvas-owned spec"
+  (before-each (test-org-canvas-stub-processors))
+  (after-each (org-canvas--assignment-processors-forget))
   (let ((specs '((:org-prop "DOCUMENT_PROCESSOR" :data-key :asset_processors
                   :type string :canvas-owned t
-                  :remote-fn org-canvas--assignment-remote-document-processor))))
+                  :remote-fn org-canvas--assignment-remote-document-processor
+                  :remote-known-p org-canvas--assignment-document-processor-known-p))))
     (it "reports a processor attached in the web UI after the last pull"
       (with-temp-org-buffer
        "* Essay\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
@@ -2446,6 +2451,8 @@ its :children is the Module Items result."
       (expect (plist-get (car paired) :kind) :to-equal 'unclaimed))))
 
 (describe "org-canvas--diff-feature pending creates (issue #294)"
+  (before-each (test-org-canvas-stub-processors))
+  (after-each (org-canvas--assignment-processors-forget))
   (defun test-org-canvas-294--feature-diff (feature-name var content items)
     "Diff FEATURE-NAME with its file VAR holding CONTENT against ITEMS.
 Returns the result and whether the file's buffer was left modified."
@@ -2902,9 +2909,12 @@ Returns (CHILD ASSIGNMENTS-MODIFIED ASSIGNMENTS-TEXT)."
 ;;;; A Declared Document Processor Held Against Canvas (issue #293)
 
 (describe "org-canvas--diff-compare-fields with an :intent-of spec"
+  (before-each (test-org-canvas-stub-processors))
+  (after-each (org-canvas--assignment-processors-forget))
   (let ((specs '((:org-prop "DOCUMENT_PROCESSOR" :data-key :asset_processors
                   :type string :canvas-owned t
-                  :remote-fn org-canvas--assignment-remote-document-processor)
+                  :remote-fn org-canvas--assignment-remote-document-processor
+                  :remote-known-p org-canvas--assignment-document-processor-known-p)
                  (:org-prop "WANT_DOCUMENT_PROCESSOR" :data-key :want_document_processor
                   :type string :intent-of "DOCUMENT_PROCESSOR"))))
     (it "reports a column Canvas says carries no processor"
@@ -2972,6 +2982,8 @@ Returns (CHILD ASSIGNMENTS-MODIFIED ASSIGNMENTS-TEXT)."
                :to-be nil)))))
 
 (describe "org-canvas--diff-entry-notes"
+  (before-each (test-org-canvas-stub-processors))
+  (after-each (org-canvas--assignment-processors-forget))
   (let ((specs (org-canvas-diff-test--specs "assignments"))
         (index (make-hash-table :test 'equal)))
     (puthash "1" '((id . 1) (asset_processors . [((id . 5) (title . "Turnitin"))]))
@@ -3008,6 +3020,8 @@ Returns (CHILD ASSIGNMENTS-MODIFIED ASSIGNMENTS-TEXT)."
                :to-be nil)))))
 
 (describe "org-canvas--diff-feature with a declared document processor"
+  (before-each (test-org-canvas-stub-processors))
+  (after-each (org-canvas--assignment-processors-forget))
   (it "counts an unmet declaration as drift and a surplus processor as a note"
     (let ((file (make-temp-file "diff-" nil ".org")))
       (unwind-protect

@@ -208,6 +208,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 - by-design extras (#98, #102, #111)
 - Canvas-owned submission types (#167)
 - comments and drafts as paragraphs and short CONFLICT values (#264)
+- document processors read by GraphQL once per command, REST `asset_processors` the fallback (#350)
 - drift report bodies (#83)
 - drift report verbs (#103)
 - every browse address checked against canvas-lms's routes, and a module SubHeader opening its module (#300)

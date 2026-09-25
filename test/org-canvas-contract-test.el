@@ -232,6 +232,8 @@ timestamp parser into an interactive prompt."
             fields)))
 
 (describe "Canvas response (pull) contract"
+  (before-each (test-org-canvas-stub-processors))
+  (after-each (org-canvas--assignment-processors-forget))
   (it "assignment pull-item tolerates the full documented response"
     (let ((response (org-canvas-contract--response "assignments")))
       (expect response :to-be-truthy)

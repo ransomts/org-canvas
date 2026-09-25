@@ -1,0 +1,8 @@
+* Fixed
+- #350 =DOCUMENT_PROCESSOR= is read from Canvas's GraphQL API, one
+  request per command, instead of the REST =asset_processors= key
+  some instances never return, so a pull writes the Turnitin attached
+  in the web UI (=Turnitin (tool 41668)=) and =WANT_DOCUMENT_PROCESSOR=
+  is checked against it.  The REST key remains the fallback, and a
+  refused GraphQL read warns once and falls back rather than failing
+  the pull.

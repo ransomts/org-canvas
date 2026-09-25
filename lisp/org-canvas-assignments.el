@@ -187,6 +187,8 @@ dates only for a reader who has been a student in the course.")
     (:org-prop "DOCUMENT_PROCESSOR" :data-key :asset_processors :type string
      :canvas-owned t
      :remote-fn org-canvas--assignment-remote-document-processor
+     :remote-known-p org-canvas--assignment-document-processor-known-p
+     :compare-p org-canvas--assignment-document-processor-comparable-p
      :doc "Document processor (Turnitin) attached in the web UI; written by pull, never pushed")
     (:org-prop "WANT_DOCUMENT_PROCESSOR" :data-key :want_document_processor :type string
      :intent-of "DOCUMENT_PROCESSOR"
@@ -502,45 +504,182 @@ external-tool assignment would report drift on every run."
   "Return the remote new-tab flag of ITEM, or nil."
   (alist-get 'new_tab (org-canvas--assignment-remote-tool-attrs item)))
 
+(defun org-canvas--assignment-processor-ref (processor)
+  "Return how PROCESSOR, one attached asset processor, is identified.
+\"tool 41668\" for a GraphQL node, which names the installed tool the
+processor launches (its `externalTool'), since that is what recurs
+across columns; \"asset processor 12345\" for a REST entry, which
+carries only its own id; nil when neither id is there."
+  (let* ((tool (alist-get 'externalTool processor))
+         (tool-id (and (consp tool)
+                       (org-canvas--registry-normalize-remote
+                        (alist-get '_id tool))))
+         (id (org-canvas--registry-normalize-remote
+              (alist-get 'id processor))))
+    (cond (tool-id (format "tool %s" tool-id))
+          (id (format "asset processor %s" id)))))
+
 (defun org-canvas--assignment-describe-processor (processor)
-  "Return PROCESSOR, one entry of Canvas's `asset_processors', as a phrase.
-\"Turnitin (asset processor 12345)\" when both a name and an id are
-there; whichever one is there otherwise.  The name is read from the
+  "Return PROCESSOR, one attached asset processor, as a phrase.
+PROCESSOR is a node of the GraphQL `ltiAssetProcessorsConnection' —
+\"Turnitin (tool 41668)\" — or an entry of the REST `asset_processors'
+fallback — \"Turnitin (asset processor 12345)\" — reduced to whichever
+of the name and the reference is there.  The name is read from the
 fields Canvas has used for an LTI placement's label — `title',
-`tool_name', the nested tool's `name', `text' — because the response
-shape is not documented and was not observable when this was written
-\(no assignment on the probed course carried one), so the reader takes
+`tool_name', the nested tool's `name', `text' — so the reader takes
 what it finds and never raises."
   (if (not (consp processor))
       (format "asset processor %s" processor)
-    (let* ((tool (alist-get 'context_external_tool processor))
+    (let* ((tool (or (alist-get 'externalTool processor)
+                     (alist-get 'context_external_tool processor)))
            (name (seq-find (lambda (v) (and (stringp v) (not (string-empty-p v))))
                            (list (alist-get 'title processor)
                                  (alist-get 'tool_name processor)
                                  (and (consp tool) (alist-get 'name tool))
                                  (alist-get 'text processor))))
-           (id (org-canvas--registry-normalize-remote (alist-get 'id processor))))
-      (cond ((and name id) (format "%s (asset processor %s)" name id))
-            (name name)
-            (id (format "asset processor %s" id))
+           (ref (org-canvas--assignment-processor-ref processor)))
+      (cond ((and name ref) (format "%s (%s)" name ref))
+            ((or name ref))
             (t "asset processor")))))
+
+;;;; Document processors: the course-wide GraphQL read
+
+;; Canvas's REST assignment never carries `asset_processors' on the
+;; instance this was built against, with or without an `include[]'
+;; (issue #350), so the processors come from GraphQL: one course-wide
+;; query per command, followed page by page, keyed by assignment id.
+;; The REST key stays as the fallback for an assignment the query did
+;; not answer for, and a refused query degrades to it with one warning.
+
+(defvar org-canvas--assignment-processors-cache nil
+  "Cons of (COURSE-ID . MAP) from the last course-wide processor read.
+MAP is a hash of assignment id (a string) to the list of its processor
+nodes, empty for an assignment that has none; or the symbol `refused'
+when Canvas would not answer, so the REST fallback is read instead.
+Forgotten when a command starts (`org-canvas--operation-start-hook'),
+so one command reads it once and the next reads afresh.")
+
+(defconst org-canvas--assignment-processors-query
+  "query ($courseId: ID!, $cursor: String) {
+  course(id: $courseId) {
+    assignmentsConnection(first: 100, after: $cursor) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        _id
+        ltiAssetProcessorsConnection {
+          nodes { _id title externalTool { _id name } }
+        }
+      }
+    }
+  }
+}"
+  "The GraphQL query listing every assignment's document processors.
+One page of assignments at a time.  Checked against the Canvas schema
+by the GraphQL contract test, which names it by this symbol.")
+
+(defun org-canvas--assignment-processors-forget ()
+  "Drop the cached processor map, so the next read asks Canvas."
+  (setq org-canvas--assignment-processors-cache nil))
+
+(add-hook 'org-canvas--operation-start-hook
+          #'org-canvas--assignment-processors-forget)
+
+(defun org-canvas--assignment-processors-page (map cursor)
+  "Read one page of processors after CURSOR into MAP.
+Returns the cursor of the next page, or nil when this was the last."
+  (let* ((data (org-canvas--graphql-query
+                org-canvas--assignment-processors-query
+                (append (list (cons 'courseId
+                                    (format "%s" org-canvas-course-id)))
+                        (when cursor (list (cons 'cursor cursor))))))
+         (connection (alist-get 'assignmentsConnection
+                                (alist-get 'course data)))
+         (info (alist-get 'pageInfo connection)))
+    (dolist (node (append (alist-get 'nodes connection) nil))
+      (let ((processors (alist-get 'ltiAssetProcessorsConnection node)))
+        (puthash (format "%s" (alist-get '_id node))
+                 (append (alist-get 'nodes processors) nil)
+                 map)))
+    (and (eq (alist-get 'hasNextPage info) t)
+         (org-canvas--alist-get-non-null 'endCursor info))))
+
+(defun org-canvas--assignment-processors-fetch ()
+  "Read every assignment's document processors into a hash by assignment id.
+Returns the symbol `refused' when the request fails, after one
+warning: the assignments still pull, their processors read from the
+REST fallback (the #171 rule)."
+  (condition-case err
+      (let ((map (make-hash-table :test 'equal))
+            (cursor nil))
+        (while (setq cursor
+                     (org-canvas--assignment-processors-page map cursor)))
+        map)
+    (org-canvas-api-error
+     (org-canvas--log-warning org-canvas--logger
+       (concat "[Processors] Could not read the document processors"
+               " by GraphQL (%s); reading the REST asset_processors instead")
+       (error-message-string err))
+     'refused)))
+
+(defun org-canvas--assignment-processors-map ()
+  "Return the course's processor map, reading it once per command."
+  (unless (equal (car org-canvas--assignment-processors-cache)
+                 org-canvas-course-id)
+    (setq org-canvas--assignment-processors-cache
+          (cons org-canvas-course-id
+                (org-canvas--assignment-processors-fetch))))
+  (cdr org-canvas--assignment-processors-cache))
+
+(defun org-canvas--assignment-graphql-processors (item)
+  "Return the processor nodes GraphQL reports for the Canvas ITEM.
+A list, empty when the assignment has none; the symbol `unknown' when
+the course-wide read was refused or did not answer for ITEM."
+  (let ((id (alist-get 'id item)))
+    (if (not id)
+        'unknown
+      (let ((map (org-canvas--assignment-processors-map)))
+        (if (hash-table-p map)
+            (gethash (format "%s" id) map 'unknown)
+          'unknown)))))
+
+(defun org-canvas--assignment-remote-processors (item)
+  "Return ITEM's processors from GraphQL, else from REST, or `unknown'."
+  (let ((graphql (org-canvas--assignment-graphql-processors item)))
+    (cond ((not (eq graphql 'unknown)) graphql)
+          ((assq 'asset_processors item)
+           (append (org-canvas--registry-normalize-remote
+                    (alist-get 'asset_processors item))
+                   nil))
+          (t 'unknown))))
+
+(defun org-canvas--assignment-document-processor-known-p (item)
+  "Return non-nil when the processors of the Canvas ITEM can be answered.
+Either GraphQL answered for it or its REST object carries the
+`asset_processors' key.  When neither did, a pull leaves
+DOCUMENT_PROCESSOR as it is instead of reading silence as \"none\"
+\(issue #350, the #216 rule)."
+  (not (eq (org-canvas--assignment-remote-processors item) 'unknown)))
+
+(defun org-canvas--assignment-document-processor-comparable-p (_pom item)
+  "Return non-nil when ITEM's processors are known, for the drift report."
+  (org-canvas--assignment-document-processor-known-p item))
 
 (defun org-canvas--assignment-remote-document-processor (item)
   "Return the document processors attached to ITEM as one string, or nil.
-Canvas's `asset_processors' is the LTI Asset Processor placement —
-Turnitin's document-processing mode, the one that keeps the PDF in
-Canvas and grades in SpeedGrader.  Canvas attaches one only through
-the interactive Deep Linking flow in a browser, never by API token,
-so org-canvas can observe it and protect it but not set it: this
-reader feeds the pull and the drift report, and the payload builder
-never emits the field (issue #184).  Nil when Canvas sends no key, a
-null, or an empty array, which is every assignment on an instance
-without the placement."
-  (let ((processors (org-canvas--registry-normalize-remote
-                     (alist-get 'asset_processors item))))
-    (when (and processors (> (length processors) 0))
+Canvas's LTI Asset Processor placement is Turnitin's
+document-processing mode, the one that keeps the PDF in Canvas and
+grades in SpeedGrader.  Canvas attaches one only through the
+interactive Deep Linking flow in a browser, never by API token, so
+org-canvas can observe it and protect it but not set it: this reader
+feeds the pull and the drift report, and the payload builder never
+emits the field (issue #184).  The processors come from the
+course-wide GraphQL read and, where that did not answer, from the REST
+`asset_processors' key (issue #350).  Nil when there are none or when
+neither source says."
+  (let ((processors (org-canvas--assignment-remote-processors item)))
+    (when (consp processors)
       (mapconcat #'org-canvas--assignment-describe-processor
-                 (append processors nil) ", "))))
+                 processors ", "))))
 
 (defun org-canvas--assignment-remote-post-policy (item)
   "Return ITEM's grade post policy when it differs from the course's, else nil.

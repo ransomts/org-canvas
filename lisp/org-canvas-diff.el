@@ -262,11 +262,15 @@ The observed value when there is one; otherwise whether Canvas said
 \"none\" or said nothing at all.  An instance can omit the field from
 every read — one course's assignment GET carried no `asset_processors'
 key with or without an `include[]' (issue #293) — and a row reading
-\"(none)\" there would claim more than the API told us."
+\"(none)\" there would claim more than the API told us.  Whether
+Canvas answered is the spec's own say
+\(`org-canvas--registry-remote-present-p'): the processors come by
+GraphQL first, and a course-wide read that answered is a \"none\"
+even with no REST key (issue #350)."
   (let ((remote (org-canvas--diff-normalize-remote
                  (org-canvas--diff-remote-field observed-spec item))))
     (cond (remote (format "%s" remote))
-          ((assq (org-canvas--registry-remote-key observed-spec) item)
+          ((org-canvas--registry-remote-present-p observed-spec item)
            "(none; attach it in the web UI, B opens the edit page, then pull)")
           (t "(not reported by Canvas)"))))
 

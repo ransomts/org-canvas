@@ -600,9 +600,10 @@ the name case-insensitively anywhere in the observed value, so
   column without the processor is a =CHANGED= row naming
   =WANT_DOCUMENT_PROCESSOR=, and counts as drift.  The Canvas side
   reads =(none; ...)= when Canvas answered with no processor and
-  =(not reported by Canvas)= when the reply carried no
-  =asset_processors= field at all, which some instances do on every
-  assignment.  The reverse — a processor on Canvas that no
+  =(not reported by Canvas)= when it could not say: the processors
+  are read by GraphQL, one request per command, and only when that
+  read is refused and the REST reply carries no =asset_processors=
+  field either is the answer unknown.  The reverse — a processor on Canvas that no
   =WANT_DOCUMENT_PROCESSOR= asks for — is a =NOTE= row: shown, not
   counted, since a processor nobody declared is a legitimate state.
 

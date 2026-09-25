@@ -424,16 +424,32 @@ Call inside a `describe' block.  OPTS is a plist:
 Creates a temp buffer with CANVAS_ID: 1, mocks html-to-org as identity,
 calls PULL-FN, and asserts (expect (org-entry-get (point) PROPERTY) MATCHER VALUE).
 Paged list fetches (e.g. the assignment overrides sub-fetch) are mocked
-to return nil so no pull-item can reach the network guard."
+to return nil, and the course-wide document-processor read answers as
+refused, so no pull-item can reach the network guard."
   (declare (indent 2))
   `(with-temp-org-buffer
     "* Test\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
     (org-back-to-heading)
     (with-html-to-org-identity
       (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
-                 (lambda (&rest _) nil)))
-        (funcall ,pull-fn ,response (point))
+                 (lambda (&rest _) nil))
+                ((symbol-function 'org-canvas--assignment-processors-fetch)
+                 (lambda () 'refused)))
+        (let ((org-canvas--assignment-processors-cache nil))
+          (funcall ,pull-fn ,response (point)))
         (expect (org-entry-get (point) ,property) ,matcher ,value)))))
+
+(defun test-org-canvas-stub-processors (&optional map)
+  "Answer the course-wide document-processor read with MAP for one spec.
+MAP is a hash of assignment id (a string) to its processor nodes; nil
+answers as a refused read, so every assignment falls back to its REST
+`asset_processors'.  Call from a `before-each', beside an `after-each'
+of `org-canvas--assignment-processors-forget': the spy ends with the
+spec, and forgetting here means no earlier spec's answer is reused
+\(issue #350)."
+  (org-canvas--assignment-processors-forget)
+  (spy-on 'org-canvas--assignment-processors-fetch
+          :and-return-value (or map 'refused)))
 
 ;;;; Assertion Helpers
 

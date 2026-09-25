@@ -1008,6 +1008,8 @@
         (delete-directory temp-dir t)))))
 
 (describe "org-canvas-pull-assignments"
+  (before-each (test-org-canvas-stub-processors))
+  (after-each (org-canvas--assignment-processors-forget))
   (it "creates assignment headings with properties"
     (let* ((temp-dir (make-temp-file "pull-assign-test" t))
            (test-file (expand-file-name "assignments.org" temp-dir)))

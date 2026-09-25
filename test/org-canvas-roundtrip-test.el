@@ -53,6 +53,8 @@ so no pull-item reaches the network guard."
       (delete-file tmp))))
 
 (describe "pull idempotence (round-trip guard)"
+  (before-each (test-org-canvas-stub-processors))
+  (after-each (org-canvas--assignment-processors-forget))
   (it "assignment pull is idempotent and populates the heading"
     (let* ((initial "* Essay\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n")
            (response '((id . 1) (name . "Essay") (points_possible . 50)
