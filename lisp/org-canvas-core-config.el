@@ -1038,8 +1038,10 @@ the discussion is what brings such an assignment into being.")
 (defconst org-canvas--valid-new-quiz-types
   '("choice" "true-false" "multi-answer" "short-answer"
     "essay" "file-upload" "numerical" "matching"
-    "ordering" "categorization" "fill-in-the-blank" "hot-spot")
-  "Valid TYPE values for New Quiz items.")
+    "ordering" "categorization" "hot-spot")
+  "Valid TYPE values for New Quiz items.
+Fill-in-the-blank is left out: its Canvas item cannot be built through
+the API (issue #337), and short-answer covers it.")
 
 (defconst org-canvas--valid-new-quiz-scoring-policies
   '("keep_highest" "keep_latest" "keep_average")

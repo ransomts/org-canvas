@@ -9,7 +9,7 @@
 ;; Each quiz contains items (questions) that are synced via a separate
 ;; endpoint (`quizzes/:quiz_id/items'), with their own parse/build/push/
 ;; finalize pipeline and a rich set of interaction types (multiple choice,
-;; matching, ordering, categorization, numerical, fill-in-the-blank, etc.).
+;; matching, ordering, categorization, numerical, short answer, etc.).
 ;;
 ;; This file provides the item-level primitives.  Orchestration lives in
 ;; `org-canvas-new-quizzes', which requires this file — the one sanctioned
@@ -119,10 +119,26 @@ An ordering item's answers are a numbered list, in the correct order
 its prompt as well as a bullet does (issue #335).  Other types keep a
 numbered list in their prompt.")
 
+(defconst org-canvas--new-quiz-prompt-only-types
+  '("essay" "file-upload" "hot-spot")
+  "TYPE values whose items have no answer list after the prompt.
+Such an item's prompt is all the text under its heading, bulleted
+lists included (issue #337).")
+
+(defconst org-canvas--new-quiz-unsupported-types
+  '(("fill-in-the-blank"
+     . "is not supported for New Quiz items; use short-answer"))
+  "TYPE values refused at the push, each with the reason given.
+Canvas's editor needs a `working_item_body' with backtick-delimited
+blanks that the API cannot set reliably (see the manual's New Quizzes
+section), so fill-in-the-blank has no mapping (issue #337).")
+
 (defun org-canvas--new-quiz-parse-question-text (&optional q-type)
   "Get the question prompt text, excluding answer lists.
 Return only the text before the first list item (- or *), or, when
-Q-TYPE is \"ordering\", before the first numbered item as well."
+Q-TYPE is \"ordering\", before the first numbered item as well.  A
+Q-TYPE in `org-canvas--new-quiz-prompt-only-types' has no answer
+list, so its prompt is all the text before the first child heading."
   (save-excursion
     (org-back-to-heading t)
     (let ((start (save-excursion
@@ -137,11 +153,12 @@ Q-TYPE is \"ordering\", before the first numbered item as well."
       (if (>= start end)
           ""
         (goto-char start)
-        (when (re-search-forward
+        (when (and (not (member q-type org-canvas--new-quiz-prompt-only-types))
+                   (re-search-forward
                (if (equal q-type "ordering")
                    org-canvas--new-quiz-ordering-prompt-end-regexp
                  org-canvas--new-quiz-prompt-end-regexp)
-               end t)
+               end t))
           (setq end (match-beginning 0)))
         (string-trim (buffer-substring-no-properties start end))))))
 
@@ -227,13 +244,24 @@ Returns a plist of raw values with no transformations applied."
           :text body-text
           :pom pom)))
 
+(defun org-canvas--new-quiz-item-check-supported (type-raw)
+  "Return TYPE-RAW, or signal when it names an unsupported type.
+The types are in `org-canvas--new-quiz-unsupported-types'; falling
+back to the default type would push an item with no answers."
+  (when-let* ((reason (cdr (assoc type-raw
+                                  org-canvas--new-quiz-unsupported-types))))
+    (org-canvas--signal 'org-canvas-validation-error
+      "TYPE %s %s" type-raw reason))
+  type-raw)
+
 (defun org-canvas--new-quiz-item-transform-props (props)
   "Apply pure transformations to raw item PROPS plist.
 No buffer access — only string/number/boolean conversions."
   (let* ((title (org-canvas--strip-statistics-cookie
                  (plist-get props :title-raw)))
          (q-type (org-canvas--validate-property
-                  (plist-get props :type-raw)
+                  (org-canvas--new-quiz-item-check-supported
+                   (plist-get props :type-raw))
                   org-canvas--valid-new-quiz-types
                   "TYPE" "choice"))
          (points-raw (plist-get props :points-raw))
