@@ -125,6 +125,56 @@ The results and quizzes files live in a temp directory."
    '(difficulty_index . :null))
   "An essay question: no answers, no ratio, a long text.")
 
+(defun test-quiz-results--survey (id title type &rest extra)
+  "A published survey ID titled TITLE of quiz TYPE, plus EXTRA pairs.
+No assignment unless EXTRA gives one, as for an ungraded survey."
+  (append extra `((id . ,id) (title . ,title) (published . t)
+                  (assignment_id . :null) (quiz_type . ,type))))
+
+(defun test-quiz-results--survey-answer (id text responses &optional correct)
+  "A survey answer ID reading TEXT picked RESPONSES times.
+CORRECT marks it right, as Canvas marks a survey's first option."
+  `((id . ,id) (text . ,text) (correct . ,(if correct t :json-false))
+    (responses . ,responses) (user_ids . []) (user_names . [])))
+
+(defconst test-quiz-results--survey-q1
+  (test-quiz-results--question
+   1 "multiple_choice_question" "<p>Ethics classes are important.</p>"
+   (list (test-quiz-results--survey-answer 51 "Strongly agree" 33 t)
+         (test-quiz-results--survey-answer 52 "<p>Agree</p>" 27)
+         (test-quiz-results--survey-answer 53 "Neutral, unsure" 17)
+         (test-quiz-results--survey-answer 54 :null 5)
+         (test-quiz-results--survey-answer 55 "Disagree" 1))
+   '(answered_student_count . 83) '(correct_student_ratio . 0.397)
+   '(difficulty_index . 0.397)
+   `(point_biserials . ,(vector '((answer_id . 51) (point_biserial . 0.3) (correct . t)))))
+  "A five-point agreement item; one answer has no text.")
+
+(defconst test-quiz-results--survey-q2
+  (test-quiz-results--question
+   2 "essay_question" "<p>Comments?</p>" nil
+   '(answered_student_count . 40))
+  "A survey's free-text question: no answers listed.")
+
+(describe "org-canvas--quiz-results-skip-reason"
+  (it "keeps a published survey of either kind without an assignment"
+    (expect (org-canvas--quiz-results-skip-reason
+             (test-quiz-results--survey 1 "S" "survey"))
+            :to-be nil)
+    (expect (org-canvas--quiz-results-skip-reason
+             (test-quiz-results--survey 2 "G" "graded_survey"))
+            :to-be nil))
+  (it "names why an unpublished quiz or a practice quiz is left out"
+    (expect (org-canvas--quiz-results-skip-reason
+             (test-quiz-results--survey 1 "S" "survey" '(published . :json-false)))
+            :to-be 'unpublished)
+    (expect (org-canvas--quiz-results-skip-reason
+             (test-quiz-results--quiz 3 "P" '(assignment_id . :null)
+                                      '(quiz_type . "practice_quiz")))
+            :to-be 'no-assignment)
+    (expect (org-canvas--quiz-results-skip-reason (test-quiz-results--quiz 4 "Q"))
+            :to-be nil)))
+
 (describe "org-canvas--quiz-results-plain-text"
   (it "strips tags, decodes entities, collapses whitespace and cuts to the width"
     (expect (org-canvas--quiz-results-plain-text "<p>What is <b>ethics</b>?&nbsp;&amp; why</p>")
@@ -167,6 +217,21 @@ The results and quizzes files live in a temp directory."
       (expect (plist-get row :discrimination) :to-be nil)
       (expect (plist-get row :responses) :to-equal "-")
       (expect row-type :to-equal "essay")))
+
+  (it "leaves a survey question's scoring out and labels its counts by answer text"
+    (let ((row (org-canvas--quiz-results-question-row test-quiz-results--survey-q1 t)))
+      (expect (plist-get row :answered) :to-equal 83)
+      (expect (plist-get row :correct) :to-be nil)
+      (expect (plist-get row :difficulty) :to-be nil)
+      (expect (plist-get row :discrimination) :to-be nil)
+      (expect (plist-get row :responses)
+              :to-equal "Strongly agree 33; Agree 27; Neutral, unsure 17; #4 5; Disagree 1"))
+    (expect (plist-get (org-canvas--quiz-results-question-row test-quiz-results--survey-q2 t)
+                       :responses)
+            :to-equal "-")
+    (expect (org-canvas--quiz-results-labelled-responses
+             `((answers . ,(vector '((id . 1) (text . 42))))))
+            :to-equal "42 0"))
 
   (it "counts an answer with no responses field as zero"
     (let ((row (org-canvas--quiz-results-question-row
@@ -316,6 +381,91 @@ The results and quizzes files live in a temp directory."
         nil
       (org-canvas-pull-quiz-results)
       (expect (test-quiz-results--file) :to-match "Canvas returned 0 items")))
+
+  (it "writes an ungraded survey with no assignment, its answers by text and no scoring"
+    (test-quiz-results--with-course
+        (list (test-quiz-results--quiz 1 "Syllabus Quiz")
+              (test-quiz-results--survey 5 "Pulse Check" "survey"))
+        (list (cons 1 (test-quiz-results--stats 55 (list test-quiz-results--q3)
+                                                '(score_average . 24.5)))
+              (cons 5 (test-quiz-results--stats 83 (list test-quiz-results--survey-q1
+                                                         test-quiz-results--survey-q2)
+                                                '(score_average . 1.0) '(score_high . 1.0)
+                                                '(score_low . 1.0) '(score_stdev . 0.0)
+                                                '(duration_average . 120))))
+      (org-canvas-pull-quiz-results)
+      (let* ((text (test-quiz-results--file))
+             (survey (substring text (string-match "^\\* Pulse Check" text))))
+        (expect text :to-match "^\\* Syllabus Quiz\n")
+        (expect survey :to-match ":QUIZ_ID: +5\n")
+        (expect survey :to-match ":STUDENTS: +83\n")
+        (expect survey :to-match ":DURATION: +0:02\n")
+        (expect survey :not :to-match ":MEAN:\\|:HIGH:\\|:LOW:\\|:STDEV:")
+        (expect survey :to-match "^| # +| Question +| Type +| Answered +| Responses +|$")
+        (expect survey :not :to-match "Correct\\|Difficulty\\|Discrimination")
+        (expect (test-quiz-results--row 1)
+                :to-equal '("Ethics classes are important." "multiple choice" "83"
+                            "Strongly agree 33; Agree 27; Neutral, unsure 17; #4 5; Disagree 1"))
+        (expect (test-quiz-results--row 2) :to-equal '("Comments?" "essay" "40" "-"))
+        ;; The graded quiz above keeps its scoring.
+        (expect text :to-match ":MEAN: +24\\.5\n")
+        (expect text :to-match "| Correct +| Difficulty +| Discrimination +|"))))
+
+  (it "treats a graded survey as a survey: its assignment keeps it, the scoring goes"
+    (test-quiz-results--with-course
+        (list (test-quiz-results--survey 6 "Graded Pulse" "graded_survey"
+                                         '(assignment_id . 706)))
+        (list (cons 6 (test-quiz-results--stats 83 (list test-quiz-results--survey-q1)
+                                                '(score_average . 2.0) '(score_high . 2.0))))
+      (org-canvas-pull-quiz-results)
+      (let ((text (test-quiz-results--file)))
+        (expect text :to-match "^\\* Graded Pulse\n")
+        (expect text :not :to-match ":MEAN:\\|:HIGH:")
+        (expect (car (last (test-quiz-results--row 1))) :to-match "\\`Strongly agree 33; "))))
+
+  (it "says in the closing line how many quizzes it left out and why"
+    (let ((messages nil))
+      (test-quiz-results--with-course
+          (list (test-quiz-results--quiz 1 "Syllabus Quiz")
+                (test-quiz-results--quiz 2 "Draft Quiz" '(published . :json-false))
+                (test-quiz-results--survey 3 "Draft Survey" "survey"
+                                           '(published . :json-false))
+                (test-quiz-results--quiz 4 "Practice" '(assignment_id . :null)
+                                         '(quiz_type . "practice_quiz"))
+                (test-quiz-results--quiz 7 "Locked"))
+          (list (cons 1 (test-quiz-results--stats 55 (list test-quiz-results--q1)))
+                (cons 7 'refuse))
+        (cl-letf (((symbol-function 'message)
+                   (lambda (fmt &rest args) (push (apply #'format fmt args) messages)))
+                  ((symbol-function 'org-canvas--log-warning) #'ignore))
+          (org-canvas-pull-quiz-results)))
+      (expect (car messages)
+              :to-equal (concat "Quiz results pull complete: 1 quizzes, 1 with attempts;"
+                                " skipped 4 (2 unpublished, 1 without an assignment,"
+                                " 1 statistics refused)."))))
+
+  (it "names the skipped quizzes even when none is left to write"
+    (let ((messages nil))
+      (test-quiz-results--with-course
+          (list (test-quiz-results--quiz 2 "Draft Quiz" '(published . :json-false)))
+          nil
+        (cl-letf (((symbol-function 'message)
+                   (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
+          (org-canvas-pull-quiz-results)))
+      (expect (car messages)
+              :to-equal (concat "Quiz results pull complete: 0 quizzes, 0 with attempts;"
+                                " skipped 1 (1 unpublished)."))))
+
+  (it "keeps the closing line plain when nothing was left out"
+    (let ((messages nil))
+      (test-quiz-results--with-course
+          (list (test-quiz-results--quiz 1 "Syllabus Quiz"))
+          (list (cons 1 nil))
+        (cl-letf (((symbol-function 'message)
+                   (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
+          (org-canvas-pull-quiz-results)))
+      (expect (car messages)
+              :to-equal "Quiz results pull complete: 1 quizzes, 0 with attempts.")))
 
   (it "is in the pull tiers after the rubric results and bound in the pull menu"
     (let ((names (mapcar #'car (apply #'append org-canvas--pull-tiers))))

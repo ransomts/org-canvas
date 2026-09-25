@@ -1,0 +1,8 @@
+* Fixed
+- #347 =org-canvas-pull-quiz-results= writes published surveys, graded or
+  not, where it used to skip every survey without an assignment.  A
+  survey's heading has no score properties and its table no Correct,
+  Difficulty or Discrimination columns, and each response count follows
+  its answer's text (=Strongly agree 33; Agree 27=).  The closing line
+  says how many quizzes were skipped and why: unpublished, without an
+  assignment, or statistics refused.

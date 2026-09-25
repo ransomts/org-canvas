@@ -14,9 +14,9 @@
 ;; FILE STRUCTURE
 ;; ==============
 ;; In quiz-results.org, one level-1 heading per published classic quiz
-;; that has an assignment, in Canvas's order, titled by the quiz title
-;; and linked to its heading in quizzes.org when that file holds the
-;; quiz's CANVAS_ID:
+;; that has an assignment, and per published survey with or without
+;; one, in Canvas's order, titled by the quiz title and linked to its
+;; heading in quizzes.org when that file holds the quiz's CANVAS_ID:
 ;;   :QUIZ_ID:  :STUDENTS:  :MEAN:  :HIGH:  :LOW:  :STDEV:  :DURATION:
 ;;   :GENERATED_AT:
 ;;   | # | Question | Type | Answered | Correct | Difficulty
@@ -27,6 +27,16 @@
 ;; answer in answer order with the correct answer starred ("12, 40*,
 ;; 3"), so a distractor nobody picks is visible.  A quiz nobody has
 ;; taken gets the heading and a "No attempts yet" line instead.
+;;
+;; A survey (quiz_type survey or graded_survey) has no right answers:
+;; Canvas marks one anyway, and a graded survey gives full marks for
+;; taking it.  So a survey's heading carries no MEAN, HIGH, LOW or
+;; STDEV, its table drops Correct, Difficulty and Discrimination, and
+;; Responses names each answer by its text ("Agree 27; Disagree 5").
+;;
+;; A quiz left out is counted in the closing message by reason:
+;; unpublished, a practice quiz with no assignment, or statistics
+;; Canvas refused.
 ;;
 ;; PERSONAL DATA
 ;; =============
@@ -104,18 +114,59 @@ course repository."
 (defconst org-canvas--quiz-results-text-width 60
   "How many characters of a question's text the table shows.")
 
+(defconst org-canvas--quiz-results-survey-types '("survey" "graded_survey")
+  "The quiz types whose answers are opinions, not right or wrong.")
+
+(defconst org-canvas--quiz-results-skip-labels
+  '((unpublished . "unpublished")
+    (no-assignment . "without an assignment")
+    (refused . "statistics refused"))
+  "How the closing message names each reason a quiz was left out.")
+
 ;;;; Fetching
 
 (defun org-canvas--quiz-results-fetch-quizzes ()
-  "Return the course's published classic quizzes that have an assignment.
-In Canvas's order.  The quizzes endpoint lists classic quizzes only; a
-New Quiz is an assignment with no statistics to pull."
-  (cl-remove-if-not
-   (lambda (q) (and (eq (alist-get 'published q) t)
-                    (org-canvas--alist-get-non-null 'assignment_id q)))
-   (append (org-canvas-api-request-all-pages
-            'GET (org-canvas-api-course-endpoint "quizzes"))
-           nil)))
+  "Return every classic quiz of the course, in Canvas's order.
+The quizzes endpoint lists classic quizzes only; a New Quiz is an
+assignment with no statistics to pull.  Which of them get a heading
+is `org-canvas--quiz-results-partition's to say."
+  (append (org-canvas-api-request-all-pages
+           'GET (org-canvas-api-course-endpoint "quizzes"))
+          nil))
+
+(defun org-canvas--quiz-results-survey-p (quiz)
+  "Return non-nil when QUIZ is a survey, graded or not."
+  (member (alist-get 'quiz_type quiz) org-canvas--quiz-results-survey-types))
+
+(defun org-canvas--quiz-results-skip-reason (quiz)
+  "Return why QUIZ gets no heading, or nil when it gets one.
+`unpublished' for a quiz students cannot take, `no-assignment' for a
+practice quiz, which has no assignment and so no grade to analyse.
+A survey is kept without an assignment: an ungraded survey has none,
+and its answers are the whole reason to run it."
+  (cond ((not (eq (alist-get 'published quiz) t)) 'unpublished)
+        ((org-canvas--quiz-results-survey-p quiz) nil)
+        ((not (org-canvas--alist-get-non-null 'assignment_id quiz))
+         'no-assignment)))
+
+(defun org-canvas--quiz-results-count-skip (reason skipped)
+  "Return the SKIPPED alist of reason to count with REASON counted once more."
+  (let ((cell (assq reason skipped)))
+    (if cell
+        (progn (setcdr cell (1+ (cdr cell))) skipped)
+      (append skipped (list (cons reason 1))))))
+
+(defun org-canvas--quiz-results-partition (quizzes)
+  "Split QUIZZES into those that get a heading and a count of the rest.
+Return (KEPT . SKIPPED): KEPT in Canvas's order, SKIPPED an alist of
+reason (see `org-canvas--quiz-results-skip-reason') to count."
+  (let (kept skipped)
+    (dolist (quiz quizzes)
+      (let ((reason (org-canvas--quiz-results-skip-reason quiz)))
+        (if reason
+            (setq skipped (org-canvas--quiz-results-count-skip reason skipped))
+          (push quiz kept))))
+    (cons (nreverse kept) skipped)))
 
 (defun org-canvas--quiz-results-fetch-statistics (quiz-id)
   "Return QUIZ-ID's statistics alist, nil when Canvas has none, or `refused'.
@@ -182,21 +233,50 @@ also name the students who chose them, and those names go nowhere."
                            (if (eq (alist-get 'correct answer) t) "*" "")))
                  answers ", "))))
 
-(defun org-canvas--quiz-results-question-row (question)
+(defun org-canvas--quiz-results-answer-label (answer position)
+  "Return ANSWER's text as one plain line, or #POSITION when it has none."
+  (let* ((raw (org-canvas--alist-get-non-null 'text answer))
+         (text (org-canvas--quiz-results-plain-text
+                (and raw (format "%s" raw)))))
+    (if (string-empty-p text) (format "#%d" position) text)))
+
+(defun org-canvas--quiz-results-labelled-responses (question)
+  "Describe QUESTION's response count per answer, each after its text.
+In answer order, as \"Strongly agree 33; Agree 27\"; - for a question
+without listed answers.  For a survey, where no answer is right and
+the position alone says nothing.  Semicolons part the answers, since
+an answer's text may hold a comma."
+  (let ((answers (append (alist-get 'answers question) nil))
+        (position 0))
+    (if (null answers)
+        "-"
+      (mapconcat
+       (lambda (answer)
+         (setq position (1+ position))
+         (format "%s %s"
+                 (org-canvas--quiz-results-answer-label answer position)
+                 (or (org-canvas--alist-get-non-null 'responses answer) 0)))
+       answers "; "))))
+
+(defun org-canvas--quiz-results-question-row (question &optional survey)
   "Return the table row plist for QUESTION's statistics.
 Keys: :position, :text, :type, :answered, :correct (a percent, nil
 when Canvas gives no ratio), :difficulty, :discrimination and
-:responses."
+:responses.  With SURVEY non-nil the three scoring keys are nil and
+:responses labels each count with its answer's text."
   (let ((ratio (org-canvas--alist-get-non-null 'correct_student_ratio question))
         (difficulty (org-canvas--alist-get-non-null 'difficulty_index question)))
     (list :position (alist-get 'position question)
           :text (org-canvas--quiz-results-plain-text (alist-get 'question_text question))
           :type (org-canvas--quiz-results-type-label (alist-get 'question_type question))
           :answered (or (org-canvas--alist-get-non-null 'answered_student_count question) 0)
-          :correct (and (numberp ratio) (* 100 ratio))
-          :difficulty (and (numberp difficulty) difficulty)
-          :discrimination (org-canvas--quiz-results-discrimination question)
-          :responses (org-canvas--quiz-results-responses question))))
+          :correct (and (not survey) (numberp ratio) (* 100 ratio))
+          :difficulty (and (not survey) (numberp difficulty) difficulty)
+          :discrimination
+          (and (not survey) (org-canvas--quiz-results-discrimination question))
+          :responses (if survey
+                         (org-canvas--quiz-results-labelled-responses question)
+                       (org-canvas--quiz-results-responses question)))))
 
 (defun org-canvas--quiz-results-duration (seconds)
   "Render SECONDS as h:mm, or nil when there is no number."
@@ -206,17 +286,21 @@ when Canvas gives no ratio), :difficulty, :discrimination and
 
 (defun org-canvas--quiz-results-entry (quiz stats)
   "Fold QUIZ and its STATS into one entry plist.
-Keys: :id, :name, :students, :mean, :high, :low, :stdev, :duration,
-:generated-at and :rows, one `org-canvas--quiz-results-question-row'
-per question sorted by position.  STATS nil means Canvas has no
-report; :students is then 0 and :rows nil."
+Keys: :id, :name, :survey, :students, :mean, :high, :low, :stdev,
+:duration, :generated-at and :rows, one
+`org-canvas--quiz-results-question-row' per question sorted by
+position.  STATS nil means Canvas has no report; :students is then 0
+and :rows nil.  :survey is non-nil for a survey, graded or not."
   (let* ((id (alist-get 'id quiz))
+         (survey (and (org-canvas--quiz-results-survey-p quiz) t))
          (summary (alist-get 'submission_statistics stats))
          (students (or (org-canvas--alist-get-non-null 'unique_count summary) 0))
-         (rows (mapcar #'org-canvas--quiz-results-question-row
+         (rows (mapcar (lambda (q)
+                         (org-canvas--quiz-results-question-row q survey))
                        (append (alist-get 'question_statistics stats) nil))))
     (list :id id
           :name (or (alist-get 'title quiz) (format "Quiz %s" id))
+          :survey survey
           :students students
           :mean (org-canvas--alist-get-non-null 'score_average summary)
           :high (org-canvas--alist-get-non-null 'score_high summary)
@@ -268,45 +352,69 @@ Nil as well when `org-canvas-quizzes-file' is unset or missing."
          name)
       name)))
 
-(defun org-canvas--quiz-results-insert-table (rows)
-  "Insert the question table for ROWS at point and align it."
-  (let ((start (point)))
-    (insert "| # | Question | Type | Answered | Correct | Difficulty | Discrimination | Responses |\n")
-    (insert "|---+---+---+---+---+---+---+---|\n")
+(defun org-canvas--quiz-results-row-cells (row survey)
+  "Return ROW's table cells as strings, without the scoring ones for a SURVEY."
+  (append
+   (list (org-canvas--quiz-results-number (plist-get row :position))
+         (plist-get row :text)
+         (plist-get row :type)
+         (format "%d" (plist-get row :answered)))
+   (unless survey
+     (list (let ((correct (plist-get row :correct)))
+             (if correct (format "%d%%" (round correct)) "-"))
+           (org-canvas--quiz-results-number (plist-get row :difficulty) 2)
+           (org-canvas--quiz-results-number (plist-get row :discrimination) 2)))
+   (list (plist-get row :responses))))
+
+(defun org-canvas--quiz-results-insert-table (rows &optional survey)
+  "Insert the question table for ROWS at point and align it.
+With SURVEY non-nil the Correct, Difficulty and Discrimination
+columns are left out: a survey has no right answer to measure."
+  (let ((start (point))
+        (header (append '("#" "Question" "Type" "Answered")
+                        (unless survey
+                          '("Correct" "Difficulty" "Discrimination"))
+                        '("Responses"))))
+    (insert "| " (mapconcat #'identity header " | ") " |\n|-\n")
     (dolist (row rows)
-      (insert (format "| %s | %s | %s | %d | %s | %s | %s | %s |\n"
-                      (org-canvas--quiz-results-number (plist-get row :position))
-                      (plist-get row :text)
-                      (plist-get row :type)
-                      (plist-get row :answered)
-                      (let ((correct (plist-get row :correct)))
-                        (if correct (format "%d%%" (round correct)) "-"))
-                      (org-canvas--quiz-results-number (plist-get row :difficulty) 2)
-                      (org-canvas--quiz-results-number (plist-get row :discrimination) 2)
-                      (plist-get row :responses))))
+      (insert "| " (mapconcat #'identity
+                              (org-canvas--quiz-results-row-cells row survey)
+                              " | ")
+              " |\n"))
     (save-excursion
       (goto-char start)
       (org-table-align))))
+
+(defun org-canvas--quiz-results-properties (entry)
+  "Return ENTRY's drawer as (PROPERTY . VALUE) pairs, in order.
+A survey's has no score properties: an ungraded survey has no score
+and a graded one gives every taker full marks."
+  (let ((score (unless (plist-get entry :survey)
+                 (mapcar (lambda (prop)
+                           (cons (car prop)
+                                 (org-canvas--quiz-results-number
+                                  (plist-get entry (cdr prop)))))
+                         '(("MEAN" . :mean) ("HIGH" . :high)
+                           ("LOW" . :low) ("STDEV" . :stdev))))))
+    (append `(("QUIZ_ID" . ,(plist-get entry :id))
+              ("STUDENTS" . ,(plist-get entry :students)))
+            score
+            `(("DURATION" . ,(plist-get entry :duration))
+              ("GENERATED_AT" . ,(org-canvas--iso8601-to-org-timestamp
+                                  (plist-get entry :generated-at)))))))
 
 (defun org-canvas--quiz-results-insert-entry (entry)
   "Insert ENTRY as a level-1 heading with its properties and table at point."
   (insert (format "* %s\n" (org-canvas--quiz-results-title entry)))
   (insert ":PROPERTIES:\n")
-  (dolist (prop `(("QUIZ_ID" . ,(plist-get entry :id))
-                  ("STUDENTS" . ,(plist-get entry :students))
-                  ("MEAN" . ,(org-canvas--quiz-results-number (plist-get entry :mean)))
-                  ("HIGH" . ,(org-canvas--quiz-results-number (plist-get entry :high)))
-                  ("LOW" . ,(org-canvas--quiz-results-number (plist-get entry :low)))
-                  ("STDEV" . ,(org-canvas--quiz-results-number (plist-get entry :stdev)))
-                  ("DURATION" . ,(plist-get entry :duration))
-                  ("GENERATED_AT" . ,(org-canvas--iso8601-to-org-timestamp
-                                      (plist-get entry :generated-at)))))
+  (dolist (prop (org-canvas--quiz-results-properties entry))
     (when (and (cdr prop) (not (equal (cdr prop) "-")))
       (insert (format ":%s: %s\n" (car prop) (cdr prop)))))
   (insert ":END:\n\n")
   (if (null (plist-get entry :rows))
       (insert "No attempts yet.\n\n")
-    (org-canvas--quiz-results-insert-table (plist-get entry :rows))
+    (org-canvas--quiz-results-insert-table (plist-get entry :rows)
+                                           (plist-get entry :survey))
     (insert "\n")))
 
 ;;;; Pull
@@ -326,34 +434,69 @@ A quiz whose statistics Canvas refuses is left out."
   "Pull the item analysis of every classic quiz into quiz-results.org.
 One heading per published quiz with the score spread in its
 properties and a table of its questions: answered, correct, difficulty,
-discrimination and the responses per answer.  Read-only, and the file
-is derived: every pull rewrites it whole.  Only aggregates are
-written, but keep the file out of a course repository all the same."
+discrimination and the responses per answer.  A survey gets its
+response counts by answer text and no scoring.  The closing message
+counts the quizzes left out and why.  Read-only, and the file is
+derived: every pull rewrites it whole.  Only aggregates are written,
+but keep the file out of a course repository all the same."
   (interactive)
   (org-canvas--start-operation "PULLING QUIZ RESULTS")
   (let* ((file (expand-file-name org-canvas-quiz-results-file))
-         (quizzes (org-canvas--quiz-results-fetch-quizzes))
+         (split (org-canvas--quiz-results-partition
+                 (org-canvas--quiz-results-fetch-quizzes)))
+         (quizzes (car split))
+         (skipped (cdr split))
          (was-fresh (org-canvas--pull-was-fresh-p file)))
     (org-canvas--pull-confirm-unsaved file "quiz-results")
     (if (null quizzes)
-        (org-canvas--pull-emit-empty-file file (org-canvas--pull-label-for "quiz-results"))
+        (progn
+          (org-canvas--pull-emit-empty-file
+           file (org-canvas--pull-label-for "quiz-results"))
+          (org-canvas--quiz-results-report nil skipped))
       (let ((entries (org-canvas--quiz-results-entries quizzes)))
-        (unless (file-exists-p file)
-          (with-temp-file file (insert "")))
-        (with-current-buffer (org-canvas--find-file-noselect file)
-          (erase-buffer)
-          (insert (format "#+TITLE: %s\n\n" (org-canvas--pull-label-for "quiz-results")))
-          (dolist (entry entries)
-            (org-canvas--quiz-results-insert-entry entry))
-          (org-canvas--pull-write-file-header)
-          (org-canvas--save-buffer))
+        (org-canvas--quiz-results-write file entries)
         (org-canvas--pull-kill-fresh-buffer file was-fresh)
-        (let ((taken (cl-count-if (lambda (e) (plist-get e :rows)) entries)))
-          (org-canvas--log-info org-canvas--logger
-            "Quiz results pull complete: %d quizzes, %d with attempts"
-            (length entries) taken)
-          (message "Quiz results pull complete: %d quizzes, %d with attempts."
-                   (length entries) taken))))))
+        (dotimes (_ (- (length quizzes) (length entries)))
+          (setq skipped (org-canvas--quiz-results-count-skip 'refused skipped)))
+        (org-canvas--quiz-results-report entries skipped)))))
+
+(defun org-canvas--quiz-results-write (file entries)
+  "Rewrite FILE whole with one heading per entry of ENTRIES."
+  (unless (file-exists-p file)
+    (with-temp-file file (insert "")))
+  (with-current-buffer (org-canvas--find-file-noselect file)
+    (erase-buffer)
+    (insert (format "#+TITLE: %s\n\n"
+                    (org-canvas--pull-label-for "quiz-results")))
+    (dolist (entry entries)
+      (org-canvas--quiz-results-insert-entry entry))
+    (org-canvas--pull-write-file-header)
+    (org-canvas--save-buffer)))
+
+(defun org-canvas--quiz-results-skip-note (skipped)
+  "Describe SKIPPED, an alist of reason to count, for the closing line.
+Empty when nothing was skipped, else as \"; skipped 3 (2 unpublished,
+1 without an assignment)\"."
+  (if (null skipped)
+      ""
+    (format "; skipped %d (%s)"
+            (apply #'+ (mapcar #'cdr skipped))
+            (mapconcat
+             (lambda (cell)
+               (let ((label (alist-get (car cell)
+                                       org-canvas--quiz-results-skip-labels)))
+                 (format "%d %s" (cdr cell) label)))
+             skipped ", "))))
+
+(defun org-canvas--quiz-results-report (entries skipped)
+  "Log and show the closing line for ENTRIES written and SKIPPED left out."
+  (let ((line (format
+               "Quiz results pull complete: %d quizzes, %d with attempts%s"
+                      (length entries)
+                      (cl-count-if (lambda (e) (plist-get e :rows)) entries)
+                      (org-canvas--quiz-results-skip-note skipped))))
+    (org-canvas--log-info org-canvas--logger "%s" line)
+    (message "%s." line)))
 
 (provide 'org-canvas-quiz-results)
 ;;; org-canvas-quiz-results.el ends here
