@@ -1273,7 +1273,7 @@ Hello world.
   (it "binds conflict-apply-all to nil per sync"
     ;; Verify the macro delegates to sync-run-pipeline (which handles bindings)
     (let ((expanded (macroexpand
-                     '(org-canvas-define-sync test-feature
+                     '(org-canvas-define-sync test-features
                         :file "/tmp/test.org"
                         :parse #'identity
                         :build #'identity

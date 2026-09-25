@@ -533,6 +533,20 @@ anything else."
     (list :outcome 'synced)))
 
 (org-canvas--sync-register-heading-fn "new-quiz" #'org-canvas-sync-new-quiz)
+;;;###autoload
+(defun org-canvas-pull-new-quiz (&optional target by)
+  "Replace the New Quiz heading TARGET names with Canvas's version.
+The pull twin of `org-canvas-sync-new-quiz' (issue #346), written by
+hand since the sync is.  TARGET is the heading's exact title in the
+file `org-canvas-new-quizzes-file' names, or, with BY `canvas-id', its
+CANVAS_ASSIGNMENT_ID.  Never asks to confirm; saves the file and
+returns a plist whose :outcome is `pulled' or `dry-run'."
+  (interactive)
+  (org-canvas--pull-heading-runtime
+   "new-quiz" (expand-file-name org-canvas-new-quizzes-file) "LEVEL=1"
+   "CANVAS_ASSIGNMENT_ID" target by))
+
+(org-canvas--pull-register-heading-fn "new-quiz" #'org-canvas-pull-new-quiz)
 
 ;;;; Delete Functions
 

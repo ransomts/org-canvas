@@ -1039,7 +1039,10 @@ as issue #26."
   :build #'org-canvas--quiz-build-payload
   :push #'org-canvas--quiz-push-to-api
   :finalize #'org-canvas--quiz-finalize
-  :hash-extra #'org-canvas--quiz-questions-digest)
+  :hash-extra #'org-canvas--quiz-questions-digest
+  ;; The pull-item function is registered with the pull below, so ask
+  ;; for org-canvas-pull-quiz by name (issue #346).
+  :pull-heading t)
 
 ;;;; Delete Functions
 

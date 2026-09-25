@@ -819,6 +819,44 @@ otherwise strips trailing \"s\"."
           (substring name 0 -1)
         name)))
 
+(defun org-canvas--pull-heading-fn-forms (feature-name singular file-expr
+                                                       query id-property)
+  "Return the forms defining and registering org-canvas-pull-SINGULAR.
+SINGULAR is the module's singular name, and FEATURE-NAME the plural
+the whole-file pull is named after;
+FILE-EXPR, QUERY and ID-PROPERTY are the module's, as
+`org-canvas-define-sync' received them.  A singular that equals
+FEATURE-NAME would name the whole-file pull org-canvas-pull-FEATURE
+and silently replace it, so that is an error at expansion (issue
+#346)."
+  (when (string= singular feature-name)
+    (error "org-canvas-define-sync: %s has no singular; org-canvas-pull-%s would replace its whole-file pull"
+           feature-name singular))
+  (let ((fn-name (intern (format "org-canvas-pull-%s" singular))))
+    `(;;;###autoload
+      (defun ,fn-name (&optional target by)
+        ,(format "Replace the %s heading TARGET names with Canvas's version.
+The pull twin of `org-canvas-sync-%s', from
+issue #346.  TARGET is the heading's exact title in %s,
+or, with BY `canvas-id', its %s; an error names a target that
+matches no heading or more than one.  Nil asks for a title (never
+under `noninteractive').  Never asks to confirm: naming the heading
+is the confirmation.  Saves the file and returns a plist whose
+:outcome is `pulled' or `dry-run'.  The whole-file pull is
+`org-canvas-pull-%s';
+`org-canvas-pull-headings' takes several."
+                 singular singular
+                 (if (symbolp file-expr)
+                     (format "the file\n`%s' names" file-expr)
+                   "the module's file")
+                 (or id-property "CANVAS_ID")
+                 feature-name)
+        (interactive)
+        (org-canvas--pull-heading-runtime
+         ,singular (expand-file-name ,file-expr) ,query
+         ,(or id-property "CANVAS_ID") target by))
+      (org-canvas--pull-register-heading-fn ,singular #',fn-name))))
+
 (defmacro org-canvas-define-sync (feature &rest args)
   "Define a sync function for FEATURE using the 4-stage pipeline pattern.
 
@@ -843,7 +881,11 @@ ARGS is a plist with the following keys:
              says so with `org-canvas--finalize-note-remote-write'
   :title-key - Plist key for display name in logs (default: :title)
   :pull-item-fn - Optional function to pull remote data into local heading
-                  for interactive conflict resolution
+                  for interactive conflict resolution; also generates the
+                  pull by heading below
+  :pull-heading - Non-nil generates the pull by heading for a module that
+                  registers its pull-item function apart from the sync
+                  (quizzes), so it passes no :pull-item-fn here
   :hash-extra - Optional function called with the parsed data; its string
                 result is folded into the payload hash so state outside the
                 payload (e.g. module items) participates in change detection
@@ -870,8 +912,9 @@ ARGS is a plist with the following keys:
            pipeline, with the log kept between the two; for a content type
            whose level-1 headings must exist on Canvas before its level-2
            headings can be filed under them (outcomes)
-  :no-at-point - When non-nil, suppress generating the sync-at-point function
-                 and the sync-by-heading function (the module writes both)
+  :no-at-point - When non-nil, suppress generating the sync-at-point function,
+                 the sync-by-heading function and the pull-by-heading
+                 function (the module writes them)
 
 When :endpoint is provided but :push is not, a push function is auto-generated
 that calls `org-canvas--push-to-api' with the given endpoint and options.
@@ -882,7 +925,11 @@ Three commands come out: org-canvas-sync-FEATURE (every entry),
 org-canvas-sync-SINGULAR-at-point (the entry at point) and
 org-canvas-sync-SINGULAR (TARGET &optional BY), the entry a title or
 a stamp names, for a caller without a point (issue #287); the last is
-registered for `org-canvas-sync-headings'.
+registered for `org-canvas-sync-headings'.  A feature with a
+single-item pull (:pull-item-fn or :pull-heading) also gets
+org-canvas-pull-SINGULAR (TARGET &optional BY), which replaces that
+heading with Canvas's version and is registered for
+`org-canvas-pull-headings' (issue #346).
 
 Example usage:
   (org-canvas-define-sync announcements
@@ -992,7 +1039,11 @@ so a script need not (`org-canvas-sync-headings' takes several)."
                               :query ,query
                               :id-property ,id-property))
                 target by))
-             (org-canvas--sync-register-heading-fn ,singular #',heading-fn-name))))))
+             (org-canvas--sync-register-heading-fn ,singular #',heading-fn-name)))
+       ,@(when (and (or pull-item-fn (plist-get args :pull-heading))
+                    (not no-at-point))
+           (org-canvas--pull-heading-fn-forms
+            feature-name singular file-expr query id-property)))))
 
 ;;;; 6a. Remote Drift Detection
 ;;
@@ -2073,16 +2124,23 @@ A second registration for the same name replaces the first, so a
 reloaded module does not leave a stale function behind."
   (setf (alist-get singular org-canvas--sync-heading-fns nil nil #'equal) fn))
 
+(defun org-canvas--heading-fn-lookup (feature fns verb)
+  "Return the function for FEATURE in FNS, an alist (SINGULAR . FUNCTION).
+FEATURE is the module's name as a symbol or string, plural or singular
+\(`assignments' or `assignment'); a name FNS lacks is a `user-error'
+naming VERB and listing the ones that exist."
+  (let* ((name (if (symbolp feature) (symbol-name feature) feature))
+         (fn (cdr (assoc (org-canvas--singularize name) fns))))
+    (or fn
+        (user-error "No %s by heading for %s; the features are: %s" verb name
+                    (mapconcat #'car (reverse fns) ", ")))))
+
 (defun org-canvas--sync-heading-fn-for (feature)
   "Return the sync by heading of FEATURE, a symbol or string.
 FEATURE is the module's name, plural or singular (`assignments' or
 `assignment'); a name no module registered is a `user-error' listing
 the ones that exist."
-  (let* ((name (if (symbolp feature) (symbol-name feature) feature))
-         (fn (cdr (assoc (org-canvas--singularize name) org-canvas--sync-heading-fns))))
-    (or fn
-        (user-error "No sync by heading for %s; the features are: %s" name
-                    (mapconcat #'car (reverse org-canvas--sync-heading-fns) ", ")))))
+  (org-canvas--heading-fn-lookup feature org-canvas--sync-heading-fns "sync"))
 
 (defun org-canvas--sync-heading-text ()
   "Return the text of the heading at point as written, or nil.
@@ -2121,10 +2179,12 @@ point at each heading.  FILE is visited through
                        query 'file))
     (nreverse found)))
 
-(defun org-canvas--sync-find-heading (file query target by id-property feature)
+(defun org-canvas--sync-find-heading (file query target by id-property feature
+                                            &optional verb)
   "Return a marker at the one heading of FILE that TARGET names.
 QUERY, BY and ID-PROPERTY are as in `org-canvas--sync-heading-matches-p';
-FEATURE names the module in the error.  No match and more than one
+FEATURE names the module in the error, and VERB (default \"sync\") what
+to do at point instead.  No match and more than one
 match are both a `user-error': a script must never push the wrong
 heading, and two headings with one title or one stamp are a file to
 fix (or a job for the at-point command) rather than a guess."
@@ -2136,8 +2196,9 @@ fix (or a job for the at-point command) rather than a guess."
     (pcase (length markers)
       (0 (user-error "No %s heading %s in %s" feature what (file-name-nondirectory file)))
       (1 (car markers))
-      (n (user-error "%d %s headings %s in %s; sync one at point instead"
-                     n feature what (file-name-nondirectory file))))))
+      (n (user-error "%d %s headings %s in %s; %s one at point instead"
+                     n feature what (file-name-nondirectory file)
+                     (or verb "sync"))))))
 
 (defun org-canvas--sync-heading-titles (file query)
   "Return the text of every heading of FILE under QUERY, in file order."
@@ -2145,12 +2206,14 @@ fix (or a job for the at-point command) rather than a guess."
                         (save-excursion (goto-char m) (org-canvas--sync-heading-text))))
           (org-canvas--sync-heading-markers file query (lambda () t))))
 
-(defun org-canvas--sync-heading-ask (feature file query)
+(defun org-canvas--sync-heading-ask (feature file query &optional verb)
   "Read the title of a FEATURE heading of FILE, among those under QUERY.
 Under `noninteractive' there is nobody to ask, and a script that
-passed no target is told so rather than left reading standard input."
+passed no target is told so rather than left reading standard input.
+VERB (default \"sync\") names the command in that message."
   (when noninteractive
-    (user-error "No %s heading named, and nothing to ask in batch (org-canvas-sync-%s)" feature feature))
+    (user-error "No %s heading named, and nothing to ask in batch (org-canvas-%s-%s)"
+                feature (or verb "sync") feature))
   (completing-read (format "%s heading: " (capitalize feature))
                    (org-canvas--sync-heading-titles file query) nil t))
 
@@ -2179,26 +2242,28 @@ and saves; the context's :outcome says how it ended."
 (defun org-canvas--sync-headings-entry (entry)
   "Return ENTRY of `org-canvas-sync-headings' as a list (FEATURE TARGET BY).
 ENTRY is (FEATURE . TARGET) with a string TARGET, or (FEATURE TARGET)
-or (FEATURE TARGET BY); anything else is a `user-error'."
+or (FEATURE TARGET BY); anything else is a `user-error'.
+`org-canvas-pull-headings' reads its entries here too."
   (cond ((and (consp entry) (stringp (cdr entry)))
          (list (car entry) (cdr entry) nil))
         ((and (consp entry) (listp (cdr entry)) (nth 1 entry))
          (list (car entry) (nth 1 entry) (nth 2 entry)))
-        (t (user-error "Sync headings: %S is not (FEATURE . TITLE) or (FEATURE TARGET BY)"
+        (t (user-error "Headings: %S is not (FEATURE . TITLE) or (FEATURE TARGET BY)"
                        entry))))
 
-(defun org-canvas--sync-headings-run-one (fn feature target by)
+(defun org-canvas--sync-headings-run-one (fn feature target by &optional label)
   "Call FN, the sync by heading of FEATURE, on TARGET and BY; return a result.
 The result is a plist (:feature :target :outcome), :outcome the
 context's, or `failed' with :error naming what went wrong: one
 heading's failure is reported and the next one is pushed, as in a full
-run."
+run.  LABEL (default \"Sync headings\") tags the log line; the pull by
+heading runs its entries here too."
   (condition-case err
       (list :feature feature :target target
             :outcome (plist-get (funcall fn target by) :outcome))
     (error
-     (org-canvas--log-error org-canvas--logger "[Sync headings] %s '%s' failed: %s"
-       feature target (error-message-string err))
+     (org-canvas--log-error org-canvas--logger "[%s] %s '%s' failed: %s"
+       (or label "Sync headings") feature target (error-message-string err))
      (list :feature feature :target target :outcome 'failed
            :error (error-message-string err)))))
 
@@ -2236,12 +2301,183 @@ words the closing lines print.  For example:
    \\='((assignment . \"R5: Framework Strengths\")
      (page . \"Week 05 objectives\")
      (assignment \"2563805\" canvas-id)))"
-  (let* ((parsed (mapcar #'org-canvas--sync-headings-entry entries))
-         (fns (mapcar (lambda (e) (org-canvas--sync-heading-fn-for (car e))) parsed))
-         (results (cl-mapcar (lambda (fn e)
-                               (org-canvas--sync-headings-run-one fn (car e) (nth 1 e) (nth 2 e)))
-                             fns parsed)))
+  (let ((results (org-canvas--headings-run
+                  entries #'org-canvas--sync-heading-fn-for "Sync headings")))
     (org-canvas--sync-headings-report results)
+    results))
+
+(defun org-canvas--headings-run (entries fn-for label)
+  "Run each of ENTRIES through its by-heading function, as FN-FOR resolves it.
+ENTRIES are read by `org-canvas--sync-headings-entry'; FN-FOR maps a
+feature name to its function, and every one is resolved before the
+first runs, so a misspelt feature stops the batch with nothing done.
+LABEL tags a failure's log line.  Return the results of
+`org-canvas--sync-headings-run-one', one per entry."
+  (let* ((parsed (mapcar #'org-canvas--sync-headings-entry entries))
+         (fns (mapcar (lambda (e) (funcall fn-for (car e))) parsed)))
+    (cl-mapcar (lambda (fn e)
+                 (org-canvas--sync-headings-run-one
+                  fn (car e) (nth 1 e) (nth 2 e) label))
+               fns parsed)))
+
+
+;;;; 11. Pull by Heading (issue #346)
+;;
+;; `org-canvas-pull-at-point' accepts one Canvas-side edit, but only at
+;; point and after a y-or-n-p.  A batch script taking Canvas's version of
+;; one named heading had to find it by regexp, redefine the private
+;; `org-canvas--confirm' for the rest of the session, pull and save —
+;; the pull side of the gap #287 closed for pushes.
+;;
+;; `org-canvas-define-sync' now also generates org-canvas-pull-<singular>
+;; \(TARGET &optional BY) for every feature with a single-item pull: the
+;; heading is found as the sync by heading finds it, the at-point pull's
+;; target and fetch run there without a prompt (naming the heading is the
+;; answer), and the file is saved.  `org-canvas-pull-headings' takes a
+;; list.  The names cannot meet the whole-file pulls: those are plural
+;; \(org-canvas-pull-assignments), these singular
+;; \(org-canvas-pull-assignment), and a feature whose singular is its
+;; plural is refused at expansion by `org-canvas--pull-heading-fn-forms'.
+
+(defun org-canvas--pull-at-point-feature ()
+  "Return the feature entry for the current buffer's file.
+Signals a `user-error' when the buffer is not a course file, or when
+its feature has no pull-item function to refresh a heading with.  A
+file outside the feature registry may still have a pull entry (New
+Quizzes, issue #297); see `org-canvas--pull-feature-for-file'."
+  (let* ((file (buffer-file-name))
+         (feature (org-canvas--pull-feature-for-file file)))
+    (unless feature
+      (user-error "%s is not one of this course's Canvas files"
+                  (if file (file-name-nondirectory file) "This buffer")))
+    (unless (plist-get feature :pull-item-fn)
+      (user-error "%s has no single-item pull; use M-x org-canvas-pull-%s"
+                  (plist-get feature :name)
+                  (downcase (replace-regexp-in-string
+                             " " "-" (plist-get feature :name)))))
+    feature))
+
+(defun org-canvas--pull-at-point-target ()
+  "Return (FEATURE ID TITLE) for the single-item pull of the heading at point.
+FEATURE is the file's entry (`org-canvas--pull-at-point-feature'), ID
+the heading's stamp and TITLE its text.  A feature that pulls whole
+entries (`:pull-whole-entry') climbs to the level-1 heading first, and
+point is left there: a quiz's question is part of the quiz.  A heading
+with no stamp is a `user-error', since nothing on Canvas answers it."
+  (org-back-to-heading t)
+  (let ((feature (org-canvas--pull-at-point-feature)))
+    (when (plist-get feature :pull-whole-entry)
+      (while (org-up-heading-safe)))
+    (let* ((id-property (or (plist-get feature :id-property) "CANVAS_ID"))
+           (id (org-entry-get (point) id-property))
+           (title (org-get-heading t t t t)))
+      (unless id
+        (user-error "'%s' has no %s — nothing on Canvas to pull from" title
+                    id-property))
+      (list feature id title))))
+
+(defun org-canvas--pull-at-point-1 (feature id title)
+  "Overwrite the heading at point with FEATURE's Canvas item ID.
+TITLE names the heading in the log.  The read carries FEATURE's
+`:item-params', so an assignment comes back with its own dates rather
+than a student's extension (issue #273).  The write is
+`org-canvas--conflict-pull-local', which restamps CANVAS_UPDATED_AT
+and drops PAYLOAD_HASH."
+  (let* ((endpoint (org-canvas--feature-item-url feature id))
+         (remote (org-canvas-api-request
+                  'GET endpoint
+                  :params (org-canvas--feature-item-params feature))))
+    (org-canvas--conflict-pull-local
+     (list :pom (point-marker)) remote (plist-get feature :pull-item-fn))
+    (org-canvas--log-info org-canvas--logger
+      "[Pull] Refreshed '%s' from Canvas (%s %s)"
+      title (plist-get feature :name) id)
+    (message "Pulled '%s' from Canvas." title)))
+
+(defvar org-canvas--pull-heading-fns nil
+  "Alist of (SINGULAR . FUNCTION): every feature's pull by heading.
+FUNCTION takes (TARGET &optional BY).  `org-canvas-define-sync' adds an
+entry for each feature with a single-item pull; a module with a
+hand-written command adds its own with
+`org-canvas--pull-register-heading-fn'.  `org-canvas-pull-headings'
+resolves its feature names here.")
+
+(defun org-canvas--pull-register-heading-fn (singular fn)
+  "Record FN as the pull by heading of the feature called SINGULAR.
+A second registration for the same name replaces the first."
+  (setf (alist-get singular org-canvas--pull-heading-fns nil nil #'equal) fn))
+
+(defun org-canvas--pull-heading-fn-for (feature)
+  "Return the pull by heading of FEATURE, a symbol or string.
+FEATURE is plural or singular; a name no module registered is a
+`user-error' listing the ones that exist."
+  (org-canvas--heading-fn-lookup feature org-canvas--pull-heading-fns "pull"))
+
+(defun org-canvas--pull-heading-here (singular)
+  "Pull the heading at point for the feature SINGULAR names; return a result.
+No prompt: the caller named the heading.  Under a dry run nothing is
+read or written.  Otherwise the at-point pull runs and the buffer is
+saved.  The result is a plist (:outcome :title :id), :outcome `pulled'
+or `dry-run'."
+  (run-hooks 'org-canvas--operation-start-hook)
+  (pcase-let ((`(,feature ,id ,title) (org-canvas--pull-at-point-target)))
+    (if org-canvas--dry-run
+        (progn
+          (message "%s '%s' would be pulled (dry run)."
+                   (capitalize singular) title)
+          (list :outcome 'dry-run :title title :id id))
+      (org-canvas--pull-at-point-1 feature id title)
+      (org-canvas--save-buffer)
+      (list :outcome 'pulled :title title :id id))))
+
+(defun org-canvas--pull-heading-runtime (singular file query id-property
+                                                  target &optional by)
+  "Pull the SINGULAR heading of FILE that TARGET names from Canvas.
+QUERY and ID-PROPERTY are the module's, as its sync by heading uses
+them; TARGET and BY mean what they mean there
+\(`org-canvas--sync-find-heading'), and TARGET nil asks for a title.
+Return the plist `org-canvas--pull-heading-here' builds, with
+:feature and :target."
+  (let* ((target (or target
+                     (org-canvas--sync-heading-ask singular file query "pull")))
+         (marker (org-canvas--sync-find-heading
+                  file query target by id-property singular "pull")))
+    (with-current-buffer (marker-buffer marker)
+      (save-excursion
+        (goto-char marker)
+        (append (list :feature singular :target target)
+                (org-canvas--pull-heading-here singular))))))
+
+(defun org-canvas--pull-headings-report (results)
+  "Say how RESULTS, the list `org-canvas-pull-headings' built, came out.
+One redacted line per heading, then one line of counts."
+  (dolist (r results)
+    (org-canvas--user-message "%s '%s': %s%s"
+      (plist-get r :feature) (plist-get r :target) (plist-get r :outcome)
+      (if (plist-get r :error) (format " — %s" (plist-get r :error)) "")))
+  (let ((count (lambda (o) (cl-count o results
+                                     :key (lambda (r) (plist-get r :outcome))))))
+    (message "Pulled %d heading(s): %d pulled, %d dry run, %d failed"
+             (length results) (funcall count 'pulled)
+             (funcall count 'dry-run) (funcall count 'failed))))
+
+;;;###autoload
+(defun org-canvas-pull-headings (entries)
+  "Replace ENTRIES, named headings of several features, with Canvas's versions.
+The pull twin of `org-canvas-sync-headings', and its ENTRIES are
+written the same way: (FEATURE . TITLE), or (FEATURE TARGET BY) where
+BY is nil, `title' or `canvas-id'.  Every feature is resolved before
+the first pull; after that a failed heading is reported and the next
+is pulled.  Nothing asks to confirm.  Return one plist per entry,
+\(:feature :target :outcome), :outcome `pulled', `dry-run' or
+`failed' with :error.  For example:
+
+  (org-canvas-pull-headings
+   \\='((assignment . \"Attendance 01\")
+     (page \"week-05-objectives\" canvas-id)))"
+  (let ((results (org-canvas--headings-run
+                  entries #'org-canvas--pull-heading-fn-for "Pull headings")))
+    (org-canvas--pull-headings-report results)
     results))
 
 

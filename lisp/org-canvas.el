@@ -416,41 +416,8 @@ No properties are modified and no API requests are sent."
 ;; was answering `l' at a conflict prompt during a sync you may not want
 ;; to run yet (issue #67).  The hard part already existed —
 ;; `org-canvas--conflict-pull-local' — and simply had no caller outside
-;; conflict resolution.
-
-(defun org-canvas--pull-at-point-feature ()
-  "Return the feature entry for the current buffer's file.
-Signals a `user-error' when the buffer is not a course file, or when
-its feature has no pull-item function to refresh a heading with.  A
-file outside the feature registry may still have a pull entry (New
-Quizzes, issue #297); see `org-canvas--pull-feature-for-file'."
-  (let* ((file (buffer-file-name))
-         (feature (org-canvas--pull-feature-for-file file)))
-    (unless feature
-      (user-error "%s is not one of this course's Canvas files"
-                  (if file (file-name-nondirectory file) "This buffer")))
-    (unless (plist-get feature :pull-item-fn)
-      (user-error "%s has no single-item pull; use M-x org-canvas-pull-%s"
-                  (plist-get feature :name)
-                  (downcase (replace-regexp-in-string
-                             " " "-" (plist-get feature :name)))))
-    feature))
-
-(defun org-canvas--pull-at-point-1 (feature id title)
-  "Overwrite the heading at point with FEATURE's Canvas item ID.
-TITLE names the heading in the log.  The read carries FEATURE's
-`:item-params', so an assignment comes back with its own dates rather
-than a student's extension (issue #273)."
-  (let* ((endpoint (org-canvas--feature-item-url feature id))
-         (remote (org-canvas-api-request
-                  'GET endpoint
-                  :params (org-canvas--feature-item-params feature))))
-    (org-canvas--conflict-pull-local
-     (list :pom (point-marker)) remote (plist-get feature :pull-item-fn))
-    (org-canvas--log-info org-canvas--logger
-      "[Pull] Refreshed '%s' from Canvas (%s %s)"
-      title (plist-get feature :name) id)
-    (message "Pulled '%s' from Canvas." title)))
+;; conflict resolution.  The helpers live in org-canvas-core-sync.el,
+;; beside the pull by heading that shares them (issue #346).
 
 ;;;###autoload
 (defun org-canvas-pull-at-point ()
@@ -467,16 +434,7 @@ asked to confirm first."
   (interactive)
   (org-back-to-heading t)
   (run-hooks 'org-canvas--operation-start-hook)
-  (let* ((feature (org-canvas--pull-at-point-feature))
-         (_ (when (plist-get feature :pull-whole-entry)
-              ;; A quiz's question is part of the quiz: pull the quiz.
-              (while (org-up-heading-safe))))
-         (id-property (or (plist-get feature :id-property) "CANVAS_ID"))
-         (id (org-entry-get (point) id-property))
-         (title (org-get-heading t t t t)))
-    (unless id
-      (user-error "'%s' has no %s — nothing on Canvas to pull from" title
-                  id-property))
+  (pcase-let ((`(,feature ,id ,title) (org-canvas--pull-at-point-target)))
     (when (org-canvas--confirm
            (format "Replace '%s' with the version on Canvas? " title))
       (org-canvas--pull-at-point-1 feature id title))))

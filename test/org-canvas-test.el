@@ -2178,6 +2178,266 @@ while Lab 4 in the same module is still scheduled ahead."
                 (kill-buffer buf)))
         (delete-file temp)))))
 
+;;;; Issue #346: pull a heading by name, without a prompt
+
+(defconst test-pull-346--file
+  "* Other
+:PROPERTIES:
+:CANVAS_ID: 99
+:END:
+Keep me.
+* Attendance 01
+:PROPERTIES:
+:CANVAS_ID: 100
+:PAYLOAD_HASH: deadbeef
+:CANVAS_UPDATED_AT: 2026-01-01T00:00:00Z
+:END:
+Template.
+* Twice
+* Twice
+* Never synced
+"
+  "An announcements file: a bystander, the stamped target, a repeated title
+and a heading with no stamp.")
+
+(defconst test-pull-346--remote
+  '((id . 100) (title . "Attendance 01") (message . "<p>Today's prompt.</p>")
+    (published . t) (updated_at . "2026-09-24T15:00:00Z"))
+  "Canvas's version of Attendance 01.")
+
+(defmacro test-pull-346--with-file (&rest body)
+  "Run BODY in an announcements file no prompt may interrupt.
+`saved' says whether the file was saved; asking anything is an error."
+  (declare (indent 0))
+  `(with-org-canvas-test-config
+     (with-temp-org-buffer test-pull-346--file
+       (let ((org-canvas-announcements-file buffer-file-name)
+             (noninteractive nil)
+             (saved nil))
+         (with-mock-api
+           (setq test-org-canvas-api-responses
+                 (list (cons "discussion_topics/100" test-pull-346--remote)))
+           (cl-letf (((symbol-function 'org-canvas--confirm)
+                      (lambda (&rest _) (error "Asked to confirm")))
+                     ((symbol-function 'y-or-n-p)
+                      (lambda (&rest _) (error "Asked y-or-n-p")))
+                     ((symbol-function 'org-canvas--save-buffer)
+                      (lambda (&rest _) (setq saved t))))
+             (with-html-to-org-identity
+               ,@body)))))))
+
+(defun test-pull-346--goto (title)
+  "Move to the level-1 heading TITLE of the current buffer."
+  (goto-char (point-min))
+  (re-search-forward (format "^\\* %s$" (regexp-quote title)))
+  (org-back-to-heading t))
+
+(describe "org-canvas-pull-SINGULAR (issue #346)"
+  (it "pulls the named heading without asking, saves, and reports pulled"
+    (test-pull-346--with-file
+      (let* ((result (org-canvas-pull-announcement "Attendance 01"))
+             (outcome (plist-get result :outcome)))
+        (expect outcome :to-be 'pulled)
+        (expect (plist-get result :feature) :to-equal "announcement")
+        (expect (plist-get result :target) :to-equal "Attendance 01")
+        (expect (plist-get result :id) :to-equal "100"))
+      (expect saved :to-be-truthy)
+      (expect (test-org-canvas-api-called-p 'GET "discussion_topics/100\\'")
+              :to-be-truthy)
+      (expect (test-org-canvas-api-called-p 'GET "discussion_topics/99")
+              :to-be nil)
+      (expect (cl-remove 'GET (mapcar #'car test-org-canvas-api-calls)) :to-be nil)
+      (test-pull-346--goto "Attendance 01")
+      (expect (org-entry-get (point) "PAYLOAD_HASH") :to-be nil)
+      (expect (org-entry-get (point) "CANVAS_UPDATED_AT")
+              :to-equal "2026-09-24T15:00:00Z")
+      (expect (buffer-string) :to-match "Today's prompt")
+      (expect (buffer-string) :not :to-match "Template\\.")
+      (test-pull-346--goto "Other")
+      (expect (org-entry-get (point) "CANVAS_ID") :to-equal "99")
+      (expect (buffer-string) :to-match "Keep me\\.")))
+
+  (it "finds the heading by its stamp with BY canvas-id"
+    (test-pull-346--with-file
+      (expect (plist-get (org-canvas-pull-announcement 100 'canvas-id) :outcome)
+              :to-be 'pulled)
+      (expect (test-org-canvas-api-called-p 'GET "discussion_topics/100\\'")
+              :to-be-truthy)))
+
+  (it "reads and writes nothing under a dry run"
+    (test-pull-346--with-file
+      (let ((org-canvas--dry-run t))
+        (expect (plist-get (org-canvas-pull-announcement "Attendance 01") :outcome)
+                :to-be 'dry-run))
+      (expect test-org-canvas-api-calls :to-be nil)
+      (expect saved :to-be nil)
+      (test-pull-346--goto "Attendance 01")
+      (expect (org-entry-get (point) "PAYLOAD_HASH") :to-equal "deadbeef")))
+
+  (it "refuses a heading with no stamp before any request"
+    (test-pull-346--with-file
+      (expect (condition-case e (org-canvas-pull-announcement "Never synced")
+                (user-error (error-message-string e)))
+              :to-match "has no CANVAS_ID")
+      (expect test-org-canvas-api-calls :to-be nil)))
+
+  (it "names a missing title, and says to pull a repeated one at point"
+    (test-pull-346--with-file
+      (expect (condition-case e (org-canvas-pull-announcement "Attendance 02")
+                (user-error (error-message-string e)))
+              :to-match "No announcement heading titled \"Attendance 02\"")
+      (expect (condition-case e (org-canvas-pull-announcement "Twice")
+                (user-error (error-message-string e)))
+              :to-match "2 announcement headings titled \"Twice\".*; pull one at point instead")
+      (expect test-org-canvas-api-calls :to-be nil)))
+
+  (it "never prompts for a title in batch, and names the command"
+    (test-pull-346--with-file
+      (let ((noninteractive t))
+        (expect (condition-case e (org-canvas-pull-announcement nil)
+                  (user-error (error-message-string e)))
+                :to-match "nothing to ask in batch (org-canvas-pull-announcement)"))))
+
+  (it "asks for a title when called without one outside batch"
+    (test-pull-346--with-file
+      (cl-letf (((symbol-function 'completing-read)
+                 (lambda (&rest _) "Attendance 01")))
+        (expect (plist-get (org-canvas-pull-announcement) :outcome)
+                :to-be 'pulled))))
+
+  (it "keeps org-canvas-pull-at-point asking as before"
+    (test-pull-346--with-file
+      (let ((asked nil))
+        (cl-letf (((symbol-function 'org-canvas--confirm)
+                   (lambda (prompt) (setq asked prompt) nil)))
+          (test-pull-346--goto "Attendance 01")
+          (org-canvas-pull-at-point))
+        (expect asked :to-match "Replace 'Attendance 01'")
+        (expect test-org-canvas-api-calls :to-be nil)))))
+
+(describe "org-canvas-pull-SINGULAR generation (issue #346)"
+  (it "generates one per feature with a single-item pull, and registers it"
+    (dolist (name '("announcement" "assignment" "assignment-group" "calendar-event"
+                    "discussion" "file" "grading-scheme" "group-category" "module"
+                    "page" "quiz" "rubric" "new-quiz"))
+      (let ((fn (intern (format "org-canvas-pull-%s" name))))
+        (expect (list name (commandp fn)) :to-equal (list name t))
+        (expect (list name (cdr (assoc name org-canvas--pull-heading-fns)))
+                :to-equal (list name fn))
+        ;; Nothing defined later, a whole-file pull above all, replaced it.
+        (expect (list name (and (string-match-p "#346" (documentation fn)) t))
+                :to-equal (list name t)))))
+
+  (it "generates none for a feature with no single-item pull"
+    (expect (assoc "outcome" org-canvas--pull-heading-fns) :to-be nil)
+    (expect (assoc "outcome-group" org-canvas--pull-heading-fns) :to-be nil))
+
+  (it "leaves every whole-file pull its own function"
+    (expect (documentation 'org-canvas-pull-assignments) :not :to-match "#346")
+    (expect (documentation 'org-canvas-pull-quizzes) :not :to-match "#346"))
+
+  (it "names the file, the stamp and the whole-file pull in the docstring"
+    (expect (documentation 'org-canvas-pull-page) :to-match "CANVAS_URL")
+    (expect (documentation 'org-canvas-pull-page) :to-match "org-canvas-pull-pages")
+    (expect (documentation 'org-canvas-pull-assignment)
+            :to-match "org-canvas-assignments-file"))
+
+  (it "refuses a feature whose singular would take its whole-file pull's name"
+    (expect (org-canvas--pull-heading-fn-forms "people" "people" 'x "LEVEL=1" nil)
+            :to-throw 'error))
+
+  (it "is generated by :pull-heading or :pull-item-fn, and not under :no-at-point"
+    (let ((names (lambda (form)
+                   (let (found)
+                     (dolist (f (cdr form) found)
+                       (when (eq (car-safe f) 'org-canvas--pull-register-heading-fn)
+                         (push (cadr f) found)))))))
+      (expect (funcall names (macroexpand-1
+                              '(org-canvas-define-sync widgets :file x :parse p
+                                 :build b :endpoint "w" :pull-heading t)))
+              :to-equal '("widget"))
+      (expect (funcall names (macroexpand-1
+                              '(org-canvas-define-sync widgets :file x :parse p
+                                 :build b :endpoint "w" :pull-item-fn #'ignore)))
+              :to-equal '("widget"))
+      (expect (funcall names (macroexpand-1
+                              '(org-canvas-define-sync widgets :file x :parse p
+                                 :build b :endpoint "w")))
+              :to-be nil)
+      (expect (funcall names (macroexpand-1
+                              '(org-canvas-define-sync widgets :file x :parse p
+                                 :build b :endpoint "w" :pull-heading t
+                                 :no-at-point t)))
+              :to-be nil)))
+
+  (it "gives the hand-written New Quiz sync its pull twin"
+    (let ((org-canvas-new-quizzes-file "/tmp/nq-346.org") seen)
+      (cl-letf (((symbol-function 'org-canvas--pull-heading-runtime)
+                 (lambda (&rest args) (setq seen args) (list :outcome 'pulled))))
+        (org-canvas-pull-new-quiz "Quiz 1"))
+      (expect seen :to-equal (list "new-quiz" "/tmp/nq-346.org" "LEVEL=1"
+                                   "CANVAS_ASSIGNMENT_ID" "Quiz 1" nil)))))
+
+(describe "org-canvas-pull-headings (issue #346)"
+  (before-each
+    (org-canvas--pull-register-heading-fn "widget" #'ignore))
+  (after-each
+    (setq org-canvas--pull-heading-fns
+          (assoc-delete-all "widget" org-canvas--pull-heading-fns)))
+
+  (it "pulls each entry in order with its target and BY, and returns the outcomes"
+    (let ((calls nil) (messages nil))
+      (org-canvas--pull-register-heading-fn
+       "widget" (lambda (target by) (push (list target by) calls)
+                  (list :outcome (if by 'dry-run 'pulled))))
+      (cl-letf (((symbol-function 'message)
+                 (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
+        (let ((results (org-canvas-pull-headings '((widget . "A") (widgets "7" canvas-id)))))
+          (expect (nreverse calls) :to-equal '(("A" nil) ("7" canvas-id)))
+          (expect (mapcar (lambda (r) (plist-get r :outcome)) results)
+                  :to-equal '(pulled dry-run))
+          (expect (plist-get (car results) :target) :to-equal "A")))
+      (expect (car messages)
+              :to-equal "Pulled 2 heading(s): 1 pulled, 1 dry run, 0 failed")
+      (expect (nth 1 messages) :to-match "widgets '7': dry-run")))
+
+  (it "reports a failed heading with its error and pulls the next one"
+    (let ((calls nil) (messages nil) (logged nil))
+      (org-canvas--pull-register-heading-fn
+       "widget" (lambda (target _by)
+                  (push target calls)
+                  (if (equal target "bad") (user-error "No widget heading titled \"bad\"")
+                    (list :outcome 'pulled))))
+      (cl-letf (((symbol-function 'message)
+                 (lambda (fmt &rest args) (push (apply #'format fmt args) messages)))
+                ((symbol-function 'org-canvas--log-error)
+                 (lambda (_l fmt &rest args) (push (apply #'format fmt args) logged))))
+        (let ((results (org-canvas-pull-headings '((widget . "bad") (widget . "good")))))
+          (expect (nreverse calls) :to-equal '("bad" "good"))
+          (expect (plist-get (car results) :outcome) :to-be 'failed)
+          (expect (plist-get (car results) :error) :to-match "No widget heading")
+          (expect (plist-get (cadr results) :outcome) :to-be 'pulled)))
+      (expect (car messages) :to-match "1 pulled, 0 dry run, 1 failed")
+      (expect (car logged) :to-match "\\[Pull headings\\] widget 'bad' failed")))
+
+  (it "stops before anything is pulled when a feature is not known"
+    (let ((calls 0))
+      (org-canvas--pull-register-heading-fn
+       "widget" (lambda (&rest _) (cl-incf calls) (list :outcome 'pulled)))
+      (expect (condition-case e (org-canvas-pull-headings '((widget . "a") (settings . "b")))
+                (user-error (error-message-string e)))
+              :to-match "No pull by heading for settings; the features are: .*announcement")
+      (expect calls :to-equal 0)))
+
+  (it "pulls a real heading end to end"
+    (test-pull-346--with-file
+      (cl-letf (((symbol-function 'message) #'ignore))
+        (let ((results (org-canvas-pull-headings '((announcements . "Attendance 01")))))
+          (expect (plist-get (car results) :outcome) :to-be 'pulled)))
+      (expect saved :to-be-truthy)
+      (test-pull-346--goto "Attendance 01")
+      (expect (org-entry-get (point) "PAYLOAD_HASH") :to-be nil))))
+
 ;;;; Issue #87: the orphan scan and delete go through the feature URL resolvers
 
 (describe "orphan scan and delete for a global endpoint (issue #87)"
