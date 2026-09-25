@@ -1,0 +1,9 @@
+* Fixed
+- #321 A New Quiz's settings reach Canvas: the push sends =TIME_LIMIT=,
+  =SHUFFLE_ANSWERS=, =ONE_AT_A_TIME=, =ALLOWED_ATTEMPTS= and
+  =SCORING_POLICY= under =quiz_settings= in Canvas's spelling (the time
+  limit in seconds, one-at-a-time as =one_at_a_time_type=, attempts and
+  scoring as =multiple_attempts=), where Canvas had ignored them at the
+  top level.  A pull reads them back in Org's units, the drift report
+  compares them, and =false= on either boolean is now sent rather than
+  dropped.  =ALLOWED_ATTEMPTS: -1= means unlimited.

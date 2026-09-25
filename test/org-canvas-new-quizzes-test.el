@@ -239,6 +239,17 @@ What would happen?
                      :body-text "" :pom nil))))
       (expect (plist-get result :shuffle_answers) :to-be nil)))
 
+  (it "keeps a setting turned off as false, to send (issue #321)"
+    (let ((result (org-canvas--new-quiz-transform-props
+                   '(:title-raw "Quiz"
+                     :canvas-id nil :time-limit-raw nil
+                     :shuffle-raw "false" :one-at-a-time-raw "false"
+                     :attempts-raw nil :scoring-policy-raw nil
+                     :assignment-group-id nil :rubric-id nil
+                     :body-text "" :pom nil))))
+      (expect (plist-get result :shuffle_answers) :to-be :json-false)
+      (expect (plist-get result :one_at_a_time) :to-be :json-false)))
+
   (it "interprets one-at-a-time boolean"
     (let ((result (org-canvas--new-quiz-transform-props
                    '(:title-raw "Quiz"
@@ -488,7 +499,7 @@ Quiz description.
 ;;;; Quiz Build Payload
 
 (describe "org-canvas--new-quiz-build-payload"
-  (it "builds payload with all fields"
+  (it "builds payload with all fields, the settings under quiz_settings"
     (let* ((data (list :title "Final Exam"
                        :description "<p>Instructions</p>"
                        :time_limit 120
@@ -496,16 +507,25 @@ Quiz description.
                        :one_at_a_time t
                        :allowed_attempts 3
                        :scoring_policy "keep_highest"))
-           (payload (org-canvas--new-quiz-build-payload data)))
+           (payload (org-canvas--new-quiz-build-payload data))
+           (settings (gethash "quiz_settings" payload))
+           (attempts (gethash "multiple_attempts" settings)))
       (expect (gethash "title" payload) :to-equal "Final Exam")
       (expect (gethash "instructions" payload) :to-equal "<p>Instructions</p>")
-      (expect (gethash "time_limit" payload) :to-equal 120)
-      (expect (gethash "shuffle_answers" payload) :to-be t)
-      (expect (gethash "one_at_a_time" payload) :to-be t)
-      (expect (gethash "allowed_attempts" payload) :to-equal 3)
-      (expect (gethash "scoring_policy" payload) :to-equal "keep_highest")))
+      ;; Canvas ignores the settings at the top level (issue #321).
+      (dolist (key '("time_limit" "shuffle_answers" "one_at_a_time"
+                     "allowed_attempts" "scoring_policy"))
+        (expect (gethash key payload 'absent) :to-be 'absent))
+      (expect (gethash "has_time_limit" settings) :to-be t)
+      (expect (gethash "session_time_limit_in_seconds" settings) :to-equal 7200)
+      (expect (gethash "shuffle_answers" settings) :to-be t)
+      (expect (gethash "one_at_a_time_type" settings) :to-equal "question")
+      (expect (gethash "multiple_attempts_enabled" attempts) :to-be t)
+      (expect (gethash "attempt_limit" attempts) :to-be t)
+      (expect (gethash "max_attempts" attempts) :to-equal 3)
+      (expect (gethash "score_to_keep" attempts) :to-equal "highest")))
 
-  (it "omits nil optional fields"
+  (it "omits nil optional fields, quiz_settings included"
     (let* ((data (list :title "Simple Quiz"
                        :description nil
                        :time_limit nil
@@ -516,8 +536,73 @@ Quiz description.
            (payload (org-canvas--new-quiz-build-payload data)))
       (expect (gethash "title" payload) :to-equal "Simple Quiz")
       (expect (gethash "instructions" payload nil) :to-be nil)
+      (expect (gethash "quiz_settings" payload 'absent) :to-be 'absent)
       (expect (gethash "time_limit" payload nil) :to-be nil)
       (expect (gethash "shuffle_answers" payload nil) :to-be nil))))
+
+(describe "org-canvas--new-quiz-settings-payload (issue #321)"
+  (it "turns the time limit off for zero minutes"
+    (let ((settings (org-canvas--new-quiz-settings-payload '(:time_limit 0))))
+      (expect (gethash "has_time_limit" settings) :to-be :json-false)
+      (expect (gethash "session_time_limit_in_seconds" settings) :to-equal 0)))
+
+  (it "rounds a fractional limit to whole seconds"
+    (let ((settings (org-canvas--new-quiz-settings-payload '(:time_limit 1.5))))
+      (expect (gethash "session_time_limit_in_seconds" settings) :to-equal 90)))
+
+  (it "sends false for the booleans a heading turns off"
+    (let ((settings (org-canvas--new-quiz-settings-payload
+                     '(:shuffle_answers :json-false
+                       :one_at_a_time :json-false))))
+      (expect (gethash "shuffle_answers" settings) :to-be :json-false)
+      (expect (gethash "one_at_a_time_type" settings) :to-equal "none")))
+
+  (it "sends only what the heading sets"
+    (let ((settings (org-canvas--new-quiz-settings-payload
+                     '(:shuffle_answers t))))
+      (expect (hash-table-count settings) :to-equal 1)
+      (expect (gethash "shuffle_answers" settings) :to-be t)))
+
+  (it "is nil when the heading sets nothing"
+    (expect (org-canvas--new-quiz-settings-payload '(:title "Q")) :to-be nil))
+
+  (it "maps one attempt, a limit and unlimited to multiple_attempts"
+    (let ((one (org-canvas--new-quiz-attempts-payload 1 nil))
+          (zero (org-canvas--new-quiz-attempts-payload 0 nil))
+          (four (org-canvas--new-quiz-attempts-payload 4 nil))
+          (unlimited (org-canvas--new-quiz-attempts-payload -1 nil)))
+      (expect (gethash "multiple_attempts_enabled" one) :to-be :json-false)
+      (expect (gethash "attempt_limit" one) :to-be t)
+      (expect (gethash "max_attempts" one) :to-equal 1)
+      (expect (gethash "multiple_attempts_enabled" zero) :to-be :json-false)
+      (expect (gethash "max_attempts" zero) :to-equal 1)
+      (expect (gethash "multiple_attempts_enabled" four) :to-be t)
+      (expect (gethash "max_attempts" four) :to-equal 4)
+      (expect (gethash "multiple_attempts_enabled" unlimited) :to-be t)
+      (expect (gethash "attempt_limit" unlimited) :to-be :json-false)
+      (expect (gethash "max_attempts" unlimited 'absent) :to-be 'absent)
+      (expect (gethash "score_to_keep" four 'absent) :to-be 'absent)))
+
+  (it "maps each scoring policy to score_to_keep, alone when attempts are unset"
+    (dolist (case '(("keep_highest" . "highest") ("keep_latest" . "latest")
+                    ("keep_average" . "average")))
+      (let ((attempts (org-canvas--new-quiz-attempts-payload nil (car case))))
+        (expect (gethash "score_to_keep" attempts) :to-equal (cdr case))
+        (expect (hash-table-count attempts) :to-equal 1))))
+
+  (it "passes a score_to_keep with no Org spelling through as written"
+    (let ((attempts (org-canvas--new-quiz-attempts-payload nil "first")))
+      (expect (gethash "score_to_keep" attempts) :to-equal "first")))
+
+  (it "is nil for multiple_attempts when neither is set"
+    (expect (org-canvas--new-quiz-attempts-payload nil nil) :to-be nil)))
+
+(describe "org-canvas--new-quiz-setting-boolean (issue #321)"
+  (it "reads true, false and anything else"
+    (expect (org-canvas--new-quiz-setting-boolean "true") :to-be t)
+    (expect (org-canvas--new-quiz-setting-boolean "false") :to-be :json-false)
+    (expect (org-canvas--new-quiz-setting-boolean nil) :to-be nil)
+    (expect (org-canvas--new-quiz-setting-boolean "maybe") :to-be nil)))
 
 ;;;; Quiz Push to API
 
@@ -1994,11 +2079,18 @@ Click the heart.
                     (expect (hash-table-p quiz) :to-be t)
                     (expect (gethash "title" quiz)
                             :to-equal "Cellular Respiration Quiz")
-                    (expect (gethash "time_limit" quiz) :to-equal 45)
-                    (expect (gethash "shuffle_answers" quiz) :to-be t)
-                    (expect (gethash "allowed_attempts" quiz) :to-equal 2)
-                    (expect (gethash "scoring_policy" quiz)
-                            :to-equal "keep_latest"))))))
+                    (let* ((settings (gethash "quiz_settings" quiz))
+                           (attempts (gethash "multiple_attempts" settings)))
+                      (expect (gethash "time_limit" quiz 'absent)
+                              :to-be 'absent)
+                      (expect (gethash "session_time_limit_in_seconds" settings)
+                              :to-equal 2700)
+                      (expect (gethash "shuffle_answers" settings) :to-be t)
+                      (expect (gethash "one_at_a_time_type" settings 'absent)
+                              :to-be 'absent)
+                      (expect (gethash "max_attempts" attempts) :to-equal 2)
+                      (expect (gethash "score_to_keep" attempts)
+                              :to-equal "latest")))))))
         (let ((buf (find-buffer-visiting
                     (expand-file-name "new-quizzes.org" temp-dir))))
           (when buf (kill-buffer buf)))
@@ -2372,11 +2464,16 @@ Click the heart.
      (let ((pos (point)))
        (org-canvas--new-quiz-pull-set-properties
         pos '((assignment_id . 42)
-              (time_limit . 60)
-              (shuffle_answers . t)
-              (one_at_a_time . t)
-              (allowed_attempts . 3)
-              (scoring_policy . "keep_highest")))
+              (quiz_settings
+               (has_time_limit . t)
+               (session_time_limit_in_seconds . 3600)
+               (shuffle_answers . t)
+               (one_at_a_time_type . "question")
+               (multiple_attempts
+                (multiple_attempts_enabled . t)
+                (attempt_limit . t)
+                (max_attempts . 3)
+                (score_to_keep . "highest")))))
        (expect (org-entry-get pos "CANVAS_ASSIGNMENT_ID") :to-equal "42")
        (expect (org-entry-get pos "TIME_LIMIT") :to-equal "60")
        (expect (org-entry-get pos "SHUFFLE_ANSWERS") :to-equal "true")
@@ -2395,11 +2492,12 @@ Click the heart.
      (let ((pos (point)))
        (org-canvas--new-quiz-pull-set-properties
         pos '((id . 77)
-              (time_limit . 30)
-              (shuffle_answers . nil)
-              (one_at_a_time . nil)
-              (allowed_attempts . 1)
-              (scoring_policy . "keep_latest")))
+              (quiz_settings
+               (has_time_limit . t)
+               (session_time_limit_in_seconds . 1800)
+               (shuffle_answers . :json-false)
+               (one_at_a_time_type . "none")
+               (multiple_attempts . :null))))
        (expect (org-entry-get pos "CANVAS_ASSIGNMENT_ID") :to-equal "77")
        (expect (org-entry-get pos "TIME_LIMIT") :to-equal "30")))))
 
@@ -2420,17 +2518,19 @@ Click the heart.
        (let ((pos (point)))
          (org-canvas--new-quiz-pull-set-properties
           pos '((assignment_id . 42)
-                (shuffle_answers . :json-false)
-                (one_at_a_time . :json-false)))
+                (quiz_settings
+                 (shuffle_answers . :json-false)
+                 (one_at_a_time_type . "none"))))
          (expect (org-entry-get pos "SHUFFLE_ANSWERS") :to-be nil)
          (expect (org-entry-get pos "ONE_AT_A_TIME") :to-be nil)))))
 
-  (it "removes a TIME_LIMIT and SCORING_POLICY Canvas cleared"
+  (it "removes a TIME_LIMIT, ALLOWED_ATTEMPTS and SCORING_POLICY Canvas cleared"
     (let ((org-canvas-emit-defaults nil))
       (with-temp-org-buffer
        "* Re-pulled Quiz
 :PROPERTIES:
 :TIME_LIMIT: 60
+:ALLOWED_ATTEMPTS: 3
 :SCORING_POLICY: keep_highest
 :END:
 "
@@ -2438,10 +2538,49 @@ Click the heart.
        (let ((pos (point)))
          (org-canvas--new-quiz-pull-set-properties
           pos '((assignment_id . 42)
-                (time_limit . :null)
-                (scoring_policy)))
+                (quiz_settings
+                 (has_time_limit . :json-false)
+                 (session_time_limit_in_seconds . 0)
+                 (multiple_attempts . :null))))
          (expect (org-entry-get pos "TIME_LIMIT") :to-be nil)
+         (expect (org-entry-get pos "ALLOWED_ATTEMPTS") :to-be nil)
          (expect (org-entry-get pos "SCORING_POLICY") :to-be nil)))))
+
+  (it "writes unlimited attempts as -1 and an unknown score_to_keep as sent"
+    (let ((org-canvas-emit-defaults nil))
+      (with-temp-org-buffer
+       "* Re-pulled Quiz
+:PROPERTIES:
+:ALLOWED_ATTEMPTS: 3
+:END:
+"
+       (org-back-to-heading)
+       (let ((pos (point)))
+         (org-canvas--new-quiz-pull-set-properties
+          pos '((assignment_id . 42)
+                (quiz_settings
+                 (multiple_attempts
+                  (multiple_attempts_enabled . t)
+                  (attempt_limit . :json-false)
+                  (max_attempts . :null)
+                  (score_to_keep . "first")))))
+         (expect (org-entry-get pos "ALLOWED_ATTEMPTS") :to-equal "-1")
+         (expect (org-entry-get pos "SCORING_POLICY") :to-equal "first")))))
+
+  (it "leaves the settings alone when the reply's quiz_settings is null"
+    (with-temp-org-buffer
+     "* Re-pulled Quiz
+:PROPERTIES:
+:TIME_LIMIT: 60
+:ONE_AT_A_TIME: true
+:END:
+"
+     (org-back-to-heading)
+     (let ((pos (point)))
+       (org-canvas--new-quiz-pull-set-properties
+        pos '((assignment_id . 42) (quiz_settings . :null)))
+       (expect (org-entry-get pos "TIME_LIMIT") :to-equal "60")
+       (expect (org-entry-get pos "ONE_AT_A_TIME") :to-equal "true"))))
 
   (it "leaves a property alone when the reply does not carry its field"
     (with-temp-org-buffer
@@ -2555,7 +2694,10 @@ Click the heart.
                            (if (string-match-p "items" url)
                                nil
                              '(((assignment_id . 42) (title . "Midterm")
-                                (time_limit . 60) (shuffle_answers . t))))))
+                                (quiz_settings
+                                 (has_time_limit . t)
+                                 (session_time_limit_in_seconds . 3600)
+                                 (shuffle_answers . t)))))))
                         ((symbol-function 'org-canvas-clear-log) (lambda () nil))
                         ((symbol-function 'display-buffer) (lambda (_) nil)))
                 (org-canvas-pull-new-quizzes)
@@ -2639,7 +2781,9 @@ Click the heart.
                                nil
                              ;; Response has id but no assignment_id
                              '(((id . 88) (title . "ID-Only Quiz")
-                                (time_limit . 45))))))
+                                (quiz_settings
+                                 (has_time_limit . t)
+                                 (session_time_limit_in_seconds . 2700)))))))
                         ((symbol-function 'org-canvas-clear-log) (lambda () nil))
                         ((symbol-function 'display-buffer) (lambda (_) nil)))
                 (org-canvas-pull-new-quizzes)
@@ -3581,7 +3725,13 @@ collects every request."
                               (unless (eq method 'GET)
                                 (error "A pull must not write to Canvas"))
                               '((id . "41") (title . "Midterm")
-                                (time_limit . 60) (allowed_attempts . 2)
+                                (quiz_settings
+                                 (has_time_limit . t)
+                                 (session_time_limit_in_seconds . 3600)
+                                 (multiple_attempts
+                                  (multiple_attempts_enabled . t)
+                                  (attempt_limit . t)
+                                  (max_attempts . 2)))
                                 (updated_at . "2026-09-20T10:00:00Z"))))
                            ((symbol-function 'org-canvas-api-request-all-pages)
                             (lambda (method url &rest _)
