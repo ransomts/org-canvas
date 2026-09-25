@@ -1,0 +1,9 @@
+* Fixed
+- #335 A New Quiz ordering item's prompt ends at its numbered answer
+  list, so the steps in their correct order no longer reach the
+  question text students see.  A numbered list in any other item
+  type's prompt still belongs to the prompt.  A quiz holding an
+  ordering item that was pushed before this fix is pushed again by the
+  next sync, with nothing to do by hand, which takes the leaked
+  answers off Canvas; a quiz with no ordering item is skipped as
+  before.

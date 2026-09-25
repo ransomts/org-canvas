@@ -794,6 +794,69 @@ Consider the following expression.
        ;; Should fall back to default "choice"
        (expect result-type :to-equal "choice")))))
 
+;;;; Answers Stay Out of the Prompt (issue #335)
+
+(defconst test-org-canvas-new-quiz-answer-bodies
+  '(("ordering" "1. Define the problem\n2. Collect the data\n3. Deploy it\n"
+     "Define the problem" "Collect the data" "Deploy it")
+    ("choice" "- [X] Alpha\n- [ ] Bravo\n" "Alpha" "Bravo")
+    ("true-false" "- [X] True\n- [ ] False\n" "True" "False")
+    ("multi-answer" "- [X] Alpha\n- [X] Bravo\n- [ ] Charlie\n"
+     "Alpha" "Bravo" "Charlie")
+    ("short-answer" "- [X] Paris\n" "Paris")
+    ("matching" "- Cat = Meow\n- Dog = Woof\n" "Cat" "Meow" "Woof")
+    ("categorization" "- Fruit: Apple, Pear\n- Tree: Oak\n"
+     "Fruit" "Apple" "Oak")
+    ("numerical" "- [X] 42\n" "42"))
+  "Per TYPE, an answer block and the answer texts it holds.")
+
+(defun test-org-canvas-new-quiz-item-body (q-type answers)
+  "Build the item_body of a Q-TYPE item whose body holds ANSWERS."
+  (with-temp-org-buffer
+   (format "* Quiz\n** Put these in place\n:PROPERTIES:\n:TYPE: %s\n:END:\n\nA prompt.\n\n%s"
+           q-type answers)
+   (search-forward "Put these in place")
+   (org-back-to-heading)
+   (gethash "item_body"
+            (org-canvas--new-quiz-item-build-payload
+             (org-canvas--new-quiz-item-parse-entry "42")))))
+
+(describe "a New Quiz item's prompt"
+  (dolist (case test-org-canvas-new-quiz-answer-bodies)
+    (let ((q-type (nth 0 case))
+          (answers (nth 1 case))
+          (texts (nthcdr 2 case)))
+      (it (format "keeps a %s item's answers out of item_body" q-type)
+        (let ((body (test-org-canvas-new-quiz-item-body q-type answers)))
+          (expect body :to-match "A prompt")
+          (dolist (text texts)
+            (expect (string-search text body) :to-be nil))))))
+
+  (it "keeps a numbered list in the prompt of a non-ordering item"
+    (let ((body (test-org-canvas-new-quiz-item-body
+                 "choice"
+                 "1. First clue\n2. Second clue\n\n- [X] Alpha\n- [ ] Bravo\n")))
+      (expect body :to-match "First clue")
+      (expect body :to-match "Second clue")
+      (expect (string-search "Alpha" body) :to-be nil)))
+
+  (it "ends an ordering prompt at an indented numbered line"
+    (with-temp-org-buffer
+     "* Quiz
+** Order
+:PROPERTIES:
+:TYPE: ordering
+:END:
+
+Put these in order.
+  1. One
+  2. Two
+"
+     (search-forward "Order")
+     (org-back-to-heading)
+     (expect (org-canvas--new-quiz-parse-question-text "ordering")
+             :to-equal "Put these in order."))))
+
 ;;;; Interaction Data Building
 
 (describe "org-canvas--new-quiz-item-build-choice-data"
@@ -2765,6 +2828,66 @@ Body text
          (org-entry-put (point) "CANVAS_ITEM_ID" "300"))
        (expect (org-canvas--new-quiz-items-digest data)
                :to-equal before)))))
+
+;;;; A quiz pushed before #335 is pushed again
+
+(defun test-org-canvas-335--pushed-p (item-type &optional restamped)
+  "Run the skip check on a quiz whose one item is of ITEM-TYPE.
+The quiz carries the PAYLOAD_HASH the digest gave before issue #335,
+or, when RESTAMPED, the one it gives now.  Return non-nil when the
+runner pushes it rather than skipping it."
+  (let ((pushed nil))
+    (with-temp-org-buffer
+     (format "* Quiz\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 41\n:END:\n** Step\n:PROPERTIES:\n:TYPE: %s\n:END:\n\n1. One\n2. Two\n"
+             item-type)
+     (goto-char (point-min))
+     (org-back-to-heading)
+     (let* ((pom (point))
+            (payload '((title . "Quiz")))
+            (data (list :pom pom :canvas-id "41" :title "Quiz"))
+            (old-hash (md5 (concat (json-encode payload)
+                                   (org-canvas--org-children-digest pom)
+                                   "|rubric=nil")))
+            (ctx (list :push-fn (lambda (&rest _) (setq pushed t) 'skip)
+                       :hash-extra-fn #'org-canvas--new-quiz-items-digest
+                       :feature-name "new-quizzes" :total-count 1
+                       :counters (list :success 0 :skip 0 :fail 0
+                                       :dry-run 0 :dry-run-conflict 0)
+                       :synced-ids (list nil))))
+       (org-entry-put pom "PAYLOAD_HASH"
+                      (if restamped
+                          (org-canvas--sync-payload-hash
+                           payload data #'org-canvas--new-quiz-items-digest)
+                        old-hash))
+       (cl-letf (((symbol-function 'org-canvas--log-info) #'ignore)
+                 ((symbol-function 'org-canvas--sync-remote-drifted-p) #'ignore)
+                 ((symbol-function 'org-canvas--sync-backfill-baseline) #'ignore)
+                 ((symbol-function 'message) #'ignore))
+         (org-canvas--sync-execute-pipeline data payload ctx))))
+    pushed))
+
+(describe "a New Quiz stamped before issue #335"
+  (it "is pushed again when it holds an ordering item"
+    (expect (test-org-canvas-335--pushed-p "ordering") :to-be-truthy))
+
+  (it "is still skipped when it holds no ordering item"
+    (expect (test-org-canvas-335--pushed-p "essay") :to-be nil))
+
+  (it "is skipped once restamped with the new digest"
+    (expect (test-org-canvas-335--pushed-p "ordering" t) :to-be nil))
+
+  (it "reads the quiz at point when DATA names no position"
+    (with-temp-org-buffer
+     "* Quiz\n** Step\n:PROPERTIES:\n:TYPE: ordering\n:END:\n1. One\n"
+     (goto-char (point-min))
+     (expect (org-canvas--new-quiz-items-digest nil)
+             :to-match "|ordering-prompt=335\\'")))
+
+  (it "finds no ordering item in a quiz with no items"
+    (with-temp-org-buffer
+     "* Quiz\nOrder: none.\n"
+     (goto-char (point-min))
+     (expect (org-canvas--new-quiz-has-ordering-item-p (point)) :to-be nil))))
 
 ;;;; Duplicate guard and twin adoption (issue #179)
 

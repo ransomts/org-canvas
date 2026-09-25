@@ -461,6 +461,26 @@ already holds, when one is unclaimed, instead of creating a second
 
 ;;;; Main Sync Function
 
+(defconst org-canvas--new-quiz-ordering-digest-salt "|ordering-prompt=335"
+  "Suffix for the items digest of a quiz holding an ordering item.
+Before issue #335 an ordering item's answers, in their correct order,
+were pushed inside its prompt.  The fix changes the payload of the
+item and not the Org text, so without this salt a quiz pushed before
+it would be skipped as unchanged and keep showing the answers; with
+it, such a quiz's stored hash no longer matches, once, and the next
+sync pushes it again.  A quiz with no ordering item keeps its hash.")
+
+(defun org-canvas--new-quiz-has-ordering-item-p (pom)
+  "Return non-nil when an item of the quiz at POM is of TYPE ordering."
+  (save-excursion
+    (goto-char pom)
+    (org-back-to-heading t)
+    (let ((end (save-excursion (org-end-of-subtree t t) (point)))
+          (case-fold-search nil))
+      (outline-next-heading)
+      (and (< (point) end)
+           (re-search-forward "^[ \t]*:TYPE:[ \t]+ordering[ \t]*$" end t)))))
+
 (defun org-canvas--new-quiz-items-digest (data)
   "Digest the item subtrees and rubric link of the new quiz in DATA.
 Folded into the quiz payload hash via `:hash-extra': items sync inside
@@ -468,9 +488,13 @@ finalize, which the unchanged-skip bypasses, so without this an item
 edit would never reach Canvas once the quiz's own attributes stopped
 changing (same bug class as issue #26).  The rubric id is included
 because rubric association also happens in finalize and is not part
-of the quiz payload."
-  (concat (org-canvas--org-children-digest (or (plist-get data :pom) (point)))
-          (format "|rubric=%s" (plist-get data :rubric-id))))
+of the quiz payload.  A quiz holding an ordering item adds
+`org-canvas--new-quiz-ordering-digest-salt' (issue #335)."
+  (let ((pom (or (plist-get data :pom) (point))))
+    (concat (org-canvas--org-children-digest pom)
+            (format "|rubric=%s" (plist-get data :rubric-id))
+            (when (org-canvas--new-quiz-has-ordering-item-p pom)
+              org-canvas--new-quiz-ordering-digest-salt))))
 
 (org-canvas-define-sync new-quizzes
   :file org-canvas-new-quizzes-file
