@@ -2117,9 +2117,10 @@ API.  Per-student attempts are a separate pull (see
 *** Structure
 
 - Level 1 headings = Published classic quizzes that have an
-  assignment, in Canvas's order, titled by the quiz title and linked
-  to the quiz's heading in =quizzes.org= when that file holds its
-  =CANVAS_ID=
+  assignment, and published surveys with or without one, in Canvas's
+  order, titled by the quiz title and linked to the quiz's heading in
+  =quizzes.org= when that file holds its =CANVAS_ID=.  Unpublished
+  quizzes and practice quizzes are left out
 - Under each: one table with the columns #, Question, Type, Answered,
   Correct, Difficulty, Discrimination and Responses.  Question is the
   question text on one line, cut to sixty characters; Correct is the
@@ -2133,16 +2134,42 @@ API.  Per-student attempts are a separate pull (see
 
 Without =all_versions= Canvas reports each student's latest attempt.
 
+*** Surveys
+
+A survey, graded or ungraded, has no right answers: Canvas marks one
+option "correct" anyway, and a graded survey gives every taker full
+marks for completing it.  So a survey's heading has no =MEAN=, =HIGH=,
+=LOW= or =STDEV=, its table drops the Correct, Difficulty and
+Discrimination columns, and Responses names each answer by its text
+with its count, semicolons between them:
+
+#+begin_example
+| # | Question                      | Type            | Answered | Responses                                    |
+|---+-------------------------------+-----------------+----------+----------------------------------------------|
+| 1 | Ethics classes are important. | multiple choice |       83 | Strongly agree 33; Agree 27; Neutral 17; ... |
+| 2 | Comments?                     | essay           |       40 | -                                            |
+#+end_example
+
+An answer without text is shown by its position (=#4 5=).
+
+*** What Was Left Out
+
+The closing message counts the quizzes that got no heading and says
+why: =Quiz results pull complete: 3 quizzes, 2 with attempts; skipped
+4 (2 unpublished, 1 without an assignment, 1 statistics refused)=.
+"Without an assignment" is a practice quiz; "statistics refused" is a
+quiz Canvas would not report on, also logged as a warning.
+
 *** Properties (set by pull)
 
 | Property         | Type      | Description                                           |
 |------------------+-----------+-------------------------------------------------------|
 | =QUIZ_ID=        | number    | Canvas id of the quiz                                 |
 | =STUDENTS=       | number    | Students whose latest attempt the statistics cover    |
-| =MEAN=           | number    | Mean score                                            |
-| =HIGH=           | number    | Highest score                                         |
-| =LOW=            | number    | Lowest score                                          |
-| =STDEV=          | number    | Standard deviation of the scores                      |
+| =MEAN=           | number    | Mean score (not written for a survey)                 |
+| =HIGH=           | number    | Highest score (not written for a survey)              |
+| =LOW=            | number    | Lowest score (not written for a survey)               |
+| =STDEV=          | number    | Standard deviation of the scores (not for a survey)   |
 | =DURATION=       | string    | Mean time spent, as =h:mm=                            |
 | =GENERATED_AT=   | timestamp | When Canvas generated the statistics                  |
 

@@ -198,6 +198,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 - a push takes its heading by name and the at-point runtime records its outcome (#287)
 - a refresh reports what changed and keeps a departed student's heading for the work under it (#282)
 - a re-pull keeps typed scores and the summary table alone still asks (#281)
+- a survey's results are its answers by text, a graded survey's included, and the quiz-results pull counts what it skipped (#347)
 - a wanted document processor declared, compared and never sent (#293)
 - assignment reads ask for their own dates and quizzes do not need to (#273)
 - batch reports (#155, #169)
