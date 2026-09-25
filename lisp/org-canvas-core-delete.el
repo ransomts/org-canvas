@@ -223,7 +223,8 @@ Return non-nil if deletion succeeded."
                        "Successfully deleted from Canvas")
             (when post-delete-fn
               (funcall post-delete-fn pom))
-            (org-canvas-clear-sync-properties pom)
+            ;; The children went with it on Canvas: clear theirs too (#331)
+            (org-canvas--clear-subtree-sync-properties pom)
             (org-canvas--log-info org-canvas--logger "Cleaned local properties")
             (message "%s '%s' deleted." (capitalize feature-name) title)
             t)

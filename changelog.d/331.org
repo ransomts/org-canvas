@@ -1,0 +1,6 @@
+* Fixed
+- #331 A delete clears the id stamps modules write beside =CANVAS_ID=
+  (a New Quiz's =CANVAS_ASSIGNMENT_ID=, its items' =CANVAS_ITEM_ID=, a
+  rubric criterion's =CANVAS_CRITERION_ID=), so the next sync creates
+  the object again instead of updating the deleted one.  A delete at
+  point clears every heading below the deleted one as well.

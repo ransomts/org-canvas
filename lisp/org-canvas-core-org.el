@@ -125,10 +125,41 @@ When BOOLEAN-P is non-nil, convert \"true\"/\"false\" to t/:json-false."
     ,org-canvas--prop-last-synced ,org-canvas--prop-payload-hash)
   "Properties managed by the sync pipeline.")
 
+(defun org-canvas--delete-id-property-names ()
+  "Return every property naming a Canvas id that a delete must clear.
+CANVAS_ID and CANVAS_URL, each feature's registered :id-property, and
+the stamps of `org-canvas--id-property-registry' (issue #331)."
+  (delete-dups
+   (append '("CANVAS_ID" "CANVAS_URL")
+           (delq nil (mapcar (lambda (feature)
+                               (plist-get feature :id-property))
+                             org-canvas--feature-registry))
+           org-canvas--id-property-registry)))
+
+(defun org-canvas--delete-cleared-property-names ()
+  "Return every property a delete clears from a heading.
+`org-canvas--sync-property-names' and every id property of
+`org-canvas--delete-id-property-names'."
+  (delete-dups (append (copy-sequence org-canvas--sync-property-names)
+                       (org-canvas--delete-id-property-names))))
+
 (defun org-canvas-clear-sync-properties (pom)
-  "Clear all sync-related properties from entry at POM."
-  (dolist (prop org-canvas--sync-property-names)
+  "Clear all sync-related properties from entry at POM.
+The pipeline's own properties and every id stamp a module registers,
+since a stamp left on a deleted object makes the next sync update what
+Canvas no longer holds (issue #331)."
+  (dolist (prop (org-canvas--delete-cleared-property-names))
     (org-entry-delete pom prop)))
+
+(defun org-canvas--clear-subtree-sync-properties (pom)
+  "Clear the sync properties of the heading at POM and every heading below.
+Deleting an object on Canvas deletes its children (a quiz's questions
+or items, a rubric's criteria, a module's items) with it (issue #331)."
+  (save-excursion
+    (goto-char pom)
+    (dolist (marker (org-map-entries #'point-marker nil 'tree))
+      (org-canvas-clear-sync-properties marker)
+      (set-marker marker nil))))
 
 ;;;; Course Files in Batch: Freshness and Saving
 
@@ -181,19 +212,25 @@ items a delete-all left on Canvas: a :skip-fn protected them or their
 DELETE failed.  A heading whose ID-PROPERTY value is in KEPT-IDS keeps
 its stamps, and so does every heading below it (a quiz's questions, a
 group's outcomes), since its Canvas object still exists (#324).  Every
-other heading carrying ID-PROPERTY is cleared.  ID-PROPERTY names the
-property holding the id, \"CANVAS_ID\" by default."
-  (let ((id-prop (or id-property "CANVAS_ID")))
+other heading carrying ID-PROPERTY or any id stamp of
+`org-canvas--delete-id-property-names' is cleared, a child's stamp
+included (a New Quiz item's, a rubric criterion's; #331).  ID-PROPERTY
+names the property holding the id, \"CANVAS_ID\" by default."
+  (let* ((id-prop (or id-property "CANVAS_ID"))
+         (stamps (cons id-prop (org-canvas--delete-id-property-names))))
     (when (and file (file-exists-p file))
       (org-canvas--log-info org-canvas--logger "Cleaning local properties...")
       (with-current-buffer (org-canvas--find-file-noselect file)
         (org-with-wide-buffer
          (dolist (marker (org-map-entries
                           (lambda ()
-                            (unless (org-canvas--clean-local-kept-p
-                                     id-prop kept-ids)
+                            (when (and (cl-some (lambda (prop)
+                                                  (org-entry-get nil prop))
+                                                stamps)
+                                       (not (org-canvas--clean-local-kept-p
+                                             id-prop kept-ids)))
                               (point-marker)))
-                          (format "%s={.}" id-prop) 'file))
+                          nil 'file))
            (when marker
              (org-canvas--log-debug org-canvas--logger
                "Removing properties for: %s" (org-entry-get marker id-prop))

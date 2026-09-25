@@ -1524,6 +1524,69 @@ Keep this body
         (org-canvas--rubric-log-linked-assignments "123")
         (expect 'org-canvas--log-warning :to-have-been-called)))))
 
+(describe "deleting a rubric clears its criteria's ids (#331)"
+  :var (temp-dir org-file)
+  (before-each
+    (setq temp-dir (make-temp-file "rubrics-331" t)
+          org-file (expand-file-name "rubrics.org" temp-dir))
+    (with-temp-file org-file
+      (insert "* Rubric
+:PROPERTIES:
+:CANVAS_ID: 111
+:END:
+** Thesis :3pt:
+:PROPERTIES:
+:CANVAS_CRITERION_ID: _100
+:OUTCOME: 51479
+:END:
+** Clarity :2pt:
+:PROPERTIES:
+:CANVAS_CRITERION_ID: _200
+:END:
+")))
+  (after-each
+    (let ((buf (find-buffer-visiting org-file)))
+      (when buf
+        (with-current-buffer buf (set-buffer-modified-p nil))
+        (kill-buffer buf)))
+    (delete-directory temp-dir t))
+
+  (it "clears CANVAS_CRITERION_ID under a rubric delete-all removed"
+    (with-org-canvas-test-config
+      (let ((org-canvas-rubrics-file org-file))
+        (with-sync-test-env
+          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t))
+                    ((symbol-function 'org-canvas--rubric-dissociate-all)
+                     (lambda () 0))
+                    ((symbol-function 'org-canvas-api-request)
+                     (lambda (method _url &rest _)
+                       (when (eq method 'GET)
+                         [((id . 111) (title . "Rubric"))]))))
+            (org-canvas-delete-all-rubrics)))
+        (with-current-buffer (find-buffer-visiting org-file)
+          (expect (org-map-entries
+                   (lambda ()
+                     (list (org-entry-get (point) "CANVAS_ID")
+                           (org-entry-get (point) "CANVAS_CRITERION_ID")
+                           (org-entry-get (point) "OUTCOME")))
+                   nil 'file)
+                  :to-equal '((nil nil nil) (nil nil "51479") (nil nil nil)))))))
+
+  (it "clears CANVAS_CRITERION_ID under a rubric deleted at point"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-current-buffer (org-canvas--find-file-noselect org-file)
+          (goto-char (point-min))
+          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+            (org-canvas-delete-rubric-at-point))
+          (expect-api-called 'DELETE "rubrics/111")
+          (expect (org-map-entries
+                   (lambda ()
+                     (list (org-entry-get (point) "CANVAS_ID")
+                           (org-entry-get (point) "CANVAS_CRITERION_ID")))
+                   nil 'file)
+                  :to-equal '((nil nil) (nil nil) (nil nil))))))))
+
 (describe "org-canvas-delete-all-rubrics confirmation"
   (it "aborts when user declines"
     (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil)))

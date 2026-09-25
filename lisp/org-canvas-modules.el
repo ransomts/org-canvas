@@ -1659,19 +1659,9 @@ the pass, for the twin lookup before a POST.  Releases the markers."
   :file org-canvas-modules-file
   :title-field 'name)
 
-(defun org-canvas--module-clear-children-properties (pom)
-  "Clear sync properties from POM and all its child headings."
-  (org-canvas-clear-sync-properties pom)
-  (save-excursion
-    (goto-char pom)
-    (when (org-goto-first-child)
-      (org-canvas-clear-sync-properties (point))
-      (while (org-get-next-sibling)
-        (org-canvas-clear-sync-properties (point))))))
-
+;; The generic delete-at-point clears the module's items with it (#331).
 (org-canvas-define-delete-at-point module
-  :endpoint "modules/%s"
-  :post-delete-fn #'org-canvas--module-clear-children-properties)
+  :endpoint "modules/%s")
 
 ;;;; Prune Module Items
 ;;
