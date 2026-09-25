@@ -4661,5 +4661,134 @@ Body.
       (expect calls :to-equal 0))))
 
 
+;;;; Push Echo Check (issue #349)
+
+(defmacro test-org-canvas-with-echo-registry (&rest body)
+  "Run BODY with a scratch \"echo\" feature in the property registry."
+  (declare (indent 0))
+  `(let ((org-canvas--property-registry (make-hash-table :test 'equal)))
+     (org-canvas-register-properties
+      "echo"
+      :properties
+      `((:org-prop "POLICY" :data-key :policy :type enum)
+        (:org-prop "FLAG" :data-key :flag :type boolean)
+        (:org-prop "LIMIT" :data-key :limit :type number)
+        (:org-prop "DUE" :data-key :due :type timestamp)
+        (:org-prop "ROLES" :data-key :roles :type csv-enum)
+        (:org-prop "NESTED" :data-key :nested :type boolean
+         :api-key "nested_flag"
+         :remote-fn ,(lambda (item)
+                       (alist-get 'on (alist-get 'nested item))))
+        (:org-prop "OWNED" :data-key :owned :type string :canvas-owned t)
+        (:org-prop "GROUP" :data-key :group :type link)))
+     (cl-letf (((symbol-function 'org-canvas--time-zone)
+                (lambda () "UTC")))
+       ,@body)))
+
+(describe "org-canvas--registry-echo-mismatches"
+  (it "names a property Canvas stored otherwise than it was sent"
+    (test-org-canvas-with-echo-registry
+      (expect (org-canvas--registry-echo-mismatches
+               "echo" '((policy . "keep_latest"))
+               '((policy . "keep_highest")))
+              :to-equal '(("POLICY" "keep_latest" "keep_highest")))))
+
+  (it "is silent when Canvas stored every field as sent"
+    (test-org-canvas-with-echo-registry
+      (expect (org-canvas--registry-echo-mismatches
+               "echo"
+               '((policy . "keep_latest") (flag . :json-false) (limit . 10)
+                 (due . "2026-10-01T15:00:00Z") (roles . "teachers,students"))
+               '((policy . "keep_latest") (flag . :null) (limit . 10.0)
+                 (due . "2026-10-01T15:00:59Z")
+                 (roles . ["students" "teachers"])))
+              :to-be nil)))
+
+  (it "reports booleans, numbers and timestamps in their Org spelling"
+    (test-org-canvas-with-echo-registry
+      (expect (org-canvas--registry-echo-mismatches
+               "echo" '((flag . t) (limit . 3) (due . "2026-10-01T15:00:00Z"))
+               '((flag . :json-false) (limit . 1) (due . :null)))
+              :to-equal '(("FLAG" "true" "false")
+                          ("LIMIT" "3" "1")
+                          ("DUE" "<2026-10-01 Thu 15:00>" "(unset)")))))
+
+  (it "compares a number Canvas returns as a string by its spelling"
+    (test-org-canvas-with-echo-registry
+      (expect (org-canvas--registry-echo-mismatches
+               "echo" '((limit . 3)) '((limit . "3")))
+              :to-be nil)))
+
+  (it "compares CSV lists as sets"
+    (test-org-canvas-with-echo-registry
+      (expect (org-canvas--registry-echo-mismatches
+               "echo" '((roles . "teachers")) '((roles . "teachers,public")))
+              :to-equal '(("ROLES" "teachers" "teachers,public")))))
+
+  (it "reads the stored side through a :remote-fn (Hard Rule 18)"
+    (test-org-canvas-with-echo-registry
+      (expect (org-canvas--registry-echo-mismatches
+               "echo" '((nested_flag . t)) '((nested (on . t))))
+              :to-be nil)
+      (expect (org-canvas--registry-echo-mismatches
+               "echo" '((nested_flag . t)) '((nested (on . :json-false))))
+              :to-equal '(("NESTED" "true" "false")))))
+
+  (it "skips a field the payload did not carry or the reply did not report"
+    (test-org-canvas-with-echo-registry
+      (expect (org-canvas--registry-echo-mismatches
+               "echo" '((policy . "keep_latest")) '((flag . t)))
+              :to-be nil)))
+
+  (it "skips Canvas-owned and link properties"
+    (test-org-canvas-with-echo-registry
+      (expect (org-canvas--registry-echo-mismatches
+               "echo" '((owned . "a") (group . 1))
+               '((owned . "b") (group . 2)))
+              :to-be nil)))
+
+  (it "reads a hash-table payload keyed by symbols or strings"
+    (test-org-canvas-with-echo-registry
+      (let ((sent (make-hash-table :test 'equal)))
+        (puthash 'policy "keep_latest" sent)
+        (puthash "limit" 3 sent)
+        (expect (org-canvas--registry-echo-mismatches
+                 "echo" sent '((policy . "keep_highest") (limit . 3)
+                               (flag . t)))
+                :to-equal '(("POLICY" "keep_latest" "keep_highest"))))))
+
+  (it "finds nothing for a feature with no registry entry"
+    (test-org-canvas-with-echo-registry
+      (expect (org-canvas--registry-echo-mismatches
+               "nobody" '((policy . "a")) '((policy . "b")))
+              :to-be nil))))
+
+(describe "org-canvas--registry-warn-echo"
+  (it "logs one warning per property Canvas changed and returns them"
+    (test-org-canvas-with-echo-registry
+      (let (warnings)
+        (cl-letf (((symbol-function 'org-canvas--log-warning)
+                   (lambda (_logger fmt &rest args)
+                     (push (apply #'format fmt args) warnings))))
+          (let ((result (org-canvas--registry-warn-echo
+                         "echo" "Survey"
+                         '((policy . "keep_latest") (flag . t))
+                         '((policy . "keep_highest") (flag . :json-false)))))
+            (expect (length result) :to-equal 2)
+            (expect (length warnings) :to-equal 2)
+            (expect (car (last warnings)) :to-equal
+                    (concat "[Verify] 'Survey': sent POLICY keep_latest,"
+                            " Canvas stored keep_highest")))))))
+
+  (it "logs nothing when Canvas stored what it was sent"
+    (test-org-canvas-with-echo-registry
+      (let (warnings)
+        (cl-letf (((symbol-function 'org-canvas--log-warning)
+                   (lambda (&rest args) (push args warnings))))
+          (expect (org-canvas--registry-warn-echo
+                   "echo" "Quiz" '((flag . t)) '((flag . t)))
+                  :to-be nil)
+          (expect warnings :to-be nil))))))
+
 (provide 'org-canvas-core-sync-test)
 ;;; org-canvas-core-sync-test.el ends here

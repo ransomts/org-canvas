@@ -4402,6 +4402,7 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =SHOW_CORRECT_ANSWERS_LAST_ATTEMPT= | boolean | true, false |  | Only show correct answers on last attempt |
 | =ONE_TIME_RESULTS= | boolean | true, false |  | Students can only view results once |
 | =ONLY_VISIBLE_TO_OVERRIDES= | boolean | true, false |  | Only visible to students with overrides |
+| =ANONYMOUS_SUBMISSIONS= | boolean | true, false |  | Survey responses are anonymous (set it on every survey) |
 | =GROUP= | link | org link |  | Link to assignment-groups.org heading |
 
 ** Rubric Results

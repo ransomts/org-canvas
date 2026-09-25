@@ -3898,4 +3898,68 @@ Syllabus text.
          (expect (plist-get (car issues) :property)
                  :to-equal "WANT_DOCUMENT_PROCESSOR"))))))
 
+(describe "org-canvas--validate-quiz-anonymity (issue #349)"
+  (it "warns, push-only, on an unstamped survey that does not say"
+    (with-temp-org-buffer
+     "* Post-debate
+:PROPERTIES:
+:QUIZ_TYPE: survey
+:END:
+"
+     (org-back-to-heading t)
+     (let* ((loc (list :file (buffer-file-name) :line 1 :heading "Post-debate"))
+            (issues (org-canvas--validate-quiz-point-total loc))
+            (issue (car issues)))
+       (expect (length issues) :to-equal 1)
+       (expect (plist-get issue :property) :to-equal "ANONYMOUS_SUBMISSIONS")
+       (expect (plist-get issue :severity) :to-be 'warning)
+       (expect (plist-get issue :push-only) :to-be t))))
+
+  (it "warns on a graded survey too"
+    (with-temp-org-buffer
+     "* Graded
+:PROPERTIES:
+:QUIZ_TYPE: graded_survey
+:END:
+"
+     (org-back-to-heading t)
+     (expect (length (org-canvas--validate-quiz-anonymity
+                      (list :file (buffer-file-name) :line 1)))
+             :to-equal 1)))
+
+  (it "is silent when the survey says either way"
+    (with-temp-org-buffer
+     "* Named
+:PROPERTIES:
+:QUIZ_TYPE: survey
+:ANONYMOUS_SUBMISSIONS: false
+:END:
+"
+     (org-back-to-heading t)
+     (expect (org-canvas--validate-quiz-anonymity
+              (list :file (buffer-file-name) :line 1))
+             :to-be nil)))
+
+  (it "is silent on a stamped survey and on a graded quiz"
+    (with-temp-org-buffer
+     "* Stamped
+:PROPERTIES:
+:QUIZ_TYPE: survey
+:CANVAS_ID: 691335
+:END:
+* Quiz
+:PROPERTIES:
+:QUIZ_TYPE: assignment
+:END:
+"
+     (goto-char (point-min))
+     (org-back-to-heading t)
+     (expect (org-canvas--validate-quiz-anonymity
+              (list :file (buffer-file-name) :line 1))
+             :to-be nil)
+     (org-next-visible-heading 1)
+     (expect (org-canvas--validate-quiz-anonymity
+              (list :file (buffer-file-name) :line 6))
+             :to-be nil))))
+
 ;;; org-canvas-validate-test.el ends here

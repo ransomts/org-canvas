@@ -4560,4 +4560,133 @@ Unpushed wording.
       (expect (cl-find-if (lambda (r) (string-match-p "questions" (nth 1 r))) requests)
               :to-be nil))))
 
+;;;; ANONYMOUS_SUBMISSIONS and the push echo check (issue #349)
+
+(describe "ANONYMOUS_SUBMISSIONS on a classic quiz"
+  (it "parses a written true as t and a written false as :json-false"
+    (with-temp-org-buffer
+     "* Survey
+:PROPERTIES:
+:QUIZ_TYPE: survey
+:ANONYMOUS_SUBMISSIONS: true
+:END:
+* Named
+:PROPERTIES:
+:QUIZ_TYPE: survey
+:ANONYMOUS_SUBMISSIONS: false
+:END:
+* Silent
+:PROPERTIES:
+:QUIZ_TYPE: survey
+:END:
+"
+     (goto-char (point-min))
+     (org-back-to-heading t)
+     (expect (plist-get (org-canvas--quiz-parse-entry) :anonymous_submissions)
+             :to-be t)
+     (org-next-visible-heading 1)
+     (expect (plist-get (org-canvas--quiz-parse-entry) :anonymous_submissions)
+             :to-be :json-false)
+     (org-next-visible-heading 1)
+     (expect (plist-get (org-canvas--quiz-parse-entry) :anonymous_submissions)
+             :to-be nil)))
+
+  (it "sends the flag whenever the heading sets it, false included"
+    (let ((quiz (lambda (value)
+                  (alist-get 'quiz (org-canvas--quiz-build-payload
+                                    (list :title "S" :quiz_type "survey"
+                                          :anonymous_submissions value))))))
+      (expect (alist-get 'anonymous_submissions (funcall quiz t)) :to-be t)
+      (expect (alist-get 'anonymous_submissions (funcall quiz :json-false))
+              :to-be :json-false)
+      (expect (assq 'anonymous_submissions (funcall quiz nil)) :to-be nil)))
+
+  (it "pulls a true flag into the drawer and leaves a false one implicit"
+    (with-temp-org-buffer
+     "* Survey
+:PROPERTIES:
+:END:
+"
+     (org-back-to-heading t)
+     (org-canvas--quiz-pull-set-properties
+      (point) '((id . 42) (anonymous_submissions . :json-false))
+      "/tmp/quizzes.org")
+     (expect (org-entry-get (point) "ANONYMOUS_SUBMISSIONS") :to-be nil)
+     (org-canvas--quiz-pull-set-properties
+      (point) '((id . 42) (anonymous_submissions . t)) "/tmp/quizzes.org")
+     (expect (org-entry-get (point) "ANONYMOUS_SUBMISSIONS") :to-equal "true")))
+
+  (it "corrects a drawer's true when Canvas holds the survey named"
+    (with-temp-org-buffer
+     "* Survey
+:PROPERTIES:
+:ANONYMOUS_SUBMISSIONS: true
+:END:
+"
+     (org-back-to-heading t)
+     (org-canvas--quiz-pull-set-properties
+      (point) '((id . 42)) "/tmp/quizzes.org")
+     (expect (org-entry-get (point) "ANONYMOUS_SUBMISSIONS") :to-equal "true")
+     (org-canvas--quiz-pull-set-properties
+      (point) '((id . 42) (anonymous_submissions . :json-false))
+      "/tmp/quizzes.org")
+     (expect (org-entry-get (point) "ANONYMOUS_SUBMISSIONS")
+             :to-equal "false")))
+
+  (it "is compared by the drift report through the registry"
+    (with-temp-org-buffer
+     "* Survey
+:PROPERTIES:
+:ANONYMOUS_SUBMISSIONS: true
+:END:
+"
+     (org-back-to-heading t)
+     (let ((specs (plist-get (gethash "quizzes" org-canvas--property-registry)
+                             :properties)))
+       (expect (org-canvas--diff-compare-fields
+                specs (point) '((id . 1) (anonymous_submissions . :json-false)))
+               :to-equal '(("ANONYMOUS_SUBMISSIONS" "true" "false")))
+       (expect (org-canvas--diff-compare-fields
+                specs (point) '((id . 1) (anonymous_submissions . t)))
+               :to-be nil)))))
+
+(describe "org-canvas--quiz-verify-response echo check"
+  (it "warns when Canvas stored a scoring policy other than the one sent"
+    (let (warnings)
+      (cl-letf (((symbol-function 'org-canvas--log-warning)
+                 (lambda (_logger fmt &rest args)
+                   (push (apply #'format fmt args) warnings))))
+        (org-canvas--quiz-verify-response
+         (list :title "Post-debate" :quiz_type "survey"
+               :scoring_policy "keep_latest" :anonymous_submissions t
+               :show_correct_answers t)
+         '((id . 691763) (quiz_type . "survey")
+           (scoring_policy . "keep_highest") (anonymous_submissions . t)
+           (show_correct_answers . t)))
+        (expect warnings :to-equal
+                (list (concat "[Verify] 'Post-debate': sent SCORING_POLICY"
+                              " keep_latest, Canvas stored keep_highest"))))))
+
+  (it "warns when Canvas made an anonymous survey named"
+    (let (warnings)
+      (cl-letf (((symbol-function 'org-canvas--log-warning)
+                 (lambda (_logger fmt &rest args)
+                   (push (apply #'format fmt args) warnings))))
+        (org-canvas--quiz-verify-response
+         (list :title "S" :quiz_type "survey" :anonymous_submissions t)
+         '((id . 1) (quiz_type . "survey") (anonymous_submissions . :json-false)
+           (show_correct_answers . :json-false)))
+        (expect warnings :to-equal
+                (list (concat "[Verify] 'S': sent ANONYMOUS_SUBMISSIONS true,"
+                              " Canvas stored false"))))))
+
+  (it "is silent under a dry run, whose reply reports no fields"
+    (let (warnings)
+      (cl-letf (((symbol-function 'org-canvas--log-warning)
+                 (lambda (&rest args) (push args warnings))))
+        (org-canvas--quiz-verify-response
+         (list :title "S" :quiz_type "survey" :scoring_policy "keep_latest")
+         org-canvas--dry-run-response)
+        (expect warnings :to-be nil)))))
+
 ;;; org-canvas-quizzes-test.el ends here
