@@ -8,13 +8,689 @@
  "provenance": {
   "generated": "2026-09-14",
   "instance": "clemson.instructure.com",
-  "source": "introspection"
+  "source": "introspection",
+  "supplements": [
+   {
+    "generated": "2026-09-25",
+    "ref": "1c9f0bb8013ed69c4f2efe11fd483025469b7e6c",
+    "repository": "https://github.com/instructure/canvas-lms",
+    "source": "sdl",
+    "types": [
+     "Assignment",
+     "AssignmentConnection",
+     "ExternalTool",
+     "LtiAssetProcessor",
+     "LtiAssetProcessorConnection"
+    ]
+   }
+  ]
  },
  "roots": {
   "mutation": "Mutation",
   "query": "Query"
  },
  "types": {
+  "Assignment": {
+   "fields": {
+    "_id": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID!"
+    },
+    "allocationRules": {
+     "args": {},
+     "deprecated": null,
+     "type": "AssignmentAllocationRules"
+    },
+    "allowGoogleDocsSubmission": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "allowProvisionalGrading": {
+     "args": {},
+     "deprecated": null,
+     "type": "AllowProvisionalGradingType!"
+    },
+    "allowedAttempts": {
+     "args": {},
+     "deprecated": null,
+     "type": "Int"
+    },
+    "allowedExtensions": {
+     "args": {},
+     "deprecated": null,
+     "type": "[String!]"
+    },
+    "anonymizeStudents": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "anonymousGrading": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "anonymousInstructorAnnotations": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "anonymousStudentIdentities": {
+     "args": {},
+     "deprecated": null,
+     "type": "[AnonymousStudentIdentity!]"
+    },
+    "assessmentRequestsForCurrentUser": {
+     "args": {},
+     "deprecated": null,
+     "type": "[AssessmentRequest!]"
+    },
+    "assessmentRequestsForUser": {
+     "args": {
+      "userId": "ID!"
+     },
+     "deprecated": null,
+     "type": "[AssessmentRequest!]"
+    },
+    "assignedStudents": {
+     "args": {
+      "after": "String",
+      "before": "String",
+      "filter": "AssignedStudentsFilter",
+      "first": "Int",
+      "last": "Int"
+     },
+     "deprecated": null,
+     "type": "UserConnection"
+    },
+    "assignedToDates": {
+     "args": {},
+     "deprecated": null,
+     "type": "[DateHash!]"
+    },
+    "assignmentGroup": {
+     "args": {},
+     "deprecated": null,
+     "type": "AssignmentGroup"
+    },
+    "assignmentGroupId": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID"
+    },
+    "assignmentOverrides": {
+     "args": {
+      "after": "String",
+      "before": "String",
+      "first": "Int",
+      "last": "Int"
+     },
+     "deprecated": null,
+     "type": "AssignmentOverrideConnection"
+    },
+    "assignmentTargetConnection": {
+     "args": {
+      "after": "String",
+      "before": "String",
+      "first": "Int",
+      "last": "Int",
+      "orderBy": "AssignmentTargetSortOrder"
+     },
+     "deprecated": null,
+     "type": "AssignmentOverrideConnection"
+    },
+    "assignmentType": {
+     "args": {},
+     "deprecated": null,
+     "type": "AssignmentTypeEnum!"
+    },
+    "assignmentVisibility": {
+     "args": {},
+     "deprecated": null,
+     "type": "[ID!]"
+    },
+    "autoGradeAssignmentErrors": {
+     "args": {},
+     "deprecated": "Use autoGradeEligibility instead",
+     "type": "[String!]!"
+    },
+    "autoGradeAssignmentIssues": {
+     "args": {},
+     "deprecated": "Use autoGradeEligibility instead",
+     "type": "EligibilityIssue"
+    },
+    "autoGradeEligibility": {
+     "args": {},
+     "deprecated": null,
+     "type": "AutoGradeEligibility"
+    },
+    "canDuplicate": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "canManageAssignTo": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "canUnpublish": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "canUpdateRubricSelfAssessment": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "checkpoints": {
+     "args": {},
+     "deprecated": null,
+     "type": "[Checkpoint!]"
+    },
+    "course": {
+     "args": {},
+     "deprecated": null,
+     "type": "Course"
+    },
+    "courseId": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID"
+    },
+    "createdAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime"
+    },
+    "description": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "discussion": {
+     "args": {},
+     "deprecated": null,
+     "type": "Discussion"
+    },
+    "dueAt": {
+     "args": {
+      "applyOverrides": "Boolean"
+     },
+     "deprecated": null,
+     "type": "DateTime"
+    },
+    "dueDateRequired": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "expectsExternalSubmission": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "expectsSubmission": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "gradeAsGroup": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean!"
+    },
+    "gradeByQuestionEnabled": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean!"
+    },
+    "gradeGroupStudentsIndividually": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "graded": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "gradedSubmissionsExist": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "graderIdentitiesConnection": {
+     "args": {
+      "after": "String",
+      "before": "String",
+      "first": "Int",
+      "last": "Int"
+     },
+     "deprecated": null,
+     "type": "GraderIdentityConnection"
+    },
+    "gradesPublished": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "gradesPublishedAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "gradingPeriodId": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "gradingRole": {
+     "args": {},
+     "deprecated": null,
+     "type": "GradingRole"
+    },
+    "gradingStandard": {
+     "args": {},
+     "deprecated": null,
+     "type": "GradingStandard"
+    },
+    "gradingStandardId": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID"
+    },
+    "gradingType": {
+     "args": {},
+     "deprecated": null,
+     "type": "GradingType"
+    },
+    "groupCategoryId": {
+     "args": {},
+     "deprecated": null,
+     "type": "Int"
+    },
+    "groupSet": {
+     "args": {},
+     "deprecated": null,
+     "type": "GroupSet"
+    },
+    "groupSubmissionsConnection": {
+     "args": {
+      "after": "String",
+      "before": "String",
+      "filter": "SubmissionSearchFilterInput",
+      "first": "Int",
+      "last": "Int",
+      "orderBy": "[SubmissionSearchOrder!]"
+     },
+     "deprecated": null,
+     "type": "SubmissionConnection"
+    },
+    "hasGroupCategory": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean!"
+    },
+    "hasMultipleDueDates": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "hasPlagiarismTool": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean!"
+    },
+    "hasRubric": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean!"
+    },
+    "hasSubAssignments": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean!"
+    },
+    "hasSubmittedSubmissions": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "htmlUrl": {
+     "args": {},
+     "deprecated": null,
+     "type": "URL"
+    },
+    "id": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID!"
+    },
+    "importantDates": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "inClosedGradingPeriod": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "isLockedByMasterCourse": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean!"
+    },
+    "isNewQuiz": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean!"
+    },
+    "lockAt": {
+     "args": {
+      "applyOverrides": "Boolean"
+     },
+     "deprecated": null,
+     "type": "DateTime"
+    },
+    "lockInfo": {
+     "args": {},
+     "deprecated": null,
+     "type": "LockInfo"
+    },
+    "ltiAssetProcessorsConnection": {
+     "args": {
+      "after": "String",
+      "before": "String",
+      "first": "Int",
+      "last": "Int"
+     },
+     "deprecated": null,
+     "type": "LtiAssetProcessorConnection"
+    },
+    "moderatedGrading": {
+     "args": {},
+     "deprecated": null,
+     "type": "ModeratedGrading"
+    },
+    "moderatedGradingEnabled": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "moduleItems": {
+     "args": {},
+     "deprecated": null,
+     "type": "[ModuleItem!]"
+    },
+    "modules": {
+     "args": {},
+     "deprecated": null,
+     "type": "[Module!]"
+    },
+    "muted": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "mySubAssignmentSubmissionsConnection": {
+     "args": {
+      "after": "String",
+      "before": "String",
+      "first": "Int",
+      "last": "Int"
+     },
+     "deprecated": null,
+     "type": "SubmissionConnection"
+    },
+    "name": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "needsGradingCount": {
+     "args": {},
+     "deprecated": null,
+     "type": "Int"
+    },
+    "newQuizzesAnonymousParticipants": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "nonDigitalSubmission": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "omitFromFinalGrade": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "onlyVisibleToOverrides": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean!"
+    },
+    "originalityReportVisibility": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "parentAssignment": {
+     "args": {},
+     "deprecated": null,
+     "type": "Assignment"
+    },
+    "parentAssignmentId": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID"
+    },
+    "peerReviewSubAssignment": {
+     "args": {},
+     "deprecated": null,
+     "type": "PeerReviewSubAssignment"
+    },
+    "peerReviews": {
+     "args": {},
+     "deprecated": null,
+     "type": "PeerReviews"
+    },
+    "pointsPossible": {
+     "args": {},
+     "deprecated": null,
+     "type": "Float"
+    },
+    "position": {
+     "args": {},
+     "deprecated": null,
+     "type": "Int"
+    },
+    "postManually": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "postPolicy": {
+     "args": {},
+     "deprecated": null,
+     "type": "PostPolicy"
+    },
+    "postToSis": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "provisionalGradingLocked": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean!"
+    },
+    "published": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "quiz": {
+     "args": {},
+     "deprecated": null,
+     "type": "Quiz"
+    },
+    "restrictQuantitativeData": {
+     "args": {
+      "checkExtraPermissions": "Boolean"
+     },
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "rubric": {
+     "args": {},
+     "deprecated": null,
+     "type": "Rubric"
+    },
+    "rubricAssessment": {
+     "args": {},
+     "deprecated": null,
+     "type": "AssignmentRubricAssessment"
+    },
+    "rubricAssociation": {
+     "args": {},
+     "deprecated": null,
+     "type": "RubricAssociation"
+    },
+    "rubricSelfAssessmentEnabled": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "rubricUpdateUrl": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "scheduledPost": {
+     "args": {},
+     "deprecated": null,
+     "type": "ScheduledPost"
+    },
+    "scoreStatistic": {
+     "args": {},
+     "deprecated": null,
+     "type": "AssignmentScoreStatistic"
+    },
+    "sisId": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "state": {
+     "args": {},
+     "deprecated": null,
+     "type": "AssignmentState!"
+    },
+    "submissionTypes": {
+     "args": {},
+     "deprecated": null,
+     "type": "[SubmissionType!]"
+    },
+    "submissionsConnection": {
+     "args": {
+      "after": "String",
+      "before": "String",
+      "filter": "SubmissionSearchFilterInput",
+      "first": "Int",
+      "last": "Int",
+      "orderBy": "[SubmissionSearchOrder!]"
+     },
+     "deprecated": null,
+     "type": "SubmissionConnection"
+    },
+    "submissionsDownloads": {
+     "args": {},
+     "deprecated": null,
+     "type": "Int"
+    },
+    "supportsGradeByQuestion": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean!"
+    },
+    "suppressAssignment": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean!"
+    },
+    "timeZoneEdited": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "title": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "totalGradedSubmissions": {
+     "args": {},
+     "deprecated": null,
+     "type": "Int"
+    },
+    "totalSubmissions": {
+     "args": {},
+     "deprecated": null,
+     "type": "Int"
+    },
+    "type": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "unlockAt": {
+     "args": {
+      "applyOverrides": "Boolean"
+     },
+     "deprecated": null,
+     "type": "DateTime"
+    },
+    "updatedAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime"
+    },
+    "visibleToEveryone": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean!"
+    }
+   },
+   "kind": "OBJECT"
+  },
+  "AssignmentConnection": {
+   "fields": {
+    "edges": {
+     "args": {},
+     "deprecated": null,
+     "type": "[AssignmentEdge]"
+    },
+    "nodes": {
+     "args": {},
+     "deprecated": null,
+     "type": "[Assignment]"
+    },
+    "pageInfo": {
+     "args": {},
+     "deprecated": null,
+     "type": "PageInfo!"
+    }
+   },
+   "kind": "OBJECT"
+  },
   "AssignmentOverrideCreateOrUpdate": {
    "fields": {
     "courseId": {
@@ -1271,6 +1947,118 @@
     "threaded": null
    }
   },
+  "ExternalTool": {
+   "fields": {
+    "_id": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID!"
+    },
+    "canDuplicate": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "canManageAssignTo": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "canUnpublish": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "createdAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime"
+    },
+    "description": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "domain": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "graded": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "isLockedByMasterCourse": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean!"
+    },
+    "labelFor": {
+     "args": {
+      "placement": "ExternalToolPlacement!"
+     },
+     "deprecated": null,
+     "type": "String"
+    },
+    "modules": {
+     "args": {},
+     "deprecated": null,
+     "type": "[Module!]"
+    },
+    "name": {
+     "args": {},
+     "deprecated": null,
+     "type": "String!"
+    },
+    "placements": {
+     "args": {},
+     "deprecated": null,
+     "type": "Placements!"
+    },
+    "pointsPossible": {
+     "args": {},
+     "deprecated": null,
+     "type": "Float"
+    },
+    "published": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "settings": {
+     "args": {},
+     "deprecated": null,
+     "type": "ExternalToolSettings"
+    },
+    "state": {
+     "args": {},
+     "deprecated": null,
+     "type": "ExternalToolState"
+    },
+    "title": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "type": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "updatedAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime"
+    },
+    "url": {
+     "args": {},
+     "deprecated": null,
+     "type": "URL"
+    }
+   },
+   "kind": "OBJECT"
+  },
   "Float": {
    "kind": "SCALAR"
   },
@@ -1290,6 +2078,66 @@
   },
   "Int": {
    "kind": "SCALAR"
+  },
+  "LtiAssetProcessor": {
+   "fields": {
+    "_id": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID!"
+    },
+    "externalTool": {
+     "args": {},
+     "deprecated": null,
+     "type": "ExternalTool!"
+    },
+    "iconOrToolIconUrl": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "iframe": {
+     "args": {},
+     "deprecated": null,
+     "type": "LtiAssetProcessorIframe"
+    },
+    "text": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "title": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "window": {
+     "args": {},
+     "deprecated": null,
+     "type": "LtiAssetProcessorWindowSettings"
+    }
+   },
+   "kind": "OBJECT"
+  },
+  "LtiAssetProcessorConnection": {
+   "fields": {
+    "edges": {
+     "args": {},
+     "deprecated": null,
+     "type": "[LtiAssetProcessorEdge]"
+    },
+    "nodes": {
+     "args": {},
+     "deprecated": null,
+     "type": "[LtiAssetProcessor]"
+    },
+    "pageInfo": {
+     "args": {},
+     "deprecated": null,
+     "type": "PageInfo!"
+    }
+   },
+   "kind": "OBJECT"
   },
   "LtiAssetProcessorCreateOrUpdate": {
    "fields": {

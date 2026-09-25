@@ -1221,6 +1221,8 @@ Content.
     (expect (org-canvas--assignment-resolve-group-link nil) :to-be nil)))
 
 (describe "org-canvas--assignment-pull-item"
+  (before-each (test-org-canvas-stub-processors))
+  (after-each (org-canvas--assignment-processors-forget))
   (it "sets PEER_REVIEWS and GROUP properties"
     (let ((groups-file (make-temp-file "test-groups" nil ".org")))
       (unwind-protect
@@ -1409,6 +1411,8 @@ Content.
       (expect (gethash "grading_standard_id" assignment) :to-be nil))))
 
 (describe "org-canvas--assignment-pull-item (muted + grading_standard_id)"
+  (before-each (test-org-canvas-stub-processors))
+  (after-each (org-canvas--assignment-processors-forget))
   (it "sets MUTED property"
     (with-pull-property-test #'org-canvas--assignment-pull-item
       '((id . 1) (name . "Assignment")
@@ -1530,6 +1534,8 @@ Content.
       (expect (org-canvas--assignment-remote-tool-new-tab item) :to-be nil))))
 
 (describe "org-canvas--assignment-pull-external-tool"
+  (before-each (test-org-canvas-stub-processors))
+  (after-each (org-canvas--assignment-processors-forget))
   (it "writes all three properties back onto the heading"
     (with-pull-property-test #'org-canvas--assignment-pull-item
       '((id . 1) (name . "PS3") (description . "")
@@ -1643,6 +1649,8 @@ Content.
         (delete-file sections-temp)))))
 
 (describe "assignment override pull"
+  (before-each (test-org-canvas-stub-processors))
+  (after-each (org-canvas--assignment-processors-forget))
   (it "emits #+NAME: overrides table when assignment has overrides"
     (let* ((temp-dir (make-temp-file "assign-ov-test" t))
            (test-file (expand-file-name "assignments.org" temp-dir))
@@ -1968,6 +1976,8 @@ Content.
 
 
 (describe "assignment pull reads the registry (issues #134, #135)"
+  (before-each (test-org-canvas-stub-processors))
+  (after-each (org-canvas--assignment-processors-forget))
   (it "writes PUBLISHED false, the field the drift report pointed at"
     (with-pull-property-test #'org-canvas--assignment-pull-item
       '((id . 1) (name . "A") (description . "") (published . :json-false))
@@ -2050,6 +2060,8 @@ Content.
 ;;;; A Document Processor Is Canvas's to Set (issue #184)
 
 (describe "org-canvas--assignment-remote-document-processor"
+  (before-each (test-org-canvas-stub-processors))
+  (after-each (org-canvas--assignment-processors-forget))
   (it "names the processor and its id"
     (expect (org-canvas--assignment-remote-document-processor
              '((id . 1)
@@ -2095,6 +2107,8 @@ Content.
             :to-be nil)))
 
 (describe "DOCUMENT_PROCESSOR on pull (issue #184)"
+  (before-each (test-org-canvas-stub-processors))
+  (after-each (org-canvas--assignment-processors-forget))
   (it "is written from the processor Canvas holds"
     (with-pull-property-test #'org-canvas--assignment-pull-item
       '((id . 1) (name . "Essay") (description . "")
@@ -2125,6 +2139,8 @@ Content.
          (expect (org-entry-get (point) "DOCUMENT_PROCESSOR") :to-be nil))))))
 
 (describe "WANT_DOCUMENT_PROCESSOR on pull (issue #293)"
+  (before-each (test-org-canvas-stub-processors))
+  (after-each (org-canvas--assignment-processors-forget))
   (it "is left as typed whether or not Canvas holds a processor"
     (dolist (processors '([] [((id . 12345) (title . "Turnitin"))]))
       (with-temp-org-buffer
@@ -2259,6 +2275,8 @@ Write it.
       (expect (plist-get ctx :remote-touched) :to-be nil))))
 
 (describe "assignment reads ask for the assignment's own dates (issue #273)"
+  (before-each (test-org-canvas-stub-processors))
+  (after-each (org-canvas--assignment-processors-forget))
   ;; Canvas applies overrides to the dates an assignment read returns, and
   ;; a teacher gets the most lenient one: one student's extension read as
   ;; the base due date, the report called it CHANGED, and a pull would
@@ -2351,5 +2369,218 @@ Write it.
         (let ((buf (find-buffer-visiting org-file)))
           (when buf (with-current-buffer buf (set-buffer-modified-p nil)) (kill-buffer buf)))
         (delete-directory temp-dir t)))))
+
+;;;; Document processors by GraphQL (issue #350)
+
+(defun test-org-canvas-processors-reply (nodes &optional next)
+  "Return a GraphQL `data' alist holding one page of assignment NODES.
+NEXT, when given, is the cursor of a following page."
+  `((course . ((assignmentsConnection
+                . ((pageInfo . ((hasNextPage . ,(if next t :json-false))
+                                (endCursor . ,(or next :null))))
+                   (nodes . ,(vconcat nodes))))))))
+
+(defun test-org-canvas-processor-node (id &rest processors)
+  "Return a GraphQL assignment node ID carrying PROCESSORS.
+Each processor is (PROCESSOR-ID TITLE TOOL-ID TOOL-NAME)."
+  `((_id . ,id)
+    (ltiAssetProcessorsConnection
+     . ((nodes . ,(vconcat
+                   (mapcar (lambda (p)
+                             `((_id . ,(nth 0 p)) (title . ,(nth 1 p))
+                               (externalTool . ((_id . ,(nth 2 p))
+                                                (name . ,(nth 3 p))))))
+                           processors)))))))
+
+(defmacro test-org-canvas-with-processor-replies (replies &rest body)
+  "Run BODY with the GraphQL read answering REPLIES, one per request.
+Binds `sent' to the list of variable alists the requests carried, in
+order, and forgets the processor cache before and after."
+  (declare (indent 1))
+  `(let ((queue ,replies) (sent nil))
+     (org-canvas--assignment-processors-forget)
+     (unwind-protect
+         (with-org-canvas-test-config
+           (cl-letf (((symbol-function 'org-canvas--graphql-query)
+                      (lambda (_document &optional variables)
+                        (setq sent (append sent (list variables)))
+                        (pop queue))))
+             ,@body))
+       (org-canvas--assignment-processors-forget))))
+
+(describe "org-canvas--assignment-describe-processor on a GraphQL node"
+  (it "names the processor and the tool it launches"
+    (expect (org-canvas--assignment-describe-processor
+             '((_id . "1259") (title . "Turnitin")
+               (externalTool . ((_id . "41668") (name . "Turnitin")))))
+            :to-equal "Turnitin (tool 41668)"))
+
+  (it "falls back to the tool's name, then to the tool alone"
+    (expect (org-canvas--assignment-describe-processor
+             '((_id . "1") (title . :null)
+               (externalTool . ((_id . "41668") (name . "Turnitin")))))
+            :to-equal "Turnitin (tool 41668)")
+    (expect (org-canvas--assignment-describe-processor
+             '((_id . "1") (externalTool . ((_id . "41668")))))
+            :to-equal "tool 41668")))
+
+(describe "org-canvas--assignment-processors-fetch (issue #350)"
+  (it "reads every page into a hash keyed by assignment id"
+    (test-org-canvas-with-processor-replies
+        (list (test-org-canvas-processors-reply
+               (list (test-org-canvas-processor-node
+                      "2497349" '("1259" "Turnitin" "41668" "Turnitin"))
+                     (test-org-canvas-processor-node "2497350"))
+               "Mg")
+              (test-org-canvas-processors-reply
+               (list (test-org-canvas-processor-node
+                      "2578396" '("1341" "Turnitin" "41668" "Turnitin")))))
+      (let ((map (org-canvas--assignment-processors-fetch)))
+        (expect (length sent) :to-equal 2)
+        (expect (alist-get 'cursor (nth 1 sent)) :to-equal "Mg")
+        (expect (hash-table-count map) :to-equal 3)
+        (expect (length (gethash "2497349" map)) :to-equal 1)
+        (expect (gethash "2497350" map 'absent) :to-be nil)
+        (expect (alist-get '_id (car (gethash "2578396" map)))
+                :to-equal "1341"))))
+
+  (it "answers refused after one warning when the read fails"
+    (let ((warned nil))
+      (org-canvas--assignment-processors-forget)
+      (unwind-protect
+          (with-org-canvas-test-config
+            (cl-letf (((symbol-function 'org-canvas--graphql-query)
+                       (lambda (&rest _)
+                         (signal 'org-canvas-api-error (list "GraphQL: nope"))))
+                      ((symbol-function 'org-canvas--log-warning)
+                       (lambda (_logger fmt &rest args)
+                         (push (apply #'format fmt args) warned))))
+              (dolist (id '(1 2 3))
+                (expect (org-canvas--assignment-graphql-processors
+                         `((id . ,id)))
+                        :to-be 'unknown))
+              (expect (length warned) :to-equal 1)
+              (expect (car warned)
+                      :to-match "reading the REST asset_processors")))
+        (org-canvas--assignment-processors-forget)))))
+
+(describe "DOCUMENT_PROCESSOR read from GraphQL (issue #350)"
+  (it "reads the course once per command, whatever the number of assignments"
+    (test-org-canvas-with-processor-replies
+        (list (test-org-canvas-processors-reply
+               (list (test-org-canvas-processor-node
+                      "1" '("1259" "Turnitin" "41668" "Turnitin"))
+                     (test-org-canvas-processor-node "2"))))
+      (expect (org-canvas--assignment-remote-document-processor '((id . 1)))
+              :to-equal "Turnitin (tool 41668)")
+      (expect (org-canvas--assignment-remote-document-processor '((id . 2)))
+              :to-be nil)
+      (expect (length sent) :to-equal 1)))
+
+  (it "reads afresh when the next command starts"
+    (test-org-canvas-with-processor-replies
+        (list (test-org-canvas-processors-reply
+               (list (test-org-canvas-processor-node "1")))
+              (test-org-canvas-processors-reply
+               (list (test-org-canvas-processor-node
+                      "1" '("1259" "Turnitin" "41668" "Turnitin")))))
+      (expect (org-canvas--assignment-remote-document-processor '((id . 1)))
+              :to-be nil)
+      (run-hooks 'org-canvas--operation-start-hook)
+      (expect (org-canvas--assignment-remote-document-processor '((id . 1)))
+              :to-equal "Turnitin (tool 41668)")
+      (expect (length sent) :to-equal 2)))
+
+  (it "prefers the GraphQL answer to the REST key, and falls back to REST"
+    (test-org-canvas-with-processor-replies
+        (list (test-org-canvas-processors-reply
+               (list (test-org-canvas-processor-node "1"))))
+      ;; GraphQL answered "none" for 1: a stale REST entry is not believed.
+      (expect (org-canvas--assignment-remote-document-processor
+               '((id . 1) (asset_processors . [((id . 5) (title . "Old"))])))
+              :to-be nil)
+      (expect (org-canvas--assignment-document-processor-known-p '((id . 1)))
+              :to-be-truthy)
+      ;; GraphQL did not answer for 9 (created after the read): REST.
+      (expect (org-canvas--assignment-remote-document-processor
+               '((id . 9)
+                 (asset_processors . [((id . 5) (title . "Turnitin"))])))
+              :to-equal "Turnitin (asset processor 5)")
+      (expect (org-canvas--assignment-document-processor-known-p '((id . 9)))
+              :to-be nil)
+      (expect (org-canvas--assignment-document-processor-known-p
+               '((name . "x")))
+              :to-be nil)
+      (expect (length sent) :to-equal 1))))
+
+(describe "DOCUMENT_PROCESSOR pulled from GraphQL (issue #350)"
+  (after-each (org-canvas--assignment-processors-forget))
+  (cl-flet ((pull (content item map)
+              (with-temp-org-buffer content
+                (org-back-to-heading)
+                (with-org-canvas-test-config
+                  (with-html-to-org-identity
+                    (org-canvas--assignment-processors-forget)
+                    (cl-letf (((symbol-function
+                                'org-canvas-api-request-all-pages)
+                               (lambda (&rest _) nil))
+                              ((symbol-function
+                                'org-canvas--assignment-processors-fetch)
+                               (lambda () map)))
+                      (org-canvas--assignment-pull-item item (point))
+                      (org-entry-get (point) "DOCUMENT_PROCESSOR")))))))
+    (let ((map (make-hash-table :test 'equal)))
+      (puthash "1" (list '((_id . "1259") (title . "Turnitin")
+                           (externalTool
+                            . ((_id . "41668") (name . "Turnitin")))))
+               map)
+      (puthash "2" nil map)
+      (it "is written from the processor GraphQL reports, with no REST key"
+        (expect (pull "* Essay\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+                      '((id . 1) (name . "Essay") (description . "")) map)
+                :to-equal "Turnitin (tool 41668)"))
+
+      (it "is dropped when GraphQL says the column has none"
+        (expect (pull (concat "* Essay\n:PROPERTIES:\n:CANVAS_ID: 2\n"
+                              ":DOCUMENT_PROCESSOR: Turnitin (tool 41668)\n"
+                              ":END:\n")
+                      '((id . 2) (name . "Essay") (description . "")) map)
+                :to-be nil))
+
+      (it "is left as it is when neither GraphQL nor REST answers"
+        (expect (pull (concat "* Essay\n:PROPERTIES:\n:CANVAS_ID: 3\n"
+                              ":DOCUMENT_PROCESSOR: Turnitin (tool 41668)\n"
+                              ":END:\n")
+                      '((id . 3) (name . "Essay") (description . "")) 'refused)
+                :to-equal "Turnitin (tool 41668)")))))
+
+(describe "the drift report on DOCUMENT_PROCESSOR from GraphQL (issue #350)"
+  (after-each (org-canvas--assignment-processors-forget))
+  (let ((specs (plist-get (org-canvas--diff-find-properties "assignments")
+                          :properties))
+        (map (make-hash-table :test 'equal)))
+    (puthash "1" nil map)
+    (it "reads a GraphQL \"none\" as none, not as unreported"
+      (test-org-canvas-stub-processors map)
+      (with-temp-org-buffer
+       (concat "* Essay\n:PROPERTIES:\n:CANVAS_ID: 1\n"
+               ":WANT_DOCUMENT_PROCESSOR: Turnitin\n:END:\n")
+       (org-back-to-heading)
+       (let ((diffs (org-canvas--diff-compare-fields
+                     specs (point) '((id . 1)))))
+         (expect (length diffs) :to-equal 1)
+         (expect (nth 2 (car diffs))
+                 :to-match "(none; attach it in the web UI"))))
+
+    (it "compares nothing it was not told, and says so on the intent row"
+      (test-org-canvas-stub-processors)
+      (with-temp-org-buffer
+       (concat "* Essay\n:PROPERTIES:\n:CANVAS_ID: 1\n"
+               ":DOCUMENT_PROCESSOR: Turnitin (tool 41668)\n"
+               ":WANT_DOCUMENT_PROCESSOR: Turnitin\n:END:\n")
+       (org-back-to-heading)
+       (expect (org-canvas--diff-compare-fields specs (point) '((id . 1)))
+               :to-equal '(("WANT_DOCUMENT_PROCESSOR" "Turnitin"
+                            "(not reported by Canvas)")))))))
 
 ;;; org-canvas-assignments-test.el ends here

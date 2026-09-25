@@ -69,9 +69,10 @@ and the per-person departure read, both on `list_enrollments_courses`.
 
 # GraphQL contract (issue #269)
 
-Five GraphQL documents travel to Canvas as strings: the post-policy
-mutations (assignments, settings), `postAssignmentGrades` (submissions), and
-the checkpoints query and `updateDiscussionTopic` mutation (discussions).
+Six GraphQL documents travel to Canvas as strings: the post-policy
+mutations (assignments, settings), `postAssignmentGrades` (submissions),
+the checkpoints query and `updateDiscussionTopic` mutation (discussions),
+and the document-processor query (assignments, issue #350).
 `org-canvas-graphql-contract-test.el` checks each — every selected field
 exists on its parent type and is not deprecated, every argument exists and
 a variable's declared type fits it, every non-null input field is supplied,
@@ -138,6 +139,20 @@ at the time of writing).  Pin the ref so the provenance says what it was:
 curl -sSLo /tmp/schema.graphql \
   https://raw.githubusercontent.com/instructure/canvas-lms/<sha>/schema.graphql
 python3 test/contract/extract-canvas-graphql-contract.py --sdl /tmp/schema.graphql --ref <sha>
+```
+
+To add a new document's types without regenerating the rest — the
+instance out of reach, the fixture otherwise current — pass
+`--supplement`: the fixture's existing types are kept as they are, only
+the missing ones come from the SDL, and the provenance lists them under
+`supplements` with the ref.  The next introspection replaces them.  The
+document-processor query's `Assignment`, `AssignmentConnection`,
+`ExternalTool`, `LtiAssetProcessor` and `LtiAssetProcessorConnection`
+came in this way (canvas-lms `1c9f0bb8`):
+
+```bash
+python3 test/contract/extract-canvas-graphql-contract.py --supplement \
+    --sdl /tmp/schema.graphql --ref <sha>
 ```
 
 Requires graphql-core (`pip install graphql-core`).  The script validates

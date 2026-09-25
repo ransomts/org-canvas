@@ -63,8 +63,9 @@
     org-canvas--settings-post-policy-mutation
     org-canvas--submissions-post-grades-mutation
     org-canvas--discussion-checkpoints-query
-    org-canvas--discussion-checkpoints-mutation)
-  "The five documents, by symbol.  A new one is added here and to the
+    org-canvas--discussion-checkpoints-mutation
+    org-canvas--assignment-processors-query)
+  "The six documents, by symbol.  A new one is added here and to the
 extractor's SOURCES when its file is new.")
 
 (defun org-canvas-graphql-contract--type (name)
@@ -636,6 +637,24 @@ page of discussions."
         (expect (length sent) :to-equal 2)
         (dolist (call sent)
           (expect (org-canvas-graphql-contract--check-variables (car call) (cdr call)) :to-equal nil))
+        (expect (alist-get 'cursor (cdar sent)) :to-equal "Mg"))))
+  (it "org-canvas--assignment-processors-fetch sends what its query declares, with and without a cursor"
+    (with-org-canvas-test-config
+      (let ((pages 0) (sent nil))
+        (cl-letf (((symbol-function 'org-canvas--graphql-query)
+                   (lambda (document &optional variables)
+                     (push (cons document variables) sent)
+                     (cl-incf pages)
+                     `((course . ((assignmentsConnection
+                                   . ((pageInfo . ((hasNextPage . ,(if (= pages 1) t :json-false))
+                                                   (endCursor . ,(if (= pages 1) "Mg" :null))))
+                                      (nodes . [])))))))))
+          (org-canvas--assignment-processors-fetch))
+        (expect (length sent) :to-equal 2)
+        (dolist (call sent)
+          (expect (car call) :to-be org-canvas--assignment-processors-query)
+          (expect (org-canvas-graphql-contract--check-variables (car call) (cdr call)) :to-equal nil))
+        (expect (assq 'cursor (cdr (car (last sent)))) :to-be nil)
         (expect (alist-get 'cursor (cdar sent)) :to-equal "Mg"))))
   (it "org-canvas--discussion-push-checkpoints sends what its mutation declares"
     (with-org-canvas-test-config

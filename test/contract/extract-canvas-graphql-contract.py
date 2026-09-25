@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Extract the GraphQL contract org-canvas's documents rely on from Canvas.
 
-The five GraphQL documents org-canvas sends (the post-policy mutations in
+The GraphQL documents org-canvas sends (the post-policy mutations in
 assignments.el and settings.el, postAssignmentGrades in submissions.el,
-and the checkpoints query and updateDiscussionTopic mutation in
-discussions.el) travel as opaque strings.  This script reads them out of
+the checkpoints query and updateDiscussionTopic mutation in
+discussions.el, and the document-processor query in assignments.el)
+travel as opaque strings.  This script reads them out of
 lisp/, validates each against a Canvas GraphQL schema, and emits a compact
 JSON fixture (canvas-graphql-contract.json) holding only the types the
 documents reach: every field of each reached object type with its type
@@ -187,6 +188,28 @@ def describe(t):
     sys.exit(f"unexpected type kind: {t}")
 
 
+def supplement(path, fresh):
+    """Return the fixture at PATH with the types of FRESH it lacks added.
+
+    For a new document when the schema the fixture was generated from is
+    out of reach (an SDL baseline beside an instance's introspection):
+    the types already there are kept as they are, the added ones are
+    named in the provenance with their source, and every type the
+    documents no longer reach is dropped.
+    """
+    old = json.load(open(path, encoding="utf-8"))
+    added = sorted(set(fresh["types"]) - set(old["types"]))
+    types = {name: old["types"].get(name, fresh["types"][name])
+             for name in fresh["types"]}
+    provenance = dict(old["provenance"])
+    if added:
+        note = dict(fresh["provenance"])
+        note["types"] = added
+        provenance["supplements"] = provenance.get("supplements", []) + [note]
+    return {"provenance": provenance, "roots": old["roots"],
+            "documents": fresh["documents"], "types": dict(sorted(types.items()))}
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Extract the GraphQL contract org-canvas's documents rely on from Canvas.")
@@ -196,6 +219,9 @@ def main():
                         help="Canvas instance to introspect (token in CANVAS_API_TOKEN)")
     parser.add_argument("--ref", help="the canvas-lms tag or sha the SDL came from (provenance)")
     parser.add_argument("--out", default=OUT, help=f"fixture path (default {OUT})")
+    parser.add_argument("--supplement", action="store_true",
+                        help="keep the fixture at --out and add only the types it "
+                             "lacks, recording where they came from")
     args = parser.parse_args()
 
     if args.sdl:
@@ -217,6 +243,8 @@ def main():
         "documents": sorted({rel for rel, _ in documents}),
         "types": {name: describe(schema.type_map[name]) for name in sorted(names)},
     }
+    if args.supplement:
+        fixture = supplement(args.out, fixture)
     with open(args.out, "w", encoding="utf-8") as fh:
         json.dump(fixture, fh, indent=1, sort_keys=True)
         fh.write("\n")
