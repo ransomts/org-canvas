@@ -208,6 +208,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 - Canvas-owned submission types (#167)
 - comments and drafts as paragraphs and short CONFLICT values (#264)
 - drift report bodies (#83)
+- drift report rows deleted in batch, EXTRA only, after safety checks and a JSON snapshot (#345)
 - drift report verbs (#103)
 - every browse address checked against canvas-lms's routes, and a module SubHeader opening its module (#300)
 - EXTRA assignments and groups described from the lists already read and a group weight total line that is not drift (#296)

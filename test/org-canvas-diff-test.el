@@ -1478,45 +1478,73 @@ EDIT is passed on.  A `user-error' comes back as (error MESSAGE)."
         (org-canvas--diff-acknowledge-save '(("Files" "1" nil))))
       (expect saved :to-equal '(org-canvas-diff-known-extras (("Files" "1" nil)))))))
 
+(defvar test-org-canvas--diff-delete-requests nil
+  "Requests the delete stub recorded, newest first, as (METHOD URL ARGS).")
+
+(defun test-org-canvas--diff-delete-stub (method url &rest args)
+  "Record METHOD, URL and ARGS; answer a GET with a small object."
+  (push (list method url args) test-org-canvas--diff-delete-requests)
+  (when (eq method 'GET) '((id . 1) (title . "Snapshot me"))))
+
+(defun test-org-canvas--diff-deletes ()
+  "Return the DELETE requests the stub recorded, oldest first."
+  (reverse (cl-remove-if-not (lambda (r) (eq (car r) 'DELETE))
+                             test-org-canvas--diff-delete-requests)))
+
+(defmacro test-org-canvas--with-snapshot-dir (&rest body)
+  "Run BODY with the delete snapshots going to a fresh temporary directory.
+The directory is bound to `snapshot-dir' and removed afterwards.  The
+course is writable whatever an earlier spec left behind (issue #163)."
+  (declare (indent 0))
+  `(let* ((snapshot-dir (make-temp-file "diff-snapshots-" t))
+          (org-canvas-diff-delete-snapshot-directory snapshot-dir)
+          (org-canvas-read-only nil)
+          (test-org-canvas--diff-delete-requests nil))
+     (ignore snapshot-dir)
+     (unwind-protect (progn ,@body)
+       (delete-directory snapshot-dir t))))
+
 (describe "org-canvas-diff-delete (issue #103)"
   (it "deletes the remote object through the feature's URL after confirming, and marks the row"
-    (let ((requests nil))
+    (test-org-canvas--with-snapshot-dir
       (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) t))
                 ((symbol-function 'org-canvas-api-request)
-                 (lambda (method url &rest args) (push (list method url args) requests) nil)))
+                 #'test-org-canvas--diff-delete-stub))
         (with-current-buffer (test-org-canvas--diff-report-buffer
                               '((:name "Files" :extra ((:kind extra :title "dup.png" :id "31505574")))))
           (test-org-canvas--diff-goto-row 'extra)
           (org-canvas-diff-delete)
           (expect (thing-at-point 'line t) :to-match "DELETED   dup.png (id 31505574)")))
-      (expect (length requests) :to-equal 1)
-      (expect (car (car requests)) :to-be 'DELETE)
-      (expect (nth 1 (car requests)) :to-match "files/31505574$")))
+      (let ((deletes (test-org-canvas--diff-deletes)))
+        (expect (length deletes) :to-equal 1)
+        (expect (nth 1 (car deletes)) :to-match "files/31505574$"))))
 
   (it "sends the feature's delete body when it declares one"
-    (let ((requests nil))
+    (test-org-canvas--with-snapshot-dir
       (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) t))
                 ((symbol-function 'org-canvas-api-request)
-                 (lambda (method url &rest args) (push (list method url args) requests) nil)))
+                 #'test-org-canvas--diff-delete-stub))
         (with-current-buffer (test-org-canvas--diff-report-buffer
                               '((:name "Calendar Events" :extra ((:kind extra :title "Old" :id "5")))))
           (test-org-canvas--diff-goto-row 'extra)
           (org-canvas-diff-delete)))
-      (expect (nth 1 (car requests)) :to-match "calendar_events/5$")
-      (expect (plist-get (nth 2 (car requests)) :data)
-              :to-equal '((cancel_reason . "Deleted by org-canvas")))))
+      (let ((delete (car (test-org-canvas--diff-deletes))))
+        (expect (nth 1 delete) :to-match "calendar_events/5$")
+        (expect (plist-get (nth 2 delete) :data)
+                :to-equal '((cancel_reason . "Deleted by org-canvas"))))))
 
-  (it "sends nothing when the confirmation is declined"
-    (let ((requests nil))
+  (it "sends no DELETE and writes no snapshot when the confirmation is declined"
+    (test-org-canvas--with-snapshot-dir
       (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) nil))
                 ((symbol-function 'org-canvas-api-request)
-                 (lambda (&rest args) (push args requests) nil)))
+                 #'test-org-canvas--diff-delete-stub))
         (with-current-buffer (test-org-canvas--diff-report-buffer
                               '((:name "Files" :extra ((:kind extra :title "dup.png" :id "1")))))
           (test-org-canvas--diff-goto-row 'extra)
           (org-canvas-diff-delete)
           (expect (thing-at-point 'line t) :to-match "EXTRA     dup.png")))
-      (expect requests :to-be nil)))
+      (expect (test-org-canvas--diff-deletes) :to-be nil)
+      (expect (directory-files snapshot-dir nil "\\.json\\'") :to-be nil)))
 
   (it "refuses a row with no remote object of its own to delete"
     (with-current-buffer (test-org-canvas--diff-report-buffer
@@ -2295,10 +2323,10 @@ its :children is the Module Items result."
             (expect (nth (1+ at) names) :to-equal "Module Items"))))))
 
   (it "deletes a module item row from its module, not from a feature URL"
-    (let ((requests nil))
+    (test-org-canvas--with-snapshot-dir
       (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) t))
                 ((symbol-function 'org-canvas-api-request)
-                 (lambda (method url &rest args) (push (list method url args) requests) nil)))
+                 #'test-org-canvas--diff-delete-stub))
         ;; The report buffer helper answers by registered feature, so
         ;; the item result rides along as the Modules result's child.
         (with-current-buffer (test-org-canvas--diff-report-buffer
@@ -2309,9 +2337,17 @@ its :children is the Module Items result."
           (test-org-canvas--diff-goto-row 'extra)
           (org-canvas-diff-delete)
           (expect (thing-at-point 'line t) :to-match "DELETED   R3: Stakeholders (id 5864661)")))
-      (expect (length requests) :to-equal 1)
-      (expect (nth 1 (car requests)) :to-match "modules/781703/items/5864661$")
-      (expect (plist-get (nth 2 (car requests)) :data) :to-be nil)))
+      (let ((deletes (test-org-canvas--diff-deletes)))
+        (expect (length deletes) :to-equal 1)
+        (expect (nth 1 (car deletes)) :to-match "modules/781703/items/5864661$")
+        (expect (plist-get (nth 2 (car deletes)) :data) :to-be nil))
+      ;; The object was read at the same URL and snapshotted first (#345).
+      (expect (cl-find-if (lambda (r) (and (eq (car r) 'GET)
+                                           (string-match-p "modules/781703/items/5864661$"
+                                                           (nth 1 r))))
+                          test-org-canvas--diff-delete-requests)
+              :to-be-truthy)
+      (expect (length (directory-files snapshot-dir nil "\\.json\\'")) :to-equal 1)))
 
   (it "acknowledges a module item row under Module Items"
     (let* ((org-canvas-diff-known-extras nil)
@@ -2712,10 +2748,10 @@ Returns the result and whether the file's buffer was left modified."
       (expect opened :to-equal "https://x.test/items/502")))
 
   (it "deletes the copy a MOVED row leaves in the old module"
-    (let ((requests nil))
+    (test-org-canvas--with-snapshot-dir
       (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) t))
                 ((symbol-function 'org-canvas-api-request)
-                 (lambda (method url &rest _) (push (list method url) requests) nil)))
+                 #'test-org-canvas--diff-delete-stub))
         (with-current-buffer (test-org-canvas--diff-report-buffer
                               '((:name "Modules"
                                  :children (:name "Module Items"
@@ -2724,7 +2760,8 @@ Returns the result and whether the file's buffer was left modified."
                                                      :to "Week 6"))))))
           (test-org-canvas--diff-goto-row 'moved)
           (org-canvas-diff-delete)))
-      (expect (cadr (car requests)) :to-match "modules/781703/items/501$")))
+      (expect (cadr (car (test-org-canvas--diff-deletes)))
+              :to-match "modules/781703/items/501$")))
 
   (it "acknowledges a MOVED row, and refuses to acknowledge or delete a PENDING one"
     (let* ((org-canvas-diff-known-extras nil)
@@ -3072,6 +3109,282 @@ Returns (CHILD ASSIGNMENTS-MODIFIED ASSIGNMENTS-TEXT)."
                 (expect (cdr where) :to-be-greater-than 1))))
         (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
         (delete-file file)))))
+
+;;;; Deleting Rows Without Asking (issue #345)
+
+(defconst test-org-canvas--diff-reshuffle-results
+  '((:name "Assignments"
+     :extra ((:kind extra :title "Session 87" :id "701")
+             (:kind unclaimed :title "Session 88" :id "702" :property "CANVAS_ID")))
+    (:name "Rubrics"
+     :extra ((:kind extra :title "Old rubric" :id "801")))
+    (:name "Module Items"
+     :divergences ((:kind stale-ack :id "999"))
+     :extra ((:kind extra :title "87-surveillance-capitalism" :id "5787192"
+              :module-id "781715" :where "Week 9")
+             (:kind extra :title "88-privacy" :id "5787193"
+              :module-id "781715" :where "Week 9")
+             (:kind moved :title "Closer" :id "5787194"
+              :module-id "781715" :where "Week 9" :to "Week 10"))))
+  "What the report found after the calendar reshuffle of issue #345.")
+
+(defmacro test-org-canvas--with-batch-delete (&rest body)
+  "Run BODY against the mock API with snapshots in a temporary directory.
+Preflight is stubbed; `snapshot-dir' names the directory."
+  (declare (indent 0))
+  `(with-org-canvas-test-config
+     (test-org-canvas--with-snapshot-dir
+       (with-mock-api
+         (cl-letf (((symbol-function 'org-canvas--preflight-check) #'ignore))
+           ,@body)))))
+
+(defun test-org-canvas--diff-outcome (outcomes id)
+  "Return the outcome symbol OUTCOMES record for ID."
+  (plist-get (cl-find id outcomes :key (lambda (o) (plist-get o :id))
+                      :test #'equal)
+             :outcome))
+
+(defun test-org-canvas--diff-deleted-urls ()
+  "Return the URLs the mock API received a DELETE for, oldest first."
+  (reverse (delq nil (mapcar (lambda (c) (and (eq (car c) 'DELETE) (nth 1 c)))
+                             test-org-canvas-api-calls))))
+
+(describe "org-canvas-diff-delete-rows (issue #345)"
+  (it "deletes module items and a clean assignment, snapshotting each first"
+    (test-org-canvas--with-batch-delete
+      (setq test-org-canvas-api-responses
+            '(("assignments/701/submissions" . [((user_id . 1) (workflow_state . "unsubmitted"))])
+              ("assignments/701" . ((id . 701) (name . "Session 87")))
+              ("modules/781715/items/5787192" . ((id . 5787192) (title . "87-surveillance-capitalism")))))
+      (let ((outcomes (org-canvas-diff-delete-rows
+                       '((:feature "Module Items" :id "5787192")
+                         (:feature "assignments" :id 701))
+                       :results test-org-canvas--diff-reshuffle-results)))
+        (expect (mapcar (lambda (o) (plist-get o :outcome)) outcomes)
+                :to-equal '(deleted deleted))
+        (expect (test-org-canvas--diff-deleted-urls)
+                :to-equal (list (org-canvas-api-course-endpoint "modules/781715/items/5787192")
+                                (org-canvas-api-course-endpoint "assignments/701")))
+        ;; Each snapshot holds the object as Canvas returned it.
+        (let* ((file (plist-get (car outcomes) :snapshot))
+               (json (json-read-file file)))
+          (expect (file-name-directory file) :to-equal (file-name-as-directory snapshot-dir))
+          (expect (file-name-nondirectory file) :to-match "-module-items-5787192\\.json\\'")
+          (expect (alist-get 'title json) :to-equal "87-surveillance-capitalism"))
+        (expect (length (directory-files snapshot-dir nil "\\.json\\'")) :to-equal 2))))
+
+  (it "reads an assignment with its own dates, the parameters its item read carries"
+    (test-org-canvas--with-batch-delete
+      (setq test-org-canvas-api-responses
+            '(("assignments/701/submissions" . [])
+              ("assignments/701" . ((id . 701)))))
+      (org-canvas-diff-delete-rows '((:feature "Assignments" :id "701"))
+                                   :results test-org-canvas--diff-reshuffle-results)
+      (let ((read (cl-find-if (lambda (c) (and (eq (car c) 'GET)
+                                               (string-match-p "assignments/701\\'" (nth 1 c))))
+                              test-org-canvas-api-calls)))
+        (expect (plist-get (nth 3 read) :params)
+                :to-equal (org-canvas--feature-item-params
+                           (org-canvas--registry-find-feature "Assignments"))))))
+
+  (it "refuses an assignment with a submission or a score, naming why"
+    (test-org-canvas--with-batch-delete
+      (setq test-org-canvas-api-responses
+            '(("assignments/701/submissions"
+               . [((user_id . 1) (submitted_at . "2026-09-01T10:00:00Z") (workflow_state . "submitted"))
+                  ((user_id . 2) (score . 8.0) (grade . "8") (workflow_state . "graded"))
+                  ((user_id . 3) (workflow_state . "unsubmitted"))])
+              ("assignments/701" . ((id . 701)))))
+      (let ((outcome (car (org-canvas-diff-delete-rows
+                           '((:feature "Assignments" :id "701"))
+                           :results test-org-canvas--diff-reshuffle-results))))
+        (expect (plist-get outcome :outcome) :to-be 'refused)
+        (expect (plist-get outcome :reason)
+                :to-equal "the assignment has 1 submission(s) and 1 score(s)")
+        (expect (test-org-canvas--diff-deleted-urls) :to-be nil)
+        (expect (directory-files snapshot-dir nil "\\.json\\'") :to-be nil))))
+
+  (it "refuses an assignment Canvas flags as submitted to even when the list shows none"
+    (test-org-canvas--with-batch-delete
+      (setq test-org-canvas-api-responses
+            '(("assignments/701/submissions" . [])
+              ("assignments/701" . ((id . 701) (has_submitted_submissions . t)))))
+      (let ((outcome (car (org-canvas-diff-delete-rows
+                           '((:feature "Assignments" :id "701"))
+                           :results test-org-canvas--diff-reshuffle-results))))
+        (expect (plist-get outcome :outcome) :to-be 'refused)
+        (expect (plist-get outcome :reason) :to-match "Canvas says"))))
+
+  (it "refuses a rubric an assignment grades with, read with its associations"
+    (test-org-canvas--with-batch-delete
+      (setq test-org-canvas-api-responses
+            '(("rubrics/801" . ((id . 801)
+                                (associations . [((association_type . "Course") (association_id . 1))
+                                                 ((association_type . "Assignment") (association_id . 701))])))))
+      (let ((outcome (car (org-canvas-diff-delete-rows
+                           '((:feature "Rubrics" :id "801"))
+                           :results test-org-canvas--diff-reshuffle-results))))
+        (expect (plist-get outcome :outcome) :to-be 'refused)
+        (expect (plist-get outcome :reason) :to-equal "the rubric grades assignment(s) 701")
+        (expect (test-org-canvas-call-arg
+                 (test-org-canvas-find-api-call 'GET "rubrics/801") :params)
+                :to-equal '(("include[]" . "associations")))
+        (expect (test-org-canvas--diff-deleted-urls) :to-be nil))))
+
+  (it "deletes a rubric only a course association holds"
+    (test-org-canvas--with-batch-delete
+      (setq test-org-canvas-api-responses
+            '(("rubrics/801" . ((id . 801)
+                                (associations . [((association_type . "Course") (association_id . 1))])))))
+      (expect (test-org-canvas--diff-outcome
+               (org-canvas-diff-delete-rows '((:feature "Rubrics" :id "801"))
+                                            :results test-org-canvas--diff-reshuffle-results)
+               "801")
+              :to-be 'deleted)))
+
+  (it "deletes a refused object under :force, keeping the reason"
+    (test-org-canvas--with-batch-delete
+      (setq test-org-canvas-api-responses
+            '(("rubrics/801" . ((id . 801)
+                                (associations . [((association_type . "Assignment") (association_id . 701))])))))
+      (let ((outcome (car (org-canvas-diff-delete-rows
+                           '((:feature "Rubrics" :id "801"))
+                           :force t
+                           :results test-org-canvas--diff-reshuffle-results))))
+        (expect (plist-get outcome :outcome) :to-be 'deleted)
+        (expect (plist-get outcome :reason) :to-match "701")
+        (expect (file-exists-p (plist-get outcome :snapshot)) :to-be-truthy)
+        (expect (test-org-canvas--diff-deleted-urls)
+                :to-equal (list (org-canvas-api-course-endpoint "rubrics/801"))))))
+
+  (it "deletes every EXTRA row of a feature under :all, and nothing UNCLAIMED or MOVED"
+    (test-org-canvas--with-batch-delete
+      (let ((outcomes (org-canvas-diff-delete-rows
+                       '((:feature "Module Items" :all t))
+                       :results test-org-canvas--diff-reshuffle-results)))
+        (expect (mapcar (lambda (o) (plist-get o :id)) outcomes)
+                :to-equal '("5787192" "5787193"))
+        (expect (length (test-org-canvas--diff-deleted-urls)) :to-equal 2))))
+
+  (it "deletes a row two selectors name only once"
+    (test-org-canvas--with-batch-delete
+      (let ((outcomes (org-canvas-diff-delete-rows
+                       '((:feature "Module Items" :id "5787192")
+                         (:feature "module-items" :all t))
+                       :results test-org-canvas--diff-reshuffle-results)))
+        (expect (mapcar (lambda (o) (plist-get o :id)) outcomes)
+                :to-equal '("5787192" "5787193"))
+        (expect (length (test-org-canvas--diff-deleted-urls)) :to-equal 2))))
+
+  (it "names a selector that matches no EXTRA row, and sends nothing for it"
+    (test-org-canvas--with-batch-delete
+      (let ((outcomes (org-canvas-diff-delete-rows
+                       '((:feature "Assignments" :id "702")
+                         (:feature "Module Items" :id "5787194")
+                         (:feature "Module Items" :id "999")
+                         (:feature "Assignments" :id "42")
+                         (:feature "Nonexistent" :id "1"))
+                       :results test-org-canvas--diff-reshuffle-results)))
+        (expect (mapcar (lambda (o) (plist-get o :outcome)) outcomes)
+                :to-equal '(not-extra not-extra not-extra not-found not-found))
+        (expect (plist-get (car outcomes) :reason) :to-match "UNCLAIMED row")
+        (expect (plist-get (nth 3 outcomes) :reason) :to-match "no row with this id")
+        (expect (plist-get (nth 4 outcomes) :reason) :to-match "no such feature")
+        (expect test-org-canvas-api-calls :to-be nil))))
+
+  (it "refuses an object Canvas returned nothing for, with nothing to snapshot"
+    (test-org-canvas--with-batch-delete
+      (setq test-org-canvas-api-responses '(("modules/781715/items/5787192" . nil)))
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (method url &rest args)
+                   (push (list method url nil args) test-org-canvas-api-calls)
+                   nil)))
+        (let ((outcome (car (org-canvas-diff-delete-rows
+                             '((:feature "Module Items" :id "5787192"))
+                             :results test-org-canvas--diff-reshuffle-results))))
+          (expect (plist-get outcome :outcome) :to-be 'refused)
+          (expect (plist-get outcome :reason) :to-match "nothing to snapshot")))))
+
+  (it "reads and checks under a dry run, but writes no snapshot and sends no DELETE"
+    (test-org-canvas--with-batch-delete
+      (let* ((org-canvas--dry-run t)
+             (outcomes (org-canvas-diff-delete-rows
+                        '((:feature "Module Items" :all t))
+                        :results test-org-canvas--diff-reshuffle-results)))
+        (expect (mapcar (lambda (o) (plist-get o :outcome)) outcomes)
+                :to-equal '(dry-run dry-run))
+        (expect (cl-remove-if (lambda (c) (eq (car c) 'GET)) test-org-canvas-api-calls)
+                :to-be nil)
+        (expect (directory-files snapshot-dir nil "\\.json\\'") :to-be nil))))
+
+  (it "fails every row on a read-only course, before a snapshot or a DELETE"
+    (test-org-canvas--with-batch-delete
+      (let* ((org-canvas-read-only t)
+             (outcomes (org-canvas-diff-delete-rows
+                        '((:feature "Module Items" :id "5787192"))
+                        :results test-org-canvas--diff-reshuffle-results)))
+        (expect (plist-get (car outcomes) :outcome) :to-be 'failed)
+        (expect (plist-get (car outcomes) :reason) :to-match "read-only")
+        (expect (test-org-canvas--diff-deleted-urls) :to-be nil)
+        (expect (directory-files snapshot-dir nil "\\.json\\'") :to-be nil))))
+
+  (it "records a failed read and goes on to the next row"
+    (test-org-canvas--with-batch-delete
+      (let ((mock (symbol-function 'org-canvas-api-request)))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest args)
+                     (if (string-match-p "5787192\\'" url)
+                         (signal 'org-canvas-api-error '("404 Not Found"))
+                       (apply mock method url args))))
+                  ((symbol-function 'org-canvas--log-error) #'ignore))
+          (let ((outcomes (org-canvas-diff-delete-rows
+                           '((:feature "Module Items" :all t))
+                           :results test-org-canvas--diff-reshuffle-results)))
+            (expect (mapcar (lambda (o) (plist-get o :outcome)) outcomes)
+                    :to-equal '(failed deleted))
+            (expect (plist-get (car outcomes) :reason) :to-match "404")
+            (expect (length (test-org-canvas--diff-deleted-urls)) :to-equal 1))))))
+
+  (it "runs the report's own comparison when no results are given"
+    (test-org-canvas--with-batch-delete
+      (let ((collected 0))
+        (cl-letf (((symbol-function 'org-canvas--diff-collect-results)
+                   (lambda () (setq collected (1+ collected))
+                     test-org-canvas--diff-reshuffle-results)))
+          (expect (test-org-canvas--diff-outcome
+                   (org-canvas-diff-delete-rows '((:feature "Module Items" :id "5787193")))
+                   "5787193")
+                  :to-be 'deleted)
+          (expect collected :to-equal 1))))))
+
+(describe "org-canvas-diff-delete's safety check (issue #345)"
+  (it "names an assignment's submissions in its question"
+    (test-org-canvas--with-snapshot-dir
+      (let ((asked nil))
+        (cl-letf (((symbol-function 'y-or-n-p) (lambda (q) (setq asked q) nil))
+                  ((symbol-function 'org-canvas-api-request)
+                   (lambda (method url &rest _)
+                     (push (list method url) test-org-canvas--diff-delete-requests)
+                     (if (string-match-p "submissions" url)
+                         [((submitted_at . "2026-09-01T10:00:00Z"))]
+                       '((id . 701))))))
+          (with-current-buffer (test-org-canvas--diff-report-buffer
+                                '((:name "Assignments" :extra ((:kind extra :title "Session 87" :id "701")))))
+            (test-org-canvas--diff-goto-row 'extra)
+            (org-canvas-diff-delete)))
+        (expect asked :to-equal
+                "Delete Assignments 'Session 87' (id 701) from Canvas, although the assignment has 1 submission(s) and 0 score(s)? ")
+        (expect (test-org-canvas--diff-deletes) :to-be nil)))))
+
+(describe "org-canvas--diff-snapshot-dir (issue #345)"
+  (it "defaults to canvas-snapshots/ under the course directory, resolved when used"
+    (let* ((dir (make-temp-file "diff-course-" t))
+           (org-canvas-directory dir)
+           (org-canvas-diff-delete-snapshot-directory nil))
+      (unwind-protect
+          (expect (org-canvas--diff-snapshot-dir)
+                  :to-equal (expand-file-name "canvas-snapshots/" (file-truename dir)))
+        (delete-directory dir t)))))
 
 (provide 'org-canvas-diff-test)
 ;;; org-canvas-diff-test.el ends here
