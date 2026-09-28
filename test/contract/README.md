@@ -34,7 +34,8 @@ outcomes (hierarchical multi-endpoint create), new-quizzes (different API,
 
 Justified deviations live in `org-canvas-contract--exceptions` in the test —
 each entry documents a field a module emits that the documented operation
-omits but Canvas honors (currently only `module[published]`).
+omits but Canvas honors (currently `module[published]`, `module[skip_content_tags]`
+(issue #47) and `quiz[anonymous_submissions]` (issue #349)).
 
 ## Pull-side contract
 

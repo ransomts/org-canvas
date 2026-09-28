@@ -19,7 +19,7 @@ See you on Monday!
 * Lab 01 Due Date Reminder
 :PROPERTIES:
 :PUBLISHED: true
-:POST_AT:  <2026-09-04 Fri 09:00>
+:DELAYED_POST_AT: <2026-09-04 Fri 09:00>
 :ALLOW_COMMENTS: false
 :CANVAS_ID: 1712672
 :LAST_SYNCED: [2026-02-15 Sun 09:37]
@@ -38,7 +38,7 @@ If you need help, visit office hours or the Data Science Tutoring Lab.
 * Guest Lecture: Data Ethics
 :PROPERTIES:
 :PUBLISHED: true
-:POST_AT:  <2026-10-05 Mon 08:00>
+:DELAYED_POST_AT: <2026-10-05 Mon 08:00>
 :ALLOW_COMMENTS: true
 :SPECIFIC_SECTIONS: Section A - MWF 9:00am,Section B - TTh 1:30pm
 :CANVAS_ID: 1712673

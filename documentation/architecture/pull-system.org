@@ -208,14 +208,19 @@ across all modules.
 | Tier | Modules                                                    |
 |------+------------------------------------------------------------|
 |    0 | Settings                                                   |
-|    1 | Sections, assignment groups, group categories, outcomes,   |
-|      | rubrics, pages, files, discussions, announcements, calendar |
+|    1 | Sections, the pull-only reports (people, gradebook, rubric |
+|      | and quiz results, discussion replies), grading periods and |
+|      | schemes, files (first), assignment groups, group categories |
+|      | and groups, outcomes, rubrics, pages, discussions,          |
+|      | announcements, calendar                                     |
 |    2 | Assignments, quizzes, new quizzes                          |
 |    3 | Modules                                                    |
 
 Tiers ensure dependencies are pulled first. Assignments (tier 2) may
 reference rubrics and assignment groups (tier 1). Modules (tier 3)
-reference everything.
+reference everything.  Files run early in tier 1 so their id-to-path
+map is there when later pulls rewrite Canvas file URLs in their bodies
+(=org-canvas--pull-tiers=, =lisp/org-canvas.el=, is the authority).
 
 ** Overwrite Protection
 
@@ -332,6 +337,14 @@ One Heading".  The
 generated =org-canvas-pull-<feature>= commands also take a prefix
 argument that restricts the pull to ids the file already claims.
 
+A caller without a point — a batch script, another command — pulls
+one heading by name with the generated =org-canvas-pull-<singular>=
+(TARGET &optional BY): a title, or with ='canvas-id= a stamp, never a
+prompt, the file saved; =org-canvas-pull-headings= takes a list and
+returns each heading's =:outcome=.  They run the at-point pull's own
+pieces at the heading found, so everything above holds for them
+(issue #346; decisions.org, "A Pull Takes Its Heading by Name Too").
+
 * Module-Specific Pull Implementations
 
 ** Macro-Based Pull (Simple Modules)
@@ -362,7 +375,13 @@ instead of =/api/v1/=). Items are fetched per-quiz and inserted as L2
 sub-headings.  =org-canvas--new-quiz-pull-item= does the same for one
 quiz, and is the New Quiz's single-item pull (issue #297).  Both write
 the quiz's =instructions= over the text above its first item, the text
-the push sends as =instructions= (issue #309).
+the push sends as =instructions= (issue #309).  An item pulls into a
+heading (the first paragraph of its body) and the prompt under it,
+rewritten in place over an existing item heading with its answer list
+kept (issue #333); a hot-spot item's regions are written as the
+Canvas-owned =HOTSPOTS= and =HOTSPOTS_COUNT=, never pushed (issue
+#365).  The quiz's settings are read back from =quiz_settings= in
+Org's units (issue #321).  See decisions.org for each.
 
 ** Custom Pull: Modules
 
@@ -543,10 +562,16 @@ decides per spec:
 | value has an Org spelling                        | written                                 |
 | value has none (a link to a missing heading)     | logged, left unchanged                  |
 | spec is =:local-only=                            | skipped                                 |
+| spec is =:intent-of= (a declaration, #293)       | skipped                                 |
+| =:remote-known-p= says the second read did not answer (#216) | property left untouched     |
 
 "Default" is what the property means when absent: the registered
 =:default= for a boolean (nil when none is declared), zero for a
 number, nothing at all for the rest (=org-canvas--registry-value-default-p=).
+A boolean declaring =:absent-inherits= has no default, so both values
+are written (a module item's =PUBLISHED=, #323).  A value equal to the
+default is deleted from a heading that carries one, so a re-pull
+removes a boolean Canvas turned off (#320).
 The registry's =:default= must therefore match the parse side's
 fallback — =PUBLISHED= declares =:default t= wherever parse treats an
 absent property as published.
@@ -601,4 +626,3 @@ headings) and informational extras nothing pushes (a file's
 =CONTENT_TYPE= and =SIZE=).  These go through =:after-pull= or the
 module's own pull-item function, which starts by calling
 =org-canvas--pull-item-from-registry=.
-||||||| 8969686
