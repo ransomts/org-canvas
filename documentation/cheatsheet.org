@@ -42,11 +42,11 @@ From Lisp: =(org-canvas-pull-page TITLE)= and the same for each feature (=org-ca
 | =g=   | =org-canvas-pull-submissions=                    | Pull an assignment into a grading file |
 | =Q=   | =org-canvas-submissions-status=                  | Grading queue                        |
 | =o=   | =org-canvas-open-submissions=                    | Open a saved grading file            |
-| =z=   | =org-canvas-pull-quiz-submissions=               | A classic quiz's attempts (read-only) |
+| =q=   | =org-canvas-pull-quiz-submissions=               | A classic quiz's attempts (read-only) |
 | =w=   | =org-canvas-pull-peer-reviews=                   | An assignment's peer reviews (read-only) |
 | =a=   | =org-canvas-submissions-apply-completion-rule=   | Fill empty scores by completion      |
 | =G=   | =org-canvas-submissions-push-grades=             | Push grades                          |
-| =P=   | =org-canvas-submissions-post-grades=             | Post grades to students              |
+| =T=   | =org-canvas-submissions-post-grades=             | Post grades to students              |
 
 ** Tools
 

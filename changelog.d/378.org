@@ -1,0 +1,5 @@
+* Fixed
+- #378 The command menu (=org-canvas-dispatch=) no longer binds =z= and
+  =P= twice each, which left the file-at-point re-upload and the Pull
+  single submenu unreachable.  Under Submissions, a quiz's attempts are
+  now =q= and posting grades to students is =T=.
