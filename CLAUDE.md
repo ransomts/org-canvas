@@ -221,6 +221,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 - a re-pull keeps typed scores and the summary table alone still asks (#281)
 - a resubmission names the attempt its score was given on, read from `submissionHistoriesConnection` for the resubmitted rows only and judged by `gradeMatchesCurrentSubmission` (#352)
 - a script pushes a grading file by id or name through `org-canvas-push-submission-grades` with no prompt, posting only when its own argument says so and the grades landed; `S` confirms through `org-canvas--confirm` and offers to post only interactively (#381)
+- a stranded body fragment (an id-less heading with a pandoc `CLASS`/`DATA-` drawer, or repeating a `#+begin_hN` block of the item above) is a validate warning, and a push refuses to create it unasked: skipped in batch and dry runs, `y-or-n-p` interactively whatever `org-canvas-assume-yes` says, at the runner rather than per module (#391)
 - a survey's results are its answers by text, a graded survey's included, and the quiz-results pull counts what it skipped (#347)
 - a wanted document processor declared, compared and never sent (#293)
 - assignment reads ask for their own dates and quizzes do not need to (#273)

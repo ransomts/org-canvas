@@ -1,0 +1,8 @@
+* Fixed
+- #391 A heading an older pull stranded from an item's body — no
+  =CANVAS_ID=, and a pandoc =:CLASS:= (or =DATA-=) drawer or a title
+  repeating a =#+begin_hN= block of the item above — is no longer
+  created on Canvas by a push. =org-canvas-validate= warns on it as
+  "probably a body fragment from an older pull"; a batch sync or a dry
+  run skips it and names it among the skipped; an interactive push asks
+  first, even under =org-canvas-assume-yes=. Nothing local is changed.

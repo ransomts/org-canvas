@@ -804,6 +804,76 @@ FILE is nil or missing."
            match 'file)))
       title)))
 
+;;;; Body Fragments Stranded by an Older Pull (issue #391)
+;;
+;; Before #175 a heading in a pulled body became an Org headline, which
+;; ended the item: the rest of its body became a sibling heading with no
+;; CANVAS_ID.  A re-pull rewrites each item by id and leaves the fragment
+;; where it is, and an ID-less heading is how a new item is written, so
+;; a push would create it.  Two marks tell a fragment from a new item.
+
+(defconst org-canvas--pandoc-attribute-property-re
+  "\\`\\(?:CLASS\\|DATA-.+\\)\\'"
+  "Match a drawer property that only pandoc writes: an HTML attribute.
+Pandoc renders a heading's class as `:CLASS:' and its data attributes
+under their own names.  `CUSTOM_ID' and `STYLE' are left out, since a
+user writes those too.")
+
+(defun org-canvas--fragment-normalize (text)
+  "Return TEXT with anchors and star entities folded, and whitespace squeezed."
+  (let* ((text (replace-regexp-in-string "<<[^>]*>>" "" text))
+         (text (replace-regexp-in-string "\\\\ast{}" "*" text t t)))
+    (string-trim (replace-regexp-in-string "[[:space:] ]+" " " text))))
+
+(defun org-canvas--fragment-pandoc-attribute ()
+  "Return the first pandoc attribute in the drawer at point, or nil."
+  (seq-find (lambda (key)
+              (string-match-p org-canvas--pandoc-attribute-property-re
+                              (upcase key)))
+            (mapcar #'car (org-entry-properties nil 'standard))))
+
+(defun org-canvas--fragment-block-above-p (title)
+  "Return non-nil when a heading block above point has the text TITLE.
+The search runs back to the nearest heading at or above this
+heading's level: the item a pull rewrote, whose body now carries
+the `#+begin_hN' block the fragment's headline once was."
+  (let ((level (org-outline-level))
+        (end (point))
+        (want (org-canvas--fragment-normalize title)))
+    (save-excursion
+      (while (and (outline-previous-heading)
+                  (> (org-outline-level) level)))
+      (let ((found nil))
+        (while (and (not found)
+                    (re-search-forward
+                     "^[ \t]*#\\+begin_h[1-6][ \t]*\n\\(\\(?:.*\n\\)*?\\)[ \t]*#\\+end_h[1-6]"
+                     end t))
+          (setq found (equal (org-canvas--fragment-normalize
+                              (match-string-no-properties 1))
+                             want)))
+        found))))
+
+(defun org-canvas--body-fragment-reason ()
+  "Return the reason the heading at point seems a stranded body fragment.
+Nil when the heading has a CANVAS_ID or CANVAS_URL, or carries
+neither mark: a drawer property only pandoc writes
+\(`org-canvas--pandoc-attribute-property-re'), or a title that a
+`#+begin_hN' block in the item above repeats.  The reason is a
+phrase for a message, such as \"carries the pandoc attribute CLASS\"."
+  (save-excursion
+    (org-back-to-heading t)
+    (unless (or (org-entry-get (point) "CANVAS_ID")
+                (org-entry-get (point) "CANVAS_URL"))
+      (let ((attribute (org-canvas--fragment-pandoc-attribute))
+            (title (progn (looking-at org-complex-heading-regexp)
+                          (or (match-string-no-properties 4) ""))))
+        (cond
+         (attribute
+          (format "carries the pandoc attribute %s" (upcase attribute)))
+         ((and (not (string-empty-p (string-trim title)))
+               (org-canvas--fragment-block-above-p title))
+          "repeats a heading block of the item above"))))))
+
 ;;;; Diagnostics and Report Output
 
 (defun org-canvas-get-course-name ()
