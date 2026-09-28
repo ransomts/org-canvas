@@ -76,8 +76,9 @@ and `updateDiscussionTopic` mutation (discussions), and the
 document-processor query (assignments, issue #350), the grading
 queue's score statistics query (submissions status, issue #352), the
 posting schedules query (assignments, issue #352), the grading file's
-`updateSubmissionGradeStatus` mutation (submissions, issue #352), and
-the module item home query and `reorderModuleItems` mutation (modules,
+`updateSubmissionGradeStatus` mutation and its comment bank query and
+create, update and delete mutations (submissions, issue #352), and the
+module item home query and `reorderModuleItems` mutation (modules,
 issue #352).
 `org-canvas-graphql-contract-test.el` checks each — every selected field
 exists on its parent type and is not deprecated, every argument exists and
@@ -213,8 +214,10 @@ the score statistics query's `AssignmentFilter`,
 ref), the posting schedule's `ScheduledPost` (issue #352, the same
 ref), the late status mutation's `LatePolicyStatusType`,
 `UpdateSubmissionsGradeStatusInput` and
-`UpdateSubmissionsGradeStatusPayload` (issue #352, the same ref), and
-the module item move's `Module`, `ModuleItem`,
+`UpdateSubmissionsGradeStatusPayload` (issue #352, the same ref), the
+comment bank's `User`, `CommentBankItem`, `CommentBankItemConnection`
+and the create, update and delete inputs and payloads (issue #352, the
+same ref), and the module item move's `Module`, `ModuleItem`,
 `ReorderModuleItemsInput` and `ReorderModuleItemsPayload` (issue #352,
 canvas-lms `1c9f0bb8`):
 

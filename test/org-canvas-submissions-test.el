@@ -2552,8 +2552,11 @@ submission.  Every call is pushed onto `test-entry--calls'."
               ((symbol-function 'org-canvas--html-to-org) #'test-rubric--decode))
       (with-temp-buffer
         (org-mode)
-        (org-canvas--submissions-render-detail
-         "Closer" "1001" (list (test-org-canvas-make-submission)) test-rubric-assignment-described)
+        ;; The Comment Bank heading (#352) would sit between the rubric
+        ;; and the first student; its own specs place it.
+        (let ((org-canvas-submissions-comment-bank-template nil))
+          (org-canvas--submissions-render-detail
+           "Closer" "1001" (list (test-org-canvas-make-submission)) test-rubric-assignment-described))
         (let ((content (buffer-string)))
           (expect content :to-match "^Rubric: \\[\\[https://.*/rubrics/138462\\]\\[on Canvas\\]\\]\n\n\\* Rubric\n\n\\*\\* The Day's Idea Does the Work (2)\nThe answer is built from the session's material\\.\n\nFeed-forward: journal row 2\\.\n| Rating *| Points *| Description *|\n|-+\\+-+\\+-+|\n| Working *| *2 *| The day's idea carries the answer *|\n| Named *| *1 *| Named, but the answer reads the same without it *|\n| Absent *| *0 *| *|\n\n\\*\\* Stakes | Named (4)\n| Rating *| Points *| Description *|\n|-+\\+-+\\+-+|\n| Yes *| *4 *| *|\n\n\\* Adams, Alice\n")
           (expect content :not :to-match "| Criterion *| Points *| Ratings *|")
@@ -3861,6 +3864,332 @@ student's live baseline for the conflict check, nil to skip it."
       (org-canvas--submissions-goto-user 5001)
       (org-canvas--submissions-record-days-late 0)
       (expect (org-entry-get (point) "DAYS_LATE") :to-equal "1"))))
+
+;;;; Comment bank (issue #352)
+
+(defvar test-bank--live nil "The bank `test-bank--run' reads, as (ID . TEXT) pairs.")
+(defvar test-bank--sent nil "What `test-bank--run' sent, as (DOCUMENT . VARIABLES).")
+(defvar test-bank--warnings nil "What `test-bank--run' logged at WARNING.")
+(defvar test-bank--messages nil "What `test-bank--run' said.")
+
+(defun test-bank--file (&rest lines)
+  "Return a grading file with a Comment Bank section of LINES and one student."
+  (concat test-grading-file-header
+          "* Comment Bank\n" (apply #'concat lines)
+          "\n* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 92\n:CANVAS_SCORE: 92\n:END:\n"))
+
+(defun test-bank--reply (kind id text)
+  "Return a KIND mutation reply for the saved comment ID holding TEXT."
+  `((,kind . ((commentBankItem . ((_id . ,id) (comment . ,text))) (errors . :null)))))
+
+(defun test-bank--run (fn &optional mutate)
+  "Call FN with the bank reading `test-bank--live' and MUTATE answering mutations.
+MUTATE is a function of the document and variables; by default a
+create answers id 9001 and an update its own id."
+  (setq test-bank--sent nil test-bank--warnings nil test-bank--messages nil)
+  (cl-letf (((symbol-function 'org-canvas--submissions-self-id) (lambda () "77"))
+            ((symbol-function 'org-canvas--graphql-query)
+             (lambda (_document &optional _variables)
+               `((user . ((commentBankItemsConnection
+                           . ((pageInfo . ((hasNextPage . :json-false) (endCursor . :null)))
+                              (nodes . ,(vconcat (mapcar (lambda (p) `((_id . ,(car p)) (comment . ,(cdr p))))
+                                                         test-bank--live))))))))))
+            ((symbol-function 'org-canvas--graphql-mutate)
+             (lambda (_what document variables)
+               (push (cons document variables) test-bank--sent)
+               (if mutate
+                   (funcall mutate document variables)
+                 (if (eq document org-canvas--submissions-bank-create-mutation)
+                     (test-bank--reply 'createCommentBankItem "9001" (alist-get 'comment variables))
+                   (test-bank--reply 'updateCommentBankItem (alist-get 'id variables)
+                                     (alist-get 'comment variables))))))
+            ((symbol-function 'org-canvas--log-warning)
+             (lambda (_logger fmt &rest args) (push (apply #'format fmt args) test-bank--warnings)))
+            ((symbol-function 'message)
+             (lambda (fmt &rest args) (push (apply #'format fmt args) test-bank--messages)))
+            ((symbol-function 'y-or-n-p) (lambda (_) t)))
+    (funcall fn)))
+
+(defun test-bank--section ()
+  "Return the Comment Bank section's text."
+  (let ((region (org-canvas--submissions-bank-region)))
+    (buffer-substring-no-properties (car region) (cdr region))))
+
+(describe "the Comment Bank heading of a grading file (issue #352)"
+  (it "sits after the rubric and before the first student, with its template"
+    (cl-letf (((symbol-function 'org-canvas--submissions-heading-for-assignment) (lambda (_id) nil)))
+      (with-temp-buffer
+        (org-mode)
+        (org-canvas--submissions-render-detail "HW" "1001" (list (test-org-canvas-make-submission)))
+        (expect (buffer-string)
+                :to-match "^\\* Comment Bank\n# Saved comments for SpeedGrader's comment library[^*]*\n\\* Adams, Alice\n")
+        (expect (org-canvas--submissions-bank-items) :to-be nil)
+        (expect (mapcar #'car (org-canvas--submissions-heading-rows)) :to-equal '("Adams, Alice")))))
+  (it "is left out when the template is nil"
+    (let ((org-canvas-submissions-comment-bank-template nil))
+      (with-temp-buffer
+        (org-mode)
+        (org-canvas--submissions-render-detail "HW" "1001" nil)
+        (expect (buffer-string) :not :to-match "Comment Bank")))))
+
+(describe "org-canvas--submissions-bank-items"
+  (it "reads labelled and new items, several lines each, and skips the template"
+    (with-grading-file (test-bank--file "# a template line\n"
+                                        "- 4821 :: Cite the source.\n"
+                                        "- Show your units,\n  every time.\n\n  Really.\n"
+                                        "- 4822 ::\n"
+                                        "-  \n")
+      (let ((items (org-canvas--submissions-bank-items)))
+        (expect (mapcar (lambda (i) (list (plist-get i :id) (plist-get i :text))) items)
+                :to-equal '(("4821" "Cite the source.")
+                            (nil "Show your units,\nevery time.\n\nReally."))))))
+  (it "answers nil without a section"
+    (with-grading-file test-grading-file-header
+      (expect (org-canvas--submissions-bank-items) :to-be nil)
+      (expect (org-canvas--submissions-bank-pending) :to-be nil))))
+
+(describe "org-canvas--submissions-bank-pending"
+  (it "is the new items and the labelled ones edited since their baseline"
+    (with-grading-file (test-bank--file
+                        (format ":PROPERTIES:\n:CANVAS_COMMENT_BANK: 4821=%s 4822=%s\n:END:\n"
+                                (org-canvas--submissions-bank-digest "Cite the source.")
+                                (org-canvas--submissions-bank-digest "Old text."))
+                        "- 4821 :: Cite the source.\n- 4822 :: New text.\n- 4823 :: Hand labelled.\n- Fresh.\n")
+      (expect (mapcar (lambda (i) (plist-get i :text)) (org-canvas--submissions-bank-pending))
+              :to-equal '("New text." "Hand labelled." "Fresh.")))))
+
+(describe "pushing the comment bank with S"
+  (it "creates a new item after reading the bank, labels it and records its baseline"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (test-bank--file "- Show your units.\n")
+          (setq test-bank--live '(("4821" . "Cite the source.")))
+          (test-bank--run #'org-canvas-submissions-push-grades)
+          (expect (length test-bank--sent) :to-equal 1)
+          (expect (caar test-bank--sent) :to-be org-canvas--submissions-bank-create-mutation)
+          (expect (cdar test-bank--sent)
+                  :to-equal '((courseId . "99999") (assignmentId . "1001") (comment . "Show your units.")))
+          (expect (test-bank--section) :to-match "^- 9001 :: Show your units\\.$")
+          (expect (test-bank--section) :not :to-match "Cite the source")
+          (expect (org-canvas--submissions-bank-baseline)
+                  :to-equal (list (cons "9001" (org-canvas--submissions-bank-digest "Show your units."))))
+          (expect (car test-bank--messages) :to-match "; comment bank: 1 saved")
+          (expect (buffer-modified-p) :to-be nil)
+          ;; A second S has nothing to send.
+          (test-bank--run #'org-canvas-submissions-push-grades)
+          (expect test-bank--sent :to-be nil)
+          (expect (car test-bank--messages) :to-equal "Nothing to push")))))
+  (it "labels an item whose text the bank already holds instead of creating it"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (test-bank--file "- Cite the  source.\n")
+          (setq test-bank--live '(("4821" . "Cite the  source.")))
+          (test-bank--run #'org-canvas-submissions-push-grades)
+          (expect test-bank--sent :to-be nil)
+          (expect (test-bank--section) :to-match "^- 4821 :: Cite the  source\\.$")
+          (expect (car test-bank--messages) :to-match "; comment bank: 1 already in the bank")))))
+  (it "rewrites an item edited here, and leaves one edited in SpeedGrader too"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (test-bank--file
+                            (format ":PROPERTIES:\n:CANVAS_COMMENT_BANK: 4821=%s 4822=%s\n:END:\n"
+                                    (org-canvas--submissions-bank-digest "Old one.")
+                                    (org-canvas--submissions-bank-digest "Old two."))
+                            "- 4821 :: New one.\n- 4822 :: New two.\n- 4823 :: Gone.\n")
+          (setq test-bank--live '(("4821" . "Old one.") ("4822" . "Two, as SpeedGrader has it.")))
+          (test-bank--run #'org-canvas-submissions-push-grades)
+          (expect (length test-bank--sent) :to-equal 1)
+          (expect (cdar test-bank--sent) :to-equal '((id . "4821") (comment . "New one.")))
+          (expect (org-canvas--submissions-bank-baseline)
+                  :to-equal (list (cons "4821" (org-canvas--submissions-bank-digest "New one."))
+                                  (cons "4822" (org-canvas--submissions-bank-digest "Old two."))))
+          (expect test-bank--warnings
+                  :to-contain "[Submissions] Saved comment 4822 was edited here and in SpeedGrader; B reads Canvas's text in")
+          (expect test-bank--warnings
+                  :to-contain "[Submissions] Saved comment 4823 is no longer in the bank; remove its label to create it again")
+          (expect (car test-bank--messages) :to-match "; comment bank: 1 rewritten, 2 skipped")))))
+  (it "records a labelled item Canvas already holds as typed, sending nothing"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (test-bank--file "- 4821 :: Same.\n")
+          (setq test-bank--live '(("4821" . "Same.")))
+          (test-bank--run #'org-canvas-submissions-push-grades)
+          (expect test-bank--sent :to-be nil)
+          (expect (org-canvas--submissions-bank-baseline)
+                  :to-equal (list (cons "4821" (org-canvas--submissions-bank-digest "Same."))))))))
+  (it "leaves a refused item new, warns once, and sends the others"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (test-bank--file "- Refused.\n- Kept.\n")
+          (setq test-bank--live nil)
+          (test-bank--run #'org-canvas-submissions-push-grades
+                          (lambda (_document variables)
+                            (if (equal (alist-get 'comment variables) "Refused.")
+                                '((createCommentBankItem
+                                   . ((commentBankItem . :null)
+                                      (errors . [((attribute . "comment") (message . "is too long"))]))))
+                              (test-bank--reply 'createCommentBankItem "9002" "Kept."))))
+          (expect (test-bank--section) :to-match "^- Refused\\.$")
+          (expect (test-bank--section) :to-match "^- 9002 :: Kept\\.$")
+          (expect (length test-bank--warnings) :to-equal 1)
+          (expect (car test-bank--warnings) :to-match "Saved comment not sent (Refused\\.): .*is too long")
+          (expect (car test-bank--messages) :to-match "; comment bank: 1 saved, 1 failed")))))
+  (it "calls a reply with no saved comment a failure"
+    (expect (org-canvas--submissions-bank-reply-item
+             '((createCommentBankItem . ((commentBankItem . :null) (errors . :null))))
+             'createCommentBankItem)
+            :to-throw 'org-canvas-api-error))
+  (it "sends nothing when the bank cannot be read, and says so"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (test-bank--file "- New.\n")
+          (test-bank--run (lambda ()
+                            (cl-letf (((symbol-function 'org-canvas--submissions-self-id)
+                                       (lambda () (error "HTTP 401"))))
+                              (org-canvas-submissions-push-grades))))
+          (expect test-bank--sent :to-be nil)
+          (expect (test-bank--section) :to-match "^- New\\.$")
+          (expect (car test-bank--warnings) :to-match "Could not read the comment bank (HTTP 401)")
+          (expect (car test-bank--messages) :to-match "; comment bank not read (see the log)")))))
+  (it "labels nothing under a dry run"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (test-bank--file "- New.\n- 4821 :: Edited.\n")
+          (setq test-bank--live '(("4821" . "Before.")))
+          (test-bank--run #'org-canvas-submissions-push-grades
+                          (lambda (&rest _) org-canvas--dry-run-response))
+          (expect (length test-bank--sent) :to-equal 2)
+          (expect (test-bank--section) :to-match "^- New\\.$")
+          (expect (org-canvas--submissions-bank-baseline) :to-be nil)))))
+  (it "names the saved comments in the confirmation"
+    (expect (org-canvas--submissions-describe-push nil '(x) '(a b))
+            :to-equal "1 comment(s) and 2 saved comment(s)")
+    (expect (org-canvas--submissions-describe-bank nil) :to-equal "")
+    (expect (org-canvas--submissions-describe-bank '(:created 0 :adopted 0 :updated 0 :skipped 0 :failed 0))
+            :to-equal "")))
+
+(describe "the Comment Bank across a refresh"
+  (it "comes back as it stood, items and baseline, with no second heading"
+    (with-org-canvas-test-config
+      (with-grading-file (test-bank--file ":PROPERTIES:\n:CANVAS_COMMENT_BANK: 4821=abc\n:END:\n"
+                                          "- 4821 :: Cite the source.\n- Show your units.\n")
+        (test-refresh--from-canvas nil)
+        (expect (how-many "^\\* Comment Bank$" (point-min) (point-max)) :to-equal 1)
+        (expect (test-bank--section)
+                :to-equal "* Comment Bank\n:PROPERTIES:\n:CANVAS_COMMENT_BANK: 4821=abc\n:END:\n- 4821 :: Cite the source.\n- Show your units.\n\n")
+        (expect (buffer-string) :to-match "- Show your units\\.\n\n\\* Adams, Alice"))))
+  (it "is kept when the template is off, before the first student"
+    (with-org-canvas-test-config
+      (let ((org-canvas-submissions-comment-bank-template nil))
+        (with-grading-file (test-bank--file "- Show your units.\n")
+          (test-refresh--from-canvas nil)
+          (expect (buffer-string) :to-match "^\\* Comment Bank\n- Show your units\\.\n\n\\* Adams, Alice"))))))
+
+(describe "org-canvas-submissions-pull-comment-bank"
+  (it "adds what Canvas holds, takes Canvas's text for unedited items, keeps edited ones"
+    (with-org-canvas-test-config
+      (with-grading-file (test-bank--file
+                          (format ":PROPERTIES:\n:CANVAS_COMMENT_BANK: 4821=%s 4822=%s\n:END:\n"
+                                  (org-canvas--submissions-bank-digest "Old one.")
+                                  (org-canvas--submissions-bank-digest "Old two."))
+                          "- 4821 :: Old one.\n- 4822 :: Mine now.\n- Unsent.\n")
+        (org-canvas--submissions-ensure-context)
+        (setq test-bank--live '(("4821" . "One from SpeedGrader.") ("4822" . "Two from SpeedGrader.")
+                                ("4830" . "Brand new,\nover two lines.")))
+        (test-bank--run #'org-canvas-submissions-pull-comment-bank)
+        (expect test-bank--sent :to-be nil)
+        (expect (test-bank--section)
+                :to-match "- 4821 :: One from SpeedGrader\\.\n- 4822 :: Mine now\\.\n- Unsent\\.\n- 4830 :: Brand new,\n  over two lines\\.\n")
+        (expect (car test-bank--messages) :to-equal "Comment bank: 1 added, 1 rewritten from Canvas")
+        (expect (mapcar #'car (org-canvas--submissions-bank-baseline)) :to-equal '("4821" "4822" "4830"))
+        (expect (cdr (assoc "4822" (org-canvas--submissions-bank-baseline)))
+                :to-equal (org-canvas--submissions-bank-digest "Old two."))
+        (expect (buffer-modified-p) :to-be nil))))
+  (it "writes the section when the file has none, and reads an empty bank"
+    (with-org-canvas-test-config
+      (with-grading-file (concat test-grading-file-header
+                                 "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n")
+        (org-canvas--submissions-ensure-context)
+        (setq test-bank--live nil)
+        (let ((org-canvas-submissions-comment-bank-template nil))
+          (test-bank--run #'org-canvas-submissions-pull-comment-bank))
+        (expect (buffer-string) :to-match "^\\* Comment Bank\n\n\\* Adams, Alice")
+        (expect (car test-bank--messages) :to-equal "Comment bank: 0 added, 0 rewritten from Canvas"))))
+  (it "writes the section with its template at the end of a file with no student"
+    (with-org-canvas-test-config
+      (with-grading-file test-grading-file-header
+        (org-canvas--submissions-ensure-context)
+        (setq test-bank--live '(("4821" . "Cite the source.")))
+        (test-bank--run #'org-canvas-submissions-pull-comment-bank)
+        (expect (buffer-string)
+                :to-match "^\\* Comment Bank\n:PROPERTIES:\n:CANVAS_COMMENT_BANK: 4821=[0-9a-f]+\n:END:\n# Saved comments[^*]*\n- 4821 :: Cite the source\\.\n\\'")
+        (expect (mapcar (lambda (i) (plist-get i :id)) (org-canvas--submissions-bank-items))
+                :to-equal '("4821")))))
+  (it "refuses when the bank cannot be read"
+    (with-org-canvas-test-config
+      (with-grading-file (test-bank--file "- New.\n")
+        (org-canvas--submissions-ensure-context)
+        (cl-letf (((symbol-function 'org-canvas--submissions-fetch-bank) #'ignore))
+          (expect (org-canvas-submissions-pull-comment-bank) :to-throw 'user-error)))))
+  (it "refuses outside a submissions buffer"
+    (with-temp-buffer
+      (expect (org-canvas-submissions-pull-comment-bank) :to-throw 'user-error))))
+
+(describe "org-canvas-submissions-delete-comment-bank-item"
+  (it "deletes the item at point on Canvas, then from the section and the baseline"
+    (with-org-canvas-test-config
+      (with-grading-file (test-bank--file ":PROPERTIES:\n:CANVAS_COMMENT_BANK: 4821=abc 4822=def\n:END:\n"
+                                          "- 4821 :: Cite the source.\n- 4822 :: Show your units,\n  always.\n")
+        (re-search-forward "always")
+        (test-bank--run #'org-canvas-submissions-delete-comment-bank-item
+                        (lambda (&rest _)
+                          '((deleteCommentBankItem . ((commentBankItemId . "4822") (errors . :null))))))
+        (expect (cdar test-bank--sent) :to-equal '((id . "4822")))
+        (expect (caar test-bank--sent) :to-be org-canvas--submissions-bank-delete-mutation)
+        (expect (test-bank--section) :not :to-match "4822\\|always")
+        (expect (test-bank--section) :to-match "- 4821 :: Cite the source\\.")
+        (expect (org-canvas--submissions-bank-baseline) :to-equal '(("4821" . "abc")))
+        (expect (car test-bank--messages) :to-equal "Saved comment 4822 deleted"))))
+  (it "keeps the item when Canvas refuses, and under a dry run"
+    (with-org-canvas-test-config
+      (with-grading-file (test-bank--file "- 4821 :: Cite the source.\n")
+        (re-search-forward "Cite")
+        (expect (test-bank--run #'org-canvas-submissions-delete-comment-bank-item
+                                (lambda (&rest _)
+                                  '((deleteCommentBankItem
+                                     . ((commentBankItemId . "4821")
+                                        (errors . [((message . "not yours"))]))))))
+                :to-throw 'org-canvas-api-error)
+        (test-bank--run #'org-canvas-submissions-delete-comment-bank-item
+                        (lambda (&rest _) org-canvas--dry-run-response))
+        (expect (test-bank--section) :to-match "- 4821 :: Cite the source\\.")
+        (expect (car test-bank--messages) :to-equal "Dry run: saved comment 4821 left in place"))))
+  (it "asks first, and does nothing on no"
+    (with-org-canvas-test-config
+      (with-grading-file (test-bank--file "- 4821 :: Cite the source.\n")
+        (re-search-forward "Cite")
+        (let ((sent nil))
+          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) nil))
+                    ((symbol-function 'org-canvas--graphql-mutate) (lambda (&rest _) (setq sent t))))
+            (org-canvas-submissions-delete-comment-bank-item))
+          (expect sent :to-be nil)))))
+  (it "refuses off a labelled item, and outside a submissions buffer"
+    (with-grading-file (test-bank--file "- New.\n")
+      (re-search-forward "New")
+      (expect (org-canvas-submissions-delete-comment-bank-item) :to-throw 'user-error)
+      (goto-char (point-max))
+      (expect (org-canvas-submissions-delete-comment-bank-item) :to-throw 'user-error))
+    (with-temp-buffer
+      (expect (org-canvas-submissions-delete-comment-bank-item) :to-throw 'user-error))))
+
+(describe "org-canvas--submissions-self-id"
+  (it "reads the token owner's id, and refuses an answer without one"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (expect (org-canvas--submissions-self-id) :to-equal "12345")
+        (expect-api-called 'GET "/api/v1/users/self"))
+      (cl-letf (((symbol-function 'org-canvas-api-request) (lambda (&rest _) '((name . "x")))))
+        (expect (org-canvas--submissions-self-id) :to-throw 'org-canvas-api-error)))))
 
 (provide 'org-canvas-submissions-test)
 ;;; org-canvas-submissions-test.el ends here

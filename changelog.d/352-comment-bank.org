@@ -1,0 +1,11 @@
+* Added
+- #352 A grading file has a =* Comment Bank= section for SpeedGrader's
+  comment library, one list item per saved comment.  =S= saves the new
+  ones after reading the library, labelling an item whose text it
+  already holds instead of saving it twice, and rewrites an item edited
+  here unless it was edited in SpeedGrader too; =B=
+  (=org-canvas-submissions-pull-comment-bank=) reads the library in.
+  Removing an item never deletes it on Canvas: =x=
+  (=org-canvas-submissions-delete-comment-bank-item=) does, after
+  asking.  A refresh keeps the section; =org-canvas-submissions-comment-bank-template=
+  set to nil leaves it out of new files (section 3 of the issue).

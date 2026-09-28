@@ -239,6 +239,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 - stamp adoption for a CHANGED row with nothing to compare (#257)
 - submission commands take their target as an argument and prompt only on nil (#280)
 - the accommodations table sits below a quiz's own text and never reaches the description from any layout (#298)
+- the comment bank is a `* Comment Bank` section of the grading file, read before any create so an item Canvas holds is labelled rather than created twice, edits sided by a `CANVAS_COMMENT_BANK` baseline, never pruned, deleted only by `x` (#352)
 - the drift report pairs module items by content as the sync adopts them, declaring the modules.el parser rather than requiring it (#299)
 - the grading queue counts rows, never columns (#283), and shows Canvas's mean and median beside the counts, one read for the course (#352)
 - the roster marks who left on Canvas's word and never on a misread list (#290)
