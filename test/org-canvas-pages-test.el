@@ -935,4 +935,124 @@ Content.
         (point))
        (expect (org-entry-get (point) "FRONT_PAGE") :to-be nil)))))
 
+;;;; Scheduled publication (issue #379)
+
+(describe "page PUBLISH_AT (issue #379)"
+  (it "parses PUBLISH_AT as publish_at"
+    (with-temp-org-buffer
+     "* Week 3
+:PROPERTIES:
+:PUBLISH_AT: <2026-10-05 Mon 08:00>
+:END:
+Notes.
+"
+     (org-back-to-heading)
+     (expect (plist-get (org-canvas--page-parse-entry) :publish_at)
+             :to-equal "2026-10-05T08:00:00Z")))
+
+  (it "sends publish_at and never published beside it"
+    ;; Canvas clears publish_at on any request that changes the
+    ;; published state, so the default PUBLISHED: true would publish
+    ;; a waiting page at once.
+    (dolist (published '(t nil))
+      (let* ((data (list :title "Week 3" :body "" :published published
+                         :publish_at "2026-10-05T08:00:00Z"))
+             (wiki-page (gethash "wiki_page"
+                                 (org-canvas--page-build-payload data))))
+        (expect (gethash "publish_at" wiki-page)
+                :to-equal "2026-10-05T08:00:00Z")
+        (expect (gethash "published" wiki-page 'absent) :to-be 'absent))))
+
+  (it "sends published, and no publish_at, on an unscheduled page"
+    (let* ((data '(:title "Syllabus" :body "" :published t))
+           (wiki-page (gethash "wiki_page"
+                               (org-canvas--page-build-payload data))))
+      (expect (gethash "published" wiki-page) :to-be t)
+      (expect (gethash "publish_at" wiki-page 'absent) :to-be 'absent)))
+
+  (it "leaves PUBLISHED out of the comparison on a scheduled page"
+    (with-temp-org-buffer
+     "* Week 3
+:PROPERTIES:
+:PUBLISH_AT: <2026-10-05 Mon 08:00>
+:END:
+"
+     (org-back-to-heading)
+     (expect (org-canvas--page-published-comparable-p (point) nil) :to-be nil))
+    (with-temp-org-buffer
+     "* Syllabus
+:PROPERTIES:
+:PUBLISHED: true
+:END:
+"
+     (org-back-to-heading)
+     (expect (org-canvas--page-published-comparable-p (point) nil)
+             :to-be-truthy)))
+
+  (it "reports no drift for a page still waiting for its time"
+    (require 'org-canvas-diff)
+    (with-temp-org-buffer
+     "* Week 3
+:PROPERTIES:
+:CANVAS_URL: week-3
+:PUBLISH_AT: <2026-10-05 Mon 08:00>
+:END:
+"
+     (org-back-to-heading)
+     (let ((specs (plist-get (gethash "pages" org-canvas--property-registry)
+                             :properties)))
+       (expect (org-canvas--diff-compare-fields
+                specs (point)
+                '((url . "week-3") (published . :json-false)
+                  (publish_at . "2026-10-05T08:00:00Z")))
+               :to-be nil)
+       (expect (car (car (org-canvas--diff-compare-fields
+                          specs (point)
+                          '((url . "week-3") (published . :json-false)
+                            (publish_at . "2026-10-06T08:00:00Z")))))
+               :to-equal "PUBLISH_AT"))))
+
+  (it "pulls a scheduled page's PUBLISH_AT and drops its PUBLISHED"
+    (org-canvas--pull-summary-reset)
+    (with-temp-org-buffer
+     "* Week 3
+:PROPERTIES:
+:CANVAS_URL: week-3
+:PUBLISHED: false
+:END:
+"
+     (org-back-to-heading)
+     (cl-letf (((symbol-function 'org-canvas-api-request)
+                (lambda (&rest _) '((body . ""))))
+               ((symbol-function 'org-canvas--pull-insert-body)
+                (lambda (&rest _) nil)))
+       (org-canvas--page-pull-item
+        '((url . "week-3") (title . "Week 3") (published . :json-false)
+          (publish_at . "2026-10-05T08:00:00Z"))
+        (point))
+       (expect (org-entry-get (point) "PUBLISH_AT")
+               :to-equal "<2026-10-05 Mon 08:00>")
+       (expect (org-entry-get (point) "PUBLISHED") :to-be nil))))
+
+  (it "pulls an unscheduled page's PUBLISHED and clears a stale PUBLISH_AT"
+    (org-canvas--pull-summary-reset)
+    (with-temp-org-buffer
+     "* Draft
+:PROPERTIES:
+:CANVAS_URL: draft
+:PUBLISH_AT: <2026-10-05 Mon 08:00>
+:END:
+"
+     (org-back-to-heading)
+     (cl-letf (((symbol-function 'org-canvas-api-request)
+                (lambda (&rest _) '((body . ""))))
+               ((symbol-function 'org-canvas--pull-insert-body)
+                (lambda (&rest _) nil)))
+       (org-canvas--page-pull-item
+        '((url . "draft") (title . "Draft") (published . :json-false)
+          (publish_at))
+        (point))
+       (expect (org-entry-get (point) "PUBLISHED") :to-equal "false")
+       (expect (org-entry-get (point) "PUBLISH_AT") :to-be nil)))))
+
 ;;; org-canvas-pages-test.el ends here

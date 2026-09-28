@@ -172,6 +172,7 @@ Question: =TYPE= + =POINTS= + optional =OUTCOME= link.  Types: choice, true-fals
 | =EDITING_ROLES=    | string | teachers, students, members, public |
 | =TODO_DATE=        | ts     | Student to-do date                  |
 | =NOTIFY_OF_UPDATE= | bool   | Write-only                          |
+| =PUBLISH_AT=       | ts     | Canvas publishes it then; no PUBLISHED sent |
 
 ** modules.org
 

@@ -38,7 +38,7 @@ pull-at-point and prune.
 | Modules           | yes  | yes      | yes  | yes    | yes      | items reconciled inside finalize; prerequisites, sequential progress, unlock dates, completion requirements; an item moved between modules keeps its id, by GraphQL |
 | New Quizzes       | yes  | yes      | yes  | yes    | no       | items sync inside finalize; the feature list keys on the assignment; pull-at-point and adopt through a pull-only entry (#297) |
 | Outcomes          | yes  | yes      | yes  | yes    | yes      | two levels, groups then outcomes                                |
-| Pages             | yes  | yes      | yes  | yes    | yes      | front page protected; to-do date                                |
+| Pages             | yes  | yes      | yes  | yes    | yes      | front page protected; to-do date; scheduled publish (#379)      |
 | Quizzes (classic) | yes  | yes      | yes  | yes    | yes      | questions and groups inline; a bank may be named, never managed |
 | Rubrics           | yes  | yes      | yes  | yes    | yes      | criteria, ratings, outcome links; associations via assignments  |
 | Sections          | no   | no       | yes  | no     | no       | pull-only, so overrides can name them                           |
@@ -215,7 +215,11 @@ legacy id, and whether SpeedGrader lists an item saved with an
 =assignmentId= on other columns, are for the first live use.  So is
 the refresh's attempt history read (#352): the rule that finds the
 graded attempt by =gradeMatchesCurrentSubmission= follows the schema's
-description, not an observed resubmission.
+description, not an observed resubmission.  A page's =PUBLISH_AT=
+(#379) follows the canvas-lms source (=ScheduledPublication=): whether
+the instance has Scheduled Page Publication on, and that a push
+without =published= schedules a page rather than leaving it as it
+was, are for the first live push of one.
 
 The browse commands' addresses (#292) were checked against the
 canvas-lms source rather than opened (decisions.org, "Every Address
