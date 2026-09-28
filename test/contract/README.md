@@ -91,6 +91,9 @@ keys, scalar kinds, a `Boolean!` that is never nil, a list that is a vector).
   fields with type references, arguments and deprecation reason (objects),
   input fields with nullability and default (inputs), values (enums), plus
   provenance. **Committed**; CI reads it and never touches a schema.
+- `instance-schema.graphql` — the printed SDL of the whole schema the last
+  run read, headed by the same provenance (issue #352).  **Gitignored**;
+  see "The instance's schema as SDL" below.
 
 ## Standing procedure: regenerate at each semester boundary
 
@@ -113,11 +116,58 @@ child's process environment only: never a command line, so never the
 shell history, and never the script's output (it prints the token's
 length, nothing more).  A 401 means the token is expired or revoked.
 
+The same run also writes `test/contract/instance-schema.graphql`, the
+whole introspected schema printed as SDL; it is not committed (below).
+
 Read the diff before committing.  Types and fields *added* around the
 documents are Canvas moving on and cost nothing; a field the documents use
 that is *removed* or `@deprecated` fails the test, which names the
 document and the field, and that is a code change to make before pushing
 anything that sends it.
+
+## The instance's schema as SDL (issue #352)
+
+The fixture holds only the types the documents reach, so it cannot
+answer "does this instance have a field for X?".  The instance can have
+more than the public `schema.graphql`: Clemson's had 18 more types in
+September 2026 (Study Notes, `AiExperience`, `RubricSortInput`, the
+`updateSubmissionsCommentReadState` mutation).  So every introspection
+through `scripts/graphql-introspect.el` also writes the whole schema,
+printed as SDL with its descriptions, to
+`test/contract/instance-schema.graphql` — the reference to grep before
+writing a new document:
+
+```bash
+grep -n -A20 '^type Assignment ' test/contract/instance-schema.graphql
+```
+
+Printing the canvas-lms SDL the same way (sorted, one form) makes the
+two diffable (the provenance header and a `@specifiedBy` aside, a schema
+with nothing extra diffs empty):
+
+```bash
+python3 test/contract/extract-canvas-graphql-contract.py --sdl /tmp/schema.graphql --ref <sha> \
+    --sdl-out /tmp/canvas-lms.graphql --out /tmp/unused.json
+diff /tmp/canvas-lms.graphql test/contract/instance-schema.graphql
+```
+
+It is gitignored rather than committed, for three reasons: it is a
+snapshot of *one* instance (another school's regeneration would rewrite
+it wholesale), it drifts with every Canvas release while nothing in the
+repository reads it, and at some 250 kB a copy per semester would be the
+bulk of the history for a file no test or CI job needs.  The committed
+fixture is the contract; the SDL is a local aid, regenerated with it.
+
+The extractor writes it whenever it is given `--sdl-out` (with no path,
+the default above; with one, anywhere), from either schema source.  The
+SDL is written before the documents are validated, so it is there to
+grep when one of them fails.  To print only the SDL without touching the
+fixture, point `--out` somewhere disposable:
+
+```bash
+CANVAS_API_TOKEN=$(cat ~/.canvas-token) python3 test/contract/extract-canvas-graphql-contract.py \
+    --introspect https://canvas.example.edu --sdl-out --out /tmp/unused.json
+```
 
 ## Two schema sources
 

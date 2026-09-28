@@ -368,7 +368,7 @@ grep -rn buttercup-pending test/                              # Specs skipped on
 scripts/test-each-file.sh                                     # Every test file alone (~2.5 min); --shard K/N for one CI shard
 scripts/test-shard.sh 2/3                                     # The files of CI shard 2 of 3 (eldev test $(scripts/test-shard.sh 2/3))
 scripts/test-each-file.sh --timings > test/shard-weights.txt  # Refresh the shard weights when shards drift apart
-eldev exec -f scripts/graphql-introspect.el                   # Refresh the GraphQL fixture from the live instance, once per semester (test/contract/README.md)
+eldev exec -f scripts/graphql-introspect.el                   # Refresh the GraphQL fixture from the live instance, once per semester; also writes the gitignored SDL test/contract/instance-schema.graphql (test/contract/README.md)
 ```
 
 Every test file must pass on its own (`scripts/test-each-file.sh`, CI's sharded `isolation` job; #260): test-helper loads the whole package, and a spec that sets global state — the log level above all — restores it.

@@ -1,0 +1,7 @@
+* Added
+- #352 Refreshing the GraphQL contract fixture from the instance
+  (=eldev exec -f scripts/graphql-introspect.el=) also writes the whole
+  introspected schema as SDL to =test/contract/instance-schema.graphql=,
+  a gitignored local reference to grep for what the instance offers
+  beyond the public canvas-lms =schema.graphql=.  The extractor takes
+  =--sdl-out [PATH]= for the same from either schema source.
