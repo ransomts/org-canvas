@@ -199,6 +199,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 - a New Quiz item is pushed only as a type it can build: fill-in-the-blank invalid, hot-spot pull-only, an unknown TYPE a failed item (#337, #340)
 - a New Quiz pull writes its instructions where the push reads them, and adoption stamps `assignment_id` first (#309)
 - a New Quiz pulls whole through a pull-only entry (`org-canvas-register-pull-feature`) kept out of the feature registry (#297)
+- a posting schedule (`POST_GRADES_AT`, `POST_COMMENTS_AT`) rides the post-policy mutation: both times or neither, manual posting implied, a schedule Canvas holds resent rather than wiped, read by its own course-wide GraphQL query (#352)
 - a pull takes its heading by name too, with no prompt, through the at-point pull's own pieces (#346)
 - a push compares what Canvas stored with what it sent, and a new survey says whether it is anonymous (#349)
 - a push takes its heading by name and the at-point runtime records its outcome (#287)
@@ -369,7 +370,7 @@ grep -rn buttercup-pending test/                              # Specs skipped on
 scripts/test-each-file.sh                                     # Every test file alone (~2.5 min); --shard K/N for one CI shard
 scripts/test-shard.sh 2/3                                     # The files of CI shard 2 of 3 (eldev test $(scripts/test-shard.sh 2/3))
 scripts/test-each-file.sh --timings > test/shard-weights.txt  # Refresh the shard weights when shards drift apart
-eldev exec -f scripts/graphql-introspect.el                   # Refresh the GraphQL fixture from the live instance, once per semester (test/contract/README.md)
+eldev exec -f scripts/graphql-introspect.el                   # Refresh the GraphQL fixture from the live instance, once per semester; also writes the gitignored SDL test/contract/instance-schema.graphql (test/contract/README.md)
 ```
 
 Every test file must pass on its own (`scripts/test-each-file.sh`, CI's sharded `isolation` job; #260): test-helper loads the whole package, and a spec that sets global state — the log level above all — restores it.

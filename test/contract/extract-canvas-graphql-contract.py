@@ -27,6 +27,11 @@ Two schema sources, one preferred:
     python3 test/contract/extract-canvas-graphql-contract.py \\
         --sdl schema.graphql --ref 318f2ad0495dd4d1e2fd3657497fbf71c91bda13
 
+    # Either source, plus the printed SDL of the schema read (a local,
+    # greppable reference; gitignored, see test/contract/README.md).
+    ... --sdl-out                  # test/contract/instance-schema.graphql
+    ... --sdl-out /tmp/schema.graphql
+
 Requires graphql-core (pip install graphql-core).
 """
 import argparse
@@ -55,6 +60,7 @@ try:
         get_introspection_query,
         get_named_type,
         parse,
+        print_schema,
         validate,
         visit,
     )
@@ -64,6 +70,11 @@ except ImportError:
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 OUT = os.path.join(HERE, "canvas-graphql-contract.json")
+# The printed SDL of the schema a run read, a local reference to grep.
+# Gitignored: it is the whole schema of one instance on one day (some
+# 250 kB, drifting every Canvas release), and the committed fixture
+# above is what the test reads.
+SDL_OUT = os.path.join(HERE, "instance-schema.graphql")
 
 # The lisp files that carry a GraphQL document.  Each document is a
 # one-line string literal beginning with `query (' or `mutation ('; the
@@ -99,7 +110,7 @@ def load_schema_introspection(base_url):
     token = os.environ.get("CANVAS_API_TOKEN")
     if not token:
         sys.exit("--introspect needs CANVAS_API_TOKEN in the environment")
-    body = json.dumps({"query": get_introspection_query(descriptions=False)}).encode()
+    body = json.dumps({"query": get_introspection_query(descriptions=True)}).encode()
     request = urllib.request.Request(
         base_url.rstrip("/") + "/api/graphql",
         data=body,
@@ -117,6 +128,14 @@ def load_schema_introspection(base_url):
     if "errors" in payload:
         sys.exit("introspection failed: " + json.dumps(payload["errors"]))
     return build_client_schema(payload["data"])
+
+
+def write_sdl(schema, path, provenance):
+    """Write SCHEMA as printed SDL to PATH, headed by its PROVENANCE."""
+    header = "".join(f"# {key}: {value}\n" for key, value in sorted(provenance.items()))
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(header + "\n" + print_schema(schema) + "\n")
+    print(f"wrote {path}: {len(schema.type_map)} types")
 
 
 def reached_types(schema, documents):
@@ -223,6 +242,11 @@ def main():
     parser.add_argument("--supplement", action="store_true",
                         help="keep the fixture at --out and add only the types it "
                              "lacks, recording where they came from")
+    parser.add_argument("--sdl-out", metavar="PATH", nargs="?", const=SDL_OUT,
+                        help="also write the schema read as printed SDL "
+                             f"(default path {SDL_OUT}); written before the "
+                             "documents are validated, so it is there to grep "
+                             "when one fails")
     args = parser.parse_args()
 
     if args.sdl:
@@ -234,6 +258,8 @@ def main():
         host = re.sub(r"^https?://", "", args.introspect).rstrip("/")
         provenance = {"source": "introspection", "instance": host}
     provenance["generated"] = datetime.date.today().isoformat()
+    if args.sdl_out:
+        write_sdl(schema, args.sdl_out, provenance)
 
     documents = read_documents()
     names = reached_types(schema, documents)
