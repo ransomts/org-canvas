@@ -51,6 +51,15 @@
    },
    {
     "generated": "2026-09-27",
+    "ref": "318f2ad0495dd4d1e2fd3657497fbf71c91bda13",
+    "repository": "https://github.com/instructure/canvas-lms",
+    "source": "sdl",
+    "types": [
+     "ScheduledPost"
+    ]
+   },
+   {
+    "generated": "2026-09-27",
     "ref": "1c9f0bb8013ed69c4f2efe11fd483025469b7e6c",
     "repository": "https://github.com/instructure/canvas-lms",
     "source": "sdl",
@@ -3900,6 +3909,26 @@
      "args": {},
      "deprecated": null,
      "type": "Module"
+    }
+   },
+   "kind": "OBJECT"
+  },
+  "ScheduledPost": {
+   "fields": {
+    "_id": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID!"
+    },
+    "postCommentsAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime!"
+    },
+    "postGradesAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime!"
     }
    },
    "kind": "OBJECT"

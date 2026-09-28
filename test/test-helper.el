@@ -488,8 +488,9 @@ Call inside a `describe' block.  OPTS is a plist:
 Creates a temp buffer with CANVAS_ID: 1, mocks html-to-org as identity,
 calls PULL-FN, and asserts (expect (org-entry-get (point) PROPERTY) MATCHER VALUE).
 Paged list fetches (e.g. the assignment overrides sub-fetch) are mocked
-to return nil, and the course-wide document-processor read answers as
-refused, so no pull-item can reach the network guard."
+to return nil, and the course-wide document-processor and posting
+schedule reads answer as refused, so no pull-item can reach the network
+guard."
   (declare (indent 2))
   `(with-temp-org-buffer
     "* Test\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
@@ -498,22 +499,31 @@ refused, so no pull-item can reach the network guard."
       (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
                  (lambda (&rest _) nil))
                 ((symbol-function 'org-canvas--assignment-processors-fetch)
+                 (lambda () 'refused))
+                ((symbol-function 'org-canvas--assignment-schedules-fetch)
                  (lambda () 'refused)))
-        (let ((org-canvas--assignment-processors-cache nil))
+        (let ((org-canvas--assignment-processors-cache nil)
+              (org-canvas--assignment-schedules-cache nil))
           (funcall ,pull-fn ,response (point)))
         (expect (org-entry-get (point) ,property) ,matcher ,value)))))
 
-(defun test-org-canvas-stub-processors (&optional map)
-  "Answer the course-wide document-processor read with MAP for one spec.
+(defun test-org-canvas-stub-processors (&optional map schedules)
+  "Answer the course-wide GraphQL reads of assignments for one spec.
 MAP is a hash of assignment id (a string) to its processor nodes; nil
 answers as a refused read, so every assignment falls back to its REST
-`asset_processors'.  Call from a `before-each', beside an `after-each'
-of `org-canvas--assignment-processors-forget': the spy ends with the
+`asset_processors'.  SCHEDULES is the same for the posting schedules
+\(issue #352), a hash of assignment id to its `scheduledPost'; nil
+answers as refused, so no POST_GRADES_AT or POST_COMMENTS_AT is
+touched.  Call from a `before-each', beside an `after-each' of
+`org-canvas--assignment-processors-forget': the spies end with the
 spec, and forgetting here means no earlier spec's answer is reused
 \(issue #350)."
   (org-canvas--assignment-processors-forget)
+  (org-canvas--assignment-schedules-forget)
   (spy-on 'org-canvas--assignment-processors-fetch
-          :and-return-value (or map 'refused)))
+          :and-return-value (or map 'refused))
+  (spy-on 'org-canvas--assignment-schedules-fetch
+          :and-return-value (or schedules 'refused)))
 
 ;;;; Assertion Helpers
 

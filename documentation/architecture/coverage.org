@@ -51,7 +51,7 @@ pull-at-point and prune.
 | Overrides         | yes  | no       | yes  | no     | no       | dates for a section, a group or some students, reconciled from a table under each assignment |
 | Quiz accommodations | yes | yes    | yes  | no     | no       | extra attempts, time and unlock per student, reconciled from a table under each classic quiz; zeros clear |
 | Course settings   | yes  | no       | yes  | no     | no       | see the settings list below; the post policy goes by GraphQL    |
-| Post policies     | yes  | no       | yes  | no     | no       | course and per-assignment grade post policy; posting grades from a grading file |
+| Post policies     | yes  | no       | yes  | no     | no       | course and per-assignment grade post policy, and an assignment's scheduled posting of grades and comments; posting grades from a grading file |
 | Discussion checkpoints | yes | no    | yes  | no     | no       | the five CHECKPOINT_ properties on a discussion, by GraphQL; the flag is account-level, so an instance without it pulls none and refuses the push |
 | Conversations     | yes  | yes      | no   | no     | yes      | push-only, on command and never in a tier: messages.org sends to students, a section, a group, the course or yourself; a sent heading is stamped and never resent; nothing is read back |
 
