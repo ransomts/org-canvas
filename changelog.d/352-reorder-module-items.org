@@ -1,0 +1,10 @@
+* Changed
+- #352 A module item moved under another module heading keeps its Canvas
+  id: the sync moves it with Canvas's GraphQL =reorderModuleItems=, one
+  item per call, whichever of the two modules syncs first, and falls back
+  to creating it in the new module and deleting the old copy only when
+  the move fails, naming the reason.  Canvas drops the item's completion
+  requirement on a move, so the sync sets the heading's requirement again
+  right after it.  A dry run names each move and
+  sends nothing.  The drift report's RELOCATE and MOVED rows and the
+  stamp commands now say the next sync moves the item, keeping its id.

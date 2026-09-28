@@ -2,6 +2,7 @@
  "documents": [
   "lisp/org-canvas-assignments.el",
   "lisp/org-canvas-discussions.el",
+  "lisp/org-canvas-modules.el",
   "lisp/org-canvas-settings.el",
   "lisp/org-canvas-submissions-status.el",
   "lisp/org-canvas-submissions.el"
@@ -66,6 +67,18 @@
      "LatePolicyStatusType",
      "UpdateSubmissionsGradeStatusInput",
      "UpdateSubmissionsGradeStatusPayload"
+    ]
+   },
+   {
+    "generated": "2026-09-27",
+    "ref": "1c9f0bb8013ed69c4f2efe11fd483025469b7e6c",
+    "repository": "https://github.com/instructure/canvas-lms",
+    "source": "sdl",
+    "types": [
+     "Module",
+     "ModuleItem",
+     "ReorderModuleItemsInput",
+     "ReorderModuleItemsPayload"
     ]
    }
   ]
@@ -2503,6 +2516,227 @@
    },
    "kind": "INPUT_OBJECT"
   },
+  "Module": {
+   "fields": {
+    "_id": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID!"
+    },
+    "completionRequirements": {
+     "args": {},
+     "deprecated": null,
+     "type": "[ModuleCompletionRequirement!]"
+    },
+    "createdAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime"
+    },
+    "estimatedDuration": {
+     "args": {},
+     "deprecated": null,
+     "type": "ISO8601Duration"
+    },
+    "hasActiveOverrides": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean!"
+    },
+    "id": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID!"
+    },
+    "moduleItems": {
+     "args": {},
+     "deprecated": null,
+     "type": "[ModuleItem!]"
+    },
+    "moduleItemsConnection": {
+     "args": {
+      "after": "String",
+      "before": "String",
+      "filter": "ModuleItemFilter",
+      "first": "Int",
+      "last": "Int"
+     },
+     "deprecated": null,
+     "type": "ModuleItemConnection"
+    },
+    "moduleItemsTotalCount": {
+     "args": {},
+     "deprecated": null,
+     "type": "Int!"
+    },
+    "name": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "position": {
+     "args": {},
+     "deprecated": null,
+     "type": "Int"
+    },
+    "prerequisites": {
+     "args": {},
+     "deprecated": null,
+     "type": "[ModulePrerequisite!]"
+    },
+    "progression": {
+     "args": {},
+     "deprecated": null,
+     "type": "ModuleProgression"
+    },
+    "published": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "requireSequentialProgress": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "requirementCount": {
+     "args": {},
+     "deprecated": null,
+     "type": "Int"
+    },
+    "submissionStatistics": {
+     "args": {},
+     "deprecated": null,
+     "type": "ModuleStatistics"
+    },
+    "unlockAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime"
+    },
+    "updatedAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime"
+    }
+   },
+   "kind": "OBJECT"
+  },
+  "ModuleItem": {
+   "fields": {
+    "_id": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID!"
+    },
+    "content": {
+     "args": {},
+     "deprecated": null,
+     "type": "ModuleItemInterface"
+    },
+    "createdAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime"
+    },
+    "estimatedDuration": {
+     "args": {},
+     "deprecated": null,
+     "type": "ISO8601Duration"
+    },
+    "id": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID!"
+    },
+    "indent": {
+     "args": {},
+     "deprecated": null,
+     "type": "Int"
+    },
+    "masterCourseRestrictions": {
+     "args": {},
+     "deprecated": null,
+     "type": "ModuleItemMasterCourseRestriction"
+    },
+    "masteryPaths": {
+     "args": {},
+     "deprecated": null,
+     "type": "ModuleItemMasteryPathInfo"
+    },
+    "module": {
+     "args": {},
+     "deprecated": null,
+     "type": "Module"
+    },
+    "moduleItemUrl": {
+     "args": {},
+     "deprecated": null,
+     "type": "URL"
+    },
+    "newTab": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "next": {
+     "args": {},
+     "deprecated": null,
+     "type": "ModuleItem"
+    },
+    "nextItemsConnection": {
+     "args": {
+      "after": "String",
+      "before": "String",
+      "first": "Int",
+      "last": "Int"
+     },
+     "deprecated": null,
+     "type": "ModuleItemConnection"
+    },
+    "position": {
+     "args": {},
+     "deprecated": null,
+     "type": "Int"
+    },
+    "previous": {
+     "args": {},
+     "deprecated": null,
+     "type": "ModuleItem"
+    },
+    "previousItemsConnection": {
+     "args": {
+      "after": "String",
+      "before": "String",
+      "first": "Int",
+      "last": "Int"
+     },
+     "deprecated": null,
+     "type": "ModuleItemConnection"
+    },
+    "published": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "title": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "updatedAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime"
+    },
+    "url": {
+     "args": {},
+     "deprecated": null,
+     "type": "URL"
+    }
+   },
+   "kind": "OBJECT"
+  },
   "Mutation": {
    "fields": {
     "acceptEnrollmentInvitation": {
@@ -3645,6 +3879,56 @@
      },
      "deprecated": null,
      "type": "User"
+    }
+   },
+   "kind": "OBJECT"
+  },
+  "ReorderModuleItemsInput": {
+   "fields": {
+    "courseId": {
+     "deprecated": null,
+     "hasDefault": false,
+     "type": "ID!"
+    },
+    "itemIds": {
+     "deprecated": null,
+     "hasDefault": false,
+     "type": "[ID!]!"
+    },
+    "moduleId": {
+     "deprecated": null,
+     "hasDefault": false,
+     "type": "ID!"
+    },
+    "oldModuleId": {
+     "deprecated": null,
+     "hasDefault": false,
+     "type": "ID"
+    },
+    "targetPosition": {
+     "deprecated": null,
+     "hasDefault": false,
+     "type": "Int"
+    }
+   },
+   "kind": "INPUT_OBJECT"
+  },
+  "ReorderModuleItemsPayload": {
+   "fields": {
+    "errors": {
+     "args": {},
+     "deprecated": null,
+     "type": "[ValidationError!]"
+    },
+    "module": {
+     "args": {},
+     "deprecated": null,
+     "type": "Module"
+    },
+    "oldModule": {
+     "args": {},
+     "deprecated": null,
+     "type": "Module"
     }
    },
    "kind": "OBJECT"

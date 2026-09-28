@@ -68,7 +68,9 @@
     org-canvas--assignment-schedules-query
     org-canvas--submissions-reports-query
     org-canvas--submissions-status-statistics-query
-    org-canvas--submissions-late-status-mutation)
+    org-canvas--submissions-late-status-mutation
+    org-canvas--module-item-home-query
+    org-canvas--module-items-move-mutation)
   "The documents, by symbol.  A new one is added here and to the
 extractor's SOURCES when its file is new.")
 
@@ -509,6 +511,7 @@ page of discussions."
       (expect (gethash "generated" provenance) :to-match "\\`[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}\\'"))
     (expect (gethash "documents" org-canvas-graphql-contract--data)
             :to-equal '("lisp/org-canvas-assignments.el" "lisp/org-canvas-discussions.el"
+                        "lisp/org-canvas-modules.el"
                         "lisp/org-canvas-settings.el"
                         "lisp/org-canvas-submissions-status.el"
                         "lisp/org-canvas-submissions.el"))
@@ -740,6 +743,31 @@ page of discussions."
         ;; answers the current grading period's assignments only.
         (expect (json-encode (alist-get 'filter (cdar sent)))
                 :to-equal "{\"gradingPeriodId\":null}"))))
+  (it "org-canvas--module-item-move-send sends what its mutation declares (issue #352)"
+    (with-org-canvas-test-config
+      (let ((sent (org-canvas-graphql-contract--capturing
+                    (org-canvas--module-item-move-send 55 100 "200" 3 "Check 3")
+                    (org-canvas--module-item-move-send "56" "100" 200 nil "Check 4"))))
+        (expect (length sent) :to-equal 2)
+        (dolist (call sent)
+          (expect (car call) :to-be org-canvas--module-items-move-mutation)
+          (expect (org-canvas-graphql-contract--check-variables (car call) (cdr call))
+                  :to-equal nil))
+        ;; Only the moved item is listed, and the position is always an Int.
+        (expect (alist-get 'itemIds (cdar sent)) :to-equal ["55"])
+        (expect (alist-get 'position (cdar sent)) :to-equal 3)
+        (expect (alist-get 'itemIds (cdadr sent)) :to-equal ["56"])
+        (expect (alist-get 'position (cdadr sent)) :to-equal 1)
+        (expect (alist-get 'oldModuleId (cdadr sent)) :to-equal "100"))))
+  (it "org-canvas--module-item-home sends what its query declares (issue #352)"
+    (with-org-canvas-test-config
+      (let ((sent (org-canvas-graphql-contract--capturing
+                    (org-canvas--module-item-home 55))))
+        (expect (length sent) :to-equal 1)
+        (expect (caar sent) :to-be org-canvas--module-item-home-query)
+        (expect (org-canvas-graphql-contract--check-variables (caar sent) (cdar sent))
+                :to-equal nil))))
+
   (it "org-canvas--submissions-push-late-status sends what its mutation declares"
     (with-org-canvas-test-config
       (let ((sent (org-canvas-graphql-contract--capturing
