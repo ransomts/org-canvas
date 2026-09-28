@@ -67,7 +67,11 @@
     org-canvas--assignment-processors-query
     org-canvas--submissions-reports-query
     org-canvas--submissions-status-statistics-query
-    org-canvas--submissions-late-status-mutation)
+    org-canvas--submissions-late-status-mutation
+    org-canvas--submissions-bank-query
+    org-canvas--submissions-bank-create-mutation
+    org-canvas--submissions-bank-update-mutation
+    org-canvas--submissions-bank-delete-mutation)
   "The documents, by symbol.  A new one is added here and to the
 extractor's SOURCES when its file is new.")
 
@@ -719,6 +723,38 @@ page of discussions."
           (expect (org-canvas-graphql-contract--enum-member-p
                    (org-canvas-graphql-contract--type "LatePolicyStatusType") status)
                   :to-be-truthy)))))
+  (it "the comment bank's mutations send what they declare"
+    (with-org-canvas-test-config
+      (let ((sent (org-canvas-graphql-contract--capturing
+                    (org-canvas--submissions-bank-create 1001 "Show your units.")
+                    (org-canvas--submissions-bank-update "4821" "Cite the source.")
+                    (org-canvas--submissions-bank-delete "4821"))))
+        (expect (mapcar #'car sent)
+                :to-equal (list org-canvas--submissions-bank-create-mutation
+                                org-canvas--submissions-bank-update-mutation
+                                org-canvas--submissions-bank-delete-mutation))
+        (dolist (call sent)
+          (expect (org-canvas-graphql-contract--check-variables (car call) (cdr call))
+                  :to-equal nil)))))
+  (it "org-canvas--submissions-fetch-bank sends what its query declares, with and without a cursor"
+    (with-org-canvas-test-config
+      (let ((pages 0) (sent nil))
+        (cl-letf (((symbol-function 'org-canvas--submissions-self-id) (lambda () "77"))
+                  ((symbol-function 'org-canvas--graphql-query)
+                   (lambda (document &optional variables)
+                     (push (cons document variables) sent)
+                     (cl-incf pages)
+                     `((user . ((commentBankItemsConnection
+                                 . ((pageInfo . ((hasNextPage . ,(if (= pages 1) t :json-false))
+                                                 (endCursor . ,(if (= pages 1) "Mg" :null))))
+                                    (nodes . [])))))))))
+          (org-canvas--submissions-fetch-bank))
+        (expect (length sent) :to-equal 2)
+        (dolist (call sent)
+          (expect (car call) :to-be org-canvas--submissions-bank-query)
+          (expect (org-canvas-graphql-contract--check-variables (car call) (cdr call)) :to-equal nil))
+        (expect (assq 'cursor (cdr (car (last sent)))) :to-be nil)
+        (expect (alist-get 'cursor (cdar sent)) :to-equal "Mg"))))
   (it "org-canvas--discussion-push-checkpoints sends what its mutation declares"
     (with-org-canvas-test-config
       (let ((sent (org-canvas-graphql-contract--capturing

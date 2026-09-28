@@ -47,7 +47,9 @@
 ;; d  download attachments for the student at point
 ;; D  download attachments for every student
 ;; c  post a comment on the student at point
-;; S  push grade changes
+;; S  push grade changes (and new saved comments)
+;; B  read the comment bank into the Comment Bank heading
+;; x  delete the saved comment at point from the bank
 ;;
 ;; PRIVACY
 ;; =======
@@ -123,6 +125,17 @@ the heading."
   :type '(choice (const :tag "No notes heading" nil) string)
   :group 'org-canvas)
 
+(defcustom org-canvas-submissions-comment-bank-template
+  "# Saved comments for SpeedGrader's comment library, one list item each.
+# S creates the new ones and B reads the library in; an item labelled
+# with a number is on Canvas already.  Removing an item here never
+# deletes it there: x on the item does, after asking."
+  "Text placed under a grading file's Comment Bank heading at pull time.
+Written as Org comment lines, so it is never sent.  Nil leaves the
+heading out of a new grading file; one a file already has is kept."
+  :type '(choice (const :tag "No Comment Bank heading" nil) string)
+  :group 'org-canvas)
+
 (defcustom org-canvas-submissions-late-window-days 2
   "Days of lateness the completion rule still gives full credit for.
 `org-canvas-submissions-apply-completion-rule' scores a submission later
@@ -172,6 +185,8 @@ its baseline in each heading's CANVAS_SCORE property instead.")
     (define-key map (kbd "S") #'org-canvas-submissions-push-grades)
     (define-key map (kbd "P") #'org-canvas-submissions-post-grades)
     (define-key map (kbd "D") #'org-canvas-submissions-download-all-attachments)
+    (define-key map (kbd "B") #'org-canvas-submissions-pull-comment-bank)
+    (define-key map (kbd "x") #'org-canvas-submissions-delete-comment-bank-item)
     map)
   "Keymap for `org-canvas-submissions-mode'.")
 
@@ -1053,6 +1068,7 @@ assignment object when at hand, supplies the rubric header."
     (when-let* ((reports (org-canvas--submissions-reports-line submissions)))
       (insert reports "\n"))
     (org-canvas--submissions-render-rubric-header assignment)
+    (org-canvas--submissions-render-bank-heading)
     (insert "\n")
     (let ((criteria (org-canvas--submissions-rubric-criteria assignment)))
       (dolist (sub sorted)
@@ -1389,6 +1405,530 @@ heading is marked CONFLICT, as a typed score is (issue #281)."
               (or (plist-get change :old-late-status) "no status")
               (plist-get change :late-status))
     ""))
+
+;;;; Comment Bank (issue #352)
+
+;; SpeedGrader's comment library is a list of saved comments a grader
+;; picks from instead of typing.  Canvas keeps it per user and course,
+;; readable as `User.commentBankItemsConnection' and written by the
+;; create, update and delete CommentBankItem mutations.  A grading file
+;; keeps it under a level-1 `* Comment Bank' heading, one list item per
+;; saved comment: `- 4821 :: text' for one on Canvas, labelled with its
+;; id, and `- text' for one to create.  The heading's
+;; CANVAS_COMMENT_BANK property holds each labelled item's digest as
+;; last read or written, the baseline that tells an item edited here
+;; from one edited in SpeedGrader.  The section is the grader's: a
+;; refresh carries it over as it stands, S sends what is new or edited
+;; after reading the bank (an item whose text the bank already holds
+;; is labelled, not created twice), B reads the bank in, and nothing
+;; is ever deleted on Canvas but by x on the item.
+
+(defconst org-canvas--submissions-bank-heading "* Comment Bank"
+  "Heading the grading file's saved comments live under.
+A level-1 heading with no USER_ID, which is no student.")
+
+(defconst org-canvas--submissions-bank-query
+  "query ($userId: ID!, $courseId: ID!, $cursor: String) { user(id: $userId) { commentBankItemsConnection(courseId: $courseId, first: 100, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { _id comment } } } }"
+  "The GraphQL query that reads the grader's saved comments in the course.
+One page per request.  Checked against the Canvas schema by the
+GraphQL contract test (issue #269), which names it by this symbol.")
+
+(defconst org-canvas--submissions-bank-create-mutation
+  "mutation ($courseId: ID!, $assignmentId: ID, $comment: String!) { createCommentBankItem(input: {courseId: $courseId, assignmentId: $assignmentId, comment: $comment}) { commentBankItem { _id comment } errors { attribute message } } }"
+  "The GraphQL mutation that saves a comment in the grader's library.
+Checked by the GraphQL contract test, which names it by this symbol.")
+
+(defconst org-canvas--submissions-bank-update-mutation
+  "mutation ($id: ID!, $comment: String!) { updateCommentBankItem(input: {id: $id, comment: $comment}) { commentBankItem { _id comment } errors { attribute message } } }"
+  "The GraphQL mutation that rewrites a saved comment.
+Checked by the GraphQL contract test, which names it by this symbol.")
+
+(defconst org-canvas--submissions-bank-delete-mutation
+  "mutation ($id: ID!) { deleteCommentBankItem(input: {id: $id}) { commentBankItemId errors { attribute message } } }"
+  "The GraphQL mutation that removes a saved comment from the library.
+Sent only by `org-canvas-submissions-delete-comment-bank-item'.
+Checked by the GraphQL contract test, which names it by this symbol.")
+
+(defconst org-canvas--submissions-bank-item-regexp
+  "^-[ \t]+\\(?:\\([0-9]+\\)[ \t]+::\\(?:[ \t]+\\|$\\)\\)?\\(.*\\)$"
+  "Match the first line of a Comment Bank item.
+Group 1 is the saved comment's id when the item is labelled with one,
+group 2 the first line of its text.  Its other lines follow, indented,
+up to the next item.")
+
+(defun org-canvas--submissions-bank-region ()
+  "Return (START . END) of the Comment Bank section, heading included, or nil."
+  (save-excursion
+    (save-restriction
+      (widen)
+      (goto-char (point-min))
+      (when (re-search-forward
+             (concat "^" (regexp-quote org-canvas--submissions-bank-heading) "[ \t]*$")
+             nil t)
+        (let ((start (line-beginning-position)))
+          (cons start (if (re-search-forward "^\\* " nil t)
+                          (line-beginning-position)
+                        (point-max))))))))
+
+(defun org-canvas--submissions-bank-digest (text)
+  "Return the short digest of a saved comment's TEXT."
+  (substring (sha1 (or text "")) 0 12))
+
+(defun org-canvas--submissions-bank-item-text (start end)
+  "Return the text of the Comment Bank item between START and END.
+START is where its first line's text begins.  Org comment lines are
+dropped and the rest normalized as a Rubric comment is
+\(`org-canvas--submissions-comment-text')."
+  (org-canvas--submissions-comment-text
+   (mapconcat #'identity
+              (seq-remove (lambda (l) (string-match-p "\\`[ \t]*#\\(?: \\|\\'\\)" l))
+                          (split-string (buffer-substring-no-properties start end) "\n"))
+              "\n")))
+
+(defun org-canvas--submissions-bank-items ()
+  "Return the Comment Bank items as plists, in order, or nil without any.
+Each has :id (a string, nil for an item to create), :text, :start (the
+item's first character) and :end (the end of its last non-blank line).
+An item with no text is left out."
+  (when-let* ((region (org-canvas--submissions-bank-region)))
+    (save-excursion
+      (goto-char (car region))
+      (forward-line 1)
+      (let ((items nil))
+        (while (re-search-forward org-canvas--submissions-bank-item-regexp (cdr region) t)
+          (let* ((id (match-string-no-properties 1))
+                 (start (match-beginning 0))
+                 (text-start (match-beginning 2))
+                 (next (save-excursion
+                         (forward-line 1)
+                         (if (re-search-forward "^-[ \t]" (cdr region) t)
+                             (match-beginning 0)
+                           (cdr region))))
+                 (end (save-excursion (goto-char next)
+                                      (skip-chars-backward " \t\n" start)
+                                      (point)))
+                 (text (org-canvas--submissions-bank-item-text text-start (max text-start end))))
+            (when text
+              (push (list :id id :text text :start start :end (max text-start end)) items))
+            (goto-char next)))
+        (nreverse items)))))
+
+(defun org-canvas--submissions-bank-baseline ()
+  "Return the CANVAS_COMMENT_BANK baseline as an alist of (ID . DIGEST)."
+  (when-let* ((region (org-canvas--submissions-bank-region))
+              (value (save-excursion (goto-char (car region))
+                                     (org-entry-get (point) "CANVAS_COMMENT_BANK"))))
+    (delq nil (mapcar (lambda (pair)
+                        (when (string-match "\\`\\([0-9]+\\)=\\([0-9a-f]+\\)\\'" pair)
+                          (cons (match-string 1 pair) (match-string 2 pair))))
+                      (split-string value)))))
+
+(defun org-canvas--submissions-bank-set-baseline (baseline)
+  "Write BASELINE, an alist of (ID . DIGEST), as CANVAS_COMMENT_BANK.
+Only the ids an item still carries are kept; none leaves no property."
+  (when-let* ((region (org-canvas--submissions-bank-region)))
+    (let* ((ids (delq nil (mapcar (lambda (i) (plist-get i :id))
+                                  (org-canvas--submissions-bank-items))))
+           (kept (seq-filter (lambda (pair) (member (car pair) ids)) baseline))
+           (value (mapconcat (lambda (pair) (format "%s=%s" (car pair) (cdr pair)))
+                             (sort (copy-sequence kept)
+                                   (lambda (a b) (< (string-to-number (car a))
+                                                    (string-to-number (car b)))))
+                             " ")))
+      (save-excursion
+        (goto-char (car region))
+        (if (string-empty-p value)
+            (org-entry-delete (point) "CANVAS_COMMENT_BANK")
+          (org-entry-put (point) "CANVAS_COMMENT_BANK" value))))))
+
+(defun org-canvas--submissions-bank-pending-p (item baseline)
+  "Return non-nil when ITEM is still to send, against BASELINE.
+An item without an id is to create; a labelled one whose text no
+longer digests to its BASELINE entry, or has none, is to compare."
+  (or (null (plist-get item :id))
+      (not (equal (cdr (assoc (plist-get item :id) baseline))
+                  (org-canvas--submissions-bank-digest (plist-get item :text))))))
+
+(defun org-canvas--submissions-bank-pending ()
+  "Return the Comment Bank items a push has to send, in order."
+  (let ((baseline (org-canvas--submissions-bank-baseline)))
+    (seq-filter (lambda (item) (org-canvas--submissions-bank-pending-p item baseline))
+                (org-canvas--submissions-bank-items))))
+
+(defun org-canvas--submissions-self-id ()
+  "Return the token owner's Canvas user id as a string.
+The comment bank is theirs: Canvas keeps it per user."
+  (let ((me (org-canvas-api-request
+             'GET (format "%s/api/v1/users/self"
+                          (replace-regexp-in-string "/+\\'" "" org-canvas-base-url)))))
+    (or (and (alist-get 'id me) (format "%s" (alist-get 'id me)))
+        (org-canvas--signal 'org-canvas-api-error "users/self answered no id"))))
+
+(defun org-canvas--submissions-bank-page (user-id cursor bank)
+  "Read one page of USER-ID's saved comments after CURSOR into BANK.
+BANK is a hash from id to text.  Return the next page's cursor, or nil
+after the last."
+  (let* ((data (org-canvas--graphql-query
+                org-canvas--submissions-bank-query
+                (append (list (cons 'userId user-id)
+                              (cons 'courseId (format "%s" org-canvas-course-id)))
+                        (when cursor (list (cons 'cursor cursor))))))
+         (connection (alist-get 'commentBankItemsConnection (alist-get 'user data)))
+         (info (alist-get 'pageInfo connection)))
+    (dolist (node (append (org-canvas--alist-get-non-null 'nodes connection) nil))
+      (let ((id (org-canvas--alist-get-non-null '_id node))
+            (text (org-canvas--submissions-comment-text
+                   (org-canvas--alist-get-non-null 'comment node))))
+        (when (and id text)
+          (puthash (format "%s" id) text bank))))
+    (and (eq (alist-get 'hasNextPage info) t)
+         (org-canvas--alist-get-non-null 'endCursor info))))
+
+(defun org-canvas--submissions-fetch-bank ()
+  "Return the grader's saved comments in the course, or nil when unreadable.
+The value is a list of (ID . TEXT), in the order Canvas answers, the
+text normalized as an item's is.  A failed read is one warning and
+nil; an empty bank is `empty', so the two are never confused."
+  (condition-case err
+      (let ((user-id (org-canvas--submissions-self-id))
+            (bank (make-hash-table :test 'equal))
+            (cursor nil)
+            (items nil))
+        (while (setq cursor (org-canvas--submissions-bank-page user-id cursor bank)))
+        (maphash (lambda (id text) (push (cons id text) items)) bank)
+        (or (nreverse items) 'empty))
+    (error
+     (org-canvas--log-warning org-canvas--logger
+       "[Submissions] Could not read the comment bank (%s); nothing sent to it"
+       (error-message-string err))
+     nil)))
+
+(defun org-canvas--submissions-bank-reply-item (data field)
+  "Return the saved comment FIELD of DATA carries, as (ID . TEXT).
+DATA is a create or update mutation's reply.  Errors the payload
+carries signal `org-canvas-api-error' naming them; a reply with no
+item is an error too, since there is no id to label the item with."
+  (let* ((payload (alist-get field data))
+         (errors (org-canvas--alist-get-non-null 'errors payload))
+         (item (org-canvas--alist-get-non-null 'commentBankItem payload)))
+    (when (and errors (> (length errors) 0))
+      (org-canvas--signal 'org-canvas-api-error
+        "%s: %s" field (org-canvas--graphql-errors-message errors)))
+    (unless (and (consp item) (org-canvas--alist-get-non-null '_id item))
+      (org-canvas--signal 'org-canvas-api-error "%s answered no saved comment" field))
+    (cons (format "%s" (alist-get '_id item))
+          (org-canvas--submissions-comment-text (alist-get 'comment item)))))
+
+(defun org-canvas--submissions-bank-create (assignment-id text)
+  "Save TEXT in the bank for ASSIGNMENT-ID; return (ID . TEXT) or `dry-run'."
+  (let ((data (org-canvas--graphql-mutate
+               (format "save a comment in the comment bank: %s" (truncate-string-to-width text 40))
+               org-canvas--submissions-bank-create-mutation
+               (list (cons 'courseId (format "%s" org-canvas-course-id))
+                     (cons 'assignmentId (format "%s" assignment-id))
+                     (cons 'comment text)))))
+    (if (org-canvas--dry-run-response-p data)
+        'dry-run
+      (org-canvas--submissions-bank-reply-item data 'createCommentBankItem))))
+
+(defun org-canvas--submissions-bank-update (id text)
+  "Rewrite the saved comment ID as TEXT; return (ID . TEXT) or `dry-run'."
+  (let ((data (org-canvas--graphql-mutate
+               (format "rewrite saved comment %s" id)
+               org-canvas--submissions-bank-update-mutation
+               (list (cons 'id id) (cons 'comment text)))))
+    (if (org-canvas--dry-run-response-p data)
+        'dry-run
+      (org-canvas--submissions-bank-reply-item data 'updateCommentBankItem))))
+
+(defun org-canvas--submissions-bank-label (item id)
+  "Label ITEM, an item without an id, with ID in the buffer."
+  (save-excursion
+    (goto-char (plist-get item :start))
+    (when (looking-at "-[ \t]+")
+      (replace-match (format "- %s :: " id) t t))))
+
+(defun org-canvas--submissions-bank-send-new (item live assignment-id)
+  "Send ITEM, which has no id, unless its text is in LIVE already.
+LIVE is the bank as `org-canvas--submissions-fetch-bank' read it;
+ASSIGNMENT-ID names the column a created comment is saved for.
+Return (KIND ID . TEXT), KIND `adopted' or `created', or nil under a
+dry run."
+  (let ((twin (rassoc (plist-get item :text) live)))
+    (if twin
+        (cons 'adopted twin)
+      (let ((made (org-canvas--submissions-bank-create assignment-id (plist-get item :text))))
+        (unless (eq made 'dry-run)
+          (cons 'created made))))))
+
+(defun org-canvas--submissions-bank-send-edit (item live baseline)
+  "Send ITEM, a labelled item, when it was edited here and not on Canvas.
+LIVE and BASELINE are the bank as read and the file's baseline.
+Return (KIND ID . TEXT): `same' when Canvas holds the text already,
+`updated' when it was rewritten, `gone' when the bank no longer has
+the id, `conflict' when Canvas's text moved off the baseline too; nil
+under a dry run."
+  (let* ((id (plist-get item :id))
+         (remote (cdr (assoc id live)))
+         (base (cdr (assoc id baseline))))
+    (cond ((null remote) (cons 'gone (cons id nil)))
+          ((equal remote (plist-get item :text)) (cons 'same (cons id remote)))
+          ((and base (not (equal base (org-canvas--submissions-bank-digest remote))))
+           (cons 'conflict (cons id remote)))
+          (t (let ((made (org-canvas--submissions-bank-update id (plist-get item :text))))
+               (unless (eq made 'dry-run)
+                 (cons 'updated made)))))))
+
+(defun org-canvas--submissions-bank-send-item (item live baseline assignment-id)
+  "Send one pending ITEM; return its outcome, or (failed nil . TEXT).
+LIVE, BASELINE and ASSIGNMENT-ID as the two senders take them.  A
+failed request is one warning, and the item stays pending."
+  (condition-case err
+      (if (plist-get item :id)
+          (org-canvas--submissions-bank-send-edit item live baseline)
+        (org-canvas--submissions-bank-send-new item live assignment-id))
+    (error
+     (org-canvas--log-warning org-canvas--logger
+       "[Submissions] Saved comment not sent (%s): %s"
+       (truncate-string-to-width (plist-get item :text) 40)
+       (error-message-string err))
+     (cons 'failed (cons nil (plist-get item :text))))))
+
+(defun org-canvas--submissions-bank-warn (outcome)
+  "Log the warning for OUTCOME of a labelled item, if it needs one."
+  (pcase (car outcome)
+    ('gone (org-canvas--log-warning org-canvas--logger
+             "[Submissions] Saved comment %s is no longer in the bank; remove its label to create it again"
+             (cadr outcome)))
+    ('conflict (org-canvas--log-warning org-canvas--logger
+                 "[Submissions] Saved comment %s was edited here and in SpeedGrader; B reads Canvas's text in"
+                 (cadr outcome)))))
+
+(defconst org-canvas--submissions-bank-count-keys
+  '((created . :created) (adopted . :adopted) (updated . :updated)
+    (gone . :skipped) (conflict . :skipped) (failed . :failed))
+  "The count each outcome of a Comment Bank item adds to.
+An item Canvas already held as typed (`same') counts nowhere.")
+
+(defun org-canvas--submissions-bank-record-one (item outcome baseline counts)
+  "Record OUTCOME of ITEM in the buffer, BASELINE and COUNTS.
+Return BASELINE, which may have gained an entry; COUNTS is changed in
+place."
+  (let ((kind (car outcome))
+        (key (cdr (assq (car outcome) org-canvas--submissions-bank-count-keys))))
+    (org-canvas--submissions-bank-warn outcome)
+    (when (memq kind '(created adopted))
+      (org-canvas--submissions-bank-label item (cadr outcome)))
+    (when key
+      (plist-put counts key (1+ (plist-get counts key))))
+    (when (memq kind '(created adopted updated same))
+      (setf (alist-get (cadr outcome) baseline nil nil #'equal)
+            (org-canvas--submissions-bank-digest (plist-get item :text))))
+    baseline))
+
+(defun org-canvas--submissions-bank-record (pending outcomes)
+  "Record OUTCOMES of PENDING items in the buffer; return the counts.
+Items are labelled and the baseline rewritten, last item first so
+the positions of the others hold; an outcome of nil (a dry run)
+records nothing.  The counts are a plist of :created, :adopted,
+:updated, :skipped (gone from Canvas or edited there too) and
+:failed."
+  (let ((baseline (org-canvas--submissions-bank-baseline))
+        (counts (list :created 0 :adopted 0 :updated 0 :skipped 0 :failed 0)))
+    (cl-mapc (lambda (item outcome)
+               (when outcome
+                 (setq baseline (org-canvas--submissions-bank-record-one
+                                 item outcome baseline counts))))
+             (reverse pending) (reverse outcomes))
+    (org-canvas--submissions-bank-set-baseline baseline)
+    counts))
+
+(defun org-canvas--submissions-push-bank (assignment-id)
+  "Send the Comment Bank's new and edited items for ASSIGNMENT-ID.
+The bank is read first, so an item whose text it already holds is
+labelled with that id rather than created twice (the duplicate
+guard's rule, Hard Rule 20), and an item edited in SpeedGrader since
+it was last read is not overwritten.  Nothing is deleted.  Return the
+counts of `org-canvas--submissions-bank-record', or nil when nothing
+was pending or the bank could not be read."
+  (when-let* ((pending (org-canvas--submissions-bank-pending))
+              (live (org-canvas--submissions-fetch-bank)))
+    (let* ((live (if (eq live 'empty) nil live))
+           (baseline (org-canvas--submissions-bank-baseline))
+           (outcomes (mapcar (lambda (item)
+                               (org-canvas--submissions-bank-send-item
+                                item live baseline assignment-id))
+                             pending)))
+      (org-canvas--submissions-bank-record pending outcomes))))
+
+(defun org-canvas--submissions-describe-bank (counts &optional pending)
+  "Return the push message note for the bank COUNTS, or \"\".
+With PENDING items and no COUNTS the bank could not be read, and the
+note says so."
+  (if (null counts)
+      (if pending "; comment bank not read (see the log)" "")
+    (let ((parts (delq nil (list (org-canvas--submissions-count-part counts :created "saved")
+                                 (org-canvas--submissions-count-part counts :adopted "already in the bank")
+                                 (org-canvas--submissions-count-part counts :updated "rewritten")
+                                 (org-canvas--submissions-count-part counts :skipped "skipped")
+                                 (org-canvas--submissions-count-part counts :failed "failed")))))
+      (if parts
+          (format "; comment bank: %s" (string-join parts ", "))
+        ""))))
+
+(defun org-canvas--submissions-count-part (counts key label)
+  "Return \"N LABEL\" for KEY of COUNTS, or nil when it is 0."
+  (let ((n (plist-get counts key)))
+    (and n (> n 0) (format "%d %s" n label))))
+
+(defun org-canvas--submissions-render-bank-heading ()
+  "Insert the Comment Bank heading with its template, when enabled."
+  (when org-canvas-submissions-comment-bank-template
+    (insert "\n" org-canvas--submissions-bank-heading "\n"
+            org-canvas-submissions-comment-bank-template "\n")))
+
+(defun org-canvas--submissions-bank-carryover ()
+  "Return the Comment Bank section as it stands, heading included, or nil."
+  (when-let* ((region (org-canvas--submissions-bank-region)))
+    (let ((text (string-trim-right
+                 (buffer-substring-no-properties (car region) (cdr region)))))
+      (concat text "\n"))))
+
+(defun org-canvas--submissions-restore-bank (text)
+  "Put TEXT, a carried Comment Bank section, back in the buffer.
+It replaces the section a render wrote, or goes before the first
+student when there is none."
+  (save-excursion
+    (let ((region (org-canvas--submissions-bank-region)))
+      (if region
+          (progn (delete-region (car region) (cdr region))
+                 (goto-char (car region)))
+        (goto-char (point-min))
+        (if (re-search-forward "^[ \t]*:USER_ID:" nil t)
+            (org-back-to-heading t)
+          (goto-char (point-max))))
+      (insert text)
+      (when (looking-at "^\\*") (insert "\n")))))
+
+(defun org-canvas--submissions-bank-merge (live)
+  "Bring LIVE, the bank as read, into the Comment Bank section.
+A labelled item unedited here takes Canvas's text; an item Canvas
+holds that the section lacks is added, labelled, at the end.  Items
+edited here, and those Canvas no longer holds, are left as they are.
+Return (:added N :rewritten N)."
+  (let* ((baseline (org-canvas--submissions-bank-baseline))
+         (items (org-canvas--submissions-bank-items))
+         (added 0) (rewritten 0))
+    (dolist (item (reverse items))
+      (let ((remote (cdr (assoc (plist-get item :id) live))))
+        (when (and remote
+                   (not (equal remote (plist-get item :text)))
+                   (not (org-canvas--submissions-bank-pending-p item baseline)))
+          (save-excursion
+            (delete-region (plist-get item :start) (plist-get item :end))
+            (goto-char (plist-get item :start))
+            (insert (org-canvas--submissions-item (plist-get item :id) remote)))
+          (cl-incf rewritten))))
+    (let ((known (mapcar (lambda (i) (plist-get i :id)) items))
+          (region (org-canvas--submissions-bank-region)))
+      (save-excursion
+        (goto-char (cdr region))
+        (skip-chars-backward " \t\n" (car region))
+        (dolist (pair live)
+          (unless (member (car pair) known)
+            (insert "\n" (org-canvas--submissions-item (car pair) (cdr pair)))
+            (cl-incf added)))))
+    (dolist (pair live)
+      (let ((item (cl-find (car pair) (org-canvas--submissions-bank-items)
+                           :key (lambda (i) (plist-get i :id)) :test #'equal)))
+        (when (and item (equal (plist-get item :text) (cdr pair)))
+          (setf (alist-get (car pair) baseline nil nil #'equal)
+                (org-canvas--submissions-bank-digest (cdr pair))))))
+    (org-canvas--submissions-bank-set-baseline baseline)
+    (list :added added :rewritten rewritten)))
+
+(defun org-canvas--submissions-ensure-bank-section ()
+  "Return the Comment Bank region, writing an empty section when missing."
+  (or (org-canvas--submissions-bank-region)
+      (progn
+        (org-canvas--submissions-restore-bank
+         (concat org-canvas--submissions-bank-heading "\n"
+                 (if org-canvas-submissions-comment-bank-template
+                     (concat org-canvas-submissions-comment-bank-template "\n")
+                   "")))
+        (org-canvas--submissions-bank-region))))
+
+;;;###autoload
+(defun org-canvas-submissions-pull-comment-bank ()
+  "Read the grader's comment bank into this grading file's Comment Bank.
+Every saved comment of the course's library comes in as an item
+labelled with its id; one already there takes Canvas's text unless it
+was edited here since it was last read.  Nothing is sent and nothing
+is removed from the section."
+  (interactive)
+  (unless org-canvas-submissions-mode
+    (user-error "Not in a submissions buffer"))
+  (org-canvas--submissions-ensure-context)
+  (let ((live (org-canvas--submissions-fetch-bank)))
+    (unless live
+      (user-error "Could not read the comment bank; see the log"))
+    (let ((inhibit-read-only t))
+      (org-canvas--submissions-ensure-bank-section)
+      (let ((counts (org-canvas--submissions-bank-merge (if (eq live 'empty) nil live))))
+        (when buffer-file-name (save-buffer))
+        (message "Comment bank: %d added, %d rewritten from Canvas"
+                 (plist-get counts :added) (plist-get counts :rewritten))))))
+
+(defun org-canvas--submissions-bank-item-at-point ()
+  "Return the Comment Bank item point is on, or nil."
+  (let ((pos (point)))
+    (cl-find-if (lambda (item)
+                  (and (<= (save-excursion (goto-char (plist-get item :start))
+                                           (line-beginning-position))
+                           pos)
+                       (<= pos (save-excursion (goto-char (plist-get item :end))
+                                               (line-end-position)))))
+                (org-canvas--submissions-bank-items))))
+
+(defun org-canvas--submissions-bank-delete (id)
+  "Delete the saved comment ID from the bank; return non-nil when sent."
+  (let* ((data (org-canvas--graphql-mutate
+                (format "delete saved comment %s" id)
+                org-canvas--submissions-bank-delete-mutation
+                (list (cons 'id id))))
+         (payload (and (not (org-canvas--dry-run-response-p data))
+                       (alist-get 'deleteCommentBankItem data)))
+         (errors (org-canvas--alist-get-non-null 'errors payload)))
+    (when (and errors (> (length errors) 0))
+      (org-canvas--signal 'org-canvas-api-error
+        "deleteCommentBankItem: %s" (org-canvas--graphql-errors-message errors)))
+    (and payload t)))
+
+;;;###autoload
+(defun org-canvas-submissions-delete-comment-bank-item ()
+  "Delete the saved comment at point from the comment bank, after asking.
+The item must carry the id of a comment on Canvas; it is removed from
+the Comment Bank section once Canvas has deleted it.  The only way
+org-canvas deletes a saved comment: removing an item from the section
+never does."
+  (interactive)
+  (unless org-canvas-submissions-mode
+    (user-error "Not in a submissions buffer"))
+  (let ((item (org-canvas--submissions-bank-item-at-point)))
+    (unless (and item (plist-get item :id))
+      (user-error "No saved comment with an id at point"))
+    (when (y-or-n-p (format "Delete saved comment %s from the comment bank? "
+                            (plist-get item :id)))
+      (if (not (org-canvas--submissions-bank-delete (plist-get item :id)))
+          (message "Dry run: saved comment %s left in place" (plist-get item :id))
+        (let ((inhibit-read-only t)
+              (baseline (org-canvas--submissions-bank-baseline)))
+          (delete-region (plist-get item :start)
+                         (save-excursion (goto-char (plist-get item :end))
+                                         (min (point-max) (1+ (line-end-position)))))
+          (org-canvas--submissions-bank-set-baseline baseline))
+        (when buffer-file-name (save-buffer))
+        (message "Saved comment %s deleted" (plist-get item :id))))))
 
 ;;;; Carry-over Across Pulls
 
@@ -2584,8 +3124,9 @@ over — and saved, so a script can go on in the buffer:
 The detail view is the grading file under the submissions directory,
 rendered and saved; the summary view is an ephemeral buffer.
 ASSIGNMENT, the Canvas assignment object when at hand, supplies the
-rubric header of the detail view.  Notes, drafted comments, Rubric
-rows and typed scores already in the file are carried over to the
+rubric header of the detail view.  The Comment Bank section, notes,
+drafted comments, Rubric rows and typed scores already in the file are
+carried over to the
 new render, a departed student's heading stays when it holds any of
 them, and what changed since the last render is reported
 \(`org-canvas--submissions-report-changes').  Return the buffer."
@@ -2598,7 +3139,8 @@ them, and what changed since the last render is reported
       (let* ((inhibit-read-only t)
              (detail (eq view 'detail))
              (previous (and detail (org-canvas--submissions-collect-previous)))
-             (carry (and detail (org-canvas--submissions-collect-carryover))))
+             (carry (and detail (org-canvas--submissions-collect-carryover)))
+             (bank (and detail (org-canvas--submissions-bank-carryover))))
         (if (not detail)
             (org-canvas--submissions-render-summary
              assignment-name assignment-id submissions)
@@ -2607,6 +3149,8 @@ them, and what changed since the last render is reported
            (append submissions
                    (org-canvas--submissions-departed-entries previous carry submissions))
            assignment)
+          (when bank
+            (org-canvas--submissions-restore-bank bank))
           (org-canvas--submissions-restore-carryover carry)
           (org-canvas--submissions-report-changes assignment-name previous submissions carry))
         (goto-char (point-min))
@@ -2962,24 +3506,29 @@ unposted ones still drafted.  Return the number posted."
       (cl-incf posted))
     posted))
 
-(defun org-canvas--submissions-describe-push (diffs drafts)
-  "Return a one-line summary of DIFFS and DRAFTS for the confirmation.
+(defun org-canvas--submissions-describe-push (diffs drafts &optional bank)
+  "Return a one-line summary of DIFFS, DRAFTS and BANK for the confirmation.
 Rubric assessments among DIFFS are counted, and those scoring only some
 of their criteria named, since Canvas accepts a partial assessment;
-so are the late statuses set."
+so are the late statuses set.  BANK are the Comment Bank items to
+send."
   (let ((rubrics (cl-count-if (lambda (ch) (plist-get ch :triples)) diffs))
         (lates (cl-count-if (lambda (ch) (plist-get ch :late-status)) diffs))
         (partial (cl-count-if (lambda (ch)
                                 (and (plist-get ch :triples)
                                      (< (plist-get ch :filled) (plist-get ch :of))))
                               diffs)))
-    (concat (when diffs (format "%d grade change(s)" (length diffs)))
-            (when (> rubrics 0)
-              (format " (%d with rubric%s)" rubrics
-                      (if (> partial 0) (format ", %d partly scored" partial) "")))
-            (when (> lates 0) (format " (%d setting a late status)" lates))
-            (when (and diffs drafts) " and ")
-            (when drafts (format "%d comment(s)" (length drafts))))))
+    (string-join
+     (delq nil
+           (list (when diffs
+                   (concat (format "%d grade change(s)" (length diffs))
+                           (when (> rubrics 0)
+                             (format " (%d with rubric%s)" rubrics
+                                     (if (> partial 0) (format ", %d partly scored" partial) "")))
+                           (when (> lates 0) (format " (%d setting a late status)" lates))))
+                 (when drafts (format "%d comment(s)" (length drafts)))
+                 (when bank (format "%d saved comment(s)" (length bank)))))
+     " and ")))
 
 ;;;###autoload
 (cl-defun org-canvas-submissions-push-grades ()
@@ -2992,31 +3541,33 @@ total.  Changes that conflict with what Canvas holds now are skipped
 and marked (see `org-canvas-submissions-check-conflicts').  After a
 successful push the baselines, the comment records, and the file are
 updated.  A LATE_STATUS that differs from its CANVAS_LATE_STATUS is
-sent too, one GraphQL request per student (issue #352)."
+sent too, one GraphQL request per student, and so is every new or
+edited item of the Comment Bank section (issue #352)."
   (interactive)
   (unless org-canvas-submissions-mode
     (user-error "Not in a submissions buffer"))
   (org-canvas--submissions-ensure-context)
   (let ((assignment-id org-canvas-submissions--assignment-id)
-        (drafts (org-canvas--submissions-collect-comment-drafts)))
+        (drafts (org-canvas--submissions-collect-comment-drafts))
+        (bank (org-canvas--submissions-bank-pending)))
     (unless assignment-id
       (user-error "No CANVAS_ASSIGNMENT_ID in this buffer"))
     (pcase-let ((`(,changes . ,conflicts)
                  (org-canvas--submissions-partition-conflicts
                   assignment-id (org-canvas--submissions-collect-grade-changes))))
       (org-canvas--submissions-mark-conflicts conflicts)
-      (unless (or changes drafts)
+      (unless (or changes drafts bank)
         (message "Nothing to push%s" (org-canvas--submissions-conflicts-note conflicts))
         (cl-return-from org-canvas-submissions-push-grades))
       (when changes
         (message "Grade changes:\n%s" (org-canvas--submissions-describe-changes changes)))
       (when (y-or-n-p (format "Push %s%s? "
-                              (org-canvas--submissions-describe-push changes drafts)
+                              (org-canvas--submissions-describe-push changes drafts bank)
                               (if conflicts
                                   (format ", skipping %d conflict(s)" (length conflicts))
                                 "")))
         (condition-case err
-            (org-canvas--submissions-push-all assignment-id changes drafts conflicts)
+            (org-canvas--submissions-push-all assignment-id changes drafts conflicts bank)
           (error (org-canvas--user-message "Error pushing: %s" (error-message-string err))))))))
 
 (defun org-canvas--submissions-late-note (failed)
@@ -3025,21 +3576,25 @@ sent too, one GraphQL request per student (issue #352)."
       (format "; late status not set for %s (see the log)" (string-join failed ", "))
     ""))
 
-(defun org-canvas--submissions-push-all (assignment-id changes drafts conflicts)
+(defun org-canvas--submissions-push-all (assignment-id changes drafts conflicts
+                                                        &optional bank)
   "Push the grade diffs and drafts of ASSIGNMENT-ID, then record them.
 CHANGES are the grade diffs and DRAFTS the drafted comments.
 The grades and rubric assessments go first, then the late statuses,
-then the drafted comments; CONFLICTS, already marked, are only
+then the drafted comments, then, when BANK lists Comment Bank items
+to send, the comment bank; CONFLICTS, already marked, are only
 counted in the closing message."
   (let* ((grading (seq-filter #'org-canvas--submissions-grade-fields changes))
          (late (progn (org-canvas--submissions-send-grades assignment-id changes)
                       (org-canvas--submissions-send-late-statuses changes)))
-         (posted (org-canvas--submissions-post-drafts assignment-id drafts)))
+         (posted (org-canvas--submissions-post-drafts assignment-id drafts))
+         (saved (and bank (org-canvas--submissions-push-bank assignment-id))))
     (org-canvas--submissions-record-pushed changes (car late))
-    (message "Pushed %d grade(s)%s and %d comment(s)%s%s" (length grading)
+    (message "Pushed %d grade(s)%s and %d comment(s)%s%s%s" (length grading)
              (if (car late) (format ", %d late status(es)" (length (car late))) "")
              posted
              (org-canvas--submissions-late-note (cdr late))
+             (org-canvas--submissions-describe-bank saved bank)
              (org-canvas--submissions-conflicts-note conflicts))
     (org-canvas--submissions-offer-to-post grading)))
 
