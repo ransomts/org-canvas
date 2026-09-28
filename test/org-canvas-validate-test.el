@@ -337,7 +337,30 @@ No level-2 children here.
                     (list :file (buffer-file-name) :line (line-number-at-pos) :heading "Section A"))))
        (expect (length issues) :to-equal 1)
        (expect (plist-get (car issues) :severity) :to-equal 'warning)
-       (expect (plist-get (car issues) :message) :to-match "no CANVAS_ID")))))
+       (expect (plist-get (car issues) :message) :to-match "no CANVAS_ID"))))
+
+  (it "warns on a MEETS it cannot read and accepts one it can (issue #383)"
+    (with-temp-org-buffer
+     "* Section A
+:PROPERTIES:
+:CANVAS_ID: 1
+:MEETS: MWF 10-11
+:END:
+* Section B
+:PROPERTIES:
+:CANVAS_ID: 2
+:MEETS: TTh 13:25-14:15
+:END:
+"
+     (let ((issues (org-canvas--validate-section-structure
+                    (list :file (buffer-file-name) :line 1 :heading "Section A"))))
+       (expect (length issues) :to-equal 1)
+       (expect (plist-get (car issues) :property) :to-equal "MEETS")
+       (expect (plist-get (car issues) :message) :to-match "MWF 10-11"))
+     (re-search-forward "^\\* Section B")
+     (expect (org-canvas--validate-section-structure
+              (list :file (buffer-file-name) :line 6 :heading "Section B"))
+             :to-be nil))))
 
 (describe "org-canvas--validate-assignment-structure"
   (it "returns nil with no override table"

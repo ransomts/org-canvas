@@ -1766,6 +1766,7 @@ Course sections and per-section assignment date overrides.
 | =START_AT=            | timestamp | Section start date                     |
 | =END_AT=              | timestamp | Section end date                       |
 | =RESTRICT_TO_DATES=   | boolean   | Restrict enrollments to section dates  |
+| =MEETS=               | string    | When the section meets (=MWF 10:10-11:00=); typed by you, kept by a pull, never pushed; see [[*Scoring by Section Window]] |
 
 *** Example
 
@@ -3114,6 +3115,43 @@ Deleting a line from the section never deletes the comment on Canvas. To delete 
 
 The library is the Canvas user's whose token org-canvas uses, kept per course: a TA grading in SpeedGrader sees their own library, not yours. A comment saved from a grading file is filed under that column's assignment. When the library cannot be read, nothing is sent to it, and the push's closing message says so.
 
+** Scoring by Section Window
+
+An in-class check — attendance, an in-room closer — is graded by when it arrived: full credit when a student submitted during their own section's meeting, 0 otherwise. =M-x org-canvas-submissions-score-by-window= (transient: Submissions, =W=) does that for a grading file, locally; nothing is read from Canvas and nothing is sent.
+
+For each student it takes the sections =people.org= lists under =SECTIONS= (pull people first) and finds each section's window:
+
+1. The section's row of the assignment's overrides table in =assignments.org= (see [[*Per-Section Date Overrides]]): =Unlock At= to =Lock At=, or to =Due At= when the row has no lock.  A column timed per section already holds its meetings there.
+2. Otherwise the section's =MEETS= property in =sections.org=, on the day the work was submitted:
+
+#+begin_src org
+,* Section 101
+:PROPERTIES:
+:CANVAS_ID: 101
+:MEETS: F 09:05-09:55
+:END:
+
+,* Lecture 100
+:PROPERTIES:
+:CANVAS_ID: 100
+:MEETS: MWF 10:10-11:00; Tue 09:00-09:50
+:END:
+#+end_src
+
+=MEETS= is days and a time range, several joined by =;=.  Days run together as letters (=M T W Th= or =R F S U=, so =MWF=, =TTh=) or are named (=Mon Wed=, =tue/thu=).  You type it; a sections pull keeps it, nothing pushes it, and =M-x org-canvas-validate= warns about one it cannot read.
+
+A submission inside any of the student's windows, widened by the grace (minutes either side), gets the assignment's points (the file's =POINTS_POSSIBLE=); outside, or not submitted, gets 0.  A student with no window — no section in =people.org=, or no section with a window — is left unscored.  A =SCORE= already there is kept unless you give a prefix argument; =EX= rows and students who left are never touched.  Full credit fills a rubric's rows at their =Max=, as the completion rule does.
+
+Before writing, a report lists the students outside the window, without one, and unsubmitted, with their submission times and the window each was held to, and asks to go ahead.  Each score written gets a line under the student's =Notes=, so the file records why a 0 is a 0:
+
+#+begin_example
+- Window rule: submitted Fri 11:19, sections Section 101, window Section 101 09:05-09:55, grace 15 min: outside, score 0
+#+end_example
+
+Times are compared as the wall clock the file shows, whatever zone Emacs runs in.  Review, then push with =S=.
+
+From Lisp, =(org-canvas-submissions-score-by-window FILE GRACE OVERWRITE POINTS)= takes the grading file by path or name, as =org-canvas-open-submissions= does, and returns its buffer; in batch the report is printed and the scores written without a prompt.  =org-canvas-submissions-window-grace= is the grace's default (0).
+
 ** Batch Use
 
 The grading workflow repeats every week per column, and the interactive path is right for one column and wrong for six. Every entry point therefore takes its target as an argument and prompts only when it is nil, so a script, a keyboard macro or a tool built on org-canvas can drive it without the minibuffer:
@@ -3833,6 +3871,7 @@ These commands delete the item at the current cursor position:
 | =org-canvas-submissions-push-grades= | Push changed scores and drafted comments (=S= in the file) |
 | =org-canvas-submissions-post-grades= | Post the assignment's grades to students, under a manual post policy (=P=) |
 | =org-canvas-submissions-apply-completion-rule= | Fill empty scores by completion and lateness |
+| =org-canvas-submissions-score-by-window= | Score by submission time against each student's section window, outliers listed first (=W=) |
 | =org-canvas-submissions-add-comment= | Post a comment on the student at point (=c=) |
 | =org-canvas-submissions-download-attachments= | Download the attachments at point (=d=) |
 | =org-canvas-submissions-download-all-attachments= | Download every student's attachments (=D=) |
@@ -4610,6 +4649,12 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | Property | Type | Allowed values | Default | Description |
 |----------+------+----------------+---------+-------------|
 | =FREE_FORM_CRITERION_COMMENTS= | boolean | true, false |  | Allow freeform comments |
+
+** Sections
+
+| Property | Type | Allowed values | Default | Description |
+|----------+------+----------------+---------+-------------|
+| =MEETS= | string |  |  | When the section meets ("MWF 10:10-11:00", several joined by ";"); typed locally, never pulled or pushed, read by the section-window scoring of a grading file |
 
 ** Settings
 

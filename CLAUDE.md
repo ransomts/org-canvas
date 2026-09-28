@@ -64,6 +64,7 @@ lisp/
 ├── org-canvas-quiz-submissions.el # Read-only table of a classic quiz's attempts (requires submissions)
 ├── org-canvas-peer-reviews.el   # Read-only tables of who reviews whom on an assignment (requires submissions)
 ├── org-canvas-submissions-status.el # Grading queue: per-column submitted/graded/posted counts and the next action (requires submissions)
+├── org-canvas-submissions-window.el # Score a grading file by SUBMITTED_AT against each student's section window (requires submissions)
 ├── org-canvas-messages.el       # Send Canvas conversations from messages.org; never part of org-canvas-sync
 ├── org-canvas-new-quiz-items.el # New Quizzes item/question pipeline (sub-module of new-quizzes)
 ├── org-canvas-{feature}.el      # Feature modules: announcements, assignment-groups, assignments,
@@ -84,7 +85,7 @@ lisp/
 - Feature modules must NOT depend on each other. The one sanctioned exception is a sub-module: `org-canvas-new-quizzes` requires `org-canvas-new-quiz-items`, which itself requires only core
 - `org-canvas-core` must NOT import any feature modules (prevents circular deps)
 - `org-canvas.el` orchestrates by requiring all modules
-- Command files (status, publish, adopt, orphans, browse, diff, validate, submissions, quiz-submissions, peer-reviews, submissions-status, messages) sit above the feature modules: they require core and may require the feature module they drive (publish requires modules, adopt requires diff, quiz-submissions, peer-reviews and submissions-status require submissions); no feature module may require a command file
+- Command files (status, publish, adopt, orphans, browse, diff, validate, submissions, quiz-submissions, peer-reviews, submissions-status, submissions-window, messages) sit above the feature modules: they require core and may require the feature module they drive (publish requires modules, adopt requires diff, quiz-submissions, peer-reviews, submissions-status and submissions-window require submissions; submissions-window declares, never requires, the sections.el readers of MEETS and the overrides table); no feature module may require a command file
 - diff.el declares, never requires, the two modules.el functions the sync adopts module items with (`org-canvas--module-item-parse-entry`, `org-canvas--module-item-same-content-p`), so its pairing agrees with the sync by construction (#299)
 - A feature module may name a validate.el function by symbol — `:structural-fn #'org-canvas--validate-drop-rules` on its property registration, resolved when validation runs — and may `declare-function` a function it must call from another module (assignments does this for `org-canvas--override-fetch` in sections.el). Declare; never require another feature
 
@@ -192,6 +193,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 **`decisions.org`**
 
 - a classic quiz pulls whole into one heading — pull-at-point, the diff's `p` on an EXTRA row, adopt filling a stub, `:pull-whole-entry` — and numbers a question name it cannot tell apart (#295)
+- a column is scored by section window: SUBMITTED_AT against the student's own sections' windows from the overrides table or a local-only `MEETS`, compared as wall-clock minutes, a typed score kept, the outliers listed before anything is written, and a Notes line naming the rule (#383)
 - a heading opens its Canvas page from `:web-pages` rules its module declares (#292)
 - a hot-spot item's regions pull into the Canvas-owned `HOTSPOTS` and `HOTSPOTS_COUNT`, never pushed, compared by the drift report, the image URL never stored (#365)
 - a late status is typed in the grading file as `LATE_STATUS` against a `CANVAS_LATE_STATUS` baseline and pushed through `updateSubmissionGradeStatus`, checked before sending, recorded as Canvas stored it, with no lateness override since the mutation takes none (#352)

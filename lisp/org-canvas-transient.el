@@ -120,6 +120,7 @@ writing commands greyed rather than only erroring when one is chosen
    ("z" "Pull a quiz's attempts (read-only table)" org-canvas-pull-quiz-submissions)
    ("w" "Pull an assignment's peer reviews (read-only)" org-canvas-pull-peer-reviews)
    ("a" "Apply the completion rule to this file" org-canvas-submissions-apply-completion-rule)
+   ("W" "Score this file by section windows (attendance)" org-canvas-submissions-score-by-window)
    ("G" "Push grades" org-canvas-submissions-push-grades
     :inapt-if-not org-canvas--transient-writable-p)
    ("P" "Post grades to students" org-canvas-submissions-post-grades
