@@ -1572,7 +1572,7 @@ a dry run), now or earlier this run."
             (org-canvas--module-item-note-relocated ctx id here)
             (org-canvas--module-item-restore-requirement
              here id (org-canvas--module-item-requirement-props
-                      (or (plist-get data :pom) (point)))
+                      (plist-get data :pom))
              (plist-get data :title))
             t)))))
 
