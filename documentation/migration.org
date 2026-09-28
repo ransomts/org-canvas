@@ -21,7 +21,7 @@ A guide for instructors currently managing courses through the Canvas web UI who
 
 - *Real-time WYSIWYG editing.*  You write Org markup, not rich text.  The Canvas preview is one sync away, not instant.
 - *Drag-and-drop.*  Module reordering is heading reordering in a text file.  Faster once you're used to it, but different.
-- *Canvas-native features.*  Some Canvas features (SpeedGrader, Analytics, Conversations) are only available in the web UI.  org-canvas covers content management and basic grading, not the entire Canvas experience.
+- *Canvas-native features.*  Some Canvas features (SpeedGrader's annotations, Analytics) are only available in the web UI.  org-canvas covers content management, grading from a file, and sending Inbox messages, not the entire Canvas experience.
 - *Collaborative real-time editing.*  Two people can't edit the same Org file simultaneously the way two people can both use the Canvas UI.  Use git branches or divide file ownership instead.
 - *Point-and-click simplicity.*  There's a learning curve.  You need to know Org Mode basics and be comfortable in Emacs.
 
@@ -98,12 +98,12 @@ Once comfortable, manage everything through Org files:
 2. Use =M-x org-canvas-validate= to catch errors before syncing.
 3. Use =M-x org-canvas-sync= to push changes.
 4. Use git for version history.
-5. Use =M-x org-canvas-submissions-view= for grading.
+5. Use =M-x org-canvas-pull-submissions= for grading: scores, rubric assessments, comments and late statuses are pushed from a grading file (see the [[file:workflows.org::*Grading Workflow][grading workflow]]).
 
 Continue using the Canvas web UI for:
-- SpeedGrader (detailed rubric grading, annotations)
+- SpeedGrader annotations on submitted files
 - Analytics and reports
-- Student Conversations (messaging)
+- Replying to student Conversations (org-canvas sends messages from =messages.org=; it does not read the Inbox)
 - Live quiz proctoring
 
 * Mapping Canvas UI to Org Properties
@@ -123,6 +123,7 @@ This table maps Canvas web form fields to their Org property equivalents.
 | Available from / Until       | =:UNLOCK_AT:= / =:LOCK_AT:= | Org timestamps                        |
 | "This is a Group Assignment" | =:GROUP_CATEGORY_ID:=     | Link to =group-categories.org=          |
 | Require Peer Reviews         | =:PEER_REVIEWS:=          |                                       |
+| Grade posting policy         | =:POST_POLICY:=           | automatic or manual                   |
 | Rubric (via Add Rubric)      | =:RUBRIC_LINK:=           | Link to =rubrics.org=                   |
 | Description (rich text)      | Body text under heading | Exported to HTML                      |
 
@@ -180,7 +181,7 @@ This table maps Canvas web form fields to their Org property equivalents.
 
 ** "What if I need to edit something quickly in Canvas?"
 
-Go ahead -- org-canvas has conflict detection.  On the next sync, it will notice the change and let you choose: keep Canvas version, keep Org version, or skip.  For emergency fixes (typos, wrong dates), editing directly in Canvas is fine.  Just pull the change into your Org file afterward.
+Go ahead -- org-canvas has conflict detection.  On the next sync, it will notice the change and let you choose: keep Canvas version, keep Org version, or skip.  For emergency fixes (typos, wrong dates), editing directly in Canvas is fine.  Just pull the change into your Org file afterward: =M-x org-canvas-pull-at-point= on the heading, or a per-type command such as =M-x org-canvas-pull-assignment=, which asks for the heading's title and replaces that heading with Canvas's version.
 
 ** "What about TAs who don't use Emacs?"
 
@@ -188,11 +189,11 @@ They can continue using Canvas.  Conflict detection handles the overlap.  See th
 
 ** "How do I handle content I can't manage with org-canvas?"
 
-org-canvas covers 16 content types, but some Canvas features (e.g., Conversations, Analytics, Attendance, external LTI tools) are outside its scope.  Use the Canvas web UI for those.  org-canvas only touches the content types you give it =.org= files for.
+org-canvas covers most course content, but some Canvas features (e.g., Analytics, Attendance, the Inbox beyond sending messages, an LTI tool's own settings) are outside its scope; [[file:architecture/coverage.org][coverage.org]] maps what is covered.  Use the Canvas web UI for those.  org-canvas only touches the content types you give it =.org= files for.
 
 ** "Is my content safe?"
 
-Your Org files are local files under your control.  Use git for backup and history.  org-canvas never deletes anything on Canvas unless you explicitly run a delete command.  Syncing creates or updates -- it never deletes.
+Your Org files are local files under your control.  Use git for backup and history.  Removing a heading never deletes its Canvas item; that takes an explicit delete, prune or orphan-cleanup command, and the interactive ones ask first.  A sync creates and updates, and deletes only what an item you keep no longer holds: an override row you removed from a table, or the old copy of a module item it had to recreate in another module when Canvas refused to move it.
 
 ** "What if I stop using org-canvas?"
 

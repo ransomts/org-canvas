@@ -123,8 +123,10 @@ complete pipeline:
   :pull-item-fn #'org-canvas--announcement-pull-item)
 #+end_src
 
-This generates =org-canvas-sync-announcements= and
-=org-canvas-sync-announcement-at-point= with:
+This generates =org-canvas-sync-announcements=,
+=org-canvas-sync-announcement-at-point=, =org-canvas-sync-announcement=
+(one heading by title or stamp, #287) and, since it has a
+=:pull-item-fn=, =org-canvas-pull-announcement= (#346), with:
 
 - Entry collection and iteration
 - Progress messages
@@ -153,8 +155,7 @@ Files decide what to send by comparing bytes and metadata, not by hashing a payl
   :file org-canvas-announcements-file
   :parse #'org-canvas--announcement-parse-entry
   :build #'org-canvas--announcement-build-payload
-  :push #'org-canvas--announcement-push-to-api
-  :finalize #'org-canvas--announcement-finalize
+  :endpoint "discussion_topics"   ; auto push/finalize; :push/:finalize override
   :pull-item-fn #'org-canvas--announcement-pull-item)
 #+end_src
 Generates =org-canvas-sync-announcements= with logging, error handling, conflict resolution, and buffer saving. The optional =:pull-item-fn= enables the "pull" option during interactive conflict resolution. The optional =:hash-extra= is a function of the parsed data whose string result is folded into the PAYLOAD_HASH — required for any module whose children sync inside finalize, because the unchanged-skip bypasses finalize and child edits would otherwise never propagate. Users: modules (=org-canvas--module-items-digest=, resolves link targets so content-id rotation also dirties), quizzes (=org-canvas--quiz-questions-digest=), new-quizzes (=org-canvas--new-quiz-items-digest=, also folds the rubric link). The latter two build on =org-canvas--org-children-digest= (core-org), which digests raw child-subtree text with sync-state property lines stripped — digests deliberately exclude CANVAS_ID/CANVAS_ITEM_ID (assigned by finalize right after hashing) so a successful sync doesn't dirty the next run. Outcomes need no digest: their two levels sync as independent pipeline passes.
@@ -183,11 +184,11 @@ implement some stages manually rather than using macro-generated code.
 
 *Modules using shared infrastructure:* announcements, pages, discussions, assignments, assignment-groups, rubrics
 
-*Modules with custom push logic (use =org-canvas-define-sync= but have custom push functions due to non-standard API endpoints):* group-categories (split POST/PUT URLs), calendar (global endpoint, not course-scoped)
+*Modules with custom push logic (use =org-canvas-define-sync= but have custom push functions):* group-categories (split POST/PUT URLs), calendar (global endpoint, not course-scoped), grading-schemes (Canvas has no update: a stamped scheme is compared and skipped, never PUT)
 
-*Modules with custom sync logic (not macro-based):* overrides (reconcile-based), and the child reconcilers inside quizzes (nested questions), new-quizzes (nested items, =/api/quiz/v1/= API) and modules (parent-child items). Files were the last hand-written top-level loop; they run on the macro since the options below
+*Modules with custom sync logic (not macro-based):* overrides (reconcile-based), and the child reconcilers inside quizzes (nested questions), new-quizzes (nested items, =/api/quiz/v1/= API) and modules (parent-child items). Files were the last hand-written top-level loop; they run on the macro since the =:hash= and =:dry-run= options above.  Quiz accommodations are a custom loop too (a table under each classic quiz, reconciled against the quiz's submissions)
 
-*Pull-only modules:* sections (pulled from Canvas via =org-canvas-pull-sections=, not pushed)
+*Pull-only modules:* sections and grading periods (both run in the master sync's tiers, so overrides and validation can name them), and discussion replies, groups, people, gradebook, rubric results and quiz results
 
 * The Declarative Parse Macro
 
@@ -532,7 +533,7 @@ errors with =M-g n= / =M-g p= and visit source with =RET=.
     (:org-prop "POST_AT" :data-key :delayed_post_at :type timestamp
      :api-key "delayed_post_at")))
 #+end_src
-All 19 validation targets self-register their property definitions at load time. The validation engine (=org-canvas-validate=) queries this registry at runtime instead of maintaining a separate spec constant. Property specs declare: Org property name, output plist key, type, API field name, and validation constraints (enum values, link targets, date ordering).
+Every validation target self-registers its property definitions at load time. The validation engine (=org-canvas-validate=) queries this registry at runtime instead of maintaining a separate spec constant. Property specs declare: Org property name, output plist key, type, API field name, and validation constraints (enum values, link targets, date ordering).
 
 *Modules registering properties:* All feature modules register via =org-canvas-register-properties=. Modules with multiple heading levels register multiple entries (e.g., quizzes registers "quizzes" for LEVEL=1 and "quiz-questions" for LEVEL=2).
 
@@ -540,9 +541,11 @@ All 19 validation targets self-register their property definitions at load time.
 
 *Pending-first-sync collapse:* validation warnings for link targets that merely lack a CANVAS_ID carry a =:pending-sync= flag and collapse into one summary line in the report; =C-u M-x org-canvas-validate= lists them individually.
 
-*=:remote-fn= — how the drift report reads a property back off Canvas.* =org-canvas--diff-remote-field= otherwise assumes the payload is a flat alist keyed by =:api-key=, falling back to =:data-key=. That assumption is wrong wherever Canvas nests or renames a field, and the failure is silent: =alist-get= returns nil, the formatter prints =false=/=(unset)=, and /every/ item with that property is reported as drifted. Two specs declare a =:remote-fn= (a symbol naming a one-argument function of the Canvas item) for exactly that reason — files' =PUBLISHED= reads the inverse of =locked=, which is the field Canvas actually returns (issue #61, matching the pull mapping from #50), and assignment-groups' =DROP_LOWEST=/=DROP_HIGHEST= read the nested =rules= object the push side already builds (issue #62). When adding a property whose Canvas spelling is not a flat key of the same name, give it a =:remote-fn=; the give-away is a whole feature reporting the same field as changed on an untouched course.
+*=:remote-fn= — how the drift report reads a property back off Canvas.* =org-canvas--diff-remote-field= otherwise assumes the payload is a flat alist keyed by =:api-key=, falling back to =:data-key=. That assumption is wrong wherever Canvas nests or renames a field, and the failure is silent: =alist-get= returns nil, the formatter prints =false=/=(unset)=, and /every/ item with that property is reported as drifted. The first two specs to declare a =:remote-fn= (a symbol naming a one-argument function of the Canvas item) did so for exactly that reason — files' =PUBLISHED= reads the inverse of =locked=, which is the field Canvas actually returns (issue #61, matching the pull mapping from #50), and assignment-groups' =DROP_LOWEST=/=DROP_HIGHEST= read the nested =rules= object the push side already builds (issue #62). When adding a property whose Canvas spelling is not a flat key of the same name, give it a =:remote-fn=; the give-away is a whole feature reporting the same field as changed on an untouched course.  Many specs declare one since, among them the New Quiz settings read back from =quiz_settings= (#321) and the assignment properties answered by a course-wide GraphQL read (=DOCUMENT_PROCESSOR=, #350; =POST_GRADES_AT= and =POST_COMMENTS_AT=, #352).  A =:remote-fn= answered by a second request pairs with =:remote-known-p=, a predicate of the item saying whether that request answered at all: when it did not (a refused read), a pull leaves the property as typed and the drift report does not compare it, rather than reading silence as "Canvas holds nothing" (#216).
 
 *=:compare-p= — when a property is no one's opinion to compare.* A spec may name a predicate of =(POM ITEM)=; nil means the drift report skips the property for that entry. Calendar =ALL_DAY= declares =org-canvas--calendar-all-day-comparable-p=: Canvas never stores the flag on an event spanning days — it keeps the times, sets =all_day= false, fills =all_day_date= — so a span's =ALL_DAY: true= could never round-trip and was a permanent diff row (issue #93). Spans are judged on the Org timestamps' /written/ dates (=org-canvas--org-timestamps-span-days-p=, core-org): comparing converted UTC dates would misclassify a single local day that crosses midnight in UTC. =org-canvas--validate-all-day-span= (the calendar registry's =:structural-fn=) warns about the same state offline.
+
+*The later keys* are each a decision recorded where it was made; the registration's docstring (=org-canvas-register-properties=, core-config) lists them all: =:canvas-owned= (#184) and =:intent-of= (#293) in decisions.org, "External-Tool (LTI) Assignments — and No Turnitin" and "A Wanted Document Processor Is Declared, Compared, Never Sent"; =:read-only-values= in "Canvas-Owned Submission Types" (#167); =:pull-only= for a timestamp only a pull writes; =:absent-inherits= for a boolean whose absence is a third state (#323); =:duplicate-titles= in "Duplicate and Superseded Titles" above (#164); and =:body-remote-fn= for a body the reply nests (#322).
 
 * Sync Orchestration
 
@@ -552,11 +555,11 @@ The master sync (=org-canvas-sync=) runs modules in dependency order:
 
 | Tier | Modules                                                  | Reason                      |
 |------+----------------------------------------------------------+-----------------------------|
-|   -1 | Settings                                                 | Must be first               |
-|    0 | Outcomes, rubrics, assignment groups, pages, files, etc. | No dependencies             |
+|   -1 | Grading schemes, then settings                           | Settings may name a scheme  |
+|    0 | Outcomes, rubrics, assignment groups, pages, files, etc.; sections and grading periods pulled | No dependencies |
 |    1 | Quizzes, new quizzes, assignments                        | Reference tier 0            |
 |  1.5 | Assignment groups (re-sync)                              | Drop rules need assignments |
-| 1.75 | Overrides                                                | Need sections + assignments |
+| 1.75 | Overrides, quiz accommodations                           | Need sections, assignments, quizzes |
 |    2 | Modules                                                  | Reference everything        |
 
 ** Why Re-Sync Assignment Groups?
@@ -714,11 +717,14 @@ cache. If a course has no images, no extra API call is made.
 
 * Complexity Management
 
-The codebase targets 0 functions above cognitive complexity 15
-(measured by =eldev complexity=). Common extraction patterns:
+The codebase targets no function above cognitive complexity 15
+(measured by =eldev complexity=); the two pre-existing macros
+=org-canvas-define-sync= and =org-canvas-define-push-at-point= are the
+budgeted exceptions in CI and the pre-push hook. Common extraction
+patterns:
 
 - *Single-item helpers*: Extract the body of =dolist= into a named
-  function (e.g., =file-sync-single-entry=, =settings-sync-single-tab=)
+  function (e.g., =file-sync-parsed-entry=, =settings-sync-single-tab=)
 - *Data-driven loops*: Replace repetitive =when= blocks with a
   field-spec constant and =dolist= + =pcase=
 - *Shared predicates*: =timeout-error-p=, =404-on-put-p= instead of
@@ -730,14 +736,14 @@ The codebase targets 0 functions above cognitive complexity 15
 
 Functions are kept below a cognitive complexity threshold of 15. Common extraction patterns used throughout the codebase:
 
-- *Single-item helpers*: Extract the body of a =dolist= into a named helper (e.g., =org-canvas--settings-sync-single-tab=, =org-canvas--file-sync-single-entry=, =org-canvas--resolve-single-image=)
+- *Single-item helpers*: Extract the body of a =dolist= into a named helper (e.g., =org-canvas--settings-sync-single-tab=, =org-canvas--file-sync-parsed-entry=, =org-canvas--resolve-single-image=)
 - *Data-driven loops*: Replace repetitive =when=-blocks with a field-spec constant and =dolist= + =pcase= (e.g., =org-canvas--late-policy-field-specs= in settings.el)
 - *Conflict extraction*: =org-canvas--push-check-and-resolve-conflict= handles the entire conflict detection block, returning a =push=/=skip=/=pulled= symbol
 - *Timeout detection*: =org-canvas--timeout-error-p= is the shared predicate for timeout errors — use it instead of inline string matching
 - *Payload wrapping*: Extract nested payload restructuring into helpers (e.g., =org-canvas--new-quiz-item-wrap-payload=)
 - *Pull property setters*: Extract property-setting blocks from pull functions into dedicated helpers (e.g., =org-canvas--file-pull-set-properties=, =org-canvas--settings-pull-late-policy-properties=)
 
-Run =eldev complexity= to check current metrics. Target: 0 functions above threshold (>15).
+Run =eldev complexity= to check current metrics. Target: no function above threshold (>15) beyond the two budgeted macros.
 
 * Key Lessons
 

@@ -37,9 +37,9 @@ Canvas rejects drop rules (=DROP_LOWEST=, =DROP_HIGHEST=) when creating a new as
 "Drop rules cannot be higher than the number of assignments"
 #+end_example
 
-=org-canvas-sync= handles this automatically with a two-phase sync: create groups without rules (Tier 0.5), sync assignments (Tier 1.5), then re-sync groups with rules (Tier 2).
+=org-canvas-sync= handles this automatically with a two-phase sync: groups are synced first and their rules deferred (Tier 0), assignments are synced (Tier 1), then groups are synced again with their rules (Tier 1.5).
 
-If you sync assignment groups individually (=M-x org-canvas-sync-assignment-groups=) on a fresh course, the drop rules will be silently skipped on the first sync.  Run it again after assignments exist.
+If you sync assignment groups individually (=M-x org-canvas-sync-assignment-groups=) on a fresh course, the rejected drop rules are counted as deferred in the summary, not applied.  Run it again after assignments exist.
 
 * Sync Order Matters for Individual Syncs
 
@@ -60,13 +60,13 @@ If you sync a module that references an assignment that hasn't been synced yet, 
 
 These are *completely different systems* with different APIs, different files, and different property names:
 
-| Aspect         | Classic (=quizzes.org=)     | New (=new-quizzes.org=)            |
-|----------------+---------------------------+----------------------------------|
-| API            | =/api/v1/quizzes=           | =/api/quiz/v1/=                    |
-| ID property    | =CANVAS_ID=                 | =CANVAS_ID= + =CANVAS_ASSIGNMENT_ID= |
-| Question types | 11 types                  | 11 types (different set)         |
-| Scoring        | keep_highest, keep_latest | + keep_average                   |
-| Question banks | Question groups           | Item banks (not supported)       |
+| Aspect         | Classic (=quizzes.org=)         | New (=new-quizzes.org=)              |
+|----------------+---------------------------------+--------------------------------------|
+| API            | =/api/v1/quizzes=               | =/api/quiz/v1/=                      |
+| ID property    | =CANVAS_ID=                     | =CANVAS_ID= + =CANVAS_ASSIGNMENT_ID= |
+| Question types | =multiple_choice_question=, ... | =choice=, ... (hot-spot pull-only)   |
+| Scoring        | keep_highest, keep_latest       | + keep_average                       |
+| Question banks | Question groups                 | Item banks (not supported)           |
 
 Check which system your institution uses before creating quiz files.  Some institutions have disabled Classic Quizzes entirely.
 
@@ -114,11 +114,9 @@ Use =C-c .= in Org mode to insert active timestamps.
 
 After a successful sync, org-canvas stores a hash of the payload in =PAYLOAD_HASH=.  On the next sync, if the hash matches, the API call is skipped entirely.  This makes repeated syncs fast.
 
-*Gotcha:* If you change something on Canvas (not in Org) and then sync, the hash still matches, so org-canvas skips the item.  To force a re-sync:
+A matching hash proves only that your heading is unchanged.  When Canvas's copy was edited since your last sync, the item leaves the skip and goes to the conflict prompt, where you choose push, pull or skip.  That check needs conflict detection: with =org-canvas-detect-conflicts= off, or under =M-x org-canvas-force-push=, an unchanged heading is skipped whatever Canvas holds.
 
-- Delete the =PAYLOAD_HASH= property from the heading, or
-- Use =M-x org-canvas-force-push=, or
-- Make any change to the Org heading (even adding and removing a space).
+To send an unchanged heading again anyway, delete its =PAYLOAD_HASH= property, or make any change to the heading.
 
 * Image Links Must Be Local Files
 
@@ -135,7 +133,7 @@ Images are uploaded to a =org-canvas-images/= folder on Canvas and cached per sy
 
 * Heading Order = Canvas Order
 
-For modules, the order of level-1 headings in =modules.org= determines the module order on Canvas.  Similarly, level-2 headings determine item order within a module.
+For modules, the order of level-1 headings in =modules.org= determines the module order on Canvas.  Similarly, level-2 headings determine item order within a module.  Moving an item heading under another module moves the item on Canvas, keeping its id.
 
 For other content types (assignments, pages, etc.), Canvas determines ordering separately.  The =POSITION= property on assignments and assignment groups controls their display order.
 
@@ -145,7 +143,7 @@ Canvas rate-limits API requests.  org-canvas automatically retries on 429 respon
 
 Tips:
 - Sync individual content types during development (=M-x org-canvas-sync-assignments=).
-- Use dry-run (=M-x org-canvas-sync-dry-run=) to preview without API calls.
+- Use dry-run (=M-x org-canvas-sync-dry-run=) to preview without writing to Canvas.
 - The payload hash skip means subsequent syncs only touch changed items.
 
 * Credentials File Must Not Be Committed

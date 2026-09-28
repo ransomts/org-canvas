@@ -26,7 +26,7 @@ Assignment description goes here.
 
 Then =M-x org-canvas-sync-assignments=.
 
-** Do I need all 14 =.org= files?
+** Do I need every =.org= file?
 
 No.  Only create files for the content types you use.  Missing files are silently skipped during sync.
 
@@ -129,6 +129,10 @@ The rubric is synced first (it's a dependency), then the association is created 
 
 Check your institution's Canvas instance to see which is available.  Some institutions have migrated entirely to New Quizzes.
 
+** Can I write hot-spot questions in =new-quizzes.org=?
+
+No.  A hot-spot item's answer regions cannot be written in Org, so a sync refuses a =TYPE: hot-spot= item; build it in Canvas.  A pull still writes it, with its regions in the read-only =HOTSPOTS= and =HOTSPOTS_COUNT= properties, and =M-x org-canvas-diff= reports a region moved in the web interface.
+
 ** How do I create a multiple-choice question?
 
 In =quizzes.org=, add a sub-heading under the quiz:
@@ -137,13 +141,12 @@ In =quizzes.org=, add a sub-heading under the quiz:
 ,* Chapter 1 Quiz
 :PROPERTIES:
 :QUIZ_TYPE: assignment
-:POINTS: 20
 :TIME_LIMIT: 30
 :END:
 
 ,** What is 2 + 2?
 :PROPERTIES:
-:QUESTION_TYPE: multiple_choice_question
+:TYPE: multiple_choice_question
 :POINTS: 5
 :END:
 
@@ -217,6 +220,10 @@ Module order in Canvas matches the heading order in =modules.org=.  Rearrange th
 ** How do I reorder items within a module?
 
 Same principle -- item order matches the level-2 heading order under the module.  Rearrange and re-sync.
+
+** How do I move an item to another module?
+
+Move its heading under the other module's heading and re-sync.  The item is moved on Canvas and keeps its id; the sync sets its completion requirement again, since Canvas drops it on a move.  Only if Canvas refuses the move is the item recreated in the new module and the old copy deleted.
 
 ** How do I add an external link to a module?
 
@@ -320,12 +327,12 @@ Any file type that Canvas accepts.  The MIME type is detected automatically from
 
 ** How do I schedule an announcement for later?
 
-Use the =POST_AT= property:
+Use the =DELAYED_POST_AT= property:
 
 #+begin_src org
 ,* Midterm Reminder
 :PROPERTIES:
-:POST_AT: <2026-10-12 Mon 08:00>
+:DELAYED_POST_AT: <2026-10-12 Mon 08:00>
 :END:
 
 The midterm is next Wednesday.  Review session Tuesday at 7pm.
@@ -333,7 +340,19 @@ The midterm is next Wednesday.  Review session Tuesday at 7pm.
 
 ** How do I create a graded discussion?
 
-Set it up as an assignment-linked discussion.  Create the discussion in =discussions.org= and reference it from =assignments.org= using the appropriate properties.
+Give the discussion's heading in =discussions.org= the grading properties; Canvas creates the assignment behind it:
+
+#+begin_src org
+,* Week 3 Discussion
+:PROPERTIES:
+:GRADING_TYPE: points
+:POINTS: 10
+:DUE_AT: <2026-09-19 Fri 23:59>
+:GROUP: [[file:assignment-groups.org::*Homework][Homework]]
+:END:
+#+end_src
+
+Don't add a heading for it in =assignments.org=.
 
 ** How do I lock comments on an announcement?
 
@@ -352,7 +371,7 @@ Announcements are locked by default on Canvas.  To allow comments:
 :PROPERTIES:
 :START_AT: <2026-09-02 Mon 14:00>
 :END_AT: <2026-09-02 Mon 16:00>
-:LOCATION: Room 301
+:LOCATION_NAME: Room 301
 :END:
 
 Drop-in office hours.  No appointment needed.
@@ -366,24 +385,28 @@ Canvas doesn't support recurring events via the API.  Create individual headings
 
 ** How do I create an outcome group hierarchy?
 
-Use nested headings in =outcomes.org=:
+Level-1 headings in =outcomes.org= are outcome groups and level-2 headings are the outcomes in them; each outcome's rating levels are list items with their points in brackets:
 
 #+begin_src org
-,* Course Outcomes
-,** Programming Skills
-,*** Can write a for loop
+,* Programming Skills
+,** Can write a for loop
 :PROPERTIES:
-:POINTS: 5
 :MASTERY_POINTS: 3
-:RATINGS: Exceeds=5, Meets=3, Below=1
+:CALCULATION_METHOD: highest
 :END:
 
-,*** Can define a function
+- [5] Exceeds
+- [3] Meets
+- [1] Below
+
+,** Can define a function
 :PROPERTIES:
-:POINTS: 5
 :MASTERY_POINTS: 3
-:RATINGS: Exceeds=5, Meets=3, Below=1
 :END:
+
+- [5] Exceeds
+- [3] Meets
+- [1] Below
 #+end_src
 
 ** How do I align a rubric criterion to an outcome?
@@ -399,27 +422,42 @@ Add an =OUTCOME= property to the rubric criterion linking to =outcomes.org=:
 ** How do I view and grade submissions?
 
 #+begin_src elisp
-M-x org-canvas-submissions-view
+M-x org-canvas-pull-submissions
 #+end_src
 
-Select an assignment, then use the keybindings in the submissions buffer:
+Select an assignment.  The submissions are written to a grading file, one heading per student, saved under =submissions/= in the course directory.  Edit each student's =:SCORE:=, then use the keybindings in the file:
 
-| Key | Action                         |
-|-----+--------------------------------|
-| =v=   | Toggle summary/detail view     |
-| =c=   | Post a comment                 |
-| =d=   | Download attachments           |
-| =S=   | Push changed grades to Canvas  |
-| =g=   | Refresh from Canvas            |
-| =q=   | Quit                           |
+| Key | Action                                          |
+|-----+-------------------------------------------------|
+| =v=   | Toggle the grading file and a summary table     |
+| =c=   | Post a comment now                              |
+| =d=   | Download the attachments of the student at point |
+| =D=   | Download every student's attachments            |
+| =S=   | Push changed grades to Canvas                   |
+| =P=   | Post grades to students                         |
+| =g=   | Refresh from Canvas                             |
+
+See the [[file:workflows.org::*Grading Workflow][grading workflow]] for the rest, and [[file:manual.org::*Grading Submissions][Grading Submissions]] in the manual for every property.
+
+** Which assignments still need grading?
+
+=M-x org-canvas-submissions-status= shows the grading queue: one row per graded assignment with its counts, Canvas's mean and median score, and the next step (pull, refresh, grade or post).
 
 ** How do I download all submissions for an assignment?
 
-In the submissions viewer, press =d= on each student.  There isn't a "download all" feature -- use Canvas's bulk download (SpeedGrader) for that.
+Press =D= in the grading file.  Every student's attachments are saved under =files/<assignment>/<student>/= beside it.
 
 ** How do I leave feedback?
 
-In the submissions viewer, navigate to the student's entry and press =c=.  Type your comment and confirm.  The comment appears immediately on Canvas.
+Write it under the student's =Comment to post= heading and press =S=; it goes out with the grades.  For a comment right away, press =c= on the student's heading.  Comments you reuse can live in the file's =* Comment Bank= section, which =S= saves to your SpeedGrader comment library.
+
+** How do I mark a submission late, missing or excused?
+
+Set =:LATE_STATUS:= on the student's heading to =late=, =missing=, =extended= or =none=, or =:SCORE: EX= to excuse, and press =S=.
+
+** Can Canvas post the grades at a set time?
+
+Yes.  Give the assignment heading in =assignments.org= both =POST_GRADES_AT= and =POST_COMMENTS_AT=, the comments no later than the grades; the next sync hands the schedule to Canvas.  Validation calls one without the other, grades before comments, or either beside =POST_POLICY: automatic= an error.
 
 * Sync and Conflicts
 

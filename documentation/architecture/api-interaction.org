@@ -63,7 +63,7 @@ declared once and honored everywhere.
 
 ** Feature Registry URL Resolution (issue #87)
 
-Every consumer of =org-canvas--feature-registry= — the sync snapshot, =org-canvas-diff=, the orphan scan and delete, =org-canvas-pull-at-point= — resolves URLs through =org-canvas--feature-list-url= / =org-canvas--feature-item-url= / =org-canvas--feature-list-params= / =org-canvas--feature-item-params= (core-api), never by spelling =org-canvas-api-course-endpoint= itself. A feature that does not list under the course registers =:list-url-fn=, =:item-url-fn=, a function-valued =:list-params= (called per use — the calendar context code embeds =org-canvas-course-id=, unknown at load) and =:delete-data=. =:item-params= are the single-item read's parameters, carried by =org-canvas-pull-at-point= and the conflict check, and the reason they exist is decisions.org, "Assignment Reads Ask for the Assignment's Own Dates" (issue #273): every read parameter a feature declares is checked against the spec by the read-parameter contract test. Calendar events were the first: unregistered, they had no drift check, no duplicate guard, no diff, and =pull-at-point= refused calendar.org because =org-canvas-register-pull-item-fn= is a no-op for an unregistered feature — so =org-canvas-register-feature= must precede the module's =org-canvas-define-sync=. *=GET /api/v1/calendar_events= returns only today's events unless ~all_events=true~* (probed 2026-09-01: 0 vs 6 on course 297530); =org-canvas--calendar-event-list-params= is the one spelling of the parameters, shared by sync, search, pull, delete-all and the registry. New quizzes stay unregistered: they key on =CANVAS_ASSIGNMENT_ID=, no course with New Quizzes was available to confirm the list's id field, and a wrong =:id-field= would make the orphan prune see every real quiz as an orphan.
+Every consumer of =org-canvas--feature-registry= — the sync snapshot, =org-canvas-diff=, the orphan scan and delete, =org-canvas-pull-at-point= — resolves URLs through =org-canvas--feature-list-url= / =org-canvas--feature-item-url= / =org-canvas--feature-list-params= / =org-canvas--feature-item-params= (core-api), never by spelling =org-canvas-api-course-endpoint= itself. A feature that does not list under the course registers =:list-url-fn=, =:item-url-fn=, a function-valued =:list-params= (called per use — the calendar context code embeds =org-canvas-course-id=, unknown at load) and =:delete-data=. =:item-params= are the single-item read's parameters, carried by =org-canvas-pull-at-point= and the conflict check, and the reason they exist is decisions.org, "Assignment Reads Ask for the Assignment's Own Dates" (issue #273): every read parameter a feature declares is checked against the spec by the read-parameter contract test. Calendar events were the first: unregistered, they had no drift check, no duplicate guard, no diff, and =pull-at-point= refused calendar.org because =org-canvas-register-pull-item-fn= is a no-op for an unregistered feature — so =org-canvas-register-feature= must precede the module's =org-canvas-define-sync=. *=GET /api/v1/calendar_events= returns only today's events unless ~all_events=true~* (probed 2026-09-01: 0 vs 6 on course 297530); =org-canvas--calendar-event-list-params= is the one spelling of the parameters, shared by sync, search, pull, delete-all and the registry. New quizzes stay out of the feature registry: their API is a separate service (=/api/quiz/v1/=), and in the registry the orphan scan and prune would list them at the wrong endpoint.  They register a pull-only entry instead (=org-canvas-register-pull-feature=), which gives them pull-at-point and adoption (#297) and, with =:drift-report=, a section of the drift report (#313); decisions.org, "A New Quiz Pulls Whole Through a Pull-Only Entry".
 
 =:modified-field= names the remote timestamp drift is decided from (default =updated_at=), resolved by =org-canvas--feature-modified-field=. Files declare =modified_at=: Canvas bumps a file's =updated_at= on metadata-only touches (a lock, usage rights, a module-item relink), which re-flagged unchanged files forever and, under =org-canvas-conflict-strategy= =push=, re-uploaded identical bytes and rotated ids (issue #94). The field feeds the snapshot index, =org-canvas--conflict-check= (files pass it through =org-canvas--file-check-conflict=) and =org-canvas--diff-modified-p=, and =org-canvas--finalize-item= stamps =CANVAS_UPDATED_AT= from the same field via =:updated-field= so baseline and comparison agree.
 
@@ -250,6 +250,74 @@ The conversion from the codebase convention (='GET=, ='POST=) to plz format:
 
 *plz has no PATCH support* (verified empirically against a local echo server): an unrecognized method symbol falls through plz's curl-argument builder, the request goes out as a *plain GET with no body*, and plz then crashes in its process sentinel. This is why New Quizzes updates (a PATCH-only API) and late-policy updates (also PATCH-only — PUT is not routed and 404s, issue #13) never worked until PATCH got its own transport: =org-canvas--api-curl-patch= invokes curl directly, passing method/headers/url via a config stream on stdin (keeping the token off the command line, same trick as plz) with the body appended after the trailing ~data-binary = "@-"~ directive. It returns parsed JSON and signals =plz-error= structs, so the shared retry and error machinery treats it exactly like a plz request. Methods outside =org-canvas--api-supported-methods= are rejected with a clear error.
 
+* GraphQL
+
+Canvas keeps some operations out of REST: the grade post policies and
+posting grades (#202), discussion checkpoints, a submission's late
+policy status, the comment bank, a submission's attempt history, the
+document processor and its reports, the per-column score statistics,
+an assignment's posting schedule and a module item's move between
+modules (#350, #351, #352).  They go to =/api/graphql= through the same
+=org-canvas-api-request= as everything else, so a GraphQL request
+inherits the token handling, redaction, rate-limit retries and the
+read-only guard (core-api.el, "GraphQL").
+
+- *One sender.*  =org-canvas--graphql-send= POSTs the document with its
+  variables and returns the reply's =data=.  GraphQL answers 200 with a
+  top-level =errors= array when a field fails, so a reply carrying one
+  signals =org-canvas-api-error= naming the messages; nothing returns a
+  partial =data=.
+- *A read is =org-canvas--graphql-query=.*  It lifts
+  =org-canvas-read-only= for its one request, since a query is a read
+  that happens to travel as a POST, and refuses a document that starts
+  with =mutation= before anything is sent.
+- *A write is =org-canvas--graphql-mutate=* (core-sync.el).  It keeps the
+  read-only guard, and under =org-canvas--dry-run= logs =[DRY-RUN] Would
+  ...= and returns =org-canvas--dry-run-response= without sending
+  (Hard Rule 1).  Its first argument says what the mutation does, for
+  that line and the =[Execute] GraphQL:= line.
+- *A mutation's refusal is in its payload.*  Canvas reports a refused
+  mutation (=reorderModuleItems=, =updateSubmissionGradeStatus=, the
+  comment bank mutations, =updateDiscussionTopic=) in the payload's own
+  =errors= list, with a 200 and no top-level error.  Every caller reads
+  that list and treats a non-empty one as a failure of that item; the
+  sender cannot, since the payload's name differs per mutation.
+- *Course-wide reads are made once per command.*  The document
+  processor and posting schedule reads (assignments.el,
+  =org-canvas--assignment-graphql-read=) and the checkpoints read
+  (discussions.el) page through =assignmentsConnection= or
+  =discussionsConnection= a hundred at a time, keep the answer in a
+  hash by id, and forget it on =org-canvas--operation-start-hook=, so
+  nothing read in one command reaches the next (#72, #141).  A read
+  that fails is one warning and the symbol =refused=: the command goes
+  on without it (the REST fallback, or the property left as typed),
+  the #171 rule.
+- *Per-row reads are for the rows that need them.*  The attempt
+  history is asked only for the rows a refresh classified resubmitted,
+  and the similarity reports once per column; the score statistics
+  once per hundred columns for the whole grading queue.
+
+Each document is a =defconst= named =org-canvas--...-query= or
+=org-canvas--...-mutation= beside its caller.  The GraphQL contract test
+(=test/org-canvas-graphql-contract-test.el=, decisions.org, "The GraphQL
+Documents Are Checked Against the Schema") checks every one of them,
+and the variables its caller builds, against the committed schema
+fixture; a new document is added to the test by symbol.  List them
+with:
+
+#+begin_src sh
+grep -n "^(defconst org-canvas--.*-\\(query\\|mutation\\)$" lisp/*.el
+#+end_src
+
+The reasoning for each document lives with its decision in
+decisions.org: "Post Policies Are GraphQL" and "A Posting Schedule
+Rides the Post-Policy Mutation", "External-Tool (LTI) Assignments — and
+No Turnitin" (the processor read), "Similarity Reports Are Read Per
+Column From GraphQL", "A Mean and a Median Beside the Counts", "A
+Resubmission Names the Attempt Its Score Was Given On", "A Late Status
+Is Typed in the Grading File", "The Comment Bank Is a Section of the
+Grading File" and "A Module Item Moved Between Modules Keeps Its Id".
+
 * Rate Limiting and Retries
 
 Canvas enforces rate limits and responds with either HTTP 429 or
@@ -388,11 +456,15 @@ sync.
 
 =org-canvas--conflict-check= compares timestamps:
 
-1. Read local =LAST_SYNCED= property → convert to Emacs time
-2. If no =LAST_SYNCED=: return nil (legacy item, allow push)
-3. GET remote item from Canvas
-4. If remote =updated_at= > local =LAST_SYNCED=: conflict
-5. Return =(cons 'conflict REMOTE-RESPONSE)= or nil
+1. Read the baseline (=org-canvas--conflict-baseline=): the entry's
+   =CANVAS_UPDATED_AT=, else the file's =#+LAST_SYNCED= header
+2. If there is no baseline: return nil (first sync, allow push)
+3. GET the remote item at the URL =org-canvas--sync-item-url= resolves,
+   with the feature's =:item-params= (#273, #344)
+4. If the remote =updated_at= (or the feature's =:modified-field=) is
+   later than the baseline: conflict
+5. Return =(cons 'conflict REMOTE-RESPONSE)= or nil; a failed GET is nil
+   and the push proceeds
 
 ** Resolution
 
@@ -696,11 +768,19 @@ logs. The result is a single continuous log for the entire sync session.
 
 1. Fetch all items from Canvas via =org-canvas-api-request-all-pages=
 2. Filter with optional =skip-fn= (e.g., skip the front page, which
-   deletion must never touch).  Skipped items are logged by name, and
-   the prune tally counts them as =protected= — an item held back
-   silently is indistinguishable from one that was not there
+   deletion must never touch; the assignment behind a New Quiz, a
+   classic quiz or a graded discussion, #319).  Skipped items are
+   logged by name with their =:skip-reason=, and the prune tally counts
+   them as =protected= — an item held back silently is
+   indistinguishable from one that was not there
 3. Delete each item via =org-canvas--delete-items-queued=
-4. Clean local Org properties (CANVAS_ID, LAST_SYNCED, etc.)
+4. Clean the local sync properties of each heading whose item was
+   deleted, and only those: an item skipped or whose DELETE failed
+   keeps its stamps, with the headings below it (#324).  The clean
+   covers every id stamp a module registered with
+   =org-canvas-register-id-property= (=CANVAS_ASSIGNMENT_ID=,
+   =CANVAS_ITEM_ID=, =CANVAS_CRITERION_ID=), so the next sync creates
+   the object again rather than updating the deleted one (#331)
 5. Log summary (N succeeded, M failed)
 
 Each item is deleted independently — failures on one item don't stop
@@ -713,7 +793,8 @@ the others. Progress messages show =[N/M]= counts.
 1. Read CANVAS_ID from heading (error if absent)
 2. Prompt user for confirmation
 3. DELETE from Canvas
-4. Clean local sync properties
+4. Clean local sync properties, the registered id stamps included, on
+   the heading and every heading below it (#331)
 5. Optional =post-delete-fn= callback
 
 ** Delete Macros

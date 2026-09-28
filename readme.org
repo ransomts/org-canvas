@@ -20,8 +20,9 @@ Tested against the Canvas LMS REST API (=/api/v1/=) as of 2026-02-07. Canvas doe
 - *Conflict Detection*: Interactive push/pull/skip resolution when remote changes are detected
 - *Modular Architecture*: Sync individual content types or the entire course at once
 - *Dependency-Aware*: Syncs in proper order respecting cross-references between files
-- *16 Content Types*: Assignments, classic quizzes, New Quizzes, pages, modules, rubrics, outcomes, discussions, announcements, files, assignment groups, group categories, sections, per-section date overrides, calendar events, and course settings
-- *Submission Grading*: View submissions, post comments, download attachments, and push grades back to Canvas -- all from Emacs
+- *Content Types*: Assignments (including LTI tools such as Gradescope), classic quizzes, New Quizzes, pages, modules, rubrics, outcomes, discussions, announcements, files, assignment groups, group categories, calendar events, grading schemes, per-section date overrides, per-student quiz accommodations, and course settings; sections and grading periods are pulled for reference
+- *Submission Grading*: View submissions, post comments, download attachments, and push grades, rubric assessments and late statuses back to Canvas -- all from Emacs
+- *Drift Report*: =org-canvas-diff= compares every heading with Canvas without writing anything
 - *Canvas Migration*: Import an entire existing Canvas course into Org files with =org-canvas-pull-all=
 - *Orphan Cleanup*: Detect and remove Canvas items that no longer have corresponding Org headings
 - *Resilient Syncing*: Pre-sync credential validation, rate limit retry with backoff, actionable error messages for auth failures, graceful handling of missing files
@@ -72,7 +73,7 @@ The easiest way to set up a new course is the setup wizard:
 M-x org-canvas-init
 #+end_src
 
-This prompts for your Canvas URL, API token, and course ID, tests the connection, writes =org-canvas-credentials.el=, and optionally creates skeleton =.org= files for all content types.
+This prompts for the course directory, your Canvas URL, API token, and course ID, tests the connection, asks whether you own the course (one you are only adopting is marked read-only: pull, status and diff, never a write), writes =org-canvas-credentials.el=, offers to add it to =.gitignore=, optionally creates skeleton =.org= files for the main content types, and offers to register the course in =org-canvas-courses=.
 
 Or create =org-canvas-credentials.el= manually in your course directory (not tracked by git):
 
@@ -104,7 +105,9 @@ my-course/
 ├── assignment-groups.org     ; Grade weighting categories
 ├── group-categories.org      ; Group sets for group assignments/discussions
 ├── calendar.org              ; Calendar events (office hours, holidays, review sessions)
-└── sections.org              ; Course sections (pulled from Canvas) & date overrides
+├── grading-schemes.org       ; Letter-grade schemes
+├── grading-periods.org       ; Grading periods (pulled from Canvas)
+└── sections.org              ; Course sections (pulled from Canvas); date overrides are tables in assignments.org
 #+end_example
 
 ** Basic Usage
@@ -145,7 +148,7 @@ M-x org-canvas-sync-pages
 M-x org-canvas-sync-settings
 M-x org-canvas-sync-group-categories
 M-x org-canvas-sync-calendar-events
-;; ... etc for all 16 content types
+;; ... etc for every content type
 
 ;; Sync a single item at cursor
 M-x org-canvas-sync-assignment-at-point
@@ -159,7 +162,7 @@ M-x org-canvas-pull-pages
 ;; ... etc for all content types
 
 ;; View, comment on, and grade submissions
-M-x org-canvas-submissions-view
+M-x org-canvas-pull-submissions
 
 ;; Find and remove orphaned Canvas items
 M-x org-canvas-cleanup-orphans
@@ -202,19 +205,22 @@ After syncing, org-canvas automatically adds:
 org-canvas includes a submissions viewer for reviewing student work, posting comments, downloading attachments, and pushing grades -- all without leaving Emacs.
 
 #+begin_src elisp
-M-x org-canvas-submissions-view
+M-x org-canvas-pull-submissions
 #+end_src
 
-This prompts for an assignment, fetches submissions from Canvas, and opens an interactive buffer with keybindings:
+This prompts for an assignment, fetches submissions from Canvas, saves them as a grading file under =org-canvas-submissions-directory= (reopen one later with =org-canvas-open-submissions=), and turns on =org-canvas-submissions-mode= with keybindings:
 
 | Key | Action                               |
 |-----+--------------------------------------|
 | =v= | Toggle between summary table and detail view |
 | =c= | Post a comment on the submission at point     |
-| =d= | Download submission attachments               |
+| =d= | Download the attachments of the student at point |
+| =D= | Download every student's attachments          |
 | =S= | Push modified grades to Canvas                |
+| =P= | Post the grades so students can see them     |
 | =g= | Refresh submissions from Canvas               |
-| =q= | Quit                                          |
+| =B= | Read the comment bank into the Comment Bank section |
+| =x= | Delete the saved comment at point from the bank |
 
 In detail view, edit the =:SCORE:= property on any student heading and press =S= to push grade changes. org-canvas detects which scores changed and confirms before pushing.
 
@@ -235,7 +241,6 @@ In detail view, edit the =:SCORE:= property on any student heading and press =S=
 - Emacs 29.1+
 - Org Mode 9.6+
 - [[https://github.com/alphapapa/plz.el][plz]] - HTTP library
-- [[https://github.com/Kinneyzhang/elog][elog]] - Logging framework
 - [[https://github.com/magit/transient][transient]] (0.4+) - Command menu (built into Emacs 29+)
 - [[https://pandoc.org/][pandoc]] (optional) - Required for HTML-to-Org conversion when pulling content from Canvas
 
@@ -245,8 +250,8 @@ In detail view, edit the =:SCORE:= property on any student heading and press =S=
 # Run tests
 eldev test
 
-# Run tests with coverage
-eldev test -u "on,text,dontsend"
+# Run tests with per-file coverage
+eldev test -u "on,codecov,dontsend" -U coverage/coverage.json
 
 # Lint
 eldev lint
