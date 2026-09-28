@@ -1165,8 +1165,10 @@ finalize must not dirty the hash for the next run."
 
 ;;;; Cross-Module Moves
 ;;
-;; Canvas offers no way to move an item between modules: the module id
-;; is in the item's URL, so delete-and-create is the only mechanism.
+;; Canvas's REST API offers no way to move an item between modules: the
+;; module id is in the item's URL, so delete-and-create was the only
+;; mechanism until the GraphQL move (issue #352, see Moving an Item Keeps
+;; Its Id below), which is now tried first and this is its fallback.
 ;; Nothing said what happened when an item's block, drawer and all, was
 ;; moved under another heading in modules.org, and an operator
 ;; reorganizing a course had to guess — dropping the CANVAS_ID by hand
@@ -1308,10 +1310,13 @@ named; they are left in place.  Returns the adopted id, or nil."
           (org-canvas--ctx-push ctx :module-items-adopted id)
           id)))))
 
-(defun org-canvas--module-item-claimed-elsewhere (item-id module-pom)
-  "Return the title of another module than MODULE-POM's claiming ITEM-ID.
-Scans the current buffer's level-2 headings; nil when no other
-module's item heading carries ITEM-ID as its CANVAS_ID."
+(defun org-canvas--module-item-claim-elsewhere (item-id module-pom)
+  "Return where a module other than MODULE-POM's claims ITEM-ID, or nil.
+Scans the current buffer's level-2 headings for one carrying ITEM-ID
+as its CANVAS_ID under another module heading.  The answer is a plist:
+:title, that module heading's title; :module-id, its CANVAS_ID (nil
+before its first sync); :position, the claiming heading's 1-based
+position among its siblings."
   (let ((here (save-excursion (goto-char module-pom) (org-back-to-heading t) (point)))
         (found nil))
     (save-excursion
@@ -1319,11 +1324,219 @@ module's item heading carries ITEM-ID as its CANVAS_ID."
        (lambda ()
          (when (and (not found)
                     (equal (org-entry-get (point) "CANVAS_ID") item-id))
-           (save-excursion
-             (when (and (org-up-heading-safe) (/= (point) here))
-               (setq found (org-get-heading t t t t))))))
+           (let ((position (org-canvas--module-item-position (point))))
+             (save-excursion
+               (when (and (org-up-heading-safe) (/= (point) here))
+                 (setq found (list :title (org-get-heading t t t t)
+                                   :module-id (org-entry-get (point) "CANVAS_ID")
+                                   :position position)))))))
        "LEVEL=2" 'file))
     found))
+
+;;;; Moving an Item Keeps Its Id (issue #352)
+;;
+;; The REST API cannot move an item between modules: the module id is
+;; in the item's URL.  GraphQL can.  `reorderModuleItems' (canvas-lms
+;; app/graphql/mutations/reorder_module_items.rb, read at 1c9f0bb8)
+;; takes the ids of the items to move — only those, not the module's
+;; whole order — plus the source module as `oldModuleId', and sets each
+;; item's module in one transaction: all of them move or none does.
+;; `targetPosition' is where the first of them lands in the target
+;; module, 1-based, the items already there from that position on
+;; shifting down; without it they land at the top.  Canvas then
+;; renumbers both modules 1..n.  The item keeps its id, so what is tied
+;; to the id — a student's progress through the module, a link to the
+;; item — survives the move, which a delete-and-create did not.
+;;
+;; Only the move uses it.  Ordering within a module stays on the REST
+;; PUT each item already gets for its title, indent and requirement:
+;; that PUT carries the position, so a reorder call would add a request
+;; per module and remove none.
+;;
+;; Which module holds the item is known from one side only.  When the
+;; module the item left syncs first, its reconcile finds the item
+;; claimed by another module's heading and moves it there, where it used
+;; to delete it.  When the module it arrived in syncs first, the item
+;; heading carries an id that module does not hold; `moduleItem' says
+;; where it sits, a REST read of it there says it is live and in this
+;; course, and the item is moved in.  Whenever the move cannot be made
+;; — no Canvas id on the new module yet, a failed read, a refused or
+;; failed mutation — the sync does what it did before (issue #105):
+;; recreate the item in its new module and delete the old copy.  A
+;; mutation that failed in transit is checked by reading the item's
+;; module again before falling back, so an item Canvas did move is not
+;; created a second time.
+
+(defconst org-canvas--module-item-home-query
+  "query ($id: ID!) { moduleItem(id: $id) { _id module { _id } } }"
+  "GraphQL query for the module holding a module item.")
+
+(defconst org-canvas--module-items-move-mutation
+  "mutation ($courseId: ID!, $moduleId: ID!, $oldModuleId: ID, $itemIds: [ID!]!, $position: Int) { reorderModuleItems(input: {courseId: $courseId, moduleId: $moduleId, oldModuleId: $oldModuleId, itemIds: $itemIds, targetPosition: $position}) { module { _id } oldModule { _id } errors { attribute message } } }"
+  "GraphQL mutation moving module items into another module (issue #352).")
+
+(defun org-canvas--module-item-home (id)
+  "Return the id of the module that Canvas lists item ID under, or nil.
+A read (`org-canvas--graphql-query'); a failure is logged and answers
+nil."
+  (condition-case err
+      (let* ((data (org-canvas--graphql-query
+                    org-canvas--module-item-home-query
+                    `((id . ,(format "%s" id)))))
+             (home (alist-get '_id (alist-get 'module (alist-get 'moduleItem data)))))
+        (and home (not (eq home :null)) (format "%s" home)))
+    (error
+     (org-canvas--log-debug org-canvas--logger
+       "[Module Item] Could not read which module holds item %s: %s"
+       id (error-message-string err))
+     nil)))
+
+(defun org-canvas--module-item-live-p (module-id id)
+  "Return non-nil when module MODULE-ID of this course lists item ID.
+The REST read answers only for an item that is not deleted, in a
+module of the configured course."
+  (condition-case nil
+      (let ((item (org-canvas-api-request
+                   'GET (org-canvas-api-course-endpoint
+                         "modules/%s/items/%s" module-id id))))
+        (and (listp item)
+             (equal (format "%s" (alist-get 'id item)) (format "%s" id))))
+    (error nil)))
+
+(defun org-canvas--module-item-live-home (id module-id)
+  "Return the module other than MODULE-ID holding live item ID, or nil."
+  (let ((home (org-canvas--module-item-home id)))
+    (when (and home (not (equal home (format "%s" module-id)))
+               (org-canvas--module-item-live-p home id))
+      home)))
+
+(defun org-canvas--module-item-move-variables (id from to position)
+  "Return the move mutation's variables: item ID from FROM to TO at POSITION."
+  `((courseId . ,(format "%s" org-canvas-course-id))
+    (moduleId . ,(format "%s" to))
+    (oldModuleId . ,(format "%s" from))
+    (itemIds . ,(vector (format "%s" id)))
+    (position . ,(max 1 (or position 1)))))
+
+(defun org-canvas--module-item-move-problem (reply to)
+  "Return nil when REPLY confirms a move into module TO, else the reason."
+  (let* ((payload (alist-get 'reorderModuleItems reply))
+         (errors (alist-get 'errors payload))
+         (landed (alist-get '_id (alist-get 'module payload))))
+    (cond ((and errors (not (eq errors :null)) (> (length errors) 0))
+           (org-canvas--graphql-errors-message errors))
+          ((equal (format "%s" landed) (format "%s" to)) nil)
+          (t "the reply did not name the module the item is in"))))
+
+(defun org-canvas--module-item-move-send (id from to position title)
+  "Send the move of item ID, TITLE, from FROM to TO at POSITION.
+Returns nil when Canvas confirmed it, or when a dry run sent nothing;
+otherwise the reason it did not."
+  (condition-case err
+      (let ((reply (org-canvas--graphql-mutate
+                    (format "move item %s '%s' from module %s to module %s"
+                            id title from to)
+                    org-canvas--module-items-move-mutation
+                    (org-canvas--module-item-move-variables id from to position))))
+        (unless (org-canvas--dry-run-response-p reply)
+          (org-canvas--module-item-move-problem reply to)))
+    (error (error-message-string err))))
+
+(defun org-canvas--module-item-move (id from to position title)
+  "Move item ID, TITLE, from module FROM to module TO, keeping its id.
+POSITION is where it lands in TO.  Returns non-nil when it moved, or
+would in a dry run.  When the mutation fails or is not confirmed, the
+item's module is read again: Canvas may have moved it before the reply
+was lost, and then the move stands.  Otherwise a warning names the
+reason and nil comes back, so the caller falls back to recreating."
+  (let ((problem (org-canvas--module-item-move-send id from to position title)))
+    (cond
+     ((null problem)
+      (unless org-canvas--dry-run
+        (org-canvas--log-info org-canvas--logger
+          "[Module Item] Moved item %s '%s' from module %s to module %s; it keeps its id"
+          id title from to))
+      t)
+     ((equal (org-canvas--module-item-home id) (format "%s" to))
+      (org-canvas--log-info org-canvas--logger
+        "[Module Item] Item %s '%s' is in module %s although the move answered: %s"
+        id title to problem)
+      t)
+     (t
+      (org-canvas--log-warning org-canvas--logger
+        "[Module Item] Could not move item %s '%s' from module %s to module %s (%s); it is recreated there with a new id instead"
+        id title from to problem)
+      nil))))
+
+(defun org-canvas--module-item-relocated-p (ctx id to)
+  "Return non-nil when CTX records item ID moved into module TO this run."
+  (member (cons (format "%s" id) (format "%s" to))
+          (plist-get ctx :module-items-relocated)))
+
+(defun org-canvas--module-item-note-relocated (ctx id to)
+  "Record in CTX that item ID moved into module TO.
+Outside a dry run the move wrote to Canvas, which the running module
+finalize is told (`org-canvas--finalize-note-remote-write')."
+  (org-canvas--ctx-push ctx :module-items-relocated
+                        (cons (format "%s" id) (format "%s" to)))
+  (when (and ctx (not org-canvas--dry-run))
+    (org-canvas--finalize-note-remote-write ctx)))
+
+(defun org-canvas--module-item-foreign-id-p (data remote)
+  "Return non-nil when DATA carries an id its module's list REMOTE lacks.
+Nothing is foreign while REMOTE is `unknown'."
+  (let ((id (plist-get data :canvas-id)))
+    (and id (not (eq remote 'unknown))
+         (not (member (format "%s" id)
+                      (org-canvas--module-remote-item-ids remote))))))
+
+(defun org-canvas--module-item-move-here (data module-id position &optional ctx)
+  "Move DATA's item into module MODULE-ID from the module holding it.
+POSITION is where it lands; CTX is the run context, which records the
+move.  Returns non-nil when DATA keeps its id: the item moved (or
+would, in a dry run), now or earlier this run."
+  (let ((id (format "%s" (plist-get data :canvas-id)))
+        (here (format "%s" module-id)))
+    (or (org-canvas--module-item-relocated-p ctx id here)
+        (let ((from (org-canvas--module-item-live-home id here)))
+          (when (and from
+                     (org-canvas--module-item-move
+                      id from here position (plist-get data :title)))
+            (org-canvas--module-item-note-relocated ctx id here)
+            t)))))
+
+(defun org-canvas--module-item-settle-foreign-id (data module-id remote position
+                                                       &optional ctx)
+  "Move DATA's item into module MODULE-ID, or else create it here.
+REMOTE is the module's item list and POSITION the item's place in it;
+CTX is the run context.  An item the module does not hold is moved in
+from wherever Canvas holds it (`org-canvas--module-item-move-here',
+issue #352); when that cannot be done, its id is cleared so it is
+created here (`org-canvas--module-item-disown-foreign-id', issue #105)."
+  (when (and (org-canvas--module-item-foreign-id-p data remote)
+             (not (org-canvas--module-item-move-here data module-id position ctx)))
+    (org-canvas--module-item-disown-foreign-id data module-id remote ctx)))
+
+(defun org-canvas--module-item-move-departed (module-id item claim &optional ctx)
+  "Move ITEM of module MODULE-ID to the module CLAIM names.
+CLAIM is what `org-canvas--module-item-claim-elsewhere' returned; CTX
+the run context.  Returns non-nil when ITEM is settled without a
+delete: moved (or would be, in a dry run), moved in earlier this run,
+or left for its new module to move in because that module has no
+Canvas id yet.  nil means the move failed, and the caller deletes."
+  (let ((id (format "%s" (alist-get 'id item)))
+        (to (plist-get claim :module-id))
+        (title (or (alist-get 'title item) "?")))
+    (cond
+     ((and to (org-canvas--module-item-relocated-p ctx id to)) t)
+     ((or (null to) (equal to (format "%s" module-id)))
+      (org-canvas--log-info org-canvas--logger
+        "[Module Item] Item %s '%s' stays in module %s until module '%s', which claims it, has a Canvas id; its sync moves it"
+        id title module-id (plist-get claim :title))
+      t)
+     ((org-canvas--module-item-move id module-id to (plist-get claim :position) title)
+      (org-canvas--module-item-note-relocated ctx id to)
+      t))))
 
 (defun org-canvas--module-delete-departed-item (module-id item new-home)
   "Delete ITEM from module MODULE-ID on Canvas; it now lives in NEW-HOME.
@@ -1373,18 +1586,24 @@ Returns the number removed."
 (defun org-canvas--module-reconcile-unclaimed-item (module-id module-pom item
                                                               &optional ctx)
   "Settle unclaimed ITEM of module MODULE-ID against the headings at MODULE-POM.
-Deleted when it has moved — another module's heading claims it, or it
-was recreated elsewhere this run (CTX's :module-items-moved) — and
-otherwise left in place and named.  Returns non-nil when it was
-deleted."
+Moved, keeping its id, when another module's heading claims it
+\(`org-canvas--module-item-move-departed', issue #352).  Deleted when
+that move fails, or when it was recreated elsewhere this run (CTX's
+:module-items-moved).  Otherwise left in place and named.  Returns
+non-nil when it was deleted."
   (let* ((id (format "%s" (alist-get 'id item)))
-         (new-home (org-canvas--module-item-claimed-elsewhere id module-pom)))
-    (if (or new-home (member id (plist-get ctx :module-items-moved)))
-        (org-canvas--module-delete-departed-item module-id item new-home)
+         (claim (org-canvas--module-item-claim-elsewhere id module-pom)))
+    (cond
+     ((and claim (org-canvas--module-item-move-departed module-id item claim ctx))
+      nil)
+     ((or claim (member id (plist-get ctx :module-items-moved)))
+      (org-canvas--module-delete-departed-item module-id item
+                                               (plist-get claim :title)))
+     (t
       (org-canvas--log-warning org-canvas--logger
         "[Module Item] Module %s holds '%s' (item %s) that modules.org does not list — left in place; delete it in Canvas or add a heading for it"
         module-id (or (alist-get 'title item) "?") id)
-      nil)))
+      nil))))
 
 (defun org-canvas--module-sync-items (module-id module-pom modules-file-dir
                                                 &optional ctx)
@@ -1398,8 +1617,9 @@ outcomes roll into the global sync summary under \"Module Items\".
 
 The module's remote item list is fetched once: an item heading whose
 id the module does not hold has moved here from another module and is
-created fresh, and a remote item no heading here claims is removed
-when it has moved elsewhere (issue #105; see Cross-Module Moves).  An
+moved in, keeping its id, or else created fresh; a remote item another
+module's heading claims is moved there, or else removed (issues #105,
+#352; see Cross-Module Moves).  An
 unstamped heading whose content the module already holds adopts that
 item instead of creating a second copy (issue #179; see Adoption).
 Returns (success-count skip-count fail-count)."
@@ -1426,7 +1646,8 @@ Returns (success-count skip-count fail-count)."
           (condition-case err
               (let* ((data (org-canvas--module-item-parse-entry modules-file-dir))
                      (item-type (plist-get data :type)))
-                (org-canvas--module-item-disown-foreign-id data module-id remote ctx)
+                (org-canvas--module-item-settle-foreign-id
+                 data module-id remote position ctx)
                 (let ((adopted (org-canvas--module-item-adopt-twin
                                 data module-id remote claimed ctx)))
                   (when adopted (push adopted claimed)))

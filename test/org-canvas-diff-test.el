@@ -3689,7 +3689,7 @@ HEADING is the shown text, the same on Emacs 29 and 30."
       (expect (plist-get moved :line) :to-equal 11)
       (expect (file-name-nondirectory (plist-get moved :file)) :to-equal "modules.org")))
 
-  (it "prints the paired heading and says the sync recreates the item with a new id"
+  (it "prints the paired heading and says the sync moves the item, keeping its id (issue #352)"
     (with-temp-buffer
       (org-canvas--diff-insert-entry
        '(:kind moved :title "R6: Arguing Both Sides" :id "5707155" :module-id "1"
@@ -3698,7 +3698,7 @@ HEADING is the shown text, the same on Emacs 29 and 30."
       (expect (buffer-string)
               :to-match "the unstamped heading 'R7: Arguing Both Sides' (line 10) places it in 'Week 6'")
       (expect (buffer-string)
-              :to-match "stamp CANVAS_ID 5707155 on that heading and the next sync instead recreates it there with a new id and deletes this copy")
+              :to-match "stamp CANVAS_ID 5707155 on that heading and the next sync instead moves it there, keeping its id (if Canvas refuses the move, it recreates it there with a new id and deletes this copy)")
       (expect (buffer-string) :not :to-match "to move it instead")))
 
   (it "names the heading without a line, or says an unstamped heading, when that is all it has"
@@ -3716,7 +3716,7 @@ HEADING is the shown text, the same on Emacs 29 and 30."
           (test-org-canvas--diff-goto-row 'moved)
           (org-canvas-diff-stamp-move)
           (expect (thing-at-point 'line t)
-                  :to-match "STAMPED   R6: Arguing Both Sides (CANVAS_ID 5707155 on 'R7: Arguing Both Sides' in 'Week 6', nothing sent; the next sync recreates it there with a new id and deletes the copy in 'Week 5')")
+                  :to-match "STAMPED   R6: Arguing Both Sides (CANVAS_ID 5707155 on 'R7: Arguing Both Sides' in 'Week 6', nothing sent; the next sync moves it there from 'Week 5', keeping its id)")
           (expect (get-text-property (point) 'org-canvas-diff-row) :to-be-truthy))
         (expect (test-org-canvas-api-call-count) :to-equal 0))
       (expect (test-org-canvas-342--ids file)
@@ -3961,14 +3961,14 @@ ANSWER `no' declines the confirmation.  Returns (PROMPT REPORT COUNT)."
                         :relocate ((:kind relocate :title "Journal 05" :id "5707155"
                                     :where "Week 06" :to "Week 07")))))))
         (expect report :to-match "Module Items: 0 divergence(s), 1 relocation(s)")
-        (expect report :to-match "  RELOCATE  Journal 05 (item id 5707155 sits in module 'Week 06'; its heading, stamped with that id, is under 'Week 07', so the next sync recreates it there with a new id and deletes this copy)")
+        (expect report :to-match "  RELOCATE  Journal 05 (item id 5707155 sits in module 'Week 06'; its heading, stamped with that id, is under 'Week 07', so the next sync moves it there, keeping its id (if Canvas refuses the move, it recreates it there with a new id and deletes this copy))")
         (expect report :to-match "No drift")
-        (expect report :to-match "Relocations: 1 module item the next sync recreates in its heading's module with a new id"))
+        (expect report :to-match "Relocations: 1 module item the next sync moves into its heading's module, keeping the id"))
       (expect (org-canvas--diff-render
                '((:name "Module Items"
                   :relocate ((:kind relocate :title "a" :id "1" :where "x" :to "y")
                              (:kind relocate :title "b" :id "2" :where "x" :to "y")))))
-              :to-match "Relocations: 2 module items the next sync recreates in their heading's module")
+              :to-match "Relocations: 2 module items the next sync moves into their heading's module")
       (expect (org-canvas--diff-render '((:name "A"))) :not :to-match "Relocations")))
 
   (it "visits the stamped heading, opens the Canvas item, and refuses to acknowledge, delete or stamp it"

@@ -3936,7 +3936,9 @@ REMOTE is a form; the symbol `fail' makes the list request signal.
          (expect (cl-find-if (lambda (r) (eq (car r) 'DELETE)) requests) :to-be nil)
          (expect (plist-get ctx :module-items-moved) :to-be nil)))))
 
-  (it "removes an unclaimed remote item that another module's heading claims"
+  (it "removes an unclaimed remote item another module's heading claims, when it cannot be moved there"
+    ;; The move mutation's reply here names no module, and the re-read
+    ;; finds none, so the #352 move falls back to the delete.
     (with-org-canvas-test-config
       (test-org-canvas--with-module-remote '(((id . 55) (title . "Check 3")))
         (with-temp-org-buffer
@@ -4091,6 +4093,325 @@ REMOTE is a form; the symbol `fail' makes the list request signal.
       (expect (plist-get ctx :module-items-moved) :to-equal '("55"))
       (expect (plist-get (org-canvas--sync-make-ctx) :module-items-moved)
               :to-be nil))))
+
+
+;;;; Moving an item keeps its id (issue #352)
+
+(defconst test-org-canvas-352--arrived
+  "* Week 1
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** Check 3
+:PROPERTIES:
+:ITEM_TYPE: SubHeader
+:CANVAS_ID: 55
+:END:
+"
+  "Week 1, whose heading carries item 55, which Canvas holds elsewhere.")
+
+(defconst test-org-canvas-352--departed
+  "* Week 1
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+* Week 2
+:PROPERTIES:
+:CANVAS_ID: 200
+:END:
+** Intro
+:PROPERTIES:
+:ITEM_TYPE: SubHeader
+:CANVAS_ID: 60
+:END:
+** Check 3
+:PROPERTIES:
+:ITEM_TYPE: SubHeader
+:CANVAS_ID: 55
+:END:
+"
+  "Week 1 holds item 55 on Canvas; its heading is second under Week 2.")
+
+(defconst test-org-canvas-352--moved-reply
+  '((reorderModuleItems . ((module . ((_id . "100")))
+                           (oldModule . ((_id . "300")))
+                           (errors . nil))))
+  "What Canvas answers when item 55 lands in module 100.")
+
+(defmacro test-org-canvas-352--with-move (spec &rest body)
+  "Run BODY with the module item requests mocked as SPEC says.
+SPEC is a plist: :remote, the module's item list; :home, the module
+`moduleItem' names (a list is answered one element per read, the last
+repeating); :live, whether the REST read of the item there succeeds;
+:reply, what the move mutation answers, or `fail' to signal.  Binds
+`requests' ((METHOD URL)), `mutations' (variables sent), `homes' (the
+reads' variables) and `ctx'."
+  (declare (indent 1))
+  `(let ((requests nil) (mutations nil) (homes nil)
+         (ctx (org-canvas--sync-make-ctx))
+         (spec (list ,@spec)))
+     (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                (lambda (&rest _) (plist-get spec :remote)))
+               ((symbol-function 'org-canvas-api-request)
+                (lambda (method url &rest _)
+                  (push (list method url) requests)
+                  (cond
+                   ((and (memq method '(GET PUT))
+                         (string-match "/items/\\([0-9]+\\)$" url))
+                    (if (and (eq method 'GET) (not (plist-get spec :live)))
+                        (error "HTTP 404")
+                      `((id . ,(string-to-number (match-string 1 url))))))
+                   (t '((id . 900))))))
+               ((symbol-function 'org-canvas--graphql-query)
+                (lambda (_document variables)
+                  (push variables homes)
+                  (let ((home (plist-get spec :home)))
+                    (when (consp home)
+                      (when (cdr home) (plist-put spec :home (cdr home)))
+                      (setq home (car home)))
+                    (and home `((moduleItem . ((_id . "55")
+                                               (module . ((_id . ,home))))))))))
+               ((symbol-function 'org-canvas--graphql-mutate)
+                (lambda (_what _document variables)
+                  (push variables mutations)
+                  (let ((reply (plist-get spec :reply)))
+                    (if (eq reply 'fail) (error "Timeout was reached") reply)))))
+       ,@body)))
+
+(defun test-org-canvas-352--sent-p (requests method pattern)
+  "Return non-nil when REQUESTS hold a METHOD request whose URL matches PATTERN."
+  (cl-find-if (lambda (r) (and (eq (car r) method) (string-match-p pattern (cadr r))))
+              requests))
+
+(describe "a module item moved in keeps its id (issue #352)"
+  (it "moves the item in from the module Canvas holds it in, and updates it there"
+    (with-org-canvas-test-config
+      (test-org-canvas-352--with-move (:remote '(((id . 77) (title . "Other")))
+                                       :home "300" :live t
+                                       :reply test-org-canvas-352--moved-reply)
+        (with-temp-org-buffer test-org-canvas-352--arrived
+          (org-back-to-heading)
+          (org-canvas--module-sync-items 100 (point) default-directory ctx)
+          (expect (length mutations) :to-equal 1)
+          (let ((vars (car mutations)))
+            (expect (alist-get 'moduleId vars) :to-equal "100")
+            (expect (alist-get 'oldModuleId vars) :to-equal "300")
+            (expect (alist-get 'itemIds vars) :to-equal ["55"])
+            (expect (alist-get 'position vars) :to-equal 1))
+          ;; The item was read where moduleItem put it before anything moved.
+          (expect (test-org-canvas-352--sent-p requests 'GET "modules/300/items/55$")
+                  :to-be-truthy)
+          ;; Updated in place under its new module; nothing created or deleted.
+          (expect (test-org-canvas-352--sent-p requests 'PUT "modules/100/items/55$")
+                  :to-be-truthy)
+          (expect (test-org-canvas-352--sent-p requests 'POST "modules/100/items$") :to-be nil)
+          (expect (test-org-canvas-352--sent-p requests 'DELETE ".") :to-be nil)
+          (expect (plist-get ctx :module-items-moved) :to-be nil)
+          (expect (plist-get ctx :module-items-relocated) :to-equal '(("55" . "100")))
+          (expect (plist-get ctx :remote-touched) :to-be t)
+          (search-forward "** Check 3")
+          (expect (org-entry-get (point) "CANVAS_ID") :to-equal "55")))))
+
+  (it "falls back to creating it here when Canvas refuses the move"
+    (with-org-canvas-test-config
+      (test-org-canvas-352--with-move
+          (:remote nil :home "300" :live t
+           :reply '((reorderModuleItems
+                     . ((module . nil)
+                        (errors . [((attribute . "item_ids")
+                                    (message . "Items do not belong to source module"))])))))
+        (let ((warnings nil))
+          (cl-letf (((symbol-function 'org-canvas--log-warning)
+                     (lambda (_logger fmt &rest args)
+                       (push (apply #'format fmt args) warnings))))
+            (with-temp-org-buffer test-org-canvas-352--arrived
+              (org-back-to-heading)
+              (org-canvas--module-sync-items 100 (point) default-directory ctx)
+              (search-forward "** Check 3")
+              (expect (org-entry-get (point) "CANVAS_ID") :to-equal "900")))
+          (expect (test-org-canvas-352--sent-p requests 'POST "modules/100/items$")
+                  :to-be-truthy)
+          (expect (plist-get ctx :module-items-moved) :to-equal '("55"))
+          (expect (plist-get ctx :module-items-relocated) :to-be nil)
+          (expect (plist-get ctx :remote-touched) :to-be nil)
+          (expect (cl-find-if (lambda (w) (string-match-p
+                                           "Could not move item 55 .*Items do not belong to source module.*new id instead"
+                                           w))
+                              warnings)
+                  :to-be-truthy)))))
+
+  (it "keeps the id when a move that failed in transit landed after all"
+    (with-org-canvas-test-config
+      (test-org-canvas-352--with-move (:remote nil :home '("300" "100") :live t
+                                       :reply 'fail)
+        (with-temp-org-buffer test-org-canvas-352--arrived
+          (org-back-to-heading)
+          (org-canvas--module-sync-items 100 (point) default-directory ctx)
+          ;; Read once to find it, once after the failure to check.
+          (expect (length homes) :to-equal 2)
+          (expect (test-org-canvas-352--sent-p requests 'POST "modules/100/items$") :to-be nil)
+          (expect (test-org-canvas-352--sent-p requests 'PUT "modules/100/items/55$")
+                  :to-be-truthy)
+          (search-forward "** Check 3")
+          (expect (org-entry-get (point) "CANVAS_ID") :to-equal "55")))))
+
+  (it "sends no move when it cannot say where the item is, or finds it gone"
+    (with-org-canvas-test-config
+      (dolist (answer '((nil t) ("300" nil) ("100" t)))
+        (test-org-canvas-352--with-move (:remote nil :home (car answer)
+                                         :live (cadr answer)
+                                         :reply test-org-canvas-352--moved-reply)
+          (with-temp-org-buffer test-org-canvas-352--arrived
+            (org-back-to-heading)
+            (org-canvas--module-sync-items 100 (point) default-directory ctx)
+            (expect mutations :to-be nil)
+            (expect (plist-get ctx :module-items-moved) :to-equal '("55"))
+            (expect (test-org-canvas-352--sent-p requests 'POST "modules/100/items$")
+                    :to-be-truthy))))))
+
+  (it "reads nothing when the module's list could not be read"
+    (with-org-canvas-test-config
+      (test-org-canvas-352--with-move (:remote nil :home "300" :live t
+                                       :reply test-org-canvas-352--moved-reply)
+        (cl-letf (((symbol-function 'org-canvas--module-remote-items)
+                   (lambda (_) 'unknown)))
+          (with-temp-org-buffer test-org-canvas-352--arrived
+            (org-back-to-heading)
+            (org-canvas--module-sync-items 100 (point) default-directory ctx)))
+        (expect homes :to-be nil)
+        (expect mutations :to-be nil)
+        (expect (test-org-canvas-352--sent-p requests 'PUT "modules/100/items/55$")
+                :to-be-truthy))))
+
+  (it "takes a move this run already made as done, without reading again"
+    (with-org-canvas-test-config
+      (test-org-canvas-352--with-move (:remote nil :home "300" :live t
+                                       :reply test-org-canvas-352--moved-reply)
+        (plist-put ctx :module-items-relocated '(("55" . "100")))
+        (with-temp-org-buffer test-org-canvas-352--arrived
+          (org-back-to-heading)
+          (org-canvas--module-sync-items 100 (point) default-directory ctx))
+        (expect homes :to-be nil)
+        (expect mutations :to-be nil)
+        (expect (test-org-canvas-352--sent-p requests 'PUT "modules/100/items/55$")
+                :to-be-truthy))))
+
+  (it "previews the move in a dry run and sends nothing"
+    (with-org-canvas-test-config
+      (let ((mutate (symbol-function 'org-canvas--graphql-mutate))
+            (sent nil)
+            (lines nil))
+        (test-org-canvas-352--with-move (:remote nil :home "300" :live t)
+          (cl-letf (((symbol-function 'org-canvas--graphql-mutate) mutate)
+                    ((symbol-function 'org-canvas--graphql-send)
+                     (lambda (document &rest _) (push document sent)))
+                    ((symbol-function 'org-canvas--log-info)
+                     (lambda (_logger fmt &rest args)
+                       (push (apply #'format fmt args) lines))))
+            (let ((org-canvas--dry-run t))
+              (with-temp-org-buffer test-org-canvas-352--arrived
+                (org-back-to-heading)
+                (org-canvas--module-sync-items 100 (point) default-directory ctx)
+                (search-forward "** Check 3")
+                (expect (org-entry-get (point) "CANVAS_ID") :to-equal "55"))))
+          (expect sent :to-be nil)
+          (expect (cl-remove-if-not (lambda (r) (memq (car r) '(POST PUT DELETE))) requests)
+                  :to-be nil)
+          (expect (cl-find-if (lambda (l) (string-match-p
+                                           "\\[DRY-RUN\\] Would move item 55 'Check 3' from module 300 to module 100"
+                                           l))
+                              lines)
+                  :to-be-truthy)
+          (expect (plist-get ctx :module-items-relocated) :to-equal '(("55" . "100")))
+          (expect (plist-get ctx :remote-touched) :to-be nil))))))
+
+(describe "a module item that moved away keeps its id (issue #352)"
+  (it "moves it to the module whose heading claims it, at that heading's place"
+    (with-org-canvas-test-config
+      (test-org-canvas-352--with-move
+          (:remote '(((id . 55) (title . "Check 3")))
+           :reply '((reorderModuleItems . ((module . ((_id . "200"))) (errors . nil)))))
+        (with-temp-org-buffer test-org-canvas-352--departed
+          (org-back-to-heading)
+          (org-canvas--module-sync-items 100 (point) default-directory ctx))
+        (expect (length mutations) :to-equal 1)
+        (let ((vars (car mutations)))
+          (expect (alist-get 'moduleId vars) :to-equal "200")
+          (expect (alist-get 'oldModuleId vars) :to-equal "100")
+          (expect (alist-get 'itemIds vars) :to-equal ["55"])
+          (expect (alist-get 'position vars) :to-equal 2))
+        (expect (test-org-canvas-352--sent-p requests 'DELETE ".") :to-be nil)
+        (expect (plist-get ctx :module-items-relocated) :to-equal '(("55" . "200")))
+        (expect (plist-get ctx :remote-touched) :to-be t))))
+
+  (it "deletes it, as before, when the move fails and Canvas still holds it here"
+    (with-org-canvas-test-config
+      (test-org-canvas-352--with-move (:remote '(((id . 55) (title . "Check 3")))
+                                       :home "100" :reply 'fail)
+        (with-temp-org-buffer test-org-canvas-352--departed
+          (org-back-to-heading)
+          (org-canvas--module-sync-items 100 (point) default-directory ctx))
+        (expect (length mutations) :to-equal 1)
+        (expect (test-org-canvas-352--sent-p requests 'DELETE "modules/100/items/55$")
+                :to-be-truthy)
+        (expect (plist-get ctx :module-items-relocated) :to-be nil))))
+
+  (it "leaves it for its new module when that module has no Canvas id yet"
+    (with-org-canvas-test-config
+      (test-org-canvas-352--with-move (:remote '(((id . 55) (title . "Check 3")))
+                                       :reply test-org-canvas-352--moved-reply)
+        (let ((lines nil))
+          (cl-letf (((symbol-function 'org-canvas--log-info)
+                     (lambda (_logger fmt &rest args)
+                       (push (apply #'format fmt args) lines))))
+            (with-temp-org-buffer (replace-regexp-in-string
+                                   ":CANVAS_ID: 200\n" "" test-org-canvas-352--departed)
+              (org-back-to-heading)
+              (org-canvas--module-sync-items 100 (point) default-directory ctx)))
+          (expect mutations :to-be nil)
+          (expect (test-org-canvas-352--sent-p requests 'DELETE ".") :to-be nil)
+          (expect (cl-find-if (lambda (l) (string-match-p
+                                           "Item 55 'Check 3' stays in module 100 until module 'Week 2'"
+                                           l))
+                              lines)
+                  :to-be-truthy)))))
+
+  (it "leaves alone an item this run already moved to its new module"
+    (with-org-canvas-test-config
+      (test-org-canvas-352--with-move (:remote '(((id . 55) (title . "Check 3")))
+                                       :reply test-org-canvas-352--moved-reply)
+        (plist-put ctx :module-items-relocated '(("55" . "200")))
+        (with-temp-org-buffer test-org-canvas-352--departed
+          (org-back-to-heading)
+          (org-canvas--module-sync-items 100 (point) default-directory ctx))
+        (expect mutations :to-be nil)
+        (expect (test-org-canvas-352--sent-p requests 'DELETE ".") :to-be nil)))))
+
+(describe "org-canvas--module-item-move-problem (issue #352)"
+  (it "accepts only a reply naming the module the item landed in"
+    (expect (org-canvas--module-item-move-problem test-org-canvas-352--moved-reply "100")
+            :to-be nil)
+    (expect (org-canvas--module-item-move-problem test-org-canvas-352--moved-reply 100)
+            :to-be nil)
+    (expect (org-canvas--module-item-move-problem test-org-canvas-352--moved-reply "200")
+            :to-match "did not name the module")
+    (expect (org-canvas--module-item-move-problem nil "100")
+            :to-match "did not name the module")
+    (expect (org-canvas--module-item-move-problem
+             '((reorderModuleItems . ((errors . [((message . "not found"))])))) "100")
+            :to-equal "not found")))
+
+(describe "org-canvas--module-item-home (issue #352)"
+  (it "answers nil, not an error, when the read fails or names no module"
+    (cl-letf (((symbol-function 'org-canvas--graphql-query)
+               (lambda (&rest _) (error "GraphQL: not found"))))
+      (expect (org-canvas--module-item-home 55) :to-be nil))
+    (cl-letf (((symbol-function 'org-canvas--graphql-query)
+               (lambda (&rest _) '((moduleItem . ((_id . "55") (module . :null)))))))
+      (expect (org-canvas--module-item-home 55) :to-be nil))
+    (cl-letf (((symbol-function 'org-canvas--graphql-query)
+               (lambda (&rest _) '((moduleItem . ((module . ((_id . 300)))))))))
+      (expect (org-canvas--module-item-home 55) :to-equal "300"))))
 
 
 (describe "module pull reads the registry (issue #135)"

@@ -73,8 +73,10 @@ The GraphQL documents travel to Canvas as strings: the post-policy
 mutations (assignments, settings), `postAssignmentGrades` and the document
 processor reports query (submissions, issue #351), the checkpoints query
 and `updateDiscussionTopic` mutation (discussions), and the
-document-processor query (assignments, issue #350), and the grading
-queue's score statistics query (submissions status, issue #352).
+document-processor query (assignments, issue #350), the grading
+queue's score statistics query (submissions status, issue #352), and
+the module item home query and `reorderModuleItems` mutation (modules,
+issue #352).
 `org-canvas-graphql-contract-test.el` checks each — every selected field
 exists on its parent type and is not deprecated, every argument exists and
 a variable's declared type fits it, every non-null input field is supplied,
@@ -156,7 +158,9 @@ reports query's `Submission`, `SubmissionConnection`, `LtiAssetReport`,
 canvas-lms `318f2ad0`, whose `schema.graphql` is the same file), and
 the score statistics query's `AssignmentFilter`,
 `AssignmentScoreStatistic` and `SubmissionType` (issue #352, the same
-ref):
+ref), and the module item move's `Module`, `ModuleItem`,
+`ReorderModuleItemsInput` and `ReorderModuleItemsPayload` (issue #352,
+canvas-lms `1c9f0bb8`):
 
 ```bash
 python3 test/contract/extract-canvas-graphql-contract.py --supplement \

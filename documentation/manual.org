@@ -1234,19 +1234,27 @@ For most item types, org-canvas resolves links to find the Canvas ID:
 *** Moving Items Between Modules
 
 Move the item's block -- heading, property drawer and all -- under the new
-module heading and sync.  Canvas has no cross-module move (the module id is
-part of the item's URL), so org-canvas performs the only mechanism there is,
-delete-and-create, and owns the bookkeeping (#105):
+module heading and sync.  The item moves on Canvas too and keeps its id, so
+a student's progress on it and any link to it survive (#352).  Canvas's
+REST API has no such move (the module id is part of the item's URL);
+org-canvas uses Canvas's GraphQL =reorderModuleItems=, one item at a time,
+and falls back to delete-and-create when that fails (#105):
 
 - When a module syncs, its items on Canvas are listed once.  An item heading
   whose =CANVAS_ID= the module does not hold has arrived from another module:
-  it is created here and the heading is restamped with the new id.  Until
-  that sync, the drift report lists such a heading as a RELOCATE row, so
-  the id change is visible beforehand (#343).
-- An item the module holds on Canvas that none of its headings claim is
-  removed *when it has moved*: another module's heading claims the id, or it
-  was recreated under its new module earlier in the same run.  Either sync
-  order works.
+  org-canvas asks Canvas where the item is, moves it into this module at the
+  heading's place, and updates it there.  Until that sync, the drift report
+  lists such a heading as a RELOCATE row (#343).
+- An item the module holds on Canvas that none of its headings claim, but
+  another module's heading does, is moved to that module.  If that module
+  has no =CANVAS_ID= yet, the item is left where it is until the new module
+  is created and its own sync moves it in.  Either sync order works.
+- When the move cannot be made -- Canvas refuses it, the request fails, the
+  item cannot be found -- the log names the reason and the sync does what it
+  did before: it creates the item in the new module with a new id,
+  restamps the heading, and deletes the old copy.  A move that failed on
+  the way back is checked first, so an item Canvas did move is not also
+  created.  A dry run names each move and sends nothing.
 - An item the module holds that =modules.org= does not list anywhere is left
   in place and named in the log.  Module items are not pruned without being
   asked, the same rule quiz questions follow; asking is
@@ -2761,23 +2769,23 @@ itself.  A heading under another module makes it *MOVED*: the item was
 carried to a new week in Org without its stamp, so the next sync would create
 it in the new module and leave this copy in the old one.  The row names the
 heading it paired and its line, which matters when the two titles differ (a
-column renumbered in Org, an item renamed on Canvas).  To have the old copy
-removed, put the item id the row names on that heading as =CANVAS_ID=: =s=
+column renumbered in Org, an item renamed on Canvas).  To have this item
+moved instead, put the item id the row names on that heading as =CANVAS_ID=: =s=
 on the row does it (see [[*Stamping a Moved Item][Stamping a Moved Item]]).
-Canvas cannot move an item between modules, so the next sync then creates
-the item in the new module with a new id and deletes the old copy (see
-[[*Moving Items Between Modules][Moving Items Between Modules]]).  =k= on a
+The next sync then moves this item into the new module, keeping its id
+(see [[*Moving Items Between Modules][Moving Items Between Modules]]).  =k= on a
 MOVED row deletes the old copy.  A SubHeader is paired only within its own
 module, since titles such as "Readings" recur in every week.  The item
 headings left over are PENDING rows naming their module.
 
 A stamped item heading whose id Canvas holds in another module is a
-*RELOCATE* row (#343): the next sync creates the item in the heading's module
-with a new id and deletes the copy in the old one.  This is what a stamped
-MOVED row becomes.  RELOCATE rows are counted apart, like PENDING rows, in the
-section header and a footer line, and do not make =org-canvas-diff-batch=
-exit non-zero.  They are listed because anything that stores the old item id
-(a completion requirement, a link to the item) loses it on the next sync.
+*RELOCATE* row (#343): the next sync moves the item into the heading's
+module, keeping its id (#352), and only if Canvas refuses the move creates
+it there with a new id and deletes the copy in the old one.  This is what a
+stamped MOVED row becomes.  RELOCATE rows are counted apart, like PENDING
+rows, in the section header and a footer line, and do not make
+=org-canvas-diff-batch= exit non-zero.  They are listed because the next
+sync writes to Canvas for them.
 
 New Quizzes are compared in a section of their own, *New Quizzes*, listed
 from the New Quizzes service rather than the course API (#313).  A quiz is
@@ -3009,8 +3017,7 @@ held back because only their title paired them.  Stamp those with =s= on
 their row.
 
 After stamping, the next report shows each item as a RELOCATE row, and the
-next sync recreates it in its new module with a new id and deletes the old
-copy.
+next sync moves it into its new module, keeping its id.
 
 ** Cost and Safety
 
