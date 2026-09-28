@@ -231,9 +231,10 @@ Files are synced in tiers based on their dependencies:
 
 | File           | Canvas Entity   | Notes                         |
 |----------------+-----------------+-------------------------------|
+| =grading-schemes.org= | Grading Schemes | Created first, since settings name one by id |
 | =settings.org=   | Course Settings | Timezone, homepage, license   |
 
-Settings are synced first because they configure the course environment that other content depends on.
+Settings are synced first, after the grading schemes they may name, because they configure the course environment that other content depends on.
 
 *** Tier 0: No Dependencies
 
@@ -256,7 +257,6 @@ These files have no outgoing links to other course files:
 | =announcements.org=     | Announcements      | Course announcements          |
 | =calendar.org=          | Calendar Events    | Office hours, holidays, etc.  |
 | =sections.org=          | Sections           | Course sections               |
-| =grading-schemes.org=   | Grading Schemes    | Letter-grade cutoffs; settings and assignments name one by id |
 | =messages.org=          | Messages           | Inbox messages to students, sent on command and stamped; never part of a sync |
 
 *** Tier 1: Depends on Tier 0
@@ -288,23 +288,25 @@ Per-section date overrides are defined as tables in =assignments.org= and requir
 
 The =org-canvas-sync= function syncs files in proper dependency order:
 
-1. =settings.org= (Tier -1) - course settings and navigation tabs
-2. =outcomes.org= (Tier 0)
-3. =rubrics.org= (Tier 0)
-4. =assignment-groups.org= (Tier 0) - first pass, without drop rules
-5. =group-categories.org= (Tier 0)
-6. =sections.org= (Tier 0) - course sections
-7. =files.org= (Tier 0)
-8. =pages.org= (Tier 0)
-9. =discussions.org= (Tier 0)
-10. =announcements.org= (Tier 0)
-11. =calendar.org= (Tier 0)
-12. =quizzes.org= (Tier 1)
-13. =new-quizzes.org= (Tier 1)
-14. =assignments.org= (Tier 1)
-15. =assignment-groups.org= (Tier 1.5) - second pass, with drop rules
-16. Per-section overrides (Tier 1.75)
-17. =modules.org= (Tier 2)
+1. =grading-schemes.org= (Tier -1) - new grading schemes
+2. =settings.org= (Tier -1) - course settings and navigation tabs
+3. =outcomes.org= (Tier 0)
+4. =rubrics.org= (Tier 0)
+5. =assignment-groups.org= (Tier 0) - first pass, without drop rules
+6. =group-categories.org= (Tier 0)
+7. =sections.org= (Tier 0) - pulled, not pushed
+8. =grading-periods.org= (Tier 0) - pulled, not pushed
+9. =files.org= (Tier 0)
+10. =pages.org= (Tier 0)
+11. =discussions.org= (Tier 0)
+12. =announcements.org= (Tier 0)
+13. =calendar.org= (Tier 0)
+14. =quizzes.org= (Tier 1)
+15. =new-quizzes.org= (Tier 1)
+16. =assignments.org= (Tier 1)
+17. =assignment-groups.org= (Tier 1.5) - second pass, with drop rules
+18. Per-section overrides and quiz accommodations (Tier 1.75)
+19. =modules.org= (Tier 2)
 
 *Note*: Assignment groups are synced twice because Canvas rejects drop rules for groups with no assignments. Per-section overrides require both sections and assignments/quizzes to exist.
 
@@ -493,6 +495,29 @@ Course assignments with due dates, submission types, and grading options.
 | =EXTERNAL_TOOL_NEW_TAB= | boolean | Launch the tool in a new tab                 |
 | =DOCUMENT_PROCESSOR= | string    | Turnitin (or another document processor) attached in the web UI; read-only |
 | =WANT_DOCUMENT_PROCESSOR= | string | The processor the column should carry; checked, never sent |
+| =POST_POLICY=        | enum      | =manual= or =automatic= grade posting; omit to inherit the course's |
+| =POST_GRADES_AT=     | timestamp | When Canvas posts the hidden grades (see below)  |
+| =POST_COMMENTS_AT=   | timestamp | When Canvas posts the hidden comments (see below) |
+
+*** Scheduled Posting
+
+Under manual posting a grade stays hidden until someone posts it.  Canvas
+can post it on a schedule instead: =POST_GRADES_AT= and =POST_COMMENTS_AT=
+on the assignment heading go out with the post-policy mutation (GraphQL, as
+=POST_POLICY= does), a pull writes them from Canvas, and the drift report
+compares them.  Canvas keeps a schedule only with both times, the grades no
+earlier than the comments, under manual posting, so a schedule on the
+heading implies =POST_POLICY: manual=; validation calls one time without the
+other, grades before comments, or a schedule beside =POST_POLICY: automatic=
+an error, and a push refuses such a heading before anything is sent.
+Canvas also drops a schedule silently when its scheduled feedback releases
+feature is off, so a push compares the schedule Canvas kept with the one it
+sent and logs a =[Verify]= warning when they differ.
+
+A heading with =POST_POLICY: manual= and no schedule keeps the one set in
+the web UI: the push resends the schedule Canvas holds rather than wiping it.
+The schedules are read once per command, in one course-wide query; when that
+read fails, the log warns once and the two properties are left as they are.
 
 *** Submission Types
 
@@ -576,7 +601,10 @@ the PDF stays in Canvas, grading stays in SpeedGrader, and the
 similarity and AI-writing report opens from the score.  Canvas
 attaches a document processor only through an interactive flow in the
 browser — never by API token — so org-canvas cannot set one.  It can
-see one: a pull writes what Canvas holds into =DOCUMENT_PROCESSOR=,
+see one: a pull writes what Canvas holds into =DOCUMENT_PROCESSOR=
+(=Turnitin (tool 41668)=), read from Canvas's GraphQL API in one
+request per command, with the REST =asset_processors= key, which some
+instances never return, as the fallback when that read is refused;
 the drift report shows a processor attached or detached since the last
 pull even when the heading says nothing about it, and a push never
 sends the field, so a heading that is silent cannot strip a processor
@@ -733,7 +761,18 @@ regenerate the totals by hand.
 | =SHOW_CORRECT_ANSWERS_LAST_ATTEMPT= | boolean | Only show correct answers on last attempt          |
 | =ONE_TIME_RESULTS=           | boolean   | Students can only view results once                        |
 | =ONLY_VISIBLE_TO_OVERRIDES=  | boolean   | Only visible to students with overrides                    |
+| =ANONYMOUS_SUBMISSIONS=      | boolean   | Survey responses are anonymous; sent when set, =false= included |
 | =GROUP=                      | link      | Link to assignment-groups.org heading                      |
+
+Canvas creates a survey named unless it is told otherwise, and a response
+cannot be made anonymous after it is submitted, so validation warns on an
+unpushed survey (=QUIZ_TYPE= =survey= or =graded_survey=) that does not set
+=ANONYMOUS_SUBMISSIONS=.
+
+After a quiz is created or updated, every registered property Canvas
+stored otherwise than it was sent -- a =SCORING_POLICY= of =keep_latest=
+kept as =keep_highest= -- is named in a =[Verify]= warning in the log at
+push time, rather than first seen in the next drift report.
 
 *** Question Properties
 
@@ -949,6 +988,18 @@ Use *Classic Quizzes* (=quizzes.org=) when:
 - Level 2 headings = Questions (items) under each quiz
 - List items under questions = Answer choices
 
+A question's text is its heading and the prompt under it: a push sends the
+heading as the first paragraph of the question and the text under it, down
+to the answer list, as the rest, and a pull writes Canvas's text back the
+same way -- the first paragraph as the heading, the rest under it --
+rewriting an existing question heading in place and keeping its answer list.
+The answer list starts at the first bulleted line, or, for an =ordering=
+question, at the first bulleted or numbered line, so its steps in their
+correct order never reach the text students see; a numbered list in any
+other question's prompt stays in the prompt.  When a pulled prompt holds a
+line that would end it early, a list above all, the pull keeps it as a
+=#+begin_export html= block, which the push sends as it stands.
+
 An =essay= or =file-upload= question has no answer list, so everything
 under its heading, bulleted lists included, is its prompt.
 
@@ -974,10 +1025,13 @@ The five settings travel under the quiz's =quiz_settings= object, which is
 where Canvas keeps them; a push sends only the ones the heading sets, so a
 setting left out keeps whatever Canvas holds.  =TIME_LIMIT= is in minutes in
 Org and in seconds on Canvas (=0= turns the limit off).  =ONE_AT_A_TIME= is
-=one_at_a_time_type= (=question= or =none=).  =ALLOWED_ATTEMPTS= of 1 is a
-single attempt, a larger number that many, and -1 unlimited; a pull writes
-nothing for a single attempt.  =SCORING_POLICY= is sent as =score_to_keep=
-(=highest=, =latest=, =average=).  A pull reads the same fields back, and the
+=one_at_a_time_type= (=question= or =none=).  =ALLOWED_ATTEMPTS= and
+=SCORING_POLICY= go together in its =multiple_attempts= object:
+=ALLOWED_ATTEMPTS= of 1 is a single attempt, a larger number that many, and
+-1 unlimited, and a pull writes nothing for a single attempt;
+=SCORING_POLICY= is sent as =score_to_keep= (=highest=, =latest=, =average=;
+only =highest= has been read back from a live course).  =false= on either
+boolean is sent, not dropped.  A pull reads the same fields back, and the
 drift report compares them (issue #321).
 
 *** Question Properties
@@ -1615,7 +1669,7 @@ Course announcements.
 
 | Property       | Type      | Description                    |
 |----------------+-----------+--------------------------------|
-| =POST_AT=        | timestamp | Scheduled post time            |
+| =DELAYED_POST_AT= | timestamp | Scheduled post time            |
 | =ALLOW_COMMENTS= | boolean   | Allow student replies          |
 | =SPECIFIC_SECTIONS= | string | Comma-separated section names (resolved to IDs via sections.org) |
 
@@ -1636,7 +1690,7 @@ Please complete the following before our first meeting:
 
 ,* Lab 1 Due Date Extended
 :PROPERTIES:
-:POST_AT: <2025-01-18 Sat 09:00>
+:DELAYED_POST_AT: <2025-01-18 Sat 09:00>
 :END:
 
 Due to technical difficulties, Lab 1 is now due Monday at midnight.
@@ -1829,8 +1883,12 @@ overrides no row matches are deleted, an extension given in the web UI
 included.  Pull the assignments first, so the table carries every
 override Canvas holds, and remove a row when you mean to remove the
 override.  A changed set of students is a new override and the old one
-is deleted.  An override that already carries its row's dates is left
-alone, so a run writes only the rows that changed.
+is deleted.  An override write moves the assignment's =updated_at=, so the
+sync restamps the heading's =CANVAS_UPDATED_AT= after it and the next push
+of that heading is not called a conflict; a heading that had already
+drifted from Canvas before the override sync keeps its stamp, so a web-UI
+edit still reports.  An override that already carries its row's
+dates is left alone, so a run writes only the rows that changed.
 
 A push of one assignment — =M-x org-canvas-sync-assignment-at-point=,
 =org-canvas-sync-assignment= or an =org-canvas-sync-headings= entry —
@@ -2387,7 +2445,7 @@ Comprehensive review covering all course material.
 
 *** API Note
 
-Calendar events use a global Canvas API endpoint (not course-scoped).  Events are tied to the course via a =context_code= parameter, and every listing asks for =all_events=true= -- without it Canvas returns only the events dated today.  The feature registry knows the global endpoint (#87), so calendar events take part in the drift check, the dry-run conflict preview, the duplicate-title guard, =org-canvas-diff=, orphan cleanup and =org-canvas-pull-at-point= like any other content type.
+Calendar events use a global Canvas API endpoint (not course-scoped).  Events are tied to the course via a =context_code= parameter, and every listing asks for =all_events=true= -- without it Canvas returns only the events dated today.  The feature registry knows the global endpoint (#87), so calendar events take part in the drift check, the dry-run conflict preview, the duplicate-title guard, =org-canvas-diff=, orphan cleanup and =org-canvas-pull-at-point= like any other content type.  One event is read where it lives, at the global =calendar_events/ID=, so the conflict check before a push catches an event edited in the web UI (#344).
 
 =ALL_DAY= applies to single-day events only.  Canvas does not store the flag
 on an event whose start and end fall on different dates: it keeps the times,
@@ -2805,10 +2863,10 @@ from the New Quizzes service rather than the course API (#313).  A quiz is
 paired by its =CANVAS_ASSIGNMENT_ID=, so the section has the same rows as any
 other: CHANGED for a setting or the instructions (the text above the first
 item) that differ, MISSING, EXTRA for a quiz built in the web UI, UNCLAIMED,
-and PENDING for an unpushed heading.  A setting is compared only when the
-service's reply carries it: which of them it reports has not been checked on
-a live course, and a setting it files elsewhere would otherwise read as unset
-on every quiz.  Every New Quiz
+and PENDING for an unpushed heading.  The five settings are compared where
+the service's reply carries its =quiz_settings= object (#321), and a field
+outside it only where the reply holds it, since a setting filed elsewhere
+would otherwise read as unset on every quiz.  Every New Quiz
 is also an assignment, which =assignments.org= does not claim, so the
 Assignments section leaves out the assignments the New Quizzes list holds
 and counts them in the "Not checked" footer line; when New Quizzes could not
@@ -3084,10 +3142,10 @@ Pulling an assignment's submissions produces a *grading file*: an Org file with 
 1. =M-x org-canvas-pull-submissions= (transient: Submissions, =g=). Pick the assignment (from Lisp, name it: the command takes an assignment id or exact name, and a second argument to download every attachment as well — see [[*Batch Use][Batch Use]]); the grading file is written, saved, and visited. Its =Assignment:= line links the assignment's heading in the assignments file (when one carries the id), its Canvas page, and SpeedGrader, and every student heading carries an =Open in SpeedGrader= link. When the assignment has a rubric, a =Rubric:= line follows, linking the rubric's heading in the rubrics file and its Canvas page, and then the rubric itself in the shape of =rubrics.org=: a =* Rubric= heading with one sub-heading per criterion — its description and points, its long description as prose, and a =| Rating | Points | Description |= table — so the work can be read against the rubric offline, the text that separates one rating from the next included. Set =org-canvas-submissions-include-rubric-criteria= to =summary= for one =| Criterion | Points | Ratings |= line per criterion instead, or to nil for just the =Rubric:= line. The =* Rubric= heading carries no =USER_ID=, so nothing that walks the students takes it for one. Set =org-canvas-submissions-default-view= to =summary= to see the overview table first instead.
 2. Read the work. Each heading carries the submitted text, an =Attachments= list, the =Comments= so far (one item per comment, a longer one's paragraphs indented under its author and date), and, on an assignment with a rubric, a =Rubric= section: a table with one row per criterion — its Canvas id, description, points, and a =Score= cell — and under it one =- <id> :: comment= item per criterion, both pre-filled when Canvas already holds an assessment. =d= downloads the attachments of the student at point and =D= everyone's, into =files/<assignment>/<student>/= beside the grading file. After a download each =Attachments= entry links the local copy first, with the Canvas link kept beside it, and a later pull keeps that local link as long as the file is still there.
 3. Grade. Edit the =:SCORE:= property on each heading: a number, or =EX= to excuse. On a rubric assignment, fill the =Score= cells of the student's =Rubric= table instead — points per criterion, within each row's =Max=; Canvas picks the rating from the points — and write each criterion's comment after its =- <id> ::= item under the table. A comment can run to several lines and paragraphs: continue it on lines indented two spaces under the item, and leave one blank line (indented or not) between paragraphs; the line breaks reach Canvas as typed. An item left empty sends no comment, and a row whose item you deleted is read the same way. When the rubric is used for grading (the file's =CANVAS_RUBRIC_USE_FOR_GRADING=), the rows' total becomes the =SCORE= at push time, so leave it alone; a =SCORE= you typed that disagrees with the total stops the push before anything is sent. A table you fill only partly is pushed as a partial assessment and named as such in the confirmation. To clear an assessment already on Canvas, use SpeedGrader: an emptied table is not a change. Write any comment for the student under their =Comment to post= heading; the lines there that begin with =#= are instructions and are never sent, and a blank line between paragraphs reaches Canvas as one. =c= still posts a one-off comment through a prompt, immediately. Your own remarks go under the student's =Notes= heading, which is never sent and survives a re-pull, as do unposted drafts. For completion-graded work, =M-x org-canvas-submissions-apply-completion-rule= (transient: Submissions, =a=) fills every empty =SCORE= at once: full credit for a submission within =org-canvas-submissions-late-window-days= of the due date (default 2, the value comes from the file's =POINTS_POSSIBLE=), 0 for a later or missing one; hand-entered scores and =EX= rows are left alone unless you give a prefix argument. On a rubric assignment full credit also fills every =Rubric= row at its =Max=, so the cells the student sees are populated; a 0 leaves the rows empty. To mark a student late, missing or extended — SpeedGrader's status menu — set =:LATE_STATUS:= on their heading to =late=, =missing=, =extended= or =none= (none: not late, whatever the due date says); the pull writes it where Canvas already holds one, and you add it where it does not. Review, then push.
-4. =S= pushes. Every heading whose =SCORE= differs from its =CANVAS_SCORE=, or whose =Rubric= rows differ from its =CANVAS_RUBRIC=, is listed and, after one confirmation, sent: one change as a single PUT, several through Canvas's bulk endpoint, each student's grade and rubric assessment in the same request. Drafted comments go in the same push, one request each; a posted comment moves under the student's =Comments= heading as a dated record and the draft resets to the template. A =LATE_STATUS= that differs from its =CANVAS_LATE_STATUS= goes in the same push, one GraphQL request per student (=updateSubmissionGradeStatus=); a value other than the four is refused before anything is sent, and a student Canvas refuses is named in the closing message and the log while the others go through. Pushed scores become the new =CANVAS_SCORE=, pushed rows the new =CANVAS_RUBRIC=, the late status as Canvas stored it the new =CANVAS_LATE_STATUS= (with =DAYS_LATE= updated from the lateness Canvas now counts), and the file is saved, so a second =S= pushes nothing. New and edited items of the =Comment Bank= section go in the same push (see [[*The Comment Bank][The Comment Bank]]). Set =org-canvas-submissions-comment-template= to nil to leave the draft heading out.
+4. =S= pushes. Every heading whose =SCORE= differs from its =CANVAS_SCORE=, or whose =Rubric= rows differ from its =CANVAS_RUBRIC=, is listed and, after one confirmation, sent: one change as a single PUT, several through Canvas's bulk endpoint, each student's grade and rubric assessment in the same request. Canvas applies a bulk push in a background job, so the push waits for it, reading the job's progress every =org-canvas-submissions-progress-interval= seconds (default 2) for up to =org-canvas-submissions-progress-timeout= seconds (default 180), with a =Waiting for Canvas to apply …= line in the echo area. Only a job that completed counts as pushed. When the job fails, or the wait runs out, the closing message says so (with Canvas's reason, or =still running after 180s=), no =CANVAS_SCORE= or =CANVAS_RUBRIC= is recorded for those grades and no posting is offered, so the next =S= sends them again; after a timeout, =g= first, since a re-pull confirms a typed score Canvas has come to hold and leaves the others to push. Drafted comments go in the same push, one request each; a posted comment moves under the student's =Comments= heading as a dated record and the draft resets to the template. A =LATE_STATUS= that differs from its =CANVAS_LATE_STATUS= goes in the same push, one GraphQL request per student (=updateSubmissionGradeStatus=); a value other than the four is refused before anything is sent, and a student Canvas refuses is named in the closing message and the log while the others go through. Pushed scores become the new =CANVAS_SCORE=, pushed rows the new =CANVAS_RUBRIC=, the late status as Canvas stored it the new =CANVAS_LATE_STATUS= (with =DAYS_LATE= updated from the lateness Canvas now counts), and the file is saved, so a second =S= pushes nothing. New and edited items of the =Comment Bank= section go in the same push (see [[*The Comment Bank][The Comment Bank]]). Set =org-canvas-submissions-comment-template= to nil to leave the draft heading out.
 
 5. Post, if the gradebook holds grades. The file's =POST_POLICY= keyword records the assignment's grade post policy at pull time. Under =manual=, a pushed grade stays hidden from the student until it is posted, so =S= offers to post right after a push; =P= (=org-canvas-submissions-post-grades=) posts at any time. Each student's =POSTED_AT= shows when their grade was last posted; refresh with =g= to see it move. The policy itself is set in settings.org (=POST_POLICY= on the course heading) or per assignment (=POST_POLICY= on the assignment heading, omitted to inherit the course's); both go to Canvas through GraphQL, the only interface Canvas offers for them.
-5. Later: =M-x org-canvas-open-submissions= (transient: Submissions, =o=) reopens a saved grading file with the mode and its context restored, ready for more grading or another push; from Lisp it takes the file (a path, or a name under the submissions directory, the assignment's name included) and returns the buffer. Opening a file, and every successful push, rebuilds its =Assignment:= line from the assignments file by =CANVAS_ID=, so a renamed heading never leaves a stale link; nothing else in the file is touched, and no Canvas request is made. =M-x org-canvas-submissions-refresh-file= does the same and re-pulls the file in one step.
+6. Later: =M-x org-canvas-open-submissions= (transient: Submissions, =o=) reopens a saved grading file with the mode and its context restored, ready for more grading or another push; from Lisp it takes the file (a path, or a name under the submissions directory, the assignment's name included) and returns the buffer. Opening a file, and every successful push, rebuilds its =Assignment:= line from the assignments file by =CANVAS_ID=, so a renamed heading never leaves a stale link; nothing else in the file is touched, and no Canvas request is made. =M-x org-canvas-submissions-refresh-file= does the same and re-pulls the file in one step.
 
 =v= shows a read-only summary table derived from the file's headings, so it reflects grades not yet pushed; =v= there returns to the file. =g= re-pulls from Canvas and rewrites the file, but everything you typed in it comes back after the re-pull: scores (a =SCORE= that differs from its =CANVAS_SCORE=, the 0 on a missing row included), late statuses, drafted comments, notes, and =Rubric= scores and comments. Nothing is asked first. The summary table is the one place a refresh loses an edit, so there =g= still asks when it holds unpushed scores (and goes ahead, saying so, when Emacs runs in batch and cannot ask).
 
@@ -3129,18 +3187,20 @@ The grading workflow repeats every week per column, and the interactive path is 
 
 - =(org-canvas-pull-submissions ASSIGNMENT &optional DOWNLOAD)=: ASSIGNMENT is a Canvas assignment id (an integer or a string of digits, one request) or an assignment's exact name (found in the course's list). With DOWNLOAD non-nil the grading file is the view whatever =org-canvas-submissions-default-view= says, and every student's attachments are downloaded beside it, the way =D= does. Returns the buffer.
 - =(org-canvas-open-submissions FILE)=: FILE is an absolute path, or a name under the submissions directory with or without its =.org= — the file's name or the assignment's. Returns the buffer.
-- =(org-canvas-submissions-refresh-file FILE)=: visits FILE the same way, re-pulls it from Canvas (what was typed comes back, as with =g=) and returns the buffer, ready for =org-canvas-submissions-download-all-attachments= or =org-canvas-submissions-push-grades= to follow in code.
+- =(org-canvas-submissions-refresh-file FILE)=: visits FILE the same way, re-pulls it from Canvas (what was typed comes back, as with =g=) and returns the buffer, ready for =org-canvas-submissions-download-all-attachments= to follow in code.
+- =(org-canvas-push-submission-grades ASSIGNMENT &optional POST)=: pushes the grading file ASSIGNMENT names — a Canvas assignment id (an integer or a string of digits, matched against the =CANVAS_ASSIGNMENT_ID= in each grading file's header, so no request is made to find it), or a path or name as for =org-canvas-open-submissions= — without a confirmation, sending everything =S= would: scores, rubric rows, late statuses, drafted comments and the Comment Bank. The mode and the view need no setting up. Grades are posted only when POST is non-nil, and then only once Canvas has stored every grade the push sent; a push without POST never posts, whatever the post policy. The file is saved, and a plist comes back: =:pushed= (the grades Canvas stored), =:state= (=completed=, =failed=, =unconfirmed=, =dry-run=, or nil when no grade was sent) with =:message=, =:late=, =:comments=, =:conflicts= and =:posted=.
 
-An id or name that matches nothing is a =user-error= naming it, and nothing in these three prompts when Emacs runs in batch. So, from a shell:
+An id or name that matches nothing is a =user-error= naming it, and nothing in these four prompts when Emacs runs in batch. So, from a shell:
 
 #+begin_src sh
 emacs --batch -l ~/.emacs.d/init.el \
   --eval '(org-canvas-pull-submissions "2497503" t)' \
   --eval '(with-current-buffer (org-canvas-submissions-refresh-file "Journal_02")
-            (org-canvas-submissions-download-all-attachments))'
+            (org-canvas-submissions-download-all-attachments))' \
+  --eval '(org-canvas-push-submission-grades "2573836")'
 #+end_src
 
-=org-canvas-submissions-push-grades= still confirms before sending; from a script, bind =y-or-n-p= if that is what you mean.
+The last line pushes that column and leaves its grades held; =(org-canvas-push-submission-grades "2573836" t)= posts them as well. =S= in a grading file confirms through the same question the rest of the package asks, so =org-canvas-assume-yes= or a batch Emacs answers it yes; the offer to post that follows a push under a manual policy is made only interactively, and =org-canvas-assume-yes= never answers it, since posting is what students see.
 
 ** Conflicts
 
@@ -3185,7 +3245,7 @@ and that is where a quiz score is changed and pushed. What the grading
 file cannot show is the attempt itself: how many a student took, which
 score Canvas kept against the latest one, how long they spent, whether
 an attempt is still open. =M-x org-canvas-pull-quiz-submissions=
-(transient: Submissions, =z=) picks a classic quiz and writes that as
+(transient: Submissions, =q=) picks a classic quiz and writes that as
 one read-only table under the submissions directory, as
 =<quiz> (quiz).org=: one row per student, sorted by name, with
 Attempts, Kept, Latest, Out of, Time (=h:mm=), Finished and State, and
@@ -3326,6 +3386,7 @@ Each content type can be pulled individually:
 | =org-canvas-pull-quiz-results=         | Pull each quiz's item analysis (read-only) |
 | =org-canvas-pull-assignments=          | Pull assignments with descriptions    |
 | =org-canvas-pull-quizzes=              | Pull quizzes with questions           |
+| =org-canvas-pull-new-quizzes=          | Pull New Quizzes with items           |
 | =org-canvas-pull-pages=               | Pull wiki pages with body content     |
 | =org-canvas-pull-modules=             | Pull modules with item links          |
 | =org-canvas-pull-rubrics=             | Pull rubrics with criteria tables     |
@@ -3610,6 +3671,10 @@ The following items are never treated as orphans:
 - The course front page (pages with =front_page: true=)
 - Sections (pull-only, not pushed)
 - Per-section overrides (managed per-assignment)
+- The assignment behind a New Quiz, a classic quiz or a graded
+  discussion: deleting it deletes the quiz or the discussion, so
+  =org-canvas-prune-assignments= and =org-canvas-delete-all-assignments=
+  leave it alone too, naming why (#319)
 
 Skipped items are named in the log, and the prune tally counts them
 as =protected=, so nothing is held back silently.
@@ -3756,7 +3821,6 @@ for the rule format.
 | =org-canvas-delete-all-assignment-groups=    | Delete all assignment groups |
 | =org-canvas-delete-all-group-categories=     | Delete all group categories  |
 | =org-canvas-delete-all-calendar-events=      | Delete all calendar events   |
-| =org-canvas-delete-all-sections=             | Delete all sections          |
 
 ** Prune Commands
 
@@ -3811,6 +3875,15 @@ Each at-point command has a twin that takes its target as an argument, for a scr
 |---|---|
 | =org-canvas-sync-headings= | Sync a list of =(FEATURE . TITLE)= or =(FEATURE TARGET BY)= entries one after another and report each |
 
+** Pull by Heading Commands
+
+Each feature with a single-item pull has a pull by heading, the twin of its sync by heading: =(org-canvas-pull-page TARGET &optional BY)=, and likewise =org-canvas-pull-assignment=, =-file=, =-discussion=, =-announcement=, =-module=, =-rubric=, =-quiz=, =-new-quiz=, =-assignment-group=, =-group-category=, =-calendar-event= and =-grading-scheme=.  Each replaces the heading TARGET names (its exact title, or with BY =canvas-id= its stamp) with Canvas's version, without asking, and saves the file (see [[*Pulling One Heading][Pulling One Heading]]).
+
+| Command | Description |
+|---|---|
+| =org-canvas-pull-at-point= | Replace the heading at point with Canvas's version, after asking |
+| =org-canvas-pull-headings= | Pull a list of =(FEATURE . TITLE)= or =(FEATURE TARGET BY)= entries one after another and report each |
+
 ** Delete at Point Commands
 
 These commands delete the item at the current cursor position:
@@ -3840,6 +3913,7 @@ These commands delete the item at the current cursor position:
 | =org-canvas-open-submissions= | Reopen a saved grading file; from Lisp, by path or name |
 | =org-canvas-submissions-refresh-file= | Reopen a grading file and re-pull it in one step, returning the buffer (see [[*Batch Use][Batch Use]]) |
 | =org-canvas-submissions-push-grades= | Push changed scores and drafted comments (=S= in the file) |
+| =org-canvas-push-submission-grades= | Push a grading file by id or name without a prompt, posting only when asked; returns what was done (see [[*Batch Use][Batch Use]]) |
 | =org-canvas-submissions-post-grades= | Post the assignment's grades to students, under a manual post policy (=P=) |
 | =org-canvas-submissions-apply-completion-rule= | Fill empty scores by completion and lateness |
 | =org-canvas-submissions-add-comment= | Post a comment on the student at point (=c=) |
@@ -3847,6 +3921,8 @@ These commands delete the item at the current cursor position:
 | =org-canvas-submissions-download-all-attachments= | Download every student's attachments (=D=) |
 | =org-canvas-submissions-toggle-view= | Summary table and grading file (=v=) |
 | =org-canvas-submissions-refresh= | Re-pull the file from Canvas (=g=) |
+| =org-canvas-submissions-pull-comment-bank= | Read SpeedGrader's comment library into the =Comment Bank= section (=B=) |
+| =org-canvas-submissions-delete-comment-bank-item= | Delete the saved comment at point on Canvas, after asking (=x=) |
 
 See [[*Grading Submissions]] for the workflow.
 
@@ -3865,6 +3941,9 @@ Never part of a sync; see [[*messages.org][messages.org]].
 |---------------------------------+-----------------------------------------------|
 | =org-canvas-test-connection=      | Test API connection (prints course name)      |
 | =org-canvas-init=                 | Setup wizard for new courses                  |
+| =org-canvas-activate-course=      | Switch to another course in =org-canvas-courses= |
+| =org-canvas-version=              | Show the org-canvas version                   |
+| =org-canvas-submit-bug-report=    | Open a buffer of diagnostic information for a bug report (the token redacted) |
 | =org-canvas-status=               | Show sync status from the Org files (no API calls) |
 | =org-canvas-list-external-tools=  | List LTI tools in the course with launch URLs (read-only) |
 | =org-canvas-publish-module=       | Publish a module and every object it lists    |
@@ -3897,22 +3976,25 @@ All commands are accessible through a transient popup menu:
 M-x org-canvas-dispatch
 #+end_src
 
-The menu is organized into groups:
+The menu is organized into groups, each key a single keystroke:
 
-| Group       | Key | Description                                      |
-|-------------+-----+--------------------------------------------------|
-| Sync        | =s=   | Sync all, dry-run, force push, sync-at-point, open the heading on Canvas (=b=, =B=) |
-| Pull        | =p=   | Pull all, pull single content type...            |
-| Delete      | =D=   | Delete all, cleanup orphans, delete-at-point...  |
-| Submissions | =g=   | Pull submissions, push grades                    |
-| Tools       | =i=   | Init, test connection, validate, status          |
-| Log         | =l=   | Set log level/destination, clear log             |
-| Learn       | =?=   | Demo conflict resolution UI                      |
+| Group       | Keys                  | Commands                                         |
+|-------------+-----------------------+--------------------------------------------------|
+| Sync        | =s= =d= =f= =@= =b= =B=   | Sync all, dry-run preview, force push, sync at point..., open the heading on Canvas / its edit page |
+| Files       | =F= =z=                 | Force re-upload of every file / the file at point |
+| Pull        | =p= =P= =u= =A=           | Pull all, pull single..., pull the heading at point, adopt the Canvas item for the heading at point |
+| Delete      | =D= =O= =X=              | Delete all, cleanup orphans, delete at point...  |
+| Publish     | =m= =M= =R=              | Publish / unpublish a module and its contents, apply =PUBLISH_AT= releases |
+| Submissions | =g= =Q= =o= =q= =w= =a= =G= =T= | Pull submissions, grading queue, open a grading file, quiz attempts, peer reviews, completion rule, push grades, post grades |
+| Messages    | =e= =E=                 | Send unsent messages / the message at point      |
+| Tools       | =i= =c= =t= =v= =V= =S= =r= =j= =J= =x= | Init, switch course, test connection, validate, validate all, status, drift report, adopt stamps, stamp moves, list external tools |
+| Log         | =ll= =ld= =lc=           | Set log level, set log destination, clear log    |
+| Learn       | =?=                     | Demo conflict resolution UI                      |
 
 Sub-menus are available for per-item operations:
 
-- *Sync at point* (=@=): Sync a single heading -- page, assignment, discussion, announcement, module, rubric, assignment group, calendar event, quiz, new quiz, or group category.
-- *Pull single* (=P=): Pull one content type from Canvas (all 16 types available).
+- *Sync at point* (=@=): Sync a single heading -- page, assignment, discussion, announcement, module, rubric, assignment group, calendar event, quiz, new quiz, group category, grading scheme, or a quiz's accommodations.
+- *Pull single* (=P=): Pull one content type from Canvas, including the read-only pulls (people, gradebook, rubric and quiz results, grading periods, submissions, quiz attempts, peer reviews).
 - *Delete at point* (=X=): Delete a single item from Canvas.
 
 Bind =org-canvas-dispatch= to a key for quick access:
@@ -4037,13 +4119,13 @@ Deleting items that are no longer needed.
 
 1. Navigate to the heading in the =.org= file.
 2. Run the delete-at-point command (e.g., =M-x org-canvas-delete-assignment-at-point=).
-3. This deletes the item from Canvas and clears sync properties from the heading.
+3. This deletes the item from Canvas and clears sync properties from the heading and every heading below it, the id stamps modules write beside =CANVAS_ID= included (=CANVAS_ASSIGNMENT_ID=, =CANVAS_ITEM_ID=, =CANVAS_CRITERION_ID=), so the next sync creates the item again.
 4. Optionally remove the heading from the Org file.
 
 *** Deleting All Items of a Type
 
 1. Run =M-x org-canvas-delete-all-assignments= (or the equivalent for another type).
-2. Confirm the deletion.  All items of that type are removed from Canvas and sync properties are cleared.
+2. Confirm the deletion.  All items of that type are removed from Canvas and sync properties are cleared.  An item left on Canvas -- the front page, one a skip rule protects (such as a quiz's or a graded discussion's assignment), one whose DELETE failed -- keeps its stamps, and the headings below it keep theirs; the log names the reason beside each.
 
 *** Finding and Removing Orphans
 

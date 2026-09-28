@@ -647,6 +647,25 @@
       }
     }
   },
+  "progress": {
+    "operationId": "query_progress",
+    "response_fields": {
+      "completion": "integer",
+      "context_id": "integer",
+      "context_type": "string",
+      "created_at": "string",
+      "id": "integer",
+      "message": "string",
+      "results": "object",
+      "tag": "string",
+      "updated_at": "string",
+      "url": "string",
+      "user_id": "integer",
+      "workflow_state": "string"
+    },
+    "response_only": true,
+    "response_schema": "Progress"
+  },
   "quizzes": {
     "fields": {
       "access_code": {

@@ -137,8 +137,10 @@ Time: 30-60 minutes.  Mostly updating dates.
 2. *Strip sync state* so everything is created fresh:
 
    #+begin_src bash
-   sed -i '/:CANVAS_ID:/d; /:CANVAS_URL:/d; /:LAST_SYNCED:/d; /:CANVAS_UPDATED_AT:/d; /:PAYLOAD_HASH:/d; /^#+LAST_SYNCED:/d' *.org
+   sed -i '/:CANVAS_ID:/d; /:CANVAS_URL:/d; /:CANVAS_ASSIGNMENT_ID:/d; /:CANVAS_ITEM_ID:/d; /:CANVAS_CRITERION_ID:/d; /:LAST_SYNCED:/d; /:CANVAS_UPDATED_AT:/d; /:PAYLOAD_HASH:/d; /^#+LAST_SYNCED:/d' *.org
    #+end_src
+
+   The three middle stamps are the ids a New Quiz, its items and a rubric's criteria carry beside =CANVAS_ID=; left in place, the next sync would try to update the old course's objects.
 
 3. *Update dates.*  Search for timestamps and adjust to the new semester.  Don't forget override tables in =assignments.org=.
 
@@ -202,6 +204,10 @@ A typical week involves adding new content, updating existing items, and keeping
 
 3. Run =M-x org-canvas-sync=.  Dependencies are resolved automatically -- content is created before the module that references it.
 
+** Moving an Item to Another Week
+
+Cut the item's heading in =modules.org= and paste it under the other module heading, then sync the modules.  The sync moves the item on Canvas and it keeps its id, so anything tied to that id stays with it; Canvas drops the item's completion requirement on a move, and the sync sets the heading's =COMPLETION_REQUIREMENT= again straight after.  Only when Canvas refuses the move does the sync create the item in the new module and delete the old copy, naming the reason in the log.  A dry run names each move and sends nothing.
+
 ** Updating Due Dates
 
 Edit the =DUE_AT=, =UNLOCK_AT=, or =LOCK_AT= timestamps in =assignments.org=.  Then sync just that assignment:
@@ -225,12 +231,12 @@ M-x org-canvas-sync-announcements
 M-x org-canvas-sync-announcement-at-point
 #+end_src
 
-Announcements can be scheduled with =POST_AT=:
+Announcements can be scheduled with =DELAYED_POST_AT=:
 
 #+begin_src org
 ,* Week 3 Reminder
 :PROPERTIES:
-:POST_AT: <2026-09-19 Fri 08:00>
+:DELAYED_POST_AT: <2026-09-19 Fri 08:00>
 :END:
 
 Don't forget: Homework 2 is due Monday!
@@ -241,8 +247,11 @@ Don't forget: Homework 2 is due Monday!
 Quick check that everything is in order:
 
 #+begin_src elisp
-;; Overview of sync state across all files
+;; Overview of sync state across all files (local only)
 M-x org-canvas-status
+
+;; What differs between your files and Canvas (read-only)
+M-x org-canvas-diff
 
 ;; Validate all files for errors
 M-x org-canvas-validate
@@ -287,9 +296,11 @@ Then =M-x org-canvas-sync-announcement-at-point=.
 
 Run =M-x org-canvas-status= to see a summary of all content types:
 
-- How many items are synced per module
+- How many items are synced per content type
 - Whether any items have never been synced
 - Whether any files have unsaved changes
+
+It reads only your Org files.  To compare them with what Canvas holds, run =M-x org-canvas-diff=.
 
 ** Handling Conflicts
 
@@ -316,20 +327,22 @@ Create the rubric in =rubrics.org=:
 
 #+begin_src org
 ,* Code Quality Rubric
-,** Correctness
+,** Correctness :40pt:
 | Rating    | Points | Description            |
 |-----------+--------+------------------------|
 | Excellent |     40 | All tests pass         |
 | Good      |     30 | Most tests pass        |
 | Poor      |     10 | Few tests pass         |
 
-,** Style
+,** Style :10pt:
 | Rating    | Points | Description            |
 |-----------+--------+------------------------|
 | Excellent |     10 | Clean, well-documented |
 | Good      |      7 | Mostly readable        |
 | Poor      |      3 | Hard to follow         |
 #+end_src
+
+The =:Npt:= tag on each criterion is its maximum points (=:3_5pt:= for 3.5); a criterion without one is worth nothing.
 
 Link it from the assignment:
 
@@ -374,31 +387,36 @@ Run =M-x org-canvas-sync-overrides= to push the overrides.
 
 ** 6. Grade Submissions
 
-After the due date:
+After the due date, pull the submissions into a grading file:
 
 #+begin_src elisp
-;; Open the submissions viewer
-M-x org-canvas-submissions-view
+M-x org-canvas-pull-submissions
 #+end_src
 
-Select the assignment from the prompt.  The viewer opens with all submissions.
+Select the assignment from the prompt.  The grading file is saved under =submissions/= in the course directory as =<assignment>.org=, one heading per student, and visited.  The keys in it:
 
-| Key | Action                                        |
-|-----+-----------------------------------------------|
-| =v=   | Toggle between summary table and detail view  |
-| =c=   | Post a comment on the submission at point     |
-| =d=   | Download submission attachments               |
-| =S=   | Push modified grades to Canvas                |
-| =g=   | Refresh submissions from Canvas               |
-| =q=   | Quit                                          |
+| Key | Action                                                   |
+|-----+----------------------------------------------------------|
+| =v=   | Toggle between the grading file and a summary table      |
+| =d=   | Download the attachments of the student at point         |
+| =D=   | Download every student's attachments                     |
+| =c=   | Post a one-off comment on the student at point, now      |
+| =S=   | Push changed grades, drafted comments and late statuses  |
+| =P=   | Post the assignment's grades to students                 |
+| =g=   | Refresh from Canvas, keeping what you typed              |
+| =B=   | Read your SpeedGrader comment library into the file      |
+| =x=   | Delete the saved comment at point from the library       |
 
 *** Grading workflow
 
-1. Press =v= to switch to detail view (one heading per student).
-2. Edit the =:SCORE:= property on each student's heading.
-3. Press =c= to leave feedback comments.
-4. Press =d= to download and review attached files.
-5. Press =S= to push all changed grades to Canvas.
+1. Press =D= to download the attachments, or =d= on one student.
+2. Edit the =:SCORE:= property on each student's heading, or fill the =Score= cells of their =Rubric= table.
+3. Write feedback under the student's =Comment to post= heading; it goes out with the grades.
+4. Set =:LATE_STATUS:= (=late=, =missing=, =extended= or =none=) where SpeedGrader's status menu would.
+5. Press =S= to push everything that changed.  A student whose grade Canvas changed since the pull, or who resubmitted, is skipped and marked =:CONFLICT:= rather than overwritten.
+6. Under a manual post policy, press =P= to release the grades.
+
+The file keeps between sessions: =M-x org-canvas-open-submissions= reopens it.  See [[file:manual.org::*Grading Submissions][Grading Submissions]] in the manual for the details.
 
 ** 7. Clean Up (End of Semester)
 
@@ -415,42 +433,59 @@ Or remove the heading from the Org file first, then use =M-x org-canvas-cleanup-
 
 * Grading Workflow
 
-A focused guide on grading, since it's the most frequent daily task.
+A focused guide on grading, since it's the most frequent daily task.  The manual's [[file:manual.org::*Grading Submissions][Grading Submissions]] chapter has the full reference.
 
-** Viewing Submissions
+** Finding What Needs Work
 
 #+begin_src elisp
-M-x org-canvas-submissions-view
+M-x org-canvas-submissions-status
 #+end_src
 
-You'll be prompted to select an assignment.  The viewer fetches all submissions and displays them.
+The grading queue: one row per graded assignment with its submitted, graded, posted, late and missing counts, Canvas's mean and median score, and the next thing to do (=pull=, =refresh=, =grade= or =post=).  It reads Canvas and writes nothing.
+
+** Pulling a Grading File
+
+#+begin_src elisp
+M-x org-canvas-pull-submissions
+#+end_src
+
+You'll be prompted to select an assignment.  The pull writes a grading file, one Org heading per student with the submitted text, attachments, comments so far, a =Rubric= section when the assignment has a rubric, and an editable =:SCORE:= property.  It is saved, so grading can span sessions; =M-x org-canvas-open-submissions= reopens it.
 
 ** Summary View vs Detail View
 
-- *Summary view* (default): A table with one row per student showing name, status, score, and submission date.
-- *Detail view*: One Org heading per student with full submission details, downloadable attachments, and editable =:SCORE:= property.
+- *Detail view* (default): the grading file itself, where you grade.
+- *Summary view*: a read-only table with one row per student, derived from the file's headings, so it shows grades not yet pushed.
 
 Press =v= to toggle between them.
 
 ** Downloading Attachments
 
-In either view, press =d= with point on a student's submission to download their attachments to a local directory.
+Press =d= with point on a student's heading to download their attachments, or =D= for every student.  They land in =files/<assignment>/<student>/= beside the grading file.
 
-** Posting Comments
+** Comments
 
-Press =c= to post a comment.  You'll be prompted for the comment text.  The comment is immediately visible to the student on Canvas.
+Write a comment under the student's =Comment to post= heading; =S= sends it with the grades.  Press =c= instead to post a one-off comment immediately.
+
+Comments you give again and again belong in the file's =* Comment Bank= section, one list item each: =S= saves the new ones to your SpeedGrader comment library and =B= reads the library in.  Removing an item never deletes it on Canvas; =x= on the item does, after asking.
 
 ** Pushing Grades
 
-1. In detail view, edit the =:SCORE:= property on any student headings.
-2. Press =S=.  org-canvas detects which scores changed and confirms before pushing.
-3. Changed grades are sent to Canvas.
+1. Edit the =:SCORE:= property on any student headings (=EX= excuses), or fill their =Rubric= rows.
+2. Set =:LATE_STATUS:= where a student should be marked late, missing or extended, or =none=.
+3. Press =S=.  org-canvas lists what changed and confirms before pushing.
+4. Changed grades, rubric assessments, drafted comments and late statuses are sent to Canvas.
+
+Before pushing, Canvas is read again: a student whose grade moved there since the pull, or who resubmitted, is skipped and marked =:CONFLICT:=.  After a resubmission, a refresh (=g=) also writes =:GRADED_ATTEMPT:=, naming the attempt the old score was given on.
+
+** Posting Grades
+
+Under a manual post policy (=POST_POLICY: manual= on the assignment or course), a pushed grade stays hidden until posted: =S= offers to post after a push, and =P= posts at any time.  To have Canvas post them for you, give the assignment heading both =POST_GRADES_AT= and =POST_COMMENTS_AT=, the comments no later than the grades, and sync it.
 
 ** Batch Grading Tips
 
 - Use Org's narrowing (=C-x n s=) to focus on one student at a time.
 - Use =org-sparse-tree= (=C-c /=) to filter by property values (e.g., find all ungraded submissions).
-- Grade one assignment at a time -- the submissions viewer is scoped to a single assignment.
+- Grade one assignment at a time -- a grading file holds a single assignment.
 
 * End-of-Semester Workflow
 
@@ -476,7 +511,7 @@ See [[*Copying from a Previous Semester]] above.  The key steps:
 
 1. Copy the directory.
 2. Update credentials with the new course ID.
-3. Strip =CANVAS_ID= (=CANVAS_URL= for pages), =CANVAS_UPDATED_AT= and =PAYLOAD_HASH= from all headings, and the =#+LAST_SYNCED= header from each file (the =sed= above does all of it, including any per-entry =LAST_SYNCED= older files still carry).
+3. Strip =CANVAS_ID= (=CANVAS_URL= for pages), the companion id stamps (=CANVAS_ASSIGNMENT_ID=, =CANVAS_ITEM_ID=, =CANVAS_CRITERION_ID=), =CANVAS_UPDATED_AT= and =PAYLOAD_HASH= from all headings, and the =#+LAST_SYNCED= header from each file (the =sed= above does all of it, including any per-entry =LAST_SYNCED= older files still carry).
 4. Update all dates.
 5. Validate and push.
 
@@ -530,6 +565,7 @@ If some TAs only use the Canvas web UI:
 - Enable conflict detection (on by default).
 - Before syncing, be aware that their changes will show as conflicts.
 - Use =pull= to accept their changes, or =push= to overwrite.
+- To take one of their edits without syncing anything, run =M-x org-canvas-pull-at-point= on the heading; =M-x org-canvas-diff= lists every item they have changed.
 - Consider having Canvas-only TAs restrict their edits to areas you don't manage in Org (e.g., they grade, you manage content).
 
 * Maintenance Tasks

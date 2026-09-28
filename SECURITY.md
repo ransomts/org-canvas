@@ -26,7 +26,7 @@ values are the ones to look for.
 ## What is in scope
 
 - A token, session cookie or CSRF value reaching anywhere a person can
-  read it: the `*org-canvas-log*` buffer or log file, the echo area and
+  read it: the `*canvas-log*` buffer or log file, the echo area and
   `*Messages*`, batch stderr, a backtrace, a curl config or temp file,
   a report buffer, or the pull summary. The package redacts on every
   path it knows about (`org-canvas--log-redact`,
