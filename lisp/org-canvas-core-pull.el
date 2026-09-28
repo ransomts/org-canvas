@@ -239,10 +239,12 @@ Saves the buffer.  Creates the file if it does not yet exist."
 On a failed request (403/404/timeout, and the rest of
 `org-canvas-api-error') record to the pull summary and return nil so
 the rewriter passes the URL through unchanged: one unreadable file —
-a cross-course link, a locked folder — costs that one link, not the
-content type (issue #171).  A 401 is deliberately not among them: an
-expired token will fail every remaining request too, so it aborts
-rather than filling the summary with one entry per item.
+a locked folder, say — costs that one link, not the content type
+\(issue #171).  A 401 is deliberately not among them: an expired
+token will fail every remaining request too, so it aborts rather
+than filling the summary with one entry per item.  A link into
+another course never reaches here
+\(`org-canvas--rewrite-resolve-file-id', issue #390).
 
 On success: GET /api/v1/files/:id, derive the folder-relative path
 via /api/v1/folders/:fid (cached in `org-canvas--rewrite-folder-cache'),
@@ -288,6 +290,65 @@ on success, or nil on failure."
       :log-line (org-canvas--pull-summary-current-log-line))
      nil)))
 
+;; A file id the rewriter will not resolve this command — one whose
+;; fetch failed, or one whose URL names another course — is remembered
+;; so a link repeated across many bodies costs one request and one
+;; warning, not one per occurrence (issue #390).  Successes go into the
+;; caller's CACHE; this is the other half.
+
+(defvar org-canvas--rewrite-unresolved-ids nil
+  "Hash of Canvas file id strings the rewriter gave up on this run.
+Each value is `failed' (the fetch was refused) or `foreign' (the URL
+names another course).  Forgotten when a top-level command starts
+\=(`org-canvas--operation-start-hook'), and kept across the sub-phases
+of a master pull or sync, which bind `org-canvas--inhibit-log-clear'.")
+
+(defun org-canvas--rewrite-unresolved-forget ()
+  "Drop the unresolved file ids unless a master run is under way."
+  (unless org-canvas--inhibit-log-clear
+    (setq org-canvas--rewrite-unresolved-ids nil)))
+
+(add-hook 'org-canvas--operation-start-hook
+          #'org-canvas--rewrite-unresolved-forget)
+
+(defun org-canvas--rewrite-mark-unresolved (id why)
+  "Remember file ID as unresolved this run for reason WHY."
+  (unless org-canvas--rewrite-unresolved-ids
+    (setq org-canvas--rewrite-unresolved-ids
+          (make-hash-table :test 'equal)))
+  (puthash id why org-canvas--rewrite-unresolved-ids))
+
+(defun org-canvas--rewrite-foreign-course (url)
+  "Return the course id URL names when it is not the configured course.
+Nil when URL names no course, or names `org-canvas-course-id', or no
+course is configured.  Such a link is a course-copy leftover the
+validator already reports (issue #172); fetching it can only 403."
+  (let ((ours (format "%s" (or org-canvas-course-id ""))))
+    (when (and (not (string-empty-p ours))
+               (string-match "/courses/\\([0-9]+\\)/files/" url))
+      (let ((theirs (match-string 1 url)))
+        (unless (string= theirs ours) theirs)))))
+
+(defun org-canvas--rewrite-resolve-file-id (id url cache)
+  "Return the local relpath for Canvas file ID linked by URL, or nil.
+Look ID up in CACHE, then in `org-canvas--rewrite-unresolved-ids';
+a URL into another course is warned about once and never fetched,
+and any other unknown ID is fetched once, a failure remembered."
+  (cond
+   ((gethash id cache))
+   ((and org-canvas--rewrite-unresolved-ids
+         (gethash id org-canvas--rewrite-unresolved-ids))
+    nil)
+   ((org-canvas--rewrite-foreign-course url)
+    (org-canvas--log-warning org-canvas--logger
+      "[Rewrite] file %s links into course %s, not this one: left as is"
+      id (org-canvas--rewrite-foreign-course url))
+    (org-canvas--rewrite-mark-unresolved id 'foreign)
+    nil)
+   ((org-canvas--rewrite-fetch-unknown-file id cache))
+   (t (org-canvas--rewrite-mark-unresolved id 'failed)
+      nil)))
+
 (defun org-canvas--rewrite-canvas-file-urls (text cache)
   "Rewrite Org-bracketed Canvas file URLs in TEXT using CACHE.
 A link `[[https://.../files/ID...]]' (optionally with a `][DESC]' tail)
@@ -295,7 +356,9 @@ is replaced by `[[file:RELPATH][DESC-or-FILENAME]]' when ID is a key in
 CACHE.  When ID is missing from CACHE, attempts to fetch its metadata
 from Canvas, download the file, register it in `org-canvas-files-file',
 and rewrite the link; if the fetch fails the URL passes through
-unchanged (the failure is recorded in the pull summary).
+unchanged (the failure is recorded in the pull summary, once per ID).
+A URL into another course is never fetched: it passes through with
+one warning per ID (issue #390).
 Returns TEXT unchanged when nil or empty."
   (if (or (null text) (string-empty-p text))
       text
@@ -305,12 +368,12 @@ Returns TEXT unchanged when nil or empty."
        ;; Capture the substring matches eagerly: the unknown-file fetch
        ;; below performs buffer operations that can clobber match data,
        ;; even though `replace-regexp-in-string' nominally guards it.
-       (let* ((id (match-string 2 match))
+       (let* ((url (match-string 1 match))
+              (id (match-string 2 match))
               (desc (match-string 3 match))
-              (relpath (or (gethash id cache)
-                           (save-match-data
-                             (org-canvas--rewrite-fetch-unknown-file
-                              id cache)))))
+              (relpath (save-match-data
+                         (org-canvas--rewrite-resolve-file-id
+                          id url cache))))
          (if relpath
              (format "[[file:%s][%s]]"
                      relpath
