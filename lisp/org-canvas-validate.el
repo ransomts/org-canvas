@@ -573,6 +573,42 @@ date sits inside a period, bounds included."
              (format "DUE_AT %s falls outside every grading period in %s"
                      raw (file-name-nondirectory org-canvas-grading-periods-file)))))))
 
+;;;; 5a-1b. Scheduled Posting (issue #352)
+
+(defun org-canvas--validate-post-schedule-problem (grades comments policy)
+  "Return what is wrong with a posting schedule, or nil.
+GRADES and COMMENTS are the raw POST_GRADES_AT and POST_COMMENTS_AT,
+POLICY the raw POST_POLICY.  Canvas keeps a schedule only with both
+times, grades no earlier than comments, under manual posting."
+  (let ((grades-iso (org-canvas--validate-safe-parse-timestamp grades))
+        (comments-iso (org-canvas--validate-safe-parse-timestamp comments)))
+    (cond
+     ((not (and grades comments))
+      (format "%s without %s: Canvas schedules a posting only with both times"
+              (if grades "POST_GRADES_AT" "POST_COMMENTS_AT")
+              (if grades "POST_COMMENTS_AT" "POST_GRADES_AT")))
+     ((and grades-iso comments-iso
+           (time-less-p (date-to-time grades-iso) (date-to-time comments-iso)))
+      (format "POST_GRADES_AT %s is before POST_COMMENTS_AT %s: Canvas posts grades no earlier than comments"
+              grades comments))
+     ((equal policy "automatic")
+      "a posting schedule needs manual posting, and POST_POLICY is automatic"))))
+
+(defun org-canvas--validate-post-schedule (loc)
+  "Check the posting schedule of the assignment heading at point.
+LOC is a (:file :line :heading) plist.  An error when Canvas would
+refuse or drop the schedule; nothing when the heading has none.  A
+time that does not parse is reported by the timestamp check."
+  (let ((grades (org-entry-get (point) "POST_GRADES_AT"))
+        (comments (org-entry-get (point) "POST_COMMENTS_AT")))
+    (when-let* (((or grades comments))
+                (problem (org-canvas--validate-post-schedule-problem
+                          grades comments
+                          (org-entry-get (point) "POST_POLICY"))))
+      (list (org-canvas--validate-make-issue
+             'error loc (if grades "POST_GRADES_AT" "POST_COMMENTS_AT")
+             problem)))))
+
 ;;;; 5a-2. Grading Schemes
 ;;
 ;; The table helpers live in the grading-schemes module, which is always
@@ -657,10 +693,11 @@ names it.  An id of 0 names no scheme and is passed over."
     (nreverse issues)))
 
 (cl-defun org-canvas--validate-assignment-structure (loc)
-  "Check the LTI tool declaration, the grading period, and the override table.
+  "Check the LTI tool, grading period, posting schedule and override table.
 LOC is a (:file :line :heading) plist."
   (let ((issues (nconc (org-canvas--validate-external-tool loc)
-                       (org-canvas--validate-due-in-grading-period loc)))
+                       (org-canvas--validate-due-in-grading-period loc)
+                       (org-canvas--validate-post-schedule loc)))
         (end (save-excursion (org-end-of-subtree t) (point))))
     (save-excursion
       (unless (re-search-forward "^#\\+NAME: overrides" end t)
