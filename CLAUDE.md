@@ -191,6 +191,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 
 **`decisions.org`**
 
+- a bulk grade push waits for Canvas's `update_grades` job through its Progress, within a timeout, and records baselines and offers posting only once the job completed (#382)
 - a classic quiz pulls whole into one heading — pull-at-point, the diff's `p` on an EXTRA row, adopt filling a stub, `:pull-whole-entry` — and numbers a question name it cannot tell apart (#295)
 - a heading opens its Canvas page from `:web-pages` rules its module declares (#292)
 - a hot-spot item's regions pull into the Canvas-owned `HOTSPOTS` and `HOTSPOTS_COUNT`, never pushed, compared by the drift report, the image URL never stored (#365)

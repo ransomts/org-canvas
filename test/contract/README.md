@@ -45,6 +45,11 @@ the generator; currently assignments and assignment-groups). The
 response shape and assert it tolerates every field and reads the ones it
 depends on — the read-path analog of the request-body contract.
 
+An object read outside any module's pull is listed in
+`RESPONSE_ONLY_SCHEMAS` and written with `"response_only": true`: the
+`Progress` a bulk grade push polls until Canvas's job has finished
+(issue #382), whose fields the push reads are checked the same way.
+
 ## Read-parameter contract (issue #273)
 
 The fixture also captures, per module, the query parameters the spec

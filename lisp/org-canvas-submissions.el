@@ -144,6 +144,23 @@ the window."
   :type 'integer
   :group 'org-canvas)
 
+(defcustom org-canvas-submissions-progress-timeout 180
+  "Seconds a bulk grade push waits for Canvas to apply the grades.
+Canvas applies several grades at once in a background job and answers
+the push with that job's progress; the push reads the progress again
+every `org-canvas-submissions-progress-interval' seconds until the job
+has completed or failed.  When this many seconds pass first, the push
+reports the grades as unconfirmed, records no baseline for them and
+offers no posting, so the next push sends them again (issue #382)."
+  :type 'number
+  :group 'org-canvas)
+
+(defcustom org-canvas-submissions-progress-interval 2
+  "Seconds between two reads of a bulk grade push's progress.
+See `org-canvas-submissions-progress-timeout'."
+  :type 'number
+  :group 'org-canvas)
+
 (defcustom org-canvas-submissions-write-gitignore t
   "Non-nil means write a .gitignore into the submissions directory.
 It is written once, when the directory is created, and excludes
@@ -3456,6 +3473,80 @@ grade, the rubric assessment, or both."
     (org-canvas-api-request 'POST url
       :data `((grade_data . ,grade-data)))))
 
+;;;; Bulk Grade Progress (issue #382)
+;;
+;; `update_grades' answers with a Progress object and applies the grades
+;; in a background job.  The push waits for that job before it records
+;; a baseline or offers to post: a baseline stamped for a grade Canvas
+;; never stored is one the next push no longer sends.
+
+(defun org-canvas--submissions-progress-url (id)
+  "Return the address of the Canvas Progress object ID.
+Built on `org-canvas-base-url', never taken from the reply's `url', so
+the token only ever travels to the configured instance."
+  (format "%s/api/v1/progress/%s"
+          (replace-regexp-in-string "/+\\'" "" org-canvas-base-url) id))
+
+(defun org-canvas--submissions-progress-state (progress)
+  "Return the state of PROGRESS: `completed', `failed' or `pending'.
+Nil when PROGRESS is no Progress object: an id and a workflow_state."
+  (let ((state (and (consp progress) (alist-get 'id progress)
+                    (alist-get 'workflow_state progress))))
+    (cond ((not (stringp state)) nil)
+          ((equal state "completed") 'completed)
+          ((equal state "failed") 'failed)
+          (t 'pending))))
+
+(defun org-canvas--submissions-progress-read (id)
+  "Read the Progress object ID again; return it, or nil when the read fails.
+A failed read is logged; the caller reports the job unconfirmed."
+  (condition-case err
+      (org-canvas-api-request 'GET (org-canvas--submissions-progress-url id))
+    (error
+     (org-canvas--log-warning org-canvas--logger
+       "[Submissions] Could not read progress %s: %s" id (error-message-string err))
+     nil)))
+
+(defun org-canvas--submissions-progress-outcome (state progress waited)
+  "Return the outcome plist for a job in STATE after WAITED seconds.
+PROGRESS is the last Progress object read, whose `message' a failed
+job's outcome carries."
+  (pcase state
+    ('completed (list :state 'completed))
+    ('failed (list :state 'failed
+                   :message (or (org-canvas--alist-get-non-null 'message progress)
+                                "Canvas gave no reason")))
+    ('pending (list :state 'unconfirmed
+                    :message (format "still running after %ds" (round waited))))
+    (_ (list :state 'unconfirmed
+             :message (if (zerop waited)
+                          "Canvas answered with no progress to follow"
+                        "the progress could not be read")))))
+
+(defun org-canvas--submissions-await-progress (progress what)
+  "Wait for the Canvas job PROGRESS describes; return how it ended.
+PROGRESS is the Progress object a bulk request answered, and WHAT names
+the job in the echo area.  The job is read again every
+`org-canvas-submissions-progress-interval' seconds (through
+`org-canvas--wait' and the request pacing) until it has completed or
+failed, or `org-canvas-submissions-progress-timeout' seconds have been
+waited.  Return a plist (:state STATE :message WHY): STATE is
+`completed', `failed' (WHY is Canvas's message) or `unconfirmed' (WHY
+says whether the wait ran out or the progress could not be read)."
+  (let ((id (and (consp progress) (alist-get 'id progress)))
+        (state (org-canvas--submissions-progress-state progress))
+        (step (let ((i org-canvas-submissions-progress-interval))
+                (if (and (numberp i) (> i 0)) i 1)))
+        (waited 0))
+    (while (and (eq state 'pending)
+                (< waited org-canvas-submissions-progress-timeout))
+      (message "Waiting for Canvas to apply %s (%ds)..." what (round waited))
+      (org-canvas--wait step)
+      (setq waited (+ waited step)
+            progress (org-canvas--submissions-progress-read id)
+            state (org-canvas--submissions-progress-state progress)))
+    (org-canvas--submissions-progress-outcome state progress waited)))
+
 (defun org-canvas--submissions-live-baselines (assignment-id)
   "Fetch ASSIGNMENT-ID's submissions as (user-id . (score attempt rubric late)).
 The score is spelled as the buffer shows it (a number or EX), or nil
@@ -3549,12 +3640,57 @@ longer does (issue #264)."
 (defun org-canvas--submissions-send-grades (assignment-id diffs)
   "Send DIFFS for ASSIGNMENT-ID: one PUT, or the bulk endpoint for several.
 A diff that only sets a late status has no grade field, and is left
-to `org-canvas--submissions-send-late-statuses'."
+to `org-canvas--submissions-send-late-statuses'.  Return nil when no
+diff carries a grade, else the outcome plist (:state STATE :message
+WHY): a PUT that returned is `completed'; the bulk endpoint's
+background job is waited for (`org-canvas--submissions-await-progress',
+issue #382).  Under `org-canvas--dry-run' nothing is sent and STATE is
+`dry-run'."
   (let ((grading (seq-filter #'org-canvas--submissions-grade-fields diffs)))
     (cond ((null grading) nil)
-          ((= (length grading) 1)
-           (org-canvas--submissions-push-single-grade assignment-id (car grading)))
-          (t (org-canvas--submissions-push-bulk-grades assignment-id grading)))))
+          (org-canvas--dry-run
+           (org-canvas--log-info org-canvas--logger
+             "[DRY-RUN] Would send %d grade(s) for assignment %s%s"
+             (length grading) assignment-id
+             (if (cdr grading)
+                 " through update_grades, a Canvas background job the push would wait for"
+               ""))
+           (list :state 'dry-run))
+          ((null (cdr grading))
+           (org-canvas--submissions-push-single-grade assignment-id (car grading))
+           (list :state 'completed))
+          (t (org-canvas--submissions-await-progress
+              (org-canvas--submissions-push-bulk-grades assignment-id grading)
+              (format "%d grade(s) to assignment %s" (length grading) assignment-id))))))
+
+(defun org-canvas--submissions-grades-applied-p (outcome)
+  "Return non-nil if the grades behind OUTCOME, from the grade send, landed.
+Nil OUTCOME means no grade was sent, which leaves nothing unconfirmed."
+  (memq (plist-get outcome :state) '(nil completed)))
+
+(defun org-canvas--submissions-grades-note (count outcome)
+  "Return the push message's opening for COUNT grades sent with OUTCOME."
+  (pcase (plist-get outcome :state)
+    ('dry-run (format "Dry run: would push %d grade(s)" count))
+    ('failed (format "Canvas did not apply %d grade(s) (%s); nothing recorded"
+                     count (plist-get outcome :message)))
+    ('unconfirmed (format "%d grade(s) sent but not confirmed (%s); nothing recorded, pull to check"
+                          count (plist-get outcome :message)))
+    (_ (format "Pushed %d grade(s)" count))))
+
+(defun org-canvas--submissions-record-late-only (diffs late)
+  "Record the late statuses LATE of DIFFS whose grades did not land.
+LATE is the alist of `org-canvas--submissions-send-late-statuses';
+each status Canvas stored becomes its heading's baseline, while the
+score and rubric baselines stay as they were."
+  (save-excursion
+    (dolist (ch diffs)
+      (let ((entry (assoc (plist-get ch :user-id) late)))
+        (when (and entry (not (eq (cdr entry) 'dry-run))
+                   (org-canvas--submissions-goto-user (plist-get ch :user-id)))
+          (org-canvas--submissions-record-late-status ch (cdr entry))))))
+  (when buffer-file-name
+    (org-canvas--save-buffer)))
 
 (defun org-canvas--submissions-record-pushed-at-point (change &optional late)
   "Make CHANGE the baseline of the heading at point.
@@ -3686,20 +3822,30 @@ CHANGES are the grade diffs and DRAFTS the drafted comments.
 The grades and rubric assessments go first, then the late statuses,
 then the drafted comments, then, when BANK lists Comment Bank items
 to send, the comment bank; CONFLICTS, already marked, are only
-counted in the closing message."
+counted in the closing message.  Every baseline is recorded only once
+the grades have landed: a bulk push waits for Canvas's background job,
+and one that failed or ran out of time records no score or rubric
+baseline and offers no posting, so the next push sends them again
+\(issue #382)."
   (let* ((grading (seq-filter #'org-canvas--submissions-grade-fields changes))
-         (late (progn (org-canvas--submissions-send-grades assignment-id changes)
-                      (org-canvas--submissions-send-late-statuses changes)))
+         (outcome (org-canvas--submissions-send-grades assignment-id changes))
+         (late (org-canvas--submissions-send-late-statuses changes))
          (posted (org-canvas--submissions-post-drafts assignment-id drafts))
-         (saved (and bank (org-canvas--submissions-push-bank assignment-id))))
-    (org-canvas--submissions-record-pushed changes (car late))
-    (message "Pushed %d grade(s)%s and %d comment(s)%s%s%s" (length grading)
-             (if (car late) (format ", %d late status(es)" (length (car late))) "")
-             posted
-             (org-canvas--submissions-late-note (cdr late))
-             (org-canvas--submissions-describe-bank saved bank)
-             (org-canvas--submissions-conflicts-note conflicts))
-    (org-canvas--submissions-offer-to-post grading)))
+         (saved (and bank (org-canvas--submissions-push-bank assignment-id)))
+         (applied (org-canvas--submissions-grades-applied-p outcome)))
+    (if applied
+        (org-canvas--submissions-record-pushed changes (car late))
+      (org-canvas--submissions-record-late-only changes (car late)))
+    (org-canvas--user-message
+     "%s%s and %d comment(s)%s%s%s"
+     (org-canvas--submissions-grades-note (length grading) outcome)
+     (if (car late) (format ", %d late status(es)" (length (car late))) "")
+     posted
+     (org-canvas--submissions-late-note (cdr late))
+     (org-canvas--submissions-describe-bank saved bank)
+     (org-canvas--submissions-conflicts-note conflicts))
+    (when applied
+      (org-canvas--submissions-offer-to-post grading))))
 
 ;;;; Posting Grades
 
