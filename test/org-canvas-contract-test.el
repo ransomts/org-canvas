@@ -53,7 +53,8 @@
   ;; Fields a module legitimately emits that the documented create operation
   ;; omits.  Each must be justified — these are not free passes.
   '(("modules" . ("published" "skip_content_tags"))
-    ("quizzes" . ("anonymous_submissions")))
+    ("quizzes" . ("anonymous_submissions"))
+    ("pages" . ("publish_at")))
   "Per-module allowed-but-undocumented payload fields.
 modules: Canvas honors `module[published]' on create even though the
 documented create_module operation does not list it; org-canvas relies on
@@ -65,7 +66,11 @@ publish state of every piece of content the module lists (issue #47).
 quizzes: `quiz[anonymous_submissions]' is absent from the documented
 create_quiz and edit_quiz operations, but the Quiz object carries it
 and the quizzes API accepts it on both: a PUT of it made a copied
-survey anonymous on a live course (issue #349).")
+survey anonymous on a live course (issue #349).
+pages: `wiki_page[publish_at]' is newer than the spec fixture; canvas-lms
+documents it on create_page and update_page and permits it in
+WikiPagesApiController#get_update_params, and ScheduledPublication acts
+on it (issue #379).")
 
 ;;;; Helpers
 
@@ -180,6 +185,12 @@ stage-1/2 functions."
     (org-canvas-contract--check
      "pages"
      "* Welcome\n:PROPERTIES:\n:PUBLISHED: false\n:END:\n\nHi.\n"
+     #'org-canvas--page-parse-entry #'org-canvas--page-build-payload))
+
+  (it "a scheduled page's build-payload conforms to create_page"
+    (org-canvas-contract--check
+     "pages"
+     "* Week 3\n:PROPERTIES:\n:PUBLISH_AT: <2026-10-05 Mon 08:00>\n:END:\n\nHi.\n"
      #'org-canvas--page-parse-entry #'org-canvas--page-build-payload))
 
   (it "calendar build-payload conforms to create_calendar_event"

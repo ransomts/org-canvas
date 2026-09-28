@@ -16,6 +16,7 @@
 ;; CANVAS_URL   - URL slug (auto-populated after first sync)
 ;; FRONT_PAGE   - Set to "true" to make this the course home page
 ;; PUBLISHED    - Visibility ("true"/"false", defaults to true)
+;; PUBLISH_AT   - Canvas publishes the page itself at this time
 ;; EDITING_ROLES - Who can edit ("teachers", "students")
 ;;
 ;; URL HANDLING
@@ -23,6 +24,14 @@
 ;; Pages use CANVAS_URL instead of CANVAS_ID for identification.
 ;; Canvas generates the URL from the title (slugified).
 ;; After first sync, the URL is saved and used for updates.
+;;
+;; SCHEDULED PUBLICATION
+;; =====================
+;; PUBLISH_AT is Canvas's own `publish_at' (issue #379), not the
+;; local-only schedule modules keep under the same name: Canvas holds
+;; the page unpublished and publishes it at that time with no Emacs
+;; running.  A heading with PUBLISH_AT never sends `published', since
+;; any request that changes the published state clears the schedule.
 ;;
 ;; FRONT PAGE
 ;; ==========
@@ -66,7 +75,11 @@
   :properties
   `((:org-prop "PUBLISHED" :data-key :published :type boolean :default t
      :api-key "published" :boolean-json t
-     :doc "Whether item is visible (default: true)")
+     :compare-p org-canvas--page-published-comparable-p
+     :doc "Whether item is visible (default: true); not sent when PUBLISH_AT is set")
+    (:org-prop "PUBLISH_AT" :data-key :publish_at :type timestamp
+     :api-key "publish_at"
+     :doc "Canvas publishes the page at this time (needs Scheduled Page Publication)")
     (:org-prop "FRONT_PAGE" :data-key :front_page :type boolean
      :api-key "front_page"
      :doc "Set as course front page")
@@ -80,6 +93,32 @@
      :api-key "notify_of_update"
      :doc "Notify students of changes (write-only)"))
   :structural-fn #'org-canvas--validate-page-structure)
+
+;;;; Scheduled Publication
+
+(defun org-canvas--page-scheduled-p (pom)
+  "Return non-nil when the page heading at POM carries a PUBLISH_AT."
+  (let ((publish-at (org-entry-get pom "PUBLISH_AT")))
+    (and publish-at (not (string-empty-p (string-trim publish-at))))))
+
+(defun org-canvas--page-published-comparable-p (pom _item)
+  "Return non-nil when PUBLISHED at POM is a comparable opinion.
+A scheduled page's published state is Canvas's to set: unpublished
+until PUBLISH_AT, published after, and the push never sends it, so
+comparing it would flag every page still waiting (issue #379).  Named
+as the PUBLISHED spec's `:compare-p'."
+  (not (org-canvas--page-scheduled-p pom)))
+
+(defun org-canvas--page-drop-published-when-scheduled (data payload)
+  "Remove `published' from PAYLOAD when DATA carries a publish time.
+Canvas clears `publish_at' on any request that changes the published
+state, so the default PUBLISHED: true would publish a waiting page at
+once and cancel its schedule; with the field absent, a future
+`publish_at' unpublishes the page and schedules it, and a past one
+publishes it (issue #379).  Returns PAYLOAD."
+  (when (plist-get data :publish_at)
+    (remhash "published" (gethash "wiki_page" payload)))
+  payload)
 
 ;;;; 1. Stage: Extraction
 
@@ -108,6 +147,7 @@ Logs warnings for invalid roles.  Returns RAW unchanged."
     data)
   :properties
   (("PUBLISHED"       :published       :type boolean :default t)
+   ("PUBLISH_AT"      :publish_at      :type timestamp)
    ("FRONT_PAGE"      :front_page      :type boolean)
    ("EDITING_ROLES"   :editing_roles   :type string)
    ("TODO_DATE"       :student_todo_at :type timestamp)
@@ -116,12 +156,14 @@ Logs warnings for invalid roles.  Returns RAW unchanged."
 ;;;; 2. Stage: Transformation
 
 (defun org-canvas--page-pre-build-check (data payload)
-  "Validate page DATA before building payload.  Return PAYLOAD unchanged."
+  "Validate page DATA before building payload.  Return PAYLOAD.
+A scheduled page's payload loses `published', through
+`org-canvas--page-drop-published-when-scheduled'."
   (when (string-empty-p (plist-get data :title))
     (org-canvas--log-error org-canvas--logger "[Stage 2: Transform] Empty title!")
     (org-canvas--signal 'org-canvas-validation-error
       "Page title cannot be empty during payload build"))
-  payload)
+  (org-canvas--page-drop-published-when-scheduled data payload))
 
 (org-canvas-define-payload page
   :registry-key "pages"
@@ -200,6 +242,11 @@ home page moved in the web UI does not leave two headings claiming it."
     ;; arrives with `front_page' false, the property's default, so the
     ;; stale FRONT_PAGE is deleted rather than left claiming it.
     (org-canvas--pull-item-from-registry "pages" item pos)
+    ;; A scheduled page's published state follows its PUBLISH_AT, and
+    ;; the push never sends it, so a PUBLISHED: false written beside it
+    ;; would only read as an intent the file cannot carry (issue #379).
+    (when (alist-get 'publish_at item)
+      (org-entry-delete pos "PUBLISHED"))
     (when detail
       (org-with-point-at pos
         (org-canvas--pull-insert-body body)))))

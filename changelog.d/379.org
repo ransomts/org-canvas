@@ -1,0 +1,9 @@
+* Added
+- #379 A page can publish itself: =PUBLISH_AT= on a pages.org heading is
+  Canvas's own scheduled publication, pushed and pulled, so Canvas
+  publishes the page at that time with no Emacs running (it needs the
+  account's Scheduled Page Publication feature).  A scheduled heading
+  never sends =PUBLISHED=, since Canvas cancels the schedule when the
+  published state changes; the drift report does not compare
+  =PUBLISHED= on it, a pull leaves =PUBLISHED= off it, and validation
+  warns about =PUBLISHED: false= or =FRONT_PAGE: true= beside it.

@@ -1212,6 +1212,7 @@ Wiki pages for course content.
 | =EDITING_ROLES= | string    | Who can edit (teachers, students)   |
 | =TODO_DATE=     | timestamp | Add to student to-do list on date   |
 | =NOTIFY_OF_UPDATE= | boolean | Notify students of changes (write-only) |
+| =PUBLISH_AT=    | timestamp | Canvas publishes the page at this time; see [[*A page publishes itself][A page publishes itself]] |
 
 *** Example
 
@@ -2735,9 +2736,49 @@ such.  The module is left alone -- publish state belongs to the object, and
 org-canvas will not publish a module you did not ask it to.  The content is
 live in Canvas, but students reach it only once the module is published too.
 
-Note that =PUBLISH_AT= is org-canvas's own scheduling, not Canvas's: it is never
-sent to the API.  A module's =UNLOCK_AT= is Canvas's, and the two are
-independent.
+Note that a module's =PUBLISH_AT= is org-canvas's own scheduling, not
+Canvas's: it is never sent to the API.  A module's =UNLOCK_AT= is Canvas's, and
+the two are independent.
+
+*** A page publishes itself
+
+A page is the one content type Canvas can publish on its own, at an exact time,
+with no Emacs running.  On a pages.org heading, =PUBLISH_AT= is Canvas's
+=publish_at= and is sent with the page:
+
+#+begin_src org
+,* Week 5 Reading Notes
+:PROPERTIES:
+:PUBLISH_AT: <2026-09-28 Mon 08:00>
+:END:
+#+end_src
+
+The next sync pushes it; Canvas holds the page unpublished and publishes it at
+08:00.  A time already past publishes the page on that push.  It needs the
+account's "Scheduled Page Publication" feature; without it Canvas stores the
+time and does nothing with it, so check one page on a new course.
+
+The schedule decides the page's published state, so a heading with
+=PUBLISH_AT= never sends =PUBLISHED=: Canvas cancels the schedule on any
+request that publishes or unpublishes the page, and the default =PUBLISHED:
+true= would have published it at once.  The drift report does not compare
+=PUBLISHED= on such a page either, and a pull writes =PUBLISH_AT= and leaves
+=PUBLISHED= off.  Validation warns about =PUBLISHED: false= beside =PUBLISH_AT=
+(it is not sent, and the page still publishes; =M-x org-canvas-unpublish-module=
+writes exactly that, so a scheduled page linked from the week comes down only
+once its =PUBLISH_AT= is removed), and about =PUBLISH_AT= on the front page,
+which a future time would unpublish.
+
+Removing =PUBLISH_AT= makes =PUBLISHED= count again: =true= (the default)
+publishes the page now and cancels the schedule.  Canvas keeps a schedule a
+push only stops mentioning, so to keep a page unpublished /and/ cancel its
+schedule, clear the date in the page's settings on Canvas.
+
+The publish itself changes the page on Canvas, so the first sync after it sees
+the page as newer than the file.  Nothing compared differs; the drift report
+lists it as =CHANGED= with no property differing, and =M-x
+org-canvas-diff-adopt-stamps= takes Canvas's stamp (see
+[[*Adopting a Stamp][Adopting a Stamp]]), as does pulling the page.
 
 * Drift Report
 
@@ -4611,7 +4652,8 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 
 | Property | Type | Allowed values | Default | Description |
 |----------+------+----------------+---------+-------------|
-| =PUBLISHED= | boolean | true, false | true | Whether item is visible (default: true) |
+| =PUBLISHED= | boolean | true, false | true | Whether item is visible (default: true); not sent when PUBLISH_AT is set |
+| =PUBLISH_AT= | timestamp |  |  | Canvas publishes the page at this time (needs Scheduled Page Publication) |
 | =FRONT_PAGE= | boolean | true, false |  | Set as course front page |
 | =EDITING_ROLES= | csv-enum | teachers, students, members, public |  | Who can edit (teachers, students) |
 | =TODO_DATE= | timestamp |  |  | Add to student to-do list on date |
