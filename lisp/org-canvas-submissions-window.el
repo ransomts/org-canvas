@@ -330,7 +330,7 @@ CONTEXT supplies :grace and :points-text."
           (plist-get row :verdict) (plist-get row :score)))
 
 (defun org-canvas--submissions-window-notes-end ()
-  "Return where a line goes at the end of the Notes of the entry at point.
+  "Return the position for a new line at the end of the entry's Notes.
 The Notes heading is added at the end of the entry when it has none."
   (let ((region (org-canvas--submissions-section-region
                  org-canvas--submissions-notes-heading)))
