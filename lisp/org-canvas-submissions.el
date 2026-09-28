@@ -20,7 +20,8 @@
 ;;    everyone's, into files/<assignment>/<student>/ beside the file.
 ;; 3. Grade.  Edit :SCORE: on each heading, or fill the Score cells of
 ;;    the student's Rubric table and the `- ID :: comment' items under
-;;    it; `c' posts a comment.
+;;    it; `c' posts a comment.  :LATE_STATUS: marks a student late,
+;;    missing or extended, or none.
 ;; 4. `S' pushes every SCORE that differs from its CANVAS_SCORE, the
 ;;    score as last pulled or pushed, and every Rubric section whose
 ;;    rows differ from its CANVAS_RUBRIC, the assessment as last pulled
@@ -1082,7 +1083,10 @@ CANVAS_RUBRIC is the same baseline for the Rubric table, a digest of
 the assessment as pulled, present only when Canvas holds one.
 FINAL_SCORE appears only when Canvas's late policy made the recorded
 score differ from the one entered.  DAYS_LATE, rounded up, appears on a
-late submission.  ATTEMPT lets a push notice a resubmission.  With
+late submission.  LATE_STATUS and its baseline CANVAS_LATE_STATUS
+appear when Canvas holds a late policy status for the submission (see
+`org-canvas--submissions-insert-late-status').  ATTEMPT lets a push
+notice a resubmission.  With
 ASSIGNMENT-ID the heading gets its SpeedGrader link, and with
 ASSIGNMENT-NAME attachments already downloaded link to the local copy.
 CRITERIA, the assignment's rubric criteria, shape the Rubric table."
@@ -1109,6 +1113,7 @@ CRITERIA, the assignment's rubric criteria, shape the Rubric table."
     (insert (format ":STATUS: %s\n" status))
     (when days-late
       (insert (format ":DAYS_LATE: %s\n" days-late)))
+    (org-canvas--submissions-insert-late-status submission)
     (when shown
       (insert (format ":SCORE: %s\n" shown))
       (insert (format ":CANVAS_SCORE: %s\n" shown)))
@@ -1212,6 +1217,179 @@ Either may be nil.  Does nothing when the entry has no such heading."
   (org-canvas--submissions-set-section org-canvas--submissions-draft-heading
                                        org-canvas-submissions-comment-template nil))
 
+;;;; Late Status (issue #352)
+
+;; A submission's late policy status — late, missing, extended or none,
+;; or nothing when Canvas decides from the due date — is what SpeedGrader
+;; sets when a grader marks one student late, missing or extended.  The
+;; pull writes it as LATE_STATUS with a CANVAS_LATE_STATUS baseline, the
+;; way SCORE has CANVAS_SCORE; the push sends a LATE_STATUS that differs
+;; from its baseline through GraphQL's `updateSubmissionGradeStatus'
+;; (REST reads the status as `late_policy_status', so no read is added),
+;; and records what Canvas answers it stored.
+
+(defconst org-canvas--submissions-late-statuses
+  '("late" "missing" "extended" "none")
+  "The LATE_STATUS values a push sends, Canvas's `LatePolicyStatusType'.
+A value Canvas returns that is not listed is written as it comes and
+compared as it is, so it never stops a pull; only a typed one is
+refused, before anything is sent.")
+
+(defconst org-canvas--submissions-late-status-mutation
+  "mutation ($submissionId: ID!, $status: String!) { updateSubmissionGradeStatus(input: {submissionId: $submissionId, latePolicyStatus: $status}) { submission { _id latePolicyStatus secondsLate } errors { attribute message } } }"
+  "The GraphQL mutation that sets one submission's late policy status.
+The reply carries the status Canvas stored and the lateness it now
+counts, which the push records.  Checked against the Canvas schema by
+the GraphQL contract test (issue #269), which names it by this
+symbol.")
+
+(defun org-canvas--submissions-late-status (submission)
+  "Return SUBMISSION's late policy status as a string, or nil when unset."
+  (let ((status (org-canvas--alist-get-non-null 'late_policy_status submission)))
+    (and (stringp status) (not (string-empty-p status)) status)))
+
+(defun org-canvas--submissions-insert-late-status (submission)
+  "Insert SUBMISSION's LATE_STATUS and CANVAS_LATE_STATUS lines, when set.
+Nothing is inserted for a submission whose status Canvas derives from
+the due date alone; a grader who wants to set one adds LATE_STATUS."
+  (when-let* ((status (org-canvas--submissions-late-status submission)))
+    (insert (format ":LATE_STATUS: %s\n:CANVAS_LATE_STATUS: %s\n" status status))))
+
+(defun org-canvas--submissions-typed-late-status ()
+  "Return the LATE_STATUS of the entry at point, trimmed and downcased, or nil.
+Nil too when the property is absent or blank."
+  (let ((typed (org-entry-get (point) "LATE_STATUS")))
+    (when typed
+      (let ((status (downcase (string-trim typed))))
+        (and (not (string-empty-p status)) status)))))
+
+(defun org-canvas--submissions-late-status-change-at-point (name)
+  "Return the late status edit of the entry at point as a plist, or nil.
+NAME is the student's, for messages.  Nil when LATE_STATUS is blank or
+matches CANVAS_LATE_STATUS; an emptied LATE_STATUS is not a change,
+since the way back to no status is to type none.  The plist carries
+:late-status, :old-late-status and :submission-id.  A value Canvas
+does not take, or a heading with no SUBMISSION_ID to address, is a
+`user-error', so nothing is sent for anyone until it is fixed."
+  (let ((new (org-canvas--submissions-typed-late-status))
+        (old (org-entry-get (point) "CANVAS_LATE_STATUS"))
+        (submission-id (org-entry-get (point) "SUBMISSION_ID")))
+    (when (and new (not (equal new old)))
+      (unless (member new org-canvas--submissions-late-statuses)
+        (user-error "%s: LATE_STATUS %s is not one of %s" name new
+                    (string-join org-canvas--submissions-late-statuses ", ")))
+      (unless submission-id
+        (user-error "%s: no SUBMISSION_ID to set the late status on; pull again" name))
+      (list :late-status new :old-late-status old :submission-id submission-id))))
+
+(defun org-canvas--submissions-late-status-stored (data)
+  "Return what Canvas stored, from DATA, the late status mutation's reply.
+The value is (:status STATUS :seconds SECONDS), STATUS nil when Canvas
+holds none, or nil when the reply names no submission.  Errors the
+payload carries signal `org-canvas-api-error' naming them."
+  (let* ((payload (alist-get 'updateSubmissionGradeStatus data))
+         (errors (org-canvas--alist-get-non-null 'errors payload))
+         (submission (org-canvas--alist-get-non-null 'submission payload)))
+    (when (and errors (> (length errors) 0))
+      (org-canvas--signal 'org-canvas-api-error
+        "updateSubmissionGradeStatus: %s" (org-canvas--graphql-errors-message errors)))
+    (when (consp submission)
+      (list :status (org-canvas--alist-get-non-null 'latePolicyStatus submission)
+            :seconds (org-canvas--alist-get-non-null 'secondsLate submission)))))
+
+(defun org-canvas--submissions-push-late-status (change)
+  "Send CHANGE's late status; return what Canvas stored, or `dry-run'.
+The stored value is that of `org-canvas--submissions-late-status-stored'."
+  (let ((data (org-canvas--graphql-mutate
+               (format "set the late status of %s to %s"
+                       (plist-get change :name) (plist-get change :late-status))
+               org-canvas--submissions-late-status-mutation
+               (list (cons 'submissionId (format "%s" (plist-get change :submission-id)))
+                     (cons 'status (plist-get change :late-status))))))
+    (if (org-canvas--dry-run-response-p data)
+        'dry-run
+      (org-canvas--submissions-late-status-stored data))))
+
+(defun org-canvas--submissions-send-late-statuses (diffs)
+  "Send the late status of each of DIFFS that changed one.
+Return (SENT . FAILED): SENT an alist of (USER-ID . STORED), STORED
+what Canvas answered it stored (see
+`org-canvas--submissions-push-late-status'); FAILED the names of the
+students whose request failed, each one warning in the log, so one
+refusal leaves the others sent and its heading still a change."
+  (let ((sent nil) (failed nil))
+    (dolist (change diffs)
+      (when (plist-get change :late-status)
+        (condition-case err
+            (push (cons (plist-get change :user-id)
+                        (org-canvas--submissions-push-late-status change))
+                  sent)
+          (error
+           (org-canvas--log-warning org-canvas--logger
+             "[Submissions] Late status for %s not set: %s"
+             (plist-get change :name) (error-message-string err))
+           (push (plist-get change :name) failed)))))
+    (cons (nreverse sent) (nreverse failed))))
+
+(defun org-canvas--submissions-record-days-late (seconds)
+  "Rewrite DAYS_LATE of the entry at point from SECONDS, Canvas's lateness.
+Only a submitted row records lateness, as the pull does
+\(`org-canvas--submissions-days-late'); a non-number leaves it alone."
+  (when (and (numberp seconds) (org-entry-get (point) "SUBMITTED_AT"))
+    (if (> seconds 0)
+        (org-entry-put (point) "DAYS_LATE" (format "%d" (ceiling seconds 86400)))
+      (org-entry-delete (point) "DAYS_LATE"))))
+
+(defun org-canvas--submissions-record-late-status (change stored)
+  "Make the late status of CHANGE, as Canvas STORED it, the entry's baseline.
+STORED is what `org-canvas--submissions-push-late-status' returned;
+without it the status sent is taken as stored.  When Canvas stored
+something else than was sent, LATE_STATUS follows it too and the log
+says so, since the file is to show what Canvas holds (issue #349's
+rule)."
+  (let* ((sent (plist-get change :late-status))
+         (status (if stored (plist-get stored :status) sent)))
+    (if status
+        (progn (org-entry-put (point) "LATE_STATUS" status)
+               (org-entry-put (point) "CANVAS_LATE_STATUS" status))
+      (org-entry-delete (point) "LATE_STATUS")
+      (org-entry-delete (point) "CANVAS_LATE_STATUS"))
+    (unless (equal status sent)
+      (org-canvas--log-warning org-canvas--logger
+        "[Submissions] %s: Canvas stored late status %s, not the %s sent"
+        (plist-get change :name) (or status "no status") sent))
+    (org-canvas--submissions-record-days-late (plist-get stored :seconds))))
+
+(defun org-canvas--submissions-late-carryover ()
+  "Return the typed LATE_STATUS of the entry at point with its baseline, or nil.
+The value is (:typed STATUS :baseline CANVAS-LATE-STATUS), when the
+two differ; nil when LATE_STATUS is blank or what Canvas holds."
+  (let ((typed (org-canvas--submissions-typed-late-status))
+        (baseline (org-entry-get (point) "CANVAS_LATE_STATUS")))
+    (when (and typed (not (equal typed baseline)))
+      (list :typed typed :baseline baseline))))
+
+(defun org-canvas--submissions-restore-late-status (carry)
+  "Put CARRY, a `org-canvas--submissions-late-carryover' value, back at point.
+Nothing is written when Canvas now holds the typed status.  When
+Canvas's status is no longer the baseline it was typed against, the
+heading is marked CONFLICT, as a typed score is (issue #281)."
+  (let ((fresh (org-entry-get (point) "CANVAS_LATE_STATUS"))
+        (typed (plist-get carry :typed)))
+    (unless (equal fresh typed)
+      (org-entry-put (point) "LATE_STATUS" typed)
+      (unless (equal fresh (plist-get carry :baseline))
+        (org-entry-put (point) "CONFLICT"
+                       (format "late status: Canvas has %s" (or fresh "no status")))))))
+
+(defun org-canvas--submissions-describe-late (change)
+  "Return the late status note for the line of CHANGE, or an empty string."
+  (if (plist-get change :late-status)
+      (format " (late status: %s → %s)"
+              (or (plist-get change :old-late-status) "no status")
+              (plist-get change :late-status))
+    ""))
+
 ;;;; Carry-over Across Pulls
 
 (defun org-canvas--submissions-score-carryover ()
@@ -1244,12 +1422,13 @@ SCORE shown is the grader's and not what Canvas holds (issue #281)."
                        (format "score: Canvas has %s" (or fresh "no grade")))))))
 
 (defun org-canvas--submissions-collect-carryover ()
-  "Return (user-id . (:notes TEXT :draft TEXT :rubric ROWS :score SCORE)).
+  "Return (user-id . (:notes TEXT :draft TEXT :rubric ROWS :score SCORE :late L)).
 Read from the current buffer before a re-render replaces it, one
 entry per student heading that carries any of them.  ROWS are the
 unpushed Rubric rows, see
 `org-canvas--submissions-rubric-carryover'; SCORE is the typed score
-with its baseline, see `org-canvas--submissions-score-carryover'."
+with its baseline, see `org-canvas--submissions-score-carryover'; L
+the typed late status, see `org-canvas--submissions-late-carryover'."
   (let ((carry nil))
     (save-excursion
       (goto-char (point-min))
@@ -1259,10 +1438,12 @@ with its baseline, see `org-canvas--submissions-score-carryover'."
               (notes (org-canvas--submissions-section-text org-canvas--submissions-notes-heading))
               (draft (org-canvas--submissions-section-text org-canvas--submissions-draft-heading))
               (rubric (org-canvas--submissions-rubric-carryover))
-              (score (org-canvas--submissions-score-carryover)))
-          (when (and user-id (or notes draft rubric score))
+              (score (org-canvas--submissions-score-carryover))
+              (late (org-canvas--submissions-late-carryover)))
+          (when (and user-id (or notes draft rubric score late))
             (push (cons (string-to-number user-id)
-                        (list :notes notes :draft draft :rubric rubric :score score))
+                        (list :notes notes :draft draft :rubric rubric :score score
+                              :late late))
                   carry)))
         (forward-line 1)))
     carry))
@@ -1271,17 +1452,21 @@ with its baseline, see `org-canvas--submissions-score-carryover'."
   "Write CARRIED, one student's carry-over plist, back at point.
 The score goes last, so a heading whose score and rubric both moved on
 Canvas is marked for the score, the way the push's conflict check
-orders them."
+orders them; the late status goes before the rubric, as the check
+compares it after them."
   (let ((notes (plist-get carried :notes))
         (draft (plist-get carried :draft))
         (rubric (plist-get carried :rubric))
-        (score (plist-get carried :score)))
+        (score (plist-get carried :score))
+        (late (plist-get carried :late)))
     (when notes
       (org-canvas--submissions-set-section org-canvas--submissions-notes-heading
                                            org-canvas-submissions-notes-template notes))
     (when draft
       (org-canvas--submissions-set-section org-canvas--submissions-draft-heading
                                            org-canvas-submissions-comment-template draft))
+    (when late
+      (org-canvas--submissions-restore-late-status late))
     (when rubric
       (org-canvas--submissions-restore-rubric rubric))
     (when score
@@ -2502,8 +2687,11 @@ of theirs to grade any more (issue #282)."
 (defun org-canvas--submissions-detail-change-at-point ()
   "Return the grade change plist for the heading at point, or nil.
 A change is a SCORE that differs from its baseline, a Rubric table
-that differs from its baseline, or both; the rubric keys are those of
-`org-canvas--submissions-rubric-change-at-point', and :score-derived
+that differs from its baseline, a LATE_STATUS that differs from its
+baseline, or any of them together; the rubric keys are those of
+`org-canvas--submissions-rubric-change-at-point', the late status keys
+those of `org-canvas--submissions-late-status-change-at-point', and
+:score-derived
 marks a score the rubric's total set
 \(`org-canvas--submissions-rubric-derived-score')."
   (let* ((user-id-str (org-entry-get (point) "USER_ID"))
@@ -2517,16 +2705,18 @@ marks a score the rubric's total set
                      (org-entry-get (point) "SCORE")))
          (attempt (org-entry-get (point) "ATTEMPT"))
          (rubric (and user-id (org-canvas--submissions-rubric-change-at-point name)))
+         (late (and user-id (org-canvas--submissions-late-status-change-at-point name)))
          (derived (org-canvas--submissions-rubric-derived-score
                    rubric old-score new-score name)))
-    (when (and user-id (or rubric (not (equal new-score old-score))))
+    (when (and user-id (or rubric late (not (equal new-score old-score))))
       (append (list :user-id user-id
                     :name name
                     :old-score old-score
                     :new-score (if derived (plist-get derived :new-score) new-score)
                     :attempt (and attempt (string-to-number attempt)))
               derived
-              rubric))))
+              rubric
+              late))))
 
 (defun org-canvas--submissions-collect-summary-changes ()
   "Return grade diffs from summary view by parsing org-table rows."
@@ -2620,21 +2810,24 @@ grade, the rubric assessment, or both."
       :data `((grade_data . ,grade-data)))))
 
 (defun org-canvas--submissions-live-baselines (assignment-id)
-  "Fetch ASSIGNMENT-ID's submissions as (user-id . (score attempt rubric)).
+  "Fetch ASSIGNMENT-ID's submissions as (user-id . (score attempt rubric late)).
 The score is spelled as the buffer shows it (a number or EX), or nil
 when ungraded; the rubric is the CANVAS_RUBRIC digest of the
-assessment Canvas holds, or nil."
+assessment Canvas holds, or nil; late is its late policy status, or
+nil."
   (mapcar (lambda (sub)
             (cons (org-canvas--submissions-user-id sub)
                   (list (org-canvas--submissions-shown-score sub)
                         (alist-get 'attempt sub)
-                        (org-canvas--submissions-submission-rubric-digest sub))))
+                        (org-canvas--submissions-submission-rubric-digest sub)
+                        (org-canvas--submissions-late-status sub))))
           (org-canvas--submissions-fetch-for-assignment assignment-id)))
 
 (defun org-canvas--submissions-conflict-p (change live)
   "Return why CHANGE conflicts with LIVE Canvas state, or nil.
-LIVE is (score attempt rubric) for the same student, or nil if gone.
-The rubric is compared only when CHANGE sends one.  The reason names
+LIVE is (score attempt rubric late) for the same student, or nil if
+gone.  The rubric is compared only when CHANGE sends one, and the late
+status only when CHANGE sets one.  The reason names
 what moved and what Canvas holds — `score: Canvas has 93' — and is
 the CONFLICT value; a property is a slot for a short value, and the
 way out (pull again, or set CANVAS_SCORE to Canvas's value) is the
@@ -2649,7 +2842,10 @@ push's message and the manual's (issue #264)."
            (format "attempt: Canvas has %s" live-attempt))
           ((and (plist-get change :triples)
                 (not (equal live-rubric (plist-get change :old-rubric))))
-           "rubric: assessed on Canvas since the pull"))))
+           "rubric: assessed on Canvas since the pull")
+          ((and (plist-get change :late-status)
+                (not (equal (nth 3 live) (plist-get change :old-late-status))))
+           (format "late status: Canvas has %s" (or (nth 3 live) "no status"))))))
 
 (defun org-canvas--submissions-partition-conflicts (assignment-id diffs)
   "Split DIFFS into (pushable . conflicting) against live Canvas state.
@@ -2693,26 +2889,38 @@ longer does (issue #264)."
     ""))
 
 (defun org-canvas--submissions-describe-changes (diffs)
-  "Return DIFFS as one line per student: name, old score, new score, rubric."
+  "Return DIFFS as one line per student: old and new score, rubric, lateness."
   (mapconcat (lambda (ch)
-               (format "  %s: %s → %s%s"
+               (format "  %s: %s → %s%s%s"
                        (plist-get ch :name)
                        (or (plist-get ch :old-score) "nil")
                        (or (plist-get ch :new-score) "nil")
-                       (org-canvas--submissions-describe-rubric ch)))
+                       (org-canvas--submissions-describe-rubric ch)
+                       (org-canvas--submissions-describe-late ch)))
              diffs "\n"))
 
 (defun org-canvas--submissions-send-grades (assignment-id diffs)
-  "Send DIFFS for ASSIGNMENT-ID: one PUT, or the bulk endpoint for several."
-  (if (= (length diffs) 1)
-      (org-canvas--submissions-push-single-grade assignment-id (car diffs))
-    (org-canvas--submissions-push-bulk-grades assignment-id diffs)))
+  "Send DIFFS for ASSIGNMENT-ID: one PUT, or the bulk endpoint for several.
+A diff that only sets a late status has no grade field, and is left
+to `org-canvas--submissions-send-late-statuses'."
+  (let ((grading (seq-filter #'org-canvas--submissions-grade-fields diffs)))
+    (cond ((null grading) nil)
+          ((= (length grading) 1)
+           (org-canvas--submissions-push-single-grade assignment-id (car grading)))
+          (t (org-canvas--submissions-push-bulk-grades assignment-id grading)))))
 
-(defun org-canvas--submissions-record-pushed-at-point (change)
+(defun org-canvas--submissions-record-pushed-at-point (change &optional late)
   "Make CHANGE the baseline of the heading at point.
 CANVAS_SCORE follows the score, SCORE too when the rubric derived it,
-CANVAS_RUBRIC follows the rows sent, and CONFLICT is cleared."
+CANVAS_RUBRIC follows the rows sent, and CONFLICT is cleared.  LATE is
+the entry `org-canvas--submissions-send-late-statuses' made for the
+student, (USER-ID . STORED), when CHANGE set a late status and the
+request went through; CANVAS_LATE_STATUS then follows what Canvas
+stored.  Without it — the request failed, or it was a dry run — the
+late status stays a change for the next push."
   (let ((score (plist-get change :new-score)))
+    (when (and late (not (eq (cdr late) 'dry-run)))
+      (org-canvas--submissions-record-late-status change (cdr late)))
     (if score
         (org-entry-put (point) "CANVAS_SCORE" score)
       (org-entry-delete (point) "CANVAS_SCORE"))
@@ -2722,8 +2930,10 @@ CANVAS_RUBRIC follows the rows sent, and CONFLICT is cleared."
       (org-entry-put (point) "CANVAS_RUBRIC" (plist-get change :new-rubric)))
     (org-entry-delete (point) "CONFLICT")))
 
-(defun org-canvas--submissions-record-pushed (diffs)
-  "Make DIFFS the new baseline: snapshot, the heading properties, and the file."
+(defun org-canvas--submissions-record-pushed (diffs &optional late)
+  "Make DIFFS the new baseline: snapshot, the heading properties, and the file.
+LATE is the alist of late statuses sent, (USER-ID . STORED) each; see
+`org-canvas--submissions-record-pushed-at-point'."
   (dolist (ch diffs)
     (setf (alist-get (plist-get ch :user-id) org-canvas-submissions--original-scores)
           (plist-get ch :new-score)))
@@ -2731,7 +2941,8 @@ CANVAS_RUBRIC follows the rows sent, and CONFLICT is cleared."
     (save-excursion
       (dolist (ch diffs)
         (when (org-canvas--submissions-goto-user (plist-get ch :user-id))
-          (org-canvas--submissions-record-pushed-at-point ch))))
+          (org-canvas--submissions-record-pushed-at-point
+           ch (assoc (plist-get ch :user-id) late)))))
     (org-canvas--submissions-refresh-links))
   (when buffer-file-name
     (save-buffer)))
@@ -2754,8 +2965,10 @@ unposted ones still drafted.  Return the number posted."
 (defun org-canvas--submissions-describe-push (diffs drafts)
   "Return a one-line summary of DIFFS and DRAFTS for the confirmation.
 Rubric assessments among DIFFS are counted, and those scoring only some
-of their criteria named, since Canvas accepts a partial assessment."
+of their criteria named, since Canvas accepts a partial assessment;
+so are the late statuses set."
   (let ((rubrics (cl-count-if (lambda (ch) (plist-get ch :triples)) diffs))
+        (lates (cl-count-if (lambda (ch) (plist-get ch :late-status)) diffs))
         (partial (cl-count-if (lambda (ch)
                                 (and (plist-get ch :triples)
                                      (< (plist-get ch :filled) (plist-get ch :of))))
@@ -2764,6 +2977,7 @@ of their criteria named, since Canvas accepts a partial assessment."
             (when (> rubrics 0)
               (format " (%d with rubric%s)" rubrics
                       (if (> partial 0) (format ", %d partly scored" partial) "")))
+            (when (> lates 0) (format " (%d setting a late status)" lates))
             (when (and diffs drafts) " and ")
             (when drafts (format "%d comment(s)" (length drafts))))))
 
@@ -2777,7 +2991,8 @@ post heading.  A rubric used for grading sets the score from its rows'
 total.  Changes that conflict with what Canvas holds now are skipped
 and marked (see `org-canvas-submissions-check-conflicts').  After a
 successful push the baselines, the comment records, and the file are
-updated."
+updated.  A LATE_STATUS that differs from its CANVAS_LATE_STATUS is
+sent too, one GraphQL request per student (issue #352)."
   (interactive)
   (unless org-canvas-submissions-mode
     (user-error "Not in a submissions buffer"))
@@ -2801,15 +3016,32 @@ updated."
                                   (format ", skipping %d conflict(s)" (length conflicts))
                                 "")))
         (condition-case err
-            (let ((posted 0))
-              (when changes
-                (org-canvas--submissions-send-grades assignment-id changes))
-              (setq posted (org-canvas--submissions-post-drafts assignment-id drafts))
-              (org-canvas--submissions-record-pushed changes)
-              (message "Pushed %d grade(s) and %d comment(s)%s" (length changes) posted
-                       (org-canvas--submissions-conflicts-note conflicts))
-              (org-canvas--submissions-offer-to-post changes))
+            (org-canvas--submissions-push-all assignment-id changes drafts conflicts)
           (error (org-canvas--user-message "Error pushing: %s" (error-message-string err))))))))
+
+(defun org-canvas--submissions-late-note (failed)
+  "Return the push message note for FAILED late statuses, or \"\"."
+  (if failed
+      (format "; late status not set for %s (see the log)" (string-join failed ", "))
+    ""))
+
+(defun org-canvas--submissions-push-all (assignment-id changes drafts conflicts)
+  "Push the grade diffs and drafts of ASSIGNMENT-ID, then record them.
+CHANGES are the grade diffs and DRAFTS the drafted comments.
+The grades and rubric assessments go first, then the late statuses,
+then the drafted comments; CONFLICTS, already marked, are only
+counted in the closing message."
+  (let* ((grading (seq-filter #'org-canvas--submissions-grade-fields changes))
+         (late (progn (org-canvas--submissions-send-grades assignment-id changes)
+                      (org-canvas--submissions-send-late-statuses changes)))
+         (posted (org-canvas--submissions-post-drafts assignment-id drafts)))
+    (org-canvas--submissions-record-pushed changes (car late))
+    (message "Pushed %d grade(s)%s and %d comment(s)%s%s" (length grading)
+             (if (car late) (format ", %d late status(es)" (length (car late))) "")
+             posted
+             (org-canvas--submissions-late-note (cdr late))
+             (org-canvas--submissions-conflicts-note conflicts))
+    (org-canvas--submissions-offer-to-post grading)))
 
 ;;;; Posting Grades
 

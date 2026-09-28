@@ -47,6 +47,17 @@
      "AssignmentScoreStatistic",
      "SubmissionType"
     ]
+   },
+   {
+    "generated": "2026-09-27",
+    "ref": "318f2ad0495dd4d1e2fd3657497fbf71c91bda13",
+    "repository": "https://github.com/instructure/canvas-lms",
+    "source": "sdl",
+    "types": [
+     "LatePolicyStatusType",
+     "UpdateSubmissionsGradeStatusInput",
+     "UpdateSubmissionsGradeStatusPayload"
+    ]
    }
   ]
  },
@@ -2168,6 +2179,15 @@
   },
   "Int": {
    "kind": "SCALAR"
+  },
+  "LatePolicyStatusType": {
+   "kind": "ENUM",
+   "values": {
+    "extended": null,
+    "late": null,
+    "missing": null,
+    "none": null
+   }
   },
   "LtiAssetProcessor": {
    "fields": {
@@ -4407,6 +4427,46 @@
      "args": {},
      "deprecated": null,
      "type": "[ValidationError!]"
+    }
+   },
+   "kind": "OBJECT"
+  },
+  "UpdateSubmissionsGradeStatusInput": {
+   "fields": {
+    "checkpointTag": {
+     "deprecated": null,
+     "hasDefault": false,
+     "type": "String"
+    },
+    "customGradeStatusId": {
+     "deprecated": null,
+     "hasDefault": false,
+     "type": "ID"
+    },
+    "latePolicyStatus": {
+     "deprecated": null,
+     "hasDefault": false,
+     "type": "String"
+    },
+    "submissionId": {
+     "deprecated": null,
+     "hasDefault": false,
+     "type": "ID!"
+    }
+   },
+   "kind": "INPUT_OBJECT"
+  },
+  "UpdateSubmissionsGradeStatusPayload": {
+   "fields": {
+    "errors": {
+     "args": {},
+     "deprecated": null,
+     "type": "[ValidationError!]"
+    },
+    "submission": {
+     "args": {},
+     "deprecated": null,
+     "type": "Submission"
     }
    },
    "kind": "OBJECT"

@@ -66,7 +66,8 @@
     org-canvas--discussion-checkpoints-mutation
     org-canvas--assignment-processors-query
     org-canvas--submissions-reports-query
-    org-canvas--submissions-status-statistics-query)
+    org-canvas--submissions-status-statistics-query
+    org-canvas--submissions-late-status-mutation)
   "The documents, by symbol.  A new one is added here and to the
 extractor's SOURCES when its file is new.")
 
@@ -701,6 +702,23 @@ page of discussions."
         ;; answers the current grading period's assignments only.
         (expect (json-encode (alist-get 'filter (cdar sent)))
                 :to-equal "{\"gradingPeriodId\":null}"))))
+  (it "org-canvas--submissions-push-late-status sends what its mutation declares"
+    (with-org-canvas-test-config
+      (let ((sent (org-canvas-graphql-contract--capturing
+                    (org-canvas--submissions-push-late-status
+                     (list :name "Adams, Alice" :late-status "extended" :submission-id "50001"))
+                    (org-canvas--submissions-push-late-status
+                     (list :name "Beta, Bob" :late-status "none" :submission-id 50002)))))
+        (expect (length sent) :to-equal 2)
+        (dolist (call sent)
+          (expect (car call) :to-be org-canvas--submissions-late-status-mutation)
+          (expect (org-canvas-graphql-contract--check-variables (car call) (cdr call)) :to-equal nil))
+        ;; Every status the push accepts is a value of Canvas's enum,
+        ;; although the input takes a String.
+        (dolist (status org-canvas--submissions-late-statuses)
+          (expect (org-canvas-graphql-contract--enum-member-p
+                   (org-canvas-graphql-contract--type "LatePolicyStatusType") status)
+                  :to-be-truthy)))))
   (it "org-canvas--discussion-push-checkpoints sends what its mutation declares"
     (with-org-canvas-test-config
       (let ((sent (org-canvas-graphql-contract--capturing
