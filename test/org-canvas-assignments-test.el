@@ -3051,4 +3051,91 @@ asked and `logged' to the log lines written."
                             logged)
                 :to-be-truthy)))))
 
+;;;; A Push by Heading Sends the Heading's Overrides (issue #380)
+
+(defun test-asg380-sync (&optional dry-run)
+  "Sync Attendance 02 by name in a scratch course; return (RESULTS . CALLS).
+The heading's overrides table moves section 777 to 14:20; Canvas holds
+14:15.  A second heading's table must stay unsent.  DRY-RUN binds
+`org-canvas--dry-run'."
+  (let ((dir (make-temp-file "asg380-" t)))
+    (unwind-protect
+        (let ((file (expand-file-name "assignments.org" dir))
+              (row (concat "| [[file:sections.org::*Section A][Section A]]"
+                           " | <2026-09-28 Mon 14:20> | | |\n")))
+          (with-temp-file (expand-file-name "sections.org" dir)
+            (insert "* Section A\n:PROPERTIES:\n:CANVAS_ID: 777\n:END:\n"))
+          (with-temp-file file
+            (dolist (heading '(("Attendance 02" . "456") ("Attendance 03" . "457")))
+              (insert (format "* %s\n:PROPERTIES:\n:CANVAS_ID: %s\n" (car heading) (cdr heading))
+                      ":POINTS: 1\n:END:\n\nBe there.\n\n#+NAME: overrides\n"
+                      "| Section | Due At | Unlock At | Lock At |\n"
+                      "|---------+--------+-----------+---------|\n" row)))
+          (let ((org-canvas-assignments-file file)
+                (org-canvas--dry-run dry-run))
+            (with-org-canvas-test-config
+              (with-sync-test-env
+                (with-mock-api
+                  (setq test-org-canvas-api-responses
+                        '(("assignments/456/overrides/10" . ((id . 10)))
+                          ("assignments/456/overrides" .
+                           [((id . 10) (course_section_id . 777)
+                             (due_at . "2026-09-28T18:15:00Z"))])
+                          ("assignments/456" .
+                           ((id . 456) (name . "Attendance 02")
+                            (updated_at . "2026-09-28T17:00:00Z")))))
+                  (cl-letf (((symbol-function 'message) #'ignore))
+                    (cons (org-canvas-sync-headings '((assignment . "Attendance 02")))
+                          (prog1 test-org-canvas-api-calls
+                            (let ((buf (find-buffer-visiting file)))
+                              (when buf
+                                (with-current-buffer buf (set-buffer-modified-p nil))
+                                (kill-buffer buf)))
+                            (let ((buf (find-buffer-visiting
+                                        (expand-file-name "sections.org" dir))))
+                              (when buf (kill-buffer buf)))))))))))
+      (delete-directory dir t))))
+
+(defun test-asg380-called-p (calls method pattern)
+  "Return non-nil when CALLS hold a METHOD request whose URL matches PATTERN."
+  (cl-find-if (lambda (c) (and (eq (car c) method) (string-match-p pattern (cadr c))))
+              calls))
+
+(describe "org-canvas-sync-assignment reconciles the heading's overrides (issue #380)"
+  (it "PUTs the moved override with the assignment and reports the counts"
+    (let* ((run (test-asg380-sync))
+           (result (car (car run)))
+           (calls (cdr run)))
+      (expect (plist-get result :error) :to-be nil)
+      (expect (plist-get result :outcome) :to-be 'synced)
+      (expect (plist-get result :overrides) :to-equal '(0 1 0))
+      (expect (plist-get result :note) :to-match "1 updated")
+      (expect (test-asg380-called-p calls 'PUT "assignments/456\\'") :to-be-truthy)
+      (expect (test-asg380-called-p calls 'PUT "assignments/456/overrides/10\\'")
+              :to-be-truthy)
+      ;; The other heading's table is not this push's business.
+      (expect (test-asg380-called-p calls 'GET "assignments/457") :to-be nil)))
+
+  (it "reads but sends nothing under a dry run, and says what it would do"
+    (let* ((run (test-asg380-sync t))
+           (result (car (car run)))
+           (calls (cdr run)))
+      (expect (plist-get result :outcome) :to-be 'dry-run)
+      (expect (plist-get result :overrides) :to-equal '(0 1 0))
+      (expect (plist-get result :note) :to-match "dry run")
+      (expect (cl-remove-if (lambda (c) (eq (car c) 'GET)) calls) :to-equal nil)))
+
+  (it "reports a reconcile that signalled as failed, the assignment still synced"
+    (let ((logged nil))
+      (with-temp-org-buffer "* A\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+        (cl-letf (((symbol-function 'org-canvas--override-sync-entry)
+                   (lambda (&rest _) (user-error "Student override names nobody")))
+                  ((symbol-function 'org-canvas--log-error)
+                   (lambda (&rest _) (setq logged t)))
+                  ((symbol-function 'message) #'ignore))
+          (let ((report (org-canvas--assignment-sync-heading-overrides nil)))
+            (expect (plist-get report :overrides) :to-be 'failed)
+            (expect (plist-get report :note) :to-match "overrides failed — Student")
+            (expect logged :to-be t)))))))
+
 ;;; org-canvas-assignments-test.el ends here

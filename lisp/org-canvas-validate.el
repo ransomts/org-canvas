@@ -1034,11 +1034,40 @@ into skipped module items linking the page.  LOC is a
 \(:file :line :heading) plist."
   (let ((front-page (org-entry-get (point) "FRONT_PAGE"))
         (published (org-entry-get (point) "PUBLISHED")))
-    (when (and front-page (string= (downcase front-page) "true")
-               published (string= (downcase published) "false"))
-      (list (org-canvas--validate-make-issue
-             'error loc "FRONT_PAGE"
-             "FRONT_PAGE: true requires PUBLISHED: true — Canvas rejects an unpublished front page (a published page in an unpublished course is still invisible to students)")))))
+    (append
+     (when (and front-page (string= (downcase front-page) "true")
+                published (string= (downcase published) "false"))
+       (list (org-canvas--validate-make-issue
+              'error loc "FRONT_PAGE"
+              "FRONT_PAGE: true requires PUBLISHED: true — Canvas rejects an unpublished front page (a published page in an unpublished course is still invisible to students)")))
+     (org-canvas--validate-page-schedule loc front-page published))))
+
+(defun org-canvas--validate-page-schedule (loc front-page published)
+  "Warn about what a page's PUBLISH_AT overrides at point (issue #379).
+Canvas publishes a scheduled page at PUBLISH_AT whatever PUBLISHED
+says, and the push never sends PUBLISHED beside it, so PUBLISHED:
+false there keeps nothing hidden.  A future PUBLISH_AT unpublishes the
+page until then, which the course home page cannot be.  FRONT-PAGE and
+PUBLISHED are the heading's values; LOC is a \(:file :line :heading)
+plist.  Push-only: both protect what the next push sends."
+  (when (org-canvas--validate-page-scheduled-p)
+    (delq nil
+          (list
+           (when (and published (string= (downcase published) "false"))
+             (org-canvas--validate-push-only
+              (org-canvas--validate-make-issue
+               'warning loc "PUBLISHED"
+               "PUBLISHED: false is not sent beside PUBLISH_AT — Canvas publishes the page at PUBLISH_AT; remove PUBLISH_AT to keep it unpublished")))
+           (when (and front-page (string= (downcase front-page) "true"))
+             (org-canvas--validate-push-only
+              (org-canvas--validate-make-issue
+               'warning loc "PUBLISH_AT"
+               "PUBLISH_AT on the front page — a future time unpublishes the course home page until then")))))))
+
+(defun org-canvas--validate-page-scheduled-p ()
+  "Return non-nil when the heading at point carries a PUBLISH_AT."
+  (let ((publish-at (org-entry-get (point) "PUBLISH_AT")))
+    (and publish-at (not (string-empty-p (string-trim publish-at))))))
 
 (defun org-canvas--validate-new-quiz-item-type (loc)
   "Warn when the New Quiz item at point has a TYPE a push refuses.

@@ -38,7 +38,7 @@ pull-at-point and prune.
 | Modules           | yes  | yes      | yes  | yes    | yes      | items reconciled inside finalize; prerequisites, sequential progress, unlock dates, completion requirements; an item moved between modules keeps its id, by GraphQL |
 | New Quizzes       | yes  | yes      | yes  | yes    | no       | items sync inside finalize; settings under =quiz_settings= (#321); the feature list keys on the assignment; pull-at-point, adopt and the drift report through a pull-only entry (#297, #313, #322); hot-spot items pull-only, their regions read as =HOTSPOTS= (#340, #365) |
 | Outcomes          | yes  | yes      | yes  | yes    | yes      | two levels, groups then outcomes                                |
-| Pages             | yes  | yes      | yes  | yes    | yes      | front page protected; to-do date                                |
+| Pages             | yes  | yes      | yes  | yes    | yes      | front page protected; to-do date; scheduled publish (#379)      |
 | Quizzes (classic) | yes  | yes      | yes  | yes    | yes      | questions and groups inline; a bank may be named, never managed |
 | Rubrics           | yes  | yes      | yes  | yes    | yes      | criteria, ratings, outcome links; associations via assignments  |
 | Sections          | no   | no       | yes  | no     | no       | pull-only, so overrides can name them                           |
@@ -224,7 +224,11 @@ comes back in UTC are unknown until the first push that sets one.  So
 are the grading file's document processor reports (#351): the query's
 types were supplemented into the contract fixture from the canvas-lms
 SDL, and the pull request that added them (#362) records no live run
-against a column with a processor attached.
+against a column with a processor attached.  A page's =PUBLISH_AT=
+(#379) follows the canvas-lms source (=ScheduledPublication=): whether
+the instance has Scheduled Page Publication on, and that a push
+without =published= schedules a page rather than leaving it as it was,
+are for the first live push of one.
 
 The browse commands' addresses (#292) were checked against the
 canvas-lms source rather than opened (decisions.org, "Every Address

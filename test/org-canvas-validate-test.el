@@ -3205,6 +3205,50 @@ Syllabus text.
               '(:file "pages.org" :line 1 :heading "Draft Page"))
              :to-be nil))))
 
+(describe "org-canvas--validate-page-structure PUBLISH_AT (issue #379)"
+  (it "warns that PUBLISHED: false is not sent beside PUBLISH_AT"
+    (with-temp-org-buffer
+     "* Week 3
+:PROPERTIES:
+:PUBLISHED: false
+:PUBLISH_AT: <2026-10-05 Mon 08:00>
+:END:
+"
+     (org-back-to-heading)
+     (let ((issues (org-canvas--validate-page-structure
+                    '(:file "pages.org" :line 1 :heading "Week 3"))))
+       (expect (length issues) :to-equal 1)
+       (expect (plist-get (car issues) :severity) :to-equal 'warning)
+       (expect (plist-get (car issues) :property) :to-equal "PUBLISHED")
+       (expect (plist-get (car issues) :message) :to-match "not sent"))))
+
+  (it "warns about a scheduled front page"
+    (with-temp-org-buffer
+     "* Course Home
+:PROPERTIES:
+:FRONT_PAGE: true
+:PUBLISH_AT: <2026-10-05 Mon 08:00>
+:END:
+"
+     (org-back-to-heading)
+     (let ((issues (org-canvas--validate-page-structure
+                    '(:file "pages.org" :line 1 :heading "Course Home"))))
+       (expect (length issues) :to-equal 1)
+       (expect (plist-get (car issues) :property) :to-equal "PUBLISH_AT")
+       (expect (plist-get (car issues) :message) :to-match "home page"))))
+
+  (it "passes a scheduled page that leaves PUBLISHED alone"
+    (with-temp-org-buffer
+     "* Week 3
+:PROPERTIES:
+:PUBLISH_AT: <2026-10-05 Mon 08:00>
+:END:
+"
+     (org-back-to-heading)
+     (expect (org-canvas--validate-page-structure
+              '(:file "pages.org" :line 1 :heading "Week 3"))
+             :to-be nil))))
+
 (describe "org-canvas-validate front-page rule integration"
   (it "reports the unpublished front page through the full validate run"
     (with-validate-test-dir dir

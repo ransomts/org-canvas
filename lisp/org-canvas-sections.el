@@ -656,6 +656,45 @@ with nil.  Under `org-canvas--dry-run' the write is logged, not sent."
                               label (error-message-string err))
        nil))))
 
+(defun org-canvas--override-same-time-p (ours theirs)
+  "Return non-nil when OURS and THEIRS, ISO8601 strings or nil, agree.
+Both blank agree; one blank does not, since a PUT that omits a date
+clears it.  Two strings agree when they name the same instant, however
+each spells its zone.  A string that does not parse agrees with
+nothing, so the row is sent as before."
+  (let ((a (and (stringp ours) (not (string-empty-p ours)) ours))
+        (b (and (stringp theirs) (not (string-empty-p theirs)) theirs)))
+    (if (and a b)
+        (ignore-errors (time-equal-p (date-to-time a) (date-to-time b)))
+      (not (or a b)))))
+
+(defun org-canvas--override-dates-match-p (override existing-override)
+  "Return non-nil when EXISTING-OVERRIDE already carries OVERRIDE's dates.
+OVERRIDE is a parsed table row, EXISTING-OVERRIDE the Canvas override it
+claims.  Every one of the three dates is compared, a blank cell against
+an absent one, because the PUT sends only the dates the row fills and
+Canvas clears the ones it omits: a match means the PUT would change
+nothing (issue #380)."
+  (cl-every (lambda (pair)
+              (org-canvas--override-same-time-p
+               (plist-get override (car pair))
+               (alist-get (cdr pair) existing-override)))
+            '((:due-at . due_at) (:unlock-at . unlock_at) (:lock-at . lock_at))))
+
+(defun org-canvas--override-reconcile-one (endpoint override existing-override)
+  "Push OVERRIDE at ENDPOINT unless EXISTING-OVERRIDE already matches it.
+Return `unchanged' without a request when the claimed override carries
+the row's dates (issue #380), else what `org-canvas--override-push-one'
+returns."
+  (if (and existing-override
+           (org-canvas--override-dates-match-p override existing-override))
+      (progn
+        (org-canvas--log-debug org-canvas--logger
+          "[Override] Override %s for %s unchanged; not sent"
+          (alist-get 'id existing-override) (org-canvas--override-label override))
+        'unchanged)
+    (org-canvas--override-push-one endpoint override existing-override)))
+
 (defun org-canvas--override-fetch-existing (endpoint assignment-id)
   "Return the overrides on Canvas at ENDPOINT for ASSIGNMENT-ID, as a list.
 A failed read is warned about and answered with nil: without the
@@ -676,7 +715,8 @@ OVERRIDES is a list of parsed override plists from
 Fetches existing overrides from Canvas, then for each local override:
   - Updates the existing override it claims (PUT); a section row claims
     by `course_section_id', a group row by `group_id', a student row by
-    an identical set of `student_ids'
+    an identical set of `student_ids'.  A claimed override that already
+    carries the row's dates is left alone and counted nowhere (#380)
   - Creates a new override when none is claimed (POST)
   - Deletes the remote overrides no row claimed (DELETE), by id
 Returns a list (CREATED UPDATED DELETED) as integer counts.
@@ -689,7 +729,8 @@ issued; the counts then report what would have been done."
          (matched-ids nil))
     (dolist (override overrides)
       (let* ((existing-override (org-canvas--override-find-existing override existing))
-             (outcome (org-canvas--override-push-one endpoint override existing-override)))
+             (outcome (org-canvas--override-reconcile-one
+                       endpoint override existing-override)))
         (when existing-override
           (push (alist-get 'id existing-override) matched-ids))
         (pcase outcome
@@ -784,6 +825,30 @@ restamping it would hide the edit.  Return the reconcile's counts."
         title)))
     counts))
 
+(defun org-canvas--override-sync-entry (pom &optional source-dir)
+  "Reconcile the overrides table under the assignment heading at POM.
+POM is a marker at the heading, or within its entry.  SOURCE-DIR is
+the directory section links resolve against, by default that of the
+buffer's file.  Return the counts (CREATED UPDATED DELETED) of
+`org-canvas--override-sync-heading', or nil when the heading has no
+CANVAS_ID or no `#+NAME: overrides' table: the one heading's reconcile,
+which `org-canvas-sync-overrides' runs for every heading and a push by
+heading runs for its own (issue #380)."
+  (org-with-point-at pom
+    (org-back-to-heading t)
+    (let* ((canvas-id (org-canvas-org-get-property (point) "CANVAS_ID"))
+           (title (org-canvas--strip-statistics-cookie (org-get-heading t t t t)))
+           (end (save-excursion (org-end-of-subtree t) (point)))
+           (table (org-canvas--override-find-table end)))
+      (when (and canvas-id table)
+        (org-canvas--log-info org-canvas--logger
+          "[Override] Processing overrides for '%s' (ID: %s)" title canvas-id)
+        (org-canvas--override-sync-heading
+         pom canvas-id
+         (org-canvas--override-parse-table
+          table (or source-dir (file-name-directory (buffer-file-name))))
+         title)))))
+
 (defun org-canvas--override-sync-preflight ()
   "Validate assignments file and log header for override sync.
 Returns the expanded assignments file path."
@@ -804,7 +869,9 @@ Returns the expanded assignments file path."
 (defun org-canvas-sync-overrides ()
   "Sync per-section date overrides for all assignments.
 Scans assignments.org for `#+NAME: overrides' tables and
-reconciles them with Canvas assignment overrides."
+reconciles them with Canvas assignment overrides.  An override that
+already carries its row's dates is not sent again (issue #380); a
+push of one assignment heading reconciles that heading's table."
   (interactive)
   (org-canvas-clear-log)
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
@@ -816,22 +883,12 @@ reconciles them with Canvas assignment overrides."
       (with-current-buffer (org-canvas--find-file-noselect assignments-file)
         (let ((markers (org-map-entries (lambda () (point-marker)) "LEVEL=1" 'file)))
           (dolist (marker markers)
-            (goto-char (marker-position marker))
-            (let* ((canvas-id (org-canvas-org-get-property (point) "CANVAS_ID"))
-                   (title (org-canvas--strip-statistics-cookie (org-get-heading t t t t)))
-                   (end (save-excursion (org-end-of-subtree t) (point)))
-                   (table (org-canvas--override-find-table end)))
-              (when (and canvas-id table)
-                (org-canvas--log-info org-canvas--logger
-                           "[Override] Processing overrides for '%s' (ID: %s)"
-                           title canvas-id)
-                (let* ((overrides (org-canvas--override-parse-table table source-dir))
-                       (counts (org-canvas--override-sync-heading
-                                marker canvas-id overrides title)))
-                  (setq total-created (+ total-created (nth 0 counts)))
-                  (setq total-updated (+ total-updated (nth 1 counts)))
-                  (setq total-deleted (+ total-deleted (nth 2 counts)))
-                  (setq assignments-processed (1+ assignments-processed))))))
+            (let ((counts (org-canvas--override-sync-entry marker source-dir)))
+              (when counts
+                (setq total-created (+ total-created (nth 0 counts)))
+                (setq total-updated (+ total-updated (nth 1 counts)))
+                (setq total-deleted (+ total-deleted (nth 2 counts)))
+                (setq assignments-processed (1+ assignments-processed)))))
           (dolist (m markers) (set-marker m nil))
           (org-canvas--save-buffer)))
 

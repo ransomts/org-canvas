@@ -53,6 +53,8 @@
 (declare-function org-canvas--override-emit-table "org-canvas-sections"
                   (overrides &optional parent-due parent-unlock parent-lock))
 (declare-function org-canvas--validate-assignment-structure "org-canvas-validate")
+(declare-function org-canvas--override-sync-entry "org-canvas-sections"
+                  (pom &optional source-dir))
 
 ;;;; Configuration
 
@@ -1144,6 +1146,39 @@ none of them, so other headings keep their hash."
          (format "schedule:%s:%s" grades-at comments-at)
        ""))))
 
+(defun org-canvas--assignment-overrides-note (counts)
+  "Describe the override reconcile COUNTS, (CREATED UPDATED DELETED)."
+  (format "overrides %d created, %d updated, %d deleted%s"
+          (nth 0 counts) (nth 1 counts) (nth 2 counts)
+          (if org-canvas--dry-run " (dry run)" "")))
+
+(defun org-canvas--assignment-sync-heading-overrides (_ctx)
+  "Reconcile the overrides table of the assignment heading at point.
+A push of one heading, at point or by name, runs this after the
+assignment went through, so a heading's table is sent with it rather
+than only by `org-canvas-sync-overrides' over the whole file (issue
+#380).  Return nil when the heading has no table or no CANVAS_ID, else
+a plist (:overrides COUNTS :note TEXT) for the by-heading result,
+COUNTS the symbol `failed' when the reconcile signalled: the
+assignment itself is pushed by then, and says so."
+  (let ((pom (point-marker))
+        (title (org-get-heading t t t t)))
+    (unwind-protect
+        (condition-case err
+            (let ((counts (org-canvas--override-sync-entry pom)))
+              (when counts
+                (let ((note (org-canvas--assignment-overrides-note counts)))
+                  (message "Assignment '%s': %s." title note)
+                  (list :overrides counts :note note))))
+          (error
+           (let ((why (error-message-string err)))
+             (org-canvas--log-error org-canvas--logger
+               "[Override] Overrides for '%s' failed: %s" title why)
+             (org-canvas--user-message "Assignment '%s': overrides failed — %s"
+                                       title why)
+             (list :overrides 'failed :note (format "overrides failed — %s" why)))))
+      (set-marker pom nil))))
+
 (org-canvas-define-sync assignments
   :file org-canvas-assignments-file
   :parse #'org-canvas--assignment-parse-entry
@@ -1152,6 +1187,7 @@ none of them, so other headings keep their hash."
   :find-fn (lambda (name) (org-canvas--search-item "assignments" name :match-field 'name))
   :post-fn #'org-canvas--assignment-post-finalize
   :hash-extra #'org-canvas--assignment-rubric-hash-extra
+  :after-heading #'org-canvas--assignment-sync-heading-overrides
   :pull-item-fn #'org-canvas--assignment-pull-item)
 
 ;;;; Delete Functions

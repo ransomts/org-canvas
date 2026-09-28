@@ -1,0 +1,11 @@
+* Fixed
+- #380 A push of one assignment heading — at point, by name with
+  =org-canvas-sync-assignment=, or through =org-canvas-sync-headings= —
+  also reconciles that heading's =#+NAME: overrides= table, and only
+  that one, once the assignment went through. The by-heading result
+  carries =:overrides= (the created, updated and deleted counts, or
+  =failed=) and its closing line says so; before, the push reported
+  =synced= while the section dates students see were unchanged.
+- #380 An override sync no longer PUTs an override that already carries
+  its row's dates, so a whole-file =org-canvas-sync-overrides= writes
+  only the rows that changed.

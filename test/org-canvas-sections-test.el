@@ -1664,4 +1664,139 @@ binds `org-canvas--dry-run'.  Return (FILE-TEXT . API-CALLS)."
      (expect (org-entry-get (point) "MEETS") :to-equal "F 09:05-09:55")
      (expect (org-get-heading t t t t) :to-equal "Section 101"))))
 
+;;;; One Heading's Overrides, and No Unchanged PUT (issue #380)
+
+(describe "org-canvas--override-same-time-p (issue #380)"
+  (it "agrees on one instant however the zone is spelt"
+    (expect (org-canvas--override-same-time-p
+             "2026-09-28T14:20:00-04:00" "2026-09-28T18:20:00Z")
+            :to-be-truthy))
+
+  (it "disagrees on two instants"
+    (expect (org-canvas--override-same-time-p
+             "2026-09-28T18:15:00Z" "2026-09-28T18:20:00Z")
+            :to-be nil))
+
+  (it "agrees on two blanks and never on one blank"
+    (expect (org-canvas--override-same-time-p nil nil) :to-be-truthy)
+    (expect (org-canvas--override-same-time-p "" nil) :to-be-truthy)
+    (expect (org-canvas--override-same-time-p nil "2026-09-28T18:20:00Z")
+            :to-be nil)
+    (expect (org-canvas--override-same-time-p "2026-09-28T18:20:00Z" nil)
+            :to-be nil))
+
+  (it "agrees with nothing when a string does not parse"
+    (expect (org-canvas--override-same-time-p "not a date" "not a date")
+            :to-be nil)))
+
+(describe "org-canvas--override-dates-match-p (issue #380)"
+  (it "matches when all three dates agree, blanks with absences"
+    (expect (org-canvas--override-dates-match-p
+             '(:section-id "1" :due-at "2026-09-28T18:20:00Z" :lock-at nil)
+             '((id . 10) (course_section_id . 1) (due_at . "2026-09-28T18:20:00Z")))
+            :to-be-truthy))
+
+  (it "does not match when the override holds a date the row leaves blank"
+    (expect (org-canvas--override-dates-match-p
+             '(:section-id "1" :due-at "2026-09-28T18:20:00Z")
+             '((id . 10) (due_at . "2026-09-28T18:20:00Z")
+               (lock_at . "2026-09-28T19:00:00Z")))
+            :to-be nil))
+
+  (it "does not match when one date moved"
+    (expect (org-canvas--override-dates-match-p
+             '(:section-id "1" :due-at "2026-09-28T18:20:00Z")
+             '((id . 10) (due_at . "2026-09-28T18:15:00Z")))
+            :to-be nil)))
+
+(describe "org-canvas--override-sync-for-assignment skips unchanged (issue #380)"
+  (it "sends no PUT for a claimed override that already carries the row's dates"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (setq test-org-canvas-api-responses
+              '(("assignments/456/overrides" .
+                 [((id . 10) (course_section_id . 100)
+                   (due_at . "2026-09-28T18:20:00Z"))
+                  ((id . 20) (course_section_id . 200)
+                   (due_at . "2026-09-28T18:15:00Z"))])))
+        (let ((counts (org-canvas--override-sync-for-assignment
+                       "456"
+                       '((:section-id "100" :due-at "2026-09-28T14:20:00-04:00")
+                         (:section-id "200" :due-at "2026-09-28T18:20:00Z")))))
+          (expect counts :to-equal '(0 1 0))
+          (expect (test-org-canvas-api-called-p 'PUT "overrides/10\\'") :to-be nil)
+          (expect (test-org-canvas-api-called-p 'PUT "overrides/20\\'") :to-be-truthy)
+          ;; The unchanged override is still claimed, so it is not deleted.
+          (expect (test-org-canvas-api-called-p 'DELETE "overrides") :to-be nil))))))
+
+(defconst test-ovr380-file
+  (concat "* Attendance 02\n:PROPERTIES:\n:CANVAS_ID: 456\n"
+          ":CANVAS_UPDATED_AT: 2026-09-28T10:00:00Z\n:END:\n\n"
+          "#+NAME: overrides\n"
+          "| Section | Due At | Unlock At | Lock At |\n"
+          "|---------+--------+-----------+---------|\n"
+          "| [[file:sections.org::*Section A][Section A]] | <2026-09-28 Mon 14:20> | | |\n"
+          "* Attendance 03\n:PROPERTIES:\n:CANVAS_ID: 457\n:END:\n\n"
+          "#+NAME: overrides\n"
+          "| Section | Due At | Unlock At | Lock At |\n"
+          "|---------+--------+-----------+---------|\n"
+          "| [[file:sections.org::*Section A][Section A]] | <2026-09-30 Wed 14:20> | | |\n"
+          "* No table\n:PROPERTIES:\n:CANVAS_ID: 458\n:END:\n"
+          "* Not pushed yet\n\n#+NAME: overrides\n"
+          "| Section | Due At | Unlock At | Lock At |\n"
+          "| [[file:sections.org::*Section A][Section A]] | <2026-09-30 Wed 14:20> | | |\n")
+  "Four assignment headings: two with tables, one without, one unstamped.")
+
+(defun test-ovr380-call-in-file (heading fn)
+  "Call FN at HEADING of a scratch assignments.org holding `test-ovr380-file'.
+A sections.org beside it names Section A, id 777.  Return FN's value."
+  (let ((dir (make-temp-file "ovr380-" t)))
+    (unwind-protect
+        (let ((file (expand-file-name "assignments.org" dir)))
+          (with-temp-file (expand-file-name "sections.org" dir)
+            (insert "* Section A\n:PROPERTIES:\n:CANVAS_ID: 777\n:END:\n"))
+          (with-temp-file file (insert test-ovr380-file))
+          (with-current-buffer (find-file-noselect file)
+            (unwind-protect
+                (progn
+                  (goto-char (point-min))
+                  (re-search-forward (concat "^\\* " (regexp-quote heading)))
+                  (funcall fn))
+              (set-buffer-modified-p nil)
+              (kill-buffer)
+              (let ((sections (find-buffer-visiting
+                               (expand-file-name "sections.org" dir))))
+                (when sections (kill-buffer sections))))))
+      (delete-directory dir t))))
+
+(describe "org-canvas--override-sync-entry (issue #380)"
+  (it "reconciles only the heading it is given"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (setq test-org-canvas-api-responses
+              '(("assignments/456/overrides" .
+                 [((id . 10) (course_section_id . 777)
+                   (due_at . "2026-09-28T18:15:00Z"))])
+                ("assignments/456\\'" .
+                 ((id . 456) (updated_at . "2026-09-28T10:00:00Z")))))
+        (expect (test-ovr380-call-in-file
+                 "Attendance 02"
+                 (lambda () (org-canvas--override-sync-entry (point-marker))))
+                :to-equal '(0 1 0))
+        (progn
+          (expect (test-org-canvas-api-called-p 'PUT "assignments/456/overrides/10")
+                  :to-be-truthy)
+          (expect (test-org-canvas-api-called-p 'GET "assignments/457")
+                  :to-be nil)))))
+
+  (it "answers nil with no request for a heading without a table or a stamp"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (dolist (heading '("No table" "Not pushed yet"))
+          (expect (test-ovr380-call-in-file
+                   heading
+                   (lambda () (org-canvas--override-sync-entry (point-marker))))
+                  :to-be nil))
+        (expect test-org-canvas-api-calls :to-equal nil)))))
+
 ;;; org-canvas-sections-test.el ends here
