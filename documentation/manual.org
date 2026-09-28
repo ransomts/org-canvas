@@ -3120,18 +3120,20 @@ The grading workflow repeats every week per column, and the interactive path is 
 
 - =(org-canvas-pull-submissions ASSIGNMENT &optional DOWNLOAD)=: ASSIGNMENT is a Canvas assignment id (an integer or a string of digits, one request) or an assignment's exact name (found in the course's list). With DOWNLOAD non-nil the grading file is the view whatever =org-canvas-submissions-default-view= says, and every student's attachments are downloaded beside it, the way =D= does. Returns the buffer.
 - =(org-canvas-open-submissions FILE)=: FILE is an absolute path, or a name under the submissions directory with or without its =.org= — the file's name or the assignment's. Returns the buffer.
-- =(org-canvas-submissions-refresh-file FILE)=: visits FILE the same way, re-pulls it from Canvas (what was typed comes back, as with =g=) and returns the buffer, ready for =org-canvas-submissions-download-all-attachments= or =org-canvas-submissions-push-grades= to follow in code.
+- =(org-canvas-submissions-refresh-file FILE)=: visits FILE the same way, re-pulls it from Canvas (what was typed comes back, as with =g=) and returns the buffer, ready for =org-canvas-submissions-download-all-attachments= to follow in code.
+- =(org-canvas-push-submission-grades ASSIGNMENT &optional POST)=: pushes the grading file ASSIGNMENT names — a Canvas assignment id (an integer or a string of digits, matched against the =CANVAS_ASSIGNMENT_ID= in each grading file's header, so no request is made to find it), or a path or name as for =org-canvas-open-submissions= — without a confirmation, sending everything =S= would: scores, rubric rows, late statuses, drafted comments and the Comment Bank. The mode and the view need no setting up. Grades are posted only when POST is non-nil, and then only once Canvas has stored every grade the push sent; a push without POST never posts, whatever the post policy. The file is saved, and a plist comes back: =:pushed= (the grades Canvas stored), =:state= (=completed=, =failed=, =unconfirmed=, =dry-run=, or nil when no grade was sent) with =:message=, =:late=, =:comments=, =:conflicts= and =:posted=.
 
-An id or name that matches nothing is a =user-error= naming it, and nothing in these three prompts when Emacs runs in batch. So, from a shell:
+An id or name that matches nothing is a =user-error= naming it, and nothing in these four prompts when Emacs runs in batch. So, from a shell:
 
 #+begin_src sh
 emacs --batch -l ~/.emacs.d/init.el \
   --eval '(org-canvas-pull-submissions "2497503" t)' \
   --eval '(with-current-buffer (org-canvas-submissions-refresh-file "Journal_02")
-            (org-canvas-submissions-download-all-attachments))'
+            (org-canvas-submissions-download-all-attachments))' \
+  --eval '(org-canvas-push-submission-grades "2573836")'
 #+end_src
 
-=org-canvas-submissions-push-grades= still confirms before sending; from a script, bind =y-or-n-p= if that is what you mean.
+The last line pushes that column and leaves its grades held; =(org-canvas-push-submission-grades "2573836" t)= posts them as well. =S= in a grading file confirms through the same question the rest of the package asks, so =org-canvas-assume-yes= or a batch Emacs answers it yes; the offer to post that follows a push under a manual policy is made only interactively, and =org-canvas-assume-yes= never answers it, since posting is what students see.
 
 ** Conflicts
 
@@ -3831,6 +3833,7 @@ These commands delete the item at the current cursor position:
 | =org-canvas-open-submissions= | Reopen a saved grading file; from Lisp, by path or name |
 | =org-canvas-submissions-refresh-file= | Reopen a grading file and re-pull it in one step, returning the buffer (see [[*Batch Use][Batch Use]]) |
 | =org-canvas-submissions-push-grades= | Push changed scores and drafted comments (=S= in the file) |
+| =org-canvas-push-submission-grades= | Push a grading file by id or name without a prompt, posting only when asked; returns what was done (see [[*Batch Use][Batch Use]]) |
 | =org-canvas-submissions-post-grades= | Post the assignment's grades to students, under a manual post policy (=P=) |
 | =org-canvas-submissions-apply-completion-rule= | Fill empty scores by completion and lateness |
 | =org-canvas-submissions-add-comment= | Post a comment on the student at point (=c=) |

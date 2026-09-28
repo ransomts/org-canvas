@@ -1,0 +1,15 @@
+* Added
+- #381 =org-canvas-push-submission-grades= pushes a grading file from a
+  script: named by assignment id (found in the grading files' headers)
+  or by path or name, with no prompt and no mode or view to set up.
+  Grades are posted only when its second argument is non-nil and Canvas
+  stored every grade pushed.  The file is saved and a plist says what
+  was pushed, why anything was not, and whether the grades were posted.
+
+* Changed
+- #381 =S= confirms the push through the question the rest of the
+  package asks, so =org-canvas-assume-yes= and a batch Emacs answer it.
+  The offer to post that follows is made only interactively and never
+  answered by =org-canvas-assume-yes=: a batch push leaves the grades
+  held and says how to post them.  A grading file is read as the
+  detail view from its header, even before it holds a student.

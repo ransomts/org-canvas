@@ -257,7 +257,9 @@ work the directory holds never travels with a course repository."
 (defun org-canvas--submissions-ensure-context ()
   "Recover the assignment id, name, and view of a reopened grading file.
 A buffer created by a pull already carries them; a file visited later
-gets them back from its #+PROPERTY: header and its headings."
+gets them back from its #+PROPERTY: header and its headings.  A file
+with that header is a grading file, whose view is `detail' even before
+it holds a student; the summary table is never saved (issue #381)."
   (unless org-canvas-submissions--assignment-id
     (setq org-canvas-submissions--assignment-id
           (org-canvas--submissions-file-property "CANVAS_ASSIGNMENT_ID")))
@@ -267,9 +269,11 @@ gets them back from its #+PROPERTY: header and its headings."
               (and buffer-file-name (file-name-base buffer-file-name)))))
   (unless org-canvas-submissions--current-view
     (setq org-canvas-submissions--current-view
-          (if (save-excursion
-                (goto-char (point-min))
-                (re-search-forward "^[ \t]*:USER_ID:" nil t))
+          (if (or (and buffer-file-name
+                       (org-canvas--submissions-file-property "CANVAS_ASSIGNMENT_ID"))
+                  (save-excursion
+                    (goto-char (point-min))
+                    (re-search-forward "^[ \t]*:USER_ID:" nil t)))
               'detail
             'summary))))
 
@@ -3770,7 +3774,7 @@ send."
      " and ")))
 
 ;;;###autoload
-(cl-defun org-canvas-submissions-push-grades ()
+(defun org-canvas-submissions-push-grades ()
   "Push every changed score, rubric table, and drafted comment in this buffer.
 In a grading file a change is a SCORE that differs from its
 CANVAS_SCORE or a Rubric table whose rows differ from its
@@ -3781,10 +3785,44 @@ and marked (see `org-canvas-submissions-check-conflicts').  After a
 successful push the baselines, the comment records, and the file are
 updated.  A LATE_STATUS that differs from its CANVAS_LATE_STATUS is
 sent too, one GraphQL request per student, and so is every new or
-edited item of the Comment Bank section (issue #352)."
+edited item of the Comment Bank section (issue #352).  The push is
+confirmed through `org-canvas--confirm'; under a manual post policy
+posting is offered afterwards, interactively only.  A script calls
+`org-canvas-push-submission-grades' instead (issue #381)."
   (interactive)
   (unless org-canvas-submissions-mode
     (user-error "Not in a submissions buffer"))
+  (org-canvas--submissions-ensure-context)
+  (unless org-canvas-submissions--assignment-id
+    (user-error "No CANVAS_ASSIGNMENT_ID in this buffer"))
+  (condition-case err
+      (let ((result (org-canvas--submissions-push-current t)))
+        (when (org-canvas--submissions-push-landed-p result)
+          (org-canvas--submissions-offer-to-post (plist-get result :pushed))))
+    (user-error (signal (car err) (cdr err)))
+    (error (org-canvas--user-message "Error pushing: %s" (error-message-string err)))))
+
+(defun org-canvas--submissions-confirm-push (diffs drafts bank conflicts)
+  "Show the grade DIFFS and ask whether to push them with DRAFTS and BANK.
+CONFLICTS are counted in the question.  The question goes through
+`org-canvas--confirm', so `org-canvas-assume-yes' and a batch Emacs
+answer it yes."
+  (when diffs
+    (message "Grade changes:\n%s" (org-canvas--submissions-describe-changes diffs)))
+  (org-canvas--confirm
+   (format "Push %s%s? "
+           (org-canvas--submissions-describe-push diffs drafts bank)
+           (if conflicts
+               (format ", skipping %d conflict(s)" (length conflicts))
+             ""))))
+
+(defun org-canvas--submissions-push-current (ask)
+  "Push the grading buffer at hand to Canvas; return what was done.
+With ASK non-nil the push is confirmed first
+\(`org-canvas--submissions-confirm-push'); nil pushes without a
+question.  Return nil when the push was declined, else the plist of
+`org-canvas--submissions-push-all', which with nothing to push has
+:pushed 0 and :state nil.  Posting is never part of it."
   (org-canvas--submissions-ensure-context)
   (let ((assignment-id org-canvas-submissions--assignment-id)
         (drafts (org-canvas--submissions-collect-comment-drafts))
@@ -3795,19 +3833,91 @@ edited item of the Comment Bank section (issue #352)."
                  (org-canvas--submissions-partition-conflicts
                   assignment-id (org-canvas--submissions-collect-grade-changes))))
       (org-canvas--submissions-mark-conflicts conflicts)
-      (unless (or changes drafts bank)
-        (message "Nothing to push%s" (org-canvas--submissions-conflicts-note conflicts))
-        (cl-return-from org-canvas-submissions-push-grades))
-      (when changes
-        (message "Grade changes:\n%s" (org-canvas--submissions-describe-changes changes)))
-      (when (y-or-n-p (format "Push %s%s? "
-                              (org-canvas--submissions-describe-push changes drafts bank)
-                              (if conflicts
-                                  (format ", skipping %d conflict(s)" (length conflicts))
-                                "")))
-        (condition-case err
-            (org-canvas--submissions-push-all assignment-id changes drafts conflicts bank)
-          (error (org-canvas--user-message "Error pushing: %s" (error-message-string err))))))))
+      (cond ((not (or changes drafts bank))
+             (message "Nothing to push%s" (org-canvas--submissions-conflicts-note conflicts))
+             (list :pushed 0 :state nil :late 0 :comments 0
+                   :conflicts (length conflicts)))
+            ((or (not ask)
+                 (org-canvas--submissions-confirm-push changes drafts bank conflicts))
+             (org-canvas--submissions-push-all
+              assignment-id changes drafts conflicts bank))))))
+
+(defun org-canvas--submissions-push-landed-p (result)
+  "Return non-nil when the push RESULT sent grades and Canvas stored them.
+RESULT is the plist of `org-canvas--submissions-push-all'."
+  (and (> (or (plist-get result :pushed) 0) 0)
+       (eq (plist-get result :state) 'completed)))
+
+;;;; Pushing From a Script (issue #381)
+
+(defun org-canvas--submissions-file-assignment-id (file)
+  "Return the CANVAS_ASSIGNMENT_ID in the header of the grading FILE, or nil."
+  (with-temp-buffer
+    (insert-file-contents file nil 0 4096)
+    (org-canvas--submissions-file-property "CANVAS_ASSIGNMENT_ID")))
+
+(defun org-canvas--submissions-grading-file-for-id (id)
+  "Return the grading file whose header names assignment ID, or nil.
+Every file under the submissions directory is looked at; no request
+is made."
+  (let ((dir (org-canvas--submissions-dir))
+        (want (format "%s" id)))
+    (when (file-directory-p dir)
+      (cl-find-if (lambda (file)
+                    (equal want (org-canvas--submissions-file-assignment-id file)))
+                  (directory-files dir t "\\.org\\'")))))
+
+(defun org-canvas--submissions-push-target (assignment)
+  "Return the path of the grading file ASSIGNMENT names.
+ASSIGNMENT is a Canvas assignment id (an integer, or a string of
+digits), matched against each grading file's CANVAS_ASSIGNMENT_ID, or
+whatever `org-canvas--submissions-grading-file-path' takes: a path, or
+the file's or the assignment's name.  Nil asks for the file.  An id no
+file names is a `user-error'."
+  (let ((id-p (or (integerp assignment)
+                  (and (stringp assignment)
+                       (string-match-p "\\`[0-9]+\\'" assignment)))))
+    (or (and id-p (org-canvas--submissions-grading-file-for-id assignment))
+        (if (integerp assignment)
+            (user-error "No grading file for assignment %s in %s; pull it first"
+                        assignment (org-canvas--submissions-dir))
+          (org-canvas--submissions-grading-file-path assignment)))))
+
+;;;###autoload
+(defun org-canvas-push-submission-grades (&optional assignment post)
+  "Push ASSIGNMENT's grading file to Canvas without a question; return a plist.
+ASSIGNMENT is a Canvas assignment id (an integer or a string of
+digits, found in the grading files' headers), or a path or a name as
+`org-canvas-open-submissions' takes it; nil asks for the file.  The
+file is visited with `org-canvas-submissions-mode' on and read as the
+grading file it is, and everything `org-canvas-submissions-push-grades'
+would send is sent, without confirming.  Grades are posted only when
+POST is non-nil, and then only once Canvas has stored every grade the
+push sent (issue #382): posting is what students see, so it is a
+choice of its own and never follows from the push.  The file is saved.
+
+Return a plist: :pushed, the grades Canvas stored; :state, how the
+grade send ended (`completed', `failed', `unconfirmed', `dry-run', or
+nil when no grade was sent) with :message its reason; :late,
+:comments and :conflicts, the late statuses set, the comments posted
+and the changes skipped as conflicts; :posted, non-nil when the
+grades were posted.  A script that pushes a column by id and posts
+it calls
+
+  (org-canvas-push-submission-grades \"2573836\" t)
+
+and one that only pushes leaves POST out (issue #381)."
+  (let ((buf (org-canvas--submissions-visit-grading-file
+              (org-canvas--submissions-push-target assignment))))
+    (with-current-buffer buf
+      (setq org-canvas-submissions--current-view 'detail)
+      (let* ((result (org-canvas--submissions-push-current nil))
+             (posted (and post
+                          (memq (plist-get result :state) '(nil completed))
+                          (org-canvas--submissions-post-assignment
+                           org-canvas-submissions--assignment-id))))
+        (org-canvas--save-buffer)
+        (plist-put result :posted posted)))))
 
 (defun org-canvas--submissions-late-note (failed)
   "Return the push message note for FAILED late statuses, or \"\"."
@@ -3825,8 +3935,13 @@ to send, the comment bank; CONFLICTS, already marked, are only
 counted in the closing message.  Every baseline is recorded only once
 the grades have landed: a bulk push waits for Canvas's background job,
 and one that failed or ran out of time records no score or rubric
-baseline and offers no posting, so the next push sends them again
-\(issue #382)."
+baseline, so the next push sends them again (issue #382).
+
+Return a plist: :pushed, the grades Canvas stored (0 when they did not
+land); :state, the grade send's (`completed', `failed', `unconfirmed',
+`dry-run', or nil when no grade was sent) and :message its reason;
+:late, :comments and :conflicts, the late statuses set, the comments
+posted and the conflicts skipped.  Posting is left to the caller."
   (let* ((grading (seq-filter #'org-canvas--submissions-grade-fields changes))
          (outcome (org-canvas--submissions-send-grades assignment-id changes))
          (late (org-canvas--submissions-send-late-statuses changes))
@@ -3844,8 +3959,12 @@ baseline and offers no posting, so the next push sends them again
      (org-canvas--submissions-late-note (cdr late))
      (org-canvas--submissions-describe-bank saved bank)
      (org-canvas--submissions-conflicts-note conflicts))
-    (when applied
-      (org-canvas--submissions-offer-to-post grading))))
+    (list :pushed (if applied (length grading) 0)
+          :state (plist-get outcome :state)
+          :message (plist-get outcome :message)
+          :late (length (car late))
+          :comments posted
+          :conflicts (length conflicts))))
 
 ;;;; Posting Grades
 
@@ -3856,14 +3975,18 @@ effective policy; a file without it, pulled before the keyword
 existed, answers nil and nothing is offered."
   (equal (org-canvas--submissions-file-property "POST_POLICY") "manual"))
 
-(defun org-canvas--submissions-offer-to-post (diffs)
-  "Offer to post the grades just pushed as DIFFS, under a manual policy.
+(defun org-canvas--submissions-offer-to-post (count)
+  "Offer to post the COUNT grades just pushed, under a manual policy.
 Under a manual post policy a pushed grade stays hidden from the
-student until it is posted (issue #202)."
-  (when (and diffs
-             (org-canvas--submissions-post-manually-p)
-             (y-or-n-p "This assignment posts grades manually; post them now? "))
-    (org-canvas-submissions-post-grades)))
+student until it is posted (issue #202).  Posting is what students
+see, so it is never assumed: a batch Emacs, which cannot be asked,
+leaves the grades held and says how to post them, and
+`org-canvas-assume-yes' does not answer the question (issue #381)."
+  (when (and (> count 0) (org-canvas--submissions-post-manually-p))
+    (cond (noninteractive
+           (message "Grades held under the manual post policy; post them with (org-canvas-push-submission-grades ASSIGNMENT t) or P"))
+          ((y-or-n-p "This assignment posts grades manually; post them now? ")
+           (org-canvas-submissions-post-grades)))))
 
 (defconst org-canvas--submissions-post-grades-mutation
   "mutation ($assignmentId: ID!) { postAssignmentGrades(input: {assignmentId: $assignmentId}) { progress { _id state } } }"
@@ -3885,11 +4008,18 @@ each student's POSTED_AT."
   (let ((assignment-id org-canvas-submissions--assignment-id))
     (unless assignment-id
       (user-error "No CANVAS_ASSIGNMENT_ID in this buffer"))
-    (org-canvas--graphql-mutate
-     (format "post the grades of assignment %s" assignment-id)
-     org-canvas--submissions-post-grades-mutation
-     (list (cons 'assignmentId (format "%s" assignment-id))))
-    (message "Grades posted for assignment %s." assignment-id)))
+    (org-canvas--submissions-post-assignment assignment-id)))
+
+(defun org-canvas--submissions-post-assignment (assignment-id)
+  "Post ASSIGNMENT-ID's grades; return non-nil when the request was sent.
+Under `org-canvas--dry-run' nothing is sent and nil comes back."
+  (let ((reply (org-canvas--graphql-mutate
+                (format "post the grades of assignment %s" assignment-id)
+                org-canvas--submissions-post-grades-mutation
+                (list (cons 'assignmentId (format "%s" assignment-id))))))
+    (unless (org-canvas--dry-run-response-p reply)
+      (message "Grades posted for assignment %s." assignment-id)
+      t)))
 
 (provide 'org-canvas-submissions)
 ;;; org-canvas-submissions.el ends here
