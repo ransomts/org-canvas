@@ -175,6 +175,16 @@ See `org-canvas--assignment-owner'."
      :remote-fn org-canvas--assignment-remote-post-policy
      :compare-p org-canvas--assignment-post-policy-comparable-p
      :doc "Grade post policy for this assignment when it differs from the course's (manual or automatic); omit to inherit")
+    (:org-prop "POST_GRADES_AT" :data-key :post_grades_at :type timestamp
+     :remote-fn org-canvas--assignment-remote-post-grades-at
+     :remote-known-p org-canvas--assignment-schedule-known-p
+     :compare-p org-canvas--assignment-schedule-comparable-p
+     :doc "When Canvas posts the grades (needs POST_COMMENTS_AT and manual posting); omit to keep Canvas's schedule")
+    (:org-prop "POST_COMMENTS_AT" :data-key :post_comments_at :type timestamp
+     :remote-fn org-canvas--assignment-remote-post-comments-at
+     :remote-known-p org-canvas--assignment-schedule-known-p
+     :compare-p org-canvas--assignment-schedule-comparable-p
+     :doc "When Canvas posts the comments, no later than POST_GRADES_AT; omit to keep Canvas's schedule")
     (:org-prop "SUBMISSION" :data-key :submission_types :type csv-enum
      :values ,org-canvas--valid-submission-types
      :read-only-values ,org-canvas--canvas-owned-submission-types
@@ -347,6 +357,8 @@ here since they require file I/O."
           :external-tool-id-raw (org-entry-get pom "EXTERNAL_TOOL_ID")
           :external-tool-new-tab-raw (org-entry-get pom "EXTERNAL_TOOL_NEW_TAB")
           :post-policy-raw (org-entry-get pom "POST_POLICY")
+          :post-grades-at-raw (org-entry-get pom "POST_GRADES_AT")
+          :post-comments-at-raw (org-entry-get pom "POST_COMMENTS_AT")
           ;; Resolved links (I/O)
           :assignment-group-id-raw (org-canvas--assignment-resolve-link-id group-link "CANVAS_ID")
           :rubric-id (org-canvas--assignment-resolve-link-id rubric-link "CANVAS_ID")
@@ -444,7 +456,11 @@ Pure function — no buffer access."
           :external_tool_new_tab (org-canvas--interpret-boolean
                                   (plist-get raw :external-tool-new-tab-raw))
           :post-policy (org-canvas--post-policy-from-property
-                        (plist-get raw :post-policy-raw) "POST_POLICY"))))
+                        (plist-get raw :post-policy-raw) "POST_POLICY")
+          :post_grades_at (org-canvas-org-parse-timestamp
+                           (plist-get raw :post-grades-at-raw))
+          :post_comments_at (org-canvas-org-parse-timestamp
+                             (plist-get raw :post-comments-at-raw)))))
 
 (defun org-canvas--assignment-parse-entry ()
   "Extract assignment data from the Org heading at point."
@@ -631,11 +647,13 @@ by the GraphQL contract test, which names it by this symbol.")
 (add-hook 'org-canvas--operation-start-hook
           #'org-canvas--assignment-processors-forget)
 
-(defun org-canvas--assignment-processors-page (map cursor)
-  "Read one page of processors after CURSOR into MAP.
-Returns the cursor of the next page, or nil when this was the last."
+(defun org-canvas--assignment-graphql-page (query node-value map cursor)
+  "Read one page of the course-wide assignments QUERY after CURSOR into MAP.
+NODE-VALUE is a function of one assignment node returning what MAP
+keeps for it under the node's `_id'.  Returns the cursor of the next
+page, or nil when this was the last."
   (let* ((data (org-canvas--graphql-query
-                org-canvas--assignment-processors-query
+                query
                 (append (list (cons 'courseId
                                     (format "%s" org-canvas-course-id)))
                         (when cursor (list (cons 'cursor cursor))))))
@@ -643,30 +661,44 @@ Returns the cursor of the next page, or nil when this was the last."
                                 (alist-get 'course data)))
          (info (alist-get 'pageInfo connection)))
     (dolist (node (append (alist-get 'nodes connection) nil))
-      (let ((processors (alist-get 'ltiAssetProcessorsConnection node)))
-        (puthash (format "%s" (alist-get '_id node))
-                 (append (alist-get 'nodes processors) nil)
-                 map)))
+      (puthash (format "%s" (alist-get '_id node))
+               (funcall node-value node)
+               map))
     (and (eq (alist-get 'hasNextPage info) t)
          (org-canvas--alist-get-non-null 'endCursor info))))
+
+(defun org-canvas--assignment-graphql-read (query node-value what fallback)
+  "Read the course-wide assignments QUERY into a hash by assignment id.
+NODE-VALUE is as for `org-canvas--assignment-graphql-page'.  Returns
+the symbol `refused' when the request fails, after one warning naming
+WHAT was read and FALLBACK, what the command does instead: the
+assignments still pull and report (the #171 rule)."
+  (condition-case err
+      (let ((map (make-hash-table :test 'equal))
+            (cursor nil))
+        (while (setq cursor (org-canvas--assignment-graphql-page
+                             query node-value map cursor)))
+        map)
+    (org-canvas-api-error
+     (org-canvas--log-warning org-canvas--logger
+       "[GraphQL] Could not read %s by GraphQL (%s); %s"
+       what (error-message-string err) fallback)
+     'refused)))
+
+(defun org-canvas--assignment-processors-node-value (node)
+  "Return the processor nodes of the assignment NODE, a list."
+  (append (alist-get 'nodes (alist-get 'ltiAssetProcessorsConnection node))
+          nil))
 
 (defun org-canvas--assignment-processors-fetch ()
   "Read every assignment's document processors into a hash by assignment id.
 Returns the symbol `refused' when the request fails, after one
 warning: the assignments still pull, their processors read from the
 REST fallback (the #171 rule)."
-  (condition-case err
-      (let ((map (make-hash-table :test 'equal))
-            (cursor nil))
-        (while (setq cursor
-                     (org-canvas--assignment-processors-page map cursor)))
-        map)
-    (org-canvas-api-error
-     (org-canvas--log-warning org-canvas--logger
-       (concat "[Processors] Could not read the document processors"
-               " by GraphQL (%s); reading the REST asset_processors instead")
-       (error-message-string err))
-     'refused)))
+  (org-canvas--assignment-graphql-read
+   org-canvas--assignment-processors-query
+   #'org-canvas--assignment-processors-node-value
+   "the document processors" "reading the REST asset_processors instead"))
 
 (defun org-canvas--assignment-processors-map ()
   "Return the course's processor map, reading it once per command."
@@ -748,22 +780,239 @@ drift report to compare."
   (org-entry-get pom "POST_POLICY"))
 
 (defconst org-canvas--assignment-post-policy-mutation
-  "mutation ($assignmentId: ID!, $manual: Boolean!) { setAssignmentPostPolicy(input: {assignmentId: $assignmentId, postManually: $manual}) { postPolicy { postManually } } }"
+  "mutation ($assignmentId: ID!, $manual: Boolean!, $gradesAt: String, $commentsAt: String) { setAssignmentPostPolicy(input: {assignmentId: $assignmentId, postManually: $manual, postGradesAt: $gradesAt, postCommentsAt: $commentsAt}) { postPolicy { postManually assignment { scheduledPost { postGradesAt postCommentsAt } } } } }"
   "The GraphQL mutation that sets one assignment's grade post policy.
-Checked against the Canvas schema by the GraphQL contract test
-\(issue #269), which names it by this symbol.")
+With the two times it schedules the posting too (issue #352), and the
+reply carries the schedule Canvas kept, so the push can say when
+Canvas dropped it.  Checked against the Canvas schema by the GraphQL
+contract test (issue #269), which names it by this symbol.")
+
+;;;; Scheduled posting (issue #352)
+
+;; `setAssignmentPostPolicy' takes a time to post grades and a time to
+;; post comments; Canvas keeps them as the assignment's `scheduledPost'
+;; and posts on its own when they come.  The REST assignment does not
+;; carry the schedule, so the pull and the drift report read it by one
+;; course-wide GraphQL query per command, as the document processors
+;; are read.  Canvas keeps a schedule only under manual posting, only
+;; with both times, grades no earlier than comments, and only when the
+;; `scheduled_feedback_releases' feature is on; and a mutation that
+;; sends manual posting with no times deletes the schedule it finds.
+
+(defvar org-canvas--assignment-schedules-cache nil
+  "Cons of (COURSE-ID . MAP) from the last course-wide schedule read.
+MAP is a hash of assignment id (a string) to its `scheduledPost'
+alist, nil for an assignment with none; or the symbol `refused' when
+Canvas would not answer.  Forgotten when a command starts.")
+
+(defconst org-canvas--assignment-schedules-query
+  "query ($courseId: ID!, $cursor: String) {
+  course(id: $courseId) {
+    assignmentsConnection(first: 100, after: $cursor) {
+      pageInfo { hasNextPage endCursor }
+      nodes { _id scheduledPost { postGradesAt postCommentsAt } }
+    }
+  }
+}"
+  "The GraphQL query listing every assignment's scheduled posting.
+Checked against the Canvas schema by the GraphQL contract test, which
+names it by this symbol.")
+
+(defun org-canvas--assignment-schedules-forget ()
+  "Drop the cached schedule map, so the next read asks Canvas."
+  (setq org-canvas--assignment-schedules-cache nil))
+
+(add-hook 'org-canvas--operation-start-hook
+          #'org-canvas--assignment-schedules-forget)
+
+(defun org-canvas--assignment-schedule-node-value (node)
+  "Return the `scheduledPost' of the assignment NODE, or nil for none."
+  (let ((schedule (alist-get 'scheduledPost node)))
+    (and (consp schedule) schedule)))
+
+(defun org-canvas--assignment-schedules-fetch ()
+  "Read every assignment's scheduled posting into a hash by assignment id.
+Returns the symbol `refused' when the request fails, after one
+warning: the assignments still pull, their schedules left as they are."
+  (org-canvas--assignment-graphql-read
+   org-canvas--assignment-schedules-query
+   #'org-canvas--assignment-schedule-node-value
+   "the scheduled grade postings"
+   "POST_GRADES_AT and POST_COMMENTS_AT are left as they are"))
+
+(defun org-canvas--assignment-schedules-map ()
+  "Return the course's schedule map, reading it once per command."
+  (unless (equal (car org-canvas--assignment-schedules-cache)
+                 org-canvas-course-id)
+    (setq org-canvas--assignment-schedules-cache
+          (cons org-canvas-course-id
+                (org-canvas--assignment-schedules-fetch))))
+  (cdr org-canvas--assignment-schedules-cache))
+
+(defun org-canvas--assignment-schedule (item)
+  "Return the `scheduledPost' alist of the Canvas ITEM, nil, or `unknown'.
+Nil when the assignment has no schedule; `unknown' when the read was
+refused or did not answer for ITEM."
+  (let ((id (alist-get 'id item)))
+    (if (not id)
+        'unknown
+      (let ((map (org-canvas--assignment-schedules-map)))
+        (if (hash-table-p map)
+            (gethash (format "%s" id) map 'unknown)
+          'unknown)))))
+
+(defun org-canvas--assignment-schedule-known-p (item)
+  "Return non-nil when the schedule of the Canvas ITEM was read."
+  (not (eq (org-canvas--assignment-schedule item) 'unknown)))
+
+(defun org-canvas--assignment-schedule-comparable-p (_pom item)
+  "Return non-nil when ITEM's schedule was read, for the drift report."
+  (org-canvas--assignment-schedule-known-p item))
+
+(defun org-canvas--assignment-schedule-time (item field)
+  "Return FIELD of ITEM's schedule, an ISO 8601 string, or nil."
+  (let ((schedule (org-canvas--assignment-schedule item)))
+    (and (consp schedule)
+         (org-canvas--alist-get-non-null field schedule))))
+
+(defun org-canvas--assignment-remote-post-grades-at (item)
+  "Return when Canvas is scheduled to post ITEM's grades, or nil."
+  (org-canvas--assignment-schedule-time item 'postGradesAt))
+
+(defun org-canvas--assignment-remote-post-comments-at (item)
+  "Return when Canvas is scheduled to post ITEM's comments, or nil."
+  (org-canvas--assignment-schedule-time item 'postCommentsAt))
+
+(defun org-canvas--assignment-time-less-p (a b)
+  "Return non-nil when the ISO 8601 time A is before B."
+  (time-less-p (date-to-time a) (date-to-time b)))
+
+(defun org-canvas--assignment-check-schedule (data)
+  "Refuse DATA's posting schedule when Canvas could not keep it.
+DATA is the parsed assignment plist.  Canvas stores a schedule only
+with both times, grades no earlier than comments, under manual
+posting; anything else fails or is dropped, and after the PUT has
+gone, so it is stopped here, before anything is sent."
+  (let ((grades (plist-get data :post_grades_at))
+        (comments (plist-get data :post_comments_at)))
+    (when (or grades comments)
+      (cond
+       ((not (and grades comments))
+        (error "POST_GRADES_AT and POST_COMMENTS_AT go together: \
+Canvas schedules a posting only with both times"))
+       ((org-canvas--assignment-time-less-p grades comments)
+        (error "POST_GRADES_AT (%s) is before POST_COMMENTS_AT (%s): \
+Canvas posts grades no earlier than comments" grades comments))
+       ((equal (plist-get data :post-policy) "automatic")
+        (error "POST_GRADES_AT needs manual posting, and POST_POLICY is \
+automatic: Canvas keeps a schedule only when it posts manually"))))))
+
+(defun org-canvas--assignment-schedule-wanted (data)
+  "Return DATA's schedule as (GRADES-AT . COMMENTS-AT), or nil."
+  (let ((grades (plist-get data :post_grades_at))
+        (comments (plist-get data :post_comments_at)))
+    (and grades comments (cons grades comments))))
+
+(defun org-canvas--assignment-schedule-held (assignment-id)
+  "Return the schedule Canvas has for ASSIGNMENT-ID, or nil.
+As (GRADES-AT . COMMENTS-AT); nil when there is none or it was not read."
+  (let* ((item (list (cons 'id assignment-id)))
+         (grades (org-canvas--assignment-remote-post-grades-at item))
+         (comments (org-canvas--assignment-remote-post-comments-at item)))
+    (and grades comments (cons grades comments))))
+
+(defun org-canvas--assignment-post-policy-request (data assignment-id)
+  "Return what the post-policy mutation sends for DATA, or nil for nothing.
+The value is (MANUAL . SCHEDULE): MANUAL t or `:json-false', SCHEDULE
+nil or (GRADES-AT . COMMENTS-AT).  A schedule on the heading means
+manual posting, POST_POLICY or not.  A manual POST_POLICY with no
+schedule on the heading sends the one Canvas holds for ASSIGNMENT-ID,
+since the mutation deletes a schedule it is not sent: a heading's
+silence is no opinion, and a schedule set in the web UI survives."
+  (let ((policy (plist-get data :post-policy))
+        (wanted (org-canvas--assignment-schedule-wanted data)))
+    (cond (wanted (cons t wanted))
+          ((equal policy "manual")
+           (cons t (org-canvas--assignment-schedule-held assignment-id)))
+          (policy (cons :json-false nil)))))
+
+(defun org-canvas--assignment-post-policy-what (data manual schedule)
+  "Return the log phrase for the post-policy write DATA asks for.
+MANUAL and SCHEDULE are as `org-canvas--assignment-post-policy-request'
+returns them."
+  (format "set the post policy of '%s' to %s%s" (plist-get data :title)
+          (if (eq manual t) "manual" "automatic")
+          (if schedule
+              (format ", posting grades at %s and comments at %s"
+                      (car schedule) (cdr schedule))
+            "")))
+
+(defun org-canvas--assignment-stored-schedule (reply)
+  "Return the `scheduledPost' the post-policy mutation REPLY carries, or nil."
+  (let* ((payload (alist-get 'setAssignmentPostPolicy reply))
+         (assignment (alist-get 'assignment (alist-get 'postPolicy payload)))
+         (schedule (and (consp assignment)
+                        (alist-get 'scheduledPost assignment))))
+    (and (consp schedule) schedule)))
+
+(defun org-canvas--assignment-schedule-kept-p (schedule stored)
+  "Return non-nil when STORED, a `scheduledPost', has SCHEDULE's times."
+  (let ((grades (org-canvas--alist-get-non-null 'postGradesAt stored))
+        (comments (org-canvas--alist-get-non-null 'postCommentsAt stored)))
+    (and grades comments
+         (time-equal-p (date-to-time grades) (date-to-time (car schedule)))
+         (time-equal-p (date-to-time comments) (date-to-time (cdr schedule))))))
+
+(defun org-canvas--assignment-describe-stored-schedule (stored)
+  "Return the `scheduledPost' STORED as a phrase for a warning."
+  (if stored
+      (format "%s and %s"
+              (org-canvas--alist-get-non-null 'postGradesAt stored)
+              (org-canvas--alist-get-non-null 'postCommentsAt stored))
+    "no schedule"))
+
+(defun org-canvas--assignment-verify-schedule (title schedule reply)
+  "Warn unless the mutation REPLY carries SCHEDULE as Canvas kept it.
+TITLE names the assignment.  Canvas drops a schedule without an error
+when the `scheduled_feedback_releases' feature is off, so the reply's
+own schedule is compared with what was sent (the #349 rule).  Returns
+non-nil when a warning was logged."
+  (unless (org-canvas--dry-run-response-p reply)
+    (let ((stored (org-canvas--assignment-stored-schedule reply)))
+      (unless (and stored
+                   (org-canvas--assignment-schedule-kept-p schedule stored))
+        (org-canvas--log-warning org-canvas--logger
+          "[Verify] '%s': sent POST_GRADES_AT %s and POST_COMMENTS_AT %s, \
+Canvas stored %s (it keeps a schedule only when its scheduled feedback \
+releases feature is on)"
+          title (car schedule) (cdr schedule)
+          (org-canvas--assignment-describe-stored-schedule stored))
+        t))))
 
 (defun org-canvas--assignment-push-post-policy (data assignment-id)
-  "Set ASSIGNMENT-ID's grade post policy from DATA's :post-policy, when given.
-The `setAssignmentPostPolicy' GraphQL mutation (issue #202).  Returns
-non-nil when a write went out, so the caller can note it on the run."
-  (let ((policy (plist-get data :post-policy)))
-    (when (and policy assignment-id)
-      (org-canvas--graphql-mutate
-       (format "set the post policy of '%s' to %s" (plist-get data :title) policy)
-       org-canvas--assignment-post-policy-mutation
-       (list (cons 'assignmentId (format "%s" assignment-id))
-             (cons 'manual (if (equal policy "manual") t :json-false))))
+  "Set ASSIGNMENT-ID's grade post policy and posting schedule from DATA.
+The `setAssignmentPostPolicy' GraphQL mutation (issue #202), sent when
+DATA carries a :post-policy or a schedule (issue #352); see
+`org-canvas--assignment-post-policy-request' for what it sends.
+Returns non-nil when a write went out, so the caller can note it on
+the run."
+  (when-let* ((assignment-id)
+              (request (org-canvas--assignment-post-policy-request
+                        data assignment-id)))
+    (let* ((manual (car request))
+           (schedule (cdr request))
+           (reply (org-canvas--graphql-mutate
+                   (org-canvas--assignment-post-policy-what data manual schedule)
+                   org-canvas--assignment-post-policy-mutation
+                   (append
+                    (list (cons 'assignmentId (format "%s" assignment-id))
+                          (cons 'manual manual))
+                    (when schedule
+                      (list (cons 'gradesAt (car schedule))
+                            (cons 'commentsAt (cdr schedule))))))))
+      (when (org-canvas--assignment-schedule-wanted data)
+        (org-canvas--assignment-verify-schedule
+         (plist-get data :title) schedule reply))
       t)))
 
 (defun org-canvas--assignment-add-optional-fields (data assignment)
@@ -788,6 +1037,7 @@ non-nil when a write went out, so the caller can note it on the run."
   "Convert DATA to Canvas assignment payload."
   (org-canvas--validate-date-ordering data)
   (org-canvas--assignment-check-owned-submission data)
+  (org-canvas--assignment-check-schedule data)
   (let ((title (plist-get data :title)))
     (org-canvas--log-info org-canvas--logger "[Stage 2: Transform] Building payload for '%s'" title)
 
@@ -876,18 +1126,23 @@ The rubric id and the association flags travel outside the assignment
 payload, so without this an added or changed RUBRIC_LINK never dirtied
 the entry and its association was never made (issue #120).  The grade
 post policy travels the same way, by GraphQL from finalize, so a
-POST_POLICY-only edit was skipped as unchanged (issue #242).  Empty
-when the heading carries none of them, so other headings keep their
-hash."
+POST_POLICY-only edit was skipped as unchanged (issue #242), and so
+does the posting schedule (issue #352).  Empty when the heading carries
+none of them, so other headings keep their hash."
   (let ((rubric-id (plist-get data :rubric-id))
         (use-for-grading (plist-get data :rubric-use-for-grading))
         (hide-score-total (plist-get data :rubric-hide-score-total))
-        (policy (plist-get data :post-policy)))
+        (policy (plist-get data :post-policy))
+        (grades-at (plist-get data :post_grades_at))
+        (comments-at (plist-get data :post_comments_at)))
     (concat
      (if (or rubric-id use-for-grading hide-score-total)
          (format "rubric:%s:%s:%s" rubric-id use-for-grading hide-score-total)
        "")
-     (if policy (format "post-policy:%s" policy) ""))))
+     (if policy (format "post-policy:%s" policy) "")
+     (if (or grades-at comments-at)
+         (format "schedule:%s:%s" grades-at comments-at)
+       ""))))
 
 (org-canvas-define-sync assignments
   :file org-canvas-assignments-file

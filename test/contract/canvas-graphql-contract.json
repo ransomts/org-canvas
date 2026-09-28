@@ -47,6 +47,15 @@
      "AssignmentScoreStatistic",
      "SubmissionType"
     ]
+   },
+   {
+    "generated": "2026-09-27",
+    "ref": "318f2ad0495dd4d1e2fd3657497fbf71c91bda13",
+    "repository": "https://github.com/instructure/canvas-lms",
+    "source": "sdl",
+    "types": [
+     "ScheduledPost"
+    ]
    }
   ]
  },
@@ -3616,6 +3625,26 @@
      },
      "deprecated": null,
      "type": "User"
+    }
+   },
+   "kind": "OBJECT"
+  },
+  "ScheduledPost": {
+   "fields": {
+    "_id": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID!"
+    },
+    "postCommentsAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime!"
+    },
+    "postGradesAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime!"
     }
    },
    "kind": "OBJECT"

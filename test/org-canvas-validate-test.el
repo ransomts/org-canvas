@@ -387,6 +387,45 @@ Not a table row here.
        (expect (length issues) :to-be-greater-than 0)
        (expect (plist-get (car issues) :message) :to-match "not a section link, Group: or Students:")))))
 
+(describe "org-canvas--validate-post-schedule (issue #352)"
+  (cl-flet ((check (props)
+              (with-temp-org-buffer (format "* HW\n:PROPERTIES:\n%s:END:\n" props)
+                (org-back-to-heading t)
+                (mapcar (lambda (issue)
+                          (list (plist-get issue :severity)
+                                (plist-get issue :property)
+                                (plist-get issue :message)))
+                        (org-canvas--validate-assignment-structure
+                         (list :file (buffer-file-name) :line 1 :heading "HW"))))))
+    (it "says nothing of a heading without a schedule, or with a sound one"
+      (expect (check ":POINTS: 10\n") :to-be nil)
+      (expect (check ":POST_GRADES_AT: [2026-12-01 Tue 09:00]\n:POST_COMMENTS_AT: [2026-12-01 Tue 09:00]\n:POST_POLICY: manual\n")
+              :to-be nil))
+
+    (it "calls one time without the other an error"
+      (let ((issues (check ":POST_GRADES_AT: [2026-12-01 Tue 09:00]\n")))
+        (expect (length issues) :to-equal 1)
+        (expect (nth 0 (car issues)) :to-be 'error)
+        (expect (nth 1 (car issues)) :to-equal "POST_GRADES_AT")
+        (expect (nth 2 (car issues)) :to-match "without POST_COMMENTS_AT"))
+      (let ((issues (check ":POST_COMMENTS_AT: [2026-12-01 Tue 09:00]\n")))
+        (expect (nth 1 (car issues)) :to-equal "POST_COMMENTS_AT")
+        (expect (nth 2 (car issues)) :to-match "POST_COMMENTS_AT without POST_GRADES_AT")))
+
+    (it "calls grades posted before comments an error"
+      (let ((issues (check ":POST_GRADES_AT: [2026-11-30 Mon 09:00]\n:POST_COMMENTS_AT: [2026-12-01 Tue 09:00]\n")))
+        (expect (length issues) :to-equal 1)
+        (expect (nth 2 (car issues)) :to-match "before POST_COMMENTS_AT")))
+
+    (it "calls a schedule beside automatic posting an error"
+      (let ((issues (check ":POST_GRADES_AT: [2026-12-01 Tue 09:00]\n:POST_COMMENTS_AT: [2026-11-30 Mon 09:00]\n:POST_POLICY: automatic\n")))
+        (expect (length issues) :to-equal 1)
+        (expect (nth 2 (car issues)) :to-match "needs manual posting")))
+
+    (it "leaves a time that does not parse to the timestamp check"
+      (expect (check ":POST_GRADES_AT: someday\n:POST_COMMENTS_AT: [2026-11-30 Mon 09:00]\n")
+              :to-be nil))))
+
 ;;;; Issue Formatting
 
 (describe "org-canvas--validate-format-issue"

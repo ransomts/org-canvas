@@ -2216,8 +2216,11 @@ Write it.
          (expect json :not :to-match "[Tt]urnitin"))))))
 
 (describe "assignment post policy (issue #202)"
-  (before-each (org-canvas--course-post-policy-forget))
-  (after-each (org-canvas--course-post-policy-forget))
+  (before-each (org-canvas--course-post-policy-forget)
+               (test-org-canvas-stub-processors))
+  (after-each (org-canvas--course-post-policy-forget)
+              (org-canvas--assignment-processors-forget)
+              (org-canvas--assignment-schedules-forget))
 
   (it "reports the assignment's policy only when it differs from the course's"
     (cl-letf (((symbol-function 'org-canvas--course-post-policy) (lambda () "automatic")))
@@ -2273,6 +2276,350 @@ Write it.
         (org-canvas--assignment-post-finalize '(:title "HW") '((id . 61)) ctx))
       (expect sent :to-be nil)
       (expect (plist-get ctx :remote-touched) :to-be nil))))
+
+;;;; Scheduled posting (issue #352)
+
+(defun test-352-schedules (&rest entries)
+  "Return a schedule map of ENTRIES, each (ID GRADES-AT COMMENTS-AT).
+An entry whose GRADES-AT is nil maps ID to no schedule."
+  (let ((map (make-hash-table :test 'equal)))
+    (dolist (entry entries)
+      (puthash (nth 0 entry)
+               (and (nth 1 entry)
+                    `((postGradesAt . ,(nth 1 entry))
+                      (postCommentsAt . ,(nth 2 entry))))
+               map))
+    map))
+
+(defun test-352-spec (org-prop)
+  "Return the assignments registry spec of ORG-PROP."
+  (seq-find (lambda (spec) (equal (plist-get spec :org-prop) org-prop))
+            (plist-get (gethash "assignments" org-canvas--property-registry)
+                       :properties)))
+
+(defun test-352-reply (grades comments)
+  "Return a post-policy mutation reply whose schedule is GRADES and COMMENTS.
+Both nil gives a reply with no schedule."
+  `((setAssignmentPostPolicy
+     . ((postPolicy
+         . ((postManually . t)
+            (assignment
+             . ((scheduledPost
+                 . ,(if grades
+                        `((postGradesAt . ,grades) (postCommentsAt . ,comments))
+                      :null))))))))))
+
+(defconst test-352-grades "[2026-12-01 Tue 09:00]")
+(defconst test-352-comments "[2026-11-30 Mon 17:00]")
+
+(describe "scheduled posting: parse, build and hash (issue #352)"
+  (it "parses POST_GRADES_AT and POST_COMMENTS_AT into ISO times"
+    (with-temp-org-buffer (format "* HW\n:PROPERTIES:\n:POST_GRADES_AT: %s\n:POST_COMMENTS_AT: %s\n:END:\n"
+                                  test-352-grades test-352-comments)
+      (org-back-to-heading)
+      (let ((data (org-canvas--assignment-parse-entry)))
+        (expect (plist-get data :post_grades_at)
+                :to-equal (org-canvas-org-parse-timestamp test-352-grades))
+        (expect (plist-get data :post_comments_at)
+                :to-equal (org-canvas-org-parse-timestamp test-352-comments)))))
+
+  (let ((base (list :title "HW" :published t :grading_type "points"
+                    :submission_types '("online_upload")))
+        (grades (org-canvas-org-parse-timestamp test-352-grades))
+        (comments (org-canvas-org-parse-timestamp test-352-comments)))
+    (it "keeps the schedule out of the REST payload"
+      (let ((json (json-encode (org-canvas--assignment-build-payload
+                                (append (list :post_grades_at grades
+                                              :post_comments_at comments)
+                                        base)))))
+        (expect json :not :to-match "post_\\(grades\\|comments\\)_at")
+        (expect json :not :to-match "postGradesAt")))
+
+    (it "refuses one time without the other before anything is sent"
+      (expect (org-canvas--assignment-build-payload
+               (append (list :post_grades_at grades) base))
+              :to-throw 'error)
+      (expect (org-canvas--assignment-build-payload
+               (append (list :post_comments_at comments) base))
+              :to-throw 'error))
+
+    (it "refuses grades posted before comments"
+      (expect (org-canvas--assignment-build-payload
+               (append (list :post_grades_at comments :post_comments_at grades)
+                       base))
+              :to-throw 'error))
+
+    (it "refuses a schedule beside an automatic POST_POLICY"
+      (expect (org-canvas--assignment-build-payload
+               (append (list :post_grades_at grades :post_comments_at comments
+                             :post-policy "automatic")
+                       base))
+              :to-throw 'error))
+
+    (it "accepts both times at the same moment under manual posting"
+      (expect (org-canvas--assignment-build-payload
+               (append (list :post_grades_at grades :post_comments_at grades
+                             :post-policy "manual")
+                       base))
+              :not :to-throw)))
+
+  (it "dirties the payload hash on a schedule-only edit and leaves others alone"
+    (expect (org-canvas--assignment-rubric-hash-extra '(:title "HW")) :to-equal "")
+    (expect (org-canvas--assignment-rubric-hash-extra
+             '(:title "HW" :post_grades_at "G" :post_comments_at "C"))
+            :to-equal "schedule:G:C")
+    (expect (org-canvas--assignment-rubric-hash-extra
+             '(:title "HW" :post-policy "manual" :post_grades_at "G" :post_comments_at "C"))
+            :to-equal "post-policy:manualschedule:G:C")))
+
+(describe "scheduled posting: the push (issue #352)"
+  (before-each (test-org-canvas-stub-processors
+                nil (test-352-schedules '("61" "2026-10-01T12:00:00Z"
+                                          "2026-10-01T10:00:00Z")
+                                        '("62" nil))))
+  (after-each (org-canvas--assignment-processors-forget)
+              (org-canvas--assignment-schedules-forget))
+
+  (it "sends manual posting with both times, POST_POLICY or not, and notes the write"
+    (with-org-canvas-test-config
+      (let ((seen nil) (ctx (org-canvas--sync-make-ctx)))
+        (cl-letf (((symbol-function 'org-canvas--graphql-mutate)
+                   (lambda (what doc vars)
+                     (setq seen (list what doc vars))
+                     (test-352-reply "2026-12-01T09:00:00Z" "2026-11-30T17:00:00Z")))
+                  ((symbol-function 'org-canvas--assignment-associate-rubric) #'ignore))
+          (org-canvas--assignment-post-finalize
+           '(:title "HW" :post_grades_at "2026-12-01T09:00:00Z"
+                    :post_comments_at "2026-11-30T17:00:00Z")
+           '((id . 70)) ctx))
+        (expect (nth 0 seen) :to-match "posting grades at 2026-12-01T09:00:00Z")
+        (expect (nth 1 seen) :to-match "postGradesAt: \\$gradesAt")
+        (expect (alist-get 'manual (nth 2 seen)) :to-be t)
+        (expect (alist-get 'gradesAt (nth 2 seen)) :to-equal "2026-12-01T09:00:00Z")
+        (expect (alist-get 'commentsAt (nth 2 seen)) :to-equal "2026-11-30T17:00:00Z")
+        (expect (plist-get ctx :remote-touched) :to-be t))))
+
+  (it "warns when Canvas did not keep the schedule it was sent"
+    (with-org-canvas-test-config
+      (let ((warned nil))
+        (cl-letf (((symbol-function 'org-canvas--graphql-mutate)
+                   (lambda (&rest _) (test-352-reply nil nil)))
+                  ((symbol-function 'org-canvas--log-warning)
+                   (lambda (_logger fmt &rest args)
+                     (push (apply #'format fmt args) warned))))
+          (expect (org-canvas--assignment-push-post-policy
+                   '(:title "HW" :post_grades_at "2026-12-01T09:00:00Z"
+                            :post_comments_at "2026-11-30T17:00:00Z")
+                   70)
+                  :to-be t))
+        (expect (length warned) :to-equal 1)
+        (expect (car warned) :to-match "'HW'.*Canvas stored no schedule")
+        (expect (car warned) :to-match "scheduled feedback releases"))))
+
+  (it "names the times Canvas stored when they differ from those sent"
+    (with-org-canvas-test-config
+      (let ((warned nil))
+        (cl-letf (((symbol-function 'org-canvas--graphql-mutate)
+                   (lambda (&rest _)
+                     (test-352-reply "2026-12-02T09:00:00Z" "2026-11-30T17:00:00Z")))
+                  ((symbol-function 'org-canvas--log-warning)
+                   (lambda (_logger fmt &rest args)
+                     (push (apply #'format fmt args) warned))))
+          (org-canvas--assignment-push-post-policy
+           '(:title "HW" :post_grades_at "2026-12-01T09:00:00Z"
+                    :post_comments_at "2026-11-30T17:00:00Z")
+           70))
+        (expect (car warned) :to-match "stored 2026-12-02T09:00:00Z and 2026-11-30T17:00:00Z"))))
+
+  (it "is quiet when Canvas stored the same moments in another spelling, and under a dry run"
+    (with-org-canvas-test-config
+      (let ((warned nil))
+        (cl-letf (((symbol-function 'org-canvas--log-warning)
+                   (lambda (&rest _) (setq warned t))))
+          (cl-letf (((symbol-function 'org-canvas--graphql-mutate)
+                     (lambda (&rest _)
+                       (test-352-reply "2026-12-01T04:00:00-05:00"
+                                       "2026-11-30T12:00:00-05:00"))))
+            (org-canvas--assignment-push-post-policy
+             '(:title "HW" :post_grades_at "2026-12-01T09:00:00Z"
+                      :post_comments_at "2026-11-30T17:00:00Z")
+             70))
+          (let ((org-canvas--dry-run t))
+            (org-canvas--assignment-push-post-policy
+             '(:title "HW" :post_grades_at "2026-12-01T09:00:00Z"
+                      :post_comments_at "2026-11-30T17:00:00Z")
+             70)))
+        (expect warned :to-be nil))))
+
+  (it "sends nothing under a dry run"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (let ((org-canvas--dry-run t))
+          (org-canvas--assignment-push-post-policy
+           '(:title "HW" :post_grades_at "2026-12-01T09:00:00Z"
+                    :post_comments_at "2026-11-30T17:00:00Z")
+           70))
+        (expect (test-org-canvas-api-call-count) :to-equal 0))))
+
+  (it "keeps the schedule Canvas holds when a manual POST_POLICY names none"
+    (with-org-canvas-test-config
+      (let ((vars nil))
+        (cl-letf (((symbol-function 'org-canvas--graphql-mutate)
+                   (lambda (what _d v) (setq vars (cons what v)) nil)))
+          (org-canvas--assignment-push-post-policy
+           '(:title "HW" :post-policy "manual") 61))
+        (expect (car vars) :to-match "posting grades at 2026-10-01T12:00:00Z")
+        (expect (alist-get 'manual (cdr vars)) :to-be t)
+        (expect (alist-get 'gradesAt (cdr vars)) :to-equal "2026-10-01T12:00:00Z")
+        (expect (alist-get 'commentsAt (cdr vars)) :to-equal "2026-10-01T10:00:00Z"))))
+
+  (it "sends no times for manual posting when Canvas holds no schedule or was not read"
+    (with-org-canvas-test-config
+      (let ((sent nil))
+        (cl-letf (((symbol-function 'org-canvas--graphql-mutate)
+                   (lambda (_w _d v) (push v sent) nil)))
+          (org-canvas--assignment-push-post-policy '(:title "A" :post-policy "manual") 62)
+          (org-canvas--assignment-push-post-policy '(:title "B" :post-policy "manual") 63))
+        (expect (length sent) :to-equal 2)
+        (dolist (v sent)
+          (expect (assq 'gradesAt v) :to-be nil)
+          (expect (assq 'commentsAt v) :to-be nil)))))
+
+  (it "sends no times with automatic posting and warns about nothing"
+    (with-org-canvas-test-config
+      (let ((vars nil) (warned nil))
+        (cl-letf (((symbol-function 'org-canvas--graphql-mutate)
+                   (lambda (what _d v) (setq vars (cons what v)) nil))
+                  ((symbol-function 'org-canvas--log-warning)
+                   (lambda (&rest _) (setq warned t))))
+          (org-canvas--assignment-push-post-policy
+           '(:title "HW" :post-policy "automatic") 61))
+        (expect (car vars) :to-equal "set the post policy of 'HW' to automatic")
+        (expect (alist-get 'manual (cdr vars)) :to-be :json-false)
+        (expect (assq 'gradesAt (cdr vars)) :to-be nil)
+        (expect warned :to-be nil))))
+
+  (it "sends nothing without an assignment id"
+    (let ((sent nil))
+      (cl-letf (((symbol-function 'org-canvas--graphql-mutate)
+                 (lambda (&rest _) (setq sent t))))
+        (expect (org-canvas--assignment-push-post-policy
+                 '(:title "HW" :post_grades_at "G" :post_comments_at "C") nil)
+                :to-be nil))
+      (expect sent :to-be nil))))
+
+(describe "scheduled posting: the course-wide read (issue #352)"
+  (after-each (org-canvas--assignment-schedules-forget))
+
+  (it "reads every page into a hash, an assignment with none as nil"
+    (org-canvas--assignment-schedules-forget)
+    (with-org-canvas-test-config
+      (let ((replies
+             (list `((course
+                      . ((assignmentsConnection
+                          . ((pageInfo . ((hasNextPage . t) (endCursor . "Mg")))
+                             (nodes . [((_id . "1")
+                                        (scheduledPost
+                                         . ((postGradesAt . "2026-12-01T09:00:00Z")
+                                            (postCommentsAt . "2026-11-30T17:00:00Z"))))
+                                       ((_id . "2") (scheduledPost . :null))]))))))
+                   `((course
+                      . ((assignmentsConnection
+                          . ((pageInfo . ((hasNextPage . :json-false) (endCursor . :null)))
+                             (nodes . [((_id . "3") (scheduledPost . :null))]))))))))
+            (sent nil))
+        (cl-letf (((symbol-function 'org-canvas--graphql-query)
+                   (lambda (document &optional variables)
+                     (push (cons document variables) sent)
+                     (pop replies))))
+          (expect (org-canvas--assignment-remote-post-grades-at '((id . 1)))
+                  :to-equal "2026-12-01T09:00:00Z")
+          (expect (org-canvas--assignment-remote-post-comments-at '((id . 1)))
+                  :to-equal "2026-11-30T17:00:00Z")
+          (expect (org-canvas--assignment-remote-post-grades-at '((id . 2))) :to-be nil)
+          (expect (org-canvas--assignment-schedule-known-p '((id . 3))) :to-be t)
+          (expect (org-canvas--assignment-schedule-known-p '((id . 4))) :to-be nil)
+          (expect (org-canvas--assignment-schedule-known-p '((name . "x"))) :to-be nil))
+        (expect (length sent) :to-equal 2)
+        (expect (caar sent) :to-be org-canvas--assignment-schedules-query)
+        (expect (alist-get 'cursor (cdar sent)) :to-equal "Mg"))))
+
+  (it "answers unknown after one warning when the read fails"
+    (org-canvas--assignment-schedules-forget)
+    (with-org-canvas-test-config
+      (let ((warned nil))
+        (cl-letf (((symbol-function 'org-canvas--graphql-query)
+                   (lambda (&rest _) (signal 'org-canvas-api-error (list "GraphQL: nope"))))
+                  ((symbol-function 'org-canvas--log-warning)
+                   (lambda (_logger fmt &rest args)
+                     (push (apply #'format fmt args) warned))))
+          (dolist (id '(1 2))
+            (expect (org-canvas--assignment-schedule-comparable-p nil `((id . ,id)))
+                    :to-be nil)))
+        (expect (length warned) :to-equal 1)
+        (expect (car warned) :to-match "scheduled grade postings.*left as they are")))))
+
+(describe "scheduled posting: pull and drift report (issue #352)"
+  (after-each (org-canvas--assignment-processors-forget)
+              (org-canvas--assignment-schedules-forget))
+
+  (cl-flet ((pull (content schedules)
+              (with-temp-org-buffer content
+                (org-back-to-heading)
+                (with-org-canvas-test-config
+                  (with-html-to-org-identity
+                    (test-org-canvas-stub-processors nil schedules)
+                    (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                               (lambda (&rest _) nil)))
+                      (org-canvas--assignment-pull-item
+                       '((id . 1) (name . "HW")) (point))
+                      (list (org-entry-get (point) "POST_GRADES_AT")
+                            (org-entry-get (point) "POST_COMMENTS_AT"))))))))
+    (it "writes the schedule Canvas holds"
+      (expect (pull "* HW\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+                    (test-352-schedules '("1" "2026-12-01T09:00:00Z"
+                                          "2026-11-30T17:00:00Z")))
+              :to-equal (list (org-canvas--iso8601-to-org-timestamp "2026-12-01T09:00:00Z")
+                              (org-canvas--iso8601-to-org-timestamp "2026-11-30T17:00:00Z"))))
+
+    (it "drops a schedule Canvas no longer holds"
+      (expect (pull (format "* HW\n:PROPERTIES:\n:CANVAS_ID: 1\n:POST_GRADES_AT: %s\n:POST_COMMENTS_AT: %s\n:END:\n"
+                            test-352-grades test-352-comments)
+                    (test-352-schedules '("1" nil)))
+              :to-equal '(nil nil)))
+
+    (it "leaves the schedule as typed when the read was refused"
+      (expect (pull (format "* HW\n:PROPERTIES:\n:CANVAS_ID: 1\n:POST_GRADES_AT: %s\n:POST_COMMENTS_AT: %s\n:END:\n"
+                            test-352-grades test-352-comments)
+                    nil)
+              :to-equal (list test-352-grades test-352-comments))))
+
+  (it "reports a schedule that differs, and nothing when it matches or was not read"
+    (with-temp-org-buffer (format "* HW\n:PROPERTIES:\n:CANVAS_ID: 1\n:POST_GRADES_AT: %s\n:POST_COMMENTS_AT: %s\n:END:\n* Quiet\n:PROPERTIES:\n:CANVAS_ID: 2\n:END:\n"
+                                  test-352-grades test-352-comments)
+      (org-back-to-heading)
+      (with-org-canvas-test-config
+        (let ((grades (test-352-spec "POST_GRADES_AT"))
+              (comments (test-352-spec "POST_COMMENTS_AT"))
+              (pom (point)))
+          (test-org-canvas-stub-processors
+           nil (test-352-schedules
+                (list "1" (org-canvas-org-parse-timestamp "[2026-12-02 Wed 09:00]")
+                      (org-canvas-org-parse-timestamp test-352-comments))
+                (list "2" (org-canvas-org-parse-timestamp test-352-grades)
+                      (org-canvas-org-parse-timestamp test-352-comments))))
+          (expect (car (org-canvas--diff-compare-field grades pom '((id . 1))))
+                  :to-equal "POST_GRADES_AT")
+          (expect (org-canvas--diff-compare-field comments pom '((id . 1))) :to-be nil)
+          ;; A silent heading has no opinion on a schedule set by hand.
+          (org-forward-heading-same-level 1)
+          (expect (org-canvas--diff-compare-field grades (point) '((id . 2))) :to-be nil)
+          ;; A refused read compares nothing.
+          (org-canvas--assignment-schedules-forget)
+          (cl-letf (((symbol-function 'org-canvas--assignment-schedules-fetch)
+                     (lambda () 'refused)))
+            (expect (org-canvas--diff-compare-field grades pom '((id . 1)))
+                    :to-be nil)))))))
 
 (describe "assignment reads ask for the assignment's own dates (issue #273)"
   (before-each (test-org-canvas-stub-processors))
@@ -2404,7 +2751,9 @@ order, and forgets the processor cache before and after."
            (cl-letf (((symbol-function 'org-canvas--graphql-query)
                       (lambda (_document &optional variables)
                         (setq sent (append sent (list variables)))
-                        (pop queue))))
+                        (pop queue)))
+                     ((symbol-function 'org-canvas--assignment-schedules-fetch)
+                      (lambda () 'refused)))
              ,@body))
        (org-canvas--assignment-processors-forget))))
 
@@ -2526,7 +2875,11 @@ order, and forgets the processor cache before and after."
                                (lambda (&rest _) nil))
                               ((symbol-function
                                 'org-canvas--assignment-processors-fetch)
-                               (lambda () map)))
+                               (lambda () map))
+                              ((symbol-function
+                                'org-canvas--assignment-schedules-fetch)
+                               (lambda () 'refused)))
+                      (org-canvas--assignment-schedules-forget)
                       (org-canvas--assignment-pull-item item (point))
                       (org-entry-get (point) "DOCUMENT_PROCESSOR")))))))
     (let ((map (make-hash-table :test 'equal)))
