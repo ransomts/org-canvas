@@ -2201,18 +2201,120 @@ line carries the label of its kind."
             " (heading kept)"
           "")))))
 
-(defun org-canvas--submissions-report-changes (name previous submissions carry)
+(defun org-canvas--submissions-report-changes (name previous submissions carry
+                                                     &optional assignment-id)
   "Say what a refresh of NAME changed, once it is rendered.
 PREVIOUS is what the file recorded before (nil on a first pull, which
 reports nothing), SUBMISSIONS the fetched ones and CARRY the work
 carried over.  Resubmissions on graded rows are marked on their
 headings, every change is logged per student, and the counts go to
-the echo area."
+the echo area.  With ASSIGNMENT-ID each resubmission also names the
+attempt its score was given on (`org-canvas--submissions-report-attempts')."
   (when previous
     (let ((changes (org-canvas--submissions-changes-since previous submissions carry)))
       (org-canvas--submissions-mark-resubmitted (plist-get changes :resubmitted) submissions)
       (org-canvas--submissions-log-changes changes)
+      (when assignment-id
+        (org-canvas--submissions-report-attempts
+         assignment-id (plist-get changes :resubmitted)))
       (message "%s" (org-canvas--submissions-describe-refresh name previous changes)))))
+
+;;;; Attempt History (issue #352)
+
+;; A refresh marks a graded row that gained an attempt (#282), and
+;; nothing in the REST submission says which attempt the score was
+;; given on or how the new one differs.  GraphQL's
+;; `Submission.submissionHistoriesConnection' lists every attempt, so
+;; for each such row — only those, a request each — the refresh reads
+;; them, logs the attempt the score belongs to beside the new one, and
+;; writes GRADED_ATTEMPT on the heading next to its CONFLICT.  Read
+;; only: nothing is pushed, and the property is Canvas's, rewritten by
+;; the next render like the CONFLICT it explains.
+
+(defconst org-canvas--submissions-history-query
+  "query ($assignmentId: ID!, $userId: ID!) { submission(assignmentId: $assignmentId, userId: $userId) { submissionHistoriesConnection(first: 100, orderBy: {field: attempt, direction: ascending}) { nodes { attempt submittedAt gradedAt enteredScore gradeMatchesCurrentSubmission wordCount attachments { displayName } } } } }"
+  "The GraphQL query that reads one student's attempts on a column.
+Checked against the Canvas schema by the GraphQL contract test (issue
+#269), which names it by this symbol.")
+
+(defun org-canvas--submissions-fetch-history (assignment-id user-id)
+  "Return USER-ID's attempts on ASSIGNMENT-ID as history nodes, in order."
+  (let* ((data (org-canvas--graphql-query
+                org-canvas--submissions-history-query
+                (list (cons 'assignmentId (format "%s" assignment-id))
+                      (cons 'userId (format "%s" user-id)))))
+         (connection (alist-get 'submissionHistoriesConnection
+                                (org-canvas--alist-get-non-null 'submission data))))
+    (sort (seq-filter (lambda (node) (numberp (alist-get 'attempt node)))
+                      (append (org-canvas--alist-get-non-null 'nodes connection) nil))
+          (lambda (a b) (< (alist-get 'attempt a) (alist-get 'attempt b))))))
+
+(defun org-canvas--submissions-graded-attempt (nodes)
+  "Return the node of NODES whose attempt the current score was given on.
+Canvas copies the score onto a later attempt's record, so a score on a
+node proves nothing; the node's `gradeMatchesCurrentSubmission' says
+whether the grade was given to that attempt.  The latest such node
+with a score wins; nil when none has one."
+  (car (last (seq-filter (lambda (node)
+                           (and (eq (alist-get 'gradeMatchesCurrentSubmission node) t)
+                                (numberp (org-canvas--alist-get-non-null 'enteredScore node))))
+                         nodes))))
+
+(defun org-canvas--submissions-describe-attempt (node)
+  "Return NODE, one attempt, as `attempt N (submitted TS, FILES, W words)'.
+The parts Canvas leaves out are left out."
+  (let* ((submitted (org-canvas--iso8601-to-org-timestamp
+                     (org-canvas--alist-get-non-null 'submittedAt node)))
+         (files (mapcar (lambda (f) (org-canvas--alist-get-non-null 'displayName f))
+                        (append (org-canvas--alist-get-non-null 'attachments node) nil)))
+         (words (org-canvas--alist-get-non-null 'wordCount node))
+         (parts (delq nil (list (and submitted (format "submitted %s" submitted))
+                                (and files (string-join (delq nil files) ", "))
+                                (and (numberp words) (> words 0)
+                                     (format "%d words" (round words)))))))
+    (format "attempt %s%s" (alist-get 'attempt node)
+            (if parts (format " (%s)" (string-join parts ", ")) ""))))
+
+(defun org-canvas--submissions-describe-attempts (nodes)
+  "Return (GRADED . LINE) for a resubmitted row's attempt history NODES.
+GRADED is the attempt number the score was given on, or nil when no
+attempt carries it; LINE sets the latest attempt beside that one.
+Nil when NODES is empty."
+  (when nodes
+    (let ((latest (car (last nodes)))
+          (graded (org-canvas--submissions-graded-attempt nodes)))
+      (cons (and graded (alist-get 'attempt graded))
+            (if graded
+                (format "%s after the score %s given on %s"
+                        (org-canvas--submissions-describe-attempt latest)
+                        (org-canvas--submissions-format-number (alist-get 'enteredScore graded))
+                        (org-canvas--submissions-describe-attempt graded))
+              (format "%s; no attempt carries the score"
+                      (org-canvas--submissions-describe-attempt latest)))))))
+
+(defun org-canvas--submissions-record-attempts (pair found)
+  "Log FOUND for PAIR, a (user-id . name), and mark its heading.
+FOUND is what `org-canvas--submissions-describe-attempts' returned."
+  (org-canvas--log-info org-canvas--logger "[Refresh] %s: %s" (cdr pair) (cdr found))
+  (when (car found)
+    (save-excursion
+      (when (org-canvas--submissions-goto-user (car pair))
+        (org-entry-put (point) "GRADED_ATTEMPT" (format "%s" (car found)))))))
+
+(defun org-canvas--submissions-report-attempts (assignment-id resubmitted)
+  "Name the attempt each of RESUBMITTED was graded on, from its history.
+RESUBMITTED are (user-id . name) pairs on ASSIGNMENT-ID.  A failed
+read is one warning, and the rest are reported without their history,
+as the refresh reported them before."
+  (condition-case err
+      (dolist (pair resubmitted)
+        (when-let* ((found (org-canvas--submissions-describe-attempts
+                            (org-canvas--submissions-fetch-history assignment-id (car pair)))))
+          (org-canvas--submissions-record-attempts pair found)))
+    (error
+     (org-canvas--log-warning org-canvas--logger
+       "[Refresh] Could not read the attempt history of assignment %s (%s); resubmissions reported without it"
+       assignment-id (error-message-string err)))))
 
 (defun org-canvas--submissions-collect-comment-drafts ()
   "Return (:user-id :name :text) for every heading with a drafted comment.
@@ -3152,7 +3254,8 @@ them, and what changed since the last render is reported
           (when bank
             (org-canvas--submissions-restore-bank bank))
           (org-canvas--submissions-restore-carryover carry)
-          (org-canvas--submissions-report-changes assignment-name previous submissions carry))
+          (org-canvas--submissions-report-changes
+           assignment-name previous submissions carry assignment-id))
         (goto-char (point-min))
         (setq-local org-canvas-submissions--assignment-name assignment-name)
         (setq-local org-canvas-submissions--assignment-id assignment-id)

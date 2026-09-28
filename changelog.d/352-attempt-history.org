@@ -1,0 +1,9 @@
+* Added
+- #352 A refresh that finds a graded row resubmitted now names the
+  attempt its score was given on: it reads that student's attempt
+  history (GraphQL's =submissionHistoriesConnection=, for those rows
+  only), writes =GRADED_ATTEMPT= beside the heading's =CONFLICT=, and
+  logs the new attempt beside the graded one with when each was
+  submitted, its files and its word count.  A failed read is one
+  warning and the resubmissions are reported as before (section 6 of
+  the issue).

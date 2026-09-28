@@ -75,6 +75,20 @@
      "UpdateCommentBankItemPayload",
      "User"
     ]
+   },
+   {
+    "generated": "2026-09-27",
+    "ref": "318f2ad0495dd4d1e2fd3657497fbf71c91bda13",
+    "repository": "https://github.com/instructure/canvas-lms",
+    "source": "sdl",
+    "types": [
+     "File",
+     "OrderDirection",
+     "SubmissionHistory",
+     "SubmissionHistoryConnection",
+     "SubmissionHistoryOrder",
+     "SubmissionHistoryOrderField"
+    ]
    }
   ]
  },
@@ -2302,6 +2316,163 @@
    },
    "kind": "OBJECT"
   },
+  "File": {
+   "fields": {
+    "_id": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID!"
+    },
+    "canDuplicate": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "canManageAssignTo": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "canUnpublish": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "contentType": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "createdAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime"
+    },
+    "displayName": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "fileState": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "folder": {
+     "args": {},
+     "deprecated": null,
+     "type": "Folder"
+    },
+    "graded": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "id": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID!"
+    },
+    "isLockedByMasterCourse": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean!"
+    },
+    "lockAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime"
+    },
+    "locked": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "mimeClass": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "modules": {
+     "args": {},
+     "deprecated": null,
+     "type": "[Module!]"
+    },
+    "pointsPossible": {
+     "args": {},
+     "deprecated": null,
+     "type": "Float"
+    },
+    "published": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "size": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "sizeBytes": {
+     "args": {},
+     "deprecated": null,
+     "type": "Int"
+    },
+    "submissionPreviewUrl": {
+     "args": {
+      "submissionId": "ID"
+     },
+     "deprecated": null,
+     "type": "URL"
+    },
+    "thumbnailUrl": {
+     "args": {},
+     "deprecated": null,
+     "type": "URL"
+    },
+    "title": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "type": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "unlockAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime"
+    },
+    "updatedAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime"
+    },
+    "url": {
+     "args": {},
+     "deprecated": null,
+     "type": "URL"
+    },
+    "usageRights": {
+     "args": {},
+     "deprecated": null,
+     "type": "UsageRights"
+    },
+    "viewedAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime"
+    },
+    "wordCount": {
+     "args": {},
+     "deprecated": null,
+     "type": "Int"
+    }
+   },
+   "kind": "OBJECT"
+  },
   "Float": {
    "kind": "SCALAR"
   },
@@ -3390,6 +3561,13 @@
    },
    "kind": "OBJECT"
   },
+  "OrderDirection": {
+   "kind": "ENUM",
+   "values": {
+    "ascending": null,
+    "descending": null
+   }
+  },
   "PageInfo": {
    "fields": {
     "endCursor": {
@@ -4351,6 +4529,413 @@
     }
    },
    "kind": "OBJECT"
+  },
+  "SubmissionHistory": {
+   "fields": {
+    "aiGradeResult": {
+     "args": {},
+     "deprecated": null,
+     "type": "AIGradeResult"
+    },
+    "anonymousId": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID"
+    },
+    "assignedAssessments": {
+     "args": {},
+     "deprecated": null,
+     "type": "[AssessmentRequest!]"
+    },
+    "assignment": {
+     "args": {},
+     "deprecated": null,
+     "type": "Assignment!"
+    },
+    "assignmentId": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID!"
+    },
+    "attachment": {
+     "args": {},
+     "deprecated": null,
+     "type": "File"
+    },
+    "attachments": {
+     "args": {},
+     "deprecated": null,
+     "type": "[File!]"
+    },
+    "attempt": {
+     "args": {},
+     "deprecated": null,
+     "type": "Int!"
+    },
+    "autoGradeResultPresent": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean!"
+    },
+    "body": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "cachedDueDate": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime"
+    },
+    "commentsConnection": {
+     "args": {
+      "after": "String",
+      "before": "String",
+      "filter": "SubmissionCommentFilterInput",
+      "first": "Int",
+      "includeDraftComments": "Boolean",
+      "includeDraftsFromOthers": "Boolean",
+      "includeProvisionalComments": "Boolean",
+      "last": "Int",
+      "sortOrder": "SubmissionCommentsSortOrderType"
+     },
+     "deprecated": null,
+     "type": "SubmissionCommentConnection!"
+    },
+    "createdAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime"
+    },
+    "customGradeStatus": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "customGradeStatusId": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID"
+    },
+    "deductedPoints": {
+     "args": {},
+     "deprecated": null,
+     "type": "Float"
+    },
+    "enteredGrade": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "enteredScore": {
+     "args": {},
+     "deprecated": null,
+     "type": "Float"
+    },
+    "excused": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "externalToolUrl": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "extraAttempts": {
+     "args": {},
+     "deprecated": null,
+     "type": "Int"
+    },
+    "feedbackForCurrentAttempt": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean!"
+    },
+    "grade": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "gradeHidden": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean!"
+    },
+    "gradeMatchesCurrentSubmission": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "gradedAnonymously": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "gradedAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime"
+    },
+    "gradingStatus": {
+     "args": {},
+     "deprecated": null,
+     "type": "SubmissionGradingStatus"
+    },
+    "groupId": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID"
+    },
+    "hasOriginalityReport": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean!"
+    },
+    "hasPostableComments": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean!"
+    },
+    "hasProvisionalGradeByCurrentUser": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean!"
+    },
+    "hasSubAssignmentSubmissions": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "hasUnreadRubricAssessment": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean!"
+    },
+    "hideGradeFromStudent": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "lastCommentedByUserAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime"
+    },
+    "late": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "latePolicyStatus": {
+     "args": {},
+     "deprecated": null,
+     "type": "LatePolicyStatusType"
+    },
+    "mediaObject": {
+     "args": {},
+     "deprecated": null,
+     "type": "MediaObject"
+    },
+    "missing": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "originalityData": {
+     "args": {},
+     "deprecated": null,
+     "type": "JSON"
+    },
+    "posted": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean!"
+    },
+    "postedAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime"
+    },
+    "previewUrl": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "proxySubmitter": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "proxySubmitterId": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID"
+    },
+    "redoRequest": {
+     "args": {},
+     "deprecated": null,
+     "type": "Boolean"
+    },
+    "resourceLinkLookupUuid": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "rootId": {
+     "args": {},
+     "deprecated": null,
+     "type": "ID!"
+    },
+    "rubricAssessmentsConnection": {
+     "args": {
+      "after": "String",
+      "before": "String",
+      "filter": "SubmissionRubricAssessmentFilterInput",
+      "first": "Int",
+      "last": "Int"
+     },
+     "deprecated": null,
+     "type": "RubricAssessmentConnection!"
+    },
+    "score": {
+     "args": {},
+     "deprecated": null,
+     "type": "Float"
+    },
+    "secondsLate": {
+     "args": {},
+     "deprecated": null,
+     "type": "Float"
+    },
+    "state": {
+     "args": {},
+     "deprecated": null,
+     "type": "SubmissionState!"
+    },
+    "status": {
+     "args": {},
+     "deprecated": null,
+     "type": "String!"
+    },
+    "statusTag": {
+     "args": {},
+     "deprecated": null,
+     "type": "SubmissionStatusTagType!"
+    },
+    "sticker": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "subAssignmentSubmissions": {
+     "args": {},
+     "deprecated": null,
+     "type": "[SubAssignmentSubmission!]"
+    },
+    "submissionCommentDownloadUrl": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "submissionDraft": {
+     "args": {},
+     "deprecated": null,
+     "type": "SubmissionDraft"
+    },
+    "submissionStatus": {
+     "args": {},
+     "deprecated": null,
+     "type": "String"
+    },
+    "submissionType": {
+     "args": {},
+     "deprecated": null,
+     "type": "SubmissionType"
+    },
+    "submittedAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime"
+    },
+    "turnitinData": {
+     "args": {},
+     "deprecated": null,
+     "type": "[TurnitinData!]"
+    },
+    "unreadCommentCount": {
+     "args": {},
+     "deprecated": null,
+     "type": "Int!"
+    },
+    "updatedAt": {
+     "args": {},
+     "deprecated": null,
+     "type": "DateTime"
+    },
+    "url": {
+     "args": {},
+     "deprecated": null,
+     "type": "URL"
+    },
+    "user": {
+     "args": {},
+     "deprecated": null,
+     "type": "User"
+    },
+    "vericiteData": {
+     "args": {},
+     "deprecated": null,
+     "type": "[VericiteData!]"
+    },
+    "wordCount": {
+     "args": {},
+     "deprecated": null,
+     "type": "Float"
+    }
+   },
+   "kind": "OBJECT"
+  },
+  "SubmissionHistoryConnection": {
+   "fields": {
+    "edges": {
+     "args": {},
+     "deprecated": null,
+     "type": "[SubmissionHistoryEdge]"
+    },
+    "nodes": {
+     "args": {},
+     "deprecated": null,
+     "type": "[SubmissionHistory]"
+    },
+    "pageInfo": {
+     "args": {},
+     "deprecated": null,
+     "type": "PageInfo!"
+    }
+   },
+   "kind": "OBJECT"
+  },
+  "SubmissionHistoryOrder": {
+   "fields": {
+    "direction": {
+     "deprecated": null,
+     "hasDefault": false,
+     "type": "OrderDirection!"
+    },
+    "field": {
+     "deprecated": null,
+     "hasDefault": false,
+     "type": "SubmissionHistoryOrderField!"
+    }
+   },
+   "kind": "INPUT_OBJECT"
+  },
+  "SubmissionHistoryOrderField": {
+   "kind": "ENUM",
+   "values": {
+    "attempt": null
+   }
   },
   "SubmissionType": {
    "kind": "ENUM",

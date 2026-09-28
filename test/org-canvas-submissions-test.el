@@ -3865,6 +3865,115 @@ student's live baseline for the conflict check, nil to skip it."
       (org-canvas--submissions-record-days-late 0)
       (expect (org-entry-get (point) "DAYS_LATE") :to-equal "1"))))
 
+;;;; Attempt history (issue #352)
+
+(defun test-history--node (attempt &rest fields)
+  "Return a submission history node for ATTEMPT with FIELDS, an alist."
+  (append `((attempt . ,attempt)) (car fields)))
+
+(defconst test-history--bob
+  (list (test-history--node 1 '((submittedAt . "2026-02-15T23:45:00Z") (gradedAt . "2026-02-17T10:00:00Z")
+                                (enteredScore . 3.0) (gradeMatchesCurrentSubmission . t)
+                                (wordCount . 412.0) (attachments . [((displayName . "essay.pdf"))])))
+        (test-history--node 2 '((submittedAt . :null) (gradedAt . "2026-02-17T10:00:00Z")
+                                (enteredScore . 3.0) (gradeMatchesCurrentSubmission . :json-false)
+                                (wordCount . :null)
+                                (attachments . [((displayName . "essay-v2.pdf")) ((displayName . "notes.txt"))]))))
+  "Bob's attempts: the first graded 3, the second carrying the copied score.")
+
+(defun test-history--graded-bob-file ()
+  "Return a grading file where Bob's first attempt is graded 3."
+  (concat test-grading-file-header
+          (test-refresh--student "Beta, Bob" 5002
+                                 ":STATUS: graded\n:SCORE: 3\n:CANVAS_SCORE: 3\n:ATTEMPT: 1\n:SUBMITTED_AT: <2026-02-15 Sun 23:45>\n")))
+
+(describe "org-canvas--submissions-graded-attempt"
+  (it "is the attempt the grade was given to, not the one Canvas copied the score onto"
+    (expect (alist-get 'attempt (org-canvas--submissions-graded-attempt test-history--bob))
+            :to-equal 1))
+  (it "is nil when no attempt was graded as it stands"
+    (expect (org-canvas--submissions-graded-attempt
+             (list (test-history--node 1 '((enteredScore . :null) (gradeMatchesCurrentSubmission . t)))
+                   (test-history--node 2 '((enteredScore . 3.0) (gradeMatchesCurrentSubmission . :json-false)))))
+            :to-be nil)))
+
+(describe "org-canvas--submissions-describe-attempts"
+  (it "sets the latest attempt beside the graded one, with what each held"
+    (let ((found (org-canvas--submissions-describe-attempts test-history--bob)))
+      (expect (car found) :to-equal 1)
+      (expect (cdr found)
+              :to-match "\\`attempt 2 (essay-v2\\.pdf, notes\\.txt) after the score 3 given on attempt 1 (submitted <2026-02-1[56] [A-Z][a-z][a-z][^>]*>, essay\\.pdf, 412 words)\\'")))
+  (it "says so when no attempt carries the score, and is nil without attempts"
+    (expect (org-canvas--submissions-describe-attempts
+             (list (test-history--node 1 '((gradeMatchesCurrentSubmission . :json-false)))))
+            :to-equal '(nil . "attempt 1; no attempt carries the score"))
+    (expect (org-canvas--submissions-describe-attempts nil) :to-be nil)))
+
+(describe "org-canvas--submissions-fetch-history"
+  (it "reads the column's one submission for the student, attempts in order"
+    (let ((sent nil))
+      (cl-letf (((symbol-function 'org-canvas--graphql-query)
+                 (lambda (document variables)
+                   (setq sent (cons document variables))
+                   `((submission . ((submissionHistoriesConnection
+                                     . ((nodes . ,(vector (nth 1 test-history--bob) '((attempt . :null))
+                                                          (nth 0 test-history--bob)))))))))))
+        (expect (mapcar (lambda (n) (alist-get 'attempt n))
+                        (org-canvas--submissions-fetch-history 1001 5002))
+                :to-equal '(1 2))
+        (expect (cdr sent) :to-equal '((assignmentId . "1001") (userId . "5002"))))))
+  (it "answers nil for a submission Canvas does not have"
+    (cl-letf (((symbol-function 'org-canvas--graphql-query)
+               (lambda (&rest _) '((submission . :null)))))
+      (expect (org-canvas--submissions-fetch-history 1001 5002) :to-be nil))))
+
+(describe "a refresh names the attempt a resubmitted row was graded on"
+  (it "logs both attempts and writes GRADED_ATTEMPT beside the CONFLICT"
+    (with-org-canvas-test-config
+      (with-grading-file (test-history--graded-bob-file)
+        (let ((asked nil))
+          (cl-letf (((symbol-function 'org-canvas--graphql-query)
+                     (lambda (document &optional variables)
+                       (when (eq document org-canvas--submissions-history-query)
+                         (push (alist-get 'userId variables) asked)
+                         `((submission . ((submissionHistoriesConnection
+                                           . ((nodes . ,(vconcat test-history--bob)))))))))))
+            (test-refresh--run (list (test-refresh--bob '((score . 3) (attempt . 2))))))
+          (expect asked :to-equal '("5002")))
+        (expect (test-refresh--summary) :to-equal "Refreshed HW: 1 resubmitted after grading")
+        (expect (cl-find-if (lambda (l) (string-prefix-p "[Refresh] Beta, Bob: attempt 2 (" l))
+                            test-refresh--log)
+                :to-match "after the score 3 given on attempt 1 ")
+        (org-canvas--submissions-goto-user 5002)
+        (expect (org-entry-get (point) "CONFLICT") :to-equal "attempt: 2 submitted after grading")
+        (expect (org-entry-get (point) "GRADED_ATTEMPT") :to-equal "1"))))
+  (it "asks nothing when no graded row was resubmitted"
+    (with-org-canvas-test-config
+      (with-grading-file (test-history--graded-bob-file)
+        (cl-letf (((symbol-function 'org-canvas--graphql-query)
+                   (lambda (document &rest _)
+                     (when (eq document org-canvas--submissions-history-query)
+                       (error "must not ask")))))
+          (test-refresh--run (list (test-refresh--bob '((score . 3) (attempt . 1))))))
+        (org-canvas--submissions-goto-user 5002)
+        (expect (org-entry-get (point) "GRADED_ATTEMPT") :to-be nil))))
+  (it "reports the resubmission without its history when the read fails, warning once"
+    (with-org-canvas-test-config
+      (with-grading-file (test-history--graded-bob-file)
+        (let ((warnings nil))
+          (cl-letf (((symbol-function 'org-canvas--graphql-query)
+                     (lambda (document &rest _)
+                       (when (eq document org-canvas--submissions-history-query)
+                         (error "HTTP 500"))))
+                    ((symbol-function 'org-canvas--log-warning)
+                     (lambda (_logger fmt &rest args) (push (apply #'format fmt args) warnings))))
+            (test-refresh--run (list (test-refresh--bob '((score . 3) (attempt . 2))))))
+          (expect warnings
+                  :to-equal '("[Refresh] Could not read the attempt history of assignment 1001 (HTTP 500); resubmissions reported without it")))
+        (org-canvas--submissions-goto-user 5002)
+        (expect (org-entry-get (point) "CONFLICT") :to-equal "attempt: 2 submitted after grading")
+        (expect (org-entry-get (point) "GRADED_ATTEMPT") :to-be nil)))))
+
 ;;;; Comment bank (issue #352)
 
 (defvar test-bank--live nil "The bank `test-bank--run' reads, as (ID . TEXT) pairs.")
