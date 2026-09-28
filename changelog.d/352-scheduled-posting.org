@@ -1,0 +1,13 @@
+* Added
+- #352 An assignment heading can schedule when Canvas posts its hidden
+  grades and comments: =POST_GRADES_AT= and =POST_COMMENTS_AT= go out
+  with the post-policy mutation, a pull writes them from Canvas, the
+  drift report compares them, and validate calls one without the
+  other, grades before comments, or a schedule beside
+  =POST_POLICY: automatic= an error.  A push warns when Canvas did not
+  keep the schedule it was sent (section 1 of the issue).
+
+* Fixed
+- #352 Pushing =POST_POLICY: manual= no longer deletes a posting
+  schedule set in the Canvas web UI: the push resends the schedule
+  Canvas holds.

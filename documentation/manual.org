@@ -4326,6 +4326,8 @@ After successful sync, =LAST_SYNCED= and =CANVAS_UPDATED_AT= are updated.  On th
 | =GRADING_TYPE= | enum | points, percent, letter_grade, gpa_scale, pass_fail, not_graded |  | How the assignment is graded |
 | =PUBLISHED= | boolean | true, false | true | Whether item is visible (default: true) |
 | =POST_POLICY= | enum | automatic, manual |  | Grade post policy for this assignment when it differs from the course's (manual or automatic); omit to inherit |
+| =POST_GRADES_AT= | timestamp |  |  | When Canvas posts the grades (needs POST_COMMENTS_AT and manual posting); omit to keep Canvas's schedule |
+| =POST_COMMENTS_AT= | timestamp |  |  | When Canvas posts the comments, no later than POST_GRADES_AT; omit to keep Canvas's schedule |
 | =SUBMISSION= | csv-enum | online_upload, online_url, online_text_entry, media_recording, on_paper, external_tool, none (set by Canvas: online_quiz, discussion_topic) |  | Submission type (see below) |
 | =ALLOWED_EXTENSIONS= | csv-enum |  |  | File extensions accepted for online uploads (comma separated) |
 | =MAX_ATTEMPTS= | number |  |  | Max submission attempts (-1 = unlimited) |

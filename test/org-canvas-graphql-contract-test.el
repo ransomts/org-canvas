@@ -65,6 +65,7 @@
     org-canvas--discussion-checkpoints-query
     org-canvas--discussion-checkpoints-mutation
     org-canvas--assignment-processors-query
+    org-canvas--assignment-schedules-query
     org-canvas--submissions-reports-query
     org-canvas--submissions-status-statistics-query
     org-canvas--submissions-late-status-mutation
@@ -597,15 +598,52 @@ page of discussions."
                         "DiscussionCheckpoints.dates[0]: DiscussionCheckpointDate has no input field due")))
   (it "org-canvas--assignment-push-post-policy sends what its mutation declares"
     (with-org-canvas-test-config
-      (let ((sent (org-canvas-graphql-contract--capturing
-                    (org-canvas--assignment-push-post-policy
-                     (list :title "Essay" :post-policy "manual") 1001)
-                    (org-canvas--assignment-push-post-policy
-                     (list :title "Essay" :post-policy "auto") "1002"))))
-        (expect (length sent) :to-equal 2)
+      (let* ((schedules (make-hash-table :test 'equal))
+             (sent (progn
+                     (puthash "1003" '((postGradesAt . "2026-12-01T09:00:00Z")
+                                       (postCommentsAt . "2026-11-30T17:00:00Z"))
+                              schedules)
+                     (org-canvas--assignment-schedules-forget)
+                     (cl-letf (((symbol-function 'org-canvas--assignment-schedules-fetch)
+                                (lambda () schedules)))
+                       (org-canvas-graphql-contract--capturing
+                         (org-canvas--assignment-push-post-policy
+                          (list :title "Essay" :post-policy "manual") 1001)
+                         (org-canvas--assignment-push-post-policy
+                          (list :title "Essay" :post-policy "auto") "1002")
+                         ;; A schedule kept from Canvas, and one from the heading.
+                         (org-canvas--assignment-push-post-policy
+                          (list :title "Essay" :post-policy "manual") 1003)
+                         (org-canvas--assignment-push-post-policy
+                          (list :title "Essay"
+                                :post_grades_at "2026-12-01T09:00:00Z"
+                                :post_comments_at "2026-11-30T17:00:00Z")
+                          1004))))))
+        (org-canvas--assignment-schedules-forget)
+        (expect (length sent) :to-equal 4)
+        (expect (alist-get 'gradesAt (cdr (nth 2 sent))) :to-equal "2026-12-01T09:00:00Z")
+        (expect (alist-get 'commentsAt (cdr (nth 3 sent))) :to-equal "2026-11-30T17:00:00Z")
         (dolist (call sent)
           (expect (car call) :to-be org-canvas--assignment-post-policy-mutation)
           (expect (org-canvas-graphql-contract--check-variables (car call) (cdr call)) :to-equal nil)))))
+  (it "org-canvas--assignment-schedules-fetch sends what its query declares, with and without a cursor"
+    (with-org-canvas-test-config
+      (let ((pages 0) (sent nil))
+        (cl-letf (((symbol-function 'org-canvas--graphql-query)
+                   (lambda (document &optional variables)
+                     (push (cons document variables) sent)
+                     (cl-incf pages)
+                     `((course . ((assignmentsConnection
+                                   . ((pageInfo . ((hasNextPage . ,(if (= pages 1) t :json-false))
+                                                   (endCursor . ,(if (= pages 1) "Mg" :null))))
+                                      (nodes . [])))))))))
+          (org-canvas--assignment-schedules-fetch))
+        (expect (length sent) :to-equal 2)
+        (dolist (call sent)
+          (expect (car call) :to-be org-canvas--assignment-schedules-query)
+          (expect (org-canvas-graphql-contract--check-variables (car call) (cdr call)) :to-equal nil))
+        (expect (assq 'cursor (cdr (car (last sent)))) :to-be nil)
+        (expect (alist-get 'cursor (cdar sent)) :to-equal "Mg"))))
   (it "org-canvas--settings-push-post-policy sends what its mutation declares"
     (with-org-canvas-test-config
       (let ((sent (org-canvas-graphql-contract--capturing
