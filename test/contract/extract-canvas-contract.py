@@ -83,6 +83,14 @@ MODULE_READ_SCHEMAS = {
     "assignment-groups": "AssignmentGroup",
 }
 
+# Objects org-canvas reads outside any module's pull -> (operationId,
+# component schema).  progress: a bulk grade push (update_grades) answers
+# a Progress object and the push polls query_progress until the job has
+# completed or failed (issue #382).
+RESPONSE_ONLY_SCHEMAS = {
+    "progress": ("query_progress", "Progress"),
+}
+
 BRACKET = re.compile(r"^([^\[]+)\[([^\]]+)\]")
 
 
@@ -193,6 +201,15 @@ def main():
             reads[kind] = {"operationId": read_opid,
                            "params": extract_query_params(read_op)}
         out[module] = {"pull_only": True, "reads": reads}
+
+    for name, (opid, schema_name) in RESPONSE_ONLY_SCHEMAS.items():
+        if find_op(spec, opid) is None:
+            sys.exit(f"operationId not found: {opid} ({name})")
+        fields = extract_response_fields(spec, schema_name)
+        if not fields:
+            sys.exit(f"response schema empty: {schema_name} ({name})")
+        out[name] = {"response_only": True, "operationId": opid,
+                     "response_schema": schema_name, "response_fields": fields}
 
     with open(OUT, "w") as fh:
         json.dump(out, fh, indent=2, sort_keys=True)

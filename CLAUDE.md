@@ -199,6 +199,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 
 **`decisions.org`**
 
+- a bulk grade push waits for Canvas's `update_grades` job through its Progress, within a timeout, and records baselines and offers posting only once the job completed (#382)
 - a classic quiz pulls whole into one heading — pull-at-point, the diff's `p` on an EXTRA row, adopt filling a stub, `:pull-whole-entry` — and numbers a question name it cannot tell apart (#295)
 - a heading opens its Canvas page from `:web-pages` rules its module declares (#292)
 - a hot-spot item's regions pull into the Canvas-owned `HOTSPOTS` and `HOTSPOTS_COUNT`, never pushed, compared by the drift report, the image URL never stored (#365)
@@ -215,6 +216,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 - a refresh reports what changed and keeps a departed student's heading for the work under it (#282)
 - a re-pull keeps typed scores and the summary table alone still asks (#281)
 - a resubmission names the attempt its score was given on, read from `submissionHistoriesConnection` for the resubmitted rows only and judged by `gradeMatchesCurrentSubmission` (#352)
+- a script pushes a grading file by id or name through `org-canvas-push-submission-grades` with no prompt, posting only when its own argument says so and the grades landed; `S` confirms through `org-canvas--confirm` and offers to post only interactively (#381)
 - a survey's results are its answers by text, a graded survey's included, and the quiz-results pull counts what it skipped (#347)
 - a wanted document processor declared, compared and never sent (#293)
 - assignment reads ask for their own dates and quizzes do not need to (#273)
