@@ -276,7 +276,23 @@ timestamp parser into an interactive prompt."
       (with-temp-org-buffer "* G\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
         (org-back-to-heading)
         (org-canvas--assignment-group-pull-item response (point))
-        (expect (org-entry-get (point) "WEIGHT") :to-be-truthy)))))
+        (expect (org-entry-get (point) "WEIGHT") :to-be-truthy))))
+
+  (it "the bulk grade push reads only documented Progress fields (issue #382)"
+    ;; update_grades answers a Progress object and the push polls
+    ;; query_progress; the three fields it reads must be the spec's.
+    (let* ((entry (alist-get "progress" org-canvas-contract--data nil nil #'string=))
+           (fields (alist-get "response_fields" entry nil nil #'string=))
+           (response (org-canvas-contract--response "progress")))
+      (expect (alist-get "operationId" entry nil nil #'string=) :to-equal "query_progress")
+      (dolist (field '("id" "workflow_state" "message"))
+        (expect (assoc field fields) :to-be-truthy))
+      ;; The full documented shape is recognised as a Progress object;
+      ;; its dummy state is no final one, so the job reads as pending.
+      (expect (org-canvas--submissions-progress-state response) :to-be 'pending)
+      (expect (org-canvas--submissions-progress-state
+               (cons '(workflow_state . "failed") response))
+              :to-be 'failed))))
 
 
 ;;;; Read-parameter contract (issue #273)

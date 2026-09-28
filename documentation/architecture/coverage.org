@@ -36,7 +36,7 @@ pull-at-point and prune.
 | Group categories  | yes  | yes      | yes  | yes    | yes      | Canvas can auto-create groups                                   |
 | Groups            | no   | no       | yes  | no     | no       | pull-only: each category's groups and member names, in groups.org |
 | Modules           | yes  | yes      | yes  | yes    | yes      | items reconciled inside finalize; prerequisites, sequential progress, unlock dates, completion requirements; an item moved between modules keeps its id, by GraphQL |
-| New Quizzes       | yes  | yes      | yes  | yes    | no       | items sync inside finalize; the feature list keys on the assignment; pull-at-point and adopt through a pull-only entry (#297) |
+| New Quizzes       | yes  | yes      | yes  | yes    | no       | items sync inside finalize; settings under =quiz_settings= (#321); the feature list keys on the assignment; pull-at-point, adopt and the drift report through a pull-only entry (#297, #313, #322); hot-spot items pull-only, their regions read as =HOTSPOTS= (#340, #365) |
 | Outcomes          | yes  | yes      | yes  | yes    | yes      | two levels, groups then outcomes                                |
 | Pages             | yes  | yes      | yes  | yes    | yes      | front page protected; to-do date; scheduled publish (#379)      |
 | Quizzes (classic) | yes  | yes      | yes  | yes    | yes      | questions and groups inline; a bank may be named, never managed |
@@ -45,7 +45,7 @@ pull-at-point and prune.
 | People            | no   | no       | yes  | no     | no       | pull-only roster: role, sections, enrollment state, last activity, in people.org |
 | Gradebook         | no   | no       | yes  | no     | no       | pull-only overview: current and final score, missing and late, custom gradebook columns, per student and per section, and each assignment's score spread, in gradebook.org |
 | Rubric results    | no   | no       | yes  | no     | no       | pull-only: per assignment, how the class scored on each criterion (assessed, mean, rating distribution), in rubric-results.org |
-| Quiz results      | no   | no       | yes  | no     | no       | pull-only: per classic quiz, the score spread and each question's answered, correct, difficulty, discrimination and response counts, in quiz-results.org |
+| Quiz results      | no   | no       | yes  | no     | no       | pull-only: per classic quiz, the score spread and each question's answered, correct, difficulty, discrimination and response counts, and a published survey's answers by text (#347), in quiz-results.org |
 | Grading periods   | no   | no       | yes  | no     | no       | pull-only; validate warns when a due date falls outside every period |
 | Grading schemes   | yes  | yes      | yes  | at point | yes    | created and deleted, never edited in place (Canvas has no update); account schemes listed, not pushed; validate checks the table and every GRADING_STANDARD_ID |
 | Overrides         | yes  | no       | yes  | no     | no       | dates for a section, a group or some students, reconciled from a table under each assignment |
@@ -79,9 +79,9 @@ settings file.
 | Quiz question banks            | a classic quiz group may name a bank on create (PUT ignores it) | create, list or edit a bank: there is no API, see "No API" below |
 | Rubric assessments             | read and pushed per student from the grading file's Rubric section (scores in a table, comments as items under it), the total setting the grade when the rubric is used for grading; the class's per-criterion results are pulled (see the covered table) | assess from Org outside the grading file; clear an assessment (SpeedGrader's) |
 | External tools (LTI)           | list installed tools so an assignment can name one     | install or configure a tool                  |
-| Turnitin document processor    | pull and diff the attachment as a Canvas-owned property | set it; deliberately, see decisions.org      |
+| Turnitin document processor    | pull and diff the attachment as a Canvas-owned property, read by GraphQL (#350); compare a wanted one (#293); each student's similarity and AI writing reports read into the grading file and counted in the grading queue (#351) | set it; deliberately, see decisions.org      |
 | Planner                        | a page's student to-do date                            | planner notes or the to-do list              |
-| Submissions                    | grades, comments, attachments, each student's late policy status (read and set), the grader's comment bank (read, created, rewritten, deleted on request), the attempt a resubmitted row was graded on (read), posting grades and each student's posted-at, per assignment; the course-wide score overview (gradebook.org); a classic quiz's attempts, kept and latest scores and time spent, read-only per quiz; each classic quiz's item analysis (quiz-results.org); who reviews whom on an assignment and which reviews are done, read-only per assignment | New Quiz attempts and reports, assigning peer reviewers, moderation |
+| Submissions                    | grades, comments, attachments, each student's late policy status (read and set), the grader's comment bank (read, created, rewritten, deleted on request), the attempt a resubmitted row was graded on (read), posting grades and each student's posted-at, per assignment; the grading queue's per-column counts, with Canvas's mean and median score (#352); the course-wide score overview (gradebook.org); a classic quiz's attempts, kept and latest scores and time spent, read-only per quiz; each classic quiz's item analysis (quiz-results.org); who reviews whom on an assignment and which reviews are done, read-only per assignment | New Quiz attempts and reports, assigning peer reviewers, moderation |
 
 * Never Touched
 
@@ -215,11 +215,20 @@ legacy id, and whether SpeedGrader lists an item saved with an
 =assignmentId= on other columns, are for the first live use.  So is
 the refresh's attempt history read (#352): the rule that finds the
 graded attempt by =gradeMatchesCurrentSubmission= follows the schema's
-description, not an observed resubmission.  A page's =PUBLISH_AT=
+description, not an observed resubmission.  So is an assignment's
+posting schedule (=POST_GRADES_AT=, =POST_COMMENTS_AT=, #352;
+decisions.org, "A Posting Schedule Rides the Post-Policy Mutation"):
+whether the =scheduled_feedback_releases= flag is on at Clemson, what a
+refused schedule looks like in the reply, and whether =postGradesAt=
+comes back in UTC are unknown until the first push that sets one.  So
+are the grading file's document processor reports (#351): the query's
+types were supplemented into the contract fixture from the canvas-lms
+SDL, and the pull request that added them (#362) records no live run
+against a column with a processor attached.  A page's =PUBLISH_AT=
 (#379) follows the canvas-lms source (=ScheduledPublication=): whether
 the instance has Scheduled Page Publication on, and that a push
-without =published= schedules a page rather than leaving it as it
-was, are for the first live push of one.
+without =published= schedules a page rather than leaving it as it was,
+are for the first live push of one.
 
 The browse commands' addresses (#292) were checked against the
 canvas-lms source rather than opened (decisions.org, "Every Address
