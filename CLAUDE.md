@@ -213,6 +213,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 - a posting schedule (`POST_GRADES_AT`, `POST_COMMENTS_AT`) rides the post-policy mutation: both times or neither, manual posting implied, a schedule Canvas holds resent rather than wiped, read by its own course-wide GraphQL query (#352)
 - a pull takes its heading by name too, with no prompt, through the at-point pull's own pieces (#346)
 - a push compares what Canvas stored with what it sent, and a new survey says whether it is anonymous (#349)
+- a push of one assignment heading, at point or by name, reconciles that heading's overrides table through `:after-heading` and reports the counts; an override already carrying its row's dates is not PUT (#380)
 - a push takes its heading by name and the at-point runtime records its outcome (#287)
 - a refresh reports what changed and keeps a departed student's heading for the work under it (#282)
 - a re-pull keeps typed scores and the summary table alone still asks (#281)

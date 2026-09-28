@@ -4527,6 +4527,74 @@ Body.
           (expect finalized :to-be nil)
           (expect (org-entry-get (point) "CANVAS_ID") :to-be nil))))))
 
+(describe "org-canvas--push-at-point-runtime :after-heading (issue #380)"
+  (it "runs after a synced push, on the heading, and keeps its report"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer "* P\nBody.\n"
+        (org-back-to-heading)
+        (let ((seen nil) ctx)
+          (cl-letf (((symbol-function 'display-buffer) #'ignore)
+                    ((symbol-function 'message) #'ignore))
+            (setq ctx (org-canvas--push-at-point-runtime
+                       (test-org-canvas-heading-spec
+                        :after-heading
+                        (lambda (c)
+                          (setq seen (list (org-get-heading t t t t)
+                                           (org-entry-get (point) "CANVAS_ID")
+                                           (plist-get c :outcome)))
+                          '(:note "extra sent"))))))
+          (expect seen :to-equal '("P" "777" synced))
+          (expect (plist-get ctx :heading-report) :to-equal '(:note "extra sent"))))))
+
+  (it "runs after an unchanged push and under a dry run"
+    (with-org-canvas-test-config
+      (dolist (push (list (lambda (&rest _) 'skip)
+                          (lambda (&rest _) org-canvas--dry-run-response)))
+        (with-temp-org-buffer "* P\n"
+          (org-back-to-heading)
+          (let ((ran 0))
+            (cl-letf (((symbol-function 'display-buffer) #'ignore)
+                      ((symbol-function 'message) #'ignore))
+              (org-canvas--push-at-point-runtime
+               (test-org-canvas-heading-spec
+                :push push :after-heading (lambda (_) (cl-incf ran) nil))))
+            (expect ran :to-equal 1))))))
+
+  (it "does not run when the push stopped at a conflict or a duplicate"
+    (with-org-canvas-test-config
+      (dolist (stop '(conflict duplicate pulled))
+        (with-temp-org-buffer "* P\n"
+          (org-back-to-heading)
+          (let ((ran nil) ctx)
+            (cl-letf (((symbol-function 'display-buffer) #'ignore)
+                      ((symbol-function 'message) #'ignore))
+              (setq ctx (org-canvas--push-at-point-runtime
+                         (test-org-canvas-heading-spec
+                          :push (lambda (&rest _) stop)
+                          :after-heading (lambda (_) (setq ran t) '(:note "x"))))))
+            (expect ran :to-be nil)
+            (expect (plist-get ctx :heading-report) :to-be nil)))))))
+
+(describe "org-canvas-sync-headings heading reports (issue #380)"
+  (after-each
+    (setq org-canvas--sync-heading-fns
+          (assoc-delete-all "widget" org-canvas--sync-heading-fns)))
+
+  (it "merges the heading report into the result and prints its note"
+    (let ((messages nil))
+      (org-canvas--sync-register-heading-fn
+       "widget" (lambda (_target _by)
+                  (list :outcome 'synced
+                        :heading-report '(:overrides (0 1 0)
+                                          :note "overrides 0 created, 1 updated, 0 deleted"))))
+      (cl-letf (((symbol-function 'message)
+                 (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
+        (let ((result (car (org-canvas-sync-headings '((widget . "A"))))))
+          (expect (plist-get result :overrides) :to-equal '(0 1 0))
+          (expect (plist-get result :outcome) :to-be 'synced)))
+      (expect (nth 1 messages)
+              :to-equal "widget 'A': synced; overrides 0 created, 1 updated, 0 deleted"))))
+
 (describe "org-canvas-define-sync sync-by-heading generation"
   (it "generates org-canvas-sync-page beside the at-point command"
     (expect (fboundp 'org-canvas-sync-page) :to-be-truthy)

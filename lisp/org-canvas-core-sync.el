@@ -660,7 +660,7 @@ the baseline re-read from it (issue #124)."
 (defconst org-canvas--sync-spec-keys
   '(:feature :file :query :parse :build :push :finalize
     :pull-item-fn :title-key :hash-extra :hash :dry-run :prepare :after-sync
-    :id-property)
+    :id-property :after-heading)
   "Keys a sync spec may carry.
 A sync spec is the plist `org-canvas-define-sync' builds from its
 options and hands to `org-canvas--sync-run-pipeline' and
@@ -681,7 +681,8 @@ the first entry, whose result the context keeps as :prepared,
 :after-sync the hook run on the context before the summary, and
 :id-property the Org property the stamp lives in (CANVAS_ID unless the
 module says otherwise), which a sync by heading matches an id against
-\(issue #287).")
+\(issue #287), and :after-heading the function a push of one heading
+runs after it (see `org-canvas--push-at-point-after-heading').")
 
 (defun org-canvas--sync-entry-hash (payload data ctx)
   "Return the change-detection hash for PAYLOAD and DATA under CTX, or nil.
@@ -904,6 +905,14 @@ ARGS is a plist with the following keys:
              push at point); its result is kept in the context as :prepared
              for :push and :finalize to read.  May signal, which stops the
              run before anything is sent
+  :after-heading - Optional function of the run context, run by the push at
+                  point and the push by heading only (never by the whole-file
+                  sync), after the heading synced, was unchanged or was
+                  previewed, with point on it; for state that lives under the
+                  heading and is pushed apart from its payload (an
+                  assignment's overrides table, issue #380).  Its plist result
+                  is merged into the `org-canvas-sync-headings' result, whose
+                  :note the closing lines print
   :after-sync - Optional function of the run context, run once after every
                 entry is processed, for reconciliation that needs remote
                 state and so cannot live in the offline validator.  Must
@@ -949,6 +958,7 @@ Example usage:
          (pull-item-fn (plist-get args :pull-item-fn))
          (hash-extra-fn (plist-get args :hash-extra))
          (after-sync-fn (plist-get args :after-sync))
+         (after-heading-fn (plist-get args :after-heading))
          (hash-fn (plist-get args :hash))
          (dry-run-mode (plist-get args :dry-run))
          (prepare-fn (plist-get args :prepare))
@@ -977,7 +987,8 @@ Example usage:
                             :title-key ,(or title-key :title)
                             :pull-item-fn ,pull-item-fn
                             :hash-extra ,hash-extra-fn :hash ,hash-fn
-                            :prepare ,prepare-fn)))
+                            :prepare ,prepare-fn
+                            :after-heading ,after-heading-fn)))
     (unless file-expr (error "org-canvas-define-sync: :file is required"))
     (unless parse-fn (error "org-canvas-define-sync: :parse is required"))
     (unless build-fn (error "org-canvas-define-sync: :build is required"))
@@ -2135,6 +2146,9 @@ to every later push at point (issue #141)."
   (org-back-to-heading t)
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (let* ((feature-name (plist-get spec :feature))
+         ;; Advances past the #+LAST_SYNCED header finalize may insert
+         ;; above a file's first heading, where point would stay behind.
+         (heading (copy-marker (point) t))
          (parse-fn (plist-get spec :parse))
          (build-fn (plist-get spec :build))
          (push-fn (plist-get spec :push))
@@ -2204,7 +2218,23 @@ to every later push at point (issue #141)."
           (plist-put ctx :outcome 'synced)
           (org-canvas--log-info org-canvas--logger "[Sync] '%s' synced successfully" title)
           (message "%s '%s' synced." (capitalize feature-name) title)))))
+    (org-canvas--push-at-point-after-heading spec ctx heading)
+    (set-marker heading nil)
     ctx))
+
+(defun org-canvas--push-at-point-after-heading (spec ctx heading)
+  "Run SPEC's :after-heading on CTX when the heading's push went through.
+The push went through when CTX's :outcome is `synced', `unchanged' or
+`dry-run': a heading stopped at a conflict or a duplicate sends nothing
+more.  The function is called with point on HEADING, a marker, and
+CTX; its result is kept as CTX's :heading-report and the buffer is
+saved, since it may have restamped the heading (issue #380)."
+  (let ((fn (plist-get spec :after-heading)))
+    (when (and fn (memq (plist-get ctx :outcome) '(synced unchanged dry-run)))
+      (goto-char heading)
+      (org-back-to-heading t)
+      (plist-put ctx :heading-report (funcall fn ctx))
+      (org-canvas--save-buffer))))
 
 (defun org-canvas--push-at-point-report-stop (feature-name title outcome)
   "Say why the single-entry push of TITLE stopped with OUTCOME.
@@ -2382,13 +2412,16 @@ or (FEATURE TARGET BY); anything else is a `user-error'.
 (defun org-canvas--sync-headings-run-one (fn feature target by &optional label)
   "Call FN, the sync by heading of FEATURE, on TARGET and BY; return a result.
 The result is a plist (:feature :target :outcome), :outcome the
-context's, or `failed' with :error naming what went wrong: one
+context's, followed by its :heading-report (an assignment's override
+counts, issue #380), or `failed' with :error naming what went wrong: one
 heading's failure is reported and the next one is pushed, as in a full
 run.  LABEL (default \"Sync headings\") tags the log line; the pull by
 heading runs its entries here too."
   (condition-case err
-      (list :feature feature :target target
-            :outcome (plist-get (funcall fn target by) :outcome))
+      (let ((ctx (funcall fn target by)))
+        (append (list :feature feature :target target
+                      :outcome (plist-get ctx :outcome))
+                (plist-get ctx :heading-report)))
     (error
      (org-canvas--log-error org-canvas--logger "[%s] %s '%s' failed: %s"
        (or label "Sync headings") feature target (error-message-string err))
@@ -2400,8 +2433,9 @@ heading runs its entries here too."
 One line per heading, redacted since an error's text is not the
 package's own, then one line of counts."
   (dolist (r results)
-    (org-canvas--user-message "%s '%s': %s%s"
+    (org-canvas--user-message "%s '%s': %s%s%s"
       (plist-get r :feature) (plist-get r :target) (plist-get r :outcome)
+      (if (plist-get r :note) (format "; %s" (plist-get r :note)) "")
       (if (plist-get r :error) (format " — %s" (plist-get r :error)) "")))
   (let ((count (lambda (o) (cl-count o results :key (lambda (r) (plist-get r :outcome))))))
     (message "Synced %d heading(s): %d synced, %d unchanged, %d stopped, %d failed"
@@ -2423,7 +2457,10 @@ with nothing sent; after that a failed heading is reported and the
 next is pushed.  Requests are paced as any sync's are
 \\(`org-canvas-request-min-interval').  Return one plist per entry,
 \\(:feature :target :outcome), with :error on a failure — the same
-words the closing lines print.  For example:
+words the closing lines print.  An assignment with a `#+NAME:
+overrides' table also reconciles that table and adds :overrides, its
+\(CREATED UPDATED DELETED) counts or `failed', and a :note saying so
+\(issue #380).  For example:
 
   (org-canvas-sync-headings
    \\='((assignment . \"R5: Framework Strengths\")

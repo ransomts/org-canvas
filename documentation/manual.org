@@ -1888,7 +1888,16 @@ is deleted.  An override write moves the assignment's =updated_at=, so the
 sync restamps the heading's =CANVAS_UPDATED_AT= after it and the next push
 of that heading is not called a conflict; a heading that had already
 drifted from Canvas before the override sync keeps its stamp, so a web-UI
-edit still reports.
+edit still reports.  An override that already carries its row's
+dates is left alone, so a run writes only the rows that changed.
+
+A push of one assignment — =M-x org-canvas-sync-assignment-at-point=,
+=org-canvas-sync-assignment= or an =org-canvas-sync-headings= entry —
+also reconciles that heading's table, and only that one, once the
+assignment itself went through (synced, unchanged or previewed).  An
+edit to the heading's due time and to one section's row is then a
+single push; =org-canvas-sync-overrides= remains the command for every
+table in the file.
 
 An extension never reads as the assignment's own date.  Canvas answers
 a teacher's read of an assignment with the most lenient override's
@@ -4193,7 +4202,7 @@ Setting different due dates for different course sections.
 
 3. *Sync.*  Run =M-x org-canvas-sync=.  Sections are synced first (Tier 0), then assignments (Tier 1), then overrides (Tier 1.75).
 
-4. *Modify overrides.*  Edit dates in the table, add new rows, or remove rows.  The override sync reconciles against Canvas: new rows are created, changed rows are updated, and removed rows are deleted.
+4. *Modify overrides.*  Edit dates in the table, add new rows, or remove rows.  The override sync reconciles against Canvas: new rows are created, changed rows are updated, unchanged rows are left alone, and removed rows are deleted.  For one assignment, push its heading (=M-x org-canvas-sync-assignment-at-point=): the table under it goes with it.
 
 5. *Give one student an extension.*  Pull the roster once (=M-x org-canvas-pull-people=), then add a row naming them; a group's own dates work the same way through =groups.org=:
 
@@ -4335,7 +4344,7 @@ The at-point commands take their target from point, which a script does not have
    (assignment "2563805" canvas-id)))
 #+end_src
 
-It prints one line per heading and a closing count, and returns one plist per entry (=:feature=, =:target=, =:outcome=, and =:error= on a failure).  Requests are paced as any sync's are (=org-canvas-request-min-interval=), so the =sleep-for= between pushes that hand-written scripts carried is not needed.  With =org-canvas--dry-run= bound, a push by heading sends nothing and stamps nothing, and its outcome is =dry-run=.  So, from a shell:
+It prints one line per heading and a closing count, and returns one plist per entry (=:feature=, =:target=, =:outcome=, and =:error= on a failure).  An assignment whose heading has an overrides table also carries =:overrides=, its =(CREATED UPDATED DELETED)= counts or =failed=, and its line says so: =assignment 'Attendance 02': synced; overrides 0 created, 1 updated, 0 deleted=.  Requests are paced as any sync's are (=org-canvas-request-min-interval=), so the =sleep-for= between pushes that hand-written scripts carried is not needed.  With =org-canvas--dry-run= bound, a push by heading sends nothing and stamps nothing, and its outcome is =dry-run=.  So, from a shell:
 
 #+begin_src sh
 emacs --batch -l ~/.emacs.d/init.el \
