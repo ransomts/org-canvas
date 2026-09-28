@@ -4144,7 +4144,7 @@ SPEC is a plist: :remote, the module's item list; :home, the module
 `moduleItem' names (a list is answered one element per read, the last
 repeating); :live, whether the REST read of the item there succeeds;
 :reply, what the move mutation answers, or `fail' to signal.  Binds
-`requests' ((METHOD URL)), `mutations' (variables sent), `homes' (the
+`requests' ((METHOD URL DATA)), `mutations' (variables sent), `homes' (the
 reads' variables) and `ctx'."
   (declare (indent 1))
   `(let ((requests nil) (mutations nil) (homes nil)
@@ -4153,8 +4153,8 @@ reads' variables) and `ctx'."
      (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
                 (lambda (&rest _) (plist-get spec :remote)))
                ((symbol-function 'org-canvas-api-request)
-                (lambda (method url &rest _)
-                  (push (list method url) requests)
+                (lambda (method url &rest args)
+                  (push (list method url (plist-get args :data)) requests)
                   (cond
                    ((and (memq method '(GET PUT))
                          (string-match "/items/\\([0-9]+\\)$" url))
@@ -4386,6 +4386,179 @@ reads' variables) and `ctx'."
           (org-canvas--module-sync-items 100 (point) default-directory ctx))
         (expect mutations :to-be nil)
         (expect (test-org-canvas-352--sent-p requests 'DELETE ".") :to-be nil)))))
+
+(defun test-org-canvas-352--requirement-sent (requests pattern)
+  "Return the completion requirement a PUT in REQUESTS to PATTERN carried.
+A cons (TYPE . MIN-SCORE) from the first such PUT's body, or nil."
+  (cl-some (lambda (r)
+             (let* ((data (nth 2 r))
+                    (item (and (hash-table-p data) (gethash "module_item" data)))
+                    (req (and item (gethash "completion_requirement" item))))
+               (when (and (eq (car r) 'PUT) (string-match-p pattern (cadr r)) req)
+                 (cons (gethash "type" req) (gethash "min_score" req)))))
+           requests))
+
+(defun test-org-canvas-352--with-requirement (text requirement &optional min-score)
+  "Return TEXT with REQUIREMENT (and MIN-SCORE) on the heading of item 55."
+  (replace-regexp-in-string
+   ":CANVAS_ID: 55\n"
+   (concat ":CANVAS_ID: 55\n:COMPLETION_REQUIREMENT: " requirement "\n"
+           (if min-score (format ":MIN_SCORE: %s\n" min-score) ""))
+   (replace-regexp-in-string "^:ITEM_TYPE: SubHeader\n:CANVAS_ID: 55\n"
+                             ":EXTERNAL_URL: https://example.edu/check\n:CANVAS_ID: 55\n"
+                             text)
+   t t))
+
+(describe "a moved item gets its completion requirement back (issue #352)"
+  ;; Verified live 2026-09-27: reorderModuleItems drops the item's
+  ;; requirement, which the module it left kept for it.
+  (it "sets it on the new module when the old module moves the item"
+    (with-org-canvas-test-config
+      (test-org-canvas-352--with-move
+          (:remote '(((id . 55) (title . "Check 3")))
+           :reply '((reorderModuleItems . ((module . ((_id . "200"))) (errors . nil)))))
+        (with-temp-org-buffer (test-org-canvas-352--with-requirement
+                               test-org-canvas-352--departed "min_score" 7)
+          (org-back-to-heading)
+          (org-canvas--module-sync-items 100 (point) default-directory ctx))
+        (expect (length mutations) :to-equal 1)
+        (expect (test-org-canvas-352--requirement-sent requests "modules/200/items/55$")
+                :to-equal '("min_score" . 7)))))
+
+  (it "sets it on this module when this module moves the item in"
+    (with-org-canvas-test-config
+      (test-org-canvas-352--with-move (:remote nil :home "300" :live t
+                                       :reply test-org-canvas-352--moved-reply)
+        (with-temp-org-buffer (test-org-canvas-352--with-requirement
+                               test-org-canvas-352--arrived "must_view")
+          (org-back-to-heading)
+          (org-canvas--module-sync-items 100 (point) default-directory ctx))
+        (expect (length mutations) :to-equal 1)
+        ;; Once right after the move, and again with the item's own PUT.
+        (expect (test-org-canvas-352--requirement-sent requests "modules/100/items/55$")
+                :to-equal '("must_view"))
+        (expect (cl-count-if (lambda (r) (and (eq (car r) 'PUT)
+                                              (string-match-p "modules/100/items/55$" (cadr r))))
+                             requests)
+                :to-equal 2))))
+
+  (it "sets it even when the item moved in is left pending by its link"
+    (with-org-canvas-test-config
+      (test-org-canvas-352--with-move (:remote nil :home "300" :live t
+                                       :reply test-org-canvas-352--moved-reply)
+        (with-temp-org-buffer "* Week 1
+:PROPERTIES:
+:CANVAS_ID: 100
+:END:
+** [[file:no-such-assignments.org::*Essay][Essay]]
+:PROPERTIES:
+:CANVAS_ID: 55
+:COMPLETION_REQUIREMENT: must_submit
+:END:
+"
+          (org-back-to-heading)
+          (org-canvas--module-sync-items 100 (point) default-directory ctx))
+        (expect (length mutations) :to-equal 1)
+        (expect (test-org-canvas-352--requirement-sent requests "modules/100/items/55$")
+                :to-equal '("must_submit")))))
+
+  (it "sends nothing more when the heading declares no requirement"
+    (with-org-canvas-test-config
+      (test-org-canvas-352--with-move
+          (:remote '(((id . 55) (title . "Check 3")))
+           :reply '((reorderModuleItems . ((module . ((_id . "200"))) (errors . nil)))))
+        (with-temp-org-buffer test-org-canvas-352--departed
+          (org-back-to-heading)
+          (org-canvas--module-sync-items 100 (point) default-directory ctx))
+        (expect (length mutations) :to-equal 1)
+        (expect (test-org-canvas-352--sent-p requests 'PUT "modules/200/items/55$")
+                :to-be nil))))
+
+  (it "names the requirement it would set in a dry run, and sends nothing"
+    (with-org-canvas-test-config
+      (let ((lines nil))
+        (test-org-canvas-352--with-move
+            (:remote '(((id . 55) (title . "Check 3")))
+             :reply org-canvas--dry-run-response)
+          (cl-letf (((symbol-function 'org-canvas--log-info)
+                     (lambda (_logger fmt &rest args)
+                       (push (apply #'format fmt args) lines))))
+            (let ((org-canvas--dry-run t))
+              (with-temp-org-buffer (test-org-canvas-352--with-requirement
+                                     test-org-canvas-352--departed "must_view")
+                (org-back-to-heading)
+                (org-canvas--module-sync-items 100 (point) default-directory ctx))))
+          (expect (test-org-canvas-352--sent-p requests 'PUT ".") :to-be nil)
+          (expect (cl-find-if (lambda (l) (string-match-p
+                                           "\\[DRY-RUN\\] Would set completion requirement must_view on item 55 'Check 3' in module 200"
+                                           l))
+                              lines)
+                  :to-be-truthy)))))
+
+  (it "keeps the move and warns when the requirement cannot be set"
+    (with-org-canvas-test-config
+      (let ((warnings nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _) (error "HTTP 500")))
+                  ((symbol-function 'org-canvas--log-warning)
+                   (lambda (_logger fmt &rest args)
+                     (push (apply #'format fmt args) warnings))))
+          (expect (org-canvas--module-item-restore-requirement
+                   200 55 '(:completion-requirement "must_view") "Check 3")
+                  :to-be nil))
+        (expect (car warnings)
+                :to-match "Item 55 'Check 3' moved to module 200, but its completion requirement must_view could not be set"))))
+
+  (it "sets it when the new module's PAYLOAD_HASH matches and the runner skips it"
+    (let ((temp-dir (make-temp-file "modules-352" t)))
+      (unwind-protect
+          (let* ((modules-file (expand-file-name "modules.org" temp-dir))
+                 (requests nil) (mutations nil))
+            (with-temp-file modules-file
+              (insert (test-org-canvas-352--with-requirement
+                       test-org-canvas-352--departed "must_view")))
+            (let ((org-canvas-modules-file modules-file))
+              ;; Week 2's stored hash is what it hashes to now, so the
+              ;; runner skips it: only Week 1's sync can set the requirement.
+              (with-current-buffer (find-file-noselect modules-file)
+                (goto-char (point-min))
+                (re-search-forward "^\\* Week 2")
+                (org-canvas--module-refresh-payload-hash)
+                (save-buffer))
+              (with-org-canvas-test-config
+                (with-sync-test-env
+                  (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                             (lambda (_method url &rest _)
+                               (cond ((string-match-p "modules/100/items" url)
+                                      '(((id . 55) (title . "Check 3"))))
+                                     ((string-match-p "modules/200/items" url)
+                                      '(((id . 60) (title . "Intro"))))
+                                     (t '(((id . 100) (name . "Week 1"))
+                                          ((id . 200) (name . "Week 2")))))))
+                            ((symbol-function 'org-canvas-api-request)
+                             (lambda (method url &rest args)
+                               (push (list method url (plist-get args :data)) requests)
+                               (cond ((string-match "modules/\\([0-9]+\\)$" url)
+                                      `((id . ,(string-to-number (match-string 1 url)))
+                                        (name . "Week")))
+                                     ((string-match "/items/\\([0-9]+\\)$" url)
+                                      `((id . ,(string-to-number (match-string 1 url)))))
+                                     (t '((id . 1))))))
+                            ((symbol-function 'org-canvas--graphql-mutate)
+                             (lambda (_what _document variables)
+                               (push variables mutations)
+                               '((reorderModuleItems
+                                  . ((module . ((_id . "200"))) (errors . nil)))))))
+                    (org-canvas-sync-modules)))))
+            ;; Week 2 itself was skipped: no PUT of the module.
+            (expect (test-org-canvas-352--sent-p requests 'PUT "modules/200$") :to-be nil)
+            (expect (test-org-canvas-352--sent-p requests 'PUT "modules/100$") :to-be-truthy)
+            (expect (length mutations) :to-equal 1)
+            (expect (test-org-canvas-352--requirement-sent requests "modules/200/items/55$")
+                    :to-equal '("must_view")))
+        (let ((buf (find-buffer-visiting (expand-file-name "modules.org" temp-dir))))
+          (when buf (with-current-buffer buf (set-buffer-modified-p nil)) (kill-buffer buf)))
+        (delete-directory temp-dir t)))))
 
 (describe "org-canvas--module-item-move-problem (issue #352)"
   (it "accepts only a reply naming the module the item landed in"

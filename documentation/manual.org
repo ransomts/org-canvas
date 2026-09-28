@@ -1249,6 +1249,10 @@ and falls back to delete-and-create when that fails (#105):
   another module's heading does, is moved to that module.  If that module
   has no =CANVAS_ID= yet, the item is left where it is until the new module
   is created and its own sync moves it in.  Either sync order works.
+- Canvas drops an item's completion requirement when it moves the item, so
+  right after each move org-canvas sets the requirement the heading
+  declares (=COMPLETION_REQUIREMENT=, =MIN_SCORE=) on the item in its new
+  module.
 - When the move cannot be made -- Canvas refuses it, the request fails, the
   item cannot be found -- the log names the reason and the sync does what it
   did before: it creates the item in the new module with a new id,

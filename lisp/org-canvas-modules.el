@@ -610,6 +610,17 @@ org-canvas feature — a file, page, assignment, quiz or discussion —
 and publishing the item publishes that object.  See
 `org-canvas--module-item-build-payload'.")
 
+(defun org-canvas--module-item-requirement (data)
+  "Return the completion_requirement object DATA asks for, or nil.
+A hash table of the requirement type and, when DATA carries one, the
+minimum score; nil when DATA has no :completion-requirement."
+  (when (plist-get data :completion-requirement)
+    (let ((requirement (make-hash-table :test 'equal)))
+      (puthash "type" (plist-get data :completion-requirement) requirement)
+      (when (plist-get data :min-score)
+        (puthash "min_score" (plist-get data :min-score) requirement))
+      requirement)))
+
 (defun org-canvas--module-item-build-payload (data position)
   "Convert module item DATA to Canvas payload at POSITION."
   (let ((item-type (plist-get data :type))
@@ -655,12 +666,8 @@ and publishing the item publishes that object.  See
       ;; field is a nested object; the bracketed form-encoded spelling the
       ;; API reference shows was a literal key Canvas ignored without a
       ;; word, so no requirement ever landed (issue #198).
-      (when (plist-get data :completion-requirement)
-        (let ((requirement (make-hash-table :test 'equal)))
-          (puthash "type" (plist-get data :completion-requirement) requirement)
-          (when (plist-get data :min-score)
-            (puthash "min_score" (plist-get data :min-score) requirement))
-          (puthash "completion_requirement" requirement item)))
+      (when-let* ((requirement (org-canvas--module-item-requirement data)))
+        (puthash "completion_requirement" requirement item))
 
       (org-canvas--log-debug org-canvas--logger "[Stage 2: Transform] Item payload complete")
 
@@ -1316,7 +1323,8 @@ Scans the current buffer's level-2 headings for one carrying ITEM-ID
 as its CANVAS_ID under another module heading.  The answer is a plist:
 :title, that module heading's title; :module-id, its CANVAS_ID (nil
 before its first sync); :position, the claiming heading's 1-based
-position among its siblings."
+position among its siblings; :requirement, the completion requirement
+it declares (`org-canvas--module-item-requirement-props')."
   (let ((here (save-excursion (goto-char module-pom) (org-back-to-heading t) (point)))
         (found nil))
     (save-excursion
@@ -1324,12 +1332,14 @@ position among its siblings."
        (lambda ()
          (when (and (not found)
                     (equal (org-entry-get (point) "CANVAS_ID") item-id))
-           (let ((position (org-canvas--module-item-position (point))))
+           (let ((position (org-canvas--module-item-position (point)))
+                 (requirement (org-canvas--module-item-requirement-props (point))))
              (save-excursion
                (when (and (org-up-heading-safe) (/= (point) here))
                  (setq found (list :title (org-get-heading t t t t)
                                    :module-id (org-entry-get (point) "CANVAS_ID")
-                                   :position position)))))))
+                                   :position position
+                                   :requirement requirement)))))))
        "LEVEL=2" 'file))
     found))
 
@@ -1366,6 +1376,59 @@ position among its siblings."
 ;; mutation that failed in transit is checked by reading the item's
 ;; module again before falling back, so an item Canvas did move is not
 ;; created a second time.
+
+;; A move loses the item's completion requirement: Canvas keeps the
+;; requirements on the module, keyed by item id, and the old module's
+;; list goes with the old module (verified live 2026-09-27).  So a move
+;; that went out is followed at once by a PUT of the requirement the
+;; heading declares (`org-canvas--module-item-restore-requirement'), in
+;; either order, rather than left to the new module's own item PUT: that
+;; PUT does not happen when the new module's PAYLOAD_HASH matches and the
+;; runner skips it, nor for an item heading still pending its link.
+
+(defun org-canvas--module-item-requirement-props (pom)
+  "Return the completion requirement the item heading at POM declares.
+A plist (:completion-requirement TYPE :min-score N), shaped as the
+parse gives it, or nil for a SubHeader or a heading that declares
+none."
+  (let ((type (org-entry-get pom "COMPLETION_REQUIREMENT"))
+        (min-score (org-canvas--interpret-number (org-entry-get pom "MIN_SCORE"))))
+    (when (and type (not (equal (org-entry-get pom "ITEM_TYPE") "SubHeader")))
+      (list :completion-requirement type
+            :min-score (when (and min-score (> min-score 0)) min-score)))))
+
+(defun org-canvas--module-item-restore-requirement (module-id id wanted title)
+  "Set the completion requirement WANTED on item ID, TITLE, in MODULE-ID.
+WANTED is a plist carrying :completion-requirement and :min-score, as
+a parsed item heading does; nothing is sent when it names none.  Called
+right after a move, which drops the requirement (issue #352).  A dry
+run logs what it would set.  A failure is a warning: the move stands,
+and the new module's next sync sets the requirement with its item PUT.
+Returns non-nil when the PUT went out."
+  (when-let* ((requirement (org-canvas--module-item-requirement wanted)))
+    (if org-canvas--dry-run
+        (progn
+          (org-canvas--log-info org-canvas--logger
+            "[DRY-RUN] Would set completion requirement %s on item %s '%s' in module %s"
+            (gethash "type" requirement) id title module-id)
+          nil)
+      (condition-case err
+          (let ((item (make-hash-table :test 'equal))
+                (body (make-hash-table :test 'equal)))
+            (puthash "completion_requirement" requirement item)
+            (puthash "module_item" item body)
+            (org-canvas-api-request
+             'PUT (org-canvas-api-course-endpoint "modules/%s/items/%s" module-id id)
+             :data body)
+            (org-canvas--log-info org-canvas--logger
+              "[Module Item] Set completion requirement %s on item %s '%s' in module %s again after its move"
+              (gethash "type" requirement) id title module-id)
+            t)
+        (error
+         (org-canvas--log-warning org-canvas--logger
+           "[Module Item] Item %s '%s' moved to module %s, but its completion requirement %s could not be set (%s); the next sync of that module sets it"
+           id title module-id (gethash "type" requirement) (error-message-string err))
+         nil)))))
 
 (defconst org-canvas--module-item-home-query
   "query ($id: ID!) { moduleItem(id: $id) { _id module { _id } } }"
@@ -1493,8 +1556,12 @@ Nothing is foreign while REMOTE is `unknown'."
 (defun org-canvas--module-item-move-here (data module-id position &optional ctx)
   "Move DATA's item into module MODULE-ID from the module holding it.
 POSITION is where it lands; CTX is the run context, which records the
-move.  Returns non-nil when DATA keeps its id: the item moved (or
-would, in a dry run), now or earlier this run."
+move.  A move is followed by the completion requirement DATA's heading
+declares, which Canvas drops, read from the heading so that an item
+still pending its link gets it too
+\(`org-canvas--module-item-restore-requirement').
+Returns non-nil when DATA keeps its id: the item moved (or would, in
+a dry run), now or earlier this run."
   (let ((id (format "%s" (plist-get data :canvas-id)))
         (here (format "%s" module-id)))
     (or (org-canvas--module-item-relocated-p ctx id here)
@@ -1503,6 +1570,10 @@ would, in a dry run), now or earlier this run."
                      (org-canvas--module-item-move
                       id from here position (plist-get data :title)))
             (org-canvas--module-item-note-relocated ctx id here)
+            (org-canvas--module-item-restore-requirement
+             here id (org-canvas--module-item-requirement-props
+                      (or (plist-get data :pom) (point)))
+             (plist-get data :title))
             t)))))
 
 (defun org-canvas--module-item-settle-foreign-id (data module-id remote position
@@ -1520,7 +1591,9 @@ created here (`org-canvas--module-item-disown-foreign-id', issue #105)."
 (defun org-canvas--module-item-move-departed (module-id item claim &optional ctx)
   "Move ITEM of module MODULE-ID to the module CLAIM names.
 CLAIM is what `org-canvas--module-item-claim-elsewhere' returned; CTX
-the run context.  Returns non-nil when ITEM is settled without a
+the run context.  A move is followed by the completion requirement the
+claiming heading declares, which Canvas drops, since the new module's
+own sync may skip the item.  Returns non-nil when ITEM is settled without a
 delete: moved (or would be, in a dry run), moved in earlier this run,
 or left for its new module to move in because that module has no
 Canvas id yet.  nil means the move failed, and the caller deletes."
@@ -1536,6 +1609,8 @@ Canvas id yet.  nil means the move failed, and the caller deletes."
       t)
      ((org-canvas--module-item-move id module-id to (plist-get claim :position) title)
       (org-canvas--module-item-note-relocated ctx id to)
+      (org-canvas--module-item-restore-requirement
+       to id (plist-get claim :requirement) title)
       t))))
 
 (defun org-canvas--module-delete-departed-item (module-id item new-home)

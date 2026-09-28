@@ -230,15 +230,17 @@ settings page after a push of: a single attempt, unlimited attempts
 =SCORING_POLICY= set on a heading without =ALLOWED_ATTEMPTS= (a
 =multiple_attempts= object carrying only =score_to_keep=).
 
-The module item move (#352) has only been checked against the
-canvas-lms source and schema: =reorderModuleItems=, one item per call,
+The module item move (#352), =reorderModuleItems=, one item per call,
 with =oldModuleId= and =targetPosition= (decisions.org, "A Module Item
-Moved Between Modules Keeps Its Id").  The first time a sync moves an
-item for real, check in the browser that the item sits in its new
-module at the heading's place, that the old module no longer shows it,
-that its completion requirement came along (the sync's PUT sets it on
-the new module; the old module's requirement list may still name the
-id), and that a student's progress on the item survived.
+Moved Between Modules Keeps Its Id"), was verified live on 2026-09-27
+on course 297530, with the mutation sent by hand: it was accepted from a
+teacher token, the item kept its id, landed at =targetPosition= and
+left its source module, and =moduleItem(id:)= resolved.  Its completion
+requirement was dropped by Canvas; the sync now restores it with a PUT
+right after every move.  The module sync has not run a move for real.
+The first time it does, check in the browser that the requirement is
+back on the item in its new module, and that a student's progress on
+the item survived.
 
 What remains in "Never Touched" is rarely set at the course level or
 belongs to the institution; nothing there is known to have bitten a
