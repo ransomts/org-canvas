@@ -1,0 +1,10 @@
+* Added
+- #352 A grading file carries each student's late policy status as
+  =LATE_STATUS= (=late=, =missing=, =extended= or =none=) with a
+  =CANVAS_LATE_STATUS= baseline, read by the pull and every refresh.
+  =S= pushes a changed one through GraphQL's
+  =updateSubmissionGradeStatus= and records what Canvas stored,
+  =DAYS_LATE= included; a typed status survives a refresh, is marked
+  =CONFLICT= when Canvas moved under it, and a value Canvas does not
+  take stops the push before anything is sent (section 4 of the
+  issue).
