@@ -76,10 +76,10 @@ and `updateDiscussionTopic` mutation (discussions), and the
 document-processor query (assignments, issue #350), the grading
 queue's score statistics query (submissions status, issue #352), the
 posting schedules query (assignments, issue #352), the grading file's
-`updateSubmissionGradeStatus` mutation and its comment bank query and
-create, update and delete mutations (submissions, issue #352), and the
-module item home query and `reorderModuleItems` mutation (modules,
-issue #352).
+`updateSubmissionGradeStatus` mutation, its comment bank query and
+create, update and delete mutations, and its attempt history query
+(submissions, issue #352), and the module item home query and
+`reorderModuleItems` mutation (modules, issue #352).
 `org-canvas-graphql-contract-test.el` checks each — every selected field
 exists on its parent type and is not deprecated, every argument exists and
 a variable's declared type fits it, every non-null input field is supplied,
@@ -216,10 +216,12 @@ ref), the late status mutation's `LatePolicyStatusType`,
 `UpdateSubmissionsGradeStatusInput` and
 `UpdateSubmissionsGradeStatusPayload` (issue #352, the same ref), the
 comment bank's `User`, `CommentBankItem`, `CommentBankItemConnection`
-and the create, update and delete inputs and payloads (issue #352, the
-same ref), and the module item move's `Module`, `ModuleItem`,
-`ReorderModuleItemsInput` and `ReorderModuleItemsPayload` (issue #352,
-canvas-lms `1c9f0bb8`):
+and the create, update and delete inputs and payloads, and the attempt
+history query's `File`, `OrderDirection`, `SubmissionHistory`,
+`SubmissionHistoryConnection`, `SubmissionHistoryOrder` and
+`SubmissionHistoryOrderField` (issue #352, the same ref), and the
+module item move's `Module`, `ModuleItem`, `ReorderModuleItemsInput`
+and `ReorderModuleItemsPayload` (issue #352, canvas-lms `1c9f0bb8`):
 
 ```bash
 python3 test/contract/extract-canvas-graphql-contract.py --supplement \

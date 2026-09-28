@@ -73,6 +73,7 @@
     org-canvas--submissions-bank-create-mutation
     org-canvas--submissions-bank-update-mutation
     org-canvas--submissions-bank-delete-mutation
+    org-canvas--submissions-history-query
     org-canvas--module-item-home-query
     org-canvas--module-items-move-mutation)
   "The documents, by symbol.  A new one is added here and to the
@@ -821,6 +822,14 @@ page of discussions."
           (expect (org-canvas-graphql-contract--check-variables (car call) (cdr call)) :to-equal nil))
         (expect (assq 'cursor (cdr (car (last sent)))) :to-be nil)
         (expect (alist-get 'cursor (cdar sent)) :to-equal "Mg"))))
+  (it "org-canvas--submissions-fetch-history sends what its query declares"
+    (with-org-canvas-test-config
+      (let ((sent (org-canvas-graphql-contract--capturing
+                    (org-canvas--submissions-fetch-history 1001 5001))))
+        (expect (length sent) :to-equal 1)
+        (expect (caar sent) :to-be org-canvas--submissions-history-query)
+        (expect (org-canvas-graphql-contract--check-variables (caar sent) (cdar sent))
+                :to-equal nil))))
   (it "org-canvas--discussion-push-checkpoints sends what its mutation declares"
     (with-org-canvas-test-config
       (let ((sent (org-canvas-graphql-contract--capturing

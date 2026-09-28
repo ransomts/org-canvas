@@ -81,7 +81,7 @@ settings file.
 | External tools (LTI)           | list installed tools so an assignment can name one     | install or configure a tool                  |
 | Turnitin document processor    | pull and diff the attachment as a Canvas-owned property | set it; deliberately, see decisions.org      |
 | Planner                        | a page's student to-do date                            | planner notes or the to-do list              |
-| Submissions                    | grades, comments, attachments, each student's late policy status (read and set), the grader's comment bank (read, created, rewritten, deleted on request), posting grades and each student's posted-at, per assignment; the course-wide score overview (gradebook.org); a classic quiz's attempts, kept and latest scores and time spent, read-only per quiz; each classic quiz's item analysis (quiz-results.org); who reviews whom on an assignment and which reviews are done, read-only per assignment | New Quiz attempts and reports, assigning peer reviewers, moderation |
+| Submissions                    | grades, comments, attachments, each student's late policy status (read and set), the grader's comment bank (read, created, rewritten, deleted on request), the attempt a resubmitted row was graded on (read), posting grades and each student's posted-at, per assignment; the course-wide score overview (gradebook.org); a classic quiz's attempts, kept and latest scores and time spent, read-only per quiz; each classic quiz's item analysis (quiz-results.org); who reviews whom on an assignment and which reviews are done, read-only per assignment | New Quiz attempts and reports, assigning peer reviewers, moderation |
 
 * Never Touched
 
@@ -212,7 +212,10 @@ and what =latePolicyStatus= it answers after =none=, only a live push
 will say.  The comment bank's query and three mutations (#352) are in
 the same state: whether =user(id:)= and the update and delete take a
 legacy id, and whether SpeedGrader lists an item saved with an
-=assignmentId= on other columns, are for the first live use.
+=assignmentId= on other columns, are for the first live use.  So is
+the refresh's attempt history read (#352): the rule that finds the
+graded attempt by =gradeMatchesCurrentSubmission= follows the schema's
+description, not an observed resubmission.
 
 The browse commands' addresses (#292) were checked against the
 canvas-lms source rather than opened (decisions.org, "Every Address
