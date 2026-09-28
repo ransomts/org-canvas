@@ -35,7 +35,7 @@ pull-at-point and prune.
 | Files             | yes  | yes      | yes  | yes    | yes      | folders, usage rights, visibility; three pull modes             |
 | Group categories  | yes  | yes      | yes  | yes    | yes      | Canvas can auto-create groups                                   |
 | Groups            | no   | no       | yes  | no     | no       | pull-only: each category's groups and member names, in groups.org |
-| Modules           | yes  | yes      | yes  | yes    | yes      | items reconciled inside finalize; prerequisites, sequential progress, unlock dates, completion requirements |
+| Modules           | yes  | yes      | yes  | yes    | yes      | items reconciled inside finalize; prerequisites, sequential progress, unlock dates, completion requirements; an item moved between modules keeps its id, by GraphQL |
 | New Quizzes       | yes  | yes      | yes  | yes    | no       | items sync inside finalize; the feature list keys on the assignment; pull-at-point and adopt through a pull-only entry (#297) |
 | Outcomes          | yes  | yes      | yes  | yes    | yes      | two levels, groups then outcomes                                |
 | Pages             | yes  | yes      | yes  | yes    | yes      | front page protected; to-do date                                |
@@ -240,6 +240,18 @@ settings page after a push of: a single attempt, unlimited attempts
 (=ALLOWED_ATTEMPTS: -1=), =keep_latest= and =keep_average=, and a
 =SCORING_POLICY= set on a heading without =ALLOWED_ATTEMPTS= (a
 =multiple_attempts= object carrying only =score_to_keep=).
+
+The module item move (#352), =reorderModuleItems=, one item per call,
+with =oldModuleId= and =targetPosition= (decisions.org, "A Module Item
+Moved Between Modules Keeps Its Id"), was verified live on 2026-09-27
+on course 297530, with the mutation sent by hand: it was accepted from a
+teacher token, the item kept its id, landed at =targetPosition= and
+left its source module, and =moduleItem(id:)= resolved.  Its completion
+requirement was dropped by Canvas; the sync now restores it with a PUT
+right after every move.  The module sync has not run a move for real.
+The first time it does, check in the browser that the requirement is
+back on the item in its new module, and that a student's progress on
+the item survived.
 
 What remains in "Never Touched" is rarely set at the course level or
 belongs to the institution; nothing there is known to have bitten a

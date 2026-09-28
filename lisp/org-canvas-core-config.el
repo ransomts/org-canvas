@@ -746,6 +746,7 @@ the sync had already written (issue #97)."
     :total-count :counters :synced-ids :title-key
     :pull-item-fn :conflict-apply-all :duplicate-apply-all :remote-touched
     :module-items-moved :module-items-pending :module-items-adopted
+    :module-items-relocated
     :file-changed-ids :file-recreated-ids :prepared :hash-fn :dry-run-in-push
     :outcome)
   "Every key a sync run context may carry, present from creation.
@@ -760,15 +761,16 @@ module's pull function, which enables the pull option at a conflict),
 prompt, remembered for the rest of this run only), :remote-touched (set
 by a finalize post-fn that wrote to Canvas again, issue #124),
 :module-items-moved, :module-items-pending and :module-items-adopted
-\(modules), :file-changed-ids and :file-recreated-ids (files), :prepared
-\(what the spec's :prepare function returned before the first entry; the
-root outcome group id for outcomes), :hash-fn and :dry-run-in-push (the
-spec's :hash and whether its :dry-run is `push'), :outcome (what a
-single-entry push ended as — `synced', `unchanged', `conflict',
-`pulled', `duplicate' or `dry-run' — for a caller that syncs headings
-by name, issue #287).  Every key is present so `plist-put' always
-mutates the context in place and the functions sharing it see one
-another's writes.")
+\(modules), :module-items-relocated (modules: (ITEM-ID . MODULE-ID)
+string pairs moved by GraphQL this run, issue #352), :file-changed-ids
+and :file-recreated-ids (files), :prepared (what the spec's :prepare
+function returned before the first entry; the root outcome group id
+for outcomes), :hash-fn and :dry-run-in-push (the spec's :hash and
+whether its :dry-run is `push'), :outcome (what a single-entry push
+ended as — `synced', `unchanged', `conflict', `pulled', `duplicate' or
+`dry-run' — for a caller that syncs headings by name, issue #287).
+Every key is present so `plist-put' always mutates the context in
+place and the functions sharing it see one another's writes.")
 
 (defun org-canvas--sync-make-ctx (&rest fields)
   "Return a fresh sync run context carrying FIELDS.
