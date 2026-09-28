@@ -24,6 +24,16 @@
 ;; RESTRICT_TO_DATES     - Restrict enrollments to section dates ("true"/"false")
 ;; LAST_SYNCED           - Timestamp of last pull
 ;;
+;; PROPERTIES (typed by you, never pulled or pushed)
+;; =================================================
+;; MEETS                 - When the section meets, e.g. "MWF 10:10-11:00"
+;;                         or "Tue 09:05-09:55; Thu 10:10-11:00"; the
+;;                         window `org-canvas-submissions-score-by-window'
+;;                         scores a column against when the assignment's
+;;                         overrides table gives the section none (#383).
+;;                         A pull sets only the properties above, so it
+;;                         keeps MEETS as typed.
+;;
 ;; ASSIGNMENT OVERRIDES
 ;; ====================
 ;; Assignment headings in assignments.org may contain an optional
@@ -77,7 +87,9 @@
   :label "Sections"
   :file-var 'org-canvas-sections-file
   :query "LEVEL=1"
-  :properties nil
+  :properties
+  '((:org-prop "MEETS" :data-key :meets :type string
+     :doc "When the section meets (\"MWF 10:10-11:00\", several joined by \";\"); typed locally, never pulled or pushed, read by the section-window scoring of a grading file"))
   :structural-fn #'org-canvas--validate-section-structure)
 
 ;;;; Pull Sections from Canvas
@@ -893,6 +905,138 @@ push of one assignment heading reconciles that heading's table."
       (message "Override sync: %d assignments, %d created, %d updated, %d deleted.%s"
                assignments-processed total-created total-updated total-deleted
                (if org-canvas--dry-run " (dry run — nothing sent)" ""))))
+
+;;;; Meeting Times (issue #383)
+
+(defconst org-canvas--section-day-letters
+  '(("U" . 0) ("M" . 1) ("T" . 2) ("W" . 3) ("Th" . 4) ("R" . 4)
+    ("F" . 5) ("S" . 6))
+  "Day letters a MEETS property may run together, as in MWF or TTh.
+The value is the day of the week, Sunday 0, as `decode-time' numbers it.")
+
+(defconst org-canvas--section-day-names
+  '(("sun" . 0) ("mon" . 1) ("tue" . 2) ("wed" . 3) ("thu" . 4)
+    ("fri" . 5) ("sat" . 6))
+  "Day names a MEETS property may list, by their first three letters.")
+
+(defun org-canvas--section-meets-letters (text)
+  "Return the days TEXT spells as run-together letters (MWF, TTh), or nil."
+  (let ((case-fold-search nil) (pos 0) days)
+    (when (string-match-p "\\`\\(?:Th\\|[MTWRFSU]\\)+\\'" text)
+      (while (string-match "Th\\|[MTWRFSU]" text pos)
+        (push (cdr (assoc (match-string 0 text) org-canvas--section-day-letters))
+              days)
+        (setq pos (match-end 0)))
+      (nreverse days))))
+
+(defun org-canvas--section-meets-names (text)
+  "Return the days TEXT names (Mon Wed, Tue/Thu), or nil when one is unknown."
+  (let* ((words (split-string (downcase text) "[ ,/]+" t))
+         (days (mapcar (lambda (w)
+                         (and (>= (length w) 3)
+                              (cdr (assoc (substring w 0 3)
+                                          org-canvas--section-day-names))))
+                       words)))
+    (and days (not (memq nil days)) days)))
+
+(defun org-canvas--section-meets-clock (hours minutes)
+  "Return HOURS:MINUTES (strings) as minutes after midnight, or nil if invalid."
+  (let ((h (string-to-number hours)) (m (string-to-number minutes)))
+    (and (< h 24) (< m 60) (+ (* 60 h) m))))
+
+(defun org-canvas--section-meets-pattern (text)
+  "Parse one MEETS pattern TEXT, \"MWF 10:10-11:00\", into (DAYS START END).
+DAYS lists days of the week (Sunday 0); START and END are minutes
+after midnight.  Nil when TEXT is not a pattern or ends before it starts."
+  (when (string-match
+         (concat "\\`[ \t]*\\(.+?\\)[ \t]+\\([0-9]\\{1,2\\}\\):\\([0-9]\\{2\\}\\)"
+                 "[ \t]*-[ \t]*\\([0-9]\\{1,2\\}\\):\\([0-9]\\{2\\}\\)[ \t]*\\'")
+         text)
+    ;; Every group is read before the day parsers run their own matches.
+    (let* ((day-text (match-string 1 text))
+           (start (org-canvas--section-meets-clock
+                   (match-string 2 text) (match-string 3 text)))
+           (end (org-canvas--section-meets-clock
+                 (match-string 4 text) (match-string 5 text)))
+           (days (or (org-canvas--section-meets-letters day-text)
+                     (org-canvas--section-meets-names day-text))))
+      (and days start end (< start end) (list days start end)))))
+
+(defun org-canvas--section-meets-parse (text)
+  "Parse a MEETS property TEXT into a list of (DAYS START END) patterns.
+Patterns are separated by `;', each a day list and a clock range:
+\"MWF 10:10-11:00\", \"TTh 13:25-14:15\", \"Mon Wed 9:05-9:55\".
+Days run together as letters (M T W Th or R F S U) or are named by
+their first three letters.  Nil when any pattern does not parse, so a
+typo never narrows a window silently; validation reports it."
+  (let* ((parts (split-string (or text "") ";" t "[ \t]+"))
+         (patterns (mapcar #'org-canvas--section-meets-pattern parts)))
+    (and patterns (not (memq nil patterns)) patterns)))
+
+(defun org-canvas--section-link-key (link description)
+  "Return the section a bracket link names, from its LINK and DESCRIPTION.
+A link into sections.org names the heading after its `::*'; any
+other link is known by its description."
+  (let ((key (or (and (string-match "::\\*\\(.+\\)\\'" link) (match-string 1 link))
+                 description
+                 link)))
+    (string-trim (replace-regexp-in-string "\\\\\\([][]\\)" "\\1" key))))
+
+(defun org-canvas--section-keys (text)
+  "Return the sections TEXT names, as sections.org heading titles.
+TEXT is a people.org SECTIONS value or an overrides table's first
+cell: links to sections.org headings, and plain section names,
+separated by commas.  A link gives its heading, so a section is
+matched by the same key wherever it is named."
+  (let ((pos 0) (rest "") keys)
+    (while (string-match org-link-bracket-re text pos)
+      ;; Read the match before `org-canvas--section-link-key' matches again.
+      (let ((link (match-string 1 text)) (description (match-string 2 text)))
+        (setq rest (concat rest (substring text pos (match-beginning 0)))
+              pos (match-end 0)
+              keys (cons (org-canvas--section-link-key link description) keys))))
+    (setq rest (concat rest (substring text pos)))
+    (append (nreverse keys) (split-string rest "," t "[ \t]+"))))
+
+(defun org-canvas--override-row-window (row columns)
+  "Return (KEY OPENS CLOSES) for the overrides table ROW, or nil.
+COLUMNS are the due, unlock and lock column indexes.  OPENS is the
+Unlock At cell; CLOSES the Lock At cell, or the Due At cell when the
+row has no lock.  A group's or students' row, and a row lacking either
+end, gives no window."
+  (let* ((cell (string-trim (or (nth 0 row) "")))
+         (text (lambda (col) (let ((v (and col (string-trim (or (nth col row) "")))))
+                               (and v (string-match-p "\\`[<[]" v) v))))
+         (opens (funcall text (nth 1 columns)))
+         (closes (or (funcall text (nth 2 columns)) (funcall text (nth 0 columns)))))
+    (unless (or (string-match-p org-canvas--override-group-regexp cell)
+                (string-match-p org-canvas--override-students-regexp cell)
+                (null opens) (null closes))
+      (list (car (org-canvas--section-keys cell)) opens closes))))
+
+(defun org-canvas--override-section-windows (assignment-id)
+  "Return the section windows the overrides table of ASSIGNMENT-ID gives.
+Each is (KEY OPENS CLOSES): the section's sections.org heading title
+and two Org timestamp strings, Unlock At and Lock At (Due At when the
+row has no Lock At).  The table is the one under the level-1 heading
+of `org-canvas-assignments-file' whose CANVAS_ID is ASSIGNMENT-ID;
+nil when there is no such heading or table."
+  (let ((file (org-canvas--override-lookup-file 'org-canvas-assignments-file)))
+    (when file
+      (with-current-buffer (org-canvas--find-file-noselect file)
+        (save-excursion
+          (goto-char (point-min))
+          (let ((pos (org-find-property "CANVAS_ID" (format "%s" assignment-id))))
+            (when pos
+              (goto-char pos)
+              (let* ((end (save-excursion (org-end-of-subtree t) (point)))
+                     (table (org-canvas--override-find-table end))
+                     (columns (and table (org-canvas--override-date-columns
+                                          (car table)))))
+                (delq nil (mapcar (lambda (row)
+                                    (and (listp row)
+                                         (org-canvas--override-row-window row columns)))
+                                  (cdr table)))))))))))
 
 (provide 'org-canvas-sections)
 ;;; org-canvas-sections.el ends here

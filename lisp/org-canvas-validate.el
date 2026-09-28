@@ -405,13 +405,26 @@ LOC is a (:file :line :heading) plist."
                     issues)))))))
     (nreverse issues)))
 
+(declare-function org-canvas--section-meets-parse "org-canvas-sections" (text))
+
 (defun org-canvas--validate-section-structure (loc)
-  "Warn if section has no CANVAS_ID (not yet pulled).
-LOC is a (:file :line :heading) plist."
-  (unless (org-entry-get (point) "CANVAS_ID")
-    (list (org-canvas--validate-make-issue
-           'warning loc "CANVAS_ID"
-           "Section has no CANVAS_ID (run org-canvas-pull-sections first)"))))
+  "Warn if section has no CANVAS_ID (not yet pulled) or an unreadable MEETS.
+LOC is a (:file :line :heading) plist.  MEETS is typed by hand and read
+only by section-window scoring, which ignores one it cannot parse, so a
+typo is reported here rather than scoring a column against no window
+\(issue #383)."
+  (let ((meets (org-entry-get (point) "MEETS")))
+    (delq nil
+          (list
+           (unless (org-entry-get (point) "CANVAS_ID")
+             (org-canvas--validate-make-issue
+              'warning loc "CANVAS_ID"
+              "Section has no CANVAS_ID (run org-canvas-pull-sections first)"))
+           (when (and meets (not (org-canvas--section-meets-parse meets)))
+             (org-canvas--validate-make-issue
+              'warning loc "MEETS"
+              (format "MEETS '%s' is not days and a time range, like MWF 10:10-11:00"
+                      meets)))))))
 
 (defun org-canvas--validate-override-lookup (var title property)
   "Return PROPERTY of the level-2 heading TITLE in the file VAR names, or nil.

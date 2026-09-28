@@ -1,0 +1,11 @@
+* Added
+- #383 =org-canvas-submissions-score-by-window= (transient: Submissions,
+  =W=) scores a grading file by when each student submitted: full
+  credit inside one of their own sections' windows, widened by a grace
+  in minutes, and 0 outside or unsubmitted.  A section's window is its
+  row of the assignment's overrides table (Unlock At to Lock At), or a
+  new =MEETS= property typed on its sections.org heading (=MWF
+  10:10-11:00=), which a sections pull keeps and nothing pushes.
+  Typed scores are kept unless asked, the outliers are listed with
+  their times before anything is written, and each score gets a Notes
+  line naming the rule.  Nothing is sent; push with =S=.

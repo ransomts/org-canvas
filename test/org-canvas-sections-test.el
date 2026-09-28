@@ -11,6 +11,7 @@
 ;; define them are not loaded here, so declare them special.
 (defvar org-canvas-groups-file)
 (defvar org-canvas-people-file)
+(defvar org-canvas-assignments-file)
 
 ;;;; ================================================================
 ;;;; Section Pull Tests
@@ -1569,6 +1570,99 @@ binds `org-canvas--dry-run'.  Return (FILE-TEXT . API-CALLS)."
                    (lambda (&rest _) (setq warned t))))
           (org-canvas--override-restamp (point-min) "456" "A")
           (expect warned :to-be t))))))
+
+;;;; ================================================================
+;;;; Meeting Times and Section Windows (issue #383)
+;;;; ================================================================
+
+(describe "org-canvas--section-meets-parse"
+  (it "reads run-together day letters and a clock range"
+    (expect (org-canvas--section-meets-parse "MWF 10:10-11:00")
+            :to-equal '(((1 3 5) 610 660)))
+    (expect (org-canvas--section-meets-parse "TTh 13:25 - 14:15")
+            :to-equal '(((2 4) 805 855)))
+    (expect (org-canvas--section-meets-parse "UMTWRFS 0:00-23:59")
+            :to-equal '(((0 1 2 3 4 5 6) 0 1439))))
+
+  (it "reads day names and several patterns separated by semicolons"
+    (expect (org-canvas--section-meets-parse "Mon Wed 9:05-9:55; Friday 10:00-10:50")
+            :to-equal '(((1 3) 545 595) ((5) 600 650)))
+    (expect (org-canvas--section-meets-parse "tue/thu 12:20-13:10")
+            :to-equal '(((2 4) 740 790))))
+
+  (it "refuses the whole value when any pattern does not parse"
+    (dolist (bad '("MWF 10-11" "Xyz 10:00-11:00" "M 11:00-10:00" "M 25:00-26:00"
+                   "M 10:61-11:00" "Mo 10:00-11:00" "MWF 10:10-11:00; oops" "" nil))
+      (expect (org-canvas--section-meets-parse bad) :to-be nil))))
+
+(describe "org-canvas--section-keys"
+  (it "names a linked section by its sections.org heading and a plain one by its text"
+    (expect (org-canvas--section-keys
+             "[[file:sections.org::*Section 101][CPSC 2921 101]], Lecture 100")
+            :to-equal '("Section 101" "Lecture 100")))
+
+  (it "unescapes brackets and falls back to a link's description"
+    (expect (org-canvas--section-keys
+             "[[file:sections.org::*Lab \\[A\\]][Lab]], [[https://x.test/s/1][Studio]]")
+            :to-equal '("Lab [A]" "Studio"))
+    (expect (org-canvas--section-keys "[[https://x.test/s/2]]")
+            :to-equal '("https://x.test/s/2")))
+
+  (it "returns nothing for an empty value"
+    (expect (org-canvas--section-keys "") :to-be nil)))
+
+(defmacro with-overrides-file (content &rest body)
+  "Bind `org-canvas-assignments-file' to a scratch file holding CONTENT; run BODY."
+  (declare (indent 1))
+  `(let* ((file (make-temp-file "org-canvas-assign-" nil ".org"))
+          (org-canvas-assignments-file file))
+     (unwind-protect
+         (progn (with-temp-file file (insert ,content)) ,@body)
+       (when-let* ((buf (get-file-buffer file)))
+         (with-current-buffer buf (set-buffer-modified-p nil))
+         (kill-buffer buf))
+       (delete-file file))))
+
+(describe "org-canvas--override-section-windows"
+  (it "reads each section row's Unlock At to Lock At, or to Due At without a lock"
+    (with-overrides-file
+        (concat "* Other\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+                "* Attendance 01\n:PROPERTIES:\n:CANVAS_ID: 2573836\n:END:\n\n"
+                "#+NAME: overrides\n"
+                "| Section | Due At | Unlock At | Lock At |\n|-\n"
+                "| [[file:sections.org::*Section 101][Section 101]] | <2026-09-18 Fri 09:55> | <2026-09-18 Fri 09:05> | <2026-09-18 Fri 10:00> |\n"
+                "| [[file:sections.org::*Section 102][Section 102]] | <2026-09-18 Fri 11:00> | <2026-09-18 Fri 10:10> |  |\n"
+                "| [[file:sections.org::*Section 103][Section 103]] | <2026-09-18 Fri 11:00> |  |  |\n"
+                "| Group: Team 1 | <2026-09-18 Fri 11:00> | <2026-09-18 Fri 10:10> |  |\n"
+                "| Students: Doe, Jane | <2026-09-18 Fri 11:00> | <2026-09-18 Fri 10:10> |  |\n")
+      (expect (org-canvas--override-section-windows "2573836")
+              :to-equal '(("Section 101" "<2026-09-18 Fri 09:05>" "<2026-09-18 Fri 10:00>")
+                          ("Section 102" "<2026-09-18 Fri 10:10>" "<2026-09-18 Fri 11:00>")))
+      (expect (org-canvas--override-section-windows "1") :to-be nil)
+      (expect (org-canvas--override-section-windows "999") :to-be nil)))
+
+  (it "finds the columns by their titles when a pulled table dropped one"
+    (with-overrides-file
+        (concat "* Closer\n:PROPERTIES:\n:CANVAS_ID: 7\n:END:\n"
+                "#+NAME: overrides\n| Section | Unlock At | Lock At |\n|-\n"
+                "| Lecture 100 | <2026-09-28 Mon 10:10> | <2026-09-28 Mon 11:00> |\n")
+      (expect (org-canvas--override-section-windows 7)
+              :to-equal '(("Lecture 100" "<2026-09-28 Mon 10:10>" "<2026-09-28 Mon 11:00>")))))
+
+  (it "is nil when there is no assignments file"
+    (let ((org-canvas-assignments-file "/nonexistent/assignments.org"))
+      (expect (org-canvas--override-section-windows "1") :to-be nil))))
+
+(describe "org-canvas--pull-sections-upsert and MEETS"
+  (it "keeps a MEETS typed on the heading, since a pull sets only its own properties"
+    (with-temp-org-buffer
+     "* Section 101\n:PROPERTIES:\n:CANVAS_ID: 11\n:MEETS: F 09:05-09:55\n:END:\n"
+     (org-canvas--pull-sections-upsert
+      '((id . 11) (name . "CPSC 2921 101") (start_at . nil)
+        (end_at . nil) (restrict_enrollments_to_section_dates . :json-false)))
+     (goto-char (point-min))
+     (expect (org-entry-get (point) "MEETS") :to-equal "F 09:05-09:55")
+     (expect (org-get-heading t t t t) :to-equal "Section 101"))))
 
 ;;;; One Heading's Overrides, and No Unchanged PUT (issue #380)
 
