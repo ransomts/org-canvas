@@ -5,7 +5,11 @@
 
 ;; Regenerates test/contract/canvas-graphql-contract.json from the Canvas
 ;; instance the course credentials point at, the standing procedure at
-;; each semester boundary (test/contract/README.md, "GraphQL contract").
+;; each semester boundary (test/contract/README.md, "GraphQL contract"),
+;; and writes the printed SDL of the whole introspected schema beside it
+;; as test/contract/instance-schema.graphql: a local reference to grep
+;; for what this instance offers beyond the public schema.graphql.  The
+;; SDL is gitignored; the fixture is what gets committed.
 ;;
 ;;     eldev exec -f scripts/graphql-introspect.el
 ;;
@@ -44,7 +48,8 @@
                    org-canvas-base-url org-canvas-course-id (length token)))
     (let ((process-environment (cons (concat "CANVAS_API_TOKEN=" token) process-environment)))
       (with-temp-buffer
-        (let ((status (call-process python nil t nil extractor "--introspect" org-canvas-base-url)))
+        (let ((status (call-process python nil t nil extractor "--introspect" org-canvas-base-url
+                                    "--sdl-out")))
           (princ (buffer-string))
           (unless (eq status 0)
             (kill-emacs 1)))))))
