@@ -13,3 +13,4 @@ test-results.xml
 gha-creds-*.json
 /lisp/org-canvas.log
 */org-canvas.log
+/test/contract/instance-schema.graphql
