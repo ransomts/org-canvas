@@ -212,6 +212,12 @@ Every buffer visiting a file under it is killed afterwards."
         (expect report :to-match "| F +| - +| Fri 10:30 +| - +| left as unscored +|")
         (expect report :to-match "\\* Unsubmitted (0)"))))
 
+  (it "takes the grace from the option when a script passes none"
+    (with-window-course
+      (let ((org-canvas-submissions-window-grace 5))
+        (with-current-buffer (org-canvas-submissions-score-by-window "Attendance 01")
+          (expect (test-window-score "B") :to-equal "1")))))
+
   (it "is strict without grace: early and late by minutes are outside"
     (with-window-course
       (with-current-buffer (org-canvas-submissions-score-by-window "Attendance 01" 0)

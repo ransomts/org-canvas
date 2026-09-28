@@ -263,11 +263,9 @@ the course are not part of it.  CONTEXT is the run's plist."
   "Return when ROW's student submitted, for a report or a note."
   (if (plist-get row :at) (org-canvas--submissions-window-day (plist-get row :at)) "-"))
 
-(defun org-canvas--submissions-window-count (rows verdict &optional action)
-  "Count ROWS judged VERDICT, and taking ACTION when given."
-  (cl-count-if (lambda (r) (and (eq (plist-get r :verdict) verdict)
-                                (or (null action) (eq (plist-get r :action) action))))
-               rows))
+(defun org-canvas--submissions-window-count (rows verdict)
+  "Count ROWS judged VERDICT."
+  (cl-count-if (lambda (r) (eq (plist-get r :verdict) verdict)) rows))
 
 (defun org-canvas--submissions-window-insert-table (rows)
   "Insert an Org table of ROWS: student, sections, submitted, window, action."
@@ -342,8 +340,7 @@ The Notes heading is added at the end of the entry when it has none."
           (point))
       (save-excursion
         (org-end-of-subtree t t)
-        (unless (bolp) (insert "\n"))
-        (insert org-canvas--submissions-notes-heading "\n")
+        (insert (if (bolp) "" "\n") org-canvas--submissions-notes-heading "\n")
         (point)))))
 
 (defun org-canvas--submissions-window-set-note (line)
