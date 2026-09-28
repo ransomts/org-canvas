@@ -81,7 +81,7 @@ settings file.
 | External tools (LTI)           | list installed tools so an assignment can name one     | install or configure a tool                  |
 | Turnitin document processor    | pull and diff the attachment as a Canvas-owned property | set it; deliberately, see decisions.org      |
 | Planner                        | a page's student to-do date                            | planner notes or the to-do list              |
-| Submissions                    | grades, comments, attachments, posting grades and each student's posted-at, per assignment; the course-wide score overview (gradebook.org); a classic quiz's attempts, kept and latest scores and time spent, read-only per quiz; each classic quiz's item analysis (quiz-results.org); who reviews whom on an assignment and which reviews are done, read-only per assignment | New Quiz attempts and reports, assigning peer reviewers, moderation |
+| Submissions                    | grades, comments, attachments, each student's late policy status (read and set), posting grades and each student's posted-at, per assignment; the course-wide score overview (gradebook.org); a classic quiz's attempts, kept and latest scores and time spent, read-only per quiz; each classic quiz's item analysis (quiz-results.org); who reviews whom on an assignment and which reviews are done, read-only per assignment | New Quiz attempts and reports, assigning peer reviewers, moderation |
 
 * Never Touched
 
@@ -204,7 +204,12 @@ whether the account flag is on — the flag is enforced when the field
 resolves, not in the schema — so the first live run is still the only
 answer to that.  So has the rubric update's
 dissociate–PUT–re-associate sequence (#255): its parts were run by hand
-on the live course, the sequence itself has not been.
+on the live course, the sequence itself has not been.  So has the
+grading file's late status mutation (=updateSubmissionGradeStatus=,
+#352): the contract test checks its shape against the canvas-lms SDL,
+but whether the instance takes a REST submission id as =submissionId=,
+and what =latePolicyStatus= it answers after =none=, only a live push
+will say.
 
 The browse commands' addresses (#292) were checked against the
 canvas-lms source rather than opened (decisions.org, "Every Address

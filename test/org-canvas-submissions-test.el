@@ -2223,8 +2223,8 @@ submission.  Every call is pushed onto `test-entry--calls'."
                         '((score . nil) (attempt . nil)
                           (user . ((id . 5002) (sortable_name . "Beta, Bob")))))))))
       (let ((live (org-canvas--submissions-live-baselines "1001")))
-        (expect (alist-get 5001 live) :to-equal '("5" 2 nil))
-        (expect (alist-get 5002 live) :to-equal '(nil nil nil)))))
+        (expect (alist-get 5001 live) :to-equal '("5" 2 nil nil))
+        (expect (alist-get 5002 live) :to-equal '(nil nil nil nil)))))
   (it "carries the digest of each student's assessment"
     (let ((sub (test-org-canvas-make-submission
                 '((rubric_assessment . ((_7104 . ((points . 2)))))))))
@@ -3600,6 +3600,267 @@ ROWS is what the reports query answers; nil answers no report."
             (unwind-protect
                 (expect (buffer-string) :not :to-match "^Reports:")
               (kill-buffer))))))))
+
+;;;; Late status (issue #352)
+
+(defvar test-late--mutations nil "What `test-late--push' sent through the mutation.")
+(defvar test-late--warnings nil "What `test-late--push' logged at WARNING.")
+
+(defun test-late--heading (&rest props)
+  "Return Alice's grading-file heading with PROPS and a SUBMISSION_ID."
+  (concat test-grading-file-header
+          "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SUBMISSION_ID: 50001\n"
+          (apply #'concat props) ":END:\n"))
+
+(defun test-late--push (reply &optional live)
+  "Push the current grading file; the mutation answers REPLY.
+REPLY is a function of the variables, or a value.  LIVE is the
+student's live baseline for the conflict check, nil to skip it."
+  (setq test-late--mutations nil
+        test-late--warnings nil)
+  (let ((org-canvas-submissions-check-conflicts (and live t)))
+    (cl-letf (((symbol-function 'org-canvas--graphql-mutate)
+               (lambda (_what document variables)
+                 (push (cons document variables) test-late--mutations)
+                 (if (functionp reply) (funcall reply variables) reply)))
+              ((symbol-function 'org-canvas--submissions-live-baselines)
+               (lambda (_id) (list (cons 5001 live))))
+              ((symbol-function 'org-canvas--log-warning)
+               (lambda (_logger fmt &rest args)
+                 (push (apply #'format fmt args) test-late--warnings)))
+              ((symbol-function 'y-or-n-p) (lambda (_) t)))
+      (org-canvas-submissions-push-grades))))
+
+(defun test-late--stored (status &optional seconds)
+  "Return a mutation reply saying Canvas stored STATUS, SECONDS late."
+  `((updateSubmissionGradeStatus
+     . ((submission . ((_id . "50001") (latePolicyStatus . ,(or status :null))
+                       (secondsLate . ,(or seconds 0))))
+        (errors . :null)))))
+
+(describe "the late status in a grading file (issue #352)"
+  (it "is written with its baseline when Canvas holds one, and not otherwise"
+    (with-temp-buffer
+      (org-mode)
+      (org-canvas--submissions-render-detail-entry
+       (test-org-canvas-make-submission '((late_policy_status . "extended"))))
+      (expect (buffer-string) :to-match ":LATE_STATUS: extended\n:CANVAS_LATE_STATUS: extended\n"))
+    (dolist (status '(nil :null ""))
+      (with-temp-buffer
+        (org-mode)
+        (org-canvas--submissions-render-detail-entry
+         (test-org-canvas-make-submission `((late_policy_status . ,status))))
+        (expect (buffer-string) :not :to-match "LATE_STATUS"))))
+  (it "writes a status Canvas returns that the push does not know, as it comes"
+    (with-temp-buffer
+      (org-mode)
+      (org-canvas--submissions-render-detail-entry
+       (test-org-canvas-make-submission '((late_policy_status . "excused_by_policy"))))
+      (expect (buffer-string) :to-match ":LATE_STATUS: excused_by_policy\n")
+      (goto-char (point-min))
+      (expect (org-canvas--submissions-late-status-change-at-point "Adams") :to-be nil))))
+
+(describe "org-canvas--submissions-late-status-change-at-point"
+  (it "is a change when the typed status differs from its baseline, in any case"
+    (with-grading-file (test-late--heading ":LATE_STATUS:  Extended \n:CANVAS_LATE_STATUS: late\n")
+      (org-canvas--submissions-goto-user 5001)
+      (expect (org-canvas--submissions-late-status-change-at-point "Adams")
+              :to-equal '(:late-status "extended" :old-late-status "late"
+                          :submission-id "50001"))))
+  (it "is a change on a row with no status yet"
+    (with-grading-file (test-late--heading ":LATE_STATUS: missing\n")
+      (org-canvas--submissions-goto-user 5001)
+      (expect (plist-get (org-canvas--submissions-late-status-change-at-point "Adams")
+                         :old-late-status)
+              :to-be nil)))
+  (it "is no change when it matches, is blank, or is absent"
+    (dolist (props '(":LATE_STATUS: late\n:CANVAS_LATE_STATUS: late\n"
+                     ":LATE_STATUS:\n:CANVAS_LATE_STATUS: late\n"
+                     ":CANVAS_LATE_STATUS: late\n"
+                     ""))
+      (with-grading-file (test-late--heading props)
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-canvas--submissions-late-status-change-at-point "Adams") :to-be nil))))
+  (it "refuses a value Canvas does not take, naming the ones it does"
+    (with-grading-file (test-late--heading ":LATE_STATUS: tardy\n")
+      (org-canvas--submissions-goto-user 5001)
+      (expect (org-canvas--submissions-late-status-change-at-point "Adams")
+              :to-throw 'user-error
+              '("Adams: LATE_STATUS tardy is not one of late, missing, extended, none"))))
+  (it "refuses a heading with no submission id to address"
+    (with-grading-file (concat test-grading-file-header
+                               "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:LATE_STATUS: late\n:END:\n")
+      (org-canvas--submissions-goto-user 5001)
+      (expect (org-canvas--submissions-late-status-change-at-point "Adams")
+              :to-throw 'user-error))))
+
+(describe "pushing a late status with S"
+  (it "sends a status-only change through the mutation and nothing over REST"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (test-late--heading ":SUBMITTED_AT: <2026-02-15 Sun 23:45>\n"
+                                               ":DAYS_LATE: 3\n:SCORE: 92\n:CANVAS_SCORE: 92\n"
+                                               ":LATE_STATUS: extended\n:CANVAS_LATE_STATUS: late\n")
+          (test-late--push (test-late--stored "extended" 0))
+          (expect (test-org-canvas-api-call-count) :to-equal 0)
+          (expect (length test-late--mutations) :to-equal 1)
+          (expect (caar test-late--mutations) :to-be org-canvas--submissions-late-status-mutation)
+          (expect (cdar test-late--mutations)
+                  :to-equal '((submissionId . "50001") (status . "extended")))
+          (org-canvas--submissions-goto-user 5001)
+          (expect (org-entry-get (point) "CANVAS_LATE_STATUS") :to-equal "extended")
+          (expect (org-entry-get (point) "DAYS_LATE") :to-be nil)
+          (expect (org-canvas--submissions-collect-grade-changes) :to-be nil)
+          (expect (buffer-modified-p) :to-be nil)))))
+  (it "sends a score and a status together, the grade over REST"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (test-late--heading ":SUBMITTED_AT: <2026-02-15 Sun 23:45>\n"
+                                               ":SCORE: 80\n:CANVAS_SCORE: 92\n:LATE_STATUS: late\n")
+          (let ((prompt nil) (messages nil))
+            (cl-letf (((symbol-function 'y-or-n-p) (lambda (p) (setq prompt p) t))
+                      ((symbol-function 'message)
+                       (lambda (fmt &rest args) (push (apply #'format fmt args) messages)))
+                      ((symbol-function 'org-canvas--graphql-mutate)
+                       (lambda (&rest _) (test-late--stored "late" 90000))))
+              (let ((org-canvas-submissions-check-conflicts nil))
+                (org-canvas-submissions-push-grades)))
+            (expect prompt :to-match "1 grade change(s) (1 setting a late status)")
+            (expect (cl-some (lambda (m) (string-match-p "92 → 80 (late status: no status → late)" m))
+                             messages)
+                    :to-be-truthy)
+            (expect (car messages) :to-match "Pushed 1 grade(s), 1 late status(es) and 0 comment(s)"))
+          (expect-api-called 'PUT "assignments/1001/submissions/5001")
+          (org-canvas--submissions-goto-user 5001)
+          (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "80")
+          (expect (org-entry-get (point) "CANVAS_LATE_STATUS") :to-equal "late")
+          (expect (org-entry-get (point) "DAYS_LATE") :to-equal "2")))))
+  (it "records what Canvas stored when it is not what was sent, and says so"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (test-late--heading ":LATE_STATUS: none\n:CANVAS_LATE_STATUS: missing\n")
+          (test-late--push (test-late--stored nil))
+          (org-canvas--submissions-goto-user 5001)
+          (expect (org-entry-get (point) "LATE_STATUS") :to-be nil)
+          (expect (org-entry-get (point) "CANVAS_LATE_STATUS") :to-be nil)
+          (expect test-late--warnings
+                  :to-contain "[Submissions] Adams, Alice: Canvas stored late status no status, not the none sent")))))
+  (it "takes the status sent as stored when the reply names no submission"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (test-late--heading ":DAYS_LATE: 3\n:LATE_STATUS: missing\n")
+          (test-late--push '((updateSubmissionGradeStatus . ((submission . :null) (errors . :null)))))
+          (org-canvas--submissions-goto-user 5001)
+          (expect (org-entry-get (point) "CANVAS_LATE_STATUS") :to-equal "missing")
+          (expect (org-entry-get (point) "DAYS_LATE") :to-equal "3")
+          (expect test-late--warnings :to-be nil)))))
+  (it "leaves a refused status a change, warns once, and sends the others"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (concat (test-late--heading ":LATE_STATUS: late\n")
+                                   "* Beta, Bob\n:PROPERTIES:\n:USER_ID: 5002\n:SUBMISSION_ID: 50002\n"
+                                   ":LATE_STATUS: missing\n:END:\n")
+          (let ((messages nil))
+            (cl-letf (((symbol-function 'message)
+                       (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
+              (test-late--push
+               (lambda (variables)
+                 (if (equal (alist-get 'submissionId variables) "50001")
+                     '((updateSubmissionGradeStatus
+                        . ((submission . :null)
+                           (errors . [((attribute . "late_policy_status")
+                                       (message . "is not allowed"))]))))
+                   (test-late--stored "missing")))))
+            (expect (car messages)
+                    :to-match "Pushed 0 grade(s), 1 late status(es) and 0 comment(s); late status not set for Adams, Alice (see the log)"))
+          (expect (length test-late--warnings) :to-equal 1)
+          (expect (car test-late--warnings) :to-match "Adams, Alice not set: .*is not allowed")
+          (org-canvas--submissions-goto-user 5001)
+          (expect (org-entry-get (point) "CANVAS_LATE_STATUS") :to-be nil)
+          (org-canvas--submissions-goto-user 5002)
+          (expect (org-entry-get (point) "CANVAS_LATE_STATUS") :to-equal "missing")
+          (let ((left (org-canvas--submissions-collect-grade-changes)))
+            (expect (length left) :to-equal 1)
+            (expect (plist-get (car left) :user-id) :to-equal 5001))))))
+  (it "records nothing under a dry run"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (test-late--heading ":LATE_STATUS: late\n")
+          (test-late--push org-canvas--dry-run-response)
+          (org-canvas--submissions-goto-user 5001)
+          (expect (org-entry-get (point) "CANVAS_LATE_STATUS") :to-be nil)
+          (expect (length (org-canvas--submissions-collect-grade-changes)) :to-equal 1)))))
+  (it "sends nothing for a value Canvas does not take"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (test-late--heading ":LATE_STATUS: tardy\n")
+          (expect (test-late--push (test-late--stored "late")) :to-throw 'user-error)
+          (expect test-late--mutations :to-be nil)
+          (expect (test-org-canvas-api-call-count) :to-equal 0)))))
+  (it "skips and marks a row whose status Canvas changed since the pull"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (test-late--heading ":SCORE: 92\n:CANVAS_SCORE: 92\n"
+                                               ":LATE_STATUS: extended\n:CANVAS_LATE_STATUS: late\n")
+          (test-late--push (test-late--stored "extended") '("92" nil nil "missing"))
+          (expect test-late--mutations :to-be nil)
+          (org-canvas--submissions-goto-user 5001)
+          (expect (org-entry-get (point) "CONFLICT") :to-equal "late status: Canvas has missing")
+          (expect (org-entry-get (point) "CANVAS_LATE_STATUS") :to-equal "late")))))
+  (it "names a status Canvas cleared as no status"
+    (expect (org-canvas--submissions-conflict-p
+             '(:old-score "92" :late-status "missing" :old-late-status "late")
+             '("92" nil nil nil))
+            :to-equal "late status: Canvas has no status")
+    (expect (org-canvas--submissions-conflict-p
+             '(:old-score "92" :new-score "95")
+             '("92" nil nil "late"))
+            :to-be nil))
+  (it "reads the live status alongside the score"
+    (cl-letf (((symbol-function 'org-canvas--submissions-fetch-for-assignment)
+               (lambda (_id) (list (test-org-canvas-make-submission
+                                    '((late_policy_status . "late")))))))
+      (expect (nth 3 (alist-get 5001 (org-canvas--submissions-live-baselines "1001")))
+              :to-equal "late"))))
+
+(describe "a re-pull keeps a typed late status"
+  (it "keeps it against an unmoved baseline, and asks nothing"
+    (with-org-canvas-test-config
+      (with-grading-file (test-late--heading ":LATE_STATUS: extended\n:CANVAS_LATE_STATUS: late\n")
+        (test-refresh--from-canvas '((late_policy_status . "late")))
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "LATE_STATUS") :to-equal "extended")
+        (expect (org-entry-get (point) "CANVAS_LATE_STATUS") :to-equal "late")
+        (expect (org-entry-get (point) "CONFLICT") :to-be nil))))
+  (it "marks the heading when Canvas set another status since"
+    (with-org-canvas-test-config
+      (with-grading-file (test-late--heading ":LATE_STATUS: extended\n")
+        (test-refresh--from-canvas '((late_policy_status . "missing")))
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "LATE_STATUS") :to-equal "extended")
+        (expect (org-entry-get (point) "CANVAS_LATE_STATUS") :to-equal "missing")
+        (expect (org-entry-get (point) "CONFLICT") :to-equal "late status: Canvas has missing"))))
+  (it "writes nothing when Canvas now holds the typed status"
+    (with-org-canvas-test-config
+      (with-grading-file (test-late--heading ":LATE_STATUS: extended\n:CANVAS_LATE_STATUS: late\n")
+        (test-refresh--from-canvas '((late_policy_status . "extended")))
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "LATE_STATUS") :to-equal "extended")
+        (expect (org-entry-get (point) "CONFLICT") :to-be nil)
+        (expect (org-canvas--submissions-collect-grade-changes) :to-be nil)))))
+
+(describe "org-canvas--submissions-record-days-late"
+  (it "rewrites DAYS_LATE on a submitted row only"
+    (with-grading-file (test-late--heading ":SUBMITTED_AT: <2026-02-15 Sun 23:45>\n:DAYS_LATE: 1\n")
+      (org-canvas--submissions-goto-user 5001)
+      (org-canvas--submissions-record-days-late 200000)
+      (expect (org-entry-get (point) "DAYS_LATE") :to-equal "3")
+      (org-canvas--submissions-record-days-late nil)
+      (expect (org-entry-get (point) "DAYS_LATE") :to-equal "3"))
+    (with-grading-file (test-late--heading ":DAYS_LATE: 1\n")
+      (org-canvas--submissions-goto-user 5001)
+      (org-canvas--submissions-record-days-late 0)
+      (expect (org-entry-get (point) "DAYS_LATE") :to-equal "1"))))
 
 (provide 'org-canvas-submissions-test)
 ;;; org-canvas-submissions-test.el ends here
