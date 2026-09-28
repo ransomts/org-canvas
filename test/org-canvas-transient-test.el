@@ -52,6 +52,35 @@
              'org-canvas-dispatch 'org-canvas-diff-adopt-stamps)
             :to-be-truthy)))
 
+;; A key bound twice in one prefix reaches only one of its commands; the
+;; dispatch menu once bound z and P twice each.
+(defun test-org-canvas-transient--keys (prefix-sym)
+  "Return every suffix key in PREFIX-SYM's layout, duplicates kept."
+  (let* ((layout (get prefix-sym 'transient--layout))
+         (columns (if (vectorp layout) (aref layout 2) layout))
+         keys)
+    (dolist (col columns)
+      (when (vectorp col)
+        (let ((suffixes (aref col (if (numberp (aref col 0)) 3 2))))
+          (dolist (suffix suffixes)
+            (when (listp suffix)
+              (let ((plist (if (numberp (car suffix)) (nth 2 suffix) (cdr suffix))))
+                (push (plist-get plist :key) keys)))))))
+    keys))
+
+(describe "org-canvas transient keys"
+  (dolist (prefix '(org-canvas-dispatch
+                    org-canvas-dispatch-sync-at-point
+                    org-canvas-dispatch-pull-single
+                    org-canvas-dispatch-delete-at-point))
+    (it (format "binds no key twice in %s" prefix)
+      (let* ((keys (test-org-canvas-transient--keys prefix))
+             (dupes (seq-uniq (seq-filter
+                               (lambda (k) (> (seq-count (lambda (x) (equal x k)) keys) 1))
+                               keys))))
+        (expect keys :not :to-be nil)
+        (expect dupes :to-equal nil)))))
+
 (describe "org-canvas-dispatch-sync-at-point"
   (it "is defined as a transient prefix"
     (expect (get 'org-canvas-dispatch-sync-at-point 'transient--prefix) :to-be-truthy))

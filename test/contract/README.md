@@ -34,7 +34,8 @@ outcomes (hierarchical multi-endpoint create), new-quizzes (different API,
 
 Justified deviations live in `org-canvas-contract--exceptions` in the test —
 each entry documents a field a module emits that the documented operation
-omits but Canvas honors (currently only `module[published]`).
+omits but Canvas honors (currently `module[published]`, `module[skip_content_tags]`
+(issue #47) and `quiz[anonymous_submissions]` (issue #349)).
 
 ## Pull-side contract
 
@@ -44,6 +45,11 @@ the generator; currently assignments and assignment-groups). The
 "Canvas response (pull) contract" tests feed a pull-item the full documented
 response shape and assert it tolerates every field and reads the ones it
 depends on — the read-path analog of the request-body contract.
+
+An object read outside any module's pull is listed in
+`RESPONSE_ONLY_SCHEMAS` and written with `"response_only": true`: the
+`Progress` a bulk grade push polls until Canvas's job has finished
+(issue #382), whose fields the push reads are checked the same way.
 
 ## Read-parameter contract (issue #273)
 

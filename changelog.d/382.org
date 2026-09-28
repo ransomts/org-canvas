@@ -1,0 +1,10 @@
+* Fixed
+- #382 A grade push of several students waits for the background job
+  Canvas applies them in, reading its progress until it completes, for
+  up to =org-canvas-submissions-progress-timeout= seconds (every
+  =org-canvas-submissions-progress-interval=).  Only a completed job
+  records the =CANVAS_SCORE= and =CANVAS_RUBRIC= baselines and offers
+  to post; a failed job, or one still running when the wait runs out,
+  records nothing, offers no posting and says why, so the next push
+  sends those grades again.  A dry run sends no grade and says that a
+  bulk push would be a background job.

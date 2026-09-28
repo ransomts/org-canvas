@@ -123,7 +123,7 @@ where HTML conversion is not the focus.
 
 ** with-nonexistent-canvas-files
 
-Binds all 14 =org-canvas-*-file= variables to nonexistent paths. Used
+Binds every =org-canvas-*-file= variable to a nonexistent path. Used
 in integration tests that check graceful handling of missing files.
 
 Important: must bind individual file variables (not just
@@ -176,11 +176,25 @@ Macro for single-property pull assertions:
 #+end_src
 
 Creates a temp buffer with a heading, calls the pull function, and
-asserts the property value.
+asserts the property value.  It binds the assignments module's
+course-wide GraphQL caches (=org-canvas--assignment-processors-cache=,
+=org-canvas--assignment-schedules-cache=) to nil around the call, so no
+earlier spec's answer is reused.
+
+** test-org-canvas-stub-processors
+
+Answers the assignments module's course-wide GraphQL reads (document
+processors, #350; posting schedules, #352) for one spec, so a pull or a
+drift report over assignments never reaches the transport.  Its
+optional arguments are hashes of assignment id to processor nodes and
+to =scheduledPost=; nil for either answers as a refused read, which is
+the fallback path (the REST =asset_processors= key, and no schedule
+property touched).  Call it from a =before-each=, beside an
+=after-each= of =org-canvas--assignment-processors-forget=.
 
 * Mock Data Builders
 
-10 builder functions generate realistic Canvas API response alists with
+Builder functions generate realistic Canvas API response alists with
 sensible defaults. Each accepts an optional overrides alist:
 
 | Builder                             | Module          |
@@ -195,7 +209,7 @@ sensible defaults. Each accepts an optional overrides alist:
 | =test-org-canvas-make-calendar-event= | Calendar      |
 | =test-org-canvas-make-outcome=      | Outcomes        |
 | =test-org-canvas-make-group-category= | Group Cats    |
-| =test-org-canvas-make-submission=   | Submissions     |
+| =test-org-canvas-make-submission=   | Submissions (defined in =org-canvas-submissions-test.el=) |
 
 #+begin_src elisp
 (let ((resp (test-org-canvas-make-assignment
@@ -251,7 +265,7 @@ Largest suites: files, modules, quizzes, core-sync, core-api, core-pull, validat
 4. *Finalize*: CANVAS_ID saving, LAST_SYNCED timestamps, error handling
 
 *Pull function tests cover:*
-- Canvas-to-Org import for all 15 feature modules
+- Canvas-to-Org import for every feature module with a pull
 - =pull-upsert-heading=, =pull-insert-body=, property/timestamp setting
 - Item link resolution across files (modules → pages/assignments/etc.)
 
@@ -265,7 +279,7 @@ Largest suites: files, modules, quizzes, core-sync, core-api, core-pull, validat
 
 *Contract tests (=test/contract/=, see its README) check what leaves for Canvas against Canvas's own description of itself:*
 - =org-canvas-contract-test.el=: each module's =build-payload= against the OpenAPI create operation, from the committed =canvas-contract.json=
-- =org-canvas-graphql-contract-test.el= (issue #269): the GraphQL documents, named by symbol, and the variables their callers build, against the committed =canvas-graphql-contract.json= — generated from the instance's introspection or the canvas-lms SDL; the test tokenizes the one-line documents itself, since there is no GraphQL parser in Elisp
+- =org-canvas-graphql-contract-test.el= (issue #269): the GraphQL documents, named by symbol, and the variables their callers build, against the committed =canvas-graphql-contract.json= — generated from the instance's introspection or the canvas-lms SDL; the test tokenizes the documents itself, since there is no GraphQL parser in Elisp
 - =scripts/graphql-introspect.el= (=eldev exec -f scripts/graphql-introspect.el=, once per semester) regenerates that fixture from the instance and also writes =test/contract/instance-schema.graphql=, the whole introspected schema printed as SDL (issue #352): a local reference to grep for what the instance offers beyond the public =schema.graphql=. It is gitignored — one instance's snapshot, some 250 kB, drifting every release, read by no test — while the fixture is committed; the README's "The instance's schema as SDL" has the reasoning and the diff against canvas-lms
 
 * Advanced Mock Patterns
@@ -338,7 +352,7 @@ test-helper.el advises the network primitives — =plz=, =url-retrieve-synchrono
 
 ** Test Isolation: Don't Assert on the Shared Log Buffer
 
-Integration tests must not assert on =*org-canvas-log*= buffer contents — earlier tests mutate logger state (handlers, buffer names, leftover content), so such assertions pass in isolation but fail in the full run. Instead capture log lines by =cl-letf=-ing =org-canvas--log-info=/=org-canvas--log-warning= into a list and match on that.
+Integration tests must not assert on =*canvas-log*= buffer contents — earlier tests mutate logger state (handlers, buffer names, leftover content), so such assertions pass in isolation but fail in the full run. Instead capture log lines by =cl-letf=-ing =org-canvas--log-info=/=org-canvas--log-warning= into a list and match on that.
 
 ** Test Isolation: Every File Passes on Its Own (issue #260)
 
@@ -393,12 +407,8 @@ Org-mode ships with Emacs but has its own version (e.g., org 9.6 in Emacs 29.x, 
 
 *Testing across Emacs versions:*
 
-#+begin_src yaml
-# CI matrix tests on multiple Emacs versions
-strategy:
-  matrix:
-    emacs-version: ['29.3', '29.4', '30.1']
-#+end_src
+CI runs Emacs 30.1 as one job and 29.3 and 29.4 in shards (see "CI
+Pipeline" below); the pre-push hook runs 29 and 30 through nix-shell.
 
 *File-backed buffers for org-mode tests:*
 
@@ -447,6 +457,10 @@ Some tests depend on org-mode internals that differ between versions. Use skip c
 - =test/org-canvas-modules-test.el= — SubHeader parsing, link type detection
 - =test/org-canvas-new-quizzes-test.el= — nested item parsing
 - =test/org-canvas-quizzes-test.el= — numerical answer exact/range parsing
+- =test/org-canvas-core-api-test.el= — the backtrace-redaction specs
+  (#178) skip under a coverage run on any Emacs
+  (=test-org-canvas--skip-when-instrumented=): edebug replaces the
+  debugger they install, so they run on every plain =eldev test= only
 
 These involve =org-back-to-heading= and =org-end-of-subtree= which don't recognize heading structure consistently in Emacs 29.x's org-mode when using =search-forward= positioning. Grep for =buttercup-pending= to enumerate.
 
@@ -525,7 +539,11 @@ version carries the old name, =needs= the shards, runs under
 =if: always()= and fails unless their result is =success=.  Without
 =always()= a failed shard would leave the aggregator skipped, and a
 skipped required check counts as passed.  Renaming any of these jobs
-means changing the protection rule in the same breath.
+means changing the protection rule in the same breath.  =isolation= is
+built the same way, but as of 2026-09-27 it is not among the required
+checks (=gh api repos/ransomts/org-canvas/branches/main/protection=
+lists them), so a red isolation run shows on the PR without blocking
+the merge.
 
 *Coverage stays on one job.*  Emacs 30.1 is the fastest suite and the
 only one measured, so its run is not split: one =coverage.json= and one
@@ -614,14 +632,14 @@ Codecov provides two types of reports: *coverage* (line coverage) and *test anal
 
 # Upload coverage report
 - name: Upload coverage to Codecov
-  uses: codecov/codecov-action@v5
+  uses: codecov/codecov-action@v6
   with:
     token: ${{ secrets.CODECOV_TOKEN }}
     files: coverage/coverage.json
 
 # Upload test results (separate upload with report_type)
 - name: Upload test results to Codecov
-  uses: codecov/codecov-action@v5
+  uses: codecov/codecov-action@v6
   if: ${{ !cancelled() }}  # Upload even if tests fail
   with:
     token: ${{ secrets.CODECOV_TOKEN }}
@@ -630,7 +648,7 @@ Codecov provides two types of reports: *coverage* (line coverage) and *test anal
 #+end_src
 
 *Key points:*
-- Use =codecov-action@v5= (v4 works but v5 has better test analytics support)
+- The workflow is on =codecov-action@v6= (v5 introduced the test analytics upload used here)
 - Coverage and test results require *separate upload steps* with different =report_type= values
 - Use =if: ${{ !cancelled() }}= for test results to ensure upload even when tests fail
 - The =CODECOV_TOKEN= secret must be configured in GitHub repository settings
@@ -643,14 +661,17 @@ The =.githooks/pre-push= hook runs four gates:
 | Gate | Command                                       | Threshold  |
 |------+-----------------------------------------------+------------|
 |    1 | =eldev lint= on Emacs 30 (via nix-shell)      | 0 warnings |
-|    2 | =eldev complexity=                            | 0 above 15 |
+|    2 | =eldev complexity=                            | budget: 2  |
 |    3 | =eldev test= on Emacs 29 (via nix-shell)      | 0 failures |
 |    4 | =eldev test= with coverage on Emacs 30 (nix)   | >= 99%     |
 
 Gates 1 and 4 use =nix-shell= with a pinned nixpkgs archive for Emacs
 30, the version CI lints and measures coverage with; gate 3 uses a
 separate pinned archive for Emacs 29.  Coverage is parsed from the
-Codecov JSON output.
+Codecov JSON output.  The complexity budget (=COMPLEXITY_BUDGET= in the
+hook, the same number in CI's =complexity= job) allows the two
+pre-existing macros above the threshold, =org-canvas-define-sync= and
+=org-canvas-define-push-at-point=; any other function above 15 blocks.
 
 * Eldev Test Configuration
 
@@ -698,7 +719,10 @@ This allows =eldev lint= to find the =Package-Requires= header while keeping the
 (setf eldev-project-source-dirs '("lisp"))
 (setf eldev-project-main-file "org-canvas.el")
 (push "test" eldev-project-source-dirs)  ; For test discovery
-(setf eldev-lint-ignored-fileset '("vendor/" "test/"))
+(setf eldev-lint-ignored-fileset '("vendor/" "test/" "scripts/"))
+;; scripts/ is out of every standard fileset too: compiling
+;; scripts/mutation-test.el would run the mutation harness
+(setf eldev-standard-excludes (append eldev-standard-excludes '("./scripts/")))
 #+end_src
 
 ** Cleaning Build Artifacts
@@ -712,8 +736,11 @@ eldev clean all
 
 ** Instrumented Files
 
-All 23 source files in =lisp/= are instrumented. Test files, vendor
-directory, and scripts are excluded.
+Every source file in =lisp/= is listed in =eldev-undercover-fileset=
+(=Eldev=) and instrumented, save the gitignored credentials file and the
+generated autoloads.  A new module must be added to that list by hand
+(module-developer-guide.org, Step 10).  Test files, the vendor
+directory and scripts are excluded.
 
 ** Running Coverage Locally
 

@@ -107,6 +107,28 @@ Key rules:
   =org-canvas-browse-at-point= and the drift report's =b= can open
   the heading's Canvas page; a file with no feature entry calls
   =org-canvas-register-web-pages= instead (issue #292, decisions.org)
+- A =:skip-fn= needs a =:skip-reason= beside it (Hard Rule 12).  An
+  item the drift report should list but no cleanup may delete (the
+  assignment behind a quiz or a graded discussion) is held back from
+  the orphan scan and prune with =:delete-skip-fn= and
+  =:delete-skip-reason= instead (issue #319)
+- A pull-item function that renders a whole level-1 entry (properties,
+  body and children) from the remote item alone declares
+  =:pull-whole-entry t=, so pull-at-point works anywhere in the
+  subtree, the drift report's =p= pulls an EXTRA row into a new
+  heading and adoption fills a stub (classic quizzes, issue #295)
+- A file the feature registry must not hold, because every registry
+  consumer (orphan scan, prune) would read it at the wrong endpoint,
+  gets its single-item pull and adoption from
+  =org-canvas-register-pull-feature= instead, and a drift report
+  section with =:drift-report t= (New Quizzes, issues #297, #313;
+  pull-system.org)
+- Every id property the module stamps that no feature entry names as
+  its =:id-property= (a child's =CANVAS_ITEM_ID=, a second id such as
+  =CANVAS_ASSIGNMENT_ID=) is declared with
+  =org-canvas-register-id-property=, so a delete clears it and the next
+  sync creates the object again rather than updating a deleted one
+  (issue #331)
 
 * Step 2: Define the Parse Stage
 
@@ -246,6 +268,13 @@ Boolean handling: use =t= for JSON true, =:json-false= for JSON false
 This generates:
 - =org-canvas-sync-{feature}s= — sync all items
 - =org-canvas-sync-{feature}-at-point= — sync item at cursor
+- =org-canvas-sync-{feature}= (TARGET &optional BY) — the heading a
+  title or, with ='canvas-id=, a stamp names, registered for
+  =org-canvas-sync-headings= (issue #287)
+- =org-canvas-pull-{feature}= (TARGET &optional BY) — its pull twin,
+  generated when the feature has a single-item pull (=:pull-item-fn=,
+  or =:pull-heading= for a module registering its pull-item function
+  apart), registered for =org-canvas-pull-headings= (issue #346)
 
 When =:endpoint= is provided without =:push= or =:finalize=, the macro
 auto-generates push and finalize functions using
@@ -261,7 +290,18 @@ auto-generates push and finalize functions using
 | =:find-fn=      | nil            | Search function for timeout recovery   |
 | =:post-fn=      | nil            | Callback after finalize                |
 | =:title-key=    | =:title=       | Plist key for display name             |
-| =:no-at-point=  | nil            | Suppress sync-at-point generation      |
+| =:query=        | ="LEVEL=1"=    | Org match for the entries synced       |
+| =:pull-heading= | nil            | Generate the pull by heading without =:pull-item-fn= |
+| =:hash-extra=   | nil            | Fold state outside the payload into PAYLOAD_HASH (required when children sync in finalize) |
+| =:hash=         | nil            | A function owning the hash, or =push= when the push decides (files) |
+| =:dry-run=      | nil            | =push= when the push previews its own writes |
+| =:prepare=      | nil            | Run once per run; result kept as =:prepared= in the context |
+| =:after-sync=   | nil            | Run once after every entry, for remote reconciliation |
+| =:first=        | nil            | Sync command run first (outcomes' two levels) |
+| =:no-at-point=  | nil            | Suppress the at-point, by-heading and pull-by-heading commands |
+
+The reasoning for =:hash-extra=, =:hash=, =:dry-run=, =:prepare= and
+=:first= is in design.org, "The 4-Stage Pipeline".
 
 ** Pages Example (Non-Standard ID)
 
@@ -292,10 +332,18 @@ Generates =org-canvas-delete-all-{feature}s= which:
 1. Prompts for confirmation
 2. Fetches all items from Canvas
 3. Deletes each one
-4. Cleans local CANVAS_ID/LAST_SYNCED properties
+4. Clears the sync properties of each heading whose item it deleted,
+   the id stamps registered with =org-canvas-register-id-property=
+   included; an item it left on Canvas (skipped, or whose DELETE
+   failed) keeps its stamps (issues #324, #331)
+
+It also generates =org-canvas-prune-{feature}s=, which deletes only the
+Canvas items whose id appears nowhere in the Org file, after
+confirmation.
 
 Optional parameters: =:id-field=, =:title-field=, =:id-property=,
-=:skip-fn=, =:list-url-fn=, =:delete-url-fn=, =:delete-data=,
+=:skip-fn= (with its required =:skip-reason=, or the expansion
+signals), =:list-url-fn=, =:delete-url-fn=, =:delete-data=,
 =:list-params=.
 
 ** Delete at Point
@@ -361,21 +409,27 @@ Add to =org-canvas--sync-tiers=:
 
 #+begin_src elisp
 (defconst org-canvas--sync-tiers
-  '(;; Tier -1: Settings
-    ((org-canvas-sync-settings "Settings"))
-    ;; Tier 0: No dependencies
+  '(;; Grading schemes, then settings (which may name a scheme)
+    ((org-canvas-sync-grading-schemes "Grading Schemes")
+     (org-canvas-sync-settings "Settings"))
+    ;; No dependencies on other content types
     ((org-canvas-sync-outcomes "Outcomes")
      ...
      (org-canvas-sync-{feature}s "{Feature}s"))
-    ;; Tier 1: Depends on tier 0
+    ;; Quizzes, New Quizzes, assignments: reference the tier above
+    ...
+    ;; Assignment groups again (drop rules), then overrides and quiz
+    ;; accommodations, then modules, which reference everything
     ...))
 #+end_src
 
-Tier placement:
-- *Tier 0*: No dependencies on other content types
-- *Tier 1*: References tier 0 items (e.g., assignments reference
-  rubrics)
-- *Tier 2*: References everything (modules)
+Tier placement (design.org, "Tier-Based Ordering"):
+- *No dependencies*: the second tier
+- *References those items* (assignments reference rubrics and groups):
+  the quizzes and assignments tier
+- *A table under another type's heading* (overrides, accommodations):
+  after that type
+- *References everything*: with modules, last
 
 ** Add to Delete Tiers
 
@@ -388,7 +442,7 @@ Add to =org-canvas--pull-tiers= in the appropriate tier.
 
 ** Add to Status Content Types
 
-Add to =org-canvas--status-content-types=:
+Add to =org-canvas--status-content-types= (in =lisp/org-canvas-status.el=):
 
 #+begin_src elisp
 ("{Feature}s" org-canvas-{feature}s-file "CANVAS_ID")
@@ -443,8 +497,28 @@ read; give a =:remote-fn= when Canvas returns the value under a nested
 or differently named key, or the drift report reports every item as
 changed.  =:date-order= warns when dates are out of sequence;
 =:structural-fn= runs a per-heading check and =:file-fn= a per-file one.
-=:body-api-key= (with optional =:body-fn= and =:body-list-params=) lets
-the drift report compare the heading's body as text.
+=:body-api-key= (with optional =:body-fn=, =:body-remote-fn= and
+=:body-list-params=) lets the drift report compare the heading's body
+as text.
+
+Keys for a property Canvas shapes (the registration's docstring in
+core-config.el is the authority):
+
+- =:compare-p= excludes the property from the drift report for an
+  entry; =:remote-known-p= says whether a =:remote-fn= answered at all
+  (a refused GraphQL read), so a pull leaves the property alone rather
+  than deleting it
+- =:canvas-owned t= for a property only Canvas may set: pulled and
+  compared, never sent (Hard Rule 5's =DOCUMENT_PROCESSOR=)
+- =:intent-of= for the declaration of what such a property should be:
+  compared, never pulled or sent (=WANT_DOCUMENT_PROCESSOR=, #293)
+- =:pull-only t= for a property a pull writes and no push reads
+- =:read-only-values= for enum values Canvas may return that a push may
+  not send (#167)
+- =:absent-inherits t= for a boolean whose absence is a third state
+  (#323)
+- =:duplicate-titles t= on the registration of a file that accumulates
+  course copies (#164)
 
 The =:query= must match the sync's heading level: a =LEVEL=1= query on a
 module whose items are level-2 headings validates only the container
@@ -569,13 +643,18 @@ When adding =org-canvas-{feature}=:
 | File                                   | Change                               |
 |----------------------------------------+--------------------------------------|
 | =lisp/org-canvas-{feature}.el=        | New module file                      |
-| =lisp/org-canvas.el=                  | Require, sync/delete/pull tiers, status |
+| =lisp/org-canvas.el=                  | Require, sync/delete/pull tiers      |
+| =lisp/org-canvas-status.el=           | Status content type                  |
 | =lisp/org-canvas-transient.el=        | Menu entries                         |
-| =lisp/org-canvas-validate.el=         | Validation spec                      |
 | =lisp/org-canvas-core-config.el=      | Enum constants (if needed)           |
 | =Eldev=                               | Coverage fileset                     |
 | =test/org-canvas-{feature}-test.el=   | Unit tests                           |
 | =test/org-canvas-test.el=             | Orchestration mocks                  |
+| =test/org-canvas-dry-run-test.el=     | =org-canvas-dry-run--sync-commands=, for a custom sync loop (Hard Rule 1) |
+| =changelog.d/<issue>.org=             | Changelog fragment                   |
+
+Validation needs no file of its own: the =org-canvas-register-properties=
+call in the module is the spec (Step 9).
 
 * Naming Conventions
 
@@ -585,21 +664,27 @@ When adding =org-canvas-{feature}=:
 | Public function                         | =org-canvas-sync-{feature}s=        |
 | Sync all                                | =org-canvas-sync-{feature}s=        |
 | Sync at point                           | =org-canvas-sync-{feature}-at-point= |
+| Sync one heading by title or stamp      | =org-canvas-sync-{feature}=         |
 | Pull all                                | =org-canvas-pull-{feature}s=        |
+| Pull one heading by title or stamp      | =org-canvas-pull-{feature}=         |
 | Delete all                              | =org-canvas-delete-all-{feature}s=  |
+| Prune (Canvas items the file lacks)     | =org-canvas-prune-{feature}s=       |
 | Delete at point                         | =org-canvas-delete-{feature}-at-point= |
 | File variable                           | =org-canvas-{feature}s-file=        |
 
 * Reference Modules by Complexity
 
-| Complexity | Module          | Lines | Notes                              |
-|------------+-----------------+-------+------------------------------------|
-| Simple     | announcements   |   116 | All macros, flat alist             |
-| Medium     | pages           |   162 | Macro + custom build, hash-table   |
-| Medium     | discussions     |   254 | Custom parse (links), post-fn      |
-| Complex    | quizzes         |  1027 | Nested questions, custom pipeline  |
-| Complex    | modules         |   800 | Parent-child items, link resolution |
-| Complex    | files           |   589 | 3-step upload, folder management   |
+| Complexity | Module          | Notes                              |
+|------------+-----------------+------------------------------------|
+| Simple     | announcements   | All macros, flat alist             |
+| Medium     | pages           | Macro + custom build, hash-table   |
+| Medium     | discussions     | Custom parse (links), post-fn, GraphQL checkpoints |
+| Complex    | quizzes         | Nested questions, custom pipeline  |
+| Complex    | modules         | Parent-child items, link resolution, GraphQL moves |
+| Complex    | files           | 3-step upload, folder management   |
+
+=wc -l lisp/org-canvas-{announcements,pages,discussions}.el= gives the
+current sizes (Hard Rule 21).
 
 Start by reading =lisp/org-canvas-announcements.el= in full — it's the
 minimal reference implementation.
