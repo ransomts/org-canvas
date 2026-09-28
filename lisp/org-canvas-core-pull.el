@@ -83,15 +83,32 @@ after the existing #+TITLE line, or at the top of the buffer."
         (goto-char (point-min))
         (insert "#+LAST_SYNCED: " timestamp "\n"))))))
 
+(defun org-canvas--pull-insert-empty-note (label)
+  "Insert the empty-file header for LABEL at point."
+  (insert (format "#+TITLE: %s\n" label)
+          (format "#+LAST_SYNCED: %s\n"
+                  (format-time-string "[%Y-%m-%d %a %H:%M]"))
+          "# Canvas returned 0 items at this sync.\n"))
+
 (defun org-canvas--pull-emit-empty-file (path label)
   "Write an empty-file self-documenting header to PATH for LABEL.
 Overwrites any existing content.  Used when a successful pull
-returned zero items so the resulting Org file is not silently blank."
-  (with-temp-file path
-    (insert (format "#+TITLE: %s\n" label))
-    (insert (format "#+LAST_SYNCED: %s\n"
-                    (format-time-string "[%Y-%m-%d %a %H:%M]")))
-    (insert "# Canvas returned 0 items at this sync.\n")))
+returned zero items so the resulting Org file is not silently blank.
+A buffer already visiting PATH is rewritten and saved in place, so its
+recorded modification time follows the write: writing around it left
+the buffer stale, and the run's next touch of it warned that the file
+changed on disk, or refused outright over unsaved edits (issue #389).
+The buffer is checked with `org-canvas--ensure-buffer-fresh' first,
+as every other whole-file rewrite is (issue #97)."
+  (let ((buffer (find-buffer-visiting path)))
+    (if (not buffer)
+        (with-temp-file path
+          (org-canvas--pull-insert-empty-note label))
+      (with-current-buffer buffer
+        (org-canvas--ensure-buffer-fresh)
+        (erase-buffer)
+        (org-canvas--pull-insert-empty-note label)
+        (org-canvas--save-buffer)))))
 
 (defun org-canvas--pull-label-for (feature-name)
   "Look up the human-readable label for FEATURE-NAME in the property registry.

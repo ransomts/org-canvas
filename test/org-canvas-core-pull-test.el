@@ -866,6 +866,55 @@
               (insert-file-contents temp)
               (expect (buffer-string) :not :to-match "stale content")
               (expect (buffer-string) :to-match "Canvas returned 0 items")))
+        (delete-file temp))))
+
+  (it "rewrites a buffer visiting the file, leaving it fresh (#389)"
+    (let* ((temp (make-temp-file "empty-test-" nil ".org"))
+           (buffer nil)
+           (warnings nil))
+      (unwind-protect
+          (progn
+            (with-temp-file temp (insert "* Old heading\n"))
+            (setq buffer (org-canvas--find-file-noselect temp))
+            (cl-letf (((symbol-function 'org-canvas--log-warning)
+                       (lambda (&rest args) (push args warnings)))
+                      ((symbol-function 'org-canvas--log-info) #'ignore))
+              (org-canvas--pull-emit-empty-file temp "Calendar")
+              (with-current-buffer buffer
+                (expect (verify-visited-file-modtime buffer) :to-be t)
+                (expect (buffer-modified-p) :to-be nil)
+                (expect (buffer-string) :not :to-match "Old heading")
+                (expect (buffer-string) :to-match "^#\\+TITLE: Calendar$")
+                (expect (buffer-string)
+                        :to-equal (with-temp-buffer
+                                    (insert-file-contents temp)
+                                    (buffer-string)))
+                (let ((noninteractive t))
+                  (org-canvas--ensure-buffer-fresh))))
+            (expect warnings :to-be nil))
+        (when (buffer-live-p buffer)
+          (with-current-buffer buffer (set-buffer-modified-p nil))
+          (kill-buffer buffer))
+        (delete-file temp))))
+
+  (it "refuses a stale visiting buffer holding unsaved edits (#97)"
+    (let* ((temp (make-temp-file "empty-test-" nil ".org"))
+           (buffer nil))
+      (unwind-protect
+          (progn
+            (with-temp-file temp (insert "* Old heading\n"))
+            (setq buffer (org-canvas--find-file-noselect temp))
+            (with-current-buffer buffer (insert "unsaved "))
+            (with-temp-file temp (insert "* Written elsewhere\n"))
+            (set-file-times temp (time-add (current-time) 60))
+            (let ((noninteractive t))
+              (expect (org-canvas--pull-emit-empty-file temp "Calendar")
+                      :to-throw 'error))
+            (with-current-buffer buffer
+              (expect (buffer-string) :to-match "unsaved")))
+        (when (buffer-live-p buffer)
+          (with-current-buffer buffer (set-buffer-modified-p nil))
+          (kill-buffer buffer))
         (delete-file temp)))))
 
 (describe "org-canvas--pull-known-ids"
