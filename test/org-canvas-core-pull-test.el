@@ -352,7 +352,7 @@
             (cl-letf (((symbol-function 'org-canvas-api-request)
                        (lambda (&rest _)
                          (signal 'org-canvas-permission-error
-                                 '("Permission denied (HTTP 403) reading files")))))
+                                 '("Permission denied (HTTP 403)")))))
               (let* ((input "x [[https://x.com/courses/99999/files/21157335/preview]] y")
                      (rewritten (org-canvas--rewrite-canvas-file-urls input cache)))
                 (expect rewritten :to-equal input)
@@ -460,6 +460,50 @@
       (expect (length (org-canvas--pull-summary-records)) :to-equal 1)
       (expect (gethash "555" org-canvas--rewrite-unresolved-ids)
               :to-be 'failed)))
+
+  (it "counts a same-course 403 as a skip, once, under the body's file"
+    (let* ((org-canvas-course-id "99999")
+           (org-canvas--rewrite-unresolved-ids nil)
+           (cache (make-hash-table :test 'equal))
+           (dir (make-temp-file "test-rewrite-skip-" t))
+           (pages (expand-file-name "pages.org" dir))
+           (link "[[https://x.com/courses/99999/files/556/preview]]"))
+      (unwind-protect
+          (cl-letf (((symbol-function 'org-canvas-api-request)
+                     (lambda (&rest _)
+                       (cl-incf calls)
+                       (signal 'org-canvas-permission-error
+                               '("Permission denied (HTTP 403)"))))
+                    ((symbol-function 'org-canvas--log-warning)
+                     (lambda (_logger fmt &rest args)
+                       (push (apply #'format fmt args) warnings))))
+            (with-temp-file pages (insert "* Page\n"))
+            (with-current-buffer (org-canvas--find-file-noselect pages)
+              (org-canvas--rewrite-canvas-file-urls (concat link link) cache)
+              (kill-buffer))
+            (let ((recs (org-canvas--pull-summary-records)))
+              (expect calls :to-equal 1)
+              (expect (length recs) :to-equal 1)
+              (expect (plist-get (car recs) :kind) :to-be 'skip)
+              (expect (plist-get (car recs) :file) :to-equal "pages.org")
+              (expect (plist-get (car recs) :item) :to-equal "556")
+              (expect (car warnings) :to-match "file 556 skipped")))
+        (delete-directory dir t))))
+
+  (it "records any other failed fetch as an error"
+    (let ((org-canvas-course-id "99999")
+          (org-canvas--rewrite-unresolved-ids nil)
+          (cache (make-hash-table :test 'equal)))
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _)
+                   (signal 'org-canvas-api-error '("Not Found" nil nil))))
+                ((symbol-function 'org-canvas--log-warning) #'ignore))
+        (with-temp-buffer
+          (org-canvas--rewrite-canvas-file-urls
+           "[[https://x.com/courses/99999/files/557]]" cache)))
+      (let ((rec (car (org-canvas--pull-summary-records))))
+        (expect (plist-get rec :kind) :to-be 'error)
+        (expect (plist-get rec :file) :to-be nil))))
 
   (it "fetches a link that names no course"
     (let ((org-canvas-course-id "99999"))

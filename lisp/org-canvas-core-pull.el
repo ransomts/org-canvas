@@ -237,7 +237,8 @@ Saves the buffer.  Creates the file if it does not yet exist."
 (defun org-canvas--rewrite-fetch-unknown-file (id cache)
   "Fetch Canvas file ID, download it, register it, and return the relpath.
 On a failed request (403/404/timeout, and the rest of
-`org-canvas-api-error') record to the pull summary and return nil so
+`org-canvas-api-error') record to the pull summary — a 403 as a skip,
+through `org-canvas--rewrite-record-failure' — and return nil so
 the rewriter passes the URL through unchanged: one unreadable file —
 a locked folder, say — costs that one link, not the content type
 \(issue #171).  A 401 is deliberately not among them: an expired
@@ -278,17 +279,33 @@ on success, or nil on failure."
         (puthash id rel-path cache)
         rel-path)
     (org-canvas-api-error
-     (org-canvas--log-warning org-canvas--logger
-       "[Rewrite] file %s fetch failed: %s"
-       id (error-message-string err))
-     (org-canvas--pull-summary-record
-      :file (and (boundp 'org-canvas-files-file)
-                 org-canvas-files-file
-                 (file-name-nondirectory org-canvas-files-file))
-      :item id
-      :error (error-message-string err)
-      :log-line (org-canvas--pull-summary-current-log-line))
+     (org-canvas--rewrite-record-failure id err)
      nil)))
+
+(defun org-canvas--rewrite-body-file ()
+  "Return the basename of the file whose body is being rewritten, or nil.
+A pull converts a body inside the buffer of the file it writes, so
+that buffer names where the link lives (issue #390)."
+  (let ((file (buffer-file-name (buffer-base-buffer))))
+    (and file (file-name-nondirectory file))))
+
+(defun org-canvas--rewrite-record-failure (id err)
+  "Log and record the failed fetch of Canvas file ID, signalled as ERR.
+A role refusal (`org-canvas-permission-error') is a skip, as
+`org-canvas--safe-pull' counts one (issue #155); anything else is an
+error.  The record names the file whose body held the link, not
+files.org (issue #390)."
+  (let* ((skip (memq 'org-canvas-permission-error
+                     (get (car err) 'error-conditions)))
+         (msg (error-message-string err)))
+    (org-canvas--log-warning org-canvas--logger
+      "[Rewrite] file %s %s: %s" id (if skip "skipped" "fetch failed") msg)
+    (org-canvas--pull-summary-record
+     :kind (if skip 'skip 'error)
+     :file (org-canvas--rewrite-body-file)
+     :item id
+     :error msg
+     :log-line (org-canvas--pull-summary-current-log-line))))
 
 ;; A file id the rewriter will not resolve this command — one whose
 ;; fetch failed, or one whose URL names another course — is remembered
