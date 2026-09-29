@@ -1,0 +1,7 @@
+* Fixed
+- #397 When the settings pull cannot read the late policy or the
+  navigation tabs because your role is refused (a 403, as a Designer
+  enrolment gets on the late policy), the pull summary lists it among
+  the skipped items under settings.org, as #155 lists a content type
+  your role cannot read, not among its errors. Any other failure of
+  those reads is still an error.

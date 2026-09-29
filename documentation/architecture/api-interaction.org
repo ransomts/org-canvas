@@ -182,6 +182,17 @@ permission)./ The summary also prints with =princ= under
 =noninteractive=, since =with-output-to-temp-buffer= shows a batch run
 nothing.
 
+The same holds below the whole type. A body file link a role cannot
+fetch is a skip naming the file that held it
+(=org-canvas--rewrite-record-failure=, #390), and so is an optional
+piece of the settings pull — the late policy, the navigation tabs —
+refused with a 403 (=org-canvas--settings-pull-optional-record=,
+#397): the Designer's =late_policy= refusal above was, until then, the
+one error left on a clean pull, and the summary's two closing lines
+disagreed, 0 failed types against 1 non-fatal error. Any other failure
+of those reads stays an error, so an unattended run can treat every
+error as real.
+
 ** Read-Only Courses (issue #163)
 
 Adopting or inheriting a course points org-canvas at a Canvas course

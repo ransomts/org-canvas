@@ -182,7 +182,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 
 **`api-interaction.org`**
 
-- a role refusal is a skip (#155)
+- a role refusal is a skip (#155), for a body file link (#390) and a settings sub-read (#397) too
 - conflict baseline and strategy rules (#48, #72, #86, #104, #124)
 - copy-pasteable curl commands for debugging
 - dry-run rules (#34, #84)
@@ -322,7 +322,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 - One concise message per failure: 4xx bodies parse through `org-canvas--api-error-message`, detail logs at DEBUG, exactly one `[ERROR]` line per item
 - A course can be marked read-only (`org-canvas-read-only`, set in the credentials file): `org-canvas--check-writable` refuses any non-GET at the transport, before the request is built, so every present and future writer is covered (#163). Reads, status and diff are untouched
 - Read an error datum with `org-canvas--api-error-datum`, never `(cdr err)`: plz signals `plz-http-error` with a *list* of a label and the struct, so a bare `(cdr err)` fails every `plz-error-p` guard and loses the status, body and cookies (#152)
-- Timeout → search Canvas for the item, retry if needed (`org-canvas--timeout-error-p` is the predicate); 404 on PUT → retry as POST; 429 or rate-limit 403 → retry (`org-canvas-rate-limit-retries`, `org-canvas-rate-limit-wait`); 401 → expired-token message; other 403 → `org-canvas-permission-error`, which `org-canvas--safe-pull` counts as a skip and names in the closing line (#155)
+- Timeout → search Canvas for the item, retry if needed (`org-canvas--timeout-error-p` is the predicate); 404 on PUT → retry as POST; 429 or rate-limit 403 → retry (`org-canvas-rate-limit-retries`, `org-canvas-rate-limit-wait`); 401 → expired-token message; other 403 → `org-canvas-permission-error`, which `org-canvas--safe-pull` counts as a skip and names in the closing line (#155); a pull's per-item and sub-read records do the same, a 403 a `skip` and anything else an `error` (`org-canvas--rewrite-record-failure` #390, `org-canvas--settings-pull-optional-record` #397)
 - `org-canvas-permission-error` has **two parents**: the credentials error (#155's skip handling) *and* `org-canvas-api-error`, so per-item handlers meaning "this request failed" still cover 403. With the credentials parent alone they silently stopped, and one cross-course file link in one page body aborted a 46-page pull (#171). When adding an error symbol, check `grep -rn "(org-canvas-api-error" lisp/` for handlers that should still catch it
 - Deferrable rejections (drop rules exceeding the group's assignment count) count as `:deferred` (`org-canvas--sync-deferred-error-p`), not failures
 - `org-canvas--safe-sync` skips missing `.org` files; `org-canvas--preflight-check` runs before any sync
