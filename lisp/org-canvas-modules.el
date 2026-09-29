@@ -2243,9 +2243,12 @@ the properties the push reads."
 
 (defun org-canvas--module-pull-insert-items (items)
   "Insert level-2 headings for module ITEMS at point.
-Returns the count of items inserted."
+Point is moved to the start of a line first, never past a blank one:
+the items sit directly under the module's drawer, which is the shape a
+re-pull writes again (issue #403).  Returns the count of items
+inserted."
   (let ((count 0))
-    (insert "\n")
+    (unless (bolp) (insert "\n"))
     (dolist (item (org-canvas--pull-sort-items (append items nil)))
       (let ((item-type (alist-get 'type item))
             (item-id (alist-get 'id item))
@@ -2291,12 +2294,9 @@ ITEM lacks an `items' key."
                                        "modules/%s/items" mid))
                                 nil)))))
         (goto-char pom)
-        (let ((body-start (save-excursion (org-end-of-meta-data t) (point)))
-              (body-end (save-excursion (org-end-of-subtree t) (point))))
-          (delete-region body-start body-end)
-          (goto-char body-start)
-          (when items
-            (org-canvas--module-pull-insert-items items)))))))
+        (org-canvas--pull-clear-entry-contents)
+        (when items
+          (org-canvas--module-pull-insert-items items))))))
 
 ;;;###autoload
 (defun org-canvas-pull-modules ()
@@ -2323,15 +2323,12 @@ ITEM lacks an `items' key."
           (when mname (org-edit-headline mname))
           (org-canvas-org-save-sync-state pos mid)
           (cl-incf mod-count)
-          (let ((body-start (save-excursion
-                              (org-end-of-meta-data t) (point)))
-                (body-end (save-excursion
-                            (org-end-of-subtree t) (point))))
-            (delete-region body-start body-end)
-            (goto-char body-start)
-            (when items
-              (setq item-count (+ item-count
-                                  (org-canvas--module-pull-insert-items items)))))))
+          ;; The items are rewritten from scratch, blank lines around
+          ;; the old ones included, so a re-pull is byte-stable (#403).
+          (org-canvas--pull-clear-entry-contents)
+          (when items
+            (setq item-count (+ item-count
+                                (org-canvas--module-pull-insert-items items))))))
       ;; A module Canvas deleted is marked, never an item (#399).
       (setq unlisted (org-canvas--pull-mark-unlisted
                       file "modules" remote 'id "CANVAS_ID"))

@@ -4483,4 +4483,29 @@ COUNT is its `hotspots_count', the number of REGIONS by default."
        (expect (plist-get issue :push-only) :to-be t)
        (expect (plist-get issue :message) :to-match "set by Canvas")))))
 
+;;;; A Re-pull Writes What the First Pull Wrote (issue #403)
+
+(describe "A New Quizzes re-pull leaves the file as it was (issue #403)"
+  (it "writes the same quizzes, instructions and items on every pull"
+    (let ((texts (test-org-canvas-pull-texts
+                  'org-canvas-new-quizzes-file #'org-canvas-pull-new-quizzes
+                  (lambda (_method url &rest _)
+                    (cond
+                     ((string-match-p "items" url)
+                      '(((id . "i1") (position . 1) (entry_type . "Item")
+                         (entry (title . "Q1") (item_body . "<p>What?</p>")
+                                (interaction_type_slug . "essay") (points_possible . 1)))
+                        ((id . "i2") (position . 2) (entry_type . "Item")
+                         (entry (title . "Q2") (item_body . "<p>Why?</p>")
+                                (interaction_type_slug . "essay") (points_possible . 1)))))
+                     ((string-match-p "quizzes" url)
+                      '(((assignment_id . 42) (id . 42) (title . "Midterm")
+                         (instructions . "<p>Hi</p>"))
+                        ((assignment_id . 43) (id . 43) (title . "Final")
+                         (instructions . ""))))))
+                  nil 3)))
+      (expect (car texts) :to-match "^\\*\\* Why\\?$")
+      (expect (nth 1 texts) :to-equal (car texts))
+      (expect (nth 2 texts) :to-equal (car texts)))))
+
 ;;; org-canvas-new-quizzes-test.el ends here

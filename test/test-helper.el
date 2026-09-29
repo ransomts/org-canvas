@@ -334,6 +334,40 @@ Suppresses `org-canvas-clear-log' and `display-buffer' side effects."
              ((symbol-function 'display-buffer) (lambda (_) nil)))
      ,@body))
 
+(defun test-org-canvas-pull-texts (file-var pull-fn api-fn &optional initial times)
+  "Run PULL-FN TIMES times (default 2) and return the file text after each.
+FILE-VAR names the `org-canvas-*-file' variable, bound to a fresh
+file in a temporary directory holding INITIAL (default empty).
+`org-canvas-api-request-all-pages' answers through API-FN on every
+pull, so each one reads the same course.  The file's #+LAST_SYNCED
+line is dropped from each text, since two pulls a minute apart stamp
+it differently and a spec comparing them would flake."
+  (let* ((dir (make-temp-file "pull-texts-" t))
+         (file (expand-file-name "course.org" dir))
+         (texts nil))
+    (unwind-protect
+        (progn
+          (with-temp-file file (insert (or initial "")))
+          (cl-progv (list file-var) (list file)
+            (with-org-canvas-test-config
+              (with-sync-test-env
+                (cl-letf (((symbol-function 'org-canvas-api-request-all-pages) api-fn)
+                          ((symbol-function 'message) #'ignore))
+                  (dotimes (_ (or times 2))
+                    (funcall pull-fn)
+                    (push (replace-regexp-in-string
+                           "^#\\+LAST_SYNCED: .*\n" ""
+                           (with-temp-buffer
+                             (insert-file-contents file)
+                             (buffer-string)))
+                          texts))))))
+          (nreverse texts))
+      (let ((buf (find-buffer-visiting file)))
+        (when buf
+          (with-current-buffer buf (set-buffer-modified-p nil))
+          (kill-buffer buf)))
+      (delete-directory dir t))))
+
 (defmacro with-html-to-org-identity (&rest body)
   "Execute BODY with `org-canvas--html-to-org' as identity function."
   (declare (indent 0))

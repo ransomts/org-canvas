@@ -2499,6 +2499,70 @@
           (when buf (kill-buffer buf)))
         (delete-directory temp-dir t)))))
 
+;;;; A Re-pull Writes What the First Pull Wrote (issue #403)
+
+(defconst test-modules-403--remote
+  '(((id . 10) (name . "Week 1")
+     (items . [((type . "SubHeader") (title . "Readings") (id . 101)
+                (position . 1))
+               ((type . "ExternalUrl") (title . "Link") (id . 102)
+                (external_url . "https://example.com") (position . 2))]))
+    ((id . 11) (name . "Week 2")
+     (items . [((type . "SubHeader") (title . "Labs") (id . 201))]))
+    ((id . 12) (name . "Week 3") (items . [])))
+  "Three modules, the last with no items, as Canvas lists them.")
+
+(defun test-modules-403--pull (&optional initial times)
+  "Pull `test-modules-403--remote' TIMES times over INITIAL; return the texts."
+  (test-org-canvas-pull-texts
+   'org-canvas-modules-file #'org-canvas-pull-modules
+   (lambda (&rest _) test-modules-403--remote) initial times))
+
+(describe "A modules re-pull leaves the file as it was (issue #403)"
+  (it "writes the same text on the second and third pulls as on the first"
+    (let ((texts (test-modules-403--pull nil 3)))
+      (expect (nth 1 texts) :to-equal (nth 0 texts))
+      (expect (nth 2 texts) :to-equal (nth 0 texts))))
+
+  (it "puts each module's first item directly under its drawer"
+    (let ((text (car (test-modules-403--pull nil 1))))
+      (expect text :to-match ":CANVAS_ID: +10\n:END:\n\\*\\* Readings\n")
+      (expect text :to-match ":CANVAS_ID: +11\n:END:\n\\*\\* Labs\n")
+      (expect text :not :to-match "\n\n")))
+
+  (it "collapses the blank lines a mirror already grew back to the first pull's shape"
+    (let* ((clean (car (test-modules-403--pull nil 1)))
+           (grown (replace-regexp-in-string
+                   ":END:\n\\*\\*" ":END:\n\n\n\n**"
+                   (replace-regexp-in-string "\n\\* " "\n\n\n* " clean)))
+           (repulled (car (test-modules-403--pull (concat grown "\n\n") 1))))
+      (expect grown :not :to-equal clean)
+      (expect repulled :to-equal clean)))
+
+  (it "rewrites a module's items at point without growing a blank line"
+    (with-temp-org-buffer
+     "* Week 1
+:PROPERTIES:
+:CANVAS_ID: 10
+:END:
+** Readings
+:PROPERTIES:
+:CANVAS_ID: 101
+:ITEM_TYPE: SubHeader
+:END:
+* Week 2
+:PROPERTIES:
+:CANVAS_ID: 11
+:END:
+"
+     (let ((module (car test-modules-403--remote)))
+       (org-canvas--module-pull-item module (point-min))
+       (let ((once (buffer-string)))
+         (org-canvas--module-pull-item module (point-min))
+         (expect (buffer-string) :to-equal once)
+         (expect once :to-match ":CANVAS_ID: +10\n:END:\n\\*\\* Readings\n")
+         (expect once :to-match ":END:\n\\* Week 2\n"))))))
+
 ;;;; New Property Tests: PUBLISHED for Module Items
 
 (describe "org-canvas--module-item-parse-entry (published)"

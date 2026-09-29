@@ -1747,5 +1747,23 @@ id is 999 404s, any other PUT answers with its id, a POST with 900."
         (expect (plist-get pushed :title) :to-equal "Outcome A")
         (expect (format "%s" (plist-get pushed :parent-group-id)) :to-equal "100")))))
 
+;;;; A Re-pull Writes What the First Pull Wrote (issue #403)
+
+(describe "An outcomes re-pull leaves the file as it was (issue #403)"
+  (it "writes the same groups, outcomes and ratings on every pull"
+    (let ((texts (test-org-canvas-pull-texts
+                  'org-canvas-outcomes-file #'org-canvas-pull-outcomes
+                  (lambda (_method url &rest _)
+                    (cond
+                     ((string-match-p "outcome_groups\\'" url)
+                      '(((id . 5) (title . "G1")) ((id . 6) (title . "G2"))))
+                     ((string-match-p "outcomes\\'" url)
+                      '(((outcome (id . 50) (title . "O1") (description . "<p>d</p>")
+                                  (ratings . [((description . "ok") (points . 3))])))
+                        ((outcome (id . 51) (title . "O2") (description . "")))))))
+                  nil 3)))
+      (expect (car texts) :to-match "^- ok (3 pts)$")
+      (expect (nth 1 texts) :to-equal (car texts))
+      (expect (nth 2 texts) :to-equal (car texts)))))
 
 ;;; org-canvas-outcomes-test.el ends here

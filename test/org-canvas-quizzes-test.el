@@ -4709,4 +4709,29 @@ Unpushed wording.
          org-canvas--dry-run-response)
         (expect warnings :to-be nil)))))
 
+;;;; A Re-pull Writes What the First Pull Wrote (issue #403)
+
+(describe "A quizzes re-pull leaves the file as it was (issue #403)"
+  (it "writes the same quizzes, descriptions and questions on every pull"
+    (let ((texts (test-org-canvas-pull-texts
+                  'org-canvas-quizzes-file #'org-canvas-pull-quizzes
+                  (lambda (_method url &rest _)
+                    (cond
+                     ((string-match-p "quizzes\\'" url)
+                      '(((id . 100) (title . "Quiz A") (description . "<p>Intro</p>")
+                         (published . t))
+                        ((id . 101) (title . "Quiz B") (description . "")
+                         (published . t))))
+                     ((string-match-p "questions" url)
+                      '(((id . 1) (question_name . "A1")
+                         (question_type . "short_answer_question")
+                         (question_text . "t") (points_possible . 1.0) (answers . []))
+                        ((id . 2) (question_name . "A2")
+                         (question_type . "essay_question")
+                         (question_text . "u") (points_possible . 2.0) (answers . []))))))
+                  nil 3)))
+      (expect (car texts) :to-match "^\\*\\* A2$")
+      (expect (nth 1 texts) :to-equal (car texts))
+      (expect (nth 2 texts) :to-equal (car texts)))))
+
 ;;; org-canvas-quizzes-test.el ends here

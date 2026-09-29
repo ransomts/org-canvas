@@ -5248,5 +5248,29 @@ or :fail to signal.  Returns (COUNTERS . FINAL-MESSAGE)."
       (expect (plist-get seen :prepare) :to-be #'org-canvas--file-sync-prepare)
       (expect (plist-get seen :after-sync) :to-be #'org-canvas--file-sync-after))))
 
+;;;; A Re-pull Writes What the First Pull Wrote (issue #403)
+
+(describe "A files re-pull leaves the file as it was (issue #403)"
+  (it "writes the folder tree the first pull built again on every re-pull"
+    (let ((texts (cl-letf (((symbol-function 'url-copy-file) #'ignore))
+                   (test-org-canvas-pull-texts
+                    'org-canvas-files-file #'org-canvas-pull-files
+                    (lambda (_method url &rest _)
+                      (cond
+                       ((string-match-p "/folders" url)
+                        '(((id . 100) (full_name . "course files"))
+                          ((id . 200) (full_name . "course files/Labs"))
+                          ((id . 300) (full_name . "course files/Labs/Sub"))))
+                       ((string-match-p "/files" url)
+                        '(((id . 1) (display_name . "a.pdf") (folder_id . 200)
+                           (url . "https://example.com/a") (size . 1))
+                          ((id . 2) (display_name . "b.pdf") (folder_id . 300)
+                           (url . "https://example.com/b") (size . 1))
+                          ((id . 3) (display_name . "c.pdf") (folder_id . 100)
+                           (url . "https://example.com/c") (size . 1))))))
+                    nil 3))))
+      (expect (car texts) :to-match "^\\*\\*\\* \\[\\[file:content/Labs/Sub/b\\.pdf\\]")
+      (expect (nth 1 texts) :to-equal (car texts))
+      (expect (nth 2 texts) :to-equal (car texts)))))
 
 ;;; org-canvas-files-test.el ends here
