@@ -561,9 +561,14 @@ file URLs in their HTML bodies via `org-canvas--pull-insert-body'.")
 (defun org-canvas--pull-all-confirm ()
   "Ask before a full pull overwrites local work.  Signals on refusal.
 Warns once about missing pandoc, then counts the headings already
-carrying a Canvas id across every content type and names the total."
+carrying a Canvas id across every content type and names the total.
+
+Both questions confirm the pull that was asked for, so they go through
+`org-canvas--confirm': batch Emacs and `org-canvas-assume-yes' answer
+yes rather than reading stdin (issue #388).  Overwriting local headings
+with Canvas's copy is what a pull does; it deletes nothing."
   (unless (executable-find "pandoc")
-    (unless (yes-or-no-p
+    (unless (org-canvas--confirm
              "Pandoc not found.  HTML will be stored raw.  Continue? ")
       (user-error "Aborted")))
   (let ((existing 0))
@@ -576,7 +581,7 @@ carrying a Canvas id across every content type and names the total."
                          (caddr entry))))
             (setq existing (+ existing (plist-get counts :synced)))))))
     (when (> existing 0)
-      (unless (yes-or-no-p
+      (unless (org-canvas--confirm
                (format "Pull will overwrite %d existing local headings.  Continue? " existing))
         (user-error "Aborted")))))
 

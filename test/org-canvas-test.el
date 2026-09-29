@@ -1165,9 +1165,11 @@
   (it "aborts when user declines no pandoc"
     (with-org-canvas-test-config
       (with-sync-test-env
-        (cl-letf (((symbol-function 'executable-find) (lambda (_) nil))
-                  ((symbol-function 'yes-or-no-p) (lambda (_) nil)))
-          (expect (org-canvas-pull-all) :to-throw 'user-error))))))
+        (let ((noninteractive nil)
+              (org-canvas-assume-yes nil))
+          (cl-letf (((symbol-function 'executable-find) (lambda (_) nil))
+                    ((symbol-function 'y-or-n-p) (lambda (_) nil)))
+            (expect (org-canvas-pull-all) :to-throw 'user-error)))))))
 
 (describe "org-canvas--find-orphans-for-feature"
   (it "returns nil when file-var is unbound"
@@ -1702,13 +1704,84 @@
 (describe "org-canvas-pull-all overwrite abort"
   (it "aborts when user declines overwrite prompt"
     (with-sync-test-env
-      (cl-letf (((symbol-function 'org-canvas--preflight-check) (lambda () nil))
-                ((symbol-function 'executable-find) (lambda (_) t))
-                ((symbol-function 'yes-or-no-p) (lambda (_) nil))
-                ((symbol-function 'file-exists-p) (lambda (_) t))
-                ((symbol-function 'org-canvas--status-count-entries)
-                 (lambda (_file _id-prop) (list :synced 5 :pending 0 :legacy 0 :unsaved 0))))
-        (expect (org-canvas-pull-all) :to-throw 'user-error)))))
+      (let ((noninteractive nil)
+            (org-canvas-assume-yes nil))
+        (cl-letf (((symbol-function 'org-canvas--preflight-check) (lambda () nil))
+                  ((symbol-function 'executable-find) (lambda (_) t))
+                  ((symbol-function 'y-or-n-p) (lambda (_) nil))
+                  ((symbol-function 'file-exists-p) (lambda (_) t))
+                  ((symbol-function 'org-canvas--status-count-entries)
+                   (lambda (_file _id-prop)
+                     (list :synced 5 :pending 0 :legacy 0 :unsaved 0))))
+          (expect (org-canvas-pull-all) :to-throw 'user-error))))))
+
+(defun test-org-canvas--pull-all-batch (dir pandoc)
+  "Run `org-canvas-pull-all' in batch over DIR's mirror.
+PANDOC non-nil pretends pandoc is installed.  Return the prompts asked."
+  (let ((asked nil)
+        (noninteractive t)
+        (org-canvas-assume-yes nil))
+    (with-nonexistent-canvas-files
+      (let ((org-canvas-assignments-file
+             (expand-file-name "assignments.org" dir)))
+        (with-sync-test-env
+          (cl-letf (((symbol-function 'executable-find)
+                     (lambda (_) pandoc))
+                    ((symbol-function 'yes-or-no-p)
+                     (lambda (p) (push p asked) nil))
+                    ((symbol-function 'y-or-n-p)
+                     (lambda (p &rest _) (push p asked) nil))
+                    ((symbol-function 'read-from-minibuffer)
+                     (lambda (p &rest _) (push p asked) nil))
+                    ((symbol-function 'org-canvas--pull-all-run)
+                     (lambda (_counters) nil))
+                    ((symbol-function 'org-canvas--pull-all-report)
+                     (lambda (_counters) nil)))
+            (org-canvas-pull-all)))))
+    asked))
+
+(describe "org-canvas-pull-all in batch (issue #388)"
+  :var (temp-dir)
+  (before-each
+    (setq temp-dir (make-temp-file "pull-all-batch" t))
+    (with-temp-file (expand-file-name "assignments.org" temp-dir)
+      (insert "#+LAST_SYNCED: 2026-09-01T00:00:00Z\n"
+              "* Homework 1\n:PROPERTIES:\n:CANVAS_ID: 11\n:END:\n"
+              "* Homework 2\n:PROPERTIES:\n:CANVAS_ID: 12\n:END:\n")))
+  (after-each
+    (dolist (buf (buffer-list))
+      (when (and (buffer-file-name buf)
+                 (string-prefix-p (file-truename temp-dir)
+                                  (file-truename (buffer-file-name buf))))
+        (with-current-buffer buf (set-buffer-modified-p nil))
+        (kill-buffer buf)))
+    (delete-directory temp-dir t))
+
+  (it "re-pulls a populated mirror without reading stdin"
+    (spy-on 'org-canvas--confirm :and-call-through)
+    (expect (test-org-canvas--pull-all-batch temp-dir t) :to-equal nil)
+    (expect 'org-canvas--confirm :to-have-been-called-with
+            "Pull will overwrite 2 existing local headings.  Continue? "))
+
+  (it "assumes yes to the missing-pandoc warning without reading stdin"
+    (spy-on 'org-canvas--confirm :and-call-through)
+    (expect (test-org-canvas--pull-all-batch temp-dir nil) :to-equal nil)
+    (expect 'org-canvas--confirm :to-have-been-called-with
+            "Pandoc not found.  HTML will be stored raw.  Continue? "))
+
+  (it "still asks about the overwrite count interactively"
+    (let ((noninteractive nil)
+          (org-canvas-assume-yes nil)
+          (asked nil))
+      (with-nonexistent-canvas-files
+        (let ((org-canvas-assignments-file
+               (expand-file-name "assignments.org" temp-dir)))
+          (with-sync-test-env
+            (cl-letf (((symbol-function 'executable-find) (lambda (_) t))
+                      ((symbol-function 'y-or-n-p)
+                       (lambda (p &rest _) (push p asked) nil)))
+              (expect (org-canvas-pull-all) :to-throw 'user-error)))))
+      (expect (car asked) :to-match "overwrite 2 existing"))))
 
 ;;;; org-canvas-version
 
