@@ -139,7 +139,9 @@ writing commands greyed rather than only erroring when one is chosen
    ("r" "Drift report (compare with Canvas)" org-canvas-diff)
    ("j" "Adopt stamps of CHANGED rows with nothing to compare" org-canvas-diff-adopt-stamps)
    ("J" "Stamp MOVED module items on their paired headings" org-canvas-diff-stamp-moves)
-   ("x" "List external tools (LTI)" org-canvas-list-external-tools)]
+   ("x" "List external tools (LTI)" org-canvas-list-external-tools)
+   ("/" "Search the live course's text for a regexp" org-canvas-search-live)
+   ("%" "List every date the live course says" org-canvas-search-live-dates)]
   ["Log"
    ("ll" "Set log level" org-canvas-set-log-level)
    ("ld" "Set log destination" org-canvas-set-log-destination)

@@ -16,6 +16,7 @@
                                   "lisp/org-canvas-adopt.el"
                                   "lisp/org-canvas-orphans.el"
                                   "lisp/org-canvas-browse.el"
+                                  "lisp/org-canvas-search.el"
                                   "lisp/org-canvas-diff.el"
                                   "lisp/org-canvas-core.el"
                                   "lisp/org-canvas-core-log.el"

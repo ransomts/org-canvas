@@ -3870,6 +3870,81 @@ not hold (New Quizzes, sections, settings) uses
 =org-canvas-register-web-pages=.  See =org-canvas-register-web-pages=
 for the rule format.
 
+* Searching the Live Course
+
+A date move is a text change in several places at once: assignment
+descriptions, module item titles, page bodies, event titles,
+announcements, quiz questions.  The drift report compares the Org
+files against Canvas, so it cannot notice a stale value both sides
+hold: after a midterm slid from Sep 30 to Oct 7, =calendar.org= still
+held the event on Sep 30 and had been pushed that way, and students'
+calendars said the exam was tomorrow while every other surface said
+Oct 7 (#406).  The audit that says a change reached every surface a
+student reads is a search of Canvas itself:
+
+#+begin_src
+M-x org-canvas-search-live        ; every match of a regexp, in context
+M-x org-canvas-search-live-dates  ; every date the course says, by object
+#+end_src
+
+The search reads every text-bearing object of the live course and
+lists each match with the object it is in, the field it came from
+and the text around it, in a =*canvas-search*= buffer (printed to
+standard output under =--batch=):
+
+#+begin_example
+org-canvas live search: "midterm\\|09-30"
+Course: 297530 | https://clemson.instructure.com
+============================================================
+
+assignment 2499696 "Midterm Exam"
+  name: Midterm Exam
+calendar event 1478728 "Midterm"
+  title: Midterm
+  start_at: <2026-09-30 Wed 08:00>
+page syllabus "Syllabus"
+  body: ...upload. The midterm is Sep 30 in class; bring a...
+
+4 hit(s) in 3 object(s); 57 object(s) searched.
+#+end_example
+
+| Object          | Searched                                                    |
+|-----------------+-------------------------------------------------------------|
+| assignment      | name, description; =due_at=, =unlock_at=, =lock_at=         |
+| discussion      | title, message; =delayed_post_at=, =lock_at=                |
+| announcement    | title, message; =delayed_post_at=, =posted_at=              |
+| page            | title, body (the front page included); =publish_at=         |
+| module          | name; =unlock_at=; then each item's title                   |
+| calendar event  | title, description; =start_at=, =end_at=                    |
+| quiz            | title, description; its dates; then each question's name and text |
+| new quiz        | title, instructions; its dates; then each item's title and body |
+| syllabus        | the syllabus body                                           |
+
+HTML is stripped before matching and case is folded.  A date field is
+searched as the Org timestamp a pull would write, in the course's
+time zone, so =09-30= finds an event dated September 30 as well as
+prose saying so.  A quiz's shadow assignment and an announcement
+listed as a discussion are left out, so a hit is reported once.
+
+=org-canvas-search-live-dates= lists every date instead: an ISO date,
+a month name or abbreviation with a day ("Sep 30", "October 7th"), a
+numeric month/day ("9/30") in any field above, and every date field,
+grouped by object.  One call reads every date a student can see.
+
+Both commands read only.  A surface the token's role cannot read, or
+a service the course has off (New Quizzes), is skipped and named in
+the closing line; the rest of the walk goes on.  From a script:
+
+#+begin_src sh
+emacs --batch -l /path/to/init.el \
+      --eval '(org-canvas-search-live "Sep\\(tember\\)? 30\\|09-30")'
+#+end_src
+
+The command returns the number of hits, so a wrapper can exit non-zero
+on any.  =org-canvas--search-live= is the same walk as a function,
+returning the hits as a list with the object count and what was
+skipped, for a script that wants the data rather than the report.
+
 * Commands Reference
 
 ** Sync Commands
@@ -4087,6 +4162,8 @@ Never part of a sync; see [[*messages.org][messages.org]].
 | =org-canvas-validate-all=         | Validate without suppressing push-only findings on a read-only course |
 | =org-canvas-sync-dry-run=         | Preview what would be synced (no API calls)   |
 | =org-canvas-cleanup-orphans=      | Find and delete orphaned Canvas items         |
+| =org-canvas-search-live=          | Search the live course's text for a regexp and list every match in context (read-only; see [[*Searching the Live Course][Searching the Live Course]]) |
+| =org-canvas-search-live-dates=    | List every date the live course says, by object (read-only) |
 | =org-canvas-clear-log=            | Clear log buffer and log file                 |
 | =org-canvas-set-log-level=        | Set logging level interactively               |
 | =org-canvas-set-log-destination=  | Set log destination interactively             |
@@ -4111,7 +4188,7 @@ The menu is organized into groups, each key a single keystroke:
 | Publish     | =m= =M= =R=              | Publish / unpublish a module and its contents, apply =PUBLISH_AT= releases |
 | Submissions | =g= =Q= =o= =q= =w= =a= =G= =T= | Pull submissions, grading queue, open a grading file, quiz attempts, peer reviews, completion rule, push grades, post grades |
 | Messages    | =e= =E=                 | Send unsent messages / the message at point      |
-| Tools       | =i= =c= =t= =v= =V= =S= =r= =j= =J= =x= | Init, switch course, test connection, validate, validate all, status, drift report, adopt stamps, stamp moves, list external tools |
+| Tools       | =i= =c= =t= =v= =V= =S= =r= =j= =J= =x= =/= =%= | Init, switch course, test connection, validate, validate all, status, drift report, adopt stamps, stamp moves, list external tools, search the live course, list every date it says |
 | Log         | =ll= =ld= =lc=           | Set log level, set log destination, clear log    |
 | Learn       | =?=                     | Demo conflict resolution UI                      |
 
@@ -4222,6 +4299,8 @@ Day-to-day workflow for an instructor maintaining a live course.
 3. *Sync a single module.*  If you changed several items in one content type, run the per-module sync command (e.g., =M-x org-canvas-sync-pages=) to push just that type.
 
 4. *Full sync after large edits.*  After updating many files, run =M-x org-canvas-sync= to push everything.  Unchanged items are skipped automatically via payload hashing, so this is safe to run frequently.
+
+5. *Audit a date move.*  After sliding a deadline, run =M-x org-canvas-search-live= with the old date (or =org-canvas-search-live-dates= for every date the course says) to find the surface that still names it: a calendar event, a module header, a sentence in a page (see [[*Searching the Live Course][Searching the Live Course]]).  The drift report cannot see a stale value the Org files also hold.
 
 ** Collaborative Course with TAs
 
