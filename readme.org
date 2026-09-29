@@ -167,6 +167,9 @@ M-x org-canvas-pull-submissions
 ;; Find and remove orphaned Canvas items
 M-x org-canvas-cleanup-orphans
 
+;; Grep the live course's text (the audit after a date move)
+M-x org-canvas-search-live
+
 ;; Delete all content from Canvas
 M-x org-canvas-delete-all
 #+end_src

@@ -44,6 +44,7 @@ lisp/
 ├── org-canvas-adopt.el          # org-canvas-adopt-at-point (requires diff)
 ├── org-canvas-orphans.el        # org-canvas-cleanup-orphans
 ├── org-canvas-browse.el         # org-canvas-browse-at-point: open the heading's Canvas web page (no API)
+├── org-canvas-search.el         # org-canvas-search-live and -dates: grep the live course's text (read-only)
 ├── org-canvas-core.el           # Meta-require for all core-* files
 ├── org-canvas-core-config.el    # Config, constants, enum values, property and feature registries
 ├── org-canvas-core-log.el       # In-tree logger (org-canvas--log-*), secret redaction
@@ -85,7 +86,7 @@ lisp/
 - Feature modules must NOT depend on each other. The one sanctioned exception is a sub-module: `org-canvas-new-quizzes` requires `org-canvas-new-quiz-items`, which itself requires only core
 - `org-canvas-core` must NOT import any feature modules (prevents circular deps)
 - `org-canvas.el` orchestrates by requiring all modules
-- Command files (status, publish, adopt, orphans, browse, diff, validate, submissions, quiz-submissions, peer-reviews, submissions-status, submissions-window, messages) sit above the feature modules: they require core and may require the feature module they drive (publish requires modules, adopt requires diff, quiz-submissions, peer-reviews, submissions-status and submissions-window require submissions; submissions-window declares, never requires, the sections.el readers of MEETS and the overrides table); no feature module may require a command file
+- Command files (status, publish, adopt, orphans, browse, search, diff, validate, submissions, quiz-submissions, peer-reviews, submissions-status, submissions-window, messages) sit above the feature modules: they require core and may require the feature module they drive (publish requires modules, adopt requires diff, quiz-submissions, peer-reviews, submissions-status and submissions-window require submissions; submissions-window declares, never requires, the sections.el readers of MEETS and the overrides table); no feature module may require a command file
 - diff.el declares, never requires, the two modules.el functions the sync adopts module items with (`org-canvas--module-item-parse-entry`, `org-canvas--module-item-same-content-p`), so its pairing agrees with the sync by construction (#299)
 - A feature module may name a validate.el function by symbol — `:structural-fn #'org-canvas--validate-drop-rules` on its property registration, resolved when validation runs — and may `declare-function` a function it must call from another module (assignments does this for `org-canvas--override-fetch` in sections.el). Declare; never require another feature
 
@@ -207,6 +208,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 - a hot-spot item's regions pull into the Canvas-owned `HOTSPOTS` and `HOTSPOTS_COUNT`, never pushed, compared by the drift report, the image URL never stored (#365)
 - a late status is typed in the grading file as `LATE_STATUS` against a `CANVAS_LATE_STATUS` baseline and pushed through `updateSubmissionGradeStatus`, checked before sending, recorded as Canvas stored it, with no lateness override since the mutation takes none (#352)
 - a list pull marks a stamped heading its list did not return `CANVAS_DELETED` only when that heading's own read is a 404, keeps the heading and names it in the closing line; a sync skips it, validate warns and leaves it (and anything under it) out of its cross-heading checks, duplicate titles above all (#402), and a relisting unmarks it (#392); the custom pulls do too (quizzes, New Quizzes, modules, outcome groups, flat or nested files, calendar events), never a child heading or a file folder, and a pull at point marks its heading on a 404 (#399)
+- a live search greps every text-bearing object Canvas holds, date fields as Org timestamps, and the date flavour lists every date a student can see; the audit after a date move the drift report cannot make (#406)
 - a module item moved between modules keeps its id: GraphQL's `reorderModuleItems`, one item per call, from whichever module syncs first, falling back to recreate-and-delete on any failure (#352)
 - a MOVED row stamps the item id on the heading it paired (`s`, `org-canvas-diff-stamp-moves`), and a stamped move is an uncounted RELOCATE row saying the sync moves the item there, keeping its id (#342, #343, #352)
 - a New Quiz item is pushed only as a type it can build: fill-in-the-blank invalid, hot-spot pull-only, an unknown TYPE a failed item (#337, #340)

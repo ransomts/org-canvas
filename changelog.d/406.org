@@ -1,0 +1,14 @@
+* Added
+- #406 =org-canvas-search-live= searches the live course's text for a
+  regexp and lists every match in context: assignments, discussions,
+  announcements, pages, modules and their items, calendar events,
+  quizzes and their questions, New Quizzes and their items, and the
+  syllabus, HTML stripped, with each object's date fields searched as
+  the Org timestamps a pull would write.  =org-canvas-search-live-dates=
+  lists every date the course says, by object.  Both read only, skip
+  and name a surface the role cannot read, print their report under
+  =--batch= and return the hit count; =org-canvas--search-live= gives a
+  script the hits as data.  The audit after a date move: the drift
+  report compares Org against Canvas and cannot see a stale value both
+  sides hold, which is how a calendar event kept a midterm on its old
+  date.  On the transient menu as =/= and =%=.
