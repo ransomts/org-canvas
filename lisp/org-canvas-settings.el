@@ -819,6 +819,28 @@ LATE-POLICY is the late policy API response (may be nil)."
     (org-end-of-subtree t)
     (insert "\n" nav-text)))
 
+(defun org-canvas--settings-pull-optional-record (what err)
+  "Log, echo and record in the pull summary that WHAT failed with ERR.
+A role refusal (`org-canvas-permission-error') is a skip, as
+`org-canvas--safe-pull' counts one for a whole type (issue #155) and
+`org-canvas--rewrite-record-failure' for a body file link (issue
+#390): a Designer enrolment 403s on the late policy, which is a gap
+to accept, not something that broke (issue #397).  Anything else is
+an error."
+  (let ((skip (memq 'org-canvas-permission-error
+                    (get (car err) 'error-conditions)))
+        (msg (error-message-string err)))
+    (org-canvas--log-warning org-canvas--logger
+      "[Pull] Settings: %s not pulled (%s); settings.org keeps what it had"
+      what msg)
+    (org-canvas--user-message "Settings: %s not pulled (%s)" what msg)
+    (org-canvas--pull-summary-record
+     :kind (if skip 'skip 'error)
+     :file (file-name-nondirectory org-canvas-settings-file)
+     :item what
+     :error (if skip msg (format "not pulled: %s" msg))
+     :log-line (org-canvas--pull-summary-current-log-line))))
+
 (defun org-canvas--settings-pull-optional (what fetch-fn &optional absent-on-404)
   "Call FETCH-FN for WHAT, returning nil and saying so when it fails.
 WHAT names an optional piece of the settings pull (\"late policy\",
@@ -826,26 +848,19 @@ WHAT names an optional piece of the settings pull (\"late policy\",
 the late-policy endpoint read as a course with no late policy — a
 skip that did not say so (issues #81, #142).  Any failure is now a
 warning in the log, an echo-area line, and a record in the pull
-summary, except the one that is an answer rather than a failure:
-ABSENT-ON-404 non-nil says a 404 means the course has no WHAT, which
-is noted at INFO and nothing more."
+summary — a skip for a role refusal, an error otherwise
+\(`org-canvas--settings-pull-optional-record') — except the one that
+is an answer rather than a failure: ABSENT-ON-404 non-nil says a 404
+means the course has no WHAT, which is noted at INFO and nothing
+more."
   (condition-case err
       (funcall fetch-fn)
     (error
-     (let ((msg (error-message-string err)))
-       (if (and absent-on-404 (org-canvas--404-error-p err))
-           (org-canvas--log-info org-canvas--logger
-             "[Pull] The course has no %s (404)" what)
-         (org-canvas--log-warning org-canvas--logger
-           "[Pull] Settings: %s not pulled (%s); settings.org keeps what it had"
-           what msg)
-         (org-canvas--user-message "Settings: %s not pulled (%s)" what msg)
-         (org-canvas--pull-summary-record
-          :file (file-name-nondirectory org-canvas-settings-file)
-          :item what
-          :error (format "not pulled: %s" msg)
-          :log-line (org-canvas--pull-summary-current-log-line)))
-       nil))))
+     (if (and absent-on-404 (org-canvas--404-error-p err))
+         (org-canvas--log-info org-canvas--logger
+           "[Pull] The course has no %s (404)" what)
+       (org-canvas--settings-pull-optional-record what err))
+     nil)))
 
 ;;;###autoload
 (defun org-canvas-pull-settings ()

@@ -441,7 +441,8 @@ child, rebuilt from =GET /tabs= by
 =org-canvas--settings-insert-navigation-heading=, which removes the
 old heading and appends the new one).  Either read may fail —
 =org-canvas--settings-pull-optional= logs it, says so in the echo
-area and records it in the pull summary (#142) — and what the file
+area and records it in the pull summary (#142), as a skip when the
+role is refused and an error otherwise (#397) — and what the file
 already held for that piece must survive the failure.  The late
 policy always did, since a nil answer sets nothing.  The tab list did
 not: =org-canvas--settings-replace-syllabus-body= wrote the syllabus
