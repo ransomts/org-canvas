@@ -1,0 +1,10 @@
+* Fixed
+- #410 A push of one assignment heading whose own fields are unchanged
+  but whose overrides table is sent — an extension copied into the
+  table after it was given in the web UI — now restamps the heading's
+  =CANVAS_UPDATED_AT= when the assignment read back agrees with the
+  heading, since the drift the stamp recorded was the overrides just
+  matched.  Before, the stamp stayed behind Canvas's clock and every
+  later drift report called the column CHANGED in a field it does not
+  compare.  A field Canvas holds otherwise still keeps the stamp, and
+  the log names it.

@@ -565,15 +565,57 @@ it encodes as a JSON array)."
                                      (append (alist-get 'student_ids item) nil) ", ")))
    (t "everyone")))
 
-(defun org-canvas--override-delete-removed (endpoint existing matched-ids)
+(defun org-canvas--override-unclaimed (existing matched-ids)
+  "Return the overrides of EXISTING whose id is not in MATCHED-IDS."
+  (cl-remove-if (lambda (item) (memq (alist-get 'id item) matched-ids))
+                existing))
+
+(defun org-canvas--override-describe-unclaimed (items)
+  "Describe ITEMS, Canvas overrides no table row claims, for a prompt."
+  (mapconcat (lambda (item)
+               (format "%s%s"
+                       (org-canvas--override-existing-label item)
+                       (if (alist-get 'due_at item)
+                           (format " due %s" (alist-get 'due_at item))
+                         "")))
+             items "; "))
+
+(defun org-canvas--override-confirm-deletes (items)
+  "Ask whether a push by heading may delete ITEMS, overrides its table lacks.
+Asks with `y-or-n-p' whatever `org-canvas-assume-yes' says, since a
+student's extension is not recoverable from Org once gone; under
+`noninteractive' answers nil, keeping them, so a batch push of one
+heading never deletes an override no one has seen (issue #411).
+Answers t without asking when ITEMS is empty."
+  (cond
+   ((null items) t)
+   (noninteractive
+    (org-canvas--log-warning org-canvas--logger
+      "[Override] Keeping %d override(s) Canvas holds that the table lacks (%s): a batch push of one heading deletes none; drop the rows and push interactively, or run org-canvas-sync-overrides"
+      (length items) (org-canvas--override-describe-unclaimed items))
+    nil)
+   (t (y-or-n-p (format "Delete %d override(s) Canvas holds that this table lacks (%s)? "
+                        (length items)
+                        (org-canvas--override-describe-unclaimed items))))))
+
+(defun org-canvas--override-delete-removed (endpoint existing matched-ids
+                                                     &optional confirm)
   "Delete overrides in EXISTING whose id is not in MATCHED-IDS.
 MATCHED-IDS are the ids of the Canvas overrides a table row claimed;
 an override is deleted only when the table no longer matches it by
 kind, never for lacking a section id, which a student's or a group's
 override lacks by nature (issue #224).  ENDPOINT is the overrides API
-URL.  Returns the number deleted.  During a dry run the deletions are
-logged but never issued."
-  (let ((deleted 0))
+URL.  Returns (DELETED . KEPT): the number deleted, and the number
+kept because CONFIRM was non-nil and `org-canvas--override-confirm-deletes'
+said no (issue #411).  During a dry run the deletions are logged but
+never issued, and nothing is asked."
+  (let ((deleted 0)
+        (unclaimed (org-canvas--override-unclaimed existing matched-ids)))
+    (when (and confirm unclaimed (not org-canvas--dry-run)
+               (not (org-canvas--override-confirm-deletes unclaimed)))
+      (org-canvas--log-info org-canvas--logger
+        "[Override] %d override(s) Canvas holds kept, not deleted" (length unclaimed))
+      (setq existing nil))
     (dolist (item existing)
       (let ((item-id (alist-get 'id item))
             (label (org-canvas--override-existing-label item)))
@@ -594,7 +636,7 @@ logged but never issued."
              (org-canvas--log-error org-canvas--logger
                          "[Override] Delete failed for override %s: %s"
                          item-id (error-message-string err)))))))
-    deleted))
+    (cons deleted (if existing 0 (length unclaimed)))))
 
 (defun org-canvas--override-label (override)
   "Describe who the table OVERRIDE is for, for a log line."
@@ -708,7 +750,8 @@ re-creates everything, so the user should know."
        assignment-id (error-message-string err))
      nil)))
 
-(defun org-canvas--override-sync-for-assignment (assignment-id overrides)
+(defun org-canvas--override-sync-for-assignment (assignment-id overrides
+                                                              &optional confirm)
   "Reconcile OVERRIDES for ASSIGNMENT-ID on Canvas.
 OVERRIDES is a list of parsed override plists from
 `org-canvas--override-parse-table'.
@@ -718,8 +761,11 @@ Fetches existing overrides from Canvas, then for each local override:
     an identical set of `student_ids'.  A claimed override that already
     carries the row's dates is left alone and counted nowhere (#380)
   - Creates a new override when none is claimed (POST)
-  - Deletes the remote overrides no row claimed (DELETE), by id
-Returns a list (CREATED UPDATED DELETED) as integer counts.
+  - Deletes the remote overrides no row claimed (DELETE), by id — after
+    asking, when CONFIRM is non-nil (issue #411)
+Returns a list (CREATED UPDATED DELETED KEPT) as integer counts, KEPT
+the overrides Canvas holds that no row claims and the reconcile did
+not delete: always 0 without CONFIRM.
 Under `org-canvas--dry-run' the remote is still read but no write is
 issued; the counts then report what would have been done."
   (let* ((endpoint (org-canvas-api-course-endpoint
@@ -736,8 +782,9 @@ issued; the counts then report what would have been done."
         (pcase outcome
           ('created (setq created (1+ created)))
           ('updated (setq updated (1+ updated))))))
-    (list created updated
-          (org-canvas--override-delete-removed endpoint existing matched-ids))))
+    (let ((removed (org-canvas--override-delete-removed
+                    endpoint existing matched-ids confirm)))
+      (list created updated (car removed) (cdr removed)))))
 
 ;;;; Keeping the Assignment's Baseline (issue #348)
 ;;
@@ -748,11 +795,11 @@ issued; the counts then report what would have been done."
 ;; anything, but only when it agreed with Canvas before the first write:
 ;; a web-UI edit made since the last push must stay visible as drift.
 
-(defun org-canvas--override-read-assignment (assignment-id)
-  "GET ASSIGNMENT-ID through the feature registry; return its `updated_at'.
+(defun org-canvas--override-read-assignment-item (assignment-id)
+  "GET ASSIGNMENT-ID through the feature registry; return the reply alist.
 The read carries the registry's `:item-params', as every single
 assignment read does (issue #273).  Answer nil when the read fails or
-names no timestamp; a failure is logged, never signalled."
+the reply is not an object; a failure is logged, never signalled."
   (let ((feature (org-canvas--registry-find-feature "Assignments")))
     (condition-case err
         (let* ((url (if feature
@@ -761,15 +808,26 @@ names no timestamp; a failure is logged, never signalled."
                        "assignments/%s" assignment-id)))
                (params (and feature
                             (org-canvas--feature-item-params feature)))
-               (reply (org-canvas-api-request 'GET url :params params))
-               (updated (and (listp reply) (alist-get 'updated_at reply))))
-          (and (stringp updated) updated))
+               (reply (org-canvas-api-request 'GET url :params params)))
+          (and (listp reply) reply))
       (error
        (org-canvas--log-warning org-canvas--logger
          (concat "[Override] Could not read assignment %s (%s); "
                  "its baseline is left alone")
          assignment-id (error-message-string err))
        nil))))
+
+(defun org-canvas--override-item-updated (item)
+  "Return the `updated_at' of the assignment ITEM as a string, or nil."
+  (let ((updated (alist-get 'updated_at item)))
+    (and (stringp updated) updated)))
+
+(defun org-canvas--override-read-assignment (assignment-id)
+  "GET ASSIGNMENT-ID through the feature registry; return its `updated_at'.
+Nil when the read fails or names no timestamp; see
+`org-canvas--override-read-assignment-item'."
+  (org-canvas--override-item-updated
+   (org-canvas--override-read-assignment-item assignment-id)))
 
 (defun org-canvas--override-baseline-clean-p (pom assignment-id)
   "Return non-nil when the heading at POM agrees with Canvas's ASSIGNMENT-ID.
@@ -785,11 +843,15 @@ no baseline to keep, or nothing will be written that moves it."
                      (org-canvas--override-read-assignment assignment-id))))
         (and remote (not (time-less-p stamp remote)))))))
 
-(defun org-canvas--override-restamp (pom assignment-id title)
+(defun org-canvas--override-restamp (pom assignment-id title &optional item)
   "Restamp CANVAS_UPDATED_AT at POM from ASSIGNMENT-ID's `updated_at'.
-TITLE names the heading in the log.  PAYLOAD_HASH is kept: the
-assignment's own payload did not change, only its overrides."
-  (let ((updated (org-canvas--override-read-assignment assignment-id)))
+TITLE names the heading in the log.  ITEM, when given, is the
+assignment as already read after the override writes, so no second
+read is made.  PAYLOAD_HASH is kept: the assignment's own payload did
+not change, only its overrides."
+  (let ((updated (if item
+                     (org-canvas--override-item-updated item)
+                   (org-canvas--override-read-assignment assignment-id))))
     (when updated
       (condition-case err
           (progn
@@ -804,33 +866,74 @@ assignment's own payload did not change, only its overrides."
                    "its next push may report a conflict")
            title (error-message-string err)))))))
 
-(defun org-canvas--override-sync-heading (pom assignment-id overrides title)
+(defun org-canvas--override-restamp-explained (pom assignment-id title
+                                                       mismatch-fn)
+  "Restamp POM after override writes on a drifted heading, if only they drifted.
+ASSIGNMENT-ID is read once, after the writes; MISMATCH-FN, called
+with the reply, returns the heading's own fields Canvas holds
+otherwise, as (ORG-PROP LOCAL REMOTE) triples.  When it returns none,
+the drift the stamp recorded was the overrides the reconcile has just
+matched — an extension given in the web UI, copied into the table —
+and the stamp is moved to the reply's `updated_at', TITLE naming the
+heading in the log (issue #410).  A field that differs keeps the
+stamp, so the next push still reports the conflict."
+  (let ((item (org-canvas--override-read-assignment-item assignment-id)))
+    (when item
+      (let ((mismatches (funcall mismatch-fn item)))
+        (if mismatches
+            (org-canvas--log-info org-canvas--logger
+              (concat "[Override] '%s' had drifted from Canvas before its "
+                      "override writes, and %s differs; stamp left alone "
+                      "so the next push reports the conflict")
+              title (mapconcat (lambda (m) (format "%s (org %s, canvas %s)"
+                                                   (nth 0 m) (nth 1 m) (nth 2 m)))
+                               mismatches ", "))
+          (org-canvas--log-info org-canvas--logger
+            (concat "[Override] '%s' had drifted from Canvas before its "
+                    "override writes, but its own fields agree with Canvas: "
+                    "the drift was its overrides")
+            title)
+          (org-canvas--override-restamp pom assignment-id title item))))))
+
+(defun org-canvas--override-sync-heading (pom assignment-id overrides title
+                                              &optional options)
   "Reconcile OVERRIDES for ASSIGNMENT-ID and keep the heading's baseline.
 POM is the assignment heading and TITLE its name for the log.  When
 the heading agreed with Canvas before the reconcile and the reconcile
 wrote anything, CANVAS_UPDATED_AT is restamped from a fresh read, so
 the next push does not take the override writes for a web-UI edit
-\(issue #348).  A heading that had already drifted keeps its stamp:
-restamping it would hide the edit.  Return the reconcile's counts."
+\(issue #348).  A heading that had already drifted keeps its stamp,
+since restamping it would hide the edit — unless OPTIONS, a plist,
+carries a `:mismatch-fn' that finds the heading's own fields agreeing
+with Canvas, in which case the drift was the overrides just matched
+and the stamp moves (issue #410; `org-canvas--override-restamp-explained').
+`:confirm-deletes' in OPTIONS asks before an override Canvas holds is
+deleted (issue #411).  Return the reconcile's counts."
   (let* ((clean (org-canvas--override-baseline-clean-p pom assignment-id))
          (counts (org-canvas--override-sync-for-assignment
-                  assignment-id overrides)))
+                  assignment-id overrides (plist-get options :confirm-deletes)))
+         (mismatch-fn (plist-get options :mismatch-fn)))
     (cond
-     ((zerop (apply #'+ counts)))
+     ((zerop (apply #'+ (cl-subseq counts 0 3))))
      (clean (org-canvas--override-restamp pom assignment-id title))
-     ((not org-canvas--dry-run)
+     (org-canvas--dry-run)
+     (mismatch-fn (org-canvas--override-restamp-explained
+                   pom assignment-id title mismatch-fn))
+     (t
       (org-canvas--log-debug org-canvas--logger
         (concat "[Override] '%s' had drifted from Canvas before its "
                 "override writes; stamp left alone")
         title)))
     counts))
 
-(defun org-canvas--override-sync-entry (pom &optional source-dir)
+(defun org-canvas--override-sync-entry (pom &optional source-dir options)
   "Reconcile the overrides table under the assignment heading at POM.
 POM is a marker at the heading, or within its entry.  SOURCE-DIR is
 the directory section links resolve against, by default that of the
-buffer's file.  Return the counts (CREATED UPDATED DELETED) of
-`org-canvas--override-sync-heading', or nil when the heading has no
+buffer's file.  OPTIONS is the plist `org-canvas--override-sync-heading'
+takes: a push by heading passes its `:mismatch-fn' and
+`:confirm-deletes'.  Return the counts (CREATED UPDATED DELETED KEPT)
+of `org-canvas--override-sync-heading', or nil when the heading has no
 CANVAS_ID or no `#+NAME: overrides' table: the one heading's reconcile,
 which `org-canvas-sync-overrides' runs for every heading and a push by
 heading runs for its own (issue #380)."
@@ -847,7 +950,7 @@ heading runs for its own (issue #380)."
          pom canvas-id
          (org-canvas--override-parse-table
           table (or source-dir (file-name-directory (buffer-file-name))))
-         title)))))
+         title options)))))
 
 (defun org-canvas--override-sync-preflight ()
   "Validate assignments file and log header for override sync.

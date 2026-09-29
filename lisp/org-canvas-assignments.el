@@ -54,7 +54,7 @@
                   (overrides &optional parent-due parent-unlock parent-lock))
 (declare-function org-canvas--validate-assignment-structure "org-canvas-validate")
 (declare-function org-canvas--override-sync-entry "org-canvas-sections"
-                  (pom &optional source-dir))
+                  (pom &optional source-dir options))
 
 ;;;; Configuration
 
@@ -164,6 +164,9 @@ See `org-canvas--assignment-owner'."
   :file-var 'org-canvas-assignments-file
   :query "LEVEL=1"
   :body-api-key "description"
+  ;; The drift report holds each heading's overrides table against
+  ;; the overrides the list carries with this (issue #411).
+  :body-list-params '(("include[]" . "overrides"))
   :properties
   `((:org-prop "POINTS" :data-key :points_possible :type number
      :doc "Points possible")
@@ -1147,25 +1150,59 @@ none of them, so other headings keep their hash."
        ""))))
 
 (defun org-canvas--assignment-overrides-note (counts)
-  "Describe the override reconcile COUNTS, (CREATED UPDATED DELETED)."
-  (format "overrides %d created, %d updated, %d deleted%s"
+  "Describe the override reconcile COUNTS, (CREATED UPDATED DELETED KEPT).
+KEPT, the overrides Canvas holds that the table lacks and the push
+left alone (issue #411), is named only when there are any."
+  (format "overrides %d created, %d updated, %d deleted%s%s"
           (nth 0 counts) (nth 1 counts) (nth 2 counts)
+          (let ((kept (or (nth 3 counts) 0)))
+            (if (> kept 0)
+                (format ", %d kept that the table lacks" kept)
+              ""))
           (if org-canvas--dry-run " (dry run)" "")))
 
-(defun org-canvas--assignment-sync-heading-overrides (_ctx)
+(defun org-canvas--assignment-heading-mismatches (payload item)
+  "Return the registered fields PAYLOAD carries differing from Canvas ITEM.
+PAYLOAD is what the push built for the heading, ITEM the assignment
+as read back; each element is (ORG-PROP LOCAL REMOTE), by the rule the
+push echo check applies (issue #349).  Nil means the heading's own
+fields agree with Canvas, so a moved `updated_at' can only be its
+overrides (issue #410).  A comparison that signals counts as a
+mismatch: the stamp is then kept, which is the safe side."
+  (condition-case err
+      (org-canvas--registry-echo-mismatches
+       "assignments" (gethash "assignment" payload) item)
+    (error
+     (org-canvas--log-warning org-canvas--logger
+       "[Override] Could not compare the heading with Canvas (%s); stamp left alone"
+       (error-message-string err))
+     (list (list "?" "?" (error-message-string err))))))
+
+(defun org-canvas--assignment-sync-heading-overrides (ctx)
   "Reconcile the overrides table of the assignment heading at point.
 A push of one heading, at point or by name, runs this after the
 assignment went through, so a heading's table is sent with it rather
 than only by `org-canvas-sync-overrides' over the whole file (issue
-#380).  Return nil when the heading has no table or no CANVAS_ID, else
-a plist (:overrides COUNTS :note TEXT) for the by-heading result,
-COUNTS the symbol `failed' when the reconcile signalled: the
-assignment itself is pushed by then, and says so."
-  (let ((pom (point-marker))
-        (title (org-get-heading t t t t)))
+#380).  CTX's :heading-payload, when the runtime set it, lets the
+reconcile tell an override-only drift from a web-UI edit and restamp
+the former (issue #410); an override Canvas holds that the table
+lacks is deleted only after asking (issue #411).  Return nil when the
+heading has no table or no CANVAS_ID, else a plist (:overrides COUNTS
+:note TEXT) for the by-heading result, COUNTS the symbol `failed'
+when the reconcile signalled: the assignment itself is pushed by
+then, and says so."
+  (let* ((pom (point-marker))
+         (title (org-get-heading t t t t))
+         (payload (plist-get ctx :heading-payload))
+         (options (list :confirm-deletes t
+                        :mismatch-fn
+                        (and (hash-table-p payload)
+                             (lambda (item)
+                               (org-canvas--assignment-heading-mismatches
+                                payload item))))))
     (unwind-protect
         (condition-case err
-            (let ((counts (org-canvas--override-sync-entry pom)))
+            (let ((counts (org-canvas--override-sync-entry pom nil options)))
               (when counts
                 (let ((note (org-canvas--assignment-overrides-note counts)))
                   (message "Assignment '%s': %s." title note)
@@ -1217,15 +1254,36 @@ this is the one spelling kept for callers that hold a bare id."
          :link-id-property "CANVAS_ID")
    group-id))
 
+(defun org-canvas--assignment-remove-overrides-table ()
+  "Delete the `#+NAME: overrides' table of the entry at point, if any.
+A pull writes the table Canvas holds afresh; the body replacement
+takes an old table with the body, but an assignment with no
+description leaves the body alone, and the fresh table would then sit
+under the stale one (issue #411)."
+  (org-back-to-heading t)
+  (let ((end (save-excursion (org-end-of-subtree t) (point))))
+    (when (re-search-forward "^#\\+NAME:[ \t]+overrides[ \t]*$" end t)
+      (let ((start (line-beginning-position)))
+        (forward-line 1)
+        (when (org-at-table-p)
+          (goto-char (org-table-end)))
+        (skip-chars-forward "\n")
+        (delete-region start (point))))))
+
 (defun org-canvas--assignment-pull-after (item pos)
   "Write what the registry cannot express for the assignment pulled at POS.
 ITEM is the API response alist: its description becomes the heading's
 body, and its section overrides, fetched separately, its table.  Every
 property comes from the registry (issue #135), so a field the push
 side reads is a field the pull writes — PUBLISHED, SUBMISSION, the LTI
-tool attributes — and nothing outside the schema lands in the drawer."
+tool attributes — and nothing outside the schema lands in the drawer.
+A table the entry already holds is removed first, so a pull over a
+heading writes one table, Canvas's (issue #411)."
   (org-with-point-at pos
     (org-canvas--pull-insert-body (alist-get 'description item)))
+  (save-excursion
+    (goto-char pos)
+    (org-canvas--assignment-remove-overrides-table))
   (let ((overrides (org-canvas--override-fetch (alist-get 'id item))))
     (when overrides
       (save-excursion

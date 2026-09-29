@@ -625,8 +625,9 @@ no arguments, called with point on the heading) where the shared
 subtree export is not what gets pushed; `:body-remote-fn' a function
 of the Canvas item returning its body where the reply nests it (a New
 Quiz item's `item_body' under `entry', issue #322); `:body-list-params'
-adds request parameters the list endpoint needs before it returns
-bodies.
+adds request parameters the drift report's list read needs: pages ask
+for bodies with it (issue #83), assignments for their overrides, which
+the report compares with each heading's table (issue #411).
 
 Does nothing if FEATURE-NAME is already registered (idempotent)."
   (unless (gethash feature-name org-canvas--property-registry)
@@ -748,7 +749,7 @@ the sync had already written (issue #97)."
     :module-items-moved :module-items-pending :module-items-adopted
     :module-items-relocated
     :file-changed-ids :file-recreated-ids :prepared :hash-fn :dry-run-in-push
-    :outcome :heading-report)
+    :outcome :heading-report :heading-payload)
   "Every key a sync run context may carry, present from creation.
 Static: :feature-name, :feature-upper, :title-key, the pipeline
 functions, :total-count, :hash-extra-fn.  Snapshot: :baseline (the
@@ -770,7 +771,9 @@ whether its :dry-run is `push'), :outcome (what a single-entry push
 ended as — `synced', `unchanged', `conflict', `pulled', `duplicate',
 `fragment' or `dry-run' — for a caller that syncs headings by name, issue #287),
 :heading-report (the plist a spec's :after-heading returned, merged
-into that caller's result, issue #380).
+into that caller's result, issue #380), :heading-payload (the payload
+that single-entry push built, for :after-heading to compare with what
+Canvas holds, issue #410).
 Every key is present so `plist-put' always mutates the context in
 place and the functions sharing it see one another's writes.")
 

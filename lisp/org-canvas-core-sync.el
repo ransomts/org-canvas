@@ -2284,6 +2284,8 @@ to every later push at point (issue #141)."
          (canvas-id (or (plist-get data :canvas-id)
                         (plist-get data :canvas-url))))
     (org-canvas--log-info org-canvas--logger "[Stage 2: Build] '%s'" title)
+    ;; What :after-heading may hold against Canvas's copy (issue #410).
+    (plist-put ctx :heading-payload payload)
     (if (and payload-hash
              stored-hash
              (string= payload-hash stored-hash)
@@ -2327,7 +2329,9 @@ The push went through when CTX's :outcome is `synced', `unchanged' or
 `dry-run': a heading stopped at a conflict or a duplicate sends nothing
 more.  The function is called with point on HEADING, a marker, and
 CTX; its result is kept as CTX's :heading-report and the buffer is
-saved, since it may have restamped the heading (issue #380)."
+saved, since it may have restamped the heading (issue #380).  CTX's
+:heading-payload is the payload the push built, whether or not it
+was sent (issue #410)."
   (let ((fn (plist-get spec :after-heading)))
     (when (and fn (memq (plist-get ctx :outcome) '(synced unchanged dry-run)))
       (goto-char heading)

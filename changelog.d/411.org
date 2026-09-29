@@ -1,0 +1,20 @@
+* Added
+- #411 The drift report compares each assignment heading's =#+NAME:
+  overrides= table with the overrides Canvas holds, in a section of its
+  own, =Assignment Overrides=: EXTRA for an override no row claims (an
+  extension given in the web UI, which the next push of that heading
+  would delete), MISSING for a row Canvas lacks, CHANGED for a date
+  that differs.  The overrides come with the assignment list
+  (=include[]=overrides=), so the pass costs no request.  On a row,
+  =RET= visits the heading, =b= opens the assignment's page and =p= pulls
+  the heading, which writes Canvas's table whole.
+* Changed
+- #411 A push of one assignment heading asks before deleting an
+  override Canvas holds that its table lacks, naming who loses what; a
+  batch push keeps them and says so in its closing line, as
+  =N kept that the table lacks=.  =org-canvas-sync-overrides= over the
+  whole file still deletes them.  The by-heading result's =:overrides=
+  gains a fourth count, the overrides kept.
+- #411 A pull over an assignment heading replaces its overrides table
+  rather than leaving a stale one above the fresh one when the
+  assignment has no description.

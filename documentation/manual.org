@@ -1902,8 +1902,13 @@ is deleted.  An override write moves the assignment's =updated_at=, so the
 sync restamps the heading's =CANVAS_UPDATED_AT= after it and the next push
 of that heading is not called a conflict; a heading that had already
 drifted from Canvas before the override sync keeps its stamp, so a web-UI
-edit still reports.  An override that already carries its row's
-dates is left alone, so a run writes only the rows that changed.
+edit still reports.  A push of one heading looks closer (#410): when the
+assignment read back after the writes agrees with the heading's own
+fields, the drift was the overrides just matched -- an extension given in
+the web UI and copied into the table -- and the stamp moves; a field
+Canvas holds otherwise keeps the stamp and is named in the log.  An
+override that already carries its row's dates is left alone, so a run
+writes only the rows that changed.
 
 A push of one assignment — =M-x org-canvas-sync-assignment-at-point=,
 =org-canvas-sync-assignment= or an =org-canvas-sync-headings= entry —
@@ -1911,7 +1916,14 @@ also reconciles that heading's table, and only that one, once the
 assignment itself went through (synced, unchanged or previewed).  An
 edit to the heading's due time and to one section's row is then a
 single push; =org-canvas-sync-overrides= remains the command for every
-table in the file.
+table in the file.  Before deleting an override Canvas holds that the
+table lacks -- an extension given in the web UI that was never copied
+into the table -- a push of one heading asks, naming who loses what; in
+a batch Emacs it keeps them and its closing line says =N kept that the
+table lacks=.  The drift report names such overrides as EXTRA rows of its
+*Assignment Overrides* section beforehand, and =p= on one pulls the table
+(see [[*Drift Report][Drift Report]]).  The whole-file
+=org-canvas-sync-overrides= deletes them without asking, as before.
 
 An extension never reads as the assignment's own date.  Canvas answers
 a teacher's read of an assignment with the most lenient override's
@@ -2945,6 +2957,26 @@ than calling every item MISSING.  An item is acknowledged under
 ="new-quiz-items"=, and excluding that name leaves the section out.  On an
 item row, =k= deletes the item from its quiz, =b= and =B= open the quiz's
 page, and =p= pulls the whole quiz, items included, over its heading.
+
+Each assignment heading's =#+NAME: overrides= table is compared with the
+overrides Canvas holds for the assignment, in a section of its own,
+*Assignment Overrides*, right after *Assignments* (#411).  The overrides
+come with the assignment list (=include[]=overrides=), so the section costs
+no request.  A row is paired with an override the way the sync claims one:
+a section row by its section, a group row by its group, a student row by
+the same set of students.  An override no row claims is EXTRA, and the row
+says so: the next push of that heading deletes it, which is what an
+extension given in the web UI looks like before it is copied into the
+table.  A row Canvas lacks is MISSING, which the next push creates; a
+claimed override whose dates differ is CHANGED, with the dates.  An EXTRA
+whose dates are the assignment's own says so, since a pull writes no row
+for it.  On a row, =RET= visits the assignment heading, =b= opens the
+assignment's page, and =p= pulls the heading, which writes Canvas's table
+whole -- the way to adopt an extension without copying it by hand.  =k= and
+=a= refuse: an override is removed by dropping its row and pushing the
+heading.  Excluding ="assignment-overrides"= leaves the section out.  A
+stamped assignment whose reply carries no overrides makes the section
+"could not check", never a course without any.
 
 Every property a module registers is compared, so this covers =PUBLISHED=,
 points, due dates, group weights, drop rules and the rest without a separate
@@ -4385,7 +4417,7 @@ Setting different due dates for different course sections.
    | Group: Team A                                | <2026-09-22 Mon 23:59> |                        |         |
    #+end_src
 
-   =Students: #1234= names a student by Canvas id instead, which keeps the name out of the course repository.  Pull the assignments before editing a table by hand, so extensions given in the web UI are in it and survive the sync.
+   =Students: #1234= names a student by Canvas id instead, which keeps the name out of the course repository.  Pull the assignments before editing a table by hand, so extensions given in the web UI are in it and survive the sync; =M-x org-canvas-diff= lists any the table lacks under *Assignment Overrides*, and a push of one heading asks before deleting them.
 
 ** Pre-Semester Validation Checklist
 

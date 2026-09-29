@@ -120,6 +120,24 @@
 ;; assignments module.
 (declare-function org-canvas--assignment-owner "org-canvas-assignments"
                   (item))
+;; The Assignment Overrides pass reads a heading's table and pairs its
+;; rows with Canvas's overrides the way the reconcile claims them
+;; (issue #411).  Declared for the same reason: `org-canvas' loads the
+;; sections module.
+(declare-function org-canvas--override-find-table "org-canvas-sections" (end))
+(declare-function org-canvas--override-parse-table "org-canvas-sections"
+                  (table source-dir))
+(declare-function org-canvas--override-find-existing "org-canvas-sections"
+                  (override existing))
+(declare-function org-canvas--override-same-time-p "org-canvas-sections"
+                  (ours theirs))
+(declare-function org-canvas--override-target-field "org-canvas-sections"
+                  (override))
+(declare-function org-canvas--override-target-cell "org-canvas-sections" (ov))
+(declare-function org-canvas--override-format-cell "org-canvas-sections"
+                  (iso8601))
+(declare-function org-canvas--override-row-redundant-p "org-canvas-sections"
+                  (ov parent-due parent-unlock parent-lock))
 
 (defconst org-canvas--diff-buffer-name "*canvas-diff*"
   "Name of the buffer holding the drift report.")
@@ -1082,7 +1100,8 @@ accepts."
 
 (defconst org-canvas--diff-children-fns
   '(("modules" . org-canvas--diff-module-items)
-    ("newquizzes" . org-canvas--diff-new-quiz-items))
+    ("newquizzes" . org-canvas--diff-new-quiz-items)
+    ("assignments" . org-canvas--diff-assignment-overrides))
   "Child checks, by normalized feature name.
 Each a function of (ITEMS LOCAL FILE) — the feature's remote list,
 the local entries `org-canvas--diff-feature' collected, and the file
@@ -1568,6 +1587,226 @@ a list that cannot be read makes it an :error, never an empty quiz."
         (error
          (list :name name :error (error-message-string err)))))))
 
+;;;; Assignment Overrides (issue #411)
+;;
+;; An extension is the commonest web-UI edit on a live course, and the
+;; report could not show one: an override is not a field of the
+;; assignment, so a per-student due date given in SpeedGrader moved the
+;; column's `updated_at' and nothing else, and the row read CHANGED "in
+;; a field this report does not compare".  Since a push by heading
+;; reconciles the heading's table (#380), the same unseen extension was
+;; deleted by the next push of that heading.  The pass below holds every
+;; stamped heading's `#+NAME: overrides' table against the overrides
+;; Canvas lists for the assignment — read with the list itself, through
+;; the `include[]=overrides' the property registration adds, so the pass
+;; costs no request — pairing a row with an override the way the
+;; reconcile claims one (`org-canvas--override-find-existing': a section
+;; row by its section, a group row by its group, a student row by the
+;; same set of students), in a section of its own, "Assignment
+;; Overrides".  A Canvas override no row claims is EXTRA, and the row
+;; says the next push of that heading deletes it; a row Canvas lacks is
+;; MISSING, which the next push creates; a claimed override whose dates
+;; differ is CHANGED, with the dates.  A row that resolves to nobody is
+;; not a row, as the push reads it.  Every entry is of kind `override'
+;; and names its assignment (:where, :assignment-id) and heading (:file,
+;; :line), so RET visits the heading, `b' opens the assignment's page,
+;; and `p' pulls the heading, which writes Canvas's table whole; the
+;; other verbs refuse — an override is deleted by dropping its row and
+;; pushing the heading, and adopted by `p'.  A stamped assignment whose
+;; list reply carries no `overrides' is a misread, never "none" (Hard
+;; Rule 16): the section reads "could not check".  Read-only, as the
+;; rest of the report.
+
+(defconst org-canvas--diff-overrides-name "Assignment Overrides"
+  "The section override rows report in (issue #411).")
+
+(defconst org-canvas--diff-override-dates
+  '((:due-at due_at "Due At" "due")
+    (:unlock-at unlock_at "Unlock At" "unlock")
+    (:lock-at lock_at "Lock At" "lock"))
+  "The three override dates: row key, Canvas field, column title, word.")
+
+(defun org-canvas--diff-override-headings (file query)
+  "Return the stamped assignment headings of FILE with their override rows.
+QUERY is the registry's heading query.  Each element is a plist: :id
+the CANVAS_ID, :title and :heading the heading text, :line where it
+sits, :rows the table's parsed rows (nil without a table).  A heading
+a pull marked deleted is left out, as the sync leaves it (issue #402)."
+  (when (and file (file-exists-p file))
+    (let ((dir (file-name-directory file)))
+      (with-current-buffer (org-canvas--find-file-noselect file)
+        (delq nil
+              (org-map-entries
+               (lambda ()
+                 (let ((id (org-entry-get (point) "CANVAS_ID")))
+                   (when (and id (not (string-empty-p id))
+                              (not (org-entry-get
+                                    (point) org-canvas--prop-canvas-deleted)))
+                     (let* ((end (save-excursion (org-end-of-subtree t) (point)))
+                            (table (save-excursion
+                                     (org-canvas--override-find-table end))))
+                       (list :id id
+                             :title (org-get-heading t t t t)
+                             :heading (org-get-heading t t t t)
+                             :line (line-number-at-pos)
+                             :rows (and table
+                                        (org-canvas--override-parse-table
+                                         table dir)))))))
+               (or query "LEVEL=1") 'file))))))
+
+(defun org-canvas--diff-override-remote (heading index)
+  "Return (ITEM . OVERRIDES) for HEADING's assignment in INDEX, or nil.
+Nil when INDEX does not hold the assignment, which the Assignments
+section reports MISSING.  Signals when the item carries no
+`overrides' key: the list was read without them, and absence is not
+an empty list (Hard Rule 16)."
+  (let ((item (gethash (plist-get heading :id) index)))
+    (when item
+      (let ((cell (assq 'overrides item)))
+        (unless cell
+          (error "The assignment list carried no overrides for id %s (include[]=overrides not honored)"
+                 (plist-get heading :id)))
+        (cons item (append (cdr cell) nil))))))
+
+(defun org-canvas--diff-override-who (target)
+  "Return who override TARGET is for, as the report names it.
+TARGET is a Canvas override alist, or a row's target as
+`org-canvas--override-target-field' spells it, wrapped in a list: a
+section reads by its sections.org heading, a group and students by
+their names, `#id' when unresolved, as the table cell does."
+  (org-link-display-format (org-canvas--override-target-cell target)))
+
+(defun org-canvas--diff-override-dates-text (getter)
+  "Return the dates GETTER answers, as \"due <…>, lock <…>\".
+GETTER is called with each entry of `org-canvas--diff-override-dates'
+and answers an ISO 8601 string or nil; the text spells each as the
+table cell would."
+  (mapconcat #'identity
+             (delq nil
+                   (mapcar (lambda (d)
+                             (let ((v (funcall getter d)))
+                               (and v (not (string-empty-p v))
+                                    (format "%s %s" (nth 3 d)
+                                            (org-canvas--override-format-cell v)))))
+                           org-canvas--diff-override-dates))
+             ", "))
+
+(defun org-canvas--diff-override-fields (row existing)
+  "Return (COLUMN ORG CANVAS) for each date of ROW that EXISTING carries otherwise.
+ROW is a parsed table row, EXISTING the Canvas override it claims;
+two dates agree as the reconcile says they do
+\(`org-canvas--override-same-time-p'), so a row the push would not
+send is not a row that differs (issue #380)."
+  (delq nil
+        (mapcar (lambda (d)
+                  (let ((ours (plist-get row (nth 0 d)))
+                        (theirs (alist-get (nth 1 d) existing)))
+                    (unless (org-canvas--override-same-time-p ours theirs)
+                      (list (nth 2 d)
+                            (if ours (org-canvas--override-format-cell ours) "(unset)")
+                            (if theirs (org-canvas--override-format-cell theirs)
+                              "(unset)")))))
+                org-canvas--diff-override-dates)))
+
+(defun org-canvas--diff-override-entry (heading item file state &rest fields)
+  "Return an override row of STATE for HEADING's assignment ITEM in FILE.
+STATE is `extra', `missing' or `changed'; FIELDS are the row's own
+keys.  Every row names its assignment and its heading's file and
+line, which is what its verbs need."
+  (append (list :kind 'override :state state
+                :assignment-id (plist-get heading :id)
+                :where (plist-get heading :title) :container "assignment"
+                :file file :line (plist-get heading :line)
+                :heading (plist-get heading :heading)
+                :html-url (org-canvas--diff-normalize-remote
+                           (alist-get 'html_url item)))
+          fields))
+
+(defun org-canvas--diff-override-row-entry (heading item file row overrides)
+  "Compare table ROW of HEADING with the OVERRIDES of its ITEM on Canvas.
+Returns (CLAIMED-ID . ENTRY): the id of the override ROW claims, or
+nil, and a MISSING or CHANGED entry, or nil when they agree.  FILE
+is the heading's."
+  (let ((existing (org-canvas--override-find-existing row overrides))
+        (who (org-canvas--diff-override-who
+              (list (org-canvas--override-target-field row)))))
+    (if (null existing)
+        (cons nil (org-canvas--diff-override-entry
+                   heading item file 'missing :title who
+                   :dates (org-canvas--diff-override-dates-text
+                           (lambda (d) (plist-get row (nth 0 d))))))
+      (let ((fields (org-canvas--diff-override-fields row existing)))
+        (cons (alist-get 'id existing)
+              (and fields
+                   (org-canvas--diff-override-entry
+                    heading item file 'changed :title who
+                    :id (format "%s" (alist-get 'id existing))
+                    :fields fields)))))))
+
+(defun org-canvas--diff-override-extra-entry (heading item file ov)
+  "Return the EXTRA entry for Canvas override OV of HEADING's ITEM in FILE.
+A row whose dates are the assignment's own says so: a pull writes no
+row for such an override (`org-canvas--override-row-redundant-p')."
+  (org-canvas--diff-override-entry
+   heading item file 'extra
+   :title (org-canvas--diff-override-who ov)
+   :id (format "%s" (alist-get 'id ov))
+   :dates (org-canvas--diff-override-dates-text
+           (lambda (d) (alist-get (nth 1 d) ov)))
+   :redundant (org-canvas--override-row-redundant-p
+               ov (alist-get 'due_at item) (alist-get 'unlock_at item)
+               (alist-get 'lock_at item))))
+
+(defun org-canvas--diff-override-rows (heading item overrides file)
+  "Return the override rows of HEADING against the OVERRIDES of its ITEM.
+FILE is the heading's.  Each table row claims an override as the
+reconcile would; what no row claims is EXTRA."
+  (let ((claimed nil) (entries nil))
+    (dolist (row (plist-get heading :rows))
+      (let ((result (org-canvas--diff-override-row-entry
+                     heading item file row overrides)))
+        (when (car result) (push (car result) claimed))
+        (when (cdr result) (push (cdr result) entries))))
+    (dolist (ov overrides)
+      (unless (memq (alist-get 'id ov) claimed)
+        (push (org-canvas--diff-override-extra-entry heading item file ov)
+              entries)))
+    (nreverse entries)))
+
+(defun org-canvas--diff-overrides-result (items file query)
+  "Compare every stamped heading's table in FILE with ITEMS' overrides.
+ITEMS is the Assignments list reply, QUERY the registry's heading
+query.  Returns the result plist; see the caller."
+  (let ((index (org-canvas--diff-remote-index items 'id))
+        (entries nil))
+    (dolist (heading (org-canvas--diff-override-headings file query))
+      (let ((remote (org-canvas--diff-override-remote heading index)))
+        (when remote
+          (setq entries (nconc entries (org-canvas--diff-override-rows
+                                        heading (car remote) (cdr remote)
+                                        file))))))
+    (list :name org-canvas--diff-overrides-name
+          :divergences (cl-remove-if (lambda (e) (eq (plist-get e :state) 'extra))
+                                     entries)
+          :extra (cl-remove-if-not (lambda (e) (eq (plist-get e :state) 'extra))
+                                   entries))))
+
+(defun org-canvas--diff-assignment-overrides (items _local file)
+  "Compare the overrides tables in FILE with the overrides ITEMS carry.
+ITEMS is the Assignments list reply, read with `include[]=overrides'.
+Returns a result plist named \"Assignment Overrides\", shaped like
+`org-canvas--diff-feature''s (issue #411); a reply without overrides
+makes it an :error, never a course without any."
+  (let ((name org-canvas--diff-overrides-name))
+    (if (org-canvas--diff-feature-excluded-p name)
+        (list :name name :excluded t)
+      (condition-case err
+          (org-canvas--diff-overrides-result
+           items file
+           (plist-get (org-canvas--diff-find-properties "assignments") :query))
+        (error
+         (list :name name :error (error-message-string err)))))))
+
 (defun org-canvas--diff-feature (feature)
   "Compare one FEATURE registry entry against Canvas.
 Returns a plist (:name :divergences :extra :notes :acknowledged
@@ -1729,9 +1968,38 @@ in no container."
           (or (plist-get entry :property) "CANVAS_ID")
           (org-canvas--diff-where entry ", in")))
 
+(defun org-canvas--diff-insert-fields (fields)
+  "Insert FIELDS, (NAME ORG CANVAS) triples, under a CHANGED row."
+  (dolist (field fields)
+    (insert (format "              %-18s org: %-24s canvas: %s\n"
+                    (nth 0 field) (nth 1 field) (nth 2 field)))))
+
+(defun org-canvas--diff-override-line (entry)
+  "Return the report line of override row ENTRY (issue #411)."
+  (let ((who (plist-get entry :title))
+        (where (org-canvas--diff-container entry))
+        (dates (plist-get entry :dates)))
+    (pcase (plist-get entry :state)
+      ('extra
+       (format "  EXTRA     %s (override id %s of %s%s; no row of the heading's overrides table claims it, so the next push of that heading deletes it — p pulls the table%s)\n"
+               who (plist-get entry :id) where
+               (if (string-empty-p dates) "" (concat ", " dates))
+               (if (plist-get entry :redundant)
+                   "; its dates are the assignment's own, which a pull writes no row for"
+                 "")))
+      ('missing
+       (format "  MISSING   %s (row of %s%s; Canvas holds no such override, so the next push of that heading creates it)\n"
+               who where (if (string-empty-p dates) "" (concat ", " dates))))
+      (_
+       (format "  CHANGED   %s (override id %s of %s)\n"
+               who (plist-get entry :id) where)))))
+
 (defun org-canvas--diff-insert-entry (entry)
   "Insert one ENTRY of a drift report at point."
   (pcase (plist-get entry :kind)
+    ('override
+     (insert (org-canvas--diff-override-line entry))
+     (org-canvas--diff-insert-fields (plist-get entry :fields)))
     ('missing
      (insert (format "  MISSING   %s (id %s is not in %s%s)\n"
                      (plist-get entry :title) (plist-get entry :id)
@@ -1771,9 +2039,7 @@ in no container."
                      (if (plist-get entry :remote-newer)
                          (format " (Canvas updated %s)" (plist-get entry :updated))
                        "")))
-     (dolist (field (plist-get entry :fields))
-       (insert (format "              %-18s org: %-24s canvas: %s\n"
-                       (nth 0 field) (nth 1 field) (nth 2 field))))
+     (org-canvas--diff-insert-fields (plist-get entry :fields))
      ;; A timestamp-only change used to be a puzzle: every compared
      ;; field matched, so the row could not say what had changed.
      (when (and (plist-get entry :remote-newer) (null (plist-get entry :fields)))
@@ -2094,7 +2360,7 @@ Returns the buffer."
 A module item's UNCLAIMED row names its Canvas item, whose heading
 has no title of its own to find it by."
   (pcase (plist-get entry :kind)
-    ((or 'missing 'modified 'note 'pending 'relocate) t)
+    ((or 'missing 'modified 'note 'pending 'relocate 'override) t)
     ('unclaimed (not (plist-get entry :module-id)))))
 
 (defun org-canvas-diff-visit ()
@@ -2222,6 +2488,8 @@ as the heading's baseline (`org-canvas-diff-adopt-stamp', issue #257)."
       ;; On a CHANGED row, accepting what Canvas holds means adopting
       ;; its timestamp — when nothing compared differs (issue #257).
       ('modified (org-canvas-diff-adopt-stamp))
+      ('override
+       (user-error "An override belongs in its heading's table: p pulls the table, or edit the row and push the heading"))
       (kind (user-error "A %s row is not something to acknowledge" (upcase (symbol-name kind)))))))
 
 ;;;; Deleting Remote Objects (issues #103, #345)
@@ -2651,13 +2919,27 @@ included (issue #322), so the quiz heading of CANVAS_ASSIGNMENT_ID
         (org-canvas-pull-at-point)
         t))))
 
+(defun org-canvas--diff-pull-heading-of (entry)
+  "Pull the assignment heading of override row ENTRY over itself.
+A table is part of its heading, and the heading's pull writes the
+table Canvas holds whole (issue #411), so the heading the row names
+by file and line is what `org-canvas-pull-at-point' runs on.  Asks
+first."
+  (save-excursion
+    (with-current-buffer (org-canvas--diff-goto-heading nil entry)
+      (org-canvas-pull-at-point)
+      t)))
+
 (defun org-canvas--diff-pulled-line (entry)
   "Return the text to put in place of ENTRY's row once it is pulled."
-  (format "  PULLED    %s (id %s%s)" (plist-get entry :title) (plist-get entry :id)
-          (cond ((plist-get entry :quiz-id)
-                 (format ", with %s" (org-canvas--diff-container entry)))
-                ((eq (plist-get entry :kind) 'extra) ", new heading")
-                (t ""))))
+  (if (eq (plist-get entry :kind) 'override)
+      (format "  PULLED    %s (with the table of %s)" (plist-get entry :title)
+              (org-canvas--diff-container entry))
+    (format "  PULLED    %s (id %s%s)" (plist-get entry :title) (plist-get entry :id)
+            (cond ((plist-get entry :quiz-id)
+                   (format ", with %s" (org-canvas--diff-container entry)))
+                  ((eq (plist-get entry :kind) 'extra) ", new heading")
+                  (t "")))))
 
 (defun org-canvas-diff-pull ()
   "Pull the item of the row at point from Canvas into Org.
@@ -2665,13 +2947,15 @@ On a CHANGED row, runs `org-canvas-pull-at-point' on the heading.  On
 an EXTRA row of a feature that pulls whole entries (classic and New
 Quizzes), writes the item as a new heading at the end of its file
 \(issues #295, #313).  On a New Quiz item's CHANGED or EXTRA row,
-pulls the quiz it sits in (issue #322).  Each asks first."
+pulls the quiz it sits in (issue #322); on an override row, the
+assignment heading whose table it is (issue #411).  Each asks first."
   (interactive)
   (let* ((row (org-canvas--diff-row-at-point))
          (entry (plist-get row :entry))
          (kind (plist-get entry :kind))
          (pulled
           (cond
+           ((eq kind 'override) (org-canvas--diff-pull-heading-of entry))
            ((not (memq kind '(modified extra)))
             (user-error "Only a CHANGED or EXTRA row has a Canvas version to pull"))
            ((plist-get entry :quiz-id) (org-canvas--diff-pull-quiz-of entry))
