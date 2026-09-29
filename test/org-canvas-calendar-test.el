@@ -715,7 +715,7 @@ Drop by.
            (cal-file (expand-file-name "calendar.org" temp-dir)))
       (unwind-protect
           (progn
-            (with-temp-file cal-file (insert "stale content\n* Old event\n"))
+            (with-temp-file cal-file (insert "stale content\n"))
             (let ((org-canvas-calendar-events-file cal-file)
                   (org-agenda-files nil))
               (with-org-canvas-test-config

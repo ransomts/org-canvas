@@ -740,6 +740,7 @@ whose prompt-only item has a list adds
   (org-back-to-heading t)
   (unless (= (org-outline-level) 1)
     (user-error "Point must be on a level-1 quiz heading"))
+  (org-canvas--sync-refuse-deleted)
   (let* ((data (org-canvas--new-quiz-parse-entry))
          (payload (org-canvas--new-quiz-build-payload data))
          (response (org-canvas--new-quiz-push-to-api data payload)))
@@ -790,7 +791,7 @@ The pull twin of `org-canvas-sync-new-quiz' (issue #346), written by
 hand since the sync is.  TARGET is the heading's exact title in the
 file `org-canvas-new-quizzes-file' names, or, with BY `canvas-id', its
 CANVAS_ASSIGNMENT_ID.  Never asks to confirm; saves the file and
-returns a plist whose :outcome is `pulled' or `dry-run'."
+returns a plist whose :outcome is `pulled', `dry-run' or `deleted'."
   (interactive)
   (org-canvas--pull-heading-runtime
    "new-quiz" (expand-file-name org-canvas-new-quizzes-file) "LEVEL=1"
@@ -960,9 +961,12 @@ CANVAS_UPDATED_AT and drops PAYLOAD_HASH."
          (endpoint (org-canvas--new-quiz-api-endpoint "quizzes"))
          (remote (org-canvas-api-request-all-pages 'GET endpoint))
          (count 0)
-         (was-fresh (org-canvas--pull-was-fresh-p file)))
+         (was-fresh (org-canvas--pull-was-fresh-p file))
+         (unlisted nil))
     (org-canvas--pull-confirm-unsaved file "new quizzes")
-    (if (zerop (length remote))
+    ;; An empty list never replaces a file holding headings (#399).
+    (if (and (zerop (length remote))
+             (not (org-canvas--pull-file-has-headings-p file)))
         (org-canvas--pull-emit-empty-file
          file (org-canvas--pull-label-for "new-quizzes"))
       (unless (file-exists-p file)
@@ -982,11 +986,18 @@ CANVAS_UPDATED_AT and drops PAYLOAD_HASH."
               (cl-incf count)))
           (org-canvas--pull-check-entry-count
            "new quizzes" file "CANVAS_ASSIGNMENT_ID" idless-before count))
+        ;; Read through the pull-only entry's item URL; the quiz's
+        ;; items are never marked (#399).
+        (setq unlisted (org-canvas--pull-mark-unlisted
+                        file (org-canvas--pull-feature-for-file file) remote
+                        '(assignment_id id) "CANVAS_ASSIGNMENT_ID" "LEVEL=1"))
         (org-canvas--pull-write-file-header)
         (org-canvas--save-buffer)))
     (org-canvas--pull-kill-fresh-buffer file was-fresh)
-    (org-canvas--log-info org-canvas--logger "New Quizzes pull complete: %d quizzes" count)
-    (message "New Quizzes pull complete: %d quizzes." count)))
+    (let ((note (org-canvas--pull-gone-suffix unlisted)))
+      (org-canvas--log-info org-canvas--logger
+        "New Quizzes pull complete: %d quizzes%s" count note)
+      (message "New Quizzes pull complete: %d quizzes%s." count note))))
 
 (provide 'org-canvas-new-quizzes)
 ;;; org-canvas-new-quizzes.el ends here

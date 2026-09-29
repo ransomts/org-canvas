@@ -400,12 +400,25 @@ already hold this title (issue #85)?  Either way the entry counts as
 Non-nil when a pull marked it `org-canvas--prop-canvas-deleted': its
 Canvas item was deleted, so a PUT would 404 and the recovery would
 create the item again under a new id, silently undoing the deletion
-\(issue #392)."
+\(issue #392).  Non-nil too when a heading above it carries the mark:
+an outcome under a group Canvas deleted, whose create would name a
+group that is gone (issue #399)."
   (let ((stamp (org-entry-get (point) org-canvas--prop-canvas-deleted)))
-    (when stamp
-      (format "'%s' was deleted on Canvas (%s %s); not pushed.  Delete the heading, or remove %s and its CANVAS_ID to create it again"
-              title org-canvas--prop-canvas-deleted stamp
-              org-canvas--prop-canvas-deleted))))
+    (if stamp
+        (format "'%s' was deleted on Canvas (%s %s); not pushed.  Delete the heading, or remove %s and its CANVAS_ID to create it again"
+                title org-canvas--prop-canvas-deleted stamp
+                org-canvas--prop-canvas-deleted)
+      (setq stamp (org-entry-get (point) org-canvas--prop-canvas-deleted t))
+      (when stamp
+        (format "'%s' sits under a heading deleted on Canvas (%s %s); not pushed.  Settle that heading first"
+                title org-canvas--prop-canvas-deleted stamp)))))
+
+(defun org-canvas--sync-refuse-deleted ()
+  "Signal a `user-error' when the heading at point may not be pushed.
+The at-point push's guard (issue #392), shared with a module whose
+push at point is written by hand, New Quizzes' (issue #399)."
+  (let ((note (org-canvas--sync-deleted-note (org-get-heading t t t t))))
+    (when note (user-error "%s" note))))
 
 (defun org-canvas--sync-skip-deleted (title ctx)
   "Count the heading at point, TITLE, as skipped if Canvas deleted it.
@@ -906,7 +919,8 @@ or, with BY `canvas-id', its %s; an error names a target that
 matches no heading or more than one.  Nil asks for a title (never
 under `noninteractive').  Never asks to confirm: naming the heading
 is the confirmation.  Saves the file and returns a plist whose
-:outcome is `pulled' or `dry-run'.  The whole-file pull is
+:outcome is `pulled', `dry-run' or `deleted' (marked CANVAS_DELETED,
+Canvas having deleted the item).  The whole-file pull is
 `org-canvas-pull-%s';
 `org-canvas-pull-headings' takes several."
                  singular singular
@@ -2229,8 +2243,7 @@ its conflict prompt is forgotten when it returns rather than applied
 to every later push at point (issue #141)."
   (org-canvas--sync-check-spec spec '(:feature :parse :build :push :finalize))
   (org-back-to-heading t)
-  (let ((note (org-canvas--sync-deleted-note (org-get-heading t t t t))))
-    (when note (user-error "%s" note)))
+  (org-canvas--sync-refuse-deleted)
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (let* ((feature-name (plist-get spec :feature))
          ;; Advances past the #+LAST_SYNCED header finalize may insert
@@ -2627,17 +2640,34 @@ TITLE names the heading in the log.  The read carries FEATURE's
 `:item-params', so an assignment comes back with its own dates rather
 than a student's extension (issue #273).  The write is
 `org-canvas--conflict-pull-local', which restamps CANVAS_UPDATED_AT
-and drops PAYLOAD_HASH."
-  (let* ((endpoint (org-canvas--feature-item-url feature id))
-         (remote (org-canvas-api-request
-                  'GET endpoint
-                  :params (org-canvas--feature-item-params feature))))
-    (org-canvas--conflict-pull-local
-     (list :pom (point-marker)) remote (plist-get feature :pull-item-fn))
-    (org-canvas--log-info org-canvas--logger
-      "[Pull] Refreshed '%s' from Canvas (%s %s)"
-      title (plist-get feature :name) id)
-    (message "Pulled '%s' from Canvas." title)))
+and drops PAYLOAD_HASH.  Returns `pulled', or `gone' when Canvas
+answers that the item was deleted: the heading is then marked
+CANVAS_DELETED, as a list pull marks it, rather than the 404 failing
+the command (issue #399)."
+  (let ((remote (org-canvas--pull-item-read feature id)))
+    (if (eq remote 'gone)
+        (org-canvas--pull-at-point-mark-gone feature id)
+      (org-canvas--conflict-pull-local
+       (list :pom (point-marker)) remote (plist-get feature :pull-item-fn))
+      (org-canvas--log-info org-canvas--logger
+        "[Pull] Refreshed '%s' from Canvas (%s %s)"
+        title (plist-get feature :name) id)
+      (message "Pulled '%s' from Canvas." title)
+      'pulled)))
+
+(defun org-canvas--pull-at-point-mark-gone (feature id)
+  "Mark the heading at point deleted on Canvas, FEATURE's item ID; return `gone'.
+The heading and its text stay, and the buffer is saved."
+  (let* ((marker (point-marker))
+         (mark (org-canvas--pull-mark-gone marker))
+         (note (format "'%s' is no longer on Canvas (%s %s); heading kept, marked %s %s"
+                       (car mark) (plist-get feature :name) id
+                       org-canvas--prop-canvas-deleted (cdr mark))))
+    (set-marker marker nil)
+    (org-canvas--save-buffer)
+    (org-canvas--log-warning org-canvas--logger "[Pull] %s" note)
+    (message "%s" note)
+    'gone))
 
 (defvar org-canvas--pull-heading-fns nil
   "Alist of (SINGULAR . FUNCTION): every feature's pull by heading.
@@ -2662,8 +2692,9 @@ FEATURE is plural or singular; a name no module registered is a
   "Pull the heading at point for the feature SINGULAR names; return a result.
 No prompt: the caller named the heading.  Under a dry run nothing is
 read or written.  Otherwise the at-point pull runs and the buffer is
-saved.  The result is a plist (:outcome :title :id), :outcome `pulled'
-or `dry-run'."
+saved.  The result is a plist (:outcome :title :id), :outcome `pulled',
+`dry-run' or `deleted' when Canvas answered that the item was deleted
+and the heading was marked instead (issue #399)."
   (run-hooks 'org-canvas--operation-start-hook)
   (pcase-let ((`(,feature ,id ,title) (org-canvas--pull-at-point-target)))
     (if org-canvas--dry-run
@@ -2671,9 +2702,11 @@ or `dry-run'."
           (message "%s '%s' would be pulled (dry run)."
                    (capitalize singular) title)
           (list :outcome 'dry-run :title title :id id))
-      (org-canvas--pull-at-point-1 feature id title)
-      (org-canvas--save-buffer)
-      (list :outcome 'pulled :title title :id id))))
+      (let ((outcome (org-canvas--pull-at-point-1 feature id title)))
+        (org-canvas--save-buffer)
+        ;; A heading Canvas deleted is marked, not pulled (issue #399).
+        (list :outcome (if (eq outcome 'gone) 'deleted 'pulled)
+              :title title :id id)))))
 
 (defun org-canvas--pull-heading-runtime (singular file query id-property
                                                   target &optional by)
@@ -2702,9 +2735,12 @@ One redacted line per heading, then one line of counts."
       (if (plist-get r :error) (format " — %s" (plist-get r :error)) "")))
   (let ((count (lambda (o) (cl-count o results
                                      :key (lambda (r) (plist-get r :outcome))))))
-    (message "Pulled %d heading(s): %d pulled, %d dry run, %d failed"
+    (message "Pulled %d heading(s): %d pulled, %d dry run, %d failed%s"
              (length results) (funcall count 'pulled)
-             (funcall count 'dry-run) (funcall count 'failed))))
+             (funcall count 'dry-run) (funcall count 'failed)
+             (let ((deleted (funcall count 'deleted)))
+               (if (zerop deleted) ""
+                 (format ", %d deleted on Canvas" deleted))))))
 
 ;;;###autoload
 (defun org-canvas-pull-headings (entries)
@@ -2714,8 +2750,8 @@ written the same way: (FEATURE . TITLE), or (FEATURE TARGET BY) where
 BY is nil, `title' or `canvas-id'.  Every feature is resolved before
 the first pull; after that a failed heading is reported and the next
 is pulled.  Nothing asks to confirm.  Return one plist per entry,
-\(:feature :target :outcome), :outcome `pulled', `dry-run' or
-`failed' with :error.  For example:
+\(:feature :target :outcome), :outcome `pulled', `dry-run', `deleted'
+\(the heading marked CANVAS_DELETED) or `failed' with :error.  For example:
 
   (org-canvas-pull-headings
    \\='((assignment . \"Attendance 01\")

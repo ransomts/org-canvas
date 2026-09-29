@@ -218,10 +218,13 @@ code — all of them, not only today's (issue #87)."
                  'GET (org-canvas--calendar-event-list-url)
                  (org-canvas--calendar-event-list-params)))
          (file (expand-file-name org-canvas-calendar-events-file))
-         (was-fresh (org-canvas--pull-was-fresh-p file)))
+         (was-fresh (org-canvas--pull-was-fresh-p file))
+         (unlisted nil))
     (org-canvas--pull-confirm-overwrite file "calendar events")
     (org-canvas--pull-confirm-unsaved file "calendar events")
-    (if (zerop (length items))
+    ;; An empty list never replaces a file holding headings (#399).
+    (if (and (zerop (length items))
+             (not (org-canvas--pull-file-has-headings-p file)))
         (org-canvas--pull-emit-empty-file
          file (org-canvas--pull-label-for "calendar-events"))
       (unless (file-exists-p file)
@@ -236,13 +239,17 @@ code — all of them, not only today's (issue #87)."
                 (goto-char pos)
                 (org-canvas-org-save-sync-state pos id "CANVAS_ID")
                 (org-canvas--calendar-event-pull-item item pos)))))
+        (setq unlisted (org-canvas--pull-mark-unlisted
+                        file "calendar-events" items 'id "CANVAS_ID"))
         (org-canvas--pull-write-file-header)
         (org-canvas--save-buffer)))
     (org-canvas--pull-kill-fresh-buffer file was-fresh)
-    (org-canvas--log-info org-canvas--logger "========================================")
-    (org-canvas--log-info org-canvas--logger ">>> CALENDAR EVENTS PULL COMPLETE (%d events)" (length items))
-    (org-canvas--log-info org-canvas--logger "========================================")
-    (message "Calendar events pull complete: %d events" (length items))))
+    (let ((note (org-canvas--pull-gone-suffix unlisted)))
+      (org-canvas--log-info org-canvas--logger "========================================")
+      (org-canvas--log-info org-canvas--logger ">>> CALENDAR EVENTS PULL COMPLETE (%d events)%s"
+        (length items) note)
+      (org-canvas--log-info org-canvas--logger "========================================")
+      (message "Calendar events pull complete: %d events%s" (length items) note))))
 
 (provide 'org-canvas-calendar)
 ;;; org-canvas-calendar.el ends here

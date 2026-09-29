@@ -577,9 +577,12 @@ Point must be at the parent group heading."
          (remote-groups (org-canvas-api-request-all-pages 'GET groups-endpoint))
          (total-groups (length remote-groups))
          (group-count 0) (outcome-count 0)
-         (was-fresh (org-canvas--pull-was-fresh-p file)))
+         (was-fresh (org-canvas--pull-was-fresh-p file))
+         (unlisted nil))
     (org-canvas--pull-confirm-unsaved file "outcomes")
-    (if (zerop total-groups)
+    ;; An empty list never replaces a file holding headings (#399).
+    (if (and (zerop total-groups)
+             (not (org-canvas--pull-file-has-headings-p file)))
         (org-canvas--pull-emit-empty-file
          file (org-canvas--pull-label-for "outcomes"))
       (unless (file-exists-p file)
@@ -596,13 +599,20 @@ Point must be at the parent group heading."
             (org-canvas-org-save-sync-state pos gid)
             (cl-incf outcome-count
                      (org-canvas--outcome-pull-process-group gid))))
+        ;; Groups only: a group's own read answers for it, while an
+        ;; outcome missing from its group's list may be unlinked, not
+        ;; deleted (#399).
+        (setq unlisted (org-canvas--pull-mark-unlisted
+                        file "outcomes" remote-groups 'id "CANVAS_ID" "LEVEL=1"))
         (org-canvas--pull-write-file-header)
         (org-canvas--save-buffer)))
     (org-canvas--pull-kill-fresh-buffer file was-fresh)
-    (org-canvas--log-info org-canvas--logger
-      "Outcomes pull complete: %d groups, %d outcomes" group-count outcome-count)
-    (message "Outcomes pull complete: %d groups, %d outcomes."
-             group-count outcome-count)))
+    (let ((note (org-canvas--pull-gone-suffix unlisted)))
+      (org-canvas--log-info org-canvas--logger
+        "Outcomes pull complete: %d groups, %d outcomes%s"
+        group-count outcome-count note)
+      (message "Outcomes pull complete: %d groups, %d outcomes%s."
+               group-count outcome-count note))))
 
 (provide 'org-canvas-outcomes)
 ;;; org-canvas-outcomes.el ends here

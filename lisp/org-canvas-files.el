@@ -1972,6 +1972,17 @@ Preserves existing CANVAS_ID matches in place; new files are appended."
          display-name download-url local-path (alist-get 'size item))))
     count))
 
+(defun org-canvas--file-pull-mark-unlisted (file remote)
+  "Mark the file headings of FILE that REMOTE lacks and Canvas deleted.
+Return the closing line's tail naming them (`org-canvas--pull-gone-suffix').
+A file heading is matched at any level, since a nested files.org keeps
+files under folder headings; a folder heading carries no Canvas id, so
+it is never read or marked: a folder deleted on Canvas takes its files
+with it, and those are what get marked (issue #399).  A fresh pull
+builds the tree from the list and has nothing to mark."
+  (org-canvas--pull-gone-suffix
+   (org-canvas--pull-mark-unlisted file "files" remote 'id "CANVAS_ID" "LEVEL>0")))
+
 (defun org-canvas--file-detect-duplicates (items)
   "Warn for any group of items in ITEMS sharing size and content-type.
 ITEMS is a list (or vector) of file API alists.  Two or more files
@@ -2008,7 +2019,8 @@ On a re-pull, entries are updated in place: a flat files.org stays
 flat, and a nested one is upserted folder by folder, with a file whose
 folder changed on Canvas moved rather than duplicated.  Nothing local
 is deleted for being absent from Canvas — that is
-`org-canvas-cleanup-orphans'.
+`org-canvas-cleanup-orphans' — but a heading whose file Canvas deleted
+is marked CANVAS_DELETED, so a push skips it (issue #399).
 
 A file whose local copy is already the right size is not downloaded
 again, so refreshing a large course costs one listing rather than every
@@ -2042,14 +2054,15 @@ byte."
                           folder-map remote content-dir))
                   (added (plist-get stats :added))
                   (moved (plist-get stats :moved))
-                  (updated (plist-get stats :updated)))
+                  (updated (plist-get stats :updated))
+                  (note (org-canvas--file-pull-mark-unlisted file remote)))
              (org-canvas--pull-write-file-header)
              (org-canvas--save-buffer)
              (org-canvas--log-info org-canvas--logger
-               "Files pull complete (nested upsert): %d new, %d moved, %d refreshed"
-               added moved updated)
-             (message "Files pull complete: %d new, %d moved, %d refreshed."
-                      added moved updated)))
+               "Files pull complete (nested upsert): %d new, %d moved, %d refreshed%s"
+               added moved updated note)
+             (message "Files pull complete: %d new, %d moved, %d refreshed%s."
+                      added moved updated note)))
           ('fresh
            (let ((emitted
                   (org-canvas--file-pull-emit-fresh-tree
@@ -2062,13 +2075,14 @@ byte."
           ('flat
            (org-canvas--log-info org-canvas--logger
              "[Files] Existing flat files.org detected; running flat upsert. Delete files.org and re-pull to rebuild folder hierarchy.")
-           (let ((emitted
-                  (org-canvas--file-pull-emit-flat file remote content-dir)))
+           (let* ((emitted
+                   (org-canvas--file-pull-emit-flat file remote content-dir))
+                  (note (org-canvas--file-pull-mark-unlisted file remote)))
              (org-canvas--pull-write-file-header)
              (org-canvas--save-buffer)
              (org-canvas--log-info org-canvas--logger
-               "Files pull complete (flat): %d files" emitted)
-             (message "Files pull complete: %d files." emitted))))))
+               "Files pull complete (flat): %d files%s" emitted note)
+             (message "Files pull complete: %d files%s." emitted note))))))
     (org-canvas--pull-kill-fresh-buffer file was-fresh)
     (setq org-canvas--file-id-cache nil)))
 

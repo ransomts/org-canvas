@@ -2186,7 +2186,22 @@ Click the heart.
 "
      (search-forward "Item")
      (org-back-to-heading)
-     (expect (org-canvas-sync-new-quiz-at-point) :to-throw 'user-error))))
+     (expect (org-canvas-sync-new-quiz-at-point) :to-throw 'user-error)))
+
+  (it "refuses a quiz a pull marked deleted on Canvas, before parsing (issue #399)"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:CANVAS_ASSIGNMENT_ID: 7
+:CANVAS_DELETED: [2026-09-28 Mon 10:00]
+:END:
+"
+     (org-back-to-heading)
+     (cl-letf (((symbol-function 'org-canvas--new-quiz-parse-entry)
+                (lambda () (error "Must not parse"))))
+       (expect (condition-case e (org-canvas-sync-new-quiz-at-point)
+                 (user-error (error-message-string e)))
+               :to-match "'Quiz' was deleted on Canvas")))))
 
 ;;;; Delete Functions
 
@@ -2801,7 +2816,7 @@ Click the heart.
            (test-file (expand-file-name "new-quizzes.org" temp-dir)))
       (unwind-protect
           (progn
-            (with-temp-file test-file (insert "stale content\n* Old\n"))
+            (with-temp-file test-file (insert "stale content\n"))
             (let ((org-canvas-new-quizzes-file test-file))
               (with-org-canvas-test-config
                 (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)

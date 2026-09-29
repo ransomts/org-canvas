@@ -1148,12 +1148,16 @@ criteria, a quiz's questions) are never matched."
   "Return (ID . MARKER) for each QUERY heading whose ID-PROPERTY REMOTE lacks.
 REMOTE is everything the list read returned, the items a `:skip-fn'
 held back included, since those are still on Canvas.  ID-FIELD is the
-key of an item's id.  Searches the current buffer.  Markers, since
-marking one heading moves the text after it."
+key of an item's id, or a list of keys tried in order: a New Quiz is
+stamped with its `assignment_id', else its `id' (issue #399).
+Searches the current buffer.  Markers, since marking one heading moves
+the text after it."
   (let ((listed (make-hash-table :test 'equal))
         (unlisted nil))
     (dolist (item remote)
-      (puthash (format "%s" (alist-get id-field item)) t listed))
+      (dolist (field (ensure-list id-field))
+        (when (alist-get field item)
+          (puthash (format "%s" (alist-get field item)) t listed))))
     (org-map-entries
      (lambda ()
        (let ((id (org-entry-get (point) id-property)))
@@ -1162,24 +1166,37 @@ marking one heading moves the text after it."
      query 'file)
     (nreverse unlisted)))
 
-(defun org-canvas--pull-item-state (feature id)
-  "Read FEATURE's item ID on its own; return `gone', `present' or `unknown'.
-FEATURE is a feature registry entry; the read goes to its item URL
-with its `:item-params'.  `gone' is a 404, or a reply whose
-`workflow_state' is deleted; `unknown' is any other failure, logged,
-so a heading is only marked on Canvas's word."
+(defun org-canvas--pull-item-read (feature id)
+  "Read FEATURE's item ID on its own; return the item, or `gone'.
+FEATURE is a feature registry entry, or a pull-only one; the read goes
+to its item URL with its `:item-params'.  `gone' is a 404, or a reply
+whose `workflow_state' is deleted: Canvas's word that the item was
+deleted.  Any other failure signals.  The list pull's check and the
+pull at point both read through here (issues #392, #399)."
   (condition-case err
       (let ((item (org-canvas-api-request
                    'GET (org-canvas--feature-item-url feature id)
                    :params (org-canvas--feature-item-params feature))))
-        (if (equal (alist-get 'workflow_state item) "deleted") 'gone 'present))
-    (error
+        (if (and (listp item)
+                 (equal (alist-get 'workflow_state item) "deleted"))
+            'gone
+          item))
+    (org-canvas-api-error
      (if (org-canvas--api-not-found-p err)
          'gone
-       (org-canvas--log-warning org-canvas--logger
-         "[Pull] Could not read %s %s on its own, left unmarked: %s"
-         (plist-get feature :name) id (error-message-string err))
-       'unknown))))
+       (signal (car err) (cdr err))))))
+
+(defun org-canvas--pull-item-state (feature id)
+  "Read FEATURE's item ID on its own; return `gone', `present' or `unknown'.
+`gone' as `org-canvas--pull-item-read' finds it; `unknown' is any
+other failure, logged, so a heading is only marked on Canvas's word."
+  (condition-case err
+      (if (eq (org-canvas--pull-item-read feature id) 'gone) 'gone 'present)
+    (error
+     (org-canvas--log-warning org-canvas--logger
+       "[Pull] Could not read %s %s on its own, left unmarked: %s"
+       (plist-get feature :name) id (error-message-string err))
+     'unknown)))
 
 (defun org-canvas--pull-mark-gone (marker)
   "Mark the heading at MARKER deleted on Canvas; return (TITLE . DATE).
@@ -1201,25 +1218,36 @@ it without one."
               stamp)))))
 
 (defun org-canvas--pull-marker-title (marker)
-  "Return the text of the heading at MARKER."
-  (save-excursion (goto-char marker) (org-get-heading t t t t)))
+  "Return the text of the heading at MARKER, a link shown as its description.
+A file heading is a link to its local copy (issue #399), which the
+closing line names by the file's name."
+  (save-excursion
+    (goto-char marker)
+    (org-link-display-format (org-get-heading t t t t))))
 
 (defun org-canvas--pull-mark-unlisted (file feature-name remote id-field
-                                            id-property)
+                                            id-property &optional query)
   "Mark the headings of FILE that REMOTE lacks and Canvas has deleted.
 FEATURE-NAME finds the feature registry entry whose item URL answers
-for each one; ID-FIELD and ID-PROPERTY are the pull's.  Runs in the
-buffer visiting FILE.  Returns (:gone ENTRIES :kept TITLES): ENTRIES
-as `org-canvas--pull-mark-gone' returns them, TITLES the headings left
-as they were because Canvas still has them or could not say.  Each
-gone heading is recorded in the pull summary."
-  (let ((feature (org-canvas--registry-find-feature feature-name))
+for each one; it may instead be the entry itself, as New Quizzes'
+pull-only entry is (issue #399).  ID-FIELD and ID-PROPERTY are the
+pull's.  QUERY matches the headings REMOTE answers for; by default
+`org-canvas--pull-gone-query' of FEATURE-NAME.  A pull whose file
+holds more than one kind of heading names the one its list reads:
+outcomes' groups, never the outcomes under them.  Runs in the buffer
+visiting FILE.  Returns (:gone ENTRIES :kept TITLES): ENTRIES as
+`org-canvas--pull-mark-gone' returns them, TITLES the headings left as
+they were because Canvas still has them or could not say.  Each gone
+heading is recorded in the pull summary."
+  (let ((feature (if (stringp feature-name)
+                     (org-canvas--registry-find-feature feature-name)
+                   feature-name))
         (gone nil)
         (kept nil))
     (dolist (entry (and feature
                         (org-canvas--pull-unlisted-headings
                          remote id-field id-property
-                         (org-canvas--pull-gone-query feature-name))))
+                         (or query (org-canvas--pull-gone-query feature-name)))))
       (if (eq (org-canvas--pull-item-state feature (car entry)) 'gone)
           (let ((mark (org-canvas--pull-mark-gone (cdr entry))))
             (org-canvas--log-warning org-canvas--logger
