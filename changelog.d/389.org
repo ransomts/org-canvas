@@ -1,0 +1,6 @@
+* Fixed
+- #389 A pull that finds nothing to write, such as an empty calendar or
+  no New Quizzes, rewrites a buffer already visiting the file instead
+  of writing around it, so a batch re-pull no longer warns that the
+  file changed on disk and a buffer with unsaved edits is guarded as
+  every other rewrite is.
