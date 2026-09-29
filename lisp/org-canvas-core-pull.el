@@ -1028,6 +1028,8 @@ PULL-CONFIG is a plist with :id-field :title-field :id-property :pull-item-fn."
     (goto-char pos)
     (when title (org-edit-headline title))
     (org-canvas-org-save-sync-state pos id id-property)
+    ;; Listed again, so back: a deletion a previous pull marked is over.
+    (org-entry-delete pos org-canvas--prop-canvas-deleted)
     (funcall item-fn item pos)))
 
 (defun org-canvas--pull-item-label (item id-field title-field)
@@ -1117,6 +1119,152 @@ writing %d %s: a body heading split an entry?  Check the file before pushing"
          :file (file-name-nondirectory file) :error msg
          :log-line (org-canvas--pull-summary-current-log-line))))))
 
+;;;; Headings Canvas No Longer Lists (issue #392)
+;;
+;; A list pull upserts what Canvas returns, and nothing else: a heading
+;; whose item was deleted on Canvas kept its CANVAS_ID and its text, the
+;; pull's count disagreed with the file's, and nothing said which
+;; heading was the difference.  A push would then PUT to an id Canvas
+;; no longer has.  After the upserts, each stamped top-level heading
+;; the list did not return is read on its own; only a 404 (or a reply
+;; saying the item is deleted) marks it with CANVAS_DELETED, and the
+;; closing line names it.  Any other answer marks nothing, so a list
+;; that came back short never marks a heading on its own say.  The
+;; People roster did this first, with its own reads (issue #290).
+
+(defun org-canvas--pull-gone-query (feature-name)
+  "Return the Org match for FEATURE-NAME's top-level entries.
+LEVEL=1, where a pull writes, joined with the property registry's
+`:query' when that names another level: assignment groups sync as
+level-2 headings under a container heading.  Child levels (a rubric's
+criteria, a quiz's questions) are never matched."
+  (let ((query (plist-get (gethash feature-name org-canvas--property-registry)
+                          :query)))
+    (if (member query '(nil "LEVEL=1"))
+        "LEVEL=1"
+      (concat "LEVEL=1|" query))))
+
+(defun org-canvas--pull-unlisted-headings (remote id-field id-property query)
+  "Return (ID . MARKER) for each QUERY heading whose ID-PROPERTY REMOTE lacks.
+REMOTE is everything the list read returned, the items a `:skip-fn'
+held back included, since those are still on Canvas.  ID-FIELD is the
+key of an item's id.  Searches the current buffer.  Markers, since
+marking one heading moves the text after it."
+  (let ((listed (make-hash-table :test 'equal))
+        (unlisted nil))
+    (dolist (item remote)
+      (puthash (format "%s" (alist-get id-field item)) t listed))
+    (org-map-entries
+     (lambda ()
+       (let ((id (org-entry-get (point) id-property)))
+         (unless (or (null id) (string-empty-p id) (gethash id listed))
+           (push (cons id (point-marker)) unlisted))))
+     query 'file)
+    (nreverse unlisted)))
+
+(defun org-canvas--pull-item-state (feature id)
+  "Read FEATURE's item ID on its own; return `gone', `present' or `unknown'.
+FEATURE is a feature registry entry; the read goes to its item URL
+with its `:item-params'.  `gone' is a 404, or a reply whose
+`workflow_state' is deleted; `unknown' is any other failure, logged,
+so a heading is only marked on Canvas's word."
+  (condition-case err
+      (let ((item (org-canvas-api-request
+                   'GET (org-canvas--feature-item-url feature id)
+                   :params (org-canvas--feature-item-params feature))))
+        (if (equal (alist-get 'workflow_state item) "deleted") 'gone 'present))
+    (error
+     (if (org-canvas--api-not-found-p err)
+         'gone
+       (org-canvas--log-warning org-canvas--logger
+         "[Pull] Could not read %s %s on its own, left unmarked: %s"
+         (plist-get feature :name) id (error-message-string err))
+       'unknown))))
+
+(defun org-canvas--pull-mark-gone (marker)
+  "Mark the heading at MARKER deleted on Canvas; return (TITLE . DATE).
+CANVAS_DELETED is set to now, as an inactive Org timestamp, unless
+the heading already carries it, so the date stays that of the pull
+that first found the item gone.
+DATE is its YYYY-MM-DD part, or the whole value when a hand edit left
+it without one."
+  (let ((pos (marker-position marker)))
+    ;; Inactive and local, as #+LAST_SYNCED is: an active timestamp
+    ;; would put every deleted item on the agenda.
+    (unless (org-entry-get pos org-canvas--prop-canvas-deleted)
+      (org-canvas-org-set-property pos org-canvas--prop-canvas-deleted
+                                   (format-time-string "[%Y-%m-%d %a %H:%M]")))
+    (let ((stamp (org-entry-get pos org-canvas--prop-canvas-deleted)))
+      (cons (org-canvas--pull-marker-title marker)
+            (if (string-match "[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}" stamp)
+                (match-string 0 stamp)
+              stamp)))))
+
+(defun org-canvas--pull-marker-title (marker)
+  "Return the text of the heading at MARKER."
+  (save-excursion (goto-char marker) (org-get-heading t t t t)))
+
+(defun org-canvas--pull-mark-unlisted (file feature-name remote id-field
+                                            id-property)
+  "Mark the headings of FILE that REMOTE lacks and Canvas has deleted.
+FEATURE-NAME finds the feature registry entry whose item URL answers
+for each one; ID-FIELD and ID-PROPERTY are the pull's.  Runs in the
+buffer visiting FILE.  Returns (:gone ENTRIES :kept TITLES): ENTRIES
+as `org-canvas--pull-mark-gone' returns them, TITLES the headings left
+as they were because Canvas still has them or could not say.  Each
+gone heading is recorded in the pull summary."
+  (let ((feature (org-canvas--registry-find-feature feature-name))
+        (gone nil)
+        (kept nil))
+    (dolist (entry (and feature
+                        (org-canvas--pull-unlisted-headings
+                         remote id-field id-property
+                         (org-canvas--pull-gone-query feature-name))))
+      (if (eq (org-canvas--pull-item-state feature (car entry)) 'gone)
+          (let ((mark (org-canvas--pull-mark-gone (cdr entry))))
+            (org-canvas--log-warning org-canvas--logger
+              "[Pull] '%s' (%s %s) is no longer on Canvas; heading kept, marked %s"
+              (car mark) id-property (car entry) org-canvas--prop-canvas-deleted)
+            (org-canvas--pull-summary-record
+             :kind 'gone :file (file-name-nondirectory file) :item (car mark)
+             :error (format "deleted on Canvas (%s %s); heading kept, marked %s %s"
+                            id-property (car entry)
+                            org-canvas--prop-canvas-deleted (cdr mark)))
+            (push mark gone))
+        (push (org-canvas--pull-marker-title (cdr entry)) kept))
+      (set-marker (cdr entry) nil))
+    (list :gone (nreverse gone) :kept (nreverse kept))))
+
+(defun org-canvas--pull-heading-count (items)
+  "Return \"N heading\" or \"N headings\" for the list ITEMS."
+  (format "%d %s" (length items) (if (cdr items) "headings" "heading")))
+
+(defun org-canvas--pull-gone-suffix (result)
+  "Return the closing line's tail for RESULT, what the unlisted check found.
+Empty when every stamped heading was listed."
+  (let ((gone (plist-get result :gone))
+        (kept (plist-get result :kept)))
+    (concat
+     (when gone
+       (format "; %s no longer on Canvas: %s"
+               (org-canvas--pull-heading-count gone)
+               (mapconcat (lambda (g) (format "%s (deleted %s)" (car g) (cdr g)))
+                          gone "; ")))
+     (when kept
+       (format "; %s not listed left unmarked, still on Canvas or unreadable: %s"
+               (org-canvas--pull-heading-count kept)
+               (string-join kept "; "))))))
+
+(defun org-canvas--pull-file-has-headings-p (file)
+  "Return non-nil when FILE exists with an Org heading in it.
+A list that comes back empty then goes through the unlisted check
+instead of replacing the file with the empty-file note, which would
+lose every heading and its text on a misread."
+  (and (file-exists-p file)
+       (with-temp-buffer
+         (insert-file-contents file)
+         (re-search-forward "^\\*+ " nil t))))
+
 (defmacro org-canvas-define-pull (feature &rest args)
   "Define `org-canvas-pull-FEATURE' function.
 FEATURE is a symbol like \\='pages or \\='announcements.
@@ -1194,10 +1342,12 @@ wholesale (issue #67)." feature-name)
                 (skipped 0)
                 (known-ids (when managed-only
                              (org-canvas--pull-known-ids file ,id-property)))
-                (was-fresh (org-canvas--pull-was-fresh-p file)))
+                (was-fresh (org-canvas--pull-was-fresh-p file))
+                (unlisted nil))
            (org-canvas--pull-confirm-overwrite file ,feature-name)
            (org-canvas--pull-confirm-unsaved file ,feature-name)
-           (if (zerop (length remote))
+           (if (and (zerop (length remote))
+                    (not (org-canvas--pull-file-has-headings-p file)))
                (org-canvas--pull-emit-empty-file
                 file (org-canvas--pull-label-for ,feature-name))
              (unless (file-exists-p file)
@@ -1217,10 +1367,13 @@ wholesale (issue #67)." feature-name)
                      ('skipped (cl-incf skipped))))
                  (org-canvas--pull-check-entry-count
                   ,feature-name file ,id-property idless-before count))
+               (setq unlisted (org-canvas--pull-mark-unlisted
+                               file ,feature-name remote ,id-field ,id-property))
                (org-canvas--pull-write-file-header)
                (org-canvas--save-buffer)))
            (org-canvas--pull-kill-fresh-buffer file was-fresh)
-           (let ((skip-note (org-canvas--pull-skip-suffix skipped ,skip-reason)))
+           (let ((skip-note (concat (org-canvas--pull-skip-suffix skipped ,skip-reason)
+                                    (org-canvas--pull-gone-suffix unlisted))))
              (org-canvas--log-info org-canvas--logger
                ,(format "%s pull complete: %%d items%%s"
                         (capitalize feature-name)) count skip-note)
@@ -1238,10 +1391,11 @@ wholesale (issue #67)." feature-name)
 (defvar org-canvas--pull-summary nil
   "Accumulator for non-fatal errors and skips during a pull.
 Each element is a plist with :kind, :file, :item, :error, :log-line.
-:kind is `error' for a failure that lost content and `skip' for an
+:kind is `error' for a failure that lost content, `skip' for an
 item a module's `:skip-fn' deliberately left out of the local file
 \(issue #81 — a skip with no record is indistinguishable from an item
-that was never on Canvas).  Newest records are pushed onto the head;
+that was never on Canvas), and `gone' for a heading kept locally whose
+item Canvas deleted (issue #392).  Newest records are pushed onto the head;
 use `org-canvas--pull-summary-records' to read them in insertion order.")
 
 (defun org-canvas--pull-summary-reset ()
@@ -1267,7 +1421,7 @@ the reason for a skip record.  It is usually raw
 summary is rendered into a buffer the user is invited to read and
 share, and redaction used to stop at the logger (issue #154).
 LOG-LINE is an optional pointer into the log buffer/file.
-KIND is `error' (default) or `skip'."
+KIND is `error' (default), `skip' or `gone'."
   (push (list :kind kind :file file :item item
               :error (and error (org-canvas--log-redact error))
               :log-line log-line)
@@ -1301,37 +1455,44 @@ non-fatal pull error."
       (with-current-buffer buf
         (line-number-at-pos (point-max))))))
 
+(defconst org-canvas--pull-summary-sections
+  '((error . "Pull complete with %d non-fatal error%s:\n")
+    (skip . "%d item%s skipped — on Canvas, not written locally:\n")
+    (gone . "%d heading%s no longer on Canvas — kept locally, marked CANVAS_DELETED:\n"))
+  "The pull summary's sections, in order: (KIND . HEADER).
+HEADER is a format taking the count and a plural suffix.")
+
 (defun org-canvas--pull-summary-print ()
   "Print the pull summary to standard output.
-Errors and skips are printed as separate sections.  Emits nothing when
-the accumulator is empty so callers can wrap this unconditionally in
-`with-output-to-temp-buffer'."
-  (let ((errors (org-canvas--pull-summary-records-of-kind 'error))
-        (skips (org-canvas--pull-summary-records-of-kind 'skip)))
-    (when errors
-      (princ (format "Pull complete with %d non-fatal error%s:\n"
-                     (length errors)
-                     (if (= (length errors) 1) "" "s")))
-      (dolist (rec errors)
-        (princ (org-canvas--pull-summary-format-record rec))))
-    (when skips
-      (when errors (princ "\n"))
-      (princ (format "%d item%s skipped — on Canvas, not written locally:\n"
-                     (length skips)
-                     (if (= (length skips) 1) "" "s")))
-      (dolist (rec skips)
-        (princ (org-canvas--pull-summary-format-record rec))))))
+Errors, skips and the headings Canvas deleted (issue #392) are printed
+as separate sections, in `org-canvas--pull-summary-sections' order.
+Emits nothing when the accumulator is empty so callers can wrap this
+unconditionally in `with-output-to-temp-buffer'."
+  (let ((first t))
+    (pcase-dolist (`(,kind . ,header) org-canvas--pull-summary-sections)
+      (let ((records (org-canvas--pull-summary-records-of-kind kind)))
+        (when records
+          (unless first (princ "\n"))
+          (setq first nil)
+          (princ (format header (length records)
+                         (if (= (length records) 1) "" "s")))
+          (dolist (rec records)
+            (princ (org-canvas--pull-summary-format-record rec))))))))
 
 (defun org-canvas--pull-summary-tally ()
-  "Return a short phrase counting the errors and skips recorded this pull."
+  "Return a short phrase counting the errors and skips recorded this pull.
+Headings found deleted on Canvas are counted too."
   (let ((errors (length (org-canvas--pull-summary-records-of-kind 'error)))
-        (skips (length (org-canvas--pull-summary-records-of-kind 'skip))))
+        (skips (length (org-canvas--pull-summary-records-of-kind 'skip)))
+        (gone (length (org-canvas--pull-summary-records-of-kind 'gone))))
     (mapconcat #'identity
                (delq nil
                      (list (when (> errors 0)
                              (format "%d non-fatal error(s)" errors))
                            (when (> skips 0)
-                             (format "%d item(s) skipped" skips))))
+                             (format "%d item(s) skipped" skips))
+                           (when (> gone 0)
+                             (format "%d heading(s) no longer on Canvas" gone))))
                ", ")))
 
 (provide 'org-canvas-core-pull)

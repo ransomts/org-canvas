@@ -82,6 +82,26 @@ write, which is what a body heading that split an item looks like.  It
 never prompts.  The quizzes and new-quizzes custom loops call the same
 pair; see decisions.org, "A Body Never Introduces a Headline".
 
+*Headings Canvas no longer lists (issue #392).* After the upserts,
+=org-canvas--pull-mark-unlisted= reads each stamped top-level heading
+whose id the list did not return on its own, at the feature registry's
+item URL.  Only a 404, or a reply whose =workflow_state= is =deleted=,
+marks it =CANVAS_DELETED= (the heading and its text stay); any other
+answer marks nothing, so a short or empty list never marks a heading on
+its own say.  The completion line names both kinds, and each marked
+heading is a =gone= record in the pull summary:
+
+#+begin_example
+Assignments pull complete: 52 items; 1 heading no longer on Canvas:
+Sprint 0 (deleted 2026-09-28)
+#+end_example
+
+An empty list no longer replaces a file that holds headings with the
+empty-file note; it goes through the same per-heading reads.  A heading
+the list returns again loses the mark in =org-canvas--pull-process-item=.
+The custom pulls do not call the helper yet.  See decisions.org, "A
+List Pull Marks the Headings Canvas Deleted, on Canvas's Word".
+
 ** Example
 
 #+begin_src elisp

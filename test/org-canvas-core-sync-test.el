@@ -4858,5 +4858,53 @@ Body.
                   :to-be nil)
           (expect warnings :to-be nil))))))
 
+;;;; Headings Canvas deleted (issue #392)
+
+(describe "a push of a heading a pull marked deleted on Canvas (issue #392)"
+  (it "is skipped by a full sync, named among the skipped, never parsed or sent"
+    (with-temp-org-buffer
+     "* Sprint 0
+:PROPERTIES:
+:CANVAS_ID: 100
+:CANVAS_DELETED: [2026-09-28 Mon 10:00]
+:END:
+"
+     (org-back-to-heading)
+     (let* ((marker (point-marker))
+            (parsed nil)
+            (logged nil)
+            (counters (list :success 0 :skip 0 :fail 0 :conflict 0))
+            (ctx (list :parse-fn (lambda () (setq parsed t) nil)
+                       :build-fn #'ignore :push-fn #'ignore :finalize-fn #'ignore
+                       :feature-name "assignments" :feature-upper "ASSIGNMENTS"
+                       :total-count 1 :counters counters :synced-ids (list nil))))
+       (cl-letf (((symbol-function 'org-canvas--log-warning)
+                  (lambda (_logger fmt &rest args)
+                    (push (apply #'format fmt args) logged)))
+                 ((symbol-function 'message) #'ignore))
+         (org-canvas--sync-process-entry marker ctx))
+       (expect parsed :to-be nil)
+       (expect (plist-get counters :skip) :to-equal 1)
+       (expect (plist-get counters :skipped-titles)
+               :to-equal '("Sprint 0 (deleted on Canvas)"))
+       (expect (car logged) :to-match "deleted on Canvas (CANVAS_DELETED \\[2026-09-28"))))
+
+  (it "is refused at point with the way out"
+    (with-temp-org-buffer
+     "* Sprint 0
+:PROPERTIES:
+:CANVAS_ID: 100
+:CANVAS_DELETED: [2026-09-28 Mon 10:00]
+:END:
+"
+     (org-back-to-heading)
+     (let ((err (condition-case e
+                    (org-canvas--push-at-point-runtime
+                     (list :feature "assignment" :parse #'ignore :build #'ignore
+                           :push #'ignore :finalize #'ignore))
+                  (user-error e))))
+       (expect (car err) :to-be 'user-error)
+       (expect (cadr err) :to-match "remove CANVAS_DELETED and its CANVAS_ID")))))
+
 (provide 'org-canvas-core-sync-test)
 ;;; org-canvas-core-sync-test.el ends here

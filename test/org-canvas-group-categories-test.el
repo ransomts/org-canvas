@@ -621,7 +621,7 @@
            (gc-file (expand-file-name "group-categories.org" temp-dir)))
       (unwind-protect
           (progn
-            (with-temp-file gc-file (insert "stale content\n* Old\n"))
+            (with-temp-file gc-file (insert "stale content\n"))
             (let ((org-canvas-group-categories-file gc-file))
               (with-org-canvas-test-config
                 (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)

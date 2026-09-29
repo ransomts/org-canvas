@@ -395,6 +395,33 @@ already hold this title (issue #85)?  Either way the entry counts as
     (message "%s [DRY-RUN] Would %s '%s'%s" cap-feature (downcase verb) title detail)
     (plist-put counters key (1+ (or (plist-get counters key) 0)))))
 
+(defun org-canvas--sync-deleted-note (title)
+  "Return why the heading at point, TITLE, is not pushed, or nil.
+Non-nil when a pull marked it `org-canvas--prop-canvas-deleted': its
+Canvas item was deleted, so a PUT would 404 and the recovery would
+create the item again under a new id, silently undoing the deletion
+\(issue #392)."
+  (let ((stamp (org-entry-get (point) org-canvas--prop-canvas-deleted)))
+    (when stamp
+      (format "'%s' was deleted on Canvas (%s %s); not pushed.  Delete the heading, or remove %s and its CANVAS_ID to create it again"
+              title org-canvas--prop-canvas-deleted stamp
+              org-canvas--prop-canvas-deleted))))
+
+(defun org-canvas--sync-skip-deleted (title ctx)
+  "Count the heading at point, TITLE, as skipped if Canvas deleted it.
+Returns non-nil when it did, after logging why and naming it among
+CTX's skipped titles; nil otherwise."
+  (let ((note (org-canvas--sync-deleted-note title))
+        (counters (plist-get ctx :counters)))
+    (when note
+      (plist-put counters :skip (1+ (plist-get counters :skip)))
+      (plist-put counters :skipped-titles
+                 (cons (format "%s (deleted on Canvas)" title)
+                       (plist-get counters :skipped-titles)))
+      (org-canvas--log-warning org-canvas--logger "[Skip] %s" note)
+      (message "%s" note)
+      t)))
+
 (defun org-canvas--sync-process-entry (marker ctx)
   "Process one entry through the 4-stage pipeline.
 MARKER is the position of the entry.  CTX is the run context from
@@ -414,17 +441,18 @@ pipeline functions, :feature-name and :feature-upper for the log,
         (goto-char (marker-position marker))
         (let ((heading-title (org-get-heading t t t t)))
           (condition-case err
-              (let ((data (funcall parse-fn)))
-                (if (null data)
-                    ;; A heading the parser declines is not an entry: a
-                    ;; folder heading in files.org.  Counted as a skip so
-                    ;; the tally still adds up to the headings walked.
-                    (progn
-                      (plist-put counters :skip (1+ (plist-get counters :skip)))
-                      (org-canvas--log-info org-canvas--logger
-                        "[Skip] '%s' is not a %s entry" heading-title feature-name))
-                  (org-canvas--sync-execute-pipeline
-                   data (funcall build-fn data) ctx)))
+              (unless (org-canvas--sync-skip-deleted heading-title ctx)
+                (let ((data (funcall parse-fn)))
+                  (if (null data)
+                      ;; A heading the parser declines is not an entry: a
+                      ;; folder heading in files.org.  Counted as a skip so
+                      ;; the tally still adds up to the headings walked.
+                      (progn
+                        (plist-put counters :skip (1+ (plist-get counters :skip)))
+                        (org-canvas--log-info org-canvas--logger
+                          "[Skip] '%s' is not a %s entry" heading-title feature-name))
+                    (org-canvas--sync-execute-pipeline
+                     data (funcall build-fn data) ctx))))
             (error
              (if (org-canvas--sync-deferred-error-p err)
                  (progn
@@ -2162,6 +2190,27 @@ Save the Canvas ID and LAST_SYNCED timestamp to the Org entry."
 
 ;;;; 9. Push-at-Point Infrastructure
 
+(defun org-canvas--push-at-point-finalize
+    (finalize-fn data response ctx payload-hash title)
+  "Finalize the push at point of TITLE and stamp its heading.
+FINALIZE-FN is called with DATA, RESPONSE and CTX; PAYLOAD-HASH, when
+non-nil, is stored on the heading and the buffer saved.  An error in
+stamping is logged as a push that landed, then re-signalled."
+  (org-canvas--log-info org-canvas--logger "[Stage 4: Finalize] '%s'" title)
+  (condition-case err
+      (progn
+        (funcall finalize-fn data response ctx)
+        (when payload-hash
+          (org-canvas-org-set-property (point) org-canvas--prop-payload-hash payload-hash))
+        (org-canvas--sync-advance-header-from-entry)
+        (org-canvas--save-buffer))
+    (error
+     ;; The push landed; only the stamp died (issue #97).
+     (org-canvas--log-error org-canvas--logger
+       "[Stamp] The push of '%s' landed on Canvas, but stamping the file failed: %s — the entry still carries its old CANVAS_UPDATED_AT and PAYLOAD_HASH, so the next sync will report drift that is not real"
+       title (error-message-string err))
+       (signal (car err) (cdr err)))))
+
 (defun org-canvas--push-at-point-runtime (spec)
   "Runtime body for generated push-at-point functions.
 SPEC is a sync spec (`org-canvas--sync-spec-keys'): :feature is the
@@ -2180,6 +2229,8 @@ its conflict prompt is forgotten when it returns rather than applied
 to every later push at point (issue #141)."
   (org-canvas--sync-check-spec spec '(:feature :parse :build :push :finalize))
   (org-back-to-heading t)
+  (let ((note (org-canvas--sync-deleted-note (org-get-heading t t t t))))
+    (when note (user-error "%s" note)))
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (let* ((feature-name (plist-get spec :feature))
          ;; Advances past the #+LAST_SYNCED header finalize may insert
@@ -2239,20 +2290,8 @@ to every later push at point (issue #141)."
           (org-canvas--log-info org-canvas--logger "[DRY-RUN] '%s' not stamped" title)
           (message "%s '%s' would be pushed (dry run)." (capitalize feature-name) title))
          (t
-          (org-canvas--log-info org-canvas--logger "[Stage 4: Finalize] '%s'" title)
-          (condition-case err
-              (progn
-                (funcall finalize-fn data response ctx)
-                (when payload-hash
-                  (org-canvas-org-set-property (point) org-canvas--prop-payload-hash payload-hash))
-                (org-canvas--sync-advance-header-from-entry)
-                (org-canvas--save-buffer))
-            (error
-             ;; The push landed; only the stamp died (issue #97).
-             (org-canvas--log-error org-canvas--logger
-               "[Stamp] The push of '%s' landed on Canvas, but stamping the file failed: %s — the entry still carries its old CANVAS_UPDATED_AT and PAYLOAD_HASH, so the next sync will report drift that is not real"
-               title (error-message-string err))
-             (signal (car err) (cdr err))))
+          (org-canvas--push-at-point-finalize
+           finalize-fn data response ctx payload-hash title)
           (plist-put ctx :outcome 'synced)
           (org-canvas--log-info org-canvas--logger "[Sync] '%s' synced successfully" title)
           (message "%s '%s' synced." (capitalize feature-name) title)))))
