@@ -1,0 +1,9 @@
+* Fixed
+- #402 =org-canvas-validate= leaves a heading a pull marked
+  =CANVAS_DELETED=, and any heading under one, out of the checks that
+  compare headings with each other: two scheduled assignments sharing
+  a title are no longer an error when Canvas has deleted one of them,
+  and a deleted assignment group's weight, a deleted assignment in a
+  group's drop-rule count, a deleted module's items and a deleted
+  grading scheme no longer count.  The deleted heading still gets its
+  own "was deleted on Canvas" warning.

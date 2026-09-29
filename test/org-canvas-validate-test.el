@@ -4096,4 +4096,104 @@ Syllabus text.
               (list :file (buffer-file-name) :line 6))
              :to-be nil))))
 
+;;;; Headings Canvas Deleted Leave the Cross-Heading Checks (issue #402)
+
+(defconst test-validate-402--deleted
+  ":PROPERTIES:\n:CANVAS_ID: %s\n:DUE_AT: <2026-11-%s>\n:CANVAS_DELETED: [2026-09-28 Mon 20:37]\n:END:\n"
+  "A scheduled heading a pull marked deleted; format with an id and a day.")
+
+(defconst test-validate-402--live
+  ":PROPERTIES:\n:CANVAS_ID: %s\n:DUE_AT: <2026-11-%s>\n:END:\n"
+  "A scheduled heading Canvas still has; format with an id and a day.")
+
+(defun test-validate-402--assignment-issues (content)
+  "Validate an assignments.org holding CONTENT through its spec; return issues."
+  (with-validate-test-dir dir
+    (with-temp-file (expand-file-name "assignments.org" dir) (insert content))
+    (unwind-protect
+        (org-canvas--validate-spec
+         (cl-find "Assignments" (org-canvas--validate-specs)
+                  :key (lambda (s) (plist-get s :label)) :test #'string=))
+      (let ((buf (find-buffer-visiting (expand-file-name "assignments.org" dir))))
+        (when buf (kill-buffer buf))))))
+
+(defun test-validate-402--messages (issues regexp)
+  "Return the messages of ISSUES matching REGEXP."
+  (seq-filter (lambda (m) (string-match-p regexp m))
+              (mapcar (lambda (i) (plist-get i :message)) issues)))
+
+(describe "headings Canvas deleted leave the cross-heading checks (issue #402)"
+  (it "pairs no deleted heading with its live twin, and still warns on it"
+    (let ((issues (test-validate-402--assignment-issues
+                   (concat "* Sprint 3 - READ AND FOLLOW INSTRUCTIONS\n"
+                           (format test-validate-402--live "1" "10 Tue")
+                           "* Sprint 3 - READ AND FOLLOW INSTRUCTIONS (S25 - old)\n"
+                           (format test-validate-402--deleted "2" "11 Wed")))))
+      (expect (test-validate-402--messages issues "share this title") :to-equal nil)
+      (expect (length (test-validate-402--messages issues "was deleted on Canvas"))
+              :to-equal 1)))
+
+  (it "still raises the error when two live twins remain beside a deleted one"
+    (let* ((issues (test-validate-402--assignment-issues
+                    (concat "* Sprint 2\n" (format test-validate-402--live "1" "10 Tue")
+                            "* Sprint 2 (OLD)\n" (format test-validate-402--deleted "2" "11 Wed")
+                            "* Sprint 2 (2)\n" (format test-validate-402--live "3" "12 Thu"))))
+           (dup (cl-find-if (lambda (i) (string-match-p "share this title"
+                                                        (plist-get i :message)))
+                            issues)))
+      (expect (plist-get dup :severity) :to-be 'error)
+      (expect (plist-get dup :message) :to-match "\\`2 entries")
+      (expect (plist-get dup :message) :not :to-match "(OLD)")))
+
+  (it "leaves out a heading under one Canvas deleted, as the push does"
+    (let ((file (make-temp-file "dup-402-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "* Group\n:PROPERTIES:\n:CANVAS_DELETED: [2026-09-28 Mon]\n:END:\n"
+                      "** Outcome A\n* Other\n** Outcome A\n"))
+            (with-current-buffer (org-canvas--find-file-noselect file)
+              (goto-char (point-min))
+              (expect (org-canvas--validate-duplicate-titles file "LEVEL=2")
+                      :to-be nil)))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file))))
+
+  (it "does not let a deleted group's weight into the sum"
+    (with-validate-test-dir dir
+      (with-temp-file (expand-file-name "assignment-groups.org" dir)
+        (insert "* Assignment Groups\n"
+                "** Homework\n:PROPERTIES:\n:WEIGHT: 60\n:END:\n"
+                "** Exams\n:PROPERTIES:\n:WEIGHT: 40\n:END:\n"
+                "** Old Exams\n:PROPERTIES:\n:WEIGHT: 40\n"
+                ":CANVAS_DELETED: [2026-09-28 Mon]\n:END:\n"))
+      (expect (org-canvas--validate-weight-sum
+               (expand-file-name "assignment-groups.org" dir))
+              :to-be nil)))
+
+  (it "does not count a deleted assignment in its group"
+    (let ((file (make-temp-file "count-402-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "* A1\n:PROPERTIES:\n:GROUP: Homework\n:END:\n"
+                      "* A2\n:PROPERTIES:\n:GROUP: Homework\n"
+                      ":CANVAS_DELETED: [2026-09-28 Mon]\n:END:\n"))
+            (expect (org-canvas--count-assignments-in-group "Homework" file)
+                    :to-equal 1))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file))))
+
+  (it "lets no item under a deleted module claim an id"
+    (let ((file (make-temp-file "item-402-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "* Week 1\n:PROPERTIES:\n:CANVAS_DELETED: [2026-09-28 Mon]\n:END:\n"
+                      "** Check 3\n:PROPERTIES:\n:CANVAS_ID: 55\n:END:\n"
+                      "* Week 2\n** Check 3\n:PROPERTIES:\n:CANVAS_ID: 55\n:END:\n"))
+            (expect (org-canvas--validate-module-item-ids file) :to-be nil))
+        (let ((buf (find-buffer-visiting file))) (when buf (kill-buffer buf)))
+        (delete-file file)))))
+
 ;;; org-canvas-validate-test.el ends here
