@@ -219,6 +219,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 - a push of one assignment heading, at point or by name, reconciles that heading's overrides table through `:after-heading` and reports the counts; an override already carrying its row's dates is not PUT (#380)
 - a push takes its heading by name and the at-point runtime records its outcome (#287)
 - a refresh reports what changed and keeps a departed student's heading for the work under it (#282)
+- a question pulls in the format its push reads: matching pairs and distractors, numerical exact and range, blanks under their ids; and a distractor is pushed as the question's `matching_answer_incorrect_matches`, never as an answer (#407)
 - a re-pull keeps typed scores and the summary table alone still asks (#281)
 - a resubmission names the attempt its score was given on, read from `submissionHistoriesConnection` for the resubmitted rows only and judged by `gradeMatchesCurrentSubmission` (#352)
 - a script pushes a grading file by id or name through `org-canvas-push-submission-grades` with no prompt, posting only when its own argument says so and the grades landed; `S` confirms through `org-canvas--confirm` and offers to post only interactively (#381)

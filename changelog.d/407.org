@@ -1,0 +1,12 @@
+* Fixed
+- #407 A classic-quiz pull writes each question type in the format the
+  push reads, so a pulled quiz re-pushes with its answer keys: a
+  matching question's pairs as =- Left = Right= followed by its
+  distractors, a numerical answer as =- [X] 42= or =- [X] [1, 10]= (an
+  exact answer with a margin becomes the range it accepts, a precision
+  answer its approximate value with a warning), and a blanks or
+  dropdowns question nested under its blank ids.  Before, every type
+  was a checklist, so a pulled matching question re-pushed with no
+  answers and no warning.  A matching question's distractors are now
+  sent as Canvas's =matching_answer_incorrect_matches= on the question
+  rather than as answers with an empty right side.

@@ -1845,15 +1845,71 @@ Intro text.
 "
      (search-forward "Match")
      (org-back-to-heading)
+     ;; A distractor is not an answer: sent alone as a left side it made
+     ;; a pair with an empty right side (issue #407).
      (let ((answers (org-canvas--question-build-answers "matching_question")))
-       (expect (length answers) :to-equal 3)
-       ;; Find the distractor (should only have left side)
-       (let ((distractor (cl-find-if (lambda (a)
-                                       (and (alist-get 'answer_match_left a)
-                                            (not (assq 'answer_match_right a))))
-                                     answers)))
-         (expect distractor :to-be-truthy)
-         (expect (alist-get 'answer_match_left distractor) :to-equal "Elephant"))))))
+       (expect (mapcar (lambda (a) (alist-get 'answer_match_left a)) answers)
+               :to-equal '("Cat" "Dog"))
+       (expect (cl-every (lambda (a) (alist-get 'answer_match_right a)) answers)
+               :to-be-truthy))
+     (expect (org-canvas--question-matching-distractors) :to-equal '("Elephant"))))
+
+  (it "sends the distractors on the question, newline-delimited (issue #407)"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:CANVAS_ID: 9
+:END:
+** Match
+:PROPERTIES:
+:TYPE: matching_question
+:END:
+
+- Cat = Feline
+- Elephant
+- Whale
+"
+     (search-forward "Match")
+     (org-back-to-heading)
+     (let* ((data (org-canvas--question-parse-entry 9))
+            (question (alist-get 'question (org-canvas--question-build-payload data))))
+       (expect (plist-get data :distractors) :to-equal '("Elephant" "Whale"))
+       (expect (alist-get 'matching_answer_incorrect_matches question)
+               :to-equal "Elephant\nWhale")
+       (expect (length (alist-get 'answers question)) :to-equal 1))))
+
+  (it "sends no distractor field for a question of another type or with none"
+    (with-temp-org-buffer
+     "* Quiz
+:PROPERTIES:
+:CANVAS_ID: 9
+:END:
+** Match
+:PROPERTIES:
+:TYPE: matching_question
+:END:
+
+- Cat = Feline
+** Choice
+:PROPERTIES:
+:TYPE: multiple_choice_question
+:END:
+
+- [X] Yes
+- [ ] No
+"
+     (search-forward "** Match")
+     (org-back-to-heading)
+     (let ((data (org-canvas--question-parse-entry 9)))
+       (expect (plist-member data :distractors) :to-be-truthy)
+       (expect (plist-get data :distractors) :to-be nil)
+       (expect (assq 'matching_answer_incorrect_matches
+                     (alist-get 'question (org-canvas--question-build-payload data)))
+               :to-be nil))
+     (search-forward "** Choice")
+     (org-back-to-heading)
+     (expect (plist-member (org-canvas--question-parse-entry 9) :distractors)
+             :to-be nil))))
 
 ;;;; Empty Quiz Body
 
@@ -4733,5 +4789,147 @@ Unpushed wording.
       (expect (car texts) :to-match "^\\*\\* A2$")
       (expect (nth 1 texts) :to-equal (car texts))
       (expect (nth 2 texts) :to-equal (car texts)))))
+
+;;;; A Question Pulls in the Format Its Push Reads (issue #407)
+
+(defun test-quiz-407--insert (answers &optional question)
+  "Return what `org-canvas--quiz-insert-answers' writes for ANSWERS of QUESTION."
+  (with-temp-org-buffer "* Quiz\n"
+    (goto-char (point-max))
+    (with-html-to-org-identity
+      (org-canvas--quiz-insert-answers answers question))
+    (save-excursion
+      (goto-char (point-min))
+      (forward-line 1)
+      (buffer-substring-no-properties (point) (point-max)))))
+
+(defconst test-quiz-407--matching
+  '((question_type . "matching_question")
+    (matches . [((match_id . 3235) (text . "Stop Starting"))
+                ((match_id . 8588) (text . "Shorten Feedback"))
+                ((match_id . 9248) (text . "Governance"))
+                ((match_id . 4997) (text . "Service Design"))]))
+  "A matching question as the questions API returns it, answers aside.")
+
+(defconst test-quiz-407--matching-answers
+  [((id . 2683) (text . "The First Way") (left . "The First Way")
+    (right . "Stop Starting") (match_id . 3235))
+   ((id . 2684) (text . "The Second Way") (left . "The Second Way")
+    (right . "Shorten Feedback") (match_id . 8588))]
+  "Its answers: two pairs, so two of the four matches are distractors.")
+
+(describe "org-canvas--quiz-insert-answers by type (issue #407)"
+  (it "writes a matching question's pairs and then its distractors"
+    (expect (test-quiz-407--insert test-quiz-407--matching-answers
+                                   test-quiz-407--matching)
+            :to-equal (concat "- The First Way = Stop Starting\n"
+                              "- The Second Way = Shorten Feedback\n"
+                              "- Governance\n"
+                              "- Service Design\n")))
+
+  (it "writes a matching question with no matches array as its pairs alone"
+    (expect (test-quiz-407--insert test-quiz-407--matching-answers
+                                   '((question_type . "matching_question")))
+            :to-equal (concat "- The First Way = Stop Starting\n"
+                              "- The Second Way = Shorten Feedback\n")))
+
+  (it "takes a pair's text when its left side is null"
+    (expect (test-quiz-407--insert
+             [((text . "Left") (left . :null) (right . "Right") (match_id . 1))]
+             '((question_type . "matching_question")))
+            :to-equal "- Left = Right\n"))
+
+  (it "writes numerical answers as the push reads them"
+    (expect (test-quiz-407--insert
+             [((numerical_answer_type . "exact_answer") (exact . 42) (margin . 0)
+               (weight . 100))
+              ((numerical_answer_type . "exact_answer") (exact . 3.5) (margin . 0))
+              ((numerical_answer_type . "range_answer") (start . 1) (end . 10.0))
+              ((numerical_answer_type . "exact_answer") (exact . 100) (margin . 5))]
+             '((question_type . "numerical_question")))
+            :to-equal (concat "- [X] 42\n"
+                              "- [X] 3.5\n"
+                              "- [X] [1, 10]\n"
+                              "- [X] [95, 105]\n")))
+
+  (it "writes a precision answer as an exact one and says so"
+    (let ((warned nil))
+      (cl-letf (((symbol-function 'org-canvas--log-warning)
+                 (lambda (_l fmt &rest args) (push (apply #'format fmt args) warned))))
+        (expect (test-quiz-407--insert
+                 [((numerical_answer_type . "precision_answer")
+                   (approximate . 3.14159) (precision . 3))]
+                 '((question_type . "numerical_question")))
+                :to-equal "- [X] 3.14159\n"))
+      (expect (car warned) :to-match "precision answer (3.14159 to 3 digits)")))
+
+  (it "nests blanks and dropdowns under their blank ids, in Canvas's order"
+    (let ((answers [((blank_id . "color") (text . "red") (weight . 100))
+                    ((blank_id . "size") (text . "big") (weight . 100))
+                    ((blank_id . "color") (text . "blue") (weight . 0))
+                    ((blank_id . "size") (text . "small") (weight . 0))]))
+      (expect (test-quiz-407--insert answers '((question_type . "multiple_dropdowns_question")))
+              :to-equal (concat "- color\n  - [X] red\n  - [ ] blue\n"
+                                "- size\n  - [X] big\n  - [ ] small\n"))
+      (expect (test-quiz-407--insert
+               [((blank_id . "b1") (text . "one") (weight . 100))
+                ((blank_id . "b1") (text . "uno") (weight . 100))]
+               '((question_type . "fill_in_multiple_blanks_question")))
+              :to-equal "- b1\n  - [X] one\n  - [X] uno\n")))
+
+  (it "writes every other type, and a call without the question, as a checklist"
+    (let ((answers [((text . "Yes") (weight . 100)) ((text . "No") (weight . 0))]))
+      (expect (test-quiz-407--insert answers '((question_type . "multiple_choice_question")))
+              :to-equal "- [X] Yes\n- [ ] No\n")
+      (expect (test-quiz-407--insert answers) :to-equal "- [X] Yes\n- [ ] No\n")
+      (expect (test-quiz-407--insert [((text . "x") (weight . :null))])
+              :to-equal "- [ ] x\n")))
+
+  (it "round-trips a pulled matching question into the push's answers"
+    (with-temp-org-buffer "* Quiz\n:PROPERTIES:\n:CANVAS_ID: 5\n:END:\n"
+      (org-back-to-heading)
+      (with-html-to-org-identity
+        (org-canvas--quiz-pull-insert-question
+         (append '((id . 77) (question_name . "Ways") (question_text . "Match them.")
+                   (points_possible . 2))
+                 (list (cons 'answers test-quiz-407--matching-answers))
+                 test-quiz-407--matching)))
+      (goto-char (point-min))
+      (search-forward "** Ways")
+      (org-back-to-heading)
+      (let ((data (org-canvas--question-parse-entry 5)))
+        (expect (plist-get data :answers)
+                :to-equal '(((answer_match_left . "The First Way")
+                             (answer_match_right . "Stop Starting"))
+                            ((answer_match_left . "The Second Way")
+                             (answer_match_right . "Shorten Feedback"))))
+        (expect (plist-get data :distractors)
+                :to-equal '("Governance" "Service Design")))))
+
+  (it "round-trips a pulled numerical range and a dropdowns question"
+    (with-temp-org-buffer "* Quiz\n:PROPERTIES:\n:CANVAS_ID: 5\n:END:\n"
+      (org-back-to-heading)
+      (with-html-to-org-identity
+        (org-canvas--quiz-pull-insert-question
+         '((id . 78) (question_name . "Range") (question_text . "Guess.")
+           (question_type . "numerical_question")
+           (answers . [((numerical_answer_type . "range_answer") (start . 1) (end . 10))])))
+        (org-canvas--quiz-pull-insert-question
+         '((id . 79) (question_name . "Drop") (question_text . "Pick.")
+           (question_type . "multiple_dropdowns_question")
+           (answers . [((blank_id . "b1") (text . "one") (weight . 100))
+                       ((blank_id . "b1") (text . "two") (weight . 0))]))))
+      (goto-char (point-min))
+      (search-forward "** Range")
+      (org-back-to-heading)
+      (expect (plist-get (org-canvas--question-parse-entry 5) :answers)
+              :to-equal '(((numerical_answer_type . "range_answer")
+                           (answer_range_start . 1) (answer_range_end . 10)
+                           (answer_weight . 100))))
+      (search-forward "** Drop")
+      (org-back-to-heading)
+      (expect (plist-get (org-canvas--question-parse-entry 5) :answers)
+              :to-equal '(((blank_id . "b1") (answer_text . "one") (answer_weight . 100))
+                          ((blank_id . "b1") (answer_text . "two") (answer_weight . 0)))))))
 
 ;;; org-canvas-quizzes-test.el ends here

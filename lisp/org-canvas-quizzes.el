@@ -29,6 +29,9 @@
 ;;   essay_question              - No answers needed
 ;;   file_upload_question        - No answers needed
 ;;
+;; A pull writes each type in the same format (issue #407), so a pulled
+;; quiz re-pushes with its answer keys: `org-canvas--quiz-insert-answers'.
+;;
 ;; QUESTION GROUPS (QUESTION BANKS)
 ;; ================================
 ;; Level 2 headings with TYPE=group create question groups that pick
@@ -734,6 +737,8 @@ QUIZ-CANVAS-ID is the Canvas ID of the parent quiz."
     (plist-put data :pom pom)
     (plist-put data :text-html text-html)
     (plist-put data :answers answers)
+    (when (equal q-type "matching_question")
+      (plist-put data :distractors (org-canvas--question-matching-distractors)))
     data))
 
 (defun org-canvas--question-build-checkbox-answers ()
@@ -767,13 +772,22 @@ When CORRECT-ONLY is non-nil, only include correct answers."
                                                            org-canvas--answer-weight-incorrect)))))))
 
 (defun org-canvas--question-build-matching-answers ()
-  "Build answers from matching pairs list."
-  (let ((matches (org-canvas--quiz-parse-matching-list)))
-    (cl-loop for (left . right) in matches
-             collect (if right
-                        `((answer_match_left . ,left)
-                          (answer_match_right . ,right))
-                      `((answer_match_left . ,left))))))
+  "Build answers from the matching pairs list: the `left = right' lines.
+A line with no `=' is a distractor, which Canvas takes on the question
+as `matching_answer_incorrect_matches', not as an answer: an answer
+with a left side alone made a pair whose right side was empty (issue
+#407).  `org-canvas--question-matching-distractors' reads those."
+  (cl-loop for (left . right) in (org-canvas--quiz-parse-matching-list)
+           when right
+           collect `((answer_match_left . ,left)
+                     (answer_match_right . ,right))))
+
+(defun org-canvas--question-matching-distractors ()
+  "Return the distractors of the matching question at point, in order.
+The `- text' lines with no `=', seeded into every dropdown beside the
+right sides."
+  (cl-loop for (left . right) in (org-canvas--quiz-parse-matching-list)
+           unless right collect left))
 
 (defun org-canvas--question-build-numerical-answer ()
   "Build answer from numerical value or range."
@@ -815,6 +829,10 @@ When CORRECT-ONLY is non-nil, only include correct answers."
 
     (when answers
       (push `(answers . ,(vconcat answers)) question-obj))
+    (when (plist-get data :distractors)
+      (push `(matching_answer_incorrect_matches
+              . ,(mapconcat #'identity (plist-get data :distractors) "\n"))
+            question-obj))
     (when (plist-get data :quiz_group_id)
       (push `(quiz_group_id . ,(plist-get data :quiz_group_id)) question-obj))
 
@@ -1155,18 +1173,121 @@ rewritten to local `[[file:...]]' links via the shared file-id cache."
   (when (and q-text (not (string-empty-p q-text)))
     (insert "\n" (org-canvas--html-to-org-with-rewrite q-text) "\n")))
 
-(defun org-canvas--quiz-insert-answers (answers)
-  "Insert ANSWERS list at point as Org checklist items.
-Each answer's weight determines checked ([X]) vs unchecked ([ ]).
-Canvas file URLs in answer text/html are rewritten to local file links."
+(defun org-canvas--quiz-answer-text (a)
+  "Return answer A's text as inline Org, file URLs rewritten to local links."
+  (org-canvas--html-to-org-inline-with-rewrite
+   (or (alist-get 'text a) (alist-get 'html a) "")))
+
+(defun org-canvas--quiz-answer-checked-p (a)
+  "Return non-nil when answer A is correct: its weight is positive."
+  (let ((weight (alist-get 'weight a)))
+    (and (numberp weight) (> weight 0))))
+
+(defun org-canvas--quiz-insert-checkbox-answers (answers)
+  "Insert ANSWERS as `- [X] text' and `- [ ] text' lines."
+  (dolist (a answers)
+    (insert (format "- [%s] %s\n"
+                    (if (org-canvas--quiz-answer-checked-p a) "X" " ")
+                    (org-canvas--quiz-answer-text a)))))
+
+(defun org-canvas--quiz-insert-matching-answers (answers matches)
+  "Insert ANSWERS as `- left = right' lines, then the distractors bare.
+MATCHES is the question's `matches' array: every right side plus the
+distractors, which are the entries no answer's `match_id' names
+\(issue #407)."
+  (let ((used nil))
+    (dolist (a answers)
+      (push (alist-get 'match_id a) used)
+      (insert (format "- %s = %s\n"
+                      (org-canvas--html-to-org-inline-with-rewrite
+                       (or (org-canvas--alist-get-non-null 'left a)
+                           (alist-get 'text a) ""))
+                      (org-canvas--html-to-org-inline-with-rewrite
+                       (or (org-canvas--alist-get-non-null 'right a) "")))))
+    (dolist (m (append matches nil))
+      (unless (member (alist-get 'match_id m) used)
+        (insert (format "- %s\n"
+                        (org-canvas--html-to-org-inline-with-rewrite
+                         (or (alist-get 'text m) ""))))))))
+
+(defun org-canvas--quiz-format-number (n)
+  "Return N in the push's number spelling: an integer without a decimal point."
+  (if (and (numberp n) (= n (truncate n)))
+      (format "%d" (truncate n))
+    (format "%s" n)))
+
+(defun org-canvas--quiz-numerical-answer-line (a)
+  "Return the `- [X] ...' line for numerical answer A, in the push's format.
+An exact answer with a margin is written as the range it accepts, which
+grades the same; a precision answer is written as its approximate
+value, since the push has no precision form (issue #407)."
+  (let ((type (alist-get 'numerical_answer_type a))
+        (n #'org-canvas--quiz-format-number))
+    (pcase type
+      ("range_answer"
+       (format "- [X] [%s, %s]" (funcall n (alist-get 'start a))
+               (funcall n (alist-get 'end a))))
+      ("precision_answer"
+       (org-canvas--log-warning org-canvas--logger
+         "[Quiz Pull] A precision answer (%s to %s digits) is written as an exact answer"
+         (alist-get 'approximate a) (alist-get 'precision a))
+       (format "- [X] %s" (funcall n (alist-get 'approximate a))))
+      (_
+       (let ((exact (alist-get 'exact a))
+             (margin (alist-get 'margin a)))
+         (if (and (numberp exact) (numberp margin) (> margin 0))
+             (format "- [X] [%s, %s]" (funcall n (- exact margin))
+                     (funcall n (+ exact margin)))
+           (format "- [X] %s" (funcall n exact))))))))
+
+(defun org-canvas--quiz-insert-numerical-answers (answers)
+  "Insert ANSWERS as the push's numerical lines, one per accepted answer.
+The push reads the first; the rest are kept so nothing Canvas holds is
+silently lost."
+  (dolist (a answers)
+    (insert (org-canvas--quiz-numerical-answer-line a) "\n")))
+
+(defun org-canvas--quiz-insert-blank-answers (answers)
+  "Insert ANSWERS grouped under their blank ids, in the push's nested form.
+`- blank_id' then `  - [X] text' for each of its answers, blanks in
+the order Canvas first names them (issue #407)."
+  (let ((blanks nil))
+    (dolist (a answers)
+      (let* ((id (format "%s" (or (alist-get 'blank_id a) "")))
+             (cell (assoc id blanks)))
+        (if cell
+            (setcdr cell (append (cdr cell) (list a)))
+          (setq blanks (append blanks (list (list id a)))))))
+    (dolist (blank blanks)
+      (insert (format "- %s\n" (car blank)))
+      (dolist (a (cdr blank))
+        (insert (format "  - [%s] %s\n"
+                        (if (org-canvas--quiz-answer-checked-p a) "X" " ")
+                        (org-canvas--quiz-answer-text a)))))))
+
+(defun org-canvas--quiz-insert-answers (answers &optional question)
+  "Insert ANSWERS at point in the push's format for QUESTION's type.
+A matching question's pairs as `- left = right' and its distractors
+bare, a numerical answer as `- [X] 42' or `- [X] [1, 10]', a blanks or
+dropdowns question nested under its blank ids, and every other type as
+a checklist, checked where the weight is positive.  The checklist alone
+used to stand for every type, so a pulled matching question re-pushed
+with no answers at all (issue #407).  QUESTION is the question's alist,
+for its type and, for matching, its `matches'; without it the
+checklist is written.  Canvas file URLs in answer text are rewritten to
+local file links."
   (when answers
-    (dolist (a (append answers nil))
-      (let ((text (org-canvas--html-to-org-inline-with-rewrite
-                   (or (alist-get 'text a) (alist-get 'html a) "")))
-            (weight (alist-get 'weight a)))
-        (insert (format "- [%s] %s\n"
-                        (if (and weight (> weight 0)) "X" " ")
-                        text))))))
+    (let ((answers (append answers nil))
+          (type (and question (alist-get 'question_type question))))
+      (pcase type
+        ("matching_question"
+         (org-canvas--quiz-insert-matching-answers
+          answers (alist-get 'matches question)))
+        ("numerical_question"
+         (org-canvas--quiz-insert-numerical-answers answers))
+        ((or "fill_in_multiple_blanks_question" "multiple_dropdowns_question")
+         (org-canvas--quiz-insert-blank-answers answers))
+        (_ (org-canvas--quiz-insert-checkbox-answers answers))))))
 
 (defun org-canvas--quiz-pull-insert-question (q)
   "Write question Q as a heading one level under the entry at point.
@@ -1198,7 +1319,7 @@ and the type goes to TYPE, the property the sync reads."
         (org-canvas-org-set-property qpos "POINTS" (format "%s" q-points)))
       (goto-char (save-excursion (org-end-of-meta-data t) (point)))
       (org-canvas--quiz-insert-question-body q-text)
-      (org-canvas--quiz-insert-answers answers))
+      (org-canvas--quiz-insert-answers answers q))
     (org-canvas--pull-child-close next)
     (set-marker next nil)
     (goto-char quiz-pos)))

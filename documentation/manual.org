@@ -798,6 +798,18 @@ push time, rather than first seen in the next drift report.
 | =file_upload_question=             | No answers (file submission)             |
 | =text_only_question=               | Body text only (instructions/headers)    |
 
+A pull writes each type in the same format, so a quiz pulled from one
+course re-pushes into another with its answer keys: a matching
+question's pairs as =- Left = Right= followed by its distractors as bare
+=- Text= lines (Canvas holds those on the question, not as answers), a
+numerical answer as =- [X] 42= or =- [X] [1, 10]=, and a blanks or
+dropdowns question nested under its blank ids.  Two numerical forms
+have no Org spelling: an exact answer with a margin is written as the
+range it accepts, which grades the same, and a precision answer as its
+approximate value, with a warning in the log.  Canvas can hold several
+accepted numerical answers; the pull keeps them all and the push sends
+the first.
+
 *** Question Groups
 
 A question group picks =PICK_COUNT= questions at random when the quiz is
