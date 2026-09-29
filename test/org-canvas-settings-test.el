@@ -1845,6 +1845,56 @@ from; without it the pull creates the file.  Returns a plist
         (expect (plist-get rec :item) :to-equal "late policy")
         (expect (plist-get rec :error) :to-match "HTTP 403"))))
 
+  (it "records a role refusal on the late policy as a skip (issue #397)"
+    (let* ((result (test-org-canvas-settings--pull-with
+                    (lambda (url)
+                      (cond
+                       ((string-match "late_policy" url)
+                        (signal 'org-canvas-permission-error
+                                '("Permission denied (HTTP 403) reading late policy")))
+                       ((string-match "tabs" url) nil)
+                       (t test-org-canvas-settings--course-response)))))
+           (records (plist-get result :records))
+           (rec (car records))
+           (kind (plist-get rec :kind)))
+      (expect (plist-get result :content) :to-match "Test Course")
+      (expect (length records) :to-equal 1)
+      (expect kind :to-equal 'skip)
+      (expect (plist-get rec :file) :to-equal "settings.org")
+      (expect (plist-get rec :item) :to-equal "late policy")
+      (expect (plist-get rec :error)
+              :to-match "\\`Canvas role cannot access this resource")
+      (expect (cl-some (lambda (w) (string-match-p "late policy not pulled.*HTTP 403" w))
+                       (plist-get result :warnings))
+              :to-be-truthy)))
+
+  (it "records a role refusal on the navigation tabs as a skip (issue #397)"
+    (let* ((result (test-org-canvas-settings--pull-with
+                    (lambda (url)
+                      (cond
+                       ((string-match "late_policy" url) nil)
+                       ((string-match "tabs" url)
+                        (signal 'org-canvas-permission-error
+                                '("Permission denied (HTTP 403) reading tabs")))
+                       (t test-org-canvas-settings--course-response)))))
+           (rec (car (plist-get result :records)))
+           (kind (plist-get rec :kind)))
+      (expect kind :to-equal 'skip)
+      (expect (plist-get rec :item) :to-equal "navigation tabs")))
+
+  (it "keeps any other late-policy failure an error (issue #397)"
+    (let* ((result (test-org-canvas-settings--pull-with
+                    (lambda (url)
+                      (cond
+                       ((string-match "late_policy" url)
+                        (signal 'org-canvas-api-error '("Gateway timeout (HTTP 504)")))
+                       ((string-match "tabs" url) nil)
+                       (t test-org-canvas-settings--course-response)))))
+           (rec (car (plist-get result :records)))
+           (kind (plist-get rec :kind)))
+      (expect kind :to-equal 'error)
+      (expect (plist-get rec :error) :to-match "\\`not pulled: .*HTTP 504")))
+
   (it "treats a 404 on the late policy as the course having none"
     (let ((result (test-org-canvas-settings--pull-with
                    (lambda (url)
