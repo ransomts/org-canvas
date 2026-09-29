@@ -3108,7 +3108,7 @@ The heading's overrides table moves section 777 to 14:20; Canvas holds
            (calls (cdr run)))
       (expect (plist-get result :error) :to-be nil)
       (expect (plist-get result :outcome) :to-be 'synced)
-      (expect (plist-get result :overrides) :to-equal '(0 1 0))
+      (expect (plist-get result :overrides) :to-equal '(0 1 0 0))
       (expect (plist-get result :note) :to-match "1 updated")
       (expect (test-asg380-called-p calls 'PUT "assignments/456\\'") :to-be-truthy)
       (expect (test-asg380-called-p calls 'PUT "assignments/456/overrides/10\\'")
@@ -3121,7 +3121,7 @@ The heading's overrides table moves section 777 to 14:20; Canvas holds
            (result (car (car run)))
            (calls (cdr run)))
       (expect (plist-get result :outcome) :to-be 'dry-run)
-      (expect (plist-get result :overrides) :to-equal '(0 1 0))
+      (expect (plist-get result :overrides) :to-equal '(0 1 0 0))
       (expect (plist-get result :note) :to-match "dry run")
       (expect (cl-remove-if (lambda (c) (eq (car c) 'GET)) calls) :to-equal nil)))
 
@@ -3137,5 +3137,164 @@ The heading's overrides table moves section 777 to 14:20; Canvas holds
             (expect (plist-get report :overrides) :to-be 'failed)
             (expect (plist-get report :note) :to-match "overrides failed — Student")
             (expect logged :to-be t)))))))
+
+;;;; An Override-Only Push Restamps the Heading (issue #410)
+
+(defun test-asg410-sync (canvas-points)
+  "Push Attendance 02 by name when only its table changed; return (RESULT TEXT CALLS).
+The heading's PAYLOAD_HASH is the one the runtime computes, so the
+assignment is skipped as unchanged; its stamp is older than Canvas's
+`updated_at', which the web-UI extension the table now carries had
+moved.  Canvas holds CANVAS-POINTS points where the heading says 1.
+TEXT is the file afterwards, CALLS the API calls made."
+  (let ((dir (make-temp-file "asg410-" t)))
+    (unwind-protect
+        (let ((file (expand-file-name "assignments.org" dir)))
+          (with-temp-file (expand-file-name "sections.org" dir)
+            (insert "* Section A\n:PROPERTIES:\n:CANVAS_ID: 777\n:END:\n"))
+          (with-temp-file file
+            (insert "* Attendance 02\n:PROPERTIES:\n:CANVAS_ID: 456\n"
+                    ":CANVAS_UPDATED_AT: 2026-09-28T16:32:20Z\n"
+                    ":POINTS: 1\n:END:\n\nBe there.\n\n#+NAME: overrides\n"
+                    "| Section | Due At | Unlock At | Lock At |\n"
+                    "|---------+--------+-----------+---------|\n"
+                    "| Students: #279871 | <2026-09-29 Tue 14:00> | | <2026-10-01 Thu 14:00> |\n"))
+          (let ((org-canvas-assignments-file file))
+            (with-org-canvas-test-config
+              (with-sync-test-env
+                (with-current-buffer (org-canvas--find-file-noselect file)
+                  (goto-char (point-min))
+                  (org-back-to-heading t)
+                  (let* ((data (org-canvas--assignment-parse-entry))
+                         (payload (org-canvas--assignment-build-payload data))
+                         (ctx (org-canvas--sync-make-ctx
+                               :hash-extra-fn #'org-canvas--assignment-rubric-hash-extra)))
+                    (org-canvas-org-set-property
+                     (point) org-canvas--prop-payload-hash
+                     (org-canvas--sync-entry-hash payload data ctx)))
+                  (org-canvas--save-buffer))
+                (with-mock-api
+                  (setq test-org-canvas-api-responses
+                        `(("assignments/456/overrides/11" . ((id . 11)))
+                          ("assignments/456/overrides" .
+                           [((id . 11) (student_ids . [279871])
+                             (due_at . "2026-09-29T18:00:00Z"))])
+                          ("assignments/456" .
+                           ((id . 456) (name . "Attendance 02")
+                            (points_possible . ,canvas-points)
+                            (updated_at . "2026-09-29T17:59:34Z")))))
+                  (cl-letf (((symbol-function 'message) #'ignore))
+                    (let ((result (car (org-canvas-sync-headings
+                                        '((assignment . "Attendance 02"))))))
+                      (dolist (name '("assignments.org" "sections.org"))
+                        (let ((buf (find-buffer-visiting (expand-file-name name dir))))
+                          (when buf
+                            (with-current-buffer buf (set-buffer-modified-p nil))
+                            (kill-buffer buf))))
+                      (list result
+                            (with-temp-buffer
+                              (insert-file-contents file)
+                              (buffer-string))
+                            test-org-canvas-api-calls))))))))
+      (delete-directory dir t))))
+
+(describe "an override-only push restamps a drifted heading (issue #410)"
+  (it "restamps CANVAS_UPDATED_AT when the skipped assignment agrees with Canvas"
+    (let* ((run (test-asg410-sync 1))
+           (result (nth 0 run)))
+      (expect (plist-get result :error) :to-be nil)
+      (expect (plist-get result :outcome) :to-be 'unchanged)
+      (expect (plist-get result :overrides) :to-equal '(0 1 0 0))
+      (expect (nth 1 run) :to-match ":CANVAS_UPDATED_AT: 2026-09-29T17:59:34Z")
+      (expect (test-asg380-called-p (nth 2 run) 'PUT "assignments/456\\'") :to-be nil)
+      (expect (test-asg380-called-p (nth 2 run) 'PUT "overrides/11\\'")
+              :to-be-truthy)))
+
+  (it "keeps the stamp when Canvas holds a field otherwise, so the next push still asks"
+    (let ((run (test-asg410-sync 2)))
+      (expect (plist-get (nth 0 run) :outcome) :to-be 'unchanged)
+      (expect (plist-get (nth 0 run) :overrides) :to-equal '(0 1 0 0))
+      (expect (nth 1 run) :to-match ":CANVAS_UPDATED_AT: 2026-09-28T16:32:20Z"))))
+
+(describe "org-canvas--assignment-heading-mismatches (issue #410)"
+  (it "names a registered field Canvas holds otherwise, and nothing when they agree"
+    (let ((payload (make-hash-table :test 'equal))
+          (assignment (make-hash-table :test 'equal)))
+      (puthash "points_possible" 1 assignment)
+      (puthash "assignment" assignment payload)
+      (expect (org-canvas--assignment-heading-mismatches
+               payload '((points_possible . 1)))
+              :to-be nil)
+      (let ((mismatches (org-canvas--assignment-heading-mismatches
+                         payload '((points_possible . 2)))))
+        (expect (length mismatches) :to-equal 1)
+        (expect (car (car mismatches)) :to-equal "POINTS"))))
+
+  (it "counts a comparison that signals as a mismatch"
+    (let ((warned nil))
+      (cl-letf (((symbol-function 'org-canvas--registry-echo-mismatches)
+                 (lambda (&rest _) (error "Boom")))
+                ((symbol-function 'org-canvas--log-warning)
+                 (lambda (&rest _) (setq warned t))))
+        (expect (org-canvas--assignment-heading-mismatches
+                 (make-hash-table :test 'equal) nil)
+                :to-be-truthy)
+        (expect warned :to-be t))))
+
+  (it "hands the reconcile the payload from the context, and none without one"
+    (with-temp-org-buffer "* A\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n"
+      (let ((seen nil)
+            (payload (make-hash-table :test 'equal)))
+        (cl-letf (((symbol-function 'org-canvas--override-sync-entry)
+                   (lambda (_pom _dir options) (setq seen options) '(0 0 0 0)))
+                  ((symbol-function 'message) #'ignore))
+          (org-canvas--assignment-sync-heading-overrides
+           (org-canvas--sync-make-ctx :heading-payload payload))
+          (expect (plist-get seen :confirm-deletes) :to-be t)
+          (expect (functionp (plist-get seen :mismatch-fn)) :to-be t)
+          (org-canvas--assignment-sync-heading-overrides nil)
+          (expect (plist-get seen :mismatch-fn) :to-be nil))))))
+
+(describe "org-canvas--assignment-overrides-note (issue #411)"
+  (it "names the overrides a push kept, and nothing when it kept none"
+    (expect (org-canvas--assignment-overrides-note '(0 0 0 2))
+            :to-equal "overrides 0 created, 0 updated, 0 deleted, 2 kept that the table lacks")
+    (expect (org-canvas--assignment-overrides-note '(0 1 0 0))
+            :to-equal "overrides 0 created, 1 updated, 0 deleted")
+    (expect (org-canvas--assignment-overrides-note '(1 0 0))
+            :to-equal "overrides 1 created, 0 updated, 0 deleted")))
+
+(describe "org-canvas--assignment-pull-after replaces the table (issue #411)"
+  (defun test-asg411-pull (content description)
+    "Pull over CONTENT's first heading with DESCRIPTION; return the buffer text."
+    (with-org-canvas-test-config
+      (with-temp-org-buffer content
+        (cl-letf (((symbol-function 'org-canvas--override-fetch)
+                   (lambda (_)
+                     '(((id . 1) (course_section_id . 777)
+                        (due_at . "2026-09-28T18:15:00Z")))))
+                  ((symbol-function 'org-canvas--section-link-by-id)
+                   (lambda (id) (format "S%s" id))))
+          (org-canvas--assignment-pull-after
+           `((id . 456) (description . ,description)) (point-min))
+          (buffer-string)))))
+
+  (it "writes one table over a heading that had one and no description"
+    (let ((text (test-asg411-pull
+                 (concat "* A\n:PROPERTIES:\n:CANVAS_ID: 456\n:END:\n\n"
+                         "#+NAME: overrides\n| Section | Due At |\n|---+---|\n"
+                         "| old | <2026-01-01 Thu 10:00> |\n\n")
+                 "")))
+      (expect (cl-count-if (lambda (l) (string= l "#+NAME: overrides"))
+                           (split-string text "\n"))
+              :to-equal 1)
+      (expect text :not :to-match "| old ")
+      (expect text :to-match "| S777 ")))
+
+  (it "leaves a heading without a table alone before writing one"
+    (let ((text (test-asg411-pull "* A\n:PROPERTIES:\n:CANVAS_ID: 456\n:END:\n"
+                                  "<p>Hi</p>")))
+      (expect text :to-match "Hi")
+      (expect text :to-match "| S777 "))))
 
 ;;; org-canvas-assignments-test.el ends here

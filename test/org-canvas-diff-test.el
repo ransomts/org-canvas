@@ -2298,7 +2298,7 @@ its :children is the Module Items result."
       (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
                  (lambda (&rest _) [])))
         (expect (plist-get (org-canvas--diff-feature
-                            (org-canvas--registry-find-feature "assignments"))
+                            (org-canvas--registry-find-feature "pages"))
                            :children)
                 :to-be nil))))
 
@@ -4723,6 +4723,229 @@ CONTENT defaults to `test-nq-365-diff--file'."
          (org-canvas--diff-insert-entry row)
          (expect (buffer-string) :to-match
                  "is not in this course; a pull marked it CANVAS_DELETED \\[2026-09-28 Mon 10:00\\])"))))))
+
+;;;; Assignment Overrides (issue #411)
+
+(defconst test-diff-411--assignments
+  (concat "* R6: The Verdict\n:PROPERTIES:\n:CANVAS_ID: 456\n"
+          ":CANVAS_UPDATED_AT: 2026-09-28T16:32:20Z\n:END:\n\nBody.\n\n"
+          "#+NAME: overrides\n"
+          "| Section | Due At | Lock At |\n"
+          "|---------+--------+---------|\n"
+          "| [[file:sections.org::*Section A][Section A]] | <2026-09-28 Mon 14:15> | |\n"
+          "| [[file:sections.org::*Section C][Section C]] | <2026-09-30 Wed 14:15> | |\n"
+          "| Students: #279871 | <2026-09-29 Tue 14:00> | <2026-10-01 Thu 14:00> |\n"
+          "* No overrides\n:PROPERTIES:\n:CANVAS_ID: 457\n:END:\n"
+          "* Gone\n:PROPERTIES:\n:CANVAS_ID: 458\n:CANVAS_DELETED: [2026-09-28 Mon]\n:END:\n"
+          "* Draft\n")
+  "One heading with a table, one without, one a pull marked deleted, one unstamped.")
+
+(defun test-diff-411--iso (org-timestamp)
+  "Return ORG-TIMESTAMP as the ISO 8601 string the table's parse gives it."
+  (org-canvas-org-parse-timestamp org-timestamp))
+
+(defun test-diff-411--items ()
+  "Return the Assignments list reply, overrides included, as Canvas sends it.
+Section A's override agrees with its row; the student's lacks the
+row's lock; Section B's no row claims; id 14 no row claims and its
+due date is the assignment's own."
+  (let ((due (test-diff-411--iso "<2026-09-28 Mon 14:15>")))
+    (vector
+     `((id . 456) (name . "R6: The Verdict") (due_at . ,due)
+       (updated_at . "2026-09-28T16:32:20Z")
+       (html_url . "https://canvas.example/courses/1/assignments/456")
+       (overrides . [((id . 10) (course_section_id . 777) (due_at . ,due))
+                     ((id . 11) (student_ids . [279871])
+                      (due_at . ,(test-diff-411--iso "<2026-09-29 Tue 14:00>")))
+                     ((id . 12) (course_section_id . 779)
+                      (due_at . ,(test-diff-411--iso "<2026-10-02 Fri 14:15>")))
+                     ((id . 14) (student_ids . [300]) (due_at . ,due))]))
+     '((id . 457) (name . "No overrides") (updated_at . "2026-09-28T16:32:20Z")
+       (overrides . [])))))
+
+(defun test-diff-411--result (items &optional excluded fn)
+  "Run the Assignments diff over the scratch course with ITEMS as the list.
+EXCLUDED binds `org-canvas-diff-excluded-features'.  Returns (RESULT
+FILE PARAMS): the Assignments result, the assignments file, and the
+parameters the list was read with.  FN, when given, is called with
+RESULT and FILE while the scratch course still exists."
+  (let ((dir (make-temp-file "diff-411-" t))
+        (params nil))
+    (unwind-protect
+        (let ((file (expand-file-name "assignments.org" dir)))
+          (with-temp-file (expand-file-name "sections.org" dir)
+            (insert "* Section A\n:PROPERTIES:\n:CANVAS_ID: 777\n:END:\n"
+                    "* Section B\n:PROPERTIES:\n:CANVAS_ID: 779\n:END:\n"
+                    "* Section C\n:PROPERTIES:\n:CANVAS_ID: 778\n:END:\n"))
+          (with-temp-file file (insert test-diff-411--assignments))
+          (let ((org-canvas-assignments-file file)
+                (org-canvas-sections-file (expand-file-name "sections.org" dir))
+                (org-canvas-diff-excluded-features excluded))
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                         (lambda (_method _url &optional p &rest _)
+                           (setq params p)
+                           items))
+                        ((symbol-function 'org-canvas-api-request)
+                         (lambda (&rest _) (error "The report must not write"))))
+                (let ((result (org-canvas--diff-feature
+                               (org-canvas--registry-find-feature "assignments"))))
+                  (when fn (funcall fn result file))
+                  (list result file params))))))
+      (dolist (name '("assignments.org" "sections.org"))
+        (let ((buf (find-buffer-visiting (expand-file-name name dir))))
+          (when buf
+            (with-current-buffer buf (set-buffer-modified-p nil))
+            (kill-buffer buf))))
+      (delete-directory dir t))))
+
+(defun test-diff-411--by-state (entries state)
+  "Return the entries of ENTRIES whose :state is STATE."
+  (cl-remove-if-not (lambda (e) (eq (plist-get e :state) state)) entries))
+
+(describe "org-canvas--diff-assignment-overrides (issue #411)"
+  (before-each (test-org-canvas-stub-processors))
+  (after-each (org-canvas--assignment-processors-forget))
+  (it "asks the list for overrides and compares each heading's table with them"
+    (let* ((run (test-diff-411--result (test-diff-411--items)))
+           (result (nth 0 run))
+           (child (plist-get result :children))
+           (divergences (plist-get child :divergences))
+           (extra (plist-get child :extra))
+           (missing (car (test-diff-411--by-state divergences 'missing)))
+           (changed (car (test-diff-411--by-state divergences 'changed)))
+           (missing-kind (plist-get missing :kind))
+           (changed-kind (plist-get changed :kind)))
+      (expect (assoc "include[]" (nth 2 run)) :to-equal '("include[]" . "overrides"))
+      (expect (assoc "override_assignment_dates" (nth 2 run)) :to-be-truthy)
+      ;; The assignment itself agrees; only its overrides differ.  The
+      ;; heading a pull marked deleted is the Assignments section's
+      ;; MISSING row (issue #392), not this pass's business.
+      (expect (mapcar (lambda (d) (plist-get d :title))
+                      (plist-get result :divergences))
+              :to-equal '("Gone"))
+      (expect (plist-get child :name) :to-equal "Assignment Overrides")
+      (expect (plist-get child :error) :to-be nil)
+      (expect (length divergences) :to-equal 2)
+      (expect missing-kind :to-be 'override)
+      (expect (plist-get missing :title) :to-equal "Section C")
+      (expect (plist-get missing :dates) :to-equal "due <2026-09-30 Wed 14:15>")
+      (expect (plist-get missing :where) :to-equal "R6: The Verdict")
+      (expect (plist-get missing :assignment-id) :to-equal "456")
+      (expect (plist-get missing :file) :to-equal (nth 1 run))
+      (expect (plist-get missing :line) :to-equal 1)
+      (expect changed-kind :to-be 'override)
+      (expect (plist-get changed :title) :to-equal "Students: #279871")
+      (expect (plist-get changed :id) :to-equal "11")
+      (expect (plist-get changed :fields)
+              :to-equal '(("Lock At" "<2026-10-01 Thu 14:00>" "(unset)")))
+      (expect (mapcar (lambda (e) (list (plist-get e :id) (plist-get e :title)
+                                        (plist-get e :redundant)))
+                      extra)
+              :to-equal '(("12" "Section B" nil) ("14" "Students: #300" t)))
+      (expect (plist-get (car extra) :dates) :to-equal "due <2026-10-02 Fri 14:15>")
+      (expect (plist-get (car extra) :html-url) :to-match "assignments/456$")
+      (expect (org-canvas--diff-count (list child)) :to-equal 4)))
+
+  (it "reads a list without overrides as unchecked, never as none"
+    (let* ((items (vector '((id . 456) (name . "R6: The Verdict")
+                            (updated_at . "2026-09-28T16:32:20Z"))))
+           (child (plist-get (nth 0 (test-diff-411--result items)) :children)))
+      (expect (plist-get child :error) :to-match "no overrides for id 456")
+      (expect (plist-get child :divergences) :to-be nil)))
+
+  (it "has nothing to say when every table agrees and the rest hold none"
+    (let* ((due (test-diff-411--iso "<2026-09-28 Mon 14:15>"))
+           (items (vector
+                   `((id . 456) (name . "R6: The Verdict") (due_at . ,due)
+                     (updated_at . "2026-09-28T16:32:20Z")
+                     (overrides . [((id . 10) (course_section_id . 777) (due_at . ,due))
+                                   ((id . 11) (student_ids . [279871])
+                                    (due_at . ,(test-diff-411--iso "<2026-09-29 Tue 14:00>"))
+                                    (lock_at . ,(test-diff-411--iso "<2026-10-01 Thu 14:00>")))
+                                   ((id . 13) (course_section_id . 778)
+                                    (due_at . ,(test-diff-411--iso "<2026-09-30 Wed 14:15>")))]))
+                   '((id . 457) (name . "No overrides") (overrides . []))))
+           (child (plist-get (nth 0 (test-diff-411--result items)) :children)))
+      (expect (plist-get child :error) :to-be nil)
+      (expect (plist-get child :divergences) :to-be nil)
+      (expect (plist-get child :extra) :to-be nil)))
+
+  (it "skips the pass when assignment-overrides is excluded, visibly"
+    (let ((child (plist-get (nth 0 (test-diff-411--result (test-diff-411--items)
+                                                          '("assignment-overrides")))
+                            :children)))
+      (expect (plist-get child :excluded) :to-be t)))
+
+  (it "has nothing to report without the file"
+    (expect (org-canvas--diff-override-headings "/nonexistent/assignments.org" "LEVEL=1")
+            :to-be nil))
+
+  (it "spells both sides of a differing date as the table would, and an absent one as unset"
+    (let ((due (test-diff-411--iso "<2026-09-28 Mon 14:15>"))
+          (other (test-diff-411--iso "<2026-09-29 Tue 14:15>")))
+      (expect (org-canvas--diff-override-fields
+               (list :section-id "777" :due-at due :lock-at other)
+               `((id . 10) (due_at . ,other)))
+              :to-equal '(("Due At" "<2026-09-28 Mon 14:15>" "<2026-09-29 Tue 14:15>")
+                          ("Lock At" "<2026-09-29 Tue 14:15>" "(unset)")))
+      (expect (org-canvas--diff-override-fields
+               (list :section-id "777" :due-at due)
+               `((id . 10) (due_at . ,due) (unlock_at . ,other)))
+              :to-equal '(("Unlock At" "(unset)" "<2026-09-29 Tue 14:15>"))))))
+
+(describe "Assignment Overrides rows (issue #411)"
+  (before-each (test-org-canvas-stub-processors))
+  (after-each (org-canvas--assignment-processors-forget))
+  (defun test-diff-411--report (child)
+    "Return the report buffer of an Assignments result carrying CHILD."
+    (test-org-canvas--diff-report-buffer
+     (list (list :name "Assignments" :children child))))
+
+  (it "renders each row naming who, the assignment and the next push's effect"
+    (let ((child (plist-get (nth 0 (test-diff-411--result (test-diff-411--items)))
+                            :children)))
+      (with-current-buffer (test-diff-411--report child)
+        (let ((text (buffer-string)))
+          (expect text :to-match "Assignment Overrides: 4 divergence(s)")
+          (expect text :to-match "MISSING   Section C (row of assignment 'R6: The Verdict', due <2026-09-30 Wed 14:15>; Canvas holds no such override, so the next push of that heading creates it)")
+          (expect text :to-match "CHANGED   Students: #279871 (override id 11 of assignment 'R6: The Verdict')")
+          (expect text :to-match "Lock At            org: <2026-10-01 Thu 14:00>   canvas: (unset)")
+          (expect text :to-match "EXTRA     Section B (override id 12 of assignment 'R6: The Verdict', due <2026-10-02 Fri 14:15>; no row of the heading's overrides table claims it, so the next push of that heading deletes it — p pulls the table)")
+          (expect text :to-match "EXTRA     Students: #300 (override id 14 of assignment 'R6: The Verdict', due <2026-09-28 Mon 14:15>; no row .* deletes it — p pulls the table; its dates are the assignment's own, which a pull writes no row for)")
+          (expect text :to-match "4 divergence(s) found")))))
+
+  (it "visits the assignment heading, browses its page, pulls it, and refuses the rest"
+    (let ((pulled nil) (opened nil))
+      (test-diff-411--result
+       (test-diff-411--items) nil
+       (lambda (result file)
+         (with-current-buffer (test-diff-411--report (plist-get result :children))
+           (goto-char (point-min))
+           (re-search-forward "^  EXTRA     Section B")
+           (let ((entry (plist-get (org-canvas--diff-row-at-point) :entry)))
+             (expect (org-canvas--diff-visits-heading-p entry) :to-be t)
+             (expect (cdr (org-canvas--diff-heading-position nil entry))
+                     :to-equal 1))
+           (cl-letf (((symbol-function 'browse-url) (lambda (url) (setq opened url)))
+                     ((symbol-function 'org-canvas-pull-at-point)
+                      (lambda () (setq pulled (org-get-heading t t t t))))
+                     ((symbol-function 'pop-to-buffer)
+                      (lambda (buf &rest _) (set-buffer buf))))
+             (expect (org-canvas-diff-browse) :to-match "assignments/456$")
+             (org-canvas-diff-pull)
+             (expect pulled :to-equal "R6: The Verdict")
+             (expect (buffer-substring (line-beginning-position) (line-end-position))
+                     :to-equal "  PULLED    Section B (with the table of assignment 'R6: The Verdict')")
+             (goto-char (point-min))
+             (re-search-forward "^  MISSING   Section C")
+             (expect (org-canvas-diff-acknowledge) :to-throw 'user-error)
+             (expect (org-canvas-diff-delete) :to-throw 'user-error)
+             (expect (org-canvas-diff-stamp-move) :to-throw 'user-error)
+             (org-canvas-diff-visit)
+             (expect (buffer-file-name) :to-equal file)
+             (expect (org-get-heading t t t t) :to-equal "R6: The Verdict")))))
+      (expect opened :to-match "assignments/456$"))))
 
 (provide 'org-canvas-diff-test)
 ;;; org-canvas-diff-test.el ends here
