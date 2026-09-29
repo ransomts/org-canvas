@@ -206,6 +206,7 @@ Each document under `documentation/architecture/`, then the topics it holds, one
 - a heading opens its Canvas page from `:web-pages` rules its module declares (#292)
 - a hot-spot item's regions pull into the Canvas-owned `HOTSPOTS` and `HOTSPOTS_COUNT`, never pushed, compared by the drift report, the image URL never stored (#365)
 - a late status is typed in the grading file as `LATE_STATUS` against a `CANVAS_LATE_STATUS` baseline and pushed through `updateSubmissionGradeStatus`, checked before sending, recorded as Canvas stored it, with no lateness override since the mutation takes none (#352)
+- a list pull marks a stamped heading its list did not return `CANVAS_DELETED` only when that heading's own read is a 404, keeps the heading and names it in the closing line; a sync skips it, validate warns, and a relisting unmarks it (#392)
 - a module item moved between modules keeps its id: GraphQL's `reorderModuleItems`, one item per call, from whichever module syncs first, falling back to recreate-and-delete on any failure (#352)
 - a MOVED row stamps the item id on the heading it paired (`s`, `org-canvas-diff-stamp-moves`), and a stamped move is an uncounted RELOCATE row saying the sync moves the item there, keeping its id (#342, #343, #352)
 - a New Quiz item is pushed only as a type it can build: fill-in-the-blank invalid, hot-spot pull-only, an unknown TYPE a failed item (#337, #340)

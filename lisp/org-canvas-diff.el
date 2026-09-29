@@ -840,6 +840,7 @@ and :line where it sits, which is how a PENDING row finds it again."
                   (match-string-no-properties 4)))))
     (list :id (and id (not (string-empty-p id)) id)
           :title (org-get-heading t t t t)
+          :deleted (org-entry-get (point) org-canvas--prop-canvas-deleted)
           :heading raw
           :match-title (org-canvas--diff-display-title raw)
           :line (line-number-at-pos))))
@@ -883,7 +884,8 @@ agree."
     (cond
      ((null id) nil)
      ((null item)
-      (list :kind 'missing :title (plist-get entry :title) :id id))
+      (list :kind 'missing :title (plist-get entry :title) :id id
+            :deleted (plist-get entry :deleted)))
      (t
       (let* ((body (org-canvas--diff-compare-body props pom item))
              (fields (append (org-canvas--diff-compare-fields specs pom item)
@@ -1731,10 +1733,16 @@ in no container."
   "Insert one ENTRY of a drift report at point."
   (pcase (plist-get entry :kind)
     ('missing
-     (insert (format "  MISSING   %s (id %s is not in %s)\n"
+     (insert (format "  MISSING   %s (id %s is not in %s%s)\n"
                      (plist-get entry :title) (plist-get entry :id)
                      ;; An item is missing from its quiz (#322).
-                     (or (org-canvas--diff-container entry) "this course"))))
+                     (or (org-canvas--diff-container entry) "this course")
+                     ;; A pull already found it deleted (#392).
+                     (if (plist-get entry :deleted)
+                         (format "; a pull marked it %s %s"
+                                 org-canvas--prop-canvas-deleted
+                                 (plist-get entry :deleted))
+                       ""))))
     ('extra
      (insert (format "  EXTRA     %s (id %s%s, no Org heading claims it)\n"
                      (plist-get entry :title) (plist-get entry :id)

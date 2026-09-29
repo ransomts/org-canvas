@@ -319,6 +319,8 @@ deletes stale PAYLOAD_HASH."
         (when updated-at
           (org-canvas-org-set-property pos "CANVAS_UPDATED_AT" updated-at)))
       (org-entry-delete pos org-canvas--prop-payload-hash)
+      ;; Canvas answered with the item, so it is not deleted (issue #392).
+      (org-entry-delete pos org-canvas--prop-canvas-deleted)
       (org-canvas--pull-write-file-header)
       (org-canvas--save-buffer))))
 

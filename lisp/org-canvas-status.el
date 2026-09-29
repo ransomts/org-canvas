@@ -36,12 +36,13 @@
 
 (defun org-canvas--status-count-entries (file id-prop)
   "Count synced and pending entries in FILE using ID-PROP.
-Returns a plist (:synced N :pending N :legacy N :last-synced TS-OR-NIL).
-LAST-SYNCED reads the file-level #+LAST_SYNCED header.  LEGACY counts
-entries with a Canvas ID but missing a file header (i.e., the file has
-no #+LAST_SYNCED, indicating it has not been re-pulled since the
-schema cutover)."
-  (let ((synced 0) (pending 0) (legacy 0) (last-synced nil))
+Returns a plist (:synced N :pending N :legacy N :deleted N
+:last-synced TS-OR-NIL).  LAST-SYNCED reads the file-level
+#+LAST_SYNCED header.  LEGACY counts entries with a Canvas ID but
+missing a file header (i.e., the file has no #+LAST_SYNCED, indicating
+it has not been re-pulled since the schema cutover).  DELETED counts
+the entries a pull marked deleted on Canvas (issue #392)."
+  (let ((synced 0) (pending 0) (legacy 0) (deleted 0) (last-synced nil))
     (with-current-buffer (org-canvas--find-file-noselect file)
       (setq last-synced (org-canvas--pull-read-file-header))
       (save-excursion
@@ -49,13 +50,16 @@ schema cutover)."
         (org-map-entries
          (lambda ()
            (let ((id (org-entry-get (point) id-prop)))
+             (when (org-entry-get (point) org-canvas--prop-canvas-deleted)
+               (setq deleted (1+ deleted)))
              (if id
                  (progn
                    (setq synced (1+ synced))
                    (unless last-synced (setq legacy (1+ legacy))))
                (setq pending (1+ pending)))))
          "LEVEL=1" 'file)))
-    (list :synced synced :pending pending :legacy legacy :last-synced last-synced)))
+    (list :synced synced :pending pending :legacy legacy :deleted deleted
+          :last-synced last-synced)))
 
 (defun org-canvas--status-report-file (buf label file-var id-prop)
   "Report sync status for content type LABEL to buffer BUF.
@@ -79,6 +83,8 @@ ID-PROP is the property used to identify synced items."
           (insert (format "  Synced: %-4d  Pending: %-4d" synced pending))
           (when (and legacy (> legacy 0))
             (insert (format "  Legacy: %d (synced before change tracking)" legacy)))
+          (when (> (plist-get counts :deleted) 0)
+            (insert (format "  Deleted on Canvas: %d" (plist-get counts :deleted))))
           (when last-synced
             (insert (format "  Last: %s" last-synced)))
           (insert "\n"))))))

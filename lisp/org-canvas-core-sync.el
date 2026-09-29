@@ -360,6 +360,33 @@ already hold this title (issue #85)?  Either way the entry counts as
     (message "%s [DRY-RUN] Would %s '%s'%s" cap-feature (downcase verb) title detail)
     (plist-put counters key (1+ (or (plist-get counters key) 0)))))
 
+(defun org-canvas--sync-deleted-note (title)
+  "Return why the heading at point, TITLE, is not pushed, or nil.
+Non-nil when a pull marked it `org-canvas--prop-canvas-deleted': its
+Canvas item was deleted, so a PUT would 404 and the recovery would
+create the item again under a new id, silently undoing the deletion
+\(issue #392)."
+  (let ((stamp (org-entry-get (point) org-canvas--prop-canvas-deleted)))
+    (when stamp
+      (format "'%s' was deleted on Canvas (%s %s); not pushed.  Delete the heading, or remove %s and its CANVAS_ID to create it again"
+              title org-canvas--prop-canvas-deleted stamp
+              org-canvas--prop-canvas-deleted))))
+
+(defun org-canvas--sync-skip-deleted (title ctx)
+  "Count the heading at point, TITLE, as skipped if Canvas deleted it.
+Returns non-nil when it did, after logging why and naming it among
+CTX's skipped titles; nil otherwise."
+  (let ((note (org-canvas--sync-deleted-note title))
+        (counters (plist-get ctx :counters)))
+    (when note
+      (plist-put counters :skip (1+ (plist-get counters :skip)))
+      (plist-put counters :skipped-titles
+                 (cons (format "%s (deleted on Canvas)" title)
+                       (plist-get counters :skipped-titles)))
+      (org-canvas--log-warning org-canvas--logger "[Skip] %s" note)
+      (message "%s" note)
+      t)))
+
 (defun org-canvas--sync-process-entry (marker ctx)
   "Process one entry through the 4-stage pipeline.
 MARKER is the position of the entry.  CTX is the run context from
@@ -379,17 +406,18 @@ pipeline functions, :feature-name and :feature-upper for the log,
         (goto-char (marker-position marker))
         (let ((heading-title (org-get-heading t t t t)))
           (condition-case err
-              (let ((data (funcall parse-fn)))
-                (if (null data)
-                    ;; A heading the parser declines is not an entry: a
-                    ;; folder heading in files.org.  Counted as a skip so
-                    ;; the tally still adds up to the headings walked.
-                    (progn
-                      (plist-put counters :skip (1+ (plist-get counters :skip)))
-                      (org-canvas--log-info org-canvas--logger
-                        "[Skip] '%s' is not a %s entry" heading-title feature-name))
-                  (org-canvas--sync-execute-pipeline
-                   data (funcall build-fn data) ctx)))
+              (unless (org-canvas--sync-skip-deleted heading-title ctx)
+                (let ((data (funcall parse-fn)))
+                  (if (null data)
+                      ;; A heading the parser declines is not an entry: a
+                      ;; folder heading in files.org.  Counted as a skip so
+                      ;; the tally still adds up to the headings walked.
+                      (progn
+                        (plist-put counters :skip (1+ (plist-get counters :skip)))
+                        (org-canvas--log-info org-canvas--logger
+                          "[Skip] '%s' is not a %s entry" heading-title feature-name))
+                    (org-canvas--sync-execute-pipeline
+                     data (funcall build-fn data) ctx))))
             (error
              (if (org-canvas--sync-deferred-error-p err)
                  (progn
@@ -2144,6 +2172,8 @@ its conflict prompt is forgotten when it returns rather than applied
 to every later push at point (issue #141)."
   (org-canvas--sync-check-spec spec '(:feature :parse :build :push :finalize))
   (org-back-to-heading t)
+  (let ((note (org-canvas--sync-deleted-note (org-get-heading t t t t))))
+    (when note (user-error "%s" note)))
   (display-buffer (get-buffer-create org-canvas--log-buffer-name))
   (let* ((feature-name (plist-get spec :feature))
          ;; Advances past the #+LAST_SYNCED header finalize may insert

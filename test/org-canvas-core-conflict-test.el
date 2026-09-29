@@ -723,5 +723,23 @@ Old body.
         (expect (org-canvas--resolve-duplicate "R11" '("1") ctx) :to-equal 'create)
         (expect (plist-get ctx :duplicate-apply-all) :to-be nil)))))
 
+(describe "org-canvas--conflict-pull-local and a deleted mark (issue #392)"
+  (it "removes CANVAS_DELETED, since Canvas answered with the item"
+    (with-temp-org-buffer
+     "* Back
+:PROPERTIES:
+:CANVAS_ID: 456
+:CANVAS_DELETED: [2026-09-01 Tue 10:00]
+:END:
+"
+     (org-back-to-heading)
+     (org-canvas--conflict-pull-local
+      (list :title "Back" :pom (point-marker))
+      '((title . "Back") (updated_at . "2026-09-10T08:00:00Z"))
+      #'ignore)
+     (goto-char (point-min))
+     (re-search-forward "^\\* " nil t)
+     (expect (org-entry-get (point) "CANVAS_DELETED") :to-be nil))))
+
 (provide 'org-canvas-core-conflict-test)
 ;;; org-canvas-core-conflict-test.el ends here

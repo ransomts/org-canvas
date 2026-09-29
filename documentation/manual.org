@@ -321,9 +321,10 @@ All syncable headings support these properties:
 | =CANVAS_ID=           | string    | Canvas ID (auto-populated after sync)     |
 | =LAST_SYNCED=         | timestamp | Last sync time (auto-populated)           |
 | =CANVAS_UPDATED_AT=   | string    | Remote modification time (auto-populated) |
+| =CANVAS_DELETED=      | timestamp | Set by a pull when Canvas deleted the item; removed if it comes back |
 | =PUBLISHED=           | boolean   | Whether item is visible (default: true)   |
 
-=CANVAS_UPDATED_AT= is saved after each successful push and is the baseline conflict detection compares the remote =updated_at= against.  See [[*Conflict Detection][Conflict Detection]].
+=CANVAS_UPDATED_AT= is saved after each successful push and is the baseline conflict detection compares the remote =updated_at= against.  See [[*Conflict Detection][Conflict Detection]].  =CANVAS_DELETED= marks a heading whose item was deleted on Canvas; a push skips it.  See [[*Items Deleted on Canvas][Items Deleted on Canvas]].
 
 ** settings.org
 
@@ -3601,6 +3602,37 @@ assignments Canvas creates behind quizzes stay out of your file.
 
 Use the plain command to import a course for the first time, and the prefix
 argument afterwards.
+
+** Items Deleted on Canvas
+
+A pull writes what Canvas lists, so an item deleted on Canvas simply stops
+coming back, and its heading would otherwise sit in your file with a
+=CANVAS_ID= Canvas no longer has.  The pulls of assignments, pages,
+discussions, announcements, rubrics, assignment groups, group categories and
+grading schemes notice: each stamped heading the list did not return is read
+from Canvas on its own (one request each), and when Canvas answers "not
+found" the heading is marked with =CANVAS_DELETED=, the time of the pull
+that first found it so.  The heading stays, text and all -- your file may be
+the only copy -- and the closing line names it:
+
+#+begin_example
+Assignments pull complete: 52 items; 1 heading no longer on Canvas: Sprint 0 (deleted 2026-09-28).
+#+end_example
+
+=org-canvas-pull-all= lists them in its summary too.  Any other answer --
+Canvas still serves the item, or the read fails -- marks nothing, and the
+heading is named in the closing line as left unmarked: a list that came back
+short never marks a heading on its own.  For the same reason a list that
+comes back empty leaves a file with headings in it alone, rather than
+replacing it with the "Canvas returned 0 items" note.
+
+A marked heading is not pushed again: a sync skips it and names it among the
+skipped, and a push at point refuses it.  =org-canvas-validate= warns about
+it, the drift report's =MISSING= row says a pull marked it, and
+=org-canvas-status= counts it.  Delete the heading once you have kept what
+you need, or remove both =CANVAS_DELETED= and its =CANVAS_ID= to create the
+item again.  If the item comes back on Canvas (restored from the course's
+undelete page, say), the next pull lists it again and removes the mark.
 
 ** Validating an Adopted Course
 

@@ -1102,7 +1102,7 @@
            (test-file (expand-file-name "discussions.org" temp-dir)))
       (unwind-protect
           (progn
-            (with-temp-file test-file (insert "stale content\n* Old\n"))
+            (with-temp-file test-file (insert "stale content\n"))
             (let ((org-canvas-discussions-file test-file))
               (with-org-canvas-test-config
                 (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
@@ -2819,5 +2819,38 @@ and a heading with no stamp.")
   (it "skips a content type whose file is absent"
     (with-nonexistent-canvas-files
      (expect (org-canvas--pull-report-duplicate-titles) :to-be nil))))
+
+(defvar test-org-canvas--status-deleted-file nil
+  "The file the status spec of issue #392 reports on.")
+
+(describe "org-canvas-status and headings deleted on Canvas (issue #392)"
+  (it "counts and reports them"
+    (let ((file (make-temp-file "status-deleted-" nil ".org")))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "#+LAST_SYNCED: [2026-09-28 Mon 10:00]
+* Gone
+:PROPERTIES:
+:CANVAS_ID: 100
+:CANVAS_DELETED: [2026-09-28 Mon 10:00]
+:END:
+* Here
+:PROPERTIES:
+:CANVAS_ID: 101
+:END:
+"))
+            (expect (plist-get (org-canvas--status-count-entries file "CANVAS_ID")
+                               :deleted)
+                    :to-equal 1)
+            (let ((test-org-canvas--status-deleted-file file))
+              (with-temp-buffer
+                (org-canvas--status-report-file
+                 (current-buffer) "Assignments"
+                 'test-org-canvas--status-deleted-file "CANVAS_ID")
+                (expect (buffer-string) :to-match "Synced: 2 .*Deleted on Canvas: 1"))))
+        (let ((buf (find-buffer-visiting file)))
+          (when buf (kill-buffer buf)))
+        (delete-file file)))))
 
 ;;; org-canvas-test.el ends here

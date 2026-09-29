@@ -13,6 +13,8 @@
 (require 'org-canvas-assignments)
 (require 'org-canvas-sections)
 (require 'org-canvas-files)
+(require 'org-canvas-announcements)
+(require 'org-canvas-discussions)
 
 (describe "file-level LAST_SYNCED"
   (it "writes #+LAST_SYNCED to the buffer header"
@@ -1909,6 +1911,235 @@ Keep this too
         (expect (buffer-string) :to-equal "** New\nbody\n* Next\n")
         (org-canvas--pull-child-close nil)
         (expect (buffer-string) :to-equal "** New\nbody\n* Next\n")))))
+
+;;;; Headings Canvas no longer lists (issue #392)
+
+(defun test-org-canvas-gone--request (_method url &rest _args)
+  "Answer a single-item read of URL the way Canvas would for the fixture.
+Item 100 is deleted (404), 200 still exists, 300 errors with a 500,
+400 comes back with workflow_state deleted."
+  (cond
+   ((string-match-p "/100\\'" url)
+    (signal 'org-canvas-api-error
+            (list "The specified resource does not exist. (HTTP 404)")))
+   ((string-match-p "/300\\'" url)
+    (signal 'org-canvas-api-error (list "Internal error (HTTP 500)")))
+   ((string-match-p "/400\\'" url)
+    '((id . 400) (workflow_state . "deleted")))
+   (t '((id . 200) (title . "Still here")))))
+
+(defmacro test-org-canvas-gone--with-pull (content remote &rest body)
+  "Pull announcements from REMOTE into a file holding CONTENT, then run BODY.
+BODY sees `file', the file's text afterwards as `text', the closing
+line as `closing' and the single-item URLs read as `reads'."
+  (declare (indent 2))
+  `(let ((file (make-temp-file "gone-pull-" nil ".org"))
+         (reads nil)
+         (messages nil))
+     (unwind-protect
+         (progn
+           (with-temp-file file (insert ,content))
+           (org-canvas--pull-summary-reset)
+           (with-org-canvas-test-config
+             (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                        (lambda (&rest _) ,remote))
+                       ((symbol-function 'org-canvas-api-request)
+                        (lambda (method url &rest args)
+                          (push url reads)
+                          (apply #'test-org-canvas-gone--request method url args)))
+                       ((symbol-function 'org-canvas-clear-log) #'ignore)
+                       ((symbol-function 'display-buffer) #'ignore)
+                       ((symbol-function 'org-canvas--pull-confirm-overwrite) #'ignore)
+                       ((symbol-function 'message)
+                        (lambda (fmt &rest args)
+                          (push (apply #'format fmt args) messages))))
+               (let ((org-canvas-announcements-file file))
+                 (org-canvas-pull-announcements))))
+           (let ((text (with-temp-buffer (insert-file-contents file)
+                                         (buffer-string)))
+                 (closing (cl-find-if (lambda (m) (string-match-p "pull complete" m))
+                                      messages)))
+             (ignore text closing reads)
+             ,@body))
+       (org-canvas--pull-summary-reset)
+       (let ((buf (find-buffer-visiting file)))
+         (when buf (with-current-buffer buf (set-buffer-modified-p nil))
+               (kill-buffer buf)))
+       (delete-file file))))
+
+(describe "a list pull marks the headings Canvas deleted (issue #392)"
+  (it "marks a heading whose own read is a 404, keeps its text and names it"
+    (test-org-canvas-gone--with-pull
+        "* Listed\n:PROPERTIES:\n:CANVAS_ID: 50\n:END:\n* Sprint 0\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\nMy only copy.\n"
+        '(((id . 50) (title . "Listed") (message . "<p>x</p>")))
+      (expect text :to-match ":CANVAS_DELETED: +\\[[0-9]\\{4\\}-")
+      (expect text :to-match "My only copy\\.")
+      (expect text :to-match "^\\* Sprint 0")
+      (expect closing :to-match "1 heading no longer on Canvas: Sprint 0 (deleted [0-9-]+)")
+      (expect (length reads) :to-equal 1)
+      (let ((gone (org-canvas--pull-summary-records-of-kind 'gone)))
+        (expect (length gone) :to-equal 1)
+        (expect (plist-get (car gone) :item) :to-equal "Sprint 0"))))
+
+  (it "leaves a heading Canvas still serves, or cannot read, unmarked and says so"
+    (test-org-canvas-gone--with-pull
+        "* Present\n:PROPERTIES:\n:CANVAS_ID: 200\n:END:\n* Flaky\n:PROPERTIES:\n:CANVAS_ID: 300\n:END:\n"
+        '(((id . 50) (title . "Listed") (message . "<p>x</p>")))
+      (expect text :not :to-match "CANVAS_DELETED")
+      (expect closing :to-match
+              "2 headings not listed left unmarked, still on Canvas or unreadable: Present; Flaky")
+      (expect (org-canvas--pull-summary-records-of-kind 'gone) :to-be nil)))
+
+  (it "takes a reply whose workflow_state is deleted as gone"
+    (test-org-canvas-gone--with-pull
+        "* Soft\n:PROPERTIES:\n:CANVAS_ID: 400\n:END:\n"
+        '(((id . 50) (title . "Listed") (message . "<p>x</p>")))
+      (expect text :to-match ":CANVAS_DELETED:")))
+
+  (it "keeps the date of the pull that first found it gone"
+    (test-org-canvas-gone--with-pull
+        "* Gone\n:PROPERTIES:\n:CANVAS_ID: 100\n:CANVAS_DELETED: [2026-09-01 Tue 10:00]\n:END:\n"
+        '(((id . 50) (title . "Listed") (message . "<p>x</p>")))
+      (expect text :to-match ":CANVAS_DELETED: +\\[2026-09-01 Tue 10:00\\]")
+      (expect closing :to-match "Gone (deleted 2026-09-01)")))
+
+  (it "names a hand-edited mark as it stands"
+    (test-org-canvas-gone--with-pull
+        "* Gone\n:PROPERTIES:\n:CANVAS_ID: 100\n:CANVAS_DELETED: yes\n:END:\n"
+        '(((id . 50) (title . "Listed") (message . "<p>x</p>")))
+      (expect closing :to-match "Gone (deleted yes)")))
+
+  (it "removes the mark from a heading Canvas lists again"
+    (test-org-canvas-gone--with-pull
+        "* Back\n:PROPERTIES:\n:CANVAS_ID: 50\n:CANVAS_DELETED: [2026-09-01 Tue 10:00]\n:END:\n"
+        '(((id . 50) (title . "Back") (message . "<p>x</p>")))
+      (expect text :not :to-match "CANVAS_DELETED")
+      (expect reads :to-be nil)
+      (expect closing :not :to-match "no longer on Canvas")))
+
+  (it "does not count an item a skip rule held back as unlisted"
+    (let ((org-canvas-discussions-file (make-temp-file "gone-disc-" nil ".org"))
+          (reads nil))
+      (unwind-protect
+          (progn
+            (with-temp-file org-canvas-discussions-file
+              (insert "* Announced\n:PROPERTIES:\n:CANVAS_ID: 60\n:END:\n"))
+            (with-org-canvas-test-config
+              (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                         (lambda (&rest _)
+                           '(((id . 60) (title . "Announced")
+                              (is_announcement . t)))))
+                        ((symbol-function 'org-canvas-api-request)
+                         (lambda (_m url &rest _) (push url reads) nil))
+                        ((symbol-function 'org-canvas-clear-log) #'ignore)
+                        ((symbol-function 'display-buffer) #'ignore)
+                        ((symbol-function 'org-canvas--pull-confirm-overwrite)
+                         #'ignore))
+                (org-canvas-pull-discussions)))
+            (expect reads :to-be nil))
+        (org-canvas--pull-summary-reset)
+        (let ((buf (find-buffer-visiting org-canvas-discussions-file)))
+          (when buf (with-current-buffer buf (set-buffer-modified-p nil))
+                (kill-buffer buf)))
+        (delete-file org-canvas-discussions-file))))
+
+  (it "checks every stamped heading when the list comes back empty, keeping the file"
+    (test-org-canvas-gone--with-pull
+        "* Gone\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\nNotes.\n* Present\n:PROPERTIES:\n:CANVAS_ID: 200\n:END:\n* Draft\n"
+        '()
+      (expect text :not :to-match "Canvas returned 0 items")
+      (expect text :to-match "Notes\\.")
+      (expect text :to-match "^\\* Draft")
+      (expect (length reads) :to-equal 2)
+      (expect closing :to-match "1 heading no longer on Canvas: Gone")
+      (expect closing :to-match "1 heading not listed left unmarked, still on Canvas or unreadable: Present"))))
+
+(describe "org-canvas--pull-gone-query"
+  (it "is LEVEL=1 where the registry says so or says nothing"
+    (expect (org-canvas--pull-gone-query "pages") :to-equal "LEVEL=1")
+    (expect (org-canvas--pull-gone-query "no-such-feature") :to-equal "LEVEL=1"))
+
+  (it "adds the level a feature syncs at when that is another"
+    (require 'org-canvas-assignment-groups)
+    (expect (org-canvas--pull-gone-query "assignment-groups")
+            :to-equal "LEVEL=1|LEVEL=2+WEIGHT={.}")))
+
+(describe "org-canvas--pull-mark-unlisted"
+  (it "marks nothing for a feature the registry does not hold"
+    (with-temp-org-buffer "* Stamped\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n"
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _) (error "Must not read"))))
+        (expect (org-canvas--pull-mark-unlisted
+                 "x.org" "no-such-feature" nil 'id "CANVAS_ID")
+                :to-equal '(:gone nil :kept nil)))))
+
+  (it "marks a level-2 assignment group and never a container or a child"
+    (require 'org-canvas-assignment-groups)
+    (with-org-canvas-test-config
+      (with-temp-org-buffer "* Assignment Groups\n** Labs\n:PROPERTIES:\n:WEIGHT: 30\n:CANVAS_ID: 100\n:END:\n*** Note\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n"
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   #'test-org-canvas-gone--request))
+          (let ((result (org-canvas--pull-mark-unlisted
+                         "assignment-groups.org" "assignment-groups" nil
+                         'id "CANVAS_ID")))
+            (expect (mapcar #'car (plist-get result :gone)) :to-equal '("Labs"))
+            (expect (org-entry-get (point-min) "CANVAS_DELETED") :to-be nil)
+            (goto-char (point-min))
+            (re-search-forward "^\\*\\*\\* Note")
+            (expect (org-entry-get (point) "CANVAS_DELETED") :to-be nil))))))
+
+  (it "reads a page by its url, as the registry names it"
+    (with-org-canvas-test-config
+      (with-temp-org-buffer "* Old page\n:PROPERTIES:\n:CANVAS_URL: old-page\n:END:\n"
+        (let ((urls nil))
+          (cl-letf (((symbol-function 'org-canvas-api-request)
+                     (lambda (_m url &rest _)
+                       (push url urls)
+                       (signal 'org-canvas-api-error (list "Gone (HTTP 404)")))))
+            (org-canvas--pull-mark-unlisted
+             "pages.org" "pages" '(((url . "front") (front_page . t)))
+             'url "CANVAS_URL")
+            (expect (car urls) :to-match "/pages/old-page\\'")
+            (expect (org-entry-get (point-min) "CANVAS_DELETED") :to-be-truthy)))))))
+
+(describe "org-canvas--api-not-found-p"
+  (it "is true of Canvas's 404 only"
+    (expect (org-canvas--api-not-found-p
+             '(org-canvas-api-error "Not found (HTTP 404)"))
+            :to-be-truthy)
+    (expect (org-canvas--api-not-found-p
+             '(org-canvas-api-error "Item 2540404 failed (HTTP 500)"))
+            :to-be nil)
+    (expect (org-canvas--api-not-found-p '(error "Not found (HTTP 404)"))
+            :to-be nil)
+    (expect (org-canvas--api-not-found-p '(org-canvas-api-error 404))
+            :to-be nil)))
+
+(describe "pull summary gone records (issue #392)"
+  (it "prints them in a section of their own and counts them"
+    (org-canvas--pull-summary-reset)
+    (unwind-protect
+        (progn
+          (org-canvas--pull-summary-record :file "a.org" :error "e1")
+          (org-canvas--pull-summary-record :kind 'gone :file "assignments.org"
+                                           :item "Sprint 0" :error "deleted")
+          (org-canvas--pull-summary-record :kind 'gone :file "assignments.org"
+                                           :item "Sprint 1" :error "deleted")
+          (let ((output (with-output-to-string (org-canvas--pull-summary-print))))
+            (expect output :to-match
+                    "\n\n2 headings no longer on Canvas — kept locally, marked CANVAS_DELETED:")
+            (expect output :to-match "assignments.org \\[Sprint 0\\]"))
+          (expect (org-canvas--pull-summary-tally)
+                  :to-equal "1 non-fatal error(s), 2 heading(s) no longer on Canvas"))
+      (org-canvas--pull-summary-reset))))
+
+(describe "group category reads (issue #392)"
+  (it "go to the unscoped group_categories address"
+    (require 'org-canvas-group-categories)
+    (let ((org-canvas-base-url "https://canvas.example.edu/"))
+      (expect (org-canvas--feature-item-url
+               (org-canvas--registry-find-feature "group-categories") 7)
+              :to-equal "https://canvas.example.edu/api/v1/group_categories/7"))))
 
 (provide 'org-canvas-core-pull-test)
 ;;; org-canvas-core-pull-test.el ends here

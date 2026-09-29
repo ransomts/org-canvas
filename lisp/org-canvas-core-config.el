@@ -1005,6 +1005,13 @@ DESTINATION should be one of: buffer, file, both."
 (defconst org-canvas--prop-payload-hash "PAYLOAD_HASH"
   "Org property storing the hash of the last-synced payload (change detection).")
 
+(defconst org-canvas--prop-canvas-deleted "CANVAS_DELETED"
+  "Org property marking a heading whose Canvas item was deleted.
+A list pull writes it on a stamped heading Canvas no longer lists and
+whose own read answers 404: when that pull first found it gone.  The
+heading and its text stay; a push skips it, validation warns, and a
+later pull that lists the item again removes it (issue #392).")
+
 (defconst org-canvas--prop-last-synced "LAST_SYNCED"
   "Legacy per-entry sync-timestamp property name.
 Superseded by the file-level \"#+LAST_SYNCED:\" header; still read for

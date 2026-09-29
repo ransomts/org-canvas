@@ -36,10 +36,17 @@
   :type 'file
   :group 'org-canvas)
 (org-canvas-register-file-var 'org-canvas-group-categories-file "group-categories.org")
+(defun org-canvas--group-category-item-url (id)
+  "Return the URL of group category ID, which Canvas serves unscoped.
+A course-scoped read of one 404s, which a pull would take for a
+category deleted on Canvas (issue #392)."
+  (format "%s/api/v1/group_categories/%s"
+          (replace-regexp-in-string "/+\\'" "" org-canvas-base-url) id))
 (org-canvas-register-feature
  :name "Group Categories" :endpoint "group_categories"
  :file-var 'org-canvas-group-categories-file
  :id-field 'id :id-property "CANVAS_ID" :title-field 'name
+ :item-url-fn #'org-canvas--group-category-item-url
  ;; One tab per group set on the course's groups page.
  :web-pages '((:level 1 :id-property "CANVAS_ID" :path "groups#tab-%s")))
 (org-canvas-register-properties "group-categories"

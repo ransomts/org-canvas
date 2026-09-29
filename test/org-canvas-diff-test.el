@@ -4706,5 +4706,23 @@ CONTENT defaults to `test-nq-365-diff--file'."
                       (scoring_data (value . "x")))))
             :to-equal '(("TYPE" "hot-spot" "choice")))))
 
+(describe "a MISSING row a pull already marked (issue #392)"
+  (it "carries the mark from the heading to the row it prints"
+    (with-temp-org-buffer
+     "* Lab 1
+:PROPERTIES:
+:CANVAS_ID: 61
+:CANVAS_DELETED: [2026-09-28 Mon 10:00]
+:END:
+"
+     (org-back-to-heading)
+     (let* ((entry (append (org-canvas--diff-local-entry "CANVAS_ID")
+                           (list :pom (point-marker))))
+            (row (org-canvas--diff-entry entry (make-hash-table :test 'equal) nil)))
+       (with-temp-buffer
+         (org-canvas--diff-insert-entry row)
+         (expect (buffer-string) :to-match
+                 "is not in this course; a pull marked it CANVAS_DELETED \\[2026-09-28 Mon 10:00\\])"))))))
+
 (provide 'org-canvas-diff-test)
 ;;; org-canvas-diff-test.el ends here

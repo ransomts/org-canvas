@@ -1514,13 +1514,26 @@ Returns a list of issues."
           (push unmet issues))))
     (nreverse issues)))
 
+(defun org-canvas--validate-canvas-deleted (loc)
+  "Warn when the heading at point, at LOC, was deleted on Canvas.
+A pull marks such a heading `org-canvas--prop-canvas-deleted' and a
+push skips it (issue #392).  A finding about the course, not a push,
+so a read-only course hears it too."
+  (let ((stamp (org-entry-get (point) org-canvas--prop-canvas-deleted)))
+    (when stamp
+      (org-canvas--validate-make-issue
+       'warning loc org-canvas--prop-canvas-deleted
+       (format "'%s' was deleted on Canvas (%s); a push skips it.  Delete the heading, or remove %s and its id to create it again"
+               (plist-get loc :heading) stamp
+               org-canvas--prop-canvas-deleted)))))
+
 (defun org-canvas--validate-entry-at-marker (props date-order structural-fn file)
   "Validate the entry at point using PROPS, DATE-ORDER, and STRUCTURAL-FN.
 FILE identifies the source file.  Returns a list of issues."
   (let* ((line (line-number-at-pos))
          (heading (org-get-heading t t t t))
          (loc (list :file file :line line :heading heading))
-         (issues nil))
+         (issues (delq nil (list (org-canvas--validate-canvas-deleted loc)))))
     (when props
       (setq issues (nconc issues
                           (org-canvas--validate-entry-properties props loc))))
