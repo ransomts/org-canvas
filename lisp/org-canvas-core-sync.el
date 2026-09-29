@@ -252,11 +252,46 @@ CTX is the sync context plist (see `org-canvas--sync-process-entry')."
       (org-canvas--sync-backfill-baseline canvas-id title ctx)
       (message "%s [%d/%d] Skipping '%s' (unchanged)"
         cap-feature progress total-count title))
+     ((org-canvas--sync-refuse-fragment-p canvas-id title)
+      (org-canvas--sync-count-fragment title ctx progress))
      ((and org-canvas--dry-run (not (plist-get ctx :dry-run-in-push)))
       (org-canvas--sync-dry-run-entry canvas-id title ctx))
      (t
       (org-canvas--sync-handle-push-response
        (funcall push-fn data payload ctx) data payload-hash ctx progress)))))
+
+(defun org-canvas--sync-refuse-fragment-p (canvas-id title)
+  "Return non-nil when the heading at point, TITLE, is not to be created.
+Only an entry without CANVAS-ID can be refused, and only one that
+`org-canvas--body-fragment-reason' calls a body fragment a pull before
+issue #175 stranded: created, it would be a new Canvas item titled
+with a line of another item's text (issue #391).  A dry run and a
+batch Emacs refuse it without asking; interactively the question is
+asked with `y-or-n-p' itself, since a create students may see is not
+the kind of question `org-canvas-assume-yes' answers.  The heading
+is never touched."
+  (when-let* (((not canvas-id))
+              (reason (org-canvas--body-fragment-reason)))
+    (org-canvas--log-warning org-canvas--logger
+      "[Fragment] '%s' has no CANVAS_ID and %s: probably a body fragment left by an older pull"
+      title reason)
+    (or org-canvas--dry-run
+        noninteractive
+        (not (y-or-n-p
+              (format "'%s' has no CANVAS_ID and %s, so it is probably a body fragment from an older pull.  Create it on Canvas anyway? "
+                      title reason))))))
+
+(defun org-canvas--sync-count-fragment (title ctx progress)
+  "Count the refused create of TITLE as a skip in CTX, and say why.
+PROGRESS is the 1-based position for the echo-area line."
+  (let ((counters (plist-get ctx :counters)))
+    (plist-put counters :skip (1+ (plist-get counters :skip)))
+    (plist-put counters :skipped-titles
+               (cons (format "%s (probably a body fragment from an older pull; fold it into the item above, or confirm the create interactively)" title)
+                     (plist-get counters :skipped-titles)))
+    (message "%s [%d/%d] SKIPPED: '%s' (probably a body fragment; not created)"
+             (capitalize (plist-get ctx :feature-name)) progress
+             (plist-get ctx :total-count) title)))
 
 (defun org-canvas--sync-handle-push-response (response data payload-hash ctx progress)
   "Count RESPONSE from the push of DATA, or finalize it.
@@ -1063,8 +1098,8 @@ TARGET is the heading's exact title in %s, or, with BY
 `canvas-id', its %s; an error names a target that matches no
 heading or more than one.  Nil asks for a title (never under
 `noninteractive').  Return the run context; its :outcome is `synced',
-`unchanged', `conflict', `pulled', `duplicate' or `dry-run'.  The
-at-point command does the same at point; this one finds the heading,
+`unchanged', `conflict', `pulled', `duplicate', `fragment' or
+`dry-run'.  The at-point command does the same at point; this one finds the heading,
 so a script need not (`org-canvas-sync-headings' takes several)."
                         singular
                         (if (symbolp file-expr)
@@ -2166,7 +2201,8 @@ non-nil, is folded into the payload hash (see
 `org-canvas--sync-payload-hash'); :hash and :prepare mean what they
 mean in a full run.  Returns the context, so a caller can read what
 the push recorded in it — its :outcome above all: `synced',
-`unchanged', `conflict', `pulled', `duplicate' or `dry-run' (issue
+`unchanged', `conflict', `pulled', `duplicate', `fragment' (a create
+refused as a stranded body fragment, issue #391) or `dry-run' (issue
 #287).  The push runs in a context of its own, so a capital answer at
 its conflict prompt is forgotten when it returns rather than applied
 to every later push at point (issue #141)."
@@ -2215,9 +2251,11 @@ to every later push at point (issue #141)."
           (message "%s '%s' unchanged — skipped." (capitalize feature-name) title))
       (org-canvas--log-info org-canvas--logger "[Stage 3: Push] '%s' (%s)"
         title (if canvas-id "UPDATE" "CREATE"))
-      (let ((response (funcall push-fn data payload ctx)))
+      (let ((response (if (org-canvas--sync-refuse-fragment-p canvas-id title)
+                          'fragment
+                        (funcall push-fn data payload ctx))))
         (cond
-         ((memq response '(conflict pulled duplicate))
+         ((memq response '(conflict pulled duplicate fragment))
           (plist-put ctx :outcome response)
           (org-canvas--push-at-point-report-stop feature-name title response))
          ((eq response 'skip)
@@ -2270,11 +2308,13 @@ saved, since it may have restamped the heading (issue #380)."
   "Say why the single-entry push of TITLE stopped with OUTCOME.
 FEATURE-NAME names the module.  OUTCOME is `conflict', `pulled' or
 `duplicate', the symbols `org-canvas--push-to-api' returns in place
-of a response; finalizing one as if it were a response is a type
+of a response, or `fragment', a create the runtime refused before the
+push (issue #391); finalizing one as if it were a response is a type
 error, which is how a conflict at point used to end in a backtrace."
   (let ((why (pcase outcome
                ('conflict "not pushed — the remote item was modified since the last sync")
                ('pulled "not pushed — the remote version was pulled instead")
+               ('fragment "not created — it has no CANVAS_ID and looks like a body fragment an older pull left behind; fold it into the item above, or confirm the create")
                (_ "not pushed — Canvas already holds this title; adopt it with M-x org-canvas-adopt-at-point or rename"))))
     (org-canvas--log-warning org-canvas--logger "[Sync] '%s' %s" title why)
     (message "%s '%s' %s." (capitalize feature-name) title why)))
@@ -2473,7 +2513,8 @@ package's own, then one line of counts."
              (funcall count 'synced)
              (funcall count 'unchanged)
              (+ (funcall count 'conflict) (funcall count 'pulled)
-                (funcall count 'duplicate) (funcall count 'dry-run))
+                (funcall count 'duplicate) (funcall count 'fragment)
+                (funcall count 'dry-run))
              (funcall count 'failed))))
 
 ;;;###autoload

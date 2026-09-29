@@ -286,7 +286,8 @@
 
 (describe "fetch unknown file on rewrite"
   (before-each
-    (setq org-canvas--rewrite-folder-cache nil)
+    (setq org-canvas--rewrite-folder-cache nil
+          org-canvas--rewrite-unresolved-ids nil)
     (org-canvas--pull-summary-reset))
 
   (it "fetches metadata, downloads, registers, and rewrites"
@@ -320,7 +321,7 @@
                          (cl-incf downloads)
                          (make-directory (file-name-directory path) t)
                          (with-temp-file path (insert "fake bytes")))))
-              (let* ((input "see [[https://x.com/courses/281704/files/30061566/preview?verifier=A]]")
+              (let* ((input "see [[https://x.com/courses/99999/files/30061566/preview?verifier=A]]")
                      (rewritten (org-canvas--rewrite-canvas-file-urls input cache)))
                 (expect rewritten :to-match
                         "\\[\\[file:content/Uploaded Media/screenshot\\.png\\]\\[screenshot\\.png\\]\\]")
@@ -353,8 +354,8 @@
             (cl-letf (((symbol-function 'org-canvas-api-request)
                        (lambda (&rest _)
                          (signal 'org-canvas-permission-error
-                                 '("Permission denied (HTTP 403) reading files")))))
-              (let* ((input "x [[https://x.com/courses/208463/files/21157335/preview]] y")
+                                 '("Permission denied (HTTP 403)")))))
+              (let* ((input "x [[https://x.com/courses/99999/files/21157335/preview]] y")
                      (rewritten (org-canvas--rewrite-canvas-file-urls input cache)))
                 (expect rewritten :to-equal input)
                 (expect (length (org-canvas--pull-summary-records)) :to-equal 1))))
@@ -373,7 +374,7 @@
             (cl-letf (((symbol-function 'org-canvas-api-request)
                        (lambda (&rest _)
                          (signal 'org-canvas-api-error '("Forbidden" nil nil)))))
-              (let* ((input "x [[https://x.com/courses/281704/files/99999999?verifier=Z]] y")
+              (let* ((input "x [[https://x.com/courses/99999/files/99999999?verifier=Z]] y")
                      (rewritten (org-canvas--rewrite-canvas-file-urls input cache)))
                 ;; URL passes through unchanged
                 (expect rewritten :to-equal input)
@@ -406,12 +407,130 @@
                        (lambda (_dn _url path _size)
                          (make-directory (file-name-directory path) t)
                          (with-temp-file path (insert "x")))))
-              (let ((url1 "[[https://x.com/courses/281704/files/30061566/preview?verifier=A]]")
-                    (url2 "[[https://x.com/courses/281704/files/30061566?verifier=B]]"))
+              (let ((url1 "[[https://x.com/courses/99999/files/30061566/preview?verifier=A]]")
+                    (url2 "[[https://x.com/courses/99999/files/30061566?verifier=B]]"))
                 (org-canvas--rewrite-canvas-file-urls (concat url1 "\n" url2) cache)
                 ;; Two URLs, but only one metadata fetch + one folder fetch
                 (expect api-calls :to-equal 2))))
         (delete-directory org-canvas-directory t)))))
+
+;; Issue #390: a link into another course is never fetched, and a
+;; file id whose fetch failed is not fetched again in the same run.
+(describe "unresolved file ids on rewrite (issue #390)"
+  :var (calls warnings)
+  (before-each
+    (setq calls 0 warnings nil)
+    (org-canvas--pull-summary-reset))
+
+  (it "leaves a link into another course untouched, warned once, unfetched"
+    (let ((org-canvas-course-id "295790")
+          (org-canvas--rewrite-unresolved-ids nil)
+          (cache (make-hash-table :test 'equal))
+          (link "[[https://x.com/courses/208463/files/21157335/preview]]"))
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _) (cl-incf calls) nil))
+                ((symbol-function 'org-canvas--log-warning)
+                 (lambda (_logger fmt &rest args)
+                   (push (apply #'format fmt args) warnings))))
+        (let ((page-1 (concat "a " link " b " link))
+              (page-2 (concat "c " link)))
+          (expect (org-canvas--rewrite-canvas-file-urls page-1 cache)
+                  :to-equal page-1)
+          (expect (org-canvas--rewrite-canvas-file-urls page-2 cache)
+                  :to-equal page-2)))
+      (expect calls :to-equal 0)
+      (expect (length warnings) :to-equal 1)
+      (expect (car warnings) :to-match "21157335 links into course 208463")
+      (expect (org-canvas--pull-summary-empty-p) :to-be t)))
+
+  (it "fetches a failed file id only once in a run"
+    (let ((org-canvas-course-id "99999")
+          (org-canvas--rewrite-unresolved-ids nil)
+          (cache (make-hash-table :test 'equal))
+          (link "[[https://x.com/courses/99999/files/555/preview]]"))
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _)
+                   (cl-incf calls)
+                   (signal 'org-canvas-api-error '("Not Found" nil nil))))
+                ((symbol-function 'org-canvas--log-warning) #'ignore))
+        (let ((body (concat link " and " link)))
+          (expect (org-canvas--rewrite-canvas-file-urls body cache)
+                  :to-equal body)
+          (expect (org-canvas--rewrite-canvas-file-urls link cache)
+                  :to-equal link)))
+      (expect calls :to-equal 1)
+      (expect (length (org-canvas--pull-summary-records)) :to-equal 1)
+      (expect (gethash "555" org-canvas--rewrite-unresolved-ids)
+              :to-be 'failed)))
+
+  (it "counts a same-course 403 as a skip, once, under the body's file"
+    (let* ((org-canvas-course-id "99999")
+           (org-canvas--rewrite-unresolved-ids nil)
+           (cache (make-hash-table :test 'equal))
+           (dir (make-temp-file "test-rewrite-skip-" t))
+           (pages (expand-file-name "pages.org" dir))
+           (link "[[https://x.com/courses/99999/files/556/preview]]"))
+      (unwind-protect
+          (cl-letf (((symbol-function 'org-canvas-api-request)
+                     (lambda (&rest _)
+                       (cl-incf calls)
+                       (signal 'org-canvas-permission-error
+                               '("Permission denied (HTTP 403)"))))
+                    ((symbol-function 'org-canvas--log-warning)
+                     (lambda (_logger fmt &rest args)
+                       (push (apply #'format fmt args) warnings))))
+            (with-temp-file pages (insert "* Page\n"))
+            (with-current-buffer (org-canvas--find-file-noselect pages)
+              (org-canvas--rewrite-canvas-file-urls (concat link link) cache)
+              (kill-buffer))
+            (let ((recs (org-canvas--pull-summary-records)))
+              (expect calls :to-equal 1)
+              (expect (length recs) :to-equal 1)
+              (expect (plist-get (car recs) :kind) :to-be 'skip)
+              (expect (plist-get (car recs) :file) :to-equal "pages.org")
+              (expect (plist-get (car recs) :item) :to-equal "556")
+              (expect (car warnings) :to-match "file 556 skipped")))
+        (delete-directory dir t))))
+
+  (it "records any other failed fetch as an error"
+    (let ((org-canvas-course-id "99999")
+          (org-canvas--rewrite-unresolved-ids nil)
+          (cache (make-hash-table :test 'equal)))
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 (lambda (&rest _)
+                   (signal 'org-canvas-api-error '("Not Found" nil nil))))
+                ((symbol-function 'org-canvas--log-warning) #'ignore))
+        (with-temp-buffer
+          (org-canvas--rewrite-canvas-file-urls
+           "[[https://x.com/courses/99999/files/557]]" cache)))
+      (let ((rec (car (org-canvas--pull-summary-records))))
+        (expect (plist-get rec :kind) :to-be 'error)
+        (expect (plist-get rec :file) :to-be nil))))
+
+  (it "fetches a link that names no course"
+    (let ((org-canvas-course-id "99999"))
+      (expect (org-canvas--rewrite-foreign-course
+               "https://x.com/files/555/download")
+              :to-be nil)
+      (expect (org-canvas--rewrite-foreign-course
+               "https://x.com/courses/99999/files/555/preview")
+              :to-be nil)))
+
+  (it "treats no link as foreign when no course is configured"
+    (let ((org-canvas-course-id ""))
+      (expect (org-canvas--rewrite-foreign-course
+               "https://x.com/courses/208463/files/555/preview")
+              :to-be nil)))
+
+  (it "forgets the ids when a command starts, not inside a master run"
+    (let ((org-canvas--rewrite-unresolved-ids nil))
+      (org-canvas--rewrite-mark-unresolved "7" 'failed)
+      (let ((org-canvas--inhibit-log-clear t))
+        (run-hooks 'org-canvas--operation-start-hook))
+      (expect (gethash "7" org-canvas--rewrite-unresolved-ids)
+              :to-be 'failed)
+      (run-hooks 'org-canvas--operation-start-hook)
+      (expect org-canvas--rewrite-unresolved-ids :to-be nil))))
 
 ;;;; Pull-side buffer lifecycle helpers
 
@@ -868,6 +987,55 @@
               (insert-file-contents temp)
               (expect (buffer-string) :not :to-match "stale content")
               (expect (buffer-string) :to-match "Canvas returned 0 items")))
+        (delete-file temp))))
+
+  (it "rewrites a buffer visiting the file, leaving it fresh (#389)"
+    (let* ((temp (make-temp-file "empty-test-" nil ".org"))
+           (buffer nil)
+           (warnings nil))
+      (unwind-protect
+          (progn
+            (with-temp-file temp (insert "* Old heading\n"))
+            (setq buffer (org-canvas--find-file-noselect temp))
+            (cl-letf (((symbol-function 'org-canvas--log-warning)
+                       (lambda (&rest args) (push args warnings)))
+                      ((symbol-function 'org-canvas--log-info) #'ignore))
+              (org-canvas--pull-emit-empty-file temp "Calendar")
+              (with-current-buffer buffer
+                (expect (verify-visited-file-modtime buffer) :to-be t)
+                (expect (buffer-modified-p) :to-be nil)
+                (expect (buffer-string) :not :to-match "Old heading")
+                (expect (buffer-string) :to-match "^#\\+TITLE: Calendar$")
+                (expect (buffer-string)
+                        :to-equal (with-temp-buffer
+                                    (insert-file-contents temp)
+                                    (buffer-string)))
+                (let ((noninteractive t))
+                  (org-canvas--ensure-buffer-fresh))))
+            (expect warnings :to-be nil))
+        (when (buffer-live-p buffer)
+          (with-current-buffer buffer (set-buffer-modified-p nil))
+          (kill-buffer buffer))
+        (delete-file temp))))
+
+  (it "refuses a stale visiting buffer holding unsaved edits (#97)"
+    (let* ((temp (make-temp-file "empty-test-" nil ".org"))
+           (buffer nil))
+      (unwind-protect
+          (progn
+            (with-temp-file temp (insert "* Old heading\n"))
+            (setq buffer (org-canvas--find-file-noselect temp))
+            (with-current-buffer buffer (insert "unsaved "))
+            (with-temp-file temp (insert "* Written elsewhere\n"))
+            (set-file-times temp (time-add (current-time) 60))
+            (let ((noninteractive t))
+              (expect (org-canvas--pull-emit-empty-file temp "Calendar")
+                      :to-throw 'error))
+            (with-current-buffer buffer
+              (expect (buffer-string) :to-match "unsaved")))
+        (when (buffer-live-p buffer)
+          (with-current-buffer buffer (set-buffer-modified-p nil))
+          (kill-buffer buffer))
         (delete-file temp)))))
 
 (describe "org-canvas--pull-known-ids"

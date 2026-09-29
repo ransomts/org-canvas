@@ -767,8 +767,8 @@ and :file-recreated-ids (files), :prepared (what the spec's :prepare
 function returned before the first entry; the root outcome group id
 for outcomes), :hash-fn and :dry-run-in-push (the spec's :hash and
 whether its :dry-run is `push'), :outcome (what a single-entry push
-ended as — `synced', `unchanged', `conflict', `pulled', `duplicate' or
-`dry-run' — for a caller that syncs headings by name, issue #287),
+ended as — `synced', `unchanged', `conflict', `pulled', `duplicate',
+`fragment' or `dry-run' — for a caller that syncs headings by name, issue #287),
 :heading-report (the plist a spec's :after-heading returned, merged
 into that caller's result, issue #380).
 Every key is present so `plist-put' always mutates the context in

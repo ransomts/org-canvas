@@ -1421,6 +1421,34 @@ from, not which link came first, so the targets are named once each."
       (format "%d link(s) into %d other course(s) or account route(s): %s"
               count (length targets) (string-join targets ", ")))))
 
+;;;; 5e. Body Fragments From an Older Pull (issue #391)
+
+(defun org-canvas--validate-body-fragments (file)
+  "Report headings in FILE that look like body text an older pull stranded.
+Before issue #175 a heading in a pulled body became an Org headline,
+and the rest of that body a heading with no CANVAS_ID after the item.
+A re-pull rewrites the item and leaves the fragment, which a push would
+create as a new Canvas item: `org-canvas--body-fragment-reason' names
+the mark that gave it away.  Every level is read, once per file, as the
+cross-course scan is.  A warning, never push-only: the mirror is wrong
+whatever happens next.  Nothing is changed."
+  (let ((issues nil))
+    (with-current-buffer (org-canvas--find-file-noselect file)
+      (org-with-wide-buffer
+       (org-map-entries
+        (lambda ()
+          (when-let* ((reason (org-canvas--body-fragment-reason)))
+            (push (org-canvas--validate-make-issue
+                   'warning
+                   (list :file file :line (line-number-at-pos)
+                         :heading (org-get-heading t t t t))
+                   nil
+                   (format "no CANVAS_ID and %s: probably a body fragment from an older pull; a push will not create it without asking (fold it into the item above)"
+                           reason))
+                  issues)))
+        t 'file)))
+    (nreverse issues)))
+
 ;;;; 6. Validation Engine
 
 (defun org-canvas--validate-check-canvas-owned (value property loc)
@@ -1639,7 +1667,8 @@ Returns a plist (:issues ISSUES :checked N :skipped N)."
                 (push file scanned)
                 (setq all-issues
                       (nconc all-issues
-                             (org-canvas--validate-cross-course-links file)))))
+                             (org-canvas--validate-cross-course-links file)
+                             (org-canvas--validate-body-fragments file)))))
           (setq files-skipped (1+ files-skipped)))))
     (list :issues all-issues :checked files-checked :skipped files-skipped)))
 

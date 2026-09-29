@@ -1,0 +1,5 @@
+* Fixed
+- #388 =org-canvas-pull-all= re-pulls a course with a local mirror from
+  batch Emacs: the missing-pandoc warning and the overwrite count go
+  through =org-canvas--confirm=, so batch and =org-canvas-assume-yes=
+  answer yes instead of reading stdin.  The deletion guards still ask.
