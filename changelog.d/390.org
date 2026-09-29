@@ -1,0 +1,13 @@
+* Fixed
+- #390 A pulled body linking a file in another course (course-copy
+  residue) no longer fetches it: the link is left as it is, with one
+  warning per file in the log, instead of a 403 reported as a role
+  problem under files.org once for every page that links it.
+  =org-canvas-validate= already reports such links.
+- #390 A file link whose fetch failed is not fetched again for later
+  occurrences in the same command, so a broken link repeated across
+  pages costs one request and one pull-summary entry.
+- #390 A same-course file a body links but your role cannot read (a
+  403) is listed among the pull's skipped items, as #155 lists a
+  content type your role cannot read, not among its errors; the entry
+  names the file holding the link, such as pages.org, not files.org.
