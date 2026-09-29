@@ -82,8 +82,11 @@ write, which is what a body heading that split an item looks like.  It
 never prompts.  The quizzes and new-quizzes custom loops call the same
 pair; see decisions.org, "A Body Never Introduces a Headline".
 
-*Headings Canvas no longer lists (issue #392).* After the upserts,
-=org-canvas--pull-mark-unlisted= reads each stamped top-level heading
+*Headings Canvas no longer lists (issues #392, #399).* After the
+upserts, every list pull, the macro's and the hand-written ones
+(quizzes, New Quizzes, modules, outcome groups, flat or nested files,
+calendar events), calls =org-canvas--pull-mark-unlisted=, which reads
+each stamped top-level heading
 whose id the list did not return on its own, at the feature registry's
 item URL.  Only a 404, or a reply whose =workflow_state= is =deleted=,
 marks it =CANVAS_DELETED= (the heading and its text stay); any other
@@ -98,9 +101,13 @@ Sprint 0 (deleted 2026-09-28)
 
 An empty list no longer replaces a file that holds headings with the
 empty-file note; it goes through the same per-heading reads.  A heading
-the list returns again loses the mark in =org-canvas--pull-process-item=.
-The custom pulls do not call the helper yet.  See decisions.org, "A
-List Pull Marks the Headings Canvas Deleted, on Canvas's Word".
+the list returns again loses the mark in
+=org-canvas-org-save-sync-state=, which every pull stamps through.
+Child headings (questions, module items, New Quiz items, outcomes) are
+never read; nor are file folders, which carry no id.  A pull at point
+whose read is a 404 marks its own heading instead of failing.  See
+decisions.org, "A List Pull Marks the Headings Canvas Deleted, on
+Canvas's Word".
 
 ** Example
 

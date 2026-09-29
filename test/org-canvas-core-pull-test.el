@@ -15,6 +15,11 @@
 (require 'org-canvas-files)
 (require 'org-canvas-announcements)
 (require 'org-canvas-discussions)
+(require 'org-canvas-quizzes)
+(require 'org-canvas-new-quizzes)
+(require 'org-canvas-modules)
+(require 'org-canvas-outcomes)
+(require 'org-canvas-calendar)
 
 (describe "file-level LAST_SYNCED"
   (it "writes #+LAST_SYNCED to the buffer header"
@@ -2308,6 +2313,170 @@ line as `closing' and the single-item URLs read as `reads'."
       (expect (org-canvas--feature-item-url
                (org-canvas--registry-find-feature "group-categories") 7)
               :to-equal "https://canvas.example.edu/api/v1/group_categories/7"))))
+
+;;;; The pulls with code of their own (issue #399)
+
+(defmacro test-org-canvas-gone--with-custom-pull (file-var content pull-fn &rest body)
+  "Run PULL-FN, bound to FILE-VAR, on a file holding CONTENT; then BODY.
+Every list read comes back empty, and each single-item read answers
+as `test-org-canvas-gone--request' does.  BODY sees `text', the file
+afterwards, `closing', the pull's closing message, and `reads', the
+single-item URLs read."
+  (declare (indent 3))
+  `(let* ((dir (make-temp-file "gone-custom-" t))
+          (file (expand-file-name "course.org" dir))
+          (reads nil)
+          (messages nil))
+     (unwind-protect
+         (progn
+           (with-temp-file file (insert ,content))
+           (org-canvas--pull-summary-reset)
+           (with-org-canvas-test-config
+             (cl-letf (((symbol-function 'org-canvas-api-request-all-pages)
+                        (lambda (&rest _) nil))
+                       ((symbol-function 'org-canvas-api-request)
+                        (lambda (method url &rest args)
+                          (push url reads)
+                          (apply #'test-org-canvas-gone--request method url args)))
+                       ((symbol-function 'org-canvas-clear-log) #'ignore)
+                       ((symbol-function 'display-buffer) #'ignore)
+                       ((symbol-function 'org-canvas--pull-confirm-overwrite) #'ignore)
+                       ((symbol-function 'message)
+                        (lambda (fmt &rest args)
+                          (push (apply #'format fmt args) messages))))
+               (let ((,file-var file)
+                     (org-agenda-files nil))
+                 (funcall ,pull-fn))))
+           (let ((text (with-temp-buffer (insert-file-contents file)
+                                         (buffer-string)))
+                 (closing (cl-find-if (lambda (m) (string-match-p "pull complete" m))
+                                      messages)))
+             (ignore text closing reads)
+             ,@body))
+       (org-canvas--pull-summary-reset)
+       (let ((buf (find-buffer-visiting file)))
+         (when buf (with-current-buffer buf (set-buffer-modified-p nil))
+               (kill-buffer buf)))
+       (delete-directory dir t))))
+
+(defun test-org-canvas-gone--count (text)
+  "Return how many CANVAS_DELETED properties TEXT holds."
+  (let ((n 0) (start 0))
+    (while (string-match ":CANVAS_DELETED:" text start)
+      (setq n (1+ n) start (match-end 0)))
+    n))
+
+(describe "the custom pulls mark the headings Canvas deleted (issue #399)"
+  (it "marks a classic quiz at its course URL, never a question under it"
+    (test-org-canvas-gone--with-custom-pull org-canvas-quizzes-file
+        "* Quiz 1\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\nMy notes.\n** Q1\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n* Quiz 2\n:PROPERTIES:\n:CANVAS_ID: 200\n:END:\n"
+        #'org-canvas-pull-quizzes
+      (expect (sort (copy-sequence reads) #'string<)
+              :to-equal (list (concat test-org-canvas-base-url
+                                      "/api/v1/courses/99999/quizzes/100")
+                              (concat test-org-canvas-base-url
+                                      "/api/v1/courses/99999/quizzes/200")))
+      (expect (test-org-canvas-gone--count text) :to-equal 1)
+      (expect text :to-match "My notes\\.")
+      (expect closing :to-match "1 heading no longer on Canvas: Quiz 1")
+      (expect closing :to-match "left unmarked, still on Canvas or unreadable: Quiz 2")))
+
+  (it "marks a New Quiz through its pull-only entry and keeps a file an empty list read"
+    (test-org-canvas-gone--with-custom-pull org-canvas-new-quizzes-file
+        "* NQ\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 100\n:END:\n** Item\n:PROPERTIES:\n:CANVAS_ITEM_ID: 100\n:END:\n"
+        #'org-canvas-pull-new-quizzes
+      (expect reads :to-equal
+              (list (concat test-org-canvas-base-url
+                            "/api/quiz/v1/courses/99999/quizzes/100")))
+      (expect text :not :to-match "Canvas returned 0 items")
+      (expect text :to-match "^\\*\\* Item")
+      (expect (test-org-canvas-gone--count text) :to-equal 1)
+      (expect closing :to-match "1 heading no longer on Canvas: NQ")))
+
+  (it "marks a module, never a module item"
+    (test-org-canvas-gone--with-custom-pull org-canvas-modules-file
+        "* Week 1\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n** Reading\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n"
+        #'org-canvas-pull-modules
+      (expect reads :to-equal
+              (list (concat test-org-canvas-base-url
+                            "/api/v1/courses/99999/modules/100")))
+      (expect (test-org-canvas-gone--count text) :to-equal 1)
+      (expect text :to-match "^\\*\\* Reading")
+      (expect closing :to-match "Modules pull complete: 0 modules, 0 items; 1 heading no longer on Canvas: Week 1")))
+
+  (it "marks an outcome group, never an outcome, and keeps the file"
+    (test-org-canvas-gone--with-custom-pull org-canvas-outcomes-file
+        "* Group\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n** Outcome\n:PROPERTIES:\n:CANVAS_ID: 400\n:END:\n"
+        #'org-canvas-pull-outcomes
+      (expect reads :to-equal
+              (list (concat test-org-canvas-base-url
+                            "/api/v1/courses/99999/outcome_groups/100")))
+      (expect text :not :to-match "Canvas returned 0 items")
+      (expect (test-org-canvas-gone--count text) :to-equal 1)
+      (expect closing :to-match "1 heading no longer on Canvas: Group")))
+
+  (it "marks a calendar event at its unscoped URL, and keeps the file"
+    (test-org-canvas-gone--with-custom-pull org-canvas-calendar-events-file
+        "* Office hours\n:PROPERTIES:\n:CANVAS_ID: 400\n:END:\n"
+        #'org-canvas-pull-calendar-events
+      (expect reads :to-equal
+              (list (concat test-org-canvas-base-url "/api/v1/calendar_events/400")))
+      (expect text :not :to-match "Canvas returned 0 items")
+      (expect (test-org-canvas-gone--count text) :to-equal 1)
+      (expect closing :to-match "1 heading no longer on Canvas: Office hours")))
+
+  (it "marks a flat file heading"
+    (test-org-canvas-gone--with-custom-pull org-canvas-files-file
+        "* [[file:content/a.pdf][a.pdf]]\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n"
+        #'org-canvas-pull-files
+      (expect reads :to-equal
+              (list (concat test-org-canvas-base-url
+                            "/api/v1/courses/99999/files/100")))
+      (expect (test-org-canvas-gone--count text) :to-equal 1)
+      (expect closing :to-match "Files pull complete: 0 files; 1 heading no longer on Canvas: a.pdf")))
+
+  (it "marks a nested file heading, never its folder"
+    (test-org-canvas-gone--with-custom-pull org-canvas-files-file
+        "* Slides\n** [[file:content/Slides/b.pdf][b.pdf]]\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\n"
+        #'org-canvas-pull-files
+      (expect (length reads) :to-equal 1)
+      (expect text :to-match "^\\* Slides\n\\*\\* ")
+      (expect (test-org-canvas-gone--count text) :to-equal 1)
+      (expect closing :to-match "0 refreshed; 1 heading no longer on Canvas: b.pdf"))))
+
+(describe "org-canvas--pull-unlisted-headings with several id fields (issue #399)"
+  (it "takes an item as listed under any of them"
+    (with-temp-org-buffer "* A\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 7\n:END:\n* B\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 8\n:END:\n* C\n:PROPERTIES:\n:CANVAS_ASSIGNMENT_ID: 9\n:END:\n"
+      (let ((unlisted (org-canvas--pull-unlisted-headings
+                       '(((assignment_id . 7) (id . 70)) ((id . 8)))
+                       '(assignment_id id) "CANVAS_ASSIGNMENT_ID" "LEVEL=1")))
+        (expect (mapcar #'car unlisted) :to-equal '("9"))
+        (dolist (u unlisted) (set-marker (cdr u) nil))))))
+
+(describe "org-canvas--pull-item-read (issue #399)"
+  (it "returns the item Canvas serves, and gone for a 404 or a deleted state"
+    (with-org-canvas-test-config
+      (cl-letf (((symbol-function 'org-canvas-api-request)
+                 #'test-org-canvas-gone--request))
+        (let ((feature (org-canvas--registry-find-feature "modules")))
+          (expect (org-canvas--pull-item-read feature 200)
+                  :to-equal '((id . 200) (title . "Still here")))
+          (expect (org-canvas--pull-item-read feature 100) :to-be 'gone)
+          (expect (org-canvas--pull-item-read feature 400) :to-be 'gone)))))
+
+  (it "signals any other failure, a 403 included"
+    (with-org-canvas-test-config
+      (let ((feature (org-canvas--registry-find-feature "modules")))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   #'test-org-canvas-gone--request))
+          (expect (org-canvas--pull-item-read feature 300)
+                  :to-throw 'org-canvas-api-error))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (&rest _)
+                     (signal 'org-canvas-permission-error
+                             (list "Not allowed (HTTP 404)")))))
+          (expect (org-canvas--pull-item-read feature 5)
+                  :to-throw 'org-canvas-permission-error))))))
 
 (provide 'org-canvas-core-pull-test)
 ;;; org-canvas-core-pull-test.el ends here

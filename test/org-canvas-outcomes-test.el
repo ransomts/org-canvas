@@ -1613,7 +1613,7 @@ Description B.
            (outcomes-file (expand-file-name "outcomes.org" temp-dir)))
       (unwind-protect
           (progn
-            (with-temp-file outcomes-file (insert "stale content\n* Old\n"))
+            (with-temp-file outcomes-file (insert "stale content\n"))
             (let ((org-canvas-outcomes-file outcomes-file))
               (with-org-canvas-test-config
                 (with-sync-test-env

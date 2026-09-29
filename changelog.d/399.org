@@ -1,0 +1,17 @@
+* Fixed
+- #399 The pulls of classic quizzes, New Quizzes, modules, outcomes,
+  files and calendar events now mark a heading whose Canvas item was
+  deleted, as the other pulls have since #392: each stamped heading the
+  list did not return is read on its own, only a 404 (or a deleted
+  state) marks it =CANVAS_DELETED=, the heading and its text stay, and
+  the closing line names it.  A sync of these types skips a marked
+  heading.  Only top-level headings are checked: never a quiz's
+  questions, a module's items, a New Quiz's items or the outcomes under
+  a group; in =files.org= every file heading is checked, at any depth,
+  but never a folder.  An outcome under a marked group is not pushed.
+  An empty list read from New Quizzes, outcomes or calendar events no
+  longer replaces a file that holds headings.
+- #399 =org-canvas-pull-at-point= and a pull by name mark the heading
+  =CANVAS_DELETED= when Canvas answers that its item was deleted,
+  instead of failing with the 404; =org-canvas-pull-headings= counts
+  such headings apart.

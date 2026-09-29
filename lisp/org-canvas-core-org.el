@@ -413,10 +413,14 @@ only safe for a property all its registrations agree on."
 (defun org-canvas-org-save-sync-state (pom id &optional id-prop)
   "Standardize saving the Canvas ID to the heading at POM.
 ID-PROP defaults to `CANVAS_ID'.  File-level LAST_SYNCED is written
-separately by `org-canvas--pull-write-file-header'."
+separately by `org-canvas--pull-write-file-header'.
+Canvas has just answered with ID, so a CANVAS_DELETED a pull wrote is
+over: every pull stamps through here, the hand-written ones too
+\(issue #399), and a relisted item loses the mark."
   (let ((prop (or id-prop "CANVAS_ID"))
 	(id-str (org-canvas--normalize-id id)))
-    (org-canvas-org-set-property pom prop id-str)))
+    (org-canvas-org-set-property pom prop id-str)
+    (org-entry-delete pom org-canvas--prop-canvas-deleted)))
 
 ;;;; Timestamps and Time Zone
 

@@ -2308,7 +2308,8 @@ ITEM lacks an `items' key."
          (remote (org-canvas-api-request-all-pages
                   'GET endpoint '(("include[]" . "items"))))
          (mod-count 0) (item-count 0)
-         (was-fresh (org-canvas--pull-was-fresh-p file)))
+         (was-fresh (org-canvas--pull-was-fresh-p file))
+         (unlisted nil))
     (org-canvas--pull-confirm-unsaved file "modules")
     (unless (file-exists-p file)
       (with-temp-file file (insert "")))
@@ -2331,13 +2332,17 @@ ITEM lacks an `items' key."
             (when items
               (setq item-count (+ item-count
                                   (org-canvas--module-pull-insert-items items)))))))
+      ;; A module Canvas deleted is marked, never an item (#399).
+      (setq unlisted (org-canvas--pull-mark-unlisted
+                      file "modules" remote 'id "CANVAS_ID"))
       (org-canvas--pull-write-file-header)
       (org-canvas--save-buffer))
     (org-canvas--pull-kill-fresh-buffer file was-fresh)
-    (org-canvas--log-info org-canvas--logger
-      "Modules pull complete: %d modules, %d items" mod-count item-count)
-    (message "Modules pull complete: %d modules, %d items."
-             mod-count item-count)))
+    (let ((note (org-canvas--pull-gone-suffix unlisted)))
+      (org-canvas--log-info org-canvas--logger
+        "Modules pull complete: %d modules, %d items%s" mod-count item-count note)
+      (message "Modules pull complete: %d modules, %d items%s."
+               mod-count item-count note))))
 
 (provide 'org-canvas-modules)
 ;;; org-canvas-modules.el ends here

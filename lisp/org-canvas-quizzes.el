@@ -1460,7 +1460,8 @@ heading, stamps CANVAS_UPDATED_AT and drops PAYLOAD_HASH."
          (endpoint (org-canvas-api-course-endpoint "quizzes"))
          (remote (org-canvas-api-request-all-pages 'GET endpoint))
          (count 0)
-         (was-fresh (org-canvas--pull-was-fresh-p file)))
+         (was-fresh (org-canvas--pull-was-fresh-p file))
+         (unlisted nil))
     (org-canvas--pull-confirm-unsaved file "quizzes")
     (unless (file-exists-p file)
       (with-temp-file file (insert "")))
@@ -1482,11 +1483,16 @@ heading, stamps CANVAS_UPDATED_AT and drops PAYLOAD_HASH."
             (cl-incf count)))
         (org-canvas--pull-check-entry-count
          "quizzes" file "CANVAS_ID" idless-before count))
+      ;; A quiz Canvas deleted is marked, never its questions (#399).
+      (setq unlisted (org-canvas--pull-mark-unlisted
+                      file "quizzes" remote 'id "CANVAS_ID"))
       (org-canvas--pull-write-file-header)
       (org-canvas--save-buffer))
     (org-canvas--pull-kill-fresh-buffer file was-fresh)
-    (org-canvas--log-info org-canvas--logger "Quizzes pull complete: %d quizzes" count)
-    (message "Quizzes pull complete: %d quizzes." count)))
+    (let ((note (org-canvas--pull-gone-suffix unlisted)))
+      (org-canvas--log-info org-canvas--logger
+        "Quizzes pull complete: %d quizzes%s" count note)
+      (message "Quizzes pull complete: %d quizzes%s." count note))))
 
 (provide 'org-canvas-quizzes)
 ;;; org-canvas-quizzes.el ends here

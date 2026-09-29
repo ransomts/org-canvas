@@ -4906,5 +4906,108 @@ Body.
        (expect (car err) :to-be 'user-error)
        (expect (cadr err) :to-match "remove CANVAS_DELETED and its CANVAS_ID")))))
 
+;;;; Headings under a heading Canvas deleted, and pull at point (issue #399)
+
+(describe "a heading under one a pull marked deleted (issue #399)"
+  (it "is skipped by a full sync with a note naming the heading above"
+    (with-temp-org-buffer
+     "* Group
+:PROPERTIES:
+:CANVAS_ID: 100
+:CANVAS_DELETED: [2026-09-28 Mon 10:00]
+:END:
+** Outcome
+:PROPERTIES:
+:CANVAS_ID: 400
+:END:
+"
+     (goto-char (point-min))
+     (re-search-forward "^\\*\\* Outcome")
+     (org-back-to-heading t)
+     (let* ((marker (point-marker))
+            (parsed nil)
+            (logged nil)
+            (counters (list :success 0 :skip 0 :fail 0 :conflict 0))
+            (ctx (list :parse-fn (lambda () (setq parsed t) nil)
+                       :build-fn #'ignore :push-fn #'ignore :finalize-fn #'ignore
+                       :feature-name "outcomes" :feature-upper "OUTCOMES"
+                       :total-count 1 :counters counters :synced-ids (list nil))))
+       (cl-letf (((symbol-function 'org-canvas--log-warning)
+                  (lambda (_logger fmt &rest args)
+                    (push (apply #'format fmt args) logged)))
+                 ((symbol-function 'message) #'ignore))
+         (org-canvas--sync-process-entry marker ctx))
+       (expect parsed :to-be nil)
+       (expect (plist-get counters :skip) :to-equal 1)
+       (expect (car logged)
+               :to-match "'Outcome' sits under a heading deleted on Canvas (CANVAS_DELETED \\[2026-09-28"))))
+
+  (it "leaves a heading with no mark above it alone"
+    (with-temp-org-buffer "* Group\n** Outcome\n"
+      (goto-char (point-max))
+      (org-back-to-heading t)
+      (expect (org-canvas--sync-deleted-note "Outcome") :to-be nil))))
+
+(defmacro test-sync-399--with-heading (reply &rest body)
+  "Run BODY at a stamped announcement whose single read answers REPLY.
+REPLY is a function of the URL.  BODY sees `saved' and `messages'."
+  (declare (indent 1))
+  `(with-org-canvas-test-config
+     (with-temp-org-buffer
+      "* Sprint 0\n:PROPERTIES:\n:CANVAS_ID: 100\n:END:\nMy notes.\n"
+      (let ((org-canvas-announcements-file buffer-file-name)
+            (saved nil)
+            (messages nil))
+        (cl-letf (((symbol-function 'org-canvas-api-request)
+                   (lambda (_m url &rest _) (funcall ,reply url)))
+                  ((symbol-function 'org-canvas--save-buffer)
+                   (lambda (&rest _) (setq saved t)))
+                  ((symbol-function 'org-canvas--log-warning) #'ignore)
+                  ((symbol-function 'message)
+                   (lambda (fmt &rest args)
+                     (push (apply #'format fmt args) messages))))
+          (goto-char (point-min))
+          (org-back-to-heading t)
+          (ignore saved messages)
+          ,@body)))))
+
+(describe "a pull at point of an item Canvas deleted (issue #399)"
+  (it "marks the heading, keeps its text and saves, on a 404"
+    (test-sync-399--with-heading
+        (lambda (_url) (signal 'org-canvas-api-error (list "Not found (HTTP 404)")))
+      (let ((feature (org-canvas--registry-find-feature "announcements")))
+        (expect (org-canvas--pull-at-point-1 feature "100" "Sprint 0") :to-be 'gone))
+      (expect (org-entry-get (point) "CANVAS_DELETED") :to-match "\\`\\[[0-9]\\{4\\}-")
+      (expect (org-entry-get (point) "CANVAS_ID") :to-equal "100")
+      (expect (buffer-string) :to-match "My notes\\.")
+      (expect saved :to-be-truthy)
+      (expect (car messages)
+              :to-match "'Sprint 0' is no longer on Canvas (Announcements 100); heading kept, marked CANVAS_DELETED")))
+
+  (it "marks it on a reply whose workflow_state is deleted, and names it by heading"
+    (test-sync-399--with-heading
+        (lambda (_url) '((id . 100) (workflow_state . "deleted")))
+      (let ((result (org-canvas--pull-heading-here "announcement")))
+        (expect (plist-get result :outcome) :to-be 'deleted))
+      (expect (org-entry-get (point) "CANVAS_DELETED") :to-be-truthy)))
+
+  (it "still fails on any other error, marking nothing"
+    (test-sync-399--with-heading
+        (lambda (_url) (signal 'org-canvas-api-error (list "Boom (HTTP 500)")))
+      (let ((feature (org-canvas--registry-find-feature "announcements")))
+        (expect (org-canvas--pull-at-point-1 feature "100" "Sprint 0")
+                :to-throw 'org-canvas-api-error))
+      (expect (org-entry-get (point) "CANVAS_DELETED") :to-be nil)))
+
+  (it "counts a deleted heading in the pull by name's report"
+    (let ((messages nil))
+      (cl-letf (((symbol-function 'message)
+                 (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
+        (org-canvas--pull-headings-report
+         (list (list :feature "page" :target "A" :outcome 'deleted)
+               (list :feature "page" :target "B" :outcome 'pulled))))
+      (expect (car messages)
+              :to-equal "Pulled 2 heading(s): 1 pulled, 0 dry run, 0 failed, 1 deleted on Canvas"))))
+
 (provide 'org-canvas-core-sync-test)
 ;;; org-canvas-core-sync-test.el ends here

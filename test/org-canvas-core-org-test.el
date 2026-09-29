@@ -325,7 +325,19 @@
      (org-back-to-heading)
      (org-canvas-org-save-sync-state (point) 55555 "QUESTION_ID")
      (expect (org-entry-get (point) "QUESTION_ID") :to-equal "55555")
-     (expect (org-entry-get (point) "CANVAS_ID") :to-be nil))))
+     (expect (org-entry-get (point) "CANVAS_ID") :to-be nil)))
+
+  (it "drops a CANVAS_DELETED mark, since Canvas answered with the id (issue #399)"
+    (with-temp-org-buffer
+     "* Heading
+:PROPERTIES:
+:CANVAS_ASSIGNMENT_ID: 7
+:CANVAS_DELETED: [2026-09-01 Tue 10:00]
+:END:
+"
+     (org-back-to-heading)
+     (org-canvas-org-save-sync-state (point) 7 "CANVAS_ASSIGNMENT_ID")
+     (expect (org-entry-get (point) "CANVAS_DELETED") :to-be nil))))
 
 (describe "org-canvas-clear-sync-properties"
   (it "removes CANVAS_ID, CANVAS_URL, and LAST_SYNCED"

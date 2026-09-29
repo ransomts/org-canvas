@@ -3607,9 +3607,10 @@ argument afterwards.
 
 A pull writes what Canvas lists, so an item deleted on Canvas simply stops
 coming back, and its heading would otherwise sit in your file with a
-=CANVAS_ID= Canvas no longer has.  The pulls of assignments, pages,
-discussions, announcements, rubrics, assignment groups, group categories and
-grading schemes notice: each stamped heading the list did not return is read
+=CANVAS_ID= Canvas no longer has.  Every whole-file pull notices -- those of
+assignments, pages, discussions, announcements, rubrics, assignment groups,
+group categories, grading schemes, classic and New Quizzes, modules, outcome
+groups, files and calendar events: each stamped heading the list did not return is read
 from Canvas on its own (one request each), and when Canvas answers "not
 found" the heading is marked with =CANVAS_DELETED=, the time of the pull
 that first found it so.  The heading stays, text and all -- your file may be
@@ -3633,6 +3634,17 @@ it, the drift report's =MISSING= row says a pull marked it, and
 you need, or remove both =CANVAS_DELETED= and its =CANVAS_ID= to create the
 item again.  If the item comes back on Canvas (restored from the course's
 undelete page, say), the next pull lists it again and removes the mark.
+
+Only the headings a list answers for are checked: a quiz's questions, a
+module's items, a New Quiz's items and the outcomes under a group never are,
+and neither is a folder heading in =files.org= (a deleted folder's files are
+what get marked).  An outcome under a marked group is not pushed either.  In
+=files.org= every file heading is checked, however deep, unless the pull is
+building the file for the first time.
+
+=org-canvas-pull-at-point= (and a pull by name) on a heading whose item Canvas
+deleted marks that heading the same way, instead of failing with the "not
+found" error.
 
 ** Validating an Adopted Course
 
