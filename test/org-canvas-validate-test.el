@@ -3856,6 +3856,34 @@ Syllabus text.
     (expect (org-canvas--validate-accommodation-number-columns
              '("Student" "A" "B")) :to-equal '(1 2))))
 
+(describe "org-canvas--validate-canvas-deleted (issue #392)"
+  (it "warns on a heading a pull marked deleted on Canvas, not only before a push"
+    (with-temp-org-buffer
+     "* Sprint 0
+:PROPERTIES:
+:CANVAS_ID: 100
+:CANVAS_DELETED: [2026-09-28 Mon 10:00]
+:END:
+"
+     (org-back-to-heading)
+     (let* ((issues (org-canvas--validate-entry-at-marker nil nil nil "a.org"))
+            (issue (car issues)))
+       (expect (length issues) :to-equal 1)
+       (expect (plist-get issue :severity) :to-be 'warning)
+       (expect (plist-get issue :property) :to-equal "CANVAS_DELETED")
+       (expect (plist-get issue :push-only) :to-be nil)
+       (expect (plist-get issue :message) :to-match "'Sprint 0' was deleted on Canvas"))))
+
+  (it "says nothing of an unmarked heading"
+    (with-temp-org-buffer
+     "* Sprint 1
+:PROPERTIES:
+:CANVAS_ID: 101
+:END:
+"
+     (org-back-to-heading)
+     (expect (org-canvas--validate-entry-at-marker nil nil nil "a.org") :to-be nil))))
+
 (provide 'org-canvas-validate-test)
 (describe "org-canvas--validate-module-item-ids (issue #105)"
   (it "warns once per item id claimed by more than one heading, naming the lines"

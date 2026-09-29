@@ -588,6 +588,16 @@ in [FAILED] lines stays readable."
         err-msg full-url body)
       (signal 'org-canvas-api-error (list err-msg))))))
 
+(defun org-canvas--api-not-found-p (err)
+  "Return non-nil when ERR, a `condition-case' value, is Canvas's HTTP 404.
+Read from the message `org-canvas--api-handle-plz-error' signals, which
+ends in the status.  `org-canvas--404-error-p' finds 404 anywhere in
+the text, an id included: too loose for a verdict that marks a heading
+deleted (issue #392)."
+  (and (eq (car err) 'org-canvas-api-error)
+       (stringp (cadr err))
+       (string-match-p "(HTTP 404)\\'" (cadr err))))
+
 (defun org-canvas--api-build-query-string (params)
   "Build a URL query string from PARAMS alist.
 Returns a string like \"?key=value&...\" or \"\" if PARAMS is nil."

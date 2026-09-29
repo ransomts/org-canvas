@@ -1,0 +1,16 @@
+* Fixed
+- #392 A list pull (assignments, pages, discussions, announcements,
+  rubrics, assignment groups, group categories, grading schemes) now
+  notices a heading whose Canvas item was deleted: each stamped
+  heading the list did not return is read on its own, and only a 404
+  marks it =CANVAS_DELETED=, keeping the heading and its text.  The
+  closing line names it ("1 heading no longer on Canvas: Sprint 0
+  (deleted 2026-09-28)"), as does =org-canvas-pull-all='s summary.  A
+  sync skips a marked heading instead of re-creating the item, a push
+  at point refuses it, =org-canvas-validate= warns, the drift report's
+  MISSING row and =org-canvas-status= say so, and a later pull that
+  lists the item again removes the mark.  A list read that comes back
+  empty no longer replaces a file that holds headings.
+- #392 Group categories are read one at a time at Canvas's unscoped
+  =/group_categories/:id=, so pull at point and the orphan cleanup no
+  longer 404 on them.
