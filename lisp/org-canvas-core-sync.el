@@ -2190,6 +2190,27 @@ Save the Canvas ID and LAST_SYNCED timestamp to the Org entry."
 
 ;;;; 9. Push-at-Point Infrastructure
 
+(defun org-canvas--push-at-point-finalize
+    (finalize-fn data response ctx payload-hash title)
+  "Finalize the push at point of TITLE and stamp its heading.
+FINALIZE-FN is called with DATA, RESPONSE and CTX; PAYLOAD-HASH, when
+non-nil, is stored on the heading and the buffer saved.  An error in
+stamping is logged as a push that landed, then re-signalled."
+  (org-canvas--log-info org-canvas--logger "[Stage 4: Finalize] '%s'" title)
+  (condition-case err
+      (progn
+        (funcall finalize-fn data response ctx)
+        (when payload-hash
+          (org-canvas-org-set-property (point) org-canvas--prop-payload-hash payload-hash))
+        (org-canvas--sync-advance-header-from-entry)
+        (org-canvas--save-buffer))
+    (error
+     ;; The push landed; only the stamp died (issue #97).
+     (org-canvas--log-error org-canvas--logger
+       "[Stamp] The push of '%s' landed on Canvas, but stamping the file failed: %s — the entry still carries its old CANVAS_UPDATED_AT and PAYLOAD_HASH, so the next sync will report drift that is not real"
+       title (error-message-string err))
+       (signal (car err) (cdr err)))))
+
 (defun org-canvas--push-at-point-runtime (spec)
   "Runtime body for generated push-at-point functions.
 SPEC is a sync spec (`org-canvas--sync-spec-keys'): :feature is the
@@ -2269,20 +2290,8 @@ to every later push at point (issue #141)."
           (org-canvas--log-info org-canvas--logger "[DRY-RUN] '%s' not stamped" title)
           (message "%s '%s' would be pushed (dry run)." (capitalize feature-name) title))
          (t
-          (org-canvas--log-info org-canvas--logger "[Stage 4: Finalize] '%s'" title)
-          (condition-case err
-              (progn
-                (funcall finalize-fn data response ctx)
-                (when payload-hash
-                  (org-canvas-org-set-property (point) org-canvas--prop-payload-hash payload-hash))
-                (org-canvas--sync-advance-header-from-entry)
-                (org-canvas--save-buffer))
-            (error
-             ;; The push landed; only the stamp died (issue #97).
-             (org-canvas--log-error org-canvas--logger
-               "[Stamp] The push of '%s' landed on Canvas, but stamping the file failed: %s — the entry still carries its old CANVAS_UPDATED_AT and PAYLOAD_HASH, so the next sync will report drift that is not real"
-               title (error-message-string err))
-             (signal (car err) (cdr err))))
+          (org-canvas--push-at-point-finalize
+           finalize-fn data response ctx payload-hash title)
           (plist-put ctx :outcome 'synced)
           (org-canvas--log-info org-canvas--logger "[Sync] '%s' synced successfully" title)
           (message "%s '%s' synced." (capitalize feature-name) title)))))
