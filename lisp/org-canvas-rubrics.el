@@ -973,21 +973,11 @@ one level-2 heading per criterion."
   (org-canvas--pull-item-from-registry "rubrics" item pos)
   (let ((criteria (alist-get 'data item)))
     (when criteria
-      ;; Anchor deletion at the end of the drawer's last non-blank line so
-      ;; the whole criterion body is replaced and re-pull stays idempotent
-      ;; (otherwise each pull prepends another blank line).  See
-      ;; `org-canvas--pull-insert-body' for the same pattern and rationale.
-      (let* ((meta-end (save-excursion (org-end-of-meta-data t) (point)))
-             (body-end (save-excursion (org-end-of-subtree t t) (point)))
-             (body-start (save-excursion
-                           (goto-char (min meta-end body-end))
-                           (skip-chars-backward " \t\n")
-                           (point))))
-        (delete-region body-start body-end)
-        (goto-char body-start)
-        (insert "\n")
-        (dolist (c (append criteria nil))
-          (org-canvas--rubric-pull-emit-criterion c))))))
+      ;; The whole criterion body is replaced, blank lines around it
+      ;; included, so a re-pull stays idempotent.
+      (org-canvas--pull-clear-entry-contents)
+      (dolist (c (append criteria nil))
+        (org-canvas--rubric-pull-emit-criterion c)))))
 
 (org-canvas-define-pull rubrics
   :file org-canvas-rubrics-file

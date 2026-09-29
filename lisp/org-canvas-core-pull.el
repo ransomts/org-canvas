@@ -468,6 +468,32 @@ Canvas file URLs in the converted body are rewritten to local
       (goto-char body-start)
       (insert "\n" rewritten "\n"))))
 
+(defun org-canvas--pull-clear-entry-contents ()
+  "Delete all text and child headings below the heading at point's metadata.
+Leave point at the start of an empty line right after the drawer's
+`:END:' (or the heading line), where the pull writes the fresh
+children, and return it.
+
+The deletion starts at the end of the metadata's last non-blank line and
+runs to the next heading at the entry's level or above, so blank lines
+on either side go with it.  Starting at `org-end-of-meta-data' instead
+kept whatever blank lines it had skipped, and ending at
+`org-end-of-subtree' without TO-HEADING kept the last child's newline:
+the modules pull grew one blank line per module on every re-pull
+\(issue #403).  Anchored this way, a re-pull writes what the first pull
+wrote, and a file that had already grown blank lines is collapsed back
+to that shape."
+  (let* ((end (save-excursion (org-end-of-subtree t t) (point)))
+         (meta-end (save-excursion (org-end-of-meta-data t) (point)))
+         (start (save-excursion
+                  (goto-char (min meta-end end))
+                  (skip-chars-backward " \t\n")
+                  (point))))
+    (delete-region start end)
+    (goto-char start)
+    (insert "\n")
+    (point)))
+
 (defun org-canvas--pull-entry-text-bounds ()
   "Return (START . END) of the text of the heading at point above its children.
 START is the end of the heading's drawer, blank lines skipped back

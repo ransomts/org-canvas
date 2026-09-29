@@ -1631,6 +1631,39 @@ text
                 (kill-buffer buf)))
         (delete-file temp)))))
 
+(describe "org-canvas--pull-clear-entry-contents (issue #403)"
+  (it "takes the text, the children and the blank lines around them"
+    (with-temp-org-buffer
+     "* One
+:PROPERTIES:
+:CANVAS_ID: 1
+:END:
+
+
+Text.
+** Child
+
+* Two
+"
+     (goto-char (point-min))
+     (let ((at (org-canvas--pull-clear-entry-contents)))
+       (expect (buffer-string) :to-equal
+               "* One\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n* Two\n")
+       (expect at :to-equal (point))
+       (expect (bolp) :to-be-truthy)
+       (expect (looking-at-p "\\* Two") :to-be-truthy))))
+
+  (it "ends a drawer the buffer ends on, and leaves a heading with no drawer its line"
+    (with-temp-org-buffer "* One\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:"
+     (goto-char (point-min))
+     (org-canvas--pull-clear-entry-contents)
+     (expect (buffer-string) :to-equal "* One\n:PROPERTIES:\n:CANVAS_ID: 1\n:END:\n")
+     (expect (eobp) :to-be-truthy))
+    (with-temp-org-buffer "* One\nText.\n\n** Child\n"
+     (goto-char (point-min))
+     (org-canvas--pull-clear-entry-contents)
+     (expect (buffer-string) :to-equal "* One\n"))))
+
 (describe "org-canvas--pull-insert-body"
   (it "inserts converted HTML as Org text"
     (with-temp-org-buffer
