@@ -499,6 +499,21 @@ A push runs in the file's own buffer, as the pipeline runs it."
           (expect (plist-get (car issues) :message)
                   :to-match "GRADING_STANDARD_ID 999 matches no CANVAS_ID in grading-schemes.org")))))
 
+  (it "knows no scheme Canvas deleted, and checks no heading it deleted (issue #402)"
+    (test-gs--with-file (concat "* Old Scale\n:PROPERTIES:\n:CANVAS_ID: 77\n"
+                                ":CANVAS_DELETED: [2026-09-28 Mon]\n:END:\n")
+      (let ((org-canvas-settings-file (expand-file-name "settings.org" dir))
+            (org-canvas-assignments-file (expand-file-name "assignments.org" dir)))
+        (with-temp-file org-canvas-settings-file
+          (insert "* Course\n:PROPERTIES:\n:GRADING_STANDARD_ID: 77\n:END:\n"))
+        (with-temp-file org-canvas-assignments-file
+          (insert "* Gone\n:PROPERTIES:\n:GRADING_STANDARD_ID: 999\n"
+                  ":CANVAS_DELETED: [2026-09-28 Mon]\n:END:\n"))
+        (let ((issues (org-canvas--validate-grading-standard-ids file)))
+          (expect (length issues) :to-equal 1)
+          (expect (plist-get (car issues) :heading) :to-equal "Course")
+          (expect (plist-get (car issues) :message) :to-match "GRADING_STANDARD_ID 77")))))
+
   (it "is quiet when the other files are absent"
     (test-gs--with-file test-gs--letters-org
       (let ((org-canvas-settings-file (expand-file-name "none.org" dir))

@@ -677,11 +677,15 @@ the last row must be 0, or Canvas has no grade for the lowest scores."
   "Warn where settings.org or assignments.org name a scheme SCHEMES-FILE lacks.
 A GRADING_STANDARD_ID that matches no CANVAS_ID in SCHEMES-FILE is
 either stale or never pulled; the warning sits on the heading that
-names it.  An id of 0 names no scheme and is passed over."
+names it.  An id of 0 names no scheme and is passed over.  A scheme
+Canvas deleted is not known, and a heading Canvas deleted is not
+checked (issue #402)."
   (let ((known (with-current-buffer (org-canvas--find-file-noselect schemes-file)
                  (save-excursion
                    (delq nil (org-map-entries
-                              (lambda () (org-entry-get (point) "CANVAS_ID"))
+                              (lambda ()
+                                (unless (org-canvas--sync-deleted-stamp)
+                                  (org-entry-get (point) "CANVAS_ID")))
                               "LEVEL=1" 'file)))))
         (issues nil))
     (dolist (var '(org-canvas-settings-file org-canvas-assignments-file))
@@ -693,6 +697,7 @@ names it.  An id of 0 names no scheme and is passed over."
                (lambda ()
                  (let ((id (org-entry-get (point) "GRADING_STANDARD_ID")))
                    (when (and id (not (member id known))
+                              (not (org-canvas--sync-deleted-stamp))
                               (not (member id '("0" ""))))
                      (push (org-canvas--validate-make-issue
                             'warning
@@ -995,7 +1000,8 @@ LOC is a (:file :line :heading) plist.  Nil without a table."
     issues))
 
 (defun org-canvas--count-assignments-in-group (group-name assignments-file)
-  "Count assignments in GROUP-NAME by scanning ASSIGNMENTS-FILE."
+  "Count assignments in GROUP-NAME by scanning ASSIGNMENTS-FILE.
+A heading Canvas deleted is not counted (issue #402)."
   (if (and assignments-file (file-exists-p assignments-file))
       (let ((count 0))
         (with-current-buffer (org-canvas--find-file-noselect assignments-file)
@@ -1005,6 +1011,7 @@ LOC is a (:file :line :heading) plist.  Nil without a table."
              (lambda ()
                (let ((group-prop (org-entry-get (point) "GROUP")))
                  (when (and group-prop
+                            (not (org-canvas--sync-deleted-stamp))
                             (string-match (regexp-quote group-name) group-prop))
                    (setq count (1+ count)))))
              "LEVEL=1" 'file)))
@@ -1138,6 +1145,8 @@ module with its drawer intact claims an item the first module holds;
 the sync copes — the copy is created fresh where it sits (issue #105)
 — but two headings naming one id is never what was meant, and the
 extra copy is what a move that should have been a cut looks like.
+A heading Canvas deleted, or one under a module it deleted, claims
+nothing: a push skips it (issue #402).
 Returns a list of issues, one per duplicated id."
   (let ((seen (make-hash-table :test 'equal))
         (order nil)
@@ -1148,7 +1157,7 @@ Returns a list of issues, one per duplicated id."
         (org-map-entries
          (lambda ()
            (let ((id (org-entry-get (point) "CANVAS_ID")))
-             (when id
+             (when (and id (not (org-canvas--sync-deleted-stamp)))
                (unless (gethash id seen) (push id order))
                (push (cons (line-number-at-pos) (org-get-heading t t t t))
                      (gethash id seen)))))
@@ -1178,7 +1187,8 @@ offline by design (see issue #37): weights that sum to less than 100
 silently inflate every grade, and more than 100 deflates them, with no
 symptom until final grades come out.  Returns a list of issues.
 
-Groups with no WEIGHT are not counted; a file with no weighted groups
+Groups with no WEIGHT are not counted, nor are groups Canvas deleted
+\(issue #402); a file with no weighted groups
 at all produces no issue, since an unweighted course is a normal
 configuration rather than a mistake."
   (let ((total 0)
@@ -1193,7 +1203,7 @@ configuration rather than a mistake."
         (org-map-entries
          (lambda ()
            (let ((weight (org-entry-get (point) "WEIGHT")))
-             (when weight
+             (when (and weight (not (org-canvas--sync-deleted-stamp)))
                (unless first-line (setq first-line (line-number-at-pos)))
                (setq count (1+ count))
                (setq total (+ total (string-to-number weight))))))
@@ -1278,7 +1288,10 @@ normalizes to nothing."
   "Return the current buffer's entries grouped by normalized title.
 QUERY is the spec's `org-map-entries' match, so only the level the
 feature declares is read and a module item never joins the modules it
-sits under.  Each group is (NORMALIZED . ENTRIES), where an entry is a
+sits under.  A heading Canvas deleted is left out, by the rule the
+push skips it with: it has its own warning, and pairing it with the
+live twin it left behind reported an error Canvas no longer has (issue
+#402).  Each group is (NORMALIZED . ENTRIES), where an entry is a
 plist (:title :line :due) in document order."
   (let ((groups nil))
     (dolist (marker (org-map-entries (lambda () (point-marker)) query 'file))
@@ -1286,7 +1299,7 @@ plist (:title :line :due) in document order."
       (let* ((title (org-get-heading t t t t))
              (norm (org-canvas--validate-normalize-title
                     (org-link-display-format (or title "")))))
-        (when norm
+        (when (and norm (not (org-canvas--sync-deleted-stamp)))
           (let ((cell (assoc norm groups))
                 (entry (list :title title
                              :line (line-number-at-pos)

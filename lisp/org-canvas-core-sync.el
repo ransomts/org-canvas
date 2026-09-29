@@ -395,6 +395,15 @@ already hold this title (issue #85)?  Either way the entry counts as
     (message "%s [DRY-RUN] Would %s '%s'%s" cap-feature (downcase verb) title detail)
     (plist-put counters key (1+ (or (plist-get counters key) 0)))))
 
+(defun org-canvas--sync-deleted-stamp ()
+  "Return the deletion mark ruling the heading at point, or nil.
+Its own `org-canvas--prop-canvas-deleted' stamp, else the nearest
+ancestor's: a heading under one Canvas deleted is gone with it (issue
+#399).  The one definition of a deleted heading, which the push skips
+\(issue #392) and validate's cross-heading checks leave out (issue
+#402)."
+  (org-entry-get (point) org-canvas--prop-canvas-deleted t))
+
 (defun org-canvas--sync-deleted-note (title)
   "Return why the heading at point, TITLE, is not pushed, or nil.
 Non-nil when a pull marked it `org-canvas--prop-canvas-deleted': its
@@ -408,7 +417,7 @@ group that is gone (issue #399)."
         (format "'%s' was deleted on Canvas (%s %s); not pushed.  Delete the heading, or remove %s and its CANVAS_ID to create it again"
                 title org-canvas--prop-canvas-deleted stamp
                 org-canvas--prop-canvas-deleted)
-      (setq stamp (org-entry-get (point) org-canvas--prop-canvas-deleted t))
+      (setq stamp (org-canvas--sync-deleted-stamp))
       (when stamp
         (format "'%s' sits under a heading deleted on Canvas (%s %s); not pushed.  Settle that heading first"
                 title org-canvas--prop-canvas-deleted stamp)))))
