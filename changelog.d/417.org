@@ -1,0 +1,12 @@
+* Added
+- #417 A grading file can take away a grade Canvas holds: =:SCORE: none=
+  (or =-=) is pushed as an empty =posted_grade=, alone or through the
+  bulk push, listed as =→ clear= and counted in the confirmation, and
+  once it lands the heading loses both =SCORE= and =CANVAS_SCORE=.  A
+  re-pull keeps a typed clear until Canvas holds no grade.
+
+* Changed
+- #417 An absent or blank =SCORE= always leaves the grade alone, in the
+  grading file and the summary table, and a =SCORE= that is no number,
+  =EX= or =none= stops the push before anything is sent; either used
+  to be sent as a null grade.

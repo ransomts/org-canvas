@@ -2250,18 +2250,169 @@ submission.  Every call is pushed onto `test-entry--calls'."
         (expect (nth 2 (alist-get 5001 (org-canvas--submissions-live-baselines "1001")))
                 :to-equal (org-canvas--submissions-rubric-digest '(("_7104" "2" nil))))))))
 
-(describe "clearing a grade"
-  (it "pushes the empty score and drops the CANVAS_SCORE baseline"
+(describe "clearing a grade (issue #417)"
+  (defun test-clear--entry (name user-id props)
+    "Return a student heading for NAME and USER-ID with PROPS lines."
+    (format "* %s\n:PROPERTIES:\n:USER_ID: %s\n%s:END:\n" name user-id props))
+
+  (it "reads a typed SCORE: blank keeps the baseline, a clear word is no grade"
+    (expect (org-canvas--submissions-typed-score nil "92" "A") :to-equal "92")
+    (expect (org-canvas--submissions-typed-score "  " "92" "A") :to-equal "92")
+    (expect (org-canvas--submissions-typed-score "none" "92" "A") :to-be nil)
+    (expect (org-canvas--submissions-typed-score " None " "92" "A") :to-be nil)
+    (expect (org-canvas--submissions-typed-score "-" "92" "A") :to-be nil)
+    (expect (org-canvas--submissions-typed-score "95" "92" "A") :to-equal "95")
+    (expect (org-canvas--submissions-typed-score "excused" nil "A") :to-equal "EX")
+    (expect (org-canvas--submissions-typed-score "9O" "92" "A") :to-throw 'user-error))
+
+  (it "pushes the empty grade and takes SCORE and CANVAS_SCORE away"
     (with-org-canvas-test-config
       (with-mock-api
         (with-grading-file (concat test-grading-file-header
-                                   "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE:\n:CANVAS_SCORE: 92\n:END:\n")
+                                   (test-clear--entry "Adams, Alice" 5001 ":SCORE: none\n:CANVAS_SCORE: 92\n"))
           (let ((org-canvas-submissions-check-conflicts nil))
             (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
               (org-canvas-submissions-push-grades)))
           (expect-api-called 'PUT "assignments/1001/submissions/5001")
+          (let ((data (nth 2 (test-org-canvas-last-api-call))))
+            (expect (alist-get 'submission data) :to-equal '((posted_grade . ""))))
           (org-canvas--submissions-goto-user 5001)
-          (expect (org-entry-get (point) "CANVAS_SCORE") :to-be nil))))))
+          (expect (org-entry-get (point) "CANVAS_SCORE") :to-be nil)
+          (expect (org-entry-get (point) "SCORE") :to-be nil)
+          (expect (org-canvas--submissions-collect-grade-changes) :to-be nil)))))
+
+  (it "leaves a grade alone when SCORE is absent or blank"
+    (with-grading-file (concat test-grading-file-header
+                               (test-clear--entry "Adams, Alice" 5001 ":CANVAS_SCORE: 92\n")
+                               (test-clear--entry "Beta, Bob" 5002 ":SCORE:\n:CANVAS_SCORE: 80\n"))
+      (org-canvas--submissions-ensure-context)
+      (expect (org-canvas--submissions-collect-grade-changes) :to-be nil)
+      (expect (org-canvas--submissions-collect-carryover) :to-be nil)))
+
+  (it "sees no change in a clear where Canvas holds no grade"
+    (with-grading-file (concat test-grading-file-header
+                               (test-clear--entry "Adams, Alice" 5001 ":SCORE: none\n"))
+      (org-canvas--submissions-ensure-context)
+      (expect (org-canvas--submissions-collect-grade-changes) :to-be nil)
+      (expect (org-canvas--submissions-collect-carryover) :to-be nil)))
+
+  (it "refuses a SCORE it cannot read before anything is sent"
+    (with-grading-file (concat test-grading-file-header
+                               (test-clear--entry "Adams, Alice" 5001 ":SCORE: 9O\n:CANVAS_SCORE: 92\n"))
+      (org-canvas--submissions-ensure-context)
+      (expect (org-canvas--submissions-collect-grade-changes) :to-throw 'user-error)))
+
+  (it "sends a clear through update_grades beside a score, and names it"
+    (let ((asked nil))
+      (with-org-canvas-test-config
+        (with-mock-api
+          (setq test-org-canvas-api-responses
+                '(("update_grades" . ((id . 77) (workflow_state . "completed")))))
+          (with-grading-file (concat test-grading-file-header
+                                     (test-clear--entry "Adams, Alice" 5001 ":SCORE: -\n:CANVAS_SCORE: 92\n")
+                                     (test-clear--entry "Beta, Bob" 5002 ":SCORE: 85\n:CANVAS_SCORE: 80\n"))
+            (let ((org-canvas-submissions-check-conflicts nil)
+                  (org-canvas-assume-yes nil)
+                  (noninteractive nil))
+              (cl-letf (((symbol-function 'y-or-n-p)
+                         (lambda (q) (if asked (error "Asked twice: %s" q) (setq asked q)) t))
+                        ((symbol-function 'yes-or-no-p)
+                         (lambda (q) (if asked (error "Asked twice: %s" q) (setq asked q)) t)))
+                (org-canvas--submissions-push-current t)))
+            (let* ((call (test-org-canvas-find-api-call 'POST "update_grades"))
+                   (grade-data (alist-get 'grade_data (nth 2 call))))
+              (expect (alist-get "5001" grade-data nil nil #'equal)
+                      :to-equal '((posted_grade . "")))
+              (expect (alist-get "5002" grade-data nil nil #'equal)
+                      :to-equal '((posted_grade . "85"))))
+            (org-canvas--submissions-goto-user 5001)
+            (expect (org-entry-get (point) "SCORE") :to-be nil)
+            (expect (org-entry-get (point) "CANVAS_SCORE") :to-be nil)
+            (org-canvas--submissions-goto-user 5002)
+            (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "85"))))
+      (expect asked :to-match "2 grade change(s) (1 clearing a grade)")))
+
+  (it "shows a clear as clear in the list of changes"
+    (expect (org-canvas--submissions-describe-changes
+             (list (list :name "Adams, Alice" :old-score "92" :new-score nil :clear t)))
+            :to-equal "  Adams, Alice: 92 → clear"))
+
+  (it "sends nothing under a dry run and records nothing"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (concat test-grading-file-header
+                                   (test-clear--entry "Adams, Alice" 5001 ":SCORE: none\n:CANVAS_SCORE: 92\n"))
+          (let ((org-canvas-submissions-check-conflicts nil)
+                (org-canvas--dry-run t))
+            (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+              (org-canvas-submissions-push-grades)))
+          (expect (test-org-canvas-api-call-count) :to-equal 0)
+          (org-canvas--submissions-goto-user 5001)
+          (expect (org-entry-get (point) "SCORE") :to-equal "none")
+          (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "92")))))
+
+  (it "keeps a typed clear over a re-pull until Canvas holds no grade"
+    (with-org-canvas-test-config
+      (with-grading-file (concat test-grading-file-header
+                                 (test-clear--entry "Adams, Alice" 5001 ":SCORE: none\n:CANVAS_SCORE: 92\n"))
+        (test-refresh--from-canvas '((score . 92) (entered_score . 92)))
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "SCORE") :to-equal "none")
+        (expect (org-entry-get (point) "CANVAS_SCORE") :to-equal "92")
+        (expect (org-entry-get (point) "CONFLICT") :to-be nil)
+        (expect (plist-get (car (org-canvas--submissions-collect-grade-changes)) :clear)
+                :to-be t)
+        (test-refresh--from-canvas '((score . nil) (entered_score . nil)))
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "SCORE") :to-be nil)
+        (expect (org-entry-get (point) "CONFLICT") :to-be nil))))
+
+  (it "marks a typed clear when Canvas's grade moved under it"
+    (with-org-canvas-test-config
+      (with-grading-file (concat test-grading-file-header
+                                 (test-clear--entry "Adams, Alice" 5001 ":SCORE: none\n:CANVAS_SCORE: 92\n"))
+        (test-refresh--from-canvas '((score . 93) (entered_score . 93)))
+        (org-canvas--submissions-goto-user 5001)
+        (expect (org-entry-get (point) "SCORE") :to-equal "none")
+        (expect (org-entry-get (point) "CONFLICT") :to-equal "score: Canvas has 93"))))
+
+  (it "reads a clear word and a blank cell in the summary table"
+    (with-temp-buffer
+      (org-mode)
+      (insert "| Student | Status | Submitted At | Score |\n")
+      (insert "|---------+--------+--------------+-------|\n")
+      (insert "| Adams, Alice | graded | <2026-02-15> | none |\n")
+      (insert "| Beta, Bob | graded | <2026-02-15> |  |\n")
+      (org-table-align)
+      (setq-local org-canvas-submissions--current-view 'summary)
+      (setq-local org-canvas-submissions--original-scores '((5001 . "92") (5002 . "80")))
+      (setq-local org-canvas-submissions--data
+                  (list (test-org-canvas-make-submission)
+                        (test-org-canvas-make-submission
+                         '((user . ((id . 5002) (sortable_name . "Beta, Bob")))))))
+      (let ((changes (org-canvas--submissions-collect-grade-changes)))
+        (expect (length changes) :to-equal 1)
+        (expect (plist-get (car changes) :user-id) :to-equal 5001)
+        (expect (plist-get (car changes) :clear) :to-be t)
+        (expect (org-canvas--submissions-grade-fields (car changes))
+                :to-equal '((posted_grade . ""))))))
+
+  (it "refuses a clear beside changed Rubric rows that set the grade"
+    (with-rubric-file (concat test-rubric-file-header
+                              (test-rubric-entry "Adams, Alice" 5001 ":SCORE: none\n:CANVAS_SCORE: 3\n"
+                                                 '(("_7104" "Thesis" 2 2 nil) ("_7105" "Evidence" 3 nil nil)
+                                                   ("_7106" "Style" 1 nil nil))))
+      (expect (org-canvas--submissions-collect-grade-changes) :to-throw 'user-error)))
+
+  (it "clears the grade alone when the Rubric rows did not change"
+    (with-rubric-file (concat test-rubric-file-header
+                              (test-rubric-entry "Adams, Alice" 5001 ":SCORE: none\n:CANVAS_SCORE: 3\n"
+                                                 test-rubric-blank-rows))
+      (let ((change (car (org-canvas--submissions-collect-grade-changes))))
+        (expect (plist-get change :clear) :to-be t)
+        (expect (plist-get change :triples) :to-be nil)
+        (expect (org-canvas--submissions-grade-fields change)
+                :to-equal '((posted_grade . "")))))))
 
 ;;;; Links and Local Attachments
 
