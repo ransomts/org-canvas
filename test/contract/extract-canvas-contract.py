@@ -91,6 +91,32 @@ RESPONSE_ONLY_SCHEMAS = {
     "progress": ("query_progress", "Progress"),
 }
 
+# Write operations org-canvas sends that the vendored spec lacks, transcribed
+# from canvas-lms's own API documentation (the `@API' and `@argument' comments
+# its API docs are generated from) at the commit named in "source".  They are
+# written into the fixture as they stand here, marked "supplement", so the
+# request-body contract still checks what org-canvas sends against what Canvas
+# documents.  submission-comments: a grading file edits (PUT, `comment') and
+# deletes (DELETE, no body) the grader's own sent comments (issue #419).
+SUPPLEMENT_OPS = {
+    "submission-comments": {
+        "operationId": "edit_submission_comment",
+        "method": "put",
+        "path": "/v1/courses/{course_id}/assignments/{assignment_id}"
+                "/submissions/{user_id}/comments/{id}",
+        "source": "canvas-lms bf50faf2 "
+                  "app/controllers/submission_comments_api_controller.rb",
+        "wrapper": None,
+        "required": [],
+        "fields": {"comment": {"type": "string"}},
+        "delete": {
+            "operationId": "delete_submission_comment",
+            "method": "delete",
+            "fields": {},
+        },
+    },
+}
+
 BRACKET = re.compile(r"^([^\[]+)\[([^\]]+)\]")
 
 
@@ -210,6 +236,14 @@ def main():
             sys.exit(f"response schema empty: {schema_name} ({name})")
         out[name] = {"response_only": True, "operationId": opid,
                      "response_schema": schema_name, "response_fields": fields}
+
+    for module, contract in SUPPLEMENT_OPS.items():
+        if module in out:
+            sys.exit(f"supplement shadows a spec module: {module}")
+        if find_op(spec, contract["operationId"]) is not None:
+            sys.exit(f"supplement now in the spec, extract it instead: "
+                     f"{contract['operationId']}")
+        out[module] = dict(contract, supplement=True)
 
     with open(OUT, "w") as fh:
         json.dump(out, fh, indent=2, sort_keys=True)

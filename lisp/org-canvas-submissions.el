@@ -1076,6 +1076,15 @@ SUBMISSIONS is the list of submission alists."
 
 ;;;; Detail View Rendering
 
+(defvar org-canvas--submissions-comment-cache nil
+  "Hash from a comment's text as Canvas holds it to its grading-file text.
+Bound around a pull's render and a push's read of the sent comments,
+where each comment is converted for its item and again for its
+CANVAS_COMMENTS digest; nil converts every time.")
+
+(defconst org-canvas--submissions-comments-heading "** Comments"
+  "Heading under which a student's sent comments are listed.")
+
 (defun org-canvas--submissions-render-detail (assignment-name assignment-id submissions &optional assignment)
   "Render detail view with per-student headings into current buffer.
 ASSIGNMENT-NAME and ASSIGNMENT-ID identify the assignment.
@@ -1098,7 +1107,8 @@ assignment object when at hand, supplies the rubric header."
     (org-canvas--submissions-render-rubric-header assignment)
     (org-canvas--submissions-render-bank-heading)
     (insert "\n")
-    (let ((criteria (org-canvas--submissions-rubric-criteria assignment)))
+    (let ((criteria (org-canvas--submissions-rubric-criteria assignment))
+          (org-canvas--submissions-comment-cache (make-hash-table :test 'equal)))
       (dolist (sub sorted)
         (org-canvas--submissions-render-detail-entry
          sub assignment-name assignment-id criteria)))))
@@ -1130,7 +1140,9 @@ score differ from the one entered.  DAYS_LATE, rounded up, appears on a
 late submission.  LATE_STATUS and its baseline CANVAS_LATE_STATUS
 appear when Canvas holds a late policy status for the submission (see
 `org-canvas--submissions-insert-late-status').  ATTEMPT lets a push
-notice a resubmission.  With
+notice a resubmission.  CANVAS_COMMENTS holds the text digest
+of each sent comment by id, the baseline an edit to one is told by
+\(issue #419).  With
 ASSIGNMENT-ID the heading gets its SpeedGrader link, and with
 ASSIGNMENT-NAME attachments already downloaded link to the local copy.
 CRITERIA, the assignment's rubric criteria, shape the Rubric table."
@@ -1176,6 +1188,7 @@ CRITERIA, the assignment's rubric criteria, shape the Rubric table."
         (insert (format ":POSTED_AT: %s\n"
                         (or (org-canvas--iso8601-to-org-timestamp posted-at) posted-at)))))
     (org-canvas--submissions-insert-report-properties submission)
+    (org-canvas--submissions-insert-comment-baseline comments)
     (insert ":END:\n")
     (when (and user-id assignment-id)
       (insert (format "[[%s][Open in SpeedGrader]]\n"
@@ -1543,13 +1556,10 @@ An item with no text is left out."
 
 (defun org-canvas--submissions-bank-baseline ()
   "Return the CANVAS_COMMENT_BANK baseline as an alist of (ID . DIGEST)."
-  (when-let* ((region (org-canvas--submissions-bank-region))
-              (value (save-excursion (goto-char (car region))
-                                     (org-entry-get (point) "CANVAS_COMMENT_BANK"))))
-    (delq nil (mapcar (lambda (pair)
-                        (when (string-match "\\`\\([0-9]+\\)=\\([0-9a-f]+\\)\\'" pair)
-                          (cons (match-string 1 pair) (match-string 2 pair))))
-                      (split-string value)))))
+  (when-let* ((region (org-canvas--submissions-bank-region)))
+    (org-canvas--submissions-parse-digests
+     (save-excursion (goto-char (car region))
+                     (org-entry-get (point) "CANVAS_COMMENT_BANK")))))
 
 (defun org-canvas--submissions-bank-set-baseline (baseline)
   "Write BASELINE, an alist of (ID . DIGEST), as CANVAS_COMMENT_BANK.
@@ -2385,28 +2395,444 @@ links to the local copy first, with the Canvas link beside it."
                    (org-canvas--submissions-local-attachment
                     assignment-name student-name filename))))))))
 
+(defun org-canvas--submissions-comment-org-text (comment)
+  "Return COMMENT's text for its Comments item, or an empty string.
+COMMENT is a submission comment alist.  The text is the full
+conversion (`org-canvas--submissions-body-text'), with the heading
+block markers dropped as `org-canvas--html-to-org-inline' drops them
+\(issue #264)."
+  (let* ((raw (alist-get 'comment comment))
+         (convert (lambda ()
+                    (string-trim
+                     (org-canvas--strip-heading-block-markers
+                      (or (org-canvas--submissions-body-text raw) ""))))))
+    (if (and org-canvas--submissions-comment-cache (stringp raw))
+        (with-memoization (gethash raw org-canvas--submissions-comment-cache)
+          (funcall convert))
+      (funcall convert))))
+
+(defun org-canvas--submissions-comment-line (label id text &optional delete)
+  "Return the Comments item LABEL [ID] :: TEXT, marked DELETE when DELETE.
+ID is nil for a comment the item cannot name, which is then read-only.
+A one-line TEXT follows the label, and one with more lines starts
+under it, indented, so its paragraphs survive (issue #264)."
+  (org-canvas--submissions-item
+   (concat (if delete "DELETE " "") label (if id (format " [%s]" id) ""))
+   (if (string-match-p "\n" text) (concat "\n" text) text)))
+
 (defun org-canvas--submissions-comment-item (comment)
   "Return the Comments item for COMMENT, a submission comment alist.
-The label is the author in bold and the timestamp; a one-line comment
-follows it on the same line, and one with more lines starts under it,
-indented, so its paragraphs survive where the inline conversion
-flattened them to one line (issue #264).  Heading block markers are
-dropped as `org-canvas--html-to-org-inline' drops them."
-  (let* ((text (org-canvas--strip-heading-block-markers
-                (or (org-canvas--submissions-body-text (alist-get 'comment comment)) "")))
-         (text (string-trim text)))
-    (org-canvas--submissions-item
-     (format "*%s* %s"
-             (or (alist-get 'author_name comment) "Unknown")
-             (or (org-canvas--iso8601-to-org-timestamp (alist-get 'created_at comment)) ""))
-     (if (string-match-p "\n" text) (concat "\n" text) text))))
+The label is the author in bold and the timestamp, then the comment's
+id in brackets, which is what lets a push edit or delete it (issue
+#419); a one-line comment follows it on the same line, and one with
+more lines starts under it, indented, so its paragraphs survive where
+the inline conversion flattened them to one line (issue #264)."
+  (org-canvas--submissions-comment-line
+   (string-trim-right
+    (format "*%s* %s"
+            (or (alist-get 'author_name comment) "Unknown")
+            (or (org-canvas--iso8601-to-org-timestamp (alist-get 'created_at comment)) "")))
+   (org-canvas--alist-get-non-null 'id comment)
+   (org-canvas--submissions-comment-org-text comment)))
 
 (defun org-canvas--submissions-render-comments (comments)
   "Render submission COMMENTS as a sub-heading, one item each."
   (when (and comments (> (length comments) 0))
-    (insert "\n** Comments\n")
+    (insert "\n" org-canvas--submissions-comments-heading "\n")
     (dolist (comment (append comments nil))
       (insert (org-canvas--submissions-comment-item comment) "\n"))))
+
+;;;; Sent Comments (issue #419)
+
+;; A comment already sent sits under the student's `** Comments'
+;; heading as `- *Author* <time> [ID] :: text'.  The heading's
+;; CANVAS_COMMENTS property holds each id's text digest as last pulled
+;; or pushed, so an item whose text no longer digests to its entry was
+;; edited here, and `- DELETE *Author* ...' marks one to delete; a line
+;; removed from the section is never a deletion, since a missing line
+;; is as likely a tidy-up as an intent.  S sends the grader's own
+;; edited comments (PUT) and deletions (DELETE) after re-reading them:
+;; one by someone else, one edited on Canvas since the pull, or one
+;; gone from Canvas is refused and named, not sent.  A refresh keeps an
+;; edit or a mark that was not sent.  An item without an id (a file
+;; pulled before #419, or a comment posted from a draft) is read-only
+;; until a refresh gives it one.
+
+(defconst org-canvas--submissions-comment-item-regexp
+  (concat "^-[ \t]+\\(DELETE[ \t]+\\)?"
+          "\\(\\(?:[^:\n]\\|:[^:\n]\\)*?\\)[ \t]+\\[\\([0-9]+\\)\\][ \t]*::"
+          "\\(?:[ \t]+\\(.*\\)\\)?$")
+  "Match the first line of a Comments item that carries a comment id.
+Group 1 is the DELETE mark, group 2 the label (the author and the
+time), group 3 the id and group 4 the first line of the text, absent
+when the text starts under the item.  The label holds no `::', so a
+text that does cannot be mistaken for one.")
+
+(defun org-canvas--submissions-comment-digest (text)
+  "Return the digest of a sent comment's TEXT, normalized as an item's is."
+  (org-canvas--submissions-bank-digest (org-canvas--submissions-comment-text text)))
+
+(defun org-canvas--submissions-parse-digests (value)
+  "Return VALUE, a string of ID=DIGEST pairs, as an alist of (ID . DIGEST)."
+  (when value
+    (delq nil (mapcar (lambda (pair)
+                        (when (string-match "\\`\\([0-9]+\\)=\\([0-9a-f]+\\)\\'" pair)
+                          (cons (match-string 1 pair) (match-string 2 pair))))
+                      (split-string value)))))
+
+(defun org-canvas--submissions-comment-baseline-value (comments)
+  "Return the CANVAS_COMMENTS value for COMMENTS, or nil when none has an id."
+  (let ((pairs (delq nil
+                     (mapcar (lambda (c)
+                               (when-let* ((id (org-canvas--alist-get-non-null 'id c)))
+                                 (format "%s=%s" id
+                                         (org-canvas--submissions-comment-digest
+                                          (org-canvas--submissions-comment-org-text c)))))
+                             (append comments nil)))))
+    (and pairs (string-join pairs " "))))
+
+(defun org-canvas--submissions-insert-comment-baseline (comments)
+  "Insert the CANVAS_COMMENTS property line for COMMENTS, when any has an id."
+  (when-let* ((value (org-canvas--submissions-comment-baseline-value comments)))
+    (insert (format ":CANVAS_COMMENTS: %s\n" value))))
+
+(defun org-canvas--submissions-comment-baseline ()
+  "Return the CANVAS_COMMENTS baseline of the entry at point, (ID . DIGEST)."
+  (org-canvas--submissions-parse-digests (org-entry-get (point) "CANVAS_COMMENTS")))
+
+(defun org-canvas--submissions-set-comment-digest (id digest)
+  "Set comment ID's CANVAS_COMMENTS entry at point to DIGEST; nil drops it."
+  (let* ((old (org-canvas--submissions-comment-baseline))
+         (new (if (assoc id old)
+                  (delq nil (mapcar (lambda (pair)
+                                      (if (equal (car pair) id) (and digest (cons id digest)) pair))
+                                    old))
+                (append old (and digest (list (cons id digest)))))))
+    (if new
+        (org-entry-put (point) "CANVAS_COMMENTS"
+                       (mapconcat (lambda (p) (format "%s=%s" (car p) (cdr p))) new " "))
+      (org-entry-delete (point) "CANVAS_COMMENTS"))))
+
+(defun org-canvas--submissions-comment-item-end (start bound)
+  "Return the end of the item starting at START, BOUND the section's end.
+It is the end of the item's last non-blank line before the next item."
+  (save-excursion
+    (goto-char start)
+    (forward-line 1)
+    (goto-char (if (and (<= (point) bound) (re-search-forward "^-[ \t]" bound t))
+                   (match-beginning 0)
+                 bound))
+    (skip-chars-backward " \t\n" start)
+    (point)))
+
+(defun org-canvas--submissions-sent-comments ()
+  "Return the Comments items of the entry at point that carry an id.
+Each is a plist: :id (a string), :label, :delete (non-nil when marked
+DELETE), :text (normalized as a Rubric comment is, nil when empty),
+:start and :end, the end of its last non-blank line.  An item without
+an id is left out, since nothing can address it."
+  (when-let* ((region (org-canvas--submissions-section-region
+                       org-canvas--submissions-comments-heading)))
+    (save-excursion
+      (goto-char (car region))
+      (let ((bound (save-excursion (goto-char (cdr region))
+                                   (if (bolp) (point) (line-end-position))))
+            (items nil))
+        (while (re-search-forward org-canvas--submissions-comment-item-regexp bound t)
+          (let* ((start (match-beginning 0))
+                 (text-start (or (match-beginning 4) (match-end 0)))
+                 (item (list :id (match-string-no-properties 3)
+                             :label (match-string-no-properties 2)
+                             :delete (and (match-beginning 1) t)))
+                 (end (max text-start (org-canvas--submissions-comment-item-end start bound))))
+            (push (append item
+                          (list :start start :end end
+                                :text (org-canvas--submissions-comment-text
+                                       (buffer-substring-no-properties text-start end))))
+                  items)
+            (goto-char (max end (line-end-position)))))
+        (nreverse items)))))
+
+(defun org-canvas--submissions-find-sent-comment (id)
+  "Return the Comments item of the entry at point whose id is ID, or nil."
+  (seq-find (lambda (item) (equal (plist-get item :id) id))
+            (org-canvas--submissions-sent-comments)))
+
+(defun org-canvas--submissions-comment-pending-p (item baseline)
+  "Return non-nil when ITEM, a sent comment, has a change to send.
+BASELINE is the entry's CANVAS_COMMENTS alist.  An item marked DELETE
+has; so does one whose text no longer digests to its entry.  An item
+the baseline does not name cannot be told edited, and has not."
+  (or (plist-get item :delete)
+      (when-let* ((digest (cdr (assoc (plist-get item :id) baseline))))
+        (not (equal digest (org-canvas--submissions-comment-digest
+                            (plist-get item :text)))))))
+
+(defun org-canvas--submissions-comment-edits-at-point (user-id)
+  "Return the pending sent comments of USER-ID's heading at point.
+Each is a `org-canvas--submissions-sent-comments' plist with :user-id
+\(a number), :name and :baseline, the digest it was edited against."
+  (let ((baseline (org-canvas--submissions-comment-baseline))
+        (name (org-get-heading t t t t)))
+    (mapcar (lambda (item)
+              (append (list :user-id (string-to-number user-id) :name name
+                            :baseline (cdr (assoc (plist-get item :id) baseline)))
+                      item))
+            (seq-filter (lambda (item) (org-canvas--submissions-comment-pending-p item baseline))
+                        (org-canvas--submissions-sent-comments)))))
+
+(defun org-canvas--submissions-comment-edits-by-student (&optional skip-left)
+  "Return (USER-ID . EDITS) for every student whose sent comments changed here.
+With SKIP-LEFT a student who left the course is passed over."
+  (let ((found nil))
+    (save-excursion
+      (goto-char (point-min))
+      (while (re-search-forward "^\\* " nil t)
+        (org-back-to-heading t)
+        (when-let* ((user-id (org-entry-get (point) "USER_ID"))
+                    ((not (and skip-left (org-canvas--submissions-left-p))))
+                    (edits (org-canvas--submissions-comment-edits-at-point user-id)))
+          (push (cons (string-to-number user-id) edits) found))
+        (forward-line 1)))
+    (nreverse found)))
+
+(defun org-canvas--submissions-collect-comment-edits ()
+  "Return every sent comment edited or marked DELETE here, in file order.
+A student who left the course is skipped, as their draft is."
+  (apply #'append (mapcar #'cdr (org-canvas--submissions-comment-edits-by-student t))))
+
+(defun org-canvas--submissions-live-comments (assignment-id user-ids)
+  "Return a hash from comment id to (AUTHOR-ID . DIGEST) on ASSIGNMENT-ID.
+Only the submissions of USER-IDS are read into it, the digest taken
+of each comment's text as its item would show it."
+  (let ((live (make-hash-table :test 'equal))
+        (org-canvas--submissions-comment-cache (make-hash-table :test 'equal)))
+    (dolist (sub (append (org-canvas--submissions-fetch-for-assignment assignment-id) nil))
+      (when (memql (org-canvas--submissions-user-id sub) user-ids)
+        (dolist (c (append (alist-get 'submission_comments sub) nil))
+          (puthash (format "%s" (alist-get 'id c))
+                   (cons (alist-get 'author_id c)
+                         (org-canvas--submissions-comment-digest
+                          (org-canvas--submissions-comment-org-text c)))
+                   live))))
+    live))
+
+(defun org-canvas--submissions-read-live-comments (assignment-id edits)
+  "Return (SELF . LIVE) for EDITS on ASSIGNMENT-ID, or `unread'.
+SELF is the token owner's user id and LIVE the hash of
+`org-canvas--submissions-live-comments'.  A failed read is one warning."
+  (condition-case err
+      (cons (org-canvas--submissions-self-id)
+            (org-canvas--submissions-live-comments
+             assignment-id (delete-dups (mapcar (lambda (e) (plist-get e :user-id)) edits))))
+    (error
+     (org-canvas--log-warning org-canvas--logger
+       "[Submissions] Could not read the sent comments (%s); none edited or deleted"
+       (error-message-string err))
+     'unread)))
+
+(defun org-canvas--submissions-comment-refusal (edit live self)
+  "Return why EDIT may not be sent, or nil when it may.
+LIVE is the comment's (AUTHOR-ID . DIGEST) on Canvas, nil when Canvas
+no longer holds it; SELF is the token owner's user id, a string.
+Canvas lets only a comment's author rewrite it, and the push holds
+deletions to the same rule, so another grader's comment stays theirs."
+  (cond ((and (not (plist-get edit :delete)) (null (plist-get edit :text)))
+         "emptied; mark it DELETE to delete it")
+        ((null live) "no longer on Canvas")
+        ((not (equal (format "%s" (car live)) self))
+         "not yours; only its author may change it")
+        ((and (plist-get edit :baseline)
+              (not (equal (cdr live) (plist-get edit :baseline))))
+         "edited on Canvas since the pull")))
+
+(defun org-canvas--submissions-check-comment-edits (assignment-id edits)
+  "Split EDITS into (SENDABLE . REFUSED) against ASSIGNMENT-ID on Canvas.
+The grader's user id and the students' comments are read once; a
+refused edit carries its :refused reason and is logged as a warning.
+When Canvas cannot be read every edit is refused, since neither the
+author nor the baseline could be checked.  Nil without EDITS."
+  (when edits
+    (let ((read (org-canvas--submissions-read-live-comments assignment-id edits))
+          (ok nil)
+          (bad nil))
+      (dolist (edit edits)
+        (let ((why (if (eq read 'unread)
+                       "Canvas could not be read"
+                     (org-canvas--submissions-comment-refusal
+                      edit (gethash (plist-get edit :id) (cdr read)) (car read)))))
+          (if (not why)
+              (push edit ok)
+            (org-canvas--log-warning org-canvas--logger
+              "[Submissions] Comment %s on %s not changed: %s"
+              (plist-get edit :id) (plist-get edit :name) why)
+            (push (append (list :refused why) edit) bad))))
+      (cons (nreverse ok) (nreverse bad)))))
+
+(defun org-canvas--submissions-comment-url (assignment-id edit)
+  "Return the URL of EDIT's sent comment on ASSIGNMENT-ID.
+Canvas addresses the submission by the student's user id (#125)."
+  (org-canvas-api-course-endpoint "assignments/%s/submissions/%s/comments/%s"
+                                  assignment-id (plist-get edit :user-id) (plist-get edit :id)))
+
+(defun org-canvas--submissions-comment-edit-payload (text)
+  "Return the body of the request that rewrites a sent comment as TEXT.
+Canvas's `Edit a submission comment' takes the text as a top-level
+`comment', not wrapped as a new comment's `text_comment' is."
+  `((comment . ,text)))
+
+(defun org-canvas--submissions-send-comment-edit (assignment-id edit)
+  "Send EDIT, a sent comment of ASSIGNMENT-ID to rewrite or delete.
+Return `dry-run' under `org-canvas--dry-run', when nothing is sent
+\(Hard Rule 1); `deleted' after a deletion; else Canvas's reply, the
+comment as it stored it."
+  (let ((url (org-canvas--submissions-comment-url assignment-id edit))
+        (verb (if (plist-get edit :delete) "delete" "edit")))
+    (cond (org-canvas--dry-run
+           (org-canvas--log-info org-canvas--logger "[DRY-RUN] Would %s comment %s on %s"
+             verb (plist-get edit :id) (plist-get edit :name))
+           'dry-run)
+          ((plist-get edit :delete)
+           (org-canvas-api-request 'DELETE url)
+           'deleted)
+          (t (org-canvas-api-request
+              'PUT url :data (org-canvas--submissions-comment-edit-payload
+                              (plist-get edit :text)))))))
+
+(defun org-canvas--submissions-rewrite-sent-comment (item text &optional delete)
+  "Replace ITEM of the entry at point by its label, id and TEXT.
+With DELETE the item is marked for deletion."
+  (save-excursion
+    (goto-char (plist-get item :start))
+    (delete-region (plist-get item :start) (plist-get item :end))
+    (insert (org-canvas--submissions-comment-line
+             (plist-get item :label) (plist-get item :id) (or text "") delete))))
+
+(defun org-canvas--submissions-record-comment-edit (edit reply)
+  "Record under EDIT's student what Canvas answered, REPLY.
+A deleted comment's item and baseline entry go; a rewritten one shows
+the text Canvas stored, which becomes its baseline."
+  (save-excursion
+    (when-let* (((org-canvas--submissions-goto-user (plist-get edit :user-id)))
+                (item (org-canvas--submissions-find-sent-comment (plist-get edit :id))))
+      (if (eq reply 'deleted)
+          (progn
+            (delete-region (plist-get item :start)
+                           (min (point-max) (1+ (plist-get item :end))))
+            (org-canvas--submissions-set-comment-digest (plist-get edit :id) nil))
+        (let ((text (if (stringp (org-canvas--alist-get-non-null 'comment reply))
+                        (org-canvas--submissions-comment-org-text reply)
+                      (plist-get edit :text))))
+          (org-canvas--submissions-rewrite-sent-comment item text)
+          (org-canvas--submissions-set-comment-digest
+           (plist-get edit :id) (org-canvas--submissions-comment-digest text)))))))
+
+(defun org-canvas--submissions-apply-comment-edit (assignment-id edit)
+  "Send EDIT to ASSIGNMENT-ID and record it; return the count it falls under.
+The count is :edited, :deleted, :dry-run, or :failed for a request
+Canvas refused, which is one warning and leaves the item pending."
+  (condition-case err
+      (let ((reply (org-canvas--submissions-send-comment-edit assignment-id edit)))
+        (if (eq reply 'dry-run)
+            :dry-run
+          (org-canvas--submissions-record-comment-edit edit reply)
+          (if (eq reply 'deleted) :deleted :edited)))
+    (error
+     (org-canvas--log-warning org-canvas--logger
+       "[Submissions] Could not %s comment %s on %s: %s"
+       (if (plist-get edit :delete) "delete" "edit")
+       (plist-get edit :id) (plist-get edit :name) (error-message-string err))
+     :failed)))
+
+(defun org-canvas--submissions-apply-comment-edits (assignment-id edits)
+  "Send each of EDITS to ASSIGNMENT-ID; return the counts, or nil without any.
+The plist has :edited, :deleted, :dry-run and :failed."
+  (when edits
+    (let ((counts (list :edited 0 :deleted 0 :dry-run 0 :failed 0)))
+      (dolist (edit edits)
+        (let ((key (org-canvas--submissions-apply-comment-edit assignment-id edit)))
+          (plist-put counts key (1+ (plist-get counts key)))))
+      counts)))
+
+(defun org-canvas--submissions-describe-comment-edits (edits)
+  "Return the confirmation's words for EDITS, sent comments to send, or nil."
+  (let* ((deletes (cl-count-if (lambda (e) (plist-get e :delete)) edits))
+         (rewrites (- (length edits) deletes)))
+    (when edits
+      (string-join (delq nil (list (when (> rewrites 0) (format "%d comment edit(s)" rewrites))
+                                   (when (> deletes 0) (format "%d comment deletion(s)" deletes))))
+                   " and "))))
+
+(defun org-canvas--submissions-list-comment-edits (comments)
+  "Return COMMENTS, (SENDABLE . REFUSED) edits, one line each for the prompt."
+  (mapconcat (lambda (e)
+               (format "  %s: %s comment %s%s"
+                       (plist-get e :name)
+                       (cond ((plist-get e :refused) "not sending")
+                             ((plist-get e :delete) "delete")
+                             (t "edit"))
+                       (plist-get e :id)
+                       (if (plist-get e :refused) (format " (%s)" (plist-get e :refused)) "")))
+             (append (car comments) (cdr comments)) "\n"))
+
+(defun org-canvas--submissions-refused-note (refused)
+  "Return the note a push message ends with for REFUSED comment edits."
+  (if refused
+      (format "; %d comment change(s) not sent (see the log)" (length refused))
+    ""))
+
+(defun org-canvas--submissions-comment-edits-note (counts refused)
+  "Return the push message's note on sent comments, from COUNTS and REFUSED.
+COUNTS is what `org-canvas--submissions-apply-comment-edits' returned."
+  (concat
+   (cond ((null counts) "")
+         ((> (plist-get counts :dry-run) 0)
+          (format "; dry run: would change %d sent comment(s)" (plist-get counts :dry-run)))
+         (t (format "; %d sent comment(s) edited, %d deleted%s"
+                    (plist-get counts :edited) (plist-get counts :deleted)
+                    (if (> (plist-get counts :failed) 0)
+                        (format ", %d refused by Canvas (see the log)" (plist-get counts :failed))
+                      ""))))
+   (org-canvas--submissions-refused-note refused)))
+
+(defun org-canvas--submissions-restore-comment (edit)
+  "Put EDIT, a sent comment changed here, back into the fresh entry at point.
+Nothing is written when Canvas now holds the edited text (it was
+pushed meanwhile).  Otherwise the item takes the grader's text or mark
+again, with the baseline it was edited against, so a comment edited on
+Canvas since is refused by the next push rather than overwritten.  A
+comment gone from Canvas is one warning, which carries the text."
+  (let ((item (org-canvas--submissions-find-sent-comment (plist-get edit :id)))
+        (fresh (cdr (assoc (plist-get edit :id) (org-canvas--submissions-comment-baseline)))))
+    (cond ((null item)
+           (org-canvas--log-warning org-canvas--logger
+             "[Refresh] Comment %s on %s is no longer on Canvas; the change made here was dropped: %s"
+             (plist-get edit :id) (plist-get edit :name)
+             (if (plist-get edit :delete) "DELETE" (plist-get edit :text))))
+          ((and (not (plist-get edit :delete))
+                (equal fresh (org-canvas--submissions-comment-digest (plist-get edit :text)))))
+          (t (org-canvas--submissions-reapply-comment item edit fresh)))))
+
+(defun org-canvas--submissions-reapply-comment (item edit fresh)
+  "Write EDIT over ITEM, freshly rendered with the digest FRESH, at point.
+The baseline goes back to the one EDIT was made against; when Canvas
+moved from it, the log says the change will not be sent as it stands."
+  (let ((baseline (plist-get edit :baseline)))
+    (org-canvas--submissions-rewrite-sent-comment
+     item (plist-get edit :text) (plist-get edit :delete))
+    (org-canvas--submissions-set-comment-digest (plist-get edit :id) (or baseline fresh))
+    (when (and baseline (not (equal baseline fresh)))
+      (org-canvas--log-warning org-canvas--logger
+        "[Refresh] Comment %s on %s was edited on Canvas since; the change made here is kept and a push will not send it"
+        (plist-get edit :id) (plist-get edit :name)))))
+
+(defun org-canvas--submissions-restore-comments (carry)
+  "Write CARRY, from `org-canvas--submissions-comment-edits-by-student', back."
+  (save-excursion
+    (dolist (entry carry)
+      (when (org-canvas--submissions-goto-user (car entry))
+        (dolist (edit (cdr entry))
+          (org-canvas--submissions-restore-comment edit))))))
 
 (defconst org-canvas--submissions-rubric-heading "** Rubric"
   "Heading under which a student's rubric table lives.")
@@ -2941,20 +3367,25 @@ submission's own id; the latter is a 404 (#125)."
   "Record posted comment TEXT under the Comments heading of the entry at point.
 A Comments heading is created when missing, ahead of the Comment to post
 heading so the record reads in order.  Newlines in TEXT become spaces in
-the one-line record; Canvas keeps the original."
+the one-line record; Canvas keeps the original.  The record goes after
+the last item, a comment's indented paragraphs included, and carries no
+id, so it is read-only until a refresh renders it with one (#419)."
   (let ((inhibit-read-only t)
         (line (format "- *You* %s :: %s\n"
                       (format-time-string "<%Y-%m-%d %a %H:%M>")
                       (replace-regexp-in-string "\n+" " " text))))
     (save-excursion
       (org-back-to-heading t)
-      (let ((end (save-excursion (org-end-of-subtree t) (point))))
-        (if (re-search-forward "^\\*\\* Comments$" end t)
+      (let ((end (save-excursion (org-end-of-subtree t) (point)))
+            (region (org-canvas--submissions-section-region
+                     org-canvas--submissions-comments-heading)))
+        (if region
             (progn
-              (forward-line 1)
-              (while (and (< (point) end) (looking-at "^- "))
-                (forward-line 1))
-              (insert line))
+              (goto-char (cdr region))
+              (skip-chars-backward " \t\n" (car region))
+              (if (> (point) (car region))
+                  (insert "\n" (string-remove-suffix "\n" line))
+                (insert line)))
           ;; Org 9.6 returns t from `org-back-to-heading', later versions the
           ;; position; never use its value.
           (org-back-to-heading t)
@@ -3267,10 +3698,10 @@ The detail view is the grading file under the submissions directory,
 rendered and saved; the summary view is an ephemeral buffer.
 ASSIGNMENT, the Canvas assignment object when at hand, supplies the
 rubric header of the detail view.  The Comment Bank section, notes,
-drafted comments, Rubric rows and typed scores already in the file are
-carried over to the
-new render, a departed student's heading stays when it holds any of
-them, and what changed since the last render is reported
+drafted comments, Rubric rows, typed scores and sent comments changed
+but not pushed already in the file are carried over to the new
+render, a departed student's heading stays when it holds any of them,
+and what changed since the last render is reported
 \(`org-canvas--submissions-report-changes') and kept in
 `org-canvas-submissions--last-refresh'.  Return the buffer."
   (let ((buf (if (eq view 'detail)
@@ -3283,6 +3714,7 @@ them, and what changed since the last render is reported
              (detail (eq view 'detail))
              (previous (and detail (org-canvas--submissions-collect-previous)))
              (carry (and detail (org-canvas--submissions-collect-carryover)))
+             (comments (and detail (org-canvas--submissions-comment-edits-by-student)))
              (bank (and detail (org-canvas--submissions-bank-carryover)))
              (changed nil))
         (if (not detail)
@@ -3296,6 +3728,7 @@ them, and what changed since the last render is reported
           (when bank
             (org-canvas--submissions-restore-bank bank))
           (org-canvas--submissions-restore-carryover carry)
+          (org-canvas--submissions-restore-comments comments)
           (setq changed (org-canvas--submissions-report-changes
                          assignment-name previous submissions carry
                          assignment-id)))
@@ -3843,15 +4276,17 @@ late statuses set and the grades cleared (issue #417)."
               (when (> lates 0) (format " (%d setting a late status)" lates))
               (when (> clears 0) (format " (%d clearing a grade)" clears))))))
 
-(defun org-canvas--submissions-describe-push (diffs drafts &optional bank)
+(defun org-canvas--submissions-describe-push (diffs drafts &optional bank comments)
   "Return a one-line summary of DIFFS, DRAFTS and BANK for the confirmation.
 The grade DIFFS are described by
 `org-canvas--submissions-describe-grade-changes'.  BANK are the Comment
-Bank items to send."
+Bank items to send, and COMMENTS the sent comments to edit or delete
+\(issue #419)."
   (string-join
    (delq nil
          (list (org-canvas--submissions-describe-grade-changes diffs)
                (when drafts (format "%d comment(s)" (length drafts)))
+               (org-canvas--submissions-describe-comment-edits comments)
                (when bank (format "%d saved comment(s)" (length bank)))))
    " and "))
 
@@ -3869,7 +4304,9 @@ that conflict with what Canvas holds now are skipped and marked (see
 the baselines, the comment records, and the file are updated.  A
 LATE_STATUS that differs from its CANVAS_LATE_STATUS is sent too, one
 GraphQL request per student, and so is every new or edited item of
-the Comment Bank section (issue #352).  The push is confirmed through
+the Comment Bank section (issue #352), and every sent comment of the
+grader's own edited or marked DELETE under a student's Comments
+heading (issue #419).  The push is confirmed through
 `org-canvas--confirm'; under a manual post policy posting is offered
 afterwards, interactively only.  A script calls
 `org-canvas-push-submission-grades' instead (issue #381)."
@@ -3886,18 +4323,29 @@ afterwards, interactively only.  A script calls
     (user-error (signal (car err) (cdr err)))
     (error (org-canvas--user-message "Error pushing: %s" (error-message-string err)))))
 
-(defun org-canvas--submissions-confirm-push (diffs drafts bank conflicts)
+(defun org-canvas--submissions-confirm-push (diffs drafts bank conflicts &optional comments)
   "Show the grade DIFFS and ask whether to push them with DRAFTS and BANK.
-CONFLICTS are counted in the question.  The question goes through
-`org-canvas--confirm', so `org-canvas-assume-yes' and a batch Emacs
-answer it yes."
-  (when diffs
-    (message "Grade changes:\n%s" (org-canvas--submissions-describe-changes diffs)))
+CONFLICTS are counted in the question.  COMMENTS, the sent comments
+as (SENDABLE . REFUSED), are listed one per line, what will not be
+sent among them, and the sendable counted in the question.  The
+question goes through `org-canvas--confirm', so
+`org-canvas-assume-yes' and a batch Emacs answer it yes."
+  (let ((lines (delq nil (list (when diffs
+                                 (concat "Grade changes:\n"
+                                         (org-canvas--submissions-describe-changes diffs)))
+                               (when (or (car comments) (cdr comments))
+                                 (concat "Sent comments:\n"
+                                         (org-canvas--submissions-list-comment-edits comments)))))))
+    (when lines
+      (message "%s" (string-join lines "\n"))))
   (org-canvas--confirm
-   (format "Push %s%s? "
-           (org-canvas--submissions-describe-push diffs drafts bank)
+   (format "Push %s%s%s? "
+           (org-canvas--submissions-describe-push diffs drafts bank (car comments))
            (if conflicts
                (format ", skipping %d conflict(s)" (length conflicts))
+             "")
+           (if (cdr comments)
+               (format ", leaving %d comment change(s) unsent" (length (cdr comments)))
              ""))))
 
 (defun org-canvas--submissions-push-current (ask)
@@ -3915,16 +4363,19 @@ question.  Return nil when the push was declined, else the plist of
       (user-error "No CANVAS_ASSIGNMENT_ID in this buffer"))
     (pcase-let ((`(,changes . ,conflicts)
                  (org-canvas--submissions-partition-conflicts
-                  assignment-id (org-canvas--submissions-collect-grade-changes))))
+                  assignment-id (org-canvas--submissions-collect-grade-changes)))
+                (comments (org-canvas--submissions-check-comment-edits
+                           assignment-id (org-canvas--submissions-collect-comment-edits))))
       (org-canvas--submissions-mark-conflicts conflicts)
-      (cond ((not (or changes drafts bank))
-             (message "Nothing to push%s" (org-canvas--submissions-conflicts-note conflicts))
+      (cond ((not (or changes drafts bank (car comments)))
+             (message "Nothing to push%s%s" (org-canvas--submissions-conflicts-note conflicts)
+                      (org-canvas--submissions-refused-note (cdr comments)))
              (list :pushed 0 :state nil :late 0 :comments 0
                    :conflicts (length conflicts)))
             ((or (not ask)
-                 (org-canvas--submissions-confirm-push changes drafts bank conflicts))
+                 (org-canvas--submissions-confirm-push changes drafts bank conflicts comments))
              (org-canvas--submissions-push-all
-              assignment-id changes drafts conflicts bank))))))
+              assignment-id changes drafts conflicts bank comments))))))
 
 (defun org-canvas--submissions-push-landed-p (result)
   "Return non-nil when the push RESULT sent grades and Canvas stored them.
@@ -3984,8 +4435,9 @@ Return a plist: :pushed, the grades Canvas stored; :state, how the
 grade send ended (`completed', `failed', `unconfirmed', `dry-run', or
 nil when no grade was sent) with :message its reason; :late,
 :comments and :conflicts, the late statuses set, the comments posted
-and the changes skipped as conflicts; :posted, non-nil when the
-grades were posted.  A script that pushes a column by id and posts
+and the changes skipped as conflicts; :edited and :deleted, the sent
+comments rewritten and deleted (issue #419); :posted, non-nil when
+the grades were posted.  A script that pushes a column by id and posts
 it calls
 
   (org-canvas-push-submission-grades \"2573836\" t)
@@ -4010,13 +4462,15 @@ and one that only pushes leaves POST out (issue #381)."
     ""))
 
 (defun org-canvas--submissions-push-all (assignment-id changes drafts conflicts
-                                                        &optional bank)
+                                                        &optional bank comments)
   "Push the grade diffs and drafts of ASSIGNMENT-ID, then record them.
 CHANGES are the grade diffs and DRAFTS the drafted comments.
 The grades and rubric assessments go first, then the late statuses,
-then the drafted comments, then, when BANK lists Comment Bank items
-to send, the comment bank; CONFLICTS, already marked, are only
-counted in the closing message.  Every baseline is recorded only once
+then, when COMMENTS, (SENDABLE . REFUSED), has sent comments to edit
+or delete, those (issue #419), then the drafted comments, then, when
+BANK lists Comment Bank items to send, the comment bank; CONFLICTS,
+already marked, and the refused comment changes are only counted in
+the closing message.  Every baseline is recorded only once
 the grades have landed: a bulk push waits for Canvas's background job,
 and one that failed or ran out of time records no score or rubric
 baseline, so the next push sends them again (issue #382).
@@ -4025,10 +4479,12 @@ Return a plist: :pushed, the grades Canvas stored (0 when they did not
 land); :state, the grade send's (`completed', `failed', `unconfirmed',
 `dry-run', or nil when no grade was sent) and :message its reason;
 :late, :comments and :conflicts, the late statuses set, the comments
-posted and the conflicts skipped.  Posting is left to the caller."
+posted and the conflicts skipped; :edited and :deleted, the sent
+comments rewritten and deleted.  Posting is left to the caller."
   (let* ((grading (seq-filter #'org-canvas--submissions-grade-fields changes))
          (outcome (org-canvas--submissions-send-grades assignment-id changes))
          (late (org-canvas--submissions-send-late-statuses changes))
+         (edited (org-canvas--submissions-apply-comment-edits assignment-id (car comments)))
          (posted (org-canvas--submissions-post-drafts assignment-id drafts))
          (saved (and bank (org-canvas--submissions-push-bank assignment-id)))
          (applied (org-canvas--submissions-grades-applied-p outcome)))
@@ -4036,10 +4492,11 @@ posted and the conflicts skipped.  Posting is left to the caller."
         (org-canvas--submissions-record-pushed changes (car late))
       (org-canvas--submissions-record-late-only changes (car late)))
     (org-canvas--user-message
-     "%s%s and %d comment(s)%s%s%s"
+     "%s%s and %d comment(s)%s%s%s%s"
      (org-canvas--submissions-grades-note (length grading) outcome)
      (if (car late) (format ", %d late status(es)" (length (car late))) "")
      posted
+     (org-canvas--submissions-comment-edits-note edited (cdr comments))
      (org-canvas--submissions-late-note (cdr late))
      (org-canvas--submissions-describe-bank saved bank)
      (org-canvas--submissions-conflicts-note conflicts))
@@ -4048,6 +4505,8 @@ posted and the conflicts skipped.  Posting is left to the caller."
           :message (plist-get outcome :message)
           :late (length (car late))
           :comments posted
+          :edited (or (plist-get edited :edited) 0)
+          :deleted (or (plist-get edited :deleted) 0)
           :conflicts (length conflicts))))
 
 ;;;; Posting Grades

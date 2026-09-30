@@ -1,0 +1,16 @@
+* Added
+- #419 A sent submission comment can be edited or deleted from the
+  grading file.  Each item under a student's =** Comments= now carries
+  the comment's id (=- *Author* <time> [48213] :: text=) and the
+  heading a =CANVAS_COMMENTS= baseline of their text, so =S= rewrites
+  a comment of yours whose text you changed and deletes one you marked
+  =DELETE= (=- DELETE *Author* ...=), after re-reading them: a comment
+  by someone else, one edited on Canvas since the pull, or one gone
+  from Canvas is named in the confirmation and the log and not sent.
+  Removing an item never deletes the comment.  A refresh keeps an edit
+  or a mark that was not sent, and a file pulled before this gets its
+  ids on its next refresh.
+* Fixed
+- #419 A comment posted from a draft is recorded after the last item
+  under =** Comments=, no longer inside a longer comment's indented
+  paragraphs.

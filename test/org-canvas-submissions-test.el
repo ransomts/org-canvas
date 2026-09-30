@@ -4844,5 +4844,420 @@ Progress by default).  No prompt may be asked.  Return a plist:
           (org-canvas-submissions-push-grades))
         (expect offered :to-be nil)))))
 
+;;;; Sent Comments (issue #419)
+
+(defun test-sent--file (baseline items &optional more)
+  "Return a grading file whose student carries BASELINE and ITEMS under Comments.
+BASELINE is a list of (ID . TEXT), written as CANVAS_COMMENTS digests;
+ITEMS is the text of the Comments section.  MORE follows the student."
+  (concat test-grading-file-header
+          "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:SCORE: 92\n:CANVAS_SCORE: 92\n"
+          (if baseline
+              (format ":CANVAS_COMMENTS: %s\n"
+                      (mapconcat (lambda (p)
+                                   (format "%s=%s" (car p)
+                                           (org-canvas--submissions-comment-digest (cdr p))))
+                                 baseline " "))
+            "")
+          ":END:\n\n** Comments\n" items "\n** Notes\nMine.\n" (or more "")))
+
+(defun test-sent--comment (id author text)
+  "Return a Canvas submission comment ID by the user AUTHOR holding TEXT."
+  `((id . ,id) (author_id . ,author) (author_name . "Prof") (comment . ,text)
+    (created_at . "2026-09-28T14:02:00Z")))
+
+(defmacro test-sent--with-canvas (comments &rest body)
+  "Run BODY with Canvas holding COMMENTS on Alice's submission, the grader 77."
+  (declare (indent 1))
+  `(cl-letf (((symbol-function 'org-canvas--submissions-self-id) (lambda () "77"))
+             ((symbol-function 'org-canvas--submissions-fetch-for-assignment)
+              (lambda (_id)
+                (list (test-org-canvas-make-submission
+                       (list (cons 'submission_comments (vconcat ,comments)))))))
+             ((symbol-function 'org-canvas--submissions-fetch-assignment) #'ignore)
+             ((symbol-function 'switch-to-buffer) #'identity))
+     (with-html-to-org-identity ,@body)))
+
+(defun test-sent--push ()
+  "Push the grading buffer at hand, confirming; return the prompt asked."
+  (let ((prompt nil))
+    (cl-letf (((symbol-function 'org-canvas--confirm) (lambda (p) (setq prompt p) t))
+              ((symbol-function 'org-canvas--submissions-offer-to-post) #'ignore))
+      (org-canvas-submissions-push-grades))
+    prompt))
+
+(defmacro test-sent--collecting-warnings (&rest body)
+  "Run BODY and return the warnings it logged, in order."
+  `(let ((warnings nil))
+     (cl-letf (((symbol-function 'org-canvas--log-warning)
+                (lambda (_logger fmt &rest args) (push (apply #'format fmt args) warnings))))
+       ,@body)
+     (nreverse warnings)))
+
+(describe "rendering sent comments with their ids (issue #419)"
+  (it "labels each comment with its id and records its digest as CANVAS_COMMENTS"
+    (with-html-to-org-identity
+      (with-temp-buffer
+        (org-mode)
+        (org-canvas--submissions-render-detail-entry
+         (test-org-canvas-make-submission
+          `((submission_comments
+             . [,(test-sent--comment 48213 77 "Good work.")
+                ,(test-sent--comment 48214 90 "First line.\nSecond line.")]))))
+        (let ((content (buffer-string)))
+          (expect content :to-match "^- \\*Prof\\* <[^>]+> \\[48213\\] :: Good work\\.$")
+          (expect content :to-match "^- \\*Prof\\* <[^>]+> \\[48214\\] ::\n  First line\\.\n  Second line\\.$")
+          (expect content :to-match
+                  (format ":CANVAS_COMMENTS: 48213=%s 48214=%s\n"
+                          (org-canvas--submissions-comment-digest "Good work.")
+                          (org-canvas--submissions-comment-digest "First line.\nSecond line.")))))))
+
+  (it "writes no baseline and no id for a comment Canvas gave none"
+    (with-html-to-org-identity
+      (with-temp-buffer
+        (org-mode)
+        (org-canvas--submissions-render-detail-entry
+         (test-org-canvas-make-submission-with-comment))
+        (expect (buffer-string) :not :to-match "CANVAS_COMMENTS")
+        (expect (buffer-string) :to-match "^- \\*Prof\\. Smith\\* <[^>]+> :: Good work!$"))))
+
+  (it "converts each comment once for its item and its digest"
+    (let ((calls 0))
+      (cl-letf (((symbol-function 'org-canvas--html-to-org)
+                 (lambda (html) (cl-incf calls) html)))
+        (with-temp-buffer
+          (org-mode)
+          (org-canvas--submissions-render-detail
+           "HW" "1001"
+           (list (test-org-canvas-make-submission
+                  `((body . nil)
+                    (submission_comments . [,(test-sent--comment 1 77 "Once.")])))))))
+      (expect calls :to-equal 1))))
+
+(describe "reading sent comments (issue #419)"
+  (it "reads the items that carry an id, their marks and their paragraphs"
+    (with-temp-org-buffer
+        (concat "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n\n** Comments\n"
+                "- *Prof* <2026-09-28 Mon 14:02> [11] :: One line.\n"
+                "- *You* <2026-09-29 Tue 09:00> :: No id, see [5] :: here.\n"
+                "- DELETE *TA* <2026-09-28 Mon 15:00> [12] :: Gone soon.\n"
+                "- *Prof* <2026-09-28 Mon 16:00> [13] ::\n  First.\n\n  Second.\n\n"
+                "** Notes\n")
+      (org-back-to-heading t)
+      (let ((items (org-canvas--submissions-sent-comments)))
+        (expect (mapcar (lambda (i) (plist-get i :id)) items) :to-equal '("11" "12" "13"))
+        (expect (mapcar (lambda (i) (plist-get i :delete)) items) :to-equal '(nil t nil))
+        (expect (plist-get (nth 1 items) :label) :to-equal "*TA* <2026-09-28 Mon 15:00>")
+        (expect (plist-get (nth 0 items) :text) :to-equal "One line.")
+        (expect (plist-get (nth 2 items) :text) :to-equal "First.\n\nSecond."))))
+
+  (it "reads an item whose line ends the file"
+    (with-temp-org-buffer
+        "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n\n** Comments\n- *Prof* [11] :: Last.  "
+      (org-back-to-heading t)
+      (expect (plist-get (car (org-canvas--submissions-sent-comments)) :text) :to-equal "Last.")))
+
+  (it "reads a file from before #419 as holding nothing to send"
+    (with-temp-org-buffer
+        (concat "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n\n** Comments\n"
+                "- *Prof* <2026-01-01 Thu 00:00> :: Old comment\n")
+      (expect (org-canvas--submissions-sent-comments) :to-be nil)
+      (expect (org-canvas--submissions-collect-comment-edits) :to-be nil)))
+
+  (it "collects an edited or marked comment, never an untouched or unknown one"
+    (with-grading-file
+        (test-sent--file '(("11" . "Same.") ("12" . "Before.") ("13" . "Kept."))
+                         (concat "- *Prof* [11] :: Same.\n- *Prof* [12] :: After.\n"
+                                 "- DELETE *Prof* [13] :: Kept.\n- *Prof* [14] :: No baseline.\n"))
+      (let ((edits (org-canvas--submissions-collect-comment-edits)))
+        (expect (mapcar (lambda (e) (plist-get e :id)) edits) :to-equal '("12" "13"))
+        (expect (plist-get (car edits) :user-id) :to-equal 5001)
+        (expect (plist-get (car edits) :name) :to-equal "Adams, Alice")
+        (expect (plist-get (car edits) :baseline)
+                :to-equal (org-canvas--submissions-comment-digest "Before.")))))
+
+  (it "adds, replaces and drops a baseline entry"
+    (with-temp-org-buffer "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n"
+      (org-back-to-heading t)
+      (org-canvas--submissions-set-comment-digest "11" "aaa")
+      (org-canvas--submissions-set-comment-digest "12" "bbb")
+      (expect (org-entry-get (point) "CANVAS_COMMENTS") :to-equal "11=aaa 12=bbb")
+      (org-canvas--submissions-set-comment-digest "11" "ccc")
+      (expect (org-entry-get (point) "CANVAS_COMMENTS") :to-equal "11=ccc 12=bbb")
+      (org-canvas--submissions-set-comment-digest "11" nil)
+      (org-canvas--submissions-set-comment-digest "13" nil)
+      (expect (org-entry-get (point) "CANVAS_COMMENTS") :to-equal "12=bbb")))
+
+  (it "passes over a student who left the course"
+    (with-grading-file
+        (concat test-grading-file-header
+                "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:STATUS: left\n:CANVAS_COMMENTS: 11=abc\n:END:\n\n"
+                "** Comments\n- DELETE *Prof* [11] :: Bye.\n")
+      (expect (org-canvas--submissions-collect-comment-edits) :to-be nil)
+      (expect (length (org-canvas--submissions-comment-edits-by-student)) :to-equal 1))))
+
+(describe "pushing sent comments (issue #419)"
+  (it "rewrites the grader's own edited comment and records Canvas's text as the baseline"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (setq test-org-canvas-api-responses
+              `(("comments/48213" . ,(test-sent--comment 48213 77 "Sharper now."))))
+        (with-grading-file (test-sent--file '(("48213" . "Good."))
+                                            "- *Prof* <2026-09-28 Mon 14:02> [48213] :: Sharper now.\n")
+          (test-sent--with-canvas (list (test-sent--comment 48213 77 "Good."))
+            (let ((prompt (test-sent--push)))
+              (expect prompt :to-match "1 comment edit(s)"))
+            (let ((call (test-org-canvas-find-api-call 'PUT "comments")))
+              (expect (nth 1 call) :to-match "assignments/1001/submissions/5001/comments/48213\\'")
+              (expect (nth 2 call) :to-equal '((comment . "Sharper now."))))
+            (expect (buffer-string) :to-match "^- \\*Prof\\* <2026-09-28 Mon 14:02> \\[48213\\] :: Sharper now\\.$")
+            (org-canvas--submissions-goto-user 5001)
+            (expect (org-entry-get (point) "CANVAS_COMMENTS")
+                    :to-equal (format "48213=%s" (org-canvas--submissions-comment-digest "Sharper now.")))
+            (expect (org-canvas--submissions-collect-comment-edits) :to-be nil)
+            (expect (buffer-modified-p) :to-be nil))))))
+
+  (it "sends a paragraph break as typed"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (test-sent--file '(("48213" . "Good."))
+                                            "- *Prof* [48213] ::\n  First.\n\n  Second.\n")
+          (test-sent--with-canvas (list (test-sent--comment 48213 77 "Good."))
+            (test-sent--push)
+            (expect (nth 2 (test-org-canvas-find-api-call 'PUT "comments"))
+                    :to-equal '((comment . "First.\n\nSecond."))))))))
+
+  (it "keeps the item's text when Canvas answers without one"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (test-sent--file '(("48213" . "Good.")) "- *Prof* [48213] :: Better.\n")
+          (test-sent--with-canvas (list (test-sent--comment 48213 77 "Good."))
+            (test-sent--push)
+            (expect (buffer-string) :to-match "^- \\*Prof\\* \\[48213\\] :: Better\\.$")
+            (expect (org-canvas--submissions-collect-comment-edits) :to-be nil))))))
+
+  (it "deletes a comment marked DELETE and takes its item and baseline away"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (test-sent--file '(("11" . "Keep.") ("12" . "Drop."))
+                                            "- *Prof* [11] :: Keep.\n- DELETE *Prof* [12] :: Drop.\n")
+          (test-sent--with-canvas (list (test-sent--comment 11 77 "Keep.")
+                                        (test-sent--comment 12 77 "Drop."))
+            (expect (test-sent--push) :to-match "1 comment deletion(s)")
+            (expect (nth 1 (test-org-canvas-find-api-call 'DELETE "comments"))
+                    :to-match "submissions/5001/comments/12\\'")
+            (expect (nth 2 (test-org-canvas-find-api-call 'DELETE "comments")) :to-be nil)
+            (expect (buffer-string) :to-match "\\*\\* Comments\n- \\*Prof\\* \\[11\\] :: Keep\\.\n\n\\*\\* Notes")
+            (org-canvas--submissions-goto-user 5001)
+            (expect (org-entry-get (point) "CANVAS_COMMENTS")
+                    :to-equal (format "11=%s" (org-canvas--submissions-comment-digest "Keep."))))))))
+
+  (it "drops the baseline property with the last comment"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (test-sent--file '(("12" . "Drop.")) "- DELETE *Prof* [12] :: Drop.\n")
+          (test-sent--with-canvas (list (test-sent--comment 12 77 "Drop."))
+            (test-sent--push)
+            (org-canvas--submissions-goto-user 5001)
+            (expect (org-entry-get (point) "CANVAS_COMMENTS") :to-be nil))))))
+
+  (it "never deletes a comment whose line was removed"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (test-sent--file '(("11" . "Keep.") ("12" . "Gone from the file."))
+                                            "- *Prof* [11] :: Keep.\n")
+          (test-sent--with-canvas (list (test-sent--comment 11 77 "Keep.")
+                                        (test-sent--comment 12 77 "Gone from the file."))
+            (cl-letf (((symbol-function 'org-canvas--confirm) (lambda (_) (error "must not ask"))))
+              (org-canvas-submissions-push-grades))
+            (expect (test-org-canvas-api-call-count) :to-equal 0))))))
+
+  (it "refuses, names and never sends a change it may not make"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file
+            (test-sent--file '(("21" . "Theirs.") ("22" . "Mine.") ("23" . "Vanished.") ("24" . "Was."))
+                             (concat "- *TA* [21] :: Theirs, rewritten.\n"
+                                     "- *Prof* [22] :: Mine, rewritten.\n"
+                                     "- DELETE *Prof* [23] :: Vanished.\n"
+                                     "- *Prof* [24] ::\n"))
+          (test-sent--with-canvas (list (test-sent--comment 21 90 "Theirs.")
+                                        (test-sent--comment 22 77 "Mine, changed in SpeedGrader.")
+                                        (test-sent--comment 24 77 "Was."))
+            (let* ((warnings (test-sent--collecting-warnings
+                              (cl-letf (((symbol-function 'org-canvas--confirm)
+                                         (lambda (_) (error "must not ask"))))
+                                (org-canvas-submissions-push-grades)))))
+              (expect warnings
+                      :to-equal '("[Submissions] Comment 21 on Adams, Alice not changed: not yours; only its author may change it"
+                                  "[Submissions] Comment 22 on Adams, Alice not changed: edited on Canvas since the pull"
+                                  "[Submissions] Comment 23 on Adams, Alice not changed: no longer on Canvas"
+                                  "[Submissions] Comment 24 on Adams, Alice not changed: emptied; mark it DELETE to delete it")))
+            (expect (test-org-canvas-api-call-count) :to-equal 0)
+            (expect (buffer-string) :to-match "\\[21\\] :: Theirs, rewritten\\.")
+            (expect (buffer-string) :to-match "DELETE \\*Prof\\* \\[23\\]"))))))
+
+  (it "lists what it sends and what it leaves in the confirmation"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (test-sent--file '(("21" . "Theirs.") ("22" . "Mine.") ("23" . "Drop."))
+                                            (concat "- *TA* [21] :: Theirs, rewritten.\n"
+                                                    "- *Prof* [22] :: Mine, rewritten.\n"
+                                                    "- DELETE *Prof* [23] :: Drop.\n"))
+          (test-sent--with-canvas (list (test-sent--comment 21 90 "Theirs.")
+                                        (test-sent--comment 22 77 "Mine.")
+                                        (test-sent--comment 23 77 "Drop."))
+            (let ((shown nil) (prompt nil))
+              (cl-letf (((symbol-function 'message)
+                         (lambda (fmt &rest args) (push (apply #'format fmt args) shown)))
+                        ((symbol-function 'org-canvas--log-warning) #'ignore))
+                (setq prompt (test-sent--push)))
+              (expect prompt :to-equal
+                      "Push 1 comment edit(s) and 1 comment deletion(s), leaving 1 comment change(s) unsent? ")
+              (expect (seq-find (lambda (m) (string-prefix-p "Sent comments:" m)) shown)
+                      :to-equal
+                      (concat "Sent comments:\n"
+                              "  Adams, Alice: edit comment 22\n"
+                              "  Adams, Alice: delete comment 23\n"
+                              "  Adams, Alice: not sending comment 21 (not yours; only its author may change it)"))
+              (expect (seq-find (lambda (m) (string-match-p "sent comment(s) edited" m)) shown)
+                      :to-match "; 1 sent comment(s) edited, 1 deleted; 1 comment change(s) not sent (see the log)")))))))
+
+  (it "sends nothing when the comments cannot be read"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (test-sent--file '(("22" . "Mine.")) "- *Prof* [22] :: Mine, rewritten.\n")
+          (cl-letf (((symbol-function 'org-canvas--submissions-self-id)
+                     (lambda () (signal 'org-canvas-api-error '("HTTP 500")))))
+            (let ((warnings (test-sent--collecting-warnings
+                             (cl-letf (((symbol-function 'org-canvas--confirm)
+                                        (lambda (_) (error "must not ask"))))
+                               (org-canvas-submissions-push-grades)))))
+              (expect (car warnings) :to-match "Could not read the sent comments")
+              (expect (cadr warnings) :to-match "not changed: Canvas could not be read")))
+          (expect (test-org-canvas-api-call-count) :to-equal 0)))))
+
+  (it "sends nothing and changes nothing under a dry run"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (test-sent--file '(("22" . "Mine.") ("23" . "Drop."))
+                                            "- *Prof* [22] :: Mine, rewritten.\n- DELETE *Prof* [23] :: Drop.\n")
+          (test-sent--with-canvas (list (test-sent--comment 22 77 "Mine.")
+                                        (test-sent--comment 23 77 "Drop."))
+            (let ((org-canvas--dry-run t)
+                  (before (buffer-string)))
+              (expect (plist-get (org-canvas--submissions-push-current nil) :edited) :to-equal 0)
+              (expect (test-org-canvas-api-call-count) :to-equal 0)
+              (expect (buffer-string) :to-equal before)
+              (expect (length (org-canvas--submissions-collect-comment-edits)) :to-equal 2)))))))
+
+  (it "leaves an item pending when Canvas refuses the request"
+    (with-org-canvas-test-config
+      (with-grading-file (test-sent--file '(("22" . "Mine.")) "- *Prof* [22] :: Mine, rewritten.\n")
+        (test-sent--with-canvas (list (test-sent--comment 22 77 "Mine."))
+          (cl-letf (((symbol-function 'org-canvas-api-request)
+                     (lambda (&rest _) (signal 'org-canvas-api-error '("HTTP 403 Forbidden")))))
+            (let ((warnings (test-sent--collecting-warnings (test-sent--push))))
+              (expect (length warnings) :to-equal 1)
+              (expect (car warnings) :to-match
+                      "\\`\\[Submissions\\] Could not edit comment 22 on Adams, Alice: .*HTTP 403 Forbidden")))
+          (expect (length (org-canvas--submissions-collect-comment-edits)) :to-equal 1)))))
+
+  (it "reports the counts to a script"
+    (with-org-canvas-test-config
+      (with-mock-api
+        (with-grading-file (test-sent--file '(("22" . "Mine.") ("23" . "Drop."))
+                                            "- *Prof* [22] :: Mine, rewritten.\n- DELETE *Prof* [23] :: Drop.\n")
+          (test-sent--with-canvas (list (test-sent--comment 22 77 "Mine.")
+                                        (test-sent--comment 23 77 "Drop."))
+            (let ((result (org-canvas-push-submission-grades 1001)))
+              (expect (plist-get result :edited) :to-equal 1)
+              (expect (plist-get result :deleted) :to-equal 1))))))))
+
+(describe "refreshing a file with sent comments changed (issue #419)"
+  (it "keeps an unsent edit and a DELETE mark over the re-render"
+    (with-org-canvas-test-config
+      (with-grading-file (test-sent--file '(("22" . "Mine.") ("23" . "Drop."))
+                                          "- *Prof* [22] :: Mine, rewritten.\n- DELETE *Prof* [23] :: Drop.\n")
+        (test-sent--with-canvas (list (test-sent--comment 22 77 "Mine.")
+                                      (test-sent--comment 23 77 "Drop."))
+          (org-canvas-submissions-refresh)
+          (expect (buffer-string) :to-match "^- \\*Prof\\* <[^>]+> \\[22\\] :: Mine, rewritten\\.$")
+          (expect (buffer-string) :to-match "^- DELETE \\*Prof\\* <[^>]+> \\[23\\] :: Drop\\.$")
+          (let ((edits (org-canvas--submissions-collect-comment-edits)))
+            (expect (mapcar (lambda (e) (plist-get e :id)) edits) :to-equal '("22" "23"))
+            (expect (plist-get (car edits) :baseline)
+                    :to-equal (org-canvas--submissions-comment-digest "Mine.")))))))
+
+  (it "gives ids to a file pulled before them"
+    (with-org-canvas-test-config
+      (with-grading-file (test-sent--file nil "- *Prof* <2026-01-01 Thu 00:00> :: Mine.\n")
+        (test-sent--with-canvas (list (test-sent--comment 22 77 "Mine."))
+          (org-canvas-submissions-refresh)
+          (expect (buffer-string) :to-match "\\[22\\] :: Mine\\.$")
+          (expect (org-canvas--submissions-collect-comment-edits) :to-be nil)))))
+
+  (it "writes nothing over a comment Canvas now holds as edited"
+    (with-org-canvas-test-config
+      (with-grading-file (test-sent--file '(("22" . "Mine.")) "- *Prof* [22] :: Mine, rewritten.\n")
+        (test-sent--with-canvas (list (test-sent--comment 22 77 "Mine, rewritten."))
+          (org-canvas-submissions-refresh)
+          (org-canvas--submissions-goto-user 5001)
+          (expect (org-entry-get (point) "CANVAS_COMMENTS")
+                  :to-equal (format "22=%s" (org-canvas--submissions-comment-digest "Mine, rewritten.")))
+          (expect (org-canvas--submissions-collect-comment-edits) :to-be nil)))))
+
+  (it "keeps an edit against its old baseline when Canvas moved, and says so"
+    (with-org-canvas-test-config
+      (with-grading-file (test-sent--file '(("22" . "Mine.")) "- *Prof* [22] :: Mine, rewritten.\n")
+        (test-sent--with-canvas (list (test-sent--comment 22 77 "Changed in SpeedGrader."))
+          (let ((warnings (test-sent--collecting-warnings (org-canvas-submissions-refresh))))
+            (expect warnings :to-contain
+                    "[Refresh] Comment 22 on Adams, Alice was edited on Canvas since; the change made here is kept and a push will not send it"))
+          (expect (buffer-string) :to-match "\\[22\\] :: Mine, rewritten\\.$")
+          (expect (plist-get (car (org-canvas--submissions-collect-comment-edits)) :baseline)
+                  :to-equal (org-canvas--submissions-comment-digest "Mine."))))))
+
+  (it "keeps a DELETE mark on a comment the old baseline did not name"
+    (with-org-canvas-test-config
+      (with-grading-file (test-sent--file nil "- DELETE *Prof* [23] :: Drop.\n")
+        (test-sent--with-canvas (list (test-sent--comment 23 77 "Drop."))
+          (org-canvas-submissions-refresh)
+          (expect (buffer-string) :to-match "^- DELETE \\*Prof\\* <[^>]+> \\[23\\] :: Drop\\.$")
+          (org-canvas--submissions-goto-user 5001)
+          (expect (org-entry-get (point) "CANVAS_COMMENTS")
+                  :to-equal (format "23=%s" (org-canvas--submissions-comment-digest "Drop.")))))))
+
+  (it "names a changed comment Canvas no longer holds, with its text"
+    (with-org-canvas-test-config
+      (with-grading-file (test-sent--file '(("22" . "Mine.") ("23" . "Drop."))
+                                          "- *Prof* [22] :: Mine, rewritten.\n- DELETE *Prof* [23] :: Drop.\n")
+        (test-sent--with-canvas nil
+          (let ((warnings (test-sent--collecting-warnings (org-canvas-submissions-refresh))))
+            (expect warnings :to-contain
+                    "[Refresh] Comment 22 on Adams, Alice is no longer on Canvas; the change made here was dropped: Mine, rewritten.")
+            (expect warnings :to-contain
+                    "[Refresh] Comment 23 on Adams, Alice is no longer on Canvas; the change made here was dropped: DELETE")))))))
+
+(describe "recording a posted draft after multi-line comments (issue #419)"
+  (it "goes after the last item's paragraphs, never inside them"
+    (with-temp-org-buffer
+        (concat "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n\n** Comments\n"
+                "- *Prof* [13] ::\n  First.\n\n  Second.\n\n** Notes\n")
+      (org-back-to-heading t)
+      (org-canvas--submissions-append-comment-to-buffer "Adams, Alice" "New.")
+      (expect (buffer-string) :to-match
+              "  Second\\.\n- \\*You\\* <[^>]+> :: New\\.\n\n\\*\\* Notes")
+      (org-back-to-heading t)
+      (expect (plist-get (car (org-canvas--submissions-sent-comments)) :text)
+              :to-equal "First.\n\nSecond.")))
+
+  (it "fills an empty Comments section"
+    (with-temp-org-buffer
+        "* Adams, Alice\n:PROPERTIES:\n:USER_ID: 5001\n:END:\n\n** Comments\n** Notes\n"
+      (org-back-to-heading t)
+      (org-canvas--submissions-append-comment-to-buffer "Adams, Alice" "New.")
+      (expect (buffer-string) :to-match "\\*\\* Comments\n- \\*You\\* <[^>]+> :: New\\.\n\\*\\* Notes"))))
+
 (provide 'org-canvas-submissions-test)
 ;;; org-canvas-submissions-test.el ends here
