@@ -1,0 +1,7 @@
+* Added
+- #413 =org-canvas-validate= warns about every published heading in
+  =assignments.org=, =pages.org=, =quizzes.org= and =discussions.org=
+  that no =modules.org= item links to.  Unpublished headings, the front
+  page, deleted headings and headings marked =NO_MODULE: t= are left
+  out.  =org-canvas-validate-module-coverage= names the files checked
+  (add =org-canvas-files-file= for files, or nil to turn it off).

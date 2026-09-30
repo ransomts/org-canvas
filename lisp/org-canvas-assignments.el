@@ -175,6 +175,7 @@ See `org-canvas--assignment-owner'."
      :doc "How the assignment is graded")
     (:org-prop "PUBLISHED" :data-key :published :type boolean :default t
      :doc "Whether item is visible (default: true)")
+    ,org-canvas--no-module-property-spec
     (:org-prop "POST_POLICY" :data-key :post_policy :type enum
      :values ,org-canvas--valid-post-policies
      :remote-fn org-canvas--assignment-remote-post-policy

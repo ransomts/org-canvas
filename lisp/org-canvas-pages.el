@@ -77,6 +77,7 @@
      :api-key "published" :boolean-json t
      :compare-p org-canvas--page-published-comparable-p
      :doc "Whether item is visible (default: true); not sent when PUBLISH_AT is set")
+    ,org-canvas--no-module-property-spec
     (:org-prop "PUBLISH_AT" :data-key :publish_at :type timestamp
      :api-key "publish_at"
      :doc "Canvas publishes the page at this time (needs Scheduled Page Publication)")
