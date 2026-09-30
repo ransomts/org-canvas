@@ -1,0 +1,18 @@
+* Added
+- #416 =scripts/org-canvas= runs a command against a course from the
+  shell, with no bootstrap script: =org-canvas -C DIR status=, =grades
+  NAME...=, =pull-queue=, =pull FEATURE:TITLE...=, =push
+  FEATURE:TITLE...=, =diff=, =validate= and =sync= (=--dry-run= makes
+  =push= and =sync= send nothing).  It finds org-canvas's dependencies itself
+  (=ORG_CANVAS_LOAD_PATH=, package.el, then the straight and elpa build
+  directories), loads the directory's =org-canvas-credentials.el=, and
+  exits 0 when done, 1 on drift, validation errors or a failed item, 2
+  on a bad command line and 3 on an error.  The same entry point is
+  =emacs --batch -l lisp/org-canvas-batch.el -f org-canvas-batch -- ARGS=.
+- #416 =org-canvas-batch-setup= loads a course directory's credentials
+  and sets the batch-safe variables for a script that still wants Lisp.
+
+* Changed
+- #416 =org-canvas-sync= returns the run's counters (=:success=,
+  =:skip=, =:fail=, =:dry-run=, =:deferred=), so a caller can set an
+  exit status from them.
