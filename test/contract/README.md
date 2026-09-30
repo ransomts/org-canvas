@@ -37,6 +37,17 @@ each entry documents a field a module emits that the documented operation
 omits but Canvas honors (currently `module[published]`, `module[skip_content_tags]`
 (issue #47) and `quiz[anonymous_submissions]` (issue #349)).
 
+## Operations the spec lacks
+
+A write org-canvas sends whose operation the vendored spec does not
+document is listed in `SUPPLEMENT_OPS` in the generator, transcribed from
+canvas-lms's own `@API`/`@argument` documentation at the commit its
+`source` names, and written into the fixture as it stands with
+`"supplement": true`. The generator refuses to run once the spec gains the
+operation, so a supplement never shadows the real thing. Currently:
+`submission-comments`, the edit (`PUT`, a top-level `comment`) and delete
+(`DELETE`, no body) of a sent submission comment (issue #419).
+
 ## Pull-side contract
 
 The fixture also captures the documented *response* object fields (typed) for

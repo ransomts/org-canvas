@@ -119,6 +119,14 @@ PAYLOAD may be an alist or a hash-table; WRAPPER is nil for flat payloads."
   "Assert MODULE's build-payload conforms to its Canvas contract.
 ORG is a representative heading snippet; PARSE-FN/BUILD-FN are the module's
 stage-1/2 functions."
+  (let ((org-canvas-course-id "99999")
+        (org-canvas-base-url "https://test.canvas.example.com")
+        (org-canvas-api-token "test-token"))
+    (org-canvas-contract--check-payload
+     module (org-canvas-contract--build org parse-fn build-fn))))
+
+(defun org-canvas-contract--check-payload (module payload)
+  "Assert PAYLOAD, a request body MODULE sends, conforms to its Canvas contract."
   (let* ((contract (alist-get module org-canvas-contract--data nil nil #'string=))
          (wrapper (alist-get "wrapper" contract nil nil #'string=))
          (fields (alist-get "fields" contract nil nil #'string=))
@@ -126,10 +134,6 @@ stage-1/2 functions."
          (allowed (append (mapcar #'car fields)
                           (alist-get module org-canvas-contract--exceptions
                                      nil nil #'string=)))
-         (org-canvas-course-id "99999")
-         (org-canvas-base-url "https://test.canvas.example.com")
-         (org-canvas-api-token "test-token")
-         (payload (org-canvas-contract--build org parse-fn build-fn))
          (keys (org-canvas-contract--inner-keys payload wrapper)))
     (expect contract :to-be-truthy)
     ;; REQUIRED: every required spec field present.
@@ -226,7 +230,42 @@ stage-1/2 functions."
      "discussions"
      "* Topic\n:PROPERTIES:\n:DISCUSSION_TYPE: threaded\n:END:\n\nDiscuss.\n"
      #'org-canvas--discussion-parse-entry
-     #'org-canvas--discussion-build-payload)))
+     #'org-canvas--discussion-build-payload))
+
+  (it "a sent comment's edit conforms to edit_submission_comment (issue #419)"
+    ;; The vendored spec lacks the operation; the fixture carries it as a
+    ;; supplement transcribed from canvas-lms's API documentation.
+    (let ((contract (alist-get "submission-comments" org-canvas-contract--data
+                               nil nil #'string=)))
+      (expect (alist-get "operationId" contract nil nil #'string=)
+              :to-equal "edit_submission_comment")
+      (expect (alist-get "supplement" contract nil nil #'string=) :to-be t)
+      (org-canvas-contract--check-payload
+       "submission-comments"
+       (org-canvas--submissions-comment-edit-payload "Rewritten.\n\nTwo paragraphs."))))
+
+  (it "a sent comment's edit and delete go where the operations say, the delete bodiless (issue #419)"
+    (let* ((contract (alist-get "submission-comments" org-canvas-contract--data
+                                nil nil #'string=))
+           (delete (alist-get "delete" contract nil nil #'string=))
+           (path (alist-get "path" contract nil nil #'string=))
+           (edit (list :user-id 5001 :id "48213" :name "Adams, Alice"
+                       :text "Rewritten."))
+           (want (replace-regexp-in-string
+                  "{[a-z_]+}" "[0-9]+" (string-remove-prefix "/v1" path) t t)))
+      (expect (alist-get "operationId" delete nil nil #'string=)
+              :to-equal "delete_submission_comment")
+      (expect (alist-get "fields" delete nil nil #'string=) :to-be nil)
+      (with-org-canvas-test-config
+        (with-mock-api
+          (org-canvas--submissions-send-comment-edit "1001" edit)
+          (org-canvas--submissions-send-comment-edit "1001" (plist-put (copy-sequence edit) :delete t))
+          (let ((put (test-org-canvas-find-api-call 'PUT "comments"))
+                (del (test-org-canvas-find-api-call 'DELETE "comments")))
+            (expect (nth 1 put) :to-match (concat want "\\'"))
+            (expect (nth 1 del) :to-match (concat want "\\'"))
+            (org-canvas-contract--check-payload "submission-comments" (nth 2 put))
+            (expect (nth 2 del) :to-be nil)))))))
 
 ;;;; Pull-side contract
 ;;

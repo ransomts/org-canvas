@@ -769,5 +769,24 @@
       "title"
     ],
     "wrapper": "quiz"
+  },
+  "submission-comments": {
+    "delete": {
+      "fields": {},
+      "method": "delete",
+      "operationId": "delete_submission_comment"
+    },
+    "fields": {
+      "comment": {
+        "type": "string"
+      }
+    },
+    "method": "put",
+    "operationId": "edit_submission_comment",
+    "path": "/v1/courses/{course_id}/assignments/{assignment_id}/submissions/{user_id}/comments/{id}",
+    "required": [],
+    "source": "canvas-lms bf50faf2 app/controllers/submission_comments_api_controller.rb",
+    "supplement": true,
+    "wrapper": null
   }
 }
